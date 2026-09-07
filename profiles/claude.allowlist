@@ -1,0 +1,7 @@
+# Hosts the claude profile (Claude Code) must reach. Same syntax as the
+# global allowlist: one host per line; a leading dot matches the domain and
+# its subdomains. Merged into the global allowlist by install.sh.
+api.anthropic.com
+.anthropic.com
+statsigapi.net
+.statsig.com

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# install_claude_sh.sh — per-host setup for claude.sh.
+# install.sh — per-host setup for agent-sandbox.
 #
 # Idempotent: safe to run multiple times. Skips steps that are already
 # done; only invokes sudo for the few system-level steps (AppArmor
 # profile, CA trust) that require it.
 #
 # Usage:
-#   1. Copy this file and claude.sh to the new host (any directory).
-#   2. ./install_claude_sh.sh
+#   1. Clone the repository (or copy this file, agent-sandbox and
+#      profiles/ together) to the new host.
+#   2. ./install.sh
 #
 # Embeds the canonical mitmproxy addon, starter allowlist, and systemd
 # user unit so nothing else needs to be carried across hosts. The
@@ -18,8 +19,8 @@ set -euo pipefail
 
 # ----- locations -----
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-CLAUDE_SH="$SCRIPT_DIR/claude.sh"
-CONFIG_DIR="$HOME/.config/claude-sandbox"
+ENGINE="$SCRIPT_DIR/agent-sandbox"
+CONFIG_DIR="$HOME/.config/agent-sandbox"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 BIN_DIR="$HOME/.local/bin"
 
@@ -39,8 +40,9 @@ info()    { printf '    %s%s%s\n'        "$C_DIM"    "$*"        "$C_RESET"; }
 
 # ----- 1. sanity -----
 section "Sanity check"
-[[ -f "$CLAUDE_SH" ]] || err "claude.sh not found at $CLAUDE_SH (copy it next to this installer)"
-ok "found $CLAUDE_SH"
+[[ -f "$ENGINE" ]] || err "agent-sandbox engine not found at $ENGINE (keep it next to this installer)"
+[[ -f "$SCRIPT_DIR/profiles/claude.sh" ]] || err "claude profile not found at $SCRIPT_DIR/profiles/claude.sh"
+ok "found $ENGINE"
 
 # ----- 2. packages -----
 section "Packages"
@@ -53,7 +55,7 @@ fi
 ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
 ok "mitmdump installed: $(mitmdump --version 2>/dev/null | head -1)"
 if command -v slirp4netns >/dev/null; then
-  ok "slirp4netns installed (enables CLAUDE_SANDBOX_NET=strict in the future)"
+  ok "slirp4netns installed (enables AGENT_SANDBOX_NET=strict in the future)"
 else
   info "slirp4netns not installed; only needed for the (currently non-functional) strict mode"
 fi
@@ -135,20 +137,25 @@ fi
 
 # ----- 6. config files -----
 section "Config files"
+# Migrate the pre-rename config dir if present (keeps your allowlist edits).
+if [[ -d "$HOME/.config/claude-sandbox" && ! -e "$CONFIG_DIR" ]]; then
+  mv "$HOME/.config/claude-sandbox" "$CONFIG_DIR"
+  ok "migrated ~/.config/claude-sandbox -> $CONFIG_DIR"
+fi
 mkdir -p "$CONFIG_DIR" "$SYSTEMD_DIR"
 
 # 6a. allowlist_addon.py (static content; safe to overwrite on every run)
 cat >"$CONFIG_DIR/allowlist_addon.py" <<'ADDON_EOF'
 """
-mitmproxy addon for claude.sh — host allowlist enforcement.
+mitmproxy addon for agent-sandbox — host allowlist enforcement.
 
-Reads ~/.config/claude-sandbox/allowlist.txt on every request and lets
+Reads ~/.config/agent-sandbox/allowlist.txt on every request and lets
 through only hosts that match. Lines are exact hostnames; a leading dot
 (".github.com") makes the line match the host AND its subdomains.
 
 Blocked requests return HTTP 403 and are logged to
-~/.config/claude-sandbox/blocked.log (one line per attempt) so you can
-review what claude tried to reach and decide whether to add it.
+~/.config/agent-sandbox/blocked.log (one line per attempt) so you can
+review what the agent tried to reach and decide whether to add it.
 
 No restart needed when editing the allowlist; the file is re-read on
 each request.
@@ -163,7 +170,7 @@ from pathlib import Path
 from mitmproxy import http
 
 
-CONFIG_DIR = Path.home() / ".config" / "claude-sandbox"
+CONFIG_DIR = Path.home() / ".config" / "agent-sandbox"
 ALLOWLIST_PATH = CONFIG_DIR / "allowlist.txt"
 BLOCKED_LOG_PATH = CONFIG_DIR / "blocked.log"
 
@@ -215,7 +222,7 @@ def request(flow: http.HTTPFlow) -> None:
     flow.response = http.Response.make(
         403,
         (
-            f"claude-sandbox: host {host!r} is not in the allowlist.\n"
+            f"agent-sandbox: host {host!r} is not in the allowlist.\n"
             f"To allow it, add a line to {ALLOWLIST_PATH}:\n"
             f"    {host}        (exact)\n"
             f"    .{host}       (and all subdomains)\n"
@@ -230,15 +237,15 @@ if [[ -f "$CONFIG_DIR/allowlist.txt" ]]; then
   ok "$CONFIG_DIR/allowlist.txt already exists (kept as-is)"
 else
   cat >"$CONFIG_DIR/allowlist.txt" <<'ALLOW_EOF'
-# claude-sandbox allowlist
+# agent-sandbox allowlist
 #
 # One hostname per line. Lines starting with "#" are comments.
 # A leading dot (".github.com") matches the host AND its subdomains.
 # Edits take effect immediately — no restart needed.
 #
-# Blocked requests are logged to ~/.config/claude-sandbox/blocked.log;
-# tail it (`tail -f ~/.config/claude-sandbox/blocked.log`) to see what
-# claude is trying to reach and add hosts here as needed.
+# Blocked requests are logged to ~/.config/agent-sandbox/blocked.log;
+# tail it (`tail -f ~/.config/agent-sandbox/blocked.log`) to see what
+# the agent is trying to reach and add hosts here as needed.
 
 # ---- Anthropic ----
 api.anthropic.com
@@ -276,10 +283,10 @@ ALLOW_EOF
 fi
 
 # 6c. systemd user unit (static; safe to overwrite)
-cat >"$SYSTEMD_DIR/claude-mitmproxy.service" <<UNIT_EOF
+cat >"$SYSTEMD_DIR/agent-sandbox-mitmproxy.service" <<UNIT_EOF
 [Unit]
-Description=mitmproxy enforcing allowlist for claude sandbox
-Documentation=file:$CLAUDE_SH
+Description=mitmproxy enforcing allowlist for the agent sandbox
+Documentation=file:$ENGINE
 After=network-online.target
 Wants=network-online.target
 
@@ -291,7 +298,7 @@ ExecStart=/usr/bin/mitmdump \\
     --set block_global=false \\
     --set termlog_verbosity=info \\
     --set flow_detail=0 \\
-    -s %h/.config/claude-sandbox/allowlist_addon.py
+    -s %h/.config/agent-sandbox/allowlist_addon.py
 Restart=on-failure
 RestartSec=2s
 StandardOutput=journal
@@ -300,39 +307,48 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 UNIT_EOF
-ok "wrote $SYSTEMD_DIR/claude-mitmproxy.service"
+ok "wrote $SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 
 # ----- 7. systemd: reload, enable, start -----
 section "Systemd user service"
+# Migrate off the pre-rename unit if present: it also binds 127.0.0.1:8888, so
+# leaving it enabled would collide with agent-sandbox-mitmproxy.service.
+if systemctl --user is-enabled claude-mitmproxy.service >/dev/null 2>&1 \
+   || [[ -f "$SYSTEMD_DIR/claude-mitmproxy.service" ]]; then
+  systemctl --user disable --now claude-mitmproxy.service >/dev/null 2>&1 || true
+  rm -f "$SYSTEMD_DIR/claude-mitmproxy.service"
+  ok "migrated off legacy claude-mitmproxy.service"
+fi
 systemctl --user daemon-reload
-systemctl --user enable claude-mitmproxy.service >/dev/null 2>&1 || true
-systemctl --user restart claude-mitmproxy.service
+systemctl --user enable agent-sandbox-mitmproxy.service >/dev/null 2>&1 || true
+systemctl --user restart agent-sandbox-mitmproxy.service
 sleep 1
-if systemctl --user is-active --quiet claude-mitmproxy.service; then
-  ok "claude-mitmproxy.service is active"
+if systemctl --user is-active --quiet agent-sandbox-mitmproxy.service; then
+  ok "agent-sandbox-mitmproxy.service is active"
 else
-  warn "claude-mitmproxy.service did not start; inspect: journalctl --user -u claude-mitmproxy"
+  warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
 fi
 
 # ----- 8. PATH symlink -----
-section "PATH symlink (\$HOME/.local/bin/claude)"
+section "PATH symlink (\$HOME/.local/bin/claude -> agent-sandbox)"
 mkdir -p "$BIN_DIR"
 link="$BIN_DIR/claude"
-if [[ -L "$link" && "$(readlink -f "$link")" == "$CLAUDE_SH" ]]; then
-  ok "symlink already pointing at $CLAUDE_SH"
+if [[ -L "$link" && "$(readlink -f "$link")" == "$ENGINE" ]]; then
+  ok "symlink already pointing at $ENGINE"
 elif [[ -e "$link" ]]; then
   warn "$link exists and is not the expected symlink (left untouched)"
   info "If it's the upstream Claude Code binary you no longer want, remove it and re-run."
 else
-  ln -s "$CLAUDE_SH" "$link"
-  ok "symlinked $link -> $CLAUDE_SH"
+  ln -s "$ENGINE" "$link"
+  ok "symlinked $link -> $ENGINE"
 fi
 
-# Verify $HOME/.local/bin precedes any other claude on PATH.
+# Verify $HOME/.local/bin precedes any other claude on PATH. The engine
+# infers the claude profile from the symlink name.
 if command -v claude >/dev/null; then
   resolved=$(readlink -f "$(command -v claude)")
-  if [[ "$resolved" == "$CLAUDE_SH" ]]; then
-    ok "\`claude\` on PATH resolves to claude.sh"
+  if [[ "$resolved" == "$ENGINE" ]]; then
+    ok "\`claude\` on PATH resolves to the agent-sandbox engine"
   else
     warn "\`claude\` on PATH resolves to $resolved (not our wrapper)"
     info "Ensure $BIN_DIR comes before other claude installations in PATH."
@@ -344,12 +360,12 @@ section "Smoke tests"
 if bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true 2>/dev/null; then
   ok "bwrap can create user+pid namespaces"
 else
-  warn "bwrap user-namespace test failed — see claude.sh header for AppArmor notes"
+  warn "bwrap user-namespace test failed — see the agent-sandbox header for AppArmor notes"
 fi
 if curl -fsS --proxy http://127.0.0.1:8888 -o /dev/null https://api.anthropic.com 2>/dev/null; then
   ok "mitmproxy reached api.anthropic.com (allowlist working)"
 else
-  warn "mitmproxy test request failed (might be transient; check 'systemctl --user status claude-mitmproxy')"
+  warn "mitmproxy test request failed (might be transient; check 'systemctl --user status agent-sandbox-mitmproxy')"
 fi
 
 # ----- 10. summary -----
@@ -360,5 +376,5 @@ Next steps:
   - cd into a project and run \`claude\`.
   - Tail blocked requests:  tail -f $CONFIG_DIR/blocked.log
   - Edit the allowlist:     \$EDITOR $CONFIG_DIR/allowlist.txt
-  - Bypass proxy one-shot:  CLAUDE_SANDBOX_NET=open claude
+  - Bypass proxy one-shot:  AGENT_SANDBOX_NET=open claude
 SUMMARY

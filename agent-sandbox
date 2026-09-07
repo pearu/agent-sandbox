@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-# claude.sh — run Claude Code inside a bubblewrap sandbox.
+# agent-sandbox — run an AI coding agent inside a bubblewrap sandbox.
+#
+# The engine in this file is provider-agnostic. Everything specific to one
+# agent -- where its binary lives, which state paths it needs read-write,
+# which environment it wants, which subcommands must run on the host -- is a
+# PROFILE: profiles/<name>.sh next to this file, sourced at launch. The
+# flagship profile is `claude` (Claude Code). A profile is selected with
+# --profile NAME, or inferred from argv[0] when the engine is invoked through
+# a symlink named after a profile (~/.local/bin/claude -> agent-sandbox), so
+# `claude` keeps working exactly as before. profiles/claude.sh documents the
+# contract a profile implements.
 #
 # ============================================================================
 # QUICK START
@@ -7,19 +17,20 @@
 #
 # Prerequisites:
 #   - bubblewrap installed:   sudo apt install bubblewrap
-#   - Claude Code installed under $HOME/.local/share/claude/versions/ (the
-#     native installer's default layout: each version is either a single
-#     executable file named after the version, e.g. "2.1.143", or a directory
-#     containing a "claude" binary).
+#   - the agent itself, installed where its profile expects. For `claude`:
+#     Claude Code under $HOME/.local/share/claude/versions/ (the native
+#     installer's default layout: each version is either a single executable
+#     file named after the version, e.g. "2.1.143", or a directory containing
+#     a "claude" binary).
 #
 # Install (pick one):
-#   1. Symlink it onto your PATH:
-#        ln -s "$PWD/claude.sh" "$HOME/.local/bin/claude"
+#   1. ./install.sh -- per-host setup: egress proxy + allowlist, AppArmor
+#      profile where needed, and the ~/.local/bin/claude symlink.
+#   2. By hand, just the symlink onto your PATH:
+#        ln -s "$PWD/agent-sandbox" "$HOME/.local/bin/claude"
 #      Ensure "$HOME/.local/bin" comes before any other claude in PATH.
-#
-#   2. Source it as a shell function:
-#        echo 'source /path/to/claude.sh' >> ~/.bashrc
-#      Then re-open your shell and use `claude` as normal.
+#   3. No symlink at all:
+#        agent-sandbox --profile claude [args]
 #
 # Use:
 #   cd /path/to/some/project
@@ -32,7 +43,7 @@
 #                            # enters the sandbox (see SSH ACCESS)
 #
 # ============================================================================
-# SANDBOX LAYOUT (what claude sees)
+# SANDBOX LAYOUT (what the agent sees)
 # ============================================================================
 #
 #   /usr, /etc, /opt, /lib*, /bin, /sbin    read-only (system)
@@ -48,7 +59,7 @@
 #                                           conda install (where conda/mamba
 #                                           live) is also bound so those
 #                                           commands work. Set
-#                                           CLAUDE_SANDBOX_CONDA_WRITE=1 to
+#                                           AGENT_SANDBOX_CONDA_WRITE=1 to
 #                                           bind both read-write — required
 #                                           for `mamba install`/`pip install`
 #                                           into the active env.
@@ -61,7 +72,7 @@
 #                                           side mitmproxy with an allowlist
 #                                           (see "Network modes" below).
 #                                           Override per-invocation via
-#                                           CLAUDE_SANDBOX_NET=open|strict|none.
+#                                           AGENT_SANDBOX_NET=open|strict|none.
 #
 # Environment is cleared by default. The default allowlist forwards locale
 # (LANG/LC_*/TZ), color hints, Anthropic config (ANTHROPIC_API_KEY etc.),
@@ -73,18 +84,18 @@
 # OPTIONAL KNOBS (set in the calling shell)
 # ============================================================================
 #
-#   CLAUDE_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
-#   CLAUDE_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
-#   CLAUDE_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
+#   AGENT_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
+#   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
+#   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
-#   CLAUDE_SANDBOX_CONDA_WRITE=1        bind the active conda env (and its
-#                                       base install) read-write, so claude
+#   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env (and its
+#                                       base install) read-write, so the agent
 #                                       can `mamba install`, `pip install`,
 #                                       etc. Default 0 (read-only) is safer.
-#   CLAUDE_SANDBOX_NET=proxy|strict|open|none  network mode (default: proxy)
+#   AGENT_SANDBOX_NET=proxy|strict|open|none  network mode (default: proxy)
 #       proxy  : --share-net plus HTTPS_PROXY pointing at a host-side
-#                mitmproxy that enforces ~/.config/claude-sandbox/allowlist.txt.
-#                Any tool that honors HTTPS_PROXY (claude, curl, git, pip,
+#                mitmproxy that enforces ~/.config/agent-sandbox/allowlist.txt.
+#                Any tool that honors HTTPS_PROXY (the agent, curl, git, pip,
 #                npm, conda, ...) is filtered. Tools that bypass HTTPS_PROXY
 #                with raw sockets, or talk to localhost/LAN directly, are
 #                NOT filtered. This is the working default on Ubuntu 24.04.
@@ -95,10 +106,31 @@
 #                future use once that's solved (rootlesskit, pasta, ...).
 #       open   : --share-net, no proxy. Debug only.
 #       none   : no network at all (offline work).
+#   AGENT_SANDBOX_PROFILE_DIR=/dir      where profiles live (default: the
+#                                       profiles/ directory next to this file)
+#   AGENT_SANDBOX_SESSION_BASE=/dir     where per-session state lives (default:
+#                                       $XDG_RUNTIME_DIR/agent-sandbox.<uid>,
+#                                       falling back to /tmp/agent-sandbox.<uid>)
+#
+# The former AGENT_SANDBOX_* names of these knobs are still honoured, with a
+# one-line note asking you to rename.
+#
+# ============================================================================
+# ENGINE FLAGS
+# ============================================================================
+#
+# The engine's own flags must come BEFORE the agent's arguments and are
+# stripped before the agent sees the command line:
+#
+#   --profile NAME        select the provider profile (see top of file)
+#   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
+#                         see SSH ACCESS below
+#   -h, --help            engine usage (only when no profile is selected;
+#                         with a profile, --help goes to the agent)
 #
 # Sensitive locations (~/.ssh, ~/.gnupg, ~/.aws, ~/.config/{gcloud,sops},
 # ~/.kube, ~/.docker, ~/.password-store) are refused both as CWD and as
-# CLAUDE_SANDBOX_RW targets. Paths that resolve to "/" or "$HOME" are
+# AGENT_SANDBOX_RW targets. Paths that resolve to "/" or "$HOME" are
 # refused outright.
 #
 # ============================================================================
@@ -106,7 +138,7 @@
 # ============================================================================
 #
 # `claude update` (alias `upgrade`) and `claude install [target]` are
-# intercepted by this wrapper and run with the newest installed binary
+# intercepted by the claude profile and run with the newest installed binary
 # directly on the host, NOT inside the sandbox. Inside the sandbox they
 # cannot work: the proxy allowlist blocks downloads.claude.ai, the versions
 # directory is not bound, and DISABLE_AUTOUPDATER=1 is set (so a sandboxed
@@ -133,8 +165,8 @@
 # and no agent socket is forwarded, so it cannot push, cannot ssh anywhere,
 # and cannot post to a remote. That is the "locked" tier and needs no flag.
 #
-# Flags (claude.sh's own; they must come BEFORE claude's arguments and are
-# stripped before claude sees the command line):
+# Flags (engine flags; they must come BEFORE the agent's arguments and are
+# stripped before the agent sees the command line):
 #
 #   --ssh HOST            allow SSH to HOST. Repeatable. HOST is anything ssh
 #                         accepts: a hostname, user@host, or an alias from
@@ -149,7 +181,7 @@
 #   --ssh-timeout LIFE    expire the loaded key after LIFE (seconds, or
 #                         e.g. 30m, 2h). Off unless given.
 #
-# How it works: claude.sh starts a FRESH ssh-agent for this session only,
+# How it works: agent-sandbox starts a FRESH ssh-agent for this session only,
 # loads the key into it, binds just that agent's unix socket into the
 # sandbox and exports SSH_AUTH_SOCK. ssh/git inside ask the host agent to
 # sign; the private key itself is never visible in the sandbox. When the
@@ -157,7 +189,7 @@
 # by an uncatchable kill (SIGKILL of the wrapper) is reaped by the next --ssh
 # launch's janitor, which skips still-running sessions, so it is safe with
 # concurrent sessions. Session state lives under
-# ${XDG_RUNTIME_DIR:-/tmp}/claude-sandbox-ssh.<uid>/.
+# ${XDG_RUNTIME_DIR:-/tmp}/agent-sandbox.<uid>/.
 #
 # Per-host enforcement: with --ssh HOST the key is loaded with an OpenSSH
 # destination constraint (ssh-add -h, OpenSSH >= 8.9). The AGENT then
@@ -174,7 +206,7 @@
 #
 # Requirements and limits:
 #   - The host's key must already be in ~/.ssh/known_hosts on the host
-#     (agent constraints are keyed by host key). If it is not, claude.sh
+#     (agent constraints are keyed by host key). If it is not, agent-sandbox
 #     refuses with a hint; connect once from a host shell (`ssh HOST`).
 #     This is deliberate: no trust-on-first-use is done for you.
 #   - ~/.ssh/known_hosts and ~/.ssh/config are bound READ-ONLY into the
@@ -225,16 +257,16 @@
 #   CUDA_HOME, CUDAToolkit_ROOT, and LD_LIBRARY_PATH are forwarded by
 #   default.
 #
-# Conda/mamba: activate your environment BEFORE running claude. The script
+# Conda/mamba: activate your environment BEFORE running the agent. The script
 #   reads $CONDA_PREFIX from your shell, binds it read-only inside the
 #   sandbox, and forwards PATH and CONDA_* variables so the env stays
 #   activated. There is no in-sandbox `conda activate` step.
 #
 # Running from $HOME: deliberately constrained. Nothing under $HOME is
 #   bound except the explicit allowlist (.claude, .claude.json, the conda
-#   env if it lives in $HOME, anything you list in CLAUDE_SANDBOX_R{O,W}).
+#   env if it lives in $HOME, anything you list in AGENT_SANDBOX_R{O,W}).
 #   $HOME itself is a read-only tmpfs, so `touch $HOME/foo` fails. Use a
-#   project subdirectory instead, or set CLAUDE_SANDBOX_RW=... for the
+#   project subdirectory instead, or set AGENT_SANDBOX_RW=... for the
 #   specific subtrees you want exposed.
 #
 # ============================================================================
@@ -247,7 +279,7 @@
 #        sudo apt install slirp4netns mitmproxy
 #
 #   2. mitmproxy's CA cert trusted system-wide (so TLS interception works
-#      for claude, node, curl, git, pip, ...):
+#      for the agent, node, curl, git, pip, ...):
 #        mitmdump --listen-port 0 &   # one-time, to materialise the CA
 #        sleep 1; kill %1
 #        sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem \
@@ -257,18 +289,18 @@
 #   3. The user systemd service that runs mitmdump with the allowlist
 #      addon enabled and started:
 #        systemctl --user daemon-reload
-#        systemctl --user enable --now claude-mitmproxy.service
-#      (Unit file: ~/.config/systemd/user/claude-mitmproxy.service; addon
-#      and allowlist live in ~/.config/claude-sandbox/.)
+#        systemctl --user enable --now agent-sandbox-mitmproxy.service
+#      (Unit file: ~/.config/systemd/user/agent-sandbox-mitmproxy.service; addon
+#      and allowlist live in ~/.config/agent-sandbox/.)
 #
-# Then every claude run goes through mitmproxy, which enforces the
-# allowlist at ~/.config/claude-sandbox/allowlist.txt. Blocked hosts are
-# logged to ~/.config/claude-sandbox/blocked.log — tail it to see what
-# claude is reaching for, and add hosts as needed (no restart required).
+# Then every agent run goes through mitmproxy, which enforces the
+# allowlist at ~/.config/agent-sandbox/allowlist.txt. Blocked hosts are
+# logged to ~/.config/agent-sandbox/blocked.log — tail it to see what
+# the agent is reaching for, and add hosts as needed (no restart required).
 #
 # Verify:
-#   systemctl --user status claude-mitmproxy
-#   tail -f ~/.config/claude-sandbox/blocked.log
+#   systemctl --user status agent-sandbox-mitmproxy
+#   tail -f ~/.config/agent-sandbox/blocked.log
 #
 # Inside a sandboxed session:
 #   ! curl -sI https://api.anthropic.com    # allowed
@@ -290,20 +322,20 @@
 #   "Can't bind mount ... on /newroot/usr/local: ..."
 #       /usr/local is a symlink whose target isn't being exposed. The script
 #       handles this automatically now; if you still hit it, expose the
-#       target manually:  CLAUDE_SANDBOX_RO=/path/to/real/local claude
+#       target manually:  AGENT_SANDBOX_RO=/path/to/real/local claude
 #
 #   "Claude configuration file not found at: /home/USER/.claude.json"
 #       The script binds this file automatically; make sure you re-symlinked
-#       /didn't drop the latest claude.sh.
+#       /didn't drop the latest agent-sandbox.
 #
 #   "API Error: Unable to connect to API (FailedToOpenSocket)" or DNS errors
 #       Usually caused by /etc/resolv.conf being a symlink into /run on
 #       systemd-resolved systems. The script binds the resolved target
 #       automatically; verify with: readlink -f /etc/resolv.conf
 #
-#   "claude.sh: slirp4netns not installed"
+#   "agent-sandbox: slirp4netns not installed"
 #       Either install it (sudo apt install slirp4netns) or set
-#       CLAUDE_SANDBOX_NET=open to bypass (loses network sandboxing).
+#       AGENT_SANDBOX_NET=open to bypass (loses network sandboxing).
 #
 #   Every HTTPS request fails with cert errors (UNABLE_TO_VERIFY_LEAF_SIGNATURE,
 #   SSL_ERROR_BAD_CERT_DOMAIN, ...)
@@ -311,12 +343,12 @@
 #         sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem \
 #                 /usr/local/share/ca-certificates/mitmproxy.crt
 #         sudo update-ca-certificates
-#       If only Node/claude breaks (other tools work), the system CA bundle
+#       If only Node/the agent breaks (other tools work), the system CA bundle
 #       isn't being read by Node — point it at the bundle explicitly:
-#         CLAUDE_SANDBOX_PASSENV="NODE_EXTRA_CA_CERTS" \
+#         AGENT_SANDBOX_PASSENV="NODE_EXTRA_CA_CERTS" \
 #         NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt claude
 #
-#   "claude.sh: bwrap did not report a child PID"
+#   "agent-sandbox: bwrap did not report a child PID"
 #       bwrap failed to set up the sandbox before slirp4netns could attach.
 #       Run bwrap manually with the same args to see its real error.
 #
@@ -338,23 +370,23 @@
 #       before slirp could attach.
 #
 #   Allowed hosts still return 403 from mitmproxy
-#       Check the addon is loaded:  systemctl --user status claude-mitmproxy
+#       Check the addon is loaded:  systemctl --user status agent-sandbox-mitmproxy
 #       Check the allowlist format: bare hostnames; leading "." for subdomains.
-#       Watch the journal:  journalctl --user -u claude-mitmproxy -f
+#       Watch the journal:  journalctl --user -u agent-sandbox-mitmproxy -f
 #
-#   Tool inside claude can't find an API token (AWS, GH, ...)
+#   Tool inside the sandbox can't find an API token (AWS, GH, ...)
 #       By design: only an explicit allowlist is forwarded. Re-export per
-#       session with:  CLAUDE_SANDBOX_PASSENV="GH_TOKEN" claude
+#       session with:  AGENT_SANDBOX_PASSENV="GH_TOKEN" claude
 #
-#   Tool inside claude can't reach a file outside CWD that you need
-#       Expose it explicitly:  CLAUDE_SANDBOX_RO=/some/dir claude
-#       (Or CLAUDE_SANDBOX_RW for writable.)
+#   Tool inside the sandbox can't reach a file outside CWD that you need
+#       Expose it explicitly:  AGENT_SANDBOX_RO=/some/dir claude
+#       (Or AGENT_SANDBOX_RW for writable.)
 #
 #   "refusing to bind sensitive directory '...' as CWD"
-#       You ran claude from a known-secret directory (~/.ssh etc.). cd
+#       You ran the agent from a known-secret directory (~/.ssh etc.). cd
 #       somewhere else.
 #
-#   "claude.sh: no trusted host key for '<host>' ..." (with --ssh)
+#   "agent-sandbox: no trusted host key for '<host>' ..." (with --ssh)
 #       The host is not in ~/.ssh/known_hosts on the host side. Connect once
 #       from a HOST shell (`ssh <host>`) to record it, then relaunch.
 #
@@ -371,18 +403,18 @@
 # ============================================================================
 #
 #   - Network: in the default "proxy" mode, every HTTPS_PROXY-aware tool
-#     (claude, curl, git, pip, npm, conda) is filtered against
-#     ~/.config/claude-sandbox/allowlist.txt by a host-side mitmproxy.
+#     (the agent, curl, git, pip, npm, conda) is filtered against
+#     ~/.config/agent-sandbox/allowlist.txt by a host-side mitmproxy.
 #     Tools that bypass HTTPS_PROXY (raw sockets, direct localhost calls)
 #     are NOT filtered — they can still reach your dev DBs, your LAN, etc.
 #     "strict" mode would close that gap via slirp4netns but is currently
 #     non-functional on Ubuntu 24.04 (see Network modes section above).
 #   - $HOME/.claude is read-write and holds Anthropic OAuth/API tokens.
-#     A compromised claude inside the sandbox can exfiltrate them; the
+#     A compromised agent inside the sandbox can exfiltrate them; the
 #     sandbox cannot prevent this.
 #   - $CONDA_PREFIX (if set) is read-only but readable, including any
 #     secrets stashed in etc/conda/activate.d/*.sh.
-#   - $CWD (and .git, .env, etc. inside it) is read-write to claude.
+#   - $CWD (and .git, .env, etc. inside it) is read-write to the agent.
 #   - bwrap relies on unprivileged user namespaces. There is no seccomp
 #     filter or resource cap configured here.
 #   - `claude update|upgrade|install` run the native binary on the host,
@@ -392,28 +424,338 @@
 #     authenticate to the permitted host(s) as you (any host, if
 #     unrestricted). SSH egress is not filtered by the proxy allowlist.
 
-claude() (
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+# Defined at top level (not inside agent_sandbox) so tests can `source` this
+# file and exercise them directly. They are only ever called from inside
+# agent_sandbox(), whose locals (args, _session_dir, ...) they reach through
+# bash's dynamic scoping.
+
+_as_msg() { echo "agent-sandbox: $*" >&2; }
+
+_as_usage() {
+  cat <<'USAGE'
+usage: agent-sandbox --profile NAME [ENGINE FLAGS] [AGENT ARGS...]
+       <profile-symlink> [ENGINE FLAGS] [AGENT ARGS...]     (e.g. `claude`)
+
+Runs an AI coding agent inside a bubblewrap sandbox. The profile picks the
+agent (profiles/<NAME>.sh next to this script, or $AGENT_SANDBOX_PROFILE_DIR);
+invoking the engine through a symlink named after a profile selects it.
+
+Engine flags (must precede the agent's own arguments):
+  --profile NAME        provider profile to run
+  --ssh HOST            allow SSH to HOST via a per-session, destination-
+                        constrained agent (the key stays on the host);
+                        repeatable
+  --ssh-unrestricted    SSH anywhere the key is accepted (mutually exclusive
+                        with --ssh HOST)
+  --ssh-key PATH        private key to load (default: what `ssh -G` picks)
+  --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
+  -h, --help            this text (only when no profile is selected)
+
+Environment knobs:
+  AGENT_SANDBOX_RO=/a:/b        extra read-only paths
+  AGENT_SANDBOX_RW=/c           extra read-write paths
+  AGENT_SANDBOX_PASSENV="A B"   extra environment variables to forward
+  AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
+  AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
+  AGENT_SANDBOX_PROFILE_DIR     where profiles live
+  AGENT_SANDBOX_SESSION_BASE    where per-session state lives
+(The former CLAUDE_SANDBOX_* names are still honoured, with a note.)
+USAGE
+}
+
+_as_list_profiles() {
+  local d="$1" f
+  local -a names=()
+  for f in "$d"/*.sh; do
+    [[ -r "$f" ]] && names+=( "$(basename -- "${f%.sh}")" )
+  done
+  if (( ${#names[@]} > 0 )); then printf '%s' "${names[*]}"; else printf '(none)'; fi
+  return 0
+}
+
+# Value of knob AGENT_SANDBOX_<NAME>, falling back to the pre-rename
+# CLAUDE_SANDBOX_<NAME> (with a one-line note). Prints nothing when neither
+# is set.
+_as_knob() {
+  local new="AGENT_SANDBOX_$1" old="CLAUDE_SANDBOX_$1"
+  if [[ -n "${!new+x}" ]]; then
+    printf '%s' "${!new}"
+  elif [[ -n "${!old+x}" ]]; then
+    _as_msg "note: $old is deprecated; use $new"
+    printf '%s' "${!old}"
+  fi
+  return 0
+}
+
+# Split $3 on the separator characters in $2 into the array named by $1.
+# IFS is local to this helper on purpose: `local IFS` in agent_sandbox itself
+# would stay in effect for the rest of that function and silently change
+# every later unquoted expansion there.
+_as_split() {
+  local -n _as_out="$1"
+  local IFS="$2"
+  read -ra _as_out <<< "$3" || true
+  return 0
+}
+
+# Refuse user-supplied RW paths that pull the rug out from under the sandbox
+# or expose well-known secret stores.
+_as_check_rw_paths() {
+  local raw="${1:-}" p real
+  local -a rw=()
+  [[ -z "$raw" ]] && return 0
+  _as_split rw ':' "$raw"
+  for p in "${rw[@]}"; do
+    [[ -z "$p" ]] && continue
+    real="$(readlink -f -- "$p" 2>/dev/null || echo "$p")"
+    case "$real" in
+      /|"$HOME")
+        _as_msg "refusing AGENT_SANDBOX_RW='$p' (would expose all of '$real' read-write)."
+        return 1 ;;
+      "$HOME"/.ssh*|"$HOME"/.gnupg*|"$HOME"/.aws*|\
+      "$HOME"/.config/gcloud*|"$HOME"/.config/sops*|\
+      "$HOME"/.kube*|"$HOME"/.docker*|"$HOME"/.password-store*)
+        _as_msg "refusing AGENT_SANDBOX_RW='$p' (sensitive path '$real')."
+        return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# User-supplied extra paths: append "$1 path path" to args for each existing
+# entry of the colon-separated list $2.
+_as_add_paths() {
+  local mode="$1" raw="${2:-}" p
+  local -a parts=()
+  [[ -z "$raw" ]] && return 0
+  _as_split parts ':' "$raw"
+  for p in "${parts[@]}"; do
+    [[ -z "$p" ]] && continue
+    if [[ ! -e "$p" ]]; then
+      _as_msg "warning — skipping missing path '$p'"
+      continue
+    fi
+    args+=( "$mode" "$p" "$p" )
+  done
+  return 0
+}
+
+# ----- per-session state: ssh agent socket -----
+# Per-user base dir, pinned (not $TMPDIR) so the janitor finds it
+# deterministically: $AGENT_SANDBOX_SESSION_BASE if set, else
+# $XDG_RUNTIME_DIR/agent-sandbox.<uid>, else /tmp/agent-sandbox.<uid>.
+_as_session_base() {
+  if [[ -n "${AGENT_SANDBOX_SESSION_BASE:-}" ]]; then
+    printf '%s' "$AGENT_SANDBOX_SESSION_BASE"
+    return 0
+  fi
+  local rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  [[ -d "$rt" && -w "$rt" ]] || rt=/tmp
+  printf '%s/agent-sandbox.%s' "$rt" "$(id -u)"
+  return 0
+}
+
+_as_session_sweep() {
+  # Janitor for orphans left by an uncatchable kill (SIGKILL of the engine
+  # runs no trap). A session dir is orphaned iff its owner process is gone:
+  # we compare the recorded PID *and* its start-time, so a recycled PID (same
+  # number, newer start-time) is never mistaken for the live owner. Live
+  # sessions are always skipped, so this is safe to run with any number of
+  # concurrent sessions on the host.
+  local base="$1" d opid ostart now agent
+  local _ng=0; shopt -q nullglob && _ng=1; shopt -s nullglob
+  for d in "$base"/session.*; do
+    [[ -d "$d" ]] || continue
+    [[ -r "$d/owner.id" ]] || continue          # unstamped => mid-setup; leave it
+    read -r opid ostart < "$d/owner.id" 2>/dev/null || continue
+    if [[ -n "$opid" && -r "/proc/$opid/stat" ]]; then
+      now="$(awk '{print $22}' "/proc/$opid/stat" 2>/dev/null || true)"
+      [[ -n "$now" && "$now" == "$ostart" ]] && continue   # owner alive -> skip
+    fi
+    # Orphan: drop keys via the socket first (addresses the agent by socket,
+    # immune to PID reuse), then guard-kill the recorded agent, then remove.
+    [[ -S "$d/agent.sock" ]] && SSH_AUTH_SOCK="$d/agent.sock" ssh-add -D >/dev/null 2>&1 || true
+    if [[ -r "$d/agent.pid" ]] && read -r agent < "$d/agent.pid" 2>/dev/null \
+       && [[ -n "$agent" && "$(cat "/proc/$agent/comm" 2>/dev/null)" == ssh-agent ]]; then
+      kill "$agent" 2>/dev/null || true
+    fi
+    rm -rf -- "$d" 2>/dev/null || true
+  done
+  (( _ng )) || shopt -u nullglob
+  return 0
+}
+
+# Create this session's directory (once), stamped for the janitor, and arm
+# the cleanup trap. Sets _session_dir.
+_as_session_begin() {
+  [[ -n "${_session_dir:-}" ]] && return 0
+  local base
+  base="$(_as_session_base)"
+  mkdir -p "$base" 2>/dev/null && chmod 700 "$base" \
+    || { _as_msg "cannot create session base $base"; return 1; }
+  _as_session_sweep "$base" || true
+  _session_dir="$(mktemp -d "$base/session.XXXXXX")" || return 1
+  chmod 700 "$_session_dir"
+  # Liveness stamp: this subshell's PID (it runs bwrap and holds the trap)
+  # plus its start-time, written BEFORE anything else lands in the dir so a
+  # concurrent sweep never sees a dir of ours unstamped.
+  printf '%s %s\n' "$BASHPID" \
+    "$(awk '{print $22}' "/proc/$BASHPID/stat" 2>/dev/null || echo 0)" > "$_session_dir/owner.id"
+  trap '_as_session_cleanup' EXIT INT TERM HUP
+  return 0
+}
+
+_as_session_cleanup() {
+  # Kill only if the recorded PID is still an ssh-agent -- guards against a
+  # PID that was already reaped and recycled to an unrelated process.
+  if [[ -n "${_ssh_agent_pid:-}" \
+     && "$(cat "/proc/${_ssh_agent_pid}/comm" 2>/dev/null)" == ssh-agent ]]; then
+    kill "$_ssh_agent_pid" 2>/dev/null
+  fi
+  [[ -n "${_session_dir:-}" ]] && rm -rf -- "$_session_dir"
+  _ssh_agent_pid="" _session_dir=""
+  return 0
+}
+
+_as_ssh_pick_key() {
+  # $1 = `ssh -G` output. Print the first readable IdentityFile ssh itself
+  # would try (config-aware). FIDO *_sk keys need a provider; skip them.
+  local cand
+  while read -r cand; do
+    cand="${cand/#\~/$HOME}"
+    [[ "$cand" == *_sk ]] && continue
+    [[ -r "$cand" ]] && { printf '%s\n' "$cand"; return 0; }
+  done < <(awk '$1=="identityfile"{print $2}' <<<"$1")
+  return 1
+}
+
+_as_ssh_setup() {
+  # See "SSH ACCESS" in the header. Runs on the HOST, before the sandbox
+  # exists: resolves each --ssh spec through ~/.ssh/config, checks the host
+  # key is already trusted, starts a fresh agent, loads the key(s) with
+  # destination constraints, and binds only the agent socket (plus the
+  # public known_hosts/config files) into the sandbox.
+  local kh="$HOME/.ssh/known_hosts" cfg="$HOME/.ssh/config"
+  command -v ssh-agent >/dev/null && command -v ssh-add >/dev/null && command -v ssh-keygen >/dev/null \
+    || { _as_msg "ssh-agent/ssh-add/ssh-keygen not found (install openssh-client)"; return 1; }
+  [[ -r "$kh" ]] || { _as_msg "$kh not readable; --ssh needs pre-trusted host keys there"; return 1; }
+
+  declare -A _by_key=()          # key file -> space-separated constraints
+  local spec g host user port khname key localuser
+  localuser="$(id -un)"
+  for spec in "${_ssh_hosts[@]}"; do
+    [[ "$spec" != -* ]] || { _as_msg "bad --ssh host '$spec'"; return 1; }
+    g="$(ssh -G "$spec" 2>/dev/null)" || { _as_msg "cannot resolve '$spec' (ssh -G failed)"; return 1; }
+    host="$(awk '$1=="hostname"{print $2; exit}' <<<"$g")"
+    user="$(awk '$1=="user"    {print $2; exit}' <<<"$g")"
+    port="$(awk '$1=="port"    {print $2; exit}' <<<"$g")"
+    # Pin the user only when asked for: user@ in the spec, or set by config.
+    [[ "$spec" != *@* && "$user" == "$localuser" ]] && user=""
+    khname="$host"; [[ "$port" != 22 ]] && khname="[$host]:$port"
+    if ! ssh-keygen -F "$khname" -f "$kh" >/dev/null 2>&1; then
+      _as_msg "no trusted host key for '$khname' (--ssh $spec) in $kh."
+      echo "               Connect once from a HOST shell to record it:   ssh $spec" >&2
+      return 1
+    fi
+    key="$_ssh_key"
+    [[ -n "$key" ]] || key="$(_as_ssh_pick_key "$g")" \
+      || { _as_msg "no readable private key for '$spec'; pass --ssh-key PATH"; return 1; }
+    _by_key[$key]+=" ${user:+$user@}$khname"
+  done
+  if (( _ssh_unrestricted )); then
+    key="$_ssh_key"
+    [[ -n "$key" ]] || key="$(_as_ssh_pick_key "$(ssh -G agent-sandbox.invalid 2>/dev/null)")" \
+      || { _as_msg "no readable private key found under ~/.ssh; pass --ssh-key PATH"; return 1; }
+    _by_key[$key]=""
+  fi
+
+  _as_session_begin || return 1
+
+  # A fresh agent for this session only. Its socket is the one secret-
+  # bearing thing bound in; the key files themselves never are.
+  local sock="$_session_dir/agent.sock"
+  eval "$(ssh-agent -s -a "$sock")" >/dev/null \
+    || { _as_msg "ssh-agent failed to start"; return 1; }
+  _ssh_agent_pid="$SSH_AGENT_PID"
+  printf '%s\n' "$_ssh_agent_pid" > "$_session_dir/agent.pid"
+
+  local c
+  local -a add
+  for key in "${!_by_key[@]}"; do
+    add=()
+    [[ -n "$_ssh_timeout" ]] && add+=( -t "$_ssh_timeout" )
+    if [[ -n "${_by_key[$key]}" ]]; then
+      for c in ${_by_key[$key]}; do add+=( -h "$c" ); done   # no spaces in constraints
+      add+=( -H "$kh" )
+      _as_msg "session agent: $key constrained to:${_by_key[$key]}${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
+    else
+      _as_msg "session agent: $key UNRESTRICTED${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
+    fi
+    SSH_AUTH_SOCK="$sock" ssh-add "${add[@]}" "$key" \
+      || { _as_msg "ssh-add failed for $key"; return 1; }
+  done
+
+  args+=(
+    --bind    "$sock" "$sock"
+    --setenv  SSH_AUTH_SOCK "$sock"
+    --ro-bind "$kh" "$kh"
+  )
+  [[ -r "$cfg" ]] && args+=( --ro-bind "$cfg" "$cfg" )
+  return 0
+}
+
+# With a session agent bash must outlive bwrap to kill the agent and remove
+# its socket, so it cannot exec. Without one, exec as before.
+_as_launch() {
+  if [[ -n "${_session_dir:-}" ]]; then
+    local rc=0
+    bwrap "$@" || rc=$?
+    _as_session_cleanup
+    return "$rc"
+  fi
+  exec bwrap "$@"
+}
+
+# ---------------------------------------------------------------------------
+# The engine
+# ---------------------------------------------------------------------------
+agent_sandbox() (
   set -euo pipefail
 
-  # ---- claude.sh's own flags (must precede claude's arguments) ----
-  # See "SSH ACCESS" in the header. Parsing stops at the first token that is
-  # not one of ours; everything from there on is passed to claude untouched.
+  local engine profile_dir invoked
+  engine="$(readlink -f -- "${BASH_SOURCE[0]}")"
+  profile_dir="${AGENT_SANDBOX_PROFILE_DIR:-$(dirname -- "$engine")/profiles}"
+  invoked="$(basename -- "$0")"
+
+  # ---- engine flags (must precede the agent's own arguments) ----
+  # See "ENGINE FLAGS" and "SSH ACCESS" in the header. Parsing stops at the
+  # first token that is not one of ours; everything from there on is passed
+  # to the agent untouched.
+  local profile=""
   local -a _ssh_hosts=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0
   while (( $# > 0 )); do
     case "$1" in
+      --profile)
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || { _as_msg "--profile needs a name"; return 2; }
+        profile="$2"; shift 2 ;;
+      --profile=?*)       profile="${1#--profile=}"; shift ;;
       --ssh)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
-          || { echo "claude.sh: --ssh needs a host (hostname, user@host, or ~/.ssh/config alias)" >&2; return 2; }
+          || { _as_msg "--ssh needs a host (hostname, user@host, or ~/.ssh/config alias)"; return 2; }
         _ssh_hosts+=( "$2" ); shift 2 ;;
       --ssh=?*)           _ssh_hosts+=( "${1#--ssh=}" ); shift ;;
       --ssh-unrestricted) _ssh_unrestricted=1; shift ;;
       --ssh-key)
-        [[ $# -ge 2 && -n "$2" ]] || { echo "claude.sh: --ssh-key needs a path" >&2; return 2; }
+        [[ $# -ge 2 && -n "$2" ]] || { _as_msg "--ssh-key needs a path"; return 2; }
         _ssh_key="$2"; shift 2 ;;
       --ssh-key=?*)       _ssh_key="${1#--ssh-key=}"; shift ;;
       --ssh-timeout)
-        [[ $# -ge 2 && -n "$2" ]] || { echo "claude.sh: --ssh-timeout needs a lifetime (seconds, or e.g. 30m)" >&2; return 2; }
+        [[ $# -ge 2 && -n "$2" ]] || { _as_msg "--ssh-timeout needs a lifetime (seconds, or e.g. 30m)"; return 2; }
         _ssh_timeout="$2"; shift 2 ;;
       --ssh-timeout=?*)   _ssh_timeout="${1#--ssh-timeout=}"; shift ;;
       *) break ;;
@@ -421,71 +763,81 @@ claude() (
   done
   (( ${#_ssh_hosts[@]} > 0 || _ssh_unrestricted )) && _ssh_want=1
   if (( _ssh_unrestricted && ${#_ssh_hosts[@]} > 0 )); then
-    echo "claude.sh: --ssh-unrestricted and --ssh HOST are mutually exclusive" >&2; return 2
+    _as_msg "--ssh-unrestricted and --ssh HOST are mutually exclusive"; return 2
   fi
   if (( ! _ssh_want )) && [[ -n "$_ssh_key$_ssh_timeout" ]]; then
-    echo "claude.sh: --ssh-key / --ssh-timeout need --ssh HOST or --ssh-unrestricted" >&2; return 2
+    _as_msg "--ssh-key / --ssh-timeout need --ssh HOST or --ssh-unrestricted"; return 2
   fi
   if [[ -n "$_ssh_timeout" && ! "$_ssh_timeout" =~ ^[0-9]+[smhdwSMHDW]?$ ]]; then
-    echo "claude.sh: --ssh-timeout: bad lifetime '$_ssh_timeout' (seconds, or e.g. 30m, 2h)" >&2; return 2
+    _as_msg "--ssh-timeout: bad lifetime '$_ssh_timeout' (seconds, or e.g. 30m, 2h)"; return 2
   fi
   if [[ -n "$_ssh_key" && ! -r "$_ssh_key" ]]; then
-    echo "claude.sh: --ssh-key: cannot read '$_ssh_key'" >&2; return 2
+    _as_msg "--ssh-key: cannot read '$_ssh_key'"; return 2
   fi
 
-  versions_dir="${HOME}/.local/share/claude/versions"
-  [[ -d "$versions_dir" ]] || { echo "claude.sh: missing $versions_dir" >&2; return 1; }
+  # ---- profile ----
+  # Explicit --profile wins; otherwise infer from argv[0] when we were
+  # executed through a symlink named after a profile (not when sourced and
+  # called as a function, where $0 is the shell).
+  if [[ -z "$profile" && "${BASH_SOURCE[0]}" == "$0" && "$invoked" != "$(basename -- "$engine")" ]]; then
+    profile="$invoked"
+  fi
+  if [[ -z "$profile" ]]; then
+    case "${1:-}" in -h|--help) _as_usage; return 0 ;; esac
+    _as_msg "no profile selected. Use --profile NAME, or invoke through a symlink named after" \
+            "a profile (e.g. ~/.local/bin/claude -> $engine)."
+    _as_msg "profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+    return 2
+  fi
+  [[ "$profile" =~ ^[a-z][a-z0-9_-]*$ ]] || { _as_msg "bad profile name '$profile'"; return 2; }
+  local profile_file="$profile_dir/$profile.sh"
+  [[ -r "$profile_file" ]] \
+    || { _as_msg "no profile '$profile' ($profile_file not found). Available: $(_as_list_profiles "$profile_dir")"; return 2; }
 
-  # Each "version" under $versions_dir is either a single executable file
-  # named after the version (e.g. 2.1.143) or a directory containing a
-  # `claude` binary. Pick the highest version-sorted entry of either kind.
-  latest=$(
-    find "$versions_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) \
-         -printf '%f\n' 2>/dev/null \
-      | sort -V | tail -n1
-  )
-  [[ -n "$latest" ]] || { echo "claude.sh: no versions under $versions_dir" >&2; return 1; }
+  # Contract defaults; the profile overrides what it needs. The contract is
+  # documented in profiles/claude.sh.
+  # These are the profile contract: set here as defaults, read by the sourced
+  # profile and (profile_allowlist_seed) by install.sh; not all are used here.
+  # shellcheck disable=SC2034
+  local AGENT_SANDBOX_ENGINE="$engine" AGENT_SANDBOX_PROFILE="$profile" AGENT_SANDBOX_PROFILE_DIR="$profile_dir"
+  # shellcheck disable=SC2034
+  local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
+  local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_host_subcommands=()
+  # shellcheck source=profiles/claude.sh
+  source "$profile_file"
+  declare -F profile_bin_discover >/dev/null \
+    || { _as_msg "profile '$profile' does not define profile_bin_discover()"; return 2; }
+  profile_bin_discover || return 1
+  [[ -n "$profile_bin" && -x "$profile_bin" ]] \
+    || { _as_msg "profile '$profile' selected no executable (profile_bin='$profile_bin')"; return 1; }
 
-  claude_bin=""
-  if [[ -x "$versions_dir/$latest" && ! -d "$versions_dir/$latest" ]]; then
-    claude_bin="$versions_dir/$latest"
-  else
-    for cand in "$versions_dir/$latest/claude" "$versions_dir/$latest/bin/claude"; do
-      [[ -x "$cand" ]] && { claude_bin="$cand"; break; }
+  # ---- host-side subcommands (e.g. `claude update`) ----
+  # The profile lists verbs that must run on the HOST with the caller's
+  # environment, unsandboxed; see "UPDATING CLAUDE CODE" in the header.
+  if [[ -n "${1:-}" ]]; then
+    local _sub _rc
+    for _sub in "${profile_host_subcommands[@]}"; do
+      [[ "$1" == "$_sub" ]] || continue
+      (( _ssh_want )) && _as_msg "--ssh* flags are ignored for '$1'"
+      declare -F profile_handle_subcommand >/dev/null \
+        || { _as_msg "profile '$profile' lists '$1' as host-side but defines no profile_handle_subcommand()"; return 2; }
+      _rc=0
+      profile_handle_subcommand "$@" || _rc=$?
+      return "$_rc"
     done
   fi
-  [[ -n "$claude_bin" ]] || { echo "claude.sh: no executable found for version '$latest'" >&2; return 1; }
 
-  # ---- host-side subcommands: update / upgrade / install ----
-  # See "UPDATING CLAUDE CODE" in the header. These run the newest installed
-  # binary directly on the host with the caller's environment; the sandbox
-  # would block the download and has no writable versions directory. After
-  # the subcommand, restore $HOME/.local/bin/claude if the installer moved
-  # it off this script.
-  case "${1:-}" in
-    update|upgrade|install)
-      (( _ssh_want )) && echo "claude.sh: --ssh* flags are ignored for '$1'" >&2
-      local launcher="$HOME/.local/bin/claude" self before after rc=0
-      self="$(readlink -f -- "${BASH_SOURCE[0]}")"
-      before="$(readlink -f -- "$launcher" 2>/dev/null || true)"
-      echo "claude.sh: running '$latest $*' on the host (unsandboxed)" >&2
-      "$claude_bin" "$@" || rc=$?
-      after="$(readlink -f -- "$launcher" 2>/dev/null || true)"
-      if [[ "$before" == "$self" && "$after" != "$self" ]]; then
-        ln -sfn -- "$self" "$launcher"
-        echo "claude.sh: installer re-pointed $launcher -> $after; restored -> $self" >&2
-      fi
-      echo "claude.sh: installed versions: $(find "$versions_dir" -mindepth 1 -maxdepth 1 \
-              \( -type f -o -type d -o -type l \) -printf '%f\n' 2>/dev/null | sort -V | tr '\n' ' ')" >&2
-      return "$rc"
-      ;;
-  esac
+  # ---- knobs (AGENT_SANDBOX_*, with CLAUDE_SANDBOX_* fallback) ----
+  local _knob_ro _knob_rw _knob_passenv _knob_conda_write _knob_net
+  _knob_ro="$(_as_knob RO)"
+  _knob_rw="$(_as_knob RW)"
+  _knob_passenv="$(_as_knob PASSENV)"
+  _knob_conda_write="$(_as_knob CONDA_WRITE)"
+  _knob_net="$(_as_knob NET)"
 
+  local cwd
   cwd="$(pwd -P)"
-  mkdir -p "$HOME/.claude"
-  # Claude also keeps top-level config in ~/.claude.json. Ensure it exists
-  # so we can bind it (bwrap refuses missing sources).
-  [[ -e "$HOME/.claude.json" ]] || : > "$HOME/.claude.json"
+  declare -F profile_prepare >/dev/null && profile_prepare
 
   # Refuse to launch from directories that almost certainly hold secrets.
   case "$cwd" in
@@ -497,7 +849,7 @@ claude() (
     "$HOME"/.kube|"$HOME"/.kube/*|\
     "$HOME"/.docker|"$HOME"/.docker/*|\
     "$HOME"/.password-store|"$HOME"/.password-store/*)
-      echo "claude.sh: refusing to bind sensitive directory '$cwd' as CWD." >&2
+      _as_msg "refusing to bind sensitive directory '$cwd' as CWD."
       return 1 ;;
   esac
 
@@ -515,44 +867,25 @@ claude() (
        || -z "$(git -C "$cwd" config --local user.email 2>/dev/null)" ]]; then
       local _gitroot
       _gitroot="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")"
-      echo "claude.sh: no repo-local git identity; commits inside the sandbox will fail" >&2
-      echo "           (~/.gitconfig is not bound in). Set it once, from a HOST shell:" >&2
-      echo "             git -C \"$_gitroot\" config user.name  \"\$(git config --global user.name)\"" >&2
-      echo "             git -C \"$_gitroot\" config user.email \"\$(git config --global user.email)\"" >&2
+      _as_msg "no repo-local git identity; commits inside the sandbox will fail"
+      echo "               (~/.gitconfig is not bound in). Set it once, from a HOST shell:" >&2
+      echo "                 git -C \"$_gitroot\" config user.name  \"\$(git config --global user.name)\"" >&2
+      echo "                 git -C \"$_gitroot\" config user.email \"\$(git config --global user.email)\"" >&2
     fi
   fi
 
   # When CWD is $HOME we deliberately do *not* bind it: that would expose
   # the entire home directory. Only the explicit bindings below apply.
-  bind_cwd=1
+  local bind_cwd=1
   if [[ "$cwd" == "$HOME" ]]; then
     bind_cwd=0
-    echo "claude.sh: CWD is \$HOME — not binding it. Only \$HOME/.claude," \
-         "the active conda env, and CLAUDE_SANDBOX_R{O,W} paths will be visible." >&2
+    _as_msg "CWD is \$HOME — not binding it. Only the profile's state paths," \
+            "the active conda env, and AGENT_SANDBOX_R{O,W} paths will be visible."
   fi
 
-  # Likewise, refuse user-supplied RW paths that pull the rug out from
-  # under the sandbox or expose well-known secret stores.
-  if [[ -n "${CLAUDE_SANDBOX_RW:-}" ]]; then
-    local IFS=':' _rw=() _p
-    read -ra _rw <<< "$CLAUDE_SANDBOX_RW"
-    for _p in "${_rw[@]}"; do
-      [[ -z "$_p" ]] && continue
-      _real="$(readlink -f -- "$_p" 2>/dev/null || echo "$_p")"
-      case "$_real" in
-        /|"$HOME")
-          echo "claude.sh: refusing CLAUDE_SANDBOX_RW='$_p' (would expose all of '$_real' read-write)." >&2
-          return 1 ;;
-        "$HOME"/.ssh*|"$HOME"/.gnupg*|"$HOME"/.aws*|\
-        "$HOME"/.config/gcloud*|"$HOME"/.config/sops*|\
-        "$HOME"/.kube*|"$HOME"/.docker*|"$HOME"/.password-store*)
-          echo "claude.sh: refusing CLAUDE_SANDBOX_RW='$_p' (sensitive path '$_real')." >&2
-          return 1 ;;
-      esac
-    done
-  fi
+  _as_check_rw_paths "$_knob_rw" || return 1
 
-  args=(
+  local -a args=(
     # Minimal system view (all read-only). Note: anything under /usr (incl.
     # /usr/local when it's a real directory) is already covered by the /usr
     # bind. When /usr/local is a symlink elsewhere we expose its real target
@@ -576,25 +909,30 @@ claude() (
     --tmpfs "$HOME"
 
     # Isolation. Network is left unshared here; we re-introduce it below
-    # according to CLAUDE_SANDBOX_NET (default: through a host-side mitmproxy
-    # allowlist via slirp4netns).
+    # according to AGENT_SANDBOX_NET (default: through a host-side mitmproxy
+    # allowlist).
     --unshare-all
     --die-with-parent
     --new-session
 
     # Drop the parent environment; we re-export an explicit allowlist below.
     --clearenv
-
-    # Always-on bindings.
-    --bind     "$HOME/.claude"      "$HOME/.claude"
-    --bind     "$HOME/.claude.json" "$HOME/.claude.json"
-    --ro-bind  "$claude_bin"        "$claude_bin"
   )
+
+  # Always-on bindings: the profile's state paths (read-write) and its binary.
+  local _p
+  for _p in "${profile_config_binds[@]}"; do
+    [[ -e "$_p" ]] \
+      || { _as_msg "profile '$profile': state path '$_p' does not exist (create it in profile_prepare)"; return 1; }
+    args+=( --bind "$_p" "$_p" )
+  done
+  args+=( --ro-bind "$profile_bin" "$profile_bin" )
 
   # If /usr/local is a symlink off /usr (e.g. to a separate filesystem),
   # expose its real target read-only so the symlink resolves inside the
   # sandbox. Needed for things like CUDA installed under /usr/local.
   if [[ -L /usr/local ]]; then
+    local _usrlocal_real
     _usrlocal_real="$(readlink -f /usr/local 2>/dev/null || true)"
     if [[ -n "$_usrlocal_real" && -d "$_usrlocal_real" ]]; then
       args+=( --ro-bind "$_usrlocal_real" "$_usrlocal_real" )
@@ -605,6 +943,7 @@ claude() (
   # symlink into /run/systemd/resolve/, and we tmpfs'd /run. Bind the real
   # target through the tmpfs so DNS works inside the sandbox.
   if [[ -L /etc/resolv.conf ]]; then
+    local _resolv_real
     _resolv_real="$(readlink -f /etc/resolv.conf 2>/dev/null || true)"
     if [[ -n "$_resolv_real" && -e "$_resolv_real" && "$_resolv_real" != /etc/* ]]; then
       args+=( --ro-bind "$_resolv_real" "$_resolv_real" )
@@ -612,43 +951,40 @@ claude() (
   fi
 
   # ---- environment allowlist ----
-  # Always-set basics.
+  # Always-set basics, then whatever the profile always sets.
   args+=(
     --setenv HOME "$HOME"
     --setenv USER "${USER:-$(id -un)}"
     --setenv PATH "$PATH"
     --setenv TERM "${TERM:-xterm-256color}"
-    # Never let the sandboxed claude try to self-update. Downloads are
-    # blocked by the proxy allowlist and the versions directory is not
-    # bound, so the attempt could only fail; `claude update` (run on the
-    # host by this wrapper) is the supported path. Note: the legacy
-    # `autoUpdates: false` in ~/.claude.json is ignored for native installs.
-    --setenv DISABLE_AUTOUPDATER 1
   )
-  # Variables that are safe-to-forward IF set in the caller's environment.
-  # Locale + display niceties, Anthropic config, and standard proxy vars.
-  # Note: secret tokens for *other* services (AWS, GitHub, K8s, npm, ...)
-  # are NOT in this list and stay outside the sandbox.
-  _claude_default_passenv=(
+  local _kv
+  for _kv in "${profile_env_set[@]}"; do
+    [[ "$_kv" == *=* ]] \
+      || { _as_msg "profile '$profile': profile_env_set entry '$_kv' is not NAME=VALUE"; return 1; }
+    args+=( --setenv "${_kv%%=*}" "${_kv#*=}" )
+  done
+  # Variables that are safe-to-forward IF set in the caller's environment:
+  # locale + display niceties, the profile's own (e.g. ANTHROPIC_* for
+  # claude), standard proxy vars, TLS CA overrides, CUDA. Note: secret tokens
+  # for *other* services (AWS, GitHub, K8s, npm, ...) are NOT in this list
+  # and stay outside the sandbox.
+  local -a _locale_passenv=(
     LANG LC_ALL LC_CTYPE LC_MESSAGES LC_NUMERIC LC_TIME LC_COLLATE
     TZ COLORTERM NO_COLOR FORCE_COLOR
-    ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-    ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
+  )
+  local -a _network_passenv=(
     HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY
     http_proxy https_proxy no_proxy all_proxy
     SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
     CUDA_HOME CUDAToolkit_ROOT LD_LIBRARY_PATH
   )
-  # Extra names the user explicitly opts in via CLAUDE_SANDBOX_PASSENV
+  # Extra names the user explicitly opts in via AGENT_SANDBOX_PASSENV
   # (space- or colon-separated).
-  _claude_extra_passenv=()
-  if [[ -n "${CLAUDE_SANDBOX_PASSENV:-}" ]]; then
-    # Split on whitespace or ':'.
-    local _raw="${CLAUDE_SANDBOX_PASSENV//:/ }"
-    # shellcheck disable=SC2206
-    _claude_extra_passenv=( $_raw )
-  fi
-  for _var in "${_claude_default_passenv[@]}" "${_claude_extra_passenv[@]}"; do
+  local -a _extra_passenv=()
+  [[ -n "$_knob_passenv" ]] && _as_split _extra_passenv $': \t\n' "$_knob_passenv"
+  local _var
+  for _var in "${_locale_passenv[@]}" "${profile_env_pass[@]}" "${_network_passenv[@]}" "${_extra_passenv[@]}"; do
     [[ -z "$_var" ]] && continue
     # Indirect lookup; skip if unset (vs. set-empty).
     if [[ -n "${!_var+x}" ]]; then
@@ -661,16 +997,17 @@ claude() (
   args+=( --chdir "$cwd" )
 
   # Active conda/mamba environment. Mode is controlled by
-  # CLAUDE_SANDBOX_CONDA_WRITE:
-  #   unset/0  : env is read-only — claude can run tools from it but cannot
+  # AGENT_SANDBOX_CONDA_WRITE:
+  #   unset/0  : env is read-only — the agent can run tools from it but cannot
   #              install/uninstall packages (`mamba install` will fail).
-  #   1        : env (and the base conda install) is read-write — claude
+  #   1        : env (and the base conda install) is read-write — the agent
   #              can mutate the environment, including installing software.
   # The base conda install (where the conda/mamba binaries live) is bound
   # in the same mode so commands like `mamba install` and `conda list`
   # actually find their executables and package cache.
   if [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX" ]]; then
-    if [[ "${CLAUDE_SANDBOX_CONDA_WRITE:-0}" == "1" ]]; then
+    local _conda_mode _conda_base=""
+    if [[ "${_knob_conda_write:-0}" == "1" ]]; then
       _conda_mode="--bind"
     else
       _conda_mode="--ro-bind"
@@ -678,7 +1015,6 @@ claude() (
 
     # Find the base conda install (where condabin/, bin/conda, bin/mamba,
     # and the package cache pkgs/ live). Try several signals, in order.
-    _conda_base=""
     if [[ -n "${MAMBA_ROOT_PREFIX:-}" && -d "${MAMBA_ROOT_PREFIX}" ]]; then
       _conda_base="$MAMBA_ROOT_PREFIX"
     elif [[ -n "${CONDA_ROOT_PREFIX:-}" && -d "${CONDA_ROOT_PREFIX}" ]]; then
@@ -709,192 +1045,30 @@ claude() (
   fi
 
   # User-supplied extra paths.
-  _claude_add_paths() {
-    local mode="$1" raw="${2:-}"
-    [[ -z "$raw" ]] && return 0
-    local IFS=':' parts=() p
-    read -ra parts <<< "$raw"
-    for p in "${parts[@]}"; do
-      [[ -z "$p" ]] && continue
-      if [[ ! -e "$p" ]]; then
-        echo "claude.sh: warning — skipping missing path '$p'" >&2
-        continue
-      fi
-      args+=( "$mode" "$p" "$p" )
-    done
-  }
-  _claude_add_paths --ro-bind "${CLAUDE_SANDBOX_RO:-}"
-  _claude_add_paths --bind    "${CLAUDE_SANDBOX_RW:-}"
+  _as_add_paths --ro-bind "$_knob_ro"
+  _as_add_paths --bind    "$_knob_rw"
 
-  # Lock $HOME itself down: the tmpfs is read-only, so claude cannot create
-  # files directly in $HOME. The sub-binds above (.claude, .claude.json, the
-  # conda env, $CWD, RW knobs) keep their own rw/ro semantics, so this only
-  # blocks writes to $HOME proper — not to anything we intentionally exposed.
-  # Must come AFTER every bind whose target is under $HOME, since bwrap may
-  # need to create intermediate directories on the tmpfs.
   # ----- SSH access: per-session agent with destination constraints -----
-  # See "SSH ACCESS" in the header. Runs on the HOST, before the sandbox
-  # exists: resolves each --ssh spec through ~/.ssh/config, checks the host
-  # key is already trusted, starts a fresh agent, loads the key(s) with
-  # destination constraints, and binds only the agent socket (plus the
-  # public known_hosts/config files) into the sandbox.
-  _ssh_agent_pid="" _ssh_dir=""
-  _claude_ssh_cleanup() {
-    # Kill only if the recorded PID is still an ssh-agent -- guards against a
-    # PID that was already reaped and recycled to an unrelated process.
-    if [[ -n "${_ssh_agent_pid:-}" \
-       && "$(cat "/proc/${_ssh_agent_pid}/comm" 2>/dev/null)" == ssh-agent ]]; then
-      kill "$_ssh_agent_pid" 2>/dev/null
-    fi
-    [[ -n "${_ssh_dir:-}" ]] && rm -rf -- "$_ssh_dir"
-    _ssh_agent_pid="" _ssh_dir=""
-    return 0
-  }
-  _claude_ssh_pick_key() {
-    # $1 = `ssh -G` output. Print the first readable IdentityFile ssh itself
-    # would try (config-aware). FIDO *_sk keys need a provider; skip them.
-    local cand
-    while read -r cand; do
-      cand="${cand/#\~/$HOME}"
-      [[ "$cand" == *_sk ]] && continue
-      [[ -r "$cand" ]] && { printf '%s\n' "$cand"; return 0; }
-    done < <(awk '$1=="identityfile"{print $2}' <<<"$1")
-    return 1
-  }
-  _claude_ssh_sweep() {
-    # Janitor for orphans left by an uncatchable kill (SIGKILL of the wrapper
-    # runs no trap). A session dir is orphaned iff its owner process is gone:
-    # we compare the recorded PID *and* its start-time, so a recycled PID (same
-    # number, newer start-time) is never mistaken for the live owner. Live
-    # sessions are always skipped, so this is safe to run with any number of
-    # concurrent claude.sh sessions on the host.
-    local base="$1" d opid ostart now agent
-    local _ng=0; shopt -q nullglob && _ng=1; shopt -s nullglob
-    for d in "$base"/session.*; do
-      [[ -d "$d" ]] || continue
-      [[ -r "$d/owner.id" ]] || continue          # unstamped => mid-setup; leave it
-      read -r opid ostart < "$d/owner.id" 2>/dev/null || continue
-      if [[ -n "$opid" && -r "/proc/$opid/stat" ]]; then
-        now="$(awk '{print $22}' "/proc/$opid/stat" 2>/dev/null || true)"
-        [[ -n "$now" && "$now" == "$ostart" ]] && continue   # owner alive -> skip
-      fi
-      # Orphan: drop keys via the socket first (addresses the agent by socket,
-      # immune to PID reuse), then guard-kill the recorded agent, then remove.
-      [[ -S "$d/agent.sock" ]] && SSH_AUTH_SOCK="$d/agent.sock" ssh-add -D >/dev/null 2>&1 || true
-      if [[ -r "$d/agent.pid" ]] && read -r agent < "$d/agent.pid" 2>/dev/null \
-         && [[ -n "$agent" && "$(cat "/proc/$agent/comm" 2>/dev/null)" == ssh-agent ]]; then
-        kill "$agent" 2>/dev/null || true
-      fi
-      rm -rf -- "$d" 2>/dev/null || true
-    done
-    (( _ng )) || shopt -u nullglob
-    return 0
-  }
-  _claude_ssh_setup() {
-    local kh="$HOME/.ssh/known_hosts" cfg="$HOME/.ssh/config"
-    command -v ssh-agent >/dev/null && command -v ssh-add >/dev/null && command -v ssh-keygen >/dev/null \
-      || { echo "claude.sh: ssh-agent/ssh-add/ssh-keygen not found (install openssh-client)" >&2; return 1; }
-    [[ -r "$kh" ]] || { echo "claude.sh: $kh not readable; --ssh needs pre-trusted host keys there" >&2; return 1; }
-
-    declare -A _by_key=()          # key file -> space-separated constraints
-    local spec g host user port khname key localuser
-    localuser="$(id -un)"
-    for spec in "${_ssh_hosts[@]}"; do
-      [[ "$spec" != -* ]] || { echo "claude.sh: bad --ssh host '$spec'" >&2; return 1; }
-      g="$(ssh -G "$spec" 2>/dev/null)" || { echo "claude.sh: cannot resolve '$spec' (ssh -G failed)" >&2; return 1; }
-      host="$(awk '$1=="hostname"{print $2; exit}' <<<"$g")"
-      user="$(awk '$1=="user"    {print $2; exit}' <<<"$g")"
-      port="$(awk '$1=="port"    {print $2; exit}' <<<"$g")"
-      # Pin the user only when asked for: user@ in the spec, or set by config.
-      [[ "$spec" != *@* && "$user" == "$localuser" ]] && user=""
-      khname="$host"; [[ "$port" != 22 ]] && khname="[$host]:$port"
-      if ! ssh-keygen -F "$khname" -f "$kh" >/dev/null 2>&1; then
-        echo "claude.sh: no trusted host key for '$khname' (--ssh $spec) in $kh." >&2
-        echo "           Connect once from a HOST shell to record it:   ssh $spec" >&2
-        return 1
-      fi
-      key="$_ssh_key"
-      [[ -n "$key" ]] || key="$(_claude_ssh_pick_key "$g")" \
-        || { echo "claude.sh: no readable private key for '$spec'; pass --ssh-key PATH" >&2; return 1; }
-      _by_key[$key]+=" ${user:+$user@}$khname"
-    done
-    if (( _ssh_unrestricted )); then
-      key="$_ssh_key"
-      [[ -n "$key" ]] || key="$(_claude_ssh_pick_key "$(ssh -G claude-sandbox.invalid 2>/dev/null)")" \
-        || { echo "claude.sh: no readable private key found under ~/.ssh; pass --ssh-key PATH" >&2; return 1; }
-      _by_key[$key]=""
-    fi
-
-    # Per-user base dir, pinned (not $TMPDIR) so the janitor finds siblings
-    # deterministically. Sweep prior orphans before adding this session.
-    local base="${XDG_RUNTIME_DIR:-/tmp}/claude-sandbox-ssh.$(id -u)"
-    mkdir -p "$base" 2>/dev/null && chmod 700 "$base" \
-      || { echo "claude.sh: cannot create session base $base" >&2; return 1; }
-    _claude_ssh_sweep "$base" || true
-
-    # A fresh agent for this session only. Its socket is the one secret-
-    # bearing thing bound in; the key files themselves never are.
-    _ssh_dir="$(mktemp -d "$base/session.XXXXXX")" || return 1
-    chmod 700 "$_ssh_dir"
-    # Liveness stamp for the janitor: this subshell's PID (it runs bwrap and
-    # holds the trap) plus its start-time, written BEFORE the agent exists so a
-    # concurrent sweep never sees a dir of ours unstamped.
-    printf '%s %s\n' "$BASHPID" \
-      "$(awk '{print $22}' "/proc/$BASHPID/stat" 2>/dev/null || echo 0)" > "$_ssh_dir/owner.id"
-    local sock="$_ssh_dir/agent.sock"
-    eval "$(ssh-agent -s -a "$sock")" >/dev/null \
-      || { echo "claude.sh: ssh-agent failed to start" >&2; return 1; }
-    _ssh_agent_pid="$SSH_AGENT_PID"
-    printf '%s\n' "$_ssh_agent_pid" > "$_ssh_dir/agent.pid"
-    trap '_claude_ssh_cleanup' EXIT INT TERM HUP
-
-    local c; local -a add
-    for key in "${!_by_key[@]}"; do
-      add=()
-      [[ -n "$_ssh_timeout" ]] && add+=( -t "$_ssh_timeout" )
-      if [[ -n "${_by_key[$key]}" ]]; then
-        for c in ${_by_key[$key]}; do add+=( -h "$c" ); done   # no spaces in constraints
-        add+=( -H "$kh" )
-        echo "claude.sh: session agent: $key constrained to:${_by_key[$key]}${_ssh_timeout:+  (lifetime $_ssh_timeout)}" >&2
-      else
-        echo "claude.sh: session agent: $key UNRESTRICTED${_ssh_timeout:+  (lifetime $_ssh_timeout)}" >&2
-      fi
-      SSH_AUTH_SOCK="$sock" ssh-add "${add[@]}" "$key" \
-        || { echo "claude.sh: ssh-add failed for $key" >&2; return 1; }
-    done
-
-    args+=(
-      --bind    "$sock" "$sock"
-      --setenv  SSH_AUTH_SOCK "$sock"
-      --ro-bind "$kh" "$kh"
-    )
-    [[ -r "$cfg" ]] && args+=( --ro-bind "$cfg" "$cfg" )
-    return 0
-  }
+  # Runs on the HOST, before the sandbox exists. See "SSH ACCESS" in the header.
+  local _session_dir="" _ssh_agent_pid=""
   if (( _ssh_want )); then
-    _claude_ssh_setup || { _claude_ssh_cleanup; return 1; }
+    _as_ssh_setup || { _as_session_cleanup; return 1; }
   fi
 
-  # With a session agent bash must outlive bwrap to kill the agent and remove
-  # its socket, so it cannot exec. Without one, exec as before.
-  _claude_launch() {
-    if [[ -n "${_ssh_agent_pid:-}" ]]; then
-      local rc=0
-      bwrap "$@" || rc=$?
-      _claude_ssh_cleanup
-      return "$rc"
-    fi
-    exec bwrap "$@"
-  }
-
+  # Lock $HOME itself down: the tmpfs is read-only, so the agent cannot create
+  # files directly in $HOME. The sub-binds above (profile state, the conda
+  # env, $CWD, RW knobs, known_hosts) keep their own rw/ro semantics, so this
+  # only blocks writes to $HOME proper — not to anything we intentionally
+  # exposed. Must come AFTER every bind whose target is under $HOME, since
+  # bwrap may need to create intermediate directories on the tmpfs.
   args+=( --remount-ro "$HOME" )
 
   # ----- Network mode -----
   # proxy  : (default) --share-net plus HTTPS_PROXY pointing at the host-side
-  #          mitmproxy (claude-mitmproxy.service on 127.0.0.1:8888). All
-  #          HTTPS_PROXY-aware tools (claude, curl, git, pip, npm, conda, ...)
-  #          go through the allowlist at
-  #          ~/.config/claude-sandbox/allowlist.txt. Limitation: tools that
+  #          mitmproxy (agent-sandbox-mitmproxy.service on 127.0.0.1:8888). All
+  #          HTTPS_PROXY-aware tools (the agent, curl, git, pip, npm, conda,
+  #          ...) go through the allowlist at
+  #          ~/.config/agent-sandbox/allowlist.txt. Limitation: tools that
   #          bypass HTTPS_PROXY by opening raw sockets (or talking to
   #          localhost directly) are NOT filtered.
   # strict : --unshare-net + slirp4netns + HTTPS_PROXY. Closes the raw-socket
@@ -905,13 +1079,13 @@ claude() (
   #          slirp4netns codepath).
   # open   : --share-net with no proxy. Use only for debugging.
   # none   : net fully unshared. Useful for offline work.
-  case "${CLAUDE_SANDBOX_NET:-proxy}" in
+  case "${_knob_net:-proxy}" in
     open)
       args+=( --share-net )
-      _claude_launch "${args[@]}" -- "$claude_bin" "$@"
+      _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     none)
-      _claude_launch "${args[@]}" -- "$claude_bin" "$@"
+      _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     proxy)
       args+=(
@@ -923,11 +1097,11 @@ claude() (
         --setenv NO_PROXY    ""
         --setenv no_proxy    ""
       )
-      _claude_launch "${args[@]}" -- "$claude_bin" "$@"
+      _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     strict)
       command -v slirp4netns >/dev/null || {
-        echo "claude.sh: slirp4netns not installed (apt install slirp4netns)." >&2
+        _as_msg "slirp4netns not installed (apt install slirp4netns)."
         return 1
       }
       args+=(
@@ -943,19 +1117,19 @@ claude() (
       # then blocks on fd 18 until slirp4netns has configured the namespace
       # and signals ready via --ready-fd 18. Strict mode also requires
       # mitmdump to be listening on a host address slirp's gateway routes
-      # to (NOT 127.0.0.1 — see ../systemd/user/claude-mitmproxy.service).
+      # to (NOT 127.0.0.1 — see the systemd unit written by install.sh).
       local _tmp _bwrap_pid _slirp_pid _child_pid _rc
-      _tmp=$(mktemp -d -t claude-sandbox.XXXXXX)
+      _tmp=$(mktemp -d -t agent-sandbox.XXXXXX)
       trap '
         [[ -n "${_slirp_pid:-}" ]] && kill "$_slirp_pid" 2>/dev/null
         [[ -n "${_bwrap_pid:-}" ]] && kill "$_bwrap_pid" 2>/dev/null
-        _claude_ssh_cleanup
+        _as_session_cleanup
         rm -rf "$_tmp"
       ' EXIT INT TERM
       mkfifo "$_tmp/info" "$_tmp/ready"
       exec 18<>"$_tmp/ready"
 
-      bwrap --info-fd 19 --block-fd 18 "${args[@]}" -- "$claude_bin" "$@" \
+      bwrap --info-fd 19 --block-fd 18 "${args[@]}" -- "$profile_bin" "$@" \
             19>"$_tmp/info" &
       _bwrap_pid=$!
 
@@ -964,7 +1138,7 @@ claude() (
           'import json,sys; print(json.load(sys.stdin)["child-pid"])' \
           <"$_tmp/info" 2>/dev/null
       ) || {
-        echo "claude.sh: bwrap did not report a child PID; aborting." >&2
+        _as_msg "bwrap did not report a child PID; aborting."
         wait "$_bwrap_pid" 2>/dev/null
         exit $?
       }
@@ -980,15 +1154,16 @@ claude() (
       exit "$_rc"
       ;;
     *)
-      echo "claude.sh: unknown CLAUDE_SANDBOX_NET='$CLAUDE_SANDBOX_NET'" \
-           "(expected proxy|strict|open|none)" >&2
+      _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
       return 1
       ;;
   esac
 )
 
-# When this file is executed (e.g. via a symlink in $PATH), invoke the
-# function with the caller's args. When it is sourced, only define it.
+# When this file is executed (directly, or through a profile symlink in
+# $PATH), run with the caller's args. When it is sourced, only define the
+# functions -- tests do this, and so can a shell wrapper such as
+#   claude() { agent_sandbox --profile claude "$@"; }
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  claude "$@"
+  agent_sandbox "$@"
 fi
