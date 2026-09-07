@@ -58,13 +58,20 @@
 #     $HOME/.claude                         read-write (claude's state dir)
 #     $HOME/.claude.json                    read-write (claude's config file)
 #     $CONDA_PREFIX  (if set)               read-only by default; the base
-#                                           conda install (where conda/mamba
-#                                           live) is also bound so those
-#                                           commands work. Set
-#                                           AGENT_SANDBOX_CONDA_WRITE=1 to
-#                                           bind both read-write — required
-#                                           for `mamba install`/`pip install`
-#                                           into the active env.
+#                                           conda install (conda/mamba, other
+#                                           envs, package cache) is bound
+#                                           read-only too so those commands
+#                                           work. AGENT_SANDBOX_CONDA_WRITE=1
+#                                           makes the active env read-write
+#                                           for `mamba install`/`pip install`;
+#                                           the base stays read-only and
+#                                           downloads go to a sandbox-owned
+#                                           package cache (knob below).
+#     $HOME/.cache                          writable, empty, session-private
+#                                           tmpfs for tool caches; gone at exit
+#     $HOME/.conda  (if conda is active)    likewise: conda's registry and
+#                                           fallback dirs, ephemeral
+#     ~/.condarc, ~/.mambarc  (if present)  read-only
 #     $CWD                                  read-write (unless CWD == $HOME,
 #                                           in which case nothing extra is
 #                                           bound — refuse to expose all of
@@ -90,10 +97,16 @@
 #   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
 #   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
-#   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env (and its
-#                                       base install) read-write, so the agent
-#                                       can `mamba install`, `pip install`,
-#                                       etc. Default 0 (read-only) is safer.
+#   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
+#                                       the agent can `mamba install`, `pip
+#                                       install`, etc. into it. The base conda
+#                                       install stays read-only; packages are
+#                                       downloaded into the sandbox's own cache
+#                                       (below), never the host's. Default 0.
+#   AGENT_SANDBOX_CONDA_PKGS=/dir      that cache's location on the host
+#                                       (default ~/.cache/agent-sandbox/conda-pkgs;
+#                                       persistent, so large packages are not
+#                                       re-downloaded every session)
 #   AGENT_SANDBOX_NET=proxy|strict|open|none  network mode (default: proxy)
 #       proxy  : --share-net plus HTTPS_PROXY pointing at a host-side
 #                mitmproxy that enforces ~/.config/agent-sandbox/allowlist.txt.
@@ -434,7 +447,12 @@
 #     A compromised agent inside the sandbox can exfiltrate them; the
 #     sandbox cannot prevent this.
 #   - $CONDA_PREFIX (if set) is read-only but readable, including any
-#     secrets stashed in etc/conda/activate.d/*.sh.
+#     secrets stashed in etc/conda/activate.d/*.sh. With
+#     AGENT_SANDBOX_CONDA_WRITE=1 the agent can put anything into that env,
+#     and you will run it on the host the next time you use the env. The base
+#     install, other envs, conda itself, its shell hook and the host package
+#     cache stay read-only, so the exposure is that one env plus the
+#     sandbox-owned package cache.
 #   - $CWD (and .git, .env, etc. inside it) is read-write to the agent.
 #   - bwrap relies on unprivileged user namespaces. There is no seccomp
 #     filter or resource cap configured here.
@@ -483,6 +501,7 @@ Environment knobs:
   AGENT_SANDBOX_RW=/c           extra read-write paths
   AGENT_SANDBOX_PASSENV="A B"   extra environment variables to forward
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
+  AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_PROFILE_DIR     where profiles live
   AGENT_SANDBOX_SESSION_BASE    where per-session state lives
@@ -791,7 +810,10 @@ _as_ca_env() {
   local bundle="${SSL_CERT_FILE:-}" cand var
   if [[ -z "$bundle" ]]; then
     for cand in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem; do
-      [[ -r "$cand" ]] && { bundle="$cand"; break; }
+      [[ -r "$cand" ]] && {
+        bundle="$cand"
+        break
+      }
     done
   fi
   [[ -n "$bundle" ]] || {
@@ -1084,8 +1106,12 @@ agent_sandbox() (
     --tmpfs /var/tmp
     --tmpfs /run
 
-    # Blank $HOME — we punch through only what's needed below.
+    # Blank $HOME — we punch through only what's needed below. ~/.cache is a
+    # fresh, writable, session-private tmpfs so tools that expect a cache dir
+    # (pip, uv, npm, conda's notices, model downloaders) just work; it vanishes
+    # with the session and never touches the host's ~/.cache.
     --tmpfs "$HOME"
+    --tmpfs "$HOME/.cache"
 
     # Isolation. Network is left unshared here; we re-introduce it below
     # according to AGENT_SANDBOX_NET (default: through a host-side mitmproxy
@@ -1182,22 +1208,18 @@ agent_sandbox() (
   fi
   args+=(--chdir "$cwd")
 
-  # Active conda/mamba environment. Mode is controlled by
-  # AGENT_SANDBOX_CONDA_WRITE:
-  #   unset/0  : env is read-only — the agent can run tools from it but cannot
-  #              install/uninstall packages (`mamba install` will fail).
-  #   1        : env (and the base conda install) is read-write — the agent
-  #              can mutate the environment, including installing software.
-  # The base conda install (where the conda/mamba binaries live) is bound
-  # in the same mode so commands like `mamba install` and `conda list`
-  # actually find their executables and package cache.
+  # Active conda/mamba environment. The active env is read-only by default;
+  # AGENT_SANDBOX_CONDA_WRITE=1 makes it read-write so the agent can
+  # `mamba install`/`pip install` into it. The base conda install (conda's own
+  # code, the shell hook host logins source, other envs, the host package
+  # cache) is ALWAYS bound read-only: a compromised agent may then reshape the
+  # one env you handed it -- which you will run on the host -- but nothing
+  # else. In write mode downloads go to a sandbox-owned package cache that is
+  # searched before the host's read-only one, so packages already extracted on
+  # the host are still reused and the host cache can never be poisoned.
   if [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX" ]]; then
-    local _conda_mode _conda_base=""
-    if [[ "${_knob_conda_write:-0}" == "1" ]]; then
-      _conda_mode="--bind"
-    else
-      _conda_mode="--ro-bind"
-    fi
+    local _conda_base="" _conda_write=0 _rc
+    [[ "${_knob_conda_write:-0}" == "1" ]] && _conda_write=1
 
     # Find the base conda install (where condabin/, bin/conda, bin/mamba,
     # and the package cache pkgs/ live). Try several signals, in order.
@@ -1211,22 +1233,45 @@ agent_sandbox() (
       _conda_base="${CONDA_PREFIX%/envs/*}"
     fi
 
-    args+=(
-      "$_conda_mode" "$CONDA_PREFIX" "$CONDA_PREFIX"
-      --setenv CONDA_PREFIX "$CONDA_PREFIX"
-    )
+    # Bind the base prefix first, read-only, if it's distinct from $CONDA_PREFIX
+    # (binding the same path twice would make bwrap error). It goes FIRST
+    # because the env usually lives inside it (<base>/envs/<name>): bwrap
+    # applies mounts in order and a later mount hides everything below its
+    # mount point, so the env's own bind must come after the base's.
+    if [[ -n "$_conda_base" && "$_conda_base" != "$CONDA_PREFIX" &&
+      -d "$_conda_base" ]]; then
+      args+=(--ro-bind "$_conda_base" "$_conda_base")
+    fi
+    if ((_conda_write)); then
+      args+=(--bind "$CONDA_PREFIX" "$CONDA_PREFIX")
+    else
+      args+=(--ro-bind "$CONDA_PREFIX" "$CONDA_PREFIX")
+    fi
+    args+=(--setenv CONDA_PREFIX "$CONDA_PREFIX")
     [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && args+=(--setenv CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV")
     [[ -n "${CONDA_SHLVL:-}" ]] && args+=(--setenv CONDA_SHLVL "$CONDA_SHLVL")
     [[ -n "${MAMBA_ROOT_PREFIX:-}" ]] && args+=(--setenv MAMBA_ROOT_PREFIX "$MAMBA_ROOT_PREFIX")
     [[ -n "${CONDA_ROOT_PREFIX:-}" ]] && args+=(--setenv CONDA_ROOT_PREFIX "$CONDA_ROOT_PREFIX")
     [[ -n "${CONDA_PYTHON_EXE:-}" ]] && args+=(--setenv CONDA_PYTHON_EXE "$CONDA_PYTHON_EXE")
 
-    # Bind the base prefix separately, but only if it's distinct from
-    # $CONDA_PREFIX (otherwise we'd try to bind the same path twice and
-    # bwrap would error).
-    if [[ -n "$_conda_base" && "$_conda_base" != "$CONDA_PREFIX" &&
-      -d "$_conda_base" ]]; then
-      args+=("$_conda_mode" "$_conda_base" "$_conda_base")
+    # conda's per-user state: config read-only so channels match the host;
+    # ~/.conda (env registry, fallback envs/pkgs dirs) an ephemeral tmpfs.
+    for _rc in "$HOME/.condarc" "$HOME/.mambarc"; do
+      [[ -f "$_rc" ]] && args+=(--ro-bind "$_rc" "$_rc")
+    done
+    args+=(--tmpfs "$HOME/.conda")
+
+    if ((_conda_write)); then
+      local _pkgs="${AGENT_SANDBOX_CONDA_PKGS:-$HOME/.cache/agent-sandbox/conda-pkgs}" _pkgs_dirs
+      mkdir -p "$_pkgs" 2>/dev/null \
+        || {
+          _as_msg "cannot create the sandbox conda package cache '$_pkgs' (set AGENT_SANDBOX_CONDA_PKGS)"
+          return 1
+        }
+      args+=(--bind "$_pkgs" "$_pkgs")
+      _pkgs_dirs="$_pkgs"
+      [[ -n "$_conda_base" && -d "$_conda_base/pkgs" ]] && _pkgs_dirs+=",$_conda_base/pkgs"
+      args+=(--setenv CONDA_PKGS_DIRS "${CONDA_PKGS_DIRS:-$_pkgs_dirs}")
     fi
   fi
 
