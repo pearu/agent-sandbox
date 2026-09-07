@@ -67,6 +67,33 @@ trust() {
   ! argv_has --bind "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$other")/memory"
 }
 
+@test "share-memory takes a wildcard: children with memory are shared, siblings and memory-less dirs are not" {
+  # real project dirs under a parent, plus a look-alike sibling
+  mkdir -p "$H/space/arrow" "$H/space/lib" "$H/space/scratch" "$H/space-other"
+  mkdir -p "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory"
+  mkdir -p "$H/home/.claude/projects/$(slug "$H/space/lib")/memory"
+  # scratch exists as a dir but has no memory; space-other is a sibling, not under space/
+  mkdir -p "$H/home/.claude/projects/$(slug "$H/space-other")/memory"
+  printf 'share-memory = %s/*\n' "$H/space" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory" "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory"
+  argv_has --ro-bind "$H/home/.claude/projects/$(slug "$H/space/lib")/memory" "$H/home/.claude/projects/$(slug "$H/space/lib")/memory"
+  ! argv_has "$H/home/.claude/projects/$(slug "$H/space/scratch")/memory" # dir exists, no memory
+  ! argv_has "$H/home/.claude/projects/$(slug "$H/space-other")/memory"   # sibling, not under space/
+}
+
+@test "a wildcard that matches nothing with memory warns" {
+  mkdir -p "$H/empty"
+  printf 'share-memory = %s/*\n' "$H/empty" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"matched no project with memory"* ]]
+  argv_has --tmpfs "$H/home/.claude/projects" # still scoped to the current project
+}
+
 @test "editing an approved dot-file re-blocks it until re-approval" {
   printf 'allow = pypi.org\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
