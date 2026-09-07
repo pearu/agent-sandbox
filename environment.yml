@@ -1,0 +1,16 @@
+# Development tooling for this repository, as a mamba/conda environment.
+# The engine itself needs none of this; the maintainers (human or AI) do.
+#
+#   mamba env create -f environment.yml          # first time
+#   mamba env update -n agent-sandbox -f environment.yml   # after edits
+#
+# Activate it before launching the sandbox so its tools are on PATH inside
+# (the engine binds the active env, read-only unless AGENT_SANDBOX_CONDA_WRITE=1).
+name: agent-sandbox
+channels:
+  - conda-forge
+dependencies:
+  - git
+  - git-filter-repo   # history extraction (Step 1 of the repo's creation)
+  - shellcheck        # lint, also run in CI
+  - go-shfmt          # provides `shfmt`: formatting check, also run in CI
