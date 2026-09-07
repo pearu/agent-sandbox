@@ -35,4 +35,7 @@ generalized.
   each guarantee in `docs/design.md` names the test that checks it. An opt-in
   end-to-end test installs for real into a throwaway HOME with a fake Claude
   binary and a `systemctl` shim, then runs the fake agent through the installed
+- CI (`.github/workflows/ci.yml`): `scripts/check.sh` (lint, format, bundle
+  sync, unit tests), and integration and end-to-end installer jobs on Ubuntu
+  22.04 and 24.04, with an allowed-to-fail real-user-systemd experiment.
   proxy.

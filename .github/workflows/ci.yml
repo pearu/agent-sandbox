@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Lint, format, the Python components, install.sh in sync with its sources,
+  # the installer's dry run, and the unit suites -- exactly scripts/check.sh,
+  # which is what a contributor runs locally. No bwrap here, so the integration
+  # suites it also invokes skip themselves; the integration job runs them for real.
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: scripts/check.sh (lint, shfmt, bundle-sync, dry-run, unit tests)
+        run: micromamba run -n agent-sandbox scripts/check.sh
+
+  # The real bwrap: what the agent sees, the CA bundle, conda passthrough, the
+  # SSH broker, on Ubuntu 22.04, 24.04 and 26.04 (26.04 preview, allowed to
+  # fail). GitHub's kernels restrict unprivileged user namespaces on 24.04+;
+  # relax that so bwrap works (the installer does the same with an AppArmor
+  # profile), then prove it works so a missing namespace fails the job instead
+  # of silently skipping the suites.
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    # 26.04 is a preview image; let its leg report without gating the build.
+    continue-on-error: ${{ matrix.os == 'ubuntu-26.04' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bubblewrap and enable user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+          echo "user namespaces work on ${{ matrix.os }}"
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Integration suites (real bwrap)
+        run: micromamba run -n agent-sandbox tests/run.sh integration
+
+  # install.sh for real against the runner's HOME: a fake Claude binary stands
+  # in for the agent, a systemctl shim runs the rendered unit's ExecStart, and
+  # the installed launcher then drives the fake agent through the installed
+  # proxy. Needs bwrap for the launch tests; port 8888 is free on a fresh
+  # runner, so the two
+  # proxy-dependent tests run here rather than skip. install.sh's pip route
+  # uses the environment's python (>= 3.12 with venv), provided by micromamba.
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    # 26.04 is a preview image; let its leg report without gating the build.
+    continue-on-error: ${{ matrix.os == 'ubuntu-26.04' }}
+    env:
+      AGENT_SANDBOX_E2E: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bubblewrap and enable user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: End-to-end installer test (shim for systemd)
+        run: micromamba run -n agent-sandbox tests/run.sh e2e
+
+  # Experiment, allowed to fail: can a GitHub runner provide a real user systemd
+  # instance, so install.sh's actual `systemctl --user` path works end to end?
+  # Enable lingering, point at the user bus, install for real (a fake Claude
+  # binary stands in for the agent), and check the unit comes up and enforces
+  # the allowlist. If the runner cannot, this fails visibly without blocking the
+  # build; the shimmed e2e job above is the enforced one.
+  e2e-real-systemd:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install bubblewrap and enable user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      - name: Bring up a user systemd instance
+        run: |
+          sudo loginctl enable-linger "$USER"
+          uid=$(id -u)
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >>"$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >>"$GITHUB_ENV"
+          for _ in $(seq 1 20); do
+            [ -S "/run/user/$uid/bus" ] && break
+            sleep 0.5
+          done
+          XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
+            systemctl --user is-system-running || true
+      - name: Install for real with the runner's user systemd
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/share/claude/versions/9.9.9"
+          cp tests/helpers/fake-claude.sh "$HOME/.local/share/claude/versions/9.9.9/claude"
+          chmod +x "$HOME/.local/share/claude/versions/9.9.9/claude"
+          ./install.sh
+          systemctl --user is-active --quiet agent-sandbox-mitmproxy.service
+          echo "the unit is active under real user systemd"
+      - name: The installed proxy enforces the allowlist
+        run: |
+          set -euo pipefail
+          ca="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+          code=$(curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
+            -o /dev/null -w '%{http_code}' https://api.anthropic.com/v1/models || true)
+          case "$code" in
+            200 | 401) echo "allowed host reached through the proxy (HTTP $code)" ;;
+            *) echo "unexpected HTTP $code from an allowed host" >&2; exit 1 ;;
+          esac
+          if curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
+            -o /dev/null https://example.com/ 2>/tmp/blocked.err; then
+            echo "a non-allowed host was NOT refused" >&2; exit 1
+          fi
+          grep -q 403 /tmp/blocked.err && echo "non-allowed host refused at CONNECT (403)"
+      - name: Stop the service
+        if: always()
+        run: systemctl --user stop agent-sandbox-mitmproxy.service || true

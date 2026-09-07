@@ -1,5 +1,7 @@
 # agent-sandbox
 
+[![CI](https://github.com/pearu/agent-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/pearu/agent-sandbox/actions/workflows/ci.yml)
+
 Run an AI coding agent inside a [bubblewrap](https://github.com/containers/bubblewrap)
 sandbox: a default-deny filesystem, an egress allowlist the agent cannot
 bypass with its normal HTTP clients, host-routed self-update, and an opt-in
