@@ -169,6 +169,12 @@ review what the agent tried to reach and decide whether to add it.
 
 No restart needed when editing the allowlist; the file is re-read on
 each request.
+
+Server-sent event streams (text/event-stream) are forwarded chunk by chunk.
+mitmproxy buffers response bodies by default, which would hold back a
+streaming LLM reply until it is complete and trip the client's first-byte
+timeout on long turns. Nothing here inspects response bodies, so streaming
+them loses nothing (mitmproxy issue #4469).
 """
 
 from __future__ import annotations
@@ -287,6 +293,12 @@ def request(flow: http.HTTPFlow) -> None:
         ).encode(),
         {"Content-Type": "text/plain; charset=utf-8"},
     )
+
+
+def responseheaders(flow: http.HTTPFlow) -> None:
+    ctype = flow.response.headers.get("content-type", "")
+    if ctype.startswith("text/event-stream"):
+        flow.response.stream = True
 ADDON_EOF
 ok "wrote $CONFIG_DIR/allowlist_addon.py"
 
