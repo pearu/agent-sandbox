@@ -153,6 +153,16 @@ Reads ~/.config/agent-sandbox/allowlist.txt on every request and lets
 through only hosts that match. Lines are exact hostnames; a leading dot
 (".github.com") makes the line match the host AND its subdomains.
 
+Per-session additions (`agent-sandbox --allow HOST`) are read from
+<session base>/session.*/allow.txt, where <session base> is
+$AGENT_SANDBOX_SESSION_BASE, else $XDG_RUNTIME_DIR/agent-sandbox.<uid>,
+else /tmp/agent-sandbox.<uid> -- the same rule the engine uses. A session's
+allow.txt is honoured only while the process stamped in its owner.id
+("<pid> <start-time>") is alive, so a session that dies without cleaning up
+cannot leave a host open, and a recycled PID is never mistaken for the
+owner. Note the proxy is shared: while a session lives, its --allow hosts
+are reachable from every concurrent session.
+
 Blocked requests return HTTP 403 and are logged to
 ~/.config/agent-sandbox/blocked.log (one line per attempt) so you can
 review what the agent tried to reach and decide whether to add it.
@@ -165,6 +175,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 from pathlib import Path
 
 from mitmproxy import http
@@ -177,26 +188,72 @@ BLOCKED_LOG_PATH = CONFIG_DIR / "blocked.log"
 logger = logging.getLogger(__name__)
 
 
-def _load_allowlist() -> tuple[set[str], list[str]]:
-    """Return (exact_hosts, suffix_patterns).
+def _session_base() -> Path:
+    override = os.environ.get("AGENT_SANDBOX_SESSION_BASE")
+    if override:
+        return Path(override)
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+    if not runtime.is_dir():
+        runtime = Path("/tmp")
+    return runtime / f"agent-sandbox.{os.getuid()}"
+
+
+SESSION_BASE = _session_base()
+
+
+def _owner_alive(owner_file: Path) -> bool:
+    """True iff the process stamped in owner.id ("<pid> <start-time>") still runs.
+
+    The start-time (field 22 of /proc/<pid>/stat) is compared too, so a
+    recycled PID is never mistaken for the original owner.
+    """
+    try:
+        pid, start = owner_file.read_text().split()[:2]
+        stat = Path(f"/proc/{int(pid)}/stat").read_text()
+    except (OSError, ValueError):
+        return False
+    fields = stat.rsplit(")", 1)[1].split()  # fields after "(comm)"; [0] is field 3
+    return len(fields) > 19 and fields[19] == start
+
+
+def _session_lines() -> list[str]:
+    """Allowlist lines contributed by live sessions' --allow files."""
+    lines: list[str] = []
+    if not SESSION_BASE.is_dir():
+        return lines
+    for session in sorted(SESSION_BASE.glob("session.*")):
+        allow, owner = session / "allow.txt", session / "owner.id"
+        try:
+            if allow.is_file() and owner.is_file() and _owner_alive(owner):
+                lines.extend(allow.read_text().splitlines())
+        except OSError:
+            continue
+    return lines
+
+
+def _parse(lines: list[str], exact: set[str], suffix: list[str]) -> None:
+    """Add allowlist lines to (exact_hosts, suffix_patterns).
 
     A line "github.com" matches only "github.com".
     A line ".github.com" matches "github.com" and "*.github.com".
     """
-    if not ALLOWLIST_PATH.exists():
-        return set(), []
-    exact: set[str] = set()
-    suffix: list[str] = []
-    for raw in ALLOWLIST_PATH.read_text().splitlines():
+    for raw in lines:
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
         if line.startswith("."):
-            base = line[1:]
-            exact.add(base)
+            exact.add(line[1:])
             suffix.append(line)
         else:
             exact.add(line)
+
+
+def _load_allowlist() -> tuple[set[str], list[str]]:
+    exact: set[str] = set()
+    suffix: list[str] = []
+    if ALLOWLIST_PATH.exists():
+        _parse(ALLOWLIST_PATH.read_text().splitlines(), exact, suffix)
+    _parse(_session_lines(), exact, suffix)
     return exact, suffix
 
 
@@ -226,6 +283,7 @@ def request(flow: http.HTTPFlow) -> None:
             f"To allow it, add a line to {ALLOWLIST_PATH}:\n"
             f"    {host}        (exact)\n"
             f"    .{host}       (and all subdomains)\n"
+            f"or relaunch with:  --allow {host}   (this session only)\n"
         ).encode(),
         {"Content-Type": "text/plain; charset=utf-8"},
     )

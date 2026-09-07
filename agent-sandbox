@@ -41,6 +41,8 @@
 #   claude --ssh github.com  # + git push / ssh to github.com through a
 #                            # per-session ssh-agent; the private key never
 #                            # enters the sandbox (see SSH ACCESS)
+#   claude --allow pypi.org  # + HTTPS to pypi.org through the egress proxy,
+#                            # for this session only (see ENGINE FLAGS)
 #
 # ============================================================================
 # SANDBOX LAYOUT (what the agent sees)
@@ -123,6 +125,17 @@
 # stripped before the agent sees the command line:
 #
 #   --profile NAME        select the provider profile (see top of file)
+#   --allow HOST          allow HOST through the egress proxy for THIS session
+#                         only, on top of the global allowlist. Repeatable.
+#                         ".example.com" matches the domain and its
+#                         subdomains. The engine writes the hosts to a
+#                         per-session file (see AGENT_SANDBOX_SESSION_BASE)
+#                         that the proxy addon reads; the addon honours it
+#                         only while this session's process is alive, so a
+#                         killed session cannot leave a host open. The proxy
+#                         is shared, though: while this session lives, its
+#                         --allow hosts are reachable from every concurrent
+#                         session on the host as well.
 #   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
 #                         see SSH ACCESS below
 #   -h, --help            engine usage (only when no profile is selected;
@@ -445,6 +458,9 @@ invoking the engine through a symlink named after a profile selects it.
 
 Engine flags (must precede the agent's own arguments):
   --profile NAME        provider profile to run
+  --allow HOST          also allow HOST through the egress proxy, for this
+                        session only; repeatable; ".example.com" matches the
+                        domain and its subdomains
   --ssh HOST            allow SSH to HOST via a per-session, destination-
                         constrained agent (the key stays on the host);
                         repeatable
@@ -543,10 +559,11 @@ _as_add_paths() {
   return 0
 }
 
-# ----- per-session state: ssh agent socket -----
-# Per-user base dir, pinned (not $TMPDIR) so the janitor finds it
-# deterministically: $AGENT_SANDBOX_SESSION_BASE if set, else
-# $XDG_RUNTIME_DIR/agent-sandbox.<uid>, else /tmp/agent-sandbox.<uid>.
+# ----- per-session state: ssh agent socket, --allow include -----
+# Per-user base dir, pinned (not $TMPDIR) so the janitor and the proxy addon
+# find it deterministically: $AGENT_SANDBOX_SESSION_BASE if set, else
+# $XDG_RUNTIME_DIR/agent-sandbox.<uid>, else /tmp/agent-sandbox.<uid>. The
+# mitmproxy addon derives the same path (it runs as the same user).
 _as_session_base() {
   if [[ -n "${AGENT_SANDBOX_SESSION_BASE:-}" ]]; then
     printf '%s' "$AGENT_SANDBOX_SESSION_BASE"
@@ -588,8 +605,8 @@ _as_session_sweep() {
   return 0
 }
 
-# Create this session's directory (once), stamped for the janitor, and arm
-# the cleanup trap. Sets _session_dir.
+# Create this session's directory (once), stamped for the janitor and the
+# proxy addon, and arm the cleanup trap. Sets _session_dir.
 _as_session_begin() {
   [[ -n "${_session_dir:-}" ]] && return 0
   local base
@@ -707,8 +724,23 @@ _as_ssh_setup() {
   return 0
 }
 
-# With a session agent bash must outlive bwrap to kill the agent and remove
-# its socket, so it cannot exec. Without one, exec as before.
+# --allow HOST: write this session's extra hosts where the proxy addon reads
+# them. Nothing is bound into the sandbox; the file lives on the host, and the
+# addon honours it only while the process stamped in owner.id is alive.
+_as_allow_setup() {
+  _as_session_begin || return 1
+  {
+    printf '# agent-sandbox --allow for %s. Honoured by the proxy addon only while\n' "$(basename -- "$_session_dir")"
+    printf '# the process recorded in owner.id is alive. One host per line; a leading\n'
+    printf '# dot matches the domain and its subdomains.\n'
+    printf '%s\n' "${_allow_hosts[@]}"
+  } > "$_session_dir/allow.txt"
+  _as_msg "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
+  return 0
+}
+
+# With per-session state (an ssh agent to kill, an --allow file to remove)
+# bash must outlive bwrap to clean up, so it cannot exec. Otherwise exec.
 _as_launch() {
   if [[ -n "${_session_dir:-}" ]]; then
     local rc=0
@@ -735,7 +767,7 @@ agent_sandbox() (
   # first token that is not one of ours; everything from there on is passed
   # to the agent untouched.
   local profile=""
-  local -a _ssh_hosts=()
+  local -a _ssh_hosts=() _allow_hosts=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0
   while (( $# > 0 )); do
     case "$1" in
@@ -744,6 +776,11 @@ agent_sandbox() (
           || { _as_msg "--profile needs a name"; return 2; }
         profile="$2"; shift 2 ;;
       --profile=?*)       profile="${1#--profile=}"; shift ;;
+      --allow)
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || { _as_msg "--allow needs a host (hostname, or .domain for a domain and its subdomains)"; return 2; }
+        _allow_hosts+=( "$2" ); shift 2 ;;
+      --allow=?*)         _allow_hosts+=( "${1#--allow=}" ); shift ;;
       --ssh)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
           || { _as_msg "--ssh needs a host (hostname, user@host, or ~/.ssh/config alias)"; return 2; }
@@ -774,6 +811,10 @@ agent_sandbox() (
   if [[ -n "$_ssh_key" && ! -r "$_ssh_key" ]]; then
     _as_msg "--ssh-key: cannot read '$_ssh_key'"; return 2
   fi
+  local _hostre='^\.?([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$' _h
+  for _h in "${_allow_hosts[@]}"; do
+    [[ "$_h" =~ $_hostre ]] || { _as_msg "--allow: bad host '$_h' (expected a hostname, or .domain)"; return 2; }
+  done
 
   # ---- profile ----
   # Explicit --profile wins; otherwise infer from argv[0] when we were
@@ -818,7 +859,7 @@ agent_sandbox() (
     local _sub _rc
     for _sub in "${profile_host_subcommands[@]}"; do
       [[ "$1" == "$_sub" ]] || continue
-      (( _ssh_want )) && _as_msg "--ssh* flags are ignored for '$1'"
+      (( _ssh_want || ${#_allow_hosts[@]} > 0 )) && _as_msg "--ssh*/--allow flags are ignored for '$1'"
       declare -F profile_handle_subcommand >/dev/null \
         || { _as_msg "profile '$profile' lists '$1' as host-side but defines no profile_handle_subcommand()"; return 2; }
       _rc=0
@@ -1048,11 +1089,18 @@ agent_sandbox() (
   _as_add_paths --ro-bind "$_knob_ro"
   _as_add_paths --bind    "$_knob_rw"
 
-  # ----- SSH access: per-session agent with destination constraints -----
-  # Runs on the HOST, before the sandbox exists. See "SSH ACCESS" in the header.
+  # ----- per-session state: SSH agent, --allow include -----
+  # Both run on the HOST, before the sandbox exists. See "SSH ACCESS" and
+  # "ENGINE FLAGS" in the header.
   local _session_dir="" _ssh_agent_pid=""
   if (( _ssh_want )); then
     _as_ssh_setup || { _as_session_cleanup; return 1; }
+  fi
+  if (( ${#_allow_hosts[@]} > 0 )); then
+    case "${_knob_net:-proxy}" in
+      open|none) _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)" ;;
+      *)         _as_allow_setup || { _as_session_cleanup; return 1; } ;;
+    esac
   fi
 
   # Lock $HOME itself down: the tmpfs is read-only, so the agent cannot create
