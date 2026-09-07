@@ -33,10 +33,13 @@ else
   C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_RESET=""
 fi
 section() { printf '\n%s==> %s%s\n' "$C_BOLD$C_BLUE" "$*" "$C_RESET"; }
-ok()      { printf '    %s[ok]%s %s\n'   "$C_GREEN"  "$C_RESET" "$*"; }
-warn()    { printf '    %s[warn]%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
-err()     { printf '    %s[err]%s %s\n'  "$C_RED"    "$C_RESET" "$*" >&2; exit 1; }
-info()    { printf '    %s%s%s\n'        "$C_DIM"    "$*"        "$C_RESET"; }
+ok() { printf '    %s[ok]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+warn() { printf '    %s[warn]%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
+err() {
+  printf '    %s[err]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
+  exit 1
+}
+info() { printf '    %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
 # ----- 1. sanity -----
 section "Sanity check"
@@ -47,9 +50,9 @@ ok "found $ENGINE"
 # ----- 2. packages -----
 section "Packages"
 missing=()
-command -v bwrap     >/dev/null || missing+=(bubblewrap)
-command -v mitmdump  >/dev/null || missing+=(mitmproxy)
-if (( ${#missing[@]} > 0 )); then
+command -v bwrap >/dev/null || missing+=(bubblewrap)
+command -v mitmdump >/dev/null || missing+=(mitmproxy)
+if ((${#missing[@]} > 0)); then
   err "Missing required packages: ${missing[*]}. Run: sudo apt install ${missing[*]}"
 fi
 ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
@@ -69,7 +72,7 @@ if [[ ! -d "$versions_dir" ]]; then
 else
   latest=$(
     find "$versions_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) \
-         -printf '%f\n' 2>/dev/null | sort -V | tail -n1
+      -printf '%f\n' 2>/dev/null | sort -V | tail -n1
   )
   if [[ -n "${latest:-}" ]]; then
     ok "latest version: $latest"
@@ -110,8 +113,11 @@ if [[ -f "$ca_in_store" ]]; then
 else
   ca_src=""
   for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" \
-              "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
-    [[ -f "$cand" ]] && { ca_src="$cand"; break; }
+    "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
+    [[ -f "$cand" ]] && {
+      ca_src="$cand"
+      break
+    }
   done
   if [[ -z "$ca_src" ]]; then
     info "Generating mitmproxy CA (one-time)"
@@ -121,8 +127,11 @@ else
     for _ in 1 2 3 4 5 6 7 8; do
       sleep 0.5
       for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" \
-                  "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
-        [[ -f "$cand" ]] && { ca_src="$cand"; break 2; }
+        "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
+        [[ -f "$cand" ]] && {
+          ca_src="$cand"
+          break 2
+        }
       done
     done
     kill "$_mp_pid" 2>/dev/null
@@ -408,7 +417,7 @@ section "Systemd user service"
 # Migrate off the pre-rename unit if present: it also binds 127.0.0.1:8888, so
 # leaving it enabled would collide with agent-sandbox-mitmproxy.service.
 if systemctl --user is-enabled claude-mitmproxy.service >/dev/null 2>&1 \
-   || [[ -f "$SYSTEMD_DIR/claude-mitmproxy.service" ]]; then
+  || [[ -f "$SYSTEMD_DIR/claude-mitmproxy.service" ]]; then
   systemctl --user disable --now claude-mitmproxy.service >/dev/null 2>&1 || true
   rm -f "$SYSTEMD_DIR/claude-mitmproxy.service"
   ok "migrated off legacy claude-mitmproxy.service"
@@ -463,11 +472,11 @@ fi
 # either proves the request went through the proxy to Anthropic. 000 means the
 # proxy is down or refused the CONNECT (host missing from the allowlist).
 smoke_code=$(curl -sS --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
-               https://api.anthropic.com/v1/models 2>/dev/null || true)
+  https://api.anthropic.com/v1/models 2>/dev/null || true)
 case "$smoke_code" in
-  200|401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
-  000)     warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
-  *)       warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
+  200 | 401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
+  000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
+  *) warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
 esac
 
 # ----- 10. summary -----

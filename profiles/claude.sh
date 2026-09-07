@@ -54,11 +54,14 @@
 # declarations above are the whole interface, so that the sandbox's isolation
 # guarantees stay reviewable in one place (the engine).
 
+# The profile_* variables below are the contract: the engine reads them after
+# sourcing this file, so shellcheck sees them as unused here.
+# shellcheck disable=SC2034
 profile_command=claude
 
 # Claude keeps its state in ~/.claude (sessions, OAuth/API tokens, settings)
 # and top-level config in ~/.claude.json. Both must be writable.
-profile_config_binds=( "$HOME/.claude" "$HOME/.claude.json" )
+profile_config_binds=("$HOME/.claude" "$HOME/.claude.json")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -70,11 +73,11 @@ profile_env_pass=(
 # could only fail; `claude update` (run on the host via
 # profile_handle_subcommand below) is the supported path. Note: the legacy
 # `autoUpdates: false` in ~/.claude.json is ignored for native installs.
-profile_env_set=( DISABLE_AUTOUPDATER=1 )
+profile_env_set=(DISABLE_AUTOUPDATER=1)
 
 profile_allowlist_seed="$(dirname -- "${BASH_SOURCE[0]}")/claude.allowlist"
 
-profile_host_subcommands=( update upgrade install )
+profile_host_subcommands=(update upgrade install)
 
 # The native installer's layout: each entry under versions/ is either a
 # single executable file named after the version (e.g. 2.1.143) or a
@@ -83,32 +86,44 @@ _claude_versions_dir="$HOME/.local/share/claude/versions"
 
 _claude_list_versions() {
   find "$_claude_versions_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) \
-       -printf '%f\n' 2>/dev/null | sort -V
+    -printf '%f\n' 2>/dev/null | sort -V
 }
 
 profile_prepare() {
   mkdir -p "$HOME/.claude"
   # Ensure ~/.claude.json exists so it can be bound (bwrap refuses missing
   # sources).
-  [[ -e "$HOME/.claude.json" ]] || : > "$HOME/.claude.json"
+  [[ -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
   return 0
 }
 
 profile_bin_discover() {
-  [[ -d "$_claude_versions_dir" ]] || { _as_msg "missing $_claude_versions_dir"; return 1; }
+  [[ -d "$_claude_versions_dir" ]] || {
+    _as_msg "missing $_claude_versions_dir"
+    return 1
+  }
   # Pick the highest version-sorted entry of either kind.
   local latest cand
   latest="$(_claude_list_versions | tail -n1)"
-  [[ -n "$latest" ]] || { _as_msg "no versions under $_claude_versions_dir"; return 1; }
+  [[ -n "$latest" ]] || {
+    _as_msg "no versions under $_claude_versions_dir"
+    return 1
+  }
   profile_bin=""
   if [[ -x "$_claude_versions_dir/$latest" && ! -d "$_claude_versions_dir/$latest" ]]; then
     profile_bin="$_claude_versions_dir/$latest"
   else
     for cand in "$_claude_versions_dir/$latest/claude" "$_claude_versions_dir/$latest/bin/claude"; do
-      [[ -x "$cand" ]] && { profile_bin="$cand"; break; }
+      [[ -x "$cand" ]] && {
+        profile_bin="$cand"
+        break
+      }
     done
   fi
-  [[ -n "$profile_bin" ]] || { _as_msg "no executable found for version '$latest'"; return 1; }
+  [[ -n "$profile_bin" ]] || {
+    _as_msg "no executable found for version '$latest'"
+    return 1
+  }
   profile_version="$latest"
   return 0
 }

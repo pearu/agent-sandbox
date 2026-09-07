@@ -486,9 +486,9 @@ _as_list_profiles() {
   local d="$1" f
   local -a names=()
   for f in "$d"/*.sh; do
-    [[ -r "$f" ]] && names+=( "$(basename -- "${f%.sh}")" )
+    [[ -r "$f" ]] && names+=("$(basename -- "${f%.sh}")")
   done
-  if (( ${#names[@]} > 0 )); then printf '%s' "${names[*]}"; else printf '(none)'; fi
+  if ((${#names[@]} > 0)); then printf '%s' "${names[*]}"; else printf '(none)'; fi
   return 0
 }
 
@@ -513,7 +513,7 @@ _as_knob() {
 _as_split() {
   local -n _as_out="$1"
   local IFS="$2"
-  read -ra _as_out <<< "$3" || true
+  read -ra _as_out <<<"$3" || true
   return 0
 }
 
@@ -528,14 +528,16 @@ _as_check_rw_paths() {
     [[ -z "$p" ]] && continue
     real="$(readlink -f -- "$p" 2>/dev/null || echo "$p")"
     case "$real" in
-      /|"$HOME")
+      / | "$HOME")
         _as_msg "refusing AGENT_SANDBOX_RW='$p' (would expose all of '$real' read-write)."
-        return 1 ;;
-      "$HOME"/.ssh*|"$HOME"/.gnupg*|"$HOME"/.aws*|\
-      "$HOME"/.config/gcloud*|"$HOME"/.config/sops*|\
-      "$HOME"/.kube*|"$HOME"/.docker*|"$HOME"/.password-store*)
+        return 1
+        ;;
+      "$HOME"/.ssh* | "$HOME"/.gnupg* | "$HOME"/.aws* | \
+        "$HOME"/.config/gcloud* | "$HOME"/.config/sops* | \
+        "$HOME"/.kube* | "$HOME"/.docker* | "$HOME"/.password-store*)
         _as_msg "refusing AGENT_SANDBOX_RW='$p' (sensitive path '$real')."
-        return 1 ;;
+        return 1
+        ;;
     esac
   done
   return 0
@@ -554,7 +556,7 @@ _as_add_paths() {
       _as_msg "warning — skipping missing path '$p'"
       continue
     fi
-    args+=( "$mode" "$p" "$p" )
+    args+=("$mode" "$p" "$p")
   done
   return 0
 }
@@ -583,25 +585,27 @@ _as_session_sweep() {
   # sessions are always skipped, so this is safe to run with any number of
   # concurrent sessions on the host.
   local base="$1" d opid ostart now agent
-  local _ng=0; shopt -q nullglob && _ng=1; shopt -s nullglob
+  local _ng=0
+  shopt -q nullglob && _ng=1
+  shopt -s nullglob
   for d in "$base"/session.*; do
     [[ -d "$d" ]] || continue
-    [[ -r "$d/owner.id" ]] || continue          # unstamped => mid-setup; leave it
-    read -r opid ostart < "$d/owner.id" 2>/dev/null || continue
+    [[ -r "$d/owner.id" ]] || continue # unstamped => mid-setup; leave it
+    read -r opid ostart <"$d/owner.id" 2>/dev/null || continue
     if [[ -n "$opid" && -r "/proc/$opid/stat" ]]; then
       now="$(awk '{print $22}' "/proc/$opid/stat" 2>/dev/null || true)"
-      [[ -n "$now" && "$now" == "$ostart" ]] && continue   # owner alive -> skip
+      [[ -n "$now" && "$now" == "$ostart" ]] && continue # owner alive -> skip
     fi
     # Orphan: drop keys via the socket first (addresses the agent by socket,
     # immune to PID reuse), then guard-kill the recorded agent, then remove.
     [[ -S "$d/agent.sock" ]] && SSH_AUTH_SOCK="$d/agent.sock" ssh-add -D >/dev/null 2>&1 || true
-    if [[ -r "$d/agent.pid" ]] && read -r agent < "$d/agent.pid" 2>/dev/null \
-       && [[ -n "$agent" && "$(cat "/proc/$agent/comm" 2>/dev/null)" == ssh-agent ]]; then
+    if [[ -r "$d/agent.pid" ]] && read -r agent <"$d/agent.pid" 2>/dev/null \
+      && [[ -n "$agent" && "$(cat "/proc/$agent/comm" 2>/dev/null)" == ssh-agent ]]; then
       kill "$agent" 2>/dev/null || true
     fi
     rm -rf -- "$d" 2>/dev/null || true
   done
-  (( _ng )) || shopt -u nullglob
+  ((_ng)) || shopt -u nullglob
   return 0
 }
 
@@ -611,8 +615,11 @@ _as_session_begin() {
   [[ -n "${_session_dir:-}" ]] && return 0
   local base
   base="$(_as_session_base)"
-  mkdir -p "$base" 2>/dev/null && chmod 700 "$base" \
-    || { _as_msg "cannot create session base $base"; return 1; }
+  { mkdir -p "$base" 2>/dev/null && chmod 700 "$base"; } \
+    || {
+      _as_msg "cannot create session base $base"
+      return 1
+    }
   _as_session_sweep "$base" || true
   _session_dir="$(mktemp -d "$base/session.XXXXXX")" || return 1
   chmod 700 "$_session_dir"
@@ -620,7 +627,7 @@ _as_session_begin() {
   # plus its start-time, written BEFORE anything else lands in the dir so a
   # concurrent sweep never sees a dir of ours unstamped.
   printf '%s %s\n' "$BASHPID" \
-    "$(awk '{print $22}' "/proc/$BASHPID/stat" 2>/dev/null || echo 0)" > "$_session_dir/owner.id"
+    "$(awk '{print $22}' "/proc/$BASHPID/stat" 2>/dev/null || echo 0)" >"$_session_dir/owner.id"
   trap '_as_session_cleanup' EXIT INT TERM HUP
   return 0
 }
@@ -628,8 +635,8 @@ _as_session_begin() {
 _as_session_cleanup() {
   # Kill only if the recorded PID is still an ssh-agent -- guards against a
   # PID that was already reaped and recycled to an unrelated process.
-  if [[ -n "${_ssh_agent_pid:-}" \
-     && "$(cat "/proc/${_ssh_agent_pid}/comm" 2>/dev/null)" == ssh-agent ]]; then
+  if [[ -n "${_ssh_agent_pid:-}" &&
+    "$(cat "/proc/${_ssh_agent_pid}/comm" 2>/dev/null)" == ssh-agent ]]; then
     kill "$_ssh_agent_pid" 2>/dev/null
   fi
   [[ -n "${_session_dir:-}" ]] && rm -rf -- "$_session_dir"
@@ -644,7 +651,10 @@ _as_ssh_pick_key() {
   while read -r cand; do
     cand="${cand/#\~/$HOME}"
     [[ "$cand" == *_sk ]] && continue
-    [[ -r "$cand" ]] && { printf '%s\n' "$cand"; return 0; }
+    [[ -r "$cand" ]] && {
+      printf '%s\n' "$cand"
+      return 0
+    }
   done < <(awk '$1=="identityfile"{print $2}' <<<"$1")
   return 1
 }
@@ -656,22 +666,35 @@ _as_ssh_setup() {
   # destination constraints, and binds only the agent socket (plus the
   # public known_hosts/config files) into the sandbox.
   local kh="$HOME/.ssh/known_hosts" cfg="$HOME/.ssh/config"
-  command -v ssh-agent >/dev/null && command -v ssh-add >/dev/null && command -v ssh-keygen >/dev/null \
-    || { _as_msg "ssh-agent/ssh-add/ssh-keygen not found (install openssh-client)"; return 1; }
-  [[ -r "$kh" ]] || { _as_msg "$kh not readable; --ssh needs pre-trusted host keys there"; return 1; }
+  { command -v ssh-agent && command -v ssh-add && command -v ssh-keygen; } >/dev/null \
+    || {
+      _as_msg "ssh-agent/ssh-add/ssh-keygen not found (install openssh-client)"
+      return 1
+    }
+  [[ -r "$kh" ]] || {
+    _as_msg "$kh not readable; --ssh needs pre-trusted host keys there"
+    return 1
+  }
 
-  declare -A _by_key=()          # key file -> space-separated constraints
+  declare -A _by_key=() # key file -> space-separated constraints
   local spec g host user port khname key localuser
   localuser="$(id -un)"
   for spec in "${_ssh_hosts[@]}"; do
-    [[ "$spec" != -* ]] || { _as_msg "bad --ssh host '$spec'"; return 1; }
-    g="$(ssh -G "$spec" 2>/dev/null)" || { _as_msg "cannot resolve '$spec' (ssh -G failed)"; return 1; }
+    [[ "$spec" != -* ]] || {
+      _as_msg "bad --ssh host '$spec'"
+      return 1
+    }
+    g="$(ssh -G "$spec" 2>/dev/null)" || {
+      _as_msg "cannot resolve '$spec' (ssh -G failed)"
+      return 1
+    }
     host="$(awk '$1=="hostname"{print $2; exit}' <<<"$g")"
     user="$(awk '$1=="user"    {print $2; exit}' <<<"$g")"
     port="$(awk '$1=="port"    {print $2; exit}' <<<"$g")"
     # Pin the user only when asked for: user@ in the spec, or set by config.
     [[ "$spec" != *@* && "$user" == "$localuser" ]] && user=""
-    khname="$host"; [[ "$port" != 22 ]] && khname="[$host]:$port"
+    khname="$host"
+    [[ "$port" != 22 ]] && khname="[$host]:$port"
     if ! ssh-keygen -F "$khname" -f "$kh" >/dev/null 2>&1; then
       _as_msg "no trusted host key for '$khname' (--ssh $spec) in $kh."
       echo "               Connect once from a HOST shell to record it:   ssh $spec" >&2
@@ -679,13 +702,19 @@ _as_ssh_setup() {
     fi
     key="$_ssh_key"
     [[ -n "$key" ]] || key="$(_as_ssh_pick_key "$g")" \
-      || { _as_msg "no readable private key for '$spec'; pass --ssh-key PATH"; return 1; }
+      || {
+        _as_msg "no readable private key for '$spec'; pass --ssh-key PATH"
+        return 1
+      }
     _by_key[$key]+=" ${user:+$user@}$khname"
   done
-  if (( _ssh_unrestricted )); then
+  if ((_ssh_unrestricted)); then
     key="$_ssh_key"
     [[ -n "$key" ]] || key="$(_as_ssh_pick_key "$(ssh -G agent-sandbox.invalid 2>/dev/null)")" \
-      || { _as_msg "no readable private key found under ~/.ssh; pass --ssh-key PATH"; return 1; }
+      || {
+        _as_msg "no readable private key found under ~/.ssh; pass --ssh-key PATH"
+        return 1
+      }
     _by_key[$key]=""
   fi
 
@@ -695,32 +724,38 @@ _as_ssh_setup() {
   # bearing thing bound in; the key files themselves never are.
   local sock="$_session_dir/agent.sock"
   eval "$(ssh-agent -s -a "$sock")" >/dev/null \
-    || { _as_msg "ssh-agent failed to start"; return 1; }
+    || {
+      _as_msg "ssh-agent failed to start"
+      return 1
+    }
   _ssh_agent_pid="$SSH_AGENT_PID"
-  printf '%s\n' "$_ssh_agent_pid" > "$_session_dir/agent.pid"
+  printf '%s\n' "$_ssh_agent_pid" >"$_session_dir/agent.pid"
 
   local c
   local -a add
   for key in "${!_by_key[@]}"; do
     add=()
-    [[ -n "$_ssh_timeout" ]] && add+=( -t "$_ssh_timeout" )
+    [[ -n "$_ssh_timeout" ]] && add+=(-t "$_ssh_timeout")
     if [[ -n "${_by_key[$key]}" ]]; then
-      for c in ${_by_key[$key]}; do add+=( -h "$c" ); done   # no spaces in constraints
-      add+=( -H "$kh" )
+      for c in ${_by_key[$key]}; do add+=(-h "$c"); done # no spaces in constraints
+      add+=(-H "$kh")
       _as_msg "session agent: $key constrained to:${_by_key[$key]}${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
     else
       _as_msg "session agent: $key UNRESTRICTED${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
     fi
     SSH_AUTH_SOCK="$sock" ssh-add "${add[@]}" "$key" \
-      || { _as_msg "ssh-add failed for $key"; return 1; }
+      || {
+        _as_msg "ssh-add failed for $key"
+        return 1
+      }
   done
 
   args+=(
-    --bind    "$sock" "$sock"
-    --setenv  SSH_AUTH_SOCK "$sock"
+    --bind "$sock" "$sock"
+    --setenv SSH_AUTH_SOCK "$sock"
     --ro-bind "$kh" "$kh"
   )
-  [[ -r "$cfg" ]] && args+=( --ro-bind "$cfg" "$cfg" )
+  [[ -r "$cfg" ]] && args+=(--ro-bind "$cfg" "$cfg")
   return 0
 }
 
@@ -734,7 +769,7 @@ _as_allow_setup() {
     printf '# the process recorded in owner.id is alive. One host per line; a leading\n'
     printf '# dot matches the domain and its subdomains.\n'
     printf '%s\n' "${_allow_hosts[@]}"
-  } > "$_session_dir/allow.txt"
+  } >"$_session_dir/allow.txt"
   _as_msg "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
   return 0
 }
@@ -769,51 +804,101 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0
-  while (( $# > 0 )); do
+  while (($# > 0)); do
     case "$1" in
       --profile)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
-          || { _as_msg "--profile needs a name"; return 2; }
-        profile="$2"; shift 2 ;;
-      --profile=?*)       profile="${1#--profile=}"; shift ;;
+          || {
+            _as_msg "--profile needs a name"
+            return 2
+          }
+        profile="$2"
+        shift 2
+        ;;
+      --profile=?*)
+        profile="${1#--profile=}"
+        shift
+        ;;
       --allow)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
-          || { _as_msg "--allow needs a host (hostname, or .domain for a domain and its subdomains)"; return 2; }
-        _allow_hosts+=( "$2" ); shift 2 ;;
-      --allow=?*)         _allow_hosts+=( "${1#--allow=}" ); shift ;;
+          || {
+            _as_msg "--allow needs a host (hostname, or .domain for a domain and its subdomains)"
+            return 2
+          }
+        _allow_hosts+=("$2")
+        shift 2
+        ;;
+      --allow=?*)
+        _allow_hosts+=("${1#--allow=}")
+        shift
+        ;;
       --ssh)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
-          || { _as_msg "--ssh needs a host (hostname, user@host, or ~/.ssh/config alias)"; return 2; }
-        _ssh_hosts+=( "$2" ); shift 2 ;;
-      --ssh=?*)           _ssh_hosts+=( "${1#--ssh=}" ); shift ;;
-      --ssh-unrestricted) _ssh_unrestricted=1; shift ;;
+          || {
+            _as_msg "--ssh needs a host (hostname, user@host, or ~/.ssh/config alias)"
+            return 2
+          }
+        _ssh_hosts+=("$2")
+        shift 2
+        ;;
+      --ssh=?*)
+        _ssh_hosts+=("${1#--ssh=}")
+        shift
+        ;;
+      --ssh-unrestricted)
+        _ssh_unrestricted=1
+        shift
+        ;;
       --ssh-key)
-        [[ $# -ge 2 && -n "$2" ]] || { _as_msg "--ssh-key needs a path"; return 2; }
-        _ssh_key="$2"; shift 2 ;;
-      --ssh-key=?*)       _ssh_key="${1#--ssh-key=}"; shift ;;
+        [[ $# -ge 2 && -n "$2" ]] || {
+          _as_msg "--ssh-key needs a path"
+          return 2
+        }
+        _ssh_key="$2"
+        shift 2
+        ;;
+      --ssh-key=?*)
+        _ssh_key="${1#--ssh-key=}"
+        shift
+        ;;
       --ssh-timeout)
-        [[ $# -ge 2 && -n "$2" ]] || { _as_msg "--ssh-timeout needs a lifetime (seconds, or e.g. 30m)"; return 2; }
-        _ssh_timeout="$2"; shift 2 ;;
-      --ssh-timeout=?*)   _ssh_timeout="${1#--ssh-timeout=}"; shift ;;
+        [[ $# -ge 2 && -n "$2" ]] || {
+          _as_msg "--ssh-timeout needs a lifetime (seconds, or e.g. 30m)"
+          return 2
+        }
+        _ssh_timeout="$2"
+        shift 2
+        ;;
+      --ssh-timeout=?*)
+        _ssh_timeout="${1#--ssh-timeout=}"
+        shift
+        ;;
       *) break ;;
     esac
   done
-  (( ${#_ssh_hosts[@]} > 0 || _ssh_unrestricted )) && _ssh_want=1
-  if (( _ssh_unrestricted && ${#_ssh_hosts[@]} > 0 )); then
-    _as_msg "--ssh-unrestricted and --ssh HOST are mutually exclusive"; return 2
+  ((${#_ssh_hosts[@]} > 0 || _ssh_unrestricted)) && _ssh_want=1
+  if ((_ssh_unrestricted && ${#_ssh_hosts[@]} > 0)); then
+    _as_msg "--ssh-unrestricted and --ssh HOST are mutually exclusive"
+    return 2
   fi
-  if (( ! _ssh_want )) && [[ -n "$_ssh_key$_ssh_timeout" ]]; then
-    _as_msg "--ssh-key / --ssh-timeout need --ssh HOST or --ssh-unrestricted"; return 2
+  if ((! _ssh_want)) && [[ -n "$_ssh_key$_ssh_timeout" ]]; then
+    _as_msg "--ssh-key / --ssh-timeout need --ssh HOST or --ssh-unrestricted"
+    return 2
   fi
   if [[ -n "$_ssh_timeout" && ! "$_ssh_timeout" =~ ^[0-9]+[smhdwSMHDW]?$ ]]; then
-    _as_msg "--ssh-timeout: bad lifetime '$_ssh_timeout' (seconds, or e.g. 30m, 2h)"; return 2
+    _as_msg "--ssh-timeout: bad lifetime '$_ssh_timeout' (seconds, or e.g. 30m, 2h)"
+    return 2
   fi
   if [[ -n "$_ssh_key" && ! -r "$_ssh_key" ]]; then
-    _as_msg "--ssh-key: cannot read '$_ssh_key'"; return 2
+    _as_msg "--ssh-key: cannot read '$_ssh_key'"
+    return 2
   fi
   local _hostre='^\.?([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$' _h
   for _h in "${_allow_hosts[@]}"; do
-    [[ "$_h" =~ $_hostre ]] || { _as_msg "--allow: bad host '$_h' (expected a hostname, or .domain)"; return 2; }
+    [[ "$_h" =~ $_hostre ]] || {
+      _as_msg "--allow: bad host '$_h' (expected a hostname, or .domain)"
+      return 2
+    }
   done
 
   # ---- profile ----
@@ -824,16 +909,26 @@ agent_sandbox() (
     profile="$invoked"
   fi
   if [[ -z "$profile" ]]; then
-    case "${1:-}" in -h|--help) _as_usage; return 0 ;; esac
+    case "${1:-}" in -h | --help)
+      _as_usage
+      return 0
+      ;;
+    esac
     _as_msg "no profile selected. Use --profile NAME, or invoke through a symlink named after" \
-            "a profile (e.g. ~/.local/bin/claude -> $engine)."
+      "a profile (e.g. ~/.local/bin/claude -> $engine)."
     _as_msg "profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
     return 2
   fi
-  [[ "$profile" =~ ^[a-z][a-z0-9_-]*$ ]] || { _as_msg "bad profile name '$profile'"; return 2; }
+  [[ "$profile" =~ ^[a-z][a-z0-9_-]*$ ]] || {
+    _as_msg "bad profile name '$profile'"
+    return 2
+  }
   local profile_file="$profile_dir/$profile.sh"
   [[ -r "$profile_file" ]] \
-    || { _as_msg "no profile '$profile' ($profile_file not found). Available: $(_as_list_profiles "$profile_dir")"; return 2; }
+    || {
+      _as_msg "no profile '$profile' ($profile_file not found). Available: $(_as_list_profiles "$profile_dir")"
+      return 2
+    }
 
   # Contract defaults; the profile overrides what it needs. The contract is
   # documented in profiles/claude.sh.
@@ -847,10 +942,16 @@ agent_sandbox() (
   # shellcheck source=profiles/claude.sh
   source "$profile_file"
   declare -F profile_bin_discover >/dev/null \
-    || { _as_msg "profile '$profile' does not define profile_bin_discover()"; return 2; }
+    || {
+      _as_msg "profile '$profile' does not define profile_bin_discover()"
+      return 2
+    }
   profile_bin_discover || return 1
   [[ -n "$profile_bin" && -x "$profile_bin" ]] \
-    || { _as_msg "profile '$profile' selected no executable (profile_bin='$profile_bin')"; return 1; }
+    || {
+      _as_msg "profile '$profile' selected no executable (profile_bin='$profile_bin')"
+      return 1
+    }
 
   # ---- host-side subcommands (e.g. `claude update`) ----
   # The profile lists verbs that must run on the HOST with the caller's
@@ -859,9 +960,12 @@ agent_sandbox() (
     local _sub _rc
     for _sub in "${profile_host_subcommands[@]}"; do
       [[ "$1" == "$_sub" ]] || continue
-      (( _ssh_want || ${#_allow_hosts[@]} > 0 )) && _as_msg "--ssh*/--allow flags are ignored for '$1'"
+      ((_ssh_want || ${#_allow_hosts[@]} > 0)) && _as_msg "--ssh*/--allow flags are ignored for '$1'"
       declare -F profile_handle_subcommand >/dev/null \
-        || { _as_msg "profile '$profile' lists '$1' as host-side but defines no profile_handle_subcommand()"; return 2; }
+        || {
+          _as_msg "profile '$profile' lists '$1' as host-side but defines no profile_handle_subcommand()"
+          return 2
+        }
       _rc=0
       profile_handle_subcommand "$@" || _rc=$?
       return "$_rc"
@@ -882,16 +986,17 @@ agent_sandbox() (
 
   # Refuse to launch from directories that almost certainly hold secrets.
   case "$cwd" in
-    "$HOME"/.ssh|"$HOME"/.ssh/*|\
-    "$HOME"/.gnupg|"$HOME"/.gnupg/*|\
-    "$HOME"/.aws|"$HOME"/.aws/*|\
-    "$HOME"/.config/gcloud|"$HOME"/.config/gcloud/*|\
-    "$HOME"/.config/sops|"$HOME"/.config/sops/*|\
-    "$HOME"/.kube|"$HOME"/.kube/*|\
-    "$HOME"/.docker|"$HOME"/.docker/*|\
-    "$HOME"/.password-store|"$HOME"/.password-store/*)
+    "$HOME"/.ssh | "$HOME"/.ssh/* | \
+      "$HOME"/.gnupg | "$HOME"/.gnupg/* | \
+      "$HOME"/.aws | "$HOME"/.aws/* | \
+      "$HOME"/.config/gcloud | "$HOME"/.config/gcloud/* | \
+      "$HOME"/.config/sops | "$HOME"/.config/sops/* | \
+      "$HOME"/.kube | "$HOME"/.kube/* | \
+      "$HOME"/.docker | "$HOME"/.docker/* | \
+      "$HOME"/.password-store | "$HOME"/.password-store/*)
       _as_msg "refusing to bind sensitive directory '$cwd' as CWD."
-      return 1 ;;
+      return 1
+      ;;
   esac
 
   # ----- git identity hint -----
@@ -903,9 +1008,9 @@ agent_sandbox() (
   # none, say so. Setting it must happen from a HOST shell to copy the values
   # out of ~/.gitconfig, which is not visible in here either.
   if command -v git >/dev/null \
-     && git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    if [[ -z "$(git -C "$cwd" config --local user.name  2>/dev/null)" \
-       || -z "$(git -C "$cwd" config --local user.email 2>/dev/null)" ]]; then
+    && git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [[ -z "$(git -C "$cwd" config --local user.name 2>/dev/null)" ||
+    -z "$(git -C "$cwd" config --local user.email 2>/dev/null)" ]]; then
       local _gitroot
       _gitroot="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")"
       _as_msg "no repo-local git identity; commits inside the sandbox will fail"
@@ -921,7 +1026,7 @@ agent_sandbox() (
   if [[ "$cwd" == "$HOME" ]]; then
     bind_cwd=0
     _as_msg "CWD is \$HOME — not binding it. Only the profile's state paths," \
-            "the active conda env, and AGENT_SANDBOX_R{O,W} paths will be visible."
+      "the active conda env, and AGENT_SANDBOX_R{O,W} paths will be visible."
   fi
 
   _as_check_rw_paths "$_knob_rw" || return 1
@@ -931,20 +1036,20 @@ agent_sandbox() (
     # /usr/local when it's a real directory) is already covered by the /usr
     # bind. When /usr/local is a symlink elsewhere we expose its real target
     # below so the symlink resolves inside the sandbox (needed for CUDA).
-    --ro-bind     /usr        /usr
-    --ro-bind-try /etc        /etc
-    --ro-bind-try /opt        /opt
-    --ro-bind-try /lib        /lib
-    --ro-bind-try /lib64      /lib64
-    --ro-bind-try /bin        /bin
-    --ro-bind-try /sbin       /sbin
+    --ro-bind /usr /usr
+    --ro-bind-try /etc /etc
+    --ro-bind-try /opt /opt
+    --ro-bind-try /lib /lib
+    --ro-bind-try /lib64 /lib64
+    --ro-bind-try /bin /bin
+    --ro-bind-try /sbin /sbin
 
     # Ephemeral pseudo-filesystems.
-    --proc   /proc
-    --dev    /dev
-    --tmpfs  /tmp
-    --tmpfs  /var/tmp
-    --tmpfs  /run
+    --proc /proc
+    --dev /dev
+    --tmpfs /tmp
+    --tmpfs /var/tmp
+    --tmpfs /run
 
     # Blank $HOME — we punch through only what's needed below.
     --tmpfs "$HOME"
@@ -964,10 +1069,13 @@ agent_sandbox() (
   local _p
   for _p in "${profile_config_binds[@]}"; do
     [[ -e "$_p" ]] \
-      || { _as_msg "profile '$profile': state path '$_p' does not exist (create it in profile_prepare)"; return 1; }
-    args+=( --bind "$_p" "$_p" )
+      || {
+        _as_msg "profile '$profile': state path '$_p' does not exist (create it in profile_prepare)"
+        return 1
+      }
+    args+=(--bind "$_p" "$_p")
   done
-  args+=( --ro-bind "$profile_bin" "$profile_bin" )
+  args+=(--ro-bind "$profile_bin" "$profile_bin")
 
   # If /usr/local is a symlink off /usr (e.g. to a separate filesystem),
   # expose its real target read-only so the symlink resolves inside the
@@ -976,7 +1084,7 @@ agent_sandbox() (
     local _usrlocal_real
     _usrlocal_real="$(readlink -f /usr/local 2>/dev/null || true)"
     if [[ -n "$_usrlocal_real" && -d "$_usrlocal_real" ]]; then
-      args+=( --ro-bind "$_usrlocal_real" "$_usrlocal_real" )
+      args+=(--ro-bind "$_usrlocal_real" "$_usrlocal_real")
     fi
   fi
 
@@ -987,7 +1095,7 @@ agent_sandbox() (
     local _resolv_real
     _resolv_real="$(readlink -f /etc/resolv.conf 2>/dev/null || true)"
     if [[ -n "$_resolv_real" && -e "$_resolv_real" && "$_resolv_real" != /etc/* ]]; then
-      args+=( --ro-bind "$_resolv_real" "$_resolv_real" )
+      args+=(--ro-bind "$_resolv_real" "$_resolv_real")
     fi
   fi
 
@@ -1002,8 +1110,11 @@ agent_sandbox() (
   local _kv
   for _kv in "${profile_env_set[@]}"; do
     [[ "$_kv" == *=* ]] \
-      || { _as_msg "profile '$profile': profile_env_set entry '$_kv' is not NAME=VALUE"; return 1; }
-    args+=( --setenv "${_kv%%=*}" "${_kv#*=}" )
+      || {
+        _as_msg "profile '$profile': profile_env_set entry '$_kv' is not NAME=VALUE"
+        return 1
+      }
+    args+=(--setenv "${_kv%%=*}" "${_kv#*=}")
   done
   # Variables that are safe-to-forward IF set in the caller's environment:
   # locale + display niceties, the profile's own (e.g. ANTHROPIC_* for
@@ -1029,13 +1140,13 @@ agent_sandbox() (
     [[ -z "$_var" ]] && continue
     # Indirect lookup; skip if unset (vs. set-empty).
     if [[ -n "${!_var+x}" ]]; then
-      args+=( --setenv "$_var" "${!_var}" )
+      args+=(--setenv "$_var" "${!_var}")
     fi
   done
-  if (( bind_cwd )); then
-    args+=( --bind "$cwd" "$cwd" )
+  if ((bind_cwd)); then
+    args+=(--bind "$cwd" "$cwd")
   fi
-  args+=( --chdir "$cwd" )
+  args+=(--chdir "$cwd")
 
   # Active conda/mamba environment. Mode is controlled by
   # AGENT_SANDBOX_CONDA_WRITE:
@@ -1070,36 +1181,42 @@ agent_sandbox() (
       "$_conda_mode" "$CONDA_PREFIX" "$CONDA_PREFIX"
       --setenv CONDA_PREFIX "$CONDA_PREFIX"
     )
-    [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && args+=( --setenv CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV" )
-    [[ -n "${CONDA_SHLVL:-}"       ]] && args+=( --setenv CONDA_SHLVL       "$CONDA_SHLVL"       )
-    [[ -n "${MAMBA_ROOT_PREFIX:-}" ]] && args+=( --setenv MAMBA_ROOT_PREFIX "$MAMBA_ROOT_PREFIX" )
-    [[ -n "${CONDA_ROOT_PREFIX:-}" ]] && args+=( --setenv CONDA_ROOT_PREFIX "$CONDA_ROOT_PREFIX" )
-    [[ -n "${CONDA_PYTHON_EXE:-}"  ]] && args+=( --setenv CONDA_PYTHON_EXE  "$CONDA_PYTHON_EXE"  )
+    [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && args+=(--setenv CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV")
+    [[ -n "${CONDA_SHLVL:-}" ]] && args+=(--setenv CONDA_SHLVL "$CONDA_SHLVL")
+    [[ -n "${MAMBA_ROOT_PREFIX:-}" ]] && args+=(--setenv MAMBA_ROOT_PREFIX "$MAMBA_ROOT_PREFIX")
+    [[ -n "${CONDA_ROOT_PREFIX:-}" ]] && args+=(--setenv CONDA_ROOT_PREFIX "$CONDA_ROOT_PREFIX")
+    [[ -n "${CONDA_PYTHON_EXE:-}" ]] && args+=(--setenv CONDA_PYTHON_EXE "$CONDA_PYTHON_EXE")
 
     # Bind the base prefix separately, but only if it's distinct from
     # $CONDA_PREFIX (otherwise we'd try to bind the same path twice and
     # bwrap would error).
-    if [[ -n "$_conda_base" && "$_conda_base" != "$CONDA_PREFIX" \
-          && -d "$_conda_base" ]]; then
-      args+=( "$_conda_mode" "$_conda_base" "$_conda_base" )
+    if [[ -n "$_conda_base" && "$_conda_base" != "$CONDA_PREFIX" &&
+      -d "$_conda_base" ]]; then
+      args+=("$_conda_mode" "$_conda_base" "$_conda_base")
     fi
   fi
 
   # User-supplied extra paths.
   _as_add_paths --ro-bind "$_knob_ro"
-  _as_add_paths --bind    "$_knob_rw"
+  _as_add_paths --bind "$_knob_rw"
 
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See "SSH ACCESS" and
   # "ENGINE FLAGS" in the header.
   local _session_dir="" _ssh_agent_pid=""
-  if (( _ssh_want )); then
-    _as_ssh_setup || { _as_session_cleanup; return 1; }
+  if ((_ssh_want)); then
+    _as_ssh_setup || {
+      _as_session_cleanup
+      return 1
+    }
   fi
-  if (( ${#_allow_hosts[@]} > 0 )); then
+  if ((${#_allow_hosts[@]} > 0)); then
     case "${_knob_net:-proxy}" in
-      open|none) _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)" ;;
-      *)         _as_allow_setup || { _as_session_cleanup; return 1; } ;;
+      open | none) _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)" ;;
+      *) _as_allow_setup || {
+        _as_session_cleanup
+        return 1
+      } ;;
     esac
   fi
 
@@ -1109,7 +1226,7 @@ agent_sandbox() (
   # only blocks writes to $HOME proper — not to anything we intentionally
   # exposed. Must come AFTER every bind whose target is under $HOME, since
   # bwrap may need to create intermediate directories on the tmpfs.
-  args+=( --remount-ro "$HOME" )
+  args+=(--remount-ro "$HOME")
 
   # ----- Network mode -----
   # proxy  : (default) --share-net plus HTTPS_PROXY pointing at the host-side
@@ -1129,7 +1246,7 @@ agent_sandbox() (
   # none   : net fully unshared. Useful for offline work.
   case "${_knob_net:-proxy}" in
     open)
-      args+=( --share-net )
+      args+=(--share-net)
       _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     none)
@@ -1138,12 +1255,12 @@ agent_sandbox() (
     proxy)
       args+=(
         --share-net
-        --setenv HTTP_PROXY  "http://127.0.0.1:8888"
+        --setenv HTTP_PROXY "http://127.0.0.1:8888"
         --setenv HTTPS_PROXY "http://127.0.0.1:8888"
-        --setenv http_proxy  "http://127.0.0.1:8888"
+        --setenv http_proxy "http://127.0.0.1:8888"
         --setenv https_proxy "http://127.0.0.1:8888"
-        --setenv NO_PROXY    ""
-        --setenv no_proxy    ""
+        --setenv NO_PROXY ""
+        --setenv no_proxy ""
       )
       _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
@@ -1153,12 +1270,12 @@ agent_sandbox() (
         return 1
       }
       args+=(
-        --setenv HTTP_PROXY  "http://10.0.2.2:8888"
+        --setenv HTTP_PROXY "http://10.0.2.2:8888"
         --setenv HTTPS_PROXY "http://10.0.2.2:8888"
-        --setenv http_proxy  "http://10.0.2.2:8888"
+        --setenv http_proxy "http://10.0.2.2:8888"
         --setenv https_proxy "http://10.0.2.2:8888"
-        --setenv NO_PROXY    ""
-        --setenv no_proxy    ""
+        --setenv NO_PROXY ""
+        --setenv no_proxy ""
       )
 
       # Coordinate bwrap and slirp4netns: bwrap writes its child PID to fd 19
@@ -1178,7 +1295,7 @@ agent_sandbox() (
       exec 18<>"$_tmp/ready"
 
       bwrap --info-fd 19 --block-fd 18 "${args[@]}" -- "$profile_bin" "$@" \
-            19>"$_tmp/info" &
+        19>"$_tmp/info" &
       _bwrap_pid=$!
 
       _child_pid=$(
@@ -1192,11 +1309,12 @@ agent_sandbox() (
       }
 
       slirp4netns --configure --mtu=65520 --disable-host-loopback \
-                  --userns-path "/proc/$_child_pid/ns/user" \
-                  --ready-fd 18 "$_child_pid" tap0 >/dev/null &
+        --userns-path "/proc/$_child_pid/ns/user" \
+        --ready-fd 18 "$_child_pid" tap0 >/dev/null &
       _slirp_pid=$!
 
-      wait "$_bwrap_pid"; _rc=$?
+      wait "$_bwrap_pid"
+      _rc=$?
       kill "$_slirp_pid" 2>/dev/null
       wait "$_slirp_pid" 2>/dev/null || true
       exit "$_rc"
