@@ -22,7 +22,7 @@ sandbox. It is a security tool. Treat every change to it as one.
 | `scripts/check.sh` | Every check CI runs. Run it before committing. |
 | `environment.yml` | The development tooling env (`agent-sandbox` mamba env): git-filter-repo, shellcheck, shfmt. Anything you install into that env for development goes in here, so the env can be recreated. |
 | `docs/` | Design, threat model and residual risks (`docs/design.md`), network, SSH, profiles, prior art, troubleshooting. The trust surface for users. |
-| `tests/` | bats tests: unit (engine helpers, profile selection), integration (nested bwrap with a stub agent), live (opt-in, real network). |
+| `tests/` | bats suites, run with `tests/run.sh`: `unit/` (engine helpers, flags, the bwrap argv, the claude profile, the proxy addon with a stubbed mitmproxy, the installer's dry run), `integration/` (the real bwrap with a probe profile), `live/` (opt-in, real network and the host's proxy). Harness in `tests/helpers/`. |
 
 ## The engine is security-sensitive
 
@@ -61,8 +61,34 @@ from `.editorconfig`: 2-space indent, indented `case` items, binary operators
 at line start); `python3 -m py_compile components/*.py`; a bundle-sync check
 (`install.sh` must equal what `scripts/bundle.sh` produces); and
 `install.sh --dry-run` against a throwaway `HOME`. Fix formatting with
-`shfmt -w .`, never by hand-aligning. Run the bats suites in `tests/` when they
-exist for the area you touched; `AGENT_SANDBOX_LIVE=1` enables the live tests.
+`shfmt -w .`, never by hand-aligning. `scripts/check.sh` runs the unit and
+integration suites when `bats` is on PATH; `tests/run.sh unit|integration|live|all`
+runs them directly, and `AGENT_SANDBOX_LIVE=1` enables the live tests.
+
+### How the tests work
+
+- **Unit suites never run bwrap.** `tests/helpers/common.bash` builds a fake
+  HOME with a stub agent binary and a stub `bwrap` that dumps its argv to a
+  file; `run_engine` launches the engine with a clean environment and loads that
+  argv into `ARGV`, so tests assert on binds, order and `--setenv` pairs
+  (`argv_has`, `setenv_value`, `argv_index`). Helper-level tests `source` the
+  engine and call the `_as_*` functions directly.
+- **Integration suites use the real bwrap** through a test profile whose
+  "agent" is a probe script (`AGENT_SANDBOX_TEST_BIN`) that writes key=value
+  lines to `$PWD/report` from inside the sandbox. They `skip` when unprivileged
+  user namespaces are unavailable. SSH tests need a short session base because
+  of the unix-socket path limit; `make_short_base` provides one.
+- **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
+  stands in for `mitmproxy.http`, and `addon_driver.py` runs one scenario.
+- **A test must fail when the bug it guards is re-introduced.** Check that with
+  a mutation: copy `agent-sandbox` into a directory that has a `profiles`
+  symlink to the repo's, re-introduce the bug there, and run the guarding test
+  with `AGENT_SANDBOX_TEST_ENGINE=/path/to/copy` (`AGENT_SANDBOX_TEST_ADDON` for
+  the addon). Run the unmutated copy first: if that fails, the harness, not the
+  test, is what you are measuring. The suites were checked this way against
+  the start-time regression, the path guards, `--remount-ro`, `--clearenv`,
+  the CA bind, conda write mode, sharing the network in `none` mode, exposing
+  `~/.ssh`, and the addon's liveness, CONNECT and suffix logic.
 
 ## Conventions
 

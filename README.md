@@ -86,7 +86,8 @@ Engine flags, before the agent's own arguments: `--profile NAME`,
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.
 - [docs/updating.md](docs/updating.md), [docs/troubleshooting.md](docs/troubleshooting.md),
   [docs/prior-art.md](docs/prior-art.md).
-- [AGENTS.md](AGENTS.md): rules for AI maintainers; [CONTRIBUTING.md](CONTRIBUTING.md).
+- [AGENTS.md](AGENTS.md): rules for AI maintainers; [CONTRIBUTING.md](CONTRIBUTING.md);
+  tests: `tests/run.sh` (bats, from `environment.yml`).
 
 ## How it compares
 

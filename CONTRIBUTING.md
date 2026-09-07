@@ -4,9 +4,10 @@ Thank you. A few things make changes here easy to review.
 
 - **Run `scripts/check.sh` before committing.** It runs what CI runs: syntax,
   shellcheck, shfmt (style from `.editorconfig`; fix with `shfmt -w .`), the
-  Python components compile, `install.sh` in sync with its sources, and the
-  installer's dry run. The development tooling comes from `environment.yml`
-  (`mamba env create -f environment.yml`).
+  Python components compile, `install.sh` in sync with its sources, the
+  installer's dry run, and the bats suites (`tests/run.sh`; `AGENTS.md`
+  explains the harness). The development tooling, bats included, comes from
+  `environment.yml` (`mamba env create -f environment.yml`).
 - **`install.sh` is generated.** Edit `install.sh.in` or a file under
   `components/`, then run `scripts/bundle.sh` and commit the result.
 - **The engine is security-sensitive.** A change to what the sandbox can see

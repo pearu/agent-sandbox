@@ -30,3 +30,6 @@ generalized.
   layout.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
+- Tests: bats suites under `tests/` (unit with a stub bwrap, integration with
+  the real bwrap and a probe profile, opt-in live), run by `scripts/check.sh`;
+  each guarantee in `docs/design.md` names the test that checks it.
