@@ -149,9 +149,15 @@ missing=()
 command -v bwrap >/dev/null || missing+=(bubblewrap)
 command -v curl >/dev/null || missing+=(curl)
 if ((${#missing[@]} > 0)); then
-  err "Missing required packages: ${missing[*]}. Run: sudo apt install ${missing[*]}"
+  if ((DRY_RUN)); then
+    warn "(dry-run) missing packages a real run needs: ${missing[*]} (sudo apt install ${missing[*]})"
+  else
+    err "Missing required packages: ${missing[*]}. Run: sudo apt install ${missing[*]}"
+  fi
 fi
-ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
+if command -v bwrap >/dev/null; then
+  ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
+fi
 if command -v slirp4netns >/dev/null; then
   ok "slirp4netns installed (enables AGENT_SANDBOX_NET=strict in the future)"
 else
