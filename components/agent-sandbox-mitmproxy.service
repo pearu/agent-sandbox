@@ -1,0 +1,25 @@
+[Unit]
+Description=mitmproxy enforcing allowlist for the agent sandbox
+Documentation=file:@ENGINE@
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# http2=false: mitmproxy's HTTP/2 path is pure Python and an order of magnitude
+# slower than HTTP/1.1; with response streaming in the addon this is near-native.
+ExecStart=@MITMDUMP@ \
+    --listen-host 127.0.0.1 \
+    --listen-port 8888 \
+    --set block_global=false \
+    --set termlog_verbosity=info \
+    --set flow_detail=0 \
+    --set http2=false \
+    -s %h/.config/agent-sandbox/allowlist_addon.py
+Restart=on-failure
+RestartSec=2s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

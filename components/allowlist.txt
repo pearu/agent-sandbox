@@ -1,0 +1,41 @@
+# agent-sandbox allowlist
+#
+# One hostname per line. Lines starting with "#" are comments.
+# A leading dot (".github.com") matches the host AND its subdomains.
+# Edits take effect immediately — no restart needed.
+#
+# Blocked requests are logged to ~/.config/agent-sandbox/blocked.log;
+# tail it (`tail -f ~/.config/agent-sandbox/blocked.log`) to see what
+# the agent is trying to reach and add hosts here as needed.
+
+# ---- Anthropic ----
+api.anthropic.com
+.anthropic.com
+statsigapi.net
+.statsig.com
+
+# ---- Git / code hosting ----
+github.com
+api.github.com
+codeload.github.com
+objects.githubusercontent.com
+raw.githubusercontent.com
+.githubusercontent.com
+
+# ---- Python packaging ----
+pypi.org
+files.pythonhosted.org
+
+# ---- Node packaging ----
+registry.npmjs.org
+
+# ---- Conda / mamba ----
+conda.anaconda.org
+repo.anaconda.com
+.conda-forge.org
+
+# ---- Rust ----
+crates.io
+static.crates.io
+
+# ---- Add more below as you hit 403s ----
