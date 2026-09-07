@@ -10,6 +10,12 @@ generalized.
   name. Knobs are `AGENT_SANDBOX_*`.
 - `--allow HOST`: per-session egress hosts, honoured only while the session's
   owner process lives.
+- Per-project `.agent-sandbox` file (trust-gated with `--trust`): `allow`
+  hosts and `share-memory` for per-project memory scoping. Memory scoping hides
+  `~/.claude/projects` and rebinds only the current project plus approved
+  projects' memory; default stays `shared`, a global `memory_default = scoped`
+  or a dot-file opts in. The trust store and global config live under
+  `~/.config/agent-sandbox`, never bound into the sandbox.
 - Egress proxy: blocked hosts are refused at CONNECT before any upstream
   connection; responses are streamed and HTTP/2 disabled in mitmproxy, taking
   throughput from ~1 MB/s to near-native; mitmproxy 12+ runs from a private

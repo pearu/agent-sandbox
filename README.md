@@ -76,7 +76,11 @@ Environment knobs, set in the calling shell:
 
 Engine flags, before the agent's own arguments: `--profile NAME`,
 `--allow HOST`, `--ssh HOST`, `--ssh-unrestricted`, `--ssh-key PATH`,
-`--ssh-timeout LIFE`. `agent-sandbox --help` lists them.
+`--ssh-timeout LIFE`, `--trust`. `agent-sandbox --help` lists them.
+
+A project can carry a git-ignored `.agent-sandbox` file with per-project
+`allow` hosts and memory scoping, honored only after `claude --trust` approves
+it. See [docs/config.md](docs/config.md).
 
 ## Documentation
 
@@ -84,6 +88,8 @@ Engine flags, before the agent's own arguments: `--profile NAME`,
   guarantee with its mechanism and check, residual risks, open questions.
 - [docs/network.md](docs/network.md): network modes, the allowlist,
   `--allow`, the CA, the proxy.
+- [docs/config.md](docs/config.md): the per-project `.agent-sandbox` file, its
+  trust gate, and per-project memory scoping.
 - [docs/ssh.md](docs/ssh.md): the SSH broker.
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.
 - [docs/updating.md](docs/updating.md), [docs/troubleshooting.md](docs/troubleshooting.md),

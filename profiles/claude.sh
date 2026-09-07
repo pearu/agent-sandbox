@@ -19,6 +19,11 @@
 #                               the agent's state and config. They must exist
 #                               when the sandbox is built; create them in
 #                               profile_prepare().
+#   profile_tmpfs=(...)         paths to overlay with a fresh tmpfs AFTER the
+#   profile_rw_binds=(...)      state binds, then rebind read-write /
+#   profile_ro_binds=(...)      read-only. Populated by profile_memory_scope()
+#                               to hide ~/.claude/projects and rebind the
+#                               current project plus approved shares.
 #   profile_env_pass=(...)      environment variable NAMES forwarded into the
 #                               sandbox IF set in the caller's environment, on
 #                               top of the engine's own list (locale, proxy,
@@ -42,6 +47,11 @@
 #                               and return non-zero.
 #   profile_prepare()           optional. Runs right before the sandbox is
 #                               assembled; create state files here.
+#   profile_memory_scope(MODE [PATH...])  optional. Called with the memory
+#                               mode (scoped|shared) and the approved share
+#                               paths; appends to profile_tmpfs/_rw_binds/
+#                               _ro_binds to scope per-project memory. See
+#                               docs/config.md.
 #   profile_handle_subcommand() required iff profile_host_subcommands is
 #                               non-empty. Receives the agent's full argv
 #                               ($1 is the subcommand); its return code is
@@ -87,6 +97,55 @@ _claude_versions_dir="$HOME/.local/share/claude/versions"
 _claude_list_versions() {
   find "$_claude_versions_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) \
     -printf '%f\n' 2>/dev/null | sort -V
+}
+
+# Map a project directory to Claude Code's per-project state slug: the absolute
+# path with every "/" turned into "-" (e.g. /home/u/proj -> -home-u-proj). This
+# must match Claude Code's own scheme, or scoped memory would bind the wrong
+# directory and the session's notes would not persist.
+_claude_project_slug() { printf '%s' "${1//\//-}"; }
+
+# profile_memory_scope MODE [SHARE_PATH...] -- engine hook (see the engine's
+# profile_memory_scope call). In "scoped" mode, hide ~/.claude/projects and
+# rebind only the current project (read-write: its memory and transcripts) plus
+# each approved project's memory/ (read-only). In "shared" mode do nothing, the
+# historical behaviour where every project's memory is visible. $cwd is the
+# engine's current working directory.
+profile_memory_scope() {
+  local mode="$1"
+  shift
+  [[ "$mode" == scoped ]] || return 0
+  local projects="$HOME/.claude/projects" cur p slug
+  # cwd is a local of the engine's agent_sandbox(), visible here by dynamic scope.
+  # shellcheck disable=SC2154
+  cur="$projects/$(_claude_project_slug "$cwd")"
+  mkdir -p "$cur" 2>/dev/null || true
+  profile_tmpfs+=("$projects")
+  profile_rw_binds+=("$cur")
+  local m
+  for p in "$@"; do
+    [[ -z "$p" ]] && continue
+    if [[ "$p" == *[*?[]* ]]; then
+      # A pathname pattern (e.g. ~/git/pearu/*): share the memory of matching
+      # project directories that actually have memory. Globbing at the path
+      # level, not the slug level, keeps "~/git/x/*" from also matching a
+      # sibling "~/git/x-notes" (whose slug shares the prefix) or descending
+      # past a single level.
+      local _n=0
+      while IFS= read -r m; do
+        [[ -d "$m" ]] || continue
+        slug="$(_claude_project_slug "$(readlink -f -- "$m")")"
+        [[ -d "$projects/$slug/memory" ]] || continue
+        profile_ro_binds+=("$projects/$slug/memory")
+        _n=1
+      done < <(compgen -G "$p" || true)
+      ((_n)) || _as_msg "share-memory: pattern '$p' matched no project with memory"
+    else
+      slug="$(_claude_project_slug "$(readlink -f -- "$p" 2>/dev/null || echo "$p")")"
+      profile_ro_binds+=("$projects/$slug/memory")
+    fi
+  done
+  return 0
 }
 
 profile_prepare() {

@@ -55,7 +55,12 @@
 #   /tmp, /var/tmp, /run, /proc, /dev       fresh, ephemeral
 #   $HOME                                   read-only tmpfs — only these are
 #                                           visible inside it:
-#     $HOME/.claude                         read-write (claude's state dir)
+#     $HOME/.claude                         read-write (claude's state dir).
+#                                           Per-project memory under
+#                                           .claude/projects can be scoped so
+#                                           a session sees only its own and
+#                                           approved projects -- see the
+#                                           per-project config in docs/config.md.
 #     $HOME/.claude.json                    read-write (claude's config file)
 #     $CONDA_PREFIX  (if set)               read-only by default; the base
 #                                           conda install (conda/mamba, other
@@ -155,6 +160,10 @@
 #                         session on the host as well.
 #   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
 #                         see docs/ssh.md
+#   --trust               review and approve this project's .agent-sandbox
+#                         file (per-project allow hosts and memory scoping),
+#                         then exit. See docs/config.md. The file is ignored
+#                         until approved, and any edit re-blocks it.
 #   -h, --help            engine usage (only when no profile is selected;
 #                         with a profile, --help goes to the agent)
 #
@@ -175,6 +184,8 @@
 #                            CA and how it is trusted inside the sandbox only
 #   docs/ssh.md              the SSH broker: --ssh, --ssh-unrestricted,
 #                            --ssh-key, --ssh-timeout
+#   docs/config.md           the per-project .agent-sandbox file, its trust
+#                            gate, and per-project memory scoping
 #   docs/profiles.md         the profile contract; adding an agent
 #   docs/updating.md         host-routed agent updates (claude update)
 #   docs/troubleshooting.md  error messages and their fixes
@@ -213,6 +224,8 @@ Engine flags (must precede the agent's own arguments):
                         with --ssh HOST)
   --ssh-key PATH        private key to load (default: what `ssh -G` picks)
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
+  --trust               review and approve this project's .agent-sandbox
+                        file, then exit (see docs/config.md)
   -h, --help            this text (only when no profile is selected)
 
 Environment knobs:
@@ -512,6 +525,145 @@ _as_allow_setup() {
   return 0
 }
 
+# ----- per-project config (.agent-sandbox) and its trust store -----
+# A project may carry a .agent-sandbox file with per-project policy (currently
+# `allow` hosts and `share-memory` project paths). It is PARSED, never sourced.
+# Because the project dir is writable by the sandboxed agent and a project may
+# come from an untrusted repository, the file is honoured only after the user
+# approves it with `--trust`: approval records the file's SHA-256, and any later
+# edit (by you or the agent) drops it to untrusted until you review and approve
+# again -- so the agent can only invalidate trust, never grant it. The trust
+# store and global config live under ~/.config/agent-sandbox, which is never
+# bound into the sandbox, so the agent can neither read nor forge them.
+_as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
+_as_sha256_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
+_as_sha256_str() { printf '%s' "$1" | sha256sum 2>/dev/null | cut -d' ' -f1; }
+
+# Global default for memory scoping when a project has no trusted directive:
+# `shared` (every project's memory visible -- the historical behaviour) or
+# `scoped` (only the current project). ~/.config/agent-sandbox/config, key
+# memory_default. Defaults to `shared`, so upgrading changes nothing.
+_as_memory_default() {
+  local cfg val="" line
+  cfg="$(_as_config_dir)/config"
+  if [[ -r "$cfg" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%#*}"
+      [[ "$line" == *memory_default* ]] || continue
+      val="${line#*=}"
+      val="${val//[[:space:]]/}"
+    done <"$cfg"
+  fi
+  case "$val" in
+    scoped | shared) printf '%s' "$val" ;;
+    *) printf 'shared' ;;
+  esac
+}
+
+# Is the .agent-sandbox at $2 (for project dir $1) approved? Trust file is
+# <config>/trust/<sha256(path)> holding the approved <sha256(content)>.
+_as_dotfile_trusted() {
+  local cwd="$1" file="$2" want have
+  want="$(_as_sha256_file "$file")"
+  [[ -n "$want" ]] || return 1
+  have="$(cat -- "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" 2>/dev/null || true)"
+  [[ -n "$have" && "$have" == "$want" ]]
+}
+
+_as_trust_record() {
+  local cwd="$1" file="$2" dir
+  dir="$(_as_config_dir)/trust"
+  mkdir -p "$dir" 2>/dev/null || {
+    _as_msg "cannot create trust store $dir"
+    return 1
+  }
+  _as_sha256_file "$file" >"$dir/$(_as_sha256_str "$cwd")" || return 1
+  return 0
+}
+
+# Parse the .agent-sandbox at $1 into the caller's _df_allow/_df_share arrays
+# and _df_share_set flag. Data only -- keys are matched, values are split; no
+# line is ever executed.
+_as_dotfile_parse() {
+  local file="$1" line key val _e
+  local -a _tmp=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" != *=* ]]; then
+      _as_msg ".agent-sandbox: ignoring malformed line: $line"
+      continue
+    fi
+    key="${line%%=*}" val="${line#*=}"
+    key="${key//[[:space:]]/}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    case "$key" in
+      allow)
+        _tmp=()
+        _as_split _tmp $', \t' "$val"
+        _df_allow+=("${_tmp[@]}")
+        ;;
+      share-memory)
+        _df_share_set=1
+        _tmp=()
+        _as_split _tmp $', \t' "$val"
+        for _e in "${_tmp[@]}"; do
+          [[ -z "$_e" ]] && continue
+          _df_share+=("${_e/#\~/$HOME}")
+        done
+        ;;
+      ssh)
+        _as_msg ".agent-sandbox: 'ssh' is not supported yet; ignoring (use --ssh on the command line)"
+        ;;
+      *)
+        _as_msg ".agent-sandbox: ignoring unknown key '$key'"
+        ;;
+    esac
+  done <"$file"
+  return 0
+}
+
+# The --trust command: show the project's .agent-sandbox, ask to approve it,
+# record the approval, and offer to keep it out of git (it is machine-local).
+_as_trust_review() {
+  local cwd="$1" file ans
+  file="$cwd/.agent-sandbox"
+  [[ -f "$file" ]] || {
+    _as_msg "no .agent-sandbox in $cwd"
+    return 1
+  }
+  {
+    printf '\n%s (sha256 %s):\n----\n' "$file" "$(_as_sha256_file "$file")"
+    cat -- "$file"
+    printf -- '----\n'
+  } >&2
+  _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
+  printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
+  read -r ans || true
+  case "$ans" in
+    y | Y | yes | YES) ;;
+    *)
+      _as_msg "not approved; the file stays ignored."
+      return 0
+      ;;
+  esac
+  _as_trust_record "$cwd" "$file" || return 1
+  _as_msg "approved."
+  if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1 && ! git -C "$cwd" check-ignore -q .agent-sandbox 2>/dev/null; then
+    local _ex
+    _ex="$(git -C "$cwd" rev-parse --absolute-git-dir)/info/exclude"
+    printf 'agent-sandbox: add .agent-sandbox to %s so it is not committed? [y/N] ' "$_ex" >&2
+    read -r ans || true
+    case "$ans" in
+      y | Y | yes | YES) printf '/.agent-sandbox\n' >>"$_ex" && _as_msg "added to $_ex" ;;
+    esac
+  fi
+  return 0
+}
+
 # The system CA bundle (Debian/Ubuntu/Arch, Fedora/RHEL, openSUSE), or fail.
 _as_system_ca_bundle() {
   local cand
@@ -605,7 +757,7 @@ agent_sandbox() (
   # to the agent untouched.
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=()
-  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0
+  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -675,6 +827,10 @@ agent_sandbox() (
         _ssh_timeout="${1#--ssh-timeout=}"
         shift
         ;;
+      --trust)
+        _do_trust=1
+        shift
+        ;;
       *) break ;;
     esac
   done
@@ -702,6 +858,13 @@ agent_sandbox() (
       return 2
     }
   done
+
+  # ---- --trust: review and approve the current project's .agent-sandbox ----
+  # Profile-independent; never launches the agent.
+  if ((_do_trust)); then
+    _as_trust_review "$(pwd -P)"
+    return $?
+  fi
 
   # ---- profile ----
   # Explicit --profile wins; otherwise infer from argv[0] when we were
@@ -741,6 +904,7 @@ agent_sandbox() (
   # shellcheck disable=SC2034
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_host_subcommands=()
+  local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=()
   # shellcheck source=profiles/claude.sh
   source "$profile_file"
   declare -F profile_bin_discover >/dev/null \
@@ -780,7 +944,44 @@ agent_sandbox() (
 
   local cwd
   cwd="$(pwd -P)"
+
+  # ---- per-project config (.agent-sandbox), trust-gated ----
+  local -a _df_allow=() _df_share=()
+  local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
+  if [[ -f "$_dotfile" ]]; then
+    if _as_dotfile_trusted "$cwd" "$_dotfile"; then
+      _as_dotfile_parse "$_dotfile"
+      local _dh
+      for _dh in "${_df_allow[@]}"; do
+        [[ -z "$_dh" ]] && continue
+        if [[ "$_dh" =~ $_hostre ]]; then
+          _allow_hosts+=("$_dh")
+        else
+          _as_msg ".agent-sandbox allow: bad host '$_dh'; ignoring"
+        fi
+      done
+    else
+      _as_msg ".agent-sandbox present but not approved; ignoring it." \
+        "Review and approve with: $invoked --trust"
+    fi
+  fi
+  if ((_df_share_set)); then
+    if ((${#_df_share[@]} == 1)) && [[ "${_df_share[0]}" == all ]]; then
+      _memory_mode=shared
+      _df_share=()
+    else
+      _memory_mode=scoped
+    fi
+  else
+    _memory_mode="$(_as_memory_default)"
+  fi
+
   declare -F profile_prepare >/dev/null && profile_prepare
+  if declare -F profile_memory_scope >/dev/null; then
+    profile_memory_scope "$_memory_mode" "${_df_share[@]}" || return 1
+  elif [[ "$_memory_mode" == scoped ]]; then
+    _as_msg "profile '$profile' does not scope memory; the setting is ignored"
+  fi
 
   # Refuse to launch from directories that almost certainly hold secrets.
   case "$cwd" in
@@ -886,6 +1087,30 @@ agent_sandbox() (
     args+=(--bind "$_p" "$_p")
   done
   args+=(--ro-bind "$profile_bin" "$profile_bin")
+
+  # Profile-declared visibility adjustments, applied AFTER its state binds so
+  # they layer on top: a tmpfs to hide a subtree, then read-write and
+  # read-only rebinds of the parts to keep. The claude profile uses these to
+  # scope ~/.claude/projects to the current project (read-write) plus any
+  # approved shares (read-only). Empty for every profile by default.
+  local _pv
+  for _pv in "${profile_tmpfs[@]}"; do
+    args+=(--tmpfs "$_pv")
+  done
+  for _pv in "${profile_rw_binds[@]}"; do
+    [[ -e "$_pv" ]] || {
+      _as_msg "profile '$profile': rw path '$_pv' does not exist"
+      return 1
+    }
+    args+=(--bind "$_pv" "$_pv")
+  done
+  for _pv in "${profile_ro_binds[@]}"; do
+    if [[ -e "$_pv" ]]; then
+      args+=(--ro-bind "$_pv" "$_pv")
+    else
+      _as_msg "share-memory: nothing at '$_pv'; skipping"
+    fi
+  done
 
   # If /usr/local is a symlink off /usr (e.g. to a separate filesystem),
   # expose its real target read-only so the symlink resolves inside the
