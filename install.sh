@@ -15,7 +15,8 @@
 #      profiles/ together) to the new host.
 #   2. ./install.sh
 #
-# Embeds the canonical mitmproxy addon, starter allowlist, and systemd
+# Installs mitmproxy >= 12 into a private environment (venv, else conda), and
+# embeds the canonical mitmproxy addon, starter allowlist, and systemd
 # user unit so nothing else needs to be carried across hosts. The
 # allowlist is only written if it doesn't already exist (so re-runs
 # preserve your customizations).
@@ -28,7 +29,7 @@ ENGINE="$SCRIPT_DIR/agent-sandbox"
 CONFIG_DIR="$HOME/.config/agent-sandbox"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 BIN_DIR="$HOME/.local/bin"
-MITMDUMP=/usr/bin/mitmdump # the proxy binary the unit runs
+STATE_DIR="${AGENT_SANDBOX_HOME:-$HOME/.local/share/agent-sandbox}" # proxy runtime lives here
 
 # ----- pretty output -----
 if [[ -t 1 ]] && command -v tput >/dev/null; then
@@ -105,12 +106,11 @@ ok "profiles: $(for f in "${profiles[@]}"; do basename -- "${f%.sh}"; done | tr 
 section "Packages"
 missing=()
 command -v bwrap >/dev/null || missing+=(bubblewrap)
-command -v mitmdump >/dev/null || missing+=(mitmproxy)
+command -v curl >/dev/null || missing+=(curl)
 if ((${#missing[@]} > 0)); then
   err "Missing required packages: ${missing[*]}. Run: sudo apt install ${missing[*]}"
 fi
 ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
-ok "mitmdump installed: $(mitmdump --version 2>/dev/null | head -1)"
 if command -v slirp4netns >/dev/null; then
   ok "slirp4netns installed (enables AGENT_SANDBOX_NET=strict in the future)"
 else
@@ -175,7 +175,49 @@ else
   ok "kernel does not restrict unprivileged userns; no profiles needed"
 fi
 
-# ----- 5. mitmproxy CA -----
+# ----- 5. the egress proxy: mitmproxy >= 12 in its own environment -----
+# Distro packages are too old (Ubuntu 24.04 ships 8.1.1, whose certificates
+# Python >= 3.13 rejects), so mitmproxy goes into a private environment under
+# $STATE_DIR: a Python venv when python3 >= 3.12 with venv is available, else
+# a conda/mamba env. An existing environment of either kind is reused.
+section "Egress proxy (mitmproxy)"
+MITMPROXY_SPEC='mitmproxy>=12,<13'
+PROXY_VENV="$STATE_DIR/proxy-venv"
+PROXY_CONDA="$STATE_DIR/proxy-env"
+python_has_venv() {
+  command -v python3 >/dev/null \
+    && python3 -c 'import sys, venv, ensurepip; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null
+}
+conda_cmd() { command -v mamba || command -v conda || true; }
+mkdir -p "$STATE_DIR"
+if [[ -x "$PROXY_VENV/bin/mitmdump" ]]; then
+  MITMDUMP="$PROXY_VENV/bin/mitmdump"
+  ok "reusing $PROXY_VENV"
+elif [[ -x "$PROXY_CONDA/bin/mitmdump" ]]; then
+  MITMDUMP="$PROXY_CONDA/bin/mitmdump"
+  ok "reusing $PROXY_CONDA"
+elif python_has_venv; then
+  info "Creating $PROXY_VENV and installing '$MITMPROXY_SPEC' with pip (about a minute)"
+  python3 -m venv "$PROXY_VENV"
+  "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check "$MITMPROXY_SPEC"
+  MITMDUMP="$PROXY_VENV/bin/mitmdump"
+  ok "installed into $PROXY_VENV"
+elif [[ -n "$(conda_cmd)" ]]; then
+  info "No python3 >= 3.12 with venv; creating $PROXY_CONDA with $(basename -- "$(conda_cmd)") (about a minute)"
+  "$(conda_cmd)" create -y -q -p "$PROXY_CONDA" -c conda-forge "$MITMPROXY_SPEC" >/dev/null
+  MITMDUMP="$PROXY_CONDA/bin/mitmdump"
+  ok "installed into $PROXY_CONDA"
+else
+  err "mitmproxy needs python3 >= 3.12 with venv (Debian/Ubuntu: sudo apt install python3-venv) or conda/mamba on PATH"
+fi
+proxy_version=$("$MITMDUMP" --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')
+[[ "${proxy_version%%.*}" -ge 12 ]] 2>/dev/null || err "$MITMDUMP reports version '${proxy_version:-?}'; need mitmproxy >= 12"
+ok "mitmdump $proxy_version at $MITMDUMP"
+if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" ]]; then
+  info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
+fi
+
+# ----- 6. mitmproxy CA -----
 section "mitmproxy CA cert"
 ca_in_store=/usr/local/share/ca-certificates/mitmproxy.crt
 if [[ -f "$ca_in_store" ]]; then
@@ -192,7 +234,7 @@ else
   if [[ -z "$ca_src" ]]; then
     info "Generating mitmproxy CA (one-time)"
     # Run mitmdump briefly to create ~/.mitmproxy with the CA.
-    mitmdump --listen-port 0 >/dev/null 2>&1 &
+    "$MITMDUMP" --listen-port 0 >/dev/null 2>&1 &
     _mp_pid=$!
     for _ in 1 2 3 4 5 6 7 8; do
       sleep 0.5
@@ -214,7 +256,7 @@ else
   ok "CA installed and trusted"
 fi
 
-# ----- 6. config files -----
+# ----- 7. config files -----
 section "Config files"
 # Migrate the pre-rename config dir if present (keeps your allowlist edits).
 if [[ -d "$HOME/.config/claude-sandbox" && ! -e "$CONFIG_DIR" ]]; then
@@ -223,7 +265,7 @@ if [[ -d "$HOME/.config/claude-sandbox" && ! -e "$CONFIG_DIR" ]]; then
 fi
 mkdir -p "$CONFIG_DIR" "$SYSTEMD_DIR"
 
-# 6a. allowlist_addon.py (static content; safe to overwrite on every run)
+# 7a. allowlist_addon.py (static content; safe to overwrite on every run)
 cat >"$CONFIG_DIR/allowlist_addon.py" <<'ADDON_EOF'
 """
 mitmproxy addon for agent-sandbox — host allowlist enforcement.
@@ -402,7 +444,7 @@ def responseheaders(flow: http.HTTPFlow) -> None:
 ADDON_EOF
 ok "wrote $CONFIG_DIR/allowlist_addon.py"
 
-# 6b. allowlist.txt: the generic starter is written only if absent (re-runs keep
+# 7b. allowlist.txt: the generic starter is written only if absent (re-runs keep
 # your edits); then every profile's seed hosts are appended if missing.
 if [[ -f "$CONFIG_DIR/allowlist.txt" ]]; then
   ok "$CONFIG_DIR/allowlist.txt already exists (kept as-is)"
@@ -468,7 +510,7 @@ for f in "${profiles[@]}"; do
   seed_allowlist "$(basename -- "${f%.sh}")" "$(profile_query "$f" profile_allowlist_seed)"
 done
 
-# 6c. systemd user unit (static; safe to overwrite)
+# 7c. systemd user unit (static; safe to overwrite)
 cat >"$SYSTEMD_DIR/agent-sandbox-mitmproxy.service" <<'UNIT_EOF'
 [Unit]
 Description=mitmproxy enforcing allowlist for the agent sandbox
@@ -499,7 +541,7 @@ UNIT_EOF
 sed -i -e "s|@ENGINE@|$ENGINE|g" -e "s|@MITMDUMP@|$MITMDUMP|g" "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 ok "wrote $SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 
-# ----- 7. systemd: reload, enable, start -----
+# ----- 8. systemd: reload, enable, start -----
 section "Systemd user service"
 # Migrate off the pre-rename unit if present: it also binds 127.0.0.1:8888, so
 # leaving it enabled would collide with agent-sandbox-mitmproxy.service.
@@ -519,7 +561,7 @@ else
   warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
 fi
 
-# ----- 8. PATH symlinks: one per profile command -> the engine -----
+# ----- 9. PATH symlinks: one per profile command -> the engine -----
 section "PATH symlinks (\$HOME/.local/bin/<agent> -> agent-sandbox)"
 mkdir -p "$BIN_DIR"
 commands=()
@@ -555,7 +597,7 @@ for cmd in "${commands[@]}"; do
   fi
 done
 
-# ----- 9. smoke test -----
+# ----- 10. smoke test -----
 section "Smoke tests"
 if bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true 2>/dev/null; then
   ok "bwrap can create user+pid namespaces"
@@ -573,7 +615,7 @@ case "$smoke_code" in
   *) warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
 esac
 
-# ----- 10. summary -----
+# ----- 11. summary -----
 section "Done"
 cat <<SUMMARY
 Next steps:
