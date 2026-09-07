@@ -159,9 +159,9 @@
 #                         with a profile, --help goes to the agent)
 #
 # Sensitive locations (~/.ssh, ~/.gnupg, ~/.aws, ~/.config/{gcloud,sops},
-# ~/.kube, ~/.docker, ~/.password-store) are refused both as CWD and as
-# AGENT_SANDBOX_RW targets. Paths that resolve to "/" or "$HOME" are
-# refused outright.
+# ~/.kube, ~/.docker, ~/.password-store) are refused as CWD and as
+# AGENT_SANDBOX_RO or _RW targets. Paths that resolve to "/", "$HOME" or a
+# parent of $HOME are refused outright, as CWD too.
 #
 # ============================================================================
 # UPDATING CLAUDE CODE
@@ -535,25 +535,26 @@ _as_split() {
   return 0
 }
 
-# Refuse user-supplied RW paths that pull the rug out from under the sandbox
-# or expose well-known secret stores.
-_as_check_rw_paths() {
-  local raw="${1:-}" p real
-  local -a rw=()
+# Refuse user-supplied RO/RW paths that pull the rug out from under the sandbox
+# (/, $HOME, or any parent of $HOME) or expose well-known secret stores. Reading
+# a key store is as bad as writing it, so RO gets the same check as RW.
+_as_check_paths() { # $1 = knob suffix (RO|RW), $2 = colon-separated list
+  local knob=$1 raw="${2:-}" p real
+  local -a parts=()
   [[ -z "$raw" ]] && return 0
-  _as_split rw ':' "$raw"
-  for p in "${rw[@]}"; do
+  _as_split parts ':' "$raw"
+  for p in "${parts[@]}"; do
     [[ -z "$p" ]] && continue
     real="$(readlink -f -- "$p" 2>/dev/null || echo "$p")"
+    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]]; then
+      _as_msg "refusing AGENT_SANDBOX_$knob='$p' (would expose all of '$real': \$HOME or a parent of it)."
+      return 1
+    fi
     case "$real" in
-      / | "$HOME")
-        _as_msg "refusing AGENT_SANDBOX_RW='$p' (would expose all of '$real' read-write)."
-        return 1
-        ;;
       "$HOME"/.ssh* | "$HOME"/.gnupg* | "$HOME"/.aws* | \
         "$HOME"/.config/gcloud* | "$HOME"/.config/sops* | \
         "$HOME"/.kube* | "$HOME"/.docker* | "$HOME"/.password-store*)
-        _as_msg "refusing AGENT_SANDBOX_RW='$p' (sensitive path '$real')."
+        _as_msg "refusing AGENT_SANDBOX_$knob='$p' (sensitive path '$real')."
         return 1
         ;;
     esac
@@ -1098,6 +1099,13 @@ agent_sandbox() (
     fi
   fi
 
+  # A CWD of / or of a parent of $HOME would be bound read-write and expose
+  # everything under it, $HOME included. Refuse; run from a project directory.
+  if [[ "$cwd" == / || "$HOME" == "$cwd"/* ]]; then
+    _as_msg "refusing to bind '$cwd' as CWD (it contains \$HOME). Run from a project directory."
+    return 1
+  fi
+
   # When CWD is $HOME we deliberately do *not* bind it: that would expose
   # the entire home directory. Only the explicit bindings below apply.
   local bind_cwd=1
@@ -1107,7 +1115,8 @@ agent_sandbox() (
       "the active conda env, and AGENT_SANDBOX_R{O,W} paths will be visible."
   fi
 
-  _as_check_rw_paths "$_knob_rw" || return 1
+  _as_check_paths RO "$_knob_ro" || return 1
+  _as_check_paths RW "$_knob_rw" || return 1
 
   local -a args=(
     # Minimal system view (all read-only). Note: anything under /usr (incl.
