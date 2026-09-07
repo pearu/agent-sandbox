@@ -170,11 +170,20 @@ review what the agent tried to reach and decide whether to add it.
 No restart needed when editing the allowlist; the file is re-read on
 each request.
 
-Server-sent event streams (text/event-stream) are forwarded chunk by chunk.
-mitmproxy buffers response bodies by default, which would hold back a
-streaming LLM reply until it is complete and trip the client's first-byte
-timeout on long turns. Nothing here inspects response bodies, so streaming
-them loses nothing (mitmproxy issue #4469).
+HTTPS is refused at the CONNECT stage for hosts not in the allowlist, so a
+blocked host never sees a connection from this machine (mitmproxy would
+otherwise open a TCP+TLS connection to it, to mirror its certificate, before
+the inner request could be checked). The client sees "CONNECT tunnel
+failed, response 403"; blocked.log records the host with method CONNECT.
+Requests inside an allowed tunnel are still checked per request, so paths
+are logged and a Host header naming another host is refused.
+
+Response bodies are streamed to the client as they arrive instead of being
+buffered to completion (mitmproxy's default), and the systemd unit runs
+mitmdump with http2=false. Together these take downloads and streaming LLM
+replies from ~1 MB/s with the first byte at the very end to near-native
+speed. Nothing here inspects response bodies, so streaming costs nothing;
+every allowlist decision is made before a body flows.
 """
 
 from __future__ import annotations
@@ -295,10 +304,22 @@ def request(flow: http.HTTPFlow) -> None:
     )
 
 
+def http_connect(flow: http.HTTPFlow) -> None:
+    """Refuse CONNECT to a non-allowed host before any upstream connection."""
+    host = flow.request.host
+    exact, suffix = _load_allowlist()
+    if _is_allowed(host, exact, suffix):
+        return
+    _log_blocked(host, "CONNECT", "-")
+    flow.response = http.Response.make(
+        403,
+        f"agent-sandbox: host {host!r} is not in the allowlist.\n".encode(),
+        {"Content-Type": "text/plain; charset=utf-8"},
+    )
+
+
 def responseheaders(flow: http.HTTPFlow) -> None:
-    ctype = flow.response.headers.get("content-type", "")
-    if ctype.startswith("text/event-stream"):
-        flow.response.stream = True
+    flow.response.stream = True
 ADDON_EOF
 ok "wrote $CONFIG_DIR/allowlist_addon.py"
 
@@ -362,12 +383,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# http2=false: mitmproxy's HTTP/2 path is pure Python and an order of magnitude
+# slower than HTTP/1.1; with response streaming in the addon this is near-native.
 ExecStart=/usr/bin/mitmdump \\
     --listen-host 127.0.0.1 \\
     --listen-port 8888 \\
     --set block_global=false \\
     --set termlog_verbosity=info \\
     --set flow_detail=0 \\
+    --set http2=false \\
     -s %h/.config/agent-sandbox/allowlist_addon.py
 Restart=on-failure
 RestartSec=2s
@@ -405,6 +429,9 @@ mkdir -p "$BIN_DIR"
 link="$BIN_DIR/claude"
 if [[ -L "$link" && "$(readlink -f "$link")" == "$ENGINE" ]]; then
   ok "symlink already pointing at $ENGINE"
+elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link")")" == claude.sh ]]; then
+  ln -sfn "$ENGINE" "$link"
+  ok "re-pointed $link from the legacy claude.sh wrapper -> $ENGINE"
 elif [[ -e "$link" ]]; then
   warn "$link exists and is not the expected symlink (left untouched)"
   info "If it's the upstream Claude Code binary you no longer want, remove it and re-run."
