@@ -87,7 +87,8 @@ Engine flags, before the agent's own arguments: `--profile NAME`,
 - [docs/updating.md](docs/updating.md), [docs/troubleshooting.md](docs/troubleshooting.md),
   [docs/prior-art.md](docs/prior-art.md).
 - [AGENTS.md](AGENTS.md): rules for AI maintainers; [CONTRIBUTING.md](CONTRIBUTING.md);
-  tests: `tests/run.sh` (bats, from `environment.yml`).
+  tests: `tests/run.sh` (bats, from `environment.yml`; `e2e` installs for real
+  into a throwaway HOME, opt-in).
 
 ## How it compares
 

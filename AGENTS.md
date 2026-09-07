@@ -22,7 +22,7 @@ sandbox. It is a security tool. Treat every change to it as one.
 | `scripts/check.sh` | Every check CI runs. Run it before committing. |
 | `environment.yml` | The development tooling env (`agent-sandbox` mamba env): git-filter-repo, shellcheck, shfmt. Anything you install into that env for development goes in here, so the env can be recreated. |
 | `docs/` | Design, threat model and residual risks (`docs/design.md`), network, SSH, profiles, prior art, troubleshooting. The trust surface for users. |
-| `tests/` | bats suites, run with `tests/run.sh`: `unit/` (engine helpers, flags, the bwrap argv, the claude profile, the proxy addon with a stubbed mitmproxy, the installer's dry run), `integration/` (the real bwrap with a probe profile), `live/` (opt-in, real network and the host's proxy). Harness in `tests/helpers/`. |
+| `tests/` | bats suites, run with `tests/run.sh`: `unit/` (engine helpers, flags, the bwrap argv, the claude profile, the proxy addon with a stubbed mitmproxy, the installer's dry run), `integration/` (the real bwrap with a probe profile), `live/` (opt-in, real network and the host's proxy), `e2e/` (opt-in: `install.sh` for real against a throwaway HOME with a fake Claude binary and a `systemctl` shim, then the installed launcher through the installed proxy). Harness in `tests/helpers/`. |
 
 ## The engine is security-sensitive
 
@@ -78,6 +78,14 @@ runs them directly, and `AGENT_SANDBOX_LIVE=1` enables the live tests.
   lines to `$PWD/report` from inside the sandbox. They `skip` when unprivileged
   user namespaces are unavailable. SSH tests need a short session base because
   of the unix-socket path limit; `make_short_base` provides one.
+- **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): a
+  fake Claude binary (`tests/helpers/fake-claude.sh`) is planted where the
+  profile discovers it, `systemctl --user` is a shim
+  (`tests/helpers/systemctl-shim.sh`) that records calls and runs the unit's
+  ExecStart itself, and the installed launcher then runs the fake agent through
+  the installed proxy. The proxy-dependent tests need port 8888 free and skip
+  otherwise, which is the case on a machine that already runs the proxy;
+  `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips the pip install.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
   stands in for `mitmproxy.http`, and `addon_driver.py` runs one scenario.
 - **A test must fail when the bug it guards is re-introduced.** Check that with
@@ -153,6 +161,12 @@ If you are an agent running inside this sandbox while maintaining it:
   checksums or signatures, so a secure route must pin a SHA256 per version and
   architecture in this repo. Deliberately not implemented: narrow audience
   (no `python3-venv` and no conda), maintenance per release, not CI-testable.
+- **Roadmap: a no-systemd mode.** Claude Code runs under WSL and in
+  devcontainers; WSL without systemd would need the proxy started another way,
+  and containers additionally block bwrap's user namespaces under Docker's
+  default seccomp profile. An installer flag is a few lines, but the lifecycle
+  it implies (start at login, restart on failure, where the log goes) is not.
+  Deliberately deferred; the end-to-end test uses a `systemctl` shim instead.
 - **CA trust is sandbox-only**: the engine binds (system bundle + proxy CA)
   over `/etc/ssl/certs/ca-certificates.crt` inside the sandbox. No system-wide
   trust, no sudo for it. Kept over TLS passthrough (SNI-only allowlisting) after

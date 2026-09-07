@@ -127,6 +127,12 @@ Stated plainly. These are what the adversary above can still do.
 
 ## Open design questions
 
+- **Running without a user systemd** (WSL with systemd disabled, containers).
+  The installer and the unit assume `systemctl --user`. A no-systemd mode needs
+  a story for starting the proxy at login, restarting it on failure and
+  logging, not only a flag; and under Docker's default seccomp profile bwrap's
+  user namespaces are blocked anyway. Deferred.
+
 Recorded so they are not re-derived from scratch; each has measurements or
 reasons attached in the repository history.
 

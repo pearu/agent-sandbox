@@ -32,4 +32,7 @@ generalized.
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with
   the real bwrap and a probe profile, opt-in live), run by `scripts/check.sh`;
-  each guarantee in `docs/design.md` names the test that checks it.
+  each guarantee in `docs/design.md` names the test that checks it. An opt-in
+  end-to-end test installs for real into a throwaway HOME with a fake Claude
+  binary and a `systemctl` shim, then runs the fake agent through the installed
+  proxy.
