@@ -47,11 +47,59 @@ err() {
 }
 info() { printf '    %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
+# ----- profiles -----
+# Everything agent-specific lives in profiles/<name>.sh (see the contract in
+# profiles/claude.sh). The installer loads a profile the way the engine does,
+# in a subshell, to ask it for its command name, allowlist seed and binary.
+shopt -s nullglob
+profiles=("$SCRIPT_DIR"/profiles/*.sh)
+shopt -u nullglob
+profile_query() { # $1 = profile file, $2.. = variable names to print, one per line
+  local f=$1
+  shift
+  (
+    # The contract the engine provides to a profile; only the sourced file uses it.
+    # shellcheck disable=SC2034,SC2329
+    _as_msg() { :; }
+    # shellcheck disable=SC2034
+    AGENT_SANDBOX_ENGINE=$ENGINE AGENT_SANDBOX_PROFILE_DIR=$SCRIPT_DIR/profiles
+    AGENT_SANDBOX_PROFILE=$(basename -- "${f%.sh}")
+    # shellcheck disable=SC2034
+    profile_command=$AGENT_SANDBOX_PROFILE profile_allowlist_seed=""
+    # shellcheck disable=SC1090
+    source "$f"
+    for v in "$@"; do printf '%s\n' "${!v}"; done
+  )
+}
+profile_probe_bin() { # $1 = profile file; prints "ok <version> <path>" or "missing <reason>"
+  local f=$1
+  (
+    # shellcheck disable=SC2034,SC2329
+    _as_msg() { printf '%s\n' "$*" >&2; }
+    # shellcheck disable=SC2034
+    AGENT_SANDBOX_ENGINE=$ENGINE AGENT_SANDBOX_PROFILE_DIR=$SCRIPT_DIR/profiles
+    AGENT_SANDBOX_PROFILE=$(basename -- "${f%.sh}")
+    # shellcheck disable=SC2034
+    profile_command=$AGENT_SANDBOX_PROFILE profile_bin="" profile_version=""
+    # shellcheck disable=SC1090
+    source "$f"
+    # Run discovery in this shell (not a $(...) subshell) so its results are visible.
+    reason_file=$(mktemp)
+    if profile_bin_discover 2>"$reason_file"; then
+      printf 'ok %s %s\n' "$profile_version" "$profile_bin"
+    else
+      printf 'missing %s\n' "$(tr '\n' ' ' <"$reason_file")"
+    fi
+    rm -f "$reason_file"
+  )
+}
+
 # ----- 1. sanity -----
 section "Sanity check"
 [[ -f "$ENGINE" ]] || err "agent-sandbox engine not found at $ENGINE (keep it next to this installer)"
-[[ -f "$SCRIPT_DIR/profiles/claude.sh" ]] || err "claude profile not found at $SCRIPT_DIR/profiles/claude.sh"
+((${#profiles[@]} > 0)) || err "no profiles found under $SCRIPT_DIR/profiles/"
 ok "found $ENGINE"
+ok "profiles: $(for f in "${profiles[@]}"; do basename -- "${f%.sh}"; done | tr '\n' ' ')"
 
 # ----- 2. packages -----
 section "Packages"
@@ -69,23 +117,22 @@ else
   info "slirp4netns not installed; only needed for the (currently non-functional) strict mode"
 fi
 
-# ----- 3. claude itself -----
-section "Claude Code installation"
-versions_dir="$HOME/.local/share/claude/versions"
-if [[ ! -d "$versions_dir" ]]; then
-  warn "No installation found at $versions_dir"
-  info "Install Claude Code first (https://docs.anthropic.com/claude-code), then re-run."
-else
-  latest=$(
-    find "$versions_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) \
-      -printf '%f\n' 2>/dev/null | sort -V | tail -n1
-  )
-  if [[ -n "${latest:-}" ]]; then
-    ok "latest version: $latest"
-  else
-    warn "$versions_dir exists but is empty"
-  fi
-fi
+# ----- 3. the agents themselves, one per profile -----
+section "Agent binaries"
+for f in "${profiles[@]}"; do
+  name=$(basename -- "${f%.sh}")
+  probe=$(profile_probe_bin "$f")
+  case "$probe" in
+    ok\ *)
+      read -r _ ver bin <<<"$probe"
+      ok "$name: version $ver at $bin"
+      ;;
+    *)
+      warn "$name: not installed yet (${probe#missing })"
+      info "Install it, then re-run; the sandbox launcher is set up regardless."
+      ;;
+  esac
+done
 
 # ----- 4. AppArmor profiles (Ubuntu 24.04+) -----
 section "AppArmor profiles for bwrap (and slirp4netns)"
@@ -355,7 +402,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
 ADDON_EOF
 ok "wrote $CONFIG_DIR/allowlist_addon.py"
 
-# 6b. allowlist.txt (customizable; only write if it doesn't already exist)
+# 6b. allowlist.txt: the generic starter is written only if absent (re-runs keep
+# your edits); then every profile's seed hosts are appended if missing.
 if [[ -f "$CONFIG_DIR/allowlist.txt" ]]; then
   ok "$CONFIG_DIR/allowlist.txt already exists (kept as-is)"
 else
@@ -368,13 +416,9 @@ else
 #
 # Blocked requests are logged to ~/.config/agent-sandbox/blocked.log;
 # tail it (`tail -f ~/.config/agent-sandbox/blocked.log`) to see what
-# the agent is trying to reach and add hosts here as needed.
-
-# ---- Anthropic ----
-api.anthropic.com
-.anthropic.com
-statsigapi.net
-.statsig.com
+# the agent is trying to reach and add hosts here as needed. Hosts an agent
+# profile needs (e.g. api.anthropic.com for claude) are appended by install.sh
+# from profiles/<name>.allowlist.
 
 # ---- Git / code hosting ----
 github.com
@@ -404,6 +448,25 @@ static.crates.io
 ALLOW_EOF
   ok "wrote starter $CONFIG_DIR/allowlist.txt"
 fi
+seed_allowlist() { # $1 = profile name, $2 = its seed file
+  local name=$1 seed=$2 line host added=0
+  [[ -r "$seed" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    host=${line%%#*}
+    host=${host//[[:space:]]/}
+    [[ -z "$host" ]] && continue
+    if sed 's/#.*//; s/[[:space:]]//g' "$CONFIG_DIR/allowlist.txt" | grep -qxF -- "$host"; then
+      continue
+    fi
+    ((added == 0)) && printf '\n# ---- %s profile (added by install.sh) ----\n' "$name" >>"$CONFIG_DIR/allowlist.txt"
+    printf '%s\n' "$host" >>"$CONFIG_DIR/allowlist.txt"
+    added=$((added + 1))
+  done <"$seed"
+  if ((added > 0)); then ok "allowlist: added $added host(s) for the $name profile"; else ok "allowlist: $name profile hosts already present"; fi
+}
+for f in "${profiles[@]}"; do
+  seed_allowlist "$(basename -- "${f%.sh}")" "$(profile_query "$f" profile_allowlist_seed)"
+done
 
 # 6c. systemd user unit (static; safe to overwrite)
 cat >"$SYSTEMD_DIR/agent-sandbox-mitmproxy.service" <<'UNIT_EOF'
@@ -456,34 +519,41 @@ else
   warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
 fi
 
-# ----- 8. PATH symlink -----
-section "PATH symlink (\$HOME/.local/bin/claude -> agent-sandbox)"
+# ----- 8. PATH symlinks: one per profile command -> the engine -----
+section "PATH symlinks (\$HOME/.local/bin/<agent> -> agent-sandbox)"
 mkdir -p "$BIN_DIR"
-link="$BIN_DIR/claude"
-if [[ -L "$link" && "$(readlink -f "$link")" == "$ENGINE" ]]; then
-  ok "symlink already pointing at $ENGINE"
-elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link")")" == claude.sh ]]; then
-  ln -sfn "$ENGINE" "$link"
-  ok "re-pointed $link from the legacy claude.sh wrapper -> $ENGINE"
-elif [[ -e "$link" ]]; then
-  warn "$link exists and is not the expected symlink (left untouched)"
-  info "If it's the upstream Claude Code binary you no longer want, remove it and re-run."
-else
-  ln -s "$ENGINE" "$link"
-  ok "symlinked $link -> $ENGINE"
-fi
-
-# Verify $HOME/.local/bin precedes any other claude on PATH. The engine
-# infers the claude profile from the symlink name.
-if command -v claude >/dev/null; then
-  resolved=$(readlink -f "$(command -v claude)")
-  if [[ "$resolved" == "$ENGINE" ]]; then
-    ok "\`claude\` on PATH resolves to the agent-sandbox engine"
+commands=()
+for f in "${profiles[@]}"; do
+  cmd=$(profile_query "$f" profile_command)
+  commands+=("$cmd")
+  link="$BIN_DIR/$cmd"
+  if [[ -L "$link" && "$(readlink -f "$link")" == "$ENGINE" ]]; then
+    ok "$link already points at the engine"
+  elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link")")" == claude.sh ]]; then
+    ln -sfn "$ENGINE" "$link"
+    ok "re-pointed $link from the legacy claude.sh wrapper -> $ENGINE"
+  elif [[ -e "$link" ]]; then
+    warn "$link exists and is not the expected symlink (left untouched)"
+    info "If it is the agent's own binary you no longer want on PATH, remove it and re-run."
   else
-    warn "\`claude\` on PATH resolves to $resolved (not our wrapper)"
-    info "Ensure $BIN_DIR comes before other claude installations in PATH."
+    ln -s "$ENGINE" "$link"
+    ok "symlinked $link -> $ENGINE"
   fi
-fi
+done
+
+# Verify $HOME/.local/bin precedes any other copy of each command on PATH; the
+# engine infers the profile from the symlink name.
+for cmd in "${commands[@]}"; do
+  if command -v "$cmd" >/dev/null; then
+    resolved=$(readlink -f "$(command -v "$cmd")")
+    if [[ "$resolved" == "$ENGINE" ]]; then
+      ok "\`$cmd\` on PATH resolves to the agent-sandbox engine"
+    else
+      warn "\`$cmd\` on PATH resolves to $resolved (not the engine)"
+      info "Ensure $BIN_DIR comes before other $cmd installations in PATH."
+    fi
+  fi
+done
 
 # ----- 9. smoke test -----
 section "Smoke tests"
@@ -507,9 +577,9 @@ esac
 section "Done"
 cat <<SUMMARY
 Next steps:
-  - Open a fresh shell (or \`hash -r\`) so the new \`claude\` is on PATH.
-  - cd into a project and run \`claude\`.
+  - Open a fresh shell (or \`hash -r\`) so the new command(s) are on PATH: ${commands[*]}
+  - cd into a project and run one of them.
   - Tail blocked requests:  tail -f $CONFIG_DIR/blocked.log
   - Edit the allowlist:     \$EDITOR $CONFIG_DIR/allowlist.txt
-  - Bypass proxy one-shot:  AGENT_SANDBOX_NET=open claude
+  - Bypass proxy one-shot:  AGENT_SANDBOX_NET=open ${commands[0]}
 SUMMARY

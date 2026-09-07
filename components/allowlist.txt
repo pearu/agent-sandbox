@@ -6,13 +6,9 @@
 #
 # Blocked requests are logged to ~/.config/agent-sandbox/blocked.log;
 # tail it (`tail -f ~/.config/agent-sandbox/blocked.log`) to see what
-# the agent is trying to reach and add hosts here as needed.
-
-# ---- Anthropic ----
-api.anthropic.com
-.anthropic.com
-statsigapi.net
-.statsig.com
+# the agent is trying to reach and add hosts here as needed. Hosts an agent
+# profile needs (e.g. api.anthropic.com for claude) are appended by install.sh
+# from profiles/<name>.allowlist.
 
 # ---- Git / code hosting ----
 github.com
