@@ -72,6 +72,11 @@
 #     $HOME/.conda  (if conda is active)    likewise: conda's registry and
 #                                           fallback dirs, ephemeral
 #     ~/.condarc, ~/.mambarc  (if present)  read-only
+#   /etc/ssl/certs/ca-certificates.crt     (proxy mode) the host's CA bundle
+#                                           plus the egress proxy's CA, so TLS
+#                                           interception is trusted inside the
+#                                           sandbox only; the host never trusts
+#                                           that CA
 #     $CWD                                  read-write (unless CWD == $HOME,
 #                                           in which case nothing extra is
 #                                           bound — refuse to expose all of
@@ -107,6 +112,8 @@
 #                                       (default ~/.cache/agent-sandbox/conda-pkgs;
 #                                       persistent, so large packages are not
 #                                       re-downloaded every session)
+#   AGENT_SANDBOX_PROXY_CA=/file       the egress proxy's CA certificate
+#                                       (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
 #   AGENT_SANDBOX_NET=proxy|strict|open|none  network mode (default: proxy)
 #       proxy  : --share-net plus HTTPS_PROXY pointing at a host-side
 #                mitmproxy that enforces ~/.config/agent-sandbox/allowlist.txt.
@@ -301,13 +308,12 @@
 #   1. slirp4netns + mitmproxy installed:
 #        sudo apt install slirp4netns mitmproxy
 #
-#   2. mitmproxy's CA cert trusted system-wide (so TLS interception works
-#      for the agent, node, curl, git, pip, ...):
-#        mitmdump --listen-port 0 &   # one-time, to materialise the CA
-#        sleep 1; kill %1
-#        sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem \
-#                /usr/local/share/ca-certificates/mitmproxy.crt
-#        sudo update-ca-certificates
+#   2. mitmproxy's CA, which mitmdump writes to ~/.mitmproxy/ on first start
+#      (install.sh does this). It is NOT installed into the system trust
+#      store: in proxy mode the engine binds (system bundle + this CA) over
+#      /etc/ssl/certs/ca-certificates.crt inside the sandbox, so everything in
+#      there trusts the proxy and nothing on the host does. Override the CA's
+#      location with AGENT_SANDBOX_PROXY_CA.
 #
 #   3. The user systemd service that runs mitmdump with the allowlist
 #      addon enabled and started:
@@ -362,17 +368,16 @@
 #
 #   Every HTTPS request fails with cert errors (UNABLE_TO_VERIFY_LEAF_SIGNATURE,
 #   SSL_ERROR_BAD_CERT_DOMAIN, ...)
-#       mitmproxy's CA cert isn't trusted. Run:
-#         sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem \
-#                 /usr/local/share/ca-certificates/mitmproxy.crt
-#         sudo update-ca-certificates
-#       Tools with a private CA store (conda/mamba, pip, a conda-provided git,
-#       node, npm, cargo) are covered: in proxy mode the engine points
-#       SSL_CERT_FILE, SSL_CERT_DIR, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE,
-#       CONDA_SSL_VERIFY, PIP_CERT, GIT_SSL_CAINFO, NODE_EXTRA_CA_CERTS,
-#       NPM_CONFIG_CAFILE and CARGO_HTTP_CAINFO at the system bundle unless
-#       you set them yourself. A tool with yet another knob needs it forwarded
-#       via AGENT_SANDBOX_PASSENV.
+#       The proxy CA is not reaching the sandbox. The engine binds it over the
+#       system bundle when ~/.mitmproxy/mitmproxy-ca-cert.pem exists (or the
+#       file named by AGENT_SANDBOX_PROXY_CA) and warns at launch if it does
+#       not; run install.sh to (re)generate the CA. Tools with a private CA
+#       store (conda/mamba, pip, a conda-provided git, node, npm, cargo) are
+#       covered too: the engine points SSL_CERT_FILE, SSL_CERT_DIR,
+#       REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, CONDA_SSL_VERIFY, PIP_CERT,
+#       GIT_SSL_CAINFO, NODE_EXTRA_CA_CERTS, NPM_CONFIG_CAFILE and
+#       CARGO_HTTP_CAINFO at that bundle unless you set them yourself. A tool
+#       with yet another knob needs it forwarded via AGENT_SANDBOX_PASSENV.
 #
 #   "certificate verify failed: Missing Authority Key Identifier" (Python 3.13+)
 #       Python 3.13 verifies certificates strictly, and mitmproxy 8.x mints leaf
@@ -459,6 +464,9 @@
 #     The key stays on the host, but while the session lives the sandbox can
 #     authenticate to the permitted host(s) as you (any host, if
 #     unrestricted). SSH egress is not filtered by the proxy allowlist.
+#   - The egress proxy's CA is trusted inside the sandbox only, by binding it
+#     into the CA bundle there; the host's trust store is never touched and
+#     the CA's private key (~/.mitmproxy on the host) is not visible inside.
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -499,6 +507,7 @@ Environment knobs:
   AGENT_SANDBOX_PASSENV="A B"   extra environment variables to forward
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
+  AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_PROFILE_DIR     where profiles live
   AGENT_SANDBOX_SESSION_BASE    where per-session state lives
@@ -783,22 +792,58 @@ _as_allow_setup() {
   return 0
 }
 
-# The proxy terminates TLS with its own CA, which install.sh puts in the system
-# store. Tools that ship their own CA bundle (conda/mamba, pip, a conda git,
-# node, npm, cargo, anything honouring SSL_CERT_FILE) never look there, so in
-# the modes that go through the proxy point every well-known override at the
-# system bundle. Names the caller set were forwarded already and are left alone.
-_as_ca_env() {
-  local bundle="${SSL_CERT_FILE:-}" cand var
-  if [[ -z "$bundle" ]]; then
-    for cand in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem; do
-      [[ -r "$cand" ]] && {
-        bundle="$cand"
-        break
-      }
-    done
+# The system CA bundle (Debian/Ubuntu/Arch, Fedora/RHEL, openSUSE), or fail.
+_as_system_ca_bundle() {
+  local cand
+  for cand in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem; do
+    [[ -r "$cand" ]] && {
+      printf '%s' "$cand"
+      return 0
+    }
+  done
+  return 1
+}
+
+# Trust the egress proxy's CA inside the sandbox only. The proxy terminates TLS
+# with a CA mitmproxy generates on first start (~/.mitmproxy/mitmproxy-ca-cert.pem,
+# or AGENT_SANDBOX_PROXY_CA). Rather than installing it into the host's trust
+# store (root, and every host process would trust it), bind a bundle made of the
+# system bundle plus that CA over the system bundle's path inside the sandbox.
+# Everything in there trusts the proxy; nothing on the host does. The bundle is
+# kept under the per-user session base and rebuilt when either input is newer.
+_as_ca_bind() {
+  local bundle ca base combined tmp
+  ca="${AGENT_SANDBOX_PROXY_CA:-$HOME/.mitmproxy/mitmproxy-ca-cert.pem}"
+  bundle="$(_as_system_ca_bundle)" || {
+    _as_msg "warning — no system CA bundle found; the proxy CA cannot be trusted inside the sandbox"
+    return 0
+  }
+  [[ -r "$ca" ]] || {
+    _as_msg "warning — proxy CA '$ca' not found: HTTPS through the proxy will fail (run install.sh, or set AGENT_SANDBOX_PROXY_CA)"
+    return 0
+  }
+  base="$(_as_session_base)"
+  { mkdir -p "$base" 2>/dev/null && chmod 700 "$base"; } || {
+    _as_msg "warning — cannot create $base; proxy CA not bound"
+    return 0
+  }
+  combined="$base/ca-bundle.crt"
+  if [[ ! -s "$combined" || "$bundle" -nt "$combined" || "$ca" -nt "$combined" ]]; then
+    tmp="$(mktemp "$base/ca-bundle.XXXXXX")" || return 0
+    cat "$bundle" "$ca" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$combined"
   fi
-  [[ -n "$bundle" ]] || {
+  args+=(--ro-bind "$combined" "$bundle")
+  return 0
+}
+
+# Tools that ship their own CA bundle (conda/mamba, pip, a conda git, node, npm,
+# cargo, anything honouring SSL_CERT_FILE) never read the system bundle, so in
+# the modes that go through the proxy point every well-known override at it --
+# inside the sandbox that path holds the bundle _as_ca_bind prepared. Names the
+# caller set were forwarded already and are left alone.
+_as_ca_env() {
+  local bundle="${SSL_CERT_FILE:-}" var
+  [[ -n "$bundle" ]] || bundle="$(_as_system_ca_bundle)" || {
     _as_msg "warning — no system CA bundle found; tools with a private CA store will not trust the proxy"
     return 0
   }
@@ -1319,6 +1364,7 @@ agent_sandbox() (
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
+      _as_ca_bind
       _as_ca_env
       _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
@@ -1335,6 +1381,7 @@ agent_sandbox() (
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
+      _as_ca_bind
       _as_ca_env
 
       # Coordinate bwrap and slirp4netns: bwrap writes its child PID to fd 19

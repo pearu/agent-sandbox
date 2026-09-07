@@ -254,45 +254,32 @@ if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" 
   info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
 fi
 
-# ----- 6. mitmproxy CA -----
-section "mitmproxy CA cert"
-ca_in_store=/usr/local/share/ca-certificates/mitmproxy.crt
-if [[ -f "$ca_in_store" ]]; then
-  ok "CA already in system store"
+# ----- 6. mitmproxy CA: generated on the host, trusted only inside sandboxes -----
+# The engine binds (system bundle + this CA) over the system bundle's path in
+# every sandbox, so nothing on the host has to trust it and no root is needed.
+section "mitmproxy CA"
+PROXY_CA="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+if [[ -f "$PROXY_CA" ]]; then
+  ok "CA present: $PROXY_CA"
+elif ((DRY_RUN)); then
+  info "(dry-run) would start mitmdump once to generate $PROXY_CA"
 else
-  ca_src=""
-  for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
-    [[ -f "$cand" ]] && {
-      ca_src="$cand"
-      break
-    }
+  info "Generating the CA (one-time): starting mitmdump briefly"
+  "$MITMDUMP" --listen-port 0 >/dev/null 2>&1 &
+  _mp_pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    [[ -f "$PROXY_CA" ]] && break
   done
-  if [[ -z "$ca_src" ]] && ((DRY_RUN)); then
-    info "(dry-run) would generate the mitmproxy CA and trust it system-wide"
-  elif [[ -z "$ca_src" ]]; then
-    info "Generating mitmproxy CA (one-time)"
-    # Run mitmdump briefly to create ~/.mitmproxy with the CA.
-    "$MITMDUMP" --listen-port 0 >/dev/null 2>&1 &
-    _mp_pid=$!
-    for _ in 1 2 3 4 5 6 7 8; do
-      sleep 0.5
-      for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
-        [[ -f "$cand" ]] && {
-          ca_src="$cand"
-          break 2
-        }
-      done
-    done
-    kill "$_mp_pid" 2>/dev/null
-    wait "$_mp_pid" 2>/dev/null || true
-    [[ -n "$ca_src" ]] || err "Could not find or generate ~/.mitmproxy/mitmproxy-ca-cert.{pem,cer}"
-  fi
-  if [[ -n "$ca_src" ]]; then
-    info "Installing CA into system store (requires sudo)"
-    run_sys sudo cp "$ca_src" "$ca_in_store"
-    run_sys sudo update-ca-certificates
-    ((DRY_RUN)) || ok "CA installed and trusted"
-  fi
+  kill "$_mp_pid" 2>/dev/null
+  wait "$_mp_pid" 2>/dev/null || true
+  [[ -f "$PROXY_CA" ]] || err "mitmdump did not create $PROXY_CA"
+  ok "CA generated: $PROXY_CA"
+fi
+info "trusted inside sandboxes only; the host's trust store is not touched"
+if [[ -f /usr/local/share/ca-certificates/mitmproxy.crt ]]; then
+  warn "an earlier install trusted this CA system-wide, which is no longer needed. To undo:"
+  info "  sudo rm /usr/local/share/ca-certificates/mitmproxy.crt && sudo update-ca-certificates --fresh"
 fi
 
 # ----- 7. config files -----
@@ -429,7 +416,7 @@ fi
 if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
 else
-  smoke_code=$(curl -sS --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
+  smoke_code=$(curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
     https://api.anthropic.com/v1/models 2>/dev/null || true)
   case "$smoke_code" in
     200 | 401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
