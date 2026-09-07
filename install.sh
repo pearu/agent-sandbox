@@ -459,11 +459,16 @@ if bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true 2>/dev/null; th
 else
   warn "bwrap user-namespace test failed — see the agent-sandbox header for AppArmor notes"
 fi
-if curl -fsS --proxy http://127.0.0.1:8888 -o /dev/null https://api.anthropic.com 2>/dev/null; then
-  ok "mitmproxy reached api.anthropic.com (allowlist working)"
-else
-  warn "mitmproxy test request failed (might be transient; check 'systemctl --user status agent-sandbox-mitmproxy')"
-fi
+# api.anthropic.com answers 404 for / and 401 for /v1/models without a key;
+# either proves the request went through the proxy to Anthropic. 000 means the
+# proxy is down or refused the CONNECT (host missing from the allowlist).
+smoke_code=$(curl -sS --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
+               https://api.anthropic.com/v1/models 2>/dev/null || true)
+case "$smoke_code" in
+  200|401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
+  000)     warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
+  *)       warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
+esac
 
 # ----- 10. summary -----
 section "Done"
