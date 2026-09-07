@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Repository checks, the same ones CI runs: syntax, shellcheck, shfmt (settings
 # come from .editorconfig), the Python components compile, install.sh is in
-# sync with install.sh.in + components/, and the installer's --dry-run works
-# against a throwaway HOME. Run from anywhere: scripts/check.sh
+# sync with install.sh.in + components/, the installer's --dry-run works
+# against a throwaway HOME, and the bats suites (unit + integration) when
+# `bats` is on PATH (it comes from environment.yml). Run from anywhere:
+# scripts/check.sh
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 step() { printf '\n==> %s\n' "$*"; }
-shell_files=(agent-sandbox install.sh install.sh.in scripts/*.sh profiles/*.sh)
+shell_files=(agent-sandbox install.sh install.sh.in scripts/*.sh profiles/*.sh tests/run.sh tests/helpers/*.sh tests/helpers/*.bash)
 
 step "bash -n"
 for f in "${shell_files[@]}"; do bash -n "$f"; done
@@ -42,5 +44,12 @@ grep -q 'symlinked .*/claude' "$tmp/dry.out" || {
   cat "$tmp/dry.out" >&2
   exit 1
 }
+
+step "bats: unit + integration (tests/run.sh)"
+if command -v bats >/dev/null; then
+  tests/run.sh
+else
+  echo "bats not on PATH; skipping the test suites (mamba env update -n agent-sandbox -f environment.yml)" >&2
+fi
 
 printf '\nall checks passed\n'

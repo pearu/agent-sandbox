@@ -7,7 +7,7 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[{*.sh,*.sh.in,agent-sandbox}]
+[{*.sh,*.sh.in,*.bash,*.bats,agent-sandbox}]
 indent_style = space
 indent_size = 2
 binary_next_line = true
