@@ -37,12 +37,12 @@
 #   conda activate myenv     # optional; the active env is forwarded
 #   claude                   # launches sandboxed claude with CWD writable
 #   claude update            # self-update; runs the native updater on the
-#                            # host, unsandboxed (see UPDATING CLAUDE CODE)
+#                            # host, unsandboxed (see docs/updating.md)
 #   claude --ssh github.com  # + git push / ssh to github.com through a
 #                            # per-session ssh-agent; the private key never
-#                            # enters the sandbox (see SSH ACCESS)
+#                            # enters the sandbox (see docs/ssh.md)
 #   claude --allow pypi.org  # + HTTPS to pypi.org through the egress proxy,
-#                            # for this session only (see ENGINE FLAGS)
+#                            # for this session only (see ENGINE FLAGS below)
 #
 # ============================================================================
 # SANDBOX LAYOUT (what the agent sees)
@@ -84,7 +84,7 @@
 #   network                                 By default: --share-net plus
 #                                           HTTPS_PROXY pointing at a host-
 #                                           side mitmproxy with an allowlist
-#                                           (see "Network modes" below).
+#                                           (see docs/network.md).
 #                                           Override per-invocation via
 #                                           AGENT_SANDBOX_NET=open|strict|none.
 #
@@ -154,7 +154,7 @@
 #                         --allow hosts are reachable from every concurrent
 #                         session on the host as well.
 #   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
-#                         see SSH ACCESS below
+#                         see docs/ssh.md
 #   -h, --help            engine usage (only when no profile is selected;
 #                         with a profile, --help goes to the agent)
 #
@@ -164,309 +164,23 @@
 # parent of $HOME are refused outright, as CWD too.
 #
 # ============================================================================
-# UPDATING CLAUDE CODE
+# DOCUMENTATION
 # ============================================================================
 #
-# `claude update` (alias `upgrade`) and `claude install [target]` are
-# intercepted by the claude profile and run with the newest installed binary
-# directly on the host, NOT inside the sandbox. Inside the sandbox they
-# cannot work: the proxy allowlist blocks downloads.claude.ai, the versions
-# directory is not bound, and DISABLE_AUTOUPDATER=1 is set (so a sandboxed
-# session never tries to self-update on its own either).
-#
-# The native updater installs the new release under
-# $HOME/.local/share/claude/versions/<version>. This wrapper always runs the
-# highest version found there, so the update takes effect on the next
-# launch. As of Claude Code 2.1.263 the updater refuses to overwrite a
-# launcher at $HOME/.local/bin/claude that is not its own versions/ symlink
-# (it logs "Not replacing ..." and still reports success), so the wrapper
-# stays on PATH. Should an installer re-point the launcher anyway, the
-# wrapper restores it right after the subcommand finishes.
-#
-# Because the launcher is not installer-managed, Claude Code skips its
-# automatic cleanup of old versions (~215 MB each). Prune by hand:
-#   ls ~/.local/share/claude/versions/     # then rm the ones you don't need
-#
-# ============================================================================
-# SSH ACCESS (git push, remote hosts)
-# ============================================================================
-#
-# By default a session has NO SSH credentials: nothing under ~/.ssh is bound
-# and no agent socket is forwarded, so it cannot push, cannot ssh anywhere,
-# and cannot post to a remote. That is the "locked" tier and needs no flag.
-#
-# Flags (engine flags; they must come BEFORE the agent's arguments and are
-# stripped before the agent sees the command line):
-#
-#   --ssh HOST            allow SSH to HOST. Repeatable. HOST is anything ssh
-#                         accepts: a hostname, user@host, or an alias from
-#                         ~/.ssh/config (HostName/User/Port/IdentityFile are
-#                         honoured -- resolution is done on the host with
-#                         `ssh -G`).
-#   --ssh-unrestricted    allow SSH anywhere the key is accepted. Mutually
-#                         exclusive with --ssh HOST. The escape hatch.
-#   --ssh-key PATH        private key to use. Default: the first readable
-#                         IdentityFile ssh itself would try for that host
-#                         (config-aware, FIDO *_sk keys skipped).
-#   --ssh-timeout LIFE    expire the loaded key after LIFE (seconds, or
-#                         e.g. 30m, 2h). Off unless given.
-#
-# How it works: agent-sandbox starts a FRESH ssh-agent for this session only,
-# loads the key into it, binds just that agent's unix socket into the
-# sandbox and exports SSH_AUTH_SOCK. ssh/git inside ask the host agent to
-# sign; the private key itself is never visible in the sandbox. When the
-# session ends the agent is killed and its socket removed. An agent orphaned
-# by an uncatchable kill (SIGKILL of the wrapper) is reaped by the next --ssh
-# launch's janitor, which skips still-running sessions, so it is safe with
-# concurrent sessions. Session state lives under
-# ${XDG_RUNTIME_DIR:-/tmp}/agent-sandbox.<uid>/.
-#
-# Per-host enforcement: with --ssh HOST the key is loaded with an OpenSSH
-# destination constraint (ssh-add -h, OpenSSH >= 8.9). The AGENT then
-# refuses to sign for any other host -- verified: for a non-permitted host
-# the key is not even offered. This matters because SSH is a raw socket and
-# shares the host network namespace in "proxy" mode, so the mitmproxy
-# allowlist cannot see or filter it; the constraint is the control.
-#
-# User pinning: the constraint carries a user only when you asked for one,
-# i.e. you wrote user@host, or ~/.ssh/config sets User for that alias. So
-# `--ssh github.com` permits any user (git@ included); `--ssh git@github.com`
-# permits only git@. Non-22 ports are handled ([host]:port, as known_hosts
-# stores them).
-#
-# Requirements and limits:
-#   - The host's key must already be in ~/.ssh/known_hosts on the host
-#     (agent constraints are keyed by host key). If it is not, agent-sandbox
-#     refuses with a hint; connect once from a host shell (`ssh HOST`).
-#     This is deliberate: no trust-on-first-use is done for you.
-#   - ~/.ssh/known_hosts and ~/.ssh/config are bound READ-ONLY into the
-#     sandbox (public data). Nothing else under ~/.ssh is. `Include` files
-#     referenced from config are not bound; keep aliases in the main file.
-#   - An encrypted key prompts for its passphrase once, on the host tty, at
-#     launch. No askpass/DISPLAY is needed. A non-tty launch cannot prompt.
-#   - Constraints are host-level, not operation-level: within a permitted
-#     host the SSH tunnel is opaque, so e.g. a force-push cannot be blocked.
-#   - --ssh-unrestricted loads the key with no constraint: a compromised
-#     session can then authenticate as you to any host that trusts the key
-#     for as long as the session lives (mitigate with --ssh-timeout).
-#   - Git identity is separate: see the repo-local [user] hint at launch.
-#
-# ============================================================================
-# ENVIRONMENT-SPECIFIC SETUP NOTES
-# ============================================================================
-#
-# Ubuntu 24.04+: unprivileged user namespaces are blocked by AppArmor.
-#   You'll see:
-#     bwrap: setting up uid map: Permission denied
-#     bwrap: No permissions to create new namespace, ...
-#   The recommended fix is to add an AppArmor profile that grants bwrap the
-#   `userns` rule (keeps the global restriction on for everything else):
-#
-#     sudo tee /etc/apparmor.d/bwrap >/dev/null <<'EOF'
-#     abi <abi/4.0>,
-#     include <tunables/global>
-#
-#     profile bwrap /usr/bin/bwrap flags=(unconfined) {
-#       userns,
-#       include if exists <local/bwrap>
-#     }
-#     EOF
-#     sudo apparmor_parser -r /etc/apparmor.d/bwrap
-#
-#   Verify with:
-#     bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true && echo OK
-#
-#   Quicker but coarser alternative — disable the restriction system-wide:
-#     sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
-#     echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
-#       | sudo tee /etc/sysctl.d/60-userns.conf
-#
-# CUDA under /usr/local: this works automatically. If /usr/local is a
-#   symlink (e.g. to /mnt/<disk>/local), the symlink target is auto-bound
-#   read-only so paths like /usr/local/cuda resolve inside the sandbox.
-#   CUDA_HOME, CUDAToolkit_ROOT, and LD_LIBRARY_PATH are forwarded by
-#   default.
-#
-# Conda/mamba: activate your environment BEFORE running the agent. The script
-#   reads $CONDA_PREFIX from your shell, binds it read-only inside the
-#   sandbox, and forwards PATH and CONDA_* variables so the env stays
-#   activated. There is no in-sandbox `conda activate` step.
-#
-# Running from $HOME: deliberately constrained. Nothing under $HOME is
-#   bound except the explicit allowlist (.claude, .claude.json, the conda
-#   env if it lives in $HOME, anything you list in AGENT_SANDBOX_R{O,W}).
-#   $HOME itself is a read-only tmpfs, so `touch $HOME/foo` fails. Use a
-#   project subdirectory instead, or set AGENT_SANDBOX_RW=... for the
-#   specific subtrees you want exposed.
-#
-# ============================================================================
-# NETWORK MODES — ONE-TIME SETUP
-# ============================================================================
-#
-# The default network mode (proxy) needs three things on the host:
-#
-#   1. slirp4netns + mitmproxy installed:
-#        sudo apt install slirp4netns mitmproxy
-#
-#   2. mitmproxy's CA, which mitmdump writes to ~/.mitmproxy/ on first start
-#      (install.sh does this). It is NOT installed into the system trust
-#      store: in proxy mode the engine binds (system bundle + this CA) over
-#      /etc/ssl/certs/ca-certificates.crt inside the sandbox, so everything in
-#      there trusts the proxy and nothing on the host does. Override the CA's
-#      location with AGENT_SANDBOX_PROXY_CA.
-#
-#   3. The user systemd service that runs mitmdump with the allowlist
-#      addon enabled and started:
-#        systemctl --user daemon-reload
-#        systemctl --user enable --now agent-sandbox-mitmproxy.service
-#      (Unit file: ~/.config/systemd/user/agent-sandbox-mitmproxy.service; addon
-#      and allowlist live in ~/.config/agent-sandbox/.)
-#
-# Then every agent run goes through mitmproxy, which enforces the
-# allowlist at ~/.config/agent-sandbox/allowlist.txt. Blocked hosts are
-# logged to ~/.config/agent-sandbox/blocked.log — tail it to see what
-# the agent is reaching for, and add hosts as needed (no restart required).
-#
-# Verify:
-#   systemctl --user status agent-sandbox-mitmproxy
-#   tail -f ~/.config/agent-sandbox/blocked.log
-#
-# Inside a sandboxed session:
-#   ! curl -sI https://api.anthropic.com    # allowed
-#   ! curl -sI https://example.com          # 403 from mitmproxy
-#   ! curl -sI http://127.0.0.1:5432        # connection refused (slirp4netns)
-#
-# ============================================================================
-# TROUBLESHOOTING
-# ============================================================================
-#
-#   "no versions under .../versions"
-#       Claude Code isn't installed at the expected path, or the versions
-#       directory is empty. Check $HOME/.local/share/claude/versions/.
-#
-#   "bwrap: setting up uid map: Permission denied"
-#   "bwrap: No permissions to create new namespace ..."
-#       See the Ubuntu 24.04 AppArmor section above.
-#
-#   "Can't bind mount ... on /newroot/usr/local: ..."
-#       /usr/local is a symlink whose target isn't being exposed. The script
-#       handles this automatically now; if you still hit it, expose the
-#       target manually:  AGENT_SANDBOX_RO=/path/to/real/local claude
-#
-#   "Claude configuration file not found at: /home/USER/.claude.json"
-#       The script binds this file automatically; make sure you re-symlinked
-#       /didn't drop the latest agent-sandbox.
-#
-#   "API Error: Unable to connect to API (FailedToOpenSocket)" or DNS errors
-#       Usually caused by /etc/resolv.conf being a symlink into /run on
-#       systemd-resolved systems. The script binds the resolved target
-#       automatically; verify with: readlink -f /etc/resolv.conf
-#
-#   "agent-sandbox: slirp4netns not installed"
-#       Either install it (sudo apt install slirp4netns) or set
-#       AGENT_SANDBOX_NET=open to bypass (loses network sandboxing).
-#
-#   Every HTTPS request fails with cert errors (UNABLE_TO_VERIFY_LEAF_SIGNATURE,
-#   SSL_ERROR_BAD_CERT_DOMAIN, ...)
-#       The proxy CA is not reaching the sandbox. The engine binds it over the
-#       system bundle when ~/.mitmproxy/mitmproxy-ca-cert.pem exists (or the
-#       file named by AGENT_SANDBOX_PROXY_CA) and warns at launch if it does
-#       not; run install.sh to (re)generate the CA. Tools with a private CA
-#       store (conda/mamba, pip, a conda-provided git, node, npm, cargo) are
-#       covered too: the engine points SSL_CERT_FILE, SSL_CERT_DIR,
-#       REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, CONDA_SSL_VERIFY, PIP_CERT,
-#       GIT_SSL_CAINFO, NODE_EXTRA_CA_CERTS, NPM_CONFIG_CAFILE and
-#       CARGO_HTTP_CAINFO at that bundle unless you set them yourself. A tool
-#       with yet another knob needs it forwarded via AGENT_SANDBOX_PASSENV.
-#
-#   "certificate verify failed: Missing Authority Key Identifier" (Python 3.13+)
-#       Python 3.13 verifies certificates strictly, and mitmproxy 8.x mints leaf
-#       certificates without an Authority Key Identifier, which strict mode
-#       rejects even with the CA trusted. The proxy needs mitmproxy 12 or newer.
-#
-#   "agent-sandbox: bwrap did not report a child PID"
-#       bwrap failed to set up the sandbox before slirp4netns could attach.
-#       Run bwrap manually with the same args to see its real error.
-#
-#   "setns(CLONE_NEWNET): Operation not permitted" from slirp4netns
-#       On Ubuntu 24.04+, the kernel.apparmor_restrict_unprivileged_userns
-#       hardening also blocks slirp4netns. Grant it userns the same way we
-#       did for bwrap:
-#         sudo tee /etc/apparmor.d/slirp4netns >/dev/null <<'EOF'
-#         abi <abi/4.0>,
-#         include <tunables/global>
-#         profile slirp4netns /usr/bin/slirp4netns flags=(unconfined) {
-#           userns,
-#           include if exists <local/slirp4netns>
-#         }
-#         EOF
-#         sudo apparmor_parser -r /etc/apparmor.d/slirp4netns
-#       If you still see the error after that, slirp4netns may be too old
-#       (need 1.0+ for --userns-path), or the bwrap child PID has exited
-#       before slirp could attach.
-#
-#   Allowed hosts still return 403 from mitmproxy
-#       Check the addon is loaded:  systemctl --user status agent-sandbox-mitmproxy
-#       Check the allowlist format: bare hostnames; leading "." for subdomains.
-#       Watch the journal:  journalctl --user -u agent-sandbox-mitmproxy -f
-#
-#   Tool inside the sandbox can't find an API token (AWS, GH, ...)
-#       By design: only an explicit allowlist is forwarded. Re-export per
-#       session with:  AGENT_SANDBOX_PASSENV="GH_TOKEN" claude
-#
-#   Tool inside the sandbox can't reach a file outside CWD that you need
-#       Expose it explicitly:  AGENT_SANDBOX_RO=/some/dir claude
-#       (Or AGENT_SANDBOX_RW for writable.)
-#
-#   "refusing to bind sensitive directory '...' as CWD"
-#       You ran the agent from a known-secret directory (~/.ssh etc.). cd
-#       somewhere else.
-#
-#   "agent-sandbox: no trusted host key for '<host>' ..." (with --ssh)
-#       The host is not in ~/.ssh/known_hosts on the host side. Connect once
-#       from a HOST shell (`ssh <host>`) to record it, then relaunch.
-#
-#   "Host key verification failed" inside the sandbox
-#       Same cause: known_hosts is bound read-only, so unknown hosts cannot
-#       be added from inside. Trust the host from a host shell first.
-#
-#   "Permission denied (publickey)" to host B while running with --ssh A
-#       Working as designed: the agent only signs for hosts named in --ssh.
-#       Add `--ssh B` (or use --ssh-unrestricted).
-#
-# ============================================================================
-# SECURITY CAVEATS
-# ============================================================================
-#
-#   - Network: in the default "proxy" mode, every HTTPS_PROXY-aware tool
-#     (the agent, curl, git, pip, npm, conda) is filtered against
-#     ~/.config/agent-sandbox/allowlist.txt by a host-side mitmproxy.
-#     Tools that bypass HTTPS_PROXY (raw sockets, direct localhost calls)
-#     are NOT filtered — they can still reach your dev DBs, your LAN, etc.
-#     "strict" mode would close that gap via slirp4netns but is currently
-#     non-functional on Ubuntu 24.04 (see Network modes section above).
-#   - $HOME/.claude is read-write and holds Anthropic OAuth/API tokens.
-#     A compromised agent inside the sandbox can exfiltrate them; the
-#     sandbox cannot prevent this.
-#   - $CONDA_PREFIX (if set) is read-only but readable, including any
-#     secrets stashed in etc/conda/activate.d/*.sh. With
-#     AGENT_SANDBOX_CONDA_WRITE=1 the agent can put anything into that env,
-#     and you will run it on the host the next time you use the env. The base
-#     install, other envs, conda itself, its shell hook and the host package
-#     cache stay read-only, so the exposure is that one env plus the
-#     sandbox-owned package cache.
-#   - $CWD (and .git, .env, etc. inside it) is read-write to the agent.
-#   - bwrap relies on unprivileged user namespaces. There is no seccomp
-#     filter or resource cap configured here.
-#   - `claude update|upgrade|install` run the native binary on the host,
-#     unsandboxed, with your full environment (see UPDATING CLAUDE CODE).
-#   - --ssh HOST / --ssh-unrestricted forward a per-session ssh-agent socket.
-#     The key stays on the host, but while the session lives the sandbox can
-#     authenticate to the permitted host(s) as you (any host, if
-#     unrestricted). SSH egress is not filtered by the proxy allowlist.
-#   - The egress proxy's CA is trusted inside the sandbox only, by binding it
-#     into the CA bundle there; the host's trust store is never touched and
-#     the CA's private key (~/.mitmproxy on the host) is not visible inside.
+# The reference lives in docs/ next to this file:
+#   docs/design.md           architecture, threat model, every guarantee with
+#                            its mechanism and check, RESIDUAL RISKS, open
+#                            design questions
+#   docs/network.md          network modes, the allowlist, --allow, the proxy
+#                            CA and how it is trusted inside the sandbox only
+#   docs/ssh.md              the SSH broker: --ssh, --ssh-unrestricted,
+#                            --ssh-key, --ssh-timeout
+#   docs/profiles.md         the profile contract; adding an agent
+#   docs/updating.md         host-routed agent updates (claude update)
+#   docs/troubleshooting.md  error messages and their fixes
+# README.md has install and quick start; AGENTS.md has the rules for
+# maintainers. Read docs/design.md before changing anything below: the engine
+# is security-sensitive and the residual-risk list there must stay true.
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -684,7 +398,7 @@ _as_ssh_pick_key() {
 }
 
 _as_ssh_setup() {
-  # See "SSH ACCESS" in the header. Runs on the HOST, before the sandbox
+  # See docs/ssh.md. Runs on the HOST, before the sandbox
   # exists: resolves each --ssh spec through ~/.ssh/config, checks the host
   # key is already trusted, starts a fresh agent, loads the key(s) with
   # destination constraints, and binds only the agent socket (plus the
@@ -886,7 +600,7 @@ agent_sandbox() (
   invoked="$(basename -- "$0")"
 
   # ---- engine flags (must precede the agent's own arguments) ----
-  # See "ENGINE FLAGS" and "SSH ACCESS" in the header. Parsing stops at the
+  # See ENGINE FLAGS in the header and docs/ssh.md. Parsing stops at the
   # first token that is not one of ours; everything from there on is passed
   # to the agent untouched.
   local profile=""
@@ -1043,7 +757,7 @@ agent_sandbox() (
 
   # ---- host-side subcommands (e.g. `claude update`) ----
   # The profile lists verbs that must run on the HOST with the caller's
-  # environment, unsandboxed; see "UPDATING CLAUDE CODE" in the header.
+  # environment, unsandboxed; see docs/updating.md.
   if [[ -n "${1:-}" ]]; then
     local _sub _rc
     for _sub in "${profile_host_subcommands[@]}"; do
@@ -1317,8 +1031,8 @@ agent_sandbox() (
   _as_add_paths --bind "$_knob_rw"
 
   # ----- per-session state: SSH agent, --allow include -----
-  # Both run on the HOST, before the sandbox exists. See "SSH ACCESS" and
-  # "ENGINE FLAGS" in the header.
+  # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
+  # docs/network.md.
   local _session_dir="" _ssh_agent_pid=""
   if ((_ssh_want)); then
     _as_ssh_setup || {
