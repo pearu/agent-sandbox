@@ -17,8 +17,9 @@ comment; blank lines are ignored. It is parsed as data, never executed.
 # hosts this project may reach through the egress proxy, this project only
 allow = pypi.org, files.pythonhosted.org, .github.com
 
-# other projects whose memory this session may read (paths; ~ is expanded)
-share-memory = ~/git/pearu/arrow, ~/work/shared-notes
+# other projects whose memory this session may read (paths; ~ is expanded;
+# a trailing /* shares the projects directly under a directory)
+share-memory = ~/git/pearu/arrow, ~/work/*
 ```
 
 Keys:
@@ -29,7 +30,10 @@ Keys:
   `open` and `none` network modes). Command-line `--allow` still applies on top.
 - **`share-memory`** — see [Memory scoping](#memory-scoping). A list of project
   paths whose memory this project may read; `all` keeps every project visible;
-  an empty value scopes to this project alone.
+  an empty value scopes to this project alone. An entry may be a shell wildcard
+  (`~/git/pearu/*`), which shares the projects directly under that directory
+  that have memory. Matching is at the path level, so `~/git/pearu/*` does not
+  match a sibling `~/git/pearu-notes` or descend past one level.
 
 `ssh` is not accepted yet; use `--ssh` on the command line. An unknown key is
 ignored with a warning.
@@ -90,8 +94,9 @@ Selecting the mode, from lowest to highest precedence:
    existing projects, which have no `.agent-sandbox`, keep whatever you set
    here. Set it to `shared` (or leave it unset) to keep today's behavior.
 3. **Per-project:** a trusted `.agent-sandbox` with `share-memory`. An empty
-   value means this project only; a list adds those projects' memory read-only;
-   `all` keeps everything visible even when the global default is `scoped`.
+   value means this project only; a list (paths or `~/dir/*` wildcards) adds
+   those projects' memory read-only; `all` keeps everything visible even when
+   the global default is `scoped`.
 
 ## Where the machine-local state lives
 
