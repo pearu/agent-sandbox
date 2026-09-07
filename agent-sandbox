@@ -356,10 +356,18 @@
 #         sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem \
 #                 /usr/local/share/ca-certificates/mitmproxy.crt
 #         sudo update-ca-certificates
-#       If only Node/the agent breaks (other tools work), the system CA bundle
-#       isn't being read by Node — point it at the bundle explicitly:
-#         AGENT_SANDBOX_PASSENV="NODE_EXTRA_CA_CERTS" \
-#         NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt claude
+#       Tools with a private CA store (conda/mamba, pip, a conda-provided git,
+#       node, npm, cargo) are covered: in proxy mode the engine points
+#       SSL_CERT_FILE, SSL_CERT_DIR, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE,
+#       CONDA_SSL_VERIFY, PIP_CERT, GIT_SSL_CAINFO, NODE_EXTRA_CA_CERTS,
+#       NPM_CONFIG_CAFILE and CARGO_HTTP_CAINFO at the system bundle unless
+#       you set them yourself. A tool with yet another knob needs it forwarded
+#       via AGENT_SANDBOX_PASSENV.
+#
+#   "certificate verify failed: Missing Authority Key Identifier" (Python 3.13+)
+#       Python 3.13 verifies certificates strictly, and mitmproxy 8.x mints leaf
+#       certificates without an Authority Key Identifier, which strict mode
+#       rejects even with the CA trusted. The proxy needs mitmproxy 12 or newer.
 #
 #   "agent-sandbox: bwrap did not report a child PID"
 #       bwrap failed to set up the sandbox before slirp4netns could attach.
@@ -774,6 +782,31 @@ _as_allow_setup() {
   return 0
 }
 
+# The proxy terminates TLS with its own CA, which install.sh puts in the system
+# store. Tools that ship their own CA bundle (conda/mamba, pip, a conda git,
+# node, npm, cargo, anything honouring SSL_CERT_FILE) never look there, so in
+# the modes that go through the proxy point every well-known override at the
+# system bundle. Names the caller set were forwarded already and are left alone.
+_as_ca_env() {
+  local bundle="${SSL_CERT_FILE:-}" cand var
+  if [[ -z "$bundle" ]]; then
+    for cand in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem; do
+      [[ -r "$cand" ]] && { bundle="$cand"; break; }
+    done
+  fi
+  [[ -n "$bundle" ]] || {
+    _as_msg "warning — no system CA bundle found; tools with a private CA store will not trust the proxy"
+    return 0
+  }
+  for var in SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE CONDA_SSL_VERIFY PIP_CERT \
+    GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE CARGO_HTTP_CAINFO; do
+    [[ -n "${!var+x}" ]] && continue
+    args+=(--setenv "$var" "$bundle")
+  done
+  [[ -n "${SSL_CERT_DIR+x}" ]] || args+=(--setenv SSL_CERT_DIR "$(dirname -- "$bundle")")
+  return 0
+}
+
 # With per-session state (an ssh agent to kill, an --allow file to remove)
 # bash must outlive bwrap to clean up, so it cannot exec. Otherwise exec.
 _as_launch() {
@@ -1129,6 +1162,7 @@ agent_sandbox() (
     HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY
     http_proxy https_proxy no_proxy all_proxy
     SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
+    CONDA_SSL_VERIFY PIP_CERT GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE CARGO_HTTP_CAINFO
     CUDA_HOME CUDAToolkit_ROOT LD_LIBRARY_PATH
   )
   # Extra names the user explicitly opts in via AGENT_SANDBOX_PASSENV
@@ -1262,6 +1296,7 @@ agent_sandbox() (
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
+      _as_ca_env
       _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     strict)
@@ -1277,6 +1312,7 @@ agent_sandbox() (
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
+      _as_ca_env
 
       # Coordinate bwrap and slirp4netns: bwrap writes its child PID to fd 19
       # then blocks on fd 18 until slirp4netns has configured the namespace
