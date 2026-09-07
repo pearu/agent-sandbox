@@ -12,7 +12,9 @@ args=("$@")
 cmd=${args[0]-}
 unit=""
 ((${#args[@]} > 0)) && unit=${args[-1]}
-unit_file="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$unit"
+# install.sh writes the unit under $HOME/.config (it ignores XDG_CONFIG_HOME),
+# so read it from the same place -- CI sets XDG_CONFIG_HOME, which must not matter here.
+unit_file="$HOME/.config/systemd/user/$unit"
 pidfile="$SYSTEMCTL_SHIM_STATE/$unit.pid"
 
 stop_unit() {
