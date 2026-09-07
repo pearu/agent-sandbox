@@ -29,8 +29,7 @@ jobs:
         run: micromamba run -n agent-sandbox scripts/check.sh
 
   # The real bwrap: what the agent sees, the CA bundle, conda passthrough, the
-  # SSH broker, on Ubuntu 22.04, 24.04 and 26.04 (26.04 preview, allowed to
-  # fail). GitHub's kernels restrict unprivileged user namespaces on 24.04+;
+  # SSH broker, on Ubuntu 22.04, 24.04 and 26.04. GitHub's kernels restrict unprivileged user namespaces on 24.04+;
   # relax that so bwrap works (the installer does the same with an AppArmor
   # profile), then prove it works so a missing namespace fails the job instead
   # of silently skipping the suites.
@@ -40,8 +39,6 @@ jobs:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.os }}
-    # 26.04 is a preview image; let its leg report without gating the build.
-    continue-on-error: ${{ matrix.os == 'ubuntu-26.04' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install bubblewrap and enable user namespaces
@@ -73,8 +70,6 @@ jobs:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.os }}
-    # 26.04 is a preview image; let its leg report without gating the build.
-    continue-on-error: ${{ matrix.os == 'ubuntu-26.04' }}
     env:
       AGENT_SANDBOX_E2E: "1"
     steps:
