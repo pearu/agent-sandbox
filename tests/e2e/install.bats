@@ -103,7 +103,10 @@ teardown_file() {
   run launch fetch https://api.anthropic.com/v1/models
   [[ "$output" == *"code=401 rc=0"* || "$output" == *"code=200 rc=0"* ]]
   run launch fetch https://example.com/
-  [[ "$output" == *"rc=56"* && "$output" == *"403"* ]]
+  # A refused CONNECT yields no HTTP response (code=000) and the proxy's 403 in
+  # the error; curl's exit code for it varies by version (56, or 97 since 7.83),
+  # so assert on those two facts, not the exit number.
+  [[ "$output" == *"code=000"* && "$output" == *"403"* ]]
   run launch fetch http://example.com/
   [[ "$output" == *"code=403 rc=0"* ]]
   [ "$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log")" -ge 3 ]
