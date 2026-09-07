@@ -11,9 +11,13 @@
 # profile, CA trust) that require it.
 #
 # Usage:
-#   1. Clone the repository (or copy this file, agent-sandbox and
-#      profiles/ together) to the new host.
-#   2. ./install.sh
+#   ./install.sh              from a checkout
+#   curl -fsSL <raw url of install.sh> | bash
+#                             standalone: clones the repository into
+#                             ~/.local/share/agent-sandbox/src first
+#   ./install.sh --dry-run    no sudo, no systemctl, no environment creation;
+#                             everything else runs against $HOME (CI uses this
+#                             with a throwaway HOME)
 #
 # Installs mitmproxy >= 12 into a private environment (venv, else conda), and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
@@ -23,9 +27,26 @@
 
 set -euo pipefail
 
+DRY_RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    -h | --help)
+      sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "install.sh: unknown argument '$arg' (try --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+
 # ----- locations -----
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-ENGINE="$SCRIPT_DIR/agent-sandbox"
+# When run from a checkout, install from it; when run standalone (curl | bash),
+# section 1 clones the repository under $STATE_DIR and installs from there.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" &>/dev/null && pwd)"
+REPO_URL="${AGENT_SANDBOX_REPO:-https://github.com/pearu/agent-sandbox.git}"
 CONFIG_DIR="$HOME/.config/agent-sandbox"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 BIN_DIR="$HOME/.local/bin"
@@ -47,14 +68,16 @@ err() {
   exit 1
 }
 info() { printf '    %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+# System-changing commands (sudo, systemctl) go through here so --dry-run can
+# report them instead of running them.
+run_sys() {
+  if ((DRY_RUN)); then info "(dry-run) would run: $*"; else "$@"; fi
+}
 
 # ----- profiles -----
 # Everything agent-specific lives in profiles/<name>.sh (see the contract in
 # profiles/claude.sh). The installer loads a profile the way the engine does,
 # in a subshell, to ask it for its command name, allowlist seed and binary.
-shopt -s nullglob
-profiles=("$SCRIPT_DIR"/profiles/*.sh)
-shopt -u nullglob
 profile_query() { # $1 = profile file, $2.. = variable names to print, one per line
   local f=$1
   shift
@@ -95,11 +118,29 @@ profile_probe_bin() { # $1 = profile file; prints "ok <version> <path>" or "miss
   )
 }
 
-# ----- 1. sanity -----
+# ----- 1. sanity: find (or fetch) the engine and the profiles -----
 section "Sanity check"
-[[ -f "$ENGINE" ]] || err "agent-sandbox engine not found at $ENGINE (keep it next to this installer)"
+((DRY_RUN)) && info "dry run: nothing privileged, no systemctl, no environment creation"
+if [[ ! -f "$SCRIPT_DIR/agent-sandbox" ]]; then
+  command -v git >/dev/null || err "standalone run needs git to clone $REPO_URL"
+  SRC="$STATE_DIR/src"
+  if [[ -d "$SRC/.git" ]]; then
+    info "updating $SRC"
+    git -C "$SRC" pull -q --ff-only
+  else
+    info "cloning $REPO_URL into $SRC"
+    mkdir -p "$STATE_DIR"
+    git clone -q "$REPO_URL" "$SRC"
+  fi
+  SCRIPT_DIR="$SRC"
+fi
+ENGINE="$SCRIPT_DIR/agent-sandbox"
+[[ -f "$ENGINE" ]] || err "agent-sandbox engine not found at $ENGINE"
+shopt -s nullglob
+profiles=("$SCRIPT_DIR"/profiles/*.sh)
+shopt -u nullglob
 ((${#profiles[@]} > 0)) || err "no profiles found under $SCRIPT_DIR/profiles/"
-ok "found $ENGINE"
+ok "engine: $ENGINE"
 ok "profiles: $(for f in "${profiles[@]}"; do basename -- "${f%.sh}"; done | tr '\n' ' ')"
 
 # ----- 2. packages -----
@@ -142,6 +183,9 @@ apparmor_profile() {
   local name=$1 target="/etc/apparmor.d/$1"
   if [[ -f "$target" ]]; then
     ok "$target already present"
+  elif ((DRY_RUN)); then
+    cat >/dev/null
+    info "(dry-run) would install $target and load it with apparmor_parser"
   else
     info "Installing AppArmor profile for $name (requires sudo)"
     sudo tee "$target" >/dev/null
@@ -184,6 +228,9 @@ if [[ -x "$PROXY_VENV/bin/mitmdump" ]]; then
 elif [[ -x "$PROXY_CONDA/bin/mitmdump" ]]; then
   MITMDUMP="$PROXY_CONDA/bin/mitmdump"
   ok "reusing $PROXY_CONDA"
+elif ((DRY_RUN)); then
+  MITMDUMP="$PROXY_VENV/bin/mitmdump"
+  info "(dry-run) would create $PROXY_VENV (or a conda env) and install '$MITMPROXY_SPEC'"
 elif python_has_venv; then
   info "Creating $PROXY_VENV and installing '$MITMPROXY_SPEC' with pip (about a minute)"
   python3 -m venv "$PROXY_VENV"
@@ -198,9 +245,11 @@ elif [[ -n "$(conda_cmd)" ]]; then
 else
   err "mitmproxy needs python3 >= 3.12 with venv (Debian/Ubuntu: sudo apt install python3-venv) or conda/mamba on PATH"
 fi
-proxy_version=$("$MITMDUMP" --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')
-[[ "${proxy_version%%.*}" -ge 12 ]] 2>/dev/null || err "$MITMDUMP reports version '${proxy_version:-?}'; need mitmproxy >= 12"
-ok "mitmdump $proxy_version at $MITMDUMP"
+if [[ -x "$MITMDUMP" ]]; then
+  proxy_version=$("$MITMDUMP" --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')
+  [[ "${proxy_version%%.*}" -ge 12 ]] 2>/dev/null || err "$MITMDUMP reports version '${proxy_version:-?}'; need mitmproxy >= 12"
+  ok "mitmdump $proxy_version at $MITMDUMP"
+fi
 if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" ]]; then
   info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
 fi
@@ -212,22 +261,22 @@ if [[ -f "$ca_in_store" ]]; then
   ok "CA already in system store"
 else
   ca_src=""
-  for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" \
-    "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
+  for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
     [[ -f "$cand" ]] && {
       ca_src="$cand"
       break
     }
   done
-  if [[ -z "$ca_src" ]]; then
+  if [[ -z "$ca_src" ]] && ((DRY_RUN)); then
+    info "(dry-run) would generate the mitmproxy CA and trust it system-wide"
+  elif [[ -z "$ca_src" ]]; then
     info "Generating mitmproxy CA (one-time)"
     # Run mitmdump briefly to create ~/.mitmproxy with the CA.
     "$MITMDUMP" --listen-port 0 >/dev/null 2>&1 &
     _mp_pid=$!
     for _ in 1 2 3 4 5 6 7 8; do
       sleep 0.5
-      for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" \
-        "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
+      for cand in "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" "$HOME/.mitmproxy/mitmproxy-ca-cert.cer"; do
         [[ -f "$cand" ]] && {
           ca_src="$cand"
           break 2
@@ -236,12 +285,14 @@ else
     done
     kill "$_mp_pid" 2>/dev/null
     wait "$_mp_pid" 2>/dev/null || true
+    [[ -n "$ca_src" ]] || err "Could not find or generate ~/.mitmproxy/mitmproxy-ca-cert.{pem,cer}"
   fi
-  [[ -n "$ca_src" ]] || err "Could not find or generate ~/.mitmproxy/mitmproxy-ca-cert.{pem,cer}"
-  info "Installing CA into system store (requires sudo)"
-  sudo cp "$ca_src" "$ca_in_store"
-  sudo update-ca-certificates
-  ok "CA installed and trusted"
+  if [[ -n "$ca_src" ]]; then
+    info "Installing CA into system store (requires sudo)"
+    run_sys sudo cp "$ca_src" "$ca_in_store"
+    run_sys sudo update-ca-certificates
+    ((DRY_RUN)) || ok "CA installed and trusted"
+  fi
 fi
 
 # ----- 7. config files -----
@@ -300,20 +351,30 @@ ok "wrote $SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 section "Systemd user service"
 # Migrate off the pre-rename unit if present: it also binds 127.0.0.1:8888, so
 # leaving it enabled would collide with agent-sandbox-mitmproxy.service.
-if systemctl --user is-enabled claude-mitmproxy.service >/dev/null 2>&1 \
-  || [[ -f "$SYSTEMD_DIR/claude-mitmproxy.service" ]]; then
-  systemctl --user disable --now claude-mitmproxy.service >/dev/null 2>&1 || true
-  rm -f "$SYSTEMD_DIR/claude-mitmproxy.service"
-  ok "migrated off legacy claude-mitmproxy.service"
+legacy=0
+[[ -f "$SYSTEMD_DIR/claude-mitmproxy.service" ]] && legacy=1
+((DRY_RUN)) || ! systemctl --user is-enabled claude-mitmproxy.service >/dev/null 2>&1 || legacy=1
+if ((legacy)); then
+  if ((DRY_RUN)); then
+    info "(dry-run) would disable and remove the legacy claude-mitmproxy.service"
+  else
+    systemctl --user disable --now claude-mitmproxy.service >/dev/null 2>&1 || true
+    rm -f "$SYSTEMD_DIR/claude-mitmproxy.service"
+    ok "migrated off legacy claude-mitmproxy.service"
+  fi
 fi
-systemctl --user daemon-reload
-systemctl --user enable agent-sandbox-mitmproxy.service >/dev/null 2>&1 || true
-systemctl --user restart agent-sandbox-mitmproxy.service
-sleep 1
-if systemctl --user is-active --quiet agent-sandbox-mitmproxy.service; then
-  ok "agent-sandbox-mitmproxy.service is active"
+run_sys systemctl --user daemon-reload
+if ((DRY_RUN)); then
+  info "(dry-run) would enable and (re)start agent-sandbox-mitmproxy.service"
 else
-  warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
+  systemctl --user enable agent-sandbox-mitmproxy.service >/dev/null 2>&1 || true
+  systemctl --user restart agent-sandbox-mitmproxy.service
+  sleep 1
+  if systemctl --user is-active --quiet agent-sandbox-mitmproxy.service; then
+    ok "agent-sandbox-mitmproxy.service is active"
+  else
+    warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
+  fi
 fi
 
 # ----- 9. PATH symlinks: one per profile command -> the engine -----
@@ -326,9 +387,12 @@ for f in "${profiles[@]}"; do
   link="$BIN_DIR/$cmd"
   if [[ -L "$link" && "$(readlink -f "$link")" == "$ENGINE" ]]; then
     ok "$link already points at the engine"
-  elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link")")" == claude.sh ]]; then
+  elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link" || readlink "$link")")" == claude.sh ]]; then
     ln -sfn "$ENGINE" "$link"
     ok "re-pointed $link from the legacy claude.sh wrapper -> $ENGINE"
+  elif [[ -L "$link" && ! -e "$link" ]]; then
+    ln -sfn "$ENGINE" "$link"
+    ok "replaced dangling symlink $link -> $ENGINE"
   elif [[ -e "$link" ]]; then
     warn "$link exists and is not the expected symlink (left untouched)"
     info "If it is the agent's own binary you no longer want on PATH, remove it and re-run."
@@ -362,13 +426,17 @@ fi
 # api.anthropic.com answers 404 for / and 401 for /v1/models without a key;
 # either proves the request went through the proxy to Anthropic. 000 means the
 # proxy is down or refused the CONNECT (host missing from the allowlist).
-smoke_code=$(curl -sS --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
-  https://api.anthropic.com/v1/models 2>/dev/null || true)
-case "$smoke_code" in
-  200 | 401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
-  000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
-  *) warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
-esac
+if ((DRY_RUN)); then
+  info "(dry-run) proxy request skipped"
+else
+  smoke_code=$(curl -sS --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
+    https://api.anthropic.com/v1/models 2>/dev/null || true)
+  case "$smoke_code" in
+    200 | 401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
+    000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
+    *) warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
+  esac
+fi
 
 # ----- 11. summary -----
 section "Done"
