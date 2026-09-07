@@ -642,11 +642,16 @@ _as_session_begin() {
   _as_session_sweep "$base" || true
   _session_dir="$(mktemp -d "$base/session.XXXXXX")" || return 1
   chmod 700 "$_session_dir"
-  # Liveness stamp: this subshell's PID (it runs bwrap and holds the trap)
-  # plus its start-time, written BEFORE anything else lands in the dir so a
-  # concurrent sweep never sees a dir of ours unstamped.
-  printf '%s %s\n' "$BASHPID" \
-    "$(awk '{print $22}' "/proc/$BASHPID/stat" 2>/dev/null || echo 0)" >"$_session_dir/owner.id"
+  # Liveness stamp: this subshell's PID (it runs bwrap and holds the trap) plus
+  # its start-time (field 22 of /proc/<pid>/stat), written BEFORE anything else
+  # lands in the dir so a concurrent sweep never sees a dir of ours unstamped.
+  # Capture BASHPID in a plain variable first: inside the $(...) below, $BASHPID
+  # would be the command-substitution subshell, whose start-time belongs to the
+  # wrong process -- and then every liveness check (the janitor, the proxy's
+  # --allow owner test) would compare against a start-time that never matches.
+  local _owner_pid=$BASHPID _owner_start
+  _owner_start="$(awk '{print $22}' "/proc/$_owner_pid/stat" 2>/dev/null || echo 0)"
+  printf '%s %s\n' "$_owner_pid" "$_owner_start" >"$_session_dir/owner.id"
   trap '_as_session_cleanup' EXIT INT TERM HUP
   return 0
 }
