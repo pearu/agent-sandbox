@@ -44,7 +44,10 @@ jobs:
       - name: Install bubblewrap and enable user namespaces
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap passt nftables
+          sudo apt-get install -y bubblewrap nftables
+          # passt is not packaged for Ubuntu 22.04; best-effort so that leg
+          # installs the rest and the strict test skips there.
+          sudo apt-get install -y passt || echo 'passt unavailable on this runner; strict test will skip'
           if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
