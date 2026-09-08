@@ -38,7 +38,7 @@ run_addon() {
 
 run_engine() {
   command -v kcov >/dev/null || {
-    echo "kcov not found; run: mamba env update -n agent-sandbox -f environment.yml" >&2
+    echo "kcov not found; it is a system package (Debian/Ubuntu: sudo apt install kcov)" >&2
     return 2
   }
   command -v bats >/dev/null || {

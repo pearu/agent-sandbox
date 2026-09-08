@@ -15,5 +15,6 @@ dependencies:
   - shellcheck        # lint, also run in CI
   - go-shfmt          # provides `shfmt`: formatting check, also run in CI
   - bats-core         # test runner for tests/ (tests/run.sh); CI installs this file too
-  - kcov              # bash line coverage of the engine (scripts/coverage.sh)
   - coverage          # Python line coverage of the addon (scripts/coverage.sh)
+  # kcov (bash line coverage of the engine, scripts/coverage.sh) is NOT on
+  # conda-forge; install it from the system: Debian/Ubuntu `sudo apt install kcov`.
