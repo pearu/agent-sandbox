@@ -586,6 +586,7 @@ _as_conda_base() {
       || { command -v mamba >/dev/null && mamba info --base; } 2>/dev/null || true)"
     [[ -n "$b" && -d "$b" ]] && printf '%s' "$b"
   fi
+  return 0 # a query: finding no base is not a failure (would trip set -e at the caller)
 }
 
 # Is the .agent-sandbox at $2 (for project dir $1) approved? Trust file is
