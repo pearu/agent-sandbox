@@ -818,7 +818,7 @@ _as_launch_pasta() {
   local gw="$1" nftbin="$2"
   shift 2
   local ruleset
-  printf -v ruleset 'table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname "lo" accept\n  ip daddr %s tcp dport 8888 accept\n  ct state established,related accept\n }\n}\n' "$gw"
+  printf -v ruleset 'table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname "lo" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n' "$gw"
   local rc=0
   # The bash -c body runs inside pasta's netns; its $vars expand there, not here.
   # shellcheck disable=SC2016

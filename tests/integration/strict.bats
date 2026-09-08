@@ -50,6 +50,7 @@ teardown() {
 
 @test "strict: the proxy on the gateway is reachable; arbitrary raw egress is blocked" {
   run_sandboxed AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PASSENV=GW GW="$GW" -- run
+  echo "engine output: $output" >&3
   [ "$status" -eq 0 ]
   [ "$(report proxy_via_gw)" = REACHED ] # gateway:8888 -> host proxy, allowed by nft
   [ "$(report raw_external)" = blocked ] # 1.1.1.1:443 dropped by the firewall
