@@ -126,7 +126,7 @@ profile_memory_scope() {
   for p in "$@"; do
     [[ -z "$p" ]] && continue
     if [[ "$p" == *[*?[]* ]]; then
-      # A pathname pattern (e.g. ~/git/pearu/*): share the memory of matching
+      # A pathname pattern (e.g. ~/git/acme/*): share the memory of matching
       # project directories that actually have memory. Globbing at the path
       # level, not the slug level, keeps "~/git/x/*" from also matching a
       # sibling "~/git/x-notes" (whose slug shares the prefix) or descending

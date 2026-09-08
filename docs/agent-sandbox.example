@@ -33,7 +33,7 @@
 # With NO [share-memory] section, the global default applies (see
 # ~/.config/agent-sandbox/config, key memory_default).
 #[share-memory]
-#~/git/pearu/arrow
+#~/git/acme/app
 #~/work/*
 
 

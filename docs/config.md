@@ -25,7 +25,7 @@ files.pythonhosted.org   # for pip
 # other projects whose memory this session may read (paths; ~ is expanded;
 # a trailing /* shares the projects directly under a directory)
 [share-memory]
-~/git/pearu/arrow
+~/git/acme/app
 ~/work/*
 ```
 
@@ -38,9 +38,9 @@ Sections:
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty scopes to this project
-  alone. An entry may be a shell wildcard (`~/git/pearu/*`), which shares the
+  alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
   projects directly under that directory that have memory. Matching is at the
-  path level, so `~/git/pearu/*` does not match a sibling `~/git/pearu-notes`
+  path level, so `~/git/acme/*` does not match a sibling `~/git/acme-notes`
   or descend past one level.
 
 - **`[ro]` / `[rw]`** — extra host paths to expose in the sandbox, one per
