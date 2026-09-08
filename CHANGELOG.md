@@ -34,6 +34,13 @@ generalized.
   self-contained `install.sh`; per-profile symlinks and allowlist seeds;
   `--dry-run`; standalone `curl | bash` mode; migration from the pre-rename
   layout.
+- `AGENT_SANDBOX_NET=strict` now works, via pasta (from the `passt` package)
+  instead of the non-functional slirp4netns: pasta owns an isolated network
+  namespace and forwards it in userspace, bwrap runs inside sharing it, and an
+  nftables rule allows only the proxy on the gateway, so a tool that ignores
+  `HTTPS_PROXY` has no route out (closes the raw-socket egress gap, issue #1).
+  Needs `passt` and its AppArmor profile (added by `install.sh`) and nftables;
+  `--ssh` is unavailable in this mode.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with

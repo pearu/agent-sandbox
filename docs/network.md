@@ -6,13 +6,14 @@ Every sandbox starts with the network unshared; the mode selected by
 | Mode | What the sandbox gets | Use |
 |---|---|---|
 | `proxy` (default) | The host network namespace (`--share-net`) plus `HTTPS_PROXY`/`HTTP_PROXY` pointing at the host proxy on `127.0.0.1:8888`, and the proxy CA trusted inside. Every client that honours the proxy variables is filtered by the allowlist. | everyday work |
-| `strict` | Its own network namespace, connected through slirp4netns, proxy at `10.0.2.2:8888`. Closes the raw-socket loophole and blocks localhost/LAN. **Does not work on Ubuntu 24.04+**: slirp4netns cannot attach to bwrap's unprivileged namespace. Kept for when pasta or rootlesskit make it possible. | not yet |
+| `strict` | Its own network namespace, owned by `pasta` and forwarded to the host in userspace; an nftables rule inside allows only the proxy on the default gateway. Closes the raw-socket loophole (a tool ignoring the proxy variables has no route out) and blocks localhost/LAN. Needs the `passt` package and its AppArmor profile (`install.sh` adds it) and nftables; `--ssh` does not work in this mode. | maximal isolation |
 | `open` | The host network, no proxy. | debugging only |
 | `none` | No network. | offline work |
 
 In `proxy` mode a tool that bypasses the proxy variables (raw sockets, its own
-resolver) is **not** filtered and can reach localhost and the LAN; see the
-residual risks in [design.md](design.md).
+resolver) is **not** filtered and can reach localhost and the LAN; `strict` mode
+closes that (at the cost of `--ssh` and a `passt` dependency). See the residual
+risks in [design.md](design.md) and issue #1.
 
 ## The proxy
 

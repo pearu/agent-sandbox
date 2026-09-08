@@ -54,14 +54,11 @@ agent-sandbox-mitmproxy`, and `journalctl --user -u agent-sandbox-mitmproxy -f`.
 A `--allow` host that is refused means the addon does not see this session as
 alive; relaunch, and if it persists report it: it is a bug.
 
-**`agent-sandbox: slirp4netns not installed`**
-Only `strict` mode needs it, and that mode does not work on Ubuntu 24.04 yet.
-Use the default `proxy` mode.
-
-**`bwrap did not report a child PID` / `setns(CLONE_NEWNET): Operation not permitted`**
-`strict` mode failures. On Ubuntu 24.04+ the userns restriction also blocks
-slirp4netns; `install.sh` installs an AppArmor profile for it when it is
-present, but the mode itself is not functional there yet.
+**`strict mode needs pasta` / `needs nft` / `needs a default-route gateway`**
+`AGENT_SANDBOX_NET=strict` needs the `passt` package (`sudo apt install passt`),
+`nftables`, and a default route (pasta maps its gateway to the host proxy).
+Install passt, then re-run `install.sh` so it adds pasta's AppArmor profile;
+without that profile Ubuntu's userns restriction blocks pasta.
 
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:

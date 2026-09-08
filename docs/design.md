@@ -93,9 +93,11 @@ Stated plainly. These are what the adversary above can still do.
 - **Raw-socket egress is unfiltered in `proxy` mode.** The sandbox shares the
   host network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its
   own resolver) can reach anything the host can, including localhost services,
-  databases and the LAN. The `strict` mode that closes this (slirp4netns) does
-  not work on Ubuntu 24.04 yet. Consequence: the allowlist is a control on
-  well-behaved clients, not a network boundary.
+  databases and the LAN. `AGENT_SANDBOX_NET=strict` closes this (pasta owns an
+  isolated netns; an nftables rule allows only the proxy), at the cost of a
+  `passt` dependency and losing `--ssh`. In the default `proxy` mode the
+  allowlist is a control on well-behaved clients, not a network boundary; the
+  user chooses the mode and its residual risk.
 - **`--allow` is a union across live sessions.** The proxy cannot attribute a
   request to a session, so while any session allows a host, every concurrent
   session can reach it.
@@ -153,8 +155,9 @@ reasons attached in the repository history.
   the CA proves a burden.
 - **A seccomp or firejail backend** for syscall filtering. Nothing here filters
   syscalls today.
-- **Strict network mode on Ubuntu 24.04+**: slirp4netns cannot enter bwrap's
-  namespace unprivileged; pasta or rootlesskit may.
+- **Strict network mode** is implemented with pasta (it owns the netns; bwrap
+  runs inside sharing it; an nftables rule allows only the proxy). slirp4netns
+  could not, because it cannot enter bwrap's unprivileged netns from outside.
 - **Per-session proxy identity**, such as a per-session proxy-auth token the
   addon maps to a session, so `--allow` stops being a union.
 - **A standalone mitmproxy binary route** for hosts with neither
