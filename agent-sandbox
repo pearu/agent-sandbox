@@ -574,7 +574,11 @@ _as_memory_default() {
 # is reached at <gateway>:8888 and it is the only address the egress firewall
 # lets through. Empty if there is no default route.
 _as_default_gateway() {
-  ip route show default 2>/dev/null | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -1
+  local _ip
+  _ip="$(command -v ip 2>/dev/null || true)"
+  [[ -n "$_ip" ]] || for _c in /usr/sbin/ip /sbin/ip; do [[ -x "$_c" ]] && _ip="$_c" && break; done
+  [[ -n "$_ip" ]] || return 0
+  "$_ip" route show default 2>/dev/null | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -1
 }
 
 # Echo the conda/mamba base prefix (where envs/ and pkgs/ live), or nothing.
@@ -1468,14 +1472,22 @@ agent_sandbox() (
     strict)
       # pasta owns an isolated netns; nftables inside it allows only the proxy.
       # See _as_launch_pasta and docs/network.md.
-      local _nftbin _gw
+      local _nftbin _gw _c
       command -v pasta >/dev/null || {
         _as_msg "strict mode needs pasta (the 'passt' package): 'sudo apt install passt', then re-run install.sh so it adds pasta's AppArmor profile."
         return 1
       }
-      _nftbin="$(command -v nft || true)"
+      # nft (and ip, below) usually live in /usr/sbin, which is often absent from
+      # a launcher's PATH; look there too.
+      _nftbin="$(command -v nft 2>/dev/null || true)"
+      [[ -n "$_nftbin" ]] || for _c in /usr/sbin/nft /sbin/nft; do
+        [[ -x "$_c" ]] && {
+          _nftbin="$_c"
+          break
+        }
+      done
       [[ -n "$_nftbin" ]] || {
-        _as_msg "strict mode needs nft ('sudo apt install nftables')."
+        _as_msg "strict mode needs nft ('sudo apt install nftables'); not on PATH or in /usr/sbin, /sbin."
         return 1
       }
       _gw="$(_as_default_gateway)"
