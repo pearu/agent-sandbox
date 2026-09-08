@@ -841,8 +841,23 @@ _as_dotfile_parse() {
   return 0
 }
 
-# The --trust command: show the project's .agent-sandbox, ask to approve it,
-# record the approval, and offer to keep it out of git (it is machine-local).
+# A .agent-sandbox must be plain text: tab, newline, printable ASCII and bytes
+# outside ASCII (UTF-8 text) only. A control character -- ESC, carriage return,
+# backspace, NUL, DEL -- could make a terminal hide or overwrite a line while
+# --trust shows the file, and that review is where the trust decision is made;
+# the format never needs one. Checked at review and again at launch.
+_as_dotfile_clean() { # $1 = file
+  if [[ -n "$(LC_ALL=C tr -d '\011\012\040-\176\200-\377' <"$1" 2>/dev/null | head -c1)" ]]; then
+    _as_msg ".agent-sandbox contains control characters (a terminal could hide lines when showing it); refusing it." \
+      "Remove them: 'cat -v' shows each as ^X. A Windows editor's carriage returns count too."
+    return 1
+  fi
+  return 0
+}
+
+# The --trust command: show the project's .agent-sandbox (escaped with cat -v,
+# so nothing in it can act on the terminal), ask to approve it, record the
+# approval, and offer to keep it out of git (it is machine-local).
 _as_trust_review() {
   local cwd="$1" file ans rec
   file="$cwd/.agent-sandbox"
@@ -865,9 +880,13 @@ _as_trust_review() {
     _as_msg "no .agent-sandbox in $cwd"
     return 1
   }
+  _as_dotfile_clean "$file" || {
+    _as_msg "not approved."
+    return 1
+  }
   {
-    printf '\n%s (sha256 %s):\n----\n' "$file" "$(_as_sha256_file "$file")"
-    cat -- "$file"
+    printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n----\n' "$file" "$(_as_sha256_file "$file")"
+    cat -v -- "$file"
     printf -- '----\n'
   } >&2
   _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
@@ -1274,6 +1293,7 @@ agent_sandbox() (
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   if [[ -f "$_dotfile" ]]; then
     if _as_dotfile_trusted "$cwd" "$_dotfile"; then
+      _as_dotfile_clean "$_dotfile" || return 1 # an approval recorded by other means does not get such a file honoured
       _as_dotfile_parse "$_dotfile"
       local _dh _dj
       for _dh in "${_df_allow[@]}"; do

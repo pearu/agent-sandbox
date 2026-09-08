@@ -87,8 +87,12 @@ The file is inert until approved. From the project directory:
 claude --trust
 ```
 
-This prints the file so you can see exactly what it grants, asks you to
-approve, and on yes records the file's SHA-256. It then offers to add
+This prints the file (through `cat -v`, so a control character or a byte
+outside ASCII shows escaped instead of acting on your terminal), asks you to
+approve, and on yes records the file's SHA-256. A file containing a control
+character other than tab and newline is refused outright, at review and again
+at launch: the format never needs one, and nothing can hide a line from you.
+It then offers to add
 `.agent-sandbox` to the repository's `.git/info/exclude`, since its contents
 (your other project paths, your hosts) are machine-local and usually should not
 be committed.

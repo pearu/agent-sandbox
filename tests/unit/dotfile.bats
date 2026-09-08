@@ -262,6 +262,26 @@ trust() {
   [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
+@test "--trust refuses a file with control characters (nothing can hide a line from the review) and shows non-ASCII escaped" {
+  printf '[allow]\npypi.org\n\033[8m[rw]\n/\033[0m\n' >"$PROJ/.agent-sandbox" # an ESC sequence would conceal the [rw] line
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"control characters"* && "$output" == *"not approved"* ]]
+  [ ! -d "$CFG/trust" ] || [ -z "$(ls -A "$CFG/trust")" ]
+  trust "$PROJ" # even a hash recorded by other means does not get such a file honoured
+  run_engine -- claude --version
+  [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
+  printf '[allow]\npypi.org\r\n' >"$PROJ/.agent-sandbox" # a carriage return counts
+  run_trust 'y\n'
+  [ "$status" -eq 1 ] && [[ "$output" == *"control characters"* ]]
+  printf '[allow]\npypi.org   # n\303\244ide\n' >"$PROJ/.agent-sandbox" # UTF-8 in a comment: shown escaped, accepted
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'M-CM-$'* && "$output" == *"approved."* ]]
+  run_engine -- claude --version
+  [ "$status" -eq 0 ] && [[ "$output" == *"session allowlist: pypi.org"* ]]
+}
+
 @test "--trust declined records nothing" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   run_trust 'n\n'

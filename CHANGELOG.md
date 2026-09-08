@@ -63,6 +63,9 @@ generalized.
   gone, forgets the approval). Ignoring it fell back to the defaults, which for
   memory scoping (`shared`) is wider than a scoped policy the agent could have
   removed.
+- `--trust` shows the file through `cat -v` and refuses one containing control
+  characters (at review and at launch), so a repo-shipped file cannot hide a
+  line from the review with an escape sequence or a carriage return.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with

@@ -66,6 +66,12 @@ you edited it, or the agent did. Run `claude --trust` from the project
 directory; it shows the current content, and approving it records the new
 hash. Do not approve a change you did not make without reading it.
 
+**`.agent-sandbox contains control characters ... refusing it`**
+The file holds a byte other than tab, newline, printable ASCII or UTF-8 text:
+an escape sequence, a carriage return (a Windows editor), a NUL. Such bytes
+could hide a line from the `--trust` review, so the file is refused until
+they are gone; `cat -v .agent-sandbox` shows each as `^X`.
+
 **`this project's approved .agent-sandbox is missing ... Refusing to launch`**
 A `.agent-sandbox` you approved is gone. Launching anyway would replace its
 policy with the defaults, which for memory scoping is wider. Restore the file,
