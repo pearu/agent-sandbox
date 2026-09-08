@@ -117,6 +117,14 @@ Stated plainly. These are what the adversary above can still do.
   put anything into that env, and you run it on the host the next time you
   activate it; the sandbox-owned package cache can be poisoned for future
   sandbox sessions.
+- **The path refusals are a blocklist.** Secret stores and the sandbox's
+  control plane are refused by name (the guarantees table has the list), and
+  so is a directory containing one. A credential inside a directory you
+  choose to bind is exposed with it: `~/.cargo/credentials.toml` under
+  `~/.cargo`, the Hugging Face token under `~/.cache/huggingface`, a `.env` in
+  `$CWD`. Nothing under `$HOME` is visible unless something binds it, so every
+  such exposure is an explicit act of yours; the list catches the well-known
+  mistakes in those acts, not all of them. Bind the narrowest path that works.
 - **Memory scoping covers `~/.claude/projects` only.** In `scoped` mode other
   state under `~/.claude` (global command history, session metadata) stays
   visible; scoping isolates per-project memory and transcripts, not the whole
