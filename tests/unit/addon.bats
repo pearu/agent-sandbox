@@ -94,6 +94,14 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   # HTTPS tunnel: the CONNECT carries the token, the inner request (no header) inherits it
   run drive tunnel_tok AAA a.example a.example
   [[ "$output" == *"connect_blocked=False"* && "$output" == *"request_blocked=False"* ]]
+  # after the client disconnects, the tunnel's remembered token is dropped
+  run drive disconnect_tok AAA a.example
+  [[ "$output" == *"after_disconnect_blocked=True"* ]]
+  # a malformed Proxy-Authorization is ignored (no token), so only the global list applies
+  run drive connect_badauth a.example
+  [[ "$output" == *"blocked=True"* ]]
+  run drive connect_badauth api.github.com
+  [[ "$output" == *"blocked=False"* ]]
   kill "$live"
   wait "$live" 2>/dev/null || true
 }

@@ -66,6 +66,9 @@ at line start); `python3 -m py_compile components/*.py`; a bundle-sync check
 `shfmt -w .`, never by hand-aligning. `scripts/check.sh` runs the unit and
 integration suites when `bats` is on PATH; `tests/run.sh unit|integration|live|all`
 runs them directly, and `AGENT_SANDBOX_LIVE=1` enables the live tests.
+`scripts/coverage.sh` reports line coverage (kcov for the engine, coverage.py
+for the addon; both from `environment.yml`) — the engine run needs bwrap/pasta
+for the integration suites, so run it where those work.
 
 ### How the tests work
 

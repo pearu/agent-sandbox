@@ -76,6 +76,20 @@ elif scenario == "tunnel_tok":
     r = Flow(args[2], "GET", "/", {}, cid="tc")
     m.request(r)
     show(connect_blocked=c.response is not None, request_blocked=r.response is not None)
+elif scenario == "disconnect_tok":
+    # CONNECT stashes the token for the tunnel; after the client disconnects the
+    # stash is dropped, so a later request on that conn id is untagged (blocked).
+    c = Flow(args[1], "CONNECT", "-", _auth(args[0]), cid="dc")
+    m.http_connect(c)
+    m.client_disconnected(Conn("dc"))
+    r = Flow(args[1], "GET", "/", {}, cid="dc")
+    m.request(r)
+    show(after_disconnect_blocked=r.response is not None)
+elif scenario == "connect_badauth":
+    # A malformed Proxy-Authorization is ignored (treated as no token).
+    f = Flow(args[0], "CONNECT", "-", {"Proxy-Authorization": "garbage not-base64"})
+    m.http_connect(f)
+    show(blocked=f.response is not None)
 elif scenario == "request":
     f = Flow(args[0], args[1] if len(args) > 1 else "GET", args[2] if len(args) > 2 else "/")
     m.request(f)
