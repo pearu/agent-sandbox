@@ -1,10 +1,12 @@
 #!/usr/bin/env bats
 # strict net mode wiring. The engine drives pasta (isolated netns + userspace
 # forward) with an nftables rule allowing only the proxy on the gateway, and
-# bwrap shares that netns. Stub pasta/nft/ip on PATH (shadowing the real ones)
-# capture what the engine invokes; real pasta is never run. The missing-tool
-# error paths are not unit-tested, since a host with passt installed cannot hide
-# the real binaries; docs/network.md and the integration test cover the rest.
+# bwrap shares that netns. A stub pasta on PATH captures what the engine invokes;
+# real pasta is never run, so the gateway (which the wrapper reads INSIDE the
+# netns) is never resolved here -- the tests assert on the wrapper script the
+# engine hands pasta, not a concrete gateway. The missing-tool error paths are
+# not unit-tested, since a host with passt installed cannot hide the real
+# binaries; docs/network.md and the integration test cover the rest.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -16,8 +18,7 @@ for a in "$@"; do printf '%s\n' "$a" >>"$PASTA_DUMP"; done
 exit 0
 S
   printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/nft"
-  printf '#!/usr/bin/env bash\n[[ "$*" == "route show default" ]] && echo "default via 10.9.9.1 dev eth0 proto static"\nexit 0\n' >"$H/bin/ip"
-  chmod +x "$H/bin/pasta" "$H/bin/nft" "$H/bin/ip"
+  chmod +x "$H/bin/pasta" "$H/bin/nft"
   make_fake_ca "$H/ca.pem"
   PROJ="$(cd "$H/proj" && pwd -P)"
 }
@@ -34,7 +35,7 @@ pasta_argv() {
   JOINED=" ${P[*]} "
 }
 
-@test "strict: pasta with an isolated netns, an nft rule allowing only gateway:8888, bwrap sharing the net, proxy at the gateway, CA bound, port forwarding off both ways" {
+@test "strict: pasta owns the netns, the wrapper derives the gateway inside it and builds the nft rule + proxy env there, bwrap shares the net, CA bound, port forwarding off both ways" {
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- claude --version
   [ "$status" -eq 0 ]
   local -a P
@@ -47,10 +48,12 @@ pasta_argv() {
   [[ "$joined" == *" -t none "* && "$joined" == *" -u none "* ]] # no sandbox listener is published on the host
   has bwrap                                                      # bwrap is the command pasta execs
   has --share-net                                                # bwrap shares pasta's netns (not the host's)
-  has http://10.9.9.1:8888                                       # HTTPS_PROXY points at the gateway
   has /etc/ssl/certs/ca-certificates.crt                         # CA bound as in proxy mode
+  grepd -- '-4 route show default'                               # the gateway is read INSIDE the netns
   grepd 'policy drop'                                            # the firewall drops by default
-  grepd 'ip daddr 10.9.9.1 tcp dport 8888 accept'                # and allows only the proxy
+  grepd 'ip daddr %s tcp dport 8888 accept'                      # allows only the gateway proxy (filled in from $gw)
+  grepd 'setenv HTTPS_PROXY "http://\$gw:8888"'                  # proxy env points at the in-netns gateway
+  ! grepd '10\.9\.9\.1'                                          # no gateway is baked in on the host side
   ! grepd '10.0.2.2'                                             # not the old slirp gateway
   [ ! -s "$H/argv" ]                                             # bwrap did not run directly; it went via pasta
 }
@@ -77,10 +80,21 @@ pasta_argv() {
   [[ "$output" == *"agent ports: none this session"* ]]
 }
 
-@test "strict: refuses to launch when there is no default-route gateway" {
-  printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/ip" # ip reports no default route
+@test "strict: the host's routes no longer gate the launch; the gateway is resolved inside the netns (with an in-netns refusal if none)" {
+  # No `ip` on the host at all: the engine must still reach pasta (it used to
+  # refuse here on a host-side gateway guess). The refusal for a gateway-less
+  # netns now lives in the wrapper the engine hands pasta.
+  rm -f "$H/bin/ip"
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- claude --version
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"default-route gateway"* ]]
-  [ ! -e "$H/pasta_argv" ] || [ ! -s "$H/pasta_argv" ] # pasta was never invoked
+  [ "$status" -eq 0 ]
+  [ -s "$H/pasta_argv" ]                                                 # pasta WAS invoked
+  grep -q 'no IPv4 gateway inside the network namespace' "$H/pasta_argv" # the wrapper refuses if the netns has none
+}
+
+@test "strict: --ssh is dropped before any ssh-agent is started, not merely warned after" {
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    AGENT_SANDBOX_SESSION_BASE="$H/base" -- claude --ssh github.com --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--ssh has no effect in strict mode"*"not starting an SSH agent"* ]]
+  [ -z "$(find "$H/base" -name agent.sock 2>/dev/null)" ] # no session agent socket was ever created
 }

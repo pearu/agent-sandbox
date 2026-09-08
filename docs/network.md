@@ -87,7 +87,10 @@ Enforcement happens twice:
 
 Refusals are appended to `~/.config/agent-sandbox/blocked.log` as
 `timestamp  host  method  path`; `tail -f` it to see what the agent is reaching
-for and add hosts as needed.
+for and add hosts as needed. The addon only appends, never rotates, so on a busy
+allowlist the file grows without bound; if that matters, point `logrotate` at it
+or truncate it between sessions (`: > ~/.config/agent-sandbox/blocked.log`). It
+holds only refused destinations, no payloads.
 
 ## Per-session hosts: `--allow`
 

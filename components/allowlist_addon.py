@@ -60,7 +60,10 @@ def _session_base() -> Path:
     if override:
         return Path(override)
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-    if not runtime.is_dir():
+    # Match the engine's _as_session_base: it falls back to /tmp when the runtime
+    # dir is not a writable directory, so require writability here too, or the
+    # addon would look in a different base and silently ignore --allow.
+    if not (runtime.is_dir() and os.access(runtime, os.W_OK)):
         runtime = Path("/tmp")
     return runtime / f"agent-sandbox.{os.getuid()}"
 

@@ -419,7 +419,10 @@ def _session_base() -> Path:
     if override:
         return Path(override)
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-    if not runtime.is_dir():
+    # Match the engine's _as_session_base: it falls back to /tmp when the runtime
+    # dir is not a writable directory, so require writability here too, or the
+    # addon would look in a different base and silently ignore --allow.
+    if not (runtime.is_dir() and os.access(runtime, os.W_OK)):
         runtime = Path("/tmp")
     return runtime / f"agent-sandbox.{os.getuid()}"
 
@@ -754,7 +757,7 @@ fi
 # machinery is present (it is opt-in), never in dry-run, always bounded by a
 # timeout, and only ever a warning -- proxy is the mode this install sets up.
 strict_smoke() {
-  local nft="$1" gw ruleset out gwr lor rawr
+  local nft="$1" out gwr lor rawr
   command -v pasta >/dev/null || {
     info "strict mode: passt not installed, skipping its check (needed only for AGENT_SANDBOX_NET=strict)"
     return 0
@@ -763,30 +766,32 @@ strict_smoke() {
     info "strict mode: nftables not installed, skipping its check"
     return 0
   }
-  gw="$({ ip route show default 2>/dev/null || true; } | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -1)"
-  [[ -n "$gw" ]] || {
-    info "strict mode: no default-route gateway, skipping its check"
-    return 0
-  }
   # Can pasta create a namespace here? (Needs its AppArmor profile, section 4.)
   if ! timeout -k 1 8 pasta --config-net --quiet -- true >/dev/null 2>&1; then
     warn "strict mode: pasta cannot create a namespace here; AGENT_SANDBOX_NET=strict will not start"
     info "is /etc/apparmor.d/pasta loaded? (re-run this installer) or relax kernel.apparmor_restrict_unprivileged_userns"
     return 0
   fi
-  printf -v ruleset 'table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname "lo" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n' "$gw"
-  # Inside pasta's netns: load the rule, then TCP-connect (via /dev/tcp, bounded)
-  # to the proxy at the gateway (must reach), the same port on loopback (must
-  # NOT -- host loopback is not mirrored), and an arbitrary host (must not).
+  # Inside pasta's netns, exactly as the engine's _as_launch_pasta does: read the
+  # gateway pasta configured there, load the rule allowing only its proxy port,
+  # then TCP-connect (via /dev/tcp, bounded) to the proxy at the gateway (must
+  # reach), the same port on loopback (must NOT -- host loopback is not
+  # mirrored), and an arbitrary host (must not).
   # shellcheck disable=SC2016
   out="$(timeout -k 2 20 pasta --config-net --quiet -T none -U none -t none -u none -- bash -c '
-    nft=$1 gw=$2 ruleset=$3
-    printf %s "$ruleset" | "$nft" -f - || { echo "nft=failed"; exit 0; }
+    nft=$1
+    gw=$(ip -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
+    [ -n "$gw" ] || { echo "gw=none"; exit 0; }
+    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n" "$gw" | "$nft" -f - || { echo "nft=failed"; exit 0; }
     pr() { timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null && echo REACHED || echo blocked; }
     echo "gw=$(pr "$gw" 8888)"
     echo "lo=$(pr 127.0.0.1 8888)"
     echo "raw=$(pr 1.1.1.1 443)"
-  ' agent-sandbox-strict-check "$nft" "$gw" "$ruleset" 2>/dev/null || true)"
+  ' agent-sandbox-strict-check "$nft" 2>/dev/null || true)"
+  if [[ "$out" == *gw=none* ]]; then
+    info "strict mode: no IPv4 gateway inside a test netns here, skipping its check"
+    return 0
+  fi
   if [[ "$out" == *nft=failed* ]]; then
     warn "strict mode: the egress firewall (nft) failed to load in a test netns; AGENT_SANDBOX_NET=strict would refuse to launch"
     return 0
@@ -800,7 +805,7 @@ strict_smoke() {
   if [[ "$rawr" != blocked ]]; then
     warn "SECURITY: strict mode did NOT block raw egress in a test netns (1.1.1.1:443 was reachable) — the firewall is not enforcing"
   elif [[ "$gwr" != REACHED ]]; then
-    warn "strict mode: the proxy at the gateway ($gw:8888) was not reachable from a test netns; strict would have no working egress (is the proxy up?)"
+    warn "strict mode: the proxy at the netns gateway was not reachable from a test netns; strict would have no working egress (is the proxy up?)"
   elif [[ "$lor" == REACHED ]]; then
     warn "strict mode: a host loopback port (127.0.0.1:8888) was reachable from a test netns — host services are not isolated as strict promises"
   else

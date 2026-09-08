@@ -663,18 +663,6 @@ _as_memory_default() {
   esac
 }
 
-# The host's default-route IPv4 gateway. In strict mode pasta copies the host's
-# routes into the sandbox netns and maps this address to the host, so the proxy
-# is reached at <gateway>:8888 and it is the only address the egress firewall
-# lets through. Empty if there is no default route.
-_as_default_gateway() {
-  local _ip
-  _ip="$(command -v ip 2>/dev/null || true)"
-  [[ -n "$_ip" ]] || for _c in /usr/sbin/ip /sbin/ip; do [[ -x "$_c" ]] && _ip="$_c" && break; done
-  [[ -n "$_ip" ]] || return 0
-  "$_ip" route show default 2>/dev/null | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -1
-}
-
 # A strict-mode port opt-in token (--host-port / --agent-port, the knobs, the
 # dot-file): a TCP port 1024-65535, or `none`. Ports below 1024 are refused:
 # pasta cannot bind system ports unprivileged, and nothing the agent runs
@@ -1012,35 +1000,55 @@ _as_launch() {
 # authority over the netns (owned by pasta's parent userns) and cannot alter the
 # firewall. The rule is installed before bwrap execs, so there is no window with
 # open egress; a failed rule refuses the launch. See docs/network.md and issue #1.
+#
+# The gateway is read INSIDE the netns (ip route in the wrapper), not guessed
+# from the host's routes: pasta configures the netns's own default route and maps
+# that gateway to the host, and it can differ from the host's (a VPN default via
+# a point-to-point interface, or an IPv6-only default route). The wrapper builds
+# the nft rule and the agent's proxy variables from the address pasta actually
+# used, and refuses if the netns has no IPv4 gateway.
+#
 # pasta's port forwarding is off in both directions unless the user opened
-# ports: $3 is the -T spec (host TCP ports the sandbox may reach at 127.0.0.1,
-# or none) and $4 the -t spec (agent TCP ports published at the host's
+# ports: $2 is the -T spec (host TCP ports the sandbox may reach at 127.0.0.1,
+# or none) and $3 the -t spec (agent TCP ports published at the host's
 # 127.0.0.1, or none); UDP stays off. pasta's defaults ("auto") would bind
 # every port listening on the host inside the netns, which the lo accept rule
 # below lets the agent reach, and publish every sandbox listener on the host.
 # Verified on Ubuntu 24.04 (passt 2024-02-20): with the defaults a host-only
 # 127.0.0.1 listener was reachable from inside and a sandbox listener appeared
 # on the host; with none, neither.
-# $1 = gateway, $2 = nft binary path, $3 = -T spec, $4 = -t spec,
-# $5.. = the full "bwrap ... -- agent" line.
+# $1 = nft binary path, $2 = -T spec, $3 = -t spec,
+# $4.. = the full "bwrap ... -- agent" line.
 _as_launch_pasta() {
-  local gw="$1" nftbin="$2" tcp_ns="$3" tcp_host="$4"
-  shift 4
-  local ruleset
-  printf -v ruleset 'table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname "lo" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n' "$gw"
+  local nftbin="$1" tcp_ns="$2" tcp_host="$3"
+  shift 3
   local rc=0
-  # The bash -c body runs inside pasta's netns; its $vars expand there, not here.
+  # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
+  # there, not here.
   # shellcheck disable=SC2016
   pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
-    nftbin=$1 ruleset=$2
-    shift 2
-    printf %s "$ruleset" | "$nftbin" -f - || {
+    nftbin=$1
+    shift
+    ipbin=$(command -v ip 2>/dev/null || true)
+    [ -n "$ipbin" ] || for c in /usr/sbin/ip /sbin/ip; do [ -x "$c" ] && ipbin=$c && break; done
+    gw=$([ -n "$ipbin" ] && "$ipbin" -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
+    if [ -z "$gw" ]; then
+      echo "agent-sandbox: strict mode found no IPv4 gateway inside the network namespace, so there is no route to the proxy; refusing to launch." >&2
+      exit 1
+    fi
+    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n" "$gw" | "$nftbin" -f - || {
       echo "agent-sandbox: strict-mode egress firewall failed to load; refusing to launch" >&2
       exit 1
     }
-    exec "$@"
-  ' agent-sandbox-strict "$nftbin" "$ruleset" "$@" || rc=$?
+    bwrapbin=$1
+    shift
+    exec "$bwrapbin" \
+      --setenv HTTP_PROXY "http://$gw:8888" --setenv HTTPS_PROXY "http://$gw:8888" \
+      --setenv http_proxy "http://$gw:8888" --setenv https_proxy "http://$gw:8888" \
+      "$@"
+  ' agent-sandbox-strict "$nftbin" "$@" || rc=$?
   _as_session_cleanup
+  [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
   return "$rc"
 }
 
@@ -1661,6 +1669,12 @@ agent_sandbox() (
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
   # docs/network.md.
   local _session_dir="" _ssh_agent_pid=""
+  # --ssh has no effect in strict mode (only the proxy is reachable), so do not
+  # start a session ssh-agent there: warn and drop the request before setup.
+  if [[ "${_knob_net:-proxy}" == strict ]] && ((_ssh_want)); then
+    _as_msg "warning — --ssh has no effect in strict mode (only the proxy is reachable); not starting an SSH agent."
+    _ssh_want=0 _ssh_hosts=() _ssh_unrestricted=0
+  fi
   if ((_ssh_want)); then
     _as_ssh_setup || {
       _as_session_cleanup
@@ -1731,7 +1745,7 @@ agent_sandbox() (
     strict)
       # pasta owns an isolated netns; nftables inside it allows only the proxy.
       # See _as_launch_pasta and docs/network.md.
-      local _nftbin _gw _c
+      local _nftbin _c
       command -v pasta >/dev/null || {
         _as_msg "strict mode needs pasta (the 'passt' package): 'sudo apt install passt', then re-run install.sh so it adds pasta's AppArmor profile."
         return 1
@@ -1749,12 +1763,6 @@ agent_sandbox() (
         _as_msg "strict mode needs nft ('sudo apt install nftables'); not on PATH or in /usr/sbin, /sbin."
         return 1
       }
-      _gw="$(_as_default_gateway)"
-      [[ -n "$_gw" ]] || {
-        _as_msg "strict mode needs a default-route gateway (pasta maps it to the host proxy); none found."
-        return 1
-      }
-      ((_ssh_want)) && _as_msg "warning — --ssh has no effect in strict mode: only the proxy is reachable, so SSH to a host is blocked by the egress firewall."
       # Port opt-ins (see _as_launch_pasta): pasta -T/-t specs, or none.
       local _tcp_ns=none _tcp_host=none
       if ((${#_host_ports[@]})); then
@@ -1775,21 +1783,19 @@ agent_sandbox() (
       elif ((_agent_none)); then
         _as_msg "strict: agent ports: none this session"
       fi
-      # The proxy is reached at the gateway address (pasta maps the host there);
-      # everything else is dropped inside the netns. bwrap shares pasta's netns
-      # and makes its own user namespace (via --unshare-all in args).
+      # The proxy is reached at the netns gateway (pasta maps it to the host);
+      # _as_launch_pasta reads that address inside the netns and points the proxy
+      # variables at it. bwrap shares pasta's netns and makes its own user
+      # namespace (via --unshare-all in args). NO_PROXY is emptied here (it does
+      # not depend on the gateway); the proxy URLs are set inside.
       args+=(
         --share-net
-        --setenv HTTP_PROXY "http://$_gw:8888"
-        --setenv HTTPS_PROXY "http://$_gw:8888"
-        --setenv http_proxy "http://$_gw:8888"
-        --setenv https_proxy "http://$_gw:8888"
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
       _as_ca_bind
       _as_ca_env
-      _as_launch_pasta "$_gw" "$_nftbin" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch_pasta "$_nftbin" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
