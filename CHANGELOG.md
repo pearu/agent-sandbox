@@ -6,7 +6,7 @@ break compatibility.
 
 ## Unreleased
 
-## 0.1.0
+## 0.1.0 — 2026-09-09
 
 First tagged version. Extracted from the author's private sandbox repository
 (history preserved) and generalized.
