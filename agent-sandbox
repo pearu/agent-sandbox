@@ -187,9 +187,13 @@
 #   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
 #                         see docs/ssh.md
 #   --trust               review and approve this project's .agent-sandbox
-#                         file (per-project allow hosts and memory scoping),
-#                         then exit. See docs/config.md. The file is ignored
-#                         until approved, and any edit re-blocks it.
+#                         file (per-project policy: allow hosts, memory
+#                         scoping, paths, environment, conda, network), then
+#                         exit. See docs/config.md. A file never approved is
+#                         ignored with a note; once approved, any edit or its
+#                         removal refuses launches from that directory until
+#                         you run --trust again (it re-approves, or offers to
+#                         forget the approval when the file is gone).
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -625,8 +629,13 @@ _as_allow_setup() {
 # Because the project dir is writable by the sandboxed agent and a project may
 # come from an untrusted repository, the file is honoured only after the user
 # approves it with `--trust`: approval records the file's SHA-256, and any later
-# edit (by you or the agent) drops it to untrusted until you review and approve
-# again -- so the agent can only invalidate trust, never grant it. The trust
+# edit or removal (by you or the agent) refuses launches from that directory
+# until you review again (--trust) -- refusing, not ignoring, because ignoring
+# would fall back to the defaults, and for memory scoping the default (shared)
+# is wider than a scoped policy. So the agent can neither grant itself
+# anything nor quietly get the defaults back; it can only stop the next launch
+# until you look. A file with no approval on record (a cloned repo's) is
+# ignored with a note. The trust
 # store and global config live under ~/.config/agent-sandbox, which is never
 # bound into the sandbox, so the agent can neither read nor forge them.
 _as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
@@ -835,9 +844,24 @@ _as_dotfile_parse() {
 # The --trust command: show the project's .agent-sandbox, ask to approve it,
 # record the approval, and offer to keep it out of git (it is machine-local).
 _as_trust_review() {
-  local cwd="$1" file ans
+  local cwd="$1" file ans rec
   file="$cwd/.agent-sandbox"
+  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   [[ -f "$file" ]] || {
+    if [[ -f "$rec" ]]; then
+      # The approved file is gone; launches are refused until the approval is
+      # forgotten (or the file restored), so offer to forget it here.
+      printf 'agent-sandbox: no .agent-sandbox in %s, but one was approved earlier. Forget that approval? [y/N] ' "$cwd" >&2
+      read -r ans || true
+      case "$ans" in
+        y | Y | yes | YES)
+          rm -f -- "$rec"
+          _as_msg "approval forgotten; launches from here use the defaults again."
+          ;;
+        *) _as_msg "kept; launches from here stay refused until the file is restored or the approval forgotten." ;;
+      esac
+      return 0
+    fi
     _as_msg "no .agent-sandbox in $cwd"
     return 1
   }
@@ -1246,6 +1270,8 @@ agent_sandbox() (
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
+  local _trust_rec
+  _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   if [[ -f "$_dotfile" ]]; then
     if _as_dotfile_trusted "$cwd" "$_dotfile"; then
       _as_dotfile_parse "$_dotfile"
@@ -1307,10 +1333,20 @@ agent_sandbox() (
           _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cbase:-<no conda base>}/envs; ignoring"
         fi
       fi
+    elif [[ -f "$_trust_rec" ]]; then
+      # Approved once, changed since (by you, or by the agent): refuse rather
+      # than ignore, or the defaults would apply in place of what you approved.
+      _as_msg ".agent-sandbox has changed since you approved it (by you, or by the agent)." \
+        "Refusing to launch until you review it: $invoked --trust"
+      return 1
     else
       _as_msg ".agent-sandbox present but not approved; ignoring it." \
         "Review and approve with: $invoked --trust"
     fi
+  elif [[ -f "$_trust_rec" ]]; then
+    _as_msg "this project's approved .agent-sandbox is missing; its policy (memory scoping, paths, ports, ...) would" \
+      "silently fall back to the defaults. Refusing to launch: restore the file, or forget the approval with: $invoked --trust"
+    return 1
   fi
   if ((_df_share_set)); then
     if ((${#_df_share[@]} == 1)) && [[ "${_df_share[0]}" == all ]]; then

@@ -178,15 +178,47 @@ trust() {
   [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied
 }
 
-@test "editing an approved dot-file re-blocks it until re-approval" {
+@test "editing an approved dot-file refuses to launch until it is re-reviewed; the edit never applies unreviewed" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [[ "$output" == *"session allowlist: pypi.org"* ]]
   printf '[allow]\npypi.org\nevil.example\n' >"$PROJ/.agent-sandbox" # the agent could do this
   run_engine -- claude --version
-  [[ "$output" == *"present but not approved"* ]]
-  [[ "$output" != *evil.example* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has changed since you approved it"*"--trust"* ]]
+  [[ "$output" != *"allowlist:"*evil.example* ]]
+  [ ! -s "$H/argv" ] # bwrap never ran
+  run_trust 'y\n'    # the user reviews the new content and approves it
+  [ "$status" -eq 0 ]
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist:"*"evil.example"* ]]
+}
+
+@test "deleting an approved dot-file refuses to launch (the defaults could be wider); --trust can forget the approval" {
+  printf '[share-memory]\n' >"$PROJ/.agent-sandbox" # scoped: this project only
+  trust "$PROJ"
+  mkdir -p "$H/home/.claude/projects/-other/memory"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --tmpfs "$H/home/.claude/projects"
+  rm "$PROJ/.agent-sandbox" # the agent could do this; the default (shared) would widen its view
+  run_engine -- claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approved .agent-sandbox is missing"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
+  run_trust 'n\n' # keep the approval: still refused
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"one was approved earlier"*"kept"* ]]
+  run_engine -- claude --version
+  [ "$status" -eq 1 ]
+  run_trust 'y\n' # forget it: the defaults apply again, knowingly
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approval forgotten"* ]]
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  ! argv_has --tmpfs "$H/home/.claude/projects"
 }
 
 @test "an all entry keeps every project's memory visible even when the global default is scoped" {

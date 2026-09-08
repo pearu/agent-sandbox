@@ -58,6 +58,11 @@ generalized.
 - The network mode can be set per project: a trusted `.agent-sandbox` `[net]`
   `mode = proxy|strict|open|none` line; an `AGENT_SANDBOX_NET` in the shell
   wins over it.
+- A `.agent-sandbox` that was approved and then edited or deleted now refuses
+  launches from that directory until `--trust` re-reviews it (or, with the file
+  gone, forgets the approval). Ignoring it fell back to the defaults, which for
+  memory scoping (`shared`) is wider than a scoped policy the agent could have
+  removed.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with

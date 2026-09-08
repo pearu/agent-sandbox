@@ -5,9 +5,10 @@
 #
 #     claude --trust
 #
-# It is honored ONLY after approval. Any later edit (by you or by the agent)
-# re-blocks it until you approve again, so a file shipped by a cloned repo, or
-# written by the agent, does nothing until you review it. Keep it out of git;
+# It is honored ONLY after approval; a file never approved is ignored with a
+# note, so one shipped by a cloned repo does nothing until you review it. Once
+# approved, any edit or removal (by you or the agent) refuses launches from
+# this directory until you run --trust again. Keep it out of git;
 # `--trust` offers to add it to .git/info/exclude, since its contents are
 # machine-local.
 #

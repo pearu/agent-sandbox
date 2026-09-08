@@ -5,9 +5,9 @@ from that directory: egress hosts, memory scoping, extra paths, forwarded
 variables, conda settings and, for the strict network mode, ports.
 Because the file lives in a directory the sandboxed agent can write, and a
 project may come from a repository you do not control, it is **honored only
-after you approve it**. Approval is bound to the file's exact contents, so any
-later edit, by you or by the agent, drops it back to unapproved until you
-review it again.
+after you approve it**. Approval is bound to the file's exact contents: after
+any later edit, by you or by the agent, or if the file disappears, launches
+from that directory are refused until you review it again.
 
 ## The file
 
@@ -95,11 +95,14 @@ be committed.
 
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
 bound into the sandbox**, so the agent can neither read nor forge it. If the
-file changes afterward, the next launch finds a hash that no longer matches,
-warns, and ignores the file until you run `claude --trust` again. The practical
-consequence: a `.agent-sandbox` shipped by a cloned repo does nothing until you
-review it, and the agent cannot widen its own permissions by writing the file,
-it can only force a re-review.
+file changes afterward, or disappears, the next launch is **refused** until you
+run `claude --trust` again: it shows the new content to approve, or, when the
+file is gone, offers to forget the approval. Refusing rather than ignoring
+matters because ignoring would fall back to the defaults, and for memory
+scoping the default (`shared`) is wider than a scoped policy. A file with no
+approval on record, such as one shipped by a cloned repo, is ignored with a
+note. The practical consequence: the agent cannot widen its own permissions by
+writing or deleting the file; it can only stop the next launch until you look.
 
 ## Memory scoping
 

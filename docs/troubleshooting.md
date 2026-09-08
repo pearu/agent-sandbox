@@ -60,6 +60,18 @@ alive; relaunch, and if it persists report it: it is a bug.
 Install passt, then re-run `install.sh` so it adds pasta's AppArmor profile;
 without that profile Ubuntu's userns restriction blocks pasta.
 
+**`.agent-sandbox has changed since you approved it ... Refusing to launch`**
+The project's `.agent-sandbox` no longer matches the content you approved:
+you edited it, or the agent did. Run `claude --trust` from the project
+directory; it shows the current content, and approving it records the new
+hash. Do not approve a change you did not make without reading it.
+
+**`this project's approved .agent-sandbox is missing ... Refusing to launch`**
+A `.agent-sandbox` you approved is gone. Launching anyway would replace its
+policy with the defaults, which for memory scoping is wider. Restore the file,
+or run `claude --trust` from the project directory: with the file missing it
+offers to forget the approval.
+
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:
 `AGENT_SANDBOX_PASSENV="GH_TOKEN" claude`.
