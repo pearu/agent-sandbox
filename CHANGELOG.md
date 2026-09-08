@@ -1,9 +1,15 @@
 # Changelog
 
+The format follows [Keep a Changelog](https://keepachangelog.com); the project
+uses [Semantic Versioning](https://semver.org). Pre-1.0, minor versions may
+break compatibility.
+
 ## Unreleased
 
-Extracted from the author's private sandbox repository (history preserved) and
-generalized.
+## 0.1.0
+
+First tagged version. Extracted from the author's private sandbox repository
+(history preserved) and generalized.
 
 - Engine + profiles: `claude.sh` became the provider-agnostic `agent-sandbox`
   engine with a `claude` profile; `--profile NAME` or inference from the symlink

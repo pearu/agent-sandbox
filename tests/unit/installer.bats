@@ -34,6 +34,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   [ -f "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # a real copy, not the checkout
   cmp -s "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
   [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude.sh" ]
+  [ "$(cat "$T/home/.local/share/agent-sandbox/app/VERSION")" = "$(cat "$REPO_ROOT/VERSION")" ] # version copied with the engine
   [[ "$output" == *"(dry-run) would run: systemctl --user daemon-reload"* ]]
   [[ "$output" == *"(dry-run) proxy request skipped"* ]]
   [[ "$output" != *"sudo "* ]] || [[ "$output" == *"(dry-run)"*"sudo"* ]]

@@ -26,6 +26,13 @@ setup() {
   [[ "$output" == *"runs inside a sandbox"* ]]
 }
 
+@test "--engine-version prints the version and exits without launching" {
+  run_engine -- claude --engine-version
+  [ "$status" -eq 0 ]
+  [[ "$output" == "agent-sandbox 0.1.0"* ]] # VERSION next to the engine; a build marker may follow
+  [ ! -s "$H/argv" ]
+}
+
 @test "--engine-help prints the engine usage even with a profile, and does not launch the agent" {
   run_engine -- claude --engine-help
   [ "$status" -eq 0 ]

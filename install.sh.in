@@ -173,8 +173,16 @@ else
   chmod 755 "$APP_DIR/agent-sandbox"
   rm -rf "$APP_DIR/profiles"
   cp -a "$SCRIPT_DIR/profiles" "$APP_DIR/profiles"
+  [[ -r "$SCRIPT_DIR/VERSION" ]] && cp -f "$SCRIPT_DIR/VERSION" "$APP_DIR/VERSION"
+  # A build marker so the installed copy reports its exact source (helps tell a
+  # stale install from a current one); best-effort, needs a git checkout.
+  if git -C "$SCRIPT_DIR" rev-parse --short HEAD >/dev/null 2>&1; then
+    git -C "$SCRIPT_DIR" describe --always --dirty --tags >"$APP_DIR/.build" 2>/dev/null || true
+  else
+    rm -f "$APP_DIR/.build"
+  fi
   LAUNCH_TARGET="$APP_DIR/agent-sandbox"
-  ok "engine + profiles copied to $APP_DIR (the launcher no longer depends on $SCRIPT_DIR)"
+  ok "engine + profiles copied to $APP_DIR (agent-sandbox $(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo '?'), independent of $SCRIPT_DIR)"
 fi
 
 # ----- 2. packages -----

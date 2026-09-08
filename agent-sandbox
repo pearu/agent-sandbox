@@ -200,6 +200,7 @@
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
+#   --engine-version      print the agent-sandbox version and exit
 #   -h, --help            engine usage (only when no profile is selected;
 #                         with a profile, --help goes to the agent)
 #
@@ -245,6 +246,23 @@
 
 _as_msg() { echo "agent-sandbox: $*" >&2; }
 
+# The agent-sandbox version: the VERSION file next to the engine, plus a build
+# marker when known (the .build install.sh writes, else `git describe` in a
+# checkout). `engine` and `profile_dir` are set by the caller (agent_sandbox).
+_as_version() {
+  local dir vf bf v="unknown" b=""
+  dir="$(dirname -- "$engine")"
+  vf="$dir/VERSION"
+  bf="$dir/.build"
+  [[ -r "$vf" ]] && v="$(<"$vf")"
+  if [[ -r "$bf" ]]; then
+    b="$(<"$bf")"
+  elif command -v git >/dev/null && git -C "$dir" rev-parse --short HEAD >/dev/null 2>&1; then
+    b="$(git -C "$dir" describe --always --dirty --tags 2>/dev/null || git -C "$dir" rev-parse --short HEAD 2>/dev/null || true)"
+  fi
+  printf 'agent-sandbox %s%s\n' "$v" "${b:+ ($b)}"
+}
+
 _as_usage() {
   cat <<'USAGE'
 usage: agent-sandbox --profile NAME [ENGINE FLAGS] [AGENT ARGS...]
@@ -273,6 +291,7 @@ Engine flags (must precede the agent's own arguments):
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
   --engine-help         this text, even when a profile is selected
+  --engine-version      print the agent-sandbox version and exit
   -h, --help            this text when no profile is selected; with a profile
                         it goes to the agent (use --engine-help for this)
 
@@ -1228,6 +1247,10 @@ agent_sandbox() (
       --engine-help)
         _do_engine_help=1
         shift
+        ;;
+      --engine-version)
+        _as_version
+        return 0
         ;;
       --trust)
         _do_trust=1

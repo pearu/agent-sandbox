@@ -88,7 +88,7 @@ Environment knobs, set in the calling shell:
 Engine flags, before the agent's own arguments: `--profile NAME`,
 `--allow HOST`, `--host-port PORT`, `--agent-port PORT`, `--ssh HOST`,
 `--ssh-unrestricted`, `--ssh-key PATH`, `--ssh-timeout LIFE`, `--trust`,
-`--engine-help`. `agent-sandbox --help` lists
+`--engine-help`, `--engine-version`. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and `<agent> --help`
 ends with a footer pointing at it.
 
