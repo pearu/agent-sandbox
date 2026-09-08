@@ -83,8 +83,9 @@ them; with a profile, `<agent> --engine-help` shows the same, and `<agent> --hel
 ends with a footer pointing at it.
 
 A project can carry a git-ignored `.agent-sandbox` file with per-project
-`allow` hosts and memory scoping, honored only after `claude --trust` approves
-it. See [docs/config.md](docs/config.md).
+policy (egress hosts, memory scoping, extra paths, forwarded variables, conda
+settings, the network mode and strict-mode ports), honored only after
+`claude --trust` approves it. See [docs/config.md](docs/config.md).
 
 ## Documentation
 

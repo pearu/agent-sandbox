@@ -22,7 +22,9 @@ trust() {
   # leave the prose comments ('# ...') as comments.
   sed -E 's/^#([^[:space:]].*)$/\1/' "$EX" >"$PROJ/.agent-sandbox"
   trust
-  run_engine -- claude --version
+  # The example's [net] mode is strict; pin proxy here (the shell's knob wins) so
+  # this stays a parser check and never needs pasta.
+  run_engine AGENT_SANDBOX_NET=proxy -- claude --version
   [ "$status" -eq 0 ]
   # Any unrecognized section or key would produce one of these:
   [[ "$output" != *"ignoring unknown section"* ]]

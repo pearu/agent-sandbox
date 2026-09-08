@@ -141,6 +141,31 @@ trust() {
   [ "$(setenv_value CONDA_PKGS_DIRS)" = "$H/pkgs,$base/pkgs" ]
 }
 
+@test "[net] mode from an approved dot-file selects the network mode; AGENT_SANDBOX_NET wins; unknown values and unapproved files are ignored" {
+  printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
+  run_engine -- claude --version # not yet approved: still the default, proxy
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"present but not approved"* ]]
+  argv_has --share-net
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"using network mode 'none' from .agent-sandbox"* ]]
+  ! argv_has --share-net
+  ! setenv_value HTTPS_PROXY
+  run_engine AGENT_SANDBOX_NET=proxy -- claude --version # the shell's knob wins
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AGENT_SANDBOX_NET=proxy overrides the .agent-sandbox network mode 'none'"* ]]
+  argv_has --share-net
+  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
+  printf '[net]\nmode = bogus\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
+  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
+}
+
 @test "[proxy-ca], [profile-dir] and [session-base] are refused in the dot-file" {
   printf '[proxy-ca]\n/tmp/x.pem\n[profile-dir]\n/tmp\n[session-base]\n/tmp\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"

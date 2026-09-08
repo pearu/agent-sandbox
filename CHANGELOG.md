@@ -49,6 +49,9 @@ generalized.
   `AGENT_SANDBOX_AGENT_PORTS` and a trusted `.agent-sandbox` `[net]` section;
   TCP, 1024-65535, the sources form a union, `none` closes a direction, noted
   and ignored outside strict.
+- The network mode can be set per project: a trusted `.agent-sandbox` `[net]`
+  `mode = proxy|strict|open|none` line; an `AGENT_SANDBOX_NET` in the shell
+  wins over it.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with

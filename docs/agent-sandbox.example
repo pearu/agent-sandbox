@@ -68,24 +68,27 @@
 #pkgs = ~/.cache/agent-sandbox/conda-pkgs
 
 
-# --- Network: strict-mode ports -------------------------------------------
-# Only for AGENT_SANDBOX_NET=strict, where pasta's port forwarding is off in
-# both directions. Each key may repeat; TCP; ports 1024-65535; `none` closes
-# that direction for the session even if the command line or a knob lists
-# ports. Loopback on both sides, never the LAN.
+# --- Network ---------------------------------------------------------------
+# mode       : proxy (default: host network + the allowlist proxy), strict (own
+#              network namespace, only the proxy reachable), open (host
+#              network, NO allowlist), none (no network). An AGENT_SANDBOX_NET
+#              set in your shell wins over this line.
+# The port keys apply in strict mode, where pasta's port forwarding is off in
+# both directions. Each may repeat; TCP; ports 1024-65535; `none` closes that
+# direction for the session even if the command line or a knob lists ports.
+# Loopback on both sides, never the LAN.
 # host-port  : a host 127.0.0.1 port the sandbox may reach (a database, a
 #              local model server). A raw path to that service, unfiltered by
 #              the proxy.
 # agent-port : a port the agent listens on, published at the host's
 #              127.0.0.1:PORT (a dev server you open in a browser).
 #[net]
+#mode = strict
 #host-port = 5432
 #agent-port = 8000
 
 
 # Not settable here, on purpose:
-#   net mode  — proxy/strict/open/none stays a command-line/environment knob
-#               (AGENT_SANDBOX_NET); [net] takes ports only.
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project
 #               setting.
 #   profile-dir, session-base — engine internals.

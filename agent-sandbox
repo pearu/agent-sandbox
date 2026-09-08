@@ -105,8 +105,9 @@
 #
 #   AGENT_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
 #   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
-#   (RO/RW, PASSENV, the conda knobs and the strict-mode ports can also be
-#    set per-project in a trusted .agent-sandbox file -- see docs/config.md.)
+#   (RO/RW, PASSENV, the conda knobs, the network mode and the strict-mode
+#    ports can also be set per-project in a trusted .agent-sandbox file; an
+#    explicit knob in your shell wins over the file -- see docs/config.md.)
 #   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
 #   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
@@ -564,8 +565,8 @@ _as_allow_setup() {
 # ----- per-project config (.agent-sandbox) and its trust store -----
 # A project may carry a .agent-sandbox file with per-project policy: `allow`
 # hosts, `share-memory` project paths, `ro`/`rw` paths, `forward`ed variable
-# names, `conda` settings and strict-mode `net` ports. It is PARSED, never
-# sourced.
+# names, `conda` settings and the `net` mode and strict-mode ports. It is
+# PARSED, never sourced.
 # Because the project dir is writable by the sandboxed agent and a project may
 # come from an untrusted repository, the file is honoured only after the user
 # approves it with `--trust`: approval records the file's SHA-256, and any later
@@ -754,12 +755,14 @@ _as_dotfile_parse() {
         fi
         ;;
       net)
-        # Strict-mode ports (validated with the flags and knobs at launch).
+        # The network mode, and strict-mode ports (validated with the flags and
+        # knobs at launch).
         if [[ "$line" != *=* ]]; then
           _as_msg ".agent-sandbox: [net] expects 'key = value', ignoring: $line"
         else
           _as_dotfile_kv "$line"
           case "$ck" in
+            mode) _df_net_mode="$cv" ;;
             host-port) _df_net_host_port+=("$cv") ;;
             agent-port) _df_net_agent_port+=("$cv") ;;
             *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
@@ -1185,6 +1188,7 @@ agent_sandbox() (
   # ---- per-project config (.agent-sandbox), trust-gated ----
   local -a _df_allow=() _df_share=() _df_ro=() _df_rw=() _df_forward=()
   local -a _df_net_host_port=() _df_net_agent_port=()
+  local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   if [[ -f "$_dotfile" ]]; then
@@ -1216,6 +1220,22 @@ agent_sandbox() (
         _knob_rw="${_knob_rw:+$_knob_rw:}$_dj"
       fi
       ((${#_df_forward[@]})) && _knob_passenv="${_knob_passenv:+$_knob_passenv }${_df_forward[*]}"
+      # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
+      # file. Note a trusted `mode = open` switches the allowlist off for this
+      # project; the --trust review is where that is decided.
+      if [[ -n "$_df_net_mode" ]]; then
+        case "$_df_net_mode" in
+          proxy | strict | open | none)
+            if [[ -z "$_knob_net" ]]; then
+              _knob_net="$_df_net_mode"
+              _as_msg "using network mode '$_df_net_mode' from .agent-sandbox"
+            else
+              _as_msg "AGENT_SANDBOX_NET=$_knob_net overrides the .agent-sandbox network mode '$_df_net_mode'"
+            fi
+            ;;
+          *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
+        esac
+      fi
       # conda scalars: an explicit environment knob wins over the file.
       [[ -z "$_knob_conda_write" && -n "$_df_conda_write" ]] && _knob_conda_write="$_df_conda_write"
       [[ -z "$_knob_conda_pkgs" && -n "$_df_conda_pkgs" ]] && _knob_conda_pkgs="$_df_conda_pkgs"

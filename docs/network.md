@@ -1,7 +1,9 @@
 # Network modes and the egress allowlist
 
 Every sandbox starts with the network unshared; the mode selected by
-`AGENT_SANDBOX_NET` decides what is re-introduced.
+`AGENT_SANDBOX_NET` (or, for a project, a trusted `.agent-sandbox` `[net]`
+`mode = ...` line, which the shell's knob overrides) decides what is
+re-introduced.
 
 | Mode | What the sandbox gets | Use |
 |---|---|---|
