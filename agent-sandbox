@@ -582,45 +582,35 @@ _as_trust_record() {
 }
 
 # Parse the .agent-sandbox at $1 into the caller's _df_allow/_df_share arrays
-# and _df_share_set flag. Data only -- keys are matched, values are split; no
-# line is ever executed.
+# and _df_share_set flag. An INI-like format: `[section]` headers (allow,
+# share-memory), one item per line beneath, `#` starts a comment (whole-line or
+# trailing), blank lines ignored. Data only -- lines are matched, never
+# executed. One item per line means paths and hosts keep any spaces.
 _as_dotfile_parse() {
-  local file="$1" line key val _e
-  local -a _tmp=()
+  local file="$1" line section=""
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    if [[ "$line" != *=* ]]; then
-      _as_msg ".agent-sandbox: ignoring malformed line: $line"
+    if [[ "$line" == '['*']' ]]; then
+      section="${line#\[}"
+      section="${section%]}"
+      section="${section//[[:space:]]/}"
+      case "$section" in
+        allow) ;;
+        share-memory) _df_share_set=1 ;;
+        ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
+        *) _as_msg ".agent-sandbox: ignoring unknown section [$section]" ;;
+      esac
       continue
     fi
-    key="${line%%=*}" val="${line#*=}"
-    key="${key//[[:space:]]/}"
-    val="${val#"${val%%[![:space:]]*}"}"
-    val="${val%"${val##*[![:space:]]}"}"
-    case "$key" in
-      allow)
-        _tmp=()
-        _as_split _tmp $', \t' "$val"
-        _df_allow+=("${_tmp[@]}")
-        ;;
-      share-memory)
-        _df_share_set=1
-        _tmp=()
-        _as_split _tmp $', \t' "$val"
-        for _e in "${_tmp[@]}"; do
-          [[ -z "$_e" ]] && continue
-          _df_share+=("${_e/#\~/$HOME}")
-        done
-        ;;
-      ssh)
-        _as_msg ".agent-sandbox: 'ssh' is not supported yet; ignoring (use --ssh on the command line)"
-        ;;
-      *)
-        _as_msg ".agent-sandbox: ignoring unknown key '$key'"
-        ;;
+    case "$section" in
+      allow) _df_allow+=("$line") ;;
+      share-memory) _df_share+=("${line/#\~/$HOME}") ;;
+      ssh) ;;
+      "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
+      *) ;;
     esac
   done <"$file"
   return 0

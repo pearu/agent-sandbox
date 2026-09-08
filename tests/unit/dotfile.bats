@@ -30,7 +30,7 @@ trust() {
 }
 
 @test "an unapproved dot-file is ignored, with a pointer to --trust; a command-line --allow still works" {
-  printf 'allow = evil.example\nshare-memory =\n' >"$PROJ/.agent-sandbox"
+  printf '[allow]\nevil.example\n[share-memory]\n' >"$PROJ/.agent-sandbox"
   mkdir -p "$H/home/.claude/projects/-other/memory"
   run_engine -- claude --allow good.example --version
   [ "$status" -eq 0 ]
@@ -42,7 +42,7 @@ trust() {
 }
 
 @test "an approved dot-file adds its allow hosts and scopes memory to the current project" {
-  printf '# my project policy\nallow = pypi.org, .github.com\nshare-memory =\n' >"$PROJ/.agent-sandbox"
+  printf '# my project policy\n[allow]\npypi.org\n.github.com   # for pip\n[share-memory]\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   mkdir -p "$H/home/.claude/projects/-other/memory"
   run_engine -- claude --version
@@ -58,7 +58,7 @@ trust() {
 @test "share-memory lists other projects: their memory is bound read-only, the rest stay hidden" {
   local other="$H/other-proj" secret="$H/secret-proj"
   mkdir -p "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$secret")/memory"
-  printf 'share-memory = %s\n' "$other" >"$PROJ/.agent-sandbox"
+  printf '[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
@@ -74,7 +74,7 @@ trust() {
   mkdir -p "$H/home/.claude/projects/$(slug "$H/space/lib")/memory"
   # scratch exists as a dir but has no memory; space-other is a sibling, not under space/
   mkdir -p "$H/home/.claude/projects/$(slug "$H/space-other")/memory"
-  printf 'share-memory = %s/*\n' "$H/space" >"$PROJ/.agent-sandbox"
+  printf '[share-memory]\n%s/*\n' "$H/space" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
@@ -86,7 +86,7 @@ trust() {
 
 @test "a wildcard that matches nothing with memory warns" {
   mkdir -p "$H/empty"
-  printf 'share-memory = %s/*\n' "$H/empty" >"$PROJ/.agent-sandbox"
+  printf '[share-memory]\n%s/*\n' "$H/empty" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
@@ -95,48 +95,48 @@ trust() {
 }
 
 @test "editing an approved dot-file re-blocks it until re-approval" {
-  printf 'allow = pypi.org\n' >"$PROJ/.agent-sandbox"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [[ "$output" == *"session allowlist: pypi.org"* ]]
-  printf 'allow = pypi.org, evil.example\n' >"$PROJ/.agent-sandbox" # the agent could do this
+  printf '[allow]\npypi.org\nevil.example\n' >"$PROJ/.agent-sandbox" # the agent could do this
   run_engine -- claude --version
   [[ "$output" == *"present but not approved"* ]]
   [[ "$output" != *evil.example* ]]
 }
 
-@test "share-memory = all keeps every project's memory visible even when the global default is scoped" {
+@test "an all entry keeps every project's memory visible even when the global default is scoped" {
   printf 'memory_default = scoped\n' >"$CFG/config" 2>/dev/null || {
     mkdir -p "$CFG"
     printf 'memory_default = scoped\n' >"$CFG/config"
   }
-  printf 'share-memory = all\n' >"$PROJ/.agent-sandbox"
+  printf '[share-memory]\nall\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   ! argv_has --tmpfs "$H/home/.claude/projects"
 }
 
-@test "the global default scopes memory with no dot-file present; unknown keys and ssh warn" {
+@test "the global default scopes memory with no dot-file present; unknown sections and ssh warn" {
   mkdir -p "$CFG"
   printf 'memory_default = scoped\n' >"$CFG/config"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
   # parsing feedback
-  printf 'allow = ok.example\nssh = h\nbogus = 1\n= noKey\n' >"$PROJ/.agent-sandbox"
+  printf '[allow]\nok.example\n[ssh]\nignored.host\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
-  [[ "$output" == *"'ssh' is not supported yet"* ]]
-  [[ "$output" == *"unknown key 'bogus'"* ]]
+  [[ "$output" == *"[ssh] is not supported yet"* ]]
+  [[ "$output" == *"unknown section [bogus]"* ]]
 }
 
 @test "--trust reviews and approves the file, offers to git-ignore it, and never launches the agent" {
   git init -q "$PROJ"
-  printf 'allow = pypi.org\n' >"$PROJ/.agent-sandbox"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   run_trust 'y\ny'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"allow = pypi.org"* ]] # shown for review
+  [[ "$output" == *"[allow]"* && "$output" == *pypi.org* ]] # shown for review
   [[ "$output" == *"approved."* ]]
   [ ! -s "$H/argv" ] # bwrap never ran
   [ -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
@@ -147,7 +147,7 @@ trust() {
 }
 
 @test "--trust declined records nothing" {
-  printf 'allow = pypi.org\n' >"$PROJ/.agent-sandbox"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   run_trust 'n\n'
   [ "$status" -eq 0 ]
   [[ "$output" == *"not approved"* ]]

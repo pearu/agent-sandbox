@@ -56,7 +56,7 @@ trust_here() {
 }
 
 @test "scoped by an approved dot-file: current writable, shared memory read-only, other project invisible" {
-  printf 'share-memory = %s\n' "$SHARED" >"$IWORK/.agent-sandbox"
+  printf '[share-memory]\n%s\n' "$SHARED" >"$IWORK/.agent-sandbox"
   trust_here
   run_claude
   [ "$status" -eq 0 ]
@@ -87,7 +87,7 @@ trust_here() {
 }
 
 @test "an unapproved dot-file does not scope: it is ignored and the default (shared) applies" {
-  printf 'share-memory = %s\n' "$SHARED" >"$IWORK/.agent-sandbox"
+  printf '[share-memory]\n%s\n' "$SHARED" >"$IWORK/.agent-sandbox"
   run_claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]

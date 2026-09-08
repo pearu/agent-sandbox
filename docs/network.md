@@ -111,7 +111,8 @@ curl -sI https://example.com          # CONNECT tunnel failed, response 403
 
 ## Per-project allow hosts
 
-Instead of passing `--allow` each time, a project can list hosts in its
-`.agent-sandbox` file (`allow = host1, host2`), which applies to every session
-run from that project once you approve the file with `claude --trust`. Same
+Instead of passing `--allow` each time, a project can list hosts in an
+`[allow]` section of its `.agent-sandbox` file, one per line, which applies to
+every session run from that project once you approve the file with
+`claude --trust`. Same
 rules as `--allow`, same per-session lifetime. See [config.md](config.md).
