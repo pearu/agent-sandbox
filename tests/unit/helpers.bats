@@ -19,15 +19,35 @@ setup() {
   [ "${e[*]}" = 'FOO BAR BAZ' ]
 }
 
-@test "_as_check_paths refuses secret stores for RO and for RW" {
+@test "_as_check_paths refuses secret stores, the control plane and directories containing them, for RO and for RW; siblings pass" {
   HOME="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube"
+  mkdir -p "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
+    "$HOME/.local/share/keyrings" "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" \
+    "$HOME/.local/share/agent-sandbox" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
+    "$HOME/.config/nvim" "$HOME/.local/share/fonts" "$HOME/.cargo" "$HOME/.sshfoo"
+  : >"$HOME/.netrc"
   for knob in RO RW; do
-    for p in "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube"; do
+    for p in "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
+      "$HOME/.local/share/keyrings" "$HOME/.netrc" "$HOME/.git-credentials"; do
       run _as_check_paths "$knob" "$p"
       [ "$status" -eq 1 ]
-      [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"sensitive path"* ]]
+      [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"the secret store"* ]]
     done
+    for p in "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" "$HOME/.local/share/agent-sandbox" \
+      "$HOME/.local/bin" "$HOME/.config/systemd/user"; do
+      run _as_check_paths "$knob" "$p"
+      [ "$status" -eq 1 ]
+      [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"the sandbox's own control plane"* ]]
+    done
+    # a directory that contains a protected path exposes it: refused, with the hint
+    for p in "$HOME/.config" "$HOME/.local" "$HOME/.local/share"; do
+      run _as_check_paths "$knob" "$p"
+      [ "$status" -eq 1 ]
+      [[ "$output" == *"contains"*"bind a specific subdirectory instead"* ]]
+    done
+    # siblings and look-alikes are fine: the match is exact or by path component
+    run _as_check_paths "$knob" "$HOME/.config/nvim:$HOME/.local/share/fonts:$HOME/.cargo:$HOME/.sshfoo"
+    [ "$status" -eq 0 ]
   done
 }
 

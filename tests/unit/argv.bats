@@ -129,9 +129,13 @@ setup() {
   [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
   RUN_CWD="$(dirname "$H/home")" run_engine -- claude --version
   [ "$status" -eq 1 ] && [[ "$output" == *"contains \$HOME"* ]]
-  mkdir -p "$H/home/.ssh"
+  mkdir -p "$H/home/.ssh" "$H/home/.config/agent-sandbox"
   RUN_CWD="$H/home/.ssh" run_engine -- claude --version
-  [ "$status" -eq 1 ] && [[ "$output" == *"sensitive directory"* ]]
+  [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it is the secret store"* ]] && [ ! -s "$H/argv" ]
+  RUN_CWD="$H/home/.config/agent-sandbox" run_engine -- claude --version
+  [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it is the sandbox's own control plane"* ]]
+  RUN_CWD="$H/home/.config" run_engine -- claude --version # contains the trust store
+  [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it contains"* ]] && [ ! -s "$H/argv" ]
 }
 
 @test "RW into a secret store or a parent of HOME is refused before bwrap runs" {

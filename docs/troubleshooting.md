@@ -66,10 +66,15 @@ By design: only an explicit allowlist of variables is forwarded. Per session:
 
 **A tool inside cannot reach a file outside the project**
 Expose it: `AGENT_SANDBOX_RO=/some/dir claude` (or `AGENT_SANDBOX_RW`).
-Secret stores, `/`, `$HOME` and its parents are refused.
+Secret stores, the sandbox's own configuration (`~/.config/agent-sandbox`,
+`~/.mitmproxy`, `~/.local/share/agent-sandbox`, `~/.local/bin`,
+`~/.config/systemd`), any directory containing one of those (`~/.config`,
+`~/.local`), `/`, `$HOME` and its parents are refused; bind a specific
+subdirectory instead. The full list is in `docs/design.md`.
 
-**`refusing to bind sensitive directory ... as CWD` / `refusing to bind '/' as CWD`**
-You ran the agent from a secret store, from `/`, or from a parent of your
+**`refusing to bind '...' as CWD: it is|is inside|contains the secret store ...` / `... the sandbox's own control plane ...` / `refusing to bind '/' as CWD`**
+You ran the agent from a secret store, from the sandbox's own configuration,
+from a directory containing one of them, from `/`, or from a parent of your
 home. Run from a project directory.
 
 **`mamba install` or `pip install` fails inside**

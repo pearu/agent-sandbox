@@ -27,6 +27,12 @@ generalized.
   cache; every session gets an ephemeral `~/.cache`.
 - Refusals extended: read-only binds into secret stores, and `/`, `$HOME` or a
   parent of `$HOME` as CWD or bind.
+- Refusals extended again: more secret stores (`~/.azure`, `~/.config/gh`,
+  `~/.local/share/keyrings`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`,
+  `~/.pypirc`), the sandbox's own control plane (`~/.config/agent-sandbox`,
+  `~/.mitmproxy`, `~/.local/share/agent-sandbox`, `~/.local/bin`,
+  `~/.config/systemd`), and any directory that contains a protected path
+  (`~/.config`, `~/.local`); one rule for CWD and for RO/RW binds.
 - Fixed: the session liveness stamp recorded the wrong process's start time,
   so `--allow` never took effect and the SSH janitor could reap live sessions.
 - Fixed: setting `RW` and `PASSENV` together aborted the launch (IFS leak).

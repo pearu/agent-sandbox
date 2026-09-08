@@ -196,10 +196,16 @@
 #   -h, --help            engine usage (only when no profile is selected;
 #                         with a profile, --help goes to the agent)
 #
-# Sensitive locations (~/.ssh, ~/.gnupg, ~/.aws, ~/.config/{gcloud,sops},
-# ~/.kube, ~/.docker, ~/.password-store) are refused as CWD and as
-# AGENT_SANDBOX_RO or _RW targets. Paths that resolve to "/", "$HOME" or a
-# parent of $HOME are refused outright, as CWD too.
+# Secret stores (~/.ssh, ~/.gnupg, ~/.aws, ~/.azure, ~/.kube, ~/.docker,
+# ~/.password-store, ~/.config/{gcloud,sops,gh}, ~/.local/share/keyrings,
+# ~/.netrc, ~/.git-credentials, ~/.npmrc, ~/.pypirc) and the sandbox's own
+# control plane (~/.config/agent-sandbox, ~/.mitmproxy,
+# ~/.local/share/agent-sandbox, ~/.local/bin, ~/.config/systemd) are refused as
+# CWD and as AGENT_SANDBOX_RO or _RW targets, and so is any directory that
+# contains one of them (~/.config, ~/.local): bind a specific subdirectory
+# instead. Paths that resolve to "/", "$HOME" or a parent of $HOME are refused
+# outright, as CWD too. The list is a blocklist and cannot be complete;
+# see _as_secret_paths below.
 #
 # ============================================================================
 # DOCUMENTATION
@@ -299,12 +305,64 @@ _as_split() {
   return 0
 }
 
+# Paths never exposed to the sandbox: not as CWD, not as an RO or RW bind, and
+# not through a directory that contains them (binding ~/.config or ~/.local
+# would expose them all; bind a specific subdirectory instead). Two kinds:
+#   secret stores      keys, tokens and credentials of services the sandbox is
+#                      meant to keep the agent away from. Reading one is as bad
+#                      as writing it, so RO gets the same refusal as RW.
+#   the control plane  the sandbox's own machinery on the host. Writable from
+#                      inside, it would let the agent forge dot-file approvals
+#                      and edit the allowlist (~/.config/agent-sandbox), take
+#                      the proxy CA key (~/.mitmproxy), replace the proxy
+#                      runtime or addon (~/.local/share/agent-sandbox),
+#                      re-point the launcher (~/.local/bin) or install a user
+#                      unit that runs at login (~/.config/systemd). Refused
+#                      read-only too, for one rule instead of two.
+# A blocklist cannot be complete: anything you bind that is not listed here is
+# yours to judge. Paths are compared resolved (readlink -f), as-is.
+_as_secret_paths() {
+  printf '%s\n' "$HOME"/.ssh "$HOME"/.gnupg "$HOME"/.aws "$HOME"/.azure "$HOME"/.kube \
+    "$HOME"/.docker "$HOME"/.password-store "$HOME"/.config/gcloud "$HOME"/.config/sops \
+    "$HOME"/.config/gh "$HOME"/.local/share/keyrings "$HOME"/.netrc "$HOME"/.git-credentials \
+    "$HOME"/.npmrc "$HOME"/.pypirc
+}
+_as_control_paths() {
+  printf '%s\n' "$HOME"/.config/agent-sandbox "$HOME"/.mitmproxy "$HOME"/.local/share/agent-sandbox \
+    "$HOME"/.local/bin "$HOME"/.config/systemd
+}
+
+# Is the resolved path $1 protected? On yes, sets the caller's _prot_what ("the
+# secret store" / "the sandbox's own control plane"), _prot_path (the listed
+# path) and _prot_how ("is" / "is inside" / "contains") for its message.
+_as_path_protected() {
+  local real="$1" kind p
+  _prot_what="" _prot_path="" _prot_how=""
+  for kind in secret control; do
+    while IFS= read -r p; do
+      if [[ "$real" == "$p" ]]; then
+        _prot_how=is
+      elif [[ "$real" == "$p"/* ]]; then
+        _prot_how="is inside"
+      elif [[ "$p" == "$real"/* ]]; then
+        _prot_how=contains
+      else
+        continue
+      fi
+      _prot_path="$p"
+      if [[ "$kind" == secret ]]; then _prot_what="the secret store"; else _prot_what="the sandbox's own control plane"; fi
+      return 0
+    done < <("_as_${kind}_paths")
+  done
+  return 1
+}
+
 # Refuse user-supplied RO/RW paths that pull the rug out from under the sandbox
-# (/, $HOME, or any parent of $HOME) or expose well-known secret stores. Reading
-# a key store is as bad as writing it, so RO gets the same check as RW.
+# (/, $HOME, or any parent of $HOME) or expose a protected path (above).
 _as_check_paths() { # $1 = knob suffix (RO|RW), $2 = colon-separated list
   local knob=$1 raw="${2:-}" p real
   local -a parts=()
+  local _prot_what _prot_path _prot_how
   [[ -z "$raw" ]] && return 0
   _as_split parts ':' "$raw"
   for p in "${parts[@]}"; do
@@ -314,14 +372,11 @@ _as_check_paths() { # $1 = knob suffix (RO|RW), $2 = colon-separated list
       _as_msg "refusing AGENT_SANDBOX_$knob='$p' (would expose all of '$real': \$HOME or a parent of it)."
       return 1
     fi
-    case "$real" in
-      "$HOME"/.ssh* | "$HOME"/.gnupg* | "$HOME"/.aws* | \
-        "$HOME"/.config/gcloud* | "$HOME"/.config/sops* | \
-        "$HOME"/.kube* | "$HOME"/.docker* | "$HOME"/.password-store*)
-        _as_msg "refusing AGENT_SANDBOX_$knob='$p' (sensitive path '$real')."
-        return 1
-        ;;
-    esac
+    if _as_path_protected "$real"; then
+      _as_msg "refusing AGENT_SANDBOX_$knob='$p' ('$real' $_prot_how $_prot_what '$_prot_path')."
+      [[ "$_prot_how" == contains ]] && _as_msg "bind a specific subdirectory instead."
+      return 1
+    fi
   done
   return 0
 }
@@ -1282,21 +1337,6 @@ agent_sandbox() (
     _as_msg "profile '$profile' does not scope memory; the setting is ignored"
   fi
 
-  # Refuse to launch from directories that almost certainly hold secrets.
-  case "$cwd" in
-    "$HOME"/.ssh | "$HOME"/.ssh/* | \
-      "$HOME"/.gnupg | "$HOME"/.gnupg/* | \
-      "$HOME"/.aws | "$HOME"/.aws/* | \
-      "$HOME"/.config/gcloud | "$HOME"/.config/gcloud/* | \
-      "$HOME"/.config/sops | "$HOME"/.config/sops/* | \
-      "$HOME"/.kube | "$HOME"/.kube/* | \
-      "$HOME"/.docker | "$HOME"/.docker/* | \
-      "$HOME"/.password-store | "$HOME"/.password-store/*)
-      _as_msg "refusing to bind sensitive directory '$cwd' as CWD."
-      return 1
-      ;;
-  esac
-
   # ----- git identity hint -----
   # ~/.gitconfig is not bound into the sandbox, so a *global* git identity is
   # invisible inside it and commits fail with "Author identity unknown". The
@@ -1332,6 +1372,13 @@ agent_sandbox() (
     bind_cwd=0
     _as_msg "CWD is \$HOME — not binding it. Only the profile's state paths," \
       "the active conda env, and AGENT_SANDBOX_R{O,W} paths will be visible."
+  fi
+  # CWD is bound read-write: refuse a secret store or the sandbox's own control
+  # plane, and any directory containing one (see _as_secret_paths).
+  local _prot_what _prot_path _prot_how
+  if ((bind_cwd)) && _as_path_protected "$cwd"; then
+    _as_msg "refusing to bind '$cwd' as CWD: it $_prot_how $_prot_what '$_prot_path'. Run from a project directory."
+    return 1
   fi
 
   _as_check_paths RO "$_knob_ro" || return 1

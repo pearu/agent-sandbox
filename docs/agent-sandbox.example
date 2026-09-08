@@ -39,7 +39,8 @@
 
 # --- Extra paths ---------------------------------------------------------
 # Host paths to expose in the sandbox, added to any AGENT_SANDBOX_RO / _RW from
-# your shell. Secret stores (~/.ssh, ~/.aws, ~/.gnupg, ...), `/`, $HOME and any
+# your shell. Secret stores (~/.ssh, ~/.aws, ~/.gnupg, ...), the sandbox's own
+# configuration, any directory containing one of them, `/`, $HOME and any
 # parent of $HOME are always refused, here as on the command line.
 #[ro]
 #/opt/shared-data

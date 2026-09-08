@@ -47,7 +47,8 @@ Sections:
 - **`[ro]` / `[rw]`** — extra host paths to expose in the sandbox, one per
   line, added to any `AGENT_SANDBOX_RO` / `AGENT_SANDBOX_RW` from your shell.
   The same refusals apply as on the command line: secret stores (`~/.ssh`,
-  `~/.aws`, ...), `/`, `$HOME` and any parent of `$HOME` are rejected.
+  `~/.aws`, ...), the sandbox's own configuration, any directory containing
+  one of them, `/`, `$HOME` and any parent of `$HOME` are rejected.
 - **`[forward]`** — names of environment variables to carry from your shell
   into the sandbox (the values come from your shell, not this file), one per
   line, on top of the built-in set. Do not list secrets for unrelated services.

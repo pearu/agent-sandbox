@@ -23,7 +23,9 @@ claude --allow pypi.org      # + one more host through the egress proxy, this se
   read-only `$HOME` in which only the agent's own state (`~/.claude`), the
   current project directory (read-write), the active conda env (read-only
   unless asked), a session-private `~/.cache`, and paths you list are visible.
-  Secret stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, ...) are refused, as CWD too.
+  Secret stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.netrc`, ...) and the
+  sandbox's own configuration are refused, as CWD too, along with any directory
+  that contains them.
 - **Network**: through a host-side mitmproxy with an allowlist you edit
   (`~/.config/agent-sandbox/allowlist.txt`). Blocked hosts are refused before
   any connection is made and logged. The proxy's CA is trusted inside the
