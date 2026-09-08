@@ -43,6 +43,12 @@ generalized.
   port into the sandbox and publish sandbox listeners on the host).
   Needs `passt` and its AppArmor profile (added by `install.sh`) and nftables;
   `--ssh` is unavailable in this mode.
+- Strict-mode port opt-ins: `--host-port PORT` (the sandbox may reach the
+  host's 127.0.0.1:PORT) and `--agent-port PORT` (a port the agent listens on is
+  published at the host's 127.0.0.1:PORT), also as `AGENT_SANDBOX_HOST_PORTS` /
+  `AGENT_SANDBOX_AGENT_PORTS` and a trusted `.agent-sandbox` `[net]` section;
+  TCP, 1024-65535, the sources form a union, `none` closes a direction, noted
+  and ignored outside strict.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with

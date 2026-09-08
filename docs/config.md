@@ -1,7 +1,8 @@
 # Per-project config and memory scoping
 
 A project can carry a `.agent-sandbox` file that sets policy for sessions run
-from that directory. Today it holds two keys, `allow` and `share-memory`.
+from that directory: egress hosts, memory scoping, extra paths, forwarded
+variables, conda settings and, for the strict network mode, ports.
 Because the file lives in a directory the sandboxed agent can write, and a
 project may come from a repository you do not control, it is **honored only
 after you approve it**. Approval is bound to the file's exact contents, so any
@@ -54,11 +55,19 @@ Sections:
   (resolved under the active or a discoverable conda base) instead of the one
   active in your shell; `write = 1` makes the active env writable; `pkgs = <dir>`
   is the sandbox-owned package cache used in write mode.
+- **`[net]`** — key/value lines for the `strict` network mode, where pasta's
+  port forwarding is off in both directions: `host-port = PORT` lets the
+  sandbox reach the host's `127.0.0.1:PORT`, `agent-port = PORT` publishes a
+  port the agent listens on at the host's `127.0.0.1:PORT`. Each may repeat;
+  TCP; 1024–65535; `none` closes that direction for the session. They join the
+  `--host-port`/`--agent-port` flags and the `AGENT_SANDBOX_HOST_PORTS` /
+  `AGENT_SANDBOX_AGENT_PORTS` knobs as a union, and are noted and ignored in
+  the other modes. See [network.md](network.md#strict-mode-opening-ports).
 
-`net`, `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the
-file, on purpose: `net = open` would switch off the egress allowlist, `proxy-ca`
-is a trust anchor, and `profile-dir` would point the engine at code to source.
-They stay command-line/environment knobs; see `claude --engine-help`. An `[ssh]`
+`proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
+on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
+engine at code to source. The network *mode* is not settable in the file yet
+either; it stays the `AGENT_SANDBOX_NET` knob. See `claude --engine-help`. An `[ssh]`
 section is not accepted yet either; use `--ssh` on the command line. An unknown
 section, or a line before any section, is ignored with a warning.
 

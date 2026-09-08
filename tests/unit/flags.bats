@@ -121,6 +121,25 @@ setup() {
   [ -z "$(ls -A "$H/base" 2>/dev/null)" ]
 }
 
+@test "--host-port/--agent-port: a port 1024-65535 or none; junk and system ports refused; noted and ignored outside strict" {
+  run_engine -- claude --host-port
+  [ "$status" -eq 2 ] && [[ "$output" == *"--host-port needs a port"* ]]
+  run_engine -- claude --agent-port 80 --version
+  [ "$status" -eq 2 ] && [[ "$output" == *"--agent-port: port 80 refused (below 1024"* ]]
+  run_engine -- claude --host-port 70000 --version
+  [ "$status" -eq 2 ] && [[ "$output" == *"--host-port: bad port '70000'"* ]]
+  run_engine -- claude --host-port 8x --version
+  [ "$status" -eq 2 ]
+  [ ! -s "$H/argv" ]
+  run_engine -- claude --host-port 5432 --agent-port=8000 --version # proxy mode
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--host-port/--agent-port are ignored with AGENT_SANDBOX_NET=proxy"* ]]
+  run_engine AGENT_SANDBOX_NET=none -- claude --agent-port none --version
+  [ "$status" -eq 0 ] && [[ "$output" == *"are ignored with AGENT_SANDBOX_NET=none"* ]]
+  run_engine AGENT_SANDBOX_HOST_PORTS=80 -- claude --version # a bad knob value is a config error
+  [ "$status" -eq 1 ] && [[ "$output" == *"below 1024"* ]]
+}
+
 @test "unknown network mode is refused" {
   run_engine AGENT_SANDBOX_NET=bogus -- claude --version
   [ "$status" -eq 1 ]

@@ -96,8 +96,10 @@ Stated plainly. These are what the adversary above can still do.
   databases and the LAN. `AGENT_SANDBOX_NET=strict` closes this (pasta owns an
   isolated netns; an nftables rule allows only the proxy; pasta's port
   forwarding is off both ways, so host loopback services are not mirrored in
-  and sandbox listeners are not published on the host), at the cost of a
-  `passt` dependency and losing `--ssh`. In the default `proxy` mode the
+  and sandbox listeners are not published on the host, except the TCP ports
+  you open with `--host-port`/`--agent-port`; a host port is a raw path to that
+  service, and if the service forwards traffic, egress control ends there), at
+  the cost of a `passt` dependency and losing `--ssh`. In the default `proxy` mode the
   allowlist is a control on well-behaved clients, not a network boundary; the
   user chooses the mode and its residual risk.
 - **`--allow` is a union across live sessions.** The proxy cannot attribute a

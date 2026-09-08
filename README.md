@@ -72,11 +72,13 @@ Environment knobs, set in the calling shell:
 | `AGENT_SANDBOX_PASSENV="A B"` | extra environment variables to forward |
 | `AGENT_SANDBOX_CONDA_WRITE=1` | make the active conda env writable (`mamba install`, `pip install`); the base install stays read-only |
 | `AGENT_SANDBOX_NET=proxy\|strict\|open\|none` | network mode, default `proxy` |
+| `AGENT_SANDBOX_HOST_PORTS="5432"`, `AGENT_SANDBOX_AGENT_PORTS="8000"` | in `strict` mode: host loopback ports the sandbox may reach / agent ports published on the host's loopback (TCP; or `none`) |
 | `AGENT_SANDBOX_CONDA_PKGS`, `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`, `AGENT_SANDBOX_SESSION_BASE` | locations; see `agent-sandbox --help` |
 
 Engine flags, before the agent's own arguments: `--profile NAME`,
-`--allow HOST`, `--ssh HOST`, `--ssh-unrestricted`, `--ssh-key PATH`,
-`--ssh-timeout LIFE`, `--trust`, `--engine-help`. `agent-sandbox --help` lists
+`--allow HOST`, `--host-port PORT`, `--agent-port PORT`, `--ssh HOST`,
+`--ssh-unrestricted`, `--ssh-key PATH`, `--ssh-timeout LIFE`, `--trust`,
+`--engine-help`. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and `<agent> --help`
 ends with a footer pointing at it.
 

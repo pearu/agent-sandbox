@@ -141,14 +141,16 @@ trust() {
   [ "$(setenv_value CONDA_PKGS_DIRS)" = "$H/pkgs,$base/pkgs" ]
 }
 
-@test "[net], [proxy-ca], [profile-dir] are refused in the dot-file" {
-  printf '[net]\nopen\n' >"$PROJ/.agent-sandbox"
+@test "[proxy-ca], [profile-dir] and [session-base] are refused in the dot-file" {
+  printf '[proxy-ca]\n/tmp/x.pem\n[profile-dir]\n/tmp\n[session-base]\n/tmp\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[net] is not allowed here"* ]]
+  [[ "$output" == *"[proxy-ca] is not allowed here"* ]]
+  [[ "$output" == *"[profile-dir] is not allowed here"* ]]
+  [[ "$output" == *"[session-base] is not allowed here"* ]]
   argv_has --share-net
-  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied, not open
+  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied
 }
 
 @test "editing an approved dot-file re-blocks it until re-approval" {

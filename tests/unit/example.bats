@@ -27,13 +27,14 @@ trust() {
   # Any unrecognized section or key would produce one of these:
   [[ "$output" != *"ignoring unknown section"* ]]
   [[ "$output" != *"unknown [conda] key"* ]]
+  [[ "$output" != *"unknown [net] key"* ]]
   [[ "$output" != *"is not allowed here"* ]]
   [[ "$output" != *"is not supported yet"* ]]
   [[ "$output" != *"before any [section]"* ]]
   [[ "$output" != *"expects 'key = value'"* ]]
 }
 
-@test "the example shows every section and [conda] key the engine supports (nothing missing)" {
+@test "the example shows every section and every [conda]/[net] key the engine supports (nothing missing)" {
   # The parser's list of accepted sections is the source of truth.
   local accepted
   accepted=$(grep -E 'allow \| share-memory \| ro' "$ENGINE" | head -1 | sed -E 's/\).*//' | tr -d ' ' | tr '|' ' ')
@@ -50,6 +51,13 @@ trust() {
   for k in $(grep -oE '_df_conda_[a-z]+' "$ENGINE" | sort -u | sed 's/_df_conda_//'); do
     grep -qE "^#?$k[[:space:]]*=" "$EX" || {
       echo "[conda] key '$k' is accepted by the engine but absent from the example" >&2
+      false
+    }
+  done
+  # and its [net] keys (_df_net_<key>, with _ for -)
+  for k in $(grep -oE '_df_net_[a-z_]+' "$ENGINE" | sort -u | sed 's/_df_net_//; s/_/-/g'); do
+    grep -qE "^#?$k[[:space:]]*=" "$EX" || {
+      echo "[net] key '$k' is accepted by the engine but absent from the example" >&2
       false
     }
   done

@@ -15,6 +15,29 @@ resolver) is **not** filtered and can reach localhost and the LAN; `strict` mode
 closes that (at the cost of `--ssh` and a `passt` dependency). See the residual
 risks in [design.md](design.md) and issue #1.
 
+## Strict mode: opening ports
+
+`strict` switches off both directions of pasta's port forwarding: nothing
+listening on the host is reachable from the sandbox, and nothing the agent
+listens on appears on the host. Open exactly what a project needs:
+
+| | Effect | Flag | Knob | `.agent-sandbox` |
+|---|---|---|---|---|
+| host port | the sandbox reaches the host's `127.0.0.1:PORT` (a database, a local model server) | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS="PORT PORT"` | `[net]` `host-port = PORT` |
+| agent port | a port the agent listens on is published at the host's `127.0.0.1:PORT` (a dev server you open in a browser) | `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS="PORT"` | `[net]` `agent-port = PORT` |
+
+Rules: TCP only (UDP is not forwarded; open an issue if you need it). Ports
+1024–65535; the engine refuses a system port rather than let pasta fail to bind
+it. The three sources form a union; `none` in any
+of them closes that direction for the session, whatever the others list.
+Loopback on both sides, never the LAN. The engine prints what it opened at
+launch. In `proxy` and `open` modes the sandbox already shares the host's
+network, and `none` has no network, so the flags are noted and ignored there.
+
+A host port is not an allowlist entry: it is a raw TCP path to that one host
+service, which the proxy never sees. If that service forwards traffic (a SOCKS
+proxy, a tunnel), the sandbox's egress control ends there.
+
 ## The proxy
 
 `install.sh` puts mitmproxy 12 or newer into a private environment under

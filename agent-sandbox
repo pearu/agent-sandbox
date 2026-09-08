@@ -105,8 +105,8 @@
 #
 #   AGENT_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
 #   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
-#   (RO/RW, PASSENV and the conda knobs can also be set per-project in a
-#    trusted .agent-sandbox file -- see docs/config.md.)
+#   (RO/RW, PASSENV, the conda knobs and the strict-mode ports can also be
+#    set per-project in a trusted .agent-sandbox file -- see docs/config.md.)
 #   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
 #   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
@@ -140,6 +140,11 @@
 #                docs/network.md and issue #1.
 #       open   : --share-net, no proxy. Debug only.
 #       none   : no network at all (offline work).
+#   AGENT_SANDBOX_HOST_PORTS="5432 11434"   (strict) host 127.0.0.1 ports the
+#   AGENT_SANDBOX_AGENT_PORTS="8000"        sandbox may reach / agent ports
+#                                       published on the host's 127.0.0.1; the
+#                                       same as --host-port / --agent-port
+#                                       below (a list, or `none`)
 #   AGENT_SANDBOX_PROFILE_DIR=/dir      where profiles live (default: the
 #                                       profiles/ directory next to this file)
 #   AGENT_SANDBOX_SESSION_BASE=/dir     where per-session state lives (default:
@@ -165,6 +170,19 @@
 #                         is shared, though: while this session lives, its
 #                         --allow hosts are reachable from every concurrent
 #                         session on the host as well.
+#   --host-port PORT      (strict mode) let the sandbox reach the host's
+#                         127.0.0.1:PORT -- a database, a local model server.
+#                         Repeatable; 1024-65535; `none` opens nothing this
+#                         session even if a knob or the dot-file lists ports.
+#                         A raw path to that one service, unfiltered by the
+#                         proxy.
+#   --agent-port PORT     (strict mode) publish a port the agent listens on at
+#                         the host's 127.0.0.1:PORT -- a dev server you open
+#                         in a browser. Same rules. Both are TCP only; the
+#                         flags, the knobs above and a trusted .agent-sandbox
+#                         [net] section form a union; noted and ignored in the
+#                         other modes (proxy/open already share the host's
+#                         network, none has none). See docs/network.md.
 #   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
 #                         see docs/ssh.md
 #   --trust               review and approve this project's .agent-sandbox
@@ -227,6 +245,10 @@ Engine flags (must precede the agent's own arguments):
   --allow HOST          also allow HOST through the egress proxy, for this
                         session only; repeatable; ".example.com" matches the
                         domain and its subdomains
+  --host-port PORT      (strict) let the sandbox reach the host's
+                        127.0.0.1:PORT; repeatable; 1024-65535, or none
+  --agent-port PORT     (strict) publish the agent's PORT at the host's
+                        127.0.0.1:PORT; repeatable; 1024-65535, or none
   --ssh HOST            allow SSH to HOST via a per-session, destination-
                         constrained agent (the key stays on the host);
                         repeatable
@@ -248,6 +270,8 @@ Environment knobs:
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
+  AGENT_SANDBOX_HOST_PORTS="5432 11434"  (strict) same as --host-port, or none
+  AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port, or none
   AGENT_SANDBOX_PROFILE_DIR     where profiles live
   AGENT_SANDBOX_SESSION_BASE    where per-session state lives
 USAGE
@@ -538,8 +562,10 @@ _as_allow_setup() {
 }
 
 # ----- per-project config (.agent-sandbox) and its trust store -----
-# A project may carry a .agent-sandbox file with per-project policy (currently
-# `allow` hosts and `share-memory` project paths). It is PARSED, never sourced.
+# A project may carry a .agent-sandbox file with per-project policy: `allow`
+# hosts, `share-memory` project paths, `ro`/`rw` paths, `forward`ed variable
+# names, `conda` settings and strict-mode `net` ports. It is PARSED, never
+# sourced.
 # Because the project dir is writable by the sandboxed agent and a project may
 # come from an untrusted repository, the file is honoured only after the user
 # approves it with `--trust`: approval records the file's SHA-256, and any later
@@ -582,6 +608,50 @@ _as_default_gateway() {
   [[ -n "$_ip" ]] || for _c in /usr/sbin/ip /sbin/ip; do [[ -x "$_c" ]] && _ip="$_c" && break; done
   [[ -n "$_ip" ]] || return 0
   "$_ip" route show default 2>/dev/null | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -1
+}
+
+# A strict-mode port opt-in token (--host-port / --agent-port, the knobs, the
+# dot-file): a TCP port 1024-65535, or `none`. Ports below 1024 are refused:
+# pasta cannot bind system ports unprivileged, and nothing the agent runs
+# should sit on one. Prints why a token is bad.
+_as_port_ok() { # $1 = label for messages, $2 = token
+  local label="$1" t="$2"
+  [[ "$t" == none ]] && return 0
+  if [[ ! "$t" =~ ^[0-9]{1,5}$ ]] || ((10#$t > 65535)); then
+    _as_msg "$label: bad port '$t' (expected a port 1024-65535, or none)"
+    return 1
+  fi
+  if ((10#$t < 1024)); then
+    _as_msg "$label: port $t refused (below 1024: pasta cannot bind system ports unprivileged)"
+    return 1
+  fi
+  return 0
+}
+
+# Union of strict-mode port opt-ins from every source (flags, knob, dot-file)
+# into the array named by $2, deduplicated in the order given. A `none` in any
+# source empties it and sets the flag named by $3: one `none` closes that
+# direction for the session whatever the other sources list. A bad token fails.
+_as_ports_merge() { # $1 = label, $2 = out array name, $3 = out none-flag name, $4.. = tokens
+  local label="$1"
+  local -n _pm_out="$2" _pm_none="$3"
+  shift 3
+  local -a acc=()
+  local t u seen
+  for t in "$@"; do
+    [[ -z "$t" ]] && continue
+    _as_port_ok "$label" "$t" || return 1
+    if [[ "$t" == none ]]; then
+      _pm_none=1
+      continue
+    fi
+    t=$((10#$t))
+    seen=0
+    for u in "${acc[@]}"; do [[ "$u" == "$t" ]] && seen=1; done
+    ((seen)) || acc+=("$t")
+  done
+  if ((_pm_none)); then _pm_out=(); else _pm_out=("${acc[@]}"); fi
+  return 0
 }
 
 # Echo the conda/mamba base prefix (where envs/ and pkgs/ live), or nothing.
@@ -627,11 +697,22 @@ _as_trust_record() {
   return 0
 }
 
-# Parse the .agent-sandbox at $1 into the caller's _df_allow/_df_share arrays
-# and _df_share_set flag. An INI-like format: `[section]` headers (allow,
-# share-memory), one item per line beneath, `#` starts a comment (whole-line or
-# trailing), blank lines ignored. Data only -- lines are matched, never
-# executed. One item per line means paths and hosts keep any spaces.
+# Split a `key = value` line into the caller's ck (whitespace removed) and cv
+# (trimmed). Used for the key/value sections ([conda], [net]).
+# shellcheck disable=SC2034
+_as_dotfile_kv() {
+  ck="${1%%=*}" cv="${1#*=}"
+  ck="${ck//[[:space:]]/}"
+  cv="${cv#"${cv%%[![:space:]]*}"}"
+  cv="${cv%"${cv##*[![:space:]]}"}"
+}
+
+# Parse the .agent-sandbox at $1 into the caller's _df_* arrays and scalars. An
+# INI-like format: `[section]` headers (allow, share-memory, ro, rw, forward,
+# conda, net), one item per line beneath ([conda] and [net] take `key = value`
+# lines), `#` starts a comment (whole-line or trailing), blank lines ignored.
+# Data only -- lines are matched, never executed. One item per line means paths
+# and hosts keep any spaces.
 _as_dotfile_parse() {
   local file="$1" line section="" ck cv
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -644,9 +725,9 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda | net) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
-        net | proxy-ca | profile-dir | session-base)
+        proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
           ;;
         *) _as_msg ".agent-sandbox: ignoring unknown section [$section]" ;;
@@ -663,15 +744,25 @@ _as_dotfile_parse() {
         if [[ "$line" != *=* ]]; then
           _as_msg ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
         else
-          ck="${line%%=*}" cv="${line#*=}"
-          ck="${ck//[[:space:]]/}"
-          cv="${cv#"${cv%%[![:space:]]*}"}"
-          cv="${cv%"${cv##*[![:space:]]}"}"
+          _as_dotfile_kv "$line"
           case "$ck" in
             name) _df_conda_name="$cv" ;;
             write) _df_conda_write="$cv" ;;
             pkgs) _df_conda_pkgs="${cv/#\~/$HOME}" ;;
             *) _as_msg ".agent-sandbox: ignoring unknown [conda] key '$ck'" ;;
+          esac
+        fi
+        ;;
+      net)
+        # Strict-mode ports (validated with the flags and knobs at launch).
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [net] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          case "$ck" in
+            host-port) _df_net_host_port+=("$cv") ;;
+            agent-port) _df_net_agent_port+=("$cv") ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
           esac
         fi
         ;;
@@ -820,22 +911,26 @@ _as_launch() {
 # authority over the netns (owned by pasta's parent userns) and cannot alter the
 # firewall. The rule is installed before bwrap execs, so there is no window with
 # open egress; a failed rule refuses the launch. See docs/network.md and issue #1.
-# pasta's port forwarding is off in both directions (-T/-U and -t/-u none). Its
-# defaults ("auto") bind every port listening on the host inside the netns,
-# which the lo accept rule below would let the agent reach, and publish every
-# sandbox listener on the host. Verified on Ubuntu 24.04 (passt 2024-02-20):
-# with the defaults a host-only 127.0.0.1 listener was reachable from inside and
-# a sandbox listener appeared on the host; with none, neither.
-# $1 = gateway, $2 = nft binary path, $3.. = the full "bwrap ... -- agent" line.
+# pasta's port forwarding is off in both directions unless the user opened
+# ports: $3 is the -T spec (host TCP ports the sandbox may reach at 127.0.0.1,
+# or none) and $4 the -t spec (agent TCP ports published at the host's
+# 127.0.0.1, or none); UDP stays off. pasta's defaults ("auto") would bind
+# every port listening on the host inside the netns, which the lo accept rule
+# below lets the agent reach, and publish every sandbox listener on the host.
+# Verified on Ubuntu 24.04 (passt 2024-02-20): with the defaults a host-only
+# 127.0.0.1 listener was reachable from inside and a sandbox listener appeared
+# on the host; with none, neither.
+# $1 = gateway, $2 = nft binary path, $3 = -T spec, $4 = -t spec,
+# $5.. = the full "bwrap ... -- agent" line.
 _as_launch_pasta() {
-  local gw="$1" nftbin="$2"
-  shift 2
+  local gw="$1" nftbin="$2" tcp_ns="$3" tcp_host="$4"
+  shift 4
   local ruleset
   printf -v ruleset 'table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname "lo" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n' "$gw"
   local rc=0
   # The bash -c body runs inside pasta's netns; its $vars expand there, not here.
   # shellcheck disable=SC2016
-  pasta --config-net --quiet -T none -U none -t none -u none -- bash -c '
+  pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
     nftbin=$1 ruleset=$2
     shift 2
     printf %s "$ruleset" | "$nftbin" -f - || {
@@ -864,8 +959,9 @@ agent_sandbox() (
   # first token that is not one of ours; everything from there on is passed
   # to the agent untouched.
   local profile=""
-  local -a _ssh_hosts=() _allow_hosts=()
+  local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
+  local _host_none=0 _agent_none=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -935,6 +1031,23 @@ agent_sandbox() (
         _ssh_timeout="${1#--ssh-timeout=}"
         shift
         ;;
+      --host-port | --agent-port)
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || {
+            _as_msg "$1 needs a port (1024-65535), or none"
+            return 2
+          }
+        if [[ "$1" == --host-port ]]; then _host_ports+=("$2"); else _agent_ports+=("$2"); fi
+        shift 2
+        ;;
+      --host-port=?*)
+        _host_ports+=("${1#--host-port=}")
+        shift
+        ;;
+      --agent-port=?*)
+        _agent_ports+=("${1#--agent-port=}")
+        shift
+        ;;
       --engine-help)
         _do_engine_help=1
         shift
@@ -970,6 +1083,8 @@ agent_sandbox() (
       return 2
     }
   done
+  for _h in "${_host_ports[@]}"; do _as_port_ok --host-port "$_h" || return 2; done
+  for _h in "${_agent_ports[@]}"; do _as_port_ok --agent-port "$_h" || return 2; done
 
   # ---- --engine-help: the engine's own usage, even with a profile selected ----
   if ((_do_engine_help)); then
@@ -1069,6 +1184,7 @@ agent_sandbox() (
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
   local -a _df_allow=() _df_share=() _df_ro=() _df_rw=() _df_forward=()
+  local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   if [[ -f "$_dotfile" ]]; then
@@ -1131,6 +1247,13 @@ agent_sandbox() (
   else
     _memory_mode="$(_as_memory_default)"
   fi
+
+  # ---- strict-mode ports: flags, knobs and the dot-file form a union ----
+  local -a _knob_host_ports=() _knob_agent_ports=()
+  [[ -n "${AGENT_SANDBOX_HOST_PORTS:-}" ]] && _as_split _knob_host_ports $', \t\n' "$AGENT_SANDBOX_HOST_PORTS"
+  [[ -n "${AGENT_SANDBOX_AGENT_PORTS:-}" ]] && _as_split _knob_agent_ports $', \t\n' "$AGENT_SANDBOX_AGENT_PORTS"
+  _as_ports_merge --host-port _host_ports _host_none "${_host_ports[@]}" "${_knob_host_ports[@]}" "${_df_net_host_port[@]}" || return 1
+  _as_ports_merge --agent-port _agent_ports _agent_none "${_agent_ports[@]}" "${_knob_agent_ports[@]}" "${_df_net_agent_port[@]}" || return 1
 
   declare -F profile_prepare >/dev/null && profile_prepare
   if declare -F profile_memory_scope >/dev/null; then
@@ -1457,6 +1580,9 @@ agent_sandbox() (
   #          in this mode. See docs/network.md and issue #1.
   # open   : --share-net with no proxy. Use only for debugging.
   # none   : net fully unshared. Useful for offline work.
+  if [[ "${_knob_net:-proxy}" != strict ]] && ((${#_host_ports[@]} + ${#_agent_ports[@]} + _host_none + _agent_none > 0)); then
+    _as_msg "--host-port/--agent-port are ignored with AGENT_SANDBOX_NET=${_knob_net:-proxy}: only strict separates the sandbox's network from the host's"
+  fi
   case "${_knob_net:-proxy}" in
     open)
       args+=(--share-net)
@@ -1506,6 +1632,26 @@ agent_sandbox() (
         return 1
       }
       ((_ssh_want)) && _as_msg "warning — --ssh has no effect in strict mode: only the proxy is reachable, so SSH to a host is blocked by the egress firewall."
+      # Port opt-ins (see _as_launch_pasta): pasta -T/-t specs, or none.
+      local _tcp_ns=none _tcp_host=none
+      if ((${#_host_ports[@]})); then
+        _tcp_ns="$(
+          IFS=,
+          printf '%s' "${_host_ports[*]}"
+        )"
+        _as_msg "strict: host ports the sandbox may reach at 127.0.0.1: ${_host_ports[*]}"
+      elif ((_host_none)); then
+        _as_msg "strict: host ports: none this session"
+      fi
+      if ((${#_agent_ports[@]})); then
+        _tcp_host="127.0.0.1/$(
+          IFS=,
+          printf '%s' "${_agent_ports[*]}"
+        )"
+        _as_msg "strict: agent ports published at the host's 127.0.0.1: ${_agent_ports[*]}"
+      elif ((_agent_none)); then
+        _as_msg "strict: agent ports: none this session"
+      fi
       # The proxy is reached at the gateway address (pasta maps the host there);
       # everything else is dropped inside the netns. bwrap shares pasta's netns
       # and makes its own user namespace (via --unshare-all in args).
@@ -1520,7 +1666,7 @@ agent_sandbox() (
       )
       _as_ca_bind
       _as_ca_env
-      _as_launch_pasta "$_gw" "$_nftbin" bwrap "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch_pasta "$_gw" "$_nftbin" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
