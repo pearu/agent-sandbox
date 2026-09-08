@@ -103,8 +103,12 @@ engine writes them to the session directory; the addon honours the file only
 while the process stamped in `owner.id` (PID and start time) is alive, so a
 session that dies without cleaning up cannot leave a host open, and a recycled
 PID is never mistaken for the owner. The flag is ignored, with a note, in the
-`open` and `none` modes. Because the proxy is shared, a host allowed by one
-session is reachable from every concurrent session while that session lives.
+`open` and `none` modes. `--allow` is scoped to the session that granted it:
+the engine mints a per-session token, points that sandbox's proxy URL at
+`http://<token>@127.0.0.1:8888`, and the proxy addon grants the global
+allowlist plus only the matching session's `--allow`. A concurrent session
+(with a different token, or none) sees the global allowlist only, so one
+session's `--allow` hosts are not reachable from another.
 
 ## The proxy CA
 

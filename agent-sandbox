@@ -168,10 +168,12 @@
 #                         per-session file (see AGENT_SANDBOX_SESSION_BASE)
 #                         that the proxy addon reads; the addon honours it
 #                         only while this session's process is alive, so a
-#                         killed session cannot leave a host open. The proxy
-#                         is shared, though: while this session lives, its
-#                         --allow hosts are reachable from every concurrent
-#                         session on the host as well.
+#                         killed session cannot leave a host open. --allow is
+#                         scoped to THIS session: the engine mints a per-session
+#                         token, carries it in the sandbox's proxy URL, and the
+#                         addon grants the global allowlist plus only the
+#                         matching session's --allow -- so another concurrent
+#                         session cannot reach this one's --allow hosts.
 #   --host-port PORT      (strict mode) let the sandbox reach the host's
 #                         127.0.0.1:PORT -- a database, a local model server.
 #                         Repeatable; 1024-65535; `none` opens nothing this
@@ -609,10 +611,26 @@ _as_ssh_setup() {
 }
 
 # --allow HOST: write this session's extra hosts where the proxy addon reads
-# them. Nothing is bound into the sandbox; the file lives on the host, and the
-# addon honours it only while the process stamped in owner.id is alive.
+# them, and mint a per-session token so the addon can tell THIS session's --allow
+# from another's. The token goes in the session dir (private, never bound into a
+# sandbox) and, as userinfo, into the sandbox's proxy URL (_proxy_auth, used by
+# the network arms); the sandbox sends it in Proxy-Authorization, and the addon
+# grants the global allowlist plus only the matching session's --allow. So one
+# session's --allow is not reachable from another. Nothing but the token value
+# (which grants only this session's own --allow) is exposed inside the sandbox.
 _as_allow_setup() {
   _as_session_begin || return 1
+  local _token
+  _token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  if [[ -n "$_token" ]]; then
+    (
+      umask 077
+      printf '%s\n' "$_token" >"$_session_dir/proxy.token"
+    )
+    _proxy_auth="$_token"
+  else
+    _as_msg "warning — could not mint a session proxy token; --allow will not be isolated from other sessions"
+  fi
   {
     printf '# agent-sandbox --allow for %s. Honoured by the proxy addon only while\n' "$(basename -- "$_session_dir")"
     printf '# the process recorded in owner.id is alive. One host per line; a leading\n'
@@ -1065,18 +1083,19 @@ _as_launch() {
 # 127.0.0.1 listener was reachable from inside and a sandbox listener appeared
 # on the host; with none, neither.
 # $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes,
-# or empty), $3 = -T spec, $4 = -t spec, $5.. = the full "bwrap ... -- agent" line.
+# or empty), $3 = per-session proxy token (userinfo for the proxy URL, or empty),
+# $4 = -T spec, $5 = -t spec, $6.. = the full "bwrap ... -- agent" line.
 _as_launch_pasta() {
-  local nftbin="$1" sshrules="$2" tcp_ns="$3" tcp_host="$4"
-  shift 4
+  local nftbin="$1" sshrules="$2" proxy_auth="$3" tcp_ns="$4" tcp_host="$5"
+  shift 5
   local rc=0
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
   # IPs) is spliced into the chain after the proxy rule.
   # shellcheck disable=SC2016
   pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
-    nftbin=$1 sshrules=$2
-    shift 2
+    nftbin=$1 sshrules=$2 auth=$3
+    shift 3
     ipbin=$(command -v ip 2>/dev/null || true)
     [ -n "$ipbin" ] || for c in /usr/sbin/ip /sbin/ip; do [ -x "$c" ] && ipbin=$c && break; done
     gw=$([ -n "$ipbin" ] && "$ipbin" -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
@@ -1090,11 +1109,12 @@ _as_launch_pasta() {
     }
     bwrapbin=$1
     shift
+    pxy="http://${auth:+$auth@}$gw:8888"
     exec "$bwrapbin" \
-      --setenv HTTP_PROXY "http://$gw:8888" --setenv HTTPS_PROXY "http://$gw:8888" \
-      --setenv http_proxy "http://$gw:8888" --setenv https_proxy "http://$gw:8888" \
+      --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
+      --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" \
       "$@"
-  ' agent-sandbox-strict "$nftbin" "$sshrules" "$@" || rc=$?
+  ' agent-sandbox-strict "$nftbin" "$sshrules" "$proxy_auth" "$@" || rc=$?
   _as_session_cleanup
   [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
   return "$rc"
@@ -1716,7 +1736,7 @@ agent_sandbox() (
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
   # docs/network.md.
-  local _session_dir="" _ssh_agent_pid=""
+  local _session_dir="" _ssh_agent_pid="" _proxy_auth=""
   local -a _ssh_endpoints=()
   # In strict mode --ssh opens a firewall pinhole to each NAMED host (resolved
   # and pinned below); --ssh-unrestricted has no host to pin, so refuse it here,
@@ -1781,12 +1801,13 @@ agent_sandbox() (
       _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     proxy)
+      local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:8888"
       args+=(
         --share-net
-        --setenv HTTP_PROXY "http://127.0.0.1:8888"
-        --setenv HTTPS_PROXY "http://127.0.0.1:8888"
-        --setenv http_proxy "http://127.0.0.1:8888"
-        --setenv https_proxy "http://127.0.0.1:8888"
+        --setenv HTTP_PROXY "$_pxy"
+        --setenv HTTPS_PROXY "$_pxy"
+        --setenv http_proxy "$_pxy"
+        --setenv https_proxy "$_pxy"
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
@@ -1856,7 +1877,7 @@ agent_sandbox() (
           return 1
         }
       fi
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"

@@ -32,32 +32,70 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   [[ "$output" == *"github.com=False"* ]]
 }
 
-@test "session --allow files count only while their owner is alive; a recycled pid never counts" {
+@test "a session's --allow counts only with that session's token, only while its owner is alive; a recycled pid never counts" {
   sleep 300 &
   local live=$!
+  local st
+  st=$(awk '{print $22}' "/proc/$live/stat")
   mkdir -p "$BASE/session.a" "$BASE/session.dead" "$BASE/session.recycled" "$BASE/session.noowner"
-  printf '%s %s\n' "$live" "$(awk '{print $22}' "/proc/$live/stat")" >"$BASE/session.a/owner.id"
+  printf '%s %s\n' "$live" "$st" >"$BASE/session.a/owner.id"
   printf '# header\npypi.org\n' >"$BASE/session.a/allow.txt"
+  echo "tokenA" >"$BASE/session.a/proxy.token"
   echo "999999 1" >"$BASE/session.dead/owner.id"
   echo "dead.example" >"$BASE/session.dead/allow.txt"
+  echo "tokenD" >"$BASE/session.dead/proxy.token"
   printf '%s %s\n' "$live" "1" >"$BASE/session.recycled/owner.id"
   echo "recycled.example" >"$BASE/session.recycled/allow.txt"
+  echo "tokenR" >"$BASE/session.recycled/proxy.token"
   echo "noowner.example" >"$BASE/session.noowner/allow.txt"
-  run drive owner_alive "$BASE/session.a/owner.id"
-  [[ "$output" == "alive=True" ]]
-  run drive owner_alive "$BASE/session.dead/owner.id"
-  [[ "$output" == "alive=False" ]]
-  run drive owner_alive "$BASE/session.recycled/owner.id"
-  [[ "$output" == "alive=False" ]]
-  run drive allowed pypi.org dead.example recycled.example noowner.example
+  echo "tokenN" >"$BASE/session.noowner/proxy.token"
+  # session.a's pypi.org is reachable ONLY with tokenA and while alive
+  run drive allowed_tok tokenA pypi.org
   [[ "$output" == *"pypi.org=True"* ]]
-  [[ "$output" == *"dead.example=False"* ]]
-  [[ "$output" == *"recycled.example=False"* ]]
-  [[ "$output" == *"noowner.example=False"* ]]
+  run drive allowed_tok tokenA dead.example recycled.example noowner.example
+  [[ "$output" == *"dead.example=False"* ]]     # dead owner: never
+  [[ "$output" == *"recycled.example=False"* ]] # recycled pid (start-time differs): never
+  [[ "$output" == *"noowner.example=False"* ]]  # unstamped: never
+  # the global list is always allowed, token or not; an unknown/absent token gets global only
+  run drive allowed_tok tokenA api.github.com
+  [[ "$output" == *"api.github.com=True"* ]]
+  run drive allowed_tok "" pypi.org api.github.com
+  [[ "$output" == *"pypi.org=False"* ]]      # no token: session --allow invisible
+  [[ "$output" == *"api.github.com=True"* ]] # but the global list still applies
+  run drive allowed_tok wrongtoken pypi.org
+  [[ "$output" == *"pypi.org=False"* ]] # a non-matching token gets nothing extra
   kill "$live"
   wait "$live" 2>/dev/null || true
-  run drive allowed pypi.org
-  [[ "$output" == *"pypi.org=False"* ]]
+  run drive allowed_tok tokenA pypi.org
+  [[ "$output" == *"pypi.org=False"* ]] # owner gone: the grant lapses even with the token
+}
+
+@test "--allow is isolated between concurrent sessions; the token rides CONNECT and inner tunnel requests inherit it" {
+  sleep 300 &
+  local live=$!
+  local st
+  st=$(awk '{print $22}' "/proc/$live/stat")
+  mkdir -p "$BASE/session.a" "$BASE/session.b"
+  printf '%s %s\n' "$live" "$st" >"$BASE/session.a/owner.id"
+  echo "AAA" >"$BASE/session.a/proxy.token"
+  echo "a.example" >"$BASE/session.a/allow.txt"
+  printf '%s %s\n' "$live" "$st" >"$BASE/session.b/owner.id"
+  echo "BBB" >"$BASE/session.b/proxy.token"
+  echo "b.example" >"$BASE/session.b/allow.txt"
+  # CONNECT: A reaches a.example with A's token; B (or no token) cannot
+  run drive connect_tok AAA a.example
+  [[ "$output" == *"blocked=False"* ]]
+  run drive connect_tok BBB a.example
+  [[ "$output" == *"blocked=True"* ]]
+  run drive connect_tok none a.example
+  [[ "$output" == *"blocked=True"* ]]
+  run drive connect_tok BBB b.example
+  [[ "$output" == *"blocked=False"* ]]
+  # HTTPS tunnel: the CONNECT carries the token, the inner request (no header) inherits it
+  run drive tunnel_tok AAA a.example a.example
+  [[ "$output" == *"connect_blocked=False"* && "$output" == *"request_blocked=False"* ]]
+  kill "$live"
+  wait "$live" 2>/dev/null || true
 }
 
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {

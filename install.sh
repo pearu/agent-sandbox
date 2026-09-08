@@ -378,6 +378,16 @@ Blocked requests return HTTP 403 and are logged to
 ~/.config/agent-sandbox/blocked.log (one line per attempt) so you can
 review what the agent tried to reach and decide whether to add it.
 
+Per-session --allow is scoped to its own session, not shared: the engine gives
+each session that uses --allow a random token, points that sandbox's proxy URL
+at http://<token>@127.0.0.1:8888, and stores the token in the session dir. A
+request carries the token in its Proxy-Authorization header (on CONNECT for
+HTTPS, on each request for plain HTTP); the addon maps it back to the one live
+session and applies the global allowlist plus ONLY that session's --allow. A
+request with another session's token, or none, gets the global allowlist only,
+so one session's --allow is never reachable from another. The global
+allowlist.txt still applies to everyone.
+
 No restart needed when editing the allowlist; the file is re-read on
 each request.
 
@@ -399,6 +409,7 @@ every allowlist decision is made before a body flows.
 
 from __future__ import annotations
 
+import base64
 import datetime
 import logging
 import os
@@ -445,19 +456,58 @@ def _owner_alive(owner_file: Path) -> bool:
     return len(fields) > 19 and fields[19] == start
 
 
-def _session_lines() -> list[str]:
-    """Allowlist lines contributed by live sessions' --allow files."""
-    lines: list[str] = []
-    if not SESSION_BASE.is_dir():
-        return lines
+# CONNECT establishes an HTTPS tunnel; the token rides its Proxy-Authorization
+# header, but the requests inside the tunnel do not resend it. Remember, per
+# client connection, the token seen at CONNECT so those inner requests inherit
+# it. Bounded by concurrent client connections; entries are dropped on disconnect.
+_conn_token: dict[str, str] = {}
+
+
+def _token_from(flow: http.HTTPFlow) -> str | None:
+    """The session token in a request's Proxy-Authorization (Basic <b64 token:>),
+    or None. The username field is the token; the password is unused."""
+    try:
+        auth = flow.request.headers.get("Proxy-Authorization")
+    except Exception:
+        return None
+    if not auth or not auth.lower().startswith("basic "):
+        return None
+    try:
+        user = base64.b64decode(auth.split(" ", 1)[1]).decode().split(":", 1)[0]
+    except Exception:
+        return None
+    return user or None
+
+
+def _strip_proxy_auth(flow: http.HTTPFlow) -> None:
+    """Never forward the session token upstream."""
+    try:
+        if "Proxy-Authorization" in flow.request.headers:
+            del flow.request.headers["Proxy-Authorization"]
+    except Exception:
+        pass
+
+
+def _session_allow(token: str | None) -> list[str]:
+    """--allow lines of the single live session whose proxy.token matches `token`.
+    No token, or no live match, means no per-session grants (global list only), so
+    one session's --allow is never visible to another."""
+    if not token or not SESSION_BASE.is_dir():
+        return []
     for session in sorted(SESSION_BASE.glob("session.*")):
-        allow, owner = session / "allow.txt", session / "owner.id"
+        tok, allow, owner = session / "proxy.token", session / "allow.txt", session / "owner.id"
         try:
-            if allow.is_file() and owner.is_file() and _owner_alive(owner):
-                lines.extend(allow.read_text().splitlines())
+            if (
+                tok.is_file()
+                and allow.is_file()
+                and owner.is_file()
+                and tok.read_text().strip() == token
+                and _owner_alive(owner)
+            ):
+                return allow.read_text().splitlines()
         except OSError:
             continue
-    return lines
+    return []
 
 
 def _parse(lines: list[str], exact: set[str], suffix: list[str]) -> None:
@@ -477,12 +527,12 @@ def _parse(lines: list[str], exact: set[str], suffix: list[str]) -> None:
             exact.add(line)
 
 
-def _load_allowlist() -> tuple[set[str], list[str]]:
+def _load_allowlist(token: str | None = None) -> tuple[set[str], list[str]]:
     exact: set[str] = set()
     suffix: list[str] = []
     if ALLOWLIST_PATH.exists():
         _parse(ALLOWLIST_PATH.read_text().splitlines(), exact, suffix)
-    _parse(_session_lines(), exact, suffix)
+    _parse(_session_allow(token), exact, suffix)
     return exact, suffix
 
 
@@ -501,7 +551,12 @@ def _log_blocked(host: str, method: str, path: str) -> None:
 
 def request(flow: http.HTTPFlow) -> None:
     host = flow.request.pretty_host
-    exact, suffix = _load_allowlist()
+    token = _token_from(flow)
+    if token is None:  # inner request of an HTTPS tunnel: inherit the CONNECT's token
+        cid = getattr(getattr(flow, "client_conn", None), "id", None)
+        token = _conn_token.get(cid) if cid is not None else None
+    _strip_proxy_auth(flow)
+    exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix):
         return
     _log_blocked(host, flow.request.method, flow.request.path)
@@ -518,10 +573,19 @@ def request(flow: http.HTTPFlow) -> None:
     )
 
 
+def client_disconnected(client) -> None:
+    _conn_token.pop(getattr(client, "id", None), None)
+
+
 def http_connect(flow: http.HTTPFlow) -> None:
     """Refuse CONNECT to a non-allowed host before any upstream connection."""
     host = flow.request.host
-    exact, suffix = _load_allowlist()
+    token = _token_from(flow)
+    cid = getattr(getattr(flow, "client_conn", None), "id", None)
+    if cid is not None and token:
+        _conn_token[cid] = token  # inner tunnel requests inherit this
+    _strip_proxy_auth(flow)
+    exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix):
         return
     _log_blocked(host, "CONNECT", "-")

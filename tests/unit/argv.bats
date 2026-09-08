@@ -167,6 +167,14 @@ STUB
   read -r pid start < <(sed -n '/owner.id$/{n;p}' "$H/probe")
   [ -n "$pid" ] && [ -n "$start" ] && [ "$start" != 0 ]
   ! argv_has allow.txt
+  # a per-session proxy token is minted and carried in the proxy URL as userinfo,
+  # so the addon can scope --allow to this session (issue #5)
+  grep -q '^== .*/proxy.token$' "$H/probe"
+  local tok
+  tok=$(sed -n '/proxy.token$/{n;p}' "$H/probe")
+  [ -n "$tok" ]
+  [ "$(setenv_value HTTPS_PROXY)" = "http://$tok@127.0.0.1:8888" ]
+  [ "$(setenv_value HTTP_PROXY)" = "http://$tok@127.0.0.1:8888" ]
   [ -z "$(ls -A "$H/base")" ]
   [[ "$output" == *"session allowlist: pypi.org .example.org"* ]]
 }

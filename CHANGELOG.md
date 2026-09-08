@@ -61,6 +61,12 @@ generalized.
 - The network mode can be set per project: a trusted `.agent-sandbox` `[net]`
   `mode = proxy|strict|open|none` line; an `AGENT_SANDBOX_NET` in the shell
   wins over it.
+- `--allow` is now scoped to the session that granted it, not shared across
+  concurrent sessions. The engine mints a per-session token, carries it in the
+  sandbox's proxy URL (`http://<token>@127.0.0.1:8888`), and the addon grants
+  the global allowlist plus only the matching live session's `--allow`. A
+  concurrent session with a different token, or none, sees the global allowlist
+  only (issue #5).
 - A `.agent-sandbox` that was approved and then edited or deleted now refuses
   launches from that directory until `--trust` re-reviews it (or, with the file
   gone, forgets the approval). Ignoring it fell back to the defaults, which for
