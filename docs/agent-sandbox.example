@@ -1,0 +1,77 @@
+# .agent-sandbox — per-project policy for the agent-sandbox sandbox.
+#
+# Copy this to `.agent-sandbox` in your project root, uncomment what you need,
+# then approve it from that directory with:
+#
+#     claude --trust
+#
+# It is honored ONLY after approval. Any later edit (by you or by the agent)
+# re-blocks it until you approve again, so a file shipped by a cloned repo, or
+# written by the agent, does nothing until you review it. Keep it out of git;
+# `--trust` offers to add it to .git/info/exclude, since its contents are
+# machine-local.
+#
+# Format: INI-like. `[section]` headers, one item per line, `#` starts a
+# comment (a whole line or the end of one). One item per line, so paths and
+# hosts may contain spaces.
+
+
+# --- Egress hosts --------------------------------------------------------
+# Extra hosts this project may reach through the proxy, on top of the global
+# allowlist and any `--allow`. A leading dot matches a domain and subdomains.
+# (Same grant as `--allow`; ignored in the `open` and `none` network modes.)
+#[allow]
+#api.example.com
+#.internal.example.org
+
+
+# --- Memory scoping ------------------------------------------------------
+# Which projects' Claude memory this session may read. With this section
+# present but empty, the session sees only its own project. List project paths
+# (not the ~/.claude slug), use a `~/dir/*` wildcard to share the projects
+# directly under a directory, or a single `all` to keep every project visible.
+# With NO [share-memory] section, the global default applies (see
+# ~/.config/agent-sandbox/config, key memory_default).
+#[share-memory]
+#~/git/pearu/arrow
+#~/work/*
+
+
+# --- Extra paths ---------------------------------------------------------
+# Host paths to expose in the sandbox, added to any AGENT_SANDBOX_RO / _RW from
+# your shell. Secret stores (~/.ssh, ~/.aws, ~/.gnupg, ...), `/`, $HOME and any
+# parent of $HOME are always refused, here as on the command line.
+#[ro]
+#/opt/shared-data
+#[rw]
+#/scratch/thisproject
+
+
+# --- Forwarded environment ----------------------------------------------
+# NAMES of environment variables to carry from your shell into the sandbox
+# (the values come from your shell, not this file), on top of the built-in set
+# (locale, proxy, TLS, CUDA). Do not put secrets for unrelated services here.
+#[forward]
+#CUDA_VISIBLE_DEVICES
+#MY_TOOL_CONFIG
+
+
+# --- Conda ---------------------------------------------------------------
+# name  : run in this conda env (resolved under the active or discoverable
+#         conda base) instead of whatever env is active in your shell.
+# write : 1 makes the active env writable (mamba/pip install into it); the base
+#         install, other envs and the host package cache stay read-only.
+# pkgs  : sandbox-owned package cache used in write mode.
+#[conda]
+#name = myproject-env
+#write = 1
+#pkgs = ~/.cache/agent-sandbox/conda-pkgs
+
+
+# Not settable here, on purpose:
+#   net       — network mode (proxy/open/none). `open` would switch off the
+#               egress allowlist, so it stays a command-line/environment knob.
+#   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project
+#               setting.
+#   profile-dir, session-base — engine internals.
+# See `claude --engine-help` for these.

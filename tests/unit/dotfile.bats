@@ -94,6 +94,63 @@ trust() {
   argv_has --tmpfs "$H/home/.claude/projects" # still scoped to the current project
 }
 
+@test "an approved dot-file adds [ro]/[rw] paths and [forward] names to the sandbox" {
+  mkdir -p "$H/ro-a" "$H/ro-b" "$H/rw-a"
+  printf '[ro]\n%s/ro-a\n%s/ro-b\n[rw]\n%s/rw-a\n[forward]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MY_TOOL=on CUDA_VISIBLE_DEVICES=1 -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/ro-a" "$H/ro-a"
+  argv_has --ro-bind "$H/ro-b" "$H/ro-b"
+  argv_has --bind "$H/rw-a" "$H/rw-a"
+  [ "$(setenv_value MY_TOOL)" = on ]
+  [ "$(setenv_value CUDA_VISIBLE_DEVICES)" = 1 ]
+}
+
+@test "dot-file [ro]/[rw] paths still go through the secret-store refusal" {
+  mkdir -p "$H/home/.aws"
+  printf '[rw]\n%s/home/.aws\n' "$H" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 1 ]
+  [ ! -s "$H/argv" ]
+}
+
+@test "a command-line env knob and the dot-file combine: RW paths union" {
+  mkdir -p "$H/env-rw" "$H/file-rw"
+  printf '[rw]\n%s/file-rw\n' "$H" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_RW="$H/env-rw" -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/env-rw" "$H/env-rw"
+  argv_has --bind "$H/file-rw" "$H/file-rw"
+}
+
+@test "[conda] write and name are applied; name pins the env, write makes it writable" {
+  local base="$H/conda"
+  local env="$base/envs/proj-env"
+  mkdir -p "$env" "$base/pkgs" "$H/pkgs"
+  printf '[conda]\nname = proj-env\nwrite = 1\npkgs = %s/pkgs\n' "$H" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"using conda env 'proj-env' from .agent-sandbox"* ]]
+  argv_has --ro-bind "$base" "$base"
+  argv_has --bind "$env" "$env"
+  [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
+  [ "$(setenv_value CONDA_PKGS_DIRS)" = "$H/pkgs,$base/pkgs" ]
+}
+
+@test "[net], [proxy-ca], [profile-dir] are refused in the dot-file" {
+  printf '[net]\nopen\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[net] is not allowed here"* ]]
+  argv_has --share-net
+  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied, not open
+}
+
 @test "editing an approved dot-file re-blocks it until re-approval" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"

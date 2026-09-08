@@ -43,8 +43,27 @@ Sections:
   path level, so `~/git/pearu/*` does not match a sibling `~/git/pearu-notes`
   or descend past one level.
 
-An `[ssh]` section is not accepted yet; use `--ssh` on the command line. An
-unknown section, or a line before any section, is ignored with a warning.
+- **`[ro]` / `[rw]`** — extra host paths to expose in the sandbox, one per
+  line, added to any `AGENT_SANDBOX_RO` / `AGENT_SANDBOX_RW` from your shell.
+  The same refusals apply as on the command line: secret stores (`~/.ssh`,
+  `~/.aws`, ...), `/`, `$HOME` and any parent of `$HOME` are rejected.
+- **`[forward]`** — names of environment variables to carry from your shell
+  into the sandbox (the values come from your shell, not this file), one per
+  line, on top of the built-in set. Do not list secrets for unrelated services.
+- **`[conda]`** — key/value lines: `name = <env>` runs in that conda env
+  (resolved under the active or a discoverable conda base) instead of the one
+  active in your shell; `write = 1` makes the active env writable; `pkgs = <dir>`
+  is the sandbox-owned package cache used in write mode.
+
+`net`, `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the
+file, on purpose: `net = open` would switch off the egress allowlist, `proxy-ca`
+is a trust anchor, and `profile-dir` would point the engine at code to source.
+They stay command-line/environment knobs; see `claude --engine-help`. An `[ssh]`
+section is not accepted yet either; use `--ssh` on the command line. An unknown
+section, or a line before any section, is ignored with a warning.
+
+A ready-to-copy [agent-sandbox.example](agent-sandbox.example) lists every
+section with commented examples.
 
 ## Trust
 

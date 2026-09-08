@@ -105,6 +105,8 @@
 #
 #   AGENT_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
 #   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
+#   (RO/RW, PASSENV and the conda knobs can also be set per-project in a
+#    trusted .agent-sandbox file -- see docs/config.md.)
 #   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
 #   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
@@ -565,6 +567,27 @@ _as_memory_default() {
   esac
 }
 
+# Echo the conda/mamba base prefix (where envs/ and pkgs/ live), or nothing.
+# Used to resolve a [conda] name = <env> from .agent-sandbox to <base>/envs/<env>.
+_as_conda_base() {
+  if [[ -n "${MAMBA_ROOT_PREFIX:-}" && -d "${MAMBA_ROOT_PREFIX}" ]]; then
+    printf '%s' "$MAMBA_ROOT_PREFIX"
+  elif [[ -n "${CONDA_ROOT_PREFIX:-}" && -d "${CONDA_ROOT_PREFIX}" ]]; then
+    printf '%s' "$CONDA_ROOT_PREFIX"
+  elif [[ -n "${CONDA_PYTHON_EXE:-}" && -x "${CONDA_PYTHON_EXE}" ]]; then
+    printf '%s' "$(dirname "$(dirname "$CONDA_PYTHON_EXE")")"
+  elif [[ "${CONDA_PREFIX:-}" == */envs/* ]]; then
+    printf '%s' "${CONDA_PREFIX%/envs/*}"
+  elif [[ -n "${CONDA_PREFIX:-}" && -d "${CONDA_PREFIX:-}/envs" ]]; then
+    printf '%s' "$CONDA_PREFIX"
+  else
+    local b
+    b="$({ command -v conda >/dev/null && conda info --base; } 2>/dev/null \
+      || { command -v mamba >/dev/null && mamba info --base; } 2>/dev/null || true)"
+    [[ -n "$b" && -d "$b" ]] && printf '%s' "$b"
+  fi
+}
+
 # Is the .agent-sandbox at $2 (for project dir $1) approved? Trust file is
 # <config>/trust/<sha256(path)> holding the approved <sha256(content)>.
 _as_dotfile_trusted() {
@@ -592,7 +615,7 @@ _as_trust_record() {
 # trailing), blank lines ignored. Data only -- lines are matched, never
 # executed. One item per line means paths and hosts keep any spaces.
 _as_dotfile_parse() {
-  local file="$1" line section=""
+  local file="$1" line section="" ck cv
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"
@@ -603,9 +626,11 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow) ;;
-        share-memory) _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
+        net | proxy-ca | profile-dir | session-base)
+          _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
+          ;;
         *) _as_msg ".agent-sandbox: ignoring unknown section [$section]" ;;
       esac
       continue
@@ -613,6 +638,25 @@ _as_dotfile_parse() {
     case "$section" in
       allow) _df_allow+=("$line") ;;
       share-memory) _df_share+=("${line/#\~/$HOME}") ;;
+      ro) _df_ro+=("${line/#\~/$HOME}") ;;
+      rw) _df_rw+=("${line/#\~/$HOME}") ;;
+      forward) _df_forward+=("$line") ;;
+      conda)
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
+        else
+          ck="${line%%=*}" cv="${line#*=}"
+          ck="${ck//[[:space:]]/}"
+          cv="${cv#"${cv%%[![:space:]]*}"}"
+          cv="${cv%"${cv##*[![:space:]]}"}"
+          case "$ck" in
+            name) _df_conda_name="$cv" ;;
+            write) _df_conda_write="$cv" ;;
+            pkgs) _df_conda_pkgs="${cv/#\~/$HOME}" ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [conda] key '$ck'" ;;
+          esac
+        fi
+        ;;
       ssh) ;;
       "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
       *) ;;
@@ -964,17 +1008,19 @@ agent_sandbox() (
   # ---- knobs (AGENT_SANDBOX_*) ----
   local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_passenv="${AGENT_SANDBOX_PASSENV:-}"
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
+  local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
 
   local cwd
   cwd="$(pwd -P)"
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
-  local -a _df_allow=() _df_share=()
+  local -a _df_allow=() _df_share=() _df_ro=() _df_rw=() _df_forward=()
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
+  local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   if [[ -f "$_dotfile" ]]; then
     if _as_dotfile_trusted "$cwd" "$_dotfile"; then
       _as_dotfile_parse "$_dotfile"
-      local _dh
+      local _dh _dj
       for _dh in "${_df_allow[@]}"; do
         [[ -z "$_dh" ]] && continue
         if [[ "$_dh" =~ $_hostre ]]; then
@@ -983,6 +1029,39 @@ agent_sandbox() (
           _as_msg ".agent-sandbox allow: bad host '$_dh'; ignoring"
         fi
       done
+      # ro/rw paths and forwarded names: add to the knobs (validated later by
+      # _as_check_paths, which still refuses secret stores, /, $HOME, parents).
+      if ((${#_df_ro[@]})); then
+        _dj="$(
+          IFS=:
+          printf '%s' "${_df_ro[*]}"
+        )"
+        _knob_ro="${_knob_ro:+$_knob_ro:}$_dj"
+      fi
+      if ((${#_df_rw[@]})); then
+        _dj="$(
+          IFS=:
+          printf '%s' "${_df_rw[*]}"
+        )"
+        _knob_rw="${_knob_rw:+$_knob_rw:}$_dj"
+      fi
+      ((${#_df_forward[@]})) && _knob_passenv="${_knob_passenv:+$_knob_passenv }${_df_forward[*]}"
+      # conda scalars: an explicit environment knob wins over the file.
+      [[ -z "$_knob_conda_write" && -n "$_df_conda_write" ]] && _knob_conda_write="$_df_conda_write"
+      [[ -z "$_knob_conda_pkgs" && -n "$_df_conda_pkgs" ]] && _knob_conda_pkgs="$_df_conda_pkgs"
+      # conda name: pin the project's env; resolve <base>/envs/<name> and hand it
+      # to the conda block by setting CONDA_PREFIX for the rest of this launch.
+      if [[ -n "$_df_conda_name" ]]; then
+        local _cbase
+        _cbase="$(_as_conda_base)"
+        if [[ -n "$_cbase" && -d "$_cbase/envs/$_df_conda_name" ]]; then
+          CONDA_PREFIX="$_cbase/envs/$_df_conda_name"
+          CONDA_DEFAULT_ENV="$_df_conda_name"
+          _as_msg "using conda env '$_df_conda_name' from .agent-sandbox"
+        else
+          _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cbase:-<no conda base>}/envs; ignoring"
+        fi
+      fi
     else
       _as_msg ".agent-sandbox present but not approved; ignoring it." \
         "Review and approve with: $invoked --trust"
@@ -1261,7 +1340,7 @@ agent_sandbox() (
     args+=(--tmpfs "$HOME/.conda")
 
     if ((_conda_write)); then
-      local _pkgs="${AGENT_SANDBOX_CONDA_PKGS:-$HOME/.cache/agent-sandbox/conda-pkgs}" _pkgs_dirs
+      local _pkgs="${_knob_conda_pkgs:-$HOME/.cache/agent-sandbox/conda-pkgs}" _pkgs_dirs
       mkdir -p "$_pkgs" 2>/dev/null \
         || {
           _as_msg "cannot create the sandbox conda package cache '$_pkgs' (set AGENT_SANDBOX_CONDA_PKGS)"
