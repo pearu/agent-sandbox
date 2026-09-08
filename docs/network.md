@@ -6,7 +6,7 @@ Every sandbox starts with the network unshared; the mode selected by
 | Mode | What the sandbox gets | Use |
 |---|---|---|
 | `proxy` (default) | The host network namespace (`--share-net`) plus `HTTPS_PROXY`/`HTTP_PROXY` pointing at the host proxy on `127.0.0.1:8888`, and the proxy CA trusted inside. Every client that honours the proxy variables is filtered by the allowlist. | everyday work |
-| `strict` | Its own network namespace, owned by `pasta` and forwarded to the host in userspace; an nftables rule inside allows only the proxy on the default gateway. Closes the raw-socket loophole (a tool ignoring the proxy variables has no route out) and blocks localhost/LAN. Needs the `passt` package and its AppArmor profile (`install.sh` adds it) and nftables; `--ssh` does not work in this mode. | maximal isolation |
+| `strict` | Its own network namespace, owned by `pasta` and forwarded to the host in userspace; an nftables rule inside allows only the proxy on the default gateway. Closes the raw-socket loophole (a tool ignoring the proxy variables has no route out) and blocks localhost/LAN: pasta's port forwarding is off in both directions, so no host loopback service is mirrored into the sandbox and no sandbox listener is published on the host. Needs the `passt` package and its AppArmor profile (`install.sh` adds it) and nftables; `--ssh` does not work in this mode. | the network closed to everything but the proxy |
 | `open` | The host network, no proxy. | debugging only |
 | `none` | No network. | offline work |
 

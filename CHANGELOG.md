@@ -39,6 +39,8 @@ generalized.
   namespace and forwards it in userspace, bwrap runs inside sharing it, and an
   nftables rule allows only the proxy on the gateway, so a tool that ignores
   `HTTPS_PROXY` has no route out (closes the raw-socket egress gap, issue #1).
+  pasta's port forwarding is off both ways (its defaults would mirror every host
+  port into the sandbox and publish sandbox listeners on the host).
   Needs `passt` and its AppArmor profile (added by `install.sh`) and nftables;
   `--ssh` is unavailable in this mode.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,

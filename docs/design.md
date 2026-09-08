@@ -94,7 +94,9 @@ Stated plainly. These are what the adversary above can still do.
   host network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its
   own resolver) can reach anything the host can, including localhost services,
   databases and the LAN. `AGENT_SANDBOX_NET=strict` closes this (pasta owns an
-  isolated netns; an nftables rule allows only the proxy), at the cost of a
+  isolated netns; an nftables rule allows only the proxy; pasta's port
+  forwarding is off both ways, so host loopback services are not mirrored in
+  and sandbox listeners are not published on the host), at the cost of a
   `passt` dependency and losing `--ssh`. In the default `proxy` mode the
   allowlist is a control on well-behaved clients, not a network boundary; the
   user chooses the mode and its residual risk.

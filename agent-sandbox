@@ -132,9 +132,12 @@
 #                userspace; an nftables rule inside drops everything except the
 #                proxy on the default gateway. Closes the raw-socket loophole (a
 #                tool ignoring HTTPS_PROXY has no route out) and blocks
-#                localhost/LAN. Needs the 'passt' package and its AppArmor
-#                profile (install.sh adds it) plus nftables; --ssh is
-#                unavailable in this mode. See docs/network.md and issue #1.
+#                localhost/LAN: pasta's port forwarding is off both ways, so no
+#                host loopback service is mirrored into the sandbox and no
+#                sandbox listener is published on the host. Needs the 'passt'
+#                package and its AppArmor profile (install.sh adds it) plus
+#                nftables; --ssh is unavailable in this mode. See
+#                docs/network.md and issue #1.
 #       open   : --share-net, no proxy. Debug only.
 #       none   : no network at all (offline work).
 #   AGENT_SANDBOX_PROFILE_DIR=/dir      where profiles live (default: the
@@ -817,6 +820,12 @@ _as_launch() {
 # authority over the netns (owned by pasta's parent userns) and cannot alter the
 # firewall. The rule is installed before bwrap execs, so there is no window with
 # open egress; a failed rule refuses the launch. See docs/network.md and issue #1.
+# pasta's port forwarding is off in both directions (-T/-U and -t/-u none). Its
+# defaults ("auto") bind every port listening on the host inside the netns,
+# which the lo accept rule below would let the agent reach, and publish every
+# sandbox listener on the host. Verified on Ubuntu 24.04 (passt 2024-02-20):
+# with the defaults a host-only 127.0.0.1 listener was reachable from inside and
+# a sandbox listener appeared on the host; with none, neither.
 # $1 = gateway, $2 = nft binary path, $3.. = the full "bwrap ... -- agent" line.
 _as_launch_pasta() {
   local gw="$1" nftbin="$2"
@@ -826,7 +835,7 @@ _as_launch_pasta() {
   local rc=0
   # The bash -c body runs inside pasta's netns; its $vars expand there, not here.
   # shellcheck disable=SC2016
-  pasta --config-net --quiet -- bash -c '
+  pasta --config-net --quiet -T none -U none -t none -u none -- bash -c '
     nftbin=$1 ruleset=$2
     shift 2
     printf %s "$ruleset" | "$nftbin" -f - || {
@@ -1442,7 +1451,8 @@ agent_sandbox() (
   #          host in userspace; an nftables rule in that netns drops everything
   #          except the proxy on the default gateway. Closes the raw-socket
   #          loophole (a tool that ignores HTTPS_PROXY has no route out) and
-  #          blocks localhost/LAN. Needs the 'passt' package and its AppArmor
+  #          blocks localhost/LAN; pasta's port forwarding is off both ways
+  #          (see _as_launch_pasta). Needs the 'passt' package and its AppArmor
   #          profile (install.sh adds it) plus nftables. --ssh is unavailable
   #          in this mode. See docs/network.md and issue #1.
   # open   : --share-net with no proxy. Use only for debugging.
