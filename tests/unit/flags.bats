@@ -21,6 +21,22 @@ setup() {
   run_engine -- claude --help
   [ "$status" -eq 0 ]
   [ "${ARGV[-1]}" = "--help" ]
+  # the agent's help ends with a footer pointing at --engine-help
+  [[ "$output" == *"--engine-help"* ]]
+  [[ "$output" == *"runs inside a sandbox"* ]]
+}
+
+@test "--engine-help prints the engine usage even with a profile, and does not launch the agent" {
+  run_engine -- claude --engine-help
+  [ "$status" -eq 0 ]
+  [[ "$output" == usage:* ]]
+  [[ "$output" == *"--allow"* && "$output" == *"--trust"* && "$output" == *"--engine-help"* ]]
+  [ ! -s "$H/argv" ]
+  # also reachable without a profile via the engine name
+  run_engine -- agent-sandbox --engine-help
+  [ "$status" -eq 0 ]
+  [[ "$output" == usage:* ]]
+  [ ! -s "$H/argv" ]
 }
 
 @test "profile from argv[0], --profile NAME and --profile=NAME produce identical argv" {

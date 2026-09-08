@@ -76,7 +76,9 @@ Environment knobs, set in the calling shell:
 
 Engine flags, before the agent's own arguments: `--profile NAME`,
 `--allow HOST`, `--ssh HOST`, `--ssh-unrestricted`, `--ssh-key PATH`,
-`--ssh-timeout LIFE`, `--trust`. `agent-sandbox --help` lists them.
+`--ssh-timeout LIFE`, `--trust`, `--engine-help`. `agent-sandbox --help` lists
+them; with a profile, `<agent> --engine-help` shows the same, and `<agent> --help`
+ends with a footer pointing at it.
 
 A project can carry a git-ignored `.agent-sandbox` file with per-project
 `allow` hosts and memory scoping, honored only after `claude --trust` approves

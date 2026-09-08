@@ -164,6 +164,9 @@
 #                         file (per-project allow hosts and memory scoping),
 #                         then exit. See docs/config.md. The file is ignored
 #                         until approved, and any edit re-blocks it.
+#   --engine-help         engine usage even when a profile is selected (with a
+#                         profile, -h/--help goes to the agent, and its help
+#                         ends with a footer pointing here)
 #   -h, --help            engine usage (only when no profile is selected;
 #                         with a profile, --help goes to the agent)
 #
@@ -226,7 +229,9 @@ Engine flags (must precede the agent's own arguments):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
-  -h, --help            this text (only when no profile is selected)
+  --engine-help         this text, even when a profile is selected
+  -h, --help            this text when no profile is selected; with a profile
+                        it goes to the agent (use --engine-help for this)
 
 Environment knobs:
   AGENT_SANDBOX_RO=/a:/b        extra read-only paths
@@ -720,11 +725,26 @@ _as_ca_env() {
 
 # With per-session state (an ssh agent to kill, an --allow file to remove)
 # bash must outlive bwrap to clean up, so it cannot exec. Otherwise exec.
+# Print, to stderr, a footer pointing at --engine-help. Shown after the agent's
+# own --help so a user who only knows the `claude` command can discover the
+# sandbox's flags. Uses the caller's profile_command and invoked (dynamic scope).
+_as_engine_help_footer() {
+  {
+    printf -- '---\n'
+    printf 'agent-sandbox: the help above is %s'"'"'s own. It runs inside a sandbox;\n' "$profile_command"
+    printf 'for the sandbox'"'"'s flags (--allow, --ssh, --trust) run: %s --engine-help\n' "$invoked"
+  } >&2
+}
+
 _as_launch() {
-  if [[ -n "${_session_dir:-}" ]]; then
+  # When help is being shown, or a session dir must be cleaned up, run bwrap in
+  # this process (not exec) so we regain control -- to print the help footer
+  # and/or tear the session down -- then propagate the exit code.
+  if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" ]]; then
     local rc=0
     bwrap "$@" || rc=$?
     _as_session_cleanup
+    [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
     return "$rc"
   fi
   exec bwrap "$@"
@@ -747,7 +767,7 @@ agent_sandbox() (
   # to the agent untouched.
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=()
-  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0
+  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -817,6 +837,10 @@ agent_sandbox() (
         _ssh_timeout="${1#--ssh-timeout=}"
         shift
         ;;
+      --engine-help)
+        _do_engine_help=1
+        shift
+        ;;
       --trust)
         _do_trust=1
         shift
@@ -848,6 +872,15 @@ agent_sandbox() (
       return 2
     }
   done
+
+  # ---- --engine-help: the engine's own usage, even with a profile selected ----
+  if ((_do_engine_help)); then
+    _as_usage
+    return 0
+  fi
+  # A footer pointing at --engine-help is appended after the agent's own --help.
+  local _help_footer=""
+  [[ "${1:-}" == -h || "${1:-}" == --help ]] && _help_footer=1
 
   # ---- --trust: review and approve the current project's .agent-sandbox ----
   # Profile-independent; never launches the agent.
