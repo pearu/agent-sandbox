@@ -42,6 +42,25 @@ engine sets (see [network.md](network.md)); a tool with yet another knob needs
 it forwarded via `AGENT_SANDBOX_PASSENV`. If you changed the host's CA state
 while a session was running, relaunch.
 
+**`mitmproxy needs python3 >= 3.12 with venv ... or conda/mamba on PATH` (install.sh)**
+The installer builds the proxy in a private environment and needs one of two
+runtimes on the host. Provide either:
+
+- **A Python venv** — `python3 >= 3.12` with the `venv` and `ensurepip`
+  modules. On Debian/Ubuntu: `sudo apt install python3-venv` (it pulls
+  `ensurepip`); if your system `python3` is older than 3.12, install a newer
+  one (e.g. from `deadsnakes`) or use conda below. Verify:
+  `python3 -c 'import sys, venv, ensurepip; print(sys.version)'`.
+- **conda or mamba** — install Miniforge/Miniconda so `mamba` or `conda` is on
+  `PATH`; the installer creates a dedicated env from `conda-forge` and does not
+  touch your base env.
+
+Then re-run `./install.sh`. Everything lands under
+`~/.local/share/agent-sandbox`, so nothing system-wide changes and it is
+removed by deleting that directory. (There is no bundled mitmproxy binary: the
+upstream tarball publishes no checksums, so a supply-chain-safe route would
+have to pin a hash per release — see `AGENTS.md`.)
+
 **`certificate verify failed: Missing Authority Key Identifier` (Python 3.13+)**
 The proxy is an old mitmproxy (8.x) whose leaf certificates lack that
 extension. Re-run `install.sh`; it installs mitmproxy 12 or newer.

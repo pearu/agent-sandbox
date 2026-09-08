@@ -168,6 +168,9 @@ If you are an agent running inside this sandbox while maintaining it:
   checksums or signatures, so a secure route must pin a SHA256 per version and
   architecture in this repo. Deliberately not implemented: narrow audience
   (no `python3-venv` and no conda), maintenance per release, not CI-testable.
+  Handled at the documentation level instead: `docs/troubleshooting.md` tells a
+  user on such a host how to get a Python venv or conda so the installer can
+  build the proxy environment.
 - **Roadmap: a no-systemd mode.** Claude Code runs under WSL and in
   devcontainers; WSL without systemd would need the proxy started another way,
   and containers additionally block bwrap's user namespaces under Docker's
