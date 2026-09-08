@@ -18,6 +18,11 @@
 #   ./install.sh --dry-run    no sudo, no systemctl, no environment creation;
 #                             everything else runs against $HOME (CI uses this
 #                             with a throwaway HOME)
+#   ./install.sh --dev        point the launcher at THIS checkout (a symlink)
+#                             instead of installing a copy; for developing
+#                             agent-sandbox. Edits to the checked-out engine or
+#                             profiles then run at the next launch, so this is
+#                             not for ordinary use -- see docs/design.md.
 #
 # Installs mitmproxy >= 12 into a private environment (venv, else conda), and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
@@ -28,9 +33,11 @@
 set -euo pipefail
 
 DRY_RUN=0
+DEV=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
+    --dev) DEV=1 ;;
     -h | --help)
       sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'
       exit 0
@@ -142,6 +149,33 @@ shopt -u nullglob
 ((${#profiles[@]} > 0)) || err "no profiles found under $SCRIPT_DIR/profiles/"
 ok "engine: $ENGINE"
 ok "profiles: $(for f in "${profiles[@]}"; do basename -- "${f%.sh}"; done | tr '\n' ' ')"
+
+# ----- 1b. engine: a true install (copy) unless --dev -----
+# The launcher runs the engine on the HOST, and the engine sources its profiles
+# from beside itself, so both must live somewhere stable and not writable by a
+# sandboxed agent. A true install copies the engine and profiles into $APP_DIR
+# (under $STATE_DIR, which the sandbox never binds): the installed command then
+# does not depend on this checkout -- move or delete the source and it keeps
+# working -- and an edit to the source is inert until the next install.sh. --dev
+# instead points the launcher straight at the checkout, convenient when working
+# ON agent-sandbox, at the cost that edits there (including any a sandboxed agent
+# makes to a checkout it has as CWD) run on the host at the next launch.
+APP_DIR="$STATE_DIR/app"
+if ((DEV)); then
+  LAUNCH_TARGET="$ENGINE"
+  section "Engine (--dev: launcher points at the checkout)"
+  warn "edits to $SCRIPT_DIR/agent-sandbox and profiles/ will run on the host at the next launch"
+  info "including any made from inside the sandbox; drop --dev for a copy that is independent of this checkout"
+else
+  section "Engine (installing a copy under $APP_DIR)"
+  mkdir -p "$APP_DIR"
+  cp -f "$ENGINE" "$APP_DIR/agent-sandbox"
+  chmod 755 "$APP_DIR/agent-sandbox"
+  rm -rf "$APP_DIR/profiles"
+  cp -a "$SCRIPT_DIR/profiles" "$APP_DIR/profiles"
+  LAUNCH_TARGET="$APP_DIR/agent-sandbox"
+  ok "engine + profiles copied to $APP_DIR (the launcher no longer depends on $SCRIPT_DIR)"
+fi
 
 # ----- 2. packages -----
 section "Packages"
@@ -586,7 +620,7 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 UNIT_EOF
-sed -i -e "s|@ENGINE@|$ENGINE|g" -e "s|@MITMDUMP@|$MITMDUMP|g" "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
+sed -i -e "s|@ENGINE@|$LAUNCH_TARGET|g" -e "s|@MITMDUMP@|$MITMDUMP|g" "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 ok "wrote $SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 
 # ----- 8. systemd: reload, enable, start -----
@@ -619,7 +653,7 @@ else
   fi
 fi
 
-# ----- 9. PATH symlinks: one per profile command -> the engine -----
+# ----- 9. PATH symlinks: one per profile command -> the launch target -----
 section "PATH symlinks (\$HOME/.local/bin/<agent> -> agent-sandbox)"
 mkdir -p "$BIN_DIR"
 commands=()
@@ -627,20 +661,24 @@ for f in "${profiles[@]}"; do
   cmd=$(profile_query "$f" profile_command)
   commands+=("$cmd")
   link="$BIN_DIR/$cmd"
-  if [[ -L "$link" && "$(readlink -f "$link")" == "$ENGINE" ]]; then
+  if [[ -L "$link" && "$(readlink -f "$link")" == "$LAUNCH_TARGET" ]]; then
     ok "$link already points at the engine"
   elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link" || readlink "$link")")" == claude.sh ]]; then
-    ln -sfn "$ENGINE" "$link"
-    ok "re-pointed $link from the legacy claude.sh wrapper -> $ENGINE"
+    ln -sfn "$LAUNCH_TARGET" "$link"
+    ok "re-pointed $link from the legacy claude.sh wrapper -> $LAUNCH_TARGET"
+  elif [[ -L "$link" && "$(basename -- "$(readlink -f "$link" 2>/dev/null)")" == agent-sandbox ]]; then
+    # An earlier install's engine link (a different mode, or a moved checkout).
+    ln -sfn "$LAUNCH_TARGET" "$link"
+    ok "re-pointed $link -> $LAUNCH_TARGET"
   elif [[ -L "$link" && ! -e "$link" ]]; then
-    ln -sfn "$ENGINE" "$link"
-    ok "replaced dangling symlink $link -> $ENGINE"
+    ln -sfn "$LAUNCH_TARGET" "$link"
+    ok "replaced dangling symlink $link -> $LAUNCH_TARGET"
   elif [[ -e "$link" ]]; then
     warn "$link exists and is not the expected symlink (left untouched)"
     info "If it is the agent's own binary you no longer want on PATH, remove it and re-run."
   else
-    ln -s "$ENGINE" "$link"
-    ok "symlinked $link -> $ENGINE"
+    ln -s "$LAUNCH_TARGET" "$link"
+    ok "symlinked $link -> $LAUNCH_TARGET"
   fi
 done
 
@@ -649,7 +687,7 @@ done
 for cmd in "${commands[@]}"; do
   if command -v "$cmd" >/dev/null; then
     resolved=$(readlink -f "$(command -v "$cmd")")
-    if [[ "$resolved" == "$ENGINE" ]]; then
+    if [[ "$resolved" == "$LAUNCH_TARGET" ]]; then
       ok "\`$cmd\` on PATH resolves to the agent-sandbox engine"
     else
       warn "\`$cmd\` on PATH resolves to $resolved (not the engine)"

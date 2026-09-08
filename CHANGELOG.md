@@ -66,6 +66,14 @@ generalized.
 - `--trust` shows the file through `cat -v` and refuses one containing control
   characters (at review and at launch), so a repo-shipped file cannot hide a
   line from the review with an escape sequence or a carriage return.
+- `install.sh` is now a true install: it copies the engine and profiles under
+  `~/.local/share/agent-sandbox` and points the launcher there, so the command
+  no longer depends on the checkout (move or delete it and it keeps working)
+  and a `git pull` takes effect on the next `install.sh`. `--dev` keeps the
+  previous symlink-into-the-checkout for developing agent-sandbox; it also
+  means an edit to the checked-out engine (including one a sandboxed agent
+  makes to a checkout it has as CWD) is no longer a live host-code path under a
+  normal install.
 - Documentation: `docs/` (design and threat model, network, SSH, profiles,
   updating, troubleshooting, prior art), `AGENTS.md`, `scripts/check.sh`.
 - Tests: bats suites under `tests/` (unit with a stub bwrap, integration with

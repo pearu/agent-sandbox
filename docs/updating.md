@@ -34,4 +34,8 @@ ls ~/.local/share/claude/versions/     # then remove the ones you don't need
 
 Updating agent-sandbox itself: pull the repository and re-run `./install.sh`.
 It is idempotent, keeps your allowlist edits, migrates older layouts, and
-replaces the addon and unit with the current ones.
+replaces the addon, the unit, and the installed copy of the engine and
+profiles with the current ones. A plain `git pull` alone does not take effect:
+the command runs from the copy under `~/.local/share/agent-sandbox`, not from
+the checkout, so the re-run is what promotes your pull. (If you installed with
+`--dev`, the launcher points at the checkout and a pull is live immediately.)

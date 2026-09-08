@@ -17,7 +17,7 @@ sandbox. It is a security tool. Treat every change to it as one.
 | `profiles/<name>.sh`, `profiles/<name>.allowlist` | One provider profile per agent. `profiles/claude.sh` is the flagship and documents the profile contract in its header. |
 | `components/` | The files the installer places on a host: the mitmproxy allowlist addon, the starter allowlist, the systemd unit template, AppArmor profiles. **Source of truth.** |
 | `install.sh.in` | The installer template, with `@@INCLUDE components/...@@` markers. **Source of truth.** |
-| `install.sh` | **Generated** by `scripts/bundle.sh` from the two above. Never edit it by hand; edit the template or a component and rebundle. It is committed so `curl -fsSL .../install.sh | bash` works from one self-contained file. |
+| `install.sh` | **Generated** by `scripts/bundle.sh` from the two above. Never edit it by hand; edit the template or a component and rebundle. It is committed so `curl -fsSL .../install.sh | bash` works from one self-contained file. A normal run copies the engine + profiles under `~/.local/share/agent-sandbox/app` and points the launcher there (a true install, source-independent); `--dev` symlinks the launcher at the checkout for development. |
 | `scripts/bundle.sh` | Regenerates `install.sh`. Idempotent. |
 | `scripts/check.sh` | Every check CI's `check` job runs. Run it before committing. |
 | `docs/config.md` | The per-project `.agent-sandbox` file (trust-gated), and per-project memory scoping. Trust store and global config under `~/.config/agent-sandbox`, never bound in. |
@@ -147,6 +147,11 @@ If you are an agent running inside this sandbox while maintaining it:
   launch. Do not change the host's CA state mid-session; relaunch instead.
 - When you have guessed wrong twice, stop guessing and get ground truth from
   the host.
+- The engine and profiles you edit here are the checkout; a normal install
+  runs a *copy* under `~/.local/share/agent-sandbox`, so your edits reach a
+  real `claude` launch only after the human re-runs `install.sh`. Under
+  `--dev` they are live at the next launch — do not rely on either; test with
+  the bats suites, which run the checkout's engine directly.
 
 ## Decided; do not re-litigate (and the roadmap)
 
@@ -179,6 +184,15 @@ If you are an agent running inside this sandbox while maintaining it:
   Stream responses in `responseheaders`; refuse blocked hosts in `http_connect`.
 - **bubblewrap stays a distro package.** Ubuntu 24.04+ needs root once for the
   bwrap AppArmor profile anyway; that and the package are the only sudo steps.
+- **install.sh is a true install (copy), not an in-place symlink.** It copies
+  the engine and profiles under `~/.local/share/agent-sandbox/app` and points
+  the launcher there, so the installed command does not depend on the checkout
+  (delete it and the command still works) and an edit to a checked-out engine
+  or profile is inert until the next `install.sh`. `--dev` keeps the old
+  symlink-into-the-checkout for people developing agent-sandbox; it warns that
+  edits there — including any a sandboxed agent makes to a checkout it has as
+  CWD — run on the host at the next launch. This is why a from-inside edit to
+  the engine is not a live host-code path under a normal install.
 - **No backwards-compatibility aliases** for renamed knobs; the project has no
   compatibility surface yet.
 - **Strict network mode** is implemented with pasta: it owns an isolated netns,

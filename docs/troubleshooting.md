@@ -78,6 +78,15 @@ policy with the defaults, which for memory scoping is wider. Restore the file,
 or run `claude --trust` from the project directory: with the file missing it
 offers to forget the approval.
 
+**`claude: command not found` (or it runs an old version) after moving or pulling the repo**
+A normal install copies the engine and profiles under
+`~/.local/share/agent-sandbox` and the launcher points there, so moving the
+clone is fine but a `git pull` takes effect only after you re-run
+`./install.sh` (it re-copies). If you used `./install.sh --dev`, the launcher
+points at the checkout instead: moving or deleting it breaks the command
+(`~/.local/bin/<agent>` becomes a dangling symlink) — re-run `./install.sh`
+from the new location.
+
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:
 `AGENT_SANDBOX_PASSENV="GH_TOKEN" claude`.

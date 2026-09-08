@@ -27,10 +27,13 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   local unit="$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ -f "$unit" ]
   grep -q "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-venv/bin/mitmdump" "$unit"
-  grep -q "^Documentation=file:$REPO_ROOT/agent-sandbox" "$unit"
+  grep -q "^Documentation=file:$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$unit"
   grep -q -- '--set http2=false' "$unit"
   ! grep -q '@' "$unit"
-  [ "$(readlink "$T/home/.local/bin/claude")" = "$REPO_ROOT/agent-sandbox" ]
+  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # a real copy, not the checkout
+  cmp -s "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
+  [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude.sh" ]
   [[ "$output" == *"(dry-run) would run: systemctl --user daemon-reload"* ]]
   [[ "$output" == *"(dry-run) proxy request skipped"* ]]
   [[ "$output" != *"sudo "* ]] || [[ "$output" == *"(dry-run)"*"sudo"* ]]
@@ -62,7 +65,20 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   grep -q '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt"
   [[ "$output" == *"would disable and remove the legacy claude-mitmproxy.service"* ]]
   [[ "$output" == *"re-pointed"*"legacy claude.sh"* ]]
+  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
+}
+
+@test "--dev points the launcher at the checkout and warns; a later true install re-points it to the copy" {
+  dry -- --dev
+  [ "$status" -eq 0 ]
   [ "$(readlink "$T/home/.local/bin/claude")" = "$REPO_ROOT/agent-sandbox" ]
+  [ ! -e "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # --dev copies nothing
+  [[ "$output" == *"run on the host at the next launch"* ]]
+  grep -q "^Documentation=file:$REPO_ROOT/agent-sandbox" "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  dry # default (copy) re-points the launcher away from the checkout
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
+  [[ "$output" == *"re-pointed"* ]]
 }
 
 @test "a dangling symlink is replaced; a regular file is left untouched with a warning" {
@@ -94,7 +110,8 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   [ "$status" -eq 0 ]
   [[ "$output" == *"cloning $REPO_ROOT"* ]]
   [ -f "$T/home/.local/share/agent-sandbox/src/agent-sandbox" ]
-  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/src/agent-sandbox" ]
+  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # copied out of the clone
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin AGENT_SANDBOX_REPO="$REPO_ROOT" "$T/alone/install.sh" --dry-run
   [[ "$output" == *"updating $T/home/.local/share/agent-sandbox/src"* ]]
 }

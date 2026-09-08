@@ -57,10 +57,16 @@ cd agent-sandbox
 The installer is idempotent: it sets up the proxy (mitmproxy 12+ in a private
 environment under `~/.local/share/agent-sandbox`), generates the CA, writes
 the allowlist (keeping your edits on re-runs) and adds each profile's hosts,
-installs the systemd user unit, and symlinks `~/.local/bin/<agent>` at the
-engine for every profile. Re-run it after pulling to update. Standalone:
+installs the systemd user unit, **copies the engine and profiles under
+`~/.local/share/agent-sandbox`** and points `~/.local/bin/<agent>` at that copy
+for every profile. Because the command runs from the copy, you can move or
+delete this clone afterward; re-run `./install.sh` after pulling to update.
+Working *on* agent-sandbox? `./install.sh --dev` points the launcher at the
+checkout instead, so your edits take effect at the next launch (see
+[docs/design.md](docs/design.md) for why that is dev-only). Standalone:
 `curl -fsSL https://raw.githubusercontent.com/pearu/agent-sandbox/main/install.sh | bash`
-clones the repository under `~/.local/share/agent-sandbox/src` first.
+clones the repository under `~/.local/share/agent-sandbox/src` and installs
+the copy from there.
 
 Then open a fresh shell, `cd` into a project, and run `claude`.
 
