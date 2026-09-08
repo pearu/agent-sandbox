@@ -85,8 +85,10 @@ teardown_file() {
   local out
   out=$(cat "$E/install1.out")
   [[ "$out" == *"agent-sandbox-mitmproxy.service is active"* ]]
-  [[ "$out" == *"forwarded to api.anthropic.com through the allowlist (HTTP 401)"* ||
-    "$out" == *"forwarded to api.anthropic.com through the allowlist (HTTP 200)"* ]]
+  [[ "$out" == *"proxy reaches an allowlisted host (api.anthropic.com)"* ]]
+  # the installer's own negative smoke check asserts the other half of the contract
+  [[ "$out" == *"proxy refuses a non-allowlisted host (example.com blocked at CONNECT)"* ]]
+  [[ "$out" != *"SECURITY:"* ]]
   run curl -sS --cacert "$H/.mitmproxy/mitmproxy-ca-cert.pem" --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null https://example.com/
   [ "$status" -ne 0 ]
   [[ "$output" == *"403"* ]]

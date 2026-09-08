@@ -661,18 +661,37 @@ if bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true 2>/dev/null; th
 else
   warn "bwrap user-namespace test failed — see the agent-sandbox header for AppArmor notes"
 fi
-# api.anthropic.com answers 404 for / and 401 for /v1/models without a key;
-# either proves the request went through the proxy to Anthropic. 000 means the
-# proxy is down or refused the CONNECT (host missing from the allowlist).
+# Verifies the contract of the default `proxy` net mode: HTTPS_PROXY-honouring
+# clients reach allowlisted hosts and ONLY those. Both halves matter -- a proxy
+# that answers but does not refuse is not enforcing anything. (Other net modes
+# make different promises: `strict` additionally blocks raw sockets and would
+# get its own check when it lands; `open` filters nothing; `none` has no
+# network. The user picks the mode per launch and owns its residual risk.)
+# api.anthropic.com answers 401 for /v1/models without a key, proving the
+# request reached Anthropic through the proxy; example.com is not in the
+# starter allowlist, so it must be refused at CONNECT (curl gets no response,
+# code 000). A non-000 code for example.com means the allowlist is not
+# enforcing.
+proxy_get() { # $1 = url; echoes the HTTP code (000 = refused/failed)
+  curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 \
+    -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || true
+}
 if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
 else
-  smoke_code=$(curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 -o /dev/null -w '%{http_code}' \
-    https://api.anthropic.com/v1/models 2>/dev/null || true)
-  case "$smoke_code" in
-    200 | 401) ok "mitmproxy forwarded to api.anthropic.com through the allowlist (HTTP $smoke_code)" ;;
+  case "$(proxy_get https://api.anthropic.com/v1/models)" in
+    200 | 401)
+      ok "proxy reaches an allowlisted host (api.anthropic.com)"
+      # The other half of the contract: a non-allowlisted host is refused.
+      block_code=$(proxy_get https://example.com/)
+      if [[ "$block_code" == 000 ]]; then
+        ok "proxy refuses a non-allowlisted host (example.com blocked at CONNECT)"
+      else
+        warn "SECURITY: non-allowlisted example.com returned HTTP $block_code through the proxy — the allowlist is NOT enforcing; check $CONFIG_DIR/allowlist_addon.py is loaded"
+      fi
+      ;;
     000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
-    *) warn "unexpected HTTP $smoke_code from api.anthropic.com via the proxy" ;;
+    *) warn "unexpected response from api.anthropic.com via the proxy" ;;
   esac
 fi
 
