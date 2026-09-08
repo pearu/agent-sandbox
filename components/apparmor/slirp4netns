@@ -1,7 +1,0 @@
-abi <abi/4.0>,
-include <tunables/global>
-
-profile slirp4netns /usr/bin/slirp4netns flags=(unconfined) {
-  userns,
-  include if exists <local/slirp4netns>
-}

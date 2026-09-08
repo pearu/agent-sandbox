@@ -158,10 +158,10 @@ fi
 if command -v bwrap >/dev/null; then
   ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
 fi
-if command -v slirp4netns >/dev/null; then
-  ok "slirp4netns installed (enables AGENT_SANDBOX_NET=strict in the future)"
+if command -v pasta >/dev/null; then
+  ok "passt/pasta installed (enables AGENT_SANDBOX_NET=strict)"
 else
-  info "slirp4netns not installed; only needed for the (currently non-functional) strict mode"
+  info "passt not installed; needed only for AGENT_SANDBOX_NET=strict (sudo apt install passt)"
 fi
 
 # ----- 3. the agents themselves, one per profile -----
@@ -182,7 +182,7 @@ for f in "${profiles[@]}"; do
 done
 
 # ----- 4. AppArmor profiles (Ubuntu 24.04+) -----
-section "AppArmor profiles for bwrap (and slirp4netns)"
+section "AppArmor profiles for bwrap (and pasta)"
 # On kernels that restrict unprivileged user namespaces, each binary that
 # needs one gets a profile granting just that. The profile text comes on stdin.
 apparmor_profile() {
@@ -204,10 +204,10 @@ if [[ -e "$restrict_flag" ]] && [[ "$(cat "$restrict_flag")" == "1" ]]; then
   apparmor_profile bwrap <<'AA_BWRAP_EOF'
 @@INCLUDE components/apparmor/bwrap@@
 AA_BWRAP_EOF
-  if command -v slirp4netns >/dev/null; then
-    apparmor_profile slirp4netns <<'AA_SLIRP_EOF'
-@@INCLUDE components/apparmor/slirp4netns@@
-AA_SLIRP_EOF
+  if command -v pasta >/dev/null; then
+    apparmor_profile pasta <<'AA_PASTA_EOF'
+@@INCLUDE components/apparmor/pasta@@
+AA_PASTA_EOF
   fi
 else
   ok "kernel does not restrict unprivileged userns; no profiles needed"

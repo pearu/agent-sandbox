@@ -1,0 +1,11 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# pasta (from the passt package) needs to create an unprivileged user namespace
+# for AGENT_SANDBOX_NET=strict. The distro's usr.bin.passt profile attaches only
+# to /usr/bin/passt (qemu mode), not /usr/bin/pasta, and grants no userns, so
+# without this pasta is blocked by apparmor_restrict_unprivileged_userns.
+profile pasta /usr/bin/pasta{,.avx2} flags=(unconfined) {
+  userns,
+  include if exists <local/pasta>
+}

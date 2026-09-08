@@ -128,11 +128,13 @@
 #                npm, conda, ...) is filtered. Tools that bypass HTTPS_PROXY
 #                with raw sockets, or talk to localhost/LAN directly, are
 #                NOT filtered. This is the working default on Ubuntu 24.04.
-#       strict : --unshare-net + slirp4netns + HTTPS_PROXY. Closes the raw-
-#                socket loophole and blocks localhost/LAN. Does not currently
-#                work on Ubuntu 24.04 — slirp4netns can't enter bwrap's
-#                unprivileged netns without root/setuid helpers. Kept for
-#                future use once that's solved (rootlesskit, pasta, ...).
+#       strict : pasta owns an isolated netns and forwards it to the host in
+#                userspace; an nftables rule inside drops everything except the
+#                proxy on the default gateway. Closes the raw-socket loophole (a
+#                tool ignoring HTTPS_PROXY has no route out) and blocks
+#                localhost/LAN. Needs the 'passt' package and its AppArmor
+#                profile (install.sh adds it) plus nftables; --ssh is
+#                unavailable in this mode. See docs/network.md and issue #1.
 #       open   : --share-net, no proxy. Debug only.
 #       none   : no network at all (offline work).
 #   AGENT_SANDBOX_PROFILE_DIR=/dir      where profiles live (default: the
@@ -567,6 +569,14 @@ _as_memory_default() {
   esac
 }
 
+# The host's default-route IPv4 gateway. In strict mode pasta copies the host's
+# routes into the sandbox netns and maps this address to the host, so the proxy
+# is reached at <gateway>:8888 and it is the only address the egress firewall
+# lets through. Empty if there is no default route.
+_as_default_gateway() {
+  ip route show default 2>/dev/null | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -1
+}
+
 # Echo the conda/mamba base prefix (where envs/ and pkgs/ live), or nothing.
 # Used to resolve a [conda] name = <env> from .agent-sandbox to <base>/envs/<env>.
 _as_conda_base() {
@@ -793,6 +803,36 @@ _as_launch() {
     return "$rc"
   fi
   exec bwrap "$@"
+}
+
+# Launch for strict mode. pasta owns the network namespace and forwards it to
+# the host in userspace, so the sandbox has no direct route out; an nftables
+# rule installed in that netns drops everything except the proxy on the gateway.
+# bwrap then makes its OWN child user namespace (via --unshare-all in args) and
+# shares pasta's netns, so the agent -- root only in bwrap's userns -- has no
+# authority over the netns (owned by pasta's parent userns) and cannot alter the
+# firewall. The rule is installed before bwrap execs, so there is no window with
+# open egress; a failed rule refuses the launch. See docs/network.md and issue #1.
+# $1 = gateway, $2 = nft binary path, $3.. = the full "bwrap ... -- agent" line.
+_as_launch_pasta() {
+  local gw="$1" nftbin="$2"
+  shift 2
+  local ruleset
+  printf -v ruleset 'table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname "lo" accept\n  ip daddr %s tcp dport 8888 accept\n  ct state established,related accept\n }\n}\n' "$gw"
+  local rc=0
+  # The bash -c body runs inside pasta's netns; its $vars expand there, not here.
+  # shellcheck disable=SC2016
+  pasta --config-net --quiet -- bash -c '
+    nftbin=$1 ruleset=$2
+    shift 2
+    printf %s "$ruleset" | "$nftbin" -f - || {
+      echo "agent-sandbox: strict-mode egress firewall failed to load; refusing to launch" >&2
+      exit 1
+    }
+    exec "$@"
+  ' agent-sandbox-strict "$nftbin" "$ruleset" "$@" || rc=$?
+  _as_session_cleanup
+  return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -1394,12 +1434,13 @@ agent_sandbox() (
   #          ~/.config/agent-sandbox/allowlist.txt. Limitation: tools that
   #          bypass HTTPS_PROXY by opening raw sockets (or talking to
   #          localhost directly) are NOT filtered.
-  # strict : --unshare-net + slirp4netns + HTTPS_PROXY. Closes the raw-socket
-  #          loophole and also blocks localhost/LAN. Currently does not work
-  #          on Ubuntu 24.04 (slirp4netns cannot setns into bwrap's unshared
-  #          netns from outside without root/setuid helpers); kept here for
-  #          when that's solvable (e.g. rootlesskit, pasta, or a fixed
-  #          slirp4netns codepath).
+  # strict : pasta owns an isolated network namespace and forwards it to the
+  #          host in userspace; an nftables rule in that netns drops everything
+  #          except the proxy on the default gateway. Closes the raw-socket
+  #          loophole (a tool that ignores HTTPS_PROXY has no route out) and
+  #          blocks localhost/LAN. Needs the 'passt' package and its AppArmor
+  #          profile (install.sh adds it) plus nftables. --ssh is unavailable
+  #          in this mode. See docs/network.md and issue #1.
   # open   : --share-net with no proxy. Use only for debugging.
   # none   : net fully unshared. Useful for offline work.
   case "${_knob_net:-proxy}" in
@@ -1425,61 +1466,39 @@ agent_sandbox() (
       _as_launch "${args[@]}" -- "$profile_bin" "$@"
       ;;
     strict)
-      command -v slirp4netns >/dev/null || {
-        _as_msg "slirp4netns not installed (apt install slirp4netns)."
+      # pasta owns an isolated netns; nftables inside it allows only the proxy.
+      # See _as_launch_pasta and docs/network.md.
+      local _nftbin _gw
+      command -v pasta >/dev/null || {
+        _as_msg "strict mode needs pasta (the 'passt' package): 'sudo apt install passt', then re-run install.sh so it adds pasta's AppArmor profile."
         return 1
       }
+      _nftbin="$(command -v nft || true)"
+      [[ -n "$_nftbin" ]] || {
+        _as_msg "strict mode needs nft ('sudo apt install nftables')."
+        return 1
+      }
+      _gw="$(_as_default_gateway)"
+      [[ -n "$_gw" ]] || {
+        _as_msg "strict mode needs a default-route gateway (pasta maps it to the host proxy); none found."
+        return 1
+      }
+      ((_ssh_want)) && _as_msg "warning — --ssh has no effect in strict mode: only the proxy is reachable, so SSH to a host is blocked by the egress firewall."
+      # The proxy is reached at the gateway address (pasta maps the host there);
+      # everything else is dropped inside the netns. bwrap shares pasta's netns
+      # and makes its own user namespace (via --unshare-all in args).
       args+=(
-        --setenv HTTP_PROXY "http://10.0.2.2:8888"
-        --setenv HTTPS_PROXY "http://10.0.2.2:8888"
-        --setenv http_proxy "http://10.0.2.2:8888"
-        --setenv https_proxy "http://10.0.2.2:8888"
+        --share-net
+        --setenv HTTP_PROXY "http://$_gw:8888"
+        --setenv HTTPS_PROXY "http://$_gw:8888"
+        --setenv http_proxy "http://$_gw:8888"
+        --setenv https_proxy "http://$_gw:8888"
         --setenv NO_PROXY ""
         --setenv no_proxy ""
       )
       _as_ca_bind
       _as_ca_env
-
-      # Coordinate bwrap and slirp4netns: bwrap writes its child PID to fd 19
-      # then blocks on fd 18 until slirp4netns has configured the namespace
-      # and signals ready via --ready-fd 18. Strict mode also requires
-      # mitmdump to be listening on a host address slirp's gateway routes
-      # to (NOT 127.0.0.1 — see the systemd unit written by install.sh).
-      local _tmp _bwrap_pid _slirp_pid _child_pid _rc
-      _tmp=$(mktemp -d -t agent-sandbox.XXXXXX)
-      trap '
-        [[ -n "${_slirp_pid:-}" ]] && kill "$_slirp_pid" 2>/dev/null
-        [[ -n "${_bwrap_pid:-}" ]] && kill "$_bwrap_pid" 2>/dev/null
-        _as_session_cleanup
-        rm -rf "$_tmp"
-      ' EXIT INT TERM
-      mkfifo "$_tmp/info" "$_tmp/ready"
-      exec 18<>"$_tmp/ready"
-
-      bwrap --info-fd 19 --block-fd 18 "${args[@]}" -- "$profile_bin" "$@" \
-        19>"$_tmp/info" &
-      _bwrap_pid=$!
-
-      _child_pid=$(
-        timeout 10 python3 -c \
-          'import json,sys; print(json.load(sys.stdin)["child-pid"])' \
-          <"$_tmp/info" 2>/dev/null
-      ) || {
-        _as_msg "bwrap did not report a child PID; aborting."
-        wait "$_bwrap_pid" 2>/dev/null
-        exit $?
-      }
-
-      slirp4netns --configure --mtu=65520 --disable-host-loopback \
-        --userns-path "/proc/$_child_pid/ns/user" \
-        --ready-fd 18 "$_child_pid" tap0 >/dev/null &
-      _slirp_pid=$!
-
-      wait "$_bwrap_pid"
-      _rc=$?
-      kill "$_slirp_pid" 2>/dev/null
-      wait "$_slirp_pid" 2>/dev/null || true
-      exit "$_rc"
+      _as_launch_pasta "$_gw" "$_nftbin" bwrap "${args[@]}" -- "$profile_bin" "$@"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
