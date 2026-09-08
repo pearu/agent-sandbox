@@ -47,8 +47,11 @@ generalized.
   `HTTPS_PROXY` has no route out (closes the raw-socket egress gap, issue #1).
   pasta's port forwarding is off both ways (its defaults would mirror every host
   port into the sandbox and publish sandbox listeners on the host).
-  Needs `passt` and its AppArmor profile (added by `install.sh`) and nftables;
-  `--ssh` is unavailable in this mode.
+  Needs `passt` and its AppArmor profile (added by `install.sh`) and nftables.
+  In strict mode `--ssh HOST` works: the egress firewall is opened to the host's
+  resolved IPv4 address(es) and its name is added to `/etc/hosts` (DNS is
+  otherwise blocked); `--ssh-unrestricted` is refused, since the firewall must
+  pin a named host. IPv6-only SSH hosts are not supported yet.
 - Strict-mode port opt-ins: `--host-port PORT` (the sandbox may reach the
   host's 127.0.0.1:PORT) and `--agent-port PORT` (a port the agent listens on is
   published at the host's 127.0.0.1:PORT), also as `AGENT_SANDBOX_HOST_PORTS` /

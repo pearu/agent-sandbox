@@ -91,10 +91,59 @@ pasta_argv() {
   grep -q 'no IPv4 gateway inside the network namespace' "$H/pasta_argv" # the wrapper refuses if the netns has none
 }
 
-@test "strict: --ssh is dropped before any ssh-agent is started, not merely warned after" {
+@test "strict: --ssh-unrestricted is refused (the firewall must pin named hosts), before any agent starts" {
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_SESSION_BASE="$H/base" -- claude --ssh github.com --version
+    AGENT_SANDBOX_SESSION_BASE="$H/base" -- claude --ssh-unrestricted --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--ssh-unrestricted is not supported in strict mode"* ]]
+  [ -z "$(find "$H/base" -name agent.sock 2>/dev/null)" ] # no agent socket created
+  [ ! -e "$H/pasta_argv" ] || [ ! -s "$H/pasta_argv" ]    # pasta never invoked
+}
+
+@test "strict: --ssh HOST opens a firewall pinhole to the host's resolved IPv4(s) and binds an /etc/hosts mapping" {
+  # Stub the ssh toolchain and name resolution so _as_ssh_setup succeeds without
+  # a real agent or a trusted key; the engine's pasta argv is the contract.
+  cat >"$H/bin/ssh" <<'X'
+#!/usr/bin/env bash
+[[ "$1" == -G ]] && { printf 'hostname %s
+user tester
+port 22
+' "${2:-h}"; exit 0; }
+exit 0
+X
+  printf '#!/usr/bin/env bash
+exit 0
+' >"$H/bin/ssh-keygen" # ssh-keygen -F: host key "found"
+  printf '#!/usr/bin/env bash
+exit 0
+' >"$H/bin/ssh-add"
+  cat >"$H/bin/ssh-agent" <<'X'
+#!/usr/bin/env bash
+sock=""; while [[ $# -gt 0 ]]; do [[ "$1" == -a ]] && sock="$2"; shift; done
+: >"$sock" 2>/dev/null
+echo "SSH_AGENT_PID=99999; export SSH_AGENT_PID;"
+X
+  cat >"$H/bin/getent" <<'X'
+#!/usr/bin/env bash
+[[ "$1" == ahostsv4 ]] && { printf '10.20.30.40 STREAM %s
+10.20.30.41 STREAM %s
+' "$2" "$2"; exit 0; }
+exit 2
+X
+  chmod +x "$H/bin/ssh" "$H/bin/ssh-keygen" "$H/bin/ssh-add" "$H/bin/ssh-agent" "$H/bin/getent"
+  mkdir -p "$H/home/.ssh"
+  : >"$H/home/.ssh/known_hosts"
+  : >"$H/key"
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    AGENT_SANDBOX_SESSION_BASE="$H/base" -- claude --ssh git.example --ssh-key "$H/key" --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--ssh has no effect in strict mode"*"not starting an SSH agent"* ]]
-  [ -z "$(find "$H/base" -name agent.sock 2>/dev/null)" ] # no session agent socket was ever created
+  pasta_argv
+  # both resolved IPs pinned on port 22, spliced into the ruleset
+  grep -q 'ip daddr 10.20.30.40 tcp dport 22 accept' "$H/pasta_argv"
+  grep -q 'ip daddr 10.20.30.41 tcp dport 22 accept' "$H/pasta_argv"
+  [[ "$JOINED" == *" --ro-bind "*"/etc-hosts /etc/hosts "* ]] # /etc/hosts injected
+  [[ "$JOINED" == *" SSH_AUTH_SOCK "* ]]                      # the agent socket is still bound
+  # both resolved IPs reported for the name (the /etc-hosts file is torn down
+  # with the session dir; the bind above and these lines prove it)
+  [[ "$output" == *"git.example reachable at 10.20.30.40 10.20.30.41 on port 22"* ]]
 }

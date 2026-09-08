@@ -135,10 +135,11 @@
 #                tool ignoring HTTPS_PROXY has no route out) and blocks
 #                localhost/LAN: pasta's port forwarding is off both ways, so no
 #                host loopback service is mirrored into the sandbox and no
-#                sandbox listener is published on the host. Needs the 'passt'
-#                package and its AppArmor profile (install.sh adds it) plus
-#                nftables; --ssh is unavailable in this mode. See
-#                docs/network.md and issue #1.
+#                sandbox listener is published on the host. --ssh HOST works
+#                (the firewall is opened to that host's resolved IPv4 and its
+#                name is put in /etc/hosts; --ssh-unrestricted is refused).
+#                Needs the 'passt' package and its AppArmor profile (install.sh
+#                adds it) plus nftables. See docs/network.md and issue #1.
 #       open   : --share-net, no proxy. Debug only.
 #       none   : no network at all (offline work).
 #   AGENT_SANDBOX_HOST_PORTS="5432 11434"   (strict) host 127.0.0.1 ports the
@@ -554,6 +555,7 @@ _as_ssh_setup() {
         return 1
       }
     _by_key[$key]+=" ${user:+$user@}$khname"
+    _ssh_endpoints+=("$host $port") # for strict mode: firewall pinholes + /etc/hosts
   done
   if ((_ssh_unrestricted)); then
     key="$_ssh_key"
@@ -978,6 +980,51 @@ _as_engine_help_footer() {
   } >&2
 }
 
+# For AGENT_SANDBOX_NET=strict: turn the --ssh endpoints (_ssh_endpoints, "host
+# port" pairs captured by _as_ssh_setup) into nft accept rules and an /etc/hosts
+# the sandbox can resolve without DNS. Runs on the HOST. Each host is resolved
+# to its IPv4 address(es) and ALL are pinned (so a round-robin rotation within
+# the session still lands on an allowed address); IPv6 is not supported yet.
+# Sets the caller's _ssh_nftrules (nft chain lines) and binds a combined
+# /etc/hosts. The socket, known_hosts and the destination constraint are already
+# handled by _as_ssh_setup; this only opens the firewall to the named hosts and
+# lets their names resolve.
+_as_strict_ssh_rules() {
+  _ssh_nftrules=""
+  ((${#_ssh_endpoints[@]})) || return 0
+  command -v getent >/dev/null || {
+    _as_msg "strict --ssh needs 'getent' to resolve hosts and pin the firewall; not found."
+    return 1
+  }
+  local ep host port ips ip hosts_extra=""
+  for ep in "${_ssh_endpoints[@]}"; do
+    host="${ep% *}" port="${ep#* }"
+    ips="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)"
+    [[ -n "$ips" ]] || {
+      _as_msg "strict --ssh: cannot resolve '$host' to an IPv4 address to pin the firewall (IPv6-only is not supported yet)."
+      return 1
+    }
+    while IFS= read -r ip; do
+      [[ -z "$ip" ]] && continue
+      printf -v _ssh_nftrules '%s  ip daddr %s tcp dport %s accept\n' "$_ssh_nftrules" "$ip" "$port"
+      hosts_extra+="$ip $host"$'\n'
+    done <<<"$ips"
+    _as_msg "strict --ssh: $host reachable at $(tr '\n' ' ' <<<"$ips")on port $port (direct, outside the proxy)"
+  done
+  # Names cannot be resolved by DNS in strict mode (the firewall drops it), so
+  # bind the host's /etc/hosts plus these mappings over /etc/hosts inside.
+  local hostsfile="$_session_dir/etc-hosts"
+  {
+    [[ -r /etc/hosts ]] && cat /etc/hosts
+    printf '%s' "$hosts_extra"
+  } >"$hostsfile" || {
+    _as_msg "strict --ssh: cannot write $hostsfile"
+    return 1
+  }
+  args+=(--ro-bind "$hostsfile" /etc/hosts)
+  return 0
+}
+
 _as_launch() {
   # When help is being shown, or a session dir must be cleaned up, run bwrap in
   # this process (not exec) so we regain control -- to print the help footer
@@ -1017,18 +1064,19 @@ _as_launch() {
 # Verified on Ubuntu 24.04 (passt 2024-02-20): with the defaults a host-only
 # 127.0.0.1 listener was reachable from inside and a sandbox listener appeared
 # on the host; with none, neither.
-# $1 = nft binary path, $2 = -T spec, $3 = -t spec,
-# $4.. = the full "bwrap ... -- agent" line.
+# $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes,
+# or empty), $3 = -T spec, $4 = -t spec, $5.. = the full "bwrap ... -- agent" line.
 _as_launch_pasta() {
-  local nftbin="$1" tcp_ns="$2" tcp_host="$3"
-  shift 3
+  local nftbin="$1" sshrules="$2" tcp_ns="$3" tcp_host="$4"
+  shift 4
   local rc=0
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
-  # there, not here.
+  # there, not here. $sshrules (built on the host from --ssh, already resolved to
+  # IPs) is spliced into the chain after the proxy rule.
   # shellcheck disable=SC2016
   pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
-    nftbin=$1
-    shift
+    nftbin=$1 sshrules=$2
+    shift 2
     ipbin=$(command -v ip 2>/dev/null || true)
     [ -n "$ipbin" ] || for c in /usr/sbin/ip /sbin/ip; do [ -x "$c" ] && ipbin=$c && break; done
     gw=$([ -n "$ipbin" ] && "$ipbin" -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
@@ -1036,7 +1084,7 @@ _as_launch_pasta() {
       echo "agent-sandbox: strict mode found no IPv4 gateway inside the network namespace, so there is no route to the proxy; refusing to launch." >&2
       exit 1
     fi
-    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n" "$gw" | "$nftbin" -f - || {
+    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport 8888 accept\n%s }\n}\n" "$gw" "$sshrules" | "$nftbin" -f - || {
       echo "agent-sandbox: strict-mode egress firewall failed to load; refusing to launch" >&2
       exit 1
     }
@@ -1046,7 +1094,7 @@ _as_launch_pasta() {
       --setenv HTTP_PROXY "http://$gw:8888" --setenv HTTPS_PROXY "http://$gw:8888" \
       --setenv http_proxy "http://$gw:8888" --setenv https_proxy "http://$gw:8888" \
       "$@"
-  ' agent-sandbox-strict "$nftbin" "$@" || rc=$?
+  ' agent-sandbox-strict "$nftbin" "$sshrules" "$@" || rc=$?
   _as_session_cleanup
   [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
   return "$rc"
@@ -1669,11 +1717,13 @@ agent_sandbox() (
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
   # docs/network.md.
   local _session_dir="" _ssh_agent_pid=""
-  # --ssh has no effect in strict mode (only the proxy is reachable), so do not
-  # start a session ssh-agent there: warn and drop the request before setup.
-  if [[ "${_knob_net:-proxy}" == strict ]] && ((_ssh_want)); then
-    _as_msg "warning — --ssh has no effect in strict mode (only the proxy is reachable); not starting an SSH agent."
-    _ssh_want=0 _ssh_hosts=() _ssh_unrestricted=0
+  local -a _ssh_endpoints=()
+  # In strict mode --ssh opens a firewall pinhole to each NAMED host (resolved
+  # and pinned below); --ssh-unrestricted has no host to pin, so refuse it here,
+  # before any agent is started.
+  if [[ "${_knob_net:-proxy}" == strict ]] && ((_ssh_unrestricted)); then
+    _as_msg "--ssh-unrestricted is not supported in strict mode (the egress firewall pins named hosts); use --ssh HOST."
+    return 2
   fi
   if ((_ssh_want)); then
     _as_ssh_setup || {
@@ -1712,9 +1762,11 @@ agent_sandbox() (
   #          except the proxy on the default gateway. Closes the raw-socket
   #          loophole (a tool that ignores HTTPS_PROXY has no route out) and
   #          blocks localhost/LAN; pasta's port forwarding is off both ways
-  #          (see _as_launch_pasta). Needs the 'passt' package and its AppArmor
-  #          profile (install.sh adds it) plus nftables. --ssh is unavailable
-  #          in this mode. See docs/network.md and issue #1.
+  #          (see _as_launch_pasta). --ssh HOST is supported (a firewall pinhole
+  #          to the host's resolved IPv4, plus an /etc/hosts entry);
+  #          --ssh-unrestricted is refused. Needs the 'passt' package and its
+  #          AppArmor profile (install.sh adds it) plus nftables. See
+  #          docs/network.md and issue #1.
   # open   : --share-net with no proxy. Use only for debugging.
   # none   : net fully unshared. Useful for offline work.
   if [[ "${_knob_net:-proxy}" != strict ]] && ((${#_host_ports[@]} + ${#_agent_ports[@]} + _host_none + _agent_none > 0)); then
@@ -1795,7 +1847,16 @@ agent_sandbox() (
       )
       _as_ca_bind
       _as_ca_env
-      _as_launch_pasta "$_nftbin" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
+      # --ssh in strict: open the firewall to the named hosts (resolved to IPs on
+      # the host) and let their names resolve without DNS. See _as_strict_ssh_rules.
+      local _ssh_nftrules=""
+      if ((_ssh_want)); then
+        _as_strict_ssh_rules || {
+          _as_session_cleanup
+          return 1
+        }
+      fi
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"

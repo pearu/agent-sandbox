@@ -34,6 +34,16 @@ even offered. This matters because SSH is a raw socket and, in `proxy` mode,
 shares the host network namespace, so the egress allowlist cannot see or filter
 it. The constraint is the control.
 
+In the `strict` network mode the sandbox has its own network namespace whose
+firewall drops everything but the proxy, so `--ssh HOST` additionally opens a
+pinhole: the host is resolved to its IPv4 address(es) on the host side, an
+nftables rule permits TCP to each on the SSH port, and the name is written into
+the sandbox's `/etc/hosts` (DNS is blocked there). All IPs returned are pinned,
+so a round-robin rotation within the session still connects. `--ssh-unrestricted`
+is refused in strict mode — there is no named host to pin — and IPv6-only hosts
+are not supported yet. The destination constraint still applies, so the firewall
+hole and the key are limited to the same named hosts.
+
 **User pinning.** The constraint carries a user only when you asked for one:
 you wrote `user@host`, or `~/.ssh/config` sets `User` for that alias. So
 `--ssh github.com` permits any user (`git@` included); `--ssh git@github.com`
