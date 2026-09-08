@@ -37,16 +37,18 @@ claude --allow pypi.org      # + one more host through the egress proxy, this se
   inside.
 
 What it does **not** do is spelled out in [docs/design.md](docs/design.md):
-the sandbox shares the host network namespace, so a tool that ignores
-`HTTPS_PROXY` is unfiltered; the agent's own credentials in `~/.claude` are
-readable; there is no seccomp filter.
+in the default `proxy` mode the sandbox shares the host network namespace, so a
+tool that ignores `HTTPS_PROXY` is unfiltered (`AGENT_SANDBOX_NET=strict` closes
+that — its own namespace, only the proxy reachable); the agent's own credentials
+in `~/.claude` are readable; there is no seccomp filter.
 
 ## Install
 
 Requirements: Linux with unprivileged user namespaces, `bubblewrap`, `curl`,
 `git`, and either `python3 >= 3.12` with `venv` or conda/mamba (for the proxy
 runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
-AppArmor profile allowing bwrap to use user namespaces; nothing else needs root.
+AppArmor profile allowing bwrap to use user namespaces (and, if you use the
+strict network mode, one for pasta); nothing else needs root.
 
 ```
 git clone https://github.com/pearu/agent-sandbox.git
