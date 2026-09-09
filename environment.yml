@@ -16,6 +16,12 @@ dependencies:
   - go-shfmt          # provides `shfmt`: formatting check, also run in CI
   - bats-core         # test runner for tests/ (tests/run.sh); CI installs this file too
   - coverage          # Python line coverage of the addon (scripts/coverage.sh)
+  - pip               # for the pip-only dependencies below
+  - pip:
+      # pyseccomp (libseccomp's Python binding, PyPI-only -- not on conda-forge;
+      # it dlopens the host's libseccomp.so at runtime) builds the bwrap seccomp
+      # BPF filter for the optional syscall-filtering backend (issue #4).
+      - pyseccomp
   # kcov (bash line coverage of the engine, scripts/coverage.sh) is not packaged
   # for conda-forge, nor in Ubuntu 24.04's repositories; build it from source
   # with scripts/install-kcov.sh -- its build deps ARE on conda-forge:
