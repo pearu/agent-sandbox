@@ -367,6 +367,8 @@ else
     "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check pyseccomp >/dev/null 2>&1 || true
     SC_PY="$PROXY_VENV/bin/python"
   elif [[ -x "$PROXY_CONDA/bin/python" ]]; then
+    # A conda env created for mitmproxy need not include pip; pyseccomp is PyPI-only.
+    [[ -x "$PROXY_CONDA/bin/pip" ]] || "$(conda_cmd)" install -y -q -p "$PROXY_CONDA" -c conda-forge pip >/dev/null 2>&1 || true
     "$PROXY_CONDA/bin/python" -m pip install -q pyseccomp >/dev/null 2>&1 || true
     SC_PY="$PROXY_CONDA/bin/python"
   fi
