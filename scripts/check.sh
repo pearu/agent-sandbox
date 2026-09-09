@@ -23,6 +23,23 @@ step "python components compile"
 python3 -m py_compile components/*.py
 rm -rf components/__pycache__
 
+step "seccomp generator compiles a filter for x86_64 and aarch64 (pyseccomp)"
+if python3 -c 'import pyseccomp' 2>/dev/null; then
+  sc_tmp="$(mktemp -d)"
+  for sc_arch in x86_64 aarch64; do
+    python3 components/seccomp/gen-seccomp.py components/seccomp/moby-default.json "$sc_arch" "$sc_tmp/$sc_arch.bpf" 2>/dev/null
+    [[ -s "$sc_tmp/$sc_arch.bpf" ]] || {
+      echo "gen-seccomp.py produced no filter for $sc_arch" >&2
+      rm -rf "$sc_tmp"
+      exit 1
+    }
+  done
+  echo "ok: $(wc -c <"$sc_tmp/x86_64.bpf") bytes x86_64, $(wc -c <"$sc_tmp/aarch64.bpf") bytes aarch64"
+  rm -rf "$sc_tmp"
+else
+  echo "pyseccomp not importable; skipping (mamba env update -n agent-sandbox -f environment.yml)"
+fi
+
 step "install.sh is in sync with install.sh.in + components/"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

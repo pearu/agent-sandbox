@@ -354,6 +354,997 @@ if [[ -f /usr/local/share/ca-certificates/mitmproxy.crt ]]; then
   info "  sudo rm /usr/local/share/ca-certificates/mitmproxy.crt && sudo update-ca-certificates --fresh"
 fi
 
+# ----- 6b. seccomp filter: default-deny syscall profile, compiled for THIS host -----
+# Opt-in at launch with AGENT_SANDBOX_SECCOMP=default. Compiled here, on the host
+# that will run it, from Docker's default profile (moby/profiles, Apache-2.0) as
+# for a container with no capabilities (components/seccomp/README.md), using
+# pyseccomp in the proxy's private Python env against this host's libseccomp. So
+# nothing binary ships and the blob matches the libseccomp that interprets it.
+section "seccomp filter (opt-in at launch)"
+SECCOMP_DIR="$STATE_DIR/seccomp"
+mkdir -p "$SECCOMP_DIR"
+cat >"$SECCOMP_DIR/gen-seccomp.py" <<'GENSC_EOF'
+#!/usr/bin/env python3
+"""Compile a seccomp BPF filter from a Docker/OCI seccomp profile (moby-default.json)
+for one architecture, as for a container holding NO capabilities (agent-sandbox drops
+them all). Run by install.sh on the host it will protect, so the blob matches that
+host's libseccomp; nothing binary ships.
+
+    gen-seccomp.py PROFILE.json ARCH OUT.bpf        ARCH: x86_64 | aarch64
+
+Interpretation of the profile:
+  * defaultAction ERRNO(defaultErrnoRet): everything not allowed fails with EPERM.
+  * rules gated on a capability (includes.caps) are SKIPPED: we hold none, so
+    unshare/setns/mount/pivot_root/chroot/bpf/ptrace-with-caps/... stay denied;
+  * rules for the cap-LESS case (excludes.caps) are kept: clone allowed only without
+    namespace flags (so no CLONE_NEWUSER), clone3 -> ENOSYS so libc falls back to it;
+  * arch-gated rules are resolved for ARCH; minKernel-gated ones are applied (our
+    supported hosts run kernels far newer than any minKernel in the profile).
+"""
+import json, sys
+import pyseccomp as s
+
+OPS = {"SCMP_CMP_LT": s.LT, "SCMP_CMP_LE": s.LE, "SCMP_CMP_EQ": s.EQ, "SCMP_CMP_NE": s.NE,
+       "SCMP_CMP_GE": s.GE, "SCMP_CMP_GT": s.GT, "SCMP_CMP_MASKED_EQ": s.MASKED_EQ}
+# target -> (libseccomp arch, its sub-arches for 32-bit binaries, profile arch tags)
+ARCHES = {"x86_64": (s.Arch.X86_64, (s.Arch.X86, s.Arch.X32), {"amd64", "x86", "x32"}),
+          "aarch64": (s.Arch.AARCH64, (s.Arch.ARM,), {"arm64", "arm"})}
+KERNEL_FLOOR = (5, 15)  # oldest kernel we support (Ubuntu 22.04)
+
+def kernel_ok(spec):
+    want = tuple(int(x) for x in spec.split(".")[:2])
+    return KERNEL_FLOOR >= want
+
+def action_of(entry):
+    a = entry["action"]
+    if a == "SCMP_ACT_ALLOW": return s.ALLOW
+    if a == "SCMP_ACT_ERRNO": return s.ERRNO(int(entry.get("errnoRet", 1)))
+    if a == "SCMP_ACT_LOG": return s.LOG
+    return None  # TRACE/NOTIFY/etc: leave at default
+
+def applies(entry, tags):
+    inc, exc = entry.get("includes") or {}, entry.get("excludes") or {}
+    if inc.get("caps"): return False                              # needs a cap we lack
+    if inc.get("arches") and tags.isdisjoint(inc["arches"]): return False
+    if inc.get("minKernel") and not kernel_ok(inc["minKernel"]): return False
+    if exc.get("arches") and not tags.isdisjoint(exc["arches"]): return False
+    return True                                                   # excludes.caps == us
+
+def build(profile, arch):
+    native, subs, tags = ARCHES[arch]
+    f = s.SyscallFilter(defaction=s.ERRNO(int(profile.get("defaultErrnoRet", 1))))
+    for a in (s.Arch.NATIVE, native, *subs):
+        try: f.remove_arch(a)
+        except Exception: pass
+    for a in (native, *subs):
+        try: f.add_arch(a)
+        except Exception: pass
+    kept = unknown = 0
+    for entry in profile["syscalls"]:
+        if not applies(entry, tags): continue
+        act = action_of(entry)
+        if act is None: continue
+        args = []
+        for a in entry.get("args") or []:
+            op = OPS[a["op"]]
+            args.append(s.Arg(a["index"], op, int(a["value"]), int(a.get("valueTwo", 0)))
+                        if op == s.MASKED_EQ else s.Arg(a["index"], op, int(a["value"])))
+        for name in entry["names"]:
+            try: f.add_rule(act, name, *args); kept += 1
+            except Exception: unknown += 1                        # not a syscall on this arch
+    print(f"gen-seccomp: {arch}: {kept} rules ({unknown} names absent on this arch)", file=sys.stderr)
+    return f
+
+def main(argv):
+    if len(argv) != 4 or argv[2] not in ARCHES:
+        print(__doc__, file=sys.stderr); return 2
+    profile = json.load(open(argv[1]))
+    if profile.get("defaultAction") != "SCMP_ACT_ERRNO":
+        print("gen-seccomp: refusing a profile whose defaultAction is not ERRNO (not default-deny)", file=sys.stderr); return 1
+    with open(argv[3], "wb") as fh:
+        build(profile, argv[2]).export_bpf(fh)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+GENSC_EOF
+cat >"$SECCOMP_DIR/moby-default.json" <<'MOBYSC_EOF'
+{
+	"defaultAction": "SCMP_ACT_ERRNO",
+	"defaultErrnoRet": 1,
+	"archMap": [
+		{
+			"architecture": "SCMP_ARCH_X86_64",
+			"subArchitectures": [
+				"SCMP_ARCH_X86",
+				"SCMP_ARCH_X32"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_AARCH64",
+			"subArchitectures": [
+				"SCMP_ARCH_ARM"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_MIPS64",
+			"subArchitectures": [
+				"SCMP_ARCH_MIPS",
+				"SCMP_ARCH_MIPS64N32"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_MIPS64N32",
+			"subArchitectures": [
+				"SCMP_ARCH_MIPS",
+				"SCMP_ARCH_MIPS64"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_MIPSEL64",
+			"subArchitectures": [
+				"SCMP_ARCH_MIPSEL",
+				"SCMP_ARCH_MIPSEL64N32"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_MIPSEL64N32",
+			"subArchitectures": [
+				"SCMP_ARCH_MIPSEL",
+				"SCMP_ARCH_MIPSEL64"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_S390X",
+			"subArchitectures": [
+				"SCMP_ARCH_S390"
+			]
+		},
+		{
+			"architecture": "SCMP_ARCH_RISCV64",
+			"subArchitectures": null
+		},
+		{
+			"architecture": "SCMP_ARCH_LOONGARCH64",
+			"subArchitectures": null
+		}
+	],
+	"syscalls": [
+		{
+			"names": [
+				"accept",
+				"accept4",
+				"access",
+				"adjtimex",
+				"alarm",
+				"bind",
+				"brk",
+				"cachestat",
+				"capget",
+				"capset",
+				"chdir",
+				"chmod",
+				"chown",
+				"chown32",
+				"clock_adjtime",
+				"clock_adjtime64",
+				"clock_getres",
+				"clock_getres_time64",
+				"clock_gettime",
+				"clock_gettime64",
+				"clock_nanosleep",
+				"clock_nanosleep_time64",
+				"close",
+				"close_range",
+				"connect",
+				"copy_file_range",
+				"creat",
+				"dup",
+				"dup2",
+				"dup3",
+				"epoll_create",
+				"epoll_create1",
+				"epoll_ctl",
+				"epoll_ctl_old",
+				"epoll_pwait",
+				"epoll_pwait2",
+				"epoll_wait",
+				"epoll_wait_old",
+				"eventfd",
+				"eventfd2",
+				"execve",
+				"execveat",
+				"exit",
+				"exit_group",
+				"faccessat",
+				"faccessat2",
+				"fadvise64",
+				"fadvise64_64",
+				"fallocate",
+				"fanotify_mark",
+				"fchdir",
+				"fchmod",
+				"fchmodat",
+				"fchmodat2",
+				"fchown",
+				"fchown32",
+				"fchownat",
+				"fcntl",
+				"fcntl64",
+				"fdatasync",
+				"fgetxattr",
+				"flistxattr",
+				"flock",
+				"fork",
+				"fremovexattr",
+				"fsetxattr",
+				"fstat",
+				"fstat64",
+				"fstatat64",
+				"fstatfs",
+				"fstatfs64",
+				"fsync",
+				"ftruncate",
+				"ftruncate64",
+				"futex",
+				"futex_requeue",
+				"futex_time64",
+				"futex_wait",
+				"futex_waitv",
+				"futex_wake",
+				"futimesat",
+				"getcpu",
+				"getcwd",
+				"getdents",
+				"getdents64",
+				"getegid",
+				"getegid32",
+				"geteuid",
+				"geteuid32",
+				"getgid",
+				"getgid32",
+				"getgroups",
+				"getgroups32",
+				"getitimer",
+				"getpeername",
+				"getpgid",
+				"getpgrp",
+				"getpid",
+				"getppid",
+				"getpriority",
+				"getrandom",
+				"getresgid",
+				"getresgid32",
+				"getresuid",
+				"getresuid32",
+				"getrlimit",
+				"get_robust_list",
+				"getrusage",
+				"getsid",
+				"getsockname",
+				"getsockopt",
+				"get_thread_area",
+				"gettid",
+				"gettimeofday",
+				"getuid",
+				"getuid32",
+				"getxattr",
+				"getxattrat",
+				"inotify_add_watch",
+				"inotify_init",
+				"inotify_init1",
+				"inotify_rm_watch",
+				"io_cancel",
+				"ioctl",
+				"io_destroy",
+				"io_getevents",
+				"io_pgetevents",
+				"io_pgetevents_time64",
+				"ioprio_get",
+				"ioprio_set",
+				"io_setup",
+				"io_submit",
+				"ipc",
+				"kill",
+				"landlock_add_rule",
+				"landlock_create_ruleset",
+				"landlock_restrict_self",
+				"lchown",
+				"lchown32",
+				"lgetxattr",
+				"link",
+				"linkat",
+				"listen",
+				"listmount",
+				"listxattr",
+				"listxattrat",
+				"llistxattr",
+				"_llseek",
+				"lremovexattr",
+				"lseek",
+				"lsetxattr",
+				"lstat",
+				"lstat64",
+				"madvise",
+				"map_shadow_stack",
+				"membarrier",
+				"memfd_create",
+				"memfd_secret",
+				"mincore",
+				"mkdir",
+				"mkdirat",
+				"mknod",
+				"mknodat",
+				"mlock",
+				"mlock2",
+				"mlockall",
+				"mmap",
+				"mmap2",
+				"mprotect",
+				"mq_getsetattr",
+				"mq_notify",
+				"mq_open",
+				"mq_timedreceive",
+				"mq_timedreceive_time64",
+				"mq_timedsend",
+				"mq_timedsend_time64",
+				"mq_unlink",
+				"mremap",
+				"mseal",
+				"msgctl",
+				"msgget",
+				"msgrcv",
+				"msgsnd",
+				"msync",
+				"munlock",
+				"munlockall",
+				"munmap",
+				"name_to_handle_at",
+				"nanosleep",
+				"newfstatat",
+				"_newselect",
+				"open",
+				"openat",
+				"openat2",
+				"pause",
+				"pidfd_open",
+				"pidfd_send_signal",
+				"pipe",
+				"pipe2",
+				"pkey_alloc",
+				"pkey_free",
+				"pkey_mprotect",
+				"poll",
+				"ppoll",
+				"ppoll_time64",
+				"prctl",
+				"pread64",
+				"preadv",
+				"preadv2",
+				"prlimit64",
+				"process_mrelease",
+				"pselect6",
+				"pselect6_time64",
+				"pwrite64",
+				"pwritev",
+				"pwritev2",
+				"read",
+				"readahead",
+				"readlink",
+				"readlinkat",
+				"readv",
+				"recv",
+				"recvfrom",
+				"recvmmsg",
+				"recvmmsg_time64",
+				"recvmsg",
+				"remap_file_pages",
+				"removexattr",
+				"removexattrat",
+				"rename",
+				"renameat",
+				"renameat2",
+				"restart_syscall",
+				"riscv_hwprobe",
+				"rmdir",
+				"rseq",
+				"rt_sigaction",
+				"rt_sigpending",
+				"rt_sigprocmask",
+				"rt_sigqueueinfo",
+				"rt_sigreturn",
+				"rt_sigsuspend",
+				"rt_sigtimedwait",
+				"rt_sigtimedwait_time64",
+				"rt_tgsigqueueinfo",
+				"sched_getaffinity",
+				"sched_getattr",
+				"sched_getparam",
+				"sched_get_priority_max",
+				"sched_get_priority_min",
+				"sched_getscheduler",
+				"sched_rr_get_interval",
+				"sched_rr_get_interval_time64",
+				"sched_setaffinity",
+				"sched_setattr",
+				"sched_setparam",
+				"sched_setscheduler",
+				"sched_yield",
+				"seccomp",
+				"select",
+				"semctl",
+				"semget",
+				"semop",
+				"semtimedop",
+				"semtimedop_time64",
+				"send",
+				"sendfile",
+				"sendfile64",
+				"sendmmsg",
+				"sendmsg",
+				"sendto",
+				"setfsgid",
+				"setfsgid32",
+				"setfsuid",
+				"setfsuid32",
+				"setgid",
+				"setgid32",
+				"setgroups",
+				"setgroups32",
+				"setitimer",
+				"setpgid",
+				"setpriority",
+				"setregid",
+				"setregid32",
+				"setresgid",
+				"setresgid32",
+				"setresuid",
+				"setresuid32",
+				"setreuid",
+				"setreuid32",
+				"setrlimit",
+				"set_robust_list",
+				"setsid",
+				"setsockopt",
+				"set_thread_area",
+				"set_tid_address",
+				"setuid",
+				"setuid32",
+				"setxattr",
+				"setxattrat",
+				"shmat",
+				"shmctl",
+				"shmdt",
+				"shmget",
+				"shutdown",
+				"sigaltstack",
+				"signalfd",
+				"signalfd4",
+				"sigprocmask",
+				"sigreturn",
+				"socketcall",
+				"socketpair",
+				"splice",
+				"stat",
+				"stat64",
+				"statfs",
+				"statfs64",
+				"statmount",
+				"statx",
+				"symlink",
+				"symlinkat",
+				"sync",
+				"sync_file_range",
+				"syncfs",
+				"sysinfo",
+				"tee",
+				"tgkill",
+				"time",
+				"timer_create",
+				"timer_delete",
+				"timer_getoverrun",
+				"timer_gettime",
+				"timer_gettime64",
+				"timer_settime",
+				"timer_settime64",
+				"timerfd_create",
+				"timerfd_gettime",
+				"timerfd_gettime64",
+				"timerfd_settime",
+				"timerfd_settime64",
+				"times",
+				"tkill",
+				"truncate",
+				"truncate64",
+				"ugetrlimit",
+				"umask",
+				"uname",
+				"unlink",
+				"unlinkat",
+				"uretprobe",
+				"utime",
+				"utimensat",
+				"utimensat_time64",
+				"utimes",
+				"vfork",
+				"vmsplice",
+				"wait4",
+				"waitid",
+				"waitpid",
+				"write",
+				"writev"
+			],
+			"action": "SCMP_ACT_ALLOW"
+		},
+		{
+			"names": [
+				"process_vm_readv",
+				"process_vm_writev",
+				"ptrace"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"minKernel": "4.8"
+			}
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 38,
+					"op": "SCMP_CMP_LT"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 39,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 40,
+					"op": "SCMP_CMP_GT"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 0,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 8,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 131072,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 131080,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 4294967295,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"sync_file_range2",
+				"swapcontext"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"ppc64le"
+				]
+			}
+		},
+		{
+			"names": [
+				"arm_fadvise64_64",
+				"arm_sync_file_range",
+				"sync_file_range2",
+				"breakpoint",
+				"cacheflush",
+				"set_tls"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"arm",
+					"arm64"
+				]
+			}
+		},
+		{
+			"names": [
+				"arch_prctl"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"amd64",
+					"x32"
+				]
+			}
+		},
+		{
+			"names": [
+				"modify_ldt"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"amd64",
+					"x32",
+					"x86"
+				]
+			}
+		},
+		{
+			"names": [
+				"s390_pci_mmio_read",
+				"s390_pci_mmio_write",
+				"s390_runtime_instr"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"s390",
+					"s390x"
+				]
+			}
+		},
+		{
+			"names": [
+				"riscv_flush_icache"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"riscv64"
+				]
+			}
+		},
+		{
+			"names": [
+				"open_by_handle_at"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_DAC_READ_SEARCH"
+				]
+			}
+		},
+		{
+			"names": [
+				"bpf",
+				"clone",
+				"clone3",
+				"fanotify_init",
+				"fsconfig",
+				"fsmount",
+				"fsopen",
+				"fspick",
+				"lookup_dcookie",
+				"lsm_get_self_attr",
+				"lsm_list_modules",
+				"lsm_set_self_attr",
+				"mount",
+				"mount_setattr",
+				"move_mount",
+				"open_tree",
+				"perf_event_open",
+				"quotactl",
+				"quotactl_fd",
+				"setdomainname",
+				"sethostname",
+				"setns",
+				"syslog",
+				"umount",
+				"umount2",
+				"unshare"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_ADMIN"
+				]
+			}
+		},
+		{
+			"names": [
+				"clone"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 2114060288,
+					"op": "SCMP_CMP_MASKED_EQ"
+				}
+			],
+			"excludes": {
+				"caps": [
+					"CAP_SYS_ADMIN"
+				],
+				"arches": [
+					"s390",
+					"s390x"
+				]
+			}
+		},
+		{
+			"names": [
+				"clone"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 1,
+					"value": 2114060288,
+					"op": "SCMP_CMP_MASKED_EQ"
+				}
+			],
+			"comment": "s390 parameter ordering for clone is different",
+			"includes": {
+				"arches": [
+					"s390",
+					"s390x"
+				]
+			},
+			"excludes": {
+				"caps": [
+					"CAP_SYS_ADMIN"
+				]
+			}
+		},
+		{
+			"names": [
+				"clone3"
+			],
+			"action": "SCMP_ACT_ERRNO",
+			"errnoRet": 38,
+			"excludes": {
+				"caps": [
+					"CAP_SYS_ADMIN"
+				]
+			}
+		},
+		{
+			"names": [
+				"reboot"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_BOOT"
+				]
+			}
+		},
+		{
+			"names": [
+				"chroot"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_CHROOT"
+				]
+			}
+		},
+		{
+			"names": [
+				"delete_module",
+				"init_module",
+				"finit_module"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_MODULE"
+				]
+			}
+		},
+		{
+			"names": [
+				"acct"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_PACCT"
+				]
+			}
+		},
+		{
+			"names": [
+				"kcmp",
+				"pidfd_getfd",
+				"process_madvise",
+				"process_vm_readv",
+				"process_vm_writev",
+				"ptrace"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_PTRACE"
+				]
+			}
+		},
+		{
+			"names": [
+				"iopl",
+				"ioperm"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_RAWIO"
+				]
+			}
+		},
+		{
+			"names": [
+				"settimeofday",
+				"stime",
+				"clock_settime",
+				"clock_settime64"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_TIME"
+				]
+			}
+		},
+		{
+			"names": [
+				"vhangup"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_TTY_CONFIG"
+				]
+			}
+		},
+		{
+			"names": [
+				"get_mempolicy",
+				"mbind",
+				"set_mempolicy",
+				"set_mempolicy_home_node"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_NICE"
+				]
+			}
+		},
+		{
+			"names": [
+				"syslog"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYSLOG"
+				]
+			}
+		},
+		{
+			"names": [
+				"bpf"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_BPF"
+				]
+			}
+		},
+		{
+			"names": [
+				"perf_event_open"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_PERFMON"
+				]
+			}
+		}
+	]
+}
+MOBYSC_EOF
+SC_ARCH="$(uname -m)"
+if ((DRY_RUN)); then
+  info "(dry-run) would compile $SECCOMP_DIR/$SC_ARCH.bpf with pyseccomp"
+else
+  SC_PY=""
+  if [[ -x "$PROXY_VENV/bin/python" ]]; then
+    "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check pyseccomp >/dev/null 2>&1 || true
+    SC_PY="$PROXY_VENV/bin/python"
+  elif [[ -x "$PROXY_CONDA/bin/python" ]]; then
+    "$PROXY_CONDA/bin/python" -m pip install -q pyseccomp >/dev/null 2>&1 || true
+    SC_PY="$PROXY_CONDA/bin/python"
+  fi
+  if [[ -n "$SC_PY" ]] && "$SC_PY" "$SECCOMP_DIR/gen-seccomp.py" "$SECCOMP_DIR/moby-default.json" "$SC_ARCH" "$SECCOMP_DIR/$SC_ARCH.bpf" 2>"$SECCOMP_DIR/gen.log"; then
+    ok "compiled $SECCOMP_DIR/$SC_ARCH.bpf ($(wc -c <"$SECCOMP_DIR/$SC_ARCH.bpf") bytes); enable with AGENT_SANDBOX_SECCOMP=default"
+  else
+    rm -f "$SECCOMP_DIR/$SC_ARCH.bpf"
+    info "seccomp filter NOT compiled (needs libseccomp2 and pyseccomp in the proxy env; see $SECCOMP_DIR/gen.log). AGENT_SANDBOX_SECCOMP=default will refuse until install.sh is re-run."
+  fi
+fi
+
 # ----- 7. config files -----
 section "Config files"
 # Migrate the pre-rename config dir if present (keeps your allowlist edits).

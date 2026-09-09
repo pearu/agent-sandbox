@@ -137,9 +137,13 @@ Stated plainly. These are what the adversary above can still do.
   visible; scoping isolates per-project memory and transcripts, not the whole
   identity. And a `.agent-sandbox` grants exactly what you approved: `--trust`
   shows the file before recording it, so review is where the security sits.
-- **No seccomp, no resource limits.** The isolation is bubblewrap's namespaces
-  plus capability dropping (`--cap-drop ALL`); no syscall filter narrows the
-  kernel surface (issue #4). Capabilities are dropped in every mode: in
+- **Seccomp is opt-in; there are no resource limits.** The isolation is
+  bubblewrap's namespaces plus capability dropping (`--cap-drop ALL`).
+  `AGENT_SANDBOX_SECCOMP=default` adds a default-deny syscall filter: Docker's
+  default profile as for a container with no capabilities, compiled by
+  `install.sh` on this machine (`components/seccomp/README.md`, issue #4). It
+  also refuses creating a user namespace, closing the capability-regain path
+  noted below. Off by default until it has seen wide use. Capabilities are dropped in every mode: in
   `proxy`/`open`/`none` bwrap is unprivileged and the agent has none anyway; in
   `strict`, where bwrap runs inside pasta's root-owned user namespace, the drop
   is what keeps the agent from starting as uid 0 with the full capability set.

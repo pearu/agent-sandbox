@@ -338,6 +338,41 @@ if [[ -f /usr/local/share/ca-certificates/mitmproxy.crt ]]; then
   info "  sudo rm /usr/local/share/ca-certificates/mitmproxy.crt && sudo update-ca-certificates --fresh"
 fi
 
+# ----- 6b. seccomp filter: default-deny syscall profile, compiled for THIS host -----
+# Opt-in at launch with AGENT_SANDBOX_SECCOMP=default. Compiled here, on the host
+# that will run it, from Docker's default profile (moby/profiles, Apache-2.0) as
+# for a container with no capabilities (components/seccomp/README.md), using
+# pyseccomp in the proxy's private Python env against this host's libseccomp. So
+# nothing binary ships and the blob matches the libseccomp that interprets it.
+section "seccomp filter (opt-in at launch)"
+SECCOMP_DIR="$STATE_DIR/seccomp"
+mkdir -p "$SECCOMP_DIR"
+cat >"$SECCOMP_DIR/gen-seccomp.py" <<'GENSC_EOF'
+@@INCLUDE components/seccomp/gen-seccomp.py@@
+GENSC_EOF
+cat >"$SECCOMP_DIR/moby-default.json" <<'MOBYSC_EOF'
+@@INCLUDE components/seccomp/moby-default.json@@
+MOBYSC_EOF
+SC_ARCH="$(uname -m)"
+if ((DRY_RUN)); then
+  info "(dry-run) would compile $SECCOMP_DIR/$SC_ARCH.bpf with pyseccomp"
+else
+  SC_PY=""
+  if [[ -x "$PROXY_VENV/bin/python" ]]; then
+    "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check pyseccomp >/dev/null 2>&1 || true
+    SC_PY="$PROXY_VENV/bin/python"
+  elif [[ -x "$PROXY_CONDA/bin/python" ]]; then
+    "$PROXY_CONDA/bin/python" -m pip install -q pyseccomp >/dev/null 2>&1 || true
+    SC_PY="$PROXY_CONDA/bin/python"
+  fi
+  if [[ -n "$SC_PY" ]] && "$SC_PY" "$SECCOMP_DIR/gen-seccomp.py" "$SECCOMP_DIR/moby-default.json" "$SC_ARCH" "$SECCOMP_DIR/$SC_ARCH.bpf" 2>"$SECCOMP_DIR/gen.log"; then
+    ok "compiled $SECCOMP_DIR/$SC_ARCH.bpf ($(wc -c <"$SECCOMP_DIR/$SC_ARCH.bpf") bytes); enable with AGENT_SANDBOX_SECCOMP=default"
+  else
+    rm -f "$SECCOMP_DIR/$SC_ARCH.bpf"
+    info "seccomp filter NOT compiled (needs libseccomp2 and pyseccomp in the proxy env; see $SECCOMP_DIR/gen.log). AGENT_SANDBOX_SECCOMP=default will refuse until install.sh is re-run."
+  fi
+fi
+
 # ----- 7. config files -----
 section "Config files"
 # Migrate the pre-rename config dir if present (keeps your allowlist edits).

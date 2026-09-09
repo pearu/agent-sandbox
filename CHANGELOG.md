@@ -6,6 +6,19 @@ break compatibility.
 
 ## Unreleased
 
+### Added
+
+- Opt-in seccomp syscall filtering (issue #4): `AGENT_SANDBOX_SECCOMP=default`
+  loads a default-deny filter into the sandbox, Docker's default profile
+  (moby/profiles, Apache-2.0, vendored under `components/seccomp/`) compiled as
+  for a container with no capabilities. Every syscall not allowlisted fails
+  with EPERM; `unshare`/`setns`/`mount`/`bpf`/`ptrace`-with-caps stay denied,
+  `clone` is allowed only without namespace flags and `clone3` returns ENOSYS,
+  so the agent cannot make its own user namespace to regain capabilities.
+  `install.sh` compiles the filter on the installing host with pyseccomp in the
+  proxy's Python env, against that host's libseccomp; nothing binary ships.
+  Verified: the real agent completes turns under it in proxy and strict.
+
 ### Changed
 
 - Drop all capabilities in the sandbox (`bwrap --cap-drop ALL`). In

@@ -139,3 +139,12 @@ Working as designed: the agent only signs for hosts named in `--ssh`. Add
 **Commits inside fail with `Author identity unknown`**
 `~/.gitconfig` is not bound in. Set a repo-local identity from a host shell;
 the engine prints the exact commands at launch.
+
+## `AGENT_SANDBOX_SECCOMP=default` refuses: "no seccomp filter for <arch>"
+
+The filter is compiled per machine by `install.sh` into
+`~/.local/share/agent-sandbox/seccomp/<arch>.bpf`, so nothing binary ships. Re-run
+`install.sh`. It needs `libseccomp2` (present on any Ubuntu) and installs
+`pyseccomp` into the proxy's private Python environment; if that step reported
+"seccomp filter NOT compiled", read `~/.local/share/agent-sandbox/seccomp/gen.log`.
+Unset `AGENT_SANDBOX_SECCOMP` to launch without the filter meanwhile.

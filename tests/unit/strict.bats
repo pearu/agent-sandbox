@@ -190,3 +190,34 @@ S
   [ "$hi" -gt "$ci" ]                              # ...and AFTER --clearenv, so it is not wiped
   [[ "${ARGV[hi + 1]}" == http://*10.9.9.1:8888 ]] # points at the gateway proxy
 }
+
+@test "strict: the wrapper opens the seccomp filter on fd 10 for bwrap when AGENT_SANDBOX_SECCOMP=default" {
+  cat >"$H/bin/pasta" <<'S'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+S
+  cat >"$H/bin/ip" <<'S'
+#!/usr/bin/env bash
+[ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"
+exit 0
+S
+  cat >"$H/bin/bwrap" <<'S'
+#!/usr/bin/env bash
+: >"${BWRAP_DUMP:?}"
+for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+readlink /proc/self/fd/10 >"$BWRAP_DUMP.fd10" 2>/dev/null || echo "(no fd 10)" >"$BWRAP_DUMP.fd10"
+exit 0
+S
+  chmod +x "$H/bin/pasta" "$H/bin/ip" "$H/bin/bwrap"
+  mkdir -p "$H/seccomp"
+  printf 'not-a-real-bpf' >"$H/seccomp/$(uname -m).bpf"
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    AGENT_SANDBOX_SECCOMP=default AGENT_SANDBOX_SECCOMP_DIR="$H/seccomp" -- claude --version
+  [ "$status" -eq 0 ]
+  local -a ARGV
+  mapfile -t ARGV <"$H/argv"
+  argv_has --seccomp 10                                      # the flag reached bwrap through pasta
+  [ "$(cat "$H/argv.fd10")" = "$H/seccomp/$(uname -m).bpf" ] # and the wrapper opened the filter on fd 10
+}

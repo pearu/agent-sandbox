@@ -110,6 +110,9 @@
 #    explicit knob in your shell wins over the file -- see docs/config.md.)
 #   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
+#   AGENT_SANDBOX_SECCOMP=default      load a default-deny seccomp syscall filter
+#                                       (Docker's default profile, as for a container
+#                                       with no capabilities; compiled by install.sh)
 #   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
 #                                       the agent can `mamba install`, `pip
 #                                       install`, etc. into it. The base conda
@@ -299,6 +302,7 @@ Environment knobs:
   AGENT_SANDBOX_RO=/a:/b        extra read-only paths
   AGENT_SANDBOX_RW=/c           extra read-write paths
   AGENT_SANDBOX_PASSENV="A B"   extra environment variables to forward
+  AGENT_SANDBOX_SECCOMP=default default-deny seccomp syscall filter (compiled by install.sh)
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
@@ -694,6 +698,8 @@ _as_allow_setup() {
 # store and global config live under ~/.config/agent-sandbox, which is never
 # bound into the sandbox, so the agent can neither read nor forge them.
 _as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
+# Where install.sh puts the compiled seccomp filter for this machine.
+_as_seccomp_dir() { printf '%s' "${AGENT_SANDBOX_SECCOMP_DIR:-$HOME/.local/share/agent-sandbox/seccomp}"; }
 _as_sha256_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
 _as_sha256_str() { printf '%s' "$1" | sha256sum 2>/dev/null | cut -d' ' -f1; }
 
@@ -1084,12 +1090,12 @@ _as_launch() {
   # and/or tear the session down -- then propagate the exit code.
   if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" ]]; then
     local rc=0
-    bwrap "$@" || rc=$?
+    bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
     _as_session_cleanup
     [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
     return "$rc"
   fi
-  exec bwrap "$@"
+  exec bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}"
 }
 
 # Launch for strict mode. pasta owns the network namespace and forwards it to
@@ -1119,18 +1125,19 @@ _as_launch() {
 # on the host; with none, neither.
 # $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes,
 # or empty), $3 = per-session proxy token (userinfo for the proxy URL, or empty),
-# $4 = -T spec, $5 = -t spec, $6.. = the full "bwrap ... -- agent" line.
+# $4 = -T spec, $5 = -t spec, $6 = seccomp filter path (or empty), $7.. = the full
+# "bwrap ... -- agent" line.
 _as_launch_pasta() {
-  local nftbin="$1" sshrules="$2" proxy_auth="$3" tcp_ns="$4" tcp_host="$5"
-  shift 5
+  local nftbin="$1" sshrules="$2" proxy_auth="$3" tcp_ns="$4" tcp_host="$5" seccomp_bpf="$6"
+  shift 6
   local rc=0
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
   # IPs) is spliced into the chain after the proxy rule.
   # shellcheck disable=SC2016
   pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
-    nftbin=$1 sshrules=$2 auth=$3
-    shift 3
+    nftbin=$1 sshrules=$2 auth=$3 bpf=$4
+    shift 4
     ipbin=$(command -v ip 2>/dev/null || true)
     [ -n "$ipbin" ] || for c in /usr/sbin/ip /sbin/ip; do [ -x "$c" ] && ipbin=$c && break; done
     gw=$([ -n "$ipbin" ] && "$ipbin" -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
@@ -1155,11 +1162,12 @@ _as_launch_pasta() {
       opts+=("$1")
       shift
     done
+    # fd 10 carries the seccomp filter when AGENT_SANDBOX_SECCOMP is on (else /dev/null).
     exec "$bwrapbin" "${opts[@]}" \
       --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
       --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" \
-      "$@"
-  ' agent-sandbox-strict "$nftbin" "$sshrules" "$proxy_auth" "$@" || rc=$?
+      "$@" 10<"${bpf:-/dev/null}"
+  ' agent-sandbox-strict "$nftbin" "$sshrules" "$proxy_auth" "$seccomp_bpf" "$@" || rc=$?
   _as_session_cleanup
   [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
   return "$rc"
@@ -1403,6 +1411,7 @@ agent_sandbox() (
   # ---- knobs (AGENT_SANDBOX_*) ----
   local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_passenv="${AGENT_SANDBOX_PASSENV:-}"
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
+  local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
 
   local cwd
@@ -1791,7 +1800,7 @@ agent_sandbox() (
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
   # docs/network.md.
-  local _session_dir="" _ssh_agent_pid="" _proxy_auth=""
+  local _session_dir="" _ssh_agent_pid="" _proxy_auth="" _seccomp_bpf=""
   local -a _ssh_endpoints=()
   # In strict mode --ssh opens a firewall pinhole to each NAMED host (resolved
   # and pinned below); --ssh-unrestricted has no host to pin, so refuse it here,
@@ -1823,6 +1832,27 @@ agent_sandbox() (
   # exposed. Must come AFTER every bind whose target is under $HOME, since
   # bwrap may need to create intermediate directories on the tmpfs.
   args+=(--remount-ro "$HOME")
+  # ----- seccomp (opt-in) -----
+  # AGENT_SANDBOX_SECCOMP=default: a default-deny syscall filter (Docker's default
+  # profile as for a container with no capabilities; components/seccomp/README.md),
+  # compiled by install.sh for this machine into $(_as_seccomp_dir). bwrap reads it
+  # from fd 10, which _as_launch / the strict wrapper open at exec time.
+  case "${_knob_seccomp:-}" in
+    "" | off | 0) ;;
+    default)
+      _seccomp_bpf="$(_as_seccomp_dir)/$(uname -m).bpf"
+      [[ -r "$_seccomp_bpf" ]] || {
+        _as_msg "AGENT_SANDBOX_SECCOMP=default: no seccomp filter for $(uname -m) at $_seccomp_bpf; re-run install.sh (needs libseccomp and pyseccomp), or unset AGENT_SANDBOX_SECCOMP."
+        return 1
+      }
+      args+=(--seccomp 10)
+      _as_msg "seccomp: default-deny syscall filter on ($_seccomp_bpf)"
+      ;;
+    *)
+      _as_msg "AGENT_SANDBOX_SECCOMP='$_knob_seccomp' is not recognised (use 'default', or unset it)"
+      return 2
+      ;;
+  esac
 
   # ----- Network mode -----
   # proxy  : (default) --share-net plus HTTPS_PROXY pointing at the host-side
@@ -1932,7 +1962,7 @@ agent_sandbox() (
           return 1
         }
       fi
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" bwrap "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}" -- "$profile_bin" "$@"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
