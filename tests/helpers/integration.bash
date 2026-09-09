@@ -35,10 +35,13 @@ run_sandboxed() {
   [[ "${1:-}" == "--" ]] && shift
   rm -f "$IWORK/report"
   pushd "$IWORK" >/dev/null || return 1
-  # Forward coverage instrumentation (kcov) through env -i; see run_engine.
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} ${KCOV_BASH_USE_DEBUG_TRAP:+KCOV_BASH_USE_DEBUG_TRAP="$KCOV_BASH_USE_DEBUG_TRAP"} ${KCOV_BASH_COMMAND:+KCOV_BASH_COMMAND="$KCOV_BASH_COMMAND"} ${KCOV_BASH_XTRACEFD:+KCOV_BASH_XTRACEFD="$KCOV_BASH_XTRACEFD"} ${LD_PRELOAD:+LD_PRELOAD="$LD_PRELOAD"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+  # Coverage: wrap the engine with kcov as its direct parent, inside env -i (see
+  # run_engine in common.bash). Empty on a normal run.
+  local -a kc=()
+  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
+  run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
-    AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" "${envs[@]}" "$ENGINE" --profile probe "$@"
+    AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" "${envs[@]}" "${kc[@]}" "$ENGINE" --profile probe "$@"
   popd >/dev/null || return 1
   declare -gA REPORT=()
   local k v

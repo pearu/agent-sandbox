@@ -42,43 +42,49 @@ run_addon() {
 run_engine() {
   command -v kcov >/dev/null || {
     echo "kcov not found. It is not on conda-forge nor in Ubuntu 24.04's repos; build" >&2
-    echo "it from source: https://github.com/SimonKagstrom/kcov (INSTALL.md). Ubuntu deps:" >&2
-    echo "  apt install binutils-dev build-essential cmake libssl-dev libcurl4-openssl-dev \\" >&2
-    echo "              libelf-dev libstdc++-12-dev zlib1g-dev libdw-dev libiberty-dev" >&2
-    echo "  then: git clone .../kcov && cd kcov && mkdir build && cd build && cmake .. && make && sudo make install" >&2
+    echo "it from source with scripts/install-kcov.sh (its conda-forge build deps:" >&2
+    echo "  cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib)." >&2
     return 2
   }
   command -v bats >/dev/null || {
     echo "bats not found (environment.yml)" >&2
     return 2
   }
-  rm -rf "$OUT/engine"
-  # kcov traces the agent-sandbox bash process the tests spawn (the harness
-  # forwards BASH_ENV through its `env -i`, which is how kcov instruments the
-  # child). Restrict the report to the engine file itself.
-  kcov --include-path="$PWD/agent-sandbox" "$OUT/engine" \
-    bats tests/unit tests/integration >/dev/null 2>&1 || true
+  local covdir="$OUT/engine-runs"
+  rm -rf "$covdir" "$OUT/engine"
+  mkdir -p "$covdir"
+  # env -i in the test harness severs kcov's collection when kcov is outside it, so
+  # each engine launch wraps itself with kcov as its INNERMOST parent (see run_engine
+  # in tests/helpers/common.bash) and writes a per-launch data dir here; we merge them.
+  # LD_LIBRARY_PATH lets a conda-built kcov resolve its libraries under env -i.
+  local kcov_bin
+  kcov_bin="$(command -v kcov)"
+  AGENT_SANDBOX_KCOV="$kcov_bin" AGENT_SANDBOX_KCOV_DIR="$covdir" \
+    LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-${CONDA_PREFIX:+$CONDA_PREFIX/lib}}" \
+    bats tests/unit tests/integration >/dev/null || true
+  echo "== engine (kcov) =="
+  shopt -s nullglob
+  local runs=("$covdir"/r.*)
+  shopt -u nullglob
+  if ((${#runs[@]} == 0)); then
+    echo "   (no engine coverage collected)"
+    return 0
+  fi
+  kcov --merge "$OUT/engine" "${runs[@]}" >/dev/null 2>&1 || true
   local j x
   j="$(find "$OUT/engine" -name 'coverage.json' 2>/dev/null | head -1)"
   x="$(find "$OUT/engine" -name 'cobertura.xml' 2>/dev/null | head -1)"
-  echo "== engine (kcov) =="
   if [[ -n "$j" ]]; then
-    python3 - "$j" <<'PY'
+    python3 - "$j" <<'PYJSON'
 import json, sys
 d = json.load(open(sys.argv[1]))
-pct = d.get("percent_covered", "?")
-files = d.get("files", [])
-tot = files[0].get("total_lines", "?") if files else "?"
-cov = files[0].get("covered_lines", "?") if files else "?"
-print(f"   agent-sandbox: {pct}% ({cov}/{tot} instrumented lines)")
-PY
-  else
-    echo "   (no coverage.json produced; see $OUT/engine/index.html)"
+f = d.get("files", [{}])[0]
+print(f"   agent-sandbox: {d.get('percent_covered','?')}% ({f.get('covered_lines','?')}/{f.get('total_lines','?')} instrumented lines)")
+PYJSON
   fi
-  echo "   html: $OUT/engine/index.html"
   [[ -n "$x" ]] && cp -f "$x" "$OUT/engine-cobertura.xml" && echo "   xml:  $OUT/engine-cobertura.xml"
+  echo "   html: $OUT/engine/index.html"
 }
-
 case "$which" in
   all)
     run_engine || true
