@@ -35,7 +35,8 @@ run_sandboxed() {
   [[ "${1:-}" == "--" ]] && shift
   rm -f "$IWORK/report"
   pushd "$IWORK" >/dev/null || return 1
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+  # Forward coverage instrumentation (kcov) through env -i; see run_engine.
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} ${KCOV_BASH_USE_DEBUG_TRAP:+KCOV_BASH_USE_DEBUG_TRAP="$KCOV_BASH_USE_DEBUG_TRAP"} ${KCOV_BASH_COMMAND:+KCOV_BASH_COMMAND="$KCOV_BASH_COMMAND"} ${KCOV_BASH_XTRACEFD:+KCOV_BASH_XTRACEFD="$KCOV_BASH_XTRACEFD"} ${LD_PRELOAD:+LD_PRELOAD="$LD_PRELOAD"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
     AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" "${envs[@]}" "$ENGINE" --profile probe "$@"
   popd >/dev/null || return 1

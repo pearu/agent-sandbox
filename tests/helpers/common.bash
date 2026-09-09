@@ -54,8 +54,10 @@ run_engine() {
   [[ "$cmd" == */* ]] || cmd="$H/bin/$cmd"
   : >"$H/argv"
   pushd "${RUN_CWD:-$H/proj}" >/dev/null || return 1
-  # BASH_ENV is forwarded so a tracing rc (coverage) reaches the engine process.
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
+  # Forward the coverage instrumentation (kcov: BASH_ENV + KCOV_BASH_* + LD_PRELOAD)
+  # through env -i so the engine SUBPROCESS is measured, not just code that runs in
+  # bats's own shell; harmless when unset (normal test runs).
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} ${KCOV_BASH_USE_DEBUG_TRAP:+KCOV_BASH_USE_DEBUG_TRAP="$KCOV_BASH_USE_DEBUG_TRAP"} ${KCOV_BASH_COMMAND:+KCOV_BASH_COMMAND="$KCOV_BASH_COMMAND"} ${KCOV_BASH_XTRACEFD:+KCOV_BASH_XTRACEFD="$KCOV_BASH_XTRACEFD"} ${LD_PRELOAD:+LD_PRELOAD="$LD_PRELOAD"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
     BWRAP_DUMP="$H/argv" AGENT_SANDBOX_SESSION_BASE="$H/base" "${envs[@]}" "$cmd" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
