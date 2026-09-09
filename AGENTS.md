@@ -21,7 +21,7 @@ sandbox. It is a security tool. Treat every change to it as one.
 | `scripts/bundle.sh` | Regenerates `install.sh`. Idempotent. |
 | `scripts/check.sh` | Every check CI's `check` job runs. Run it before committing. |
 | `docs/config.md` | The per-project `.agent-sandbox` file (trust-gated), and per-project memory scoping. Trust store and global config under `~/.config/agent-sandbox`, never bound in. |
-| `.github/workflows/ci.yml` | CI: `check` (scripts/check.sh), `integration` and `e2e` on Ubuntu 22.04, 24.04 and 26.04, and an allowed-to-fail `e2e-real-systemd` experiment. |
+| `.github/workflows/ci.yml` | CI: `check` (scripts/check.sh), `integration` and `e2e` on Ubuntu 22.04, 24.04 and 26.04, an allowed-to-fail `e2e-real-systemd` experiment, and a `coverage` job (kcov + coverage.py -> Codecov badge). |
 | `environment.yml` | The development tooling env (`agent-sandbox` mamba env): git-filter-repo, shellcheck, shfmt. Anything you install into that env for development goes in here, so the env can be recreated. |
 | `docs/` | Design, threat model and residual risks (`docs/design.md`), network, SSH, profiles, prior art, troubleshooting. The trust surface for users. |
 | `tests/` | bats suites, run with `tests/run.sh`: `unit/` (engine helpers, flags, the bwrap argv, the claude profile, the proxy addon with a stubbed mitmproxy, the installer's dry run), `integration/` (the real bwrap with a probe profile; `memory.bats` scopes per-project memory with the claude profile), `live/` (opt-in, real network and the host's proxy), `e2e/` (opt-in: `install.sh` for real against a throwaway HOME with a fake Claude binary and a `systemctl` shim, then the installed launcher through the installed proxy). Harness in `tests/helpers/`. |

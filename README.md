@@ -1,6 +1,7 @@
 # agent-sandbox
 
 [![CI](https://github.com/pearu/agent-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/pearu/agent-sandbox/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/pearu/agent-sandbox/graph/badge.svg)](https://codecov.io/gh/pearu/agent-sandbox)
 
 Run an AI coding agent inside a [bubblewrap](https://github.com/containers/bubblewrap)
 sandbox: a default-deny filesystem, an egress allowlist the agent cannot

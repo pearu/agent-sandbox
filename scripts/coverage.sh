@@ -34,6 +34,9 @@ run_addon() {
   COVERAGE_FILE="$cf" coverage report -m
   COVERAGE_FILE="$cf" coverage html -d "$OUT/addon" >/dev/null 2>&1 \
     && echo "   html: $OUT/addon/index.html"
+  # XML for CI upload (Codecov ingests this).
+  COVERAGE_FILE="$cf" coverage xml -o "$OUT/addon-coverage.xml" >/dev/null 2>&1 \
+    && echo "   xml:  $OUT/addon-coverage.xml"
 }
 
 run_engine() {
@@ -55,8 +58,9 @@ run_engine() {
   # child). Restrict the report to the engine file itself.
   kcov --include-path="$PWD/agent-sandbox" "$OUT/engine" \
     bats tests/unit tests/integration >/dev/null 2>&1 || true
-  local j
+  local j x
   j="$(find "$OUT/engine" -name 'coverage.json' 2>/dev/null | head -1)"
+  x="$(find "$OUT/engine" -name 'cobertura.xml' 2>/dev/null | head -1)"
   echo "== engine (kcov) =="
   if [[ -n "$j" ]]; then
     python3 - "$j" <<'PY'
@@ -72,6 +76,7 @@ PY
     echo "   (no coverage.json produced; see $OUT/engine/index.html)"
   fi
   echo "   html: $OUT/engine/index.html"
+  [[ -n "$x" ]] && cp -f "$x" "$OUT/engine-cobertura.xml" && echo "   xml:  $OUT/engine-cobertura.xml"
 }
 
 case "$which" in

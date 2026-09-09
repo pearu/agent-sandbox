@@ -153,3 +153,36 @@ jobs:
       - name: Stop the service
         if: always()
         run: systemctl --user stop agent-sandbox-mitmproxy.service || true
+
+  # Line coverage: kcov (engine) + coverage.py (addon), uploaded to Codecov for
+  # the README badge. kcov is built from source with conda-forge deps (it is not
+  # packaged); the engine's integration suites need bwrap/pasta. Needs the
+  # CODECOV_TOKEN repo secret; forks (no secret) skip the upload, not the run.
+  coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bubblewrap, nftables, passt; enable user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap nftables passt
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Build kcov (conda-forge deps) and run coverage
+        run: |
+          micromamba install -y -n agent-sandbox -c conda-forge \
+            cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
+          micromamba run -n agent-sandbox scripts/install-kcov.sh
+          micromamba run -n agent-sandbox scripts/coverage.sh | tee "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-out/addon-coverage.xml,coverage-out/engine-cobertura.xml
+          fail_ci_if_error: false
