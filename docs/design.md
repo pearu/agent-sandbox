@@ -137,8 +137,15 @@ Stated plainly. These are what the adversary above can still do.
   visible; scoping isolates per-project memory and transcripts, not the whole
   identity. And a `.agent-sandbox` grants exactly what you approved: `--trust`
   shows the file before recording it, so review is where the security sits.
-- **No seccomp, no capability dropping, no resource limits.** The isolation is
-  bubblewrap's namespaces alone.
+- **No seccomp, no resource limits.** The isolation is bubblewrap's namespaces
+  plus capability dropping (`--cap-drop ALL`); no syscall filter narrows the
+  kernel surface (issue #4). Capabilities are dropped in every mode: in
+  `proxy`/`open`/`none` bwrap is unprivileged and the agent has none anyway; in
+  `strict`, where bwrap runs inside pasta's root-owned user namespace, the drop
+  is what keeps the agent from starting as uid 0 with the full capability set.
+  A determined agent can still create its own user namespace and gain namespaced
+  capabilities there (as it could in any mode via `unshare -U -r`), but those are
+  confined to that namespace and grant nothing over the host.
 - **SSH constraints are host-level, not operation-level.** Within a permitted
   host the tunnel is opaque: a force-push cannot be blocked. `--ssh-unrestricted`
   lets the session authenticate as you to any host that trusts the key, for as

@@ -6,6 +6,14 @@ break compatibility.
 
 ## Unreleased
 
+### Changed
+
+- Drop all capabilities in the sandbox (`bwrap --cap-drop ALL`). In
+  `proxy`/`open`/`none` this is a no-op (bwrap is unprivileged), but in `strict`
+  the agent ran inside pasta's root-owned user namespace and started as uid 0
+  with the full capability set; it now starts with none, matching the other
+  modes. Namespaced and host-harmless before, but an unnecessary surface.
+
 ### Fixed
 
 - Strict network mode (`AGENT_SANDBOX_NET=strict`) launched the agent with no

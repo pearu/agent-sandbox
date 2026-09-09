@@ -1587,6 +1587,12 @@ agent_sandbox() (
     --unshare-all
     --die-with-parent
     --new-session
+    # Drop all capabilities. A no-op in proxy/open/none, where bwrap is
+    # unprivileged and the agent already has none; it matters in strict, where
+    # bwrap runs inside pasta's root-owned user namespace and its child userns
+    # would otherwise start the agent as uid 0 with the full capability set.
+    # bwrap still holds the caps it needs during setup; this is the payload's set.
+    --cap-drop ALL
 
     # Drop the parent environment; we re-export an explicit allowlist below.
     --clearenv

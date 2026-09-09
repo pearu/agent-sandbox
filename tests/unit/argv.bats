@@ -23,6 +23,7 @@ setup() {
   argv_has --die-with-parent
   argv_has --new-session
   argv_has --clearenv
+  argv_has --cap-drop ALL # capabilities dropped (matters in strict; no-op here)
   argv_has --bind "$H/home/.claude" "$H/home/.claude"
   argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"
   argv_has --ro-bind "$BIN" "$BIN"
