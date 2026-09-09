@@ -11,7 +11,11 @@
 # need bwrap (and pasta for strict) or they skip, so run it where those work.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-OUT="${COVERAGE_OUT:-coverage-out}"
+# OUT must be ABSOLUTE: the test harness pushd's into bats's per-test tmpdir before
+# launching the engine, so a relative kcov output dir would land there and vanish
+# with it (this bit CI: "no engine coverage collected").
+OUT="${COVERAGE_OUT:-$PWD/coverage-out}"
+[[ "$OUT" == /* ]] || OUT="$PWD/$OUT"
 mkdir -p "$OUT"
 which="${1:-all}"
 
