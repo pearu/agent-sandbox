@@ -302,7 +302,12 @@ else
   err "mitmproxy needs python3 >= 3.12 with venv (Debian/Ubuntu: sudo apt install python3-venv) or conda/mamba on PATH"
 fi
 if [[ -x "$MITMDUMP" ]]; then
-  proxy_version=$("$MITMDUMP" --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')
+  # Probe explicitly: a failing `mitmdump --version` inside a plain assignment would
+  # let `set -e` kill the installer silently, with the reason thrown away.
+  if ! proxy_version_out=$("$MITMDUMP" --version 2>&1); then
+    err "$MITMDUMP failed to run: ${proxy_version_out:-<no output>} -- the proxy environment is broken (a system python upgrade can break a venv); remove $PROXY_VENV (or $PROXY_CONDA) and re-run install.sh to recreate it"
+  fi
+  proxy_version=$(awk '/^Mitmproxy:/ {print $2}' <<<"$proxy_version_out")
   [[ "${proxy_version%%.*}" -ge 12 ]] 2>/dev/null || err "$MITMDUMP reports version '${proxy_version:-?}'; need mitmproxy >= 12"
   ok "mitmdump $proxy_version at $MITMDUMP"
 fi
