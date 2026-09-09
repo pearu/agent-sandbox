@@ -38,7 +38,11 @@ run_addon() {
 
 run_engine() {
   command -v kcov >/dev/null || {
-    echo "kcov not found; it is a system package (Debian/Ubuntu: sudo apt install kcov)" >&2
+    echo "kcov not found. It is not on conda-forge nor in Ubuntu 24.04's repos; build" >&2
+    echo "it from source: https://github.com/SimonKagstrom/kcov (INSTALL.md). Ubuntu deps:" >&2
+    echo "  apt install binutils-dev build-essential cmake libssl-dev libcurl4-openssl-dev \\" >&2
+    echo "              libelf-dev libstdc++-12-dev zlib1g-dev libdw-dev libiberty-dev" >&2
+    echo "  then: git clone .../kcov && cd kcov && mkdir build && cd build && cmake .. && make && sudo make install" >&2
     return 2
   }
   command -v bats >/dev/null || {

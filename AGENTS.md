@@ -67,9 +67,11 @@ at line start); `python3 -m py_compile components/*.py`; a bundle-sync check
 integration suites when `bats` is on PATH; `tests/run.sh unit|integration|live|all`
 runs them directly, and `AGENT_SANDBOX_LIVE=1` enables the live tests.
 `scripts/coverage.sh` reports line coverage: coverage.py for the addon (from
-`environment.yml`) and kcov for the engine (a system package, `apt install
-kcov` — not on conda-forge). The engine run needs bwrap/pasta for the
-integration suites, so run it where those work.
+`environment.yml`) and kcov for the engine. kcov is not on conda-forge nor in
+Ubuntu 24.04's repos — build it from source
+(<https://github.com/SimonKagstrom/kcov>, see its `INSTALL.md`); `coverage.sh`
+prints the build deps if it is missing. The engine run needs bwrap/pasta for
+the integration suites, so run it where those work.
 
 ### How the tests work
 

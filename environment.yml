@@ -16,5 +16,6 @@ dependencies:
   - go-shfmt          # provides `shfmt`: formatting check, also run in CI
   - bats-core         # test runner for tests/ (tests/run.sh); CI installs this file too
   - coverage          # Python line coverage of the addon (scripts/coverage.sh)
-  # kcov (bash line coverage of the engine, scripts/coverage.sh) is NOT on
-  # conda-forge; install it from the system: Debian/Ubuntu `sudo apt install kcov`.
+  # kcov (bash line coverage of the engine, scripts/coverage.sh) is not packaged
+  # for conda-forge, nor in Ubuntu 24.04's repositories; build it from source:
+  # https://github.com/SimonKagstrom/kcov (see its INSTALL.md).
