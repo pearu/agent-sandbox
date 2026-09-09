@@ -6,6 +6,15 @@ break compatibility.
 
 ## Unreleased
 
+### Fixed
+
+- `--allow` (and a `.agent-sandbox` `[allow]` line) no longer hangs the agent.
+  The per-session proxy token went into the sandbox's proxy URL with an empty
+  password (`TOKEN@host`), and Node's HTTP stack hangs on that, so the agent
+  could not reach the API whenever a per-session allow host was set. The URL now
+  carries a dummy password (`TOKEN:x@host`); the proxy addon reads the token
+  from the username and ignores the password.
+
 ## 0.1.0 — 2026-09-09
 
 First tagged version. Extracted from the author's private sandbox repository

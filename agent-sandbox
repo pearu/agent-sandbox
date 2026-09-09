@@ -646,7 +646,12 @@ _as_allow_setup() {
       umask 077
       printf '%s\n' "$_token" >"$_session_dir/proxy.token"
     )
-    _proxy_auth="$_token"
+    # Userinfo is TOKEN:x, not TOKEN, on purpose: with an empty proxy password
+    # (TOKEN@host) Node's HTTP stack hangs instead of connecting, so the agent
+    # itself could not reach the API whenever --allow was in effect. The addon
+    # reads the token from the username half and ignores the password (and strips
+    # Proxy-Authorization before going upstream), so the value 'x' never matters.
+    _proxy_auth="$_token:x"
   else
     _as_msg "warning — could not mint a session proxy token; --allow will not be isolated from other sessions"
   fi
