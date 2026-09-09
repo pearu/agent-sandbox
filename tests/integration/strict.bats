@@ -39,6 +39,7 @@ except Exception as e:
 # pasta's default -T auto (the regression guarded against) rescans the host's
 # listening ports every second; give it time to show.
 sleep 1.5
+say https_proxy "${HTTPS_PROXY:-<unset>}"   # must be set, or the agent has no route to the API
 say proxy_via_gw "$(conn "$GW" 8888)"
 say proxy_via_lo "$(conn 127.0.0.1 8888)"
 say host_loopback "$(conn 127.0.0.1 8899)"
@@ -128,13 +129,14 @@ launch_strict() {
 @test "strict: the proxy is reachable at the gateway only; raw egress, host loopback services and publishing sandbox listeners are blocked" {
   launch_strict
   [ "$RC" -eq 0 ]
-  [ "$(report proxy_via_gw)" = REACHED ]    # gateway:8888 -> host proxy, allowed by nft
-  [ "$(report proxy_via_lo)" = blocked ]    # the proxy is reached at the gateway only
-  [ "$(report host_loopback)" = blocked ]   # the host-only 127.0.0.1:8899 is not mirrored into the netns
-  [ "$(report raw_external)" = blocked ]    # 1.1.1.1:443 dropped by the firewall
-  [ "$(report inside_listener)" = REACHED ] # the sandbox's own loopback works
-  [ "$PUBLISHED" = blocked ]                # the sandbox's 8877 is not published on the host
-  [[ "$(report net_ifaces)" != "lo " ]]     # pasta gave the netns a real interface
+  [ "$(report proxy_via_gw)" = REACHED ]         # gateway:8888 -> host proxy, allowed by nft
+  [[ "$(report https_proxy)" == http://*:8888 ]] # the agent env carries the gateway proxy (survives --clearenv)
+  [ "$(report proxy_via_lo)" = blocked ]         # the proxy is reached at the gateway only
+  [ "$(report host_loopback)" = blocked ]        # the host-only 127.0.0.1:8899 is not mirrored into the netns
+  [ "$(report raw_external)" = blocked ]         # 1.1.1.1:443 dropped by the firewall
+  [ "$(report inside_listener)" = REACHED ]      # the sandbox's own loopback works
+  [ "$PUBLISHED" = blocked ]                     # the sandbox's 8877 is not published on the host
+  [[ "$(report net_ifaces)" != "lo " ]]          # pasta gave the netns a real interface
 }
 
 @test "strict: --host-port and --agent-port open exactly those ports; everything else stays blocked" {

@@ -1134,7 +1134,17 @@ _as_launch_pasta() {
     bwrapbin=$1
     shift
     pxy="http://${auth:+$auth@}$gw:8888"
-    exec "$bwrapbin" \
+    # The proxy env must be set AFTER the base args reach their --clearenv, or
+    # bwrap clears it and the agent launches with no proxy -- it then resolves
+    # api.anthropic.com directly, which strict mode has no DNS route for, and
+    # fails with ENOTFOUND. Split the bwrap options from the "-- command" tail
+    # and insert the proxy env between them, past --clearenv.
+    opts=()
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+      opts+=("$1")
+      shift
+    done
+    exec "$bwrapbin" "${opts[@]}" \
       --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
       --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" \
       "$@"

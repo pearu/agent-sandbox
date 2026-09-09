@@ -8,6 +8,13 @@ break compatibility.
 
 ### Fixed
 
+- Strict network mode (`AGENT_SANDBOX_NET=strict`) launched the agent with no
+  proxy variables, so it resolved `api.anthropic.com` directly and failed with
+  ENOTFOUND (strict has no DNS route by design). The strict wrapper set the
+  proxy `--setenv` before the base `--clearenv`, which cleared them; the env is
+  now set after `--clearenv`. Strict mode had never delivered a working proxy to
+  the agent.
+
 - `--allow` (and a `.agent-sandbox` `[allow]` line) no longer hangs the agent.
   The per-session proxy token went into the sandbox's proxy URL with an empty
   password (`TOKEN@host`), and Node's HTTP stack hangs on that, so the agent

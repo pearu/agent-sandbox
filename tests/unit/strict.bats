@@ -148,3 +148,40 @@ X
   # with the session dir; the bind above and these lines prove it)
   [[ "$output" == *"git.example reachable at 10.20.30.40 10.20.30.41 on port 22"* ]]
 }
+
+@test "strict: the proxy env survives --clearenv (set after it), so the agent gets HTTPS_PROXY" {
+  # The stubs above only record pasta's argv; here pasta actually runs the wrapper
+  # body so we see the argv bwrap really receives. A stub 'ip' feeds the gateway
+  # the wrapper reads inside the netns; the harness stub bwrap records that argv.
+  cat >"$H/bin/pasta" <<'S'
+#!/usr/bin/env bash
+# Skip pasta's own options up to the first '--', then run the wrapper it was given.
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+S
+  cat >"$H/bin/ip" <<'S'
+#!/usr/bin/env bash
+# Enough for the wrapper's `ip -4 route show default`.
+[ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"
+exit 0
+S
+  chmod +x "$H/bin/pasta" "$H/bin/ip"
+
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- claude --version
+  [ "$status" -eq 0 ]
+  local -a ARGV
+  mapfile -t ARGV <"$H/argv" # what the real bwrap would have received
+  argv_has --clearenv
+  argv_has --setenv # the proxy env made it into bwrap's argv
+  local ci hi
+  ci="$(argv_index --clearenv)"
+  # index of the HTTPS_PROXY value (the token '--setenv' then 'HTTPS_PROXY' then URL)
+  hi=""
+  for ((i = 0; i < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == HTTPS_PROXY ]] && hi=$i && break
+  done
+  [ -n "$hi" ]                                     # HTTPS_PROXY is present at all
+  [ "$hi" -gt "$ci" ]                              # ...and AFTER --clearenv, so it is not wiped
+  [[ "${ARGV[hi + 1]}" == http://*10.9.9.1:8888 ]] # points at the gateway proxy
+}
