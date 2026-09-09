@@ -16,6 +16,13 @@ break compatibility.
 
 ### Fixed
 
+- Strict-mode `--ssh` failed host-key verification. In strict the agent runs as
+  uid 0 (pasta maps the one uid to root), so ssh resolves `~` through
+  `getpwuid(0)` to root's home, not `$HOME`, and never saw the bound
+  `~/.ssh/known_hosts`. The engine now also binds `known_hosts` and `config` at
+  uid 0's home, so `--ssh` works in strict as in proxy. A live `--ssh` test
+  covers it (the stubbed-toolchain unit test could not).
+
 - Strict network mode (`AGENT_SANDBOX_NET=strict`) launched the agent with no
   proxy variables, so it resolved `api.anthropic.com` directly and failed with
   ENOTFOUND (strict has no DNS route by design). The strict wrapper set the

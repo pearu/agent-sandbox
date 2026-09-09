@@ -129,6 +129,7 @@ X
 [[ "$1" == ahostsv4 ]] && { printf '10.20.30.40 STREAM %s
 10.20.30.41 STREAM %s
 ' "$2" "$2"; exit 0; }
+[[ "$1 $2" == "passwd 0" ]] && { echo "root:x:0:0:root:/root:/bin/bash"; exit 0; }
 exit 2
 X
   chmod +x "$H/bin/ssh" "$H/bin/ssh-keygen" "$H/bin/ssh-add" "$H/bin/ssh-agent" "$H/bin/getent"
@@ -144,6 +145,10 @@ X
   grep -q 'ip daddr 10.20.30.41 tcp dport 22 accept' "$H/pasta_argv"
   [[ "$JOINED" == *" --ro-bind "*"/etc-hosts /etc/hosts "* ]] # /etc/hosts injected
   [[ "$JOINED" == *" SSH_AUTH_SOCK "* ]]                      # the agent socket is still bound
+  # known_hosts is bound both at $HOME/.ssh and at uid 0's home, because in strict
+  # the agent is uid 0 and ssh resolves ~ to root's home, not $HOME
+  [[ "$JOINED" == *" --ro-bind $H/home/.ssh/known_hosts $H/home/.ssh/known_hosts "* ]]
+  [[ "$JOINED" == *" --ro-bind $H/home/.ssh/known_hosts /root/.ssh/known_hosts "* ]]
   # both resolved IPs reported for the name (the /etc-hosts file is torn down
   # with the session dir; the bind above and these lines prove it)
   [[ "$output" == *"git.example reachable at 10.20.30.40 10.20.30.41 on port 22"* ]]

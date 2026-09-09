@@ -626,6 +626,17 @@ _as_ssh_setup() {
     --ro-bind "$kh" "$kh"
   )
   [[ -r "$cfg" ]] && args+=(--ro-bind "$cfg" "$cfg")
+  # In strict mode the agent runs as uid 0 (pasta maps the one uid to root), so
+  # ssh resolves ~ through getpwuid(0) to root's home rather than $HOME and would
+  # not find the binds above -- host-key verification then fails. Bind the same
+  # read-only files at uid 0's home too, so --ssh works in strict as in proxy.
+  # Harmless in the other modes, where the agent is your uid and uses $HOME.
+  local _root_home
+  _root_home="$(getent passwd 0 2>/dev/null | cut -d: -f6)"
+  if [[ -n "$_root_home" && "$_root_home" != "$HOME" ]]; then
+    args+=(--ro-bind "$kh" "$_root_home/.ssh/known_hosts")
+    [[ -r "$cfg" ]] && args+=(--ro-bind "$cfg" "$_root_home/.ssh/config")
+  fi
   return 0
 }
 
