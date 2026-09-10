@@ -32,15 +32,21 @@ trust() {
 }
 
 @test "an unapproved dot-file is ignored, with a pointer to --trust; a command-line --allow still works" {
-  printf '[allow]\nevil.example\n[share-memory]\n' >"$PROJ/.agent-sandbox"
-  mkdir -p "$H/home/.claude/projects/-other/memory"
+  local other="$H/other-proj" om
+  mkdir -p "$other"
+  om="$H/home/.claude/projects/$(slug "$other")/memory"
+  mkdir -p "$om"
+  printf '[allow]\nevil.example\n[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
   run_engine -- claude --allow good.example --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
   [[ "$output" == *"--trust"* ]]
   [[ "$output" == *"session allowlist: good.example"* ]]
   [[ "$output" != *evil.example* ]]
-  ! argv_has --tmpfs "$H/home/.claude/projects" # share-memory not applied either
+  # the share it asked for is not granted; scoping still applies, because
+  # isolation is the default rather than something the dot-file switches on
+  argv_has --tmpfs "$H/home/.claude/projects"
+  ! argv_has --ro-bind "$om" "$om"
 }
 
 @test "an approved dot-file adds its allow hosts and scopes memory to the current project" {
@@ -235,13 +241,19 @@ trust() {
 }
 
 @test "deleting an approved dot-file refuses to launch (the defaults could be wider); --trust can forget the approval" {
-  printf '[share-memory]\n' >"$PROJ/.agent-sandbox" # scoped: this project only
+  local other="$H/other-proj" om
+  mkdir -p "$other"
+  om="$H/home/.claude/projects/$(slug "$other")/memory"
+  mkdir -p "$om"
+  # a policy that DIFFERS from the default, so "the dot-file applied" and "the
+  # default applied" stay distinguishable: it shares another project's memory
+  printf '[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  mkdir -p "$H/home/.claude/projects/-other/memory"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
-  rm "$PROJ/.agent-sandbox" # the agent could do this; the default (shared) would widen its view
+  argv_has --ro-bind "$om" "$om" # the approved share is granted
+  rm "$PROJ/.agent-sandbox"      # the agent could do this; falling back to defaults must not be silent
   run_engine -- claude --version
   [ "$status" -eq 1 ]
   [[ "$output" == *"approved .agent-sandbox is missing"*"--trust"* ]]
@@ -256,7 +268,10 @@ trust() {
   [[ "$output" == *"approval forgotten"* ]]
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --tmpfs "$H/home/.claude/projects"
+  # the defaults apply again, knowingly: still scoped, since that is the default
+  # now, but the share the dot-file used to grant is gone
+  argv_has --tmpfs "$H/home/.claude/projects"
+  ! argv_has --ro-bind "$om" "$om"
 }
 
 @test "an all entry keeps every project's memory visible even when the global default is scoped" {

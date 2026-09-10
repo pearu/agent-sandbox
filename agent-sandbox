@@ -684,19 +684,20 @@ _as_allow_setup() {
 # A project may carry a .agent-sandbox file with per-project policy: `allow`
 # hosts, `share-memory` project paths, `ro`/`rw` paths, `forward`ed variable
 # names, `conda` settings and the `net` mode and strict-mode ports. It is
-# PARSED, never sourced.
-# Because the project dir is writable by the sandboxed agent and a project may
-# come from an untrusted repository, the file is honoured only after the user
-# approves it with `--trust`: approval records the file's SHA-256, and any later
-# edit or removal (by you or the agent) refuses launches from that directory
-# until you review again (--trust) -- refusing, not ignoring, because ignoring
-# would fall back to the defaults, and for memory scoping the default (shared)
-# is wider than a scoped policy. So the agent can neither grant itself
-# anything nor quietly get the defaults back; it can only stop the next launch
-# until you look. A file with no approval on record (a cloned repo's) is
-# ignored with a note. The trust
-# store and global config live under ~/.config/agent-sandbox, which is never
-# bound into the sandbox, so the agent can neither read nor forge them.
+# PARSED, never sourced. Because the project dir is writable by the sandboxed
+# agent and a project may come from an untrusted repository, the file is
+# honoured only after the user approves it with `--trust`: approval records
+# the file's SHA-256, and any later edit or removal (by you or the agent)
+# refuses launches from that directory until you review again (--trust) --
+# refusing, not ignoring, because ignoring would fall back to the defaults,
+# and a default can be wider than the policy you approved: a project pinning
+# `[net] mode = strict` would drop to the default `proxy`, where a tool that
+# ignores HTTPS_PROXY reaches the network unfiltered. So the agent can neither
+# grant itself anything nor quietly get the defaults back; it can only stop
+# the next launch until you look. A file with no approval on record (a cloned
+# repo's) is ignored with a note. The trust store and global config live under
+# ~/.config/agent-sandbox, which is never bound into the sandbox, so the agent
+# can neither read nor forge them.
 _as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
 # Where install.sh puts the compiled seccomp filter for this machine.
 _as_seccomp_dir() { printf '%s' "${AGENT_SANDBOX_SECCOMP_DIR:-$HOME/.local/share/agent-sandbox/seccomp}"; }
@@ -706,7 +707,10 @@ _as_sha256_str() { printf '%s' "$1" | sha256sum 2>/dev/null | cut -d' ' -f1; }
 # Global default for memory scoping when a project has no trusted directive:
 # `shared` (every project's memory visible -- the historical behaviour) or
 # `scoped` (only the current project). ~/.config/agent-sandbox/config, key
-# memory_default. Defaults to `shared`, so upgrading changes nothing.
+# memory_default. Defaults to `scoped`: a session sees its own project's memory
+# and transcripts and no other's, so the isolation the README promises holds
+# without configuration. Set `memory_default = shared` to get the pre-0.2
+# behaviour back for projects that have no dot-file.
 _as_memory_default() {
   local cfg val="" line
   cfg="$(_as_config_dir)/config"
@@ -720,7 +724,7 @@ _as_memory_default() {
   fi
   case "$val" in
     scoped | shared) printf '%s' "$val" ;;
-    *) printf 'shared' ;;
+    *) printf 'scoped' ;;
   esac
 }
 

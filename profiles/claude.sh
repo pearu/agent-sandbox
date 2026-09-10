@@ -121,8 +121,8 @@ _claude_project_slug() { printf '%s' "${1//[^A-Za-z0-9-]/-}"; }
 # profile_memory_scope MODE [SHARE_PATH...] -- engine hook (see the engine's
 # profile_memory_scope call). In "scoped" mode, hide ~/.claude/projects and
 # rebind only the current project (read-write: its memory and transcripts) plus
-# each approved project's memory/ (read-only). In "shared" mode do nothing, the
-# historical behaviour where every project's memory is visible. $cwd is the
+# each approved project's memory/ (read-only). In "shared" mode do nothing, so
+# every project's memory is visible -- the pre-0.2 default, now an opt-out. $cwd is the
 # engine's current working directory.
 profile_memory_scope() {
   local mode="$1"
