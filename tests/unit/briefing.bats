@@ -172,9 +172,9 @@ trust() {
   [ "$(grep -c "^$IN/briefing.md$" "$H/argv")" -eq 1 ]
 }
 
-@test "the user wins on every shared key: the merge only appends to two hook events" {
-  # Keys the briefing never writes must come through byte-identical, and a hook
-  # event of a name we do use keeps the user's entry FIRST.
+@test "the merge only appends two hook entries: no setting of the user's changes" {
+  # The briefing contributes a list of hook entries and nothing else, so every
+  # key it does not write must come through byte-identical.
   local mine
   mine='{"permissions":{"defaultMode":"plan","allow":["Bash(git *)"]},"env":{"FOO":"bar"},"model":"opus","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo theirs"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo stop"}]}]}}'
   run_engine BWRAP_COPY="$OUT" -- claude --settings "$mine" --version

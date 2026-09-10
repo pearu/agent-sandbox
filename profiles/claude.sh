@@ -285,7 +285,8 @@ try:
     ours = json.loads(os.environ["AS_OURS"])
 except Exception as exc:
     sys.exit(f"cannot read --settings: {exc}")
-# The user wins on every shared key. Only "hooks" is touched, and only by
+# There is nothing to resolve here: this whole contribution is a list of two
+# hook entries, appended. Only "hooks" is touched, and only by
 # APPENDING to the two events the briefing uses -- hook entries merge across
 # settings levels, so a per-event union is what Claude Code itself would do with
 # two sources. Their entries stay first. Nothing else is read, rewritten or
