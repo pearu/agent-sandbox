@@ -1,5 +1,36 @@
 # Troubleshooting
 
+## The sandbox will not start
+
+The launcher on your `PATH` **is** agent-sandbox: `~/.local/bin/claude` is a
+symlink to the engine. So if the sandbox cannot start, `claude` is exactly what
+is broken, and you have no working agent to fix it with.
+
+The way back in is the agent's own binary. Claude Code's native installer keeps
+it under `~/.local/share/claude/versions/`, and agent-sandbox never modifies,
+moves or wraps it:
+
+```
+ls ~/.local/share/claude/versions/            # newest is the one to run
+~/.local/share/claude/versions/<version>      # a normal, unsandboxed session
+```
+
+That is a full agent with your ordinary environment and no sandbox at all — no
+allowlist, no read-only paths, no state isolation. Use it to repair the
+install, then go back to `claude`.
+
+The engine prints this path itself when it detects that `bwrap` could not be
+run. If you would rather have it to hand:
+
+```
+alias claude-raw='"$(ls -d ~/.local/share/claude/versions/* | sort -V | tail -1)"'
+```
+
+There is deliberately **no `--no-sandbox` flag**. The escape should be
+documented and discoverable, not convenient: a one-flag bypass tends to become
+the habit rather than the last resort, and the point of the tool is that the
+limits do not depend on remembering to keep them.
+
 **`agent-sandbox: no profile selected`**
 Run through a profile symlink (`claude`) or pass `--profile NAME`. The
 message lists the profiles found.

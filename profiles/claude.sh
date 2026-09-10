@@ -389,3 +389,17 @@ profile_isolate() {
     "tmpfs	$c/paste-cache"
   )
 }
+
+# profile_fallback_hint -- engine hook, printed when the sandbox cannot start.
+# Claude Code's native installer keeps its binaries under versions/ and
+# agent-sandbox never touches them, so the newest one is a working, unsandboxed
+# agent. This is the emergency exit; see docs/troubleshooting.md.
+profile_fallback_hint() {
+  local newest=""
+  [[ -d "$_claude_versions_dir" ]] && newest="$(_claude_list_versions | tail -n1)"
+  if [[ -n "$newest" && -x "$_claude_versions_dir/$newest" ]]; then
+    _as_msg "  $_claude_versions_dir/$newest"
+  else
+    _as_msg "  the newest entry under $_claude_versions_dir (none found there now)"
+  fi
+}
