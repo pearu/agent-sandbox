@@ -683,8 +683,8 @@ _as_allow_setup() {
 # ----- per-project config (.agent-sandbox) and its trust store -----
 # A project may carry a .agent-sandbox file with per-project policy: `allow`
 # hosts, `share-memory` project paths, `ro`/`rw` paths, `forward`ed variable
-# names, `conda` settings and the `net` mode and strict-mode ports. It is
-# PARSED, never sourced. Because the project dir is writable by the sandboxed
+# names, `conda` settings, the `net` mode and strict-mode ports, and the
+# `seccomp` mode. It is PARSED, never sourced. Because the project dir is writable by the sandboxed
 # agent and a project may come from an untrusted repository, the file is
 # honoured only after the user approves it with `--trust`: approval records
 # the file's SHA-256, and any later edit or removal (by you or the agent)
@@ -849,8 +849,9 @@ _as_dotfile_kv() {
 
 # Parse the .agent-sandbox at $1 into the caller's _df_* arrays and scalars. An
 # INI-like format: `[section]` headers (allow, share-memory, ro, rw, forward,
-# conda, net), one item per line beneath ([conda] and [net] take `key = value`
-# lines), `#` starts a comment (whole-line or trailing), blank lines ignored.
+# conda, net, seccomp), one item per line beneath ([conda], [net] and [seccomp]
+# take `key = value` lines), `#` starts a comment (whole-line or trailing),
+# blank lines ignored.
 # Data only -- lines are matched, never executed. One item per line means paths
 # and hosts keep any spaces.
 _as_dotfile_parse() {
@@ -865,7 +866,7 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda | net) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda | net | seccomp) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
@@ -905,6 +906,18 @@ _as_dotfile_parse() {
             host-port) _df_net_host_port+=("$cv") ;;
             agent-port) _df_net_agent_port+=("$cv") ;;
             *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
+          esac
+        fi
+        ;;
+      seccomp)
+        # The syscall filter's state (validated with the knob at launch).
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [seccomp] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          case "$ck" in
+            mode) _df_seccomp_mode="$cv" ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
           esac
         fi
         ;;
@@ -1452,6 +1465,7 @@ agent_sandbox() (
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_seccomp_mode=""
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   if [[ -f "$_dotfile" ]]; then
@@ -1498,6 +1512,26 @@ agent_sandbox() (
             fi
             ;;
           *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
+        esac
+      fi
+      # seccomp: an explicit AGENT_SANDBOX_SECCOMP in your shell wins over the
+      # file. A project can only ask for the filter or decline it; it cannot
+      # pick a profile, and with the built-in default off, `mode = off` is a
+      # no-op today. If the filter ever becomes the default, a trusted
+      # `mode = off` becomes a real widening -- which is what the --trust
+      # review is for, and why deleting an approved file refuses the launch
+      # instead of falling back to the defaults.
+      if [[ -n "$_df_seccomp_mode" ]]; then
+        case "$_df_seccomp_mode" in
+          on | 1 | off | 0)
+            if [[ -z "$_knob_seccomp" ]]; then
+              _knob_seccomp="$_df_seccomp_mode"
+              _as_msg "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
+            else
+              _as_msg "AGENT_SANDBOX_SECCOMP=$_knob_seccomp overrides the .agent-sandbox seccomp mode '$_df_seccomp_mode'"
+            fi
+            ;;
+          *) _as_msg ".agent-sandbox: [seccomp] mode '$_df_seccomp_mode' unknown (on|off); ignoring" ;;
         esac
       fi
       # conda scalars: an explicit environment knob wins over the file.

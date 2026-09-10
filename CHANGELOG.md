@@ -8,6 +8,15 @@ break compatibility.
 
 ### Added
 
+- `.agent-sandbox` accepts a `[seccomp]` section with `mode = on|off`, so a
+  project can ask for the syscall filter the way it already pins a network
+  mode. An `AGENT_SANDBOX_SECCOMP` in your shell wins, as with `[net] mode`.
+  Its own section rather than a key in a shared `[security]`/`[options]`
+  group: the environment variable's name is the section (plus key) uppercased,
+  and `[security] seccomp` would map to `AGENT_SANDBOX_SECURITY_SECCOMP`, which
+  is not the variable. `mode` also leaves room for a `profile` key if a second
+  filter ever ships. With the built-in default off a project can only turn the
+  filter *on*, so this cannot weaken the sandbox today.
 - Opt-in seccomp syscall filtering (issue #4): `AGENT_SANDBOX_SECCOMP=on`
   loads a default-deny filter into the sandbox, Docker's default profile
   (moby/profiles, Apache-2.0, vendored under `components/seccomp/`) compiled as
