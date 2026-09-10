@@ -85,3 +85,25 @@ seccomp_available() {
   [ "$status" -eq 0 ]
   [[ "${output,,}" == *ok* ]]
 }
+
+# --- the briefing (issue #15): does the real agent actually receive it? ---
+# The unit suite proves the engine writes the briefing and passes the hooks; only
+# the real agent can prove the hooks FIRE and the text lands in its context. The
+# prompt is answerable only from injected context: nothing tells the agent that
+# path except the SessionStart hook, and the question forbids looking.
+
+@test "briefing: the real agent has the briefing in context at session start, without reading any file" {
+  run env AGENT_SANDBOX_NET=proxy timeout 120 "$ENGINE" --profile claude \
+    --model claude-haiku-4-5-20251001 \
+    -p 'Without using any tool, answer from what is already in your context: what absolute path were you told holds the details of this sandbox? Reply with the path and nothing else.' </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/run/agent-sandbox/briefing.md"* ]]
+}
+
+@test "briefing off: the same question has no answer, so the hook is what put it there" {
+  run env AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_BRIEFING=off timeout 120 "$ENGINE" --profile claude \
+    --model claude-haiku-4-5-20251001 \
+    -p 'Without using any tool, answer from what is already in your context: what absolute path were you told holds the details of this sandbox? Reply with the path, or the single word none.' </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"/run/agent-sandbox/briefing.md"* ]]
+}

@@ -223,3 +223,85 @@ profile_handle_subcommand() {
   _as_msg "installed versions: $(_claude_list_versions | tr '\n' ' ')"
   return "$rc"
 }
+
+# profile_briefing_args INSIDE_DIR [AGENT ARGS...] -- engine hook. Hands the
+# briefing to Claude Code as SessionStart and SubagentStart hooks, which fire on
+# every launch, on --continue/--resume, and again after compaction, so what the
+# session is told can never be older than this launch. Sets
+# profile_briefing_argv; the engine appends it AFTER the user's own arguments.
+#
+# Deliberately not --append-system-prompt: passing that turns system-prompt
+# snapshotting off, and with snapshotting on the recorded prompt is reused until
+# compaction -- so a session resumed after the user opened a host would keep
+# describing the old policy. A hook is re-run rather than recorded.
+#
+# Claude Code honours only ONE --settings: passing it twice keeps the last and
+# silently drops the first (measured, as is the fact that flags still parse
+# after a positional prompt -- which is why ours goes last). So when the user
+# passes their own, the two are merged into one file. That merge needs a JSON
+# parser: python3 is used ONLY on this path, and if it is missing the USER's
+# --settings is kept and the briefing's hooks are dropped with a loud note.
+# Losing a hint beats changing how someone's tools behave.
+profile_briefing_args() {
+  local inside="$1"
+  shift
+  # _session_dir is a local of the engine's agent_sandbox(), reached here by
+  # dynamic scope -- the same arrangement profile_memory_scope uses for $cwd.
+  # shellcheck disable=SC2154
+  local host_file="$_session_dir/settings.json" inside_file="$inside/settings.json"
+  local ours user_val="" i
+  ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]}}"
+
+  local -a rest=("$@")
+  for ((i = 0; i < ${#rest[@]}; i++)); do
+    case "${rest[i]}" in
+      --settings) user_val="${rest[i + 1]:-}" ;;
+      --settings=*) user_val="${rest[i]#--settings=}" ;;
+    esac
+  done
+
+  if [[ -n "$user_val" ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      _as_msg "briefing: keeping your --settings, NOT installing the briefing's hooks. Claude Code honours only the last --settings, so merging is the only way to keep both, and that needs python3, which is not on PATH. Install python3 (or read $inside/briefing.md, bound read-only either way)."
+      return 0
+    fi
+    if ! AS_OURS="$ours" AS_USER="$user_val" AS_OUT="$host_file" python3 -c '
+import json, os, sys
+def load(v):
+    v = v.strip()
+    if v.startswith("{"):
+        return json.loads(v)
+    with open(os.path.expanduser(v)) as fh:
+        return json.load(fh)
+try:
+    user = load(os.environ["AS_USER"])
+    ours = json.loads(os.environ["AS_OURS"])
+except Exception as exc:
+    sys.exit(f"cannot read --settings: {exc}")
+# Hook entries merge across settings levels, so a per-event union is what Claude
+# Code itself would do with two sources. The user\x27s entries stay first.
+merged = dict(user)
+hooks = dict(user.get("hooks") or {})
+for event, entries in ours["hooks"].items():
+    hooks[event] = list(hooks.get(event) or []) + list(entries)
+merged["hooks"] = hooks
+with open(os.environ["AS_OUT"], "w") as fh:
+    json.dump(merged, fh, indent=2)
+'; then
+      _as_msg "briefing: keeping your --settings unchanged; the briefing's hooks were not installed. $inside/briefing.md is bound read-only either way."
+      return 0
+    fi
+    _as_msg "briefing: merged your --settings with the briefing's session hooks"
+  else
+    printf '%s\n' "$ours" >"$host_file" || {
+      _as_msg "briefing: cannot write $host_file; continuing without the session hooks"
+      return 0
+    }
+  fi
+
+  # The session dir is host-side, so the file has to be bound in under its own
+  # name for the flag to resolve inside.
+  args+=(--ro-bind "$host_file" "$inside_file")
+  profile_briefing_argv=(--settings "$inside_file")
+  return 0
+}

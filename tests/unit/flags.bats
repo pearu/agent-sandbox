@@ -20,7 +20,10 @@ setup() {
   [[ "$output" == usage:* ]]
   run_engine -- claude --help
   [ "$status" -eq 0 ]
-  [ "${ARGV[-1]}" = "--help" ]
+  # the briefing appends its own --settings after the agent's arguments, so
+  # --help is the last argument the USER gave, not the last on the line
+  argv_has --help
+  [ "$(argv_index --help)" -lt "$(argv_index --settings)" ]
   # the agent's help ends with a footer pointing at --engine-help
   [[ "$output" == *"--engine-help"* ]]
   [[ "$output" == *"runs inside a sandbox"* ]]
@@ -47,16 +50,20 @@ setup() {
 }
 
 @test "profile from argv[0], --profile NAME and --profile=NAME produce identical argv" {
-  run_engine -- claude --version
+  # AGENT_SANDBOX_BRIEFING=off throughout: the briefing binds files from a
+  # per-launch session directory whose name is random, so two identical
+  # invocations differ in exactly those paths. How the profile was selected is
+  # what this test is about.
+  run_engine AGENT_SANDBOX_BRIEFING=off -- claude --version
   [ "$status" -eq 0 ]
   cp "$H/argv" "$H/argv.a"
-  run_engine -- agent-sandbox --profile claude --version
+  run_engine AGENT_SANDBOX_BRIEFING=off -- agent-sandbox --profile claude --version
   [ "$status" -eq 0 ]
   cmp -s "$H/argv" "$H/argv.a"
-  run_engine -- agent-sandbox --profile=claude --version
+  run_engine AGENT_SANDBOX_BRIEFING=off -- agent-sandbox --profile=claude --version
   cmp -s "$H/argv" "$H/argv.a"
   # explicit --profile wins over argv[0]
-  run_engine -- claude --profile claude --version
+  run_engine AGENT_SANDBOX_BRIEFING=off -- claude --profile claude --version
   cmp -s "$H/argv" "$H/argv.a"
 }
 

@@ -78,6 +78,14 @@ Sections:
   becomes the default, approving `mode = off` would be a real widening and the
   `--trust` review is where that is decided. See
   [seccomp](../components/seccomp/README.md).
+- **`[briefing]`** — key/value lines. `mode = on|off` (default on) controls
+  whether the sandbox tells the session what it may and may not do. When on,
+  the engine writes a briefing per launch and binds it read-only at
+  `/run/agent-sandbox/briefing.md`, and the claude profile installs
+  `SessionStart`/`SubagentStart` hooks that inject a compact summary — so a
+  resumed session is never told a policy that has since changed. It lists
+  names and paths only, never the contents of anything shared. Turning it off
+  grants and hides nothing; it only stops the sandbox describing itself.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

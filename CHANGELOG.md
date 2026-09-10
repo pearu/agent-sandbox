@@ -8,6 +8,23 @@ break compatibility.
 
 ### Added
 
+- The sandbox now tells the session what it allows (issue #15).
+  `AGENT_SANDBOX_BRIEFING` / `[briefing] mode`, **on by default**. Each launch
+  writes a briefing from the policy actually in force -- egress mode and
+  allowlist size, session `--allow` hosts, extra writable and read-only paths,
+  which projects' memory is readable, `--ssh` hosts, seccomp state -- and binds
+  it read-only at `/run/agent-sandbox/briefing.md`. The claude profile installs
+  `SessionStart` and `SubagentStart` hooks that inject a compact summary, so it
+  arrives on every launch, on `--continue`/`--resume` and again after
+  compaction: what a session is told can never be older than its launch.
+  It says both halves. A blocked action is deliberate, so retrying it or
+  routing around it only spends the budget; and what is open was opened on
+  purpose, so it should be used rather than worked around. It ends with the
+  escalation recipe, because a sandboxed agent cannot widen its own access:
+  state what you need, what for, and the exact `.agent-sandbox` lines, then ask
+  the user to run `--trust`. Names and paths only, never the contents of
+  anything shared. Turning it off grants and hides nothing; it only stops the
+  sandbox describing itself.
 - `.agent-sandbox` accepts a `[seccomp]` section with `mode = on|off`, so a
   project can ask for the syscall filter the way it already pins a network
   mode. An `AGENT_SANDBOX_SECCOMP` in your shell wins, as with `[net] mode`.

@@ -43,13 +43,18 @@ setup() {
   # HOME's binds come before the final remount-ro; the HOME tmpfs before them
   [ "$(argv_index --remount-ro)" -gt "$(argv_index "$H/home/.claude")" ]
   [ "$(argv_index "$H/home/.claude")" -gt "$(argv_index --tmpfs)" ]
-  # the command line ends with the agent and its untouched arguments
+  # the agent's own arguments are passed through untouched and in order, right
+  # after the binary; the briefing's --settings is appended after them (it has
+  # to come last, because Claude Code honours only the last --settings)
+  local i
+  i="$(argv_index --)"
+  [ "${ARGV[i + 1]}" = "$BIN" ]
+  [ "${ARGV[i + 2]}" = "--version" ]
+  [ "${ARGV[i + 3]}" = "--foo" ]
+  [ "${ARGV[i + 4]}" = "bar" ]
+  [ "${ARGV[i + 5]}" = "--settings" ]
   local n=${#ARGV[@]}
-  [ "${ARGV[n - 5]}" = "--" ]
-  [ "${ARGV[n - 4]}" = "$BIN" ]
-  [ "${ARGV[n - 3]}" = "--version" ]
-  [ "${ARGV[n - 2]}" = "--foo" ]
-  [ "${ARGV[n - 1]}" = "bar" ]
+  [ "$n" -eq "$((i + 7))" ] # ...and nothing after the settings path
 }
 
 @test "none: no network at all; open: host network without proxy; neither sets proxy or CA variables" {
