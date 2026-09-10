@@ -42,6 +42,14 @@ follow. Sessions running at the same time cannot reach into each other's work.
 And where a protection is weaker than it sounds, we say so plainly. Believing
 you are safe when you are not is worse than knowing where the limit really is.
 
+A limit the agent cannot see is a limit it will fight. Blocked once, an agent
+retries, looks for another route, and spends your time proving what you already
+decided. So the sandbox tells it, at the start of every session, what is closed,
+what is open, and how to ask you for more. The same message does the opposite
+job too: access you opened on purpose is worth nothing if the agent never learns
+it is there, and asking you costs far less than twenty attempts to get around
+you.
+
 Is it worth installing? That depends on one question: how much does the agent
 do while you are not reading every command? If you approve each step yourself,
 you are already the sandbox, and this adds little. Once you stop doing that,
@@ -124,6 +132,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
 | — | — | `[share-memory]` | which projects' agent memory this session may read: paths, `all`, or present-but-empty for this project only (scoped to this project; widen with the global `memory_default = shared`) ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | `on` loads a default-deny syscall filter, compiled per machine by `install.sh` (off) ([seccomp](components/seccomp/README.md)) |
+| — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
 | `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |

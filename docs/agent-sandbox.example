@@ -102,6 +102,18 @@
 #mode = on
 
 
+# ---- briefing: what the session is told about its own sandbox --------------
+# mode : on|off. Default on. The sandbox writes a briefing per launch (bound
+#        read-only at /run/agent-sandbox/briefing.md) and has the agent inject
+#        a compact summary at session start, resume and after compaction: what
+#        egress is filtered, which paths are writable, which other projects are
+#        readable, and how to ask you for something that is blocked. Names and
+#        paths only, never the contents of anything shared. Off stops the
+#        sandbox describing itself; it changes no limit.
+#[briefing]
+#mode = on
+
+
 # Not settable here, on purpose:
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project
 #               setting.

@@ -680,6 +680,149 @@ _as_allow_setup() {
   return 0
 }
 
+# ----- briefing: the sandbox tells the agent what it may and may not do -----
+# AGENT_SANDBOX_BRIEFING / [briefing] mode, on by default. A session that does
+# not know it is sandboxed treats a deliberate block as a transient fault and
+# spends turns working around it; worse, it never uses the access the user
+# deliberately opened, so the grant costs effort and buys nothing. Two artefacts
+# per launch, both bound READ-ONLY so the agent cannot rewrite its own briefing:
+#   briefing.md          the full text, to read on demand
+#   hook-*.json          a compact summary wrapped as a SessionStart /
+#                        SubagentStart hook payload. The profile hands these to
+#                        the agent (profiles/claude.sh), which re-reads them on
+#                        every launch, resume and compaction -- so nothing here
+#                        can go stale, and nothing is recorded in a system
+#                        prompt that would outlive a policy change.
+# Names and paths only, never contents: summarising shared material would mean
+# reading it, which is another agent's job and out of scope.
+_as_briefing_inside() { printf '/run/agent-sandbox'; }
+
+# A JSON string literal for $1, in bash: no jq, no python on this path.
+_as_json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\n'/\\n}"
+  printf '"%s"' "$s"
+}
+
+# Compose briefing.md and the two hook payloads into the session dir, and bind
+# them read-only. Reads the resolved policy from agent_sandbox()'s locals.
+_as_briefing_write() {
+  _as_session_begin || return 1
+  local inside net gal n_gal=0
+  inside="$(_as_briefing_inside)"
+  net="${_knob_net:-proxy}"
+  gal="$(_as_config_dir)/allowlist.txt"
+  local gal_desc
+  if [[ -r "$gal" ]]; then
+    n_gal="$(grep -cvE '^[[:space:]]*(#|$)' "$gal" 2>/dev/null || printf 0)"
+    gal_desc="an allowlist of $n_gal hosts"
+  else
+    # Saying "0 hosts" would read as a policy; the file being absent is a
+    # different thing, and worth naming so the user can be told which it is.
+    gal_desc="an allowlist the sandbox could not read ($gal)"
+  fi
+
+  # every one of these gets a value below, but name them with defaults anyway:
+  # agent_sandbox() runs under `set -euo pipefail`, so an unset variable is a
+  # hard failure -- and an unknown net mode must still reach the network block's
+  # own refusal rather than dying here.
+  local egress="unknown" hosts_line="none" ssh_line="none"
+  local mem_line="unknown" rw_line="" ro_line="none"
+  case "$net" in
+    proxy) egress="filtered. Every request goes through an egress proxy that enforces $gal_desc. A refused host answers 403 naming itself -- deliberate, not an outage." ;;
+    strict) egress="filtered, and there is no DNS and no route except the proxy. A name that does not resolve is the sandbox, not a broken network. The proxy enforces $gal_desc." ;;
+    open) egress="unfiltered (AGENT_SANDBOX_NET=open). No allowlist applies." ;;
+    none) egress="none. The network namespace is unshared; nothing outside this machine is reachable." ;;
+    *) egress="unknown ($net); this launch is about to be refused" ;;
+  esac
+  ((${#_allow_hosts[@]} > 0)) && hosts_line="${_allow_hosts[*]}"
+  ((${#_ssh_hosts[@]} > 0)) && ssh_line="${_ssh_hosts[*]}"
+  # two forms: the full one for briefing.md, a short one for the summary that is
+  # injected on every launch (where a spare sentence is paid for every time)
+  local mem_short
+  case "${_memory_mode:-scoped}" in
+    shared)
+      mem_line="every project's memory and transcripts are visible"
+      mem_short="every project is visible"
+      ;;
+    *) if ((${#_df_share[@]} > 0)); then
+      mem_line="only this project, plus read-only memory of: ${_df_share[*]}"
+      mem_short="this project, plus ${#_df_share[@]} shared read-only"
+    else
+      mem_line="only this project. Other projects are hidden behind a tmpfs"
+      mem_short="hidden; only this project is visible"
+    fi ;;
+  esac
+  rw_line="$cwd"
+  [[ -n "${_knob_rw:-}" ]] && rw_line="$rw_line, ${_knob_rw//:/, }"
+  [[ -n "${_knob_ro:-}" ]] && ro_line="${_knob_ro//:/, }"
+
+  local sec="off"
+  case "${_knob_seccomp:-}" in on | 1) sec="on: syscalls outside an allowlist fail with EPERM" ;; esac
+
+  local ports=""
+  if [[ "$net" == strict ]]; then
+    ((${#_host_ports[@]} > 0)) && ports="host ports reachable: ${_host_ports[*]}. "
+    ((${#_agent_ports[@]} > 0)) && ports="${ports}ports published to the host: ${_agent_ports[*]}. "
+  fi
+
+  local md="$_session_dir/briefing.md"
+  # The text below is literal: `$HOME` and the backticks name things for the
+  # reader, they are not expansions.
+  # shellcheck disable=SC2016
+  {
+    printf '# This session runs inside agent-sandbox\n\n'
+    printf 'The limits below are the user'"'"'s policy for this project, enforced around\n'
+    printf 'the agent rather than by it. Two things follow.\n\n'
+    printf '1. A blocked action is deliberate. It is not a bug, not a transient fault\n'
+    printf '   and not something to route around: retrying it, or reaching for another\n'
+    printf '   tool to get past it, spends the budget and ends the same way.\n'
+    printf '2. What is open was opened on purpose, by hand. Use it rather than working\n'
+    printf '   around it.\n\n'
+    printf '## Network\n\nEgress is %s\n\n' "$egress"
+    printf -- '- hosts added for this session only (--allow): %s\n' "$hosts_line"
+    printf -- '- SSH reachable through a constrained agent: %s\n' "$ssh_line"
+    [[ -n "$ports" ]] && printf -- '- %s\n' "$ports"
+    printf '\nThe allowlist itself lives on the host and is not readable from in here.\n'
+    printf '\n## Filesystem\n\n'
+    printf -- '- writable: %s\n' "$rw_line"
+    printf -- '- extra read-only paths: %s\n' "$ro_line"
+    printf -- '- everything else, /usr and /etc included, is read-only\n'
+    printf -- '- $HOME is a fresh tmpfs; the host'"'"'s home directory is not here\n'
+    printf '\n## Other projects\n\n%s.\n' "$mem_line"
+    printf '\n## Syscall filter\n\nseccomp is %s.\n' "$sec"
+    printf '\n## If you need something that is blocked\n\n'
+    printf 'Stop and ask. You cannot widen this yourself: .agent-sandbox is\n'
+    printf 'trust-gated so that an agent cannot grant itself access, and the trust\n'
+    printf 'store is not bound into the sandbox. Tell the user, in one message:\n\n'
+    printf -- '- what you need (host, path or project),\n'
+    printf -- '- what it is for,\n'
+    printf -- '- the exact lines to add to %s/.agent-sandbox, e.g.\n\n' "$cwd"
+    printf '      [allow]\n      example.com\n\n'
+    printf 'then ask them to run `claude --trust` in that directory and relaunch.\n'
+    printf 'One clear request costs less than twenty workarounds.\n'
+  } >"$md" || return 1
+
+  local short
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If you need something blocked, stop and ask the user to add it to .agent-sandbox and re-run \`claude --trust\` -- you cannot widen this yourself."
+
+  local ev
+  for ev in SessionStart SubagentStart; do
+    printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":%s}}\n' \
+      "$ev" "$(_as_json_str "$short")" >"$_session_dir/hook-$ev.json" || return 1
+  done
+
+  args+=(--ro-bind "$md" "$inside/briefing.md")
+  for ev in SessionStart SubagentStart; do
+    args+=(--ro-bind "$_session_dir/hook-$ev.json" "$inside/hook-$ev.json")
+  done
+  return 0
+}
+
 # ----- per-project config (.agent-sandbox) and its trust store -----
 # A project may carry a .agent-sandbox file with per-project policy: `allow`
 # hosts, `share-memory` project paths, `ro`/`rw` paths, `forward`ed variable
@@ -866,7 +1009,7 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda | net | seccomp) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
@@ -918,6 +1061,18 @@ _as_dotfile_parse() {
           case "$ck" in
             mode) _df_seccomp_mode="$cv" ;;
             *) _as_msg ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
+          esac
+        fi
+        ;;
+      briefing)
+        # Whether to tell the agent what its sandbox allows (validated at launch).
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [briefing] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          case "$ck" in
+            mode) _df_briefing_mode="$cv" ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
           esac
         fi
         ;;
@@ -1451,6 +1606,7 @@ agent_sandbox() (
   local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
+  local _knob_briefing="${AGENT_SANDBOX_BRIEFING:-}"
   local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
   # PATH for INSIDE the sandbox. Empty means "pass the launching shell's PATH";
   # a selected conda env rewrites it (see the [conda] name block).
@@ -1465,7 +1621,7 @@ agent_sandbox() (
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
-  local _df_seccomp_mode=""
+  local _df_seccomp_mode="" _df_briefing_mode=""
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   if [[ -f "$_dotfile" ]]; then
@@ -1532,6 +1688,22 @@ agent_sandbox() (
             fi
             ;;
           *) _as_msg ".agent-sandbox: [seccomp] mode '$_df_seccomp_mode' unknown (on|off); ignoring" ;;
+        esac
+      fi
+      # briefing: an explicit AGENT_SANDBOX_BRIEFING in your shell wins over the
+      # file. Turning it off hides nothing and grants nothing; it only stops the
+      # sandbox describing itself, so an approved `mode = off` is not a widening.
+      if [[ -n "$_df_briefing_mode" ]]; then
+        case "$_df_briefing_mode" in
+          on | 1 | off | 0)
+            if [[ -z "$_knob_briefing" ]]; then
+              _knob_briefing="$_df_briefing_mode"
+              _as_msg "using briefing mode '$_df_briefing_mode' from .agent-sandbox"
+            else
+              _as_msg "AGENT_SANDBOX_BRIEFING=$_knob_briefing overrides the .agent-sandbox briefing mode '$_df_briefing_mode'"
+            fi
+            ;;
+          *) _as_msg ".agent-sandbox: [briefing] mode '$_df_briefing_mode' unknown (on|off); ignoring" ;;
         esac
       fi
       # conda scalars: an explicit environment knob wins over the file.
@@ -1929,6 +2101,29 @@ agent_sandbox() (
       ;;
   esac
 
+  # ----- briefing -----
+  # Default on (opt-out): the sessions that most need to know they are sandboxed
+  # are the ones nobody configured. `profile_briefing_args` decides how to hand
+  # it to the agent and may decline, in which case briefing.md is still bound so
+  # the agent can read it.
+  local -a profile_briefing_argv=()
+  case "${_knob_briefing:-on}" in
+    off | 0) ;;
+    on | 1)
+      if _as_briefing_write; then
+        if declare -F profile_briefing_args >/dev/null; then
+          profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
+        fi
+      else
+        _as_msg "briefing: could not be written; continuing without it"
+      fi
+      ;;
+    *)
+      _as_msg "AGENT_SANDBOX_BRIEFING='$_knob_briefing' is not recognised (use 'on' or 'off')"
+      return 2
+      ;;
+  esac
+
   # ----- Network mode -----
   # proxy  : (default) --share-net plus HTTPS_PROXY pointing at the host-side
   #          mitmproxy (agent-sandbox-mitmproxy.service on 127.0.0.1:8888). All
@@ -1955,10 +2150,10 @@ agent_sandbox() (
   case "${_knob_net:-proxy}" in
     open)
       args+=(--share-net)
-      _as_launch "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
       ;;
     none)
-      _as_launch "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
       ;;
     proxy)
       local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:8888"
@@ -1973,7 +2168,7 @@ agent_sandbox() (
       )
       _as_ca_bind
       _as_ca_env
-      _as_launch "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
       ;;
     strict)
       # pasta owns an isolated netns; nftables inside it allows only the proxy.
@@ -2037,7 +2232,7 @@ agent_sandbox() (
           return 1
         }
       fi
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}" -- "$profile_bin" "$@"
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
