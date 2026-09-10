@@ -106,42 +106,47 @@ Then open a fresh shell, `cd` into a project, and run `claude`.
 
 ## Knobs and flags
 
-Each setting is listed with every way to set it. A dash means that form does
-not exist for that setting.
+Each setting is listed with every way to set it; a dash means that form does
+not exist. Values and defaults are in the last column.
 
 | Command line | Environment | `.agent-sandbox` | What it does (default) |
 |---|---|---|---|
-| `--profile NAME` | — | — | which agent profile to run (inferred from the launcher's name) |
-| `--allow HOST` | — | `[allow]`, one host per line | extra hosts the agent may reach, on top of the global allowlist; the flag lasts one session (none) |
-| — | `AGENT_SANDBOX_NET=proxy\|strict\|open\|none` | `[net] mode =` | network mode (`proxy`) |
-| `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS="5432 11434"` | `[net] host-port =` | `strict` only: host loopback ports the sandbox may reach; `none` closes the direction (none) |
-| `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS="8000"` | `[net] agent-port =` | `strict` only: agent ports published on the host's loopback; `none` closes the direction (none) |
-| — | `AGENT_SANDBOX_RO=/a:/b` | `[ro]`, one path per line | extra read-only paths (none) |
-| — | `AGENT_SANDBOX_RW=/c` | `[rw]`, one path per line | extra read-write paths (none) |
-| — | `AGENT_SANDBOX_PASSENV="A B"` | `[forward]`, one name per line | extra environment variables to forward, by name (only the built-in set: locale, proxy, CA, CUDA) |
-| — | `AGENT_SANDBOX_CONDA_WRITE=1` | `[conda] write = 1` | make the active conda env writable; the base install and other envs stay read-only (read-only) |
-| — | — | `[conda] name = ENV` | run in this conda env instead of the shell's active one (the active one) |
-| — | `AGENT_SANDBOX_CONDA_PKGS=DIR` | `[conda] pkgs = DIR` | sandbox-owned package cache used in write mode (`~/.cache/agent-sandbox/conda-pkgs`) |
-| — | — | `[share-memory]`, paths, `all`, or empty | which projects' agent memory this session may read; present but empty means this project only (the global `memory_default`, itself `shared`) |
-| — | `AGENT_SANDBOX_SECCOMP=default` | — | default-deny syscall filter, compiled per machine by `install.sh` (off) |
-| `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) |
-| `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) |
-| `--ssh-key PATH`, `--ssh-timeout LIFE` | — | — | which key to load and how long it stays loaded (first readable key under `~/.ssh`; no expiry) |
-| `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed |
-| `--engine-help`, `--engine-version` | — | — | the engine's own flags, and its version |
-| — | `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`, `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR` | — | where the proxy CA, the profiles, per-session state and the seccomp filter live; see `--engine-help` |
+| `--profile NAME` | — | — | which agent profile to run; inferred from the launcher's name ([profiles.md](docs/profiles.md)) |
+| `--allow HOST` | — | `[allow]` | extra hosts the agent may reach, on top of the global allowlist; one host per line in the file, and the flag lasts one session (none) ([network.md](docs/network.md)) |
+| — | `AGENT_SANDBOX_NET` | `[net] mode` | network mode: `proxy` (default), `strict`, `open`, `none` ([network.md](docs/network.md)) |
+| `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS` | `[net] host-port` | `strict` only: host loopback ports the sandbox may reach, space-separated in the variable; `none` closes the direction (none) ([network.md](docs/network.md)) |
+| `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback; `none` closes the direction (none) ([network.md](docs/network.md)) |
+| — | `AGENT_SANDBOX_RO` | `[ro]` | extra read-only paths: colon-separated in the variable, one per line in the file (none) ([design.md](docs/design.md)) |
+| — | `AGENT_SANDBOX_RW` | `[rw]` | extra read-write paths, same syntax (none) ([design.md](docs/design.md)) |
+| — | `AGENT_SANDBOX_PASSENV` | `[forward]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |
+| — | `AGENT_SANDBOX_CONDA_WRITE` | `[conda] write` | `1` makes the active conda env writable; its base install and other envs stay read-only (read-only) |
+| — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | package cache used in write mode (`~/.cache/agent-sandbox/conda-pkgs`) |
+| — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
+| — | — | `[share-memory]` | which projects' agent memory this session may read: paths, `all`, or present-but-empty for this project only (the global `memory_default`, itself `shared`) ([config.md](docs/config.md)) |
+| — | `AGENT_SANDBOX_SECCOMP` | — | `default` loads a default-deny syscall filter, compiled per machine by `install.sh` (off) ([seccomp](components/seccomp/README.md)) |
+| `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
+| `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
+| `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |
+| `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
+| `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed ([config.md](docs/config.md)) |
+| `--engine-help`, `--engine-version` | — | — | print the engine's own flags, or its version, and exit |
 
 When a setting can be given more than one way, they combine like this. Hosts,
-paths, forwarded names and ports **add up** across all three, so the dot-file
-grants and your shell's grants are a union. The network mode, conda write and
-conda package cache are **taken over** by the environment variable when it is
-set, and the engine says so. A `.agent-sandbox` is read only after `--trust`
-approves it.
+paths, forwarded names and ports **add up** across all three, so the dot-file's
+grants and your shell's grants are a union. The network mode and the conda
+settings are **taken over** by the environment variable when it is set, and the
+engine says so. Nothing in a `.agent-sandbox` applies until `--trust` approves
+it.
+
+Four more variables name locations rather than behaviour and are rarely set by
+hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
+`AGENT_SANDBOX_SESSION_BASE` and `AGENT_SANDBOX_SECCOMP_DIR`. `--engine-help`
+prints each with its default.
 
 Engine flags go before the agent's own arguments. `agent-sandbox --help` lists
-them; with a profile, `<agent> --engine-help` shows the same, and `<agent> --help`
-ends with a footer pointing at it. The per-project file is documented in
-[docs/config.md](docs/config.md), with a commented template in
+them; with a profile, `<agent> --engine-help` shows the same, and
+`<agent> --help` ends with a footer pointing at it. The per-project file has a
+commented template in
 [docs/agent-sandbox.example](docs/agent-sandbox.example).
 
 ## Documentation

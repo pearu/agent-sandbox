@@ -24,9 +24,11 @@ break compatibility.
 - README's "Knobs and flags" is now one table with a column per way to set a
   setting (command line, environment variable, `.agent-sandbox` entry) plus the
   default, instead of an environment-only table with the flags and the dot-file
-  described in prose. It also states how the three combine: hosts, paths,
-  forwarded names and ports add up, while the network mode and the conda
-  settings are taken over by the environment variable when set.
+  described in prose. Each column carries only the name; values, defaults and a
+  link to the relevant document live in the last column. It also states how the
+  three combine: hosts, paths, forwarded names and ports add up, while the
+  network mode and the conda settings are taken over by the environment
+  variable when set.
 - README opens with a non-technical "Why" section: what the project is for,
   which two failures (an agent led astray, and an agent simply wrong) it puts a
   boundary around, why that boundary is enforced around the agent rather than by
