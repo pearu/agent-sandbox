@@ -50,21 +50,27 @@ setup() {
 }
 
 @test "profile from argv[0], --profile NAME and --profile=NAME produce identical argv" {
-  # AGENT_SANDBOX_BRIEFING=off throughout: the briefing binds files from a
-  # per-launch session directory whose name is random, so two identical
-  # invocations differ in exactly those paths. How the profile was selected is
-  # what this test is about.
-  run_engine AGENT_SANDBOX_BRIEFING=off -- claude --version
+  # Session-scoped paths are normalised away: the briefing and state isolation
+  # both bind files out of a per-launch session directory whose name is random,
+  # so two identical invocations legitimately differ in exactly those paths.
+  # How the profile was selected is what this test is about -- and normalising
+  # beats switching those features off, since then the argv compared is the one
+  # a real launch produces.
+  norm() { sed 's/session\.[A-Za-z0-9]\{6\}/session.NORMALISED/g' "$1"; }
+  run_engine -- claude --version
   [ "$status" -eq 0 ]
-  cp "$H/argv" "$H/argv.a"
-  run_engine AGENT_SANDBOX_BRIEFING=off -- agent-sandbox --profile claude --version
+  norm "$H/argv" >"$H/argv.a"
+  run_engine -- agent-sandbox --profile claude --version
   [ "$status" -eq 0 ]
-  cmp -s "$H/argv" "$H/argv.a"
-  run_engine AGENT_SANDBOX_BRIEFING=off -- agent-sandbox --profile=claude --version
-  cmp -s "$H/argv" "$H/argv.a"
+  norm "$H/argv" >"$H/argv.b" && cmp -s "$H/argv.b" "$H/argv.a"
+  run_engine -- agent-sandbox --profile=claude --version
+  norm "$H/argv" >"$H/argv.b" && cmp -s "$H/argv.b" "$H/argv.a"
   # explicit --profile wins over argv[0]
-  run_engine AGENT_SANDBOX_BRIEFING=off -- claude --profile claude --version
-  cmp -s "$H/argv" "$H/argv.a"
+  run_engine -- claude --profile claude --version
+  norm "$H/argv" >"$H/argv.b" && cmp -s "$H/argv.b" "$H/argv.a"
+  # the normalisation must actually have had something to normalise, or this
+  # test would be comparing raw argvs and passing for the wrong reason
+  grep -q 'session\.NORMALISED' "$H/argv.a"
 }
 
 @test "unknown, path-like or missing profile names are refused with exit 2" {

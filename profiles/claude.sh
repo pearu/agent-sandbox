@@ -339,3 +339,53 @@ if merged.get("disableAllHooks"):
   profile_briefing_argv=(--settings "$inside_file")
   return 0
 }
+
+# Claude Code's own state directory holds far more than per-project memory, and
+# most of it is keyed by session rather than by project, so scoping
+# ~/.claude/projects leaves it all readable. Measured on one developer machine:
+# file-history alone was 40M of VERBATIM file contents from twelve sessions
+# across thirty projects, and history.jsonl held every prompt typed in any of
+# them. None of it was asked for by the user, and a session that reads another
+# project's source has broken the isolation the README promises.
+#
+# What stays visible, deliberately: CLAUDE.md and settings.json (the user's own
+# instructions), credentials, plugins, statsig, and .claude.json. That last one
+# is a known gap -- it lists every project path, but it is written live by the
+# agent and filtering it risks breaking Claude Code for a leak that is paths and
+# an email address, not project content. docs/design.md records it as a cap.
+_claude_history_filter() { # $1 = history.jsonl, $2 = project dir
+  # Records are compact JSON, one per line, each carrying "project":"<dir>".
+  # A fixed-string match including the closing quote cannot match a different
+  # project (no prefix collision), so this can only ever return too few lines,
+  # never another project's -- the safe direction for a filter whose input
+  # format we do not control.
+  grep -F "\"project\":\"$2\"" -- "$1" 2>/dev/null || true
+}
+
+profile_isolate() {
+  local c="$HOME/.claude"
+  profile_isolate_spec=(
+    # Verbatim file contents from other sessions. Copied out so this session's
+    # own snapshots survive a resume, which is what makes undo work.
+    "copyout	$c/file-history"
+    # Plans are documents; leaving them shared is a leak, so copy out.
+    "copyout	$c/plans"
+    # Every prompt typed in any project. The session gets its own project's
+    # records back, and its new ones are appended on exit.
+    "append	$c/history.jsonl	_claude_history_filter"
+    # Not Claude Code's, but in the same directory and just as cross-session:
+    # logs written by the user's own Notification/Stop hooks. Not attributable
+    # to a project, so the session starts with an empty one and its lines are
+    # appended back -- the log stays complete on the host.
+    "append	$c/responses.log"
+    "append	$c/alerts.log"
+    # Nothing below needs to outlive the session: a probe established that a
+    # session starts, and a resume completes, with the whole set blanked.
+    "tmpfs	$c/session-env"
+    "tmpfs	$c/sessions"
+    "tmpfs	$c/jobs"
+    "tmpfs	$c/shell-snapshots"
+    "tmpfs	$c/debug"
+    "tmpfs	$c/paste-cache"
+  )
+}
