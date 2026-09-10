@@ -68,7 +68,7 @@ teardown_file() {
   [ -f "$H/.mitmproxy/mitmproxy-ca-cert.pem" ]
   grep -q '^api.anthropic.com$' "$H/.config/agent-sandbox/allowlist.txt"
   cmp -s "$H/.config/agent-sandbox/allowlist_addon.py" "$REPO_ROOT/components/allowlist_addon.py"
-  grep -q "^ExecStart=$H/.local/share/agent-sandbox/proxy-venv/bin/mitmdump" "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  grep -qE "^ExecStart=$H/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ "$(readlink "$H/.local/bin/claude")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
   cmp -s "$H/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
   [[ "$out" == *"bwrap can create user+pid namespaces"* ]]

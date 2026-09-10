@@ -26,7 +26,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   grep -q 'claude profile (added by install.sh)' "$T/home/.config/agent-sandbox/allowlist.txt"
   local unit="$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ -f "$unit" ]
-  grep -q "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-venv/bin/mitmdump" "$unit"
+  grep -qE "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$unit"
   grep -q "^Documentation=file:$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$unit"
   grep -q -- '--set http2=false' "$unit"
   ! grep -q '@' "$unit"
