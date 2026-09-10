@@ -76,6 +76,17 @@ break compatibility.
 
 ### Fixed
 
+- Memory scoping used the wrong project-state directory for any project path
+  containing a character Claude Code rewrites. The profile mapped a path to a
+  slug by replacing `/` only; Claude Code replaces every character outside
+  `[A-Za-z0-9-]`, one for one. For a project like `~/work/site.com`, scoping put
+  a tmpfs over `~/.claude/projects`, created and bound a directory that had
+  never existed, and left the project's real memory and transcripts hidden, so
+  notes did not persist and `--continue`/`--resume` found nothing -- silently.
+  The scheme is undocumented, so it is now derived empirically by
+  `probes/slug-probe.sh` and pinned by a unit test using a path with `.` and
+  `+`; the previous tests shared the same wrong rule in their own helper and so
+  passed, because bats temp paths happen to contain no dots.
 - A `.agent-sandbox` `[conda] name = <env>` set `CONDA_PREFIX` and bound that
   env, but left PATH as the launching shell had it. So the sandbox got a
   contradiction (`CONDA_PREFIX` naming one env, PATH resolving another) and none
