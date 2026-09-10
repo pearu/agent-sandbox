@@ -19,6 +19,15 @@ break compatibility.
   proxy's Python env, against that host's libseccomp; nothing binary ships.
   Verified: the real agent completes turns under it in proxy and strict.
 
+### Added
+
+- `tests/unit/docs.bats` checks the README's knobs table against the engine in
+  both directions: every engine flag, every `AGENT_SANDBOX_*` the engine reads
+  and every `.agent-sandbox` section and key is documented, and the table
+  claims nothing the engine no longer has. Each extraction asserts it found a
+  plausible number of items, so a rename or reformat that breaks it fails the
+  test instead of silently checking nothing.
+
 ### Changed
 
 - README's "Knobs and flags" is now one table with a column per way to set a
