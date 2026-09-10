@@ -72,7 +72,7 @@ in the default `proxy` mode the sandbox shares the host network namespace, so a
 tool that ignores `HTTPS_PROXY` is unfiltered (`AGENT_SANDBOX_NET=strict` closes
 that: its own namespace, only the proxy reachable); the agent's own credentials
 in `~/.claude` are readable; syscall filtering is opt-in, not on by default
-(`AGENT_SANDBOX_SECCOMP=default`).
+(`AGENT_SANDBOX_SECCOMP=on`).
 
 ## Install
 
@@ -123,7 +123,7 @@ not exist. Values and defaults are in the last column.
 | — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | package cache used in write mode (`~/.cache/agent-sandbox/conda-pkgs`) |
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
 | — | — | `[share-memory]` | which projects' agent memory this session may read: paths, `all`, or present-but-empty for this project only (scoped to this project; widen with the global `memory_default = shared`) ([config.md](docs/config.md)) |
-| — | `AGENT_SANDBOX_SECCOMP` | — | `default` loads a default-deny syscall filter, compiled per machine by `install.sh` (off) ([seccomp](components/seccomp/README.md)) |
+| — | `AGENT_SANDBOX_SECCOMP` | — | `on` loads a default-deny syscall filter, compiled per machine by `install.sh` (off) ([seccomp](components/seccomp/README.md)) |
 | `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |

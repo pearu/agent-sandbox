@@ -1,6 +1,6 @@
 # seccomp: default-deny syscall filter (opt-in)
 
-`AGENT_SANDBOX_SECCOMP=default` loads a seccomp filter into the sandbox: every
+`AGENT_SANDBOX_SECCOMP=on` loads a seccomp filter into the sandbox: every
 syscall not on an allowlist fails with `EPERM`. It is defense in depth behind
 the namespaces and `--cap-drop ALL`, off by default (issue #4).
 

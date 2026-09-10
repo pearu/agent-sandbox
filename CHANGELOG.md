@@ -8,7 +8,7 @@ break compatibility.
 
 ### Added
 
-- Opt-in seccomp syscall filtering (issue #4): `AGENT_SANDBOX_SECCOMP=default`
+- Opt-in seccomp syscall filtering (issue #4): `AGENT_SANDBOX_SECCOMP=on`
   loads a default-deny filter into the sandbox, Docker's default profile
   (moby/profiles, Apache-2.0, vendored under `components/seccomp/`) compiled as
   for a container with no capabilities. Every syscall not allowlisted fails
@@ -18,6 +18,12 @@ break compatibility.
   `install.sh` compiles the filter on the installing host with pyseccomp in the
   proxy's Python env, against that host's libseccomp; nothing binary ships.
   Verified: the real agent completes turns under it in proxy and strict.
+  The knob takes `on`/`1` and `off`/`0`, and says nothing about which profile:
+  the value is the state, so it still reads correctly if the filter ever becomes
+  the default. An earlier iteration on `main` spelled the on value `default`,
+  which is now refused with a message naming `on`/`off` rather than treated as
+  an alias -- a stale `AGENT_SANDBOX_SECCOMP=default` in a shell profile must
+  not quietly launch without the filter it was asking for.
 - `tests/unit/docs.bats` checks the README's knobs table against the engine in
   both directions: every engine flag, every `AGENT_SANDBOX_*` the engine reads
   and every `.agent-sandbox` section and key is documented, and the table

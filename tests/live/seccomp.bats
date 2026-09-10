@@ -38,8 +38,8 @@ teardown() {
   [[ "$output" == *"userns=created"* ]]
 }
 
-@test "with AGENT_SANDBOX_SECCOMP=default: a filter is active and creating a user namespace is refused" {
-  run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_SECCOMP=default \
+@test "with AGENT_SANDBOX_SECCOMP=on: a filter is active and creating a user namespace is refused" {
+  run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_SECCOMP=on \
     "$ENGINE" --profile scprobe run
   [ "$status" -eq 0 ]
   [[ "$output" == *"seccomp_mode=2"* ]]

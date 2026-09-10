@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# AGENT_SANDBOX_SECCOMP=default: bwrap gets --seccomp 10 with fd 10 open on the
+# AGENT_SANDBOX_SECCOMP=on: bwrap gets --seccomp 10 with fd 10 open on the
 # compiled filter for this arch; off by default; refuses when the filter is
 # missing or the value is unknown. The stub bwrap here also records what fd 10
 # points at, so the fd plumbing (not just the flag) is under test.
@@ -27,24 +27,44 @@ S
   [ "$(cat "$H/argv.fd10")" = /dev/null ]
 }
 
-@test "default: --seccomp 10 is passed and fd 10 is the arch's compiled filter" {
-  run_engine AGENT_SANDBOX_SECCOMP=default AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+@test "on: --seccomp 10 is passed and fd 10 is the arch's compiled filter" {
+  run_engine AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
   argv_has --seccomp 10
   [ "$(cat "$H/argv.fd10")" = "$SC/$(uname -m).bpf" ]
   [[ "$output" == *"seccomp: default-deny syscall filter on"* ]]
 }
 
-@test "default with no compiled filter for this arch refuses to launch and says how to fix it" {
+@test "on with no compiled filter for this arch refuses to launch and says how to fix it" {
   rm -f "$SC/$(uname -m).bpf"
-  run_engine AGENT_SANDBOX_SECCOMP=default AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 1 ]
   [[ "$output" == *"no seccomp filter for $(uname -m)"* && "$output" == *"re-run install.sh"* ]]
   [ ! -s "$H/argv" ] # bwrap never ran
 }
 
-@test "an unknown value is refused" {
+@test "1 is on too; off, 0 and empty are off" {
+  run_engine AGENT_SANDBOX_SECCOMP=1 AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --seccomp 10
+  local v
+  for v in off 0 ""; do
+    run_engine AGENT_SANDBOX_SECCOMP="$v" AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+    [ "$status" -eq 0 ]
+    ! argv_has --seccomp
+    [ "$(cat "$H/argv.fd10")" = /dev/null ]
+  done
+}
+
+@test "an unknown value is refused -- including 'default', which no longer means on" {
   run_engine AGENT_SANDBOX_SECCOMP=strictest AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"not recognised"* ]]
+  # the value the knob used to take. Refused loudly rather than accepted as an
+  # alias or ignored as unset: a stale AGENT_SANDBOX_SECCOMP=default in someone's
+  # shell profile must not silently launch WITHOUT the filter they asked for.
+  run_engine AGENT_SANDBOX_SECCOMP=default AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not recognised"* && "$output" == *"'on' or 'off'"* ]]
+  [ ! -s "$H/argv" ]
 }
