@@ -139,6 +139,42 @@ trust() {
   argv_has --bind "$env" "$env"
   [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
   [ "$(setenv_value CONDA_PKGS_DIRS)" = "$H/pkgs,$base/pkgs" ]
+  # PATH must agree with CONDA_PREFIX, or the pinned env's own tools are not
+  # found inside. No env was active here, so its bin is prepended.
+  [ "$(setenv_value PATH)" = "$env/bin:$H/bin:/usr/bin:/bin" ]
+}
+
+@test "[conda] name replaces the shell's active env on PATH, rather than shadowing it" {
+  local base="$H/conda"
+  local env="$base/envs/proj-env" active="$base/envs/shell-env"
+  mkdir -p "$env" "$active" "$base/pkgs"
+  printf '[conda]\nname = proj-env\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  # launched from a shell with shell-env active, the way conda leaves PATH
+  run_engine CONDA_PREFIX="$active" CONDA_DEFAULT_ENV=shell-env CONDA_SHLVL=1 \
+    PATH="$active/bin:$H/bin:/usr/bin:/bin" -- claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
+  [ "$(setenv_value CONDA_DEFAULT_ENV)" = "proj-env" ]
+  # swapped in place: the pinned env's bin is where the active one was, and the
+  # active env is gone rather than merely outranked
+  [ "$(setenv_value PATH)" = "$env/bin:$H/bin:/usr/bin:/bin" ]
+  [[ "$(setenv_value PATH)" != *"$active/bin"* ]]
+  # and it is the pinned env that gets bound (read-only: write mode is off here)
+  argv_has --ro-bind "$env" "$env"
+  ! argv_has --ro-bind "$active" "$active"
+
+  # The case that actually bit: launched from conda's BASE env, where
+  # CONDA_PREFIX is the base itself and PATH carries <base>/bin, not an
+  # <base>/envs/<name>/bin. The base's bin must give way to the pinned env too,
+  # or the dot-file's env is bound but none of its tools are on PATH.
+  mkdir -p "$base/bin"
+  run_engine CONDA_PREFIX="$base" CONDA_DEFAULT_ENV=base CONDA_SHLVL=1 \
+    PATH="$base/bin:$H/bin:/usr/bin:/bin" -- claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
+  [ "$(setenv_value PATH)" = "$env/bin:$H/bin:/usr/bin:/bin" ]
+  [[ "$(setenv_value PATH)" != *"$base/bin:"* ]]
 }
 
 @test "[net] mode from an approved dot-file selects the network mode; AGENT_SANDBOX_NET wins; unknown values and unapproved files are ignored" {

@@ -18,9 +18,6 @@ break compatibility.
   `install.sh` compiles the filter on the installing host with pyseccomp in the
   proxy's Python env, against that host's libseccomp; nothing binary ships.
   Verified: the real agent completes turns under it in proxy and strict.
-
-### Added
-
 - `tests/unit/docs.bats` checks the README's knobs table against the engine in
   both directions: every engine flag, every `AGENT_SANDBOX_*` the engine reads
   and every `.agent-sandbox` section and key is documented, and the table
@@ -61,7 +58,6 @@ break compatibility.
   uid 0 in strict, seccomp/limits) and the uid-0 consequences documented;
   resolved items removed from "Open design questions" (syscall filtering, and
   per-session proxy identity, which shipped as issue #5).
-
 - `install.sh` chooses the proxy runtime so it works from any shell state: an
   existing environment is reused only if `mitmdump --version` still succeeds
   and is otherwise recreated (it is installer-owned); a dedicated conda env is
@@ -72,7 +68,6 @@ break compatibility.
   fixes a real outage-in-waiting: a venv built from a dev conda env's python
   stopped importing mitmproxy after that env switched interpreters, while the
   running service masked it until its next restart.
-
 - Drop all capabilities in the sandbox (`bwrap --cap-drop ALL`). In
   `proxy`/`open`/`none` this is a no-op (bwrap is unprivileged), but in `strict`
   the agent ran inside pasta's root-owned user namespace and started as uid 0
@@ -81,20 +76,28 @@ break compatibility.
 
 ### Fixed
 
+- A `.agent-sandbox` `[conda] name = <env>` set `CONDA_PREFIX` and bound that
+  env, but left PATH as the launching shell had it. So the sandbox got a
+  contradiction (`CONDA_PREFIX` naming one env, PATH resolving another) and none
+  of the pinned env's tools were found inside, defeating the documented
+  "run in this conda env instead of whatever env is active in your shell".
+  The env's `bin/` now takes the active env's place on PATH inside, as
+  `conda activate` does, and is prepended when no env was active. The engine's
+  own PATH is untouched, so it still finds bwrap, pasta and nft as before.
+  Covered for all three starting points: no env active, a different env active,
+  and conda's base active (the case that surfaced it).
 - Strict-mode `--ssh` failed host-key verification. In strict the agent runs as
   uid 0 (pasta maps the one uid to root), so ssh resolves `~` through
   `getpwuid(0)` to root's home, not `$HOME`, and never saw the bound
   `~/.ssh/known_hosts`. The engine now also binds `known_hosts` and `config` at
   uid 0's home, so `--ssh` works in strict as in proxy. A live `--ssh` test
   covers it (the stubbed-toolchain unit test could not).
-
 - Strict network mode (`AGENT_SANDBOX_NET=strict`) launched the agent with no
   proxy variables, so it resolved `api.anthropic.com` directly and failed with
   ENOTFOUND (strict has no DNS route by design). The strict wrapper set the
   proxy `--setenv` before the base `--clearenv`, which cleared them; the env is
   now set after `--clearenv`. Strict mode had never delivered a working proxy to
   the agent.
-
 - `--allow` (and a `.agent-sandbox` `[allow]` line) no longer hangs the agent.
   The per-session proxy token went into the sandbox's proxy URL with an empty
   password (`TOKEN@host`), and Node's HTTP stack hangs on that, so the agent

@@ -769,6 +769,28 @@ _as_ports_merge() { # $1 = label, $2 = out array name, $3 = out none-flag name, 
 }
 
 # Echo the conda/mamba base prefix (where envs/ and pkgs/ live), or nothing.
+# _as_path_swap_conda OLD_PREFIX NEW_PREFIX: the launching shell's PATH with
+# OLD_PREFIX/bin replaced by NEW_PREFIX/bin, or NEW_PREFIX/bin prepended when the
+# old one is not there (no env active, or a PATH we did not build). What
+# `conda activate` does to PATH, so CONDA_PREFIX and PATH agree inside the sandbox.
+_as_path_swap_conda() {
+  local old="${1%/}/bin" new="${2%/}/bin" out="" p found=0
+  local -a parts=()
+  _as_split parts ':' "$PATH"
+  for p in "${parts[@]}"; do
+    [[ -z "$p" ]] && continue
+    if [[ "$p" == "$old" ]]; then
+      p="$new"
+      found=1
+    elif [[ "$p" == "$new" ]]; then
+      continue # keep exactly one copy, in the swapped position
+    fi
+    out="${out:+$out:}$p"
+  done
+  ((found)) || out="$new${out:+:$out}"
+  printf '%s' "$out"
+}
+
 # Used to resolve a [conda] name = <env> from .agent-sandbox to <base>/envs/<env>.
 _as_conda_base() {
   if [[ -n "${MAMBA_ROOT_PREFIX:-}" && -d "${MAMBA_ROOT_PREFIX}" ]]; then
@@ -1413,6 +1435,9 @@ agent_sandbox() (
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
+  # PATH for INSIDE the sandbox. Empty means "pass the launching shell's PATH";
+  # a selected conda env rewrites it (see the [conda] name block).
+  local _inner_path=""
 
   local cwd
   cwd="$(pwd -P)"
@@ -1480,8 +1505,16 @@ agent_sandbox() (
         local _cbase
         _cbase="$(_as_conda_base)"
         if [[ -n "$_cbase" && -d "$_cbase/envs/$_df_conda_name" ]]; then
+          local _old_prefix="${CONDA_PREFIX:-}"
           CONDA_PREFIX="$_cbase/envs/$_df_conda_name"
           CONDA_DEFAULT_ENV="$_df_conda_name"
+          # Setting CONDA_PREFIX alone is not enough: PATH still comes from the
+          # launching shell, so the env's own tools would not be found inside and
+          # CONDA_PREFIX would disagree with PATH. Swap the shell's active env
+          # (an env's bin, or the base's) for this one, as `conda activate` does.
+          if [[ "$_old_prefix" != "$CONDA_PREFIX" ]]; then
+            _inner_path="$(_as_path_swap_conda "${_old_prefix:-$_cbase}" "$CONDA_PREFIX")"
+          fi
           _as_msg "using conda env '$_df_conda_name' from .agent-sandbox"
         else
           _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cbase:-<no conda base>}/envs; ignoring"
@@ -1681,7 +1714,7 @@ agent_sandbox() (
   args+=(
     --setenv HOME "$HOME"
     --setenv USER "${USER:-$(id -un)}"
-    --setenv PATH "$PATH"
+    --setenv PATH "${_inner_path:-$PATH}"
     --setenv TERM "${TERM:-xterm-256color}"
   )
   local _kv

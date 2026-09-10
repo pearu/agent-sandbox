@@ -54,8 +54,9 @@ Sections:
   line, on top of the built-in set. Do not list secrets for unrelated services.
 - **`[conda]`** — key/value lines: `name = <env>` runs in that conda env
   (resolved under the active or a discoverable conda base) instead of the one
-  active in your shell; `write = 1` makes the active env writable; `pkgs = <dir>`
-  is the sandbox-owned package cache used in write mode.
+  active in your shell, and its `bin/` takes that env's place on PATH inside, so
+  `CONDA_PREFIX` and PATH agree; `write = 1` makes the active env writable;
+  `pkgs = <dir>` is the sandbox-owned package cache used in write mode.
 - **`[net]`** — key/value lines. `mode = proxy|strict|open|none` selects the
   network mode for sessions in this project (an `AGENT_SANDBOX_NET` set in your
   shell wins); approving `mode = open` switches the egress allowlist off for

@@ -60,7 +60,9 @@
 
 # --- Conda ---------------------------------------------------------------
 # name  : run in this conda env (resolved under the active or discoverable
-#         conda base) instead of whatever env is active in your shell.
+#         conda base) instead of whatever env is active in your shell. Its
+#         bin/ takes the active env's place on PATH inside the sandbox, so the
+#         env's own tools are the ones found there.
 # write : 1 makes the active env writable (mamba/pip install into it); the base
 #         install, other envs and the host package cache stay read-only.
 # pkgs  : sandbox-owned package cache used in write mode.
