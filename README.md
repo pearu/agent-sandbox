@@ -42,6 +42,14 @@ follow. Sessions running at the same time cannot reach into each other's work.
 And where a protection is weaker than it sounds, we say so plainly. Believing
 you are safe when you are not is worse than knowing where the limit really is.
 
+A limit the agent cannot see is a limit it will fight. Blocked once, an agent
+retries, looks for another route, and spends your time proving what you already
+decided. So the sandbox tells it, at the start of every session, what is closed,
+what is open, and how to ask you for more. The same message does the opposite
+job too: access you opened on purpose is worth nothing if the agent never learns
+it is there, and asking you costs far less than twenty attempts to get around
+you.
+
 Is it worth installing? That depends on one question: how much does the agent
 do while you are not reading every command? If you approve each step yourself,
 you are already the sandbox, and this adds little. Once you stop doing that,
