@@ -65,7 +65,7 @@ reach() {
   [[ "${output,,}" == *ok* ]]
 }
 
-# --- seccomp (AGENT_SANDBOX_SECCOMP=default): the real agent still completes a turn ---
+# --- seccomp (AGENT_SANDBOX_SECCOMP=on): the real agent still completes a turn ---
 seccomp_available() {
   [ -r "$HOME/.local/share/agent-sandbox/seccomp/$(uname -m).bpf" ] \
     || skip "no compiled seccomp filter for $(uname -m); re-run install.sh"
@@ -73,7 +73,7 @@ seccomp_available() {
 
 @test "proxy + seccomp: the real agent reaches the API under the default-deny syscall filter" {
   seccomp_available
-  AGENT_SANDBOX_SECCOMP=default run reach proxy
+  AGENT_SANDBOX_SECCOMP=on run reach proxy
   [ "$status" -eq 0 ]
   [[ "${output,,}" == *ok* ]]
 }
@@ -81,7 +81,7 @@ seccomp_available() {
 @test "strict + seccomp: the real agent reaches the API under the default-deny syscall filter" {
   seccomp_available
   strict_available
-  AGENT_SANDBOX_SECCOMP=default run reach strict
+  AGENT_SANDBOX_SECCOMP=on run reach strict
   [ "$status" -eq 0 ]
   [[ "${output,,}" == *ok* ]]
 }

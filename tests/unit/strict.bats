@@ -191,7 +191,7 @@ S
   [[ "${ARGV[hi + 1]}" == http://*10.9.9.1:8888 ]] # points at the gateway proxy
 }
 
-@test "strict: the wrapper opens the seccomp filter on fd 10 for bwrap when AGENT_SANDBOX_SECCOMP=default" {
+@test "strict: the wrapper opens the seccomp filter on fd 10 for bwrap when AGENT_SANDBOX_SECCOMP=on" {
   cat >"$H/bin/pasta" <<'S'
 #!/usr/bin/env bash
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
@@ -214,7 +214,7 @@ S
   mkdir -p "$H/seccomp"
   printf 'not-a-real-bpf' >"$H/seccomp/$(uname -m).bpf"
   run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_SECCOMP=default AGENT_SANDBOX_SECCOMP_DIR="$H/seccomp" -- claude --version
+    AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$H/seccomp" -- claude --version
   [ "$status" -eq 0 ]
   local -a ARGV
   mapfile -t ARGV <"$H/argv"

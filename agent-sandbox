@@ -110,7 +110,7 @@
 #    explicit knob in your shell wins over the file -- see docs/config.md.)
 #   AGENT_SANDBOX_FORWARD="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
-#   AGENT_SANDBOX_SECCOMP=default      load a default-deny seccomp syscall filter
+#   AGENT_SANDBOX_SECCOMP=on           load a default-deny seccomp syscall filter
 #                                       (Docker's default profile, as for a container
 #                                       with no capabilities; compiled by install.sh)
 #   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
@@ -302,7 +302,7 @@ Environment knobs:
   AGENT_SANDBOX_RO=/a:/b        extra read-only paths
   AGENT_SANDBOX_RW=/c           extra read-write paths
   AGENT_SANDBOX_FORWARD="A B"   extra environment variables to forward
-  AGENT_SANDBOX_SECCOMP=default default-deny seccomp syscall filter (compiled by install.sh)
+  AGENT_SANDBOX_SECCOMP=on|off  default-deny seccomp syscall filter (default: off)
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
@@ -1870,23 +1870,27 @@ agent_sandbox() (
   # bwrap may need to create intermediate directories on the tmpfs.
   args+=(--remount-ro "$HOME")
   # ----- seccomp (opt-in) -----
-  # AGENT_SANDBOX_SECCOMP=default: a default-deny syscall filter (Docker's default
+  # AGENT_SANDBOX_SECCOMP=on: a default-deny syscall filter (Docker's default
   # profile as for a container with no capabilities; components/seccomp/README.md),
   # compiled by install.sh for this machine into $(_as_seccomp_dir). bwrap reads it
   # from fd 10, which _as_launch / the strict wrapper open at exec time.
+  # The value says on or off, never which profile: there is one, and if a second
+  # ever ships it can be named by a value that is not a boolean. It deliberately
+  # does not spell the state as `default`, which would say nothing about whether
+  # the filter is wanted and would contradict itself if the default ever flips.
   case "${_knob_seccomp:-}" in
     "" | off | 0) ;;
-    default)
+    on | 1)
       _seccomp_bpf="$(_as_seccomp_dir)/$(uname -m).bpf"
       [[ -r "$_seccomp_bpf" ]] || {
-        _as_msg "AGENT_SANDBOX_SECCOMP=default: no seccomp filter for $(uname -m) at $_seccomp_bpf; re-run install.sh (needs libseccomp and pyseccomp), or unset AGENT_SANDBOX_SECCOMP."
+        _as_msg "AGENT_SANDBOX_SECCOMP=on: no seccomp filter for $(uname -m) at $_seccomp_bpf; re-run install.sh (needs libseccomp and pyseccomp), or set AGENT_SANDBOX_SECCOMP=off."
         return 1
       }
       args+=(--seccomp 10)
       _as_msg "seccomp: default-deny syscall filter on ($_seccomp_bpf)"
       ;;
     *)
-      _as_msg "AGENT_SANDBOX_SECCOMP='$_knob_seccomp' is not recognised (use 'default', or unset it)"
+      _as_msg "AGENT_SANDBOX_SECCOMP='$_knob_seccomp' is not recognised (use 'on' or 'off')"
       return 2
       ;;
   esac
