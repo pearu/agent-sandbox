@@ -21,6 +21,13 @@ break compatibility.
 
 ### Changed
 
+- README opens with a non-technical "Why" section: what the project is for,
+  which two failures (an agent led astray, and an agent simply wrong) it puts a
+  boundary around, why that boundary is enforced around the agent rather than by
+  it (rules given to an agent drift and need repeating), and when running an
+  agent sandboxed is worth the setup at all.
+- README no longer claims "there is no seccomp filter"; syscall filtering is
+  opt-in as of issue #4.
 - `code.claude.com` (Claude Code's documentation) is in the starter allowlist:
   agents working on Claude Code configuration reach for it, and it was the most
   refused host in the author's `blocked.log`. It is a convenience host like

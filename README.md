@@ -18,6 +18,36 @@ claude --ssh github.com      # + git push through a per-session, host-constraine
 claude --allow pypi.org      # + one more host through the egress proxy, this session only
 ```
 
+## Why
+
+The more you let an AI coding agent work on its own, the more useful it is:
+reading the whole project, installing what it needs, running the tests,
+changing a dozen files. That freedom is also the problem. You cannot check what
+an agent means to do, and you cannot review everything it touched afterwards,
+so in practice you just trust it. Trust has to cover two different failures
+here. An agent can be led into doing something you never asked for, by the
+content it reads or by a package it installs. It can also simply be wrong, and
+run a command that deletes your work or publishes something private. From the
+outside these look the same, and both run with everything you can reach.
+
+agent-sandbox replaces that trust with a boundary you set in advance. You say
+which project the agent may work in and which places on the network it may
+reach. Everything else, the rest of your files, your keys and tokens, your
+other machines and services, is not discouraged but simply absent. What matters
+is that the limits are enforced around the agent, not by it. Asking an agent to
+respect a rule does not last: it obeys for a while, then drifts, and you have
+to remind it again. A limit around the agent cannot drift. It holds whether the
+agent is careful, mistaken, or deliberately pushed against you. Two more aims
+follow. Sessions running at the same time cannot reach into each other's work.
+And where a protection is weaker than it sounds, we say so plainly. Believing
+you are safe when you are not is worse than knowing where the limit really is.
+
+Is it worth installing? That depends on one question: how much does the agent
+do while you are not reading every command? If you approve each step yourself,
+you are already the sandbox, and this adds little. Once you stop doing that,
+the question becomes what a single bad step could reach. That is what you set
+here, once, and then stop thinking about.
+
 ## What the agent gets
 
 - **Filesystem**: the system directories read-only; a fresh `/tmp`; an empty,
@@ -40,8 +70,9 @@ claude --allow pypi.org      # + one more host through the egress proxy, this se
 What it does **not** do is spelled out in [docs/design.md](docs/design.md):
 in the default `proxy` mode the sandbox shares the host network namespace, so a
 tool that ignores `HTTPS_PROXY` is unfiltered (`AGENT_SANDBOX_NET=strict` closes
-that — its own namespace, only the proxy reachable); the agent's own credentials
-in `~/.claude` are readable; there is no seccomp filter.
+that: its own namespace, only the proxy reachable); the agent's own credentials
+in `~/.claude` are readable; syscall filtering is opt-in, not on by default
+(`AGENT_SANDBOX_SECCOMP=default`).
 
 ## Install
 
