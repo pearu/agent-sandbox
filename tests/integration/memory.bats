@@ -79,17 +79,30 @@ trust_here() {
   [ "${M[shared_readable]}" = no ] # not shared, so hidden too
 }
 
-@test "shared (the default): every project's memory stays visible" {
+@test "scoped is the default: with no dot-file and no config, other projects are invisible" {
+  run_claude
+  [ "$status" -eq 0 ]
+  [ "${M[current_writable]}" = yes ] # its own project's memory still works
+  [ "${M[other_visible]}" = no ]     # and nothing else is reachable
+  [ "${M[shared_readable]}" = no ]
+}
+
+@test "memory_default = shared opts out: every project's memory stays visible" {
+  mkdir -p "$IHOME/.config/agent-sandbox"
+  printf 'memory_default = shared\n' >"$IHOME/.config/agent-sandbox/config"
   run_claude
   [ "$status" -eq 0 ]
   [ "${M[other_visible]}" = yes ]
   [ "${M[shared_readable]}" = yes ]
 }
 
-@test "an unapproved dot-file does not scope: it is ignored and the default (shared) applies" {
+@test "an unapproved dot-file grants nothing: its share is ignored and the isolated default applies" {
   printf '[share-memory]\n%s\n' "$SHARED" >"$IWORK/.agent-sandbox"
   run_claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
-  [ "${M[other_visible]}" = yes ]
+  # the file would have shared $SHARED; unapproved, it grants nothing, and the
+  # default is isolation rather than the old wide-open view
+  [ "${M[shared_readable]}" = no ]
+  [ "${M[other_visible]}" = no ]
 }

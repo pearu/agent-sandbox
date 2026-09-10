@@ -27,6 +27,17 @@ break compatibility.
 
 ### Changed
 
+- **Breaking:** memory scoping is now the default. Without any configuration,
+  a session sees only the current project's directory under
+  `~/.claude/projects/`; other projects' transcripts, todos and shell
+  snapshots are hidden behind a tmpfs. Previously the default was `shared`
+  (every project visible) and scoping had to be asked for with a
+  `[share-memory]` section in an approved `.agent-sandbox`. The README claimed
+  sessions are isolated from each other, which was true only once configured;
+  it now holds out of the box. To go back to the old behaviour, set
+  `memory_default = shared` in `~/.config/agent-sandbox/config` (global, so an
+  agent inside the sandbox cannot set it), or list `all` under
+  `[share-memory]` in the project's dot-file.
 - **Breaking:** `AGENT_SANDBOX_PASSENV` is now `AGENT_SANDBOX_FORWARD`, with no
   alias. Every other setting's variable is its `.agent-sandbox` section (plus
   key) uppercased -- `[ro]`/`AGENT_SANDBOX_RO`, `[net] mode`/`AGENT_SANDBOX_NET`,

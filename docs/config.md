@@ -112,16 +112,18 @@ writing or deleting the file; it can only stop the next launch until you look.
 ## Memory scoping
 
 Claude Code keeps per-project memory and session transcripts under
-`~/.claude/projects/<project>`. By default the sandbox binds all of `~/.claude`
-read-write, so every session can read every project's memory and transcripts.
-That is convenient (one project can learn from another) but it also means
-sessions are not independent and one project's notes can shape another's output.
+`~/.claude/projects/<project>`. The sandbox binds `~/.claude` read-write, so
+without scoping every session could read every project's memory and
+transcripts. That is convenient (one project can learn from another) but it
+also means sessions are not independent and one project's notes can shape
+another's output. Scoping is therefore the default, and sharing is something
+you ask for.
 
 Two modes:
 
-- **`shared`** (the default) — every project's memory stays visible, the
-  historical behavior. Upgrading changes nothing.
-- **`scoped`** — `~/.claude/projects` is hidden and only the current project is
+- **`shared`** — every project's memory stays visible, how agent-sandbox
+  behaved before 0.2. An explicit opt-out now.
+- **`scoped`** (the default) — `~/.claude/projects` is hidden and only the current project is
   rebound read-write (it keeps writing its own memory and transcripts), plus the
   `memory/` directory of each project you name in `share-memory`, read-only.
   Other projects are invisible.
@@ -132,16 +134,18 @@ memory and transcripts, not a full identity reset.
 
 Selecting the mode, from lowest to highest precedence:
 
-1. **Built-in default:** `shared`.
+1. **Built-in default:** `scoped` — a session sees its own project's memory and
+   transcripts and no other's.
 2. **Global default:** `~/.config/agent-sandbox/config`, key `memory_default`:
 
    ```ini
-   memory_default = scoped
+   memory_default = shared
    ```
 
-   Set this to `scoped` to make new projects independent by default while your
-   existing projects, which have no `.agent-sandbox`, keep whatever you set
-   here. Set it to `shared` (or leave it unset) to keep today's behavior.
+   Set this to `shared` to let every project see every other project's memory,
+   which is how agent-sandbox behaved before 0.2. Leaving it unset keeps the
+   isolated default. It lives outside the sandbox, so an agent cannot widen
+   its own view by writing it.
 3. **Per-project:** a trusted `.agent-sandbox` with a `[share-memory]` section.
    Present but empty means this project only; the paths or `~/dir/*` wildcards
    listed add those projects' memory read-only; a single `all` keeps everything
