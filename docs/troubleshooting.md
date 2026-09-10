@@ -39,7 +39,7 @@ bundle when `~/.mitmproxy/mitmproxy-ca-cert.pem` exists (or the file named by
 to (re)generate the CA. Tools with a private CA store (conda/mamba, pip, a
 conda-provided git, node, npm, cargo) are covered by the CA variables the
 engine sets (see [network.md](network.md)); a tool with yet another knob needs
-it forwarded via `AGENT_SANDBOX_PASSENV`. If you changed the host's CA state
+it forwarded via `AGENT_SANDBOX_FORWARD`. If you changed the host's CA state
 while a session was running, relaunch.
 
 **`no way to run mitmproxy: need mamba/conda on PATH (preferred), or a python3 >= 3.12 ...` (install.sh)**
@@ -108,7 +108,7 @@ from the new location.
 
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:
-`AGENT_SANDBOX_PASSENV="GH_TOKEN" claude`.
+`AGENT_SANDBOX_FORWARD="GH_TOKEN" claude`.
 
 **A tool inside cannot reach a file outside the project**
 Expose it: `AGENT_SANDBOX_RO=/some/dir claude` (or `AGENT_SANDBOX_RW`).

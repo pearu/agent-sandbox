@@ -66,7 +66,7 @@ setup() {
   ! setenv_value SSL_CERT_FILE
 }
 
-@test "environment allowlist: locale, profile, proxy/CA and CUDA names are forwarded only when set; PASSENV adds names; caller-set CA variables win" {
+@test "environment allowlist: locale, profile, proxy/CA and CUDA names are forwarded only when set; FORWARD adds names; caller-set CA variables win" {
   run_engine LANG=C.UTF-8 TZ=UTC ANTHROPIC_API_KEY=k CUDA_HOME=/usr/local/cuda AWS_SECRET_ACCESS_KEY=x GH_TOKEN=y -- claude --version
   [ "$(setenv_value LANG)" = "C.UTF-8" ]
   [ "$(setenv_value TZ)" = "UTC" ]
@@ -75,7 +75,7 @@ setup() {
   ! setenv_value AWS_SECRET_ACCESS_KEY
   ! setenv_value GH_TOKEN
   ! setenv_value TERM_PROGRAM
-  run_engine AGENT_SANDBOX_PASSENV="GH_TOKEN FOO:BAR" GH_TOKEN=y FOO="two words" -- claude --version
+  run_engine AGENT_SANDBOX_FORWARD="GH_TOKEN FOO:BAR" GH_TOKEN=y FOO="two words" -- claude --version
   [ "$(setenv_value GH_TOKEN)" = "y" ]
   [ "$(setenv_value FOO)" = "two words" ]
   ! setenv_value BAR

@@ -30,6 +30,12 @@ break compatibility.
 
 ### Changed
 
+- **Breaking:** `AGENT_SANDBOX_PASSENV` is now `AGENT_SANDBOX_FORWARD`, with no
+  alias. Every other setting's variable is its `.agent-sandbox` section (plus
+  key) uppercased -- `[ro]`/`AGENT_SANDBOX_RO`, `[net] mode`/`AGENT_SANDBOX_NET`,
+  `[conda] write`/`AGENT_SANDBOX_CONDA_WRITE` -- and this was the one exception,
+  made obvious by the new knobs table putting both names side by side. Renamed
+  rather than aliased because pre-1.0 is when it is free.
 - README's "Knobs and flags" is now one table with a column per way to set a
   setting (command line, environment variable, `.agent-sandbox` entry) plus the
   default, instead of an environment-only table with the flags and the dot-file

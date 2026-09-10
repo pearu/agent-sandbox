@@ -105,10 +105,10 @@
 #
 #   AGENT_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
 #   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
-#   (RO/RW, PASSENV, the conda knobs, the network mode and the strict-mode
+#   (RO/RW, FORWARD, the conda knobs, the network mode and the strict-mode
 #    ports can also be set per-project in a trusted .agent-sandbox file; an
 #    explicit knob in your shell wins over the file -- see docs/config.md.)
-#   AGENT_SANDBOX_PASSENV="A B C"      extra env vars to forward (space-
+#   AGENT_SANDBOX_FORWARD="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
 #   AGENT_SANDBOX_SECCOMP=default      load a default-deny seccomp syscall filter
 #                                       (Docker's default profile, as for a container
@@ -301,7 +301,7 @@ Engine flags (must precede the agent's own arguments):
 Environment knobs:
   AGENT_SANDBOX_RO=/a:/b        extra read-only paths
   AGENT_SANDBOX_RW=/c           extra read-write paths
-  AGENT_SANDBOX_PASSENV="A B"   extra environment variables to forward
+  AGENT_SANDBOX_FORWARD="A B"   extra environment variables to forward
   AGENT_SANDBOX_SECCOMP=default default-deny seccomp syscall filter (compiled by install.sh)
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
@@ -1409,7 +1409,7 @@ agent_sandbox() (
   fi
 
   # ---- knobs (AGENT_SANDBOX_*) ----
-  local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_passenv="${AGENT_SANDBOX_PASSENV:-}"
+  local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
@@ -1454,7 +1454,7 @@ agent_sandbox() (
         )"
         _knob_rw="${_knob_rw:+$_knob_rw:}$_dj"
       fi
-      ((${#_df_forward[@]})) && _knob_passenv="${_knob_passenv:+$_knob_passenv }${_df_forward[*]}"
+      ((${#_df_forward[@]})) && _knob_forward="${_knob_forward:+$_knob_forward }${_df_forward[*]}"
       # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
       # file. Note a trusted `mode = open` switches the allowlist off for this
       # project; the --trust review is where that is decided.
@@ -1709,10 +1709,10 @@ agent_sandbox() (
     CONDA_SSL_VERIFY PIP_CERT GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE CARGO_HTTP_CAINFO
     CUDA_HOME CUDAToolkit_ROOT LD_LIBRARY_PATH
   )
-  # Extra names the user explicitly opts in via AGENT_SANDBOX_PASSENV
+  # Extra names the user explicitly opts in via AGENT_SANDBOX_FORWARD
   # (space- or colon-separated).
   local -a _extra_passenv=()
-  [[ -n "$_knob_passenv" ]] && _as_split _extra_passenv $': \t\n' "$_knob_passenv"
+  [[ -n "$_knob_forward" ]] && _as_split _extra_passenv $': \t\n' "$_knob_forward"
   local _var
   for _var in "${_locale_passenv[@]}" "${profile_env_pass[@]}" "${_network_passenv[@]}" "${_extra_passenv[@]}"; do
     [[ -z "$_var" ]] && continue

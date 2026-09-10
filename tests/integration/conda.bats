@@ -23,7 +23,7 @@ PROBE
   ENV="$BASE/envs/myenv"
   mkdir -p "$ENV" "$BASE/envs/other" "$BASE/pkgs" "$BASE/condabin" "$I/pkgs"
   printf 'channels:\n  - conda-forge\n' >"$IHOME/.condarc"
-  CENV=(CONDA_PREFIX="$ENV" CONDA_DEFAULT_ENV=myenv CONDA_SHLVL=1 AGENT_SANDBOX_PASSENV=CONDA_BASE_FOR_TEST CONDA_BASE_FOR_TEST="$BASE" AGENT_SANDBOX_NET=none)
+  CENV=(CONDA_PREFIX="$ENV" CONDA_DEFAULT_ENV=myenv CONDA_SHLVL=1 AGENT_SANDBOX_FORWARD=CONDA_BASE_FOR_TEST CONDA_BASE_FOR_TEST="$BASE" AGENT_SANDBOX_NET=none)
 }
 
 @test "default: env, base, other envs and host cache all read-only; ~/.conda writable; .condarc visible" {
