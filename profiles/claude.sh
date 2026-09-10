@@ -303,6 +303,11 @@ try:
         # list() of a dict would silently replace their data with its keys.
         if not isinstance(mine, list):
             raise TypeError(f"hooks.{event} is not an array")
+        # Order is cosmetic here, not precedence: matching hooks run in
+        # parallel, and these two events are context-only with no decision
+        # control, so their additionalContext and ours are both added and
+        # neither suppresses the other. Theirs reads first because it is
+        # theirs, not because position confers anything.
         hooks[event] = mine + entries
     merged = dict(user)
     merged["hooks"] = hooks
