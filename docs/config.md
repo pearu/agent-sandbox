@@ -89,7 +89,11 @@ Sections:
   If you pass your own `--settings`, the two are merged (Claude Code honours
   only the last one, so adding a second would drop yours) — specifically the
   *last* `--settings` on your command line, the one that would have won anyway,
-  so a wrapper that overrides an earlier one keeps working. `disableAllHooks`
+  so a wrapper that overrides an earlier one keeps working. Your settings win on
+  every shared key: the merge writes only `hooks`, and only by appending the
+  briefing's two entries after yours, so nothing else you set can be changed by
+  it — and a `hooks` shape it does not recognise is refused rather than coerced.
+  `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
   be injected; `briefing.md` stays bound and readable either way.
 

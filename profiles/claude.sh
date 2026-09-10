@@ -285,13 +285,29 @@ try:
     ours = json.loads(os.environ["AS_OURS"])
 except Exception as exc:
     sys.exit(f"cannot read --settings: {exc}")
-# Hook entries merge across settings levels, so a per-event union is what Claude
-# Code itself would do with two sources. The user\x27s entries stay first.
-merged = dict(user)
-hooks = dict(user.get("hooks") or {})
-for event, entries in ours["hooks"].items():
-    hooks[event] = list(hooks.get(event) or []) + list(entries)
-merged["hooks"] = hooks
+# The user wins on every shared key. Only "hooks" is touched, and only by
+# APPENDING to the two events the briefing uses -- hook entries merge across
+# settings levels, so a per-event union is what Claude Code itself would do with
+# two sources. Their entries stay first. Nothing else is read, rewritten or
+# merged, so no other setting of theirs can be changed by this.
+try:
+    if not isinstance(user, dict):
+        raise TypeError("top level is not an object")
+    hooks = user.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise TypeError("hooks is not an object")
+    hooks = dict(hooks)
+    for event, entries in ours["hooks"].items():
+        mine = hooks.get(event, [])
+        # A shape we do not recognise is left alone rather than coerced:
+        # list() of a dict would silently replace their data with its keys.
+        if not isinstance(mine, list):
+            raise TypeError(f"hooks.{event} is not an array")
+        hooks[event] = mine + entries
+    merged = dict(user)
+    merged["hooks"] = hooks
+except Exception as exc:
+    sys.exit(f"refusing to merge --settings, leaving yours untouched: {exc}")
 with open(os.environ["AS_OUT"], "w") as fh:
     json.dump(merged, fh, indent=2)
 # Their setting stands, but say so: with hooks off the briefing never arrives.

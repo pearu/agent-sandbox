@@ -27,8 +27,10 @@ break compatibility.
   sandbox describing itself. A user-supplied `--settings` is merged rather than
   clobbered -- specifically the last one, which is the value Claude Code would
   have honoured, so a wrapper that overrides an earlier `--settings` behaves as
-  before; `disableAllHooks` is respected, with a note that the briefing will
-  then not be injected.
+  before. The user wins on every shared key: only `hooks` is written, and only
+  by appending the briefing's two entries after theirs, and an unrecognised
+  `hooks` shape is refused rather than coerced. `disableAllHooks` is respected,
+  with a note that the briefing will then not be injected.
 - `.agent-sandbox` accepts a `[seccomp]` section with `mode = on|off`, so a
   project can ask for the syscall filter the way it already pins a network
   mode. An `AGENT_SANDBOX_SECCOMP` in your shell wins, as with `[net] mode`.

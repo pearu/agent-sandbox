@@ -172,6 +172,36 @@ trust() {
   [ "$(grep -c "^$IN/briefing.md$" "$H/argv")" -eq 1 ]
 }
 
+@test "the user wins on every shared key: the merge only appends to two hook events" {
+  # Keys the briefing never writes must come through byte-identical, and a hook
+  # event of a name we do use keeps the user's entry FIRST.
+  local mine
+  mine='{"permissions":{"defaultMode":"plan","allow":["Bash(git *)"]},"env":{"FOO":"bar"},"model":"opus","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo theirs"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo stop"}]}]}}'
+  run_engine BWRAP_COPY="$OUT" -- claude --settings "$mine" --version
+  [ "$status" -eq 0 ]
+  python3 - "$OUT/settings.json" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["permissions"] == {"defaultMode": "plan", "allow": ["Bash(git *)"]}, m
+assert m["env"] == {"FOO": "bar"}, m
+assert m["model"] == "opus", m
+assert len(m["hooks"]["Stop"]) == 1, m          # an event we do not use: untouched
+ss = m["hooks"]["SessionStart"]                 # one we do: theirs first, ours appended
+assert len(ss) == 2, ss
+assert ss[0]["hooks"][0]["command"] == "echo theirs", ss
+assert "hook-SessionStart.json" in ss[1]["hooks"][0]["command"], ss
+CHECK
+}
+
+@test "a hooks shape we do not recognise is refused, never coerced" {
+  # list() of a dict yields its keys, which would silently replace their data.
+  run_engine BWRAP_COPY="$OUT" -- claude --settings '{"hooks":{"SessionStart":{"oops":1}}}' --version
+  [ "$status" -eq 0 ] # the launch goes on
+  [[ "$output" == *"not installed"* ]]
+  ! argv_has --settings "$IN/settings.json"
+  argv_has --settings '{"hooks":{"SessionStart":{"oops":1}}}'
+}
+
 @test "when the merge cannot be done the USER's settings are kept and the loss is said out loud" {
   # A python3 that fails stands in for the interpreter being absent: both take
   # the same branch, and losing a hint must never cost someone their settings.
