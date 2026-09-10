@@ -21,6 +21,17 @@ break compatibility.
 
 ### Changed
 
+- `code.claude.com` (Claude Code's documentation) is in the starter allowlist:
+  agents working on Claude Code configuration reach for it, and it was the most
+  refused host in the author's `blocked.log`. It is a convenience host like
+  `github.com`, not something an agent needs to run, so it is in the global
+  starter list rather than the `claude` profile's required seeds.
+- `docs/design.md` brought back in line with the code: guarantee rows for
+  capability dropping and opt-in seccomp; residual risks split (capabilities,
+  uid 0 in strict, seccomp/limits) and the uid-0 consequences documented;
+  resolved items removed from "Open design questions" (syscall filtering, and
+  per-session proxy identity, which shipped as issue #5).
+
 - `install.sh` chooses the proxy runtime so it works from any shell state: an
   existing environment is reused only if `mitmdump --version` still succeeds
   and is otherwise recreated (it is installer-owned); a dedicated conda env is

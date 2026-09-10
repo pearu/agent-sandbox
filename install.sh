@@ -1722,6 +1722,9 @@ repo.anaconda.com
 crates.io
 static.crates.io
 
+# ---- Documentation an agent may need to consult ----
+code.claude.com
+
 # ---- Add more below as you hit 403s ----
 ALLOW_EOF
   ok "wrote starter $CONFIG_DIR/allowlist.txt"

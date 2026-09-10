@@ -81,12 +81,14 @@ that records the argv it receives; the argv is the contract.
 | Strict network mode (opt-in, `AGENT_SANDBOX_NET=strict`). The sandbox gets its own network namespace, owned by `pasta` and forwarded in userspace; an nftables rule inside allows only the proxy on the gateway, and pasta's port forwarding is off both ways, so a tool ignoring `HTTPS_PROXY`, host loopback services and the LAN are all unreachable — only the proxy is. The agent is root only in bwrap's child user namespace, which has no authority over the netns pasta's parent namespace owns, so it cannot alter the firewall. `--host-port`/`--agent-port` open named TCP ports, and `--ssh HOST` opens a firewall pinhole to that host's resolved IPv4 (with an `/etc/hosts` entry so its name resolves without DNS; `--ssh-unrestricted` is refused, as the firewall must pin a named host). | `_as_launch_pasta` (pasta + the nft ruleset), `_as_strict_ssh_rules`, the `strict` arm of the engine, the userns nesting. | `tests/unit/strict.bats` (the pasta/nft argv: netns, `policy drop`, only the gateway proxy, port forwarding off, ports opened on request), `tests/integration/strict.bats` (real pasta+bwrap+nft: proxy reachable at the gateway only, raw egress, host loopback and publishing a sandbox listener all blocked, ports opened on request). `install.sh` re-checks the contract on the host. |
 | Per-session `--allow` hosts are scoped to their session and lapse with it. The engine writes them to the session dir with a per-session token, carried in the sandbox's proxy URL; the addon applies them only for a request bearing that token, and only while the process stamped in `owner.id` is alive (PID and start time, so a recycled PID never counts). Another session's `--allow` is not reachable. | `_as_allow_setup` (token + hosts), `_session_allow`/`_token_from`/`_owner_alive` in the addon. | `tests/unit/addon.bats` (a host is reachable only with its session's token and while the owner is alive; dead, recycled-PID, unstamped and cross-session all denied; the CONNECT token carries into the tunnel's inner requests), `tests/unit/argv.bats` (the token is minted, stored 0600, and set as the proxy URL's userinfo). Verified live once: alive 200, owner killed 403. |
 | The proxy CA is trusted inside the sandbox only. The engine binds (system bundle + CA) over `/etc/ssl/certs/ca-certificates.crt` and points the CA variables of tools with private stores at it. The host trust store is never touched. | `_as_ca_bind`, `_as_ca_env`. | `tests/unit/helpers.bats` (`_as_ca_bind`, `_as_ca_env`), `tests/integration/sandbox.bats` (bundle inside is the system bundle plus the given CA; plain system bundle with a warning when the CA is missing). Python 3.14 strict verification through the live proxy was checked once by hand. |
-| SSH keys never enter. `--ssh HOST` starts a per-session ssh-agent on the host, loads the key with an OpenSSH destination constraint, binds only the socket (plus read-only `known_hosts` and `config`). The agent refuses to sign for any other host. Teardown kills the agent and removes the socket. | `_as_ssh_setup`, `_as_session_cleanup`. | `tests/integration/ssh.bats` (generated host key: constrained key listed inside, `~/.ssh` and the private key invisible, known_hosts read-only, agent dead and dir gone after exit; unknown host refused before any session exists). |
+| SSH keys never enter. `--ssh HOST` starts a per-session ssh-agent on the host, loads the key with an OpenSSH destination constraint, binds only the socket (and the public `known_hosts`/`config`, also at uid 0's home, since in `strict` ssh resolves `~` to root's) (plus read-only `known_hosts` and `config`). The agent refuses to sign for any other host. Teardown kills the agent and removes the socket. | `_as_ssh_setup`, `_as_session_cleanup`. | `tests/integration/ssh.bats` (generated host key: constrained key listed inside, `~/.ssh` and the private key invisible, known_hosts read-only, agent dead and dir gone after exit; unknown host refused before any session exists). |
 | Concurrency-safe sessions. Each launch gets its own directory; the janitor reaps only directories whose owner (PID and start time) is gone and never touches unstamped or live ones. | `_as_session_begin`, `_as_session_sweep`. | `tests/unit/helpers.bats` (`_as_session_sweep`), `tests/integration/ssh.bats` (janitor at launch; `--ssh` and `--allow` share one dir). |
 | Self-update runs on the host, never inside. The profile lists the subcommands; the engine runs them unsandboxed and restores the launcher symlink if an installer moves it. `DISABLE_AUTOUPDATER=1` inside. | `profile_host_subcommands`, `profile_handle_subcommand`. | `tests/unit/profile-claude.bats` (no bwrap call, exit code propagated, flags ignored with a note, launcher restored). |
 | Per-project policy is trust-gated. A project's `.agent-sandbox` (allow hosts, memory scoping, paths, environment, conda, network) is honored only after `--trust` records its SHA-256. A file with no approval on record is ignored with a note. Once approved, an edit by anyone, the agent included, or the file's removal refuses launches from that directory until `--trust` re-reviews it (or forgets the approval), because ignoring would fall back to the defaults, and for memory scoping the default is wider than a scoped policy. So the agent can neither grant itself anything nor quietly regain the defaults. The review shows the file escaped (`cat -v`) and a file containing control characters is refused at review and at launch, so no line can be hidden from the reviewer. The trust store and global config live under `~/.config/agent-sandbox`, which is never bound into the sandbox. | `_as_dotfile_trusted`, `_as_trust_record`, `_as_dotfile_parse`, `_as_dotfile_clean`, `_as_trust_review`, the trust-record check at launch. | `tests/unit/dotfile.bats` (unapproved ignored with a pointer to `--trust`; an edit and a deletion refuse to launch, bwrap never invoked, until `--trust` re-approves or forgets; an approved file adds allow hosts; `--trust` records the hash and offers to git-ignore; a file with an ESC sequence or a carriage return is refused at review and at launch, UTF-8 is shown escaped and accepted). |
 | Memory is scoped per project on request. In `scoped` mode `~/.claude/projects` is hidden and only the current project (read-write) and each approved project's `memory/` (read-only) are rebound, so a session cannot read other projects' notes or transcripts. The default is `shared` (unchanged on upgrade); a global setting or a trusted dot-file selects `scoped`. | `profile_memory_scope` in the claude profile; `profile_tmpfs`/`_rw_binds`/`_ro_binds` applied by the engine after the state binds. | `tests/unit/dotfile.bats` (argv: tmpfs hide then current read-write then shared read-only, in that order), `tests/integration/memory.bats` (real bwrap: other project invisible, shared `memory/` read-only, current writable). |
 | Conda write mode is bounded. Only the active env becomes writable; the base install, other envs, conda itself, its shell hook and the host package cache stay read-only. Downloads go to a sandbox-owned cache. | conda block in the engine; `CONDA_PKGS_DIRS`. | `tests/unit/argv.bats` (bind order and modes), `tests/integration/conda.bats` (fake layout: env writable only in write mode; base, other env and host cache never; sandbox cache first). A real nested `mamba install` was checked once at extraction. |
+| All capabilities are dropped. The agent's effective and bounding capability sets are empty in every network mode, so a setuid binary or a capability-checking syscall gains it nothing. Needed most in `strict`, where bwrap runs inside pasta's root-owned user namespace and would otherwise start the agent as uid 0 with the full set. | `--cap-drop ALL` in the base bwrap arguments. | `tests/unit/argv.bats` (the flag is in the argv for every mode). Confirmed on a host that a root-in-userns bwrap goes from `CapEff: 000001ffffffffff` to `0000000000000000` with it. |
+| Opt-in syscall filtering. With `AGENT_SANDBOX_SECCOMP=default` every syscall not on an allowlist fails with `EPERM`: `unshare`, `setns`, `mount`, `pivot_root`, `chroot`, `bpf` and the capability-gated `ptrace` family stay denied, `clone` is allowed only without namespace flags and `clone3` returns `ENOSYS`, so the agent cannot create a user namespace to regain capabilities. Off by default (issue #4). | Docker's default seccomp profile (vendored, Apache-2.0) compiled *as for a container with no capabilities* by `components/seccomp/gen-seccomp.py`; `install.sh` builds it per machine against that host's libseccomp; the engine passes `--seccomp` with the blob on fd 10 (opened by `_as_launch`, or by the strict wrapper inside pasta). | `tests/unit/seccomp.bats` (flag and fd only when enabled, per-arch, refusals), `tests/unit/strict.bats` (the wrapper opens the fd), `tests/live/seccomp.bats` (filter active inside; creating a user namespace refused, versus a control launch), `tests/live/agent.bats` (the real agent completes a turn under it, in proxy and strict). |
 
 ## Residual risks
 
@@ -137,19 +139,25 @@ Stated plainly. These are what the adversary above can still do.
   visible; scoping isolates per-project memory and transcripts, not the whole
   identity. And a `.agent-sandbox` grants exactly what you approved: `--trust`
   shows the file before recording it, so review is where the security sits.
-- **Seccomp is opt-in; there are no resource limits.** The isolation is
-  bubblewrap's namespaces plus capability dropping (`--cap-drop ALL`).
-  `AGENT_SANDBOX_SECCOMP=default` adds a default-deny syscall filter: Docker's
-  default profile as for a container with no capabilities, compiled by
-  `install.sh` on this machine (`components/seccomp/README.md`, issue #4). It
-  also refuses creating a user namespace, closing the capability-regain path
-  noted below. Off by default until it has seen wide use. Capabilities are dropped in every mode: in
-  `proxy`/`open`/`none` bwrap is unprivileged and the agent has none anyway; in
-  `strict`, where bwrap runs inside pasta's root-owned user namespace, the drop
-  is what keeps the agent from starting as uid 0 with the full capability set.
-  A determined agent can still create its own user namespace and gain namespaced
-  capabilities there (as it could in any mode via `unshare -U -r`), but those are
-  confined to that namespace and grant nothing over the host.
+- **All capabilities are dropped** (`--cap-drop ALL`), in every network mode.
+  In `proxy`/`open`/`none` bwrap is unprivileged and the agent has none anyway;
+  in `strict`, where bwrap runs inside pasta's root-owned user namespace, the
+  drop is what keeps the agent from starting with the full capability set. A
+  determined agent can still make its own user namespace and hold namespaced
+  capabilities inside it (in any mode, via `unshare -U -r`), but they are
+  confined there and grant nothing over the host; the opt-in seccomp filter
+  refuses that too.
+- **In `strict` the agent runs as uid 0.** pasta maps your single uid to root in
+  its user namespace, and bwrap's child namespace inherits that, so `id -u` is 0
+  inside. It is root only there, with no capabilities, and files it writes land
+  as you on the host, so it grants nothing extra. It does change behaviour:
+  tools that refuse to run as root behave differently, and anything resolving
+  `~` through the passwd database sees root's home instead of `$HOME` (which is
+  why `--ssh` binds `known_hosts` and `config` at both).
+- **Seccomp is opt-in, and there are no resource limits.** Without
+  `AGENT_SANDBOX_SECCOMP=default` nothing narrows the syscall surface, so a
+  kernel bug reachable from an unprivileged process is reachable from the
+  sandbox. There are no CPU, memory or disk limits in any configuration.
 - **SSH constraints are host-level, not operation-level.** Within a permitted
   host the tunnel is opaque: a force-push cannot be blocked. `--ssh-unrestricted`
   lets the session authenticate as you to any host that trusts the key, for as
@@ -166,14 +174,15 @@ Stated plainly. These are what the adversary above can still do.
 
 ## Open design questions
 
+Recorded so they are not re-derived from scratch; each has measurements or
+reasons attached in the repository history.
+
 - **Running without a user systemd** (WSL with systemd disabled, containers).
   The installer and the unit assume `systemctl --user`. A no-systemd mode needs
   a story for starting the proxy at login, restarting it on failure and
   logging, not only a flag; and under Docker's default seccomp profile bwrap's
   user namespaces are blocked anyway. Deferred.
 
-Recorded so they are not re-derived from scratch; each has measurements or
-reasons attached in the repository history.
 
 - **SNI/TLS-passthrough allowlisting.** Enforce the allowlist on the CONNECT
   host and relay TLS untouched (as
@@ -183,13 +192,9 @@ reasons attached in the repository history.
   interception keeps per-path logging and 403 bodies, and because a non-HTTP
   protocol could then be tunnelled to an allowed host's port 443. Revisit if
   the CA proves a burden.
-- **A seccomp or firejail backend** for syscall filtering. Nothing here filters
-  syscalls today.
-- **Strict network mode** is implemented with pasta (it owns the netns; bwrap
+- **Strict network mode** (decided, shipped) is implemented with pasta (it owns the netns; bwrap
   runs inside sharing it; an nftables rule allows only the proxy). slirp4netns
   could not, because it cannot enter bwrap's unprivileged netns from outside.
-- **Per-session proxy identity**, such as a per-session proxy-auth token the
-  addon maps to a session, so `--allow` stops being a union.
 - **A standalone mitmproxy binary route** for hosts with neither
   `python3-venv` nor conda: `downloads.mitmproxy.org` serves a 119 MB tarball
   but publishes no checksums or signatures, so it needs a SHA256 pinned per
