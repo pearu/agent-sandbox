@@ -281,52 +281,125 @@ fi
 
 # ----- 5. the egress proxy: mitmproxy >= 12 in its own environment -----
 # Distro packages are too old (Ubuntu 24.04 ships 8.1.1, whose certificates
-# Python >= 3.13 rejects), so mitmproxy goes into a private environment under
-# $STATE_DIR: a Python venv when python3 >= 3.12 with venv is available, else
-# a conda/mamba env. An existing environment of either kind is reused.
+# Python >= 3.13 rejects), so mitmproxy runs from a private environment under
+# $STATE_DIR, chosen so this works from ANY shell state (a conda env active or
+# not, whatever python3 is on PATH):
+#   1. an existing environment (venv or conda) is reused only if it still runs
+#      (`mitmdump --version`); a broken one is installer-owned and is recreated;
+#   2. otherwise a dedicated conda env when mamba/conda is available: its own
+#      regular-build interpreter and binary packages, untouched by dev-env updates;
+#   3. else a venv from a suitable interpreter: python3 >= 3.12 with venv and
+#      ensurepip and NOT a free-threaded build (mitmproxy's aioquic ships only an
+#      abi3 wheel, which free-threaded builds cannot load or build). /usr/bin's
+#      python3 is tried before PATH's; a conda env's interpreter is accepted last,
+#      with a warning, since it can change underneath the venv (then see 1).
 section "Egress proxy (mitmproxy)"
 MITMPROXY_SPEC='mitmproxy>=12,<13'
 PROXY_VENV="$STATE_DIR/proxy-venv"
 PROXY_CONDA="$STATE_DIR/proxy-env"
-python_has_venv() {
-  command -v python3 >/dev/null \
-    && python3 -c 'import sys, venv, ensurepip; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null
+VENV_PY="" VENV_PY_KIND="" PROXY_PROBE="" PROXY_VERSION="" MITMDUMP=""
+# conda_cmd: mamba or conda from PATH, else the exe conda init recorded even when
+# no env is active. Prints the command; nothing if none.
+conda_cmd() {
+  local c
+  for c in mamba conda; do
+    command -v "$c" && return 0
+  done
+  for c in "${MAMBA_EXE:-}" "${CONDA_EXE:-}"; do
+    [[ -n "$c" && -x "$c" ]] && {
+      printf '%s\n' "$c"
+      return 0
+    }
+  done
+  return 1
 }
-conda_cmd() { command -v mamba || command -v conda || true; }
+# python_suitable PY: >= 3.12, venv + ensurepip present, not free-threaded.
+# Prints "conda" if PY belongs to a conda env, else "ok".
+python_suitable() {
+  [[ -n "$1" && -x "$1" ]] || return 1
+  "$1" - <<'PYCHK' 2>/dev/null
+import os, sys, sysconfig
+if sys.version_info < (3, 12): sys.exit(1)
+import venv, ensurepip  # noqa: F401
+if sysconfig.get_config_var("Py_GIL_DISABLED"): sys.exit(1)
+print("conda" if os.path.isdir(os.path.join(sys.prefix, "conda-meta")) else "ok")
+PYCHK
+}
+# find_venv_python: first suitable interpreter into VENV_PY / VENV_PY_KIND.
+find_venv_python() {
+  local py kind
+  for py in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)"; do
+    [[ -n "$py" ]] || continue
+    kind="$(python_suitable "$py")" || continue
+    VENV_PY="$py" VENV_PY_KIND="$kind"
+    return 0
+  done
+  return 1
+}
+# proxy_env_ok DIR: DIR/bin/mitmdump runs and reports >= 12. Sets PROXY_PROBE
+# (the probe's output, for messages) and PROXY_VERSION.
+proxy_env_ok() {
+  local v
+  [[ -x "$1/bin/mitmdump" ]] || {
+    PROXY_PROBE="no executable bin/mitmdump"
+    return 1
+  }
+  if ! PROXY_PROBE=$("$1/bin/mitmdump" --version 2>&1); then return 1; fi
+  v=$(awk '/^Mitmproxy:/ {print $2}' <<<"$PROXY_PROBE")
+  [[ "${v%%.*}" -ge 12 ]] 2>/dev/null || {
+    PROXY_PROBE="reports version '${v:-?}'; need mitmproxy >= 12"
+    return 1
+  }
+  PROXY_VERSION="$v"
+  return 0
+}
 mkdir -p "$STATE_DIR"
-if [[ -x "$PROXY_VENV/bin/mitmdump" ]]; then
-  MITMDUMP="$PROXY_VENV/bin/mitmdump"
-  ok "reusing $PROXY_VENV"
-elif [[ -x "$PROXY_CONDA/bin/mitmdump" ]]; then
-  MITMDUMP="$PROXY_CONDA/bin/mitmdump"
-  ok "reusing $PROXY_CONDA"
-elif ((DRY_RUN)); then
-  MITMDUMP="$PROXY_VENV/bin/mitmdump"
-  info "(dry-run) would create $PROXY_VENV (or a conda env) and install '$MITMPROXY_SPEC'"
-elif python_has_venv; then
-  info "Creating $PROXY_VENV and installing '$MITMPROXY_SPEC' with pip (about a minute)"
-  python3 -m venv "$PROXY_VENV"
-  "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check "$MITMPROXY_SPEC"
-  MITMDUMP="$PROXY_VENV/bin/mitmdump"
-  ok "installed into $PROXY_VENV"
-elif [[ -n "$(conda_cmd)" ]]; then
-  info "No python3 >= 3.12 with venv; creating $PROXY_CONDA with $(basename -- "$(conda_cmd)") (about a minute)"
-  "$(conda_cmd)" create -y -q -p "$PROXY_CONDA" -c conda-forge "$MITMPROXY_SPEC" >/dev/null
-  MITMDUMP="$PROXY_CONDA/bin/mitmdump"
-  ok "installed into $PROXY_CONDA"
-else
-  err "mitmproxy needs python3 >= 3.12 with venv (Debian/Ubuntu: sudo apt install python3-venv) or conda/mamba on PATH"
-fi
-if [[ -x "$MITMDUMP" ]]; then
-  # Probe explicitly: a failing `mitmdump --version` inside a plain assignment would
-  # let `set -e` kill the installer silently, with the reason thrown away.
-  if ! proxy_version_out=$("$MITMDUMP" --version 2>&1); then
-    err "$MITMDUMP failed to run: ${proxy_version_out:-<no output>} -- the proxy environment is broken (a system python upgrade can break a venv); remove $PROXY_VENV (or $PROXY_CONDA) and re-run install.sh to recreate it"
+# 1. reuse a working environment; a broken one gets recreated
+for d in "$PROXY_VENV" "$PROXY_CONDA"; do
+  [[ -e "$d" ]] || continue
+  if proxy_env_ok "$d"; then
+    MITMDUMP="$d/bin/mitmdump"
+    ok "reusing $d"
+    break
   fi
-  proxy_version=$(awk '/^Mitmproxy:/ {print $2}' <<<"$proxy_version_out")
-  [[ "${proxy_version%%.*}" -ge 12 ]] 2>/dev/null || err "$MITMDUMP reports version '${proxy_version:-?}'; need mitmproxy >= 12"
-  ok "mitmdump $proxy_version at $MITMDUMP"
+  if ((DRY_RUN)); then
+    info "(dry-run) $d is broken (${PROXY_PROBE##*$'\n'}); would recreate it"
+  else
+    warn "$d is broken: ${PROXY_PROBE##*$'\n'} -- recreating it (a conda env update can swap the interpreter under a venv)"
+    rm -rf -- "$d"
+  fi
+done
+# 2./3. create when nothing usable exists
+if [[ -z "$MITMDUMP" ]]; then
+  cc="$(conda_cmd)" || true
+  if ((DRY_RUN)); then
+    if [[ -n "$cc" ]]; then
+      MITMDUMP="$PROXY_CONDA/bin/mitmdump"
+      info "(dry-run) would create $PROXY_CONDA with $(basename -- "$cc") and install '$MITMPROXY_SPEC'"
+    else
+      MITMDUMP="$PROXY_VENV/bin/mitmdump"
+      info "(dry-run) would create $PROXY_VENV (a venv from a suitable python3) and install '$MITMPROXY_SPEC'"
+    fi
+  elif [[ -n "$cc" ]]; then
+    info "Creating $PROXY_CONDA with $(basename -- "$cc") (about a minute)"
+    "$cc" create -y -q -p "$PROXY_CONDA" -c conda-forge "$MITMPROXY_SPEC" pip >/dev/null
+    MITMDUMP="$PROXY_CONDA/bin/mitmdump"
+    ok "installed into $PROXY_CONDA"
+  elif find_venv_python; then
+    [[ "$VENV_PY_KIND" == conda ]] && warn "$VENV_PY belongs to a conda env; a venv built from it breaks if that env's interpreter changes (install.sh then recreates it)"
+    info "Creating $PROXY_VENV from $VENV_PY and installing '$MITMPROXY_SPEC' with pip (about a minute)"
+    "$VENV_PY" -m venv "$PROXY_VENV"
+    "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check "$MITMPROXY_SPEC"
+    MITMDUMP="$PROXY_VENV/bin/mitmdump"
+    ok "installed into $PROXY_VENV"
+  else
+    err "no way to run mitmproxy: need mamba/conda on PATH (preferred), or a python3 >= 3.12 with venv and ensurepip that is not a free-threaded build (Debian/Ubuntu: sudo apt install python3-venv)"
+  fi
+  if ! ((DRY_RUN)); then
+    proxy_env_ok "$(dirname -- "$(dirname -- "$MITMDUMP")")" || err "$MITMDUMP does not run after installation: ${PROXY_PROBE##*$'\n'}"
+  fi
 fi
+((DRY_RUN)) || ok "mitmdump $PROXY_VERSION at $MITMDUMP"
 if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" ]]; then
   info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
 fi

@@ -131,7 +131,7 @@ teardown_file() {
   }
   local out
   out=$(cat "$E/install2.out")
-  [[ "$out" == *"reusing $H/.local/share/agent-sandbox/proxy-venv"* ]]
+  [[ "$out" == *"reusing $H/.local/share/agent-sandbox/proxy-"* ]] # venv or conda env, whichever this host got
   [[ "$out" == *"CA present: $H/.mitmproxy/mitmproxy-ca-cert.pem"* ]]
   [[ "$out" == *"already exists (kept as-is)"* ]]
   [[ "$out" == *"already points at the engine"* ]]
@@ -142,4 +142,32 @@ teardown_file() {
     sleep 1
     "$B/systemctl" --user is-active --quiet agent-sandbox-mitmproxy.service
   fi
+}
+
+@test "re-running install.sh detects a broken proxy environment and recreates it" {
+  local env="" d
+  for d in "$H/.local/share/agent-sandbox/proxy-venv" "$H/.local/share/agent-sandbox/proxy-env"; do
+    [[ -d "$d" ]] && env="$d" && break
+  done
+  [ -n "$env" ]
+  # Break it the way a swapped interpreter does: mitmdump runs but cannot import.
+  cat >"$env/bin/mitmdump" <<'X'
+#!/usr/bin/env bash
+echo "ModuleNotFoundError: No module named 'mitmproxy'" >&2
+exit 1
+X
+  chmod +x "$env/bin/mitmdump"
+  run_install "$E/install3.out"
+  [ "$(cat "$E/install3.out.rc")" -eq 0 ] || {
+    cat "$E/install3.out"
+    false
+  }
+  local out
+  out=$(cat "$E/install3.out")
+  [[ "$out" == *"is broken: ModuleNotFoundError: No module named 'mitmproxy' -- recreating it"* ]]
+  # a working runtime is back, and it is the one the rendered unit runs
+  local md
+  md=$(sed -n 's/^ExecStart=\([^ ]*\).*/\1/p' "$H/.config/systemd/user/agent-sandbox-mitmproxy.service")
+  [ -x "$md" ]
+  "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }

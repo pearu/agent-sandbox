@@ -42,7 +42,7 @@ engine sets (see [network.md](network.md)); a tool with yet another knob needs
 it forwarded via `AGENT_SANDBOX_PASSENV`. If you changed the host's CA state
 while a session was running, relaunch.
 
-**`mitmproxy needs python3 >= 3.12 with venv ... or conda/mamba on PATH` (install.sh)**
+**`no way to run mitmproxy: need mamba/conda on PATH (preferred), or a python3 >= 3.12 ...` (install.sh)**
 The installer builds the proxy in a private environment and needs one of two
 runtimes on the host. Provide either:
 
@@ -148,3 +148,16 @@ The filter is compiled per machine by `install.sh` into
 `pyseccomp` into the proxy's private Python environment; if that step reported
 "seccomp filter NOT compiled", read `~/.local/share/agent-sandbox/seccomp/gen.log`.
 Unset `AGENT_SANDBOX_SECCOMP` to launch without the filter meanwhile.
+
+
+## `install.sh` says the proxy environment "is broken ... recreating it"
+
+The proxy runtime (`~/.local/share/agent-sandbox/proxy-env` or `proxy-venv`) is
+probed with `mitmdump --version` on every run and rebuilt if it no longer works.
+The usual cause is a venv built from a conda env's interpreter that a later
+`mamba env update` swapped (for example to a free-threaded build, whose
+`lib/python3.Xt` layout hides the venv's packages). Nothing to do: the rebuild is
+automatic. With mamba/conda on PATH the rebuild is a dedicated conda env, which
+does not have this failure mode. Note that the running proxy service keeps
+working until its next restart, so a broken environment is a latent outage; the
+rebuild (and the restart the installer performs) is what removes it.

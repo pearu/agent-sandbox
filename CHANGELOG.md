@@ -21,6 +21,17 @@ break compatibility.
 
 ### Changed
 
+- `install.sh` chooses the proxy runtime so it works from any shell state: an
+  existing environment is reused only if `mitmdump --version` still succeeds
+  and is otherwise recreated (it is installer-owned); a dedicated conda env is
+  preferred whenever mamba/conda is available; a venv is built only from a
+  regular-build `python3 >= 3.12` with `venv`/`ensurepip` (free-threaded
+  builds cannot use mitmproxy's abi3 `aioquic` wheel), trying `/usr/bin/python3`
+  before `PATH`'s and warning if the interpreter belongs to a conda env. This
+  fixes a real outage-in-waiting: a venv built from a dev conda env's python
+  stopped importing mitmproxy after that env switched interpreters, while the
+  running service masked it until its next restart.
+
 - Drop all capabilities in the sandbox (`bwrap --cap-drop ALL`). In
   `proxy`/`open`/`none` this is a no-op (bwrap is unprivileged), but in `strict`
   the agent ran inside pasta's root-owned user namespace and started as uid 0

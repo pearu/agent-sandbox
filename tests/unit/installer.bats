@@ -128,3 +128,14 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   run "$T/repo/scripts/bundle.sh"
   cmp -s "$T/repo/install.sh" "$REPO_ROOT/install.sh"
 }
+
+@test "--dry-run chooses a dedicated conda proxy env when mamba/conda is on PATH (a venv only otherwise)" {
+  mkdir -p "$T/bin" "$T/home"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/mamba"
+  chmod +x "$T/bin/mamba"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would create $T/home/.local/share/agent-sandbox/proxy-env with mamba"* ]]
+  grep -q "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-env/bin/mitmdump" \
+    "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
+}
