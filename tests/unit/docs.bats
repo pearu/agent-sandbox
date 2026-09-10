@@ -60,6 +60,13 @@ enough() { # enough NAME MIN < items
 # ---- the README's side ----
 readme_flags() { grep -oE '`--[a-z-]+' <<<"$TABLE" | tr -d '`' | sort -u; }
 readme_env() { grep -oE 'AGENT_SANDBOX_[A-Z_]+' <<<"$SECTION" | sort -u; }
+# The dot-file column (the third of four) only. Searching a whole row for
+# "[section]" gives false passes: the last column carries markdown links, and a
+# link label like ([seccomp](components/seccomp/README.md)) satisfies a search
+# for [seccomp] while the dot-file column says "no such setting".
+readme_dotfile_col() {
+  awk -F'|' 'NF >= 6 { print $4 }' <<<"$TABLE"
+}
 
 # fail_missing LABEL WHERE < list-of-items-not-found
 fail_missing() {
@@ -96,14 +103,19 @@ fail_missing() {
   code_sections | enough code_sections 5
   code_keys conda | enough "code_keys conda" 2
   code_keys net | enough "code_keys net" 2
-  fail_missing ".agent-sandbox sections" "documented in README's table" < <(
-    for s in $(code_sections); do grep -qF -- "[$s]" <<<"$TABLE" || echo "[$s]"; done
+  local col
+  col="$(readme_dotfile_col)"
+  enough readme_dotfile_col 5 <<<"$col"
+  fail_missing ".agent-sandbox sections" "documented in README's dot-file column" < <(
+    for s in $(code_sections); do grep -qF -- "[$s]" <<<"$col" || echo "[$s]"; done
   )
+  # Every section that takes `key = value` lines, derived rather than listed, so
+  # a new one is not silently exempt from the key check.
   local sec key
-  fail_missing ".agent-sandbox keys" "documented in README's table" < <(
-    for sec in conda net; do
+  fail_missing ".agent-sandbox keys" "documented in README's dot-file column" < <(
+    for sec in $(code_sections); do
       for key in $(code_keys "$sec"); do
-        grep -qF -- "[$sec] $key" <<<"$TABLE" || echo "[$sec] $key"
+        grep -qF -- "[$sec] $key" <<<"$col" || echo "[$sec] $key"
       done
     done
   )

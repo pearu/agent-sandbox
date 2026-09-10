@@ -102,6 +102,12 @@ break compatibility.
 
 ### Fixed
 
+- `tests/unit/docs.bats` checked the whole table row for a `[section]`, so a
+  markdown link in the last column could satisfy the search while the dot-file
+  column said the setting did not exist. It now reads the dot-file column only,
+  and derives the sections whose keys it checks instead of listing `conda net`,
+  so a new key-taking section is not silently exempt. Latent until a section's
+  name appeared in one of its own doc links.
 - `platform.claude.com` is in the claude profile's seed allowlist. Without it
   `/login` failed with "OAuth error: proxy refused the connection": the OAuth
   flow reaches that host from inside the sandbox, and the only way to sign in
