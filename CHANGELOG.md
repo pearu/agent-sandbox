@@ -8,6 +8,24 @@ break compatibility.
 
 ### Added
 
+- Cross-session state in `~/.claude` is now isolated, unconditionally and with
+  no knob. Scoping `projects/` (the default since the previous entry) left the
+  rest of the state directory readable, and most of it is keyed by session
+  rather than by project. Measured on one developer machine: `file-history`
+  held **40M of verbatim file contents** from twelve sessions across thirty
+  projects, and `history.jsonl` held every prompt typed in any of them; also
+  `plans/`, `paste-cache/`, `session-env/`, `sessions/`, `jobs/`,
+  `shell-snapshots/`, `debug/`. None of it was ever asked for.
+  Each launch gets its own view: the throwaway parts behind a tmpfs, the rest
+  staged empty and merged back on exit, so a session keeps its own undo history
+  and prompt history across a resume without seeing another session's.
+  `history.jsonl` comes in filtered to this project's records. The user's own
+  hook logs in the same directory (`responses.log`, `alerts.log`) start empty
+  and are appended back, so they stay complete on the host. A session killed
+  before its cleanup runs has its pending appends flushed by the janitor at the
+  next launch. `.claude.json` and `telemetry/` are deliberate gaps, recorded in
+  `docs/design.md`: paths and an email rather than project content, and
+  filtering the former risks breaking Claude Code.
 - The sandbox now tells the session what it allows (issue #15).
   `AGENT_SANDBOX_BRIEFING` / `[briefing] mode`, **on by default**. Each launch
   writes a briefing from the policy actually in force -- egress mode and

@@ -471,6 +471,10 @@ _as_session_sweep() {
       && [[ -n "$agent" && "$(cat "/proc/$agent/comm" 2>/dev/null)" == ssh-agent ]]; then
       kill "$agent" 2>/dev/null || true
     fi
+    # An orphan may hold un-flushed appends (the engine was SIGKILLed before
+    # its trap). Apply them before the dir goes, or the session's own new
+    # history lines are lost for good.
+    _as_iso_flush "$d"
     rm -rf -- "$d" 2>/dev/null || true
   done
   ((_ng)) || shopt -u nullglob
@@ -512,7 +516,10 @@ _as_session_cleanup() {
     "$(cat "/proc/${_ssh_agent_pid}/comm" 2>/dev/null)" == ssh-agent ]]; then
     kill "$_ssh_agent_pid" 2>/dev/null
   fi
-  [[ -n "${_session_dir:-}" ]] && rm -rf -- "$_session_dir"
+  if [[ -n "${_session_dir:-}" ]]; then
+    _as_iso_flush "$_session_dir"
+    rm -rf -- "$_session_dir"
+  fi
   _ssh_agent_pid="" _session_dir=""
   return 0
 }
@@ -680,6 +687,119 @@ _as_allow_setup() {
   return 0
 }
 
+# ----- state isolation: cross-session leaks in the agent's own state dir -----
+# Scoping ~/.claude/projects (profile_memory_scope) hides other projects'
+# transcripts, but an agent's state directory holds far more that is keyed by
+# session rather than by project: verbatim file snapshots, prompt history,
+# pasted text, plans, per-session environments. None of it is asked for by the
+# user and all of it was readable, so isolation here is unconditional -- there
+# is no per-item knob, only the one control the whole feature has.
+#
+# The profile declares WHAT (it knows its agent's layout); the engine provides
+# the mechanism. Each declaration is one line in profile_isolate_spec:
+#
+#   tmpfs<TAB>DIR              empty inside, discarded at exit
+#   copyout<TAB>DIR            empty inside; entries the session created are
+#                              merged back at exit, never overwriting
+#   append<TAB>FILE[<TAB>FN]   empty inside, or FN's filtered view of FILE;
+#                              lines beyond that baseline are appended to FILE
+#                              at exit, under flock
+#
+# Append-back rather than a live bind because a live bind is the leak: the
+# session could read every other session's lines. Deferring the write means a
+# crash can lose the session's own new lines, which is why the janitor flushes
+# a dead session's manifest before removing it (_as_session_sweep). Losing
+# lines is the failure we accept; showing another project's is not.
+_as_iso_slug() {
+  local s="${1//\//_}"
+  printf '%s' "${s#_}"
+}
+
+# Stage the declared paths, add their binds to args, and record a manifest for
+# the flush. Reads profile_isolate_spec; needs $cwd and $args from the caller.
+_as_iso_prepare() {
+  ((${#profile_isolate_spec[@]})) || return 0
+  _as_session_begin || return 1
+  local iso="$_session_dir/iso" man="$_session_dir/iso.manifest"
+  mkdir -p "$iso" || return 1
+  : >"$man" || return 1
+  local line mode path fn slug staged base
+  for line in "${profile_isolate_spec[@]}"; do
+    IFS=$'\t' read -r mode path fn <<<"$line"
+    [[ -n "${path:-}" ]] || continue
+    slug="$(_as_iso_slug "$path")"
+    case "$mode" in
+      tmpfs)
+        args+=(--tmpfs "$path")
+        ;;
+      copyout)
+        staged="$iso/$slug"
+        mkdir -p "$staged" || continue
+        args+=(--bind "$staged" "$path")
+        printf 'copyout\t%s\t%s\t0\n' "$path" "$staged" >>"$man"
+        ;;
+      append)
+        staged="$iso/$slug"
+        : >"$staged" || continue
+        # A filter gives the session its OWN history back; without one it
+        # starts empty. Either way it never sees another project's lines.
+        if [[ -n "${fn:-}" ]] && declare -F "$fn" >/dev/null && [[ -r "$path" ]]; then
+          "$fn" "$path" "$cwd" >"$staged" 2>/dev/null || : >"$staged"
+        fi
+        base="$(wc -l <"$staged" 2>/dev/null || printf 0)"
+        args+=(--bind "$staged" "$path")
+        printf 'append\t%s\t%s\t%s\n' "$path" "$staged" "${base// /}" >>"$man"
+        ;;
+      *) _as_msg "isolate: unknown mode '$mode' for $path; ignoring" ;;
+    esac
+  done
+  return 0
+}
+
+# Apply a session's manifest: append new lines, merge new entries. Safe to call
+# twice (the manifest is removed on success) and safe from a trap. $1 = session
+# dir. Runs on the HOST, after bwrap has exited.
+_as_iso_flush() {
+  local d="${1:-}"
+  local man="$d/iso.manifest"
+  [[ -n "$d" && -r "$man" ]] || return 0
+  local mode host staged base cur
+  while IFS=$'\t' read -r mode host staged base; do
+    [[ -n "${host:-}" && -e "${staged:-/nonexistent}" ]] || continue
+    case "$mode" in
+      append)
+        cur="$(wc -l <"$staged" 2>/dev/null || printf 0)"
+        cur="${cur// /}"
+        if ((cur < base)); then
+          # Rewritten rather than appended to: which lines are new is no longer
+          # knowable, so nothing is written back rather than write nonsense.
+          _as_msg "isolate: $host was rewritten inside the sandbox ($cur lines < $base); its new lines are not appended back"
+          continue
+        fi
+        # NOT `((cur == base)) && continue`: a false (( )) returns 1, and under
+        # `set -e` that aborts the flush -- which then never removes the
+        # session dir either.
+        if ((cur == base)); then continue; fi # nothing new
+        if command -v flock >/dev/null 2>&1; then
+          flock "$host.lock" -c "tail -n +$((base + 1)) \"\$1\" >>\"\$2\"" _ "$staged" "$host" 2>/dev/null \
+            || tail -n +$((base + 1)) "$staged" >>"$host" 2>/dev/null || true
+        else
+          tail -n +$((base + 1)) "$staged" >>"$host" 2>/dev/null || true
+        fi
+        ;;
+      copyout)
+        [[ -n "$(ls -A "$staged" 2>/dev/null)" ]] || continue
+        mkdir -p "$host" 2>/dev/null || continue
+        # -n: never overwrite what the host already has. The session's own new
+        # entries are what we are preserving, not a whole-tree sync.
+        cp -an "$staged/." "$host/" 2>/dev/null || true
+        ;;
+    esac
+  done <"$man"
+  rm -f -- "$man" 2>/dev/null || true
+  return 0
+}
+
 # ----- briefing: the sandbox tells the agent what it may and may not do -----
 # AGENT_SANDBOX_BRIEFING / [briefing] mode, on by default. A session that does
 # not know it is sandboxed treats a deliberate block as a transient fault and
@@ -794,6 +914,10 @@ _as_briefing_write() {
     printf -- '- everything else, /usr and /etc included, is read-only\n'
     printf -- '- $HOME is a fresh tmpfs; the host'"'"'s home directory is not here\n'
     printf '\n## Other projects\n\n%s.\n' "$mem_line"
+    printf 'Other sessions leave state here too -- file snapshots, prompt history,\n'
+    printf 'plans, pasted text -- and none of it is in this sandbox. What this\n'
+    printf 'session writes is kept and merged back when it ends, so your own undo\n'
+    printf 'history and prompt history survive a resume.\n'
     printf '\n## Syscall filter\n\nseccomp is %s.\n' "$sec"
     printf '\n## If you need something that is blocked\n\n'
     printf 'Stop and ask. You cannot widen this yourself: .agent-sandbox is\n'
@@ -1569,6 +1693,13 @@ agent_sandbox() (
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_host_subcommands=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=()
+  local -a profile_isolate_spec=()
+  # Declared HERE, not down with the launch locals: state isolation opens the
+  # session dir well before that point, and a later `local _session_dir=""`
+  # would reset it -- so _as_session_begin would make a SECOND dir, and the
+  # cleanup trap would only ever know about the last one, leaving the first
+  # behind with its staged files.
+  local _session_dir=""
   # shellcheck source=profiles/claude.sh
   source "$profile_file"
   declare -F profile_bin_discover >/dev/null \
@@ -1897,6 +2028,15 @@ agent_sandbox() (
     fi
   done
 
+  # State isolation: the profile declares which parts of its state directory
+  # leak across sessions, the engine stages and binds them. After the binds
+  # above for the same reason they come after the state binds -- these layer on
+  # top of a directory that is already in place.
+  if declare -F profile_isolate >/dev/null; then
+    profile_isolate || return 1
+    _as_iso_prepare || return 1
+  fi
+
   # If /usr/local is a symlink off /usr (e.g. to a separate filesystem),
   # expose its real target read-only so the symlink resolves inside the
   # sandbox. Needed for things like CUDA installed under /usr/local.
@@ -2043,7 +2183,7 @@ agent_sandbox() (
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
   # docs/network.md.
-  local _session_dir="" _ssh_agent_pid="" _proxy_auth="" _seccomp_bpf=""
+  local _ssh_agent_pid="" _proxy_auth="" _seccomp_bpf=""
   local -a _ssh_endpoints=()
   # In strict mode --ssh opens a firewall pinhole to each NAMED host (resolved
   # and pinned below); --ssh-unrestricted has no host to pin, so refuse it here,
