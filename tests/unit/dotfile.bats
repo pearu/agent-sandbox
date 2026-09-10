@@ -274,6 +274,60 @@ trust() {
   ! argv_has --ro-bind "$om" "$om"
 }
 
+@test "[seccomp] mode: an approved file turns the filter on; the shell knob wins; unapproved grants nothing" {
+  local SC="$H/seccomp"
+  mkdir -p "$SC"
+  printf 'not-a-real-bpf' >"$SC/$(uname -m).bpf"
+  printf '[seccomp]\nmode = on\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --seccomp 10
+  [[ "$output" == *"using seccomp mode 'on' from .agent-sandbox"* ]]
+  # an explicit knob in the launching shell wins, as it does for [net] mode
+  run_engine AGENT_SANDBOX_SECCOMP=off AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  ! argv_has --seccomp
+  [[ "$output" == *"overrides the .agent-sandbox seccomp mode 'on'"* ]]
+  # ...and without approval the file asks for nothing
+  rm -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  ! argv_has --seccomp
+  [[ "$output" == *"present but not approved"* ]]
+}
+
+@test "[seccomp] mode: off is accepted, an unknown value is ignored with a message, and a bare line is refused" {
+  local SC="$H/seccomp"
+  mkdir -p "$SC"
+  printf 'not-a-real-bpf' >"$SC/$(uname -m).bpf"
+  printf '[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  ! argv_has --seccomp
+  # ...and the engine says it took the value from the file. Without this the
+  # check is vacuous: `off` is also the built-in default, so a missing --seccomp
+  # would prove nothing about whether the file was read at all.
+  [[ "$output" == *"using seccomp mode 'off' from .agent-sandbox"* ]]
+  printf '[seccomp]\nmode = default\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ] # ignored, not fatal: the file is data, the launch goes on
+  ! argv_has --seccomp
+  [[ "$output" == *"[seccomp] mode 'default' unknown (on|off)"* ]]
+  printf '[seccomp]\non\n' >"$PROJ/.agent-sandbox" # a list line, not key = value
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  ! argv_has --seccomp
+  [[ "$output" == *"[seccomp] expects 'key = value'"* ]]
+  printf '[seccomp]\nprofile = paranoid\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [[ "$output" == *"unknown [seccomp] key 'profile'"* ]]
+}
+
 @test "an all entry keeps every project's memory visible even when the global default is scoped" {
   printf 'memory_default = scoped\n' >"$CFG/config" 2>/dev/null || {
     mkdir -p "$CFG"

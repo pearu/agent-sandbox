@@ -69,6 +69,15 @@ Sections:
   and the `AGENT_SANDBOX_HOST_PORTS` / `AGENT_SANDBOX_AGENT_PORTS` knobs as a
   union, and are noted and ignored in the other modes. See
   [network.md](network.md#strict-mode-opening-ports).
+- **`[seccomp]`** — key/value lines. `mode = on|off` asks for the default-deny
+  syscall filter for sessions in this project, the same grant as
+  `AGENT_SANDBOX_SECCOMP` (which wins if set in your shell). The value is the
+  state, not a profile name: there is one filter, compiled per machine by
+  `install.sh`. With the built-in default off, a project can only turn the
+  filter *on*, so this cannot weaken the sandbox today; if the filter ever
+  becomes the default, approving `mode = off` would be a real widening and the
+  `--trust` review is where that is decided. See
+  [seccomp](../components/seccomp/README.md).
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

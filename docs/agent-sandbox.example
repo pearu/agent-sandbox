@@ -92,6 +92,16 @@
 #agent-port = 8000
 
 
+# ---- seccomp: the syscall filter ------------------------------------------
+# mode : on|off. `on` loads the default-deny filter compiled per machine by
+#        install.sh; every syscall not allowlisted fails with EPERM, and the
+#        agent cannot make its own user namespace to regain capabilities.
+#        The value is the state, not a profile name. An AGENT_SANDBOX_SECCOMP
+#        set in your shell wins over this line. Default: off.
+#[seccomp]
+#mode = on
+
+
 # Not settable here, on purpose:
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project
 #               setting.
