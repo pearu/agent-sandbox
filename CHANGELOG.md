@@ -76,6 +76,14 @@ break compatibility.
 
 ### Fixed
 
+- `platform.claude.com` is in the claude profile's seed allowlist. Without it
+  `/login` failed with "OAuth error: proxy refused the connection": the OAuth
+  flow reaches that host from inside the sandbox, and the only way to sign in
+  was `AGENT_SANDBOX_NET=open`, which turns egress filtering off for the whole
+  session -- a wide door for a narrow need. Found by reading
+  `~/.config/agent-sandbox/blocked.log` after a failed sign-in. Existing
+  installs pick it up by re-running `install.sh`, or by adding the line to
+  `~/.config/agent-sandbox/allowlist.txt` (re-read per request, no restart).
 - Memory scoping used the wrong project-state directory for any project path
   containing a character Claude Code rewrites. The profile mapped a path to a
   slug by replacing `/` only; Claude Code replaces every character outside

@@ -3,5 +3,10 @@
 # its subdomains. Merged into the global allowlist by install.sh.
 api.anthropic.com
 .anthropic.com
+# OAuth sign-in. `/login` makes requests to this host from inside the sandbox;
+# without it sign-in fails with "OAuth error: proxy refused the connection"
+# and the only way through is AGENT_SANDBOX_NET=open, which turns egress
+# filtering off entirely -- a wide door for a narrow need.
+platform.claude.com
 statsigapi.net
 .statsig.com

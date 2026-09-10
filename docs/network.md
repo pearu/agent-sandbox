@@ -76,7 +76,8 @@ It is re-read on every request; edits take effect immediately.
 `install.sh` writes a generic starter list once (never overwriting your edits)
 and then appends each installed profile's seed hosts (`profiles/<name>.allowlist`)
 that are missing. The claude profile seeds `api.anthropic.com`,
-`.anthropic.com`, `statsigapi.net`, `.statsig.com`.
+`.anthropic.com`, `platform.claude.com` (OAuth sign-in), `statsigapi.net`,
+`.statsig.com`.
 
 Enforcement happens twice:
 
