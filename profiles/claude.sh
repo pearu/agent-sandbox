@@ -252,6 +252,12 @@ profile_briefing_args() {
   local ours user_val="" i
   ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]}}"
 
+  # The LAST --settings, deliberately: Claude Code honours only the last one, so
+  # that is the value the user's command line resolves to, and merging any
+  # earlier one would resurrect settings they had overridden. A wrapper that
+  # appends --settings to override an earlier one keeps working unchanged; the
+  # only difference this feature makes is the two hook entries added on top,
+  # which is what [briefing] mode = off is for.
   local -a rest=("$@")
   for ((i = 0; i < ${#rest[@]}; i++)); do
     case "${rest[i]}" in
@@ -265,7 +271,8 @@ profile_briefing_args() {
       _as_msg "briefing: keeping your --settings, NOT installing the briefing's hooks. Claude Code honours only the last --settings, so merging is the only way to keep both, and that needs python3, which is not on PATH. Install python3 (or read $inside/briefing.md, bound read-only either way)."
       return 0
     fi
-    if ! AS_OURS="$ours" AS_USER="$user_val" AS_OUT="$host_file" python3 -c '
+    local _merge_note=""
+    if ! _merge_note=$(AS_OURS="$ours" AS_USER="$user_val" AS_OUT="$host_file" python3 -c '
 import json, os, sys
 def load(v):
     v = v.strip()
@@ -287,11 +294,16 @@ for event, entries in ours["hooks"].items():
 merged["hooks"] = hooks
 with open(os.environ["AS_OUT"], "w") as fh:
     json.dump(merged, fh, indent=2)
-'; then
+# Their setting stands, but say so: with hooks off the briefing never arrives.
+if merged.get("disableAllHooks"):
+    print("hooks-disabled")
+'); then
       _as_msg "briefing: keeping your --settings unchanged; the briefing's hooks were not installed. $inside/briefing.md is bound read-only either way."
       return 0
     fi
     _as_msg "briefing: merged your --settings with the briefing's session hooks"
+    [[ "$_merge_note" == *hooks-disabled* ]] \
+      && _as_msg "briefing: your settings set disableAllHooks, so the briefing will NOT be injected into the session; $inside/briefing.md is bound read-only and can be read on request"
   else
     printf '%s\n' "$ours" >"$host_file" || {
       _as_msg "briefing: cannot write $host_file; continuing without the session hooks"

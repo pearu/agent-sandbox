@@ -150,6 +150,28 @@ trust() {
   grep -q "cat $IN/hook-SessionStart.json" "$OUT/settings.json"
 }
 
+@test "several --settings: the LAST one is merged, so overriding an earlier one still works" {
+  # Claude Code honours only the last --settings, so a wrapper that appends one
+  # to override an earlier one relies on the earlier being dropped. Merging must
+  # not resurrect it.
+  local first='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo FIRST"}]}]}}'
+  local last='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo LAST"}]}]}}'
+  run_engine BWRAP_COPY="$OUT" -- claude --settings "$first" --settings "$last" --version
+  [ "$status" -eq 0 ]
+  grep -q 'echo LAST' "$OUT/settings.json"
+  ! grep -q 'echo FIRST' "$OUT/settings.json" # overridden, as it would have been
+  grep -q "cat $IN/hook-SessionStart.json" "$OUT/settings.json"
+}
+
+@test "settings that disable all hooks are respected, and the briefing says it will not arrive" {
+  run_engine BWRAP_COPY="$OUT" -- claude --settings '{"disableAllHooks":true}' --version
+  [ "$status" -eq 0 ]
+  grep -q '"disableAllHooks": true' "$OUT/settings.json" # their call stands
+  [[ "$output" == *"will NOT be injected"* ]]
+  # the readable copy is still there, so the information is not lost entirely
+  [ "$(grep -c "^$IN/briefing.md$" "$H/argv")" -eq 1 ]
+}
+
 @test "when the merge cannot be done the USER's settings are kept and the loss is said out loud" {
   # A python3 that fails stands in for the interpreter being absent: both take
   # the same branch, and losing a hint must never cost someone their settings.

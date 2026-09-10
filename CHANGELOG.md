@@ -24,7 +24,11 @@ break compatibility.
   state what you need, what for, and the exact `.agent-sandbox` lines, then ask
   the user to run `--trust`. Names and paths only, never the contents of
   anything shared. Turning it off grants and hides nothing; it only stops the
-  sandbox describing itself.
+  sandbox describing itself. A user-supplied `--settings` is merged rather than
+  clobbered -- specifically the last one, which is the value Claude Code would
+  have honoured, so a wrapper that overrides an earlier `--settings` behaves as
+  before; `disableAllHooks` is respected, with a note that the briefing will
+  then not be injected.
 - `.agent-sandbox` accepts a `[seccomp]` section with `mode = on|off`, so a
   project can ask for the syscall filter the way it already pins a network
   mode. An `AGENT_SANDBOX_SECCOMP` in your shell wins, as with `[net] mode`.

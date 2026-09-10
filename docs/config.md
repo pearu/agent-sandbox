@@ -86,6 +86,12 @@ Sections:
   resumed session is never told a policy that has since changed. It lists
   names and paths only, never the contents of anything shared. Turning it off
   grants and hides nothing; it only stops the sandbox describing itself.
+  If you pass your own `--settings`, the two are merged (Claude Code honours
+  only the last one, so adding a second would drop yours) — specifically the
+  *last* `--settings` on your command line, the one that would have won anyway,
+  so a wrapper that overrides an earlier one keeps working. `disableAllHooks`
+  in your settings is respected, and the engine then says the briefing will not
+  be injected; `briefing.md` stays bound and readable either way.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
