@@ -1402,6 +1402,24 @@ _as_strict_ssh_rules() {
   return 0
 }
 
+# If the sandbox itself cannot start, the user has no working agent to fix it
+# with -- the launcher on PATH is this engine, so `claude` is exactly what is
+# broken. Name the way back in: the agent's own binary, which the installer
+# never touches, run directly and unsandboxed. A profile that knows where its
+# binary lives says so via profile_fallback_hint; otherwise point at the docs.
+# Deliberately not a `--no-sandbox` flag: the way out should be documented and
+# discoverable, not ergonomic, or it becomes the habit rather than the last
+# resort.
+_as_fallback_hint() {
+  _as_msg "the sandbox did not start, so '$profile_command' cannot run. To get a working agent -- to fix this, for instance -- run its own binary directly, without the sandbox:"
+  if declare -F profile_fallback_hint >/dev/null; then
+    profile_fallback_hint
+  else
+    _as_msg "  the agent's own executable (agent-sandbox never modifies it); see docs/troubleshooting.md"
+  fi
+  _as_msg "See docs/troubleshooting.md, section 'The sandbox will not start'."
+}
+
 _as_launch() {
   # When help is being shown, or a session dir must be cleaned up, run bwrap in
   # this process (not exec) so we regain control -- to print the help footer
@@ -1409,6 +1427,9 @@ _as_launch() {
   if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" ]]; then
     local rc=0
     bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
+    # 127 = bwrap not found, 126 = found but not executable. Any other code is
+    # the AGENT's own exit status and means the sandbox worked fine.
+    ((rc == 126 || rc == 127)) && _as_fallback_hint
     _as_session_cleanup
     [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
     return "$rc"

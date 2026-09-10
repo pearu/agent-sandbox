@@ -8,6 +8,14 @@ break compatibility.
 
 ### Added
 
+- An emergency exit is documented, and pointed at from the engine. The
+  launcher on `PATH` is the engine itself, so a sandbox that will not start
+  leaves no working agent to repair it with. `docs/troubleshooting.md` opens
+  with "The sandbox will not start", naming the agent's own binary under
+  `~/.local/share/claude/versions/`, which agent-sandbox never touches; and
+  when `bwrap` cannot be executed (exit 126 or 127) the engine prints that path
+  itself, resolved by the profile. No `--no-sandbox` flag, deliberately: the
+  way out should be discoverable, not ergonomic.
 - Cross-session state in `~/.claude` is now isolated, unconditionally and with
   no knob. Scoping `projects/` (the default since the previous entry) left the
   rest of the state directory readable, and most of it is keyed by session

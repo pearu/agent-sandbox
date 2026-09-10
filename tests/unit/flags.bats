@@ -29,6 +29,39 @@ setup() {
   [[ "$output" == *"runs inside a sandbox"* ]]
 }
 
+@test "when bwrap itself cannot run, the engine names the unsandboxed way back in" {
+  # The launcher on PATH IS the engine, so a sandbox that will not start leaves
+  # the user with no agent to fix it with. 127 is what a shell returns when the
+  # command does not exist; a stub that exits 127 exercises OUR handling of it
+  # without depending on PATH resolution (making the stub unexecutable does not
+  # work: the lookup then finds the real bwrap further along PATH).
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+: >"${BWRAP_DUMP:?}"; exit 127
+STUB
+  chmod +x "$H/bin/bwrap"
+  run_engine -- claude --version
+  [ "$status" -eq 127 ]
+  [[ "$output" == *"the sandbox did not start"* ]]
+  [[ "$output" == *"without the sandbox"* ]]
+  # the claude profile names the actual binary, not just the idea of one
+  [[ "$output" == *"$H/home/.local/share/claude/versions/2.1.300"* ]]
+  [[ "$output" == *"troubleshooting.md"* ]]
+}
+
+@test "a normal non-zero exit from the agent is NOT mistaken for a broken sandbox" {
+  # Only 126/127 mean bwrap could not run; anything else is the agent's own
+  # status, and suggesting the emergency exit there would be noise.
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+: >"${BWRAP_DUMP:?}"; exit 3
+STUB
+  chmod +x "$H/bin/bwrap"
+  run_engine -- claude --version
+  [ "$status" -eq 3 ]
+  [[ "$output" != *"the sandbox did not start"* ]]
+}
+
 @test "--engine-version prints the version and exits without launching" {
   run_engine -- claude --engine-version
   [ "$status" -eq 0 ]
