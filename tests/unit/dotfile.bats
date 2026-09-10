@@ -8,7 +8,9 @@ setup() {
   make_harness
   PROJ="$(cd "$H/proj" && pwd -P)"
   CFG="$H/home/.config/agent-sandbox"
-  slug() { printf '%s' "$1" | sed 's:/:-:g'; }
+  # Claude Code's scheme: every character outside [A-Za-z0-9-] becomes "-",
+  # one for one (see _claude_project_slug and probes/slug-probe.sh).
+  slug() { printf '%s' "$1" | sed 's:[^A-Za-z0-9-]:-:g'; }
 }
 
 # Run `--trust` from inside the project, feeding $1 as the prompt answers.
@@ -324,4 +326,27 @@ trust() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"not approved"* ]]
   [ ! -d "$CFG/trust" ] || [ -z "$(ls -A "$CFG/trust")" ]
+}
+
+@test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {
+  # The bats temp paths have no dots, so the plain "/"-only rule passed for years
+  # while being wrong. A project directory with characters Claude Code converts
+  # is the case that matters: get the slug wrong and the engine binds a directory
+  # that does not exist, leaving the project's own memory and transcripts hidden.
+  local proj="$H/proj.x+y"
+  mkdir -p "$proj"
+  printf '[share-memory]\n' >"$proj/.agent-sandbox"
+  trust "$proj"
+  local real s wrong
+  real="$(cd "$proj" && pwd -P)"
+  s="$(slug "$real")"
+  [[ "$s" != *.* && "$s" != *+* ]] # the slug itself converts . and +
+  [[ "$s" == *"-proj-x-y" ]]
+  wrong="${real//\//-}" # what the old "/"-only rule produced
+  [[ "$wrong" == *.* ]] # and that one still carries the dot
+  RUN_CWD="$proj" run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --tmpfs "$H/home/.claude/projects"
+  argv_has --bind "$H/home/.claude/projects/$s" "$H/home/.claude/projects/$s"
+  ! argv_has --bind "$H/home/.claude/projects/$wrong" "$H/home/.claude/projects/$wrong"
 }

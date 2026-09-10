@@ -134,6 +134,13 @@ Stated plainly. These are what the adversary above can still do.
   `$CWD`. Nothing under `$HOME` is visible unless something binds it, so every
   such exposure is an explicit act of yours; the list catches the well-known
   mistakes in those acts, not all of them. Bind the narrowest path that works.
+- **Project state is keyed by a lossy slug.** Claude Code names a project's
+  state directory after its path with every character outside `[A-Za-z0-9-]`
+  turned into `-`, so two projects whose paths differ only in a converted
+  character (`~/x.y` and `~/x-y`) share one directory, and scoping cannot
+  separate them. The scheme is Claude Code's, undocumented, and pinned by
+  `probes/slug-probe.sh` plus a unit test; a release that moved it would break
+  scoping, which is why the test exists.
 - **Memory scoping covers `~/.claude/projects` only.** In `scoped` mode other
   state under `~/.claude` (global command history, session metadata) stays
   visible; scoping isolates per-project memory and transcripts, not the whole

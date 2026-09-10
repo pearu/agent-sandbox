@@ -100,10 +100,23 @@ _claude_list_versions() {
 }
 
 # Map a project directory to Claude Code's per-project state slug: the absolute
-# path with every "/" turned into "-" (e.g. /home/u/proj -> -home-u-proj). This
-# must match Claude Code's own scheme, or scoped memory would bind the wrong
-# directory and the session's notes would not persist.
-_claude_project_slug() { printf '%s' "${1//\//-}"; }
+# path with every character outside [A-Za-z0-9-] turned into "-", one for one
+# (/home/u/pro.j -> -home-u-pro-j). This must match Claude Code's own scheme, or
+# scoped memory binds a directory that does not exist: the profile would mkdir
+# and bind that, while the project's real memory and transcripts stayed hidden
+# behind the tmpfs -- silently, and --continue/--resume would find nothing.
+#
+# Determined empirically with probes/slug-probe.sh, since the scheme is not
+# documented: a project at .../Ab.c_d+e@f~g:h=i,j-k9 became
+# ...-Ab-c-d-e-f-g-h-i-j-k9, so ".", "_", "+", "@", "~", ":", "=" and "," all
+# convert, dashes/digits/both letter cases survive, and 21 input characters gave
+# 21 output characters, so runs are not collapsed. Re-run that probe if a Claude
+# Code release seems to have moved the scheme.
+#
+# Note the consequence, which is Claude Code's and not ours: two project paths
+# differing only in a converted character (~/x.y and ~/x-y) share one slug, and
+# therefore one memory directory.
+_claude_project_slug() { printf '%s' "${1//[^A-Za-z0-9-]/-}"; }
 
 # profile_memory_scope MODE [SHARE_PATH...] -- engine hook (see the engine's
 # profile_memory_scope call). In "scoped" mode, hide ~/.claude/projects and
