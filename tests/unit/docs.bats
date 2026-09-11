@@ -187,14 +187,44 @@ profile_dotfile_keys() {
   grep -qE 'AGENT_SANDBOX_SECCOMP=on\|off .*default: on\)' "$ENGINE"
   run ! grep -qE 'AGENT_SANDBOX_SECCOMP.*default: off' "$ENGINE"
 
-  # no shipped doc may call it opt-in or off-by-default (unrelated "port opt-ins"
-  # is fine; these patterns are seccomp-scoped)
+  # No shipped file may call it opt-in or off-by-default (unrelated "port
+  # opt-ins" is fine; these patterns are seccomp-scoped). The first version of
+  # this check listed four files by hand and missed two more:
+  # docs/agent-sandbox.example, the file people copy, still said "Default:
+  # off", and the engine's own comments still explained why `mode = off` was a
+  # no-op. So the list is derived now -- every shipped file that mentions
+  # seccomp at all -- rather than typed out and forgotten.
+  # CHANGELOG.md is excluded: it is a record of what was true when, and the
+  # entry saying the filter USED to be opt-in is correct and must stay.
   local f
-  for f in "$REPO_ROOT/README.md" "$REPO_ROOT/docs/design.md" \
-    "$REPO_ROOT/components/seccomp/README.md" "$REPO_ROOT/install.sh"; do
+  while IFS= read -r f; do
     run ! grep -qiE 'seccomp[^.]{0,40}(opt-in|off by default)' "$f"
     run ! grep -qiE '(opt-in|off by default)[^.]{0,40}seccomp' "$f"
-  done
+    run ! grep -qiE 'seccomp[^.]{0,60}default[ :]+off' "$f"
+    run ! grep -qiE 'built-in default off' "$f"
+  done < <(grep -rlEi seccomp "$REPO_ROOT" --include='*.md' --include='*.example' \
+    --include='install.sh' --include='install.sh.in' --include='agent-sandbox' \
+    --exclude=CHANGELOG.md \
+    --exclude-dir=.git --exclude-dir=tests --exclude-dir=probes)
   # the component README title specifically (it said "(opt-in)")
   run ! grep -qi 'default-deny syscall filter (opt-in)' "$REPO_ROOT/components/seccomp/README.md"
+}
+
+@test "the example dot-file states the defaults the engine actually uses" {
+  # docs/agent-sandbox.example is the file people copy into a project, and it
+  # was in no drift check at all: it said "Default: off" for seccomp long after
+  # the filter became default-on. Derive each on|off default from the engine
+  # and require the block that documents it to say the same word.
+  local knob want block
+  for knob in seccomp briefing; do
+    want="$(grep -oE "_knob_${knob}:-[a-z0-9]+" "$ENGINE" | head -1 | sed 's/.*:-//')"
+    [ -n "$want" ] # the engine still spells this default as a parameter default
+    block="$(awk "/^# ---- ${knob}[:;,. ]/,/^#\\[${knob}\\]/" "$REPO_ROOT/docs/agent-sandbox.example")"
+    [ -n "$block" ] # the block is still findable by its heading
+    grep -qiE "default[ :]+.?${want}" <<<"$block" || {
+      echo "docs/agent-sandbox.example does not say the [$knob] default is '$want':"
+      echo "$block"
+      false
+    }
+  done
 }

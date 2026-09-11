@@ -110,9 +110,10 @@
 #    explicit knob in your shell wins over the file -- see docs/config.md.)
 #   AGENT_SANDBOX_FORWARD="A B C"      extra env vars to forward (space-
 #                                       or colon-separated names)
-#   AGENT_SANDBOX_SECCOMP=on           load a default-deny seccomp syscall filter
+#   AGENT_SANDBOX_SECCOMP=on|off       default-deny seccomp syscall filter
 #                                       (Docker's default profile, as for a container
-#                                       with no capabilities; compiled by install.sh)
+#                                       with no capabilities; compiled by install.sh).
+#                                       Default: on.
 #   AGENT_SANDBOX_CONDA_WRITE=1        bind the active conda env read-write so
 #                                       the agent can `mamba install`, `pip
 #                                       install`, etc. into it. The base conda
@@ -1847,11 +1848,12 @@ agent_sandbox() (
       fi
       # seccomp: an explicit AGENT_SANDBOX_SECCOMP in your shell wins over the
       # file. A project can only ask for the filter or decline it; it cannot
-      # pick a profile, and with the built-in default off, `mode = off` is a
-      # no-op today. If the filter ever becomes the default, a trusted
-      # `mode = off` becomes a real widening -- which is what the --trust
-      # review is for, and why deleting an approved file refuses the launch
-      # instead of falling back to the defaults.
+      # pick a profile. The filter is on by default, so `mode = off` is a real
+      # widening -- which is what the --trust review is for, and why deleting
+      # an approved file refuses the launch instead of falling back to the
+      # defaults. A value the engine does not act on (unknown, or a malformed
+      # line) leaves the default in place, which means ON: a project file must
+      # not switch the filter off by being wrong.
       if [[ -n "$_df_seccomp_mode" ]]; then
         case "$_df_seccomp_mode" in
           on | 1 | off | 0)
