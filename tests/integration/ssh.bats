@@ -5,7 +5,7 @@ setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   load "$BATS_TEST_DIRNAME/../helpers/integration"
   require_bwrap
-  command -v ssh-agent >/dev/null && command -v ssh-keygen >/dev/null || skip "openssh-client not installed"
+  { command -v ssh-agent && command -v ssh-keygen; } >/dev/null || skip "openssh-client not installed"
   make_integration <<'PROBE'
 #!/usr/bin/env bash
 R="$PWD/report"; : >"$R"; say() { printf '%s=%s\n' "$1" "$2" >>"$R"; }
@@ -23,6 +23,7 @@ PROBE
   ssh-keygen -q -t ed25519 -N '' -f "$IHOME/.ssh/id_ed25519" -C userkey
   chmod 700 "$IHOME/.ssh"
   make_short_base
+  # shellcheck disable=SC2034 # read by run_probe in helpers/integration.bash
   SESSION_BASE="$SHORT_BASE"
 }
 
@@ -40,7 +41,7 @@ teardown() { rm -rf "${SHORT_BASE:-}"; }
   [ "$(report private_key_visible)" = no ]
   [ "$(report config_visible)" = no ]
   [ -z "$(ls -A "$SHORT_BASE")" ]
-  ! pgrep -f "ssh-agent -s -a $SHORT_BASE" >/dev/null
+  run ! pgrep -f "ssh-agent -s -a $SHORT_BASE" >/dev/null
 }
 
 @test "--ssh to a host without a trusted key is refused before any session exists" {

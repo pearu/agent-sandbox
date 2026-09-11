@@ -79,7 +79,7 @@ fail_missing() {
   items="$(cat)"
   [ -z "$items" ] || {
     echo "$label not $where:"
-    printf '  %s\n' $items
+    printf '  %s\n' "${items//$'\n'/$'\n'  }"
     false
   }
 }
@@ -165,7 +165,7 @@ profile_dotfile_keys() {
   rows=$(wc -l <<<"$TABLE")
   [ "$rows" -ge 10 ] # header + separator + the settings
   # every row has exactly four cells; an escaped \| inside a cell is not a divider
-  body=$(sed 's/\\|//g' <<<"$TABLE" | awk -F'|' 'NF != 6 {print NR": "$0}')
+  body=$(awk -F'|' 'NF != 6 {print NR": "$0}' <<<"${TABLE//\\|/}")
   [ -z "$body" ] || {
     echo "rows without four cells:"
     echo "$body"
@@ -185,16 +185,16 @@ profile_dotfile_keys() {
 
   # the engine's own --help must state the same default
   grep -qE 'AGENT_SANDBOX_SECCOMP=on\|off .*default: on\)' "$ENGINE"
-  ! grep -qE 'AGENT_SANDBOX_SECCOMP.*default: off' "$ENGINE"
+  run ! grep -qE 'AGENT_SANDBOX_SECCOMP.*default: off' "$ENGINE"
 
   # no shipped doc may call it opt-in or off-by-default (unrelated "port opt-ins"
   # is fine; these patterns are seccomp-scoped)
   local f
   for f in "$REPO_ROOT/README.md" "$REPO_ROOT/docs/design.md" \
     "$REPO_ROOT/components/seccomp/README.md" "$REPO_ROOT/install.sh"; do
-    ! grep -qiE 'seccomp[^.]{0,40}(opt-in|off by default)' "$f"
-    ! grep -qiE '(opt-in|off by default)[^.]{0,40}seccomp' "$f"
+    run ! grep -qiE 'seccomp[^.]{0,40}(opt-in|off by default)' "$f"
+    run ! grep -qiE '(opt-in|off by default)[^.]{0,40}seccomp' "$f"
   done
   # the component README title specifically (it said "(opt-in)")
-  ! grep -qi 'default-deny syscall filter (opt-in)' "$REPO_ROOT/components/seccomp/README.md"
+  run ! grep -qi 'default-deny syscall filter (opt-in)' "$REPO_ROOT/components/seccomp/README.md"
 }

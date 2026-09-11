@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 # stdout+stderr to OUT, exit code to OUT.rc
 run_install() {
   (
-    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME= \
+    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME='' \
       SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
       "$REPO_ROOT/install.sh" >"$1" 2>&1
     echo $? >"$1.rc"
@@ -31,7 +31,7 @@ launch() {
 
 setup_file() {
   [[ "${AGENT_SANDBOX_E2E:-0}" == 1 ]] || skip "set AGENT_SANDBOX_E2E=1 to run the end-to-end installer test"
-  command -v bwrap >/dev/null && command -v curl >/dev/null || skip "bwrap and curl are required"
+  { command -v bwrap && command -v curl; } >/dev/null || skip "bwrap and curl are required"
   E="$BATS_FILE_TMPDIR/e2e"
   H="$E/home"
   B="$E/bin"
@@ -199,7 +199,7 @@ X
   grep -q '^renamed' "$H/.local/share/agent-sandbox/install.manifest"
 
   (
-    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME= \
+    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME='' \
       SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
       "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall.out" 2>&1
     echo $? >"$E/uninstall.out.rc"
@@ -218,7 +218,7 @@ X
   [ -f "$H/.config/agent-sandbox/allowlist.txt" ]
   # and it is re-runnable on a machine that is already clean
   (
-    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME= \
+    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME='' \
       SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
       "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall2.out" 2>&1
     echo $? >"$E/uninstall2.out.rc"

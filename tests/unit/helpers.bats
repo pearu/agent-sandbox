@@ -91,6 +91,7 @@ setup() {
   # Regression: $BASHPID inside a $(...) is the substitution's subshell, so the
   # recorded start time used to belong to the wrong process and every liveness
   # check saw the owner as dead.
+  # shellcheck disable=SC2030 # each @test is its own subshell; this export is for this test only
   export AGENT_SANDBOX_SESSION_BASE="$BATS_TEST_TMPDIR/base"
   (
     _session_dir=""
@@ -103,7 +104,7 @@ setup() {
     trap - EXIT # leave the dir for the check below
   )
   [ -d "$BATS_TEST_TMPDIR/base" ]
-  ls "$BATS_TEST_TMPDIR/base" | grep -q '^session\.'
+  compgen -G "$BATS_TEST_TMPDIR/base/session.*" >/dev/null
 }
 
 @test "_as_session_sweep reaps dead and recycled-pid dirs, keeps live and unstamped" {
@@ -130,6 +131,7 @@ setup() {
 }
 
 @test "_as_ca_bind builds system+CA and binds it over the system bundle; rebuilds when the CA is newer; skips when the CA is missing" {
+  # shellcheck disable=SC2031 # set afresh here; the earlier test's export died with its subshell
   export AGENT_SANDBOX_SESSION_BASE="$BATS_TEST_TMPDIR/base"
   export AGENT_SANDBOX_PROXY_CA="$BATS_TEST_TMPDIR/ca.pem"
   local bundle

@@ -29,7 +29,6 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   grep -qE "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$unit"
   grep -q "^Documentation=file:$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$unit"
   grep -q -- '--set http2=false' "$unit"
-  ! grep -q '@' "$unit"
   [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
   [ -f "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # a real copy, not the checkout
   cmp -s "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
@@ -38,6 +37,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   [[ "$output" == *"(dry-run) would run: systemctl --user daemon-reload"* ]]
   [[ "$output" == *"(dry-run) proxy request skipped"* ]]
   [[ "$output" != *"sudo "* ]] || [[ "$output" == *"(dry-run)"*"sudo"* ]]
+  run ! grep -q '@' "$unit"
   cmp -s "$T/home/.config/agent-sandbox/allowlist_addon.py" "$REPO_ROOT/components/allowlist_addon.py"
 }
 

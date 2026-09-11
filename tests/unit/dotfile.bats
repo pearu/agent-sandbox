@@ -10,6 +10,7 @@ setup() {
   CFG="$H/home/.config/agent-sandbox"
   # Claude Code's scheme: every character outside [A-Za-z0-9-] becomes "-",
   # one for one (see _claude_project_slug and probes/slug-probe.sh).
+  # shellcheck disable=SC2329 # called from the tests below
   slug() { printf '%s' "$1" | sed 's:[^A-Za-z0-9-]:-:g'; }
 }
 
@@ -46,7 +47,7 @@ trust() {
   # the share it asked for is not granted; scoping still applies, because
   # isolation is the default rather than something the dot-file switches on
   argv_has --tmpfs "$H/home/.claude/projects"
-  ! argv_has --ro-bind "$om" "$om"
+  run ! argv_has --ro-bind "$om" "$om"
 }
 
 @test "an approved dot-file adds its allow hosts and scopes memory to the current project" {
@@ -58,7 +59,7 @@ trust() {
   [[ "$output" == *"session allowlist:"*"pypi.org"*".github.com"* ]]
   argv_has --tmpfs "$H/home/.claude/projects"
   argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")" "$H/home/.claude/projects/$(slug "$PROJ")"
-  ! argv_has --ro-bind "$H/home/.claude/projects/-other/memory" "$H/home/.claude/projects/-other/memory"
+  run ! argv_has --ro-bind "$H/home/.claude/projects/-other/memory" "$H/home/.claude/projects/-other/memory"
   # tmpfs hides projects before the current one is rebound
   [ "$(argv_index --tmpfs)" -lt "$(argv_index "$H/home/.claude/projects/$(slug "$PROJ")")" ]
 }
@@ -71,8 +72,8 @@ trust() {
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$other")/memory"
-  ! argv_has "$H/home/.claude/projects/$(slug "$secret")/memory"
-  ! argv_has --bind "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$other")/memory"
+  run ! argv_has "$H/home/.claude/projects/$(slug "$secret")/memory"
+  run ! argv_has --bind "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$other")/memory"
 }
 
 @test "share-memory takes a wildcard: children with memory are shared, siblings and memory-less dirs are not" {
@@ -88,8 +89,8 @@ trust() {
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory" "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory"
   argv_has --ro-bind "$H/home/.claude/projects/$(slug "$H/space/lib")/memory" "$H/home/.claude/projects/$(slug "$H/space/lib")/memory"
-  ! argv_has "$H/home/.claude/projects/$(slug "$H/space/scratch")/memory" # dir exists, no memory
-  ! argv_has "$H/home/.claude/projects/$(slug "$H/space-other")/memory"   # sibling, not under space/
+  run ! argv_has "$H/home/.claude/projects/$(slug "$H/space/scratch")/memory" # dir exists, no memory
+  run ! argv_has "$H/home/.claude/projects/$(slug "$H/space-other")/memory"   # sibling, not under space/
 }
 
 @test "a wildcard that matches nothing with memory warns" {
@@ -170,7 +171,7 @@ trust() {
   [[ "$(setenv_value PATH)" != *"$active/bin"* ]]
   # and it is the pinned env that gets bound (read-only: write mode is off here)
   argv_has --ro-bind "$env" "$env"
-  ! argv_has --ro-bind "$active" "$active"
+  run ! argv_has --ro-bind "$active" "$active"
 
   # The case that actually bit: launched from conda's BASE env, where
   # CONDA_PREFIX is the base itself and PATH carries <base>/bin, not an
@@ -195,8 +196,8 @@ trust() {
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"using network mode 'none' from .agent-sandbox"* ]]
-  ! argv_has --share-net
-  ! setenv_value HTTPS_PROXY
+  run ! argv_has --share-net
+  run ! setenv_value HTTPS_PROXY
   run_engine AGENT_SANDBOX_NET=proxy -- claude --version # the shell's knob wins
   [ "$status" -eq 0 ]
   [[ "$output" == *"AGENT_SANDBOX_NET=proxy overrides the .agent-sandbox network mode 'none'"* ]]
@@ -271,7 +272,7 @@ trust() {
   # the defaults apply again, knowingly: still scoped, since that is the default
   # now, but the share the dot-file used to grant is gone
   argv_has --tmpfs "$H/home/.claude/projects"
-  ! argv_has --ro-bind "$om" "$om"
+  run ! argv_has --ro-bind "$om" "$om"
 }
 
 @test "[seccomp] mode: an approved file turns the filter on; the shell knob wins; unapproved grants nothing" {
@@ -287,17 +288,22 @@ trust() {
   # an explicit knob in the launching shell wins, as it does for [net] mode
   run_engine AGENT_SANDBOX_SECCOMP=off AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --seccomp
   [[ "$output" == *"overrides the .agent-sandbox seccomp mode 'on'"* ]]
-  # ...and without approval the file asks for nothing
+  run ! argv_has --seccomp
+  # ...and without approval the file asks for nothing. It has to ask for the
+  # OPPOSITE of the built-in default to show that: with the filter on by
+  # default, an ignored `mode = on` and an honoured one look identical in the
+  # argv, so the file says `off` and the filter must still be there.
+  printf '[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
   rm -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --seccomp
+  argv_has --seccomp 10
   [[ "$output" == *"present but not approved"* ]]
+  [[ "$output" != *"using seccomp mode 'off' from .agent-sandbox"* ]]
 }
 
-@test "[seccomp] mode: off is accepted, an unknown value is ignored with a message, and a bare line is refused" {
+@test "[seccomp] mode: off is accepted; an unknown value or a malformed line is reported and leaves the default on" {
   local SC="$H/seccomp"
   mkdir -p "$SC"
   printf 'not-a-real-bpf' >"$SC/$(uname -m).bpf"
@@ -305,26 +311,30 @@ trust() {
   trust "$PROJ"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --seccomp
-  # ...and the engine says it took the value from the file. Without this the
-  # check is vacuous: `off` is also the built-in default, so a missing --seccomp
-  # would prove nothing about whether the file was read at all.
+  # ...and the engine says it took the value from the file. The filter is on by
+  # default, so its absence here is already the file's doing; the message is
+  # what proves WHICH line did it rather than some other path to the same argv.
   [[ "$output" == *"using seccomp mode 'off' from .agent-sandbox"* ]]
+  run ! argv_has --seccomp
   printf '[seccomp]\nmode = default\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ] # ignored, not fatal: the file is data, the launch goes on
-  ! argv_has --seccomp
+  # "ignored" means the built-in default stands, and that default is ON. A
+  # malformed line must not read as `off` -- that would be a project file
+  # switching the filter off by being wrong, the one outcome nobody asked for.
+  argv_has --seccomp 10
   [[ "$output" == *"[seccomp] mode 'default' unknown (on|off)"* ]]
   printf '[seccomp]\non\n' >"$PROJ/.agent-sandbox" # a list line, not key = value
   trust "$PROJ"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --seccomp
+  argv_has --seccomp 10
   [[ "$output" == *"[seccomp] expects 'key = value'"* ]]
   printf '[seccomp]\nprofile = paranoid\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  argv_has --seccomp 10
   [[ "$output" == *"unknown [seccomp] key 'profile'"* ]]
 }
 
@@ -337,7 +347,7 @@ trust() {
   trust "$PROJ"
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --tmpfs "$H/home/.claude/projects"
+  run ! argv_has --tmpfs "$H/home/.claude/projects"
 }
 
 @test "the global default scopes memory with no dot-file present; unknown sections and ssh warn" {
@@ -417,5 +427,5 @@ trust() {
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
   argv_has --bind "$H/home/.claude/projects/$s" "$H/home/.claude/projects/$s"
-  ! argv_has --bind "$H/home/.claude/projects/$wrong" "$H/home/.claude/projects/$wrong"
+  run ! argv_has --bind "$H/home/.claude/projects/$wrong" "$H/home/.claude/projects/$wrong"
 }

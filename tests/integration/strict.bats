@@ -106,8 +106,8 @@ launch_strict() {
       AGENT_SANDBOX_FORWARD="GW PROBE_BIND" GW="$GW" PROBE_BIND="${PROBE_BIND:-0.0.0.0}" \
       "$ENGINE" --profile probe "$@" run
   ) >"$I/engine.out" 2>&1 3>&- &
-  local pid=$! i
-  for i in $(seq 1 100); do
+  local pid=$!
+  for _ in $(seq 1 100); do
     [ -e "$IWORK/listening" ] && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.2
@@ -120,8 +120,10 @@ launch_strict() {
   RC=0
   wait "$pid" || RC=$?
   echo "engine output: $(cat "$I/engine.out")"
+  # shellcheck disable=SC2034 # one of launch_strict's documented outputs; not every test reads it
   declare -gA REPORT=()
   local k v
+  # shellcheck disable=SC2034 # (same: filled for callers that want it)
   while IFS='=' read -r k v; do [ -n "$k" ] && REPORT["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
   [ -e "$IWORK/listening" ] # the probe ran far enough to listen inside
 }

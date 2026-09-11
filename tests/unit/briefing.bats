@@ -83,7 +83,7 @@ trust() {
   # names and paths only: nothing is read out of the shared project
   printf 'SECRET-CANARY\n' >"$H/home/.claude/projects/$(printf '%s' "$H/other" | sed 's:[^A-Za-z0-9-]:-:g')/memory/MEMORY.md"
   run_engine BWRAP_COPY="$OUT" -- claude --version
-  ! grep -q 'SECRET-CANARY' "$OUT/briefing.md"
+  run ! grep -q 'SECRET-CANARY' "$OUT/briefing.md"
 }
 
 @test "the compact summary carries the actionable half, not just the prohibitions" {
@@ -100,18 +100,18 @@ trust() {
 @test "off suppresses every trace of it; a dot-file can ask for that, and the shell knob wins" {
   run_engine AGENT_SANDBOX_BRIEFING=off BWRAP_COPY="$OUT" -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --settings
-  ! grep -q "$IN" "$H/argv"
+  run ! argv_has --settings
+  run ! grep -q "$IN" "$H/argv"
   [ ! -e "$OUT/briefing.md" ]
   # a trusted dot-file can turn it off...
   printf '[briefing]\nmode = off\n' >"$PROJ/.agent-sandbox"
   trust
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --settings
   # ...and says so, which is what distinguishes "the file was read" from "the
   # default happened to match"
   [[ "$output" == *"using briefing mode 'off' from .agent-sandbox"* ]]
+  run ! argv_has --settings
   # an explicit knob in the shell overrides the file, as everywhere else
   run_engine AGENT_SANDBOX_BRIEFING=on -- claude --version
   argv_has --settings "$IN/settings.json"
@@ -159,7 +159,7 @@ trust() {
   run_engine BWRAP_COPY="$OUT" -- claude --settings "$first" --settings "$last" --version
   [ "$status" -eq 0 ]
   grep -q 'echo LAST' "$OUT/settings.json"
-  ! grep -q 'echo FIRST' "$OUT/settings.json" # overridden, as it would have been
+  run ! grep -q 'echo FIRST' "$OUT/settings.json" # overridden, as it would have been
   grep -q "cat $IN/hook-SessionStart.json" "$OUT/settings.json"
 }
 
@@ -198,7 +198,7 @@ CHECK
   run_engine BWRAP_COPY="$OUT" -- claude --settings '{"hooks":{"SessionStart":{"oops":1}}}' --version
   [ "$status" -eq 0 ] # the launch goes on
   [[ "$output" == *"not installed"* ]]
-  ! argv_has --settings "$IN/settings.json"
+  run ! argv_has --settings "$IN/settings.json"
   argv_has --settings '{"hooks":{"SessionStart":{"oops":1}}}'
 }
 
@@ -208,11 +208,11 @@ CHECK
   printf '#!/bin/sh\nexit 3\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
   run_engine BWRAP_COPY="$OUT" -- claude --settings '{"a":1}' --version
-  [ "$status" -eq 0 ] # the launch goes on
-  ! argv_has --settings "$IN/settings.json"
+  [ "$status" -eq 0 ]           # the launch goes on
   argv_has --settings '{"a":1}' # theirs, untouched
   [[ "$output" == *"not installed"* ]]
   [[ "$output" == *"briefing.md"* ]] # ...and where to read it anyway
+  run ! argv_has --settings "$IN/settings.json"
   # the readable briefing is still bound: only the injection was lost
   [ "$(grep -c "^$IN/briefing.md$" "$H/argv")" -eq 1 ]
 }

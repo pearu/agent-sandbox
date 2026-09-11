@@ -52,22 +52,25 @@ trust() {
   done
   # and its [conda] keys
   local k
+  # shellcheck disable=SC2013 # identifiers, one per line, no whitespace
   for k in $(grep -oE '_df_conda_[a-z]+' "$ENGINE" | sort -u | sed 's/_df_conda_//'); do
-    grep -qE "^#?$k[[:space:]]*=" "$EX" || {
+    grep -qE "^#?${k}[[:space:]]*=" "$EX" || {
       echo "[conda] key '$k' is accepted by the engine but absent from the example" >&2
       false
     }
   done
   # and its [net] keys (_df_net_<key>, with _ for -)
+  # shellcheck disable=SC2013
   for k in $(grep -oE '_df_net_[a-z_]+' "$ENGINE" | sort -u | sed 's/_df_net_//; s/_/-/g'); do
-    grep -qE "^#?$k[[:space:]]*=" "$EX" || {
+    grep -qE "^#?${k}[[:space:]]*=" "$EX" || {
       echo "[net] key '$k' is accepted by the engine but absent from the example" >&2
       false
     }
   done
   # and its [seccomp] keys
+  # shellcheck disable=SC2013
   for k in $(grep -oE '_df_seccomp_[a-z_]+' "$ENGINE" | sort -u | sed 's/_df_seccomp_//; s/_/-/g'); do
-    grep -qE "^#?$k[[:space:]]*=" "$EX" || {
+    grep -qE "^#?${k}[[:space:]]*=" "$EX" || {
       echo "[seccomp] key '$k' is accepted by the engine but absent from the example" >&2
       false
     }

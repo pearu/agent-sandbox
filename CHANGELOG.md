@@ -6,6 +6,26 @@ break compatibility.
 
 ## Unreleased
 
+### Fixed
+
+- **Every negative assertion in the test suite was vacuous.** `! cmd` cannot
+  fail a bats test: bash suppresses `errexit` -- and the `ERR` trap bats fails
+  on -- for a negated command, so `! true` in a test body is reported `ok`
+  (measured, bats 1.14.0). 62 of them had accumulated across nine files,
+  covering the things this project most needs to prove *absent*: no
+  `--share-net`, no `HTTPS_PROXY` in `none` mode, no `AWS_SECRET_ACCESS_KEY`
+  forwarded, another project's memory not bound, a secret canary not in the
+  briefing. All 62 now go through a `refute` helper, which negates inside a
+  function so the test body runs an ordinary command that can fail (and, unlike
+  `run ! cmd`, leaves `$status` and `$output` alone for the message assertions
+  that follow). Two were asserting the opposite of what the engine does: with
+  seccomp on by default since #28, an unknown `[seccomp] mode` value and a
+  malformed line leave the filter **on**, and an unapproved file cannot turn it
+  off -- which is what those tests now check, instead of an absence that could
+  no longer happen. `tests/unit/harness.bats` keeps the idiom out: it proves
+  `refute` fails on success in a child bats run, and greps the suite for a bare
+  `!` in command position.
+
 ### Added
 
 - `[claude] hide` in `.agent-sandbox`: a space-separated list of paths under

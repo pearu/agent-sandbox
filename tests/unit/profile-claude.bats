@@ -8,7 +8,7 @@ setup() {
 }
 
 @test "discovers the highest version across the three layouts (file, dir/claude, dir/bin/claude)" {
-  rm -rf "$V"/*
+  rm -rf "${V:?}"/*
   printf '#!/bin/sh\n' >"$V/2.1.100"
   mkdir -p "$V/2.1.300" "$V/2.1.301/bin" "$V/2.1.9"
   printf '#!/bin/sh\n' >"$V/2.1.300/claude"
