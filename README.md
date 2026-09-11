@@ -82,6 +82,42 @@ that: its own namespace, only the proxy reachable); the agent's own credentials
 in `~/.claude` are readable; syscall filtering is opt-in, not on by default
 (`AGENT_SANDBOX_SECCOMP=on`).
 
+## Scope
+
+agent-sandbox wraps a **local process**. If you launch an agent on your machine,
+it can run inside the sandbox; if the agent runs on someone else's machine,
+there is nothing here to put a boundary around.
+
+**Covered.** Any agent you start locally through a launcher: the engine is
+provider-agnostic and everything agent-specific lives in a profile, so a new
+agent needs a profile rather than engine changes
+([profiles.md](docs/profiles.md)). Only the `claude` profile ships today. MCP
+servers are covered automatically, since the agent spawns them inside the
+sandbox.
+
+**Not covered, and cannot be.** claude.ai in a browser, Claude Code on the web,
+and cloud or background sessions all run on Anthropic's servers. The risk there
+is a different shape: such an agent has no access to your filesystem or your LAN
+in the first place, so a local sandbox has nothing to protect. What it *can*
+reach — a connected GitHub account, say — is granted on the service side and can
+only be limited there.
+
+**Depends on how it is launched.** An IDE extension or a script that runs
+`claude` from your PATH reaches the launcher and is sandboxed. One that calls a
+bundled or absolute path to the agent's own binary is not, and nothing will tell
+you. If this matters to you, check what actually runs:
+
+```
+type -a claude       # the launcher should come first
+```
+
+We have not yet verified how the VS Code extension launches Claude Code, so this
+README does not claim either way.
+
+**Single user.** Everything installs into one account and there is no
+system-wide mode; the installer refuses to run through `sudo`. See
+[Install](#install).
+
 ## Install
 
 Requirements: Linux with unprivileged user namespaces, `bubblewrap`, `curl`,
