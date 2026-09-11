@@ -99,10 +99,24 @@ cd agent-sandbox
 The installer is idempotent: it sets up the proxy (mitmproxy 12+ in a private
 environment under `~/.local/share/agent-sandbox`), generates the CA, writes
 the allowlist (keeping your edits on re-runs) and adds each profile's hosts,
-installs the systemd user unit, **copies the engine and profiles under
-`~/.local/share/agent-sandbox`** and points `~/.local/bin/<agent>` at that copy
-for every profile. Because the command runs from the copy, you can move or
-delete this clone afterward; re-run `./install.sh` after pulling to update.
+installs the systemd user unit, and **copies the engine and profiles under
+`~/.local/share/agent-sandbox`**. Because the command runs from the copy, you
+can move or delete this clone afterward; re-run `./install.sh` after pulling to
+update.
+
+It then makes sure that typing the command reaches the sandbox, which is the
+only thing that decides whether any of this applies. If `claude` is already on
+your PATH in a directory you can write to — what Claude Code's own installer
+leaves — it is moved aside to `claude.pre-agent-sandbox` and the sandbox
+launcher takes its place, so PATH order is untouched. If it lives somewhere
+read-only such as `/usr/bin`, the launcher goes in the first writable PATH
+directory *before* it and shadows it, leaving the original alone. If there is
+no `claude` on PATH at all, the launcher goes in the first writable PATH
+directory. And if none of those is possible, the installer stops and shows how
+to fix your PATH, rather than installing something that would lose.
+
+Undo it with `./install.sh --uninstall`: it gives the original launcher back
+and removes the rest ([troubleshooting.md](docs/troubleshooting.md)).
 Working *on* agent-sandbox? `./install.sh --dev` points the launcher at the
 checkout instead, so your edits take effect at the next launch (see
 [docs/design.md](docs/design.md) for why that is dev-only). Standalone:

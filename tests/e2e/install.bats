@@ -171,3 +171,53 @@ X
   [ -x "$md" ]
   "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }
+
+@test "a native launcher is taken over, and --uninstall gives it back (issue #22)" {
+  # The real round trip, which --dry-run cannot show: dry runs deliberately do
+  # not move a launcher aside. This is the ordinary case -- Claude Code's own
+  # installer leaves ~/.local/bin/claude pointing at its binary -- and before
+  # this the installer declined it and left the agent unsandboxed.
+  local native="$H/.local/share/claude/versions/9.9.9/claude"
+  rm -f "$H/.local/bin/claude"
+  ln -sfn "$native" "$H/.local/bin/claude"
+
+  run_install "$E/install-takeover.out"
+  [ "$(cat "$E/install-takeover.out.rc")" -eq 0 ] || {
+    cat "$E/install-takeover.out"
+    false
+  }
+  grep -q 'moved your claude aside' "$E/install-takeover.out"
+  # typing `claude` now reaches the engine, which is the only thing that matters
+  [ "$(readlink -f "$H/.local/bin/claude")" = "$(readlink -f "$H/.local/share/agent-sandbox/app/agent-sandbox")" ]
+  [ -e "$H/.local/bin/claude.pre-agent-sandbox" ]
+  grep -q 'resolves to the agent-sandbox engine' "$E/install-takeover.out"
+  # and the manifest records it, so the undo is exact rather than inferred
+  grep -q '^renamed' "$H/.local/share/agent-sandbox/install.manifest"
+
+  (
+    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME= \
+      SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
+      "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall.out" 2>&1
+    echo $? >"$E/uninstall.out.rc"
+  )
+  [ "$(cat "$E/uninstall.out.rc")" -eq 0 ] || {
+    cat "$E/uninstall.out"
+    false
+  }
+  # the machine is as it was before agent-sandbox: the original launcher back
+  # under its own name, no backup left over, and our state gone
+  [ "$(readlink -f "$H/.local/bin/claude")" = "$(readlink -f "$native")" ]
+  [ ! -e "$H/.local/bin/claude.pre-agent-sandbox" ]
+  [ ! -d "$H/.local/share/agent-sandbox" ]
+  [ ! -f "$H/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
+  # the allowlist and trust store are kept, as a reinstall should find them
+  [ -f "$H/.config/agent-sandbox/allowlist.txt" ]
+  # and it is re-runnable on a machine that is already clean
+  (
+    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME= \
+      SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
+      "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall2.out" 2>&1
+    echo $? >"$E/uninstall2.out.rc"
+  )
+  [ "$(cat "$E/uninstall2.out.rc")" -eq 0 ]
+}

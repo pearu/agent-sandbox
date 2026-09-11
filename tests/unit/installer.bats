@@ -14,7 +14,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
     shift
   done
   [[ "${1:-}" == "--" ]] && shift
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin "${envs[@]}" "$REPO_ROOT/install.sh" --dry-run "$@"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" "${envs[@]}" "$REPO_ROOT/install.sh" --dry-run "$@"
 }
 
 @test "--dry-run: writes config, seeds the profile hosts, renders the unit with the proxy path, symlinks the profile command; nothing privileged" {
@@ -92,7 +92,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   echo x >"$T/home/.local/bin/claude"
   dry
   [ "$status" -eq 0 ]
-  [[ "$output" == *"not the expected symlink (left untouched)"* ]]
+  [[ "$output" == *"is not our launcher (left untouched)"* ]]
   [ "$(cat "$T/home/.local/bin/claude")" = x ]
 }
 
@@ -107,13 +107,13 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
 @test "standalone: a lone install.sh clones the repository and installs from the clone" {
   mkdir -p "$T/alone"
   cp "$REPO_ROOT/install.sh" "$T/alone/"
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin AGENT_SANDBOX_REPO="$REPO_ROOT" "$T/alone/install.sh" --dry-run
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" AGENT_SANDBOX_REPO="$REPO_ROOT" "$T/alone/install.sh" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"cloning $REPO_ROOT"* ]]
   [ -f "$T/home/.local/share/agent-sandbox/src/agent-sandbox" ]
   [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
   [ -f "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # copied out of the clone
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin AGENT_SANDBOX_REPO="$REPO_ROOT" "$T/alone/install.sh" --dry-run
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" AGENT_SANDBOX_REPO="$REPO_ROOT" "$T/alone/install.sh" --dry-run
   [[ "$output" == *"updating $T/home/.local/share/agent-sandbox/src"* ]]
 }
 
@@ -146,7 +146,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
 # and never touch what the installer did not create.
 
 uninst() { # uninst [extra args...] -- a real (not dry) uninstall, no prompt
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin \
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
     "$REPO_ROOT/install.sh" --uninstall --yes "$@"
 }
 
@@ -186,7 +186,7 @@ fake_install() {
 
 @test "--uninstall --dry-run changes nothing, and installs nothing on the way" {
   fake_install
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin \
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
     "$REPO_ROOT/install.sh" --uninstall --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"repoint"* ]]
@@ -224,4 +224,156 @@ fake_install() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"removed"* ]]
   [[ "$output" != *"repoint"* ]]
+}
+
+# ---- the launcher has to WIN on PATH (issue #22 follow-up) -----------------
+# Before this, an existing ~/.local/bin/claude -- what Claude Code's own
+# installer leaves -- made the installer decline with a warning, so the common
+# case ended with an agent that was not sandboxed at all. These use --dry-run,
+# which acts under $HOME but deliberately does NOT move a launcher aside; the
+# real round trip is in tests/e2e/install.bats.
+
+native_launcher() { # a machine with Claude Code installed the normal way
+  mkdir -p "$T/home/.local/bin" "$T/home/.local/share/claude/versions"
+  printf '#!/bin/sh\necho native\n' >"$T/home/.local/share/claude/versions/9.9.9"
+  chmod +x "$T/home/.local/share/claude/versions/9.9.9"
+  ln -sfn "$T/home/.local/share/claude/versions/9.9.9" "$T/home/.local/bin/claude"
+}
+
+@test "an existing launcher in a writable directory is moved aside, not declined" {
+  native_launcher
+  dry
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would move"*"claude.pre-agent-sandbox"* ]]
+  [[ "$output" != *"left untouched"* ]] # the old refusal is gone
+  # a dry run reports the move and does not make it
+  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
+  [ ! -e "$T/home/.local/bin/claude.pre-agent-sandbox" ]
+}
+
+@test "an existing backup is never overwritten: that copy is the only original" {
+  native_launcher
+  : >"$T/home/.local/bin/claude.pre-agent-sandbox" # left by an earlier install
+  dry
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already exists"* ]]
+  [[ "$output" == *"destroy the only"* ]]
+  [ ! -s "$T/home/.local/bin/claude.pre-agent-sandbox" ] # untouched (still empty)
+}
+
+@test "a read-only directory is shadowed from earlier in PATH, leaving the original alone" {
+  mkdir -p "$T/home/.local/bin" "$T/rodir" "$T/home/.local/share/claude/versions"
+  printf '#!/bin/sh\necho native\n' >"$T/home/.local/share/claude/versions/9.9.9"
+  chmod +x "$T/home/.local/share/claude/versions/9.9.9"
+  printf '#!/bin/sh\necho system-claude\n' >"$T/rodir/claude"
+  chmod +x "$T/rodir/claude"
+  chmod 555 "$T/rodir"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" \
+    PATH="$T/home/.local/bin:$T/rodir:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+  chmod 755 "$T/rodir"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not writable; shadowing it"* ]]
+  [ -x "$T/rodir/claude" ]                     # the original is where it was
+  [ ! -e "$T/rodir/claude.pre-agent-sandbox" ] # and was not backed up
+  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
+}
+
+@test "no writable PATH directory before the command: stop and say how to fix PATH" {
+  mkdir -p "$T/rodir" "$T/home/.local/share/claude/versions"
+  printf '#!/bin/sh\n' >"$T/home/.local/share/claude/versions/9.9.9"
+  chmod +x "$T/home/.local/share/claude/versions/9.9.9"
+  printf '#!/bin/sh\n' >"$T/rodir/claude"
+  chmod +x "$T/rodir/claude"
+  chmod 555 "$T/rodir"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" \
+    PATH="$T/rodir:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+  chmod 755 "$T/rodir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no writable directory"* ]]
+  [[ "$output" == *"export PATH="* ]] # ...and the line to add
+}
+
+# ---- uninstall: the manifest and its fingerprints -------------------------
+# The post-install state is built by hand rather than by installing, which also
+# exercises the manifest READER: these are the entries install.sh writes.
+
+fp() { # fingerprint, the way install.sh records it
+  if [[ -L "$1" ]]; then printf 'symlink %s' "$(readlink "$1")"; else
+    printf 'sha256 %s' "$(sha256sum -- "$1" | cut -d' ' -f1)"
+  fi
+}
+
+installed_over_native() { # ours in place, the original backed up, manifest written
+  native_launcher
+  local st="$T/home/.local/share/agent-sandbox"
+  mkdir -p "$st/app" "$T/home/.config/systemd/user"
+  cp "$REPO_ROOT/agent-sandbox" "$st/app/agent-sandbox"
+  mv "$T/home/.local/bin/claude" "$T/home/.local/bin/claude.pre-agent-sandbox"
+  ln -sfn "$st/app/agent-sandbox" "$T/home/.local/bin/claude"
+  : >"$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  {
+    printf 'version\t1\n'
+    printf 'statedir\t%s\n' "$st"
+    printf 'unit\t%s\t%s\n' "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" \
+      "$(fp "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service")"
+    printf 'renamed\t%s\t%s\t%s\n' "$T/home/.local/bin/claude" \
+      "$T/home/.local/bin/claude.pre-agent-sandbox" "$(fp "$T/home/.local/bin/claude.pre-agent-sandbox")"
+    printf 'launcher\t%s\t%s\n' "$T/home/.local/bin/claude" "$(fp "$T/home/.local/bin/claude")"
+  } >"$st/install.manifest"
+}
+
+@test "uninstall restores the launcher it moved aside" {
+  installed_over_native
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"restore"* ]]
+  # the machine is as it was: the original back under its own name
+  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
+  [ ! -e "$T/home/.local/bin/claude.pre-agent-sandbox" ]
+  [ "$("$T/home/.local/bin/claude")" = "native" ]
+}
+
+@test "uninstall refuses to act on a path changed since the install, and keeps its state" {
+  installed_over_native
+  # The user replaces the backup afterwards: it is no longer what we set aside.
+  # Note the rm: the backup is a SYMLINK, and writing through one edits its
+  # target, leaving the link (and so its fingerprint) unchanged.
+  rm -f "$T/home/.local/bin/claude.pre-agent-sandbox"
+  printf '#!/bin/sh\necho MINE-NOW\n' >"$T/home/.local/bin/claude.pre-agent-sandbox"
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"changed since install"* ]]
+  grep -q MINE-NOW "$T/home/.local/bin/claude.pre-agent-sandbox" # not overwritten
+  # the manifest survives, so a second run can still finish the job
+  [ -f "$T/home/.local/share/agent-sandbox/install.manifest" ]
+  [[ "$output" == *"re-run --uninstall"* ]]
+}
+
+@test "uninstall is re-runnable: what is already gone is reported, not an error" {
+  installed_over_native
+  uninst
+  [ "$status" -eq 0 ]
+  uninst # again, on a machine that is already clean
+  [ "$status" -eq 0 ]
+  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
+}
+
+@test "uninstall removes our launcher when another one on PATH takes over again" {
+  # the read-only case: we shadowed a system claude, so the restore is removal
+  mkdir -p "$T/home/.local/bin" "$T/sysdir" "$T/home/.local/share/agent-sandbox/app"
+  printf '#!/bin/sh\necho system-claude\n' >"$T/sysdir/claude"
+  chmod +x "$T/sysdir/claude"
+  cp "$REPO_ROOT/agent-sandbox" "$T/home/.local/share/agent-sandbox/app/agent-sandbox"
+  ln -sfn "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$T/home/.local/bin/claude"
+  {
+    printf 'version\t1\n'
+    printf 'statedir\t%s\n' "$T/home/.local/share/agent-sandbox"
+    printf 'launcher\t%s\t%s\n' "$T/home/.local/bin/claude" "$(fp "$T/home/.local/bin/claude")"
+  } >"$T/home/.local/share/agent-sandbox/install.manifest"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" \
+    PATH="$T/home/.local/bin:$T/sysdir:/usr/bin:/bin" "$REPO_ROOT/install.sh" --uninstall --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"takes over again"* ]]
+  [ ! -e "$T/home/.local/bin/claude" ] # ours gone
+  [ -x "$T/sysdir/claude" ]            # theirs wins on PATH once more
 }
