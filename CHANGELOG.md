@@ -8,6 +8,36 @@ break compatibility.
 
 ### Added
 
+- `install.sh --uninstall` (issue #22). It shows exactly what it will touch and
+  asks before touching it (`--dry-run` only prints, `--yes` skips the question).
+  It **repoints** `~/.local/bin/claude` at the agent's own binary rather than
+  deleting it -- the symlink is the engine, so removing it would leave no
+  `claude` on PATH, the dead end the previous entry exists for. It stops and
+  removes the proxy unit, deletes `~/.local/share/agent-sandbox`, keeps
+  `~/.config/agent-sandbox` (your allowlist and trust approvals) unless
+  `--purge-config`, and never touches the agent, `~/.mitmproxy`, or the
+  AppArmor profiles, printing the command for those instead. Anything it did
+  not create is left alone and reported, and if the agent's own binary is
+  missing it refuses to repoint into nothing and says the launcher is now
+  broken.
+  What it undoes is read from `~/.local/share/agent-sandbox/install.manifest`,
+  written at install time with a fingerprint per path (a symlink's target, a
+  file's sha256). An entry whose fingerprint no longer matches is **not acted
+  on**: it is listed with what was recorded and what is there now, and the
+  state directory is kept so a later run can finish the job. Re-running is
+  safe -- a path that is already gone is reported, not an error.
+- **The launcher now actually wins on PATH.** Previously, if `claude` already
+  existed at `~/.local/bin/claude` -- which is what Claude Code's own installer
+  leaves -- `install.sh` declined with a warning and the agent ran
+  **unsandboxed**, which is the one outcome this project exists to prevent. The
+  installer now takes the name: a launcher in a writable directory is moved
+  aside to `<cmd>.pre-agent-sandbox` (never overwriting an existing backup, the
+  only copy of your original), one in a read-only directory such as `/usr/bin`
+  is shadowed from the first writable PATH directory before it, and with no
+  launcher at all the first writable PATH directory is used. If none of those
+  is possible it stops and shows how to fix PATH, rather than installing
+  something that would lose. `--dry-run` reports the move without making it: a
+  preview must not move a command you depend on.
 - An emergency exit is documented, and pointed at from the engine. The
   launcher on `PATH` is the engine itself, so a sandbox that will not start
   leaves no working agent to repair it with. `docs/troubleshooting.md` opens

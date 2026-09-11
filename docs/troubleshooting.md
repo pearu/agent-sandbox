@@ -1,5 +1,42 @@
 # Troubleshooting
 
+## Removing agent-sandbox
+
+```
+./install.sh --uninstall            # shows the plan, then asks
+./install.sh --uninstall --dry-run  # shows the plan and stops
+```
+
+It stops and removes the proxy's systemd unit, deletes
+`~/.local/share/agent-sandbox` (engine copy, proxy runtime, compiled seccomp
+filter), and puts the `claude` command back the way it was. Which of those it
+does depends on what the install did, recorded in
+`~/.local/share/agent-sandbox/install.manifest`:
+
+- it moved your launcher aside → the original is **restored** over ours;
+- it shadowed a launcher elsewhere on PATH → ours is **removed**, so that one
+  wins again;
+- it created the only launcher there was → ours is **repointed** at the agent's
+  own binary under `~/.local/share/claude/versions/`, because deleting it would
+  leave no `claude` on your PATH at all.
+
+Each manifest entry records what the path looked like when the installer left
+it. **Anything that has changed since is not touched** — it is listed, with what
+was recorded and what is there now, and the state directory is kept so you can
+sort it out and run `--uninstall` again. Re-running is always safe: what is
+already gone is reported as such, not treated as an error.
+
+Kept unless you say otherwise: `~/.config/agent-sandbox`, which holds your
+allowlist and your `--trust` approvals, so a later install picks up where you
+left off (`--purge-config` removes it). Never touched: the agent itself,
+`~/.mitmproxy` (mitmproxy's own CA), and the AppArmor profiles for `bwrap` and
+`pasta` — they grant a permission Ubuntu 24.04+ withholds, they are harmless,
+and other tools may rely on them by now. The plan prints the command to remove
+those by hand.
+
+Anything the installer did not create is left alone and reported: a launcher
+that is not a symlink to the engine, for instance, is never rewritten.
+
 ## The sandbox will not start
 
 The launcher on your `PATH` **is** agent-sandbox: `~/.local/bin/claude` is a

@@ -52,11 +52,11 @@ fi
 
 step "install.sh --dry-run against a throwaway HOME"
 mkdir -p "$tmp/home"
-if ! HOME="$tmp/home" PATH="/usr/bin:/bin" ./install.sh --dry-run >"$tmp/dry.out" 2>&1; then
+if ! HOME="$tmp/home" PATH="$tmp/home/.local/bin:/usr/bin:/bin" ./install.sh --dry-run >"$tmp/dry.out" 2>&1; then
   cat "$tmp/dry.out" >&2
   exit 1
 fi
-grep -q 'symlinked .*/claude' "$tmp/dry.out" || {
+grep -qE '(would symlink|symlinked) .*/claude' "$tmp/dry.out" || {
   echo "dry run did not create the claude symlink:" >&2
   cat "$tmp/dry.out" >&2
   exit 1
