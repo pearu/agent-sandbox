@@ -8,6 +8,19 @@ break compatibility.
 
 ### Added
 
+- `docs/recipes.md`: ordinary tools from inside the sandbox. Most things that
+  "don't work in the sandbox" are one of five boundary crossings -- egress,
+  credentials, loopback, paths, host config -- so the doc names the crossing
+  for each tool rather than only the fix, which is what lets someone solve a
+  tool it does not list. Covers finding out what is blocking you
+  (`blocked.log`, the briefing, the launch messages), `git` over the SSH broker,
+  the git-identity trap (`~/.gitconfig` is not bound), `gh` with a forwarded
+  token and what that costs, package indexes, dev servers and local services in
+  `strict` mode, extra paths, conda environments, and editors.
+- `probes/whats-running.sh`, plus the VS Code and startup-timing probes. The
+  first answers "is this session actually sandboxed?" by reading process
+  ancestry rather than by assurance, and is what the README and recipes point at
+  for checking an editor.
 - `install.sh` refuses to run through `sudo`, and says why. agent-sandbox is a
   **single-user tool**: the proxy is a systemd *user* unit, and the allowlist,
   trust store and launcher belong to one account, so there is nothing for a
