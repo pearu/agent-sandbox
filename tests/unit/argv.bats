@@ -39,7 +39,7 @@ setup() {
   [ "$(setenv_value USER)" = "tester" ]
   [ "$(setenv_value SSL_CERT_FILE)" = "/etc/ssl/certs/ca-certificates.crt" ]
   [ "$(setenv_value CONDA_SSL_VERIFY)" = "/etc/ssl/certs/ca-certificates.crt" ]
-  ! setenv_value LEAKED
+  run ! setenv_value LEAKED
   # HOME's binds come before the final remount-ro; the HOME tmpfs before them
   [ "$(argv_index --remount-ro)" -gt "$(argv_index "$H/home/.claude")" ]
   [ "$(argv_index "$H/home/.claude")" -gt "$(argv_index --tmpfs)" ]
@@ -60,15 +60,15 @@ setup() {
 @test "none: no network at all; open: host network without proxy; neither sets proxy or CA variables" {
   run_engine AGENT_SANDBOX_NET=none -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --share-net
-  ! setenv_value HTTPS_PROXY
-  ! setenv_value SSL_CERT_FILE
-  ! argv_has --ro-bind "$H/base/ca-bundle.crt"
+  run ! argv_has --share-net
+  run ! setenv_value HTTPS_PROXY
+  run ! setenv_value SSL_CERT_FILE
+  run ! argv_has --ro-bind "$H/base/ca-bundle.crt"
   run_engine AGENT_SANDBOX_NET=open -- claude --version
   [ "$status" -eq 0 ]
   argv_has --share-net
-  ! setenv_value HTTPS_PROXY
-  ! setenv_value SSL_CERT_FILE
+  run ! setenv_value HTTPS_PROXY
+  run ! setenv_value SSL_CERT_FILE
 }
 
 @test "environment allowlist: locale, profile, proxy/CA and CUDA names are forwarded only when set; FORWARD adds names; caller-set CA variables win" {
@@ -77,13 +77,13 @@ setup() {
   [ "$(setenv_value TZ)" = "UTC" ]
   [ "$(setenv_value ANTHROPIC_API_KEY)" = "k" ]
   [ "$(setenv_value CUDA_HOME)" = "/usr/local/cuda" ]
-  ! setenv_value AWS_SECRET_ACCESS_KEY
-  ! setenv_value GH_TOKEN
-  ! setenv_value TERM_PROGRAM
+  run ! setenv_value AWS_SECRET_ACCESS_KEY
+  run ! setenv_value GH_TOKEN
+  run ! setenv_value TERM_PROGRAM
   run_engine AGENT_SANDBOX_FORWARD="GH_TOKEN FOO:BAR" GH_TOKEN=y FOO="two words" -- claude --version
   [ "$(setenv_value GH_TOKEN)" = "y" ]
   [ "$(setenv_value FOO)" = "two words" ]
-  ! setenv_value BAR
+  run ! setenv_value BAR
   run_engine PIP_CERT=/my/ca SSL_CERT_FILE=/my/bundle -- claude --version
   [ "$(setenv_value PIP_CERT)" = "/my/ca" ]
   [ "$(setenv_value SSL_CERT_FILE)" = "/my/bundle" ]
@@ -97,8 +97,8 @@ setup() {
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/ro1" "$H/ro1"
   argv_has --bind "$H/rw1" "$H/rw1"
-  ! argv_has "$H/nope"
   [[ "$output" == *"skipping missing path"* ]]
+  run ! argv_has "$H/nope"
 }
 
 @test "conda: base bound read-only before the env; env read-only by default; write mode makes only the env rw, adds the sandbox package cache, CONDA_PKGS_DIRS, tmpfs ~/.conda and read-only rc files" {
@@ -110,13 +110,13 @@ setup() {
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$base" "$base"
   argv_has --ro-bind "$env" "$env"
-  ! argv_has --bind "$env" "$env"
+  run ! argv_has --bind "$env" "$env"
   [ "$(argv_index "$base")" -lt "$(argv_index "$env")" ]
   argv_has --tmpfs "$H/home/.conda"
   argv_has --ro-bind "$H/home/.condarc" "$H/home/.condarc"
   [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
   [ "$(setenv_value CONDA_DEFAULT_ENV)" = "myenv" ]
-  ! setenv_value CONDA_PKGS_DIRS
+  run ! setenv_value CONDA_PKGS_DIRS
   run_engine "${cenv[@]}" AGENT_SANDBOX_CONDA_WRITE=1 AGENT_SANDBOX_CONDA_PKGS="$H/pkgs" -- claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$base" "$base"
@@ -129,7 +129,6 @@ setup() {
 @test "CWD: \$HOME itself is not bound; /, a parent of \$HOME, and secret stores are refused" {
   RUN_CWD="$H/home" run_engine -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --bind "$H/home" "$H/home"
   [[ "$output" == *"CWD is \$HOME"* ]]
   RUN_CWD=/ run_engine -- claude --version
   [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
@@ -142,6 +141,7 @@ setup() {
   [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it is the sandbox's own control plane"* ]]
   RUN_CWD="$H/home/.config" run_engine -- claude --version # contains the trust store
   [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it contains"* ]] && [ ! -s "$H/argv" ]
+  run ! argv_has --bind "$H/home" "$H/home"
 }
 
 @test "RW into a secret store or a parent of HOME is refused before bwrap runs" {
@@ -172,7 +172,6 @@ STUB
   local pid start
   read -r pid start < <(sed -n '/owner.id$/{n;p}' "$H/probe")
   [ -n "$pid" ] && [ -n "$start" ] && [ "$start" != 0 ]
-  ! argv_has allow.txt
   # a per-session proxy token is minted and carried in the proxy URL as userinfo,
   # so the addon can scope --allow to this session (issue #5). The userinfo is
   # TOKEN:x, not TOKEN: an empty proxy password hangs Node's HTTP stack, so the
@@ -186,4 +185,5 @@ STUB
   [ "$(setenv_value HTTP_PROXY)" = "http://$tok:x@127.0.0.1:8888" ]
   [ -z "$(ls -A "$H/base")" ]
   [[ "$output" == *"session allowlist: pypi.org .example.org"* ]]
+  run ! argv_has allow.txt
 }

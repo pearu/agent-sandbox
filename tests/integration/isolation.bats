@@ -38,8 +38,10 @@ PROBE
   printf '{"display":"MY-PROMPT","project":"%s"}\n' "$IWORK" >>"$IHOME/.claude/history.jsonl"
 }
 
+# shellcheck disable=SC2120 # optional env overrides; the callers here pass none
 run_claude() {
   rm -f "$IWORK/report"
+  # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
   run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
     AGENT_SANDBOX_SESSION_BASE="$I/base" "$@" \

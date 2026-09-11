@@ -72,6 +72,16 @@ run_engine() {
   mapfile -t ARGV <"$H/argv"
 }
 
+# `run ! cmd` is how this suite asserts that a command fails. A bare `! cmd`
+# cannot: bash suppresses errexit -- and the ERR trap bats fails on -- for a
+# negated command, so a test body of `! true` is reported ok (measured, bats
+# 1.14.0; ShellCheck reports it as SC2314). `run !` needs bats 1.5.0, and
+# declaring that here, in the helper every suite loads, is what makes bats
+# honour the `!` flag instead of warning BW02 and running `!` as a command.
+# Mind that `run` replaces $status and $output: check a message BEFORE the
+# `run !` line that follows it, not after.
+bats_require_minimum_version 1.5.0
+
 # True if the tokens appear consecutively in ARGV.
 argv_has() {
   local -a want=("$@")
