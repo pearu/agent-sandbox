@@ -190,7 +190,11 @@ X
   # typing `claude` now reaches the engine, which is the only thing that matters
   [ "$(readlink -f "$H/.local/bin/claude")" = "$(readlink -f "$H/.local/share/agent-sandbox/app/agent-sandbox")" ]
   [ -e "$H/.local/bin/claude.pre-agent-sandbox" ]
-  grep -q 'resolves to the agent-sandbox engine' "$E/install-takeover.out"
+  # Not asserting "resolves to the agent-sandbox engine": this harness runs with
+  # a PATH that does not include the throwaway ~/.local/bin, so the installer
+  # rightly reports the command as not yet reachable. The readlink above is what
+  # proves the launcher is in place.
+  grep -q 'is not on your PATH' "$E/install-takeover.out"
   # and the manifest records it, so the undo is exact rather than inferred
   grep -q '^renamed' "$H/.local/share/agent-sandbox/install.manifest"
 
