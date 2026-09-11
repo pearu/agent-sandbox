@@ -902,6 +902,22 @@ fi
 # uninstall can undo exactly this and nothing else. See uninstall_plan_and_run.
 section "Launcher (\`<agent>\` on PATH -> agent-sandbox)"
 
+# preferred_dir_before STOP -- where to put the launcher. ~/.local/bin is the
+# conventional home for a user's commands, so prefer it whenever it qualifies;
+# "the first writable directory on PATH" alone is too arbitrary a target (it
+# could be /usr/local/bin, or whatever a script happened to prepend).
+preferred_dir_before() {
+  local stop=$1 d
+  local conventional="$HOME/.local/bin"
+  while read -r d; do
+    [[ "$d" == "$conventional" ]] && {
+      printf '%s' "$conventional"
+      return 0
+    }
+  done < <(writable_path_dirs_before "$stop")
+  writable_path_dirs_before "$stop" | head -n1
+}
+
 MANIFEST="$STATE_DIR/install.manifest"
 manifest_lines=()
 commands=()
@@ -956,7 +972,7 @@ for f in "${profiles[@]}"; do
       continue
     fi
     # 3. cannot rename: shadow it from earlier in PATH
-    target_dir="$(writable_path_dirs_before "$existing_dir" | head -n1)"
+    target_dir="$(preferred_dir_before "$existing_dir")"
     if [[ -z "$target_dir" ]]; then
       err "\`$cmd\` is at $existing, whose directory is not writable, and no writable directory
     on your PATH comes before it -- so the sandbox launcher cannot win.
@@ -967,16 +983,23 @@ for f in "${profiles[@]}"; do
     fi
     info "$existing is not writable; shadowing it from $target_dir (earlier on PATH)"
   else
-    # 4. nothing named $cmd on PATH: the agent is installed, the launcher is not
-    target_dir="$(writable_path_dirs_before "" | head -n1)"
-    if [[ -z "$target_dir" ]]; then
-      err "\`$cmd\` is not on your PATH and no PATH directory is writable, so there is nowhere
-    to put the launcher. Create one and put it first, for example:
-        mkdir -p $HOME/.local/bin
-        export PATH=\"\$HOME/.local/bin:\$PATH\"   # add this to your shell profile
-    then re-run this installer."
-    fi
+    # 4. nothing named $cmd on PATH: the agent is installed, the launcher is not.
+    # Use the conventional directory rather than whatever PATH lists first.
+    target_dir="$HOME/.local/bin"
     info "no \`$cmd\` on PATH; installing the launcher in $target_dir"
+    case ":$PATH:" in
+      *":$target_dir:"*) ;;
+      *)
+        warn "$target_dir is not on your PATH, so \`$cmd\` will not be found yet. Add it:"
+        info "    export PATH=\"\$HOME/.local/bin:\$PATH\"   # in your shell profile"
+        ;;
+    esac
+  fi
+  if ! mkdir -p -- "$target_dir" 2>/dev/null; then
+    err "cannot create $target_dir, so there is nowhere to put the \`$cmd\` launcher.
+    Create a writable directory, put it first on your PATH, and re-run:
+        mkdir -p $HOME/.local/bin
+        export PATH=\"\$HOME/.local/bin:\$PATH\"   # add this to your shell profile"
   fi
   link="$target_dir/$cmd"
   if is_legacy_wrapper "$link"; then
@@ -1001,7 +1024,6 @@ for f in "${profiles[@]}"; do
   fi
   # --dry-run still acts under $HOME (see Usage); a symlink is additive and
   # reversible, so it is made here as everything else under $HOME is.
-  mkdir -p -- "$target_dir"
   ln -sfn "$LAUNCH_TARGET" "$link"
   ok "symlinked $link -> $LAUNCH_TARGET"
   manifest_lines+=("launcher	$link	$(fingerprint "$link")")
