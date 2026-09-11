@@ -36,8 +36,10 @@ PROBE
 }
 
 # run_claude [ENV=val ...] : engine as claude, from IWORK, real bwrap, net=none
+# shellcheck disable=SC2120 # optional env overrides; the callers here pass none
 run_claude() {
   rm -f "$IWORK/report"
+  # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
   run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
     AGENT_SANDBOX_SESSION_BASE="$I/base" \

@@ -34,12 +34,12 @@ S
   rm -f "$SC/$(uname -m).bpf"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
-  ! argv_has --seccomp
   [ "$(cat "$H/argv.fd10")" = /dev/null ] # and the launcher still opens fd 10
   [[ "$output" == *"runs WITHOUT one"* ]]
   [[ "$output" == *"re-run install.sh"* || "$output" == *"Re-run install.sh"* ]]
   # ...and why it is not merely defence in depth on an installed host
   [[ "$output" == *"user namespaces"* ]]
+  run ! argv_has --seccomp
 }
 
 @test "explicitly on with no filter still refuses: asked for, so not silently weaker" {
@@ -75,7 +75,7 @@ S
   for v in off 0; do
     run_engine AGENT_SANDBOX_SECCOMP="$v" AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
     [ "$status" -eq 0 ]
-    ! argv_has --seccomp
+    run ! argv_has --seccomp
     [ "$(cat "$H/argv.fd10")" = /dev/null ]
   done
 }

@@ -52,11 +52,13 @@ pasta_argv() {
   grepd -- '-4 route show default'                               # the gateway is read INSIDE the netns
   grepd 'policy drop'                                            # the firewall drops by default
   grepd 'ip daddr %s tcp dport 8888 accept'                      # allows only the gateway proxy (filled in from $gw)
-  grepd 'pxy="http://\${auth:+\$auth@}\$gw:8888"'                # proxy URL built inside, gateway + optional per-session token
-  grepd 'setenv HTTPS_PROXY "\$pxy"'                             # proxy env points at that URL
-  ! grepd '10\.9\.9\.1'                                          # no gateway is baked in on the host side
-  ! grepd '10.0.2.2'                                             # not the old slirp gateway
-  [ ! -s "$H/argv" ]                                             # bwrap did not run directly; it went via pasta
+  # shellcheck disable=SC2016 # literal \$: these are patterns for the wrapper's own text
+  grepd 'pxy="http://\${auth:+\$auth@}\$gw:8888"' # proxy URL built inside, gateway + optional per-session token
+  # shellcheck disable=SC2016
+  grepd 'setenv HTTPS_PROXY "\$pxy"' # proxy env points at that URL
+  run ! grepd '10\.9\.9\.1'          # no gateway is baked in on the host side
+  run ! grepd '10.0.2.2'             # not the old slirp gateway
+  [ ! -s "$H/argv" ]                 # bwrap did not run directly; it went via pasta
 }
 
 @test "strict: --host-port/--agent-port, the knobs and a trusted [net] section open exactly those TCP ports in pasta; none closes a direction" {

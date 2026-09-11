@@ -55,8 +55,8 @@ STUB
   i="$(argv_index "$C/history.jsonl")"
   [[ "${ARGV[i - 1]}" == "$H/base"/session.*/iso/* ]]
   # nothing binds the host's own copies through
-  ! argv_has --bind "$C/file-history" "$C/file-history"
-  ! argv_has --bind "$C/history.jsonl" "$C/history.jsonl"
+  run ! argv_has --bind "$C/file-history" "$C/file-history"
+  run ! argv_has --bind "$C/history.jsonl" "$C/history.jsonl"
 }
 
 @test "canary: another session's file contents and plans are not in what the session gets" {
@@ -64,11 +64,9 @@ STUB
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   # what was bound over file-history/ and plans/ is empty of the other session
-  local iso
-  iso="$(echo "$H/base"/session.*/iso)" # (removed by cleanup; check via the copy-back instead)
   # the canary is still on the host, but nothing of it was ever staged:
-  ! grep -rq 'SECRET FROM ANOTHER PROJECT' "$H/base" 2>/dev/null
-  ! grep -rq 'another project plan' "$H/base" 2>/dev/null
+  run ! grep -rq 'SECRET FROM ANOTHER PROJECT' "$H/base" 2>/dev/null
+  run ! grep -rq 'another project plan' "$H/base" 2>/dev/null
   # ...and the host's copy is untouched by the session
   grep -q 'SECRET FROM ANOTHER PROJECT' "$C/file-history/OTHER-SESSION/deadbeef@v1"
 }
@@ -88,7 +86,7 @@ STUB
   local f
   f="$(echo "$H/staged"/*history.jsonl)"
   grep -q '"display":"mine"' "$f" # its own project's record is there
-  ! grep -q 'THEIRS' "$f"         # another project's is not
+  run ! grep -q 'THEIRS' "$f"     # another project's is not
 }
 
 @test "append-back: lines the session added reach the host file, the rest is not duplicated" {
@@ -129,7 +127,7 @@ STUB
   chmod +x "$H/bin/bwrap"
   run_engine -- claude --version
   [[ "$output" == *"was rewritten inside the sandbox"* ]]
-  ! grep -q 'REPLACED' "$C/history.jsonl"
+  run ! grep -q 'REPLACED' "$C/history.jsonl"
   [ "$(grep -c 'THEIRS' "$C/history.jsonl")" -eq 1 ] # host file intact
   [ "$(grep -c 'mine2' "$C/history.jsonl")" -eq 1 ]
 }
@@ -168,8 +166,8 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   argv_has --tmpfs "$C/daemon"
   # both of these exist to make Claude Code work from inside a sandbox, so
   # hiding them by default would break the feature they were created for
-  ! argv_has --tmpfs "$C/gh"
-  ! argv_has --tmpfs "$C/ide"
+  run ! argv_has --tmpfs "$C/gh"
+  run ! argv_has --tmpfs "$C/ide"
 }
 
 @test "[claude] hide blanks the named paths, but only from an approved dot-file" {
@@ -180,7 +178,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
-  ! argv_has --tmpfs "$C/gh"
+  run ! argv_has --tmpfs "$C/gh"
 
   trust_proj
   run_engine -- claude --version
@@ -197,8 +195,8 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   [ "$status" -eq 0 ]
   [[ "$output" == *"must be a relative path"* ]]
   [[ "$output" == *"unknown [claude] key"* ]]
-  ! argv_has --tmpfs /etc
-  ! grep -q '\.\./\.\./etc' "$H/argv"
+  run ! argv_has --tmpfs /etc
+  run ! grep -q '\.\./\.\./etc' "$H/argv"
   argv_has --tmpfs "$C/gh" # the valid entry on the same line still applies
 }
 
@@ -209,5 +207,5 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring unknown section [codex]"* ]]
-  ! argv_has --tmpfs "$C/gh"
+  run ! argv_has --tmpfs "$C/gh"
 }
