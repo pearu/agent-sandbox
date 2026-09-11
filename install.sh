@@ -2195,6 +2195,70 @@ preferred_dir_before() {
 
 MANIFEST="$STATE_DIR/install.manifest"
 manifest_lines=()
+
+# place_launcher DIR CMD -- put our launcher at DIR/CMD, deciding by what is
+# there already. Separate from CHOOSING the directory because the two questions
+# are independent: a launcher can occupy the target path without being on PATH
+# at all, and it still has to be moved aside rather than declined.
+place_launcher() {
+  local dir=$1 cmd=$2 link="$1/$2" backup
+  if is_our_launcher "$link"; then
+    if [[ "$(readlink -f "$link")" != "$LAUNCH_TARGET" ]]; then
+      ln -sfn "$LAUNCH_TARGET" "$link"
+      ok "re-pointed $link -> $LAUNCH_TARGET"
+    else
+      ok "$link already points at the engine"
+    fi
+    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+    return 0
+  fi
+  if is_legacy_wrapper "$link"; then
+    ln -sfn "$LAUNCH_TARGET" "$link"
+    ok "re-pointed $link from the legacy claude.sh wrapper -> $LAUNCH_TARGET"
+    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+    return 0
+  fi
+  if [[ -L "$link" && ! -e "$link" ]]; then
+    # A broken symlink runs nothing, so taking the name costs nobody anything.
+    ln -sfn "$LAUNCH_TARGET" "$link"
+    ok "replaced dangling symlink $link -> $LAUNCH_TARGET"
+    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+    return 0
+  fi
+  if [[ -e "$link" ]]; then
+    if [[ -x "$link" && -w "$dir" ]]; then
+      # A working launcher of someone else's: move it aside and take the name,
+      # so that typing the command reaches the sandbox. Keeping a copy is what
+      # makes this reversible.
+      backup="$link.pre-agent-sandbox"
+      if [[ -e "$backup" ]]; then
+        warn "$backup already exists, so $link is left untouched"
+        info "That backup is from an earlier install; overwriting it would destroy the only"
+        info "copy of your original $cmd. Decide which you want to keep, then re-run."
+        return 0
+      fi
+      if ((DRY_RUN)); then
+        info "(dry-run) would move $link -> $backup and symlink $link -> $LAUNCH_TARGET"
+        manifest_lines+=("renamed	$link	$backup	$(fingerprint "$link")")
+        return 0
+      fi
+      mv -- "$link" "$backup"
+      ln -sfn "$LAUNCH_TARGET" "$link"
+      ok "moved your $cmd aside to $backup and put the sandbox launcher in its place"
+      manifest_lines+=("renamed	$link	$backup	$(fingerprint "$backup")")
+      manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+      return 0
+    fi
+    warn "$link exists and is not our launcher (left untouched)"
+    info "It is not executable, or its directory is not writable, so we cannot take the name."
+    info "Remove it and re-run, or put a writable directory earlier on your PATH."
+    return 0
+  fi
+  ln -sfn "$LAUNCH_TARGET" "$link"
+  ok "symlinked $link -> $LAUNCH_TARGET"
+  manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+}
+
 commands=()
 for f in "${profiles[@]}"; do
   cmd=$(profile_query "$f" profile_command)
@@ -2202,66 +2266,31 @@ for f in "${profiles[@]}"; do
   existing="$(command -v "$cmd" 2>/dev/null || true)"
   # `command -v` is not a reliable executability test across users: as root it
   # can return a mode-644 file that nothing can actually run. Check explicitly,
-  # so the branch taken is the same for root and for everyone else -- and so a
-  # non-executable file named `claude` is treated as the junk it is, not as a
-  # launcher worth preserving.
+  # so the branch taken is the same for root and for everyone else.
   [[ -n "$existing" && ! -x "$existing" ]] && existing=""
-  target_dir=""
-  if [[ -n "$existing" ]] && is_our_launcher "$existing"; then
-    # 1. already ours
-    if [[ "$(readlink -f "$existing")" != "$LAUNCH_TARGET" ]]; then
-      ln -sfn "$LAUNCH_TARGET" "$existing"
-      ok "re-pointed $existing -> $LAUNCH_TARGET"
-    else
-      ok "$existing already points at the engine"
-    fi
-    manifest_lines+=("launcher	$existing	$(fingerprint "$existing")")
-    continue
-  fi
-  if [[ -n "$existing" ]] && is_legacy_wrapper "$existing"; then
-    ln -sfn "$LAUNCH_TARGET" "$existing"
-    ok "re-pointed $existing from the legacy claude.sh wrapper -> $LAUNCH_TARGET"
-    manifest_lines+=("launcher	$existing	$(fingerprint "$existing")")
-    continue
-  fi
+
+  # Choose the directory. Only this part cares about PATH.
   if [[ -n "$existing" ]]; then
     existing_dir="$(cd -- "$(dirname -- "$existing")" && pwd -P)"
     if [[ -w "$existing_dir" ]]; then
-      # 2. take its place, keeping a copy of what was there
-      backup="$existing.pre-agent-sandbox"
-      if [[ -e "$backup" ]]; then
-        warn "$backup already exists, so $existing is left untouched"
-        info "That backup is from an earlier install; overwriting it would destroy the only"
-        info "copy of your original $cmd. Decide which you want to keep, then re-run."
-        continue
-      fi
-      if ((DRY_RUN)); then
-        info "(dry-run) would move $existing -> $backup and symlink $existing -> $LAUNCH_TARGET"
-      else
-        mv -- "$existing" "$backup"
-        ln -sfn "$LAUNCH_TARGET" "$existing"
-        ok "moved your $cmd aside to $backup and put the sandbox launcher in its place"
-      fi
-      manifest_lines+=("renamed	$existing	$backup	$(fingerprint "$backup")")
-      manifest_lines+=("launcher	$existing	$(fingerprint "$existing")")
-      continue
-    fi
-    # 3. cannot rename: shadow it from earlier in PATH
-    target_dir="$(preferred_dir_before "$existing_dir")"
-    if [[ -z "$target_dir" ]]; then
-      err "\`$cmd\` is at $existing, whose directory is not writable, and no writable directory
+      target_dir="$existing_dir"
+    else
+      target_dir="$(preferred_dir_before "$existing_dir")"
+      if [[ -z "$target_dir" ]]; then
+        err "\`$cmd\` is at $existing, whose directory is not writable, and no writable directory
     on your PATH comes before it -- so the sandbox launcher cannot win.
     Create one and put it first, for example:
         mkdir -p $HOME/.local/bin
         export PATH=\"\$HOME/.local/bin:\$PATH\"   # add this to your shell profile
     then re-run this installer."
+      fi
+      info "$existing is not writable; shadowing it from $target_dir (earlier on PATH)"
     fi
-    info "$existing is not writable; shadowing it from $target_dir (earlier on PATH)"
   else
-    # 4. nothing named $cmd on PATH: the agent is installed, the launcher is not.
-    # Use the conventional directory rather than whatever PATH lists first.
+    # The conventional place, not whatever PATH happens to list first: a
+    # launcher in ~/.local/bin needing one PATH edit beats one installed
+    # somewhere surprising.
     target_dir="$HOME/.local/bin"
-    info "no \`$cmd\` on PATH; installing the launcher in $target_dir"
     case ":$PATH:" in
       *":$target_dir:"*) ;;
       *)
@@ -2276,32 +2305,7 @@ for f in "${profiles[@]}"; do
         mkdir -p $HOME/.local/bin
         export PATH=\"\$HOME/.local/bin:\$PATH\"   # add this to your shell profile"
   fi
-  link="$target_dir/$cmd"
-  if is_legacy_wrapper "$link"; then
-    ln -sfn "$LAUNCH_TARGET" "$link"
-    ok "re-pointed $link from the legacy claude.sh wrapper -> $LAUNCH_TARGET"
-    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
-    continue
-  fi
-  if [[ -L "$link" && ! -e "$link" ]]; then
-    # A broken symlink is not a working command, so nothing is lost by taking
-    # the name. command -v never found it, which is how it got this far.
-    ln -sfn "$LAUNCH_TARGET" "$link"
-    ok "replaced dangling symlink $link -> $LAUNCH_TARGET"
-    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
-    continue
-  fi
-  if [[ -e "$link" || -L "$link" ]] && ! is_our_launcher "$link"; then
-    warn "$link exists and is not our launcher (left untouched)"
-    info "It is not executable, so it is not what \`$cmd\` runs either. Remove it and re-run,"
-    info "or put the launcher in another writable PATH directory that comes first."
-    continue
-  fi
-  # --dry-run still acts under $HOME (see Usage); a symlink is additive and
-  # reversible, so it is made here as everything else under $HOME is.
-  ln -sfn "$LAUNCH_TARGET" "$link"
-  ok "symlinked $link -> $LAUNCH_TARGET"
-  manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+  place_launcher "$target_dir" "$cmd"
 done
 
 # The only check that matters: does typing the command now reach the engine? If
