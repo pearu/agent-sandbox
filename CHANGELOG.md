@@ -231,6 +231,14 @@ break compatibility.
 
 ### Fixed
 
+- The documentation said seccomp was opt-in / off by default; #28 had made it
+  on by default. Swept every statement -- README, `docs/design.md` (including
+  the residual-risk list, the trust surface, which had it flatly wrong), the
+  engine `--help`, `components/seccomp/README.md`, and two `install.sh` messages
+  the review missed -- to "on by default (`AGENT_SANDBOX_SECCOMP=off` disables
+  it)". A `tests/unit/docs.bats` guard now pins the engine, its `--help` and the
+  shipped docs to one another so the default cannot drift again silently. Found
+  by the adversarial review (finding F3).
 - `tests/unit/docs.bats` checked the whole table row for a `[section]`, so a
   markdown link in the last column could satisfy the search while the dot-file
   column said the setting did not exist. It now reads the dot-file column only,

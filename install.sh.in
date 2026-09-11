@@ -803,12 +803,12 @@ if [[ -f /usr/local/share/ca-certificates/mitmproxy.crt ]]; then
 fi
 
 # ----- 6b. seccomp filter: default-deny syscall profile, compiled for THIS host -----
-# Opt-in at launch with AGENT_SANDBOX_SECCOMP=on. Compiled here, on the host
+# On by default; AGENT_SANDBOX_SECCOMP=off disables it. Compiled here, on the host
 # that will run it, from Docker's default profile (moby/profiles, Apache-2.0) as
 # for a container with no capabilities (components/seccomp/README.md), using
 # pyseccomp in the proxy's private Python env against this host's libseccomp. So
 # nothing binary ships and the blob matches the libseccomp that interprets it.
-section "seccomp filter (opt-in at launch)"
+section "seccomp filter (on by default)"
 SECCOMP_DIR="$STATE_DIR/seccomp"
 mkdir -p "$SECCOMP_DIR"
 cat >"$SECCOMP_DIR/gen-seccomp.py" <<'GENSC_EOF'
@@ -832,10 +832,10 @@ else
     SC_PY="$PROXY_CONDA/bin/python"
   fi
   if [[ -n "$SC_PY" ]] && "$SC_PY" "$SECCOMP_DIR/gen-seccomp.py" "$SECCOMP_DIR/moby-default.json" "$SC_ARCH" "$SECCOMP_DIR/$SC_ARCH.bpf" 2>"$SECCOMP_DIR/gen.log"; then
-    ok "compiled $SECCOMP_DIR/$SC_ARCH.bpf ($(wc -c <"$SECCOMP_DIR/$SC_ARCH.bpf") bytes); enable with AGENT_SANDBOX_SECCOMP=on"
+    ok "compiled $SECCOMP_DIR/$SC_ARCH.bpf ($(wc -c <"$SECCOMP_DIR/$SC_ARCH.bpf") bytes); on by default (AGENT_SANDBOX_SECCOMP=off disables it)"
   else
     rm -f "$SECCOMP_DIR/$SC_ARCH.bpf"
-    info "seccomp filter NOT compiled (needs libseccomp2 and pyseccomp in the proxy env; see $SECCOMP_DIR/gen.log). AGENT_SANDBOX_SECCOMP=on will refuse until install.sh is re-run."
+    info "seccomp filter NOT compiled (needs libseccomp2 and pyseccomp in the proxy env; see $SECCOMP_DIR/gen.log). Sessions will WARN and run WITHOUT it until install.sh is re-run; AGENT_SANDBOX_SECCOMP=on refuses instead, =off silences the warning."
   fi
 fi
 

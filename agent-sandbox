@@ -302,7 +302,7 @@ Environment knobs:
   AGENT_SANDBOX_RO=/a:/b        extra read-only paths
   AGENT_SANDBOX_RW=/c           extra read-write paths
   AGENT_SANDBOX_FORWARD="A B"   extra environment variables to forward
-  AGENT_SANDBOX_SECCOMP=on|off  default-deny seccomp syscall filter (default: off)
+  AGENT_SANDBOX_SECCOMP=on|off  default-deny seccomp syscall filter (default: on)
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
