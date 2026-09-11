@@ -96,6 +96,21 @@ Sections:
   `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
   be injected; `briefing.md` stays bound and readable either way.
+- **`[claude]`** — key/value lines, read by the `claude` profile rather than by
+  the engine (a section named after the active profile; a `[codex]` section in
+  a claude run is an unknown section and does nothing). `hide = <paths>` is a
+  space-separated list of paths under `~/.claude` to blank inside the sandbox,
+  on top of the cross-session state the sandbox already replaces per launch.
+  Each is relative to `~/.claude`; an absolute path or one containing `..` is
+  refused. The directory is bound read-write because the agent needs its own
+  state, so this is how you keep a particular thing in it out of reach:
+  `hide = gh` if you put a GitHub token there and do not want this project's
+  agent using it, `hide = todos statsig` for state you would rather not share.
+  Hiding something the agent needs breaks that feature — which is the point of
+  the default being short. `daemon` is hidden already (the background
+  supervisor's control key and its roster of other sessions, a cross-session
+  channel rather than this session's state); `gh` and `ide` are deliberately
+  **not**, because both exist to let Claude Code work from inside a sandbox.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

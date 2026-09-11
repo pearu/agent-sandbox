@@ -379,6 +379,19 @@ profile_isolate() {
     # appended back -- the log stays complete on the host.
     "append	$c/responses.log"
     "append	$c/alerts.log"
+    # Not the agent's own state, despite living in its directory: daemon/ holds
+    # the background supervisor's control key and a roster of other sessions'
+    # ids, pids and sockets. A sandboxed session has no use for it -- those
+    # sockets live under /tmp, which is a fresh tmpfs inside, so the key has
+    # nothing to talk to -- and it is a cross-session control channel, which is
+    # the one thing isolation exists to prevent.
+    #
+    # gh/ and ide/ are deliberately NOT here. Both exist to make Claude Code
+    # work from inside a sandbox: gh/ is a GH_CONFIG_DIR that lives in a bound
+    # directory because ~/.config/gh is not one, and ide/ carries the lockfiles
+    # an editor connects through. Hiding either would break the feature it was
+    # created for. Use [claude] hide if you want them gone.
+    "tmpfs	$c/daemon"
     # Nothing below needs to outlive the session: a probe established that a
     # session starts, and a resume completes, with the whole set blanked.
     "tmpfs	$c/session-env"
@@ -388,6 +401,38 @@ profile_isolate() {
     "tmpfs	$c/debug"
     "tmpfs	$c/paste-cache"
   )
+
+  # [claude] hide = a b c -- extra paths under the state directory to blank.
+  # ~/.claude is bound read-write and is a catch-all: Claude Code keeps its own
+  # state there, and so does anything a user puts there (a GH_CONFIG_DIR, say).
+  # The engine cannot know which of those hold secrets, so the user says.
+  # Additive to the list above, and only from an approved dot-file.
+  #
+  # profile_dotfile is set by the engine from the [claude] section, reached here
+  # by dynamic scope like $cwd in profile_memory_scope.
+  # shellcheck disable=SC2154
+  local -a _opts=(${profile_dotfile[@]+"${profile_dotfile[@]}"})
+  local kv key val name
+  for kv in ${_opts[@]+"${_opts[@]}"}; do
+    key="${kv%%=*}"
+    val="${kv#*=}"
+    case "$key" in
+      hide)
+        # Word-splitting $val is the point: the value is a space-separated list.
+        # shellcheck disable=SC2086
+        for name in $val; do
+          case "$name" in
+            /* | *..*)
+              _as_msg ".agent-sandbox: [claude] hide: ignoring \"$name\" (must be a relative path under the state dir)"
+              continue
+              ;;
+          esac
+          profile_isolate_spec+=("tmpfs	$c/$name")
+        done
+        ;;
+      *) _as_msg ".agent-sandbox: ignoring unknown [claude] key \"$key\"" ;;
+    esac
+  done
 }
 
 # profile_fallback_hint -- engine hook, printed when the sandbox cannot start.

@@ -1142,6 +1142,7 @@ _as_dotfile_parse() {
       section="${section//[[:space:]]/}"
       case "$section" in
         allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        "$profile") ;; # a section named after the active profile; see below
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
@@ -1194,6 +1195,19 @@ _as_dotfile_parse() {
             mode) _df_seccomp_mode="$cv" ;;
             *) _as_msg ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
           esac
+        fi
+        ;;
+      "$profile")
+        # A section named after the ACTIVE profile. The engine does not
+        # interpret these: it collects the pairs and hands them to the profile,
+        # which is the only thing that knows what its agent keeps where. See
+        # docs/profiles.md. A dot-file naming a different profile's section is
+        # ignored as unknown, so [codex] in a claude run says nothing.
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [$profile] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          _df_profile_kv+=("$ck=$cv")
         fi
         ;;
       briefing)
@@ -1782,6 +1796,7 @@ agent_sandbox() (
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode=""
+  local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   if [[ -f "$_dotfile" ]]; then
@@ -2062,6 +2077,9 @@ agent_sandbox() (
   # above for the same reason they come after the state binds -- these layer on
   # top of a directory that is already in place.
   if declare -F profile_isolate >/dev/null; then
+    # Only from an APPROVED dot-file: _df_profile_kv is empty unless the trust
+    # gate honoured the file, so an unapproved [claude] section grants nothing.
+    local -a profile_dotfile=("${_df_profile_kv[@]}")
     profile_isolate || return 1
     _as_iso_prepare || return 1
   fi

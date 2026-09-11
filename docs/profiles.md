@@ -35,6 +35,23 @@ What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
 `AGENT_SANDBOX_PROFILE_DIR`, and `_as_msg` for prefixed stderr messages.
 
+### A dot-file section named after the profile
+
+A project's `.agent-sandbox` may carry a section named after the **active**
+profile — `[claude]` in a claude run. The engine does not interpret those
+lines: it checks they are `key = value`, collects them, and hands them to the
+profile in `profile_dotfile` (a `key=value` array) for the duration of
+`profile_isolate()`. A section naming a different profile is an unknown
+section, ignored with a warning, so a `[codex]` block says nothing in a claude
+run.
+
+This exists because only a profile knows what its agent keeps where. Validate
+the keys in the profile and warn on ones you do not know — a typo must not
+silently do nothing. The pairs reach you **only from an approved dot-file**, so
+an unreviewed file grants nothing; the trust gate is the engine's, not yours.
+`profiles/claude.sh` uses it for one key, `hide`
+([config.md](config.md#the-file)).
+
 A profile must **not** touch the engine's bwrap argument list. The declarations
 above are the whole interface, so that the sandbox's isolation guarantees stay
 reviewable in one place, the engine.
