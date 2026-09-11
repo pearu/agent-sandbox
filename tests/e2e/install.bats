@@ -96,6 +96,40 @@ teardown_file() {
   grep -q $'\texample.com\tCONNECT\t-$' "$H/.config/agent-sandbox/blocked.log"
 }
 
+@test "F1: the proxy gates the real destination, not a spoofed Host header, and refuses non-public addresses" {
+  ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
+  local allow="$H/.config/agent-sandbox/allowlist.txt"
+  local blog="$H/.config/agent-sandbox/blocked.log"
+
+  # a throwaway loopback "host service" the sandbox must never reach through the proxy
+  python3 -m http.server 8099 --bind 127.0.0.1 >"$E/f1-listener.log" 2>&1 &
+  local listener=$!
+  # allowlist a public host to spoof, and 127.0.0.1 so the destination gate (not
+  # the name gate) is what must refuse the loopback dial
+  printf 'spoof.example
+127.0.0.1
+' >>"$allow"
+  # give the listener a moment
+  for _ in $(seq 1 25); do
+    (echo >/dev/tcp/127.0.0.1/8099) 2>/dev/null && break
+    sleep 0.2
+  done
+
+  # (a) Host-header spoof: allowlisted Host, real destination 127.0.0.1 -> refused
+  run curl -sS --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null -w '%{http_code}' -H 'Host: spoof.example' http://127.0.0.1:8099/SECRET
+  [[ "$output" != 200 ]]
+  # (b) destination gate: 127.0.0.1 is allowlisted by name yet must be refused as non-public
+  run curl -sS --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/DIRECT
+  [[ "$output" != 200 ]]
+
+  kill "$listener" 2>/dev/null || true
+  # the loopback listener must have received NOTHING through the proxy
+  run grep -c 'GET /' "$E/f1-listener.log"
+  [ "$output" -eq 0 ]
+  # and the refusals are recorded
+  grep -q $'\t127.0.0.1\t' "$blog"
+}
+
 @test "the launcher runs the fake agent sandboxed: proxy variables set, TLS verified by the bound CA, allowed host reached, others refused and logged" {
   ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
   run launch env

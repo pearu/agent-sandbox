@@ -8,6 +8,26 @@ break compatibility.
 
 ### Fixed
 
+- **The egress allowlist could be bypassed for plain HTTP with a spoofed `Host`
+  header, and could be pointed at host-local services.** The addon decided on
+  `pretty_host`, which returns the `Host` header, while mitmproxy connects to
+  the request-line authority: `GET http://<any-dest>/` with `Host: <allowlisted>`
+  reached `<any-dest>` -- any external host, the LAN, or cloud metadata --
+  through the proxy, unlogged. Verified reproduced against the shipped mitmproxy
+  12.2.2. The request hook now gates `request.host`, the address actually dialed
+  (`http_connect` already did). Separately, the allowlist gates a destination's
+  *name* but never the address it resolves to, so an allowlisted name that
+  resolves to a non-public address (`localhost`, or a public name under DNS
+  rebinding) reached host-local services; a new `server_connect` hook refuses to
+  dial any destination that resolves to a loopback, private, link-local or other
+  non-public address, before the socket opens, whatever the allowlist says about
+  its name. Both are covered by unit tests (stubbed mitmproxy, mutation-checked)
+  and an end-to-end test against the real installed proxy; the residual zero-TTL
+  rebinding race is documented in `docs/design.md`. (Adversarial-review finding
+  F1, refined by measurement: the reviewer's literal-IP framing did not
+  reproduce -- literal IPs are not on the allowlist, so they were already
+  refused -- but the `Host`-header and resolved-address paths did.)
+
 - Two documented lists had fallen behind the code, both of them the kind a
   reader checks a claim against. `docs/profiles.md`'s contract table says "the
   declarations above are the whole interface" and was missing four hooks the

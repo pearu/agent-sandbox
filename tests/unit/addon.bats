@@ -132,3 +132,47 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   run drive responseheaders application/octet-stream
   [[ "$output" == "stream=True" ]]
 }
+
+@test "the destination gate uses the request-line host, not a spoofable Host header (F1)" {
+  # `GET http://<dest>/` with `Host: <allowlisted>` must be judged on <dest>,
+  # the address mitmproxy actually dials, not the Host header. api.github.com is
+  # allowlisted (see setup); evil.example is not.
+  run drive request_spoof evil.example api.github.com
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"blocked=True"* ]] # judged on the real destination
+  run drive request_spoof api.github.com evil.example
+  [[ "$output" == *"blocked=False"* ]] # allowlisted real destination passes
+}
+
+@test "_addr_is_public: public routable yes; loopback, private, link-local, ULA no" {
+  run drive public 93.184.216.34 8.8.8.8 2606:4700:4700::1111
+  [[ "$output" == *"93.184.216.34=True"* ]]
+  [[ "$output" == *"8.8.8.8=True"* ]]
+  [[ "$output" == *"2606:4700:4700::1111=True"* ]]
+  run drive public 127.0.0.1 10.0.0.1 192.168.1.1 169.254.169.254 ::1 fd00::1 0.0.0.0
+  local ip
+  for ip in 127.0.0.1 10.0.0.1 192.168.1.1 169.254.169.254 ::1 fd00::1 0.0.0.0; do
+    [[ "$output" == *"$ip=False"* ]]
+  done
+}
+
+@test "server_connect refuses a non-public destination and passes a public one (F1)" {
+  # literal IPs: no DNS needed
+  run drive server_connect 127.0.0.1 9099
+  [[ "$output" == *"aborted=True"* ]]
+  run drive server_connect 169.254.169.254 80 # cloud metadata
+  [[ "$output" == *"aborted=True"* ]]
+  run drive server_connect 93.184.216.34 443 # public
+  [[ "$output" == *"aborted=False"* ]]
+}
+
+@test "server_connect refuses an allowlisted NAME that resolves to a private address (DNS rebinding)" {
+  # the name gate would allow it; the destination gate resolves and refuses.
+  run drive server_connect_resolve rebind.example 127.0.0.1
+  [[ "$output" == *"aborted=True"* ]]
+  run drive server_connect_resolve legit.example 93.184.216.34
+  [[ "$output" == *"aborted=False"* ]]
+  # a name resolving to BOTH public and private is refused (any bad answer loses)
+  run drive server_connect_resolve mixed.example 93.184.216.34 127.0.0.1
+  [[ "$output" == *"aborted=True"* ]]
+}

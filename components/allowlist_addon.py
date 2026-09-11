@@ -32,6 +32,14 @@ allowlist.txt still applies to everyone.
 No restart needed when editing the allowlist; the file is re-read on
 each request.
 
+The allowlist decides on the destination the proxy actually dials, not on a
+client-supplied Host header: `GET http://<dest>/` with `Host: <allowlisted>`
+is judged on <dest>. And because the proxy runs on the host, a destination that
+resolves to a non-public address -- loopback, a private LAN, link-local (cloud
+metadata) -- is refused before the socket opens, even if its NAME is on the
+allowlist (an allowlisted name that resolves to loopback, or a public name under
+DNS rebinding, would otherwise reach a host-local service). See `server_connect`.
+
 HTTPS is refused at the CONNECT stage for hosts not in the allowlist, so a
 blocked host never sees a connection from this machine (mitmproxy would
 otherwise open a TCP+TLS connection to it, to mirror its certificate, before
@@ -52,8 +60,10 @@ from __future__ import annotations
 
 import base64
 import datetime
+import ipaddress
 import logging
 import os
+import socket
 from pathlib import Path
 
 from mitmproxy import http
@@ -183,6 +193,47 @@ def _is_allowed(host: str, exact: set[str], suffix: list[str]) -> bool:
     return any(host.endswith(s) for s in suffix)
 
 
+def _addr_is_public(ip: str) -> bool:
+    """True iff `ip` is a globally routable address. Loopback, private, link-local,
+    unique-local, unspecified, multicast and reserved ranges are all non-public."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.is_global
+
+
+def _forbidden_destination(host: str) -> str | None:
+    """A reason string if connecting to `host` would reach a non-public address,
+    else None.
+
+    The proxy runs on the host, so a destination that resolves to loopback,
+    a private LAN, link-local (cloud metadata at 169.254.169.254) or the like is
+    never a legitimate allowlist target -- yet the allowlist gates the NAME, so an
+    allowlisted name that resolves to such an address (localhost, or a public name
+    under DNS rebinding) would otherwise reach a host-local service. This is the
+    destination-IP check the name gate cannot do.
+
+    A resolution failure returns None (not forbidden): there is nothing to reach,
+    and mitmproxy's own connect will fail it. Only an address that resolves and is
+    non-public is refused.
+    """
+    try:
+        ipaddress.ip_address(host)  # already a literal IP?
+        candidates = [host]
+    except ValueError:
+        try:
+            candidates = [ai[4][0] for ai in socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)]
+        except OSError:
+            return None
+    for ip in candidates:
+        if not _addr_is_public(ip):
+            return f"{ip} (from {host})" if ip != host else ip
+    return None
+
+
 def _log_blocked(host: str, method: str, path: str) -> None:
     BLOCKED_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().isoformat(timespec="seconds")
@@ -191,7 +242,12 @@ def _log_blocked(host: str, method: str, path: str) -> None:
 
 
 def request(flow: http.HTTPFlow) -> None:
-    host = flow.request.pretty_host
+    # flow.request.host is the request-line authority -- where mitmproxy actually
+    # opens the connection. pretty_host would return the Host HEADER instead, and
+    # a client can send any Host header it likes: `GET http://dest/` with
+    # `Host: <allowlisted>` made pretty_host allowlisted while the connection went
+    # to dest, bypassing egress entirely for plain HTTP. Gate the connect target.
+    host = flow.request.host
     token = _token_from(flow)
     if token is None:  # inner request of an HTTPS tunnel: inherit the CONNECT's token
         cid = getattr(getattr(flow, "client_conn", None), "id", None)
@@ -235,6 +291,26 @@ def http_connect(flow: http.HTTPFlow) -> None:
         f"agent-sandbox: host {host!r} is not in the allowlist.\n".encode(),
         {"Content-Type": "text/plain; charset=utf-8"},
     )
+
+
+def server_connect(data) -> None:
+    """Refuse to dial any destination that resolves to a non-public address,
+    whatever the allowlist says about its name. Fires once per upstream
+    connection, before the socket is opened; setting data.server.error aborts it
+    (mitmproxy checks .error immediately after this hook). This is the backstop
+    the per-request name check cannot be: it sees the address actually dialed."""
+    server = getattr(data, "server", None)
+    address = getattr(server, "address", None)
+    if not address:
+        return
+    host = address[0]
+    reason = _forbidden_destination(host)
+    if reason:
+        _log_blocked(host, "DEST", reason)
+        server.error = (
+            f"agent-sandbox: refused connection to a non-public address ({reason}). "
+            f"The proxy only reaches public hosts on the allowlist."
+        )
 
 
 def responseheaders(flow: http.HTTPFlow) -> None:
