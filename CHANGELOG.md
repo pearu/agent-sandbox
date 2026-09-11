@@ -8,6 +8,18 @@ break compatibility.
 
 ### Added
 
+- `install.sh --uninstall` (issue #22). It shows exactly what it will touch and
+  asks before touching it (`--dry-run` only prints, `--yes` skips the question).
+  It **repoints** `~/.local/bin/claude` at the agent's own binary rather than
+  deleting it -- the symlink is the engine, so removing it would leave no
+  `claude` on PATH, the dead end the previous entry exists for. It stops and
+  removes the proxy unit, deletes `~/.local/share/agent-sandbox`, keeps
+  `~/.config/agent-sandbox` (your allowlist and trust approvals) unless
+  `--purge-config`, and never touches the agent, `~/.mitmproxy`, or the
+  AppArmor profiles, printing the command for those instead. Anything it did
+  not create is left alone and reported, and if the agent's own binary is
+  missing it refuses to repoint into nothing and says the launcher is now
+  broken.
 - An emergency exit is documented, and pointed at from the engine. The
   launcher on `PATH` is the engine itself, so a sandbox that will not start
   leaves no working agent to repair it with. `docs/troubleshooting.md` opens

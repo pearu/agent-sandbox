@@ -18,6 +18,14 @@
 #   ./install.sh --dry-run    no sudo, no systemctl, no environment creation;
 #                             everything else runs against $HOME (CI uses this
 #                             with a throwaway HOME)
+#   ./install.sh --uninstall  undo an install: stop and remove the proxy unit,
+#                             point the launcher back at the agent's own binary,
+#                             and remove agent-sandbox's state. Shows the plan
+#                             and asks before touching anything (-y skips the
+#                             question, --dry-run only prints). Your allowlist
+#                             and trust approvals are KEPT unless
+#                             --purge-config. The AppArmor profiles and the
+#                             agent itself are never touched.
 #   ./install.sh --dev        point the launcher at THIS checkout (a symlink)
 #                             instead of installing a copy; for developing
 #                             agent-sandbox. Edits to the checked-out engine or
@@ -34,10 +42,16 @@ set -euo pipefail
 
 DRY_RUN=0
 DEV=0
+UNINSTALL=0
+PURGE_CONFIG=0
+ASSUME_YES=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --dev) DEV=1 ;;
+    --uninstall) UNINSTALL=1 ;;
+    --purge-config) PURGE_CONFIG=1 ;;
+    --yes | -y) ASSUME_YES=1 ;;
     -h | --help)
       sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'
       exit 0
@@ -125,6 +139,119 @@ profile_probe_bin() { # $1 = profile file; prints "ok <version> <path>" or "miss
   )
 }
 
+# ----- uninstall -----
+# Reverses what this installer does, and nothing else. Two rules shape it.
+#
+# It never removes what it did not create: a launcher that is not a symlink to
+# the engine is left alone, an absent path is reported rather than forced.
+#
+# And it REPOINTS the launcher rather than deleting it. ~/.local/bin/claude is
+# a symlink to the engine, so removing it would leave no `claude` on PATH at
+# all -- the same dead end docs/troubleshooting.md exists for. The agent's own
+# binary is still there, untouched, so the launcher goes back to pointing at it.
+uninstall_plan_and_run() {
+  local purge_config="${1:-0}" assume_yes="${2:-0}"
+  section "Uninstall"
+
+  # ---- what is actually here ----
+  local -a to_remove=()
+  local unit="$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
+  local unit_present=0
+  [[ -f "$unit" ]] && unit_present=1
+  [[ -d "$STATE_DIR" ]] && to_remove+=("$STATE_DIR")
+  ((purge_config)) && [[ -d "$CONFIG_DIR" ]] && to_remove+=("$CONFIG_DIR")
+
+  # launcher symlinks that point at an engine (this install's, or another's)
+  local -a relink_cmd=() relink_to=() leave_alone=() dangling=()
+  local f cmd link target probe
+  for f in "$SCRIPT_DIR"/profiles/*.sh; do
+    [[ -e "$f" ]] || continue
+    cmd="$(profile_query "$f" profile_command)"
+    link="$BIN_DIR/$cmd"
+    [[ -L "$link" ]] || {
+      [[ -e "$link" ]] && leave_alone+=("$link (not a symlink)")
+      continue
+    }
+    target="$(readlink -f "$link" 2>/dev/null || true)"
+    if [[ "$(basename -- "$target")" != agent-sandbox ]]; then
+      leave_alone+=("$link -> $target (not agent-sandbox)")
+      continue
+    fi
+    probe="$(profile_probe_bin "$f" || true)"
+    if [[ "$probe" == ok\ * ]]; then
+      relink_cmd+=("$link")
+      relink_to+=("$(printf '%s' "$probe" | cut -d' ' -f3-)")
+    else
+      # Removing the state dir will leave this symlink dangling, and there is
+      # nothing to repoint it at. Say so at the end, where it will be read.
+      leave_alone+=("$link (the engine, but $cmd's own binary was not found: ${probe#missing })")
+      dangling+=("$link")
+    fi
+  done
+
+  # ---- say what will happen, before anything happens ----
+  ((unit_present)) && info "stop, disable and remove $unit"
+  local i
+  for ((i = 0; i < ${#relink_cmd[@]}; i++)); do
+    info "repoint ${relink_cmd[i]} -> ${relink_to[i]}"
+  done
+  local p
+  for p in "${to_remove[@]}"; do info "remove $p"; done
+  for p in "${leave_alone[@]}"; do warn "leave alone: $p"; done
+  ((purge_config)) || [[ -d "$CONFIG_DIR" ]] \
+    && info "keep $CONFIG_DIR (your allowlist and trust approvals; --purge-config removes it)"
+  [[ -d "$HOME/.mitmproxy" ]] \
+    && info "keep ~/.mitmproxy (mitmproxy's own CA, not ours to delete)"
+  local aa=""
+  [[ -e /etc/apparmor.d/bwrap ]] && aa="/etc/apparmor.d/bwrap"
+  [[ -e /etc/apparmor.d/pasta ]] && aa="${aa:+$aa }/etc/apparmor.d/pasta"
+  [[ -n "$aa" ]] && {
+    info "keep the AppArmor profile(s): $aa"
+    info "  they let bwrap/pasta use user namespaces on Ubuntu 24.04+, are harmless, and other"
+    info "  tools may rely on them now. To remove: sudo rm $aa && sudo systemctl reload apparmor"
+  }
+
+  if ((DRY_RUN)); then
+    ok "(dry-run) nothing was changed"
+    return 0
+  fi
+  if ((! assume_yes)); then
+    printf '\n    Proceed? [y/N] '
+    local answer=""
+    read -r answer </dev/tty || true
+    [[ "$answer" == [yY]* ]] || {
+      warn "cancelled; nothing was changed"
+      return 0
+    }
+  fi
+
+  # ---- do it ----
+  if ((unit_present)); then
+    run_sys systemctl --user disable --now agent-sandbox-mitmproxy.service || true
+    rm -f "$unit"
+    run_sys systemctl --user daemon-reload || true
+    ok "removed $unit"
+  fi
+  for ((i = 0; i < ${#relink_cmd[@]}; i++)); do
+    ln -sfn "${relink_to[i]}" "${relink_cmd[i]}"
+    ok "repointed ${relink_cmd[i]} -> ${relink_to[i]}"
+  done
+  for p in "${to_remove[@]}"; do
+    rm -rf -- "$p"
+    ok "removed $p"
+  done
+  section "Done"
+  info "agent-sandbox is gone; the agent itself was not touched."
+  local dl
+  for dl in "${dangling[@]}"; do
+    warn "$dl still points at the engine that was just removed, so it is now a broken link:"
+    warn "  the agent's own binary was not found, so there was nothing to point it back at."
+    warn "  Reinstall the agent, then: ln -sfn <its binary> $dl"
+  done
+  ((purge_config)) || [[ ! -d "$CONFIG_DIR" ]] \
+    || info "$CONFIG_DIR kept. A later install reuses your allowlist and trust approvals."
+}
+
 # ----- 1. sanity: find (or fetch) the engine and the profiles -----
 section "Sanity check"
 ((DRY_RUN)) && info "dry run: nothing privileged, no systemctl, no environment creation"
@@ -160,6 +287,15 @@ ok "profiles: $(for f in "${profiles[@]}"; do basename -- "${f%.sh}"; done | tr 
 # instead points the launcher straight at the checkout, convenient when working
 # ON agent-sandbox, at the cost that edits there (including any a sandboxed agent
 # makes to a checkout it has as CWD) run on the host at the next launch.
+# Uninstall runs here: the engine and profiles have been located (their list is
+# what says which launcher names to repoint), and nothing has been installed
+# yet -- placing this after the copy below would install the engine and then
+# delete it, which a --dry-run made embarrassingly visible.
+if ((UNINSTALL)); then
+  uninstall_plan_and_run "$PURGE_CONFIG" "$ASSUME_YES"
+  exit 0
+fi
+
 APP_DIR="$STATE_DIR/app"
 if ((DEV)); then
   LAUNCH_TARGET="$ENGINE"

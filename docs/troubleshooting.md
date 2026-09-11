@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## Removing agent-sandbox
+
+```
+./install.sh --uninstall            # shows the plan, then asks
+./install.sh --uninstall --dry-run  # shows the plan and stops
+```
+
+It stops and removes the proxy's systemd unit, deletes
+`~/.local/share/agent-sandbox` (engine copy, proxy runtime, compiled seccomp
+filter), and **repoints** `~/.local/bin/claude` at the agent's own binary under
+`~/.local/share/claude/versions/` — deleting that symlink would leave no
+`claude` on your PATH at all.
+
+Kept unless you say otherwise: `~/.config/agent-sandbox`, which holds your
+allowlist and your `--trust` approvals, so a later install picks up where you
+left off (`--purge-config` removes it). Never touched: the agent itself,
+`~/.mitmproxy` (mitmproxy's own CA), and the AppArmor profiles for `bwrap` and
+`pasta` — they grant a permission Ubuntu 24.04+ withholds, they are harmless,
+and other tools may rely on them by now. The plan prints the command to remove
+those by hand.
+
+Anything the installer did not create is left alone and reported: a launcher
+that is not a symlink to the engine, for instance, is never rewritten.
+
 ## The sandbox will not start
 
 The launcher on your `PATH` **is** agent-sandbox: `~/.local/bin/claude` is a

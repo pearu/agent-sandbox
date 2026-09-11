@@ -139,3 +139,89 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   grep -q "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-env/bin/mitmdump" \
     "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
 }
+
+# ---- --uninstall (issue #22) ----------------------------------------------
+# The launcher is a symlink to the engine, so a careless uninstall leaves no
+# `claude` on PATH at all. These pin the two rules: repoint rather than delete,
+# and never touch what the installer did not create.
+
+uninst() { # uninst [extra args...] -- a real (not dry) uninstall, no prompt
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin \
+    "$REPO_ROOT/install.sh" --uninstall --yes "$@"
+}
+
+# a HOME that looks like a completed install
+fake_install() {
+  mkdir -p "$T/home/.local/bin" "$T/home/.local/share/agent-sandbox/app" \
+    "$T/home/.local/share/claude/versions" "$T/home/.config/agent-sandbox/trust" \
+    "$T/home/.config/systemd/user"
+  printf '#!/bin/sh\necho real-claude\n' >"$T/home/.local/share/claude/versions/9.9.9"
+  chmod +x "$T/home/.local/share/claude/versions/9.9.9"
+  cp "$REPO_ROOT/agent-sandbox" "$T/home/.local/share/agent-sandbox/app/agent-sandbox"
+  ln -sfn "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$T/home/.local/bin/claude"
+  printf 'example.com\n' >"$T/home/.config/agent-sandbox/allowlist.txt"
+  : >"$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
+}
+
+@test "--uninstall: the launcher is repointed at the agent's own binary, not deleted" {
+  fake_install
+  uninst
+  [ "$status" -eq 0 ]
+  [ -L "$T/home/.local/bin/claude" ]
+  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
+  [ "$("$T/home/.local/bin/claude")" = "real-claude" ] # still a working agent
+  [ ! -d "$T/home/.local/share/agent-sandbox" ]        # engine and proxy runtime gone
+  [ ! -f "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
+}
+
+@test "--uninstall keeps your allowlist and trust store; --purge-config removes them" {
+  fake_install
+  uninst
+  [ -f "$T/home/.config/agent-sandbox/allowlist.txt" ] # a reinstall reuses them
+  [[ "$output" == *"kept"* ]]
+  fake_install
+  uninst --purge-config
+  [ ! -d "$T/home/.config/agent-sandbox" ]
+}
+
+@test "--uninstall --dry-run changes nothing, and installs nothing on the way" {
+  fake_install
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin \
+    "$REPO_ROOT/install.sh" --uninstall --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"repoint"* ]]
+  [ -d "$T/home/.local/share/agent-sandbox" ] # still there
+  [ -f "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
+  # and the engine was NOT copied in on the way past: the uninstall must run
+  # before the install work, or it installs what it is about to delete
+  [ ! -d "$T/home/.local/share/agent-sandbox/app/profiles" ]
+}
+
+@test "--uninstall leaves a launcher that is not ours alone" {
+  fake_install
+  rm -f "$T/home/.local/bin/claude"
+  printf '#!/bin/sh\necho someone-elses\n' >"$T/home/.local/bin/claude"
+  chmod +x "$T/home/.local/bin/claude"
+  uninst
+  [ "$status" -eq 0 ]
+  [ "$("$T/home/.local/bin/claude")" = "someone-elses" ]
+  [[ "$output" == *"leave alone"* ]]
+}
+
+@test "--uninstall does not repoint into nothing when the agent's binary is gone" {
+  fake_install
+  rm -rf "$T/home/.local/share/claude"
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"leave alone"* ]]
+  # ...and it says the launcher is now broken, rather than leaving that to be
+  # discovered the next time the user types the command
+  [[ "$output" == *"broken link"* ]]
+}
+
+@test "--uninstall on a machine with nothing installed does nothing at all" {
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"removed"* ]]
+  [[ "$output" != *"repoint"* ]]
+}
