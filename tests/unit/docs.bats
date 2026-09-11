@@ -210,6 +210,45 @@ profile_dotfile_keys() {
   run ! grep -qi 'default-deny syscall filter (opt-in)' "$REPO_ROOT/components/seccomp/README.md"
 }
 
+@test "docs/profiles.md lists every profile hook the engine calls" {
+  # The contract table says "The declarations above are the whole interface".
+  # It stopped being true four hooks ago: profile_memory_scope, profile_isolate,
+  # profile_briefing_args and profile_fallback_hint were added to the engine and
+  # never to the table, so someone writing a second profile would not know they
+  # exist. The engine is the source of truth -- it names each one in a
+  # `declare -F` guard before calling it.
+  local hooks
+  hooks="$(grep -oE 'declare -F (profile_[a-z_]+)' "$ENGINE" | awk '{print $3}' | sort -u)"
+  enough profile_hooks 5 <<<"$hooks"
+  fail_missing "profile hooks the engine calls" "in docs/profiles.md's contract table" < <(
+    local h
+    for h in $hooks; do
+      grep -qF -- "\`$h()\`" "$REPO_ROOT/docs/profiles.md" || echo "$h"
+    done
+  )
+}
+
+@test "docs/design.md names every path the claude profile isolates" {
+  # The guarantee row lists the state that is replaced per launch. It is the
+  # only place a reader can check the claim against, so an entry the profile
+  # isolates and the row does not name is a guarantee nobody knows they have --
+  # and, the other way round, a row naming something no longer isolated would
+  # be a promise the code stopped keeping. responses.log and alerts.log were
+  # missing for both reasons: added in the same release, never written down.
+  local paths
+  # shellcheck disable=SC2016 # literal \$c: the profile spells its paths as "$c/<name>"
+  paths="$(awk '/^profile_isolate\(\) \{/,/^\}$/' "$REPO_ROOT/profiles/claude.sh" \
+    | grep -oE '\$c/[A-Za-z._-]+' | sed 's|\$c/||' | sort -u)"
+  enough profile_isolate_paths 8 <<<"$paths"
+  local row
+  row="$(grep -F 'Cross-session state is isolated' "$REPO_ROOT/docs/design.md")"
+  [ -n "$row" ] # the guarantee row is still findable
+  fail_missing "isolated paths" "named in docs/design.md's guarantee row" < <(
+    local p
+    for p in $paths; do grep -qF -- "$p" <<<"$row" || echo "$p"; done
+  )
+}
+
 @test "the example dot-file states the defaults the engine actually uses" {
   # docs/agent-sandbox.example is the file people copy into a project, and it
   # was in no drift check at all: it said "Default: off" for seccomp long after
