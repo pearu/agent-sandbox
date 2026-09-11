@@ -96,14 +96,17 @@ the integration suites, so run it where those work.
   `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips the pip install.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
   stands in for `mitmproxy.http`, and `addon_driver.py` runs one scenario.
-- **Assert a negative with `refute cmd`, never `! cmd`.** Bash suppresses
+- **Assert a negative with `run ! cmd`, never `! cmd`.** Bash suppresses
   `errexit` -- and the `ERR` trap bats fails on -- for a negated command, so a
-  test body of `! true` is reported `ok`: the line reads like a guarantee and
-  enforces nothing. 62 of them had accumulated here, two of them asserting the
-  opposite of what the engine does. `tests/unit/harness.bats` greps for the
-  idiom and will fail your run; `refute` is in `tests/helpers/common.bash` and
-  leaves `$status`/`$output` alone, unlike `run ! cmd`. `[ ! -s "$f" ]` is
-  fine -- there the negation belongs to the test operator.
+  test body of `! true` followed by anything else is reported `ok`: the line
+  reads like a guarantee and enforces nothing. Fifty of them had accumulated
+  here before anyone noticed, two asserting the opposite of what the engine
+  does. `run !` (bats >= 1.5.0, declared in `tests/helpers/common.bash`) fails
+  the test when the command succeeds. It replaces `$status` and `$output`, so
+  check a message *before* the `run !` that follows it. `[ ! -s "$f" ]` is fine;
+  there the negation is the test operator's own. ShellCheck reports the bad
+  form as SC2314, and `scripts/check.sh` runs ShellCheck on the `.bats` files
+  -- that is the actual guard; the rule here is so you know why it fires.
 - **A test must fail when the bug it guards is re-introduced.** Check that with
   a mutation: copy `agent-sandbox` into a directory that has a `profiles`
   symlink to the repo's, re-introduce the bug there, and run the guarding test
@@ -221,10 +224,12 @@ If you are an agent running inside this sandbox while maintaining it:
 
 ## Pitfalls that already cost time
 
-- A negative assertion needs `refute`, not `!` (see "How the tests work"). The
-  shape of the mistake is general: an assertion that cannot fail is worse than
-  no assertion, because it reports a guarantee nobody is checking. Ask of any
-  new check what makes it go red.
+- The `.bats` suites were not under ShellCheck for the project's first months,
+  and 50 negative assertions that could not fail (`! cmd`, SC2314) accumulated
+  where the one tool that knows about that bug was not looking. The general
+  shape: a check that cannot go red is worse than no check, because it reports
+  a guarantee nobody is keeping. When you add a linter, point it at everything;
+  when you add an assertion, know what makes it fail.
 - `$BASHPID` inside `$(...)` is the substitution's subshell. Capture it in a
   variable first. Getting this wrong made every session look dead to the
   liveness checks.
