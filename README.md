@@ -79,8 +79,8 @@ What it does **not** do is spelled out in [docs/design.md](docs/design.md):
 in the default `proxy` mode the sandbox shares the host network namespace, so a
 tool that ignores `HTTPS_PROXY` is unfiltered (`AGENT_SANDBOX_NET=strict` closes
 that: its own namespace, only the proxy reachable); the agent's own credentials
-in `~/.claude` are readable; syscall filtering is opt-in, not on by default
-(`AGENT_SANDBOX_SECCOMP=on`).
+in `~/.claude` are readable; a default-deny syscall filter is on by default
+(`AGENT_SANDBOX_SECCOMP=off` disables it), but there are no resource limits.
 
 ## Scope
 

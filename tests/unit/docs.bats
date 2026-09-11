@@ -133,3 +133,29 @@ fail_missing() {
     false
   }
 }
+
+@test "seccomp default: the engine, its --help, and every shipped doc agree it is on" {
+  # F3: five docs (plus two install.sh messages the reviewer missed) had drifted
+  # to "opt-in / off by default" after #28 flipped it on. This pins all three
+  # sources to each other so they cannot part again silently.
+
+  # the code default, from the parameter expansion the engine actually uses
+  local code_default
+  code_default="$(grep -oE '_knob_seccomp:-[a-z]+' "$ENGINE" | head -1 | sed 's/.*:-//')"
+  [ "$code_default" = on ]
+
+  # the engine's own --help must state the same default
+  grep -qE 'AGENT_SANDBOX_SECCOMP=on\|off .*default: on\)' "$ENGINE"
+  ! grep -qE 'AGENT_SANDBOX_SECCOMP.*default: off' "$ENGINE"
+
+  # no shipped doc may call it opt-in or off-by-default (unrelated "port opt-ins"
+  # is fine; these patterns are seccomp-scoped)
+  local f
+  for f in "$REPO_ROOT/README.md" "$REPO_ROOT/docs/design.md" \
+    "$REPO_ROOT/components/seccomp/README.md" "$REPO_ROOT/install.sh"; do
+    ! grep -qiE 'seccomp[^.]{0,40}(opt-in|off by default)' "$f"
+    ! grep -qiE '(opt-in|off by default)[^.]{0,40}seccomp' "$f"
+  done
+  # the component README title specifically (it said "(opt-in)")
+  ! grep -qi 'default-deny syscall filter (opt-in)' "$REPO_ROOT/components/seccomp/README.md"
+}

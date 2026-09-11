@@ -92,3 +92,49 @@ S
   [[ "$output" == *"not recognised"* && "$output" == *"'on' or 'off'"* ]]
   [ ! -s "$H/argv" ]
 }
+
+# ---- the generator's kernel gate (issue found by review, F4) ---------------
+
+@test "generator: a minKernel gate is judged against the host kernel, not a fixed floor" {
+  python3 -c 'import pyseccomp' 2>/dev/null || skip "pyseccomp not importable"
+  local gen="$REPO_ROOT/components/seccomp/gen-seccomp.py"
+
+  # A profile with one allow rule gated above the old hard-coded floor (5.15).
+  # Judged against the floor it is dropped; judged against a 6.8 host it applies.
+  local prof="$BATS_TEST_TMPDIR/p.json"
+  cat >"$prof" <<'JSON'
+{ "defaultAction": "SCMP_ACT_ERRNO", "defaultErrnoRet": 1,
+  "syscalls": [ { "names": ["listen"], "action": "SCMP_ACT_ALLOW",
+                  "includes": { "minKernel": "6.0" } } ] }
+JSON
+  run python3 - "$gen" "$prof" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("gen", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.HOST_KERNEL = (5, 15); floor = m.kernel_ok("6.0")
+m.HOST_KERNEL = (6, 8);  host  = m.kernel_ok("6.0")
+bad = m.kernel_ok("not-a-version")
+print(f"floor={floor} host={host} unparseable={bad}")
+PY
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"floor=False"* ]]       # the old behaviour, now only for old hosts
+  [[ "$output" == *"host=True"* ]]         # the bug: this used to be False on a 6.8 host
+  [[ "$output" == *"unparseable=False"* ]] # a gate we cannot read stays denied
+}
+
+@test "generator: the kernel argument is optional and a bad one falls back, not crashes" {
+  python3 -c 'import pyseccomp' 2>/dev/null || skip "pyseccomp not importable"
+  local gen="$REPO_ROOT/components/seccomp/gen-seccomp.py"
+  local prof="$REPO_ROOT/components/seccomp/moby-default.json"
+  local arch
+  arch="$(uname -m)"
+  [[ "$arch" == x86_64 || "$arch" == aarch64 ]] || skip "unsupported arch $arch"
+
+  run python3 "$gen" "$prof" "$arch" "$BATS_TEST_TMPDIR/a.bpf" # no kernel arg
+  [ "$status" -eq 0 ] && [ -s "$BATS_TEST_TMPDIR/a.bpf" ]
+  run python3 "$gen" "$prof" "$arch" "$BATS_TEST_TMPDIR/b.bpf" "$(uname -r)"
+  [ "$status" -eq 0 ] && [ -s "$BATS_TEST_TMPDIR/b.bpf" ]
+  run python3 "$gen" "$prof" "$arch" "$BATS_TEST_TMPDIR/c.bpf" "garbage"
+  [ "$status" -eq 0 ] && [ -s "$BATS_TEST_TMPDIR/c.bpf" ] # falls back, still builds
+  [[ "$output" == *"cannot parse kernel"* ]]
+}

@@ -819,12 +819,12 @@ if [[ -f /usr/local/share/ca-certificates/mitmproxy.crt ]]; then
 fi
 
 # ----- 6b. seccomp filter: default-deny syscall profile, compiled for THIS host -----
-# Opt-in at launch with AGENT_SANDBOX_SECCOMP=on. Compiled here, on the host
+# On by default; AGENT_SANDBOX_SECCOMP=off disables it. Compiled here, on the host
 # that will run it, from Docker's default profile (moby/profiles, Apache-2.0) as
 # for a container with no capabilities (components/seccomp/README.md), using
 # pyseccomp in the proxy's private Python env against this host's libseccomp. So
 # nothing binary ships and the blob matches the libseccomp that interprets it.
-section "seccomp filter (opt-in at launch)"
+section "seccomp filter (on by default)"
 SECCOMP_DIR="$STATE_DIR/seccomp"
 mkdir -p "$SECCOMP_DIR"
 cat >"$SECCOMP_DIR/gen-seccomp.py" <<'GENSC_EOF'
@@ -834,7 +834,8 @@ for one architecture, as for a container holding NO capabilities (agent-sandbox 
 them all). Run by install.sh on the host it will protect, so the blob matches that
 host's libseccomp; nothing binary ships.
 
-    gen-seccomp.py PROFILE.json ARCH OUT.bpf        ARCH: x86_64 | aarch64
+    gen-seccomp.py PROFILE.json ARCH OUT.bpf [KERNEL]   ARCH: x86_64 | aarch64
+                                                        KERNEL: e.g. 6.8 (default: 5.15)
 
 Interpretation of the profile:
   * defaultAction ERRNO(defaultErrnoRet): everything not allowed fails with EPERM.
@@ -842,10 +843,12 @@ Interpretation of the profile:
     unshare/setns/mount/pivot_root/chroot/bpf/ptrace-with-caps/... stay denied;
   * rules for the cap-LESS case (excludes.caps) are kept: clone allowed only without
     namespace flags (so no CLONE_NEWUSER), clone3 -> ENOSYS so libc falls back to it;
-  * arch-gated rules are resolved for ARCH; minKernel-gated ones are applied (our
-    supported hosts run kernels far newer than any minKernel in the profile).
+  * arch-gated rules are resolved for ARCH; minKernel-gated ones are judged against
+    KERNEL, the host's own release, since the blob is compiled per machine. An
+    unparseable or absent KERNEL falls back to the oldest supported release, and an
+    unparseable gate drops the rule: the safe direction is deny, never allow.
 """
-import json, sys
+import json, re, sys
 import pyseccomp as s
 
 OPS = {"SCMP_CMP_LT": s.LT, "SCMP_CMP_LE": s.LE, "SCMP_CMP_EQ": s.EQ, "SCMP_CMP_NE": s.NE,
@@ -853,11 +856,25 @@ OPS = {"SCMP_CMP_LT": s.LT, "SCMP_CMP_LE": s.LE, "SCMP_CMP_EQ": s.EQ, "SCMP_CMP_
 # target -> (libseccomp arch, its sub-arches for 32-bit binaries, profile arch tags)
 ARCHES = {"x86_64": (s.Arch.X86_64, (s.Arch.X86, s.Arch.X32), {"amd64", "x86", "x32"}),
           "aarch64": (s.Arch.AARCH64, (s.Arch.ARM,), {"arm64", "arm"})}
-KERNEL_FLOOR = (5, 15)  # oldest kernel we support (Ubuntu 22.04)
+# The kernel a minKernel-gated rule is judged against. install.sh passes the
+# host's own release, because the filter is compiled per machine; the fallback
+# is the oldest kernel we support (Ubuntu 22.04). Judging against a fixed floor
+# DROPPED any rule gated above it even on a newer host -- harmless with the
+# vendored profile (its only minKernel is 4.8) but latent: a future moby update
+# adding a higher-gated allow rule would silently leave that syscall denied.
+KERNEL_FLOOR = (5, 15)
+
+def parse_kernel(spec):
+    """Leading major.minor of a version string; None if unparseable."""
+    m = re.match(r"(\d+)\.(\d+)", str(spec))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+HOST_KERNEL = KERNEL_FLOOR  # replaced from argv by main()
 
 def kernel_ok(spec):
-    want = tuple(int(x) for x in spec.split(".")[:2])
-    return KERNEL_FLOOR >= want
+    want = parse_kernel(spec)
+    # Unparseable gate: keep the rule out. The safe direction is deny, never allow.
+    return want is not None and HOST_KERNEL >= want
 
 def action_of(entry):
     a = entry["action"]
@@ -900,8 +917,14 @@ def build(profile, arch):
     return f
 
 def main(argv):
-    if len(argv) != 4 or argv[2] not in ARCHES:
+    if len(argv) not in (4, 5) or argv[2] not in ARCHES:
         print(__doc__, file=sys.stderr); return 2
+    if len(argv) == 5:
+        host = parse_kernel(argv[4])
+        if host is None:
+            print(f"gen-seccomp: cannot parse kernel {argv[4]!r}; using {KERNEL_FLOOR}", file=sys.stderr)
+        else:
+            globals()["HOST_KERNEL"] = host
     profile = json.load(open(argv[1]))
     if profile.get("defaultAction") != "SCMP_ACT_ERRNO":
         print("gen-seccomp: refusing a profile whose defaultAction is not ERRNO (not default-deny)", file=sys.stderr); return 1
@@ -1803,11 +1826,11 @@ else
     "$PROXY_CONDA/bin/python" -m pip install -q pyseccomp >/dev/null 2>&1 || true
     SC_PY="$PROXY_CONDA/bin/python"
   fi
-  if [[ -n "$SC_PY" ]] && "$SC_PY" "$SECCOMP_DIR/gen-seccomp.py" "$SECCOMP_DIR/moby-default.json" "$SC_ARCH" "$SECCOMP_DIR/$SC_ARCH.bpf" 2>"$SECCOMP_DIR/gen.log"; then
-    ok "compiled $SECCOMP_DIR/$SC_ARCH.bpf ($(wc -c <"$SECCOMP_DIR/$SC_ARCH.bpf") bytes); enable with AGENT_SANDBOX_SECCOMP=on"
+  if [[ -n "$SC_PY" ]] && "$SC_PY" "$SECCOMP_DIR/gen-seccomp.py" "$SECCOMP_DIR/moby-default.json" "$SC_ARCH" "$SECCOMP_DIR/$SC_ARCH.bpf" "$(uname -r)" 2>"$SECCOMP_DIR/gen.log"; then
+    ok "compiled $SECCOMP_DIR/$SC_ARCH.bpf ($(wc -c <"$SECCOMP_DIR/$SC_ARCH.bpf") bytes); on by default (AGENT_SANDBOX_SECCOMP=off disables it)"
   else
     rm -f "$SECCOMP_DIR/$SC_ARCH.bpf"
-    info "seccomp filter NOT compiled (needs libseccomp2 and pyseccomp in the proxy env; see $SECCOMP_DIR/gen.log). AGENT_SANDBOX_SECCOMP=on will refuse until install.sh is re-run."
+    info "seccomp filter NOT compiled (needs libseccomp2 and pyseccomp in the proxy env; see $SECCOMP_DIR/gen.log). Sessions will WARN and run WITHOUT it until install.sh is re-run; AGENT_SANDBOX_SECCOMP=on refuses instead, =off silences the warning."
   fi
 fi
 
