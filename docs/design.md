@@ -121,6 +121,21 @@ Stated plainly. These are what the adversary above can still do.
   OAuth or API tokens and is read-write; any allowed host, api.anthropic.com
   first among them, is an exfiltration channel for anything the agent can read.
   The sandbox cannot prevent this.
+- **`~/.claude` is writable, and it steers every later session.**
+  `settings.json` has to stay writable -- `/model` and `/permissions` write it,
+  and so does the agent when the user asks it to change a setting -- and that
+  file can register arbitrary hook commands. So a session can add a hook, edit
+  the global `CLAUDE.md`, or add an `mcpServers` entry to `~/.claude.json`, and
+  the result runs in **every later session of every project**, inside their
+  sandboxes. It also runs on the host, unsandboxed, the moment the user takes
+  the documented recovery path (running the agent's own binary directly, see
+  troubleshooting) or `claude update`, which runs host-side by design.
+  There is no subset of these files that can be made read-only to close the
+  channel while leaving the feature working, because `settings.json` *is* the
+  channel: make it read-only and `/model` breaks; leave it writable and a hook
+  can be registered pointing at anything. Isolation here covers reading --
+  another project's transcripts are hidden -- not writing to the shared
+  configuration both projects use. Stated plainly rather than half-closed.
 - **`$CWD` is read-write**, including `.git`, `.env` and anything else in the
   project. Files the host later executes (git hooks, project scripts) are a
   persistence path from inside the sandbox to the host.
