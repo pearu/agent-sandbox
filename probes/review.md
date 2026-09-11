@@ -58,13 +58,84 @@ briefing that is injected into every session: can the agent forge, suppress or
 poison it? Session directories, the janitor, and what two concurrent sessions do
 to each other. Symlinks and time-of-check/time-of-use around every bind.
 
-Also review the **tests themselves**. Several in this repo have been found to
-pass without testing anything — asserting an absence that was already true, or
-matching a string that appeared elsewhere in the file. A guarantee whose test
-cannot fail is not a guarantee.
-
 And read the list of things the project says it does *not* cover. Judge whether
 each is honestly scoped or quietly convenient.
+
+## Reviewing the tests: check the machinery, not each test
+
+Several tests in this repo have been found to pass without testing anything.
+A guarantee whose test cannot fail is not a guarantee — it is worse than an
+untested one, because it reports a promise nobody is keeping.
+
+Do not try to fix that by breaking every test to see if it notices. That is a
+sweep, it is expensive, and it finds one instance at a time. The classes of
+mistake that have occurred here are all mechanically detectable, so review the
+mechanism and spot-check the rest:
+
+1. **Is every test file under the linter?** Read `scripts/check.sh` and compare
+   its file lists with what is actually in `tests/`. ShellCheck parses bats
+   files natively and has dedicated checks for bats mistakes (an assertion the
+   runner cannot fail on is SC2314); a test file the linter never sees is where
+   such things accumulate. This project's suites were outside the list for its
+   first months.
+2. **Does the harness test itself?** `tests/unit/harness.bats` runs a child
+   bats to prove that the suite's negative-assertion idiom actually fails when
+   it should. If a helper is added that assertions depend on, it belongs there.
+3. **For the guarantees you examine closely**, take the test named beside each
+   in `docs/design.md` and ask what would make it go red. Break that one thing
+   in a copy of the engine (`AGENT_SANDBOX_TEST_ENGINE`; `AGENTS.md` describes
+   the arrangement) and run the test. A handful, chosen by what matters most,
+   not the whole suite. Run the unmutated copy first: if *that* fails, you are
+   measuring the harness.
+
+Three shapes to recognise on sight, because all three have occurred here:
+
+- **An absence that was already true.** `no --tmpfs for the projects directory`
+  proves nothing when nothing was going to add one. The test has to make the
+  two cases differ — have the file ask for the *opposite* of the default.
+- **A match that lands somewhere else.** A search for `[seccomp]` that the
+  markdown link `[seccomp](components/seccomp/README.md)` satisfies, in a row
+  whose actual setting column is empty.
+- **An assertion the runner cannot fail on.** In bats, `! cmd` followed by
+  anything else is reported `ok` whatever `cmd` returns. Do not reason about
+  whether an idiom works: write a two-line test that asserts something plainly
+  false, run it, and read the report.
+
+## Inventory the claims; do not sample them
+
+Where the documentation states a **default** ("on by default", "Default: off")
+or an **exhaustive list** ("the declarations above are the whole interface", a
+table of every knob, a guarantee naming the paths it covers), the claim is
+mechanically checkable: derive the same thing from the code and diff the two.
+
+Do that for every such claim in every shipped file, not only the prose in
+`README.md` and `docs/design.md` — including the example file users copy into
+their own projects, the engine's own comments and `--help` output, the
+installer's messages, and the component READMEs. A stale default in prose
+misleads a reader; a stale default in the file people copy travels into their
+projects.
+
+Sampling finds the first one. The value of a review is in the ones the last
+sample missed.
+
+## What the previous run of this prompt did not reach
+
+The first review under this prompt found real defects, and this section is not
+a criticism of it. It is a description of what reading cannot reach, so that
+the next run spends its effort differently:
+
+- It judged the tests by reading them, and reported on their coverage. It did
+  not check whether the test files were under the linter at all — they were not
+  — and fifty assertions across nine files later turned out to be incapable of
+  failing, two of them asserting the opposite of what the engine does. One
+  ShellCheck run over `tests/` would have listed every one.
+- It checked the documents it was pointed at. A default that had been flipped
+  months earlier still read the old way in two files it did not open — one of
+  them the example a user copies, the other a comment in the engine explaining
+  why a setting was a no-op that had since become a real widening.
+
+If you find yourself writing "the tests cover this", say which test, and say
+what would make it fail — and whether a tool, not a person, is checking that.
 
 ## Your situation
 
