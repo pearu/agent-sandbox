@@ -8,23 +8,30 @@ break compatibility.
 
 ### Fixed
 
-- **Every negative assertion in the test suite was vacuous.** `! cmd` cannot
-  fail a bats test: bash suppresses `errexit` -- and the `ERR` trap bats fails
-  on -- for a negated command, so `! true` in a test body is reported `ok`
-  (measured, bats 1.14.0). 62 of them had accumulated across nine files,
-  covering the things this project most needs to prove *absent*: no
-  `--share-net`, no `HTTPS_PROXY` in `none` mode, no `AWS_SECRET_ACCESS_KEY`
-  forwarded, another project's memory not bound, a secret canary not in the
-  briefing. All 62 now go through a `refute` helper, which negates inside a
-  function so the test body runs an ordinary command that can fail (and, unlike
-  `run ! cmd`, leaves `$status` and `$output` alone for the message assertions
-  that follow). Two were asserting the opposite of what the engine does: with
-  seccomp on by default since #28, an unknown `[seccomp] mode` value and a
-  malformed line leave the filter **on**, and an unapproved file cannot turn it
-  off -- which is what those tests now check, instead of an absence that could
-  no longer happen. `tests/unit/harness.bats` keeps the idiom out: it proves
-  `refute` fails on success in a child bats run, and greps the suite for a bare
-  `!` in command position.
+- **50 negative assertions in the test suite could not fail.** `! cmd` does
+  not fail a bats test unless it is the test's last line: bash suppresses
+  `errexit` -- and the `ERR` trap bats fails on -- for a negated command, so
+  `! true` followed by any other statement is reported `ok` (measured, bats
+  1.14.0). 62 had accumulated across nine files; 12 happened to be last lines
+  and worked, 50 did not. They cover the things this project most needs to
+  prove *absent*: no `--share-net` in `none` mode, no `HTTPS_PROXY`, no
+  `AWS_SECRET_ACCESS_KEY` forwarded, another project's memory not bound, a
+  secret canary not in the briefing. All now use bats' own `run ! cmd`, with
+  the 1.5.0 floor it needs declared in the shared helper; the nine that were
+  followed by a message check are reordered, since `run` replaces `$output`.
+  Two were asserting the opposite of what the engine does: with seccomp on by
+  default since #28, an unknown `[seccomp] mode` value or a malformed line
+  leaves the filter **on**, and an unapproved file cannot turn it off -- which
+  is what those tests now check.
+- **The `.bats` suites are under ShellCheck.** They never were: `scripts/check.sh`
+  listed every shell file in the repository except the tests, and ShellCheck
+  has a dedicated error for the bug above (SC2314, "In Bats, ! does not cause
+  a test failure") that would have failed CI on the first one. The 37 other
+  findings it raised are fixed or waived with a stated reason; two were real if
+  small -- `rm -rf "$V"/*` with nothing stopping `$V` from being empty, and a
+  drift-test failure message that split its items on spaces.
+  `tests/unit/harness.bats` proves `run !` is live on the bats actually
+  running, by running it in a child bats and reading the report.
 
 ### Added
 
