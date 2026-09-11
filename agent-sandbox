@@ -853,8 +853,16 @@ _as_briefing_write() {
   local egress="unknown" hosts_line="none" ssh_line="none"
   local mem_line="unknown" rw_line="" ro_line="none"
   case "$net" in
-    proxy) egress="filtered. Every request goes through an egress proxy that enforces $gal_desc. A refused host answers 403 naming itself -- deliberate, not an outage." ;;
-    strict) egress="filtered, and there is no DNS and no route except the proxy. A name that does not resolve is the sandbox, not a broken network. The proxy enforces $gal_desc." ;;
+    # Both lines say HOW the filtering is enforced, not only that it is. A probe
+    # run read `--share-net` out of the bwrap argv and concluded strict had no
+    # network isolation and only "harness-level" filtering -- wrong on both
+    # counts, and the sort of wrong conclusion that ends up in a report.
+    # What is NOT said here: that proxy mode cannot filter a tool which ignores
+    # HTTPS_PROXY. That limitation belongs in docs/design.md, which users read;
+    # this text is read by the agent, and naming a gap to the party the gap
+    # constrains invites the behaviour the briefing exists to discourage.
+    proxy) egress="filtered. This sandbox shares the host's network namespace, and every request goes through an egress proxy that enforces $gal_desc. A refused host answers 403 naming itself -- deliberate, not an outage." ;;
+    strict) egress="filtered, and there is no DNS and no route except the proxy. A name that does not resolve is the sandbox, not a broken network. The proxy enforces $gal_desc. This sandbox has its OWN network namespace (pasta forwards to the host in userspace) and nftables inside it allows only the proxy, so the limit is kernel-enforced rather than advisory: a tool that ignores HTTPS_PROXY has no route either." ;;
     open) egress="unfiltered (AGENT_SANDBOX_NET=open). No allowlist applies." ;;
     none) egress="none. The network namespace is unshared; nothing outside this machine is reachable." ;;
     *) egress="unknown ($net); this launch is about to be refused" ;;
