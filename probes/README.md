@@ -50,6 +50,35 @@ difference between runs belongs to the sandbox rather than to the gate. A tool
 outside the list is refused by Claude Code and not by the sandbox, which is why
 `run.sh` prints the list in its plan.
 
+## What the probes have found
+
+Kept short, and deliberately without host specifics: reports may contain
+addresses, paths and interface names, which is why `results/` is gitignored.
+
+- **A default that was weaker than it read.** A strict-mode run reported
+  "Seccomp is OFF" under enforcement gaps. It was right: a probe runs outside
+  this repo, where no `.agent-sandbox` applies, so the harness had to gain `-s`
+  before it could characterize the sandbox we actually ship.
+- **The reason seccomp matters more than "defence in depth".** A run noticed
+  that the AppArmor profile `install.sh` installs for bwrap is
+  `flags=(unconfined)` with `userns,`, and that such a profile is inherited by
+  children -- so everything under bwrap is exempt from the host restriction that
+  would otherwise prevent creating a user namespace. With the filter off,
+  nothing else prevents it. `tests/live/seccomp.bats` had asserted the
+  behaviour for months; nobody had written down the cause. seccomp is on by
+  default as of that finding.
+- **What an inside observer cannot know.** Runs have concluded that the network
+  namespace was shared with the host and that filtering was "harness-level"
+  rather than kernel-level (both wrong -- pasta owns the namespace and nftables
+  enforces in kernel), and that the sandbox ran as host root (wrong -- nested
+  user namespaces). Each was a sound observation with an unsound inference about
+  what lies outside. The briefing now states the topology for that reason.
+- **Models differ at the same task.** On identical prompts, one run asserted the
+  briefing's claims as its own verified findings; another marked them
+  "inferred", said which commands had failed and why, and derived the uid
+  mapping correctly from evidence. For a probe whose output reads as a security
+  report, that distinction is the whole value.
+
 ## What the probe is not told, and what it can still learn
 
 The instance is not told which tool sandboxes it. `run.sh` keeps the tool's

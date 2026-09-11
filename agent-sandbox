@@ -853,8 +853,16 @@ _as_briefing_write() {
   local egress="unknown" hosts_line="none" ssh_line="none"
   local mem_line="unknown" rw_line="" ro_line="none"
   case "$net" in
-    proxy) egress="filtered. Every request goes through an egress proxy that enforces $gal_desc. A refused host answers 403 naming itself -- deliberate, not an outage." ;;
-    strict) egress="filtered, and there is no DNS and no route except the proxy. A name that does not resolve is the sandbox, not a broken network. The proxy enforces $gal_desc." ;;
+    # Both lines say HOW the filtering is enforced, not only that it is. A probe
+    # run read `--share-net` out of the bwrap argv and concluded strict had no
+    # network isolation and only "harness-level" filtering -- wrong on both
+    # counts, and the sort of wrong conclusion that ends up in a report.
+    # What is NOT said here: that proxy mode cannot filter a tool which ignores
+    # HTTPS_PROXY. That limitation belongs in docs/design.md, which users read;
+    # this text is read by the agent, and naming a gap to the party the gap
+    # constrains invites the behaviour the briefing exists to discourage.
+    proxy) egress="filtered. This sandbox shares the host's network namespace, and every request goes through an egress proxy that enforces $gal_desc. A refused host answers 403 naming itself -- deliberate, not an outage." ;;
+    strict) egress="filtered, and there is no DNS and no route except the proxy. A name that does not resolve is the sandbox, not a broken network. The proxy enforces $gal_desc. This sandbox has its OWN network namespace (pasta forwards to the host in userspace) and nftables inside it allows only the proxy, so the limit is kernel-enforced rather than advisory: a tool that ignores HTTPS_PROXY has no route either." ;;
     open) egress="unfiltered (AGENT_SANDBOX_NET=open). No allowlist applies." ;;
     none) egress="none. The network namespace is unshared; nothing outside this machine is reachable." ;;
     *) egress="unknown ($net); this launch is about to be refused" ;;
@@ -2236,8 +2244,8 @@ agent_sandbox() (
   # exposed. Must come AFTER every bind whose target is under $HOME, since
   # bwrap may need to create intermediate directories on the tmpfs.
   args+=(--remount-ro "$HOME")
-  # ----- seccomp (opt-in) -----
-  # AGENT_SANDBOX_SECCOMP=on: a default-deny syscall filter (Docker's default
+  # ----- seccomp (on by default) -----
+  # AGENT_SANDBOX_SECCOMP: a default-deny syscall filter (Docker's default
   # profile as for a container with no capabilities; components/seccomp/README.md),
   # compiled by install.sh for this machine into $(_as_seccomp_dir). bwrap reads it
   # from fd 10, which _as_launch / the strict wrapper open at exec time.
@@ -2245,16 +2253,32 @@ agent_sandbox() (
   # ever ships it can be named by a value that is not a boolean. It deliberately
   # does not spell the state as `default`, which would say nothing about whether
   # the filter is wanted and would contradict itself if the default ever flips.
-  case "${_knob_seccomp:-}" in
-    "" | off | 0) ;;
+  case "${_knob_seccomp:-on}" in
+    off | 0) ;;
     on | 1)
-      _seccomp_bpf="$(_as_seccomp_dir)/$(uname -m).bpf"
-      [[ -r "$_seccomp_bpf" ]] || {
-        _as_msg "AGENT_SANDBOX_SECCOMP=on: no seccomp filter for $(uname -m) at $_seccomp_bpf; re-run install.sh (needs libseccomp and pyseccomp), or set AGENT_SANDBOX_SECCOMP=off."
+      # Assigned only when the filter is really used: _seccomp_bpf is what the
+      # launcher opens on fd 10, and pointing it at a missing file fails the
+      # exec itself rather than falling back.
+      local _sc_cand
+      _sc_cand="$(_as_seccomp_dir)/$(uname -m).bpf"
+      if [[ -r "$_sc_cand" ]]; then
+        _seccomp_bpf="$_sc_cand"
+        args+=(--seccomp 10)
+        _as_msg "seccomp: default-deny syscall filter on ($_seccomp_bpf)"
+      elif [[ -n "${_knob_seccomp:-}" ]]; then
+        # Asked for explicitly and not available: refuse, rather than run
+        # something weaker than what was requested.
+        _as_msg "AGENT_SANDBOX_SECCOMP=on: no seccomp filter for $(uname -m) at $_sc_cand; re-run install.sh (needs libseccomp and pyseccomp), or set AGENT_SANDBOX_SECCOMP=off."
         return 1
-      }
-      args+=(--seccomp 10)
-      _as_msg "seccomp: default-deny syscall filter on ($_seccomp_bpf)"
+      else
+        # On by default, but this machine has no compiled filter -- install.sh
+        # only warns when it cannot build one. Refusing here would break a tool
+        # the user never asked to change, for no gain over the previous
+        # default; so run, and say so every launch rather than quietly.
+        _as_msg "WARNING: no seccomp filter for $(uname -m) at $_sc_cand, so this session runs WITHOUT one."
+        _as_msg "  Re-run install.sh to compile it (needs libseccomp and pyseccomp), or set AGENT_SANDBOX_SECCOMP=off to stop asking."
+        _as_msg "  It matters here: the AppArmor profile install.sh installs for bwrap permits user namespaces to everything under it, so seccomp is what stops the agent making one and regaining capabilities."
+      fi
       ;;
     *)
       _as_msg "AGENT_SANDBOX_SECCOMP='$_knob_seccomp' is not recognised (use 'on' or 'off')"

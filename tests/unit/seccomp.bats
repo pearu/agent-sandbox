@@ -20,11 +20,33 @@ S
   printf 'not-a-real-bpf' >"$SC/$(uname -m).bpf"
 }
 
-@test "off by default: no --seccomp, fd 10 is /dev/null" {
+@test "ON by default: no knob needed, --seccomp 10 with the arch's filter" {
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --seccomp 10
+  [ "$(cat "$H/argv.fd10")" = "$SC/$(uname -m).bpf" ]
+}
+
+@test "on by default with no filter compiled: warns, runs anyway, no --seccomp" {
+  # install.sh only warns when it cannot build the filter, so a machine can end
+  # up without one. Refusing here would break a tool the user never asked to
+  # change, for no gain over the previous default -- so it runs and says so.
+  rm -f "$SC/$(uname -m).bpf"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
   [ "$status" -eq 0 ]
   ! argv_has --seccomp
-  [ "$(cat "$H/argv.fd10")" = /dev/null ]
+  [ "$(cat "$H/argv.fd10")" = /dev/null ] # and the launcher still opens fd 10
+  [[ "$output" == *"runs WITHOUT one"* ]]
+  [[ "$output" == *"re-run install.sh"* || "$output" == *"Re-run install.sh"* ]]
+  # ...and why it is not merely defence in depth on an installed host
+  [[ "$output" == *"user namespaces"* ]]
+}
+
+@test "explicitly on with no filter still refuses: asked for, so not silently weaker" {
+  rm -f "$SC/$(uname -m).bpf"
+  run_engine AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  [ "$status" -eq 1 ]
+  [ ! -s "$H/argv" ]
 }
 
 @test "on: --seccomp 10 is passed and fd 10 is the arch's compiled filter" {
@@ -43,12 +65,14 @@ S
   [ ! -s "$H/argv" ] # bwrap never ran
 }
 
-@test "1 is on too; off, 0 and empty are off" {
-  run_engine AGENT_SANDBOX_SECCOMP=1 AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
-  [ "$status" -eq 0 ]
-  argv_has --seccomp 10
+@test "1 is on too; off and 0 turn it off; empty means the default, which is on" {
   local v
-  for v in off 0 ""; do
+  for v in 1 ""; do
+    run_engine AGENT_SANDBOX_SECCOMP="$v" AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+    [ "$status" -eq 0 ]
+    argv_has --seccomp 10
+  done
+  for v in off 0; do
     run_engine AGENT_SANDBOX_SECCOMP="$v" AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
     [ "$status" -eq 0 ]
     ! argv_has --seccomp

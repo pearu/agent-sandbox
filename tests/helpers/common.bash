@@ -61,8 +61,13 @@ run_engine() {
   # kcov finds its libs. Empty on a normal run.
   local -a kc=()
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
+  # seccomp is ON by default in the engine. The harness points its filter
+  # directory at an empty one rather than forcing AGENT_SANDBOX_SECCOMP=off:
+  # setting the knob would override the .agent-sandbox value that the dot-file
+  # tests exist to check. With no filter present the engine warns and runs on,
+  # so every other suite sees the argv it saw before, plus that warning.
   run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
-    BWRAP_DUMP="$H/argv" AGENT_SANDBOX_SESSION_BASE="$H/base" "${envs[@]}" "${kc[@]}" "$cmd" "$@"
+    BWRAP_DUMP="$H/argv" AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" "${envs[@]}" "${kc[@]}" "$cmd" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
 }

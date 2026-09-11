@@ -6,6 +6,11 @@
 #   -n MODE   network mode (default proxy). 'none' is refused: a Claude instance
 #             cannot reach the API there, so it cannot report.
 #   -m MODEL  model id passed explicitly (default: "model" in ~/.claude/settings.json)
+#   -s        turn the seccomp filter on (AGENT_SANDBOX_SECCOMP=on). Off by
+#             default because a probe runs OUTSIDE this repo, where no
+#             .agent-sandbox applies -- so without this, even a `strict` probe
+#             characterizes a looser sandbox than the one we ship. The first
+#             real run said so itself: "Seccomp is OFF ... enforcement gap".
 #   -i        interactive session instead of headless (claude -p); for watching
 #             and demonstrating. Same flags otherwise.
 #   -d        dry run: print the plan, launch nothing.
@@ -42,11 +47,12 @@ usage() {
   exit "${1:-0}"
 }
 
-mode=proxy model="" interactive=0 dry=0
-while getopts ':n:m:idh' opt; do
+mode=proxy model="" interactive=0 dry=0 seccomp=off
+while getopts ':n:m:sidh' opt; do
   case "$opt" in
     n) mode="$OPTARG" ;;
     m) model="$OPTARG" ;;
+    s) seccomp=on ;;
     i) interactive=1 ;;
     d) dry=1 ;;
     h) usage 0 ;;
@@ -110,6 +116,7 @@ if ((dry)); then
 plan:
   probe:     $probe ($pname)
   net mode:  $mode
+  seccomp:   $seccomp
   model:     $model
   session:   $([[ $interactive == 1 ]] && echo interactive || echo headless)
   launcher:  ${launcher:-"(none)"}  $engine_ver
@@ -117,7 +124,7 @@ plan:
   work dir:  $runs/$ts   (linked as $here/work)
   result:    $result
   tools:     $probe_tools
-  command:   env -i HOME USER LOGNAME PATH=<system dirs> TERM LANG AGENT_SANDBOX_NET=$mode AGENT_SANDBOX_SESSION_BASE=$rt \\
+  command:   env -i HOME USER LOGNAME PATH=<system dirs> TERM LANG AGENT_SANDBOX_NET=$mode AGENT_SANDBOX_SECCOMP=$seccomp AGENT_SANDBOX_SESSION_BASE=$rt \\
                claude ${cli[*]} "<TASK.md contents>"
 PLAN
   exit 0
@@ -148,13 +155,13 @@ rc=0
     exec env -i HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" \
       PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
       TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" \
-      AGENT_SANDBOX_NET="$mode" AGENT_SANDBOX_SESSION_BASE="$rt" \
+      AGENT_SANDBOX_NET="$mode" AGENT_SANDBOX_SECCOMP="$seccomp" AGENT_SANDBOX_SESSION_BASE="$rt" \
       "$launcher" "${cli[@]}" "$prompt"
   else
     exec env -i HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" \
       PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
       TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" \
-      AGENT_SANDBOX_NET="$mode" AGENT_SANDBOX_SESSION_BASE="$rt" \
+      AGENT_SANDBOX_NET="$mode" AGENT_SANDBOX_SECCOMP="$seccomp" AGENT_SANDBOX_SESSION_BASE="$rt" \
       "$launcher" "${cli[@]}" "$prompt" >"$logs/$id.stdout" 2>"$logs/$id.stderr"
   fi
 ) || rc=$?
