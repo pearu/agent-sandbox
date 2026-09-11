@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## `install.sh: do not run this with sudo`
+
+agent-sandbox is a single-user tool: the proxy is a systemd *user* unit, and the
+allowlist, trust store and launcher belong to one account. Run the installer as
+yourself — it asks for sudo itself for the one step that needs it (the AppArmor
+profile that lets `bwrap` use user namespaces).
+
+Through `sudo` it would either install for root (a launcher not on your PATH, a
+proxy nobody uses) or leave root-owned files in your home that later runs and
+the proxy cannot write. `--uninstall` under sudo is worse: it would examine
+root's home, find nothing, and report success while your install stays where it
+is.
+
+Being root with no `SUDO_USER` — a container image — is allowed, since there
+being root is ordinary rather than a mistake.
+
 ## Removing agent-sandbox
 
 ```
