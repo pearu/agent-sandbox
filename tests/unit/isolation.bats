@@ -148,3 +148,66 @@ STUB
   [ ! -d "$d" ]                              # reaped
   grep -q 'ORPHANED LINE' "$C/history.jsonl" # ...but not lost
 }
+
+# ---- [claude] hide, and what is hidden by default -------------------------
+
+trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
+  local t="$H/home/.config/agent-sandbox/trust"
+  mkdir -p "$t"
+  sha256sum -- "$PROJ/.agent-sandbox" | cut -d' ' -f1 \
+    >"$t/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+}
+
+@test "daemon/ is hidden by default; gh/ and ide/ are not" {
+  mkdir -p "$C/daemon" "$C/gh" "$C/ide"
+  printf 'control-key\n' >"$C/daemon/control.key"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  # the supervisor's control key and session roster: a cross-session control
+  # channel with no in-sandbox use
+  argv_has --tmpfs "$C/daemon"
+  # both of these exist to make Claude Code work from inside a sandbox, so
+  # hiding them by default would break the feature they were created for
+  ! argv_has --tmpfs "$C/gh"
+  ! argv_has --tmpfs "$C/ide"
+}
+
+@test "[claude] hide blanks the named paths, but only from an approved dot-file" {
+  mkdir -p "$C/gh" "$C/ide"
+  printf '[claude]\nhide = gh ide\n' >"$PROJ/.agent-sandbox"
+
+  # unapproved: the section grants nothing
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"present but not approved"* ]]
+  ! argv_has --tmpfs "$C/gh"
+
+  trust_proj
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --tmpfs "$C/gh"
+  argv_has --tmpfs "$C/ide"
+  argv_has --tmpfs "$C/daemon" # the default still applies alongside
+}
+
+@test "[claude] hide refuses to escape the state directory, and warns on unknown keys" {
+  printf '[claude]\nhide = ../../etc /etc gh\nbogus = 1\n' >"$PROJ/.agent-sandbox"
+  trust_proj
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"must be a relative path"* ]]
+  [[ "$output" == *"unknown [claude] key"* ]]
+  ! argv_has --tmpfs /etc
+  ! grep -q '\.\./\.\./etc' "$H/argv"
+  argv_has --tmpfs "$C/gh" # the valid entry on the same line still applies
+}
+
+@test "a section named for another profile is ignored, not applied" {
+  mkdir -p "$C/gh"
+  printf '[codex]\nhide = gh\n' >"$PROJ/.agent-sandbox"
+  trust_proj
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring unknown section [codex]"* ]]
+  ! argv_has --tmpfs "$C/gh"
+}

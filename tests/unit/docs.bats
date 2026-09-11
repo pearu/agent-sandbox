@@ -32,6 +32,11 @@ code_sections() { # supported .agent-sandbox sections
   # have none -- [ssh] is recognised and refused at the header, and the header
   # case also names knob-only sections -- so a bare `;;` arm is not a setting.
   # Read this way the list survives renames and reordering.
+  #
+  # The profile-named section is invisible here on purpose: its arm is
+  # `"$profile")`, whose name is a runtime value, so there is no static list to
+  # read. Its keys are checked against the shipping profile instead, in the
+  # `[claude]` test below.
   awk '/^_as_dotfile_parse\(\) \{/,/^\}$/' "$ENGINE" \
     | awk '/^      [a-z-]+\)/ {
         arm = $0; sub(/^ +/, "", arm)
@@ -117,6 +122,40 @@ fail_missing() {
       for key in $(code_keys "$sec"); do
         grep -qF -- "[$sec] $key" <<<"$col" || echo "[$sec] $key"
       done
+    done
+  )
+}
+
+# The keys of the profile-named section, from the profile that defines them.
+# The engine hands the pairs over uninterpreted, so the profile is the source of
+# truth for this one section the way the engine is for all the others.
+profile_dotfile_keys() {
+  awk '/^profile_isolate\(\) \{/,/^\}$/' "$REPO_ROOT/profiles/claude.sh" \
+    | grep -oE '^      [a-z-]+\)' | tr -d ' )' | sort -u
+}
+
+@test "README knobs: every [claude] key the profile reads is in the table" {
+  # This section cannot be derived from the engine (see code_sections), so
+  # without this test a new [claude] key would be exempt from the drift check
+  # that covers every other setting.
+  profile_dotfile_keys | enough profile_dotfile_keys 1
+  local col key
+  col="$(readme_dotfile_col)"
+  fail_missing "[claude] keys" "documented in README's dot-file column" < <(
+    for key in $(profile_dotfile_keys); do
+      grep -qF -- "[claude] $key" <<<"$col" || echo "[claude] $key"
+    done
+  )
+  # and in the two places that explain a section rather than list it: config.md
+  # writes a key as `key = ...` in prose, the example file as a commented line.
+  fail_missing "[claude] keys" "explained in docs/config.md" < <(
+    for key in $(profile_dotfile_keys); do
+      grep -qF -- "\`$key = " "$REPO_ROOT/docs/config.md" || echo "$key"
+    done
+  )
+  fail_missing "[claude] keys" "shown in docs/agent-sandbox.example" < <(
+    for key in $(profile_dotfile_keys); do
+      grep -qE "^#$key = " "$REPO_ROOT/docs/agent-sandbox.example" || echo "$key"
     done
   )
 }

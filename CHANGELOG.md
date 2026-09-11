@@ -8,6 +8,24 @@ break compatibility.
 
 ### Added
 
+- `[claude] hide` in `.agent-sandbox`: a space-separated list of paths under
+  `~/.claude` to blank inside the sandbox, on top of the cross-session state
+  that is already replaced per launch. `~/.claude` is bound read-write because
+  the agent needs its own state, which makes the directory a catch-all -- a
+  `GH_CONFIG_DIR` kept there is a working way to give a sandboxed agent GitHub
+  access, and someone who does not want *this* project's agent reaching it now
+  has a way to say so. Paths are relative to the state directory; absolute or
+  `..` is refused, an unknown key warns, and the pairs reach the profile only
+  from an **approved** dot-file. `daemon/` is hidden unconditionally (the
+  background supervisor's control key and its roster of other sessions -- a
+  channel between sessions, not this session's state); `gh/` and `ide/` stay
+  visible on purpose, since both exist to let Claude Code work from inside a
+  sandbox.
+- The dot-file accepts a section named after the **active** profile. The engine
+  does not interpret it: it checks each line is `key = value` and hands the
+  pairs to the profile, which is the only thing that knows what its agent keeps
+  where. A section naming another profile is unknown and ignored, so `[codex]`
+  says nothing in a claude run. See [docs/profiles.md](docs/profiles.md).
 - `probes/`: the harness that runs a probe prompt in a fresh sandbox and
   collects its report (`run.sh`), plus `netdiag.sh` and `claude-state-probe.sh`.
   The permission gate is opened with `--allowedTools` rather than
