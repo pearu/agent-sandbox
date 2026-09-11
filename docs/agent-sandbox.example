@@ -114,6 +114,19 @@
 #mode = on
 
 
+# ---- claude: options for the claude profile -------------------------------
+# A section named after the ACTIVE profile, read by that profile and not by the
+# engine. In a claude run, [codex] would be an unknown section and do nothing.
+# hide : space-separated paths under ~/.claude to blank inside the sandbox, on
+#        top of the cross-session state it already replaces per launch. Paths
+#        are relative to ~/.claude; absolute or `..` is refused. `daemon` is
+#        hidden already; `gh` and `ide` are not, because both exist to let
+#        Claude Code work from inside a sandbox. Hiding something the agent
+#        needs breaks that feature.
+#[claude]
+#hide = gh todos
+
+
 # Not settable here, on purpose:
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project
 #               setting.

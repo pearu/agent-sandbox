@@ -78,8 +78,10 @@ here, once, and then stop thinking about.
 What it does **not** do is spelled out in [docs/design.md](docs/design.md):
 in the default `proxy` mode the sandbox shares the host network namespace, so a
 tool that ignores `HTTPS_PROXY` is unfiltered (`AGENT_SANDBOX_NET=strict` closes
-that: its own namespace, only the proxy reachable); the agent's own credentials
-in `~/.claude` are readable; a default-deny syscall filter is on by default
+that: its own namespace, only the proxy reachable); `~/.claude` is bound
+read-write, so the agent's own credentials are readable and so is anything else
+you keep there -- `[claude] hide` blanks what you would rather it did not see;
+a default-deny syscall filter is on by default
 (`AGENT_SANDBOX_SECCOMP=off` disables it), but there are no resource limits.
 
 ## Scope
@@ -191,6 +193,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
 | — | — | `[share-memory]` | which projects' agent memory this session may read: paths, `all`, or present-but-empty for this project only (scoped to this project; widen with the global `memory_default = shared`) ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | default-deny syscall filter, compiled per machine by `install.sh`; `off` disables it (on) ([seccomp](components/seccomp/README.md)) |
+| — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
 | `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
