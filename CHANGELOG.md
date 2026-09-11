@@ -231,6 +231,13 @@ break compatibility.
 
 ### Fixed
 
+- `docs/design.md` now states that `~/.claude` is writable and steers later
+  sessions: `settings.json` must stay writable for `/model` and `/permissions`,
+  and it can register arbitrary hook commands, so a compromised session can
+  affect every later session and -- via the documented unsandboxed recovery
+  path or `claude update` -- the host. No subset can be made read-only without
+  breaking the feature, since `settings.json` is itself the channel. Found by
+  the adversarial review (finding F2); documented rather than half-closed.
 - The documentation said seccomp was opt-in / off by default; #28 had made it
   on by default. Swept every statement -- README, `docs/design.md` (including
   the residual-risk list, the trust surface, which had it flatly wrong), the
