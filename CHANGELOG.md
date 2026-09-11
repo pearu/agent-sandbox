@@ -8,6 +8,14 @@ break compatibility.
 
 ### Added
 
+- `probes/`: the harness that runs a probe prompt in a fresh sandbox and
+  collects its report (`run.sh`), plus `netdiag.sh` and `claude-state-probe.sh`.
+  The permission gate is opened with `--allowedTools` rather than
+  `--permission-mode bypassPermissions`: the bypass is refused outright when the
+  agent sees itself as root, which is the case in `strict` where it runs as
+  uid 0 inside pasta's user namespace -- so the tightest mode, the one most
+  worth probing, could not be probed at all. The same list goes to every mode,
+  so a difference between runs belongs to the sandbox rather than to the gate.
 - `docs/recipes.md`: ordinary tools from inside the sandbox. Most things that
   "don't work in the sandbox" are one of five boundary crossings -- egress,
   credentials, loopback, paths, host config -- so the doc names the crossing
