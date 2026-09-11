@@ -155,6 +155,22 @@ break compatibility.
 
 ### Changed
 
+- **The seccomp filter is on by default** (issue #4). It was opt-in on the
+  understanding that it added depth to capability-dropping. A probe run showed
+  otherwise: the AppArmor profile `install.sh` installs for bwrap is
+  `flags=(unconfined)` with `userns,`, and AppArmor profiles are inherited by
+  children -- so every process under bwrap is exempt from
+  `kernel.apparmor_restrict_unprivileged_userns=1`, the restriction that would
+  otherwise stop a sandboxed agent creating a user namespace and regaining
+  capabilities in it. On an installed machine the filter is not depth, it is
+  the only control. `tests/live/seccomp.bats` had asserted the behaviour all
+  along ("without seccomp (control) ... a user namespace can be created");
+  what was missing was the cause.
+  If no filter is compiled for this architecture the engine warns at every
+  launch and runs without it, rather than refusing a tool the user never asked
+  to change -- `install.sh` only warns when it cannot build one. Asking for it
+  explicitly (`AGENT_SANDBOX_SECCOMP=on`) still refuses in that situation,
+  since what was requested cannot be delivered. `off` disables it.
 - **Breaking:** memory scoping is now the default. Without any configuration,
   a session sees only the current project's directory under
   `~/.claude/projects/`; other projects' transcripts, todos and shell

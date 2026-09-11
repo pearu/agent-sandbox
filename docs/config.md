@@ -73,10 +73,9 @@ Sections:
   syscall filter for sessions in this project, the same grant as
   `AGENT_SANDBOX_SECCOMP` (which wins if set in your shell). The value is the
   state, not a profile name: there is one filter, compiled per machine by
-  `install.sh`. With the built-in default off, a project can only turn the
-  filter *on*, so this cannot weaken the sandbox today; if the filter ever
-  becomes the default, approving `mode = off` would be a real widening and the
-  `--trust` review is where that is decided. See
+  `install.sh`. The filter is **on by default**, so `mode = off` in a project
+  file is a real widening -- which is what the `--trust` review is for, and why
+  deleting an approved file refuses the launch rather than falling back. See
   [seccomp](../components/seccomp/README.md).
 - **`[briefing]`** — key/value lines. `mode = on|off` (default on) controls
   whether the sandbox tells the session what it may and may not do. When on,

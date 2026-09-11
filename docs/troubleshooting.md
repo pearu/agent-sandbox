@@ -224,15 +224,22 @@ Working as designed: the agent only signs for hosts named in `--ssh`. Add
 `~/.gitconfig` is not bound in. Set a repo-local identity from a host shell;
 the engine prints the exact commands at launch.
 
-## `AGENT_SANDBOX_SECCOMP=on` refuses: "no seccomp filter for <arch>"
+## "no seccomp filter for <arch>"
 
 The filter is compiled per machine by `install.sh` into
 `~/.local/share/agent-sandbox/seccomp/<arch>.bpf`, so nothing binary ships. Re-run
 `install.sh`. It needs `libseccomp2` (present on any Ubuntu) and installs
 `pyseccomp` into the proxy's private Python environment; if that step reported
 "seccomp filter NOT compiled", read `~/.local/share/agent-sandbox/seccomp/gen.log`.
-Set `AGENT_SANDBOX_SECCOMP=off` (or unset it) to launch without the filter
-meanwhile.
+The filter is on by default, so a launch says this and continues without it,
+warning each time. `AGENT_SANDBOX_SECCOMP=on` turns the same situation into a
+refusal, which is what you want in a script that must not run unfiltered; and
+`AGENT_SANDBOX_SECCOMP=off` stops the warnings.
+
+It is worth fixing rather than silencing: the AppArmor profile `install.sh`
+installs for bwrap permits user namespaces to everything running under it, so
+on an installed machine the seccomp filter is what stops a sandboxed agent
+creating one and regaining capabilities.
 
 
 ## `install.sh` says the proxy environment "is broken ... recreating it"
