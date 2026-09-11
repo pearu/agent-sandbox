@@ -30,6 +30,10 @@ Functions a profile defines:
 | `profile_bin_discover()` | **Required.** Locate the agent executable: set `profile_bin` (path) and `profile_version` (for messages). On failure print why with `_as_msg` and return non-zero. |
 | `profile_prepare()` | Optional. Runs right before the sandbox is assembled; create state files here. Not run for host-side subcommands. |
 | `profile_handle_subcommand()` | Required iff `profile_host_subcommands` is non-empty. Receives the agent's full argv (`$1` is the subcommand); its return code is the exit code. |
+| `profile_memory_scope()` | Optional. Called with the resolved mode (`scoped`/`shared`) and the approved share paths. In `scoped` mode, hide the agent's per-project state and rebind the current project plus each share. Without it, a `scoped` setting is reported as ignored rather than silently doing nothing. |
+| `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR`, `copyout<TAB>DIR` or `append<TAB>FILE[<TAB>FILTER_FN]` lines; the engine stages, binds and flushes them. Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
+| `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. Skipped when the briefing is off or could not be written. |
+| `profile_fallback_hint()` | Optional. Printed when the sandbox itself fails to start: name the agent's own unsandboxed executable, so the user has a way back in. The engine prints a generic line without it. |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),

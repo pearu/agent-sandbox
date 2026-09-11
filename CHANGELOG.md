@@ -8,6 +8,18 @@ break compatibility.
 
 ### Fixed
 
+- Two documented lists had fallen behind the code, both of them the kind a
+  reader checks a claim against. `docs/profiles.md`'s contract table says "the
+  declarations above are the whole interface" and was missing four hooks the
+  engine calls -- `profile_memory_scope`, `profile_isolate`,
+  `profile_briefing_args`, `profile_fallback_hint` -- so a second profile would
+  be written without knowing they exist. `docs/design.md`'s isolation guarantee
+  named nine paths where the profile isolates eleven; the two it left out are
+  the logs a user's own hooks write (`responses.log`, `alerts.log`), which is a
+  guarantee nobody knew they had. Both lists are now derived from the code by a
+  test -- the hooks from the engine's own `declare -F` guards, the paths from
+  `profile_isolate` -- so neither can drift again without a red suite.
+
 - Two more places still described seccomp as off by default, both missed when
   #29 fixed the five the review found: `docs/agent-sandbox.example`, the file
   people copy into a project, said `Default: off`, and the engine's own comment
