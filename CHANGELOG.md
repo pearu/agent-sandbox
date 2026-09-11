@@ -8,6 +8,17 @@ break compatibility.
 
 ### Fixed
 
+- Two more places still described seccomp as off by default, both missed when
+  #29 fixed the five the review found: `docs/agent-sandbox.example`, the file
+  people copy into a project, said `Default: off`, and the engine's own comment
+  on the `[seccomp]` dot-file section explained why `mode = off` was "a no-op
+  today" -- the opposite of the truth, in the source a reviewer reads to check
+  what the trust gate is for. The drift check no longer takes a hand-written
+  list of files: it derives one from every shipped file that mentions seccomp
+  (the changelog excepted, since its history is meant to say the filter used to
+  be opt-in), and a second test derives each `on|off` default from the engine
+  and requires the example file's block to state it.
+
 - **50 negative assertions in the test suite could not fail.** `! cmd` does
   not fail a bats test unless it is the test's last line: bash suppresses
   `errexit` -- and the `ERR` trap bats fails on -- for a negated command, so

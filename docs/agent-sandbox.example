@@ -97,7 +97,8 @@
 #        install.sh; every syscall not allowlisted fails with EPERM, and the
 #        agent cannot make its own user namespace to regain capabilities.
 #        The value is the state, not a profile name. An AGENT_SANDBOX_SECCOMP
-#        set in your shell wins over this line. Default: off.
+#        set in your shell wins over this line. Default: on, so `mode = on`
+#        asks for what you already have and `mode = off` is a real widening.
 #[seccomp]
 #mode = on
 
