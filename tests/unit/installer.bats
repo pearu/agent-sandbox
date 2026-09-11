@@ -377,3 +377,30 @@ installed_over_native() { # ours in place, the original backed up, manifest writ
   [ ! -e "$T/home/.local/bin/claude" ] # ours gone
   [ -x "$T/sysdir/claude" ]            # theirs wins on PATH once more
 }
+
+# ---- single-user tool: not through sudo -----------------------------------
+
+@test "refuses to run through sudo, and says why, for install and uninstall alike" {
+  # SUDO_USER set with euid 0 is the precise signal: a normal user reached root
+  # through sudo. Faked here, since the test suite does not run as root.
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin \
+    SUDO_USER=someone "$REPO_ROOT/tests/helpers/as-root.sh" "$REPO_ROOT/install.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"do not run this with sudo"* ]]
+  [[ "$output" == *"single-user tool"* ]]
+  [[ "$output" == *"systemd --user unit"* ]]
+  [[ "$output" == *"asks for sudo itself"* ]] # ...and which step needs it
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH=/usr/bin:/bin \
+    SUDO_USER=someone "$REPO_ROOT/tests/helpers/as-root.sh" "$REPO_ROOT/install.sh" --uninstall
+  [ "$status" -eq 2 ]
+  # the uninstall case is the dangerous one: it would report success on the
+  # wrong home, so the refusal names that outcome specifically
+  [[ "$output" == *"report success while"* ]]
+}
+
+@test "plain root with no SUDO_USER is allowed: that is a container, not a mistake" {
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" \
+    PATH="$T/home/.local/bin:/usr/bin:/bin" \
+    "$REPO_ROOT/tests/helpers/as-root.sh" "$REPO_ROOT/install.sh" --dry-run
+  [[ "$output" != *"do not run this with sudo"* ]]
+}

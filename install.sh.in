@@ -70,6 +70,48 @@ for arg in "$@"; do
   esac
 done
 
+# agent-sandbox is a SINGLE-USER tool: everything it installs belongs to one
+# person. The proxy is a systemd *user* unit, the allowlist and trust store live
+# in that user's ~/.config, the agent's own state is in that user's home, and
+# the launcher goes on that user's PATH. There is no system-wide mode, and
+# running the installer through sudo produces one of two wrong outcomes:
+#
+#   - with HOME still the caller's, it writes root-owned files into their home
+#     (the trust store, the allowlist, blocked.log -- which the proxy must write
+#     as them), so later runs and the proxy itself fail on permissions;
+#   - with HOME reset to root's, it installs for root instead: a launcher not on
+#     the caller's PATH, a proxy environment nobody uses -- and `--uninstall`
+#     then inspects root's home, finds nothing, and reports success while the
+#     real install sits untouched. A misleading "done" is worse than an error.
+#
+# Either way `systemctl --user` addresses root's user manager, not theirs.
+#
+# SUDO_USER is the precise signal: set when a normal user reached root through
+# sudo. Plain root with no SUDO_USER is a container image, where being root is
+# ordinary and the tool should work, so that is allowed through.
+# `id -u` rather than $EUID: bash keeps EUID readonly and always set, which
+# makes the check impossible to exercise without actually being root. A safety
+# guard that cannot be tested is a guard nobody knows still works.
+if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+  echo "install.sh: do not run this with sudo." >&2
+  echo >&2
+  echo "agent-sandbox is a single-user tool: the proxy is a systemd --user unit, and the" >&2
+  echo "allowlist, trust store and launcher all belong to one person's account. Run as" >&2
+  echo "yourself:" >&2
+  echo >&2
+  echo "    ./install.sh${*:+ $*}" >&2
+  echo >&2
+  echo "It asks for sudo itself for the one step that needs it: the AppArmor profile" >&2
+  echo "that lets bwrap use user namespaces." >&2
+  echo >&2
+  echo "Through sudo it would install for root instead -- a launcher that is not on your" >&2
+  echo "PATH and a proxy nobody uses -- or leave root-owned files in ${SUDO_USER}'s home" >&2
+  echo "that later runs and the proxy itself cannot write. An --uninstall under sudo is" >&2
+  echo "worse still: it would examine root's home, find nothing, and report success while" >&2
+  echo "your install stays exactly where it is." >&2
+  exit 2
+fi
+
 # ----- locations -----
 # When run from a checkout, install from it; when run standalone (curl | bash),
 # section 1 clones the repository under $STATE_DIR and installs from there.

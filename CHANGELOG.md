@@ -8,6 +8,18 @@ break compatibility.
 
 ### Added
 
+- `install.sh` refuses to run through `sudo`, and says why. agent-sandbox is a
+  **single-user tool**: the proxy is a systemd *user* unit, and the allowlist,
+  trust store and launcher belong to one account, so there is nothing for a
+  system-wide install to mean. Through sudo it would either install for root (a
+  launcher not on the caller's PATH) or leave root-owned files in their home
+  that later runs and the proxy itself cannot write -- and `--uninstall` under
+  sudo would inspect root's home, find nothing, and report success while the
+  real install sat untouched. `SUDO_USER` with euid 0 is the signal; plain root
+  with no `SUDO_USER` is a container image and is allowed through. The check
+  calls `id -u` rather than reading `$EUID`, because bash keeps `$EUID`
+  readonly and always set, which would make the guard impossible to test
+  without actually being root.
 - `install.sh --uninstall` (issue #22). It shows exactly what it will touch and
   asks before touching it (`--dry-run` only prints, `--yes` skips the question).
   It **repoints** `~/.local/bin/claude` at the agent's own binary rather than

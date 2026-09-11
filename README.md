@@ -96,6 +96,12 @@ cd agent-sandbox
 ./install.sh            # or ./install.sh --dry-run to see what it would do
 ```
 
+agent-sandbox is a **single-user tool**. Everything it installs belongs to one
+account: the proxy is a systemd *user* unit, the allowlist and trust store live
+in that account's `~/.config`, and the launcher goes on that account's PATH.
+There is no system-wide mode, and the installer refuses to run through `sudo` —
+it asks for sudo itself for the one step that needs it, the AppArmor profile.
+
 The installer is idempotent: it sets up the proxy (mitmproxy 12+ in a private
 environment under `~/.local/share/agent-sandbox`), generates the CA, writes
 the allowlist (keeping your edits on re-runs) and adds each profile's hosts,
