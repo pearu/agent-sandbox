@@ -102,17 +102,20 @@ in the first place, so a local sandbox has nothing to protect. What it *can*
 reach — a connected GitHub account, say — is granted on the service side and can
 only be limited there.
 
-**Depends on how it is launched.** An IDE extension or a script that runs
-`claude` from your PATH reaches the launcher and is sandboxed. One that calls a
-bundled or absolute path to the agent's own binary is not, and nothing will tell
-you. If this matters to you, check what actually runs:
+**Depends on how it is launched.** Anything that runs `claude` from your PATH
+reaches the launcher and is sandboxed — a terminal inside your editor included.
+Anything that calls the agent's own binary by an absolute path is not, and
+nothing will tell you.
+
+The **VS Code extension is the second case**: it ships its own copy of Claude
+Code and runs that, so its sessions are outside the sandbox while a terminal in
+the same window is inside it. To see which you have, with a session running:
 
 ```
-type -a claude       # the launcher should come first
+./probes/whats-running.sh    # lists agent processes, sandboxed or not
 ```
 
-We have not yet verified how the VS Code extension launches Claude Code, so this
-README does not claim either way.
+[recipes.md](docs/recipes.md#editors-and-ides) covers what to do about it.
 
 **Single user.** Everything installs into one account and there is no
 system-wide mode; the installer refuses to run through `sudo`. See
@@ -223,6 +226,8 @@ commented template in
 - [docs/config.md](docs/config.md): the per-project `.agent-sandbox` file, its
   trust gate, and per-project memory scoping.
 - [docs/ssh.md](docs/ssh.md): the SSH broker.
+- [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git, `gh`,
+  package installs, ports, editors — and how to tell what is blocking you.
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.
 - [docs/updating.md](docs/updating.md), [docs/troubleshooting.md](docs/troubleshooting.md),
   [docs/prior-art.md](docs/prior-art.md).

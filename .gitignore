@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 coverage-out/
 .coverage*
+probes/results/
+probes/work
+.claude/settings.local.json
