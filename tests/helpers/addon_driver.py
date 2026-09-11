@@ -24,19 +24,34 @@ class Conn:
 
 
 class Req:
-    def __init__(self, host, method="GET", path="/", headers=None):
-        self.pretty_host = host
+    def __init__(self, host, method="GET", path="/", headers=None, pretty_host=None):
+        # host is the request-line authority (where the connection goes);
+        # pretty_host is what mitmproxy derives from the Host header. They differ
+        # only when a client spoofs the Host header, which is the case the
+        # destination gate must survive; default them equal for every other test.
         self.host = host
+        self.pretty_host = pretty_host if pretty_host is not None else host
         self.method = method
         self.path = path
         self.headers = headers if headers is not None else {}
 
 
 class Flow:
-    def __init__(self, host, method="GET", path="/", headers=None, cid="c1"):
-        self.request = Req(host, method, path, headers)
+    def __init__(self, host, method="GET", path="/", headers=None, cid="c1", pretty_host=None):
+        self.request = Req(host, method, path, headers, pretty_host)
         self.response = None
         self.client_conn = Conn(cid)
+
+
+class Srv:
+    def __init__(self, address):
+        self.address = address
+        self.error = None
+
+
+class ConnData:
+    def __init__(self, address):
+        self.server = Srv(address)
 
 
 def _auth(token):
@@ -105,5 +120,30 @@ elif scenario == "responseheaders":
     f.response = m.http.Response.make(200, b"", {"content-type": args[0] if args else "text/plain"})
     m.responseheaders(f)
     show(stream=f.response.stream)
+elif scenario == "request_spoof":
+    # request-line host = args[0] (real dest), Host header = args[1] (spoof).
+    f = Flow(args[0], "GET", "/SECRET", pretty_host=args[1])
+    m.request(f)
+    show(blocked=f.response is not None,
+         gated_host=args[0], header_host=args[1])
+elif scenario == "public":
+    for ip in args:
+        show(**{ip: m._addr_is_public(ip)})
+elif scenario == "forbidden":
+    # literal IPs only (no DNS); prints the reason or "OK"
+    for h in args:
+        show(**{h: (m._forbidden_destination(h) or "OK")})
+elif scenario == "server_connect":
+    # args[0] host, args[1] port; literal or (with resolve) a name
+    d = ConnData((args[0], int(args[1]) if len(args) > 1 else 443))
+    m.server_connect(d)
+    show(aborted=d.server.error is not None, error=(d.server.error or ""))
+elif scenario == "server_connect_resolve":
+    # NAME IP1 [IP2...] : monkeypatch getaddrinfo so a name resolves to given IPs
+    name, ips = args[0], args[1:]
+    m.socket.getaddrinfo = lambda host, *a, **k: [(2, 1, 6, "", (ip, 0)) for ip in ips]
+    d = ConnData((name, 443))
+    m.server_connect(d)
+    show(aborted=d.server.error is not None)
 else:
     sys.exit(f"unknown scenario {scenario}")
