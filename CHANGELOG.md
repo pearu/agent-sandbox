@@ -6,6 +6,20 @@ break compatibility.
 
 ## Unreleased
 
+### Added
+
+- The engine has a **wrapper role** (`--wrap`), the mechanism for opt-in
+  sandboxing of background `claude` workers (issue #45). Invoked as Claude
+  Code's `CLAUDE_CODE_PROCESS_WRAPPER`, it runs the discovered native binary
+  (discarding the launcher path Claude passes) and switches on the spawned
+  process's own argv: the supervisor (`daemon run`) and the PTY provider
+  (`--bg-pty-host`) pass through to the host — trusted infra that must stay
+  host-side to spawn, and themselves wrap, their children — while the pooled
+  worker (`--bg-spare`, and any unknown verb, fail-safe) is sandboxed, with only
+  the rendezvous-socket directories named in its argv bound in. Not yet wired to
+  a knob: the opt-in delivery, the host e2e confirming the pty-host/spare split,
+  and CI via an extended `fake-claude.sh` are the remaining pieces of #45.
+
 ## 0.2.0 — 2026-09-12
 
 ### Fixed
