@@ -80,3 +80,49 @@ setup() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"--wrap needs the wrapped command"* ]]
 }
+
+@test "a wrapped worker binds the background project (from the session-base file) like a foreground CWD" {
+  local proj="$H/work/myproj"
+  mkdir -p "$proj"
+  mkdir -p "$H/base"
+  printf '%s' "$proj" >"$H/base/bg-project"
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  [ "$status" -eq 0 ]
+  argv_has --bind "$proj" "$proj" # the project is bound rw
+  argv_has "$NATIVE" --bg-spare "$SOCKDIR/a.claim.sock"
+}
+
+@test "no background project set: the worker binds no project (only ~/.claude etc.)" {
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  [ "$status" -eq 0 ]
+  # nothing under a project root is bound; only the socket dir + state paths
+  run ! grep -qE -- '--bind /work/' "$H/argv"
+}
+
+@test "background project == \$HOME is not bound (secrets stay hidden)" {
+  mkdir -p "$H/base"
+  printf '%s' "$H/home" >"$H/base/bg-project"
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"background project is \$HOME"* ]]
+  run ! argv_has --bind "$H/home" "$H/home"
+}
+
+@test "a background project that is a secret store is refused" {
+  local secret="$H/home/.ssh"
+  mkdir -p "$secret"
+  mkdir -p "$H/base"
+  printf '%s' "$secret" >"$H/base/bg-project"
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to bind background project"* ]]
+}
+
+@test "the background project is read from the session-base file when the env is unset" {
+  local proj="$H/work/fromfile"
+  mkdir -p "$proj" "$H/base"
+  printf '%s' "$proj" >"$H/base/bg-project"
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  [ "$status" -eq 0 ]
+  argv_has --bind "$proj" "$proj"
+}

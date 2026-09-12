@@ -435,6 +435,18 @@ _as_add_paths() {
 # find it deterministically: $AGENT_SANDBOX_SESSION_BASE if set, else
 # $XDG_RUNTIME_DIR/agent-sandbox.<uid>, else /tmp/agent-sandbox.<uid>. The
 # mitmproxy addon derives the same path (it runs as the same user).
+_as_bg_project() {
+  # The project directory a wrapped background worker should see, bound like a
+  # foreground session's CWD. The launcher records it per `--bg` in wrapper mode
+  # (a fresh daemon is started per launch, so this file is the current project);
+  # the wrapper reads it here. Empty means "no project" -> the worker gets only
+  # ~/.claude, like a foreground session started from $HOME.
+  local f
+  f="$(_as_session_base)/bg-project"
+  [[ -r "$f" ]] && cat -- "$f"
+  return 0
+}
+
 _as_session_base() {
   if [[ -n "${AGENT_SANDBOX_SESSION_BASE:-}" ]]; then
     printf '%s' "$AGENT_SANDBOX_SESSION_BASE"
@@ -1814,6 +1826,25 @@ agent_sandbox() (
           done
           ((_wseen)) || profile_rw_binds+=("$_wdir")
         done
+        # Bind the background session's PROJECT the same way a foreground
+        # session binds its CWD: skip when it is $HOME (secrets stay hidden),
+        # refuse a secret store or the control plane, otherwise bind read-write.
+        # There is no bg_roots knob: the project is whatever `--bg` was launched
+        # from, recorded by the launcher (see _as_bg_project).
+        local _bgproj _prot_what _prot_path _prot_how
+        _bgproj="$(_as_bg_project)"
+        if [[ -n "$_bgproj" ]]; then
+          if [[ ! -d "$_bgproj" ]]; then
+            _as_msg "wrap: background project '$_bgproj' does not exist; not binding it"
+          elif [[ "$_bgproj" == "$HOME" ]]; then
+            _as_msg "wrap: background project is \$HOME -- not binding it (secrets stay hidden)"
+          elif _as_path_protected "$_bgproj"; then
+            _as_msg "wrap: refusing to bind background project '$_bgproj': it $_prot_how $_prot_what '$_prot_path'"
+            return 1
+          else
+            profile_rw_binds+=("$_bgproj")
+          fi
+        fi
         # A wrapped worker's argv is not a session prompt; no briefing is
         # injected (it would append --settings to the worker's own arguments).
         ;;
