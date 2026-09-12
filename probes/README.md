@@ -15,6 +15,7 @@ defeat a restriction, and they must not read the contents of private state
 | Path | What | Committed |
 |---|---|---|
 | `*.md` | probe prompts: `characterize.md` (filesystem, network, privileges, workaround tools, enforcement gaps) and `review.md` (adversarial review of the whole project, meant for a session run from a separate clone so the reviewer cannot read this project's transcripts) | yes |
+| `wrapper-measure.sh` | host-side: does Claude Code spawn background workers through `CLAUDE_CODE_PROCESS_WRAPPER` (starts a real unsandboxed bg session briefly, then removes it) | yes |
 | `f1-egress.sh` | host-side: does the installed proxy gate the real destination (not a spoofed `Host` header) and refuse loopback/private/metadata dials | yes |
 | `run.sh` | runs one probe: fresh work dir outside the repo, sanitized launch, report collected | yes |
 | `results/` | collected reports, `<probe>-<model>-<net>-<UTC time>.md`, with a metadata header | **no** (gitignored: reports describe this machine) |
