@@ -1553,7 +1553,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
-  local _host_none=0 _agent_none=0
+  local _host_none=0 _agent_none=0 _do_wrap=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -1650,6 +1650,13 @@ agent_sandbox() (
         ;;
       --trust)
         _do_trust=1
+        shift
+        ;;
+      --wrap)
+        # Internal: set by opt-in wrapper mode as CLAUDE_CODE_PROCESS_WRAPPER.
+        # Everything after it is `<binary> <argv...>` -- a process Claude Code
+        # spawns -- to sandbox. See the wrapper role below and issue #45.
+        _do_wrap=1
         shift
         ;;
       *) break ;;
@@ -1757,6 +1764,61 @@ agent_sandbox() (
       _as_msg "profile '$profile' selected no executable (profile_bin='$profile_bin')"
       return 1
     }
+
+  # ---- wrapper role (CLAUDE_CODE_PROCESS_WRAPPER) ----
+  # Invoked as `agent-sandbox --wrap <binary> <argv...>` to sandbox a process
+  # Claude Code spawns. We always run our discovered native binary
+  # ($profile_bin) and DISCARD the <binary> Claude passed: it is
+  # ~/.local/bin/claude, our launcher, which would re-enter the engine. The
+  # switch on the worker's own argv decides what stays host-side (trusted infra
+  # that must run on the host to spawn -- and itself wrap -- its children) from
+  # what is sandboxed (the process that runs the agent):
+  #   daemon run     the background supervisor. Host-side; it keeps the wrapper
+  #                  in its environment, so the workers it spawns are wrapped.
+  #   --bg-pty-host  a PTY provider (its argv carries the terminal WxH and,
+  #                  after `--`, the wrapper + the spare command). Host-side, so
+  #                  the spare it spawns is wrapped -> sandboxed.
+  #   --bg-spare/*   the pooled worker that claims and runs a session: SANDBOX.
+  #                  An unknown verb defaults here -- fail safe: sandbox it.
+  # The pty-host/spare split is read from the argv (WxH, "pty-host" vs the
+  # claimed "spare"); confirm end-to-end on the host before wrapper mode ships
+  # enabled (issue #45).
+  if ((_do_wrap)); then
+    [[ $# -ge 1 ]] || {
+      _as_msg "--wrap needs the wrapped command"
+      return 2
+    }
+    shift # drop the <binary> Claude passed; we use $profile_bin (native)
+    case "${1:-}" in
+      daemon | --bg-pty-host)
+        exec "$profile_bin" "$@"
+        ;;
+      *)
+        # Sandbox this worker. Bind the rendezvous sockets named in its argv so
+        # it can reach the daemon -- and nothing else of the daemon's. The
+        # sockets live in the daemon's per-instance dir under /tmp; bind that
+        # dir read-write (a worker both creates and connects sockets there).
+        # This is broader than a per-socket bind (it exposes sibling workers'
+        # sockets in the same dir) but not the roster, which stays hidden in
+        # ~/.claude/daemon; narrowing it is tracked in issue #45.
+        local _wtok _wdir _wb _wseen
+        for _wtok in "$@"; do
+          [[ "$_wtok" == /*.sock ]] || continue
+          _wdir="$(dirname -- "$_wtok")"
+          _wseen=0
+          for _wb in ${profile_rw_binds[@]+"${profile_rw_binds[@]}"}; do
+            [[ "$_wb" == "$_wdir" ]] && {
+              _wseen=1
+              break
+            }
+          done
+          ((_wseen)) || profile_rw_binds+=("$_wdir")
+        done
+        # A wrapped worker's argv is not a session prompt; no briefing is
+        # injected (it would append --settings to the worker's own arguments).
+        ;;
+    esac
+  fi
 
   # ---- host-side subcommands (e.g. `claude update`) ----
   # The profile lists verbs that must run on the HOST with the caller's
@@ -2312,7 +2374,11 @@ agent_sandbox() (
   # it to the agent and may decline, in which case briefing.md is still bound so
   # the agent can read it.
   local -a profile_briefing_argv=()
-  case "${_knob_briefing:-on}" in
+  # A wrapped worker (wrapper role) gets no briefing: its argv is a spawn
+  # command, not a session prompt, and appending --settings would corrupt it.
+  local _brief="${_knob_briefing:-on}"
+  ((_do_wrap)) && _brief=off
+  case "$_brief" in
     off | 0) ;;
     on | 1)
       if _as_briefing_write; then
