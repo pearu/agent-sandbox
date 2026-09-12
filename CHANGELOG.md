@@ -6,6 +6,8 @@ break compatibility.
 
 ## Unreleased
 
+## 0.2.0 — 2026-09-12
+
 ### Fixed
 
 - The repository checks scanned the working tree, so an untracked local note or

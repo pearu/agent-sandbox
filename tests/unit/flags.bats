@@ -65,7 +65,9 @@ STUB
 @test "--engine-version prints the version and exits without launching" {
   run_engine -- claude --engine-version
   [ "$status" -eq 0 ]
-  [[ "$output" == "agent-sandbox 0.1.0"* ]] # VERSION next to the engine; a build marker may follow
+  # derived from the VERSION file next to the engine, not hardcoded, so a
+  # release bump does not need to touch this test; a build marker may follow.
+  [[ "$output" == "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]]
   [ ! -s "$H/argv" ]
 }
 
