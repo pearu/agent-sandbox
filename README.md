@@ -200,6 +200,7 @@ not exist. Values and defaults are in the last column.
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |
 | `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
 | `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed ([config.md](docs/config.md)) |
+| `--wrap` | — | — | internal: run as Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER` to sandbox a background worker Claude spawns; set by opt-in wrapper mode, not typed by hand ([design.md](docs/design.md)) |
 | `--engine-help`, `--engine-version` | — | — | print the engine's own flags, or its version, and exit |
 
 When a setting can be given more than one way, they combine like this. Hosts,
