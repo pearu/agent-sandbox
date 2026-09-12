@@ -8,6 +8,15 @@ break compatibility.
 
 ### Fixed
 
+- The repository checks scanned the working tree, so an untracked local note or
+  a gitignored review artifact could fail an otherwise-clean tree: a file
+  containing "seccomp opt-in" failed the drift test, an unformatted stray script
+  failed `shfmt -d .`, while CI on a fresh checkout stayed green. `scripts/check.sh`
+  now derives its file lists from `git ls-files` and runs `shfmt` on that list,
+  and the docs drift scan uses `git grep`; both see only tracked files. A real
+  edit to a tracked file is still caught, staged or not. (Adversarial-review
+  finding F2.)
+
 - **The egress allowlist could be bypassed for plain HTTP with a spoofed `Host`
   header, and could be pointed at host-local services.** The addon decided on
   `pretty_host`, which returns the `Host` header, while mitmproxy connects to

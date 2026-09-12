@@ -8,12 +8,20 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 step() { printf '\n==> %s\n' "$*"; }
-shell_files=(agent-sandbox install.sh install.sh.in scripts/*.sh profiles/*.sh tests/run.sh tests/helpers/*.sh tests/helpers/*.bash)
+# All file lists come from `git ls-files`, so the checks judge what is TRACKED,
+# not whatever happens to sit in the working tree. A stray local note or a
+# review artifact under a gitignored dir used to fail an otherwise-clean tree
+# (it tripped shfmt, and a repo-wide grep in docs.bats) -- CI, on a clean
+# checkout, stayed green while a maintainer's local run went red for no real
+# defect.
+mapfile -t shell_files < <(git ls-files -- agent-sandbox install.sh install.sh.in 'scripts/*.sh' 'profiles/*.sh' tests/run.sh 'tests/helpers/*.sh' 'tests/helpers/*.bash')
 # The bats suites are shell too, and ShellCheck parses @test natively. They
 # were left out of this list once, and 50 negative assertions that could not
 # fail (`! cmd`; SC2314) accumulated where the one linter that knows about
 # that bug was not looking. Not under `bash -n`: @test is not bash syntax.
-bats_files=(tests/*/*.bats)
+mapfile -t bats_files < <(git ls-files -- 'tests/*/*.bats')
+# Everything shfmt formats, tracked only (the engine has no extension).
+mapfile -t fmt_files < <(git ls-files -- '*.sh' '*.bash' '*.bats' agent-sandbox install.sh.in)
 
 step "bash -n"
 for f in "${shell_files[@]}"; do bash -n "$f"; done
@@ -23,8 +31,8 @@ shellcheck -x "${shell_files[@]}"
 step "shellcheck (bats suites)"
 shellcheck -x "${bats_files[@]}"
 
-step "shfmt -d . (formatting per .editorconfig)"
-shfmt -d .
+step "shfmt -d (tracked files, formatting per .editorconfig)"
+shfmt -d "${fmt_files[@]}"
 
 step "python components compile"
 python3 -m py_compile components/*.py

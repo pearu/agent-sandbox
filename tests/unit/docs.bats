@@ -202,10 +202,9 @@ profile_dotfile_keys() {
     run ! grep -qiE '(opt-in|off by default)[^.]{0,40}seccomp' "$f"
     run ! grep -qiE 'seccomp[^.]{0,60}default[ :]+off' "$f"
     run ! grep -qiE 'built-in default off' "$f"
-  done < <(grep -rlEi seccomp "$REPO_ROOT" --include='*.md' --include='*.example' \
-    --include='install.sh' --include='install.sh.in' --include='agent-sandbox' \
-    --exclude=CHANGELOG.md \
-    --exclude-dir=.git --exclude-dir=tests --exclude-dir=probes)
+  done < <(git -C "$REPO_ROOT" grep -lIiE 'seccomp' -- \
+    '*.md' '*.example' install.sh install.sh.in agent-sandbox \
+    ':!CHANGELOG.md' ':!tests/' ':!probes/' | sed "s|^|$REPO_ROOT/|")
   # the component README title specifically (it said "(opt-in)")
   run ! grep -qi 'default-deny syscall filter (opt-in)' "$REPO_ROOT/components/seccomp/README.md"
 }
