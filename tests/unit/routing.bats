@@ -83,7 +83,17 @@ native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
   run_engine CLAUDE_CODE_PROCESS_WRAPPER=/tmp/mine.sh -- claude --sandbox "fg bg" --bg 'do a thing'
   [ "$status" -eq 0 ]
   [[ "$output" == *"wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]]
-  [ -x "$H/base/wrap-claude.sh" ] # ours is what the workers get
+  [[ "$output" == *"--sandbox none"* ]] # points at the workaround
+  [ -x "$H/base/wrap-claude.sh" ]       # ours is what the workers get
+}
+
+@test "--sandbox none: --bg runs native and leaves a caller's CLAUDE_CODE_PROCESS_WRAPPER untouched (the documented workaround)" {
+  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/caller/wrap.sh -- claude --sandbox none --bg 'do a thing'
+  [ "$status" -eq 0 ]
+  native
+  [[ "$output" == *"stub-agent argv: --bg do a thing"* ]]
+  [ ! -e "$H/base/wrap-claude.sh" ]                                # our shim not written
+  [[ "$output" != *"replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]] # caller wrapper left alone
 }
 
 @test "[claude] sandbox = none in a trusted dot-file makes foreground native" {

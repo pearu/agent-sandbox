@@ -109,7 +109,9 @@ If the caller already set their own `CLAUDE_CODE_PROCESS_WRAPPER`, wrapper mode
 the caller's wrapper) and says so rather than dropping it silently; the caller's
 wrapper is not chained. Composing a caller-supplied wrapper — running it *inside*
 the sandbox, applied to the claude workers rather than to the arbitrary sandbox
-around them — is a separate feature, tracked as its own request.
+around them — is a separate feature, tracked in #49. To keep your own wrapper
+today, run `--sandbox none` (or otherwise leave `bg` out of scope), which runs
+`--bg` natively through it.
 
 ## Threat model
 

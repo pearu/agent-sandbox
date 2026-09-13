@@ -355,11 +355,12 @@ _claude_bg_launch() {
   _as_msg "background session sandboxed (wrapper mode)${proj:+, project: $proj}"
   # If the caller already set CLAUDE_CODE_PROCESS_WRAPPER (their own wrapper),
   # wrapper mode replaces it -- the workers run in OUR sandbox, not the caller's
-  # wrapper, and it is not chained. Say so rather than dropping it silently.
-  # Composing a caller wrapper (running it INSIDE the sandbox) is a separate
-  # feature, deliberately not built here.
+  # wrapper, and it is not chained. Say so rather than dropping it silently, and
+  # point at the escape hatch: --sandbox none runs --bg natively, so the caller's
+  # wrapper takes effect. Composing a caller wrapper (running it INSIDE the
+  # sandbox) is a separate feature, deliberately not built here.
   if [[ -n "${CLAUDE_CODE_PROCESS_WRAPPER:-}" && "$CLAUDE_CODE_PROCESS_WRAPPER" != "$shim" ]]; then
-    _as_msg "note: wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER ('$CLAUDE_CODE_PROCESS_WRAPPER') for background workers; it is not chained"
+    _as_msg "note: wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER ('$CLAUDE_CODE_PROCESS_WRAPPER') for background workers and does not chain it; use --sandbox none to keep your own wrapper"
   fi
   export CLAUDE_CODE_PROCESS_WRAPPER="$shim"
   exec "$profile_bin" "$@"
