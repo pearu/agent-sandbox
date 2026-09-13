@@ -87,6 +87,17 @@ Enforcement happens twice:
 2. **Per request**, inside an allowed tunnel and for plain HTTP. This keeps
    per-path logging and refuses a `Host` header naming another host.
 
+The allowlist gates **public** hosts only. Independently, the proxy refuses to
+connect to any destination that resolves to a **non-public** address — loopback
+(`127.0.0.0/8`, `::1`), private/LAN (`10/8`, `172.16/12`, `192.168/16`),
+link-local including cloud metadata (`169.254.169.254`), and unique-local IPv6 —
+even when the host *name* is on the allowlist. An allowlisted name that resolves
+to such an address (an internal/LAN host, `localhost`, or a public name under
+DNS rebinding) is refused with a `502` and a `DEST` line in the log; the proxy
+runs on the host, so these are never legitimate egress targets. To reach a
+host-local service from a sandbox, use `--host-port` in `strict` mode (above),
+not the allowlist.
+
 Refusals are appended to `~/.config/agent-sandbox/blocked.log` as
 `timestamp  host  method  path`; `tail -f` it to see what the agent is reaching
 for and add hosts as needed. The addon only appends, never rotates, so on a busy
