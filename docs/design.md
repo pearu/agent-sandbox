@@ -83,12 +83,17 @@ daemon is **one we started with this wrapper** — a daemon started otherwise
 *unwrapped*, so a foreign or unwrapped daemon is restarted (active sessions
 survive: the fresh daemon re-adopts them); and **reaps the idle pool** so the
 re-warmed spares bind this project, keeping per-project isolation exact without a
-fragile restart on every launch. The reap is keyed on the daemon's roster: it
-kills only process trees rooted at a background-worker marker whose ancestry
-holds no rostered (active) session, so a foreground sandbox — which carries no
-such marker and is not a descendant of a worker — can never be selected. Pool
-maintenance uses `python3`; without it the step is skipped with a note (idle
-sandboxes may then accumulate until cleared).
+fragile restart on every launch. The reap is keyed on the daemon's roster and
+matches workers **structurally**: a process is selected only when its executable
+is a claude version binary *and* `--bg-spare`/`--bg-pty-host` is an exact `argv`
+element (never a substring of some process's joined command line) *and* its
+ancestry holds no rostered (active) session; its subtree is then taken. Matching
+the executable and an exact argv element is what keeps a shell or test that merely
+*mentions* the token — or that shell's children — from being selected and killed.
+The selection is a pure function of the roster and `/proc`, unit-tested against a
+synthetic process table (`tests/unit/bg-reap.bats`). Pool maintenance uses
+`python3`; without it the step is skipped with a note (idle sandboxes may then
+accumulate until cleared).
 
 **Why the environment variable, not a configured launcher.** Claude Code offers
 two ways to deliver a process wrapper: the per-launch `CLAUDE_CODE_PROCESS_WRAPPER`
@@ -294,6 +299,14 @@ Stated plainly. These are what the adversary above can still do.
   `daemon/`-class, infra-only hole between workers — not a path to the roster or
   to another project's data. Narrowing it to a per-socket bind is tracked in
   issue #45.
+- **The background-pool reap kills host process trees.** With `bg` in scope, a
+  `claude --bg` launch sends SIGTERM then SIGKILL to the leaked idle-pool worker
+  trees it finds on the host (see "Background sandboxing"). It selects
+  structurally — a claude version binary with an exact `--bg-spare`/`--bg-pty-host`
+  argv element and no rostered ancestor — so unrelated processes are not targets,
+  but it is real process-killing on the host and fires only for an opted-in `bg`
+  launch. A bug in the selection would kill the wrong thing, so the selection is
+  isolated as a pure function and unit-tested (`tests/unit/bg-reap.bats`).
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.
