@@ -130,7 +130,7 @@ setup() {
   grep -q 'BEGIN CERT' "$output"
 }
 
-@test "_as_ca_bind builds system+CA and binds it over the system bundle; rebuilds when the CA is newer; skips when the CA is missing" {
+@test "_as_ca_bind builds system+CA and binds it over the system bundle; rebuilds every launch (even a rotated CA that is not newer); skips when the CA is missing" {
   # shellcheck disable=SC2031 # set afresh here; the earlier test's export died with its subshell
   export AGENT_SANDBOX_SESSION_BASE="$BATS_TEST_TMPDIR/base"
   export AGENT_SANDBOX_PROXY_CA="$BATS_TEST_TMPDIR/ca.pem"
@@ -148,19 +148,25 @@ setup() {
   [ "${args[0]}" = "--ro-bind" ]
   [ "${args[1]}" = "$AGENT_SANDBOX_SESSION_BASE/ca-bundle.crt" ]
   [ "${args[2]}" = "$bundle" ]
+  local combined="${args[1]}"
   local n_sys n_comb
   n_sys=$(grep -c 'BEGIN CERT' "$bundle")
-  n_comb=$(grep -c 'BEGIN CERT' "${args[1]}")
+  n_comb=$(grep -c 'BEGIN CERT' "$combined")
   [ "$n_comb" -eq $((n_sys + 1)) ]
-  grep -q "$(sed -n 2p "$AGENT_SANDBOX_PROXY_CA")" "${args[1]}"
-  # rebuild when the CA is newer
-  local m1
-  m1=$(stat -c %Y "${args[1]}")
-  sleep 1.1
-  touch "$AGENT_SANDBOX_PROXY_CA"
+  grep -q "$(sed -n 2p "$AGENT_SANDBOX_PROXY_CA")" "$combined"
+  # Staleness regression: the proxy CA is ROTATED to a different cert whose file
+  # mtime is NOT newer than the cached bundle (an mtime-only cache would keep
+  # serving the old CA here, and every agent verifying the proxy leaf then fails
+  # TLS). The rebuild must replace the cached CA with the current one regardless.
+  local old_line
+  old_line="$(sed -n 2p "$AGENT_SANDBOX_PROXY_CA")" # a body line unique to the old CA
+  make_fake_ca "$BATS_TEST_TMPDIR/ca2.pem"
+  cp "$BATS_TEST_TMPDIR/ca2.pem" "$AGENT_SANDBOX_PROXY_CA" # rotate in place
+  touch -d '2001-01-01' "$AGENT_SANDBOX_PROXY_CA"          # older than the cached bundle
   args=()
   _as_ca_bind
-  [ "$(stat -c %Y "${args[1]}")" -gt "$m1" ]
+  grep -q "$(sed -n 2p "$AGENT_SANDBOX_PROXY_CA")" "$combined" # new CA present
+  run ! grep -qF "$old_line" "$combined"                       # old CA gone
 }
 
 @test "_as_ca_env points the CA variables at the bundle unless the caller set them" {
