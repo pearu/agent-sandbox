@@ -37,6 +37,7 @@ setup() {
   [ "$(setenv_value DISABLE_AUTOUPDATER)" = "1" ]
   [ "$(setenv_value HOME)" = "$H/home" ]
   [ "$(setenv_value USER)" = "tester" ]
+  [ "$(setenv_value AGENT_SANDBOX)" = "1" ] # marks the inside of a sandbox (nested-launcher detection)
   [ "$(setenv_value SSL_CERT_FILE)" = "/etc/ssl/certs/ca-certificates.crt" ]
   [ "$(setenv_value CONDA_SSL_VERIFY)" = "/etc/ssl/certs/ca-certificates.crt" ]
   run ! setenv_value LEAKED

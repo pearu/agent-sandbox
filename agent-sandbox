@@ -1566,6 +1566,7 @@ agent_sandbox() (
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
   local _host_none=0 _agent_none=0 _do_wrap=0
+  local _sandbox_flag="" _sandbox_flag_set=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -1662,6 +1663,24 @@ agent_sandbox() (
         ;;
       --trust)
         _do_trust=1
+        shift
+        ;;
+      --sandbox)
+        # Which invocations to sandbox, as a scope list the profile interprets
+        # (e.g. claude: "fg", "bg", "fg bg", or "none"). A launch-time choice, so
+        # it overrides the dot-file's [<profile>] sandbox key and is not
+        # trust-gated (widening your own launch is yours to do). See profile_route.
+        [[ $# -ge 2 && -n "$2" ]] || {
+          _as_msg "--sandbox needs a scope list (e.g. 'fg bg', or none)"
+          return 2
+        }
+        _sandbox_flag="$2"
+        _sandbox_flag_set=1
+        shift 2
+        ;;
+      --sandbox=*)
+        _sandbox_flag="${1#--sandbox=}"
+        _sandbox_flag_set=1
         shift
         ;;
       --wrap)
@@ -1870,6 +1889,22 @@ agent_sandbox() (
     done
   fi
 
+  # ---- profile management verbs: run natively, before any project machinery ----
+  # Verbs that observe or manage the agent's background service (e.g. claude
+  # daemon/agents/attach/logs/stop/rm). They are never sandboxed, and must not be
+  # gated by this project's .agent-sandbox (a changed/unapproved dot-file must not
+  # stop you listing or stopping sessions), so this runs before the dot-file is
+  # read. Not for wrapper spawns, and not when engine --ssh/--allow were given.
+  if ((! _do_wrap)) && [[ -n "${1:-}" ]] && declare -p profile_native_verbs >/dev/null 2>&1; then
+    local _pv
+    for _pv in ${profile_native_verbs[@]+"${profile_native_verbs[@]}"}; do
+      [[ "$1" == "$_pv" ]] || continue
+      ((_ssh_want || ${#_allow_hosts[@]} > 0)) && _as_msg "--ssh*/--allow flags are ignored for '$1'"
+      _as_msg "'$1' runs natively (unsandboxed): it manages the background service"
+      exec "$profile_bin" "$@"
+    done
+  fi
+
   # ---- knobs (AGENT_SANDBOX_*) ----
   local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
@@ -2015,6 +2050,22 @@ agent_sandbox() (
       "silently fall back to the defaults. Refusing to launch: restore the file, or forget the approval with: $invoked --trust"
     return 1
   fi
+
+  # ---- profile routing: sandbox this invocation, or hand it off ----
+  # With the project's trusted .agent-sandbox now read, let the profile decide
+  # what to do with the agent's own argv against the effective sandbox scopes
+  # (--sandbox flag > [<profile>] sandbox dot-file key > a context default: none
+  # inside a sandbox, else fg). It either
+  # runs the invocation itself (e.g. a foreground scope turned off -> native; a
+  # background launch -> sandbox the workers) and never returns, or returns 0 to
+  # continue with the normal sandboxed foreground flow below. It reads the engine
+  # locals it needs (_sandbox_flag, _sandbox_flag_set, _df_profile_kv, cwd,
+  # engine, profile_bin, profile) by dynamic scope, as the other profile hooks
+  # do. Wrapper spawns and `--trust` never route.
+  if ((! _do_wrap && ! _do_trust)) && declare -F profile_route >/dev/null; then
+    profile_route "$@" || return $?
+  fi
+
   if ((_df_share_set)); then
     if ((${#_df_share[@]} == 1)) && [[ "${_df_share[0]}" == all ]]; then
       _memory_mode=shared
@@ -2203,11 +2254,16 @@ agent_sandbox() (
 
   # ---- environment allowlist ----
   # Always-set basics, then whatever the profile always sets.
+  # AGENT_SANDBOX=1 marks the inside of a sandbox: a launcher invoked in here
+  # (e.g. the agent runs `claude` again) can see it and default to not
+  # re-sandboxing. It is a UX default, not a security signal -- the enclosing
+  # sandbox is enforced regardless of what any inner process believes.
   args+=(
     --setenv HOME "$HOME"
     --setenv USER "${USER:-$(id -un)}"
     --setenv PATH "${_inner_path:-$PATH}"
     --setenv TERM "${TERM:-xterm-256color}"
+    --setenv AGENT_SANDBOX 1
   )
   local _kv
   for _kv in "${profile_env_set[@]}"; do
