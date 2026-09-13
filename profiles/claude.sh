@@ -95,6 +95,12 @@ profile_host_subcommands=(update upgrade install)
 # foreground/background routing (which does depend on the dot-file's scope).
 profile_native_verbs=(daemon agents attach logs stop rm)
 
+# Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
+# The single source of truth: the engine warns on any other [claude] key (a typo
+# must not silently do nothing), and the docs drift-check verifies each is
+# documented. `hide` is read in profile_isolate(); `sandbox` in profile_route().
+profile_dotfile_keys=(hide sandbox)
+
 # The native installer's layout: each entry under versions/ is either a
 # single executable file named after the version (e.g. 2.1.143) or a
 # directory containing a `claude` binary.
@@ -248,7 +254,7 @@ profile_handle_subcommand() {
 # sandbox scopes whether to sandbox this invocation (return 0 -> the engine
 # continues its foreground flow) or to run it here and NOT return (exec). Reads
 # the engine's locals by dynamic scope, as the other hooks do.
-#   scope precedence: --sandbox flag >
+#   scope precedence: --sandbox flag > AGENT_SANDBOX_CLAUDE_SANDBOX env >
 #   [claude] sandbox dot-file key > context default (none inside a sandbox, else
 #   fg). Tokens: fg, bg, none.
 # _sandbox_flag,_sandbox_flag_set,_df_profile_kv,profile_bin are engine locals,
@@ -258,6 +264,8 @@ profile_route() {
   local raw="" src="" tok
   if ((_sandbox_flag_set)); then
     raw="$_sandbox_flag" src="--sandbox"
+  elif [[ -n "${AGENT_SANDBOX_CLAUDE_SANDBOX:-}" ]]; then
+    raw="$AGENT_SANDBOX_CLAUDE_SANDBOX" src="AGENT_SANDBOX_CLAUDE_SANDBOX"
   else
     local _pkv _dfp="" _dfp_set=0
     for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do

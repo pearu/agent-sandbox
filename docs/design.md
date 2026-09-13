@@ -253,6 +253,24 @@ Stated plainly. These are what the adversary above can still do.
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `claude update` runs the native
   binary on the host with your full environment.
+- **In wrapper mode the background daemon runs unsandboxed.** With `bg` in the
+  sandbox scope, each background *worker* is sandboxed, but the per-user
+  supervisor that spawns and manages them (`claude daemon run`) stays on the
+  host, unsandboxed — it has to, so it can build the bwrap for each worker (a
+  sandbox cannot nest another). It is trusted vendor infrastructure, not
+  agent-authored code, and it holds no project data; the LLM's decisions and its
+  generated code run only in the sandboxed workers. Compromise of the vendor
+  binary is out of scope, exactly as for the foreground agent binary. The
+  management verbs (`daemon`/`agents`/`stop`/…) likewise run natively.
+- **A wrapped worker's sandbox binds its daemon socket *directory*, not a single
+  socket.** The wrapper binds the directory that holds the rendezvous sockets
+  named in the worker's own argv (read-write — a worker both creates and
+  connects sockets there), which also exposes sibling workers' sockets in that
+  directory: broader than a per-socket bind. The daemon's roster and control key
+  are not there (they live under `~/.claude/daemon`, unbound), so this is a
+  `daemon/`-class, infra-only hole between workers — not a path to the roster or
+  to another project's data. Narrowing it to a per-socket bind is tracked in
+  issue #45.
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.

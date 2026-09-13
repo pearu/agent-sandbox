@@ -111,6 +111,12 @@ Sections:
   supervisor's control key and its roster of other sessions, a cross-session
   channel rather than this session's state); `gh` and `ide` are deliberately
   **not**, because both exist to let Claude Code work from inside a sandbox.
+  `sandbox = <scopes>` selects which invocations this project sandboxes — `fg`
+  (foreground sessions), `bg` (`claude --bg` background workers), both (`fg bg`),
+  or `none`. Turning a scope off is a widening, so this key takes effect only
+  from a `--trust`-approved file; the `--sandbox` flag and
+  `AGENT_SANDBOX_CLAUDE_SANDBOX` are the ungated launch-time forms. Default: `fg`
+  on the host, `none` when the launcher itself runs inside a sandbox.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

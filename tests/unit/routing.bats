@@ -102,3 +102,22 @@ native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
   sandboxed
   [[ "$output" == *"not approved"* ]]
 }
+
+@test "AGENT_SANDBOX_CLAUDE_SANDBOX=none: a foreground session runs native (env layer)" {
+  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude -p hello
+  native
+  [[ "$output" == *"stub-agent argv: -p hello"* ]]
+}
+
+@test "the --sandbox flag overrides the AGENT_SANDBOX_CLAUDE_SANDBOX env var" {
+  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude --sandbox fg -p hello
+  sandboxed
+}
+
+@test "an unknown [claude] key in a trusted dot-file warns (typo guard), known ones do not" {
+  printf '[claude]\nsandbox = fg\nbogus = x\n' >"$H/proj/.agent-sandbox"
+  run_engine -- claude --trust <<<"yes"
+  run_engine -- claude -p hello
+  [[ "$output" == *"[claude] key 'bogus' is not one this profile reads"* ]]
+  [[ "$output" != *"key 'sandbox' is not one"* ]]
+}

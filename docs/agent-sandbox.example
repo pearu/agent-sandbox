@@ -124,8 +124,13 @@
 #        hidden already; `gh` and `ide` are not, because both exist to let
 #        Claude Code work from inside a sandbox. Hiding something the agent
 #        needs breaks that feature.
+# sandbox : which invocations to sandbox -- fg (foreground), bg (`claude --bg`
+#        workers), `fg bg`, or none. Default fg on the host, none inside a
+#        sandbox. Turning a scope off is a widening, so it needs --trust; the
+#        --sandbox flag and AGENT_SANDBOX_CLAUDE_SANDBOX are the ungated forms.
 #[claude]
 #hide = gh todos
+#sandbox = fg bg
 
 
 # Not settable here, on purpose:

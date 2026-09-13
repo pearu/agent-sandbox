@@ -23,8 +23,8 @@ code_flags() { # engine flags, from the argument parser only
   awk '/---- engine flags \(must precede/,/^      \*\) break ;;/' "$ENGINE" \
     | grep -oE '^      --[a-z-]+( \| --[a-z-]+)*\)' | tr -d ' )' | tr '|' '\n' | sort -u
 }
-code_env() { # variables the engine reads from the environment
-  grep -oE '\$\{AGENT_SANDBOX_[A-Z_]+' "$ENGINE" | sed 's/.*{//' | sort -u
+code_env() { # variables the engine and its profiles read from the environment
+  grep -ohE '\$\{AGENT_SANDBOX_[A-Z_]+' "$ENGINE" "$REPO_ROOT"/profiles/*.sh | sed 's/.*{//' | sort -u
 }
 code_sections() { # supported .agent-sandbox sections
   # The sections the parser ACTS on: arms of the section dispatch (6-space
@@ -128,10 +128,12 @@ fail_missing() {
 
 # The keys of the profile-named section, from the profile that defines them.
 # The engine hands the pairs over uninterpreted, so the profile is the source of
-# truth for this one section the way the engine is for all the others.
+# truth: it declares them in a profile_dotfile_keys=(...) array (read across its
+# handlers -- profile_isolate, profile_route -- and used by the engine to warn on
+# an unknown key).
 profile_dotfile_keys() {
-  awk '/^profile_isolate\(\) \{/,/^\}$/' "$REPO_ROOT/profiles/claude.sh" \
-    | grep -oE '^      [a-z-]+\)' | tr -d ' )' | sort -u
+  sed -n 's/^profile_dotfile_keys=(\(.*\))/\1/p' "$REPO_ROOT/profiles/claude.sh" \
+    | tr ' ' '\n' | grep . | sort -u
 }
 
 @test "README knobs: every [claude] key the profile reads is in the table" {
