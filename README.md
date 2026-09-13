@@ -109,6 +109,13 @@ reaches the launcher and is sandboxed — a terminal inside your editor included
 Anything that calls the agent's own binary by an absolute path is not, and
 nothing will tell you.
 
+One case rides *through* the launcher and is still not sandboxed by default:
+`claude --bg` background workers. Background sandboxing is opt-in (`--sandbox
+"fg bg"`, `AGENT_SANDBOX_CLAUDE_SANDBOX`, or a trusted `[claude] sandbox = fg bg`),
+and the launcher prints a note when it is off; until you opt in, a `--bg` worker
+runs natively with your full filesystem and every project's memory, like native
+`claude`. See [design.md](docs/design.md).
+
 The **VS Code extension is the second case**: it ships its own copy of Claude
 Code and runs that, so its sessions are outside the sandbox while a terminal in
 the same window is inside it. To see which you have, with a session running:
