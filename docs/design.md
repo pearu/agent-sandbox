@@ -50,6 +50,46 @@ before the env inside it, the CA bundle after `/etc`, `--remount-ro $HOME` after
 every bind under `$HOME`, and the SSH socket and `--allow` file exist before
 bwrap starts.
 
+### Background sandboxing (wrapper mode)
+
+A foreground `claude` is one process the engine execs into bwrap. A background
+session (`claude --bg`) is not: `--bg` hands the task to a per-user supervisor
+daemon that pre-warms a pool of worker processes and dispatches the task to one.
+Those workers are the thing that runs the agent, and the engine never launched
+them — so foreground sandboxing does not cover them. Claude Code does expose a
+seam: `CLAUDE_CODE_PROCESS_WRAPPER`, a command it prepends when it spawns a
+worker. The engine's `--wrap` role is that command — it sandboxes each worker
+with the same bwrap policy as a foreground session, binding the launching
+project (recorded per launch under the session base) the way a foreground
+session binds its CWD.
+
+This is opt-in per project, because it is newer and it changes how `--bg`
+behaves. The `sandbox` scope (the `--sandbox` flag, or the trust-gated
+`[claude] sandbox` key) lists which invocations to sandbox: `fg`, `bg`, both, or
+`none`. The default is `fg` on the host and `none` inside a sandbox (detected by
+the `AGENT_SANDBOX` marker the engine sets in every sandbox, so a nested `claude`
+does not try to sandbox itself again). Management verbs
+(`daemon`/`agents`/`attach`/`logs`/`stop`/`rm`) always run natively — they
+observe or manage the daemon — and run before any project machinery, so a
+changed or unapproved `.agent-sandbox` never stops you listing or stopping
+sessions.
+
+With `bg` in scope, a `claude --bg` launch (`_claude_bg_launch` in the profile):
+records the project for the wrapper; **auto-trusts** it (a non-interactive
+worker cannot answer the workspace-trust prompt, and the sandbox is strictly more
+restrictive than native, which itself auto-proceeds for `--bg`); ensures the live
+daemon is **one we started with this wrapper** — a daemon started otherwise
+(e.g. by `claude agents`) would, by Claude Code's own contract, spawn its workers
+*unwrapped*, so a foreign or unwrapped daemon is restarted (active sessions
+survive: the fresh daemon re-adopts them); and **reaps the idle pool** so the
+re-warmed spares bind this project, keeping per-project isolation exact without a
+fragile restart on every launch. The reap is keyed on the daemon's roster: it
+kills only process trees rooted at a background-worker marker whose ancestry
+holds no rostered (active) session, so a foreground sandbox — which carries no
+such marker and is not a descendant of a worker — can never be selected. Pool
+maintenance uses `python3`; without it the step is skipped with a note (idle
+sandboxes may then accumulate until cleared).
+
 ## Threat model
 
 **Adversary**: the agent process and anything it runs inside the sandbox,

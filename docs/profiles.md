@@ -22,6 +22,7 @@ Variables a profile declares (all optional unless marked):
 | `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. |
 | `profile_allowlist_seed` | Path of a file listing the hosts this agent must reach, in allowlist syntax. `install.sh` merges it into the global allowlist; the engine does not read it. |
 | `profile_host_subcommands=(...)` | Agent subcommands the engine hands to `profile_handle_subcommand()` to run on the host, unsandboxed, instead of launching the sandbox (self-update, typically). |
+| `profile_native_verbs=(...)` | Agent verbs the engine runs natively (unsandboxed) before any project machinery — for observing or managing a background service (so a project's `.agent-sandbox` never gates them). Unlike `profile_host_subcommands`, these get no `profile_handle_subcommand()` call; the engine just `exec`s the native binary. |
 
 Functions a profile defines:
 
@@ -34,6 +35,7 @@ Functions a profile defines:
 | `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR`, `copyout<TAB>DIR` or `append<TAB>FILE[<TAB>FILTER_FN]` lines; the engine stages, binds and flushes them. Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
 | `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. Skipped when the briefing is off or could not be written. |
 | `profile_fallback_hint()` | Optional. Printed when the sandbox itself fails to start: name the agent's own unsandboxed executable, so the user has a way back in. The engine prints a generic line without it. |
+| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a wrapper spawn, a `--trust` review, or a `profile_native_verbs` verb. Decides, from the effective sandbox scopes (`--sandbox` flag > `[<profile>] sandbox` key > a context default), whether to `return 0` so the engine sandboxes this (foreground) launch, or to run the invocation itself and not return (e.g. foreground scope off → native; a background launch → sandbox its workers). |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
