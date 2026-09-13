@@ -1333,7 +1333,7 @@ _as_system_ca_bundle() {
 # store (root, and every host process would trust it), bind a bundle made of the
 # system bundle plus that CA over the system bundle's path inside the sandbox.
 # Everything in there trusts the proxy; nothing on the host does. The bundle is
-# kept under the per-user session base and rebuilt when either input is newer.
+# kept under the per-user session base and rebuilt from its inputs every launch.
 _as_ca_bind() {
   local bundle ca base combined tmp
   ca="${AGENT_SANDBOX_PROXY_CA:-$HOME/.mitmproxy/mitmproxy-ca-cert.pem}"
@@ -1351,10 +1351,14 @@ _as_ca_bind() {
     return 0
   }
   combined="$base/ca-bundle.crt"
-  if [[ ! -s "$combined" || "$bundle" -nt "$combined" || "$ca" -nt "$combined" ]]; then
-    tmp="$(mktemp "$base/ca-bundle.XXXXXX")" || return 0
-    cat "$bundle" "$ca" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$combined"
-  fi
+  # Rebuild every launch rather than caching on mtime. An mtime check cannot tell
+  # that a cached bundle's proxy CA no longer matches the CA the egress proxy now
+  # presents: a rotated CA whose file mtime is not newer than the cache would be
+  # served stale, and every agent that verifies the proxy leaf then fails TLS
+  # ("SSL certificate verification failed"). The inputs are small and the mv is
+  # atomic, so an unconditional rebuild is cheap and closes that staleness hole.
+  tmp="$(mktemp "$base/ca-bundle.XXXXXX")" || return 0
+  cat "$bundle" "$ca" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$combined"
   args+=(--ro-bind "$combined" "$bundle")
   return 0
 }
