@@ -65,6 +65,26 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+@test "_as_add_paths binds a symlink's resolved target, and refuses one resolving to a protected path" {
+  local d
+  d="$(readlink -f "$BATS_TEST_TMPDIR")"
+  HOME="$d/home"
+  mkdir -p "$d/realdir" "$HOME/.ssh"
+  ln -s "$d/realdir" "$d/link"
+  local -a args=()
+  _as_add_paths --bind "$d/link"
+  [ "${#args[@]}" -eq 3 ]
+  [ "${args[0]}" = "--bind" ]
+  [ "${args[1]}" = "$d/realdir" ] # the resolved target, not the symlink
+  [ "${args[2]}" = "$d/link" ]    # mounted at the original name
+  # a symlink that resolves to a protected path (a secret store) is refused
+  ln -s "$HOME/.ssh" "$d/badlink"
+  args=()
+  run _as_add_paths --bind "$d/badlink"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"protected path"* ]]
+}
+
 @test "_as_ssh_pick_key returns the first readable identity, skipping FIDO *_sk keys" {
   HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME/.ssh"

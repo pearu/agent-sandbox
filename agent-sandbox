@@ -415,7 +415,8 @@ _as_check_paths() { # $1 = knob suffix (RO|RW), $2 = colon-separated list
 # User-supplied extra paths: append "$1 path path" to args for each existing
 # entry of the colon-separated list $2.
 _as_add_paths() {
-  local mode="$1" raw="${2:-}" p
+  local mode="$1" raw="${2:-}" p real
+  local _prot_what _prot_path _prot_how
   local -a parts=()
   [[ -z "$raw" ]] && return 0
   _as_split parts ':' "$raw"
@@ -425,7 +426,17 @@ _as_add_paths() {
       _as_msg "warning — skipping missing path '$p'"
       continue
     fi
-    args+=("$mode" "$p" "$p")
+    # Bind the RESOLVED target, not the symlink. _as_check_paths validated the
+    # resolved path, but binding "$p" lets bwrap re-resolve it at mount time, so a
+    # symlink repointed after the check could mount a different, refused target.
+    # Resolve here, re-check fail-closed, and bind the real path at the original
+    # name: the mounted target is exactly the one just validated.
+    real="$(readlink -f -- "$p" 2>/dev/null || echo "$p")"
+    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real"; then
+      _as_msg "refusing to bind '$p': it resolves to a protected path ('$real')"
+      return 1
+    fi
+    args+=("$mode" "$real" "$p")
   done
   return 0
 }
@@ -2398,8 +2409,8 @@ agent_sandbox() (
   fi
 
   # User-supplied extra paths.
-  _as_add_paths --ro-bind "$_knob_ro"
-  _as_add_paths --bind "$_knob_rw"
+  _as_add_paths --ro-bind "$_knob_ro" || return 1
+  _as_add_paths --bind "$_knob_rw" || return 1
 
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
