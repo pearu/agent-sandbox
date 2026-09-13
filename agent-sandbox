@@ -1847,10 +1847,23 @@ agent_sandbox() (
         # This is broader than a per-socket bind (it exposes sibling workers'
         # sockets in the same dir) but not the roster, which stays hidden in
         # ~/.claude/daemon; narrowing it is tracked in issue #45.
-        local _wtok _wdir _wb _wseen
+        local _wtok _wdir _wb _wseen _prot_what _prot_path _prot_how
         for _wtok in "$@"; do
           [[ "$_wtok" == /*.sock ]] || continue
           _wdir="$(dirname -- "$_wtok")"
+          # A socket directory is named in the worker's argv, so validate it
+          # before an rw bind rather than trust it -- the same guard the
+          # background-project bind below applies. In practice these live under
+          # /tmp/cc-daemon-<uid>/ and pass; refusing a $HOME/parent or a secret
+          # store keeps the two argv-fed binds symmetric and fail-closed.
+          if [[ "$_wdir" == / || "$_wdir" == "$HOME" || "$HOME" == "$_wdir"/* ]]; then
+            _as_msg "wrap: refusing to bind socket directory '$_wdir' (\$HOME or a parent of it)"
+            return 1
+          fi
+          if _as_path_protected "$_wdir"; then
+            _as_msg "wrap: refusing to bind socket directory '$_wdir': it $_prot_how $_prot_what '$_prot_path'"
+            return 1
+          fi
           _wseen=0
           for _wb in ${profile_rw_binds[@]+"${profile_rw_binds[@]}"}; do
             [[ "$_wb" == "$_wdir" ]] && {
