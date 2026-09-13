@@ -38,7 +38,20 @@ setup() {
   mkdir -p "$V/1.0.0"
   run_engine -- claude --version
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no executable found for version '1.0.0'"* ]]
+  [[ "$output" == *"no runnable Claude Code executable under $V"* ]]
+}
+
+@test "tolerates a phantom newest version (mid self-update): falls back to the newest runnable one" {
+  rm -rf "${V:?}"/*
+  # 2.1.269 is runnable; 2.1.270 exists (as during a native self-update) but its
+  # binary has not landed yet -- so it must be skipped, not fail the launch.
+  mkdir -p "$V/2.1.269"
+  printf '#!/bin/sh\n' >"$V/2.1.269/claude"
+  chmod +x "$V/2.1.269/claude"
+  mkdir -p "$V/2.1.270" # phantom: directory, no executable inside
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$V/2.1.269/claude" "$V/2.1.269/claude"
 }
 
 @test "profile_prepare creates ~/.claude and ~/.claude.json for a launch, not for a host subcommand" {

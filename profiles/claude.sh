@@ -174,29 +174,41 @@ profile_bin_discover() {
     _as_msg "missing $_claude_versions_dir"
     return 1
   }
-  # Pick the highest version-sorted entry of either kind.
-  local latest cand
-  latest="$(_claude_list_versions | tail -n1)"
-  [[ -n "$latest" ]] || {
+  local -a _vers
+  mapfile -t _vers < <(_claude_list_versions)
+  ((${#_vers[@]})) || {
     _as_msg "no versions under $_claude_versions_dir"
     return 1
   }
+  # Highest version first, but skip an entry whose executable is missing and
+  # fall back to the newest version that actually has a runnable binary. A native
+  # self-update creates versions/<new> before its binary lands, so for a window
+  # the highest-sorted entry is a phantom; failing the launch on it would break
+  # every sandboxed run (and every background worker) mid-update. Tolerate the
+  # skew instead -- the older, runnable version is the right thing to launch.
   profile_bin=""
-  if [[ -x "$_claude_versions_dir/$latest" && ! -d "$_claude_versions_dir/$latest" ]]; then
-    profile_bin="$_claude_versions_dir/$latest"
-  else
-    for cand in "$_claude_versions_dir/$latest/claude" "$_claude_versions_dir/$latest/bin/claude"; do
+  profile_version=""
+  local i v cand
+  for ((i = ${#_vers[@]} - 1; i >= 0; i--)); do
+    v="${_vers[i]}"
+    if [[ -x "$_claude_versions_dir/$v" && ! -d "$_claude_versions_dir/$v" ]]; then
+      profile_bin="$_claude_versions_dir/$v"
+      profile_version="$v"
+      break
+    fi
+    for cand in "$_claude_versions_dir/$v/claude" "$_claude_versions_dir/$v/bin/claude"; do
       [[ -x "$cand" ]] && {
         profile_bin="$cand"
+        profile_version="$v"
         break
       }
     done
-  fi
+    [[ -n "$profile_bin" ]] && break
+  done
   [[ -n "$profile_bin" ]] || {
-    _as_msg "no executable found for version '$latest'"
+    _as_msg "no runnable Claude Code executable under $_claude_versions_dir"
     return 1
   }
-  profile_version="$latest"
   return 0
 }
 
