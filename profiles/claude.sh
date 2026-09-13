@@ -428,35 +428,50 @@ PY
 
 # Reap leaked background sandbox trees. KEEP = the rostered worker launchers (the
 # active sessions); kill every process in a bg tree (rooted at a --bg-pty-host /
-# --bg-spare marker) whose ancestry contains no rostered launcher -- i.e. idle
-# pool spares and orphans. Foreground sandboxes carry no such marker and are not
-# descendants of a bg launcher, so they can never be selected. python3-only.
-_claude_bg_reap() {
-  local roster="$1" pids p n
-  pids="$(
-    AS_ROSTER="$roster" python3 - <<'PY' 2>/dev/null
+# --bg-spare worker) whose ancestry contains no rostered launcher -- i.e. idle
+# pool spares and orphans. A worker is matched STRUCTURALLY: its executable is a
+# claude version binary AND --bg-spare/--bg-pty-host is an EXACT argv element --
+# never a substring of some process's joined command line. That is what keeps a
+# shell or test that merely MENTIONS the token (this repo's own suites and probes
+# do), and its children, from being selected and killed. python3-only.
+#
+# _claude_bg_reap_select prints the pids to reap and is pure: it reads $AS_PROC
+# (default /proc) so it is unit-testable against a synthetic process table.
+# $AS_VERSIONS_DIR/$AS_BIN identify a claude executable. cwd/profile_bin are
+# engine locals seen here by dynamic scope.
+# shellcheck disable=SC2154
+_claude_bg_reap_select() {
+  AS_ROSTER="$1" AS_VERSIONS_DIR="$_claude_versions_dir" AS_BIN="${profile_bin:-}" python3 - <<'PY' 2>/dev/null
 import json, os
-roster = os.environ["AS_ROSTER"]
+proc = os.environ.get("AS_PROC", "/proc")
+vroot = os.environ.get("AS_VERSIONS_DIR", "").rstrip("/")
+binpath = os.environ.get("AS_BIN", "")
 keep = set()
 try:
-    d = json.load(open(roster))
+    d = json.load(open(os.environ["AS_ROSTER"]))
     for w in (d.get("workers", {}) or {}).values():
         if isinstance(w, dict) and isinstance(w.get("pid"), int):
             keep.add(w["pid"])
 except Exception:
     pass
 info = {}
-for e in os.listdir("/proc"):
+for e in os.listdir(proc):
     if not e.isdigit():
         continue
     pid = int(e)
     try:
-        with open("/proc/%d/stat" % pid, "rb") as f:
+        with open("%s/%d/stat" % (proc, pid), "rb") as f:
             ppid = int(f.read().rsplit(b") ", 1)[1].split()[1])
-        cl = open("/proc/%d/cmdline" % pid, "rb").read().replace(b"\0", b" ").decode("utf-8", "replace")
+        argv = [a.decode("utf-8", "replace") for a in open("%s/%d/cmdline" % (proc, pid), "rb").read().split(b"\0") if a]
+        try:
+            exe = os.readlink("%s/%d/exe" % (proc, pid))
+        except OSError:
+            exe = ""
+        if exe.endswith(" (deleted)"):
+            exe = exe[: -len(" (deleted)")]
     except Exception:
         continue
-    info[pid] = (ppid, cl)
+    info[pid] = (ppid, argv, exe)
 def kept_ancestor(pid):
     seen = 0
     while pid and pid != 1 and seen < 50:
@@ -469,7 +484,7 @@ def kept_ancestor(pid):
         seen += 1
     return False
 children = {}
-for pid, (pp, cl) in info.items():
+for pid, (pp, argv, exe) in info.items():
     children.setdefault(pp, []).append(pid)
 def subtree(root):
     out, stack = [], [root]
@@ -478,15 +493,25 @@ def subtree(root):
         out.append(x)
         stack.extend(children.get(x, []))
     return out
+def is_worker(argv, exe):
+    if not exe:
+        return False
+    if not (exe == binpath or (vroot and exe.startswith(vroot + "/"))):
+        return False
+    return "--bg-spare" in argv or "--bg-pty-host" in argv
 leaked = set()
-for pid, (pp, cl) in info.items():
-    if ("--bg-pty-host" in cl or "--bg-spare" in cl) and not kept_ancestor(pid):
+for pid, (pp, argv, exe) in info.items():
+    if is_worker(argv, exe) and not kept_ancestor(pid):
         leaked.update(subtree(pid))
 leaked.discard(1)
 leaked.discard(os.getpid())
 print(" ".join(str(x) for x in sorted(leaked)))
 PY
-  )"
+}
+
+_claude_bg_reap() {
+  local roster="$1" pids p n
+  pids="$(_claude_bg_reap_select "$roster")"
   [[ -n "$pids" ]] || return 0
   for p in $pids; do kill "$p" 2>/dev/null || true; done
   sleep 1
