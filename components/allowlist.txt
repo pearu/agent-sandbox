@@ -9,6 +9,12 @@
 # the agent is trying to reach and add hosts here as needed. Hosts an agent
 # profile needs (e.g. api.anthropic.com for claude) are appended by install.sh
 # from profiles/<name>.allowlist.
+#
+# The allowlist gates PUBLIC hosts only. A host here that resolves to a
+# non-public address -- loopback, a private/LAN range, or link-local (incl.
+# cloud metadata 169.254.169.254) -- is still refused (502): the proxy runs on
+# the host and never dials those. To reach a host-local service, use --host-port
+# in strict mode, not this list. See docs/network.md.
 
 # ---- Git / code hosting ----
 github.com

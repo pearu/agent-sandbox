@@ -105,6 +105,12 @@ files.example.com
 For every project, add the line to `~/.config/agent-sandbox/allowlist.txt`,
 which is re-read per request — no restart.
 
+The allowlist opens **public** hosts. A host that resolves to a non-public
+address — loopback, a private/LAN range, or link-local (incl. cloud metadata
+`169.254.169.254`) — is refused (`502`) even when it is on the list; the proxy
+runs on the host and never dials those. For a host-local service, cross via
+`--host-port` in `strict` mode (below), not the allowlist.
+
 ## A dev server you want to open in a browser
 
 **Crossing: loopback.** In `proxy` mode the sandbox shares the host's network
