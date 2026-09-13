@@ -118,6 +118,19 @@ setup() {
   [[ "$output" == *"refusing to bind background project"* ]]
 }
 
+@test "a socket directory under a secret store is refused (W3: argv-fed socket dirs are guarded)" {
+  mkdir -p "$H/home/.ssh"
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$H/home/.ssh/x.claim.sock"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to bind socket directory"* ]]
+}
+
+@test "a socket directory that is \$HOME is refused" {
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$H/home/x.claim.sock"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to bind socket directory"* ]]
+}
+
 @test "the background project is read from the session-base file when the env is unset" {
   local proj="$H/work/fromfile"
   mkdir -p "$proj" "$H/base"
