@@ -90,6 +90,27 @@ such marker and is not a descendant of a worker — can never be selected. Pool
 maintenance uses `python3`; without it the step is skipped with a note (idle
 sandboxes may then accumulate until cleared).
 
+**Why the environment variable, not a configured launcher.** Claude Code offers
+two ways to deliver a process wrapper: the per-launch `CLAUDE_CODE_PROCESS_WRAPPER`
+environment variable (what the launcher exports before it execs `claude --bg`),
+and a persistently *configured* launcher the daemon records. Wrapper mode uses the
+environment variable, because it is transient and scoped to the launch that opted
+in: nothing is written to Claude Code's own settings, and a session that did not
+ask for `bg` sandboxing is unaffected. A configured launcher is the wrong
+granularity — it is machine-global and persistent, so it would route *every*
+background session, for every project, through the wrapper until unset. The cost
+of the environment-variable path is Claude Code's "launcher contract #3": a daemon
+already running without the variable dispatches its workers *unwrapped*
+(unsandboxed) — which is exactly why `_claude_bg_launch` verifies the live
+supervisor's environment carries this wrapper and restarts it otherwise.
+
+If the caller already set their own `CLAUDE_CODE_PROCESS_WRAPPER`, wrapper mode
+**replaces** it for the background workers (they run in the engine's sandbox, not
+the caller's wrapper) and says so rather than dropping it silently; the caller's
+wrapper is not chained. Composing a caller-supplied wrapper — running it *inside*
+the sandbox, applied to the claude workers rather than to the arbitrary sandbox
+around them — is a separate feature, tracked as its own request.
+
 ## Threat model
 
 **Adversary**: the agent process and anything it runs inside the sandbox,

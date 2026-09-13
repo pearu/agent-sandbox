@@ -79,6 +79,13 @@ native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
   [ "$(cat "$H/base/bg-project")" = "$H/proj" ]
 }
 
+@test "--bg: a caller's own CLAUDE_CODE_PROCESS_WRAPPER is replaced with a notice, not dropped silently" {
+  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/tmp/mine.sh -- claude --sandbox "fg bg" --bg 'do a thing'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]]
+  [ -x "$H/base/wrap-claude.sh" ] # ours is what the workers get
+}
+
 @test "[claude] sandbox = none in a trusted dot-file makes foreground native" {
   printf '[claude]\nsandbox = none\n' >"$H/proj/.agent-sandbox"
   run_engine -- claude --trust <<<"yes" # approve it
