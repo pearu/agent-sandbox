@@ -2055,11 +2055,30 @@ agent_sandbox() (
     return 1
   fi
 
+  # A [<profile>] dot-file key the profile does not declare is almost always a
+  # typo; warn rather than silently ignore it. The profile lists the keys it
+  # reads in profile_dotfile_keys -- its single source of truth, also checked by
+  # the docs drift test.
+  if declare -p profile_dotfile_keys >/dev/null 2>&1; then
+    local _pk _pkn _kk _known
+    for _pk in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+      _pkn="${_pk%%=*}"
+      _known=0
+      for _kk in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do
+        [[ "$_pkn" == "$_kk" ]] && {
+          _known=1
+          break
+        }
+      done
+      ((_known)) || _as_msg ".agent-sandbox: [$profile] key '$_pkn' is not one this profile reads; ignoring"
+    done
+  fi
+
   # ---- profile routing: sandbox this invocation, or hand it off ----
   # With the project's trusted .agent-sandbox now read, let the profile decide
   # what to do with the agent's own argv against the effective sandbox scopes
-  # (--sandbox flag > [<profile>] sandbox dot-file key > a context default: none
-  # inside a sandbox, else fg). It either
+  # (--sandbox flag > AGENT_SANDBOX_<PROFILE>_SANDBOX env > [<profile>] sandbox
+  # dot-file key > a context default: none inside a sandbox, else fg). It either
   # runs the invocation itself (e.g. a foreground scope turned off -> native; a
   # background launch -> sandbox the workers) and never returns, or returns 0 to
   # continue with the normal sandboxed foreground flow below. It reads the engine

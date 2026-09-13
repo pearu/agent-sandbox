@@ -206,6 +206,28 @@ X
   "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }
 
+@test "wrapper mode: claude --bg sandboxes the pooled worker through the installed launcher (issue #45)" {
+  # The whole background path: profile_route -> _claude_bg_launch -> wrapper ->
+  # a bwrapped --bg-spare. The fake plays the daemon (spawns one spare through
+  # the wrapper) and the worker (reports whether it ran sandboxed, via the
+  # engine's AGENT_SANDBOX marker). No proxy/port needed -- the spare reports,
+  # it does not fetch -- so this runs even when 8888 is busy. Must run while the
+  # launcher is installed, i.e. before the --uninstall test below.
+  run launch --sandbox "fg bg" --bg 'do a thing'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spare:"* ]] # the daemon spawned a pooled worker through the wrapper
+  # ...and that worker ran bwrapped. The engine's own stderr (e.g. the seccomp
+  # notice) can land between "spare:" and this line, so don't require adjacency.
+  [[ "$output" == *"--bg-spare ran SANDBOXED"* ]]
+}
+
+@test "wrapper mode off (no bg scope): claude --bg runs the worker natively, no wrapper set" {
+  run launch --bg 'do a thing'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"background sandboxing off"* ]]
+  [[ "$output" == *"no wrapper set"* ]]
+}
+
 @test "a native launcher is taken over, and --uninstall gives it back (issue #22)" {
   # The real round trip, which --dry-run cannot show: dry runs deliberately do
   # not move a launcher aside. This is the ordinary case -- Claude Code's own

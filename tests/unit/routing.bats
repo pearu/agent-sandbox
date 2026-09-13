@@ -79,6 +79,23 @@ native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
   [ "$(cat "$H/base/bg-project")" = "$H/proj" ]
 }
 
+@test "--bg: a caller's own CLAUDE_CODE_PROCESS_WRAPPER is replaced with a notice, not dropped silently" {
+  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/tmp/mine.sh -- claude --sandbox "fg bg" --bg 'do a thing'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]]
+  [[ "$output" == *"--sandbox none"* ]] # points at the workaround
+  [ -x "$H/base/wrap-claude.sh" ]       # ours is what the workers get
+}
+
+@test "--sandbox none: --bg runs native and leaves a caller's CLAUDE_CODE_PROCESS_WRAPPER untouched (the documented workaround)" {
+  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/caller/wrap.sh -- claude --sandbox none --bg 'do a thing'
+  [ "$status" -eq 0 ]
+  native
+  [[ "$output" == *"stub-agent argv: --bg do a thing"* ]]
+  [ ! -e "$H/base/wrap-claude.sh" ]                                # our shim not written
+  [[ "$output" != *"replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]] # caller wrapper left alone
+}
+
 @test "[claude] sandbox = none in a trusted dot-file makes foreground native" {
   printf '[claude]\nsandbox = none\n' >"$H/proj/.agent-sandbox"
   run_engine -- claude --trust <<<"yes" # approve it
@@ -101,4 +118,23 @@ native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
   run_engine -- claude -p hello
   sandboxed
   [[ "$output" == *"not approved"* ]]
+}
+
+@test "AGENT_SANDBOX_CLAUDE_SANDBOX=none: a foreground session runs native (env layer)" {
+  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude -p hello
+  native
+  [[ "$output" == *"stub-agent argv: -p hello"* ]]
+}
+
+@test "the --sandbox flag overrides the AGENT_SANDBOX_CLAUDE_SANDBOX env var" {
+  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude --sandbox fg -p hello
+  sandboxed
+}
+
+@test "an unknown [claude] key in a trusted dot-file warns (typo guard), known ones do not" {
+  printf '[claude]\nsandbox = fg\nbogus = x\n' >"$H/proj/.agent-sandbox"
+  run_engine -- claude --trust <<<"yes"
+  run_engine -- claude -p hello
+  [[ "$output" == *"[claude] key 'bogus' is not one this profile reads"* ]]
+  [[ "$output" != *"key 'sandbox' is not one"* ]]
 }

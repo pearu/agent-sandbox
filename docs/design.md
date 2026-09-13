@@ -90,6 +90,29 @@ such marker and is not a descendant of a worker — can never be selected. Pool
 maintenance uses `python3`; without it the step is skipped with a note (idle
 sandboxes may then accumulate until cleared).
 
+**Why the environment variable, not a configured launcher.** Claude Code offers
+two ways to deliver a process wrapper: the per-launch `CLAUDE_CODE_PROCESS_WRAPPER`
+environment variable (what the launcher exports before it execs `claude --bg`),
+and a persistently *configured* launcher the daemon records. Wrapper mode uses the
+environment variable, because it is transient and scoped to the launch that opted
+in: nothing is written to Claude Code's own settings, and a session that did not
+ask for `bg` sandboxing is unaffected. A configured launcher is the wrong
+granularity — it is machine-global and persistent, so it would route *every*
+background session, for every project, through the wrapper until unset. The cost
+of the environment-variable path is Claude Code's "launcher contract #3": a daemon
+already running without the variable dispatches its workers *unwrapped*
+(unsandboxed) — which is exactly why `_claude_bg_launch` verifies the live
+supervisor's environment carries this wrapper and restarts it otherwise.
+
+If the caller already set their own `CLAUDE_CODE_PROCESS_WRAPPER`, wrapper mode
+**replaces** it for the background workers (they run in the engine's sandbox, not
+the caller's wrapper) and says so rather than dropping it silently; the caller's
+wrapper is not chained. Composing a caller-supplied wrapper — running it *inside*
+the sandbox, applied to the claude workers rather than to the arbitrary sandbox
+around them — is a separate feature, tracked in #49. To keep your own wrapper
+today, run `--sandbox none` (or otherwise leave `bg` out of scope), which runs
+`--bg` natively through it.
+
 ## Threat model
 
 **Adversary**: the agent process and anything it runs inside the sandbox,
@@ -253,6 +276,24 @@ Stated plainly. These are what the adversary above can still do.
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `claude update` runs the native
   binary on the host with your full environment.
+- **In wrapper mode the background daemon runs unsandboxed.** With `bg` in the
+  sandbox scope, each background *worker* is sandboxed, but the per-user
+  supervisor that spawns and manages them (`claude daemon run`) stays on the
+  host, unsandboxed — it has to, so it can build the bwrap for each worker (a
+  sandbox cannot nest another). It is trusted vendor infrastructure, not
+  agent-authored code, and it holds no project data; the LLM's decisions and its
+  generated code run only in the sandboxed workers. Compromise of the vendor
+  binary is out of scope, exactly as for the foreground agent binary. The
+  management verbs (`daemon`/`agents`/`stop`/…) likewise run natively.
+- **A wrapped worker's sandbox binds its daemon socket *directory*, not a single
+  socket.** The wrapper binds the directory that holds the rendezvous sockets
+  named in the worker's own argv (read-write — a worker both creates and
+  connects sockets there), which also exposes sibling workers' sockets in that
+  directory: broader than a per-socket bind. The daemon's roster and control key
+  are not there (they live under `~/.claude/daemon`, unbound), so this is a
+  `daemon/`-class, infra-only hole between workers — not a path to the roster or
+  to another project's data. Narrowing it to a per-socket bind is tracked in
+  issue #45.
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.
