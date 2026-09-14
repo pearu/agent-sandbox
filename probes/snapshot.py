@@ -21,6 +21,15 @@ a regular file or a symlink; for a symlink it is the hash of the link *target st
 is recorded only for regular files (lstat reads it, O_NOATIME hashing preserves it);
 it is 0 for everything else, whose atime the tool would itself perturb by scanning a
 directory or reading a symlink.
+
+Performance (measured 2026-09-14, study host): hashing the whole ~/.claude -- 609 MiB
+across 5201 files, dominated by a few large session-transcript .jsonl -- took ~1.3 s
+cold and ~1.5 s warm (~460 MB/s). That is negligible beside a real `claude` session,
+so the tool ALWAYS hashes rather than skipping unchanged files by (size, mtime): the
+skip would save ~1 s while trusting mtime, and a content change that preserves or
+restores mtime -- exactly the kind of unexpected change this instrument exists to
+catch -- would be missed. Scope the roots (e.g. just settings.json + CLAUDE.md) when
+a targeted run wants to avoid the large transcripts.
 """
 import hashlib
 import os
