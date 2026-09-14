@@ -209,3 +209,17 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   [[ "$output" == *"ignoring unknown section [codex]"* ]]
   run ! argv_has --tmpfs "$C/gh"
 }
+
+@test "the sandbox runs as the invoking user, and identically in every network mode" {
+  # strict runs bwrap inside pasta's user namespace, where the caller is already
+  # mapped to root; without an explicit --uid the same sandbox would report uid 0
+  # there and the real uid in every other mode. Nothing about the network should
+  # change who the payload is, so this asserts the invariant across all of them --
+  # the cross-mode check whose absence let the two drift apart.
+  local mode
+  for mode in none proxy open strict; do
+    run_engine AGENT_SANDBOX_NET="$mode" -- claude --version
+    [ "$status" -eq 0 ]
+    argv_has --uid "$(id -u)" --gid "$(id -g)"
+  done
+}
