@@ -174,11 +174,19 @@ this document does not enumerate.
   mtime again) and a file the tool could not re-time is reported by path, because an
   unarmed file reads as "not accessed" either way. Arming writes metadata, so it is
   never used on a run whose purpose is to prove a tree was left untouched. For a
-  continuous read signal, or on a `noatime` mount where arming cannot work, use an
-  `inotify`/`fanotify` `IN_ACCESS`/`FAN_ACCESS` watch
-  over `~/.claude` for the session's lifetime (a kernel read-event stream,
-  independent of atime policy; `fanotify` wants `CAP_SYS_ADMIN`). A file being
-  *opened* is still not the model *ingesting* it — for kind (1), the
+  continuous read signal, for a run that must not write to the tree at all, or on
+  a `noatime` mount where arming cannot work, use an `inotify` `IN_ACCESS` watch
+  over `~/.claude` for the session's lifetime: a kernel read-event stream,
+  independent of atime policy, not one-shot, and perturbing nothing. **Measured:
+  a host-side `inotify` watch does see reads made inside the sandbox** — the watch
+  follows the inode, so a bwrap session reading a bind-mounted file raises
+  `IN_OPEN`/`IN_ACCESS` on the host, through read-only binds as well as read-write
+  ones. It needs no privileges, unlike `fanotify`, whose mount-wide watch wants
+  `CAP_SYS_ADMIN` and which is therefore worth it only for PID attribution.
+  `inotify` watches are per-directory and not recursive (so directories created
+  mid-run must be picked up), and its queue can overflow — `IN_Q_OVERFLOW` means
+  dropped events and must be reported, never swallowed. A file being *opened* is
+  still not the model *ingesting* it — for kind (1), the
   content-canary-in-output test stays the authoritative read-relevance signal.
 - **Attribution.** Snapshot only around sequential sessions; concurrency blurs
   which session caused a change.
