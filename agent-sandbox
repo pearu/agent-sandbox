@@ -2281,6 +2281,14 @@ agent_sandbox() (
     --unshare-all
     --die-with-parent
     --new-session
+    # Identity inside: the invoking user, in every network mode. In strict, bwrap
+    # runs inside pasta's user namespace where the caller is already mapped to
+    # root, so without this the SAME sandbox reports uid 0 there and the real uid
+    # everywhere else -- inherited from pasta, never chosen, and at odds with
+    # $USER (set below), which says the real user in both. Writes land on the host
+    # as the real user either way; what changes is what the payload sees, and what
+    # tools that branch on being root then do.
+    --uid "$(id -u)" --gid "$(id -g)"
     # Drop all capabilities. A no-op in proxy/open/none, where bwrap is
     # unprivileged and the agent already has none; it matters in strict, where
     # bwrap runs inside pasta's root-owned user namespace and its child userns

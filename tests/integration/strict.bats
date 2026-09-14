@@ -39,6 +39,9 @@ except Exception as e:
 # pasta's default -T auto (the regression guarded against) rescans the host's
 # listening ports every second; give it time to show.
 sleep 1.5
+# strict runs bwrap inside pasta's user namespace, where the caller is mapped to
+# root; the sandbox must still present the invoking user, as every other mode does
+say uid "$(id -u)"
 say https_proxy "${HTTPS_PROXY:-<unset>}"   # must be set, or the agent has no route to the API
 say proxy_via_gw "$(conn "$GW" 8888)"
 say proxy_via_lo "$(conn 127.0.0.1 8888)"
@@ -131,6 +134,7 @@ launch_strict() {
 @test "strict: the proxy is reachable at the gateway only; raw egress, host loopback services and publishing sandbox listeners are blocked" {
   launch_strict
   [ "$RC" -eq 0 ]
+  [ "$(report uid)" = "$(id -u)" ]               # not 0: pasta's root mapping must not show through
   [ "$(report proxy_via_gw)" = REACHED ]         # gateway:8888 -> host proxy, allowed by nft
   [[ "$(report https_proxy)" == http://*:8888 ]] # the agent env carries the gateway proxy (survives --clearenv)
   [ "$(report proxy_via_lo)" = blocked ]         # the proxy is reached at the gateway only
