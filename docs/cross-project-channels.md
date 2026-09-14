@@ -143,8 +143,11 @@ this document does not enumerate.
   identical), and edge cases (symlinks recorded not followed; special, vanishing,
   and unreadable files handled, not crashed). Critically it must **not perturb what
   it measures**: capture atime via `stat` and hash with `O_NOATIME`, so the tool's
-  own reads never bump the atime/mtime it records (a second reason atime is a
-  fragile read-signal — a naive hasher pollutes it).
+  own reads never bump the atime/mtime it records (a naive hasher pollutes exactly
+  the signal it is supposed to observe). Where `O_NOATIME` is refused — it is the
+  owner's privilege — hashing falls back to a plain read, which is why arming
+  happens *after* the hash rather than in a separate pass that the fallback could
+  silently undo.
 - **Write-discovery (manifest diff).** Before and after each session, record a
   manifest over `~/.claude` and `~/.claude.json` (second tier: `/tmp`, `/dev/shm`,
   the project dir): per file `path, size, mtime, sha256`. Diff the two into
@@ -160,12 +163,19 @@ this document does not enumerate.
 - **Host-side around a sandboxed call.** Snapshot the host `~/.claude` around a [T2](#t2)
   session to see what the sandbox let *through* to shared host state (the
   copyout/append write-backs) — the write-back surface the dispositions describe.
-- **Reads.** Detecting that a session *read* a file is worth doing, but **atime is
-  not the way**: under `relatime` (the Linux default) a read updates atime only if
-  atime predates mtime/ctime or is >24h old, and `noatime` disables it — so an
-  atime diff yields false negatives and would manufacture false confidence. Capture
-  atime in the manifest (it is free) but treat it as a weak hint only. For a
-  reliable read signal use an `inotify`/`fanotify` `IN_ACCESS`/`FAN_ACCESS` watch
+- **Reads.** Detecting that a session *read* a file is worth doing, and a raw atime
+  diff is **not** the way: under `relatime` (the Linux default) a read updates atime
+  only if atime predates mtime/ctime or is >24h old, and `noatime` disables it — so
+  a quiet atime column means "not read **or** read invisibly", which would
+  manufacture false confidence. **Arming removes that ambiguity for the files we
+  choose to watch:** `snapshot.py manifest --arm` sets each file's atime back to its
+  own mtime while taking the baseline, which satisfies the `relatime` rule, so the
+  *next* read is recorded. It is one-shot per file (after that read atime leads
+  mtime again) and a file the tool could not re-time is reported by path, because an
+  unarmed file reads as "not accessed" either way. Arming writes metadata, so it is
+  never used on a run whose purpose is to prove a tree was left untouched. For a
+  continuous read signal, or on a `noatime` mount where arming cannot work, use an
+  `inotify`/`fanotify` `IN_ACCESS`/`FAN_ACCESS` watch
   over `~/.claude` for the session's lifetime (a kernel read-event stream,
   independent of atime policy; `fanotify` wants `CAP_SYS_ADMIN`). A file being
   *opened* is still not the model *ingesting* it — for kind (1), the
