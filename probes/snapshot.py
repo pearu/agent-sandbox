@@ -54,7 +54,6 @@ import stat
 import sys
 
 _CHUNK = 1 << 16
-_SEC = 10**9
 
 
 def _sha_file(path):
@@ -88,8 +87,12 @@ def _read_is_already_recorded(st):
     """Whether relatime would record the NEXT read of this file without our help.
 
     man mount: "Access time is only updated if the previous access time was earlier
-    than or equal to the current modify or change time." Compared in whole seconds,
-    which is the granularity the kernel uses.
+    than or equal to the current modify or change time." The man page states no
+    precision; measured, the comparison is at NANOSECOND granularity -- a file whose
+    atime sits in the same second as its mtime but later in nanoseconds records
+    nothing on the next read. Comparing whole seconds here would call such a file
+    observable and skip arming it, which is the silent false negative this exists to
+    remove, so the full nanosecond timestamps are compared.
 
     The documented rule has a third clause -- an atime more than 24 hours stale is
     also refreshed -- deliberately NOT implemented here. It cannot be exercised in a
@@ -97,8 +100,7 @@ def _read_is_already_recorded(st):
     and skipping a file on an untestable branch would reintroduce exactly the silent
     false negative arming exists to remove. Such a file is armed needlessly instead:
     one extra utime, erring toward detection."""
-    at = st.st_atime_ns // _SEC
-    return at <= st.st_mtime_ns // _SEC or at <= st.st_ctime_ns // _SEC
+    return st.st_atime_ns <= st.st_mtime_ns or st.st_atime_ns <= st.st_ctime_ns
 
 
 def _arm(path, st, noatime_ok, report):

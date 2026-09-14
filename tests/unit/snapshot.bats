@@ -242,3 +242,23 @@ read_is_recorded() {
   has_change atime "$T/read-me.txt"
   run ! grep -qF -- "leave-me.txt" <<<"$output"
 }
+
+@test "--arm does not mistake same-second-but-later-nanoseconds for observable" {
+  require_relatime
+  # atime in the SAME second as mtime but later in nanoseconds, with ctime safely
+  # below both so only the mtime comparison decides. Comparing whole seconds would
+  # call this observable and skip it -- while the kernel, which compares
+  # nanoseconds, records nothing on the next read.
+  printf 'x' >"$T/ns.txt"
+  python3 - "$T/ns.txt" <<'PY'
+import os, sys, time
+base = int(time.time()) + 10          # ahead of ctime, which utime sets to now
+os.utime(sys.argv[1], ns=(base * 10**9 + 900000000, base * 10**9 + 100000000))
+PY
+  run ! read_is_recorded "$T/ns.txt" # the kernel really does hide this read
+
+  run python3 "$SNAP" manifest --arm "$T"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"armed 1 file"* ]] # armed, NOT skipped as already observable
+  read_is_recorded "$T/ns.txt"
+}
