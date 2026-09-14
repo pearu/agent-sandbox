@@ -18,8 +18,7 @@ setup() {
 start_watch() {
   python3 "$W" "$@" "$T" >"$OUT" 2>"$ERR" &
   WPID=$!
-  local i
-  for i in $(seq 1 200); do
+  for _ in $(seq 1 200); do
     grep -q '^READY' "$OUT" && return 0
     sleep 0.05
   done
