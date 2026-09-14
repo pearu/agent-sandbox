@@ -244,3 +244,41 @@ STUB
   [ -s "$H/argv" ]
   [[ "$output" != *"runs natively"* ]]
 }
+
+@test "--quiet suppresses the routine status lines a launch prints" {
+  run_engine -- claude --allow pypi.org --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]] # loud by default
+  run_engine -- claude --quiet --allow pypi.org --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"session allowlist"* ]]
+  argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
+    "$H/home/.local/share/claude/versions/2.1.300/claude" # and the launch is unchanged
+}
+
+@test "AGENT_SANDBOX_QUIET does the same, and rejects a value it does not understand" {
+  run_engine AGENT_SANDBOX_QUIET=on -- claude --allow pypi.org --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"session allowlist"* ]]
+  run_engine AGENT_SANDBOX_QUIET=off -- claude --allow pypi.org --version
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  run_engine AGENT_SANDBOX_QUIET=maybe -- claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"AGENT_SANDBOX_QUIET='maybe' is not recognised"* ]]
+}
+
+@test "--quiet never hides a refusal, a warning, or an unsandboxed notice" {
+  # a refusal: the launch must still explain itself, and still fail
+  mkdir -p "$H/home/.aws"
+  run_engine AGENT_SANDBOX_RW="$H/home/.aws" -- claude --quiet --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *refusing* ]]
+  [ ! -s "$H/argv" ]
+  # a warning about a path that is not there
+  run_engine AGENT_SANDBOX_RO="$H/home/no-such-dir" -- claude --quiet --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping missing path"* ]]
+  # and a notice that something runs OUTSIDE the sandbox
+  run_engine -- claude --quiet agents
+  [[ "$output" == *"runs natively (unsandboxed)"* ]]
+}

@@ -250,6 +250,18 @@
 
 _as_msg() { echo "agent-sandbox: $*" >&2; }
 
+# Routine status: what the resolved policy IS on a normal launch (the dot-file
+# values applied, the session allowlist, the seccomp filter in use). Silenced by
+# --quiet / AGENT_SANDBOX_QUIET, which exists so a script or harness invoking the
+# engine repeatedly is not drowned in banner lines.
+#
+# Refusals, warnings, and anything announcing that something is NOT sandboxed
+# stay on _as_msg deliberately: --quiet must never be able to hide why a launch
+# was refused, why a path did not bind, or that a command is running outside the
+# sandbox. Quiet is about noise, never about consequences.
+_as_quiet=0
+_as_info() { ((_as_quiet)) || _as_msg "$@"; }
+
 # The agent-sandbox version: the VERSION file next to the engine, plus a build
 # marker when known (the .build install.sh writes, else `git describe` in a
 # checkout). `engine` and `profile_dir` are set by the caller (agent_sandbox).
@@ -294,6 +306,10 @@ Engine flags (must precede the agent's own arguments):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
+  --quiet               suppress the routine status lines (dot-file values
+                        applied, session allowlist, seccomp filter in use).
+                        Refusals, warnings and "not sandboxed" notices are
+                        never suppressed
   --exec CMD [ARGS...]  run CMD instead of the agent, in the sandbox this
                         profile would have built for it. Everything after
                         --exec is the command, so engine flags come first.
@@ -649,7 +665,7 @@ _as_ssh_setup() {
     if [[ -n "${_by_key[$key]}" ]]; then
       for c in ${_by_key[$key]}; do add+=(-h "$c"); done # no spaces in constraints
       add+=(-H "$kh")
-      _as_msg "session agent: $key constrained to:${_by_key[$key]}${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
+      _as_info "session agent: $key constrained to:${_by_key[$key]}${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
     else
       _as_msg "session agent: $key UNRESTRICTED${_ssh_timeout:+  (lifetime $_ssh_timeout)}"
     fi
@@ -712,7 +728,7 @@ _as_allow_setup() {
     printf '# dot matches the domain and its subdomains.\n'
     printf '%s\n' "${_allow_hosts[@]}"
   } >"$_session_dir/allow.txt"
-  _as_msg "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
+  _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
   return 0
 }
 
@@ -1585,7 +1601,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
-  local _host_none=0 _agent_none=0 _do_wrap=0 _do_exec=0
+  local _host_none=0 _agent_none=0 _do_wrap=0 _do_exec=0 _do_quiet=0
   local _sandbox_flag="" _sandbox_flag_set=0
   while (($# > 0)); do
     case "$1" in
@@ -1600,6 +1616,10 @@ agent_sandbox() (
         ;;
       --profile=?*)
         profile="${1#--profile=}"
+        shift
+        ;;
+      --quiet)
+        _do_quiet=1
         shift
         ;;
       --exec)
@@ -1723,6 +1743,18 @@ agent_sandbox() (
       *) break ;;
     esac
   done
+  # Resolve quiet before anything routine is printed: the dot-file notices, the
+  # session allowlist and the seccomp line all come later, but the ssh-agent
+  # status does not wait long.
+  case "${AGENT_SANDBOX_QUIET:-}" in
+    "" | off | 0) ;;
+    on | 1) _as_quiet=1 ;;
+    *)
+      _as_msg "AGENT_SANDBOX_QUIET='$AGENT_SANDBOX_QUIET' is not recognised (use 'on' or 'off')"
+      return 2
+      ;;
+  esac
+  ((_do_quiet)) && _as_quiet=1
   if ((_do_exec)); then
     [[ $# -ge 1 ]] || {
       _as_msg "--exec needs a command, e.g. --exec bash -l"
@@ -2025,7 +2057,7 @@ agent_sandbox() (
           proxy | strict | open | none)
             if [[ -z "$_knob_net" ]]; then
               _knob_net="$_df_net_mode"
-              _as_msg "using network mode '$_df_net_mode' from .agent-sandbox"
+              _as_info "using network mode '$_df_net_mode' from .agent-sandbox"
             else
               _as_msg "AGENT_SANDBOX_NET=$_knob_net overrides the .agent-sandbox network mode '$_df_net_mode'"
             fi
@@ -2046,7 +2078,7 @@ agent_sandbox() (
           on | 1 | off | 0)
             if [[ -z "$_knob_seccomp" ]]; then
               _knob_seccomp="$_df_seccomp_mode"
-              _as_msg "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
+              _as_info "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
             else
               _as_msg "AGENT_SANDBOX_SECCOMP=$_knob_seccomp overrides the .agent-sandbox seccomp mode '$_df_seccomp_mode'"
             fi
@@ -2062,7 +2094,7 @@ agent_sandbox() (
           on | 1 | off | 0)
             if [[ -z "$_knob_briefing" ]]; then
               _knob_briefing="$_df_briefing_mode"
-              _as_msg "using briefing mode '$_df_briefing_mode' from .agent-sandbox"
+              _as_info "using briefing mode '$_df_briefing_mode' from .agent-sandbox"
             else
               _as_msg "AGENT_SANDBOX_BRIEFING=$_knob_briefing overrides the .agent-sandbox briefing mode '$_df_briefing_mode'"
             fi
@@ -2089,7 +2121,7 @@ agent_sandbox() (
           if [[ "$_old_prefix" != "$CONDA_PREFIX" ]]; then
             _inner_path="$(_as_path_swap_conda "${_old_prefix:-$_cbase}" "$CONDA_PREFIX")"
           fi
-          _as_msg "using conda env '$_df_conda_name' from .agent-sandbox"
+          _as_info "using conda env '$_df_conda_name' from .agent-sandbox"
         else
           _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cbase:-<no conda base>}/envs; ignoring"
         fi
@@ -2511,7 +2543,7 @@ agent_sandbox() (
       if [[ -r "$_sc_cand" ]]; then
         _seccomp_bpf="$_sc_cand"
         args+=(--seccomp 10)
-        _as_msg "seccomp: default-deny syscall filter on ($_seccomp_bpf)"
+        _as_info "seccomp: default-deny syscall filter on ($_seccomp_bpf)"
       elif [[ -n "${_knob_seccomp:-}" ]]; then
         # Asked for explicitly and not available: refuse, rather than run
         # something weaker than what was requested.
