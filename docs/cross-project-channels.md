@@ -184,8 +184,13 @@ this document does not enumerate.
   ones. It needs no privileges, unlike `fanotify`, whose mount-wide watch wants
   `CAP_SYS_ADMIN` and which is therefore worth it only for PID attribution.
   `inotify` watches are per-directory and not recursive (so directories created
-  mid-run must be picked up), and its queue can overflow — `IN_Q_OVERFLOW` means
-  dropped events and must be reported, never swallowed. A file being *opened* is
+  mid-run must be picked up), its queue can overflow — `IN_Q_OVERFLOW` means
+  dropped events and must be reported, never swallowed — and a **symlink leaving
+  the watched tree is a blind spot**: an open resolving to an inode outside the
+  watched directories raises nothing, under neither the link path nor the target
+  path, so such a tree must be watched too. Measured: `~/.claude` is ~5,600 files
+  against a 16,384 queue cap, so overflow is not a realistic risk for it; a large
+  project tree in the second tier is a different matter. A file being *opened* is
   still not the model *ingesting* it — for kind (1), the
   content-canary-in-output test stays the authoritative read-relevance signal.
 - **Attribution.** Snapshot only around sequential sessions; concurrency blurs
