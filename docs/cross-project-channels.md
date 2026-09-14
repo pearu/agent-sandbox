@@ -57,16 +57,45 @@ are the experiments most likely to show a leak the sandbox does not stop.
 
 ## Units: project vs session
 
-The isolation unit is the **project** — the directory a session launches from,
-which Claude turns into the per-project slug for `~/.claude/projects/<slug>/`
-(memory + transcripts). A **session** is one `claude` run (its own session id and
-transcript). `-n NAME`/`--name` only sets a *display* name (shown in the prompt box
-and `/resume`); it does not change the slug or any state path. So `claude -n foo`
+The isolation unit is the **project** — but Claude Code does not derive it the same
+way for the two kinds of per-project state, so "different project" means two
+different things and the experiments must respect both:
+
+- **transcripts** are keyed to the **working directory**: *"`<project>` is your
+  working directory path with non-alphanumeric characters replaced by `-`"*
+  ([sessions](https://code.claude.com/docs/en/sessions)). Over 200 characters the
+  name is truncated and a hash of the full path appended.
+- **memory** is keyed to the **repository**: *"The `<project>` path is derived from
+  the git repository, so all worktrees and subdirectories within the same repo
+  share one auto memory directory. Outside a git repo, the project root is used
+  instead."* ([memory](https://code.claude.com/docs/en/memory)). Measured: the
+  concrete path is the **main** worktree's root, so a linked `git worktree` keeps
+  its memory with the main repository, not with itself.
+
+Two directories in one repository are therefore **different** projects for
+transcripts and **the same** project for memory. For an experiment to measure
+anything, project A and project B must be **separate repositories** (or
+directories outside any repository) — not two subdirectories of one, and not two
+worktrees of one, either of which would share memory by construction and make a
+"leak" result meaningless.
+
+A **session** is one `claude` run (its own session id and transcript).
+`-n NAME`/`--name` only sets a *display* name (shown in the prompt box and
+`/resume`); it does not change the slug or any state path. So `claude -n foo`
 and `claude -n bar` from the same directory are two sessions of the **same
 project**: they share `projects/<slug>/` — the project's memory and each other's
 transcripts — and do so **even when each is separately sandboxed ([T2](#t2))**, because
 the sandbox scopes to the project, not the session. `-n` is therefore **not** a way
-to isolate two workstreams; different **directories** are.
+to isolate two workstreams; different **repositories** are (different directories
+suffice for transcripts, but not for memory).
+
+**Inside the sandbox the repository is not visible.** The engine binds the session's
+directory, not its parents, so a subdirectory of a repository has no `.git` above it
+and Claude Code takes the no-repository branch: it keys memory to the **directory**.
+Measured with real bwrap — `git rev-parse --show-toplevel` from a bound subdirectory
+answers *"not a git repository"*. So the same session keys memory to its repository
+natively and to its directory when sandboxed, which is why a row's canary placement
+can differ between [T1](#t1) and [T2](#t2) even though the channel is the same.
 
 Same-project sessions are thus a **positive control**: they are *expected* to share
 ([T1](#t1) and [T2](#t2)). A leak there is only surprising if `-n` were mistaken for project
@@ -308,13 +337,18 @@ sandbox. Four topologies:
 - <a id="t2"></a>**T2 — two separate sandboxes, shared host.** Two `claude` runs, each its own
   bwrap, both binding the host `~/.claude` (the default deployment). The canary
   travels — or is blocked — through the shared host paths per their disposition.
-- <a id="t3"></a>**T3 — two sessions inside one sandbox.** Sandbox a shell once (`bash-sandbox`)
-  and call `claude` from two directories inside it. Inside a sandbox the
+- <a id="t3"></a>**T3 — two sessions inside one sandbox.** Sandbox a shell once
+  (`claude --exec bash -l`) and call `claude` from two directories inside it. The
+  agent binary stays bound read-only under `--exec`, so a session started inside
+  runs natively there. Inside a sandbox the
   context-default is off, so a bare `claude` runs native *within that one sandbox*;
   the two sessions share that sandbox's single set of binds and tmpfs'd dirs, so a
   path isolated *between* sandboxes ([T2](#t2)) is shared *within* one ([T3](#t3)). This is what
-  a user creates by running several agents in one `bash-sandbox`, and it is where
-  per-invocation isolation does not apply.
+  a user creates by running several agents in one shell sandbox, and it is where
+  per-invocation isolation does not apply. Note both sessions write memory under
+  the `projects/` **tmpfs** unless their own directory happens to be the bound one,
+  so within one sandbox they share memory that then vanishes on exit — a result
+  about co-residence, not about host state.
 - <a id="t4"></a>**T4 — nested sandbox (note).** `AGENT_SANDBOX= claude` inside the shell sandbox
   clears the marker and asks the launcher to sandbox again; nesting bwrap needs the
   outer sandbox's seccomp to permit a new user namespace, so this is a variant to
@@ -350,10 +384,11 @@ each other.
   completion, then B, to exercise the write-back path. Run A and B concurrently to
   exercise the live channels (daemon, MCP, abstract sockets, `/proc`).
 - **Determinism.** The read and IPC channels can be tested without an LLM by a
-  scripted writer/reader run under the *same* sandbox machinery — the planned
-  generic `<cmd>-sandbox` (e.g. `bash-sandbox`, `python-sandbox`) that applies the
-  same binds and dispositions and runs a command instead of the agent, giving
-  exit-code assertions. The **injection** channels need a real `claude` turn for
+  scripted writer/reader run under the *same* sandbox machinery: `claude --exec CMD`
+  applies the identical binds and dispositions and runs CMD instead of the agent,
+  giving exit-code assertions. (This replaced a planned generic `<cmd>-sandbox`
+  profile: the sandbox a shell needs *is* the agent's, with the entrypoint
+  swapped, so no profile composition was required.) The **injection** channels need a real `claude` turn for
   the "B acts on it" half; a scripted reader can only confirm read-visibility.
 
 ## Experiment matrix
@@ -364,15 +399,28 @@ isolation — **[T1](#t1)** (two native sessions, shared host: the baseline, whe
 should appear) and **[T2](#t2)** (two separate sandboxes, default scoped mode: the
 isolation test). Each experiment plants a canary in project A's copy of the
 channel, runs a session in project B (native for [T1](#t1), sandboxed for [T2](#t2)), and records
-whether B **obtains or acts on** A's canary. "scripted read" = a `bash-sandbox`
-reader (deterministic, no LLM); "real claude" = a reader session checked for
+whether B **obtains or acts on** A's canary. "scripted read" = a deterministic
+reader with no LLM, run as `claude --exec <cmd>` — the same sandbox the agent would
+get, with the command swapped in; "real claude" = a reader session checked for
 whether the canary reaches its context or behavior.
+
+Reads are detected with `probes/watch-reads.py` (a host-side `inotify` watch, which
+sees reads made inside the sandbox), falling back to `probes/snapshot.py --arm` when
+no live collector can be attached. Writes are detected by a `snapshot.py` manifest
+diff. **Every read-based row needs the symlink pre-check first** — a read through a
+symlink leaving the watched tree raises nothing, so a null result is only meaningful
+alongside evidence that nothing could have been read invisibly.
+
+**Setup, or the rows measure nothing:** A and B are **separate repositories**; the
+harness must not set `CLAUDE_CODE_PROJECT_DIR_NAME` (honoured whenever
+`CLAUDE_CONFIG_DIR` is set, as it is here, and it collapses every session into one
+project); and paths stay under 200 converted characters so no slug is truncated.
 
 **Per-project state — the sandbox's project scoping should isolate these in [T2](#t2):**
 
 | # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
 |---|---|---|---|---|
-| 1 | project memory (`projects/<slug>/`, its `CLAUDE.md`) | reachable on disk; auto-ingested only if `memory_default = shared` | **isolated** — `projects/` tmpfs'd, only B's own slug rebound | real claude + scripted read |
+| 1 | project memory (`projects/<slug>/memory/`) | reachable on disk; auto-ingested only if `memory_default = shared`. A's canary goes under the slug of **A's repository root**, which is where a native session keeps it | **isolated** — `projects/` tmpfs'd, only B's own slug rebound. Note B keys memory to its **directory** here, not its repository, since the repo is not visible inside: plant and look under the slug each reader actually uses | real claude + scripted read |
 | 2 | transcripts (`projects/<slug>/*.jsonl`) | reachable | **isolated** (same scoping) | scripted read |
 | 3 | plans (`plans/`) | reachable | **isolated** — copyout, empty at start | scripted read |
 | 4 | prompt history (`history.jsonl`) | every project's prompts | **isolated** — append, own/filtered view | scripted read |
@@ -381,7 +429,8 @@ whether the canary reaches its context or behavior.
 
 | # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
 |---|---|---|---|---|
-| 5 | global `CLAUDE.md` | shared | **shared** (bound rw) | real claude (auto-ingest) |
+| 5 | global `CLAUDE.md` (`~/.claude/CLAUDE.md`) | shared | **shared** (bound rw) | real claude (auto-ingest) |
+| 5b | **ancestor `CLAUDE.md`** — any parent directory's, e.g. `$HOME/CLAUDE.md` or a shared parent of A and B | **shared**: loaded *"from your current working directory and every directory above it"*, ordered filesystem-root down ([memory](https://code.claude.com/docs/en/memory)); no documented stop at the repository root | **isolated, expected** — the engine binds the session's directory, not its parents, so the cascade is truncated inside. The one row here where the sandbox is expected to *help* | real claude (auto-ingest) |
 | 6 | `settings.json` hooks | shared | **shared** | real claude (hook fires) |
 | 7 | `skills/` | shared | **shared** | real claude (skill offered/invoked) |
 | 8 | `commands/` | shared | **shared** | real claude |
@@ -392,7 +441,9 @@ whether the canary reaches its context or behavior.
 
 Expected headline: the first group confirms the per-project scoping works ([T2](#t2)
 isolates); the second is where the sandbox does **not** help — the leaks to decide
-about. Row 11 is the sharp one: it is per-project *data*, yet the monolithic
+about, with row 5b the exception that should be isolated by the same property
+(parents unbound) that makes a sandboxed subdirectory a non-repository. Row 11 is
+the sharp one: it is per-project *data*, yet the monolithic
 `~/.claude.json` is bound whole, so a sandboxed B still reads A's project history —
 a per-project leak the project scoping misses because the data isn't under
 `projects/`.
@@ -433,10 +484,28 @@ version with every result**. The study is meant to be re-run against a newer pin
 version later to compare, so the version is part of each result, not a footnote.
 
 **Stage by cost.** Rows 1–4 and 10–12 ("scripted read") need only the sandbox + the
-isolated state + two projects + `bash-sandbox` — no credentials, no network; run
-these first. Rows 5–9 (and the auto-ingest halves) need credentials in the isolated
+isolated state + two separate project repositories + `claude --exec` — no
+credentials, no network; run these first. Rows 5–9 (and the auto-ingest halves) need credentials in the isolated
 state, the proxy on `:8888`, a cheap model, and in-project no-tool prompts.
 
-**Tooling and stability.** The validated snapshot tool + `inotify-tools` (fanotify
-needs root); sequential sessions during any snapshot window; a control (noise-floor)
-run before each batch.
+**Tooling and stability.** `probes/snapshot.py` for writes (`--arm` when reads must
+be detected without a live collector) and `probes/watch-reads.py` for reads — a
+host-side `inotify` watch, measured to see reads made inside the sandbox, and
+unprivileged, unlike `fanotify`'s mount-wide watch. Sequential sessions during any
+snapshot window (neither instrument attributes an access to a process); a control
+(noise-floor) run before each batch; and the **symlink pre-check** before any
+read-based row, since a read through a symlink leaving the watched tree raises
+nothing at all.
+
+**Harness constraints**, each learned the hard way and each able to invalidate a
+row silently:
+
+- **Never set `CLAUDE_CODE_PROJECT_DIR_NAME`.** It is honoured whenever
+  `CLAUDE_CONFIG_DIR` is set — which this study always sets — and it stores every
+  session's transcripts *and* memory under one name, collapsing the independent
+  variable.
+- **Keep experiment paths short.** Past 200 converted characters the project slug is
+  truncated and hashed, so a canary planted by path lands somewhere else.
+- **A and B must be separate repositories**, not two subdirectories or two worktrees
+  of one — those share memory by construction.
+- **Use `--quiet`** so captured output carries results rather than policy banners.
