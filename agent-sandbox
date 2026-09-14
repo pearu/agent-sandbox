@@ -294,6 +294,11 @@ Engine flags (must precede the agent's own arguments):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
+  --exec CMD [ARGS...]  run CMD instead of the agent, in the sandbox this
+                        profile would have built for it. Everything after
+                        --exec is the command, so engine flags come first.
+                        The agent binary stays bound read-only, so an agent
+                        started from inside runs natively there
   --engine-help         this text, even when a profile is selected
   --engine-version      print the agent-sandbox version and exit
   -h, --help            this text when no profile is selected; with a profile
@@ -1580,7 +1585,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
-  local _host_none=0 _agent_none=0 _do_wrap=0
+  local _host_none=0 _agent_none=0 _do_wrap=0 _do_exec=0
   local _sandbox_flag="" _sandbox_flag_set=0
   while (($# > 0)); do
     case "$1" in
@@ -1596,6 +1601,16 @@ agent_sandbox() (
       --profile=?*)
         profile="${1#--profile=}"
         shift
+        ;;
+      --exec)
+        # Run a command INSTEAD of the agent, in the sandbox this profile would
+        # have built for it: same binds, environment, network, seccomp and state
+        # isolation. Everything after --exec is that command and its arguments,
+        # so engine flags must precede it -- the same rule agent flags already
+        # follow, since the loop below breaks at the first unrecognised word.
+        _do_exec=1
+        shift
+        break
         ;;
       --allow)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
@@ -1708,6 +1723,16 @@ agent_sandbox() (
       *) break ;;
     esac
   done
+  if ((_do_exec)); then
+    [[ $# -ge 1 ]] || {
+      _as_msg "--exec needs a command, e.g. --exec bash -l"
+      return 2
+    }
+    if ((_do_wrap)); then
+      _as_msg "--wrap and --exec are mutually exclusive"
+      return 2
+    fi
+  fi
   ((${#_ssh_hosts[@]} > 0 || _ssh_unrestricted)) && _ssh_want=1
   if ((_ssh_unrestricted && ${#_ssh_hosts[@]} > 0)); then
     _as_msg "--ssh-unrestricted and --ssh HOST are mutually exclusive"
@@ -1900,8 +1925,11 @@ agent_sandbox() (
 
   # ---- host-side subcommands (e.g. `claude update`) ----
   # The profile lists verbs that must run on the HOST with the caller's
-  # environment, unsandboxed; see docs/updating.md.
-  if [[ -n "${1:-}" ]]; then
+  # environment, unsandboxed; see docs/updating.md. Not under --exec: there the
+  # words are a command line of the caller's choosing, so `--exec update` must
+  # run the program named `update` inside the sandbox, never the agent's
+  # host-side updater.
+  if [[ -n "${1:-}" ]] && ((! _do_exec)); then
     local _sub _rc
     for _sub in "${profile_host_subcommands[@]}"; do
       [[ "$1" == "$_sub" ]] || continue
@@ -1923,7 +1951,10 @@ agent_sandbox() (
   # gated by this project's .agent-sandbox (a changed/unapproved dot-file must not
   # stop you listing or stopping sessions), so this runs before the dot-file is
   # read. Not for wrapper spawns, and not when engine --ssh/--allow were given.
-  if ((! _do_wrap)) && [[ -n "${1:-}" ]] && declare -p profile_native_verbs >/dev/null 2>&1; then
+  # Not under --exec either: `--exec agents` names a program to run INSIDE the
+  # sandbox, and matching it here would run the agent natively and unsandboxed
+  # instead -- the one outcome --exec must never produce.
+  if ((! _do_wrap && ! _do_exec)) && [[ -n "${1:-}" ]] && declare -p profile_native_verbs >/dev/null 2>&1; then
     local _pv
     for _pv in ${profile_native_verbs[@]+"${profile_native_verbs[@]}"}; do
       [[ "$1" == "$_pv" ]] || continue
@@ -2512,11 +2543,16 @@ agent_sandbox() (
   # command, not a session prompt, and appending --settings would corrupt it.
   local _brief="${_knob_briefing:-on}"
   ((_do_wrap)) && _brief=off
+  # Under --exec the argv is an arbitrary command, so the agent-specific hook
+  # args (claude's --settings) must not be appended to it. briefing.md is still
+  # written and bound read-only, so whatever runs can read the policy.
+  local _brief_args=1
+  ((_do_exec)) && _brief_args=0
   case "$_brief" in
     off | 0) ;;
     on | 1)
       if _as_briefing_write; then
-        if declare -F profile_briefing_args >/dev/null; then
+        if ((_brief_args)) && declare -F profile_briefing_args >/dev/null; then
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
         fi
       else
@@ -2528,6 +2564,18 @@ agent_sandbox() (
       return 2
       ;;
   esac
+
+  # What the sandbox actually runs: normally the discovered agent binary with the
+  # caller's agent argv and the briefing hook args; under --exec, the caller's
+  # command line verbatim. Everything else about the sandbox is identical, which
+  # is the point -- including the read-only bind of the agent binary, so an agent
+  # started from inside runs natively there.
+  local -a _run_argv=()
+  if ((_do_exec)); then
+    _run_argv=("$@")
+  else
+    _run_argv=("$profile_bin" "$@" "${profile_briefing_argv[@]}")
+  fi
 
   # ----- Network mode -----
   # proxy  : (default) --share-net plus HTTPS_PROXY pointing at the host-side
@@ -2555,10 +2603,10 @@ agent_sandbox() (
   case "${_knob_net:-proxy}" in
     open)
       args+=(--share-net)
-      _as_launch "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
+      _as_launch "${args[@]}" -- "${_run_argv[@]}"
       ;;
     none)
-      _as_launch "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
+      _as_launch "${args[@]}" -- "${_run_argv[@]}"
       ;;
     proxy)
       local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:8888"
@@ -2573,7 +2621,7 @@ agent_sandbox() (
       )
       _as_ca_bind
       _as_ca_env
-      _as_launch "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
+      _as_launch "${args[@]}" -- "${_run_argv[@]}"
       ;;
     strict)
       # pasta owns an isolated netns; nftables inside it allows only the proxy.
@@ -2637,7 +2685,7 @@ agent_sandbox() (
           return 1
         }
       fi
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}" -- "$profile_bin" "$@" "${profile_briefing_argv[@]}"
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}" -- "${_run_argv[@]}"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"
