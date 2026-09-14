@@ -147,7 +147,10 @@ profile_memory_scope() {
   mkdir -p "$cur" 2>/dev/null || true
   profile_tmpfs+=("$projects")
   profile_rw_binds+=("$cur")
-  local m
+  # A share naming this project would rebind the memory the session is about to
+  # write READ-ONLY over the read-write bind above, silently breaking its own
+  # memory. Drop it instead: it is already there, writable.
+  local m own_mem="$cur/memory"
   for p in "$@"; do
     [[ -z "$p" ]] && continue
     if [[ "$p" == *[*?[]* ]]; then
@@ -161,13 +164,15 @@ profile_memory_scope() {
         [[ -d "$m" ]] || continue
         slug="$(_claude_project_slug "$(readlink -f -- "$m")")"
         [[ -d "$projects/$slug/memory" ]] || continue
-        profile_ro_binds+=("$projects/$slug/memory")
         _n=1
+        [[ "$projects/$slug/memory" == "$own_mem" ]] && continue
+        profile_ro_binds+=("$projects/$slug/memory")
       done < <(compgen -G "$p" || true)
       ((_n)) || _as_msg "share-memory: pattern '$p' matched no project with memory"
     else
       slug="$(_claude_project_slug "$(readlink -f -- "$p" 2>/dev/null || echo "$p")")"
-      profile_ro_binds+=("$projects/$slug/memory")
+      [[ "$projects/$slug/memory" == "$own_mem" ]] \
+        || profile_ro_binds+=("$projects/$slug/memory")
     fi
   done
   return 0
