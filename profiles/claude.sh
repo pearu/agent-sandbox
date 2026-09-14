@@ -128,7 +128,57 @@ _claude_list_versions() {
 # Note the consequence, which is Claude Code's and not ours: two project paths
 # differing only in a converted character (~/x.y and ~/x-y) share one slug, and
 # therefore one memory directory.
-_claude_project_slug() { printf '%s' "${1//[^A-Za-z0-9-]/-}"; }
+#
+# Long paths are truncated, which the docs do state: "For a working directory
+# whose converted name exceeds 200 characters, Claude Code truncates the name to
+# 200 characters and appends a hash of the full path"
+# (https://code.claude.com/docs/en/sessions). Which hash is not stated; see
+# _claude_path_hash. Without this the engine binds projects/<untruncated>, and
+# between 201 and 255 characters that is a directory Claude Code never uses, so
+# the session's transcripts and memory land on the tmpfs and are lost on exit;
+# past 255 the name exceeds NAME_MAX, cannot be created, and the launch fails.
+_claude_project_slug() {
+  local conv="${1//[^A-Za-z0-9-]/-}"
+  if ((${#conv} <= 200)); then
+    printf '%s' "$conv"
+    return 0
+  fi
+  printf '%s-%s' "${conv:0:200}" "$(_claude_path_hash "$1")"
+}
+
+# The hash Claude Code appends to a truncated project name: the 32-bit
+# h = h*31 + c string hash of the ORIGINAL path, printed base36 from its
+# ABSOLUTE value -- so the suffix is 1 to 6 characters, not a fixed width (the
+# largest magnitude, 2147483648, is "zik0zk"). Derived from real slugs recorded
+# by probes/config-dir-check.sh --matrix; both vectors are pinned as tests.
+#
+# Hashes bytes, under LC_ALL=C. That reproduces every measured vector, all of
+# which are ASCII. A path with non-ASCII characters could differ if Claude Code
+# hashes UTF-16 code units instead of bytes -- unmeasured, and it only matters
+# for a path whose converted name already exceeds 200 characters. The truncation
+# POINT is unaffected: conversion maps any non-ASCII character to "-", so both
+# sides count the same characters.
+_claude_path_hash() {
+  local LC_ALL=C s="$1" n i c v h=0 out=""
+  local digits=0123456789abcdefghijklmnopqrstuvwxyz
+  n=${#s}
+  for ((i = 0; i < n; i++)); do
+    c="${s:i:1}"
+    printf -v v '%d' "'$c"
+    h=$(((h * 31 + (v & 0xff)) & 0xffffffff))
+  done
+  if ((h >= 0x80000000)); then h=$((h - 0x100000000)); fi
+  if ((h < 0)); then h=$((-h)); fi
+  if ((h == 0)); then
+    printf '0'
+    return 0
+  fi
+  while ((h > 0)); do
+    out="${digits:$((h % 36)):1}$out"
+    h=$((h / 36))
+  done
+  printf '%s' "$out"
+}
 
 # profile_memory_scope MODE [SHARE_PATH...] -- engine hook (see the engine's
 # profile_memory_scope call). In "scoped" mode, hide ~/.claude/projects and
