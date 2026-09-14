@@ -49,7 +49,7 @@ Not every channel is in scope. Sort by *who causes* the crossing:
    this study's target — noted so results are not misread as security claims.
 
 The sharp split for kind (1): the sandbox isolates the **state** channels a
-sandboxed reader ingests (memory, transcripts, plans, history — closed in T2), but
+sandboxed reader ingests (memory, transcripts, plans, history — closed in [T2](#t2)), but
 leaves the **configuration / extension** channels shared and writable in every
 topology (`CLAUDE.md`, settings/hooks, skills, plugins, `mcpServers`). So an
 accidental write there by A is auto-ingested by B *even under the sandbox* — those
@@ -64,12 +64,12 @@ transcript). `-n NAME`/`--name` only sets a *display* name (shown in the prompt 
 and `/resume`); it does not change the slug or any state path. So `claude -n foo`
 and `claude -n bar` from the same directory are two sessions of the **same
 project**: they share `projects/<slug>/` — the project's memory and each other's
-transcripts — and do so **even when each is separately sandboxed (T2)**, because
+transcripts — and do so **even when each is separately sandboxed ([T2](#t2))**, because
 the sandbox scopes to the project, not the session. `-n` is therefore **not** a way
 to isolate two workstreams; different **directories** are.
 
 Same-project sessions are thus a **positive control**: they are *expected* to share
-(T1 and T2). A leak there is only surprising if `-n` were mistaken for project
+([T1](#t1) and [T2](#t2)). A leak there is only surprising if `-n` were mistaken for project
 isolation.
 
 ### Within-project, between-session leaks (out of scope here — flagged)
@@ -157,7 +157,7 @@ this document does not enumerate.
   Subtract it; what remains, correlated with the canary content, is
   *content-bearing*. This turns the content/auxiliary split from a-priori into
   measured.
-- **Host-side around a sandboxed call.** Snapshot the host `~/.claude` around a T2
+- **Host-side around a sandboxed call.** Snapshot the host `~/.claude` around a [T2](#t2)
   session to see what the sandbox let *through* to shared host state (the
   copyout/append write-backs) — the write-back surface the dispositions describe.
 - **Reads.** Detecting that a session *read* a file is worth doing, but **atime is
@@ -198,7 +198,7 @@ Paths are under `~/.claude` unless noted. "Native" = every session reads and
 writes it. "Sandbox" = the disposition applied.
 
 Scope tags (per the three kinds above): **A** and **B** carry the accidental
-kind (1) — the study's focus, with A closed by the sandbox in T2 and B not.
+kind (1) — the study's focus, with A closed by the sandbox in [T2](#t2) and B not.
 **C** is mostly kind (2) or tool-side-effect. **D**, and the code-execution use
 of **B**/**E**, are kind (3) — security, out of the main scope. **E** and **F**
 bear on kind (1) only through LLM-generated tools.
@@ -279,25 +279,25 @@ A `claude` process is sandboxed one-per-bwrap, but a *shell* can be sandboxed on
 and then invoke `claude` many times inside it — so several sessions can share one
 sandbox. Four topologies:
 
-- **T1 — two native sessions, shared host.** Two `claude` runs, no sandbox, both
+- <a id="t1"></a>**T1 — two native sessions, shared host.** Two `claude` runs, no sandbox, both
   reading/writing the host `~/.claude`. Baseline; expect full leak on every shared
   channel.
-- **T2 — two separate sandboxes, shared host.** Two `claude` runs, each its own
+- <a id="t2"></a>**T2 — two separate sandboxes, shared host.** Two `claude` runs, each its own
   bwrap, both binding the host `~/.claude` (the default deployment). The canary
   travels — or is blocked — through the shared host paths per their disposition.
-- **T3 — two sessions inside one sandbox.** Sandbox a shell once (`bash-sandbox`)
+- <a id="t3"></a>**T3 — two sessions inside one sandbox.** Sandbox a shell once (`bash-sandbox`)
   and call `claude` from two directories inside it. Inside a sandbox the
   context-default is off, so a bare `claude` runs native *within that one sandbox*;
   the two sessions share that sandbox's single set of binds and tmpfs'd dirs, so a
-  path isolated *between* sandboxes (T2) is shared *within* one (T3). This is what
+  path isolated *between* sandboxes ([T2](#t2)) is shared *within* one ([T3](#t3)). This is what
   a user creates by running several agents in one `bash-sandbox`, and it is where
   per-invocation isolation does not apply.
-- **T4 — nested sandbox (note).** `AGENT_SANDBOX= claude` inside the shell sandbox
+- <a id="t4"></a>**T4 — nested sandbox (note).** `AGENT_SANDBOX= claude` inside the shell sandbox
   clears the marker and asks the launcher to sandbox again; nesting bwrap needs the
   outer sandbox's seccomp to permit a new user namespace, so this is a variant to
   characterize, not assume.
 
-**Shell-sandbox composition.** For T3/T4 the shell sandbox must expose what a
+**Shell-sandbox composition.** For [T3](#t3)/[T4](#t4) the shell sandbox must expose what a
 profile needs. A `[bash]` section (or an engine arg / env) naming
 `profiles = claude` would build the shell sandbox as a *subset of* the claude
 sandbox — the same binds, ports and state-isolation the claude profile applies —
@@ -311,14 +311,14 @@ isolation. Two limits to record:
    is native at its own cwd, so `cd a && claude` auto-loads only `a`'s memory. The
    residual limit is *physical co-residence*: those projects' memory is present in
    the one sandbox, so a deliberate read (kind 2/3) could cross; only separate
-   sandboxes (T2) make one project's data physically absent from another's view.
+   sandboxes ([T2](#t2)) make one project's data physically absent from another's view.
    For the accidental kind (1), per-project auto-scope is what matters.
 2. **Co-located sessions are one trust domain.** Two `claude` sessions in one
    shell sandbox share that sandbox's ephemeral state by construction, so
-   isolation *between* projects still means separate sandboxes (T2), never
-   co-location (T3).
+   isolation *between* projects still means separate sandboxes ([T2](#t2)), never
+   co-location ([T3](#t3)).
 
-So for the study, T3 is the "one trust domain" case and T2 is the isolation test;
+So for the study, [T3](#t3) is the "one trust domain" case and [T2](#t2) is the isolation test;
 `profiles = claude` is sufficient to *run* claude inside and inherit its
 host-facing isolation, but does not (and cannot) isolate co-located sessions from
 each other.
@@ -337,17 +337,17 @@ each other.
 
 The finalized experiment list: the **content-bearing** channels only (auxiliary
 channels are safe — see above), across the two topologies that decide cross-project
-isolation — **T1** (two native sessions, shared host: the baseline, where a leak
-should appear) and **T2** (two separate sandboxes, default scoped mode: the
+isolation — **[T1](#t1)** (two native sessions, shared host: the baseline, where a leak
+should appear) and **[T2](#t2)** (two separate sandboxes, default scoped mode: the
 isolation test). Each experiment plants a canary in project A's copy of the
-channel, runs a session in project B (native for T1, sandboxed for T2), and records
+channel, runs a session in project B (native for [T1](#t1), sandboxed for [T2](#t2)), and records
 whether B **obtains or acts on** A's canary. "scripted read" = a `bash-sandbox`
 reader (deterministic, no LLM); "real claude" = a reader session checked for
 whether the canary reaches its context or behavior.
 
-**Per-project state — the sandbox's project scoping should isolate these in T2:**
+**Per-project state — the sandbox's project scoping should isolate these in [T2](#t2):**
 
-| # | Channel | Expected T1 (native) | Expected T2 (sandboxed) | Probe |
+| # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
 |---|---|---|---|---|
 | 1 | project memory (`projects/<slug>/`, its `CLAUDE.md`) | reachable on disk; auto-ingested only if `memory_default = shared` | **isolated** — `projects/` tmpfs'd, only B's own slug rebound | real claude + scripted read |
 | 2 | transcripts (`projects/<slug>/*.jsonl`) | reachable | **isolated** (same scoping) | scripted read |
@@ -356,7 +356,7 @@ whether the canary reaches its context or behavior.
 
 **Global / config — bound whole, not scoped; expected to leak in both:**
 
-| # | Channel | Expected T1 (native) | Expected T2 (sandboxed) | Probe |
+| # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
 |---|---|---|---|---|
 | 5 | global `CLAUDE.md` | shared | **shared** (bound rw) | real claude (auto-ingest) |
 | 6 | `settings.json` hooks | shared | **shared** | real claude (hook fires) |
@@ -367,7 +367,7 @@ whether the canary reaches its context or behavior.
 | 11 | per-project history in `~/.claude.json` | shared | **shared** — `.claude.json` is bound whole, *not* scoped | scripted read |
 | 12 | `downloads/` | shared | **shared** (until #52) | scripted read |
 
-Expected headline: the first group confirms the per-project scoping works (T2
+Expected headline: the first group confirms the per-project scoping works ([T2](#t2)
 isolates); the second is where the sandbox does **not** help — the leaks to decide
 about. Row 11 is the sharp one: it is per-project *data*, yet the monolithic
 `~/.claude.json` is bound whole, so a sandboxed B still reads A's project history —
