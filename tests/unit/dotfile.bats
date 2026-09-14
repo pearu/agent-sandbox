@@ -103,6 +103,29 @@ trust() {
   argv_has --tmpfs "$H/home/.claude/projects" # still scoped to the current project
 }
 
+@test "a share naming this project is dropped, not rebound read-only over its own memory" {
+  # the memory must EXIST, or the bind would be skipped for absence and the test
+  # would pass without exercising the guard at all
+  mkdir -p "$H/home/.claude/projects/$(slug "$PROJ")/memory"
+  printf '[share-memory]\n%s\n' "$PROJ" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  # the project stays writable; its memory must not also appear as a read-only bind
+  argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")" "$H/home/.claude/projects/$(slug "$PROJ")"
+  run ! argv_has --ro-bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory"
+}
+
+@test "a wildcard matching only this project shares nothing and does not warn" {
+  mkdir -p "$H/home/.claude/projects/$(slug "$PROJ")/memory"
+  printf '[share-memory]\n%s/*\n' "$(dirname "$PROJ")" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"matched no project with memory"* ]] # it did match; it was our own
+  run ! argv_has --ro-bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory"
+}
+
 @test "an approved dot-file adds [ro]/[rw] paths and [forward] names to the sandbox" {
   mkdir -p "$H/ro-a" "$H/ro-b" "$H/rw-a"
   printf '[ro]\n%s/ro-a\n%s/ro-b\n[rw]\n%s/rw-a\n[forward]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"

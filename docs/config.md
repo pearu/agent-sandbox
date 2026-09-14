@@ -180,6 +180,34 @@ Scoping covers `~/.claude/projects`. Other state under `~/.claude` (global
 command history, session metadata) stays visible; this is about per-project
 memory and transcripts, not a full identity reset.
 
+### What counts as "the project" inside the sandbox
+
+Claude Code decides where a project's memory lives from what it can see. With a
+git repository in view it uses the repository, so every subdirectory and linked
+worktree of one repository shares a single memory directory; with no repository
+in view it uses the directory itself. See
+[Auto memory](https://code.claude.com/docs/en/memory).
+
+Inside the sandbox the second case is the normal one. The engine binds the
+session's directory, not its parents, so a subdirectory of a repository has no
+`.git` above it and is simply a directory. A session started in `repo/sub`
+therefore keeps its own memory, and a session in a sibling `repo/other` cannot
+see it. That is the isolation you would want from a sandbox, and it follows
+from the environment the sandbox provides rather than from the engine
+predicting Claude Code's choice.
+
+Two consequences:
+
+- A sandboxed session and a native session started in the same subdirectory do
+  not share memory: the sandboxed one keeps memory per directory, the native
+  one shares it across the repository. Sandboxed and native runs already differ
+  in more fundamental ways, so treat this as one more of them.
+- **Known limitation.** If a `[ro]` or `[rw]` entry exposes a parent directory
+  that contains `.git`, the repository is visible again and Claude Code keys
+  that session's memory to the repository root — a directory the engine does
+  not bind, so the memory does not survive the session. Run from the repository
+  root if you want the repository's memory.
+
 Selecting the mode, from lowest to highest precedence:
 
 1. **Built-in default:** `scoped` — a session sees its own project's memory and
