@@ -208,6 +208,8 @@ not exist. Values and defaults are in the last column.
 | `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
 | `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed ([config.md](docs/config.md)) |
 | `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | which invocations to sandbox for the claude profile: `fg`, `bg`, both (`fg bg`), or `none`; the flag and env are launch-time choices (not trust-gated), the dot-file key is (default: `fg` on the host, `none` inside a sandbox) ([design.md](docs/design.md)) |
+| `--quiet` | `AGENT_SANDBOX_QUIET` | — | suppress the routine status lines a launch prints — which dot-file values were applied, the session allowlist, the seccomp filter in use. Refusals, warnings and notices that something is **not** sandboxed are never suppressed, so `--quiet` can hide noise but never a consequence (off) |
+| `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first (`claude --allow pypi.org --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
 | `--wrap` | — | — | internal: run as Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER` to sandbox a background worker Claude spawns; set by opt-in wrapper mode, not typed by hand ([design.md](docs/design.md)) |
 | `--engine-help`, `--engine-version` | — | — | print the engine's own flags, or its version, and exit |
 

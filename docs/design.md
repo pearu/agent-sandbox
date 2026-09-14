@@ -161,6 +161,35 @@ that records the argv it receives; the argv is the contract.
 | The sandbox tells the agent what it allows. Each launch writes a briefing from the resolved policy -- egress mode and allowlist size, session `--allow` hosts, extra writable and read-only paths, which projects' memory is readable, `--ssh` hosts, seccomp state -- bound read-only at `/run/agent-sandbox/`, plus the recipe for asking the user to open something. Names and paths only, never the contents of anything shared. On by default: the sessions that most need it are the ones nobody configured. | `_as_briefing_write` in the engine composes it; `profile_briefing_args` in the claude profile delivers it as `SessionStart`/`SubagentStart` hooks via `--settings`. Hooks rather than `--append-system-prompt`, which switches system-prompt snapshotting off; with snapshotting on a recorded prompt is reused until compaction, so a resumed session would keep describing a policy the user had since changed. A hook is re-run every launch, resume and compaction instead. Claude Code honours only the last `--settings`, so a user-supplied one is merged (python3, on that path only) and ours goes last; if the merge is impossible the user's is kept and the loss is announced. | `tests/unit/briefing.bats` (binds and flag present and read-only, both hook payloads, the policy actually stated, the canary never read out of a shared project, `off` suppresses everything, dot-file and knob precedence, an unknown value refused, a user `--settings` merged both spellings, and the merge-failure fallback keeping the user's file). |
 | Syscall filtering. With the filter on (the default) every syscall not on an allowlist fails with `EPERM`: `unshare`, `setns`, `mount`, `pivot_root`, `chroot`, `bpf` and the capability-gated `ptrace` family stay denied, `clone` is allowed only without namespace flags and `clone3` returns `ENOSYS`, so the agent cannot create a user namespace to regain capabilities. On by default (issue #4). It is not merely defence in depth on a machine where `install.sh` ran: the AppArmor profile it installs for bwrap is `flags=(unconfined)` with `userns,`, and an AppArmor profile is inherited by children -- so every process under bwrap is exempt from `kernel.apparmor_restrict_unprivileged_userns=1`, the very restriction that would otherwise stop a sandboxed agent creating a user namespace. With the filter off, nothing else does. Found by a probe run, 2026-09-11; the behaviour was already asserted by `tests/live/seccomp.bats` ("without seccomp (control) ... a user namespace can be created") but its cause was not written down. If no filter is compiled for the architecture the engine warns each launch and runs without it, rather than refusing a tool the user never asked to change. | Docker's default seccomp profile (vendored, Apache-2.0) compiled *as for a container with no capabilities* by `components/seccomp/gen-seccomp.py`; `install.sh` builds it per machine against that host's libseccomp; the engine passes `--seccomp` with the blob on fd 10 (opened by `_as_launch`, or by the strict wrapper inside pasta). | `tests/unit/seccomp.bats` (flag and fd only when enabled, per-arch, refusals), `tests/unit/strict.bats` (the wrapper opens the fd), `tests/live/seccomp.bats` (filter active inside; creating a user namespace refused, versus a control launch), `tests/live/agent.bats` (the real agent completes a turn under it, in proxy and strict). |
 
+### Running something other than the agent: `--exec`
+
+`--exec CMD [ARGS...]` runs CMD in place of the agent, in the sandbox the profile
+would have built for it. It is a deliberately small mechanism -- the engine's
+launch is `bwrap <args> -- <command>`, and `--exec` substitutes only that last
+part -- which is what makes it **a simple but reliable way to run a command in an
+environment identical to a sandboxed agent session**. Identical is meant
+literally: the same binds, environment, PATH, network mode and allowlist,
+seccomp filter, state isolation and per-project `.agent-sandbox` policy, because
+they are computed by the same code before the command is chosen. A shell there is
+the agent's sandbox with a different entrypoint, which is why it needs no
+profile-composition machinery. That makes it the tool of choice for inspecting or
+reproducing what a session sees, and for hosting agent sessions inside one
+sandbox: the agent binary stays bound read-only, so an agent started from within
+runs natively there.
+
+Three dispatches are bypassed under `--exec`, because each interprets the first
+argument and two of them would otherwise run the agent *outside* the sandbox:
+host-side subcommands (`claude update`), native verbs (`claude agents`,
+`daemon`), and `profile_briefing_args`, whose `--settings` flags would corrupt an
+arbitrary command line. `briefing.md` is still bound read-only. `--wrap` and
+`--exec` are mutually exclusive.
+
+**Scope note.** A project's `.agent-sandbox`, once approved, grants its policy to
+whatever `--exec` runs there, not only to an agent session. This is not an
+escalation -- the user already has full access to their own host, and types the
+command themselves -- but the trust review's scope is properly read as "this
+policy, for what I run in this project", not "this policy, for the agent".
+
 ## Residual risks
 
 Stated plainly. These are what the adversary above can still do.

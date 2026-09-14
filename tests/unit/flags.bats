@@ -200,3 +200,85 @@ STUB
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown AGENT_SANDBOX_NET"* ]]
 }
+
+@test "--exec runs the given command in the sandbox instead of the agent" {
+  run_engine -- claude --exec /bin/echo hello world
+  [ "$status" -eq 0 ]
+  # the sandbox is still built; only the command at the end differs
+  argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
+    "$H/home/.local/share/claude/versions/2.1.300/claude"
+  argv_has -- /bin/echo hello world
+  # the agent binary is NOT the thing being executed
+  run ! argv_has -- "$H/home/.local/share/claude/versions/2.1.300/claude"
+}
+
+@test "--exec passes flags of its own through untouched, and needs a command" {
+  # the command's flags must reach the command, not be eaten by the engine
+  run_engine -- claude --exec python3 -c 'print(1)'
+  [ "$status" -eq 0 ]
+  argv_has -- python3 -c 'print(1)'
+  run_engine -- claude --exec
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--exec needs a command"* ]]
+}
+
+@test "engine flags before --exec still apply; everything after belongs to the command" {
+  run_engine -- claude --allow pypi.org --exec bash -l --allow evil.example
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  [[ "$output" != *evil.example* ]] # the second --allow is the command's argument
+  argv_has -- bash -l --allow evil.example
+}
+
+@test "--exec never routes to a host-side subcommand or a native verb" {
+  # `claude update` runs on the host unsandboxed, and `claude agents` runs
+  # natively; under --exec both name a program to run INSIDE the sandbox, and
+  # matching them here would run the agent outside the sandbox instead
+  run_engine -- claude --exec update --foo
+  [ "$status" -eq 0 ]
+  [ -s "$H/argv" ] # bwrap WAS invoked; it did not take the host-side path
+  argv_has -- update --foo
+  [[ "$output" != *"on the host"* ]]
+  run_engine -- claude --exec agents
+  [ "$status" -eq 0 ]
+  [ -s "$H/argv" ]
+  [[ "$output" != *"runs natively"* ]]
+}
+
+@test "--quiet suppresses the routine status lines a launch prints" {
+  run_engine -- claude --allow pypi.org --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]] # loud by default
+  run_engine -- claude --quiet --allow pypi.org --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"session allowlist"* ]]
+  argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
+    "$H/home/.local/share/claude/versions/2.1.300/claude" # and the launch is unchanged
+}
+
+@test "AGENT_SANDBOX_QUIET does the same, and rejects a value it does not understand" {
+  run_engine AGENT_SANDBOX_QUIET=on -- claude --allow pypi.org --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"session allowlist"* ]]
+  run_engine AGENT_SANDBOX_QUIET=off -- claude --allow pypi.org --version
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  run_engine AGENT_SANDBOX_QUIET=maybe -- claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"AGENT_SANDBOX_QUIET='maybe' is not recognised"* ]]
+}
+
+@test "--quiet never hides a refusal, a warning, or an unsandboxed notice" {
+  # a refusal: the launch must still explain itself, and still fail
+  mkdir -p "$H/home/.aws"
+  run_engine AGENT_SANDBOX_RW="$H/home/.aws" -- claude --quiet --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *refusing* ]]
+  [ ! -s "$H/argv" ]
+  # a warning about a path that is not there
+  run_engine AGENT_SANDBOX_RO="$H/home/no-such-dir" -- claude --quiet --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping missing path"* ]]
+  # and a notice that something runs OUTSIDE the sandbox
+  run_engine -- claude --quiet agents
+  [[ "$output" == *"runs natively (unsandboxed)"* ]]
+}
