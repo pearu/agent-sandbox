@@ -84,8 +84,8 @@ rec() { awk -F'\t' -v p="$1" '$6==p{print $1, $2, $3, $4, $5}' "$2"; }
   sleep 0.05
   printf 'aaaaaa' >"$T/f.txt"
   manifest_to "$BATS_TEST_TMPDIR/m1"
-  r0=($(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m0"))
-  r1=($(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m1"))
+  read -r -a r0 < <(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m0")
+  read -r -a r1 < <(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m1")
   [ "${r1[4]}" != "${r0[4]}" ] # sha changed
   [ "${r1[1]}" != "${r0[1]}" ] # size changed
   [ "${r1[2]}" != "${r0[2]}" ] # mtime changed
@@ -95,7 +95,7 @@ rec() { awk -F'\t' -v p="$1" '$6==p{print $1, $2, $3, $4, $5}' "$2"; }
   sleep 0.05
   printf 'bbbbbb' >"$T/f.txt"
   manifest_to "$BATS_TEST_TMPDIR/m2"
-  r2=($(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m2"))
+  read -r -a r2 < <(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m2")
   [ "${r2[1]}" = "${r1[1]}" ]  # size unchanged
   [ "${r2[4]}" != "${r1[4]}" ] # sha changed -> detectable without a size change
   run python3 "$SNAP" diff "$BATS_TEST_TMPDIR/m1" "$BATS_TEST_TMPDIR/m2"
@@ -104,7 +104,7 @@ rec() { awk -F'\t' -v p="$1" '$6==p{print $1, $2, $3, $4, $5}' "$2"; }
   # (3) a read (atime bumped only) -> only atime changes; classified 'atime'
   touch -a -d '2031-01-01T00:00:00' "$T/f.txt"
   manifest_to "$BATS_TEST_TMPDIR/m3"
-  r3=($(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m3"))
+  read -r -a r3 < <(rec "$T/f.txt" "$BATS_TEST_TMPDIR/m3")
   [ "${r3[3]}" != "${r2[3]}" ] # atime changed
   [ "${r3[2]}" = "${r2[2]}" ]  # mtime unchanged
   [ "${r3[1]}" = "${r2[1]}" ]  # size unchanged
