@@ -30,7 +30,9 @@ note "bundle files: ${#js[@]}"
 # boundaries once, then search the split copy.
 split="$(mktemp)"
 trap 'rm -f "$split"' EXIT
+# shellcheck disable=SC2020 # per-CHARACTER mapping is the intent: split on ; { or }
 tr ';{}' '\n\n\n' <"${js[0]}" >"$split"
+# shellcheck disable=SC2020 # as above
 for f in "${js[@]:1}"; do tr ';{}' '\n\n\n' <"$f" >>"$split"; done
 note "split into $(wc -l <"$split") statement-ish lines"
 
