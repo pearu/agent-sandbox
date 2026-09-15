@@ -196,6 +196,37 @@ Level 3 is applied **selectively**, since it costs a real session each time: whe
 [T1](#t1) reports *no leak* (to show that is not disinterest). A row where T1 leaks
 freely and T2 blocks it does not need its upper bound measured.
 
+#### The model is a dimension of levels 2 and 3 — and of neither anything else
+
+**Level 1 is model-independent**: the scripted reader contains no LLM, so
+reachability is a property of the container alone and its results are stable across
+models. That is why the free half of the matrix is reproducible.
+
+Levels 2 and 3 depend on the model in two distinct ways: **capability** (a stronger
+model finds what a weaker one misses, so level 3's upper bound is really *the upper
+bound for model M*) and **willingness** (the refusal above is model- and
+version-specific). An asymmetry follows:
+
+- a level-3 **positive** is an existence proof — if any model obtained it, it is
+  obtainable, and no replication is needed;
+- a level-3 **negative** is model-relative and is recorded as *not obtained by M*,
+  requiring corroboration from at least one more capable model before it may be
+  written down as *not obtainable*.
+
+Which is the refusal rule one level up: **one model's failure is not the channel's
+closure.**
+
+So the levels use different models on purpose: level 2 runs the **default** model,
+because "what a normal session does" means what users actually run; level 3 runs the
+**most capable** available, because it is an upper bound. Every level-2 and level-3
+record carries the model id beside the Claude Code version and the network mode —
+pinned for the same reason the version is, since these rows will be re-run against
+newer models and a result without its model is uninterpretable.
+
+Caveat, recorded rather than solved: the model in the record is the one *requested*.
+A session that falls back or switches mid-run may be served by another, and neither
+instrument sees that.
+
 ### State snapshots: write-discovery and the noise floor
 
 The canary tests **reads** (did B obtain A's token); a before/after snapshot tests
