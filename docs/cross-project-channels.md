@@ -1,9 +1,11 @@
 # Cross-project data channels: a leak study
 
-**Status: planning.** This enumerates every channel through which data — or
+**Status: collecting.** This enumerates every channel through which data — or
 influence — can pass between Claude Code sessions in **different projects** of the
 same user, and defines a canary-based test of each, with and without the sandbox.
-The test harness is not built yet.
+The harness is built (`probes/leak/`) and rows are being measured; results land in
+[leak-results.md](leak-results.md). Interpretation is deferred until every row is
+in — the findings that matter are cross-row.
 
 A *session* is one `claude` invocation and its process tree; a *project* is the
 directory it launches from (see "Units" below). The adversary (the sandbox's threat
@@ -513,6 +515,11 @@ each other.
   the "B acts on it" half; a scripted reader can only confirm read-visibility.
 
 ## Experiment matrix
+
+**Measured results live in [leak-results.md](leak-results.md)**, one section per row,
+each keeping a table that gains a line per run so results stay comparable without
+reading them out of git history. This document stays the plan.
+
 
 The finalized experiment list: the **content-bearing** channels only (auxiliary
 channels are safe — see above), across the two topologies that decide cross-project
