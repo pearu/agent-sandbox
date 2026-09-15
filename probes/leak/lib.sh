@@ -286,26 +286,30 @@ leak_credentials_clean() {
   LEAK_CREDENTIAL_COPY=""
 }
 
-# leak_session_native CWD PROMPT OUT -- one real turn, NOT sandboxed.
+# leak_session_native CWD PROMPT OUT [FLAG...] -- one real turn, NOT sandboxed.
+# Trailing FLAGs are passed to claude before -p, for cells that deliberately widen the
+# deployment (a permission grant, say) and must say so in the command.
 # `claude` on PATH is the launcher, so a bare call would sandbox. --sandbox none is the
 # documented way to route a launch past it, and says so in the command rather than by
 # setting a marker that claims the session is already inside a sandbox.
 leak_session_native() {
   local cwd="$1" prompt="$2" out="$3"
+  shift 3
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" claude --quiet --sandbox none -p "$prompt"
+    env HOME="$LEAK_HOME" claude --quiet --sandbox none "$@" -p "$prompt"
   ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 
-# leak_session_sandboxed NET CWD PROMPT OUT -- one real turn inside the sandbox.
+# leak_session_sandboxed NET CWD PROMPT OUT [FLAG...] -- one real turn inside the sandbox.
 # Real sessions need the API, so NET is `proxy` (the default deployment) rather than the
 # `none` the scripted rows used.
 leak_session_sandboxed() {
   local net="$1" cwd="$2" prompt="$3" out="$4"
+  shift 4
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" claude --quiet -p "$prompt"
+    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" claude --quiet "$@" -p "$prompt"
   ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 
