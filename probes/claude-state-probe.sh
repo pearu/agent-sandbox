@@ -25,7 +25,9 @@ die() {
   && die "this is inside a sandbox; run it on the host (nested namespaces are blocked, and with AGENT_SANDBOX_SECCOMP=on unshare is denied)"
 command -v bwrap >/dev/null || die "bwrap not found"
 MODEL="${MODEL:-claude-haiku-4-5-20251001}"
+# shellcheck disable=SC2012 # version directory names; sort -V is the point
 CB="$(ls -d "$HOME"/.local/share/claude/versions/*/claude 2>/dev/null | sort -V | tail -1)"
+# shellcheck disable=SC2012 # version directory names; sort -V is the point
 [[ -x "$CB" ]] || CB="$(ls -d "$HOME"/.local/share/claude/versions/* 2>/dev/null | sort -V | tail -1)"
 [[ -x "$CB" ]] || die "no Claude Code binary under ~/.claude... (~/.local/share/claude/versions)"
 C="$HOME/.claude"

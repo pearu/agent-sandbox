@@ -68,7 +68,12 @@ fi
 
 say "Does it ship its own agent binary?"
 found=$(find "$ext" -maxdepth 3 -type f \( -name 'claude' -o -name 'claude-code' -o -name '*.node' \) 2>/dev/null | head -5)
-[[ -n "$found" ]] && printf '   %s\n' $found || note "nothing binary-looking in the top levels"
+if [[ -n "$found" ]]; then
+  # shellcheck disable=SC2086 # deliberate split: printf recycles its format, one per line
+  printf '   %s\n' $found
+else
+  note "nothing binary-looking in the top levels"
+fi
 
 say "How does its code start the CLI?"
 # The bundle is minified, so context lines matter more than the match itself.

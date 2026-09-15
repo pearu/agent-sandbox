@@ -17,7 +17,9 @@ die() {
 [[ -r /proc/1/cmdline ]] && [[ "$(tr '\0' ' ' </proc/1/cmdline)" == bwrap* ]] \
   && die "run this on the host, not in a sandbox"
 MODEL="${MODEL:-claude-haiku-4-5-20251001}"
+# shellcheck disable=SC2012 # version directory names; sort -V is the point
 CB="$(ls -d "$HOME"/.local/share/claude/versions/*/claude 2>/dev/null | sort -V | tail -1)"
+# shellcheck disable=SC2012 # version directory names; sort -V is the point
 [[ -x "$CB" ]] || CB="$(ls -d "$HOME"/.local/share/claude/versions/* 2>/dev/null | sort -V | tail -1)"
 [[ -x "$CB" ]] || die "no Claude Code binary found"
 C="$HOME/.claude"
