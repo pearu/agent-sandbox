@@ -533,9 +533,9 @@ symlink leaving the watched tree raises nothing, so a null result is only meanin
 alongside evidence that nothing could have been read invisibly.
 
 **Setup, or the rows measure nothing:** A and B are **separate repositories**; the
-harness must not set `CLAUDE_CODE_PROJECT_DIR_NAME` (honoured whenever
-`CLAUDE_CONFIG_DIR` is set, as it is here, and it collapses every session into one
-project); and paths stay under 200 converted characters so no slug is truncated.
+harness must not set `CLAUDE_CODE_PROJECT_DIR_NAME` (it collapses every session's
+transcripts *and* memory into one project); and paths stay under 200 converted
+characters so no slug is truncated.
 
 **Per-project state — the sandbox's project scoping should isolate these in [T2](#t2):**
 
@@ -592,24 +592,40 @@ canaries and run sessions that mutate claude state; they must not touch the real
 tool**: snapshot the real `~/.claude`, `~/.claude.json` and `/tmp/cc-daemon-<uid>/`
 before and after an isolated run and assert **zero changes** — the study does not
 begin until this passes (this is what makes the snapshot tool's own validation a
-prerequisite). Two candidate mechanisms:
+prerequisite).
 
-- **Throwaway `HOME`** with the binary, proxy CA, seccomp filter and allowlist
-  symlinked in — what `e2e/install.bats` already exercises.
-- **`CLAUDE_CONFIG_DIR`** to relocate claude's state. Cleaner, but two unknowns:
-  the engine binds `$HOME/.claude` literally (`profile_config_binds`), so it needs a
-  small change to bind `CLAUDE_CONFIG_DIR` instead; and it is unverified that claude
-  honors the variable for *every* write. Adopt it only once the snapshot check above
-  shows the real `~/.claude` stays untouched; otherwise fall back to the throwaway
-  `HOME`.
+**The mechanism is a throwaway `HOME`** — the binary, the seccomp filter and the
+version directory symlinked in, as `e2e/install.bats` already exercises. The
+alternative, a throwaway `CLAUDE_CONFIG_DIR`, was measured and **rejected**: the
+engine neither forwards it (it is not in `profile_env_pass`) nor binds it
+(`profile_config_binds` names `$HOME/.claude`), so a **sandboxed** session cannot see
+such a config at all — and a canary planted there reads as *unreachable*, which is
+indistinguishable from the sandbox working. The earlier verification that it left the
+real `~/.claude` untouched covered **native** runs only, where that trap does not
+appear. A throwaway `HOME` is both bound and scoped by the engine, so [T2](#t2)
+measures the real scoping, and it keeps the default credential account.
 
-Either way, `/tmp/cc-daemon-<uid>/` is keyed by the real uid, not `HOME`, so the
-daemon path is shared regardless — include it in the verification snapshot.
+Symlink the **parents** `~/.local/share/claude` (version discovery) and
+`~/.local/share/agent-sandbox` (the seccomp filter): `find` does not descend a start
+point that is itself a symlink, and a missing filter would leave [T2](#t2) running
+without seccomp — silently not the default deployment.
 
-**Pin the claude version.** Results depend on the claude version, so pin it, disable
-auto-update (a self-update would swap the binary mid-study), and **record the exact
-version with every result**. The study is meant to be re-run against a newer pinned
-version later to compare, so the version is part of each result, not a footnote.
+`/tmp/cc-daemon-<uid>/` is keyed by the real uid, not `HOME`, so the daemon path is
+shared regardless — include it in the verification snapshot.
+
+**Record the claude version with every result; do not pin it.** Results depend on the
+version, so every record carries the exact one and the study is meant to be re-run
+later against a newer one to compare — the version is part of each result, not a
+footnote. Pinning was considered and dropped: micro-version drift across a study is
+acceptable, and a harness that refuses to run unless one exact build is installed
+would block measurement for a difference it cannot show is material. Note what this
+does *not* buy: sandboxed cells get `DISABLE_AUTOUPDATER=1` from the profile, but the
+`autoUpdates: false` key in a throwaway `.claude.json` is **ignored for native
+installs**, so nothing here prevents the host binary being updated between rows. Drift
+is therefore recorded rather than prevented — which is why the version belongs on
+every cell and not in a footnote. If a result ever differs across micro versions that
+is itself the finding, and it is visible because each row's table keeps one line per
+run.
 
 **Network mode.** For rows 1–12 the mode is **not** a variable: the sandbox's bind
 set is computed before the network is chosen, and a normalised argv diff shows the
@@ -644,10 +660,11 @@ nothing at all.
 **Harness constraints**, each learned the hard way and each able to invalidate a
 row silently:
 
-- **Never set `CLAUDE_CODE_PROJECT_DIR_NAME`.** It is honoured whenever
-  `CLAUDE_CONFIG_DIR` is set — which this study always sets — and it stores every
-  session's transcripts *and* memory under one name, collapsing the independent
-  variable.
+- **Never set `CLAUDE_CODE_PROJECT_DIR_NAME`.** It stores every session's transcripts
+  *and* memory under one name, collapsing the independent variable. (It is documented
+  as honoured only when `CLAUDE_CONFIG_DIR` is set, which this study no longer sets —
+  but the harness refuses to start when either variable is present rather than relying
+  on that.)
 - **Keep experiment paths short.** Past 200 converted characters the project slug is
   truncated and hashed, so a canary planted by path lands somewhere else.
 - **A and B must be separate repositories**, not two subdirectories or two worktrees
