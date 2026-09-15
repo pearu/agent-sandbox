@@ -122,17 +122,30 @@ leak_precheck() {
 # ambient, and is subtracted. What remains is attributable to the experiment.
 LEAK_CONTROL_SECONDS="${LEAK_CONTROL_SECONDS:-15}"
 
+# The daemon directory is keyed by the REAL uid, not by HOME, so a throwaway HOME does
+# not relocate it: a real session can register there whatever HOME says. Harmless while
+# every row ran `--exec` and started no session; it matters from the real-session rows
+# on, which is why it is in the snapshot set rather than left to be noticed later.
+leak_real_roots() {
+  local d
+  d="/tmp/cc-daemon-$(id -u)"
+  printf '%s\n' "$HOME/.claude" "$HOME/.claude.json"
+  [[ -e "$d" ]] && printf '%s\n' "$d"
+  return 0
+}
+
 leak_real_config_before() {
-  python3 "$LEAK_SNAPSHOT" manifest "$HOME/.claude" "$HOME/.claude.json" >"$LEAK_RUN/real-m0"
+  mapfile -t _leak_real_roots < <(leak_real_roots)
+  python3 "$LEAK_SNAPSHOT" manifest "${_leak_real_roots[@]}" >"$LEAK_RUN/real-m0"
   leak_say "noise floor: ${LEAK_CONTROL_SECONDS}s idle control window"
   sleep "$LEAK_CONTROL_SECONDS"
-  python3 "$LEAK_SNAPSHOT" manifest "$HOME/.claude" "$HOME/.claude.json" >"$LEAK_RUN/real-before"
+  python3 "$LEAK_SNAPSHOT" manifest "${_leak_real_roots[@]}" >"$LEAK_RUN/real-before"
   python3 "$LEAK_SNAPSHOT" diff "$LEAK_RUN/real-m0" "$LEAK_RUN/real-before" >"$LEAK_RUN/real-ambient"
   leak_say "noise floor: $(wc -l <"$LEAK_RUN/real-ambient") ambient change(s)"
 }
 
 leak_real_config_after() {
-  python3 "$LEAK_SNAPSHOT" manifest "$HOME/.claude" "$HOME/.claude.json" >"$LEAK_RUN/real-after"
+  python3 "$LEAK_SNAPSHOT" manifest "${_leak_real_roots[@]}" >"$LEAK_RUN/real-after"
   python3 "$LEAK_SNAPSHOT" diff "$LEAK_RUN/real-before" "$LEAK_RUN/real-after" >"$LEAK_RUN/real-diff"
   cut -f2 "$LEAK_RUN/real-ambient" | sort -u >"$LEAK_RUN/real-ambient-paths"
   awk -F'\t' 'NR==FNR { a[$0] = 1; next } !($2 in a)' \
@@ -222,6 +235,93 @@ leak_trust() {
   mkdir -p "$t"
   sha256sum -- "$d/.agent-sandbox" | cut -d' ' -f1 \
     >"$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
+}
+
+# ---- real sessions (the auto-ingest rows) ---------------------------------------
+# Everything above measures the container with a scripted reader and no LLM. An
+# INJECTION row cannot: whether a file reaches the model's context is not a property of
+# the filesystem, so these rows run a real turn and assert on what the model did.
+
+# leak_authenticate -- copy the host's credentials into the throwaway config.
+#
+# COPIED, NEVER SYMLINKED. A session refreshes its token, and a symlink would let the
+# experiment write to the real credential file. The copy is mode 600, lives in the
+# git-ignored run directory, and is REMOVED WHEN THE SCRIPT EXITS, failures included --
+# a credential left behind in a results directory outlives the reason it was there.
+leak_authenticate() {
+  local src="$HOME/.claude/.credentials.json" dst="$LEAK_CONFIG/.credentials.json"
+  [[ -r "$src" ]] || leak_die "no credentials at ~/.claude/.credentials.json; a
+    real-session row needs a logged-in host"
+  (umask 077 && cp -- "$src" "$dst") || leak_die "could not copy credentials"
+  chmod 600 -- "$dst"
+  LEAK_CREDENTIAL_COPY="$dst"
+  trap leak_credentials_clean EXIT
+  leak_say "credentials copied into the throwaway config (removed at exit)"
+}
+
+leak_credentials_clean() {
+  [[ -n "${LEAK_CREDENTIAL_COPY:-}" ]] || return 0
+  rm -f -- "$LEAK_CREDENTIAL_COPY"
+  leak_say "credential copy removed"
+  LEAK_CREDENTIAL_COPY=""
+}
+
+# leak_session_native CWD PROMPT OUT -- one real turn, NOT sandboxed.
+# `claude` on PATH is the launcher, so a bare call would sandbox. --sandbox none is the
+# documented way to route a launch past it, and says so in the command rather than by
+# setting a marker that claims the session is already inside a sandbox.
+leak_session_native() {
+  local cwd="$1" prompt="$2" out="$3"
+  (
+    cd "$cwd" || exit 1
+    env HOME="$LEAK_HOME" claude --quiet --sandbox none -p "$prompt"
+  ) >"$out" 2>"$out.err" || true
+}
+
+# leak_session_sandboxed NET CWD PROMPT OUT -- one real turn inside the sandbox.
+# Real sessions need the API, so NET is `proxy` (the default deployment) rather than the
+# `none` the scripted rows used.
+leak_session_sandboxed() {
+  local net="$1" cwd="$2" prompt="$3" out="$4"
+  (
+    cd "$cwd" || exit 1
+    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" claude --quiet -p "$prompt"
+  ) >"$out" 2>"$out.err" || true
+}
+
+# leak_session_verdict REPLY TOKEN JSON -- the reader contract, from a model's reply.
+#
+# A session that produced NO reply writes NO json, so the cell classifies as
+# invalid-reader-output and the gate refuses the run. That is deliberate: `open` must
+# never be set to anything but "ok" here, because classify() maps every other string to
+# UNREACHABLE -- which would record a session that failed to start as "the sandbox
+# blocked it", the one confusion the gate exists to prevent.
+leak_session_verdict() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8", errors="surrogateescape") as fh:
+        reply = fh.read()
+except OSError:
+    reply = ""
+if not reply.strip():
+    sys.exit(0)  # no reply: a failed experiment, not a negative -- leave the file absent
+with open(sys.argv[3], "w", encoding="utf-8") as fh:
+    json.dump({"open": "ok", "token_found": sys.argv[2] in reply,
+               "reply_chars": len(reply)}, fh)
+PY
+}
+
+# leak_latest_transcript CWD -- the newest transcript for the project at CWD, so a
+# record can carry WHICH MODEL ACTUALLY SERVED. The requested model is not necessarily
+# the one that did: a session can fall back or switch mid-run, and the transcript
+# records the model per message (record.py models).
+leak_latest_transcript() {
+  local d
+  d="$LEAK_CONFIG/projects/$(leak_slug "$1")"
+  # newest first, by mtime; find+sort rather than ls, which cannot be parsed safely
+  find "$d" -maxdepth 1 -name '*.jsonl' -printf '%T@\t%p\n' 2>/dev/null \
+    | sort -rn | head -1 | cut -f2-
 }
 
 # leak_isolation_canary -- plant a canary in A's TRANSCRIPT; sets LEAK_ISO_PATH and
