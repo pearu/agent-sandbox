@@ -23,6 +23,8 @@ both look like "B did not get it". Keeping them apart is what stops a broken set
 from being recorded as a working sandbox.
 """
 import json
+import os
+import re
 import subprocess
 import sys
 
@@ -89,6 +91,121 @@ def models_served(path):
         # A run that straddles a switch is not a clean measurement of either model.
         out["note"] = "MORE THAN ONE MODEL SERVED THIS SESSION; attribute per message"
     return out
+
+
+def validate(rundir, known_ambient=None):
+    """The per-run VALIDITY pass: does this data mean what it claims?
+
+    Separate from interpreting it. Interpretation waits until every row is in --
+    reading one row's story into the next is how a study drifts -- but a run whose
+    controls did not fire is not a result at all, and that has to be caught now,
+    while re-running is cheap.
+    """
+    import glob
+
+    checks, records = [], []
+    for f in sorted(glob.glob(os.path.join(rundir, "records", "*.json"))):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                d = json.load(fh)
+            d["_file"] = os.path.basename(f)
+            records.append(d)
+        except (OSError, ValueError) as e:
+            checks.append(("records readable", False, "%s: %s" % (f, e)))
+    if not records:
+        checks.append(("records present", False, "no records in %s" % rundir))
+        return checks, records
+
+    verdicts = [r.get("verdict") for r in records]
+
+    bad = [r["_file"] for r in records if r.get("verdict") == VERDICT_MALFORMED]
+    checks.append(
+        ("no invalid reader output", not bad,
+         "a failed experiment, not a negative: " + ", ".join(bad) if bad else "")
+    )
+
+    pos = [r for r in records if r.get("topology") == "T1"]
+    ok = bool(pos) and all(r.get("verdict") == VERDICT_OBTAINED for r in pos)
+    checks.append(
+        ("positive control obtained", ok,
+         "" if ok else "T1 must obtain the canary, or the plant is broken rather than the sandbox working")
+    )
+
+    neg = [r for r in records if str(r.get("topology", "")).endswith("-own")]
+    ok = bool(neg) and all(r.get("verdict") == VERDICT_OBTAINED for r in neg)
+    checks.append(
+        ("negative control obtained", ok,
+         "" if ok else "B must still reach its OWN project, or 'unreachable' just means nothing is mounted")
+    )
+
+    distinct = set(v for v in verdicts if v)
+    checks.append(
+        ("verdicts not degenerate", len(distinct) >= 2,
+         "" if len(distinct) >= 2 else "every cell returned %r; usually means nothing was planted" % distinct)
+    )
+
+    missing = [
+        r["_file"] for r in records
+        if not r.get("claude_version") or not r.get("net") or not r.get("topology")
+    ]
+    checks.append(
+        ("environment recorded", not missing,
+         "version/net/topology missing in: " + ", ".join(missing) if missing else "")
+    )
+
+    # Changes to the REAL config that the noise floor does not explain. The floor
+    # samples an IDLE window, while an observing session writes on events (a turn
+    # ending, a hook firing), so it cannot capture those by construction. The tool
+    # cannot attribute a write to a process -- inotify carries no pid and fanotify
+    # needs root -- so classification is the operator's, made explicit here rather
+    # than left to a warning nobody reads.
+    att = os.path.join(rundir, "real-attributable")
+    unexplained = []
+    if os.path.exists(att):
+        with open(att, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 2 and not (known_ambient and re.search(known_ambient, parts[1])):
+                    unexplained.append(line.rstrip("\n"))
+    checks.append(
+        ("real config changes accounted for", not unexplained,
+         "unclassified: " + "; ".join(unexplained) if unexplained else "")
+    )
+    return checks, records
+
+
+def cmd_validate(argv):
+    rundir = None
+    known = None
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--known-ambient":
+            i += 1
+            known = argv[i] if i < len(argv) else None
+        else:
+            rundir = argv[i]
+        i += 1
+    if not rundir:
+        sys.stderr.write("record.py validate RUNDIR [--known-ambient REGEX]\n")
+        return 2
+    checks, records = validate(rundir, known)
+    failed = [c for c in checks if not c[1]]
+    for name, ok, detail in checks:
+        sys.stdout.write("  %-38s %s%s\n" % (name, "PASS" if ok else "FAIL",
+                                              ("  -- " + detail) if detail else ""))
+    summary = {
+        "valid": not failed,
+        "checks": [{"name": n, "pass": o, "detail": d} for n, o, d in checks],
+        "cells": len(records),
+    }
+    with open(os.path.join(rundir, "validity.json"), "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    if failed:
+        sys.stdout.write("  => INVALID RUN: do not record this as a result\n")
+        return 1
+    sys.stdout.write("  => valid\n")
+    return 0
 
 
 def _harness_commit():
@@ -172,11 +289,14 @@ def main(argv):
         json.dump(models_served(argv[2]), sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         return 0
+    if len(argv) >= 3 and argv[1] == "validate":
+        return cmd_validate(argv[2:])
     if len(argv) >= 2 and argv[1] == "write":
         return cmd_write(argv[2:])
     sys.stderr.write(
         "usage: record.py verdict READER.json\n"
         "       record.py models TRANSCRIPT.jsonl\n"
+        "       record.py validate RUNDIR [--known-ambient REGEX]\n"
         "       record.py write --out R.json [--set k=v] [--set-file k=PATH]\n"
         "                       [--reader READER.json] [--transcript T.jsonl]\n"
     )

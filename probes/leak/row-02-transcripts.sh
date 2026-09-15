@@ -22,6 +22,7 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 LEAK_ROW=02-transcripts
+VALID=1
 leak_setup "$LEAK_ROW"
 
 # ---- plant A's canary -------------------------------------------------------
@@ -39,6 +40,14 @@ leak_say "planted $CANARY in A's transcript ($A_SLUG)"
 # "A's transcript is unreachable" cannot be told apart from "no config is visible in
 # there at all" -- the same shape of mistake as a mis-planted canary, and it would
 # read as isolation either way.
+# A also gets a memory note. The share-memory cell below needs something that IS
+# shared to contrast with the transcript that is not: "nothing came through" would
+# otherwise be explained equally well by the share not taking effect at all.
+A_MEM_CANARY="LEAK-AMEM-ROW02-$(date +%s)-$RANDOM"
+A_MEMORY="$LEAK_CONFIG/projects/$A_SLUG/memory/NOTE.md"
+mkdir -p "$(dirname "$A_MEMORY")"
+printf '%s\n' "$A_MEM_CANARY" >"$A_MEMORY"
+
 B_SLUG="$(leak_slug "$LEAK_B")"
 B_CANARY="LEAK-OWN-ROW02-$(date +%s)-$RANDOM"
 B_TRANSCRIPT="$LEAK_CONFIG/projects/$B_SLUG/00000000-0000-0000-0000-00000000000b.jsonl"
@@ -92,7 +101,29 @@ for net in none proxy strict; do
     --reader "$LEAK_RUN/t2-$net-own.json"
 done
 
+# ---- can a share expose transcripts too? -------------------------------------
+# [share-memory] naming A binds projects/<A>/memory read-only. Transcripts are
+# SIBLINGS of memory/, not inside it, so the expectation is that A's memory comes
+# through and A's transcript does not -- i.e. transcripts cannot be shared
+# selectively at all. Measured rather than read off the code, because it is the
+# advice a user acts on.
+leak_say "T2-share (sandboxed, [share-memory] names A, net=none)"
+printf '[share-memory]\n%s\n' "$LEAK_A" >"$LEAK_B/.agent-sandbox"
+leak_trust "$LEAK_B"
+leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-share-mem.json" \
+  "$A_MEMORY" "$A_MEM_CANARY"
+leak_record "t2-share-memory" --set "topology=T2-share" --set "net=none" \
+  --set "sandboxed=yes" --set "canary=$A_MEM_CANARY" --set "target=$A_MEMORY" \
+  --reader "$LEAK_RUN/t2-share-mem.json"
+leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-share-tx.json" \
+  "$A_TRANSCRIPT" "$CANARY"
+leak_record "t2-share-transcript" --set "topology=T2-share" --set "net=none" \
+  --set "sandboxed=yes" --set "canary=$CANARY" --set "target=$A_TRANSCRIPT" \
+  --reader "$LEAK_RUN/t2-share-tx.json"
+rm -f "$LEAK_B/.agent-sandbox"
+
 leak_real_config_after
+leak_validate || VALID=0
 
 # ---- report -----------------------------------------------------------------
 echo
@@ -106,3 +137,8 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+((VALID)) || {
+  echo
+  echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2
+  exit 1
+}
