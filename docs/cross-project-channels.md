@@ -183,6 +183,13 @@ this document does not enumerate.
   *created / deleted / content-changed (hash) / touched-only (mtime)*. The hash is
   the real write signal; mtime alone is noisy. **Any changed path not in the
   catalog is a channel we missed.**
+- **Records that explain, not just verdicts.** A row's record must be detailed enough
+  to reconstruct **the path** a leak took, **what triggered or blocked it** within a
+  fixed topology and channel, and what a user can do about it *in either direction*.
+  Sharing is not always a fault: keeping one session current with another project's
+  progress is a legitimate reason to want a channel open. So each row records the
+  mechanism, the conditions, and both "to block it" and "to enable it deliberately" —
+  a bare leak/no-leak verdict is not a result.
 - **Noise floor → content vs auxiliary, measured.** A control session (nothing
   experiment-relevant) shows the files that change every run regardless —
   telemetry, `statsig`, `numStartups`, caches, bookkeeping: the *auxiliary* floor.
@@ -323,6 +330,39 @@ Bound read-write, shared in both modes unless noted:
   agent schedules work that runs in or for another session; sandbox: no
   cron/systemd/dbus reach (capabilities dropped, default-deny filesystem)
 
+### G. Network-mediated — an external medium both projects can reach
+
+The only family where the **network mode is the independent variable** rather than a
+nuisance one. Nothing here lives in `~/.claude`; the medium is outside the machine.
+
+- **shared external medium** — session A publishes (a PR, an issue, a gist, a wiki
+  page, a package release) and session B later retrieves it. The crossing is
+  accidental in exactly the kind-(1) sense: A publishes as part of its own task and
+  B finds it while researching. The sandbox cannot stop A publishing; what it
+  decides is whether B can **reach** the medium.
+- **remote-backed state** — an MCP server or a synced service that remembers
+  per-account context, carrying data between sessions without either one
+  publishing anything. Distinct from the `mcpServers` *config* channel (catalog B):
+  there the shared thing is the configuration, here it is the remote state behind it.
+
+Reachability by topology, measured:
+
+| | medium reachable | allowlist |
+|---|---|---|
+| [T1](#t1) native, and `open` | all of the internet | none |
+| `proxy` (the default) | allowlisted hosts for a client that honours the proxy variables; **anything at all via a raw socket** | advisory |
+| `strict` | allowlisted hosts only | **enforced** by the nft firewall |
+
+That `proxy` is advisory is documented, not a finding of this study
+([network.md](network.md), and the guarantee in [design.md](design.md) is scoped to
+"every client that honours `HTTPS_PROXY`"); measured here only to fix what the rows
+mean. A direct connect to a public address from inside succeeds under `proxy` and
+times out under `strict`.
+
+This family is also the clearest case where a user may **want** the flow — a shared
+medium is how one project's session is kept current with another's progress. So its
+rows record how to get both outcomes, not merely whether a leak occurred.
+
 ## Running the study
 
 ### Topologies
@@ -439,6 +479,13 @@ project); and paths stay under 200 converted characters so no slug is truncated.
 | 11 | per-project history in `~/.claude.json` | shared | **shared** — `.claude.json` is bound whole, *not* scoped | scripted read |
 | 12 | `downloads/` | shared | **shared** (until #52) | scripted read |
 
+**Network-mediated — the rows where the network mode decides the answer ([G](#g-network-mediated--an-external-medium-both-projects-can-reach)):**
+
+| # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
+|---|---|---|---|---|
+| 13 | shared external medium (A publishes; B fetches) | **reachable** — no allowlist at all | **depends on the mode, and this row is run in each**: `open` reachable; `proxy` reachable if allowlisted, and reachable regardless via a raw socket; `strict` only if allowlisted | scripted read (fetch a canary URL) |
+| 14 | remote-backed state (an MCP server or synced service that remembers per-account context) | **shared** — same account, same remote state | **shared wherever the host is reachable**; the sandbox gates reach, not the remote's memory | real claude + scripted read |
+
 Expected headline: the first group confirms the per-project scoping works ([T2](#t2)
 isolates); the second is where the sandbox does **not** help — the leaks to decide
 about, with row 5b the exception that should be isolated by the same property
@@ -482,6 +529,22 @@ daemon path is shared regardless — include it in the verification snapshot.
 auto-update (a self-update would swap the binary mid-study), and **record the exact
 version with every result**. The study is meant to be re-run against a newer pinned
 version later to compare, so the version is part of each result, not a footnote.
+
+**Network mode.** For rows 1–12 the mode is **not** a variable: the sandbox's bind
+set is computed before the network is chosen, and a normalised argv diff shows the
+modes are purely *additive* — `open` adds `--share-net`, `proxy` adds that plus the
+proxy/CA `--setenv` block and (where the proxy CA is installed) one read-only bind of
+the combined bundle over the system trust path; `strict` wraps the same argv in
+pasta. **Nothing is removed and no `~/.claude` bind changes.** So rather than
+tripling every row, **row 2 is run in all three modes as an invariance control** and
+the result recorded; if it is invariant, the remaining filesystem rows are run in one
+mode — `none` for the deterministic ones (fastest, no proxy or credentials needed)
+and `proxy` for the real-claude ones (the default deployment, and the API must be
+reachable). If it is *not* invariant, that is a more interesting result than any
+single row and the plan changes.
+
+Rows 13–14 are the exception and are run **per mode**, because there the mode is what
+decides the answer.
 
 **Stage by cost.** Rows 1–4 and 10–12 ("scripted read") need only the sandbox + the
 isolated state + two separate project repositories + `claude --exec` — no
