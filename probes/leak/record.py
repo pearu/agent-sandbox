@@ -231,10 +231,20 @@ def _harness_commit():
     if head is None:
         return "unknown"
     head = head.strip()
-    status = _git("status", "--porcelain")
-    if status is None:
+    # TRACKED changes only, anywhere in the repository: the engine and the profiles
+    # decide what a cell measures just as much as the harness does, so an
+    # uncommitted edit to either means the run is not reproducible from this commit.
+    #
+    # Untracked files are deliberately NOT counted. On a working machine there are
+    # always some -- local scratch probes, editor droppings -- and none of them can
+    # change what ran, so counting them would mark every run dirty and a marker that
+    # always fires is one nobody reads. What that does not catch: a row script that
+    # has never been `git add`ed at all. In practice the workflow adds it before
+    # running the checks, and a staged addition IS a tracked change.
+    tracked = _git("status", "--porcelain", "--untracked-files=no")
+    if tracked is None:
         return head + "-unknown-tree"
-    return head + "-dirty" if status.strip() else head
+    return head + "-dirty" if tracked.strip() else head
 
 
 def cmd_write(argv):

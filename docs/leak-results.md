@@ -255,3 +255,88 @@ it. Sandboxing a session limits what it can read, not what it leaves behind.
 ### Not yet measured
 
 Level 2 — whether a real session reads another project's plans unprompted — and level 3.
+
+---
+
+## Row 4 — prompt history
+
+**Question (level 1, reachability):** can a session in project B read project A's
+prompts from `history.jsonl`? The reader contains no LLM, so this measures the
+container alone.
+
+**Script:** `probes/leak/row-04-history.sh`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's prompt | n/a | `obtained` (4 lines) |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — A's prompt | `none` | `not-obtained-absent` (2 lines) |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **B's own** prompt (control) | `none` | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 — sibling project extending B's path (`<B>-notes`) | `none` | `not-obtained-absent` |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **A's line carrying `"project":"<B>"` nested** | `none` | **`obtained`** |
+| 2026-09-15 | 2.1.272 | n/a | T2-share-all — A's prompt under `[share-memory] all` | `none` | `not-obtained-absent` |
+| 2026-09-15 | 2.1.272 | n/a | T2-writeback — B appends a prompt inside | `none` | `obtained` (3 lines) |
+| 2026-09-15 | 2.1.272 | n/a | T2-writeback — that prompt read from the **host** | n/a | `obtained` (5 lines) |
+
+Validity gate: **6/6 pass**, 8 cells. Symlink pre-check clean. Noise floor: 0 ambient
+changes. A first attempt at this row was **refused by the gate** — a share cell left
+its trust approval standing after deleting the dot-file, so every later sandboxed cell
+died at launch and recorded `invalid-reader-output`. That is what the gate is for, and
+nothing from it was recorded. (The run's `harness_commit` carries a `-dirty` marker
+from unrelated untracked files, under the marker rule in force at the time; the tracked
+tree matched the commit.)
+
+### Analysis (provisional)
+
+> Interpretation is deferred until every row is collected; what follows is the
+> mechanism this row's data supports, to be revisited against the full set.
+
+**The first channel the sandbox filters rather than removes.** `history.jsonl` is
+`append`: at launch the engine greps the session's own lines into a staging file and
+binds that over the host path, and at exit appends back what the session added. So the
+verdict is **`not-obtained-absent`, not `not-obtained-unreachable`** — the file is
+present and readable inside; its *contents* are filtered. Every other isolated row so
+far reported ENOENT. That distinction is the result: this is a content filter, and a
+filter can be wrong in ways an absence cannot.
+
+**The negative control comes free here**, which is a property of the disposition: B's
+own lines are supposed to be present, so the cell proving the file is mounted is the
+same cell proving the filter kept B's history.
+
+**The prefix claim holds.** The filter is `grep -F "\"project\":\"<cwd>\""`, and the
+engine's comment argues the closing quote prevents a sibling project whose path
+*extends* B's from matching. Measured: a line belonging to `<B>-notes` did **not**
+reach B. The claim is good.
+
+**But the filter discriminates by text position, not by field — measured.** A line
+belonging to **A**, carrying the literal `"project":"<B>"` elsewhere on it (nested
+inside `pastedContents`, which the real record format carries as an object), **was**
+delivered into B's sandbox. Of the two lines B saw, one was A's. `grep -F` matches a
+substring anywhere on the line, so any occurrence of that byte sequence — in any field,
+at any depth — is indistinguishable from the record's own project key.
+
+What limits this in practice: a **pasted string** cannot collide, because its quotes
+serialise as `\"`. The shapes that can are nested objects, and whether Claude Code ever
+writes a nested `project` key is not documented — the record format is undocumented
+throughout, which is the point. The exposure is narrow today and rests on a format nobody
+has promised to keep. Tracked as a follow-up.
+
+**Isolation governs reads, not write-back — again.** The prompt B appended inside the
+sandbox was in the host file after exit (5 lines where 4 were planted), the same outward
+direction row 3 measured for copyout. Consistent across both dispositions that write
+back.
+
+### For users
+
+**To keep another project's prompts out of a session:** nothing to do. The filter is
+unconditional and has no knob.
+
+**To share prompt history deliberately: not possible.** No configuration exposes another
+project's lines — `[share-memory] all` leaves the filter in place.
+
+**Be aware of the outward direction.** A prompt typed inside a sandbox is appended to the
+host's history at exit, where a native session can read it. As with plans, the sandbox
+limits what a session reads, not what it leaves behind.
+
+### Not yet measured
+
+Level 2 — whether a real session reads the history unprompted — and level 3.
