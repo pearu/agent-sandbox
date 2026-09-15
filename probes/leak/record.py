@@ -51,6 +51,46 @@ def classify(reader):
     return VERDICT_OBTAINED if found else VERDICT_ABSENT
 
 
+def harness_errors(path):
+    """Tool results the HARNESS marked as errors, from a session transcript.
+
+    A permission denial is Claude Code's, not the model's, and it has a stable
+    machine-readable form: a tool_result carrying is_error. Measured the hard way --
+    a session whose skill was blocked reported in prose "I declined to run it", which
+    reads as a model refusal and is not one. The model was narrating a harness denial
+    in the first person, and a write-up that trusted the prose recorded the wrong
+    finding twice, in both directions.
+
+    So the method's rule -- assert on the token, never on prose -- extends here: a
+    denial is read out of the transcript's structure, never out of what the model said
+    about it.
+    """
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict) or c.get("type") != "tool_result":
+                        continue
+                    if not c.get("is_error"):
+                        continue
+                    text = c.get("content")
+                    if isinstance(text, list):
+                        text = " ".join(x.get("text", "") for x in text
+                                        if isinstance(x, dict))
+                    out.append(str(text))
+    except OSError as e:
+        return {"error": str(e)}
+    return {"count": len(out), "errors": out}
+
+
 def models_served(path):
     """Which model served each message of a session, in order of first appearance,
     with counts. The requested model is not necessarily the one that served: a
@@ -314,6 +354,7 @@ def cmd_write(argv):
         rec["verdict"] = classify(reader)
     if transcript:
         rec["serving_models"] = models_served(transcript)
+        rec["harness_errors"] = harness_errors(transcript)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(rec, fh, indent=2, sort_keys=True)
         fh.write("\n")

@@ -138,6 +138,34 @@ print('ok')
   }
 }
 
+@test "harness errors: a permission denial is read from structure, not from prose" {
+  # measured: a blocked skill made the model say "I declined to run it", which reads as
+  # a model refusal and is not one -- it was narrating the harness's denial
+  cat >"$T/t.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"Shell command permission check failed: This command requires approval"}]}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I declined to run it."}]}}
+EOF
+  run python3 "$R" write --out "$T/rec.json" --set topology=T2 --transcript "$T/t.jsonl"
+  [ "$status" -eq 0 ]
+  run python3 -c "
+import json
+d=json.load(open('$T/rec.json'))['harness_errors']
+assert d['count']==1, d
+assert 'permission check failed' in d['errors'][0], d
+print('ok')
+"
+  [ "$output" = ok ]
+
+  # a clean session records a count of zero, rather than an absent key a reader has to
+  # guess about -- "no denial" and "not looked for" must not be the same record
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"4"}]}}' >"$T/clean.jsonl"
+  run python3 "$R" write --out "$T/rec2.json" --set topology=T2 --transcript "$T/clean.jsonl"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;print(json.load(open('$T/rec2.json'))['harness_errors']['count'])"
+  [ "$output" = 0 ]
+}
+
 # --- the validity gate ------------------------------------------------------
 # It decides whether a run is a RESULT at all. If it cannot fail, a run whose
 # controls never fired gets recorded as a finding.
