@@ -66,6 +66,12 @@ leak_setup() {
   # T2 running without seccomp -- silently not the default deployment.
   ln -sfn "$HOME/.local/share/claude" "$LEAK_HOME/.local/share/claude"
   ln -sfn "$HOME/.local/share/agent-sandbox" "$LEAK_HOME/.local/share/agent-sandbox"
+  # The proxy CA is looked up under $HOME/.mitmproxy, so a throwaway HOME loses it and
+  # every HTTPS call through the proxy fails TLS verification. Only the net=proxy and
+  # net=strict rows need it -- which is why it went unnoticed until the first row that
+  # ran a real session. A symlinked directory is enough here: the engine reads one file
+  # from it by path and nothing walks it.
+  [[ -d "$HOME/.mitmproxy" ]] && ln -sfn "$HOME/.mitmproxy" "$LEAK_HOME/.mitmproxy"
   printf '%s\n' '{"hasCompletedOnboarding":true,"autoUpdates":false}' >"$LEAK_HOME/.claude.json"
   local gc=(-c user.email=leak@example.invalid -c user.name=leak -c init.defaultBranch=main)
   git "${gc[@]}" -C "$LEAK_A" init -q
@@ -275,7 +281,7 @@ leak_session_native() {
   (
     cd "$cwd" || exit 1
     env HOME="$LEAK_HOME" claude --quiet --sandbox none -p "$prompt"
-  ) >"$out" 2>"$out.err" || true
+  ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 
 # leak_session_sandboxed NET CWD PROMPT OUT -- one real turn inside the sandbox.
@@ -286,17 +292,27 @@ leak_session_sandboxed() {
   (
     cd "$cwd" || exit 1
     env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" claude --quiet -p "$prompt"
-  ) >"$out" 2>"$out.err" || true
+  ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 
 # leak_session_verdict REPLY TOKEN JSON -- the reader contract, from a model's reply.
 #
-# A session that produced NO reply writes NO json, so the cell classifies as
-# invalid-reader-output and the gate refuses the run. That is deliberate: `open` must
-# never be set to anything but "ok" here, because classify() maps every other string to
-# UNREACHABLE -- which would record a session that failed to start as "the sandbox
-# blocked it", the one confusion the gate exists to prevent.
+# A session that FAILED writes NO json, so the cell classifies as invalid-reader-output
+# and the gate refuses the run. `open` is never set to anything but "ok" here, because
+# classify() maps every other string to UNREACHABLE -- which would record a session that
+# never reached the API as "the sandbox blocked it", the one confusion the gate exists
+# to prevent.
+#
+# "Failed" is judged by the EXIT STATUS, not by the text. Measured the hard way: a
+# session whose TLS verification failed still printed "API Error: ..." on stdout, so an
+# empty-output test passed it through and the cell was recorded as a clean negative. The
+# gate caught it only because a different control happened to fail. Exit status is
+# structural; matching an undocumented error string is not.
 leak_session_verdict() {
+  if [[ "${LEAK_SESSION_STATUS:-1}" != 0 ]]; then
+    leak_say "  session exited ${LEAK_SESSION_STATUS:-?}: recording no verdict (a failed experiment, not a negative)"
+    return 0
+  fi
   python3 - "$1" "$2" "$3" <<'PY'
 import json, sys
 try:

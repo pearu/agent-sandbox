@@ -138,6 +138,25 @@ def validate(rundir, known_ambient=None):
          "" if ok else "B must still reach its OWN project, or 'unreachable' just means nothing is mounted")
     )
 
+    # A level-2 cell asserts what a MODEL did, so a cell where no model ran cannot be a
+    # negative. Measured: a sandboxed session whose TLS verification failed still wrote a
+    # transcript, with the model recorded as "<synthetic>" -- no API turn happened, yet
+    # the cell would otherwise read as "the file was not ingested". Bracketed names are
+    # Claude Code's marker for a locally generated message rather than a served one.
+    # Only cells carrying serving_models are checked, so the scripted rows are unaffected.
+    synthetic = []
+    for r in records:
+        sm = r.get("serving_models")
+        if not isinstance(sm, dict):
+            continue
+        served = sm.get("models") or {}
+        if not any(m and not (m.startswith("<") and m.endswith(">")) for m in served):
+            synthetic.append("%s (%s)" % (r["_file"], ",".join(served) or "none"))
+    checks.append(
+        ("a real model served each level-2 cell", not synthetic,
+         "no model served: " + ", ".join(synthetic) if synthetic else "")
+    )
+
     distinct = set(v for v in verdicts if v)
     checks.append(
         ("verdicts not degenerate", len(distinct) >= 2,

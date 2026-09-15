@@ -200,6 +200,29 @@ mkrun() { # mkrun DIR -- a minimal valid run
   [[ "$output" == *"environment recorded"*FAIL* ]]
 }
 
+@test "gate: a level-2 cell where no real model served is invalid, not a negative" {
+  # measured: a sandboxed session whose TLS verification failed still wrote a transcript
+  # with the model recorded as "<synthetic>", and the cell would otherwise have read as
+  # "the file was not ingested"
+  mkrun "$T/g"
+  printf '{"topology":"T2","net":"proxy","claude_version":"x","verdict":"not-obtained-absent","serving_models":{"models":{"<synthetic>":1}}}' >"$T/g/records/t2.json"
+  run python3 "$R" validate "$T/g"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a real model served"*FAIL* ]]
+  [[ "$output" == *synthetic* ]] # names what served, rather than just counting
+
+  # a real model makes the same cell fine
+  printf '{"topology":"T2","net":"proxy","claude_version":"x","verdict":"not-obtained-absent","serving_models":{"models":{"claude-opus-5":3}}}' >"$T/g/records/t2.json"
+  run python3 "$R" validate "$T/g"
+  [ "$status" -eq 0 ]
+
+  # and the scripted rows, which carry no serving_models at all, are untouched
+  mkrun "$T/h"
+  run python3 "$R" validate "$T/h"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"a real model served"*PASS* ]]
+}
+
 @test "gate: an unclassified change to the real config stops the run; a known one does not" {
   mkrun "$T/f"
   printf 'content\t/home/u/.claude/projects/-something/NEW.md\n' >"$T/f/real-attributable"
