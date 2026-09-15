@@ -318,7 +318,9 @@ What limits this in practice: a **pasted string** cannot collide, because its qu
 serialise as `\"`. The shapes that can are nested objects, and whether Claude Code ever
 writes a nested `project` key is not documented — the record format is undocumented
 throughout, which is the point. The exposure is narrow today and rests on a format nobody
-has promised to keep. Tracked as a follow-up.
+has promised to keep. Tracked as
+[#73](https://github.com/pearu/agent-sandbox/issues/73), deliberately not fixed until
+the study is complete so the harness keeps measuring the behaviour that is in the tree.
 
 **Isolation governs reads, not write-back — again.** The prompt B appended inside the
 sandbox was in the host file after exit (5 lines where 4 were planted), the same outward
