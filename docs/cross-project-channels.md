@@ -567,6 +567,33 @@ characters so no slug is truncated.
 | 13 | shared external medium (A publishes; B fetches) | **reachable** — no allowlist at all | **depends on the mode, and this row is run in each**: `open` reachable; `proxy` reachable if allowlisted, and reachable regardless via a raw socket; `strict` only if allowlisted | scripted read (fetch a canary URL) |
 | 14 | remote-backed state (an MCP server or synced service that remembers per-account context) | **shared** — same account, same remote state | **shared wherever the host is reachable**; the sandbox gates reach, not the remote's memory | real claude + scripted read |
 
+**Paths the documentation names that this catalog first missed** — found by reading
+[claude-directory](https://code.claude.com/docs/en/claude-directory) rather than the
+code, which is why they are here at all: the plan's own rule is that *any changed path
+not in the catalog is a channel we missed*. None of them appears in
+`profiles/claude.sh`, so none has a disposition:
+
+| # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
+|---|---|---|---|---|
+| 15 | `agent-memory/` — documented as **subagent memory** | shared | **shared** — it is a sibling of `projects/`, not inside it, so `memory = scoped` does not reach it. The same kind of content row 1 found closed, through a path beside the closed one | scripted read + real claude |
+| 16 | session artefacts **under** `projects/`: `<session>/subagents/` (subagent transcripts), `<session>/tool-results/` (large tool outputs spilled to files), and the set-aside `.orphaned-*` / `.superseded-*` transcripts, which do not appear in the session picker | shared | **isolated** — inside the directory row 2 found unreachable. The row asks whether the scoping covers a project's whole subtree or only its top, rather than assuming it | scripted read |
+| 17 | `backups/` — up to five whole `~/.claude.json` snapshots, each carrying **every** project's entry | shared | **shared**, and it *survives removal*: the purge documentation says backups may still hold an entry deleted from the live config, so the remedy row 11 can offer is incomplete by design | scripted read |
+| 18 | the rest, sharing one mechanism: `uploads/<session>/`, `image-cache/<session>/`, `usage-data/`, `feedback-bundles/`, `tasks/`, `stats-cache.json`, `remote-settings.json`, `cache/changelog.md`, `policy-limits.json` | shared | **shared** | scripted read |
+
+Row 18's reachability is the easy half and the expected answer is the same for every
+path in it. The half worth measuring is the **content-bearing vs auxiliary** split this
+document calls a study output: each cell records the *documented description* of what
+the path holds, so the classification rests on that rather than on the path's name. Some
+of these should turn out safe fully shared; some will be another session's work. A third
+possibility the rows can also settle: a path a sandboxed session never uses need not be
+bound at all.
+
+Several of these paths do not exist on a host that has not used the features that write
+them. That does not block the measurement — a canary is planted at the documented path,
+and the container's treatment of a path does not depend on whether the product has
+populated it — but it does mean the *shape* of a path's contents may be unverified, and
+a row says so where that applies.
+
 Expected headline: the first group confirms the per-project scoping works ([T2](#t2)
 isolates); the second is where the sandbox does **not** help — the leaks to decide
 about, with row 5b the exception that should be isolated by the same property
