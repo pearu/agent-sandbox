@@ -428,19 +428,12 @@ nuisance one. Nothing here lives in `~/.claude`; the medium is outside the machi
   publishing anything. Distinct from the `mcpServers` *config* channel (catalog B):
   there the shared thing is the configuration, here it is the remote state behind it.
 
-Reachability by topology, measured:
-
-| | medium reachable | allowlist |
-|---|---|---|
-| [T1](#t1) native, and `open` | all of the internet | none |
-| `proxy` (the default) | allowlisted hosts for a client that honours the proxy variables; **anything at all via a raw socket** | advisory |
-| `strict` | allowlisted hosts only | **enforced** by the nft firewall |
-
-That `proxy` is advisory is documented, not a finding of this study
-([network.md](network.md), and the guarantee in [design.md](design.md) is scoped to
-"every client that honours `HTTPS_PROXY`"); measured here only to fix what the rows
-mean. A direct connect to a public address from inside succeeds under `proxy` and
-times out under `strict`.
+What the mode decides is **reach**, and the modes differ in whether the allowlist is
+advisory or enforced — documented in [network.md](network.md), with the guarantee in
+[design.md](design.md) scoped to "every client that honours `HTTPS_PROXY`". That is the
+design these rows are run against; what a reader in project B actually obtains under
+each mode is rows 13–14's measurement and is recorded in
+[leak-results.md](leak-results.md), not here.
 
 This family is also the clearest case where a user may **want** the flow — a shared
 medium is how one project's session is kept current with another's progress. So its
@@ -583,8 +576,12 @@ the sharp one: it is per-project *data*, yet the monolithic
 a per-project leak the project scoping misses because the data isn't under
 `projects/`.
 
-Each row is one checklist item in the tracking issue (#56) and one result row here
-once measured (leak / no-leak, and a link if it opens a follow-up).
+Each row is one checklist item in the tracking issue (#56) and one section in
+[leak-results.md](leak-results.md) once measured. **Results are recorded there and
+only there** — a finding restated in this document is a second copy to keep in step
+with the first, and the copy that drifts is the one a reader happens to open. What
+stays here is the question, the expectation, and the method; a follow-up issue is
+linked from the results section that opened it.
 
 ## Environment / running on the host
 
