@@ -194,6 +194,25 @@ leak_read_native() {
   ) >"$out" 2>"$out.err" || true
 }
 
+# Paths the OBSERVING session owns. The interactive Claude Code session driving the
+# study writes these, and the idle noise floor cannot capture them: they are
+# EVENT-driven -- a turn ending fires the Stop hook -- so they never happen during a
+# quiet control window. Classified once here, with the reason, rather than re-decided
+# per run; anything NOT matched still fails the gate, which is the point.
+#
+#   responses.log, alerts.log  written by the user's Stop/Notification hooks
+#   history.jsonl              prompt history, read by the interactive session
+#   jobs/                      background job state of the session running this
+LEAK_KNOWN_AMBIENT="${LEAK_KNOWN_AMBIENT:-/\.claude/(responses\.log|alerts\.log|history\.jsonl|jobs/)}"
+
+# leak_validate -- the per-run VALIDITY gate. Does this data mean what it claims?
+# Interpretation waits for every row, but a run whose controls did not fire is not a
+# result, and that must be caught while re-running is still cheap.
+leak_validate() {
+  leak_say "validity gate:"
+  python3 "$LEAK_RECORD" validate "$LEAK_RUN" --known-ambient "$LEAK_KNOWN_AMBIENT"
+}
+
 # leak_trust DIR -- approve DIR/.agent-sandbox exactly as `--trust` would, by
 # recording its SHA-256 in the throwaway HOME's trust store. The real --trust is
 # interactive, and the trust gate is not what any row is measuring: a dot-file that

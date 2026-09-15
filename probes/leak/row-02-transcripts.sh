@@ -22,6 +22,7 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 LEAK_ROW=02-transcripts
+VALID=1
 leak_setup "$LEAK_ROW"
 
 # ---- plant A's canary -------------------------------------------------------
@@ -122,6 +123,7 @@ leak_record "t2-share-transcript" --set "topology=T2-share" --set "net=none" \
 rm -f "$LEAK_B/.agent-sandbox"
 
 leak_real_config_after
+leak_validate || VALID=0
 
 # ---- report -----------------------------------------------------------------
 echo
@@ -135,3 +137,8 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+((VALID)) || {
+  echo
+  echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2
+  exit 1
+}
