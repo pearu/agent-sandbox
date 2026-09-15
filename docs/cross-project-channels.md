@@ -223,9 +223,21 @@ record carries the model id beside the Claude Code version and the network mode 
 pinned for the same reason the version is, since these rows will be re-run against
 newer models and a result without its model is uninterpretable.
 
-Caveat, recorded rather than solved: the model in the record is the one *requested*.
-A session that falls back or switches mid-run may be served by another, and neither
-instrument sees that.
+The requested model is not necessarily the one that served: a session can fall back
+or switch mid-run. That is **observable**, and not from the instruments — the session
+transcript records the model **per message**, so the harness reads what actually
+served each turn out of `projects/<slug>/<session-id>.jsonl` rather than stamping the
+record with what it asked for. Measured: a single session of this study's own work
+shows `claude-opus-4-8` for 883 messages and then `claude-opus-5` for 1006, in that
+order.
+
+Per-message attribution is stronger than a per-run label, and it matters most exactly
+where the asymmetry above applies — a level-3 negative attributed to the wrong model
+is the error the asymmetry exists to prevent. Two caveats on it: the field is part of
+an undocumented transcript schema, so a harness must treat its absence as *unknown*
+rather than assume; and a run that straddles a switch is not a clean measurement of
+either model, so the record keeps the per-message breakdown rather than a single
+value.
 
 ### State snapshots: write-discovery and the noise floor
 
