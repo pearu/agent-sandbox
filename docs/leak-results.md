@@ -23,6 +23,84 @@ Verdicts come from `probes/leak/record.py` and mean:
 
 ---
 
+## Row 1 — project memory
+
+**Question (level 1, reachability):** can a session in project B open project A's
+`projects/<slug>/memory/`? The reader contains no LLM, so this measures the container
+alone and the result is model-independent. Whether a real session *ingests* another
+project's memory is the "real claude" half of this row's probe and is not yet measured.
+
+**Script:** `probes/leak/row-01-memory.sh`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's memory | n/a | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — A's memory | `none` | `not-obtained-unreachable` (ENOENT) |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **B's own** memory (control) | `none` | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2-share — A's memory (`[share-memory]` names A) | `none` | `obtained`, write `EROFS` |
+| 2026-09-15 | 2.1.272 | n/a | T2-share-all — A's memory (`[share-memory] all`) | `none` | `obtained` |
+
+Validity gate: **6/6 pass**, 5 cells. Symlink pre-check clean. Noise floor: **0**
+ambient changes — no conversation was in progress during this run, which is what an
+idle control window can actually capture (contrast row 2, where two of the observing
+session's own event-driven writes had to be classified).
+
+### Analysis (provisional)
+
+> Interpretation is deferred until every row is collected; what follows is the
+> mechanism this row's data supports, to be revisited against the full set.
+
+**The path.** A project's auto-memory lives at `<config>/projects/<slug>/memory/`, a
+sibling of that project's transcripts under one shared `projects/` directory — so
+natively nothing separates one project's notes from another's but the directory name.
+Which slug a session uses differs between the topologies (repository natively,
+directory inside the sandbox, since the engine binds the session's directory and not
+its parents), and that is documented behaviour rather than a finding of this row; here
+A and B are separate repositories at their own roots, so the two keys name the same
+slug and the canary is planted once.
+
+**What blocks it.** The same mechanism as row 2: `memory = scoped`, the default, puts
+a tmpfs over `<config>/projects` and rebinds only the current project. **ENOENT, not
+EACCES** — A's directory is absent inside, not present-and-forbidden, which does not
+depend on the reader's privileges. Both controls fired: T1 `obtained` (the canary was
+really reachable with nothing isolating it) and B's own memory `obtained` inside the
+same sandbox (the config *is* mounted in there, so the ENOENT is the scoping and not
+an empty sandbox).
+
+**Memory is the one channel with a working selective-sharing lever.** An approved
+`[share-memory]` entry naming A gives B exactly A's memory — and the same entry, in
+row 2, did *not* give B A's transcript. So for memory the choice is genuinely
+per-project, while for transcripts it is all projects or none. The blunt levers
+(`[share-memory] all`, or the global `memory_default = shared`) also return
+`obtained`, as expected, and are the wrong tool when one project is what you meant.
+
+**The share is read-only, measured.** A write into the shared memory from inside B's
+sandbox failed with **EROFS**, and A's canary file was verified byte-identical on the
+host after the run. So B can *learn from* A's notes without being able to *corrupt*
+them — which matters because the read verdict alone would leave a user who opens a
+share unable to tell whether they had also granted write access.
+
+### For users
+
+**To keep memory isolated:** nothing to do. `scoped` is the default and is what
+produces this result.
+
+**To share one project's memory deliberately:** put `[share-memory]` naming that
+project in the reading project's `.agent-sandbox` and approve it with `--trust`. It
+grants that project's `memory/` read-only, and nothing else — not its transcripts, not
+any other project. This is the lever that does not exist for transcripts.
+
+**Reach for `all` or `memory_default = shared` only if you mean every project**, since
+both also expose every project's transcripts.
+
+### Not yet measured
+
+Level 2 — whether a real session ingests another project's memory into its context
+unprompted, which is the `memory_default = shared` case the matrix flags — and level 3.
+Both need real sessions.
+
+---
+
 ## Row 2 — transcripts
 
 **Question (level 1, reachability):** can a session in project B open project A's
