@@ -194,6 +194,17 @@ leak_read_native() {
   ) >"$out" 2>"$out.err" || true
 }
 
+# leak_trust DIR -- approve DIR/.agent-sandbox exactly as `--trust` would, by
+# recording its SHA-256 in the throwaway HOME's trust store. The real --trust is
+# interactive, and the trust gate is not what any row is measuring: a dot-file that
+# is silently ignored would make a share look like isolation.
+leak_trust() {
+  local d="$1" t="$LEAK_HOME/.config/agent-sandbox/trust"
+  mkdir -p "$t"
+  sha256sum -- "$d/.agent-sandbox" | cut -d' ' -f1 \
+    >"$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
+}
+
 # leak_record NAME --set k=v ... -- one record per cell, under records/.
 leak_record() {
   local name="$1"
