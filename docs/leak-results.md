@@ -623,3 +623,81 @@ they point in opposite directions:
 
 Level 3 for both — what a session obtains when *told* to go looking — and rows 6–9,
 which are the remaining injection channels (hooks, skills, commands, plugins).
+
+---
+
+## Row 6 — `settings.json` hooks
+
+**Question:** does a session in project B *run* hooks another project wrote into the
+global `~/.claude/settings.json`? Different in kind from row 5: a `CLAUDE.md` is text a
+model may or may not act on, a hook is **code that runs**, executed because an event
+fired rather than because a model decided to. So the observable is model-independent and
+these cells carry no transcript — the hook writes a token to a file, and the verdict is
+whether the file carries it.
+
+**Script:** `probes/leak/row-06-hooks.sh`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (hook, not model) | T1 native — global hook | n/a | `obtained` — `SessionStart`, `Stop` |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — global hook | `proxy` | **`obtained` — `SessionStart`, `Stop`** |
+| 2026-09-15 | 2.1.272 | n/a | T2 — same prompt, **no** hooks configured | `proxy` | `not-obtained-unreachable` (ENOENT) |
+| 2026-09-15 | 2.1.272 | n/a | T2 — B's **own** project hook | `proxy` | `obtained` — `SessionStart`, `Stop` |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
+
+Validity gate: **7/7 pass**, 5 cells. Symlink pre-check clean. Noise floor 0.
+
+### Analysis (provisional)
+
+**A hook another project configured runs in B's sandboxed session.** Both events fired,
+so the surface is not one unlucky event: `SessionStart` at launch and `Stop` at the end
+of the turn, each executing the configured command.
+
+**The control's errno is the evidence that the positive is real.** With no hooks
+configured the marker file was **never created** — ENOENT rather than an empty file — so
+the token in the other cells came from a command that actually ran, not from anything
+the harness left lying around.
+
+**The isolation check is what makes this row interpretable at all**, and it matters more
+here than in any earlier row. A hook firing "inside the sandbox" is indistinguishable
+from a hook firing because the launch was never sandboxed — same command, same file,
+same host path, same result on disk. The check reads a known-isolated canary from the
+same sandbox and gets ENOENT, so the sandbox demonstrably applied and the hook ran
+*within* it.
+
+**What that does and does not imply.** The hook executes inside the sandbox, so it
+inherits that sandbox's view of the filesystem — a hook trying to read another project's
+memory should meet the same ENOENT the scripted readers met in rows 1–2. That follows
+from where it runs, but it was **not directly measured**: the isolation check was a
+scripted read, not a read performed by the hook itself. A row that plants a *reading*
+hook would settle it.
+
+So the channel is open for **execution** and, on the evidence of rows 1–4, constrained
+in **reach**. Those are different properties and this row establishes only the first.
+
+**It is also deliberate.** `settings.json` is on the engine's short list of paths left
+visible on purpose, beside `CLAUDE.md`, as the user's own configuration. The study's
+question is not whether that choice is wrong but what it costs, and the cost here is
+code execution rather than disclosure — which is why this row reads differently from
+rows 10–12 even though all four are "shared".
+
+### For users
+
+**Anything that can write `~/.claude/settings.json` can run code in every project's
+sessions, sandboxed or not.** That is the sharpest form of the configuration channel: an
+agent that edits the global settings does not merely influence other projects' sessions,
+it executes in them.
+
+**There is no knob that closes this while keeping your own hooks.** `settings.json` is
+visible by design; `[claude] hide` would blank it entirely, which removes your own
+configuration along with the risk.
+
+**Project-local hooks work inside the sandbox too** (the `T2-own` cell), so moving a hook
+from the global settings to a project's `.claude/settings.json` keeps it working while
+limiting it to that project. That is the available mitigation, and it is a placement
+choice rather than a sandbox setting.
+
+### Not yet measured
+
+Whether a hook's own filesystem view is scoped the way a scripted reader's is — the
+inference above, measured directly. And rows 7–9: `skills/`, `commands/`, `plugins/`.
