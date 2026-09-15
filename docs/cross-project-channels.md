@@ -580,6 +580,14 @@ not in the catalog is a channel we missed*. None of them appears in
 | 17 | `backups/` — up to five whole `~/.claude.json` snapshots, each carrying **every** project's entry | shared | **shared**, and it *survives removal*: the purge documentation says backups may still hold an entry deleted from the live config, so the remedy row 11 can offer is incomplete by design | scripted read |
 | 18 | the rest, sharing one mechanism: `uploads/<session>/`, `image-cache/<session>/`, `usage-data/`, `feedback-bundles/`, `tasks/`, `stats-cache.json`, `remote-settings.json`, `cache/changelog.md`, `policy-limits.json` | shared | **shared** | scripted read |
 
+**Rows 15, 17 and 18 are measured but held.** Every path in them turned out to have no
+disposition at all, so each is a decision the engine has yet to make rather than
+behaviour to characterise — one issue per path (#74–#81), with #82 for the structural
+gap that let them go unnoticed. [leak-results.md](leak-results.md) mentions what was
+measured and points at the issues, and will carry the results once the dispositions are
+settled and the rows are re-run against them. Row 16 is not held: it confirms behaviour
+that is staying as it is.
+
 Row 18's reachability is the easy half and the expected answer is the same for every
 path in it. The half worth measuring is the **content-bearing vs auxiliary** split this
 document calls a study output: each cell records the *documented description* of what

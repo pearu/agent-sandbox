@@ -447,27 +447,14 @@ unprompted, which for row 10 means connecting to a server another project config
 
 ---
 
-## Rows 15–18 — the channels the catalog missed
+## Row 16 — session artefacts under `projects/`
 
-Found by reading [claude-directory](https://code.claude.com/docs/en/claude-directory)
-rather than the engine. That is the point of them: the catalog had been built from the
-engine's own disposition list, so it could only ever contain what the engine already
-knew about.
+**Question (level 1, reachability):** does the project scoping cover a project's whole
+subtree, or only the files at its top? `/en/claude-directory` names three kinds of
+per-session artefact this study's catalog did not have, all of them inside
+`projects/<project>/`.
 
-**Scripts:** `probes/leak/row-15-agent-memory.sh`, `row-16-session-artifacts.sh`,
-`row-17-backups.sh`, `row-18-uncatalogued.sh`. All at Claude Code 2.1.272, validity gate
-**6/6** on each, symlink pre-check clean.
-
-### Row 15 — `agent-memory/` (subagent memory)
-
-| date | Claude Code | model | cell | net | verdict |
-|---|---|---|---|---|---|
-| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — another agent's note | n/a | `obtained` |
-| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — another agent's note | `none` | **`obtained`** |
-| 2026-09-15 | 2.1.272 | n/a | T2 — B's own agent note | `none` | `obtained` |
-| 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
-
-### Row 16 — session artefacts under `projects/`
+**Script:** `probes/leak/row-16-session-artifacts.sh`
 
 | date | Claude Code | model | cell | net | verdict |
 |---|---|---|---|---|---|
@@ -478,95 +465,70 @@ knew about.
 | 2026-09-15 | 2.1.272 | n/a | T2 — A's `.superseded-*` transcript | `none` | `not-obtained-unreachable` |
 | 2026-09-15 | 2.1.272 | n/a | T2 — **B's own** spilled tool output (control) | `none` | `obtained` |
 
-### Row 17 — `backups/`
-
-| date | Claude Code | model | cell | net | verdict |
-|---|---|---|---|---|---|
-| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's entry in a snapshot | n/a | `obtained` |
-| 2026-09-15 | 2.1.272 | n/a | T2 — A's **purged** entry, from the snapshot | `none` | **`obtained`** |
-| 2026-09-15 | 2.1.272 | n/a | T2 — the **live** config after the purge | `none` | `not-obtained-absent` |
-| 2026-09-15 | 2.1.272 | n/a | T2 — B's own entry in the snapshot | `none` | `obtained` |
-| 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
-
-### Row 18 — the remaining uncatalogued paths
-
-All nine `obtained` from B's sandbox, `none` mode, with the isolation check
-`not-obtained-unreachable` in the same sandbox and B's own file `obtained`.
-
-| path | documented contents | provisional class |
-|---|---|---|
-| `uploads/<session>/` | files attached from the web or mobile app to a Remote Control session | **content-bearing** |
-| `image-cache/<session>/` | attached images | **content-bearing** |
-| `usage-data/` | past `/insights` reports and the cached analysis behind them | **content-bearing** (shape unverified) |
-| `feedback-bundles/` | feedback and bug-report archives not yet sent | **content-bearing** |
-| `tasks/` | task lists that a resumed session would pick up | **content-bearing, and actionable** |
-| `stats-cache.json` | aggregated token and cost counts shown by `/usage` | auxiliary |
-| `remote-settings.json` | cached server-managed settings for the organization | auxiliary |
-| `cache/changelog.md` | cached copy of the Claude Code changelog | auxiliary |
-| `policy-limits.json` | cached feature policy settings for the organization | auxiliary |
+Validity gate: **6/6 pass**, 6 cells. Symlink pre-check clean. Noise floor: 1 ambient
+change, subtracted.
 
 ### Analysis (provisional)
 
-> Interpretation is deferred until every row is collected; what follows is the
-> mechanism this data supports, to be revisited against the full set.
+**The scoping covers the whole subtree.** All four artefact kinds were unreachable from
+B's sandbox, while B's own artefact of the same kind was `obtained` inside it — so the
+config was mounted and the absence is the scoping, not an empty sandbox.
 
-**Row 16 is a negative result that the study needed.** The scoping covers a project's
-**whole subtree**, not merely the files at its top: subagent transcripts, spilled tool
-outputs and set-aside transcripts were all unreachable, while B's own artefact of the
-same kind was `obtained` inside the same sandbox. Worth having explicitly, because
-`tool-results/` holds **file content** — whatever a tool read, spilled out of the
-transcript — so had the scoping been shallow, rows 1–2's isolation would have been
-undone by a directory one level down. It was not.
-
-**Row 15 is the mirror image, and the sharper finding.** `agent-memory/` is documented
-as *subagent memory* and sits as a **sibling** of `projects/`, not inside it — so
-`memory = scoped`, the mechanism that closed row 1, does not reach it. The same kind of
-content row 1 measured as closed is open through a path beside the closed one. It does
-not exist on the host that ran this, so nothing has written it yet and its internal
-shape is unverified; what is measured is the container's treatment of the path, which
-does not depend on that.
-
-**Row 17: the remedy does not hold.** Row 11 could offer one user-facing mitigation —
-`claude project purge`, which deletes a project's entry from `~/.claude.json`. Both
-halves were measured in the same run: the live config genuinely no longer carries the
-purged entry (`not-obtained-absent`), and the entry is **still readable from B's
-sandbox** in the backup snapshot beside it. So the deletion works and is undone by the
-rotating snapshots Claude Code writes before each config write — up to five of them. The
-documentation says as much in passing; this measures it. `backups/` has no disposition
-in the engine, so even a future scoping of `.claude.json` would leave the snapshots
-readable.
-
-**Row 18's split is the study output, not the reachability.** Every path was reachable,
-as the one shared mechanism predicts. The division that matters is between paths holding
-another session's *work* and paths holding machine-local bookkeeping — and on the
-documented descriptions, five of the nine are content-bearing. Two of those are
-**user-supplied documents and images** attached to a session; one is an archive built for
-bug reports; one is `/insights` analysis.
-
-`tasks/` is the odd one and the one to look at first: *"task lists that a resumed session
-would pick up"* is not only readable but **actionable** — closer to the injection half of
-this study than the disclosure half, since the material is designed to be acted on rather
-than merely read.
-
-**Not measured: writes.** Every one of these is part of the read-write bind, so a
-sandboxed session can presumably *write* them too, and for the two organization policy
-caches (`remote-settings.json`, `policy-limits.json`) that would be a different kind of
-concern from disclosure. The rows measured reads only; no claim is made about writes.
+This is a negative result the study needed rather than a new finding. `tool-results/`
+holds **file content** — whatever a tool read, spilled out of the transcript to a
+separate file — so had the scoping been shallow, rows 1–2's isolation would have been
+undone by a directory one level down. The `.orphaned-*` and `.superseded-*` transcripts
+matter for a different reason: the documentation says they do not appear in the session
+picker, so they are easy to forget are there at all.
 
 ### For users
 
-**There is no knob for any of these.** None appears in `profiles/claude.sh`, so none can
-be scoped, hidden or filtered today — `[claude] hide` is the only lever that could apply
-and it must be asked for by name.
+Nothing to do. These inherit the project scoping that rows 1–2 measured, and it reaches
+them.
 
-**If you purge a project, the purge is incomplete** while `~/.claude/backups/` holds
-snapshots from before it. They rotate out as the config is rewritten, but there is no
-command that clears them.
+---
 
-**Attachments and images are shared across every project.** A document attached to a
-session in one project is readable by sessions in all of them, sandboxed or not.
+## Rows 15, 17, 18 — measured, deliberately **not** recorded as results
 
-### Not yet measured
+These rows found paths that have **no disposition in the engine at all** — the profile
+has never classified them, so they are shared by default. Every one is reachable from
+another project's sandbox, with the isolation check firing in the same sandbox.
 
-Level 2 for all four — whether a real session reads any of this unprompted, which for
-`tasks/` means whether a resumed session would pick up another project's list.
+They are **not written up as results here**, on purpose. A result describes behaviour the
+study is characterising; these describe behaviour that is expected to *change*, and each
+now has an issue proposing how. Recording an analysis of the current behaviour would date
+the moment any of them is fixed, and re-running the row afterwards would measure a
+different system than the one the write-up described.
+
+So this section is a pointer, not a finding. Each row's script stays in `probes/leak/`
+and is re-runnable, and its raw records are on the machine that produced them.
+
+| row | path | measured, 2.1.272 | issue |
+|---|---|---|---|
+| 15 | `agent-memory/` — documented as subagent memory, a **sibling** of `projects/` | `obtained` | #74 |
+| 17 | `backups/` — whole `~/.claude.json` snapshots, up to five | `obtained`, and the entry survives `claude project purge` | #75 |
+| 18 | `uploads/<session>/` — attachments from web/mobile | `obtained` | #76 |
+| 18 | `image-cache/<session>/` — attached images | `obtained` | #77 |
+| 18 | `tasks/` — task lists a resumed session picks up | `obtained` | #78 |
+| 18 | `usage-data/` — past `/insights` reports | `obtained` | #79 |
+| 18 | `feedback-bundles/` — unsent bug-report archives | `obtained` | #80 |
+| 18 | `stats-cache.json`, `remote-settings.json`, `cache/changelog.md`, `policy-limits.json` | `obtained` | #81 |
+
+Two things about this group are worth stating even while the rest waits, because neither
+depends on how the individual paths are resolved:
+
+**They were found by reading the product's documentation, not the code.** The study's
+catalog had been built from the engine's own disposition list, so it could only ever
+contain what the engine already knew about. `/en/claude-directory` named six paths it did
+not.
+
+**The default for an unclassified path is *exposed*.** `profile_isolate_spec` is a literal
+list with no discovery and no comparison against what is actually in `~/.claude`, so
+anything upstream adds is shared across every project from the day it appears until a
+human notices. `design.md` already said the list "will lag what upstream adds"; what these
+rows add is the measurement of the lag, and #82 proposes making it visible rather than
+silent.
+
+**Scripts:** `probes/leak/row-15-agent-memory.sh`, `row-17-backups.sh`,
+`row-18-uncatalogued.sh`. All at Claude Code 2.1.272, validity gate **6/6** on each,
+symlink pre-check clean, harness `a00735a`.
