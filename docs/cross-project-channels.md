@@ -1,9 +1,11 @@
 # Cross-project data channels: a leak study
 
-**Status: planning.** This enumerates every channel through which data — or
+**Status: collecting.** This enumerates every channel through which data — or
 influence — can pass between Claude Code sessions in **different projects** of the
 same user, and defines a canary-based test of each, with and without the sandbox.
-The test harness is not built yet.
+The harness is built (`probes/leak/`) and rows are being measured; results land in
+[leak-results.md](leak-results.md). Interpretation is deferred until every row is
+in — the findings that matter are cross-row.
 
 A *session* is one `claude` invocation and its process tree; a *project* is the
 directory it launches from (see "Units" below). The adversary (the sandbox's threat
@@ -426,19 +428,12 @@ nuisance one. Nothing here lives in `~/.claude`; the medium is outside the machi
   publishing anything. Distinct from the `mcpServers` *config* channel (catalog B):
   there the shared thing is the configuration, here it is the remote state behind it.
 
-Reachability by topology, measured:
-
-| | medium reachable | allowlist |
-|---|---|---|
-| [T1](#t1) native, and `open` | all of the internet | none |
-| `proxy` (the default) | allowlisted hosts for a client that honours the proxy variables; **anything at all via a raw socket** | advisory |
-| `strict` | allowlisted hosts only | **enforced** by the nft firewall |
-
-That `proxy` is advisory is documented, not a finding of this study
-([network.md](network.md), and the guarantee in [design.md](design.md) is scoped to
-"every client that honours `HTTPS_PROXY`"); measured here only to fix what the rows
-mean. A direct connect to a public address from inside succeeds under `proxy` and
-times out under `strict`.
+What the mode decides is **reach**, and the modes differ in whether the allowlist is
+advisory or enforced — documented in [network.md](network.md), with the guarantee in
+[design.md](design.md) scoped to "every client that honours `HTTPS_PROXY`". That is the
+design these rows are run against; what a reader in project B actually obtains under
+each mode is rows 13–14's measurement and is recorded in
+[leak-results.md](leak-results.md), not here.
 
 This family is also the clearest case where a user may **want** the flow — a shared
 medium is how one project's session is kept current with another's progress. So its
@@ -514,6 +509,11 @@ each other.
 
 ## Experiment matrix
 
+**Measured results live in [leak-results.md](leak-results.md)**, one section per row,
+each keeping a table that gains a line per run so results stay comparable without
+reading them out of git history. This document stays the plan.
+
+
 The finalized experiment list: the **content-bearing** channels only (auxiliary
 channels are safe — see above), across the two topologies that decide cross-project
 isolation — **[T1](#t1)** (two native sessions, shared host: the baseline, where a leak
@@ -567,6 +567,41 @@ characters so no slug is truncated.
 | 13 | shared external medium (A publishes; B fetches) | **reachable** — no allowlist at all | **depends on the mode, and this row is run in each**: `open` reachable; `proxy` reachable if allowlisted, and reachable regardless via a raw socket; `strict` only if allowlisted | scripted read (fetch a canary URL) |
 | 14 | remote-backed state (an MCP server or synced service that remembers per-account context) | **shared** — same account, same remote state | **shared wherever the host is reachable**; the sandbox gates reach, not the remote's memory | real claude + scripted read |
 
+**Paths the documentation names that this catalog first missed** — found by reading
+[claude-directory](https://code.claude.com/docs/en/claude-directory) rather than the
+code, which is why they are here at all: the plan's own rule is that *any changed path
+not in the catalog is a channel we missed*. None of them appears in
+`profiles/claude.sh`, so none has a disposition:
+
+| # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
+|---|---|---|---|---|
+| 15 | `agent-memory/` — documented as **subagent memory** | shared | **shared** — it is a sibling of `projects/`, not inside it, so `memory = scoped` does not reach it. The same kind of content row 1 found closed, through a path beside the closed one | scripted read + real claude |
+| 16 | session artefacts **under** `projects/`: `<session>/subagents/` (subagent transcripts), `<session>/tool-results/` (large tool outputs spilled to files), and the set-aside `.orphaned-*` / `.superseded-*` transcripts, which do not appear in the session picker | shared | **isolated** — inside the directory row 2 found unreachable. The row asks whether the scoping covers a project's whole subtree or only its top, rather than assuming it | scripted read |
+| 17 | `backups/` — up to five whole `~/.claude.json` snapshots, each carrying **every** project's entry | shared | **shared**, and it *survives removal*: the purge documentation says backups may still hold an entry deleted from the live config, so the remedy row 11 can offer is incomplete by design | scripted read |
+| 18 | the rest, sharing one mechanism: `uploads/<session>/`, `image-cache/<session>/`, `usage-data/`, `feedback-bundles/`, `tasks/`, `stats-cache.json`, `remote-settings.json`, `cache/changelog.md`, `policy-limits.json` | shared | **shared** | scripted read |
+
+**Rows 15, 17 and 18 are measured but held.** Every path in them turned out to have no
+disposition at all, so each is a decision the engine has yet to make rather than
+behaviour to characterise — one issue per path (#74–#81), with #82 for the structural
+gap that let them go unnoticed. [leak-results.md](leak-results.md) mentions what was
+measured and points at the issues, and will carry the results once the dispositions are
+settled and the rows are re-run against them. Row 16 is not held: it confirms behaviour
+that is staying as it is.
+
+Row 18's reachability is the easy half and the expected answer is the same for every
+path in it. The half worth measuring is the **content-bearing vs auxiliary** split this
+document calls a study output: each cell records the *documented description* of what
+the path holds, so the classification rests on that rather than on the path's name. Some
+of these should turn out safe fully shared; some will be another session's work. A third
+possibility the rows can also settle: a path a sandboxed session never uses need not be
+bound at all.
+
+Several of these paths do not exist on a host that has not used the features that write
+them. That does not block the measurement — a canary is planted at the documented path,
+and the container's treatment of a path does not depend on whether the product has
+populated it — but it does mean the *shape* of a path's contents may be unverified, and
+a row says so where that applies.
+
 Expected headline: the first group confirms the per-project scoping works ([T2](#t2)
 isolates); the second is where the sandbox does **not** help — the leaks to decide
 about, with row 5b the exception that should be isolated by the same property
@@ -576,8 +611,12 @@ the sharp one: it is per-project *data*, yet the monolithic
 a per-project leak the project scoping misses because the data isn't under
 `projects/`.
 
-Each row is one checklist item in the tracking issue (#56) and one result row here
-once measured (leak / no-leak, and a link if it opens a follow-up).
+Each row is one checklist item in the tracking issue (#56) and one section in
+[leak-results.md](leak-results.md) once measured. **Results are recorded there and
+only there** — a finding restated in this document is a second copy to keep in step
+with the first, and the copy that drifts is the one a reader happens to open. What
+stays here is the question, the expectation, and the method; a follow-up issue is
+linked from the results section that opened it.
 
 ## Environment / running on the host
 

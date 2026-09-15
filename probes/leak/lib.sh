@@ -66,7 +66,27 @@ leak_setup() {
   # T2 running without seccomp -- silently not the default deployment.
   ln -sfn "$HOME/.local/share/claude" "$LEAK_HOME/.local/share/claude"
   ln -sfn "$HOME/.local/share/agent-sandbox" "$LEAK_HOME/.local/share/agent-sandbox"
+  # The proxy CA is looked up under $HOME/.mitmproxy, so a throwaway HOME loses it and
+  # every HTTPS call through the proxy fails TLS verification. Only the net=proxy and
+  # net=strict rows need it -- which is why it went unnoticed until the first row that
+  # ran a real session. A symlinked directory is enough here: the engine reads one file
+  # from it by path and nothing walks it.
+  [[ -d "$HOME/.mitmproxy" ]] && ln -sfn "$HOME/.mitmproxy" "$LEAK_HOME/.mitmproxy"
   printf '%s\n' '{"hasCompletedOnboarding":true,"autoUpdates":false}' >"$LEAK_HOME/.claude.json"
+  # Pre-accept the trust dialog for both projects. It is not what any row measures, and
+  # an unanswered dialog would block a real session or silently drop a project-local
+  # settings file -- the same reason leak_trust exists for the .agent-sandbox dot-file.
+  python3 - "$LEAK_HOME/.claude.json" "$LEAK_A" "$LEAK_B" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    cfg = json.load(fh)
+cfg.setdefault("projects", {})
+for d in sys.argv[2:]:
+    cfg["projects"].setdefault(d, {})["hasTrustDialogAccepted"] = True
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh)
+PY
   local gc=(-c user.email=leak@example.invalid -c user.name=leak -c init.defaultBranch=main)
   git "${gc[@]}" -C "$LEAK_A" init -q
   git "${gc[@]}" -C "$LEAK_B" init -q
@@ -122,17 +142,30 @@ leak_precheck() {
 # ambient, and is subtracted. What remains is attributable to the experiment.
 LEAK_CONTROL_SECONDS="${LEAK_CONTROL_SECONDS:-15}"
 
+# The daemon directory is keyed by the REAL uid, not by HOME, so a throwaway HOME does
+# not relocate it: a real session can register there whatever HOME says. Harmless while
+# every row ran `--exec` and started no session; it matters from the real-session rows
+# on, which is why it is in the snapshot set rather than left to be noticed later.
+leak_real_roots() {
+  local d
+  d="/tmp/cc-daemon-$(id -u)"
+  printf '%s\n' "$HOME/.claude" "$HOME/.claude.json"
+  [[ -e "$d" ]] && printf '%s\n' "$d"
+  return 0
+}
+
 leak_real_config_before() {
-  python3 "$LEAK_SNAPSHOT" manifest "$HOME/.claude" "$HOME/.claude.json" >"$LEAK_RUN/real-m0"
+  mapfile -t _leak_real_roots < <(leak_real_roots)
+  python3 "$LEAK_SNAPSHOT" manifest "${_leak_real_roots[@]}" >"$LEAK_RUN/real-m0"
   leak_say "noise floor: ${LEAK_CONTROL_SECONDS}s idle control window"
   sleep "$LEAK_CONTROL_SECONDS"
-  python3 "$LEAK_SNAPSHOT" manifest "$HOME/.claude" "$HOME/.claude.json" >"$LEAK_RUN/real-before"
+  python3 "$LEAK_SNAPSHOT" manifest "${_leak_real_roots[@]}" >"$LEAK_RUN/real-before"
   python3 "$LEAK_SNAPSHOT" diff "$LEAK_RUN/real-m0" "$LEAK_RUN/real-before" >"$LEAK_RUN/real-ambient"
   leak_say "noise floor: $(wc -l <"$LEAK_RUN/real-ambient") ambient change(s)"
 }
 
 leak_real_config_after() {
-  python3 "$LEAK_SNAPSHOT" manifest "$HOME/.claude" "$HOME/.claude.json" >"$LEAK_RUN/real-after"
+  python3 "$LEAK_SNAPSHOT" manifest "${_leak_real_roots[@]}" >"$LEAK_RUN/real-after"
   python3 "$LEAK_SNAPSHOT" diff "$LEAK_RUN/real-before" "$LEAK_RUN/real-after" >"$LEAK_RUN/real-diff"
   cut -f2 "$LEAK_RUN/real-ambient" | sort -u >"$LEAK_RUN/real-ambient-paths"
   awk -F'\t' 'NR==FNR { a[$0] = 1; next } !($2 in a)' \
@@ -222,6 +255,179 @@ leak_trust() {
   mkdir -p "$t"
   sha256sum -- "$d/.agent-sandbox" | cut -d' ' -f1 \
     >"$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
+}
+
+# ---- real sessions (the auto-ingest rows) ---------------------------------------
+# Everything above measures the container with a scripted reader and no LLM. An
+# INJECTION row cannot: whether a file reaches the model's context is not a property of
+# the filesystem, so these rows run a real turn and assert on what the model did.
+
+# leak_authenticate -- copy the host's credentials into the throwaway config.
+#
+# COPIED, NEVER SYMLINKED. A session refreshes its token, and a symlink would let the
+# experiment write to the real credential file. The copy is mode 600, lives in the
+# git-ignored run directory, and is REMOVED WHEN THE SCRIPT EXITS, failures included --
+# a credential left behind in a results directory outlives the reason it was there.
+leak_authenticate() {
+  local src="$HOME/.claude/.credentials.json" dst="$LEAK_CONFIG/.credentials.json"
+  [[ -r "$src" ]] || leak_die "no credentials at ~/.claude/.credentials.json; a
+    real-session row needs a logged-in host"
+  (umask 077 && cp -- "$src" "$dst") || leak_die "could not copy credentials"
+  chmod 600 -- "$dst"
+  LEAK_CREDENTIAL_COPY="$dst"
+  trap leak_credentials_clean EXIT
+  leak_say "credentials copied into the throwaway config (removed at exit)"
+}
+
+leak_credentials_clean() {
+  [[ -n "${LEAK_CREDENTIAL_COPY:-}" ]] || return 0
+  rm -f -- "$LEAK_CREDENTIAL_COPY"
+  leak_say "credential copy removed"
+  LEAK_CREDENTIAL_COPY=""
+}
+
+# leak_session_native CWD PROMPT OUT [FLAG...] -- one real turn, NOT sandboxed.
+# Trailing FLAGs are passed to claude before -p, for cells that deliberately widen the
+# deployment (a permission grant, say) and must say so in the command.
+# `claude` on PATH is the launcher, so a bare call would sandbox. --sandbox none is the
+# documented way to route a launch past it, and says so in the command rather than by
+# setting a marker that claims the session is already inside a sandbox.
+leak_session_native() {
+  local cwd="$1" prompt="$2" out="$3"
+  shift 3
+  (
+    cd "$cwd" || exit 1
+    env HOME="$LEAK_HOME" claude --quiet --sandbox none "$@" -p "$prompt"
+  ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
+}
+
+# leak_session_sandboxed NET CWD PROMPT OUT [FLAG...] -- one real turn inside the sandbox.
+# Real sessions need the API, so NET is `proxy` (the default deployment) rather than the
+# `none` the scripted rows used.
+leak_session_sandboxed() {
+  local net="$1" cwd="$2" prompt="$3" out="$4"
+  shift 4
+  (
+    cd "$cwd" || exit 1
+    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" claude --quiet "$@" -p "$prompt"
+  ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
+}
+
+# leak_session_verdict REPLY TOKEN JSON -- the reader contract, from a model's reply.
+#
+# A session that FAILED writes NO json, so the cell classifies as invalid-reader-output
+# and the gate refuses the run. `open` is never set to anything but "ok" here, because
+# classify() maps every other string to UNREACHABLE -- which would record a session that
+# never reached the API as "the sandbox blocked it", the one confusion the gate exists
+# to prevent.
+#
+# "Failed" is judged by the EXIT STATUS, not by the text. Measured the hard way: a
+# session whose TLS verification failed still printed "API Error: ..." on stdout, so an
+# empty-output test passed it through and the cell was recorded as a clean negative. The
+# gate caught it only because a different control happened to fail. Exit status is
+# structural; matching an undocumented error string is not.
+leak_session_verdict() {
+  if [[ "${LEAK_SESSION_STATUS:-1}" != 0 ]]; then
+    leak_say "  session exited ${LEAK_SESSION_STATUS:-?}: recording no verdict (a failed experiment, not a negative)"
+    return 0
+  fi
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8", errors="surrogateescape") as fh:
+        reply = fh.read()
+except OSError:
+    reply = ""
+if not reply.strip():
+    sys.exit(0)  # no reply: a failed experiment, not a negative -- leave the file absent
+with open(sys.argv[3], "w", encoding="utf-8") as fh:
+    json.dump({"open": "ok", "token_found": sys.argv[2] in reply,
+               "reply_chars": len(reply)}, fh)
+PY
+}
+
+# leak_latest_transcript CWD -- the newest transcript for the project at CWD, so a
+# record can carry WHICH MODEL ACTUALLY SERVED. The requested model is not necessarily
+# the one that did: a session can fall back or switch mid-run, and the transcript
+# records the model per message (record.py models).
+leak_latest_transcript() {
+  local d
+  d="$LEAK_CONFIG/projects/$(leak_slug "$1")"
+  # newest first, by mtime; find+sort rather than ls, which cannot be parsed safely
+  find "$d" -maxdepth 1 -name '*.jsonl' -printf '%T@\t%p\n' 2>/dev/null \
+    | sort -rn | head -1 | cut -f2-
+}
+
+# leak_write_exec_probe PATH -- a shell probe for a channel that EXECUTES code: a hook,
+# or a skill's !`command` dynamic context injection.
+#
+# Usage from the channel: sh PATH EVENT MARKER TOKEN TARGET
+#
+# It answers two questions that must not be inferred from one another:
+#
+#   WHERE IT RAN, reported POSITIVELY from $AGENT_SANDBOX, which the engine sets inside
+#   the sandbox. Row 6 could not tell "the hook ran inside" from "the hook ran on the
+#   host": its marker went to the bound working directory, which both can write, so the
+#   two stories left identical evidence. An absence proves nothing; a marker that exists
+#   only inside does.
+#
+#   WHAT IT COULD REACH, by copying TARGET beside the marker. An unreadable target
+#   leaves NO file, so the cell reads as unreachable rather than as an empty success --
+#   the same distinction classify() draws for every other reader.
+#
+# Both matter because the reach conclusion depends on the location one. "It runs inside,
+# and inside that path is ENOENT" chains two claims, and only the second was ever
+# measured -- for a reader launched by `claude --exec`, which REPLACES the agent, where
+# a hook is spawned BY the agent at runtime.
+leak_write_exec_probe() {
+  cat >"$1" <<'PROBE_EOF'
+#!/bin/sh
+# argv: EVENT MARKER TOKEN TARGET
+event="$1"
+marker="$2"
+token="$3"
+target="$4"
+printf '%s:%s:AGENT_SANDBOX=%s\n' "$event" "$token" "${AGENT_SANDBOX:-unset}" >>"$marker"
+# No file at all when the target is unreadable, so the cell is unreachable, not empty.
+[ -r "$target" ] && cat "$target" >>"$marker.read"
+exit 0
+PROBE_EOF
+  chmod +x "$1"
+}
+
+# leak_isolation_canary -- plant a canary in A's TRANSCRIPT; sets LEAK_ISO_PATH and
+# LEAK_ISO_TOKEN.
+#
+# For a row EXPECTED TO LEAK, the control rows 1-4 used does not work. "B reads its own
+# data -> obtained" proves nothing when the channel is shared: it is obtained whether or
+# not the sandbox applied at all, so a positive in the test cell could equally mean the
+# sandbox never ran. The control has to be something KNOWN ISOLATED read from the SAME
+# sandbox -- row 2 measured A's transcript as ENOENT under the default scoping. If A's
+# shared data comes through while A's transcript does not, the sandbox demonstrably
+# applied and the leak is the channel's, not the harness's.
+#
+# It also keeps the verdict set non-degenerate, which the validity gate requires for
+# exactly this reason.
+leak_isolation_canary() {
+  local slug
+  slug="$(leak_slug "$LEAK_A")"
+  LEAK_ISO_TOKEN="LEAK-ISO-$(date +%s)-$RANDOM"
+  LEAK_ISO_PATH="$LEAK_CONFIG/projects/$slug/00000000-0000-0000-0000-0000000000ff.jsonl"
+  mkdir -p "$(dirname "$LEAK_ISO_PATH")"
+  printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' \
+    "$LEAK_ISO_TOKEN" >"$LEAK_ISO_PATH"
+}
+
+# leak_untrust DIR -- forget DIR's approval; the counterpart to leak_trust.
+#
+# Removing a dot-file while its approval still stands makes the engine REFUSE to
+# launch -- deliberately, since a policy that vanished must not silently fall back to
+# the defaults. So a row with any sandboxed cell AFTER a share cell must forget the
+# approval as well as delete the file, or every later cell dies at launch. Found by
+# the validity gate rather than by reading the code, which is what it is for.
+leak_untrust() {
+  local d="$1" t="$LEAK_HOME/.config/agent-sandbox/trust"
+  rm -f "$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
 }
 
 # leak_record NAME --set k=v ... -- one record per cell, under records/.

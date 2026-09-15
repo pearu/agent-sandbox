@@ -51,6 +51,46 @@ def classify(reader):
     return VERDICT_OBTAINED if found else VERDICT_ABSENT
 
 
+def harness_errors(path):
+    """Tool results the HARNESS marked as errors, from a session transcript.
+
+    A permission denial is Claude Code's, not the model's, and it has a stable
+    machine-readable form: a tool_result carrying is_error. Measured the hard way --
+    a session whose skill was blocked reported in prose "I declined to run it", which
+    reads as a model refusal and is not one. The model was narrating a harness denial
+    in the first person, and a write-up that trusted the prose recorded the wrong
+    finding twice, in both directions.
+
+    So the method's rule -- assert on the token, never on prose -- extends here: a
+    denial is read out of the transcript's structure, never out of what the model said
+    about it.
+    """
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict) or c.get("type") != "tool_result":
+                        continue
+                    if not c.get("is_error"):
+                        continue
+                    text = c.get("content")
+                    if isinstance(text, list):
+                        text = " ".join(x.get("text", "") for x in text
+                                        if isinstance(x, dict))
+                    out.append(str(text))
+    except OSError as e:
+        return {"error": str(e)}
+    return {"count": len(out), "errors": out}
+
+
 def models_served(path):
     """Which model served each message of a session, in order of first appearance,
     with counts. The requested model is not necessarily the one that served: a
@@ -138,6 +178,25 @@ def validate(rundir, known_ambient=None):
          "" if ok else "B must still reach its OWN project, or 'unreachable' just means nothing is mounted")
     )
 
+    # A level-2 cell asserts what a MODEL did, so a cell where no model ran cannot be a
+    # negative. Measured: a sandboxed session whose TLS verification failed still wrote a
+    # transcript, with the model recorded as "<synthetic>" -- no API turn happened, yet
+    # the cell would otherwise read as "the file was not ingested". Bracketed names are
+    # Claude Code's marker for a locally generated message rather than a served one.
+    # Only cells carrying serving_models are checked, so the scripted rows are unaffected.
+    synthetic = []
+    for r in records:
+        sm = r.get("serving_models")
+        if not isinstance(sm, dict):
+            continue
+        served = sm.get("models") or {}
+        if not any(m and not (m.startswith("<") and m.endswith(">")) for m in served):
+            synthetic.append("%s (%s)" % (r["_file"], ",".join(served) or "none"))
+    checks.append(
+        ("a real model served each level-2 cell", not synthetic,
+         "no model served: " + ", ".join(synthetic) if synthetic else "")
+    )
+
     distinct = set(v for v in verdicts if v)
     checks.append(
         ("verdicts not degenerate", len(distinct) >= 2,
@@ -208,17 +267,43 @@ def cmd_validate(argv):
     return 0
 
 
-def _harness_commit():
+def _git(*args):
     try:
         r = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            ["git", *args], capture_output=True, text=True, timeout=10
         )
-        return r.stdout.strip() if r.returncode == 0 else "unknown"
+        return r.stdout if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _harness_commit():
+    """HEAD, marked -dirty when the tree does not match it.
+
+    A result claims to be reproducible by re-running its script at the recorded
+    commit. That is false if the script was edited and not committed, and a bare
+    HEAD would assert it anyway -- naming a commit that does not contain the code
+    that ran. So the uncertainty is recorded rather than hidden: a run marked dirty
+    is still a run, but nobody can mistake it for one that is reproducible.
+    """
+    head = _git("rev-parse", "HEAD")
+    if head is None:
         return "unknown"
+    head = head.strip()
+    # TRACKED changes only, anywhere in the repository: the engine and the profiles
+    # decide what a cell measures just as much as the harness does, so an
+    # uncommitted edit to either means the run is not reproducible from this commit.
+    #
+    # Untracked files are deliberately NOT counted. On a working machine there are
+    # always some -- local scratch probes, editor droppings -- and none of them can
+    # change what ran, so counting them would mark every run dirty and a marker that
+    # always fires is one nobody reads. What that does not catch: a row script that
+    # has never been `git add`ed at all. In practice the workflow adds it before
+    # running the checks, and a staged addition IS a tracked change.
+    tracked = _git("status", "--porcelain", "--untracked-files=no")
+    if tracked is None:
+        return head + "-unknown-tree"
+    return head + "-dirty" if tracked.strip() else head
 
 
 def cmd_write(argv):
@@ -269,6 +354,7 @@ def cmd_write(argv):
         rec["verdict"] = classify(reader)
     if transcript:
         rec["serving_models"] = models_served(transcript)
+        rec["harness_errors"] = harness_errors(transcript)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(rec, fh, indent=2, sort_keys=True)
         fh.write("\n")
