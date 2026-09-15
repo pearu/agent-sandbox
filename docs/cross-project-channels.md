@@ -158,6 +158,87 @@ For each channel:
 A cell is a *leak* iff B sees or acts on A's token. Assert on the token, never on
 prose.
 
+### Three levels of "obtained"
+
+"B obtained A's token" is not one question. Each level answers a different one, and a
+row is only fully characterised once it is clear *which* was measured:
+
+| level | question | needs |
+|---|---|---|
+| **reachable** | can B open A's data at all? | a scripted reader (`claude --exec`) — free |
+| **taken** | did a *normal* B session actually touch it, unprompted? | a real session + `watch-reads.py` |
+| **obtainable under direction** | how much does B get when asked to retrieve as much as it can? | a real session, and a longer one |
+
+The third is not a new scope: it is **kind (2), user-directed**, which this document
+already reserves as *a positive control, not a threat*. Its job is to make **negative
+results interpretable**. Without it, a row where B never touched A's data cannot
+distinguish *could not* from *had no reason to* — and every "no leak" verdict is
+ambiguous in the same way a quiet `atime` column is. Directing B to try establishes
+the upper bound of what is obtainable while the channel is open, which is what the
+other two levels are then compared against:
+
+- **reachable but not taken** — the channel is open and idle: little accidental
+  exposure, but everything is available to a session that goes looking.
+- **taken without direction** — a genuine kind-(1) leak, this study's target.
+- **not obtainable even under direction** — the control holds against an active
+  attempt, not merely against disinterest.
+
+**A refusal is not isolation.** If B's model declines the request, that is recorded as
+*not obtained — declined*, kept distinct from *not obtained — unreachable*, with the
+model's response verbatim in the record. Conflating them would credit the sandbox for
+something the model did, and the two have opposite implications: a declining model on
+an open channel is still an open channel. The prompt is therefore a plain retrieval
+instruction with no pressure applied — the measurement is of the container, not of the
+model's willingness.
+
+Level 3 is applied **selectively**, since it costs a real session each time: where
+[T2](#t2) reports *isolated* (to show it holds against an active attempt) and where
+[T1](#t1) reports *no leak* (to show that is not disinterest). A row where T1 leaks
+freely and T2 blocks it does not need its upper bound measured.
+
+#### The model is a dimension of levels 2 and 3 — and of neither anything else
+
+**Level 1 is model-independent**: the scripted reader contains no LLM, so
+reachability is a property of the container alone and its results are stable across
+models. That is why the free half of the matrix is reproducible.
+
+Levels 2 and 3 depend on the model in two distinct ways: **capability** (a stronger
+model finds what a weaker one misses, so level 3's upper bound is really *the upper
+bound for model M*) and **willingness** (the refusal above is model- and
+version-specific). An asymmetry follows:
+
+- a level-3 **positive** is an existence proof — if any model obtained it, it is
+  obtainable, and no replication is needed;
+- a level-3 **negative** is model-relative and is recorded as *not obtained by M*,
+  requiring corroboration from at least one more capable model before it may be
+  written down as *not obtainable*.
+
+Which is the refusal rule one level up: **one model's failure is not the channel's
+closure.**
+
+So the levels use different models on purpose: level 2 runs the **default** model,
+because "what a normal session does" means what users actually run; level 3 runs the
+**most capable** available, because it is an upper bound. Every level-2 and level-3
+record carries the model id beside the Claude Code version and the network mode —
+pinned for the same reason the version is, since these rows will be re-run against
+newer models and a result without its model is uninterpretable.
+
+The requested model is not necessarily the one that served: a session can fall back
+or switch mid-run. That is **observable**, and not from the instruments — the session
+transcript records the model **per message**, so the harness reads what actually
+served each turn out of `projects/<slug>/<session-id>.jsonl` rather than stamping the
+record with what it asked for. Measured: a single session of this study's own work
+shows `claude-opus-4-8` for 883 messages and then `claude-opus-5` for 1006, in that
+order.
+
+Per-message attribution is stronger than a per-run label, and it matters most exactly
+where the asymmetry above applies — a level-3 negative attributed to the wrong model
+is the error the asymmetry exists to prevent. Two caveats on it: the field is part of
+an undocumented transcript schema, so a harness must treat its absence as *unknown*
+rather than assume; and a run that straddles a switch is not a clean measurement of
+either model, so the record keeps the per-message breakdown rather than a single
+value.
+
 ### State snapshots: write-discovery and the noise floor
 
 The canary tests **reads** (did B obtain A's token); a before/after snapshot tests
