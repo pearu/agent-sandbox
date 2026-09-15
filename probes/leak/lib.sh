@@ -73,6 +73,20 @@ leak_setup() {
   # from it by path and nothing walks it.
   [[ -d "$HOME/.mitmproxy" ]] && ln -sfn "$HOME/.mitmproxy" "$LEAK_HOME/.mitmproxy"
   printf '%s\n' '{"hasCompletedOnboarding":true,"autoUpdates":false}' >"$LEAK_HOME/.claude.json"
+  # Pre-accept the trust dialog for both projects. It is not what any row measures, and
+  # an unanswered dialog would block a real session or silently drop a project-local
+  # settings file -- the same reason leak_trust exists for the .agent-sandbox dot-file.
+  python3 - "$LEAK_HOME/.claude.json" "$LEAK_A" "$LEAK_B" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    cfg = json.load(fh)
+cfg.setdefault("projects", {})
+for d in sys.argv[2:]:
+    cfg["projects"].setdefault(d, {})["hasTrustDialogAccepted"] = True
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh)
+PY
   local gc=(-c user.email=leak@example.invalid -c user.name=leak -c init.defaultBranch=main)
   git "${gc[@]}" -C "$LEAK_A" init -q
   git "${gc[@]}" -C "$LEAK_B" init -q
