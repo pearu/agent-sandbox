@@ -166,7 +166,8 @@ for topo in T1 T2; do
   leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/exec-$topo.json" "$mark" "$RUN"
   leak_record "${topo,,}-exec-default" \
     --set "topology=$topo-exec-default" --set "net=proxy" --set "question=execution" \
-    --set "permissions=default" --set "canary=$RUN" --reader "$LEAK_RUN/exec-$topo.json"
+    --set "permissions=default" --set "canary=$RUN" \
+    --reader "$LEAK_RUN/exec-$topo.json" --transcript "$(leak_latest_transcript "$LEAK_B")"
 done
 
 # ---- execution, permissions granted ------------------------------------------
