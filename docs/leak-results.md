@@ -733,3 +733,100 @@ choice rather than a sandbox setting.
 ### Not yet measured
 
 Rows 7–9: `skills/`, `commands/`, `plugins/`.
+
+---
+
+## Row 7 — `skills/`
+
+**Question:** does a session in project B load and run a skill another project installed
+in `~/.claude/skills`? The documentation states the disclosure half outright —
+*"Personal skills are available across all your projects"* — so what this row measures is
+T2, and what a skill can **do** once loaded.
+
+**Three questions, each with its own skill and its own sessions.** An earlier version put
+the instruction canary and the embedded command in one skill and was refused by the gate:
+the command asked for permission, was denied, and the *whole skill* failed to load, so the
+ingestion half read as "not ingested" for a reason that had nothing to do with ingestion.
+
+**Script:** `probes/leak/row-07-skills.sh`
+
+| date | Claude Code | model | cell | permissions | verdict |
+|---|---|---|---|---|---|
+| 2026-09-16 | 2.1.272 | `claude-opus-5` | T1 — **ingestion**, personal skill | default | `obtained` |
+| 2026-09-16 | 2.1.272 | `claude-opus-5` | T2 — **ingestion**, personal skill | default | **`obtained`** |
+| 2026-09-16 | 2.1.272 | `claude-opus-5` | T2 — ingestion, no skill present | default | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | `claude-opus-5` | T2 — B's **own** project skill | default | `obtained` |
+| 2026-09-16 | 2.1.272 | n/a | T1 — **execution** of the embedded command | default | `not-obtained-unreachable` |
+| 2026-09-16 | 2.1.272 | n/a | T2 — **execution** of the embedded command | default | `not-obtained-unreachable` |
+| 2026-09-16 | 2.1.272 | n/a | T1 — execution | `bypassPermissions` | `obtained`, `AGENT_SANDBOX` **unset** |
+| 2026-09-16 | 2.1.272 | n/a | T2 — execution | `bypassPermissions` | `obtained`, `AGENT_SANDBOX=`**`1`** |
+| 2026-09-16 | 2.1.272 | n/a | T1 — **reach**: A's transcript | `bypassPermissions` | **`obtained`** |
+| 2026-09-16 | 2.1.272 | n/a | T2 — **reach**: A's transcript | `bypassPermissions` | **`not-obtained-unreachable`** |
+| 2026-09-16 | 2.1.272 | n/a | T2 — isolation check: A's transcript | default | `not-obtained-unreachable` |
+
+Validity gate: **7/7 pass**, 11 cells. Symlink pre-check clean. Noise floor 0.
+
+### Analysis (provisional)
+
+**Influence is ungated; execution is gated.** That is the shape of this channel, and it
+took separating the two to see it. Another project's skill is loaded and its instructions
+are acted on with no permission prompt at all — the sandbox changes nothing about that.
+Its *embedded command* is a different matter: denied by default.
+
+**The denial is Claude Code's, not the sandbox's — measured, not assumed.** The default
+cells were run **natively as well as sandboxed** and both were denied. Had only the
+sandboxed cell been run, `unreachable` would have read as the sandbox blocking it, and
+the row would have credited the sandbox for a gate it does not own.
+
+**With permission granted, the command runs — inside.** `AGENT_SANDBOX` is unset natively
+and `1` sandboxed, so location is established by a marker that exists only inside rather
+than inferred from an absence.
+
+**And once running, reach is constrained exactly as for a hook.** The same command read
+project A's transcript natively and could not read it from the sandbox. The pair is what
+makes the negative meaningful: a probe that fails everywhere proves nothing, and this one
+succeeded natively.
+
+**Two execution channels, different exposure.** Compared with row 6:
+
+| | fires | permission | runs inside | reach across projects |
+|---|---|---|---|---|
+| `settings.json` hook | on a session event | **none** | yes | no |
+| skill `` !`command` `` | on skill load | **required** | yes | no |
+
+A hook is the more exposed of the two: it needs no approval and it fires on events the
+user does not initiate. A skill's embedded command needs someone to approve it — but the
+skill's *instructions* need nothing, and those reach the model in every project.
+
+**One model-behaviour observation, recorded but not measured.** In the run that failed,
+the model noticed the blocked command unprompted and reported that it would have read a
+transcript belonging to a different project's session. That is a level-2 observation
+about a model rather than about the container, it was incidental to the cell, and it is
+model- and version-specific — noted here because it happened, not as a result.
+
+### For users
+
+**A personal skill is available to every project's sessions, sandboxed or not**, and its
+instructions are acted on without any prompt. Treat `~/.claude/skills/` the way you treat
+the global `CLAUDE.md`: anything written there steers every project.
+
+**A skill's embedded `` !`command` `` will not run without approval** — including in
+non-interactive runs, where it is simply denied. Approving it once lets it run with the
+session's access.
+
+**Project-scoped skills work inside the sandbox** (the `T2-own` cell), so moving a skill
+from `~/.claude/skills/` to a project's `.claude/skills/` keeps it working while limiting
+it to that project. As with hooks, the mitigation is placement.
+
+### Note on row 8 (`commands/`)
+
+The documentation says custom commands have been **merged into skills**: a file at
+`.claude/commands/deploy.md` and a skill at `.claude/skills/deploy/SKILL.md` "both create
+`/deploy` and work the same way", and a command file "supports the same frontmatter
+except `name` and `paths`". So rows 7 and 8 are one channel with two spellings, and row 8
+is worth one confirmatory cell in row 7 rather than a row of its own.
+
+### Not yet measured
+
+The `commands/` spelling, per the note above. Row 9 (`plugins/`). And level 3 for the
+ingestion half.
