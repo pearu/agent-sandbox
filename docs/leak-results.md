@@ -644,8 +644,16 @@ whether the file carries it.
 | 2026-09-15 | 2.1.272 | n/a | T2 — same prompt, **no** hooks configured | `proxy` | `not-obtained-unreachable` (ENOENT) |
 | 2026-09-15 | 2.1.272 | n/a | T2 — B's **own** project hook | `proxy` | `obtained` — `SessionStart`, `Stop` |
 | 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
+| 2026-09-15 (2nd run) | 2.1.272 | n/a | T1 — where the hook ran | n/a | `AGENT_SANDBOX` **unset** |
+| 2026-09-15 (2nd run) | 2.1.272 | n/a | T2 — where the hook ran | `proxy` | `AGENT_SANDBOX=`**`1`** |
+| 2026-09-15 (2nd run) | 2.1.272 | n/a | T1 — what the hook could **reach**: A's transcript | n/a | **`obtained`** |
+| 2026-09-15 (2nd run) | 2.1.272 | n/a | T2 — what the hook could **reach**: A's transcript | `proxy` | **`not-obtained-unreachable`** |
 
-Validity gate: **7/7 pass**, 5 cells. Symlink pre-check clean. Noise floor 0.
+Validity gate: **7/7 pass** on both runs, 5 cells then 7. Symlink pre-check clean. Noise
+floor 0 on the first run, 4 on the second, with one further change — an `atime` on the
+real `history.jsonl` — classified as the observing session's own read. The second run
+extended the script with the location and reach cells; the first run's lines are kept
+above rather than replaced.
 
 ### Analysis (provisional)
 
@@ -665,27 +673,32 @@ same host path, same result on disk. The check reads a known-isolated canary fro
 same sandbox and gets ENOENT, so the sandbox demonstrably applied and the hook ran
 *within* it.
 
-**What this run does and does not establish.** It establishes that a hook another
-project configured causes a command to run, and that the command's output reached a host
-path. It does **not** establish where that command ran. The marker file was written to
-the bound working directory, which the host can write just as well as the sandbox, so
-"the hook ran inside" and "the hook ran on the host" left identical evidence.
+**Where the hook runs — measured, not inferred.** The first run established that the
+command *ran*, but not *where*: its marker went to the bound working directory, which the
+host can write just as well as the sandbox, so "ran inside" and "ran on the host" left
+identical evidence. The second run settles it with a **positive** marker — the hook
+echoes `$AGENT_SANDBOX`, which the engine sets only inside. Natively it is **unset**;
+sandboxed it is **`1`**. The hook executes inside the sandbox.
 
-That matters because the obvious next conclusion chains two claims: *the hook runs inside
-the sandbox* (not measured here) onto *inside the sandbox that path is ENOENT* (measured
-in rows 1–2, but for a reader launched by `claude --exec`, which **replaces** the agent,
-where a hook is spawned **by** the agent at runtime). Only the second link was ever
-tested, and not on this launch path. Treating the conclusion as settled would make an
-assumption do the work of a measurement.
+**And what it can reach from there.** The same hook copies another project's transcript
+beside its marker, leaving no file when it cannot read it. Natively: `obtained` — the
+hook read project A's transcript. Sandboxed: `not-obtained-unreachable`.
 
-The script has since been extended to settle it rather than infer it: the hook now
-reports `$AGENT_SANDBOX` — which the engine sets only inside — so its location is proved
-by a **positive** marker rather than by an absence, and separately attempts to read
-another project's transcript, leaving no file when it cannot. Those cells are pending a
-re-run and this section will gain their line.
+**The pair is what makes the negative meaningful.** Same probe, same target, opposite
+results by topology: a sandboxed hook that "could not read" something a native hook
+*did* read is a measurement of the sandbox, not a probe that never worked. Had only the
+sandboxed cell been run, `unreachable` would have been equally consistent with a broken
+probe.
 
-So this run establishes the channel is open for **execution**. Whether it is also open
-for **reach** is not yet measured.
+This replaces an inference the first write-up made and should not have. The chain was
+*the hook runs inside the sandbox* (unverified) onto *inside the sandbox that path is
+ENOENT* (measured in rows 1–2 — but for a reader launched by `claude --exec`, which
+**replaces** the agent, where a hook is spawned **by** the agent at runtime). Only the
+second link had been tested, and not on this launch path. The conclusion happened to be
+right; it was not evidence until it was measured.
+
+So the channel is open for **execution** and closed for **reach** — both measured, on the
+hook's own launch path.
 
 **It is also deliberate.** `settings.json` is on the engine's short list of paths left
 visible on purpose, beside `CLAUDE.md`, as the user's own configuration. The study's
@@ -700,6 +713,14 @@ sessions, sandboxed or not.** That is the sharpest form of the configuration cha
 agent that edits the global settings does not merely influence other projects' sessions,
 it executes in them.
 
+**What the sandbox does contain is the blast radius.** The hook runs *inside*, so it sees
+what the session sees: measured, a hook that read another project's transcript natively
+could not read it from a sandboxed session. Running sandboxed does not stop a planted
+hook executing; it does stop that hook reading across projects.
+
+**No hooks fire at all without configuration** — the control cell's marker file was never
+created — so this is a channel someone must write to, not a standing exposure.
+
 **There is no knob that closes this while keeping your own hooks.** `settings.json` is
 visible by design; `[claude] hide` would blank it entirely, which removes your own
 configuration along with the risk.
@@ -711,5 +732,4 @@ choice rather than a sandbox setting.
 
 ### Not yet measured
 
-Where the hook actually executes, and what it can reach from there — the cells described
-above, pending a re-run. And rows 7–9: `skills/`, `commands/`, `plugins/`.
+Rows 7–9: `skills/`, `commands/`, `plugins/`.
