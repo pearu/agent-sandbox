@@ -208,17 +208,33 @@ def cmd_validate(argv):
     return 0
 
 
-def _harness_commit():
+def _git(*args):
     try:
         r = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            ["git", *args], capture_output=True, text=True, timeout=10
         )
-        return r.stdout.strip() if r.returncode == 0 else "unknown"
+        return r.stdout if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _harness_commit():
+    """HEAD, marked -dirty when the tree does not match it.
+
+    A result claims to be reproducible by re-running its script at the recorded
+    commit. That is false if the script was edited and not committed, and a bare
+    HEAD would assert it anyway -- naming a commit that does not contain the code
+    that ran. So the uncertainty is recorded rather than hidden: a run marked dirty
+    is still a run, but nobody can mistake it for one that is reproducible.
+    """
+    head = _git("rev-parse", "HEAD")
+    if head is None:
         return "unknown"
+    head = head.strip()
+    status = _git("status", "--porcelain")
+    if status is None:
+        return head + "-unknown-tree"
+    return head + "-dirty" if status.strip() else head
 
 
 def cmd_write(argv):

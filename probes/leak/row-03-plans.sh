@@ -128,6 +128,7 @@ leak_record "t2-share-all" --set "topology=T2-share-all" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$A_CANARY" --set "target=$A_PLAN" \
   --reader "$LEAK_RUN/t2-all.json"
 rm -f "$LEAK_B/.agent-sandbox"
+leak_untrust "$LEAK_B"
 
 # The other direction: the plan B wrote INSIDE the sandbox, read from the host after
 # that session exited. copyout merges a session's new entries back, so this is where

@@ -127,6 +127,7 @@ leak_record "t2-share-all" --set "topology=T2-share-all" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$A_CANARY" --set "target=$A_MEMORY" \
   --reader "$LEAK_RUN/t2-all.json"
 rm -f "$LEAK_B/.agent-sandbox"
+leak_untrust "$LEAK_B"
 
 # A's canary must still read exactly as planted: if the share bind were writable, the
 # write above changed the substrate under the later cells.

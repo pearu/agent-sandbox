@@ -224,6 +224,18 @@ leak_trust() {
     >"$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
 }
 
+# leak_untrust DIR -- forget DIR's approval; the counterpart to leak_trust.
+#
+# Removing a dot-file while its approval still stands makes the engine REFUSE to
+# launch -- deliberately, since a policy that vanished must not silently fall back to
+# the defaults. So a row with any sandboxed cell AFTER a share cell must forget the
+# approval as well as delete the file, or every later cell dies at launch. Found by
+# the validity gate rather than by reading the code, which is what it is for.
+leak_untrust() {
+  local d="$1" t="$LEAK_HOME/.config/agent-sandbox/trust"
+  rm -f "$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
+}
+
 # leak_record NAME --set k=v ... -- one record per cell, under records/.
 leak_record() {
   local name="$1"

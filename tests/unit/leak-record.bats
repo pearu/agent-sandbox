@@ -96,6 +96,33 @@ print('ok')
   [ "$output" = ok ]
 }
 
+@test "write: a commit is marked dirty when the tree does not match it" {
+  # a result claims to be reproducible at the recorded commit; an edited-but-
+  # uncommitted script makes that false, and a bare HEAD would assert it anyway
+  repo="$T/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" -c user.email=t@e.invalid -c user.name=t commit -q --allow-empty -m x
+  reader_json '{"open":"ok","token_found":true}'
+
+  run bash -c "cd '$repo' && python3 '$R' write --out '$T/clean.json' --reader '$T/r.json'"
+  [ "$status" -eq 0 ]
+  clean="$(python3 -c "import json;print(json.load(open('$T/clean.json'))['harness_commit'])")"
+  [[ "$clean" != *-dirty ]] || {
+    echo "clean tree marked dirty: $clean"
+    return 1
+  }
+
+  echo edit >"$repo/new-file"
+  run bash -c "cd '$repo' && python3 '$R' write --out '$T/dirty.json' --reader '$T/r.json'"
+  [ "$status" -eq 0 ]
+  dirty="$(python3 -c "import json;print(json.load(open('$T/dirty.json'))['harness_commit'])")"
+  [[ "$dirty" == "$clean-dirty" ]] || {
+    echo "expected $clean-dirty, got $dirty"
+    return 1
+  }
+}
+
 # --- the validity gate ------------------------------------------------------
 # It decides whether a run is a RESULT at all. If it cannot fail, a run whose
 # controls never fired gets recorded as a finding.
