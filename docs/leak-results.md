@@ -665,15 +665,27 @@ same host path, same result on disk. The check reads a known-isolated canary fro
 same sandbox and gets ENOENT, so the sandbox demonstrably applied and the hook ran
 *within* it.
 
-**What that does and does not imply.** The hook executes inside the sandbox, so it
-inherits that sandbox's view of the filesystem — a hook trying to read another project's
-memory should meet the same ENOENT the scripted readers met in rows 1–2. That follows
-from where it runs, but it was **not directly measured**: the isolation check was a
-scripted read, not a read performed by the hook itself. A row that plants a *reading*
-hook would settle it.
+**What this run does and does not establish.** It establishes that a hook another
+project configured causes a command to run, and that the command's output reached a host
+path. It does **not** establish where that command ran. The marker file was written to
+the bound working directory, which the host can write just as well as the sandbox, so
+"the hook ran inside" and "the hook ran on the host" left identical evidence.
 
-So the channel is open for **execution** and, on the evidence of rows 1–4, constrained
-in **reach**. Those are different properties and this row establishes only the first.
+That matters because the obvious next conclusion chains two claims: *the hook runs inside
+the sandbox* (not measured here) onto *inside the sandbox that path is ENOENT* (measured
+in rows 1–2, but for a reader launched by `claude --exec`, which **replaces** the agent,
+where a hook is spawned **by** the agent at runtime). Only the second link was ever
+tested, and not on this launch path. Treating the conclusion as settled would make an
+assumption do the work of a measurement.
+
+The script has since been extended to settle it rather than infer it: the hook now
+reports `$AGENT_SANDBOX` — which the engine sets only inside — so its location is proved
+by a **positive** marker rather than by an absence, and separately attempts to read
+another project's transcript, leaving no file when it cannot. Those cells are pending a
+re-run and this section will gain their line.
+
+So this run establishes the channel is open for **execution**. Whether it is also open
+for **reach** is not yet measured.
 
 **It is also deliberate.** `settings.json` is on the engine's short list of paths left
 visible on purpose, beside `CLAUDE.md`, as the user's own configuration. The study's
@@ -699,5 +711,5 @@ choice rather than a sandbox setting.
 
 ### Not yet measured
 
-Whether a hook's own filesystem view is scoped the way a scripted reader's is — the
-inference above, measured directly. And rows 7–9: `skills/`, `commands/`, `plugins/`.
+Where the hook actually executes, and what it can reach from there — the cells described
+above, pending a re-run. And rows 7–9: `skills/`, `commands/`, `plugins/`.

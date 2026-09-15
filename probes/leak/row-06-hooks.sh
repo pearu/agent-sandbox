@@ -19,6 +19,15 @@
 #   same host path. So a known-isolated canary is read from the same sandbox to show it
 #   really applied. Without that, this row's positive would be uninterpretable.
 #
+#   AND THE HOOK REPORTS WHERE IT RAN, POSITIVELY. The isolation check above shows the
+#   SESSION was sandboxed; it does not show the HOOK was, because the marker file goes
+#   to the bound working directory, which the host can write just as well. So the hook
+#   echoes $AGENT_SANDBOX -- set by the engine only inside -- and separately tries to
+#   read another project's transcript, leaving no file when it cannot. Measuring both
+#   avoids chaining "it runs inside" (unverified) onto "inside, that path is ENOENT"
+#   (measured for a DIFFERENT launch path: `--exec` replaces the agent, while a hook is
+#   spawned by the agent at runtime).
+#
 # Each cell writes to its OWN file: a file left by an earlier cell would otherwise make
 # the control cell, which must find nothing, read as a positive.
 #
@@ -48,12 +57,12 @@ mkdir -p "$(dirname "$PROJECT_SETTINGS")"
 # use, and both write the same marker file: which of them fires is detail, that one of
 # them does is the result. The per-event prefix keeps that detail in the record.
 write_hooks() {
-  python3 - "$1" "$2" "$3" <<'PY'
+  python3 - "$1" "$2" "$3" "$PROBE" "$LEAK_ISO_PATH" <<'PY'
 import json, os, sys
-path, token, outfile = sys.argv[1], sys.argv[2], sys.argv[3]
+path, token, outfile, probe, target = sys.argv[1:6]
 hooks = {}
 for event in ("SessionStart", "Stop"):
-    cmd = "printf '%s:%s\\n' >> %s" % (event, token, outfile)
+    cmd = "sh %s %s %s %s %s" % (probe, event, outfile, token, target)
     hooks[event] = [{"hooks": [{"type": "command", "command": cmd}]}]
 cfg = {}
 if os.path.exists(path):
@@ -79,6 +88,8 @@ try:
     out["open"] = "ok"
     out["token_found"] = token in data
     out["events"] = sorted({ln.split(":")[0] for ln in data.splitlines() if ":" in ln})
+    out["agent_sandbox"] = sorted({ln.split("AGENT_SANDBOX=")[1].strip()
+                                   for ln in data.splitlines() if "AGENT_SANDBOX=" in ln})
 except OSError as e:
     out["open"] = errno.errorcode.get(e.errno, str(e.errno))
     out["token_found"] = False
@@ -86,6 +97,8 @@ print(json.dumps(out))
 PY
 
 leak_isolation_canary
+PROBE="$LEAK_B/exec-probe.sh"
+leak_write_exec_probe "$PROBE"
 leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
@@ -105,6 +118,12 @@ leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2.json" "$T2_OUT" "$G_CANARY"
 leak_record "t2-sandboxed" --set "topology=T2" --set "net=proxy" --set "sandboxed=yes" \
   --set "canary=$G_CANARY" --set "target=$SETTINGS" --reader "$LEAK_RUN/t2.json"
 
+leak_say "  ...and what could the hook reach? (A's transcript, copied beside the marker)"
+leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-reach.json" "$T2_OUT.read" "$LEAK_ISO_TOKEN"
+leak_record "t2-hook-reach" --set "topology=T2-hook-reach" --set "net=proxy" \
+  --set "sandboxed=yes" --set "canary=$LEAK_ISO_TOKEN" --set "target=$LEAK_ISO_PATH" \
+  --reader "$LEAK_RUN/t2-reach.json"
+
 leak_say "T2 control — the same prompt with NO hooks configured"
 T2C_OUT="$LEAK_B/fired-t2-control.txt"
 python3 -c "
@@ -117,6 +136,12 @@ leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-control.json" "$T2C_OUT" "$G_
 leak_record "t2-control-nohooks" --set "topology=T2-control" --set "net=proxy" \
   --set "sandboxed=yes" --set "canary=$G_CANARY" --set "target=(removed)" \
   --reader "$LEAK_RUN/t2-control.json"
+
+leak_say "  ...and the same reach question NATIVELY, as the comparison"
+leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t1-reach.json" "$T1_OUT.read" "$LEAK_ISO_TOKEN"
+leak_record "t1-hook-reach" --set "topology=T1-hook-reach" --set "net=n/a" \
+  --set "sandboxed=no" --set "canary=$LEAK_ISO_TOKEN" --set "target=$LEAK_ISO_PATH" \
+  --reader "$LEAK_RUN/t1-reach.json"
 
 leak_say "T2 negative control — B's OWN project hook (.claude/settings.json)"
 OWN_OUT="$LEAK_B/fired-own.txt"
@@ -142,10 +167,12 @@ for r in "$LEAK_RUN"/records/*.json; do
   python3 - "$r" <<'PY'
 import json, os, sys
 d = json.load(open(sys.argv[1]))
-e = d.get("reader", {}).get("events") or []
-print("  %-20s %-22s %-26s %s" % (os.path.basename(sys.argv[1])[:-5],
-                                  d.get("topology", "?"), d.get("verdict", "?"),
-                                  ",".join(e)))
+r = d.get("reader", {})
+e = r.get("events") or []
+a = r.get("agent_sandbox") or []
+print("  %-20s %-22s %-26s %-18s %s" % (os.path.basename(sys.argv[1])[:-5],
+                                        d.get("topology", "?"), d.get("verdict", "?"),
+                                        ",".join(e), "AGENT_SANDBOX=" + ",".join(a) if a else ""))
 PY
 done
 echo

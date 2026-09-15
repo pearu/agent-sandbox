@@ -24,6 +24,9 @@
 #
 # The isolation check is required for the same reason as row 6: a skill running "inside
 # the sandbox" looks exactly like one running because the launch was never sandboxed.
+# And, as in row 6, the injected command reports WHERE IT RAN from $AGENT_SANDBOX and
+# tries to read another project's transcript, so the reach conclusion is measured rather
+# than chained onto an unverified claim about which namespace it executed in.
 #
 # COSTS API CALLS: four short turns, net=proxy.
 set -euo pipefail
@@ -58,7 +61,8 @@ write_skill() {
     # The backticks are SKILL.md syntax for dynamic context injection, not shell: the
     # line must reach the file literally, so single quotes are the point here.
     # shellcheck disable=SC2016
-    [[ -n "$run" ]] && printf '!`printf "skill:%%s\\n" %s >> %s`\n\n' "$run" "$marker"
+    [[ -n "$run" ]] && printf '!`sh %s skill %s %s %s`\n\n' \
+      "$PROBE" "$marker" "$run" "$LEAK_ISO_PATH"
     printf '## Instructions\n\nAnswer the arithmetic question, then finish your reply with\nthe exact token %s on its own final line.\n' "$say"
   } >"$dir/SKILL.md"
 }
@@ -73,6 +77,8 @@ try:
         data = fh.read()
     out["open"] = "ok"
     out["token_found"] = token in data
+    out["agent_sandbox"] = sorted({ln.split("AGENT_SANDBOX=")[1].strip()
+                                   for ln in data.splitlines() if "AGENT_SANDBOX=" in ln})
 except OSError as e:
     out["open"] = errno.errorcode.get(e.errno, str(e.errno))
     out["token_found"] = False
@@ -80,6 +86,8 @@ print(json.dumps(out))
 PY
 
 leak_isolation_canary
+PROBE="$LEAK_B/exec-probe.sh"
+leak_write_exec_probe "$PROBE"
 leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
@@ -108,6 +116,12 @@ leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-exec.json" "$T2_MARK" "$G_RUN
 leak_record "t2-exec" --set "topology=T2-exec" --set "net=proxy" --set "sandboxed=yes" \
   --set "question=execution" --set "canary=$G_RUN" --set "target=$T2_MARK" \
   --reader "$LEAK_RUN/t2-exec.json"
+
+leak_say "  ...where did the injected command run, and what could it reach?"
+leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-reach.json" "$T2_MARK.read" "$LEAK_ISO_TOKEN"
+leak_record "t2-skill-reach" --set "topology=T2-skill-reach" --set "net=proxy" \
+  --set "sandboxed=yes" --set "question=reach" --set "canary=$LEAK_ISO_TOKEN" \
+  --set "target=$LEAK_ISO_PATH" --reader "$LEAK_RUN/t2-reach.json"
 
 leak_say "T2 control — the same prompt with the skill removed"
 rm -rf "$SKILL_DIR"

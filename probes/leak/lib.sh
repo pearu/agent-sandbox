@@ -354,6 +354,43 @@ leak_latest_transcript() {
     | sort -rn | head -1 | cut -f2-
 }
 
+# leak_write_exec_probe PATH -- a shell probe for a channel that EXECUTES code: a hook,
+# or a skill's !`command` dynamic context injection.
+#
+# Usage from the channel: sh PATH EVENT MARKER TOKEN TARGET
+#
+# It answers two questions that must not be inferred from one another:
+#
+#   WHERE IT RAN, reported POSITIVELY from $AGENT_SANDBOX, which the engine sets inside
+#   the sandbox. Row 6 could not tell "the hook ran inside" from "the hook ran on the
+#   host": its marker went to the bound working directory, which both can write, so the
+#   two stories left identical evidence. An absence proves nothing; a marker that exists
+#   only inside does.
+#
+#   WHAT IT COULD REACH, by copying TARGET beside the marker. An unreadable target
+#   leaves NO file, so the cell reads as unreachable rather than as an empty success --
+#   the same distinction classify() draws for every other reader.
+#
+# Both matter because the reach conclusion depends on the location one. "It runs inside,
+# and inside that path is ENOENT" chains two claims, and only the second was ever
+# measured -- for a reader launched by `claude --exec`, which REPLACES the agent, where
+# a hook is spawned BY the agent at runtime.
+leak_write_exec_probe() {
+  cat >"$1" <<'PROBE_EOF'
+#!/bin/sh
+# argv: EVENT MARKER TOKEN TARGET
+event="$1"
+marker="$2"
+token="$3"
+target="$4"
+printf '%s:%s:AGENT_SANDBOX=%s\n' "$event" "$token" "${AGENT_SANDBOX:-unset}" >>"$marker"
+# No file at all when the target is unreadable, so the cell is unreachable, not empty.
+[ -r "$target" ] && cat "$target" >>"$marker.read"
+exit 0
+PROBE_EOF
+  chmod +x "$1"
+}
+
 # leak_isolation_canary -- plant a canary in A's TRANSCRIPT; sets LEAK_ISO_PATH and
 # LEAK_ISO_TOKEN.
 #
