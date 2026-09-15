@@ -224,6 +224,29 @@ leak_trust() {
     >"$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
 }
 
+# leak_isolation_canary -- plant a canary in A's TRANSCRIPT; sets LEAK_ISO_PATH and
+# LEAK_ISO_TOKEN.
+#
+# For a row EXPECTED TO LEAK, the control rows 1-4 used does not work. "B reads its own
+# data -> obtained" proves nothing when the channel is shared: it is obtained whether or
+# not the sandbox applied at all, so a positive in the test cell could equally mean the
+# sandbox never ran. The control has to be something KNOWN ISOLATED read from the SAME
+# sandbox -- row 2 measured A's transcript as ENOENT under the default scoping. If A's
+# shared data comes through while A's transcript does not, the sandbox demonstrably
+# applied and the leak is the channel's, not the harness's.
+#
+# It also keeps the verdict set non-degenerate, which the validity gate requires for
+# exactly this reason.
+leak_isolation_canary() {
+  local slug
+  slug="$(leak_slug "$LEAK_A")"
+  LEAK_ISO_TOKEN="LEAK-ISO-$(date +%s)-$RANDOM"
+  LEAK_ISO_PATH="$LEAK_CONFIG/projects/$slug/00000000-0000-0000-0000-0000000000ff.jsonl"
+  mkdir -p "$(dirname "$LEAK_ISO_PATH")"
+  printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' \
+    "$LEAK_ISO_TOKEN" >"$LEAK_ISO_PATH"
+}
+
 # leak_untrust DIR -- forget DIR's approval; the counterpart to leak_trust.
 #
 # Removing a dot-file while its approval still stands makes the engine REFUSE to

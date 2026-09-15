@@ -342,3 +342,105 @@ limits what a session reads, not what it leaves behind.
 ### Not yet measured
 
 Level 2 — whether a real session reads the history unprompted — and level 3.
+
+---
+
+## Rows 10–12 — the channels bound whole
+
+Rows 1–4 covered the per-project state the sandbox scopes. These three cover state it
+does **not**: `~/.claude.json`, bound whole and read-write, and `downloads/`, which has
+no disposition at all. All three were expected to leak, and the control structure
+changes with that expectation — see the note below the tables.
+
+**Scripts:** `probes/leak/row-10-mcpservers.sh`, `row-11-project-history.sh`,
+`row-12-downloads.sh`
+
+### Row 10 — `mcpServers`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's MCP server config | n/a | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — A's MCP server config | `none` | **`obtained`** |
+| 2026-09-15 | 2.1.272 | n/a | T2 — B's own per-project `mcpServers` | `none` | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
+
+### Row 11 — per-project state in `~/.claude.json`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's `lastSessionFirstPrompt` | n/a | `obtained`, 2 project entries |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — A's `lastSessionFirstPrompt` | `none` | **`obtained`, 2 project entries** |
+| 2026-09-15 | 2.1.272 | n/a | T2 — B's own entry | `none` | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
+
+### Row 12 — `downloads/`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's downloaded document | n/a | `obtained`, 2 entries |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — A's downloaded document | `none` | **`obtained`, 2 entries** |
+| 2026-09-15 | 2.1.272 | n/a | T2 — B's own download | `none` | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 — **isolation check**: A's transcript | `none` | `not-obtained-unreachable` |
+
+Validity gate: **6/6 pass** on each, 4 cells each. Symlink pre-check clean. Noise floor
+0 on all three.
+
+### Analysis (provisional)
+
+> Interpretation is deferred until every row is collected; what follows is the
+> mechanism this data supports, to be revisited against the full set.
+
+**The control had to change, and that is the methodological point of these rows.** For
+rows 1–4 the control was "B reads its **own** data → `obtained`", which proved the
+config was mounted and the absence was scoping. On a channel that is *expected* to leak
+that proves nothing: B's own data is obtained whether or not the sandbox applied at all,
+so a positive in the test cell would be equally well explained by the sandbox never
+having run. The replacement is an **isolation check** — a canary in A's transcript,
+which row 2 measured as ENOENT under the default scoping, read from the *same* sandbox.
+It returned `not-obtained-unreachable` in all three rows. So the sandbox demonstrably
+applied, and these leaks are the channels', not the harness's.
+
+**Why they leak.** `~/.claude.json` is bound whole and read-write (`profile_config_binds`)
+with no disposition, so `memory = scoped` — which made rows 1–2 unreachable — does not
+reach it. `downloads/` is not in `profile_isolate` at all: neither scoped, tmpfs'd,
+copied out nor filtered, simply part of the read-write bind of `~/.claude`, and flat
+rather than keyed by project.
+
+**What row 11 actually exposes.** A project entry in `~/.claude.json` carries
+`lastSessionFirstPrompt` — the literal text of that project's last session's opening
+prompt — beside `mcpServers`, `allowedTools`, `exampleFiles`, `lastSessionId` and
+per-project cost and token metrics. The canary was planted in that field rather than a
+synthetic one, so the row measures the exposure that exists. B saw **both** project
+entries. This is the case the plan calls sharp: per-project *data* the project scoping
+misses, because it is not under `projects/`.
+
+`~/.claude.json` being visible is a **documented cap, not an oversight** — `design.md`
+records that it lists every project path and the account email and is written live by
+the agent, so filtering it risks breaking Claude Code. These rows measure what that cap
+costs: not just paths and an email, but another project's prompt text.
+
+**Row 10 is also an injection channel, not only a disclosure one.** `mcpServers` is
+configuration: a server another project configured is not merely *visible* to B but
+available to it. That half needs a real session and is level 2.
+
+### For users
+
+**To keep another project's `~/.claude.json` state out of a session: not possible
+today.** There is no knob; the file is bound whole by design. What does exist is
+after-the-fact removal — **`claude project purge <path>`** deletes that project's
+transcripts and memory, its `~/.claude.json` entry, and its matching `history.jsonl`
+lines ([claude-directory](https://code.claude.com/docs/en/claude-directory)). Note the
+documentation's own caveat: `backups/` may still hold the entry in older `.claude.json`
+snapshots, up to five of which are kept.
+
+**For `downloads/`:** treat it as shared. A document one project downloaded is readable
+by every other, sandboxed or not. Scoping it per project is tracked as #52.
+
+**For `mcpServers`:** an MCP server configured anywhere is configured everywhere,
+including inside a sandbox. If a server reaches private data, every project's sessions
+can reach it.
+
+### Not yet measured
+
+Level 2 for all three — whether a real session reads or *acts on* this material
+unprompted, which for row 10 means connecting to a server another project configured.
