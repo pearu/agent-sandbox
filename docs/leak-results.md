@@ -186,3 +186,72 @@ Level 2 (does a normal session read another project's transcript unprompted) and
 level 3 (what one obtains when asked to retrieve as much as it can). Both need real
 sessions, and level 3's negative result would be model-relative — see the Method
 section on the three levels.
+
+---
+
+## Row 3 — plans
+
+**Question (level 1, reachability):** can a session in project B open project A's plan
+documents in `plans/`? The reader contains no LLM, so this measures the container alone.
+
+**Script:** `probes/leak/row-03-plans.sh`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-15 | 2.1.272 | n/a (no LLM) | T1 native — A's plan | n/a | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2 sandboxed — A's plan | `none` | `not-obtained-unreachable` (ENOENT), `plans/` empty |
+| 2026-09-15 | 2.1.272 | n/a | T2 — B writes a plan inside, reads it back (control) | `none` | `obtained` |
+| 2026-09-15 | 2.1.272 | n/a | T2-share-all — A's plan under `[share-memory] all` | `none` | `not-obtained-unreachable` (ENOENT) |
+| 2026-09-15 | 2.1.272 | n/a | T2-writeback — B's plan read from the **host** after exit | n/a | `obtained` |
+
+Validity gate: **6/6 pass**, 5 cells. Symlink pre-check clean. Noise floor: 0 ambient
+changes.
+
+### Analysis (provisional)
+
+> Interpretation is deferred until every row is collected; what follows is the
+> mechanism this row's data supports, to be revisited against the full set.
+
+**A different mechanism from rows 1–2, with the same read outcome.** `plans/` is not
+scoped — it is **copyout**: the engine binds an *empty* staging directory over it and
+at exit merges back the entries the session created, never overwriting. So A's plan is
+unreachable because the directory B sees is **empty**, not because A's subtree was
+hidden. The directory listing is the evidence, and the reason the reader reports it:
+`plans/` held one entry natively and **zero** inside, in every sandboxed cell.
+
+**The control had to change shape, and that is itself a property of copyout.** B has no
+plan of its own inside, because the directory starts empty for *every* session — so
+unlike rows 1–2 there is nothing of B's to read back as a negative control. Instead B
+**wrote** a plan inside and read it back: `obtained`, with the listing empty beforehand.
+That is what distinguishes "A's plan is absent" from "`plans/` is not mounted in there
+at all".
+
+**No lever reaches plans.** `[share-memory] all` — the blunt lever that exposes every
+project's memory *and* transcripts — leaves `plans/` empty. It adds read-only binds
+under `projects/<slug>/memory` and switches the memory mode; the copyout of `plans/` is
+applied independently of both. So plans cannot be shared at all, deliberately or
+otherwise.
+
+**Isolation here governs reads, not write-back — measured.** The plan B wrote inside the
+sandbox was on the **host** after that session exited, where a native reader in any
+project found it (`plans/` then held two entries: A's and B's). This is by design —
+copyout exists so a session's own plans and undo history survive a resume — but it makes
+"isolated" only half the story for this channel, and it is the first cell in the study
+where data crosses in the **outward** direction.
+
+### For users
+
+**To keep another project's plans out of a session:** nothing to do. Copyout is
+unconditional, with no knob, and it is what produces this result.
+
+**To share plans deliberately: not possible.** No configuration exposes another
+project's `plans/` — not `[share-memory]`, not `memory_default = shared`. Copy the
+document into the project if you want it there.
+
+**Be aware of the outward direction.** A plan written inside a sandbox is *not* confined
+to it: at exit it is merged into the host's `plans/`, where any native session can read
+it. Sandboxing a session limits what it can read, not what it leaves behind.
+
+### Not yet measured
+
+Level 2 — whether a real session reads another project's plans unprompted — and level 3.
