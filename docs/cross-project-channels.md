@@ -588,6 +588,26 @@ measured and points at the issues, and will carry the results once the dispositi
 settled and the rows are re-run against them. Row 16 is not held: it confirms behaviour
 that is staying as it is.
 
+**Configuration channels the documentation names that this catalog also missed** — from
+the same file-scope table in
+[claude-directory](https://code.claude.com/docs/en/claude-directory), which lists every
+file Claude Code reads and the scope it applies at. Rows 15–18 were *state* the catalog
+lacked; these are *configuration*, the group rows 5–9 cover. Each is documented as
+**"Project and global"**, so the global form reaches every project, and none appears in
+`profiles/claude.sh`:
+
+| # | Channel | Expected [T1](#t1) (native) | Expected [T2](#t2) (sandboxed) | Probe |
+|---|---|---|---|---|
+| 19 | `rules/*.md` — *"topic-scoped instructions, optionally path-gated"* | shared | **shared** — the `CLAUDE.md` channel under another name, unless the path gate narrows which *projects* rather than which *files* | real claude (auto-ingest) → #83 |
+| 20 | `output-styles/*.md` — *"custom instruction sets that adjust how Claude works"* | shared | **shared**; the question is whether one is loaded *automatically*, which is what separates a kind-(1) channel from one a user invokes | real claude → #84 |
+| 21 | `agents/*.md` — *"subagent definitions with their own prompt **and tools**"* | shared | **shared**, and an instruction channel *and* a capability channel at once: a definition naming its own tools may meet the permission gate rows 7–8 measured differently | real claude → #85 |
+| 22 | `workflows/*.js` — *"dynamic workflow scripts **written by Claude**… each file becomes a `/<name>` command"* | shared | **shared** — measure first | real claude → #86 |
+
+**Row 22 is the closest thing in this document to the study's stated target.** Every other
+channel is either data an agent writes and another reads, or code a *user* configured. A
+workflow is **code an agent writes** — JavaScript, in a directory every project shares,
+invocable as a command from any of them. Kind (1) by construction rather than by accident.
+
 Row 18's reachability is the easy half and the expected answer is the same for every
 path in it. The half worth measuring is the **content-bearing vs auxiliary** split this
 document calls a study output: each cell records the *documented description* of what
