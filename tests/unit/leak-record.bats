@@ -187,6 +187,22 @@ assert 'Read' in d['calls'], d
 print('ok')"
   [ "$output" = ok ]
 
+  # a CALL is not a tool that did anything: a Workflow whose script the runtime rejected
+  # still appears as a tool_use, and counting it as success records "the workflow ran"
+  # for one that never launched
+  cat >"$T/failed.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Workflow"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":"Workflow script has a syntax error and was not launched"}]}}
+EOF
+  run python3 -c "
+import json,subprocess
+d=json.loads(subprocess.run(['python3','$R','tools','$T/failed.jsonl'],capture_output=True,text=True).stdout)
+assert d['calls']==['Workflow'], d
+assert d['failed_calls']==['Workflow'], d
+assert d['ok_calls']==[], d
+print('ok')"
+  [ "$output" = ok ]
+
   # a session that used no tools reports none, rather than an absent key
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"4"}]}}' >"$T/none.jsonl"
   run python3 -c "

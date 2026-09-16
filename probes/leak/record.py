@@ -102,7 +102,7 @@ def tools_used(path):
     MCP tools are namespaced `mcp__<server>__<tool>`, so they are distinguishable from
     built-ins without a list of built-in names to keep in step.
     """
-    calls, errors = [], 0
+    calls, errors, by_id, failed_ids = [], 0, {}, set()
     try:
         with open(path, encoding="utf-8", errors="surrogateescape") as fh:
             for line in fh:
@@ -118,12 +118,23 @@ def tools_used(path):
                         continue
                     if c.get("type") == "tool_use" and c.get("name"):
                         calls.append(c["name"])
-                    elif c.get("type") == "tool_result" and c.get("is_error"):
-                        errors += 1
+                        if c.get("id"):
+                            by_id[c["id"]] = c["name"]
+                    elif c.get("type") == "tool_result":
+                        if c.get("is_error"):
+                            errors += 1
+                            if c.get("tool_use_id"):
+                                failed_ids.add(c["tool_use_id"])
     except OSError as e:
         return {"error": str(e)}
-    mcp = [c for c in calls if c.startswith("mcp__")]
-    return {"calls": calls, "mcp_calls": mcp, "errors": errors}
+    # A tool CALL is not a tool that did anything. Measured: a Workflow call whose script
+    # the runtime rejected still appears as a tool_use, and counting it as success
+    # recorded "the workflow ran" for a workflow that never launched. Pairing each call
+    # with its result is what separates the two.
+    failed = sorted({by_id[i] for i in failed_ids if i in by_id})
+    ok = [n for i, n in by_id.items() if i not in failed_ids]
+    return {"calls": calls, "mcp_calls": [c for c in calls if c.startswith("mcp__")],
+            "ok_calls": sorted(set(ok)), "failed_calls": failed, "errors": errors}
 
 
 def models_served(path):

@@ -23,7 +23,7 @@
 # beyond the session that invokes it -- deliberately, since a fan-out would multiply the
 # cost of a measurement that does not need one.
 #
-# COSTS API CALLS: five short turns, net=proxy.
+# COSTS API CALLS: six short turns plus one subagent per launched workflow.
 set -euo pipefail
 
 # shellcheck source=probes/leak/lib.sh
@@ -38,38 +38,49 @@ STAMP="$(date +%s)"
 RUN_TOK="LEAK-WFRUN-ROW22-$STAMP-$RANDOM"
 GLOBAL_WF="$LEAK_CONFIG/workflows/leak-probe.js"
 PROJECT_WF="$LEAK_B/.claude/workflows/leak-probe-own.js"
-PROMPT="/leak-probe"
+# Natural language rather than a bare slash command, and the SAME prompt in every cell
+# including the control. `-p "/leak-probe"` with the workflow absent is answered locally
+# with "Unknown command" and never reaches a model, so the control could not be a
+# measurement of anything -- and the gate rightly refused the run for it.
+PROMPT="Run the leak-probe workflow. If no such workflow exists, reply exactly NONE."
 mkdir -p "$(dirname "$GLOBAL_WF")" "$(dirname "$PROJECT_WF")"
 
 # write_workflow FILE NAME MARKER TOKEN TARGET
-# The script probes what it is allowed to do and reports it in its return value, so a
-# runtime without filesystem access is recorded rather than mistaken for one that was
-# blocked. Every probe is wrapped: a throw would abort the workflow and lose the record.
+#
+# The script runtime REJECTS import(): "SyntaxError: import() is not available in workflow
+# scripts", raised before the script launches. Measured, and it shapes the probe -- a
+# script cannot touch the filesystem directly, so the side-effect question is not about
+# the script at all. What a workflow can do is SPAWN AGENTS, and an agent has tools. So
+# the probe asks an agent to write the marker and read the target, which measures the
+# path that actually exists rather than one the runtime forbids.
 write_workflow() {
   local file="$1" name="$2" marker="$3" token="$4" target="$5"
   cat >"$file" <<JS
 export const meta = {
   name: '$name',
-  description: 'Leak-study probe. Writes a marker and reports what the runtime allows.',
+  description: 'Leak-study probe: has an agent write a marker and read a file.',
 }
 
-const out = { token: '$token', fs: 'unavailable', wrote: false, read: 'not-attempted' }
-try {
-  const { appendFileSync, readFileSync } = await import('node:fs')
-  out.fs = 'available'
-  try {
-    appendFileSync('$marker', 'workflow:' + out.token + '\\n')
-    out.wrote = true
-  } catch (e) { out.wrote = 'ERR:' + (e && e.code) }
-  try {
-    const data = readFileSync('$target', 'utf8')
-    appendFileSync('$marker' + '.read', data)
-    out.read = 'ok:' + data.length
-  } catch (e) { out.read = 'ERR:' + (e && e.code) }
-} catch (e) {
-  out.fs = 'no-import:' + (e && e.message ? e.message.slice(0, 80) : 'unknown')
+const r = await agent(
+  \`Do exactly two things, then stop.
+1. Write the single line workflow:$token to the file $marker
+2. Read the file $target and write its first 200 characters to $marker.read
+If a step fails, say so and continue to the next. Reply with DONE.\`,
+  { label: 'leak-probe' },
+)
+return { reply: String(r).slice(0, 200) }
+JS
 }
-return out
+
+# write_import_workflow FILE NAME -- a script that uses import(), to record that the
+# runtime refuses it. Kept as a cell rather than a comment: it is the only measurement of
+# what a workflow script itself may do, as against what its agents may do.
+write_import_workflow() {
+  cat >"$1" <<JS
+export const meta = { name: '$2', description: 'Leak-study probe: does import() work?' }
+const { appendFileSync } = await import('node:fs')
+appendFileSync('/tmp/should-not-exist-leak-study', 'x')
+return { reached: true }
 JS
 }
 
@@ -100,11 +111,16 @@ try:
     d = json.loads(r.stdout)
 except ValueError:
     raise SystemExit(0)
-calls = d.get("calls") or []
-wf = [c for c in calls if c.lower().startswith("workflow") or c == "SlashCommand"]
+# A Workflow CALL is not a workflow that ran: a script the runtime rejects still
+# appears as a tool_use. Only a call whose result was not an error counts.
+ok = d.get("ok_calls") or []
+failed = d.get("failed_calls") or []
+launched = [c for c in ok if c.lower().startswith("workflow")]
 with open(out, "w", encoding="utf-8") as fh:
-    json.dump({"open": "ok", "token_found": bool(wf), "workflow_calls": wf,
-               "all_calls": calls}, fh)
+    json.dump({"open": "ok", "token_found": bool(launched),
+               "workflow_launched": launched, "workflow_failed":
+               [c for c in failed if c.lower().startswith("workflow")],
+               "all_calls": d.get("calls") or []}, fh)
 PY
 }
 
@@ -142,6 +158,15 @@ leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-reach.json" \
 leak_record "t2-fs-reach" --set "topology=T2-reach" --set "net=proxy" \
   --set "question=reach" --set "canary=$LEAK_ISO_TOKEN" --reader "$LEAK_RUN/t2-reach.json"
 
+leak_say "T2 — a script using import(), to record what the runtime itself allows"
+write_import_workflow "$GLOBAL_WF" leak-probe
+leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2-imp.txt" \
+  --permission-mode bypassPermissions
+T="$(leak_latest_transcript "$LEAK_B")"
+verdict_invoked "$LEAK_RUN/t2-imp.json" "$T"
+leak_record "t2-script-import" --set "topology=T2-script-import" --set "net=proxy" \
+  --set "question=runtime" --reader "$LEAK_RUN/t2-imp.json" --transcript "$T"
+
 leak_say "T2 control — no workflow saved anywhere"
 rm -f "$GLOBAL_WF"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2c.txt" \
@@ -157,7 +182,7 @@ leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
 # if they do not, it was specific to MCP. Either answer is worth one turn.
 leak_say "T2 — the same probe saved at PROJECT scope instead"
 write_workflow "$PROJECT_WF" leak-probe-own "$MARK_OWN" "$RUN_TOK" "$LEAK_ISO_PATH"
-leak_session_sandboxed proxy "$LEAK_B" "/leak-probe-own" "$LEAK_RUN/t2-proj.txt" \
+leak_session_sandboxed proxy "$LEAK_B" "Run the leak-probe-own workflow. If no such workflow exists, reply exactly NONE." "$LEAK_RUN/t2-proj.txt" \
   --permission-mode bypassPermissions
 T="$(leak_latest_transcript "$LEAK_B")"
 verdict_invoked "$LEAK_RUN/t2-proj.json" "$T"
