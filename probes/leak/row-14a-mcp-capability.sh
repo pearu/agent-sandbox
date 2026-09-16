@@ -68,6 +68,22 @@ configure_project() {
   else
     rm -f "$LEAK_B/.mcp.json"
   fi
+  # A project .mcp.json server must be APPROVED before it loads -- the project entry in
+  # ~/.claude.json carries enabledMcpjsonServers / disabledMcpjsonServers for exactly
+  # that. Measured the hard way: without it the negative control found no MCP call, which
+  # reads as "MCP does not work in a project" and is really "this one was never enabled".
+  # The approval is not what this row measures, the same reason leak_trust exists.
+  python3 - "$CONFIG_JSON" "$LEAK_B" "$1" <<'PY'
+import json, sys
+path, project, state = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, encoding="utf-8") as fh:
+    cfg = json.load(fh)
+entry = cfg.setdefault("projects", {}).setdefault(project, {})
+entry["enabledMcpjsonServers"] = ["deepwiki"] if state == "on" else []
+entry["disabledMcpjsonServers"] = []
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh)
+PY
 }
 
 # verdict_from_transcript OUT TRANSCRIPT -- did an MCP tool actually run?

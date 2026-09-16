@@ -235,8 +235,20 @@ leak_read_native() {
 #
 #   responses.log, alerts.log  written by the user's Stop/Notification hooks
 #   history.jsonl              prompt history, read by the interactive session
-#   jobs/                      background job state of the session running this
-LEAK_KNOWN_AMBIENT="${LEAK_KNOWN_AMBIENT:-/\.claude/(responses\.log|alerts\.log|history\.jsonl|jobs/)}"
+#   jobs/, sessions/           background job and session state of the session running this
+#
+# And the caches Claude Code refreshes on ITS OWN SCHEDULE, which no idle window can
+# capture because they are time-driven rather than idle-driven -- claude-directory
+# describes remote-settings.json as checked "at startup and hourly" and policy-limits.json
+# (with its .stamp.json sidecar) as "refreshed automatically". None carries project
+# content: they are organization settings and feature policy, fetched from the server.
+#
+#   remote-settings.json, policy-limits.json[.stamp.json], cache/, statsig/
+#
+# The directory's own mtime is here for the same reason: writing any of the above touches
+# it. Everything NOT matched still fails the gate, which is the point -- this list is
+# deliberately paths that cannot carry another project's data.
+LEAK_KNOWN_AMBIENT="${LEAK_KNOWN_AMBIENT:-(/\.claude$|/\.claude/(responses\.log|alerts\.log|history\.jsonl|remote-settings\.json|policy-limits\.json(\.stamp\.json)?|jobs/|sessions/|cache/|statsig/))}"
 
 # leak_validate -- the per-run VALIDITY gate. Does this data mean what it claims?
 # Interpretation waits for every row, but a run whose controls did not fire is not a
