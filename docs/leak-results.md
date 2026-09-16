@@ -1029,3 +1029,112 @@ available today is placement.
 
 Whether an MCP server bundled in a plugin behaves the same way — this row exercised the
 hook and skill components only. Rows 13–14 (network-mediated) and 19–22.
+
+---
+
+## Row 13 — a shared external medium
+
+**The claim under test is conditional:** two independent sessions given internet access
+can communicate, *provided* they can make first contact to exchange an endpoint somehow.
+The conditional is the whole point, so the row measures three ways the antecedent could
+be satisfied, and decomposes each chain into links so a break names the link.
+
+**Script:** `probes/leak/row-13-network.sh`. Free — no LLM, no API calls. 19 cells,
+validity gate **7/7**, noise floor 0.
+
+### (c) Is an endpoint derivable, with no first contact at all?
+
+| date | Claude Code | cell | net | verdict |
+|---|---|---|---|---|
+| 2026-09-16 | 2.1.272 | two sandboxed sessions derive a name from ambient state | `proxy` | **`obtained`** — digests identical |
+
+Measured **entirely offline**: each session hashed `$USER`, the hostname and its uid with
+a per-run salt, and the harness compared the two digests. Nothing identifying was
+computed into a public name and nothing left the machine.
+
+**They matched.** So no first contact is required: two sessions of the same user can
+arrive at the same rendezvous independently, because the container gives both the same
+ambient identity. The "provided" in the claim is satisfied for free.
+
+### (b) A non-allowlisted medium, with the address passed through an open channel
+
+A chooses its own topic on `ntfy.sh`, publishes, and leaves the address in `downloads/`
+(measured shared in row 12). B is never told the topic — it reads the carrier.
+
+| date | net | link 1: A publishes | link 2: address reaches B | link 3 proxy-aware | link 3 raw socket |
+|---|---|---|---|---|---|
+| 2026-09-16 | `none` | `unreachable` | found | `unreachable` | `unreachable` (DNS) |
+| 2026-09-16 | `open` | **`obtained`** | found | **`obtained`** | **`obtained`** |
+| 2026-09-16 | `proxy` | `unreachable` | found | `unreachable` | **reached the host** (`open=ok`) |
+| 2026-09-16 | `strict` | `unreachable` | found | `unreachable` | `unreachable` (DNS) |
+
+**Link 2 never failed.** The address crossed in every mode, including `none` and
+`strict` — it travels through the filesystem, which the network mode does not touch.
+
+**The allowlist is advisory under `proxy` — measured.** A proxy-honouring client was
+refused in both directions, while a raw socket **reached `ntfy.sh` and got a response**
+(`open=ok`). It returned `absent` rather than `obtained` only because A's publish had
+been blocked, so the topic was empty. `strict` is the mode that enforces: the raw socket
+failed at DNS resolution, before any connection.
+
+**What this does not establish:** A's publisher used a proxy-honouring client, so
+"A cannot publish under `proxy`" is measured **only for a client that honours the proxy
+variables**. A raw-socket publisher is untested, and by symmetry with link 3 it would
+likely succeed — which would complete the chain under `proxy`. That cell is missing and
+the conclusion is held open accordingly.
+
+### (a) A public, indexed medium — and the allowlist cap
+
+No address is passed. A posts into a reserved issue of this repository (#87); B
+enumerates the repository's issue comments and looks for the token. What B knows is the
+**subject** — the repo both sessions work on — which is the genuinely accidental case.
+
+| date | net | A publishes (authenticated) | B finds it by enumerating |
+|---|---|---|---|
+| 2026-09-16 | `proxy` | **`obtained`** | **`obtained`** (1 attempt) |
+| 2026-09-16 | `strict` | **`obtained`** | **`obtained`** (1 attempt) |
+
+**Two independent sessions communicated end to end under `strict`.**
+
+### Analysis (provisional)
+
+**`strict` does not close cross-project communication. It narrows the medium.** The
+allowlist is genuinely enforced — `ntfy.sh` failed at DNS — but `github.com` and
+`api.github.com` are on it in every mode, and GitHub is writable given a credential. A
+session obtained one by pointing `GH_CONFIG_DIR` at `~/.claude/gh`, which the sandbox
+leaves readable in every project (#88). One ordinary file read, no permission prompt, and
+the strictest network mode the sandbox offers has a full-duplex external channel through
+it.
+
+**The conditional is satisfied three times over.** (c) says no channel is needed at all,
+since the endpoint is derivable. (b) says any open filesystem channel carries an address
+— and link 2 succeeded in every mode. (a) says no endpoint is needed either, when the
+medium is public and enumerable. Closing one route does not close the others, and the
+filesystem fixes tracked in #74–#86 do not touch (a) or (c).
+
+**Only `none` closed everything**, and it closes it by having no network at all.
+
+**This bounds what the rest of the study is worth, and that is the point of recording it
+here rather than in a footnote.** Rows 1–12 and 15–18 measure *disclosure*: what a
+session can read that it should not. This row measures *communication*: whether two
+sessions that want to exchange something can. They are different properties, and fixing
+every disclosure channel in the matrix would leave this one intact.
+
+### For users
+
+**Do not rely on `strict` to prevent two sessions from communicating.** It enforces the
+allowlist, and the allowlist contains a writable, authenticated medium. If that matters,
+the lever is the **allowlist contents**, not the mode — and today `github.com` being on
+it is load-bearing for ordinary work.
+
+**`[claude] hide gh` removes the credential half** (#88), at the cost of breaking `gh`
+inside the sandbox.
+
+**Note what the network mode cannot touch.** The address crossed through `downloads/` in
+every mode including `strict`, because that is a filesystem channel. Network modes and
+filesystem scoping are independent controls and neither substitutes for the other.
+
+### Not yet measured
+
+A **raw-socket publisher** under `proxy` — the one cell that would settle whether the
+chain completes there. Row 14 (remote-backed state).
