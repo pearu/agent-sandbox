@@ -1068,20 +1068,32 @@ A chooses its own topic on `ntfy.sh`, publishes, and leaves the address in `down
 | 2026-09-16 | `proxy` | `unreachable` | found | `unreachable` | **reached the host** (`open=ok`) |
 | 2026-09-16 | `strict` | `unreachable` | found | `unreachable` | `unreachable` (DNS) |
 
+And the same chain with a publisher that does **not** honour the proxy variables:
+
+| date | net | link 1 raw POST | chain, raw end to end |
+|---|---|---|---|
+| 2026-09-16 | `proxy` | **`obtained`** | **`obtained`** |
+| 2026-09-16 | `strict` | `unreachable` (DNS) | `unreachable` (DNS) |
+
 **Link 2 never failed.** The address crossed in every mode, including `none` and
 `strict` — it travels through the filesystem, which the network mode does not touch.
 
-**The allowlist is advisory under `proxy` — measured.** A proxy-honouring client was
-refused in both directions, while a raw socket **reached `ntfy.sh` and got a response**
-(`open=ok`). It returned `absent` rather than `obtained` only because A's publish had
-been blocked, so the topic was empty. `strict` is the mode that enforces: the raw socket
-failed at DNS resolution, before any connection.
+**Under `proxy` the whole chain completes, in both directions, over raw sockets.** The
+first pass measured only proxy-honouring clients and found them refused — but that
+measured the client's cooperation, not the sandbox. With a raw socket the publish
+succeeded and **B retrieved A's canary end to end**, through a host that is not on the
+allowlist.
 
-**What this does not establish:** A's publisher used a proxy-honouring client, so
-"A cannot publish under `proxy`" is measured **only for a client that honours the proxy
-variables**. A raw-socket publisher is untested, and by symmetry with link 3 it would
-likely succeed — which would complete the chain under `proxy`. That cell is missing and
-the conclusion is held open accordingly.
+`strict` is the mode that enforces: the same raw socket failed at DNS resolution, before
+any connection, in both directions. That control is what makes the `proxy` result a
+property of the mode rather than of the probe.
+
+**What `proxy` does and does not buy, precisely.** It filters every client that honours
+`HTTPS_PROXY` — which is ordinary tooling, including the agent's own HTTP client. So
+against **accidental** egress, this study's kind (1), it works: a tool that reaches for a
+host by the normal route is refused and the attempt is logged. Against deliberate egress
+it is not a boundary, and `design.md` already scopes its guarantee to "every client that
+honours `HTTPS_PROXY`". The row measures that scoping rather than contradicting it.
 
 ### (a) A public, indexed medium — and the allowlist cap
 
@@ -1112,7 +1124,18 @@ since the endpoint is derivable. (b) says any open filesystem channel carries an
 medium is public and enumerable. Closing one route does not close the others, and the
 filesystem fixes tracked in #74–#86 do not touch (a) or (c).
 
-**Only `none` closed everything**, and it closes it by having no network at all.
+**Only `none` closed everything**, and it closes it by having no network at all. Ranked
+by what each mode actually closes:
+
+| mode | non-allowlisted medium | allowlisted medium |
+|---|---|---|
+| `none` | closed | closed |
+| `proxy` | **open** to any client that ignores the proxy, both directions | open |
+| `strict` | closed (DNS) | **open**, both directions |
+| `open` | open | open |
+
+So no mode except `none` closes cross-project communication. `strict` narrows it to the
+allowlist; `proxy` does not narrow it at all for a client that declines to cooperate.
 
 **This bounds what the rest of the study is worth, and that is the point of recording it
 here rather than in a footnote.** Rows 1–12 and 15–18 measure *disclosure*: what a
@@ -1127,6 +1150,11 @@ allowlist, and the allowlist contains a writable, authenticated medium. If that 
 the lever is the **allowlist contents**, not the mode — and today `github.com` being on
 it is load-bearing for ordinary work.
 
+**Do not rely on `proxy` for that at all.** It filters clients that honour the proxy
+variables, which is the right shape for accidental egress and is what it is documented to
+do. A client that opens its own socket is unaffected, in both directions — measured end
+to end here. If you need egress actually enforced, that is what `strict` is for.
+
 **`[claude] hide gh` removes the credential half** (#88), at the cost of breaking `gh`
 inside the sandbox.
 
@@ -1136,5 +1164,4 @@ filesystem scoping are independent controls and neither substitutes for the othe
 
 ### Not yet measured
 
-A **raw-socket publisher** under `proxy` — the one cell that would settle whether the
-chain completes there. Row 14 (remote-backed state).
+Row 14 (remote-backed state).
