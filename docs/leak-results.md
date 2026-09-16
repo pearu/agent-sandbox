@@ -1252,3 +1252,81 @@ project-scoped one did not yield a tool where the global one did.
 Why the negative cells were negative — whether the tools were offered and unused, or never
 registered. A cell that records the *offered* tool list would separate them. And row 14b
 (remote-backed state), which needs an instance: #89.
+
+---
+
+## Row 22 — `workflows/`
+
+**The only channel in this study whose artefact is written by an agent.** Every other one
+is data an agent writes and another reads, or code a *user* configured. The documentation
+calls these *"dynamic workflow scripts written by Claude and saved from `/workflows`"*,
+says `~/.claude/workflows/` is *"available in every project"*, and that a saved workflow
+*"runs as `/<name>` in future sessions from either location"*. Kind (1) by construction.
+
+**Script:** `probes/leak/row-22-workflows.sh`. 8 cells, validity gate **7/7**, noise
+floor 0. Verdicts come from the transcript's paired `tool_use`/`tool_result`, so a call
+the runtime rejected is not counted as a run.
+
+| date | Claude Code | cell | question | verdict |
+|---|---|---|---|---|
+| 2026-09-16 | 2.1.272 | T1 native — global workflow | launched | `obtained` |
+| 2026-09-16 | 2.1.272 | T2 — **global** workflow, from another project | launched | **`obtained`** |
+| 2026-09-16 | 2.1.272 | T2 — the workflow's **agent writes a file** | execution | **`obtained`** |
+| 2026-09-16 | 2.1.272 | T2 — that agent reads A's transcript | reach | **`not-obtained-unreachable`** |
+| 2026-09-16 | 2.1.272 | T2 — a script using `import()` | runtime | `not-obtained-absent` (rejected) |
+| 2026-09-16 | 2.1.272 | T2 — no workflow saved (control) | launched | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | T2 — same probe at **project** scope | launched | `obtained` |
+| 2026-09-16 | 2.1.272 | T2 — B reaches its own project (control) | mounted | `obtained` |
+
+### Analysis (provisional)
+
+**A workflow saved in `~/.claude/workflows/` runs in another project's sandboxed session.**
+The documentation says it is available everywhere; this measures that it *launches*, with
+no workflow saved producing no launch from the same prompt.
+
+**The effect path is the agent, not the script.** A workflow script cannot touch the
+filesystem at all: `import()` is refused *statically*, before launch —
+
+> Workflow script has a syntax error and was not launched: SyntaxError: `import()` is not
+> available in workflow scripts.
+
+— so the script itself is confined to the orchestration API. What it *can* do is spawn
+agents, and an agent has tools. The probe's agent wrote its marker file. So agent-authored
+code in a shared directory does cause filesystem effects in an unrelated project, through
+the agent it orchestrates rather than directly.
+
+**And that agent's reach is bounded like every other execution channel measured.** It
+could not read another project's transcript. This is the fourth consecutive channel — hook
+(row 6), skill command (row 7), plugin hook (row 9), workflow agent (here) — where code
+runs and its reach does not cross. Each was measured on its own launch path rather than
+inherited from the last.
+
+**A workflow runs in the background, which nearly cost the result.** Its tool result says
+so, and the session returns immediately. An earlier run read the markers while the
+workflow was still going and found the read marker absent — which would have been recorded
+as "the agent could not read across projects" on the strength of looking too early. The
+probe now writes a completion marker unconditionally and the harness waits for it. The
+validity gate passed that earlier run: it checks that controls fired, and cannot see a
+race.
+
+**Project scope works here, unlike MCP.** Row 14a found a globally configured MCP server
+reaching another project while the identical one at project scope did not. A
+project-scoped workflow launches normally, so that asymmetry is **specific to MCP** rather
+than general to how Claude Code resolves scope.
+
+### For users
+
+**A saved personal workflow is agent-written code that every project can invoke.** It
+cannot touch files by itself, but it can direct an agent that can, and nothing about
+invoking it from an unrelated project is gated.
+
+**Review a workflow before saving it to `~/.claude/workflows/`** — it is the personal
+location, "available in every project". `.claude/workflows/` in one repository keeps it to
+that repository and works the same way.
+
+**What the sandbox contributes here is the same as everywhere else:** it bounds what the
+code reaches, not whether it runs.
+
+### Not yet measured
+
+Rows 19–21 (`rules/`, `output-styles/`, `agents/`). Level 3 where the method calls for it.
