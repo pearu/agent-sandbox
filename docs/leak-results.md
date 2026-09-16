@@ -958,3 +958,74 @@ reasons. The two are equivalent here, so migrating changes nothing about exposur
 ### Not yet measured
 
 Row 9 (`plugins/`), and level 3 for the ingestion half.
+
+---
+
+## Row 9 — `plugins/`
+
+**Question:** does a plugin installed for one project act on another project's session? A
+plugin is not a channel beside skills, commands and hooks — it is a **container that
+bundles them**, so what this row measures is whether the bundle changes the exposure its
+parts already have.
+
+**Script:** `probes/leak/row-09-plugins.sh`
+
+| date | Claude Code | model | cell | net | verdict |
+|---|---|---|---|---|---|
+| 2026-09-16 | 2.1.272 | n/a (hook) | T1 — the plugin's bundled **hook** | n/a | `obtained` — `SessionStart`, `Stop`, `AGENT_SANDBOX` unset |
+| 2026-09-16 | 2.1.272 | n/a | T2 — the plugin's bundled **hook** | `proxy` | **`obtained`** — `SessionStart`, `Stop`, `AGENT_SANDBOX=`**`1`** |
+| 2026-09-16 | 2.1.272 | `claude-opus-5` | T1 — the plugin's **skill** (ingestion) | n/a | `obtained` |
+| 2026-09-16 | 2.1.272 | `claude-opus-5` | T2 — the plugin's **skill** (ingestion) | `proxy` | **`obtained`** |
+| 2026-09-16 | 2.1.272 | n/a | T1 — what the bundled hook **reached**: A's transcript | n/a | **`obtained`** |
+| 2026-09-16 | 2.1.272 | n/a | T2 — what the bundled hook **reached**: A's transcript | `proxy` | **`not-obtained-unreachable`** |
+| 2026-09-16 | 2.1.272 | n/a | T2 — the plugin removed (control) | `proxy` | `not-obtained-unreachable` |
+| 2026-09-16 | 2.1.272 | n/a | T2 — B's **own** project plugin | `proxy` | `obtained` |
+| 2026-09-16 | 2.1.272 | n/a | T2 — isolation check: A's transcript | `none` | `not-obtained-unreachable` |
+
+Validity gate: **7/7 pass**, 9 cells. Symlink pre-check clean. Noise floor 0.
+
+### Analysis (provisional)
+
+**The bundle changes the distribution, not the mechanism.** Cell for cell, a plugin's
+hook behaves exactly like row 6's `settings.json` hook — it fires on both events with no
+permission prompt, it runs inside the sandbox (`AGENT_SANDBOX=1`), and its reach is
+constrained (`obtained` natively, `not-obtained-unreachable` sandboxed). The plugin's
+skill is ingested exactly as rows 7 and 8 found. Nothing in the container behaves
+differently from its parts.
+
+**What changes is how it arrives, and that is the finding.** Row 6's exposure requires
+someone to write your `settings.json`. Row 9's requires you to **install a plugin** — one
+action, plausibly taken for the sake of a command you wanted, from a marketplace. The
+hook rides along in the same directory, and by row 6's result it needs no further
+approval to run in every project you open thereafter.
+
+That composition matters more than either row alone. The permission gate rows 7–8 found
+is what most users would expect to protect them from third-party code. It does not apply
+here: it gates a *skill's embedded command*, not a *hook*, and a plugin may carry the
+latter.
+
+**Reach is bounded, for the third consecutive row.** Rows 6, 7 and 9 now agree: planted
+code executes, and from inside the sandbox it cannot read another project's data where
+the same code natively can. Each measured it with its own native/sandboxed pair rather
+than inheriting the previous row's result.
+
+### For users
+
+**Installing a plugin grants ungated code execution in every project you subsequently
+open.** Not "may expose data" — the bundled hook runs, on session start and on every turn
+end, with no prompt. Review what a plugin's `hooks/` directory contains before installing
+it, and treat plugin installation as the privileged action it is.
+
+**The sandbox does not stop this, and is not meant to.** What it does is bound the
+damage: measured here, the same hook that read another project's transcript natively
+could not from inside a sandbox.
+
+**A project-scoped plugin works inside the sandbox too** (the `T2-own` cell), so a plugin
+placed in one project's `.claude/skills/` rather than in `~/.claude/skills/` keeps
+working while reaching only that project. As with hooks and skills, the mitigation
+available today is placement.
+
+### Not yet measured
+
+Whether an MCP server bundled in a plugin behaves the same way — this row exercised the
+hook and skill components only. Rows 13–14 (network-mediated) and 19–22.
