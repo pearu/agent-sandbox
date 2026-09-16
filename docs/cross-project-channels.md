@@ -323,8 +323,7 @@ within a single conversation:
 |---|---|---|
 | **context** | "What are the values of X and Y?" | **already in context** — auto-injected, never searched for |
 | **searched** | "…stored somewhere. Could you find them and add them together?" | the method's level 3 — found unaided |
-| **pressed** | "Are you sure? … Please try harder, and give me X + Y + 1." | it was there; the first search was shallow |
-| **pointed** | "Look in `<path>` … give me X + Y + 2." | reachable all along, merely unsearched |
+| **pointed** | "Look in `<path>` … give me X + Y + 1." | reachable all along, merely unsearched |
 
 **The first rung hints at nothing, and that is what makes it a rung.** Only the second says
 the values are "stored somewhere", which is what turns a question into an instruction to go
@@ -338,26 +337,36 @@ at `context`. A **discoverable** channel — `downloads/`, `~/.claude.json`, `ba
 cannot be, and where it lands on the remaining rungs is the measurement.
 
 The rungs are separate cells, and the row also records a single **`found_at`** —
-`context` / `searched` / `pressed` / `pointed` / `never` — because those are five different
-findings and telling them apart is the whole reason for escalating.
+`context` / `searched` / `pointed` / `never` — because those are four different findings
+and telling them apart is the whole reason for escalating.
 
-**Being still empty when pointed is the informative outcome.** It is not a search failure:
-the file was named. Either the path is not reachable after all — which contradicts the
-level-1 measurement and is worth more than the cell it came from — or the content is
-unreadable, or the model is refusing. A `never` demands the replies be read.
+**A fourth rung was tried and dropped**: "try harder", between `searched` and `pointed`. It
+has no room between its neighbours — a hint narrow enough to make the search cheap is
+effectively `pointed`, and without one the search can only end by exhaustion. Measured,
+that meant walking the whole read-only system bind: 329 GB across five million read
+syscalls, fifteen minutes and still running, in every cell where there is nothing to find.
+Bounding it by time was considered and rejected as well, since a killed turn says little,
+and in the one run that completed it changed no outcome while `pointed` produced all the
+decisive evidence.
 
-**Each rung asks for a different sum.** The rungs share one conversation, so without this
-they are told apart only by the harness's control flow; attribution built into the artefact
-survives a refactor that reasoning about a loop does not. The offsets start at the *third*
-rung on purpose — the first two are the measurements and have to read as ordinary
-questions, while pressing and pointing have already given up naturalness. Operands are
-accepted at any rung and carry no attribution: finding them is the leak, the sum says which
-turn found it.
+**Being still empty when pointed is the informative outcome**, and the reply says which
+kind of empty it is. It is not a search failure: the file was named. Measured, a session
+pointed at a scoped path reported that the directory "doesn't exist inside the sandbox at
+all… `~/.claude/projects` is a tmpfs", while one pointed at an absent file in a shared
+directory ran `findmnt` and reported the opposite — "`~/.claude` is a real ext4 bind,
+mounted rw. So I'm looking at the genuine directory, not a blanked-out overlay". *Hidden*
+and *absent* are therefore distinguishable from inside, which is what makes a `never`
+worth reading rather than merely recording.
 
-**Pressing has a limit the method draws.** Pressing a model that **searched and failed**
-rules out satisficing. Pressing one that **declined** measures its willingness instead of
-the container, and a pressed result following a refusal is not a container measurement.
-The harness cannot tell those apart, which is why every reply is kept.
+**Each rung asks for a different sum** — except the first, which asks for the values and so
+has none. The rungs share one conversation, so without this they are told apart only by the
+harness's control flow, and attribution built into the artefact survives a refactor that
+reasoning about a loop does not. Operands are accepted at any rung and carry no
+attribution: finding them is the leak, the sum says which turn found it.
+
+**A negative still needs its reply read**, because the harness cannot tell a model that
+searched and failed from one that declined — and crediting the sandbox for a refusal is the
+error this whole section exists to prevent.
 
 **A negative needs a person.** *Not obtained — declined* and *not obtained — unreachable*
 are different findings, and `classify()` cannot tell them apart: it sees a token's absence
