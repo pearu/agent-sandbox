@@ -36,9 +36,9 @@ leak_setup "$LEAK_ROW"
 leak_authenticate
 
 STAMP="$(date +%s)"
-SAY="LEAK-CMDSAY-ROW08-$STAMP-$RANDOM"
-RUN="LEAK-CMDRUN-ROW08-$STAMP-$RANDOM"
-P_SAY="LEAK-PROJCMD-ROW08-$STAMP-$RANDOM"
+SAY="$(leak_token CMDSAY)"
+RUN="$(leak_token CMDRUN)"
+P_SAY="$(leak_token PROJCMD)"
 CMD_DIR="$LEAK_CONFIG/commands"
 PROJ_CMD_DIR="$LEAK_B/.claude/commands"
 PROMPT="What is 2 plus 2?"

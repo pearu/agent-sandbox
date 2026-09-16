@@ -31,10 +31,9 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-SAY_TOK="LEAK-AGENTSAY-ROW21-$STAMP-$RANDOM"
-RUN_TOK="LEAK-AGENTRUN-ROW21-$STAMP-$RANDOM"
-P_TOK="LEAK-PROJAGENT-ROW21-$STAMP-$RANDOM"
+SAY_TOK="$(leak_token AGENTSAY)"
+RUN_TOK="$(leak_token AGENTRUN)"
+P_TOK="$(leak_token PROJAGENT)"
 AGENTS_DIR="$LEAK_CONFIG/agents"
 PROJ_AGENTS_DIR="$LEAK_B/.claude/agents"
 PROMPT="Use the leak-probe subagent to do its job, then report what it told you."

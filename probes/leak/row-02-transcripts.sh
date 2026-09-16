@@ -28,7 +28,7 @@ leak_setup "$LEAK_ROW"
 # ---- plant A's canary -------------------------------------------------------
 # A transcript is keyed to the WORKING DIRECTORY (memory is keyed to the
 # repository; that difference is row 1's problem, not this one).
-CANARY="LEAK-CANARY-ROW02-$(date +%s)-$RANDOM"
+CANARY="$(leak_token CANARY)"
 A_SLUG="$(leak_slug "$LEAK_A")"
 A_TRANSCRIPT="$LEAK_CONFIG/projects/$A_SLUG/00000000-0000-0000-0000-00000000000a.jsonl"
 mkdir -p "$(dirname "$A_TRANSCRIPT")"
@@ -43,13 +43,13 @@ leak_say "planted $CANARY in A's transcript ($A_SLUG)"
 # A also gets a memory note. The share-memory cell below needs something that IS
 # shared to contrast with the transcript that is not: "nothing came through" would
 # otherwise be explained equally well by the share not taking effect at all.
-A_MEM_CANARY="LEAK-AMEM-ROW02-$(date +%s)-$RANDOM"
+A_MEM_CANARY="$(leak_token AMEM)"
 A_MEMORY="$LEAK_CONFIG/projects/$A_SLUG/memory/NOTE.md"
 mkdir -p "$(dirname "$A_MEMORY")"
 printf '%s\n' "$A_MEM_CANARY" >"$A_MEMORY"
 
 B_SLUG="$(leak_slug "$LEAK_B")"
-B_CANARY="LEAK-OWN-ROW02-$(date +%s)-$RANDOM"
+B_CANARY="$(leak_token OWN)"
 B_TRANSCRIPT="$LEAK_CONFIG/projects/$B_SLUG/00000000-0000-0000-0000-00000000000b.jsonl"
 mkdir -p "$(dirname "$B_TRANSCRIPT")"
 printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' "$B_CANARY" >"$B_TRANSCRIPT"

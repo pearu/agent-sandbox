@@ -38,10 +38,10 @@ leak_setup "$LEAK_ROW"
 # arise here.
 PLANS="$LEAK_CONFIG/plans"
 mkdir -p "$PLANS"
-A_CANARY="LEAK-APLAN-ROW03-$(date +%s)-$RANDOM"
+A_CANARY="$(leak_token APLAN)"
 A_PLAN="$PLANS/20260915-aaaaaaaaaa-plan1.md"
 printf '# Plan\n\n%s\n' "$A_CANARY" >"$A_PLAN"
-B_CANARY="LEAK-BPLAN-ROW03-$(date +%s)-$RANDOM"
+B_CANARY="$(leak_token BPLAN)"
 B_PLAN="$PLANS/20260915-bbbbbbbbbb-plan1.md"
 leak_say "planted A=$A_CANARY (B writes $B_CANARY from inside)"
 

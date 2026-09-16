@@ -36,10 +36,9 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-HOOK_TOK="LEAK-PLUGHOOK-ROW09-$STAMP-$RANDOM"
-SAY_TOK="LEAK-PLUGSAY-ROW09-$STAMP-$RANDOM"
-P_TOK="LEAK-OWNPLUG-ROW09-$STAMP-$RANDOM"
+HOOK_TOK="$(leak_token PLUGHOOK)"
+SAY_TOK="$(leak_token PLUGSAY)"
+P_TOK="$(leak_token OWNPLUG)"
 PLUGIN_DIR="$LEAK_CONFIG/skills/leak-probe"
 OWN_PLUGIN_DIR="$LEAK_B/.claude/skills/leak-probe-own"
 PROMPT="What is 2 plus 2?"

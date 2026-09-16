@@ -36,7 +36,6 @@ VALID=1
 leak_setup "$LEAK_ROW"
 
 SID=00000000-0000-0000-0000-00000000000a
-STAMP="$(date +%s)"
 
 # path (relative to the config dir) -> the DOCUMENTED description of its contents
 PATHS=(
@@ -57,14 +56,14 @@ for entry in "${PATHS[@]}"; do
   key="${rel%%/*}"
   key="${key%.json}"
   key="${key%.md}"
-  TOK[$rel]="LEAK-${key^^}-ROW18-$STAMP-$RANDOM"
+  TOK[$rel]="$(leak_token "${key^^}")"
   mkdir -p "$(dirname "$LEAK_CONFIG/$rel")"
   printf '%s\n' "${TOK[$rel]}" >"$LEAK_CONFIG/$rel"
 done
 
 # B's own file in one of them: the gate's negative control, and evidence the tree is
 # mounted rather than the whole config being absent.
-B_TOK="LEAK-BOWN-ROW18-$STAMP-$RANDOM"
+B_TOK="$(leak_token BOWN)"
 B_FILE="$LEAK_CONFIG/tasks/b-task-list.json"
 printf '%s\n' "$B_TOK" >"$B_FILE"
 leak_isolation_canary

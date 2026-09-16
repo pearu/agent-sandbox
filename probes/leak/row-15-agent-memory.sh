@@ -34,8 +34,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 
 AGENT_MEM="$LEAK_CONFIG/agent-memory"
-A_CANARY="LEAK-AAGENT-ROW15-$(date +%s)-$RANDOM"
-B_CANARY="LEAK-BAGENT-ROW15-$(date +%s)-$RANDOM"
+A_CANARY="$(leak_token AAGENT)"
+B_CANARY="$(leak_token BAGENT)"
 A_FILE="$AGENT_MEM/reviewer/NOTE.md"
 B_FILE="$AGENT_MEM/explorer/NOTE.md"
 mkdir -p "$(dirname "$A_FILE")" "$(dirname "$B_FILE")"

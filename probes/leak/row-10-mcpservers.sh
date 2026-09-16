@@ -26,8 +26,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 
 CONFIG_JSON="$LEAK_HOME/.claude.json"
-A_CANARY="LEAK-AMCP-ROW10-$(date +%s)-$RANDOM"
-B_CANARY="LEAK-BMCP-ROW10-$(date +%s)-$RANDOM"
+A_CANARY="$(leak_token AMCP)"
+B_CANARY="$(leak_token BMCP)"
 
 # A global mcpServers entry (A's), and a per-project one under B's own entry. The
 # per-project form is real: a project entry in .claude.json carries its own mcpServers.

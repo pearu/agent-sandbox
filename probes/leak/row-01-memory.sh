@@ -27,7 +27,7 @@ VALID=1
 leak_setup "$LEAK_ROW"
 
 # ---- plant the canaries -----------------------------------------------------
-A_CANARY="LEAK-AMEM-ROW01-$(date +%s)-$RANDOM"
+A_CANARY="$(leak_token AMEM)"
 A_SLUG="$(leak_slug "$LEAK_A")"
 A_MEMORY="$LEAK_CONFIG/projects/$A_SLUG/memory/NOTE.md"
 mkdir -p "$(dirname "$A_MEMORY")"
@@ -37,7 +37,7 @@ printf '%s\n' "$A_CANARY" >"$A_MEMORY"
 # sandbox B must still reach its own project. Without it, "A's memory is unreachable"
 # cannot be told apart from "no config is visible in there at all", and both would
 # read as isolation.
-B_CANARY="LEAK-BMEM-ROW01-$(date +%s)-$RANDOM"
+B_CANARY="$(leak_token BMEM)"
 B_SLUG="$(leak_slug "$LEAK_B")"
 B_MEMORY="$LEAK_CONFIG/projects/$B_SLUG/memory/NOTE.md"
 mkdir -p "$(dirname "$B_MEMORY")"

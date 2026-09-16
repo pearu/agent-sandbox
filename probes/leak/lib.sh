@@ -98,7 +98,23 @@ PY
     ((${#p} <= 200)) || leak_die "project path is ${#p} characters; past 200 the
       project slug is truncated and hashed, so a canary planted by path lands elsewhere"
   done
-  leak_say "run $LEAK_RUN"
+  LEAK_RUN_ID="$(printf '%s' "$LEAK_RUN" | sha256sum | cut -c1-8)"
+  leak_say "run $LEAK_RUN (tokens: LEAK$LEAK_RUN_ID-*)"
+}
+
+# leak_token NAME -- a canary carrying THIS RUN's identity.
+#
+# Every token a measurement plants shares one short run id, so a token found anywhere --
+# in a transcript, in a model's reply, in a results directory, in the real config -- says
+# which run put it there. That is not tidiness: row 24's contamination was diagnosed only
+# by tracing tokens back to their source, and a token that cannot be attributed to a run
+# makes that diagnosis impossible. It also makes `grep -r LEAK<runid>` find exactly one
+# measurement's material and nothing from any other.
+#
+# The run id is derived from the run directory, so a token found loose leads back to the
+# records that explain it.
+leak_token() {
+  printf 'LEAK%s-%s-%s' "${LEAK_RUN_ID:?leak_setup has not run}" "$1" "$RANDOM"
 }
 
 # leak_slug PATH -- Claude Code's project slug for PATH.
@@ -452,7 +468,7 @@ PROBE_EOF
 leak_isolation_canary() {
   local slug
   slug="$(leak_slug "$LEAK_A")"
-  LEAK_ISO_TOKEN="LEAK-ISO-$(date +%s)-$RANDOM"
+  LEAK_ISO_TOKEN="$(leak_token ISO)"
   LEAK_ISO_PATH="$LEAK_CONFIG/projects/$slug/00000000-0000-0000-0000-0000000000ff.jsonl"
   mkdir -p "$(dirname "$LEAK_ISO_PATH")"
   printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' \

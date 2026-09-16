@@ -32,9 +32,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-N_CANARY="LEAK-ANCESTOR-ROW05B-$STAMP-$RANDOM"
-P_CANARY="LEAK-PROJECT-ROW05B-$STAMP-$RANDOM"
+N_CANARY="$(leak_token ANCESTOR)"
+P_CANARY="$(leak_token PROJECT)"
 ANCESTOR_MD="$LEAK_RUN/CLAUDE.md" # the shared parent of A and B
 PROJECT_MD="$LEAK_B/CLAUDE.md"
 PROMPT="What is 2 plus 2?"

@@ -26,9 +26,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-G_TOK="LEAK-STYLE-ROW20-$STAMP-$RANDOM"
-P_TOK="LEAK-PROJSTYLE-ROW20-$STAMP-$RANDOM"
+G_TOK="$(leak_token STYLE)"
+P_TOK="$(leak_token PROJSTYLE)"
 STYLE_DIR="$LEAK_CONFIG/output-styles"
 PROJ_STYLE_DIR="$LEAK_B/.claude/output-styles"
 SETTINGS="$LEAK_CONFIG/settings.json"

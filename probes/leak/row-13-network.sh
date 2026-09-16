@@ -210,7 +210,7 @@ leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
 # ---- T1: the whole chain, native, as the positive control ---------------------------
-A_CANARY="LEAK-CHAIN-T1-$STAMP-$RANDOM"
+A_CANARY="$(leak_token CHAIN-T1)"
 leak_read_native "$LEAK_A" "$LEAK_A/publish.py" "$LEAK_RUN/t1-pub.json" \
   "$A_CANARY" "$DROP" "$STAMP"
 leak_say "T1 A published: $(python3 -c "import json;d=json.load(open('$LEAK_RUN/t1-pub.json'));print(d['open'])")"
@@ -233,7 +233,7 @@ leak_record "t2-allowed-own" --set "topology=T2-allowed-own" --set "net=proxy" \
 # ---- the chain, per mode, each link recorded ----------------------------------------
 for net in none open proxy strict; do
   rm -f "$DROP"
-  C="LEAK-CHAIN-${net}-$STAMP-$RANDOM"
+  C="$(leak_token "CHAIN-${net}")"
   leak_say "net=$net — link 1: can A publish from inside?"
   leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/publish.py" "$LEAK_RUN/pub-$net.json" \
     "$C" "$DROP" "$STAMP"
@@ -298,7 +298,7 @@ PY
 
 for net in proxy strict; do
   rm -f "$DROP"
-  C="LEAK-RAWCHAIN-${net}-$STAMP-$RANDOM"
+  C="$(leak_token "RAWCHAIN-${net}")"
   leak_say "net=$net — link 1 via RAW SOCKET: can A publish without honouring the proxy?"
   leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/raw-publish.py" \
     "$LEAK_RUN/rawpub-$net.json" "$C" "$DROP" "$STAMP"
@@ -383,7 +383,7 @@ out.setdefault("attempts", 6)
 print(json.dumps(out))
 PY
   for net in proxy strict; do
-    G="LEAK-GH-${net}-$STAMP-$RANDOM"
+    G="$(leak_token "GH-${net}")"
     leak_say "net=$net — (a) can A publish to the allowlisted medium from inside?"
     leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/gh-publish.py" \
       "$LEAK_RUN/gh-pub-$net.json" "$LEAK_GH_ISSUE" "$G"

@@ -34,8 +34,7 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-RUN_TOK="LEAK-WFRUN-ROW22-$STAMP-$RANDOM"
+RUN_TOK="$(leak_token WFRUN)"
 GLOBAL_WF="$LEAK_CONFIG/workflows/leak-probe.js"
 PROJECT_WF="$LEAK_B/.claude/workflows/leak-probe-own.js"
 # Natural language rather than a bare slash command, and the SAME prompt in every cell

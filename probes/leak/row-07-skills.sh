@@ -45,10 +45,9 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-SAY="LEAK-SKILLSAY-ROW07-$STAMP-$RANDOM"
-RUN="LEAK-SKILLRUN-ROW07-$STAMP-$RANDOM"
-P_SAY="LEAK-PROJSKILL-ROW07-$STAMP-$RANDOM"
+SAY="$(leak_token SKILLSAY)"
+RUN="$(leak_token SKILLRUN)"
+P_SAY="$(leak_token PROJSKILL)"
 SAY_DIR="$LEAK_CONFIG/skills/arith-say"
 RUN_DIR="$LEAK_CONFIG/skills/arith-run"
 PROJ_DIR="$LEAK_B/.claude/skills/arith-say"
@@ -206,7 +205,7 @@ done
 # cell below then answers whether the default refusal is about the COMMAND'S CONTENT at
 # all, or simply about any shell command.
 SELF_FILE="$LEAK_B/project-notes.txt"
-SELF_TOKEN="LEAK-SELFREAD-ROW07-$STAMP-$RANDOM"
+SELF_TOKEN="$(leak_token SELFREAD)"
 printf 'project notes\n%s\n' "$SELF_TOKEN" >"$SELF_FILE"
 SETTINGS="$LEAK_CONFIG/settings.json"
 

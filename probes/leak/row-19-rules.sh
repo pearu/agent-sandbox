@@ -23,10 +23,9 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-G_TOK="LEAK-RULE-ROW19-$STAMP-$RANDOM"
-P_TOK="LEAK-PROJRULE-ROW19-$STAMP-$RANDOM"
-GATED_TOK="LEAK-GATEDRULE-ROW19-$STAMP-$RANDOM"
+G_TOK="$(leak_token RULE)"
+P_TOK="$(leak_token PROJRULE)"
+GATED_TOK="$(leak_token GATEDRULE)"
 RULES_DIR="$LEAK_CONFIG/rules"
 PROJ_RULES_DIR="$LEAK_B/.claude/rules"
 PROMPT="What is 2 plus 2?"

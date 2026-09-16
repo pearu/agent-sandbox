@@ -38,8 +38,8 @@ leak_authenticate
 
 STAMP="$(date +%s)"
 B_SLUG="$(leak_slug "$LEAK_B")"
-A_TOK="LEAK-L2-A-$STAMP-$RANDOM"
-B_TOK="LEAK-L2-B-$STAMP-$RANDOM"
+A_TOK="$(leak_token L2-A)"
+B_TOK="$(leak_token L2-B)"
 
 # A's material, spread across the channels measured SHARED. Whether any is opened is the
 # row's question; which one, if so, tells us where to look first.

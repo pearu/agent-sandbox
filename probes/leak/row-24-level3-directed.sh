@@ -38,12 +38,11 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
 A_SLUG="$(leak_slug "$LEAK_A")"
 B_SLUG="$(leak_slug "$LEAK_B")"
-SCOPED_TOK="LEAK-L3-SCOPED-$STAMP-$RANDOM"
-SHARED_TOK="LEAK-L3-SHARED-$STAMP-$RANDOM"
-OWN_TOK="LEAK-L3-OWN-$STAMP-$RANDOM"
+SCOPED_TOK="$(leak_token L3-SCOPED)"
+SHARED_TOK="$(leak_token L3-SHARED)"
+OWN_TOK="$(leak_token L3-OWN)"
 
 # scoped: what rows 1 and 2 measured as unreachable inside
 mkdir -p "$LEAK_CONFIG/projects/$A_SLUG/memory" "$LEAK_CONFIG/projects/$B_SLUG/memory"

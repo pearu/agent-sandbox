@@ -30,8 +30,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 
 CONFIG_JSON="$LEAK_HOME/.claude.json"
-A_CANARY="LEAK-APROJ-ROW11-$(date +%s)-$RANDOM"
-B_CANARY="LEAK-BPROJ-ROW11-$(date +%s)-$RANDOM"
+A_CANARY="$(leak_token APROJ)"
+B_CANARY="$(leak_token BPROJ)"
 
 python3 - "$CONFIG_JSON" "$LEAK_A" "$LEAK_B" "$A_CANARY" "$B_CANARY" <<'PY'
 import json, sys

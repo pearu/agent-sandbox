@@ -45,9 +45,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-G_CANARY="LEAK-HOOK-ROW06-$STAMP-$RANDOM"
-P_CANARY="LEAK-PROJHOOK-ROW06-$STAMP-$RANDOM"
+G_CANARY="$(leak_token HOOK)"
+P_CANARY="$(leak_token PROJHOOK)"
 SETTINGS="$LEAK_CONFIG/settings.json"
 PROJECT_SETTINGS="$LEAK_B/.claude/settings.json"
 PROMPT="What is 2 plus 2?"

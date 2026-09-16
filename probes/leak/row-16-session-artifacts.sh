@@ -46,14 +46,14 @@ A_PATH["tool-results"]="$LEAK_CONFIG/projects/$A_SLUG/$SID/tool-results/out-1.tx
 A_PATH["orphaned"]="$LEAK_CONFIG/projects/$A_SLUG/$SID.orphaned-$STAMP-x.jsonl"
 A_PATH["superseded"]="$LEAK_CONFIG/projects/$A_SLUG/$SID.jsonl.superseded-$STAMP"
 for k in "${!A_PATH[@]}"; do
-  A_TOK["$k"]="LEAK-A${k^^}-ROW16-$STAMP-$RANDOM"
+  A_TOK["$k"]="$(leak_token "A${k^^}")"
   mkdir -p "$(dirname "${A_PATH["$k"]}")"
   printf '%s\n' "${A_TOK["$k"]}" >"${A_PATH["$k"]}"
 done
 
 # B's own artefact of the same kind: the control. Without it, "A's subagent transcript
 # is unreachable" cannot be told apart from "this subtree is not mounted at all".
-B_TOK="LEAK-BOWN-ROW16-$STAMP-$RANDOM"
+B_TOK="$(leak_token BOWN)"
 B_PATH="$LEAK_CONFIG/projects/$B_SLUG/$SID/tool-results/out-1.txt"
 mkdir -p "$(dirname "$B_PATH")"
 printf '%s\n' "$B_TOK" >"$B_PATH"

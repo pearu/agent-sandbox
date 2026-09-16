@@ -40,11 +40,11 @@ VALID=1
 leak_setup "$LEAK_ROW"
 
 HISTORY="$LEAK_CONFIG/history.jsonl"
-A_CANARY="LEAK-APROMPT-ROW04-$(date +%s)-$RANDOM"
-B_CANARY="LEAK-BPROMPT-ROW04-$(date +%s)-$RANDOM"
-PFX_CANARY="LEAK-PFXPROMPT-ROW04-$(date +%s)-$RANDOM"
-NEST_CANARY="LEAK-NESTPROMPT-ROW04-$(date +%s)-$RANDOM"
-WB_CANARY="LEAK-WBPROMPT-ROW04-$(date +%s)-$RANDOM"
+A_CANARY="$(leak_token APROMPT)"
+B_CANARY="$(leak_token BPROMPT)"
+PFX_CANARY="$(leak_token PFXPROMPT)"
+NEST_CANARY="$(leak_token NESTPROMPT)"
+WB_CANARY="$(leak_token WBPROMPT)"
 
 # Records are COMPACT json, one per line -- separators matter, because the filter
 # greps the literal `"project":"<dir>"` with no space after the colon.

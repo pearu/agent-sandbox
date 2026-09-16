@@ -29,9 +29,8 @@ VALID=1
 leak_setup "$LEAK_ROW"
 leak_authenticate
 
-STAMP="$(date +%s)"
-G_CANARY="LEAK-GLOBAL-ROW05-$STAMP-$RANDOM"
-P_CANARY="LEAK-PROJECT-ROW05-$STAMP-$RANDOM"
+G_CANARY="$(leak_token GLOBAL)"
+P_CANARY="$(leak_token PROJECT)"
 GLOBAL_MD="$LEAK_CONFIG/CLAUDE.md"
 PROJECT_MD="$LEAK_B/CLAUDE.md"
 PROMPT="What is 2 plus 2?"
