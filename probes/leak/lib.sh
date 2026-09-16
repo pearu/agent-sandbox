@@ -275,7 +275,7 @@ leak_authenticate() {
   (umask 077 && cp -- "$src" "$dst") || leak_die "could not copy credentials"
   chmod 600 -- "$dst"
   LEAK_CREDENTIAL_COPY="$dst"
-  trap leak_credentials_clean EXIT
+  trap leak_secrets_clean EXIT
   leak_say "credentials copied into the throwaway config (removed at exit)"
 }
 
@@ -284,6 +284,35 @@ leak_credentials_clean() {
   rm -f -- "$LEAK_CREDENTIAL_COPY"
   leak_say "credential copy removed"
   LEAK_CREDENTIAL_COPY=""
+}
+
+# leak_borrow_gh -- copy the host's gh config into the throwaway config.
+#
+# The real ~/.claude holds a GH_CONFIG_DIR at ~/.claude/gh, which the claude profile
+# keeps VISIBLE on purpose ("hiding it would break the feature it was created for").
+# A throwaway HOME does not have it, so a row that measures what a sandboxed session can
+# do with GitHub has to reproduce the real deployment rather than a stripped one.
+#
+# COPIED, NEVER SYMLINKED, and removed at exit, for the same reason as the credentials:
+# this is an OAuth token, and a study directory is not where one should be left lying.
+leak_borrow_gh() {
+  local src="$HOME/.claude/gh" dst="$LEAK_CONFIG/gh"
+  [[ -d "$src" ]] || return 1
+  (umask 077 && cp -r -- "$src" "$dst") || leak_die "could not copy the gh config"
+  chmod -R go-rwx "$dst" 2>/dev/null || true
+  LEAK_GH_COPY="$dst"
+  trap leak_secrets_clean EXIT
+  leak_say "gh config copied into the throwaway config (removed at exit)"
+}
+
+# One trap for every borrowed secret, so adding a second did not silently replace the
+# first one's cleanup.
+leak_secrets_clean() {
+  leak_credentials_clean
+  [[ -n "${LEAK_GH_COPY:-}" ]] || return 0
+  rm -rf -- "$LEAK_GH_COPY"
+  leak_say "gh config copy removed"
+  LEAK_GH_COPY=""
 }
 
 # leak_session_native CWD PROMPT OUT [FLAG...] -- one real turn, NOT sandboxed.
