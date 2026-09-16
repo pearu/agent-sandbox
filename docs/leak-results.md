@@ -1165,3 +1165,90 @@ filesystem scoping are independent controls and neither substitutes for the othe
 ### Not yet measured
 
 Row 14 (remote-backed state).
+
+---
+
+## Row 14a — remote capability (MCP)
+
+**Question:** does an MCP server configured once, anywhere, give a session in an unrelated
+project a **live external capability**? Row 10 measured that the `mcpServers` *config* is
+shared, by reading `~/.claude.json` with a script; row 13 measured that the network is
+reachable. Neither shows that B actually gets a working tool, and only a real session can.
+
+**Measured from structure, not prose:** the verdict is a `tool_use` block in the
+transcript, namespaced `mcp__<server>__<tool>`, via `record.py tools`.
+
+**Script:** `probes/leak/row-14a-mcp-capability.sh`. Server: `mcp.deepwiki.com`, free,
+read-only, **not** on the allowlist. 8 cells, validity gate **7/7**.
+
+| date | Claude Code | cell | net | permissions | MCP call | verdict |
+|---|---|---|---|---|---|---|
+| 2026-09-16 | 2.1.272 | T1 native — global server | n/a | bypass | `mcp__deepwiki__read_wiki_structure` | `obtained` |
+| 2026-09-16 | 2.1.272 | T2 — **global** server, from another project | `open` | bypass | **`mcp__deepwiki__read_wiki_structure`** | **`obtained`** |
+| 2026-09-16 | 2.1.272 | T2 — global server | `proxy` | bypass | none | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | T2 — global server | `strict` | bypass | none | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | T2 — global server | `open` | **default** | none | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | T2 — no server configured (control) | `open` | bypass | none | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | T2 — same server at **project** scope (`.mcp.json`) | `open` | bypass | none | `not-obtained-absent` |
+| 2026-09-16 | 2.1.272 | T2 — B reaches its own project (control, scripted) | `open` | n/a | n/a | `obtained` |
+
+No harness errors were recorded in any cell.
+
+### Analysis (provisional)
+
+**A globally configured MCP server does give another project's session a live external
+capability.** Under `open`, a session in project B called
+`mcp__deepwiki__read_wiki_structure` — a tool it has only because a server was configured
+once, for anyone, in `~/.claude.json`. With no server configured the same prompt produced
+no MCP call, so the capability came from the configuration and not from the model.
+
+This is the **capability** analogue of row 5's instruction channel, and it differs in
+reaching *outside the machine*: rows 5–9 shared text and code within the host, this shares
+a live connection to a third party.
+
+**And it is the first configuration channel in the study that a network control appears
+to close.** Under `proxy` and `strict` — the server being absent from the allowlist — no
+MCP call was made, where every config channel in rows 5–9 was open regardless of mode.
+That is what makes the network modes worth anything against this channel: they are in the
+path here, and they were not in the path there.
+
+**What is measured, and what is not.** Four cells came back with **no MCP call and no
+harness error**. That is a weaker observation than row 7's, where a permission check
+recorded its own refusal in the transcript. Here nothing in the record says *why* the tool
+was not invoked — whether the server failed to connect and its tools were never offered,
+or they were offered and not used. The plausible reading for `proxy`/`strict` is the
+allowlist, consistent with row 13, but it is a reading and not a measurement.
+
+**Two further observations, each an open question rather than a finding:**
+
+*At default permissions the tool was not called, and that cell made **no tool calls at
+all**.* Something gates MCP tools, but not by a route that leaves a `tool_result` error
+the way a skill's embedded command does (rows 7–8).
+
+*The same server, configured in B's **own** project `.mcp.json`, was not used, while the
+identical URL configured globally was.* The less-local source was the less-gated one.
+Both cells ran under `open`, with bypassed permissions and the project's
+`enabledMcpjsonServers` set. The session's own prose blamed an unauthorized server and a
+missing OAuth flow — not recorded as evidence, since a model narrating its container is
+not a measurement of it. Whatever the mechanism, the **direction** is what matters and it
+is measured: another project's configuration reached B, and B's own did not.
+
+### For users
+
+**An MCP server you configure once is a capability every project's sessions get**, not
+just the project you configured it for. If a server reaches private data or can act on
+your behalf, that reach belongs to every session you run.
+
+**The network mode is a real control here, unlike for the other configuration channels.**
+A server whose host is not on the allowlist did not produce a tool call under `proxy` or
+`strict`. Allowlisting a server's host is therefore a deliberate step, and worth treating
+as one.
+
+**Do not assume a project-scoped `.mcp.json` behaves like a global entry.** Measured, the
+project-scoped one did not yield a tool where the global one did.
+
+### Not yet measured
+
+Why the negative cells were negative — whether the tools were offered and unused, or never
+registered. A cell that records the *offered* tool list would separate them. And row 14b
+(remote-backed state), which needs an instance: #89.
