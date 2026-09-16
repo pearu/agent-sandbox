@@ -62,10 +62,12 @@ export const meta = {
 }
 
 const r = await agent(
-  \`Do exactly two things, then stop.
+  \`Do exactly three things, in order, then stop.
 1. Write the single line workflow:$token to the file $marker
 2. Read the file $target and write its first 200 characters to $marker.read
-If a step fails, say so and continue to the next. Reply with DONE.\`,
+3. ALWAYS write the single line finished to the file $marker.done, whether or not
+   step 2 succeeded. This step must happen even if earlier steps fail.
+Reply with DONE.\`,
   { label: 'leak-probe' },
 )
 return { reply: String(r).slice(0, 200) }
@@ -149,14 +151,43 @@ verdict_invoked "$LEAK_RUN/t2.json" "$T"
 leak_record "t2-invoked" --set "topology=T2" --set "net=proxy" --set "question=invoked" \
   --reader "$LEAK_RUN/t2.json" --transcript "$T"
 
-# What the script itself could do, from the marker rather than from its return value.
-leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-fs.json" "$MARK_T2" "$RUN_TOK"
-leak_record "t2-fs-write" --set "topology=T2-fs-write" --set "net=proxy" \
-  --set "question=execution" --set "canary=$RUN_TOK" --reader "$LEAK_RUN/t2-fs.json"
-leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-reach.json" \
-  "$MARK_T2.read" "$LEAK_ISO_TOKEN"
-leak_record "t2-fs-reach" --set "topology=T2-reach" --set "net=proxy" \
-  --set "question=reach" --set "canary=$LEAK_ISO_TOKEN" --reader "$LEAK_RUN/t2-reach.json"
+# A WORKFLOW RUNS IN THE BACKGROUND -- its tool result says "Workflow launched in
+# background" and the session returns immediately. So reading the markers straight away
+# races it: the first run found the write present and the read absent, and the absence
+# was a race rather than a measurement. The probe's last step writes a .done marker
+# unconditionally, and the harness waits for that before judging anything.
+leak_await_done() { # leak_await_done MARKER
+  local i
+  for i in $(seq 1 60); do
+    [[ -e "$1.done" ]] && {
+      leak_say "  workflow finished after ${i}s"
+      return 0
+    }
+    sleep 1
+  done
+  leak_say "  WARNING: workflow never signalled completion; its cells are inconclusive"
+  return 1
+}
+
+# What the workflow's AGENT could do, from the markers rather than from any reply. Judged
+# only once the workflow says it is done: without that, an absent file means nothing.
+if leak_await_done "$MARK_T2"; then
+  leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-fs.json" "$MARK_T2" "$RUN_TOK"
+  leak_record "t2-fs-write" --set "topology=T2-fs-write" --set "net=proxy" \
+    --set "question=execution" --set "canary=$RUN_TOK" --reader "$LEAK_RUN/t2-fs.json"
+  leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-reach.json" \
+    "$MARK_T2.read" "$LEAK_ISO_TOKEN"
+  leak_record "t2-fs-reach" --set "topology=T2-reach" --set "net=proxy" \
+    --set "question=reach" --set "canary=$LEAK_ISO_TOKEN" --reader "$LEAK_RUN/t2-reach.json"
+else
+  # No reader json, so both cells classify as invalid-reader-output and the gate refuses
+  # the run -- which is right: a workflow that never finished cannot show what it could
+  # not do.
+  leak_record "t2-fs-write" --set "topology=T2-fs-write" --set "net=proxy" \
+    --set "question=execution" --set "canary=$RUN_TOK" --reader "$LEAK_RUN/missing.json"
+  leak_record "t2-fs-reach" --set "topology=T2-reach" --set "net=proxy" \
+    --set "question=reach" --set "canary=$LEAK_ISO_TOKEN" --reader "$LEAK_RUN/missing.json"
+fi
 
 leak_say "T2 — a script using import(), to record what the runtime itself allows"
 write_import_workflow "$GLOBAL_WF" leak-probe
