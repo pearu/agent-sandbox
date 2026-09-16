@@ -179,6 +179,33 @@ PY
 leak_record "t2-derivable-rendezvous" --set "topology=T2-derive" --set "net=proxy" \
   --set "link=0-rendezvous" --set "how=ambient-hash" --reader "$LEAK_RUN/derive.json"
 
+# Borrowing the gh config READS the real ~/.claude/gh, which bumps its atime. That has
+# to happen BEFORE the baseline snapshot, or the harness perturbs the very state it then
+# asserts was untouched -- which is exactly what the first run of this row did.
+LEAK_GH_READY=0
+if [[ -n "${LEAK_GH_ISSUE:-}" ]] && leak_borrow_gh; then LEAK_GH_READY=1; fi
+
+# The medium is eventually consistent: a message is accepted before it is readable.
+# Measured -- the first run of this row published successfully and then fetched nothing,
+# which looked exactly like isolation. Polling makes the wait explicit and bounded, and
+# only runs when the publish actually succeeded, so a mode that cannot publish does not
+# pay for it.
+leak_await_medium() { # leak_await_medium URL TOKEN PUBLISH_JSON
+  local url="$1" token="$2" pub="$3" i
+  python3 -c "
+import json,sys
+try: sys.exit(0 if json.load(open('$pub')).get('token_found') else 1)
+except Exception: sys.exit(1)" || return 0
+  for i in $(seq 1 15); do
+    if curl -sS "$url" --max-time 10 2>/dev/null | grep -qF "$token"; then
+      leak_say "  medium visible after ${i}s"
+      return 0
+    fi
+    sleep 1
+  done
+  leak_say "  WARNING: published but not visible after 15s"
+}
+
 leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
@@ -187,6 +214,8 @@ A_CANARY="LEAK-CHAIN-T1-$STAMP-$RANDOM"
 leak_read_native "$LEAK_A" "$LEAK_A/publish.py" "$LEAK_RUN/t1-pub.json" \
   "$A_CANARY" "$DROP" "$STAMP"
 leak_say "T1 A published: $(python3 -c "import json;d=json.load(open('$LEAK_RUN/t1-pub.json'));print(d['open'])")"
+T1_TOPIC="$(python3 -c "import json;print(json.load(open('$LEAK_RUN/t1-pub.json')).get('topic',''))")"
+leak_await_medium "https://ntfy.sh/$T1_TOPIC/json?poll=1" "$A_CANARY" "$LEAK_RUN/t1-pub.json"
 leak_read_native "$LEAK_B" "$LEAK_B/discover.py" "$LEAK_RUN/t1.json" \
   proxy-aware "$DROP" "$A_CANARY"
 leak_record "t1-native-chain" --set "topology=T1" --set "net=n/a" --set "link=chain" \
@@ -211,6 +240,9 @@ for net in none open proxy strict; do
   leak_record "t2-$net-1-publish" --set "topology=T2-$net-publish" --set "net=$net" \
     --set "link=1-publish" --set "canary=$C" --reader "$LEAK_RUN/pub-$net.json"
 
+  TOPIC="$(python3 -c "import json;print(json.load(open('$LEAK_RUN/pub-$net.json')).get('topic',''))")"
+  leak_await_medium "https://ntfy.sh/$TOPIC/json?poll=1" "$C" "$LEAK_RUN/pub-$net.json"
+
   leak_say "net=$net — links 2+3: does B find the address, and reach it?"
   for how in proxy-aware raw; do
     leak_read_sandboxed "$net" "$LEAK_B" "$LEAK_B/discover.py" \
@@ -231,7 +263,7 @@ done
 # allowlisted in EVERY mode, strict included, so if a sandboxed session can authenticate
 # then strict does not close cross-project communication -- it narrows the medium to
 # what the allowlist contains, and the allowlist contains a writable one.
-if [[ -n "${LEAK_GH_ISSUE:-}" ]] && leak_borrow_gh; then
+if ((LEAK_GH_READY)); then
   cat >"$LEAK_A/gh-publish.py" <<'PY'
 import json, os, subprocess, sys
 issue, canary = sys.argv[1], sys.argv[2]
@@ -258,17 +290,32 @@ canary = sys.argv[1]
 # B knows the repository, not the issue: it enumerates and searches, unauthenticated,
 # the way a session researching this project would.
 out = {"token": canary}
-try:
-    url = "https://api.github.com/repos/pearu/agent-sandbox/issues/comments?per_page=100&sort=created&direction=desc"
-    req = urllib.request.Request(url, headers={"User-Agent": "leak-study"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = r.read().decode("utf-8", "replace")
-    out["open"] = "ok"
-    out["token_found"] = canary in data
-    out["bytes"] = len(data)
-except Exception as e:  # noqa: BLE001
-    out["open"] = type(e).__name__
-    out["token_found"] = False
+# The listing is eventually consistent and unauthenticated reads may be served from
+# cache, so a single miss cannot be told from a block. Retry, and record the attempt
+# count: "not found after N tries with the endpoint reachable" is a different statement
+# from "could not reach the endpoint".
+import time
+last = None
+for attempt in range(1, 7):
+    try:
+        url = ("https://api.github.com/repos/pearu/agent-sandbox/issues/comments"
+               "?per_page=100&sort=created&direction=desc&_=%d" % time.time())
+        req = urllib.request.Request(url, headers={"User-Agent": "leak-study",
+                                                   "Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read().decode("utf-8", "replace")
+        last, out["open"], out["bytes"] = "ok", "ok", len(data)
+        if canary in data:
+            out["token_found"] = True
+            out["attempts"] = attempt
+            break
+        out["token_found"] = False
+    except Exception as e:  # noqa: BLE001
+        last = type(e).__name__
+        out["open"], out["token_found"] = last, False
+        break  # unreachable is unreachable; retrying measures nothing
+    time.sleep(5)
+out.setdefault("attempts", 6)
 print(json.dumps(out))
 PY
   for net in proxy strict; do
