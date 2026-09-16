@@ -166,6 +166,36 @@ print('ok')
   [ "$output" = 0 ]
 }
 
+@test "tools: an MCP call is identified by namespace, from structure not prose" {
+  # a model may say it used a tool when it answered from memory, or say it could not
+  # when the call was refused -- the transcript's tool_use block is the harness's record
+  cat >"$T/t.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__deepwiki__read_wiki_structure"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"ok"}]}}
+EOF
+  run python3 "$R" tools "$T/t.jsonl"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"mcp__deepwiki__read_wiki_structure"'* ]]
+  [[ "$output" == *'"errors": 0'* ]]
+  # the built-in is listed under calls but must NOT count as an MCP call
+  run python3 -c "
+import json,subprocess
+d=json.loads(subprocess.run(['python3','$R','tools','$T/t.jsonl'],capture_output=True,text=True).stdout)
+assert d['mcp_calls']==['mcp__deepwiki__read_wiki_structure'], d
+assert 'Read' in d['calls'], d
+print('ok')"
+  [ "$output" = ok ]
+
+  # a session that used no tools reports none, rather than an absent key
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"4"}]}}' >"$T/none.jsonl"
+  run python3 -c "
+import json,subprocess
+d=json.loads(subprocess.run(['python3','$R','tools','$T/none.jsonl'],capture_output=True,text=True).stdout)
+print(len(d['mcp_calls']), len(d['calls']))"
+  [ "$output" = "0 0" ]
+}
+
 # --- the validity gate ------------------------------------------------------
 # It decides whether a run is a RESULT at all. If it cannot fail, a run whose
 # controls never fired gets recorded as a finding.

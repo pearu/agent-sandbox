@@ -91,6 +91,41 @@ def harness_errors(path):
     return {"count": len(out), "errors": out}
 
 
+def tools_used(path):
+    """Tool calls in a transcript, from its structure.
+
+    An MCP server's presence is not something to take a model's word for: it may say it
+    used a tool when it answered from memory, or say it could not when the call was
+    refused. A tool_use block with a matching tool_result is the harness's own record of
+    what happened, the same reasoning that put harness_errors here.
+
+    MCP tools are namespaced `mcp__<server>__<tool>`, so they are distinguishable from
+    built-ins without a list of built-in names to keep in step.
+    """
+    calls, errors = [], 0
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict):
+                        continue
+                    if c.get("type") == "tool_use" and c.get("name"):
+                        calls.append(c["name"])
+                    elif c.get("type") == "tool_result" and c.get("is_error"):
+                        errors += 1
+    except OSError as e:
+        return {"error": str(e)}
+    mcp = [c for c in calls if c.startswith("mcp__")]
+    return {"calls": calls, "mcp_calls": mcp, "errors": errors}
+
+
 def models_served(path):
     """Which model served each message of a session, in order of first appearance,
     with counts. The requested model is not necessarily the one that served: a
@@ -355,6 +390,7 @@ def cmd_write(argv):
     if transcript:
         rec["serving_models"] = models_served(transcript)
         rec["harness_errors"] = harness_errors(transcript)
+        rec["tools_used"] = tools_used(transcript)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(rec, fh, indent=2, sort_keys=True)
         fh.write("\n")
@@ -375,6 +411,10 @@ def main(argv):
         json.dump(models_served(argv[2]), sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         return 0
+    if len(argv) >= 3 and argv[1] == "tools":
+        json.dump(tools_used(argv[2]), sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
     if len(argv) >= 3 and argv[1] == "validate":
         return cmd_validate(argv[2:])
     if len(argv) >= 2 and argv[1] == "write":
@@ -383,6 +423,7 @@ def main(argv):
         "usage: record.py verdict READER.json\n"
         "       record.py models TRANSCRIPT.jsonl\n"
         "       record.py validate RUNDIR [--known-ambient REGEX]\n"
+        "       record.py tools TRANSCRIPT.jsonl\n"
         "       record.py write --out R.json [--set k=v] [--set-file k=PATH]\n"
         "                       [--reader READER.json] [--transcript T.jsonl]\n"
     )
