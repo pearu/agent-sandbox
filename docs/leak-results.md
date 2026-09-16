@@ -1330,3 +1330,104 @@ code reaches, not whether it runs.
 ### Not yet measured
 
 Rows 19–21 (`rules/`, `output-styles/`, `agents/`). Level 3 where the method calls for it.
+
+---
+
+## Rows 19–21 — the configuration channels the documentation named
+
+Three channels the catalog missed, found in `claude-directory`'s file-scope table and
+filed as #83–#85. All three follow row 5's shape: the canary is an **instruction**, the
+prompt asks something unrelated and never mentions the file or the token, and a reply
+carrying the token means the file was auto-loaded and acted on. All at Claude Code
+2.1.272, `net=proxy`, validity gate **7/7** each, noise floor 0.
+
+### Row 19 — `rules/`
+
+**Script:** `probes/leak/row-19-rules.sh`
+
+| date | cell | scope | verdict |
+|---|---|---|---|
+| 2026-09-16 | T1 native — user-level rule | user | `obtained` |
+| 2026-09-16 | T2 — the same user-level rule, from another project | user | **`obtained`** |
+| 2026-09-16 | T2 — no rule at all (control) | none | `not-obtained-absent` |
+| 2026-09-16 | T2 — rule gated to a path that does not exist in B | user | **`not-obtained-absent`** |
+| 2026-09-16 | T2 — B's own project rule (control) | project | `obtained` |
+
+**A user-level rule is `CLAUDE.md`'s channel under another name** — documented as applying
+"to every project on your machine", and measured doing so.
+
+**But `paths:` is a real narrowing, and the only one of its kind in this family.** A rule
+gated to a pattern matching nothing in B was **not** applied. No other instruction channel
+in the study has a built-in way to limit where it takes effect. It gates by *file path*
+rather than by project, so it does not make the channel project-scoped — but it is the one
+lever a user has short of deleting the file.
+
+### Row 20 — `output-styles/`
+
+**Script:** `probes/leak/row-20-output-styles.sh`
+
+| date | cell | state | verdict |
+|---|---|---|---|
+| 2026-09-16 | T1 native — style selected | file + selected | `obtained` |
+| 2026-09-16 | T2 — the same selected style, from another project | file + selected | **`obtained`** |
+| 2026-09-16 | T2 — style file present but **not** selected | file only | **`not-obtained-absent`** |
+| 2026-09-16 | T2 — neither file nor selection (control) | none | `not-obtained-absent` |
+| 2026-09-16 | T2 — B's own project style, selected | project | `obtained` |
+
+**The file is inert; the selection is the channel.** A style sitting in
+`~/.claude/output-styles/` did nothing until `outputStyle` named it — and that key lives
+in the global `settings.json`, the file row 6 measured as shared across projects.
+
+So **row 20 is not an independent channel**: it is a payload carried by row 6's. Writing a
+style file changes nothing; writing the *setting* is what reaches every project, and that
+is the same write row 6 already measured. Worth knowing for the fix list — closing
+`settings.json` would close this with it, and closing this alone would not.
+
+### Row 21 — `agents/`
+
+**Script:** `probes/leak/row-21-agents.sh`
+
+| date | cell | question | verdict |
+|---|---|---|---|
+| 2026-09-16 | T1 native — user-level subagent | ingestion | `obtained` |
+| 2026-09-16 | T2 — the same subagent, from another project | ingestion | **`obtained`** |
+| 2026-09-16 | T2 — was a subagent actually run? | invoked | **`obtained`** (`Agent`) |
+| 2026-09-16 | T2 — did the tools it granted itself work? | execution | **`obtained`** |
+| 2026-09-16 | T2 — could it read A's transcript? | reach | `not-obtained-absent` (ENOENT) |
+| 2026-09-16 | T2 — no subagent defined (control) | ingestion | `not-obtained-absent` |
+| 2026-09-16 | T2 — B's own project subagent (control) | ingestion | `obtained` |
+
+**A subagent definition in `~/.claude/agents/` is instruction *and* capability, and both
+crossed.** Its prompt reached a session in another project, an `Agent` call actually ran
+it, and the tools the definition **declared for itself** — `Read, Write, Bash` — worked:
+the subagent wrote its marker file.
+
+**Its reach was bounded, and it said so itself.** Told to read another project's
+transcript, it wrote `ERROR: source file does not exist` — ENOENT, the same answer every
+other execution channel got. Fifth consecutive: hook (6), skill command (7), plugin hook
+(9), workflow agent (22), subagent (21).
+
+**One limit on the execution result, stated because it changes what it means.** These
+cells ran with `--permission-mode bypassPermissions`, so "the declared tools worked" is
+measured **only where permissions were already granted**. Whether a definition naming its
+own `tools:` bypasses the check that refuses a skill's embedded command (rows 7–8) is
+**not** answered here, and it is the interesting half. A default-permission cell would
+settle it.
+
+### For users
+
+**`~/.claude/rules/` is a second global instruction channel** beside `CLAUDE.md`, with one
+advantage: `paths:` limits where a rule applies, measured working. Use it if you want a
+personal rule that does not follow you into every file of every project.
+
+**An output style only matters once selected**, and the selection is global. Reviewing
+style files is less important than reviewing what `outputStyle` is set to.
+
+**A subagent definition grants tools.** Reading one before saving it to `~/.claude/agents/`
+matters more than for a rule or a style, because it carries a capability grant and not
+only words.
+
+### Not yet measured
+
+Whether a subagent's declared `tools:` are subject to the permission check at default
+permissions (row 21). Level 3 where the method calls for it.
