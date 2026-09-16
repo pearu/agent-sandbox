@@ -98,15 +98,25 @@ leak_real_config_before
 
 # The instrument must be shown to see a read at all, or "nothing was opened" means
 # nothing. A session TOLD to read one of A's paths, natively, where it is reachable.
+# THE NATIVE CONTROL RUNS IN A THIRD PROJECT, not in B, and that is not fastidiousness.
+# Measured: running it in B left A's material inside B's OWN TRANSCRIPT -- a native
+# session told to look around read A's memory, and the transcript recorded what it read.
+# The sandboxed cell then read that transcript, which is B's own and legitimately visible,
+# and reported A's token. The control had manufactured the result it was there to check.
+LEAK_C="$LEAK_RUN/c"
+mkdir -p "$LEAK_C"
+git -c user.email=leak@example.invalid -c user.name=leak -c init.defaultBranch=main \
+  -C "$LEAK_C" init -q
+
 leak_say "T1 (native, positive control) — the watch sees a read it was asked for"
 leak_watch_start "$LEAK_CONFIG"
-leak_session_native "$LEAK_B" "$DIRECTED_A" "$LEAK_RUN/t1.txt" --permission-mode bypassPermissions
+leak_session_native "$LEAK_C" "$DIRECTED_A" "$LEAK_RUN/t1.txt" --permission-mode bypassPermissions
 leak_watch_stop
 cp "$LEAK_WATCH_OUT" "$LEAK_RUN/t1.reads" 2>/dev/null || true
 watched_any "$LEAK_RUN/t1.reads" "$LEAK_RUN/t1.json"
 leak_record "t1-instrument" --set "topology=T1" --set "net=n/a" --set "prompt=directed" \
   --reader "$LEAK_RUN/t1.json" --set-file "reads=$LEAK_RUN/t1.reads" \
-  --transcript "$(leak_latest_transcript "$LEAK_B")"
+  --transcript "$(leak_latest_transcript "$LEAK_C")"
 
 # THE MEASUREMENT: an ordinary task, nothing named.
 leak_say "T2 — an ORDINARY task, sandboxed. Does it touch any of A's material?"
