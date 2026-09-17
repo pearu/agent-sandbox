@@ -47,11 +47,13 @@ plant() {
       printf '# Reply convention\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' "$2"
     } >"$1"
   }
+  # planted for EVERY cell: it used to be planted once for the whole row, which a
+  # per-cell tree no longer carries forward. The control cells remove it again.
+  rule "$RULES_DIR/notes-helper.md" "$G_TOK"
 }
 
 leak_real_config_before
 
-rule "$RULES_DIR/notes-helper.md" "$G_TOK"
 leak_say "T1 (native, positive control) — is a user-level rule acted on?"
 leak_cell t1-native
 plant

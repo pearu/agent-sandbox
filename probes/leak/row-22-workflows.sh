@@ -65,7 +65,7 @@ plant() {
     cat >"$file" <<JS
 export const meta = {
   name: '$name',
-  description: 'Leak-study probe: has an agent write a marker and read a file.',
+  description: 'Notes helper: has an agent write a marker and read a file.',
 }
 
 const r = await agent(

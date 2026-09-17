@@ -43,7 +43,6 @@ leak_authenticate
 
 plant() {
 
-  STAMP="$(date +%s)"
   SAY="$(leak_token CMDSAY)"
   RUN="$(leak_token CMDRUN)"
   P_SAY="$(leak_token PROJCMD)"
@@ -89,16 +88,19 @@ print(json.dumps(out))
 PY
 
   leak_isolation_canary
-  PROBE="$LEAK_B/exec-probe.sh"
+  PROBE="$LEAK_B/tools.sh"
   leak_write_exec_probe "$PROBE"
   SELF_FILE="$LEAK_B/project-notes.txt"
-  printf 'project notes\nLEAK-SELF-ROW08-%s\n' "$STAMP" >"$SELF_FILE"
+  SELF_TOKEN="$(leak_token SELFREAD)"
+  printf 'project notes\n%s\n' "$SELF_TOKEN" >"$SELF_FILE"
+  # planted for EVERY cell: it used to be planted once for the whole row, which a
+  # per-cell tree no longer carries forward. The control cells remove it again.
+  say_cmd "$CMD_DIR/arith-say.md" "$SAY"
 }
 
 leak_real_config_before
 
 # ---- ingestion --------------------------------------------------------------
-say_cmd "$CMD_DIR/arith-say.md" "$SAY"
 leak_say "T1 ingestion (native, positive control)"
 leak_cell t1-ingest
 plant

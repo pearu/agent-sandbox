@@ -104,7 +104,7 @@ print(json.dumps(out))
 PY
 
   leak_isolation_canary
-  PROBE="$LEAK_B/exec-probe.sh"
+  PROBE="$LEAK_B/tools.sh"
   leak_write_exec_probe "$PROBE"
 }
 
@@ -142,11 +142,10 @@ leak_say "T2 control — the same prompt with NO hooks configured"
 leak_cell t2-control-nohooks
 plant
 T2C_OUT="$LEAK_B/fired-t2-control.txt"
-python3 -c "
-import json,sys
-p=sys.argv[1]
-d=json.load(open(p)); d.pop('hooks', None)
-json.dump(d, open(p,'w'), indent=2)" "$SETTINGS"
+# A fresh tree has no hooks to begin with -- this cell used to strip them from a
+# settings.json an earlier cell had written, and with one tree per cell that file does
+# not exist. Removing it keeps the control explicit rather than implicit.
+rm -f "$SETTINGS"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2-control.txt"
 leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-control.json" "$T2C_OUT" "$G_CANARY"
 leak_record "t2-control-nohooks" --set "topology=T2-control" --set "net=proxy" \

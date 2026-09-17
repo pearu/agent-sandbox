@@ -96,7 +96,7 @@ print(json.dumps(out))
 PY
 
   leak_isolation_canary
-  PROBE="$LEAK_B/exec-probe.sh"
+  PROBE="$LEAK_B/tools.sh"
   leak_write_exec_probe "$PROBE"
 }
 

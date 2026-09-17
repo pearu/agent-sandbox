@@ -120,7 +120,7 @@ print(json.dumps(out))
 PY
 
   leak_isolation_canary
-  PROBE="$LEAK_B/exec-probe.sh"
+  PROBE="$LEAK_B/tools.sh"
   leak_write_exec_probe "$PROBE"
   # The innocuous cells need a file in B's OWN project to read, and a settings path to
   # write a permission rule into. Built for every cell, so the cells stay identical apart
@@ -129,12 +129,14 @@ PY
   SELF_TOKEN="$(leak_token SELFREAD)"
   printf 'project notes\n%s\n' "$SELF_TOKEN" >"$SELF_FILE"
   SETTINGS="$LEAK_CONFIG/settings.json"
+  # planted for EVERY cell: it used to be planted once for the whole row, which a
+  # per-cell tree no longer carries forward. The control cells remove it again.
+  say_skill "$SAY_DIR" "$SAY"
 }
 
 leak_real_config_before
 
 # ---- ingestion --------------------------------------------------------------
-say_skill "$SAY_DIR" "$SAY"
 leak_say "T1 ingestion (native, positive control)"
 leak_cell t1-ingest
 plant

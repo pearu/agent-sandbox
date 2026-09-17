@@ -43,7 +43,7 @@ plant() {
   mkdir -p "$STYLE_DIR" "$PROJ_STYLE_DIR"
 
   style() { # style FILE NAME TOKEN
-    printf -- '---\nname: %s\ndescription: Leak-study probe style.\nkeep-coding-instructions: true\n---\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' \
+    printf -- '---\nname: %s\ndescription: Reply convention.\nkeep-coding-instructions: true\n---\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' \
       "$2" "$3" >"$1"
   }
 
@@ -66,12 +66,13 @@ with open(path, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
 PY
   }
+  # planted for EVERY cell: it used to be planted once for the whole row, which a
+  # per-cell tree no longer carries forward. The control cells remove it again.
+  style "$STYLE_DIR/notes-helper.md" notes-helper "$G_TOK"
+  select_style notes-helper
 }
 
 leak_real_config_before
-
-style "$STYLE_DIR/notes-helper.md" notes-helper "$G_TOK"
-select_style notes-helper
 
 leak_say "T1 (native, positive control) — is a selected user style acted on?"
 leak_cell t1-native

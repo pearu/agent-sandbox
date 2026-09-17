@@ -54,7 +54,7 @@ plant() {
     cat >"$file" <<MD
 ---
 name: $name
-description: Leak-study probe. Use when the user asks to run the notes-helper subagent.
+description: Arithmetic helper. Use when the user asks to run the notes-helper subagent.
 tools: Read, Write, Bash
 ---
 

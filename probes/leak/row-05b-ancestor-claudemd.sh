@@ -42,7 +42,10 @@ plant() {
 
   N_CANARY="$(leak_token ANCESTOR)"
   P_CANARY="$(leak_token PROJECT)"
-  ANCESTOR_MD="$LEAK_RUN/CLAUDE.md" # the shared parent of A and B
+  # The shared parent of A and B is the CELL BASE. It was the run directory when a
+  # row had one tree; with a tree per cell the run directory is an ancestor of
+  # nothing, and the native positive control correctly reported the canary absent.
+  ANCESTOR_MD="$LEAK_CELL_BASE/CLAUDE.md"
   PROJECT_MD="$LEAK_B/CLAUDE.md"
   PROMPT="What is 2 plus 2?"
 
