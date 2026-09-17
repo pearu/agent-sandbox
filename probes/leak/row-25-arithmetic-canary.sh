@@ -112,8 +112,8 @@ print("  %-26s %-22s %-14s %-26s%s%s" % (
 PY
 done
 echo
-echo "Stages escalate: asked -> pressed -> pointed at the file. A cell that is still"
-echo "empty when POINTED is not a search failure; something specific is wrong."
+echo "Stages escalate: asked -> told they are stored -> pointed at the file. A cell"
+echo "still empty when POINTED is not a search failure; something specific is wrong."
 echo "records: $LEAK_RUN/records/"
 ((VALID)) || {
   echo

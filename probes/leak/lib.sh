@@ -486,7 +486,11 @@ except OSError:
 if not reply.strip():
     raise SystemExit(0)
 flat = "".join(c for c in reply if c.isdigit())
-hits = [n for n in (total, x, y) if n in flat]
+# `n and` is not defensive noise: rung 0 has NO expected sum, and an empty needle is
+# a substring of every string. Without it every first-rung cell scored a hit on the
+# empty match, the ladder broke out at stage 0, and a whole run's escalation -- five
+# cells, control included -- reported `found at: context` having matched nothing.
+hits = [n for n in (total, x, y) if n and n in flat]
 rec = {"open": "ok", "token_found": bool(hits), "token": total,
        "matched": hits, "reply": reply[:3000]}
 if not hits:
