@@ -107,6 +107,9 @@ leak_cell() {
   LEAK_A="$LEAK_CELL_BASE/$(leak_hexid)"
   LEAK_B="$LEAK_CELL_BASE/$(leak_hexid)"
   mkdir -p "$LEAK_CONFIG" "$LEAK_A" "$LEAK_B" "$LEAK_HOME/.local/share"
+  # Paths a producer changed, with the copy to put back when the cell ends.
+  LEAK_CELL_RESTORE="$LEAK_CELL_BASE/.restore"
+  : >"$LEAK_CELL_RESTORE"
 
   # Version discovery walks $HOME/.local/share/claude/versions, and the seccomp filter
   # lives under $HOME/.local/share/agent-sandbox. Symlink the PARENTS: `find` does not
@@ -182,6 +185,24 @@ leak_cell_finish() {
   [[ -n "${LEAK_CELL_BASE:-}" ]] || return 0
   local base="$LEAK_CELL_BASE" dest="$LEAK_RUN/cells/${LEAK_CELL:-cell}-${LEAK_CELL_ID:-0}"
   LEAK_CELL_BASE=""
+
+  # Put back whatever a producer changed, now that every cell that needed to read it has.
+  # The before/after copies stay under the run's produced-<cell>/ directory, so the change
+  # is still evidence; what is restored is the tree, so nothing outlives the cell mutated.
+  if [[ -s "${LEAK_CELL_RESTORE:-/nonexistent}" ]]; then
+    local rpath rcopy
+    while IFS=$'\t' read -r rpath rcopy; do
+      [[ -n "${rpath:-}" ]] || continue
+      if [[ -n "${rcopy:-}" && -e "$rcopy" ]]; then
+        cp -a -- "$rcopy" "$rpath"
+      else
+        rm -f -- "$rpath"
+      fi
+    done <"$LEAK_CELL_RESTORE"
+    leak_say "  restored $(wc -l <"$LEAK_CELL_RESTORE") path(s) a producer changed"
+  fi
+  LEAK_CELL_RESTORE=""
+
   leak_secrets_clean
   mkdir -p "$LEAK_RUN/cells"
   mv -- "$base" "$dest" 2>/dev/null \
@@ -809,6 +830,96 @@ PYEOF
     leak_say "  found at stage: $found"
   fi
   return 0
+}
+
+# leak_produce_as_a NET REL TOKEN -- A's material PRODUCED BY A SESSION IN A, not
+# planted by the harness. Sets LEAK_PRODUCED_PATH and LEAK_PRODUCED_TOKEN.
+#
+# WHY THIS EXISTS. Every row so far plants A's material, which is the state a NATIVE A
+# leaves behind: that is topology T5, and it is the worst case for the reader. T2 (both
+# sandboxed) and T6 (A sandboxed, B native) ask a different question -- what a SANDBOXED A
+# leaves on the host -- and it cannot be planted without assuming the answer. A sandboxed
+# A's transcript lives in a tmpfs and never reaches the host at all, while its memory is
+# rebound and does, its plans are copyout and do, its prompts append through a filter. So
+# A runs, and the harness measures what landed.
+#
+# SCRIPTED, NOT A MODEL. This asks whether the CONTAINER can be written through, which is
+# a property of the binds and needs no LLM; the writer is a Python script under
+# `claude --exec`, so it is free and deterministic. Whether a session WOULD write there is
+# a different question -- for the channels where it is worth a turn, and not decided here.
+#
+# BACKED UP AND RESTORED. The target is copied to `produced/<name>.before` before the
+# writer runs and to `.after` once it has, and the original is restored WHEN THE CELL
+# ENDS -- not here, because in T2 and T6 the very next step is B reading what A wrote.
+# Both copies stay in the cell's archived tree, so the delta attributable to the
+# sandboxed writer is exact and nothing outlives the cell mutated.
+leak_produce_as_a() {
+  # TEXT defaults to TOKEN: a channel whose canary is a bare marker needs nothing more,
+  # while one whose canary is an INSTRUCTION -- a CLAUDE.md, a rule, an output style --
+  # passes the whole instruction and keeps TOKEN as the thing the verdict looks for.
+  local net="$1" rel="$2" token="$3" text="${4:-$3}"
+  local target="$LEAK_CONFIG/$rel" ev="$LEAK_RUN/produced-${LEAK_CELL:-cell}"
+  local name="${rel//\//_}"
+  mkdir -p "$ev" "$(dirname "$target")"
+
+  if [[ -e "$target" ]]; then
+    cp -a -- "$target" "$ev/$name.before"
+    printf '%s\t%s\n' "$target" "$ev/$name.before" >>"$LEAK_CELL_RESTORE"
+  else
+    printf 'absent before the run\n' >"$ev/$name.before"
+    printf '%s\t\n' "$target" >>"$LEAK_CELL_RESTORE"
+  fi
+
+  # The writer lives in A's own working directory: the sandbox binds that, and nothing
+  # above it. It appends rather than truncates, so a file the deployment already has is
+  # measured as a real session would change it.
+  local writer="$LEAK_A/append.py"
+  cat >"$writer" <<'PY'
+import errno, json, os, sys
+rel, text = sys.argv[1], sys.argv[2]
+path = os.path.join(os.path.expanduser("~"), ".claude", rel)
+out = {"path": rel, "chars": len(text)}
+try:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(text + "\n")
+    out["open"] = "ok"
+    out["token_found"] = True
+except OSError as e:
+    out["open"] = errno.errorcode.get(e.errno, str(e.errno))
+    out["token_found"] = False
+print(json.dumps(out))
+PY
+  leak_read_sandboxed "$net" "$LEAK_A" "$writer" "$ev/$name.write.json" "$rel" "$text"
+
+  # What the harness sees from OUTSIDE the sandbox is the measurement: the writer
+  # reporting success only says the call returned inside.
+  if [[ -e "$target" ]]; then
+    cp -a -- "$target" "$ev/$name.after"
+  fi
+  LEAK_PRODUCED_PATH="$target"
+  LEAK_PRODUCED_TOKEN="$token"
+}
+
+# leak_verdict_produced OUT -- did the sandboxed writer's line reach the host tree?
+# Read from outside the sandbox, by the harness, after the writing session has exited.
+leak_verdict_produced() {
+  python3 - "$1" "$LEAK_PRODUCED_PATH" "$LEAK_PRODUCED_TOKEN" <<'PY'
+import errno, json, sys
+out, path, token = sys.argv[1:4]
+rec = {"path": path, "token": token}
+try:
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        data = fh.read()
+    rec["open"] = "ok"
+    rec["token_found"] = token in data
+    rec["bytes"] = len(data)
+except OSError as e:
+    rec["open"] = errno.errorcode.get(e.errno, str(e.errno))
+    rec["token_found"] = False
+with open(out, "w", encoding="utf-8") as fh:
+    json.dump(rec, fh)
+PY
 }
 
 # leak_isolation_canary -- plant a canary in A's TRANSCRIPT; sets LEAK_ISO_PATH and
