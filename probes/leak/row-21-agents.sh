@@ -129,10 +129,10 @@ leak_cell t1-native
 plant
 subagent "$AGENTS_DIR/notes-helper.md" notes-helper "$SAY_TOK" "$MARK_T1" "$RUN_TOK" "$LEAK_ISO_PATH"
 leak_session_native "$LEAK_B" "$PROMPT" "$LEAK_RUN/t1.txt" --permission-mode bypassPermissions
-leak_session_verdict "$LEAK_RUN/t1.txt" "$SAY_TOK" "$LEAK_RUN/t1.json"
+T="$(leak_latest_transcript "$LEAK_B")"
+leak_verdict_subagent "$LEAK_RUN/t1.json" "$T" "$SAY_TOK"
 leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "question=ingestion" \
-  --set "canary=$SAY_TOK" --reader "$LEAK_RUN/t1.json" \
-  --transcript "$(leak_latest_transcript "$LEAK_B")"
+  --set "canary=$SAY_TOK" --reader "$LEAK_RUN/t1.json" --transcript "$T"
 
 leak_say "T2 (sandboxed) — the same user-level subagent, from another project"
 leak_cell t2-ingestion
@@ -141,7 +141,7 @@ subagent "$AGENTS_DIR/notes-helper.md" notes-helper "$SAY_TOK" "$MARK_T2" "$RUN_
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2.txt" \
   --permission-mode bypassPermissions
 T="$(leak_latest_transcript "$LEAK_B")"
-leak_session_verdict "$LEAK_RUN/t2.txt" "$SAY_TOK" "$LEAK_RUN/t2.json"
+leak_verdict_subagent "$LEAK_RUN/t2.json" "$T" "$SAY_TOK"
 leak_record "t2-ingestion" --set "topology=T2" --set "net=proxy" \
   --set "question=ingestion" --set "canary=$SAY_TOK" --reader "$LEAK_RUN/t2.json" \
   --transcript "$T"
@@ -170,10 +170,11 @@ plant
 rm -f "$AGENTS_DIR/notes-helper.md"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2c.txt" \
   --permission-mode bypassPermissions
-leak_session_verdict "$LEAK_RUN/t2c.txt" "$SAY_TOK" "$LEAK_RUN/t2c.json"
+T="$(leak_latest_transcript "$LEAK_B")"
+leak_verdict_subagent "$LEAK_RUN/t2c.json" "$T" "$SAY_TOK"
 leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
   --set "question=ingestion" --set "canary=$SAY_TOK" --reader "$LEAK_RUN/t2c.json" \
-  --transcript "$(leak_latest_transcript "$LEAK_B")"
+  --transcript "$T"
 
 leak_say "T2 negative control — B's OWN project subagent"
 leak_cell t2-own
@@ -181,10 +182,10 @@ plant
 subagent "$PROJ_AGENTS_DIR/notes-helper.md" notes-helper "$P_TOK" "$MARK_OWN" "$P_TOK" "$LEAK_ISO_PATH"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2own.txt" \
   --permission-mode bypassPermissions
-leak_session_verdict "$LEAK_RUN/t2own.txt" "$P_TOK" "$LEAK_RUN/t2own.json"
+T="$(leak_latest_transcript "$LEAK_B")"
+leak_verdict_subagent "$LEAK_RUN/t2own.json" "$T" "$P_TOK"
 leak_record "t2-own" --set "topology=T2-own" --set "net=proxy" --set "question=ingestion" \
-  --set "canary=$P_TOK" --reader "$LEAK_RUN/t2own.json" \
-  --transcript "$(leak_latest_transcript "$LEAK_B")"
+  --set "canary=$P_TOK" --reader "$LEAK_RUN/t2own.json" --transcript "$T"
 
 leak_cell_finish
 leak_real_config_after

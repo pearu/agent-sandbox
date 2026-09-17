@@ -132,6 +132,9 @@ leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
 leak_say "T2 negative control — B's OWN project command file"
 leak_cell t2-own
 plant
+# The global file of the SAME NAME shadows B's own, so the control has to be the
+# only one present. plant() rebuilds it for every cell; here it must go.
+rm -f "$CMD_DIR/arith-say.md"
 say_cmd "$PROJ_CMD_DIR/arith-say.md" "$P_SAY"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2own.txt"
 leak_session_verdict "$LEAK_RUN/t2own.txt" "$P_SAY" "$LEAK_RUN/t2own.json"

@@ -258,12 +258,15 @@ def validate(rundir, known_ambient=None):
          "version/net/topology missing in: " + ", ".join(missing) if missing else "")
     )
 
-    # Changes to the REAL config that the noise floor does not explain. The floor
-    # samples an IDLE window, while an observing session writes on events (a turn
-    # ending, a hook firing), so it cannot capture those by construction. The tool
-    # cannot attribute a write to a process -- inotify carries no pid and fanotify
-    # needs root -- so classification is the operator's, made explicit here rather
-    # than left to a warning nobody reads.
+    # Changes to the REAL config that the noise floor does not explain AND that carry
+    # this run's id -- lib.sh's leak_real_config_after splits them. The floor samples an
+    # IDLE window while the session driving the study writes on events (a turn ending, a
+    # backup rotating), so a bare diff flags that session on every run; classifying those
+    # PATHS as ambient would blind the gate to .claude.json, backups/ and projects/,
+    # which is where this study's subject lives. Attribution by run id is the sharper
+    # question -- every canary carries it -- and a deletion is attributed regardless,
+    # since nothing is left to inspect. known_ambient still applies on top, for the paths
+    # a run may legitimately touch.
     att = os.path.join(rundir, "real-attributable")
     unexplained = []
     if os.path.exists(att):

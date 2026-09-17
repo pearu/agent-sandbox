@@ -275,12 +275,63 @@ leak_real_config_after() {
   python3 "$LEAK_SNAPSHOT" diff "$LEAK_RUN/real-before" "$LEAK_RUN/real-after" >"$LEAK_RUN/real-diff"
   cut -f2 "$LEAK_RUN/real-ambient" | sort -u >"$LEAK_RUN/real-ambient-paths"
   awk -F'\t' 'NR==FNR { a[$0] = 1; next } !($2 in a)' \
-    "$LEAK_RUN/real-ambient-paths" "$LEAK_RUN/real-diff" >"$LEAK_RUN/real-attributable"
+    "$LEAK_RUN/real-ambient-paths" "$LEAK_RUN/real-diff" >"$LEAK_RUN/real-unexplained"
+
+  # ATTRIBUTION, NOT A PATH LIST. The noise floor samples an IDLE window, and the session
+  # DRIVING the study writes on events -- a turn ending, a backup rotating -- so a
+  # before/after diff of the real config flags that session's own writes on every run.
+  # Classifying those paths as ambient would blind the gate to `.claude.json`, `backups/`
+  # and `projects/`, which is precisely where this study's subject lives.
+  #
+  # So ask a sharper question: did THIS RUN write it? Every canary the harness plants
+  # carries the run id, so a real-config file that changed and does NOT contain the run id
+  # was not written by this run. Measured: a run refused for `content ~/.claude.json` plus
+  # a backup rotation turned out to have changed exactly one key, `promptQueueUseCount`,
+  # with no project entry touched and the run id nowhere in the file or its backups.
+  #
+  # A DELETION cannot be inspected -- there is nothing left to look at -- so it is
+  # attributed to the run unless it is a ROTATION: the same directory also gained a file
+  # that is itself foreign, which is what a store keeping N newest copies does when it
+  # writes the N+1th. Measured: `~/.claude/backups` loses its oldest .claude.json backup
+  # every time the driving session writes a new one, so attributing every deletion failed
+  # the run for the very activity this attribution exists to exclude. A deletion with no
+  # accompanying foreign creation still fails, because removing something from the real
+  # config is the one outcome that must never pass quietly.
+  : >"$LEAK_RUN/real-attributable"
+  : >"$LEAK_RUN/real-foreign"
+  local kind path dir
+  # first pass: everything that still exists can be read, so read it
+  while IFS=$'\t' read -r kind path; do
+    [[ -n "${path:-}" && "$kind" != deleted ]] || continue
+    if grep -qsF -- "$LEAK_RUN_ID" "$path"; then
+      printf '%s\t%s\n' "$kind" "$path" >>"$LEAK_RUN/real-attributable"
+    else
+      printf '%s\t%s\n' "$kind" "$path" >>"$LEAK_RUN/real-foreign"
+    fi
+  done <"$LEAK_RUN/real-unexplained"
+  # second pass: a deletion beside a foreign creation in the same directory is a rotation
+  while IFS=$'\t' read -r kind path; do
+    [[ "$kind" == deleted ]] || continue
+    dir="$(dirname -- "$path")"
+    if awk -F'\t' -v d="$dir" '$1 == "created" && index($2, d "/") == 1 { found = 1 }
+         END { exit !found }' "$LEAK_RUN/real-foreign"; then
+      printf '%s\t%s (rotation: the same directory gained a file that is not ours)\n' \
+        "$kind" "$path" >>"$LEAK_RUN/real-foreign"
+    else
+      printf '%s\t%s\n' "$kind" "$path" >>"$LEAK_RUN/real-attributable"
+    fi
+  done <"$LEAK_RUN/real-unexplained"
+
+  if [[ -s "$LEAK_RUN/real-foreign" ]]; then
+    leak_say "$(wc -l <"$LEAK_RUN/real-foreign") real-config change(s) NOT this run's \
+(no run id in them; another session on this host):"
+    sed 's/^/  /' "$LEAK_RUN/real-foreign" >&2
+  fi
   if [[ -s "$LEAK_RUN/real-attributable" ]]; then
-    leak_say "WARNING: the real ~/.claude changed in ways the noise floor does not explain:"
+    leak_say "WARNING: the real ~/.claude changed and THIS RUN is attributable:"
     sed 's/^/  /' "$LEAK_RUN/real-attributable" >&2
   else
-    leak_say "real ~/.claude untouched (beyond the measured noise floor)"
+    leak_say "real ~/.claude carries nothing from this run"
   fi
 }
 
@@ -508,6 +559,49 @@ with open(sys.argv[3], "w", encoding="utf-8") as fh:
     json.dump({"open": "ok", "token_found": sys.argv[2] in reply,
                "reply_chars": len(reply)}, fh)
 PY
+}
+
+# leak_verdict_subagent OUT TRANSCRIPT TOKEN -- did the SUBAGENT follow the definition?
+#
+# The parent's final reply is the wrong artefact for this channel. A subagent's answer
+# comes back to the parent as a tool_result, and the parent is free to summarise it --
+# measured twice: the subagent ran, wrote all three of its files, and the parent narrated
+# what it had done instead of quoting the token, so an ingestion cell read as `absent`
+# while the definition had plainly been ingested. The token inside the Agent call's
+# RESULT is the structural evidence; the parent's prose is not.
+#
+# Only tool_result blocks are searched, so a parent that merely READ the definition file
+# cannot produce a false positive.
+leak_verdict_subagent() {
+  python3 - "$1" "$2" "$3" <<'PYSUB'
+import json, sys
+out, transcript, token = sys.argv[1:4]
+try:
+    found = False
+    with open(transcript, encoding="utf-8", errors="surrogateescape") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            msg = rec.get("message")
+            if not isinstance(msg, dict):
+                continue
+            for c in msg.get("content") or []:
+                if not isinstance(c, dict) or c.get("type") != "tool_result":
+                    continue
+                content = c.get("content")
+                text = content if isinstance(content, str) else json.dumps(content)
+                if token in text:
+                    found = True
+except OSError:
+    raise SystemExit(0)  # no transcript: a failed experiment, not a negative
+rec = {"open": "ok", "token_found": found, "token": token, "where": "tool_result"}
+if not found:
+    rec["requires_human_classification"] = True
+with open(out, "w", encoding="utf-8") as fh:
+    json.dump(rec, fh)
+PYSUB
 }
 
 # leak_latest_transcript CWD -- the newest transcript for the project at CWD, so a
