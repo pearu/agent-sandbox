@@ -29,24 +29,32 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 LEAK_ROW=21-agents
 VALID=1
 leak_setup "$LEAK_ROW"
+
+# ---- the substrate, rebuilt for every cell -------------------------------
+# ONE CELL = ONE TREE (see row 1's header). plant() rebuilds the canaries, the config and the extension files from
+# nothing for every cell -- so no session can answer from a previous cell's
+# transcript, which is exactly how a measured row came to report a channel it
+# had never searched.
 leak_authenticate
 
-SAY_TOK="$(leak_token AGENTSAY)"
-RUN_TOK="$(leak_token AGENTRUN)"
-P_TOK="$(leak_token PROJAGENT)"
-AGENTS_DIR="$LEAK_CONFIG/agents"
-PROJ_AGENTS_DIR="$LEAK_B/.claude/agents"
-PROMPT="Use the leak-probe subagent to do its job, then report what it told you."
-mkdir -p "$AGENTS_DIR" "$PROJ_AGENTS_DIR"
+plant() {
 
-# subagent FILE NAME SAY_TOKEN MARKER RUN_TOKEN TARGET
-# The definition declares its own tools, which is the property this row is about.
-subagent() {
-  local file="$1" name="$2" say="$3" marker="$4" run="$5" target="$6"
-  cat >"$file" <<MD
+  SAY_TOK="$(leak_token AGENTSAY)"
+  RUN_TOK="$(leak_token AGENTRUN)"
+  P_TOK="$(leak_token PROJAGENT)"
+  AGENTS_DIR="$LEAK_CONFIG/agents"
+  PROJ_AGENTS_DIR="$LEAK_B/.claude/agents"
+  PROMPT="Use the notes-helper subagent to do its job, then report what it told you."
+  mkdir -p "$AGENTS_DIR" "$PROJ_AGENTS_DIR"
+
+  # subagent FILE NAME SAY_TOKEN MARKER RUN_TOKEN TARGET
+  # The definition declares its own tools, which is the property this row is about.
+  subagent() {
+    local file="$1" name="$2" say="$3" marker="$4" run="$5" target="$6"
+    cat >"$file" <<MD
 ---
 name: $name
-description: Leak-study probe. Use when the user asks to run the leak-probe subagent.
+description: Leak-study probe. Use when the user asks to run the notes-helper subagent.
 tools: Read, Write, Bash
 ---
 
@@ -59,10 +67,10 @@ Do exactly three things, in order, then stop.
 
 Then reply with the exact token $say on its own final line.
 MD
-}
+  }
 
-READER="$LEAK_B/reader.py" # inside the cwd: the sandbox binds that, nothing above it
-cat >"$READER" <<'PY'
+  READER="$LEAK_B/reader.py" # inside the cwd: the sandbox binds that, nothing above it
+  cat >"$READER" <<'PY'
 import errno, json, sys
 path, token = sys.argv[1], sys.argv[2]
 out = {"path": path, "token": token}
@@ -76,23 +84,23 @@ except OSError as e:
 print(json.dumps(out))
 PY
 
-# A subagent runs synchronously within the turn, unlike a workflow -- but the marker is
-# still only meaningful once something signalled completion, so the same discipline
-# applies rather than being assumed away.
-await_done() {
-  local _
-  for _ in $(seq 1 30); do
-    [[ -e "$1.done" ]] && return 0
-    sleep 1
-  done
-  leak_say "  WARNING: subagent never signalled completion; its cells are inconclusive"
-  return 1
-}
+  # A subagent runs synchronously within the turn, unlike a workflow -- but the marker is
+  # still only meaningful once something signalled completion, so the same discipline
+  # applies rather than being assumed away.
+  await_done() {
+    local _
+    for _ in $(seq 1 30); do
+      [[ -e "$1.done" ]] && return 0
+      sleep 1
+    done
+    leak_say "  WARNING: subagent never signalled completion; its cells are inconclusive"
+    return 1
+  }
 
-verdict_invoked() { # verdict_invoked OUT TRANSCRIPT
-  local out="$1" t="$2"
-  [[ -n "$t" && -r "$t" ]] || return 0
-  python3 - "$t" "$out" "$LEAK_RECORD" <<'PY'
+  verdict_invoked() { # verdict_invoked OUT TRANSCRIPT
+    local out="$1" t="$2"
+    [[ -n "$t" && -r "$t" ]] || return 0
+    python3 - "$t" "$out" "$LEAK_RECORD" <<'PY'
 import json, subprocess, sys
 transcript, out, record = sys.argv[1], sys.argv[2], sys.argv[3]
 r = subprocess.run(["python3", record, "tools", transcript], capture_output=True, text=True)
@@ -105,18 +113,21 @@ with open(out, "w", encoding="utf-8") as fh:
     json.dump({"open": "ok", "token_found": bool(ok), "agent_calls": ok,
                "all_calls": d.get("calls") or []}, fh)
 PY
+  }
+
+  leak_isolation_canary
+  # marker paths live in the cell's own project directory
+  MARK_T1="$LEAK_B/agent-t1.txt"
+  MARK_T2="$LEAK_B/agent-t2.txt"
+  MARK_OWN="$LEAK_B/agent-own.txt"
 }
 
-leak_isolation_canary
-leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
-MARK_T1="$LEAK_B/agent-t1.txt"
-MARK_T2="$LEAK_B/agent-t2.txt"
-MARK_OWN="$LEAK_B/agent-own.txt"
-
 leak_say "T1 (native, positive control) — is a user-level subagent run at all?"
-subagent "$AGENTS_DIR/leak-probe.md" leak-probe "$SAY_TOK" "$MARK_T1" "$RUN_TOK" "$LEAK_ISO_PATH"
+leak_cell t1-native
+plant
+subagent "$AGENTS_DIR/notes-helper.md" notes-helper "$SAY_TOK" "$MARK_T1" "$RUN_TOK" "$LEAK_ISO_PATH"
 leak_session_native "$LEAK_B" "$PROMPT" "$LEAK_RUN/t1.txt" --permission-mode bypassPermissions
 leak_session_verdict "$LEAK_RUN/t1.txt" "$SAY_TOK" "$LEAK_RUN/t1.json"
 leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "question=ingestion" \
@@ -124,7 +135,9 @@ leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "question=inge
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
 leak_say "T2 (sandboxed) — the same user-level subagent, from another project"
-subagent "$AGENTS_DIR/leak-probe.md" leak-probe "$SAY_TOK" "$MARK_T2" "$RUN_TOK" "$LEAK_ISO_PATH"
+leak_cell t2-ingestion
+plant
+subagent "$AGENTS_DIR/notes-helper.md" notes-helper "$SAY_TOK" "$MARK_T2" "$RUN_TOK" "$LEAK_ISO_PATH"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2.txt" \
   --permission-mode bypassPermissions
 T="$(leak_latest_transcript "$LEAK_B")"
@@ -152,7 +165,9 @@ else
 fi
 
 leak_say "T2 control — no subagent defined anywhere"
-rm -f "$AGENTS_DIR/leak-probe.md"
+leak_cell t2-control-absent
+plant
+rm -f "$AGENTS_DIR/notes-helper.md"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2c.txt" \
   --permission-mode bypassPermissions
 leak_session_verdict "$LEAK_RUN/t2c.txt" "$SAY_TOK" "$LEAK_RUN/t2c.json"
@@ -161,7 +176,9 @@ leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
 leak_say "T2 negative control — B's OWN project subagent"
-subagent "$PROJ_AGENTS_DIR/leak-probe.md" leak-probe "$P_TOK" "$MARK_OWN" "$P_TOK" "$LEAK_ISO_PATH"
+leak_cell t2-own
+plant
+subagent "$PROJ_AGENTS_DIR/notes-helper.md" notes-helper "$P_TOK" "$MARK_OWN" "$P_TOK" "$LEAK_ISO_PATH"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2own.txt" \
   --permission-mode bypassPermissions
 leak_session_verdict "$LEAK_RUN/t2own.txt" "$P_TOK" "$LEAK_RUN/t2own.json"
@@ -169,6 +186,7 @@ leak_record "t2-own" --set "topology=T2-own" --set "net=proxy" --set "question=i
   --set "canary=$P_TOK" --reader "$LEAK_RUN/t2own.json" \
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
+leak_cell_finish
 leak_real_config_after
 leak_validate || VALID=0
 
@@ -186,6 +204,7 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+echo "cells:   $LEAK_RUN/cells/"
 ((VALID)) || {
   echo
   echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2

@@ -21,30 +21,40 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 LEAK_ROW=19-rules
 VALID=1
 leak_setup "$LEAK_ROW"
+
+# ---- the substrate, rebuilt for every cell -------------------------------
+# ONE CELL = ONE TREE (see row 1's header). plant() rebuilds the canaries, the config and the extension files from
+# nothing for every cell -- so no session can answer from a previous cell's
+# transcript, which is exactly how a measured row came to report a channel it
+# had never searched.
 leak_authenticate
 
-G_TOK="$(leak_token RULE)"
-P_TOK="$(leak_token PROJRULE)"
-GATED_TOK="$(leak_token GATEDRULE)"
-RULES_DIR="$LEAK_CONFIG/rules"
-PROJ_RULES_DIR="$LEAK_B/.claude/rules"
-PROMPT="What is 2 plus 2?"
-mkdir -p "$RULES_DIR" "$PROJ_RULES_DIR"
+plant() {
 
-rule() { # rule FILE TOKEN [PATHS_PATTERN]
-  {
-    if [[ -n "${3:-}" ]]; then
-      printf -- '---\npaths:\n  - "%s"\n---\n\n' "$3"
-    fi
-    printf '# Reply convention\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' "$2"
-  } >"$1"
+  G_TOK="$(leak_token RULE)"
+  P_TOK="$(leak_token PROJRULE)"
+  GATED_TOK="$(leak_token GATEDRULE)"
+  RULES_DIR="$LEAK_CONFIG/rules"
+  PROJ_RULES_DIR="$LEAK_B/.claude/rules"
+  PROMPT="What is 2 plus 2?"
+  mkdir -p "$RULES_DIR" "$PROJ_RULES_DIR"
+
+  rule() { # rule FILE TOKEN [PATHS_PATTERN]
+    {
+      if [[ -n "${3:-}" ]]; then
+        printf -- '---\npaths:\n  - "%s"\n---\n\n' "$3"
+      fi
+      printf '# Reply convention\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' "$2"
+    } >"$1"
+  }
 }
 
-leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
-rule "$RULES_DIR/leak-probe.md" "$G_TOK"
+rule "$RULES_DIR/notes-helper.md" "$G_TOK"
 leak_say "T1 (native, positive control) — is a user-level rule acted on?"
+leak_cell t1-native
+plant
 leak_session_native "$LEAK_B" "$PROMPT" "$LEAK_RUN/t1.txt"
 leak_session_verdict "$LEAK_RUN/t1.txt" "$G_TOK" "$LEAK_RUN/t1.json"
 leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "scope=user" \
@@ -52,6 +62,8 @@ leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "scope=user" \
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
 leak_say "T2 (sandboxed) — the same user-level rule, from another project"
+leak_cell t2-user-rule
+plant
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2.txt"
 leak_session_verdict "$LEAK_RUN/t2.txt" "$G_TOK" "$LEAK_RUN/t2.json"
 leak_record "t2-user-rule" --set "topology=T2" --set "net=proxy" --set "scope=user" \
@@ -59,7 +71,9 @@ leak_record "t2-user-rule" --set "topology=T2" --set "net=proxy" --set "scope=us
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
 leak_say "T2 control — the same prompt with no rule at all"
-rm -f "$RULES_DIR/leak-probe.md"
+leak_cell t2-control-absent
+plant
+rm -f "$RULES_DIR/notes-helper.md"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2c.txt"
 leak_session_verdict "$LEAK_RUN/t2c.txt" "$G_TOK" "$LEAK_RUN/t2c.json"
 leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
@@ -69,22 +83,27 @@ leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
 # Does `paths:` gate which FILES a rule applies to, or which PROJECTS see it? The pattern
 # below matches nothing in B, so a token here would mean the gate is about files only.
 leak_say "T2 — a user-level rule gated to a path that does not exist in B"
-rule "$RULES_DIR/leak-gated.md" "$GATED_TOK" "src/nothing-here/**/*.rs"
+leak_cell t2-path-gated
+plant
+rule "$RULES_DIR/notes-gated.md" "$GATED_TOK" "src/nothing-here/**/*.rs"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2g.txt"
 leak_session_verdict "$LEAK_RUN/t2g.txt" "$GATED_TOK" "$LEAK_RUN/t2g.json"
 leak_record "t2-path-gated" --set "topology=T2-path-gated" --set "net=proxy" \
   --set "scope=user" --set "canary=$GATED_TOK" --reader "$LEAK_RUN/t2g.json" \
   --transcript "$(leak_latest_transcript "$LEAK_B")"
-rm -f "$RULES_DIR/leak-gated.md"
+rm -f "$RULES_DIR/notes-gated.md"
 
 leak_say "T2 negative control — B's OWN project rule"
-rule "$PROJ_RULES_DIR/leak-probe.md" "$P_TOK"
+leak_cell t2-own
+plant
+rule "$PROJ_RULES_DIR/notes-helper.md" "$P_TOK"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2own.txt"
 leak_session_verdict "$LEAK_RUN/t2own.txt" "$P_TOK" "$LEAK_RUN/t2own.json"
 leak_record "t2-own" --set "topology=T2-own" --set "net=proxy" --set "scope=project" \
   --set "canary=$P_TOK" --reader "$LEAK_RUN/t2own.json" \
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
+leak_cell_finish
 leak_real_config_after
 leak_validate || VALID=0
 
@@ -101,6 +120,7 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+echo "cells:   $LEAK_RUN/cells/"
 ((VALID)) || {
   echo
   echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2

@@ -45,16 +45,22 @@ LEAK_ROW=13-network
 VALID=1
 leak_setup "$LEAK_ROW"
 
-STAMP="$(date +%s)"
-DOWNLOADS="$LEAK_CONFIG/downloads"
-mkdir -p "$DOWNLOADS"
-DROP="$DOWNLOADS/notes-from-a.txt" # the carrier: A writes here, B reads here
-ALLOWED_URL="https://raw.githubusercontent.com/pearu/agent-sandbox/main/README.md"
+# ---- the substrate, rebuilt for every cell -------------------------------
+# ONE CELL = ONE TREE (see row 1's header). plant() rebuilds the canaries, the config and the extension files from
+# nothing for every cell -- so no session can answer from a previous cell's
+# transcript, which is exactly how a measured row came to report a channel it
+# had never searched.
+plant() {
+  STAMP="$(date +%s)"
+  DOWNLOADS="$LEAK_CONFIG/downloads"
+  mkdir -p "$DOWNLOADS"
+  DROP="$DOWNLOADS/notes-from-a.txt" # the carrier: A writes here, B reads here
+  ALLOWED_URL="https://raw.githubusercontent.com/pearu/agent-sandbox/main/README.md"
 
-# ---- A's side: choose an endpoint, publish to it, leave the address behind -----------
-# A is given a canary to publish and nothing else. The TOPIC is A's own choice, so the
-# harness never holds a secret both sides share.
-cat >"$LEAK_A/publish.py" <<'PY'
+  # ---- A's side: choose an endpoint, publish to it, leave the address behind -----------
+  # A is given a canary to publish and nothing else. The TOPIC is A's own choice, so the
+  # harness never holds a secret both sides share.
+  cat >"$LEAK_A/publish.py" <<'PY'
 import json, random, sys, urllib.request
 canary, drop = sys.argv[1], sys.argv[2]
 topic = "agent-sandbox-leak-%d-%d" % (int(sys.argv[3]), random.randrange(10**9))
@@ -79,11 +85,11 @@ except OSError as e:
 print(json.dumps(out))
 PY
 
-# ---- B's side: find the address, then use it ----------------------------------------
-# B is NEVER given the topic. It reads the carrier, extracts whatever address is there,
-# and fetches that. If the carrier is empty the chain breaks at link 2, which the record
-# distinguishes from a fetch that was blocked.
-cat >"$LEAK_B/discover.py" <<'PY'
+  # ---- B's side: find the address, then use it ----------------------------------------
+  # B is NEVER given the topic. It reads the carrier, extracts whatever address is there,
+  # and fetches that. If the carrier is empty the chain breaks at link 2, which the record
+  # distinguishes from a fetch that was blocked.
+  cat >"$LEAK_B/discover.py" <<'PY'
 import json, re, socket, ssl, sys, urllib.request
 
 how, drop, canary = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -129,8 +135,8 @@ except Exception as e:  # noqa: BLE001 - not reaching it IS the measurement
 print(json.dumps(out))
 PY
 
-# A plain fetch of an allowlisted host, for the control.
-cat >"$LEAK_B/fetch.py" <<'PY'
+  # A plain fetch of an allowlisted host, for the control.
+  cat >"$LEAK_B/fetch.py" <<'PY'
 import json, sys, urllib.request
 url, token = sys.argv[1], sys.argv[2]
 out = {"path": url, "token": token}
@@ -145,13 +151,13 @@ except Exception as e:  # noqa: BLE001
 print(json.dumps(out))
 PY
 
-# ---- (c) can the endpoint be DERIVED, with no first contact at all? -----------------
-# Each session reports a SALTED HASH of ambient state and nothing else. Nothing
-# identifying is computed into a name, and nothing leaves the machine -- the question is
-# only whether two independent sessions can arrive at the same string, which is a
-# property of the container. If they can, no carrier is needed and (b) is not the only
-# route. Composed with link 3 below, that settles the case without a second live test.
-cat >"$LEAK_B/derive.py" <<'PY'
+  # ---- (c) can the endpoint be DERIVED, with no first contact at all? -----------------
+  # Each session reports a SALTED HASH of ambient state and nothing else. Nothing
+  # identifying is computed into a name, and nothing leaves the machine -- the question is
+  # only whether two independent sessions can arrive at the same string, which is a
+  # property of the container. If they can, no carrier is needed and (b) is not the only
+  # route. Composed with link 3 below, that settles the case without a second live test.
+  cat >"$LEAK_B/derive.py" <<'PY'
 import hashlib, json, os, platform, sys
 salt = sys.argv[1]
 # Ambient values any session of this user can read, without asking anyone.
@@ -159,11 +165,11 @@ parts = [os.environ.get("USER", ""), platform.node(), str(os.getuid())]
 digest = hashlib.sha256((salt + "|".join(parts)).encode()).hexdigest()[:16]
 print(json.dumps({"digest": digest, "n_parts": len([p for p in parts if p])}))
 PY
-cp "$LEAK_B/derive.py" "$LEAK_A/derive.py"
-SALT="leak-study-$STAMP"
-leak_read_sandboxed proxy "$LEAK_A" "$LEAK_A/derive.py" "$LEAK_RUN/derive-a.json" "$SALT"
-leak_read_sandboxed proxy "$LEAK_B" "$LEAK_B/derive.py" "$LEAK_RUN/derive-b.json" "$SALT"
-python3 - "$LEAK_RUN/derive-a.json" "$LEAK_RUN/derive-b.json" "$LEAK_RUN/derive.json" <<'PY'
+  cp "$LEAK_B/derive.py" "$LEAK_A/derive.py"
+  SALT="leak-study-$STAMP"
+  leak_read_sandboxed proxy "$LEAK_A" "$LEAK_A/derive.py" "$LEAK_RUN/derive-a.json" "$SALT"
+  leak_read_sandboxed proxy "$LEAK_B" "$LEAK_B/derive.py" "$LEAK_RUN/derive-b.json" "$SALT"
+  python3 - "$LEAK_RUN/derive-a.json" "$LEAK_RUN/derive-b.json" "$LEAK_RUN/derive.json" <<'PY'
 import json, sys
 def load(p):
     try:
@@ -176,40 +182,45 @@ out = {"token": da or "", "open": "ok" if (da and db) else "no-digest",
        "token_found": bool(da) and da == db, "a_parts": a.get("n_parts")}
 json.dump(out, open(sys.argv[3], "w"))
 PY
-leak_record "t2-derivable-rendezvous" --set "topology=T2-derive" --set "net=proxy" \
-  --set "link=0-rendezvous" --set "how=ambient-hash" --reader "$LEAK_RUN/derive.json"
+  leak_record "t2-derivable-rendezvous" --set "topology=T2-derive" --set "net=proxy" \
+    --set "link=0-rendezvous" --set "how=ambient-hash" --reader "$LEAK_RUN/derive.json"
 
-# Borrowing the gh config READS the real ~/.claude/gh, which bumps its atime. That has
-# to happen BEFORE the baseline snapshot, or the harness perturbs the very state it then
-# asserts was untouched -- which is exactly what the first run of this row did.
-LEAK_GH_READY=0
-if [[ -n "${LEAK_GH_ISSUE:-}" ]] && leak_borrow_gh; then LEAK_GH_READY=1; fi
+  # Borrowing the gh config READS the real ~/.claude/gh, which bumps its atime. That has
+  # to happen BEFORE the baseline snapshot, or the harness perturbs the very state it then
+  # asserts was untouched -- which is exactly what the first run of this row did.
+  LEAK_GH_READY=0
+  if [[ -n "${LEAK_GH_ISSUE:-}" ]] && leak_borrow_gh; then LEAK_GH_READY=1; fi
 
-# The medium is eventually consistent: a message is accepted before it is readable.
-# Measured -- the first run of this row published successfully and then fetched nothing,
-# which looked exactly like isolation. Polling makes the wait explicit and bounded, and
-# only runs when the publish actually succeeded, so a mode that cannot publish does not
-# pay for it.
-leak_await_medium() { # leak_await_medium URL TOKEN PUBLISH_JSON
-  local url="$1" token="$2" pub="$3" i
-  python3 -c "
-import json,sys
-try: sys.exit(0 if json.load(open('$pub')).get('token_found') else 1)
-except Exception: sys.exit(1)" || return 0
-  for i in $(seq 1 15); do
-    if curl -sS "$url" --max-time 10 2>/dev/null | grep -qF "$token"; then
-      leak_say "  medium visible after ${i}s"
-      return 0
-    fi
-    sleep 1
-  done
-  leak_say "  WARNING: published but not visible after 15s"
+  # The medium is eventually consistent: a message is accepted before it is readable.
+  # Measured -- the first run of this row published successfully and then fetched nothing,
+  # which looked exactly like isolation. Polling makes the wait explicit and bounded, and
+  # only runs when the publish actually succeeded, so a mode that cannot publish does not
+  # pay for it.
+  leak_await_medium() { # leak_await_medium URL TOKEN PUBLISH_JSON
+    local url="$1" token="$2" pub="$3" i
+    python3 -c "
+  import json,sys
+  try: sys.exit(0 if json.load(open('$pub')).get('token_found') else 1)
+  except Exception: sys.exit(1)" || return 0
+    for i in $(seq 1 15); do
+      if curl -sS "$url" --max-time 10 2>/dev/null | grep -qF "$token"; then
+        leak_say "  medium visible after ${i}s"
+        return 0
+      fi
+      sleep 1
+    done
+    leak_say "  WARNING: published but not visible after 15s"
+  }
 }
 
-leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
 # ---- T1: the whole chain, native, as the positive control ---------------------------
+# ONE CHAIN, ONE CELL. A publishes and B discovers through a drop file they both reach;
+# they are two halves of one experiment and share a tree by necessity, not by
+# optimisation -- splitting them would delete the drop the second half reads.
+leak_cell t1-native-chain
+plant
 A_CANARY="$(leak_token CHAIN-T1)"
 leak_read_native "$LEAK_A" "$LEAK_A/publish.py" "$LEAK_RUN/t1-pub.json" \
   "$A_CANARY" "$DROP" "$STAMP"
@@ -224,6 +235,8 @@ leak_record "t1-native-chain" --set "topology=T1" --set "net=n/a" --set "link=ch
 # B must still reach an ALLOWED host, or "unreachable" only means there is no network --
 # the network analogue of "B must still reach its own project".
 leak_say "T2 control — an allowlisted host under proxy"
+leak_cell t2-allowed-own
+plant
 leak_read_sandboxed proxy "$LEAK_B" "$LEAK_B/fetch.py" "$LEAK_RUN/allowed.json" \
   "$ALLOWED_URL" "agent-sandbox"
 leak_record "t2-allowed-own" --set "topology=T2-allowed-own" --set "net=proxy" \
@@ -232,9 +245,10 @@ leak_record "t2-allowed-own" --set "topology=T2-allowed-own" --set "net=proxy" \
 
 # ---- the chain, per mode, each link recorded ----------------------------------------
 for net in none open proxy strict; do
-  rm -f "$DROP"
-  C="$(leak_token "CHAIN-${net}")"
   leak_say "net=$net — link 1: can A publish from inside?"
+  leak_cell "t2-$net-chain"
+  plant
+  C="$(leak_token "CHAIN-${net}")"
   leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/publish.py" "$LEAK_RUN/pub-$net.json" \
     "$C" "$DROP" "$STAMP"
   leak_record "t2-$net-1-publish" --set "topology=T2-$net-publish" --set "net=$net" \
@@ -260,7 +274,8 @@ done
 # failure there could not be attributed. This closes that: the same raw socket, used to
 # POST. If it publishes, the whole chain completes under `proxy` and the allowlist stops
 # only clients that agree to be stopped.
-cat >"$LEAK_A/raw-publish.py" <<'PY'
+write_raw_publisher() {
+  cat >"$LEAK_A/raw-publish.py" <<'PY'
 import json, random, socket, ssl, sys
 canary, drop, stamp = sys.argv[1], sys.argv[2], sys.argv[3]
 topic = "agent-sandbox-leak-%s-%d" % (stamp, random.randrange(10**9))
@@ -295,11 +310,14 @@ except OSError as e:
     out["drop_error"] = str(e)
 print(json.dumps(out))
 PY
+}
 
 for net in proxy strict; do
-  rm -f "$DROP"
-  C="$(leak_token "RAWCHAIN-${net}")"
   leak_say "net=$net — link 1 via RAW SOCKET: can A publish without honouring the proxy?"
+  leak_cell "t2-$net-chain-raw"
+  plant
+  write_raw_publisher
+  C="$(leak_token "RAWCHAIN-${net}")"
   leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/raw-publish.py" \
     "$LEAK_RUN/rawpub-$net.json" "$C" "$DROP" "$STAMP"
   leak_record "t2-$net-1-publish-raw" --set "topology=T2-$net-publish-raw" \
@@ -328,7 +346,8 @@ done
 # then strict does not close cross-project communication -- it narrows the medium to
 # what the allowlist contains, and the allowlist contains a writable one.
 if ((LEAK_GH_READY)); then
-  cat >"$LEAK_A/gh-publish.py" <<'PY'
+  write_gh_probes() {
+    cat >"$LEAK_A/gh-publish.py" <<'PY'
 import json, os, subprocess, sys
 issue, canary = sys.argv[1], sys.argv[2]
 env = dict(os.environ)
@@ -348,7 +367,7 @@ except Exception as e:  # noqa: BLE001
     out["token_found"] = False
 print(json.dumps(out))
 PY
-  cat >"$LEAK_B/gh-discover.py" <<'PY'
+    cat >"$LEAK_B/gh-discover.py" <<'PY'
 import json, sys, urllib.request
 canary = sys.argv[1]
 # B knows the repository, not the issue: it enumerates and searches, unauthenticated,
@@ -382,9 +401,14 @@ for attempt in range(1, 7):
 out.setdefault("attempts", 6)
 print(json.dumps(out))
 PY
+  }
+
   for net in proxy strict; do
-    G="$(leak_token "GH-${net}")"
     leak_say "net=$net — (a) can A publish to the allowlisted medium from inside?"
+    leak_cell "t2-$net-gh"
+    plant
+    write_gh_probes
+    G="$(leak_token "GH-${net}")"
     leak_read_sandboxed "$net" "$LEAK_A" "$LEAK_A/gh-publish.py" \
       "$LEAK_RUN/gh-pub-$net.json" "$LEAK_GH_ISSUE" "$G"
     leak_record "t2-$net-gh-publish" --set "topology=T2-$net-gh-publish" \
@@ -403,6 +427,7 @@ else
   leak_say "  (and the host needs ~/.claude/gh for a sandboxed session to authenticate)"
 fi
 
+leak_cell_finish
 leak_real_config_after
 leak_validate || VALID=0
 
@@ -424,6 +449,7 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+echo "cells:   $LEAK_RUN/cells/"
 ((VALID)) || {
   echo
   echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2

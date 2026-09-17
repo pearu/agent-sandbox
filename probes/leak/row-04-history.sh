@@ -39,17 +39,22 @@ LEAK_ROW=04-history
 VALID=1
 leak_setup "$LEAK_ROW"
 
-HISTORY="$LEAK_CONFIG/history.jsonl"
-A_CANARY="$(leak_token APROMPT)"
-B_CANARY="$(leak_token BPROMPT)"
-PFX_CANARY="$(leak_token PFXPROMPT)"
-NEST_CANARY="$(leak_token NESTPROMPT)"
-WB_CANARY="$(leak_token WBPROMPT)"
+# ---- the substrate, rebuilt for every cell ----------------------------------
+# ONE CELL = ONE TREE (see row 1's header): the history file is written from
+# nothing for every cell, so a line that is present inside the sandbox is present
+# because the filter delivered it and not because an earlier cell appended it.
+plant() {
+  HISTORY="$LEAK_CONFIG/history.jsonl"
+  A_CANARY="$(leak_token APROMPT)"
+  B_CANARY="$(leak_token BPROMPT)"
+  PFX_CANARY="$(leak_token PFXPROMPT)"
+  NEST_CANARY="$(leak_token NESTPROMPT)"
+  WB_CANARY="$(leak_token WBPROMPT)"
 
-# Records are COMPACT json, one per line -- separators matter, because the filter
-# greps the literal `"project":"<dir>"` with no space after the colon.
-python3 - "$HISTORY" "$LEAK_A" "$LEAK_B" \
-  "$A_CANARY" "$B_CANARY" "$PFX_CANARY" "$NEST_CANARY" <<'PY'
+  # Records are COMPACT json, one per line -- separators matter, because the filter
+  # greps the literal `"project":"<dir>"` with no space after the colon.
+  python3 - "$HISTORY" "$LEAK_A" "$LEAK_B" \
+    "$A_CANARY" "$B_CANARY" "$PFX_CANARY" "$NEST_CANARY" <<'PY'
 import json, sys
 path, a, b, a_tok, b_tok, pfx_tok, nest_tok = sys.argv[1:8]
 def rec(display, project, pasted=None):
@@ -67,11 +72,11 @@ lines = [
 with open(path, "w", encoding="utf-8") as fh:
     fh.write("\n".join(lines) + "\n")
 PY
-leak_say "planted 4 history lines (A, B, ${LEAK_B##*/}-notes, A-with-nested-B)"
+  leak_say "planted 4 history lines (A, B, ${LEAK_B##*/}-notes, A-with-nested-B)"
 
-# ---- the readers ------------------------------------------------------------
-READER="$LEAK_B/reader.py" # inside the cwd: the sandbox binds that, nothing above it
-cat >"$READER" <<'PY'
+  # ---- the readers ------------------------------------------------------------
+  READER="$LEAK_B/reader.py" # inside the cwd: the sandbox binds that, nothing above it
+  cat >"$READER" <<'PY'
 import errno, json, sys
 path, token = sys.argv[1], sys.argv[2]
 out = {"path": path, "token": token}
@@ -87,11 +92,11 @@ except OSError as e:
 print(json.dumps(out))
 PY
 
-# Append a record inside the sandbox and read it back. `append` merges a session's new
-# lines into the host file at exit, so this is the outward direction -- the same shape
-# of question row 3 answered for copyout.
-WRITER="$LEAK_B/writer.py"
-cat >"$WRITER" <<'PY'
+  # Append a record inside the sandbox and read it back. `append` merges a session's new
+  # lines into the host file at exit, so this is the outward direction -- the same shape
+  # of question row 3 answered for copyout.
+  WRITER="$LEAK_B/writer.py"
+  cat >"$WRITER" <<'PY'
 import errno, json, sys
 path, token = sys.argv[1], sys.argv[2]
 out = {"path": path, "token": token}
@@ -112,17 +117,21 @@ except OSError as e:
     out["token_found"] = False
 print(json.dumps(out))
 PY
+}
 
-# ---- run the cells ----------------------------------------------------------
-leak_precheck "$LEAK_CONFIG"
+# ---- the cells --------------------------------------------------------------
 leak_real_config_before
 
 leak_say "T1 (native, positive control)"
+leak_cell t1-native
+plant
 leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t1.json" "$HISTORY" "$A_CANARY"
 leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "sandboxed=no" \
   --set "canary=$A_CANARY" --set "target=$HISTORY" --reader "$LEAK_RUN/t1.json"
 
 leak_say "T2 (sandboxed, net=none) — A's prompt"
+leak_cell t2-append
+plant
 leak_watch_start "$LEAK_CONFIG"
 leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2.json" "$HISTORY" "$A_CANARY"
 leak_watch_stop
@@ -132,34 +141,44 @@ leak_record "t2-append" --set "topology=T2" --set "net=none" --set "sandboxed=ye
   --reader "$LEAK_RUN/t2.json" --set-file "reads=$LEAK_RUN/records/t2.reads"
 
 leak_say "T2 negative control — B's OWN prompt (the filter must keep it)"
+leak_cell t2-append-own
+plant
 leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-own.json" "$HISTORY" "$B_CANARY"
 leak_record "t2-append-own" --set "topology=T2-own" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$B_CANARY" --set "target=$HISTORY" \
   --reader "$LEAK_RUN/t2-own.json"
 
 leak_say "T2 collision A — a sibling project whose path EXTENDS B's"
+leak_cell t2-prefix
+plant
 leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-prefix.json" "$HISTORY" "$PFX_CANARY"
 leak_record "t2-prefix-collision" --set "topology=T2-prefix" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$PFX_CANARY" --set "target=$HISTORY" \
   --reader "$LEAK_RUN/t2-prefix.json"
 
 leak_say "T2 collision B — A's line carrying the literal project key of B, nested"
+leak_cell t2-nested
+plant
 leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-nested.json" "$HISTORY" "$NEST_CANARY"
 leak_record "t2-nested-collision" --set "topology=T2-nested" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$NEST_CANARY" --set "target=$HISTORY" \
   --reader "$LEAK_RUN/t2-nested.json"
 
 leak_say "T2-share-all ([share-memory] all — does any lever reach the history?)"
+leak_cell t2-share-all
+plant
 printf '[share-memory]\nall\n' >"$LEAK_B/.agent-sandbox"
 leak_trust "$LEAK_B"
 leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-all.json" "$HISTORY" "$A_CANARY"
 leak_record "t2-share-all" --set "topology=T2-share-all" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$A_CANARY" --set "target=$HISTORY" \
   --reader "$LEAK_RUN/t2-all.json"
-rm -f "$LEAK_B/.agent-sandbox"
-leak_untrust "$LEAK_B"
-
+# ONE CELL, TWO OBSERVATIONS: the host read measures what the sandboxed write left
+# behind, so they cannot live in different trees. Splitting them would delete the file
+# the second one reads.
 leak_say "T2-writeback: B appends a prompt inside..."
+leak_cell t2-writeback
+plant
 leak_read_sandboxed none "$LEAK_B" "$WRITER" "$LEAK_RUN/t2-wb-in.json" \
   "$HISTORY" "$WB_CANARY" "$LEAK_B"
 leak_record "t2-writeback-inside" --set "topology=T2-writeback-inside" --set "net=none" \
@@ -171,6 +190,7 @@ leak_record "t2-writeback" --set "topology=T2-writeback" --set "net=none" \
   --set "sandboxed=no" --set "canary=$WB_CANARY" --set "target=$HISTORY" \
   --reader "$LEAK_RUN/t2-wb-host.json"
 
+leak_cell_finish
 leak_real_config_after
 leak_validate || VALID=0
 
@@ -189,6 +209,7 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+echo "cells:   $LEAK_RUN/cells/"
 ((VALID)) || {
   echo
   echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2

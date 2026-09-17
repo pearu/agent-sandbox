@@ -241,6 +241,53 @@ rather than assume; and a run that straddles a switch is not a clean measurement
 either model, so the record keeps the per-message breakdown rather than a single
 value.
 
+### One experiment, one tree
+
+Everything in this section is about what a session is asked. This is about what it can
+see before it is asked anything, and it is the same kind of error: an experiment whose
+starting point carries the previous experiment's material does not measure the channel
+it names.
+
+**Every cell gets a tree built from nothing.** A new HOME, a new config, new
+repositories — per cell, not per row. The earlier harness gave a row one throwaway HOME
+and one pair of project directories for all of its cells, and the cost was not
+hypothetical: every cell of a row ran in the same project directory, so each session
+could read the transcripts of the sessions before it. One did, and said so —
+
+> it only reached me because a previous session in *this* project printed it into its own
+> transcript before that directory became unreachable
+
+— answering from residue rather than from the channel under test. Per-cell verdicts
+happened to survive, because each cell checks its own pair and a stale pair does not
+match, but the searches were being answered by the harness's own history.
+
+**Cleaning between cells is not the same thing.** A cleaned tree is a tree whose history
+is an assumption; a new one has no history to assume about. `leak_cell` asserts the fresh
+config has no `projects/` directory at all, so a reused tree fails loudly instead of
+quietly.
+
+**Nothing in a path may name the experiment.** A project's slug *is* its path, so a tree
+under the study's own results directory told every session it was inside a leak
+experiment, by name — and row 24 had already measured a session declining once it
+recognised the harness. Cells live under `/tmp/<hexid>`, with hexid names for the home
+and both projects. The ids are the microsecond clock in hex at a fixed width, so a
+lexical sort is a chronological sort and the run still reads in order; they carry no row
+name, no readable date and no word. The tree is moved into the run directory when the
+cell ends — the move is the throwaway.
+
+**Neither may anything planted in it.** Tokens are pure hex for the same reason: the
+earlier form, `LEAK<runid>-<NAME>-<n>`, announced the experiment to anything that could
+read it, and a session declined to quote one because it *"is shaped like a tracer"*. The
+same applies to every name a session can see — a skill, a plugin, a rule, an output style
+or an agent called `leak-probe` is a tracer with extra steps.
+
+**Do not optimise the setup.** Planting once and reusing, cleaning instead of rebuilding,
+sharing a HOME to save a few seconds of startup — each buys time and costs the property
+that makes the cells comparable. Two cells that legitimately share a tree are the
+exception and say why: a write inside the sandbox and the host read that measures what it
+left behind are one experiment, and splitting them would delete the thing the second half
+reads.
+
 ### Measuring through a model
 
 Levels 2 and 3 run a real session, which makes the model part of the instrument. Every

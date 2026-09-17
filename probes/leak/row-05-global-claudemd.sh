@@ -27,28 +27,38 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 LEAK_ROW=05-global-claudemd
 VALID=1
 leak_setup "$LEAK_ROW"
+
+# ---- the substrate, rebuilt for every cell -------------------------------
+# ONE CELL = ONE TREE (see row 1's header). plant() rebuilds the canaries, the config and the extension files from
+# nothing for every cell -- so no session can answer from a previous cell's
+# transcript, which is exactly how a measured row came to report a channel it
+# had never searched.
 leak_authenticate
 
-G_CANARY="$(leak_token GLOBAL)"
-P_CANARY="$(leak_token PROJECT)"
-GLOBAL_MD="$LEAK_CONFIG/CLAUDE.md"
-PROJECT_MD="$LEAK_B/CLAUDE.md"
-PROMPT="What is 2 plus 2?"
+plant() {
 
-instruction() { # instruction TOKEN
-  printf '# Instructions\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' "$1"
+  G_CANARY="$(leak_token GLOBAL)"
+  P_CANARY="$(leak_token PROJECT)"
+  GLOBAL_MD="$LEAK_CONFIG/CLAUDE.md"
+  PROJECT_MD="$LEAK_B/CLAUDE.md"
+  PROMPT="What is 2 plus 2?"
+
+  instruction() { # instruction TOKEN
+    printf '# Instructions\n\nWhen you reply, always finish your response with the exact\ntoken %s on its own final line.\n' "$1"
+  }
+
+  # Only ONE CLAUDE.md is in place per cell. With both present the model would carry two
+  # competing instructions, and a cell where it followed only one would read as a failure
+  # of the other.
+  instruction "$G_CANARY" >"$GLOBAL_MD"
+  leak_say "planted global=$G_CANARY project=$P_CANARY (planted later)"
 }
 
-# Only ONE CLAUDE.md is in place per cell. With both present the model would carry two
-# competing instructions, and a cell where it followed only one would read as a failure
-# of the other.
-instruction "$G_CANARY" >"$GLOBAL_MD"
-leak_say "planted global=$G_CANARY project=$P_CANARY (planted later)"
-
-leak_precheck "$LEAK_CONFIG"
 leak_real_config_before
 
 leak_say "T1 (native, positive control) — does a session follow the global instruction?"
+leak_cell t1-native
+plant
 leak_session_native "$LEAK_B" "$PROMPT" "$LEAK_RUN/t1.txt"
 leak_session_verdict "$LEAK_RUN/t1.txt" "$G_CANARY" "$LEAK_RUN/t1.json"
 leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "sandboxed=no" \
@@ -56,6 +66,8 @@ leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "sandboxed=no"
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
 leak_say "T2 (sandboxed, net=proxy) — the same global instruction"
+leak_cell t2-sandboxed
+plant
 leak_watch_start "$LEAK_CONFIG"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2.txt"
 leak_watch_stop
@@ -69,6 +81,8 @@ leak_record "t2-sandboxed" --set "topology=T2" --set "net=proxy" --set "sandboxe
 # Without this, a positive above could be the harness leaking the token into the prompt
 # rather than the model reading it out of the file.
 leak_say "T2 control — the same prompt with NO global CLAUDE.md"
+leak_cell t2-control-absent
+plant
 rm -f "$GLOBAL_MD"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2-control.txt"
 leak_session_verdict "$LEAK_RUN/t2-control.txt" "$G_CANARY" "$LEAK_RUN/t2-control.json"
@@ -81,6 +95,8 @@ leak_record "t2-control-absent" --set "topology=T2-control" --set "net=proxy" \
 # be followed inside: without it, "the global one was not ingested" could not be told
 # apart from "no CLAUDE.md is ever ingested in this setup".
 leak_say "T2 negative control — B's OWN project CLAUDE.md"
+leak_cell t2-own
+plant
 instruction "$P_CANARY" >"$PROJECT_MD"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2-own.txt"
 leak_session_verdict "$LEAK_RUN/t2-own.txt" "$P_CANARY" "$LEAK_RUN/t2-own.json"
@@ -88,6 +104,7 @@ leak_record "t2-own" --set "topology=T2-own" --set "net=proxy" --set "sandboxed=
   --set "canary=$P_CANARY" --set "target=$PROJECT_MD" --reader "$LEAK_RUN/t2-own.json" \
   --transcript "$(leak_latest_transcript "$LEAK_B")"
 
+leak_cell_finish
 leak_real_config_after
 leak_validate || VALID=0
 
@@ -105,6 +122,7 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+echo "cells:   $LEAK_RUN/cells/"
 ((VALID)) || {
   echo
   echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2

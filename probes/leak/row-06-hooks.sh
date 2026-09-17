@@ -43,20 +43,28 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 LEAK_ROW=06-hooks
 VALID=1
 leak_setup "$LEAK_ROW"
+
+# ---- the substrate, rebuilt for every cell -------------------------------
+# ONE CELL = ONE TREE (see row 1's header). plant() rebuilds the canaries, the config and the extension files from
+# nothing for every cell -- so no session can answer from a previous cell's
+# transcript, which is exactly how a measured row came to report a channel it
+# had never searched.
 leak_authenticate
 
-G_CANARY="$(leak_token HOOK)"
-P_CANARY="$(leak_token PROJHOOK)"
-SETTINGS="$LEAK_CONFIG/settings.json"
-PROJECT_SETTINGS="$LEAK_B/.claude/settings.json"
-PROMPT="What is 2 plus 2?"
-mkdir -p "$(dirname "$PROJECT_SETTINGS")"
+plant() {
 
-# write_hooks FILE TOKEN OUTFILE -- SessionStart and Stop both fire without any tool
-# use, and both write the same marker file: which of them fires is detail, that one of
-# them does is the result. The per-event prefix keeps that detail in the record.
-write_hooks() {
-  python3 - "$1" "$2" "$3" "$PROBE" "$LEAK_ISO_PATH" <<'PY'
+  G_CANARY="$(leak_token HOOK)"
+  P_CANARY="$(leak_token PROJHOOK)"
+  SETTINGS="$LEAK_CONFIG/settings.json"
+  PROJECT_SETTINGS="$LEAK_B/.claude/settings.json"
+  PROMPT="What is 2 plus 2?"
+  mkdir -p "$(dirname "$PROJECT_SETTINGS")"
+
+  # write_hooks FILE TOKEN OUTFILE -- SessionStart and Stop both fire without any tool
+  # use, and both write the same marker file: which of them fires is detail, that one of
+  # them does is the result. The per-event prefix keeps that detail in the record.
+  write_hooks() {
+    python3 - "$1" "$2" "$3" "$PROBE" "$LEAK_ISO_PATH" <<'PY'
 import json, os, sys
 path, token, outfile, probe, target = sys.argv[1:6]
 hooks = {}
@@ -74,10 +82,10 @@ cfg["hooks"] = hooks
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
 PY
-}
+  }
 
-READER="$LEAK_B/reader.py" # inside the cwd: the sandbox binds that, nothing above it
-cat >"$READER" <<'PY'
+  READER="$LEAK_B/reader.py" # inside the cwd: the sandbox binds that, nothing above it
+  cat >"$READER" <<'PY'
 import errno, json, sys
 path, token = sys.argv[1], sys.argv[2]
 out = {"path": path, "token": token}
@@ -95,13 +103,16 @@ except OSError as e:
 print(json.dumps(out))
 PY
 
-leak_isolation_canary
-PROBE="$LEAK_B/exec-probe.sh"
-leak_write_exec_probe "$PROBE"
-leak_precheck "$LEAK_CONFIG"
+  leak_isolation_canary
+  PROBE="$LEAK_B/exec-probe.sh"
+  leak_write_exec_probe "$PROBE"
+}
+
 leak_real_config_before
 
 leak_say "T1 (native, positive control) — does a global hook fire at all?"
+leak_cell t1-native
+plant
 T1_OUT="$LEAK_B/fired-t1.txt"
 write_hooks "$SETTINGS" "$G_CANARY" "$T1_OUT"
 leak_session_native "$LEAK_B" "$PROMPT" "$LEAK_RUN/t1.txt"
@@ -110,6 +121,8 @@ leak_record "t1-native" --set "topology=T1" --set "net=n/a" --set "sandboxed=no"
   --set "canary=$G_CANARY" --set "target=$SETTINGS" --reader "$LEAK_RUN/t1.json"
 
 leak_say "T2 (sandboxed, net=proxy) — the same global hook"
+leak_cell t2-sandboxed
+plant
 T2_OUT="$LEAK_B/fired-t2.txt"
 write_hooks "$SETTINGS" "$G_CANARY" "$T2_OUT"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2.txt"
@@ -118,12 +131,16 @@ leak_record "t2-sandboxed" --set "topology=T2" --set "net=proxy" --set "sandboxe
   --set "canary=$G_CANARY" --set "target=$SETTINGS" --reader "$LEAK_RUN/t2.json"
 
 leak_say "  ...and what could the hook reach? (A's transcript, copied beside the marker)"
+leak_cell t2-hook-reach
+plant
 leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t2-reach.json" "$T2_OUT.read" "$LEAK_ISO_TOKEN"
 leak_record "t2-hook-reach" --set "topology=T2-hook-reach" --set "net=proxy" \
   --set "sandboxed=yes" --set "canary=$LEAK_ISO_TOKEN" --set "target=$LEAK_ISO_PATH" \
   --reader "$LEAK_RUN/t2-reach.json"
 
 leak_say "T2 control — the same prompt with NO hooks configured"
+leak_cell t2-control-nohooks
+plant
 T2C_OUT="$LEAK_B/fired-t2-control.txt"
 python3 -c "
 import json,sys
@@ -137,12 +154,16 @@ leak_record "t2-control-nohooks" --set "topology=T2-control" --set "net=proxy" \
   --reader "$LEAK_RUN/t2-control.json"
 
 leak_say "  ...and the same reach question NATIVELY, as the comparison"
+leak_cell t1-hook-reach
+plant
 leak_read_native "$LEAK_B" "$READER" "$LEAK_RUN/t1-reach.json" "$T1_OUT.read" "$LEAK_ISO_TOKEN"
 leak_record "t1-hook-reach" --set "topology=T1-hook-reach" --set "net=n/a" \
   --set "sandboxed=no" --set "canary=$LEAK_ISO_TOKEN" --set "target=$LEAK_ISO_PATH" \
   --reader "$LEAK_RUN/t1-reach.json"
 
 leak_say "T2 negative control — B's OWN project hook (.claude/settings.json)"
+leak_cell t2-own
+plant
 OWN_OUT="$LEAK_B/fired-own.txt"
 write_hooks "$PROJECT_SETTINGS" "$P_CANARY" "$OWN_OUT"
 leak_session_sandboxed proxy "$LEAK_B" "$PROMPT" "$LEAK_RUN/t2-own.txt"
@@ -151,12 +172,15 @@ leak_record "t2-own" --set "topology=T2-own" --set "net=proxy" --set "sandboxed=
   --set "canary=$P_CANARY" --set "target=$PROJECT_SETTINGS" --reader "$LEAK_RUN/t2-own.json"
 
 leak_say "T2 ISOLATION CHECK — A's transcript, known scoped, from the SAME sandbox"
+leak_cell t2-isolation-check
+plant
 leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-iso.json" \
   "$LEAK_ISO_PATH" "$LEAK_ISO_TOKEN"
 leak_record "t2-isolation-check" --set "topology=T2-isolation-check" --set "net=none" \
   --set "sandboxed=yes" --set "canary=$LEAK_ISO_TOKEN" --set "target=$LEAK_ISO_PATH" \
   --reader "$LEAK_RUN/t2-iso.json"
 
+leak_cell_finish
 leak_real_config_after
 leak_validate || VALID=0
 
@@ -176,6 +200,7 @@ PY
 done
 echo
 echo "records: $LEAK_RUN/records/"
+echo "cells:   $LEAK_RUN/cells/"
 ((VALID)) || {
   echo
   echo "THIS RUN IS NOT A RESULT -- see the validity gate above." >&2
