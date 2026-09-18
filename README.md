@@ -132,9 +132,11 @@ system-wide mode; the installer refuses to run through `sudo`. See
 
 ## Install
 
-Requirements: Linux with unprivileged user namespaces, `bubblewrap`, `curl`,
-`git`, and either `python3 >= 3.12` with `venv` or conda/mamba (for the proxy
-runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
+Requirements: Linux with unprivileged user namespaces, `bubblewrap` (0.12.0 or
+newer recommended: the installer warns below it, and
+[troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404)
+has the recipe for Ubuntu 24.04), `curl`, `git`, and either `python3 >= 3.12`
+with `venv` or conda/mamba (for the proxy runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
 AppArmor profile allowing bwrap to use user namespaces (and, if you use the
 strict network mode, one for pasta); nothing else needs root.
 

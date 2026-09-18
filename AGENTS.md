@@ -202,8 +202,14 @@ If you are an agent running inside this sandbox while maintaining it:
 - **Proxy options that are unsafe here**: `stream_large_bodies` streams request
   bodies too, and then the allowlist hook runs after the upstream connect.
   Stream responses in `responseheaders`; refuse blocked hosts in `http_connect`.
-- **bubblewrap stays a distro package.** Ubuntu 24.04+ needs root once for the
-  bwrap AppArmor profile anyway; that and the package are the only sudo steps.
+- **bubblewrap stays a distro package, from Ubuntu's own source.** Ubuntu 24.04+
+  needs root once for the bwrap AppArmor profile anyway; that and the package
+  are the only sudo steps. Where the distribution's binary lags -- 24.04 ships
+  0.9.0, and its noble-security update dropped the fix for CVE-2026-87766 again
+  -- the supported route is a no-change rebuild of Ubuntu's newer source
+  package, never a third-party PPA; the recipe is in `docs/troubleshooting.md`,
+  and `install.sh` warns below 0.12.0. The sandbox creates mount points inside
+  the agent's writable state directory, which is the shape that CVE describes.
 - **install.sh is a true install (copy), not an in-place symlink.** It copies
   the engine and profiles under `~/.local/share/agent-sandbox/app` and points
   the launcher there, so the installed command does not depend on the checkout

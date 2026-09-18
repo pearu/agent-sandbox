@@ -6,6 +6,19 @@ break compatibility.
 
 ## Unreleased
 
+### Added
+
+- `install.sh` warns when bubblewrap is older than 0.12.0. That release fixes
+  CVE-2026-87766, a sandbox escape during setup: a symlink in a directory the
+  sandboxed process controls could redirect the files and directories bwrap
+  creates as mount points onto the host, and this sandbox creates mount points
+  inside the agent's writable state directory. Ubuntu 24.04 ships 0.9.0, and
+  its noble-security update 0.9.0-1ubuntu0.3 dropped Canonical's backport of
+  the fix again. `docs/troubleshooting.md` gains the recipe for a no-change
+  rebuild of Ubuntu's own 0.12.0 source on 24.04, with pinned checksums;
+  measured on such a host, the engine's integration suite passes unchanged and
+  overlay mounts work inside bubblewrap's user namespace.
+
 ## 0.2.1 — 2026-09-18
 
 ### Added
