@@ -131,6 +131,7 @@
 #[claude]
 #hide = gh todos
 #sandbox = fg bg
+#user-mcp = inherit
 
 
 # Not settable here, on purpose:

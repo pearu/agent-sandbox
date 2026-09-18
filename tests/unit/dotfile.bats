@@ -139,6 +139,27 @@ trust() {
   [ "$(setenv_value CUDA_VISIBLE_DEVICES)" = 1 ]
 }
 
+@test "[claude] user-mcp = none leaves the host's user-level MCP servers out of the project's config copy from an approved dot-file; an unapproved one changes nothing" {
+  printf '{"mcpServers":{"host":{}},"projects":{}}' >"$H/home/.claude.json"
+  local copy
+  copy="$H/home/.local/state/agent-sandbox/claude/$(slug "$PROJ")/claude.json"
+  printf '[claude]\nuser-mcp = none\n' >"$PROJ/.agent-sandbox"
+  # unapproved: the file is ignored, so the block is inherited as by default
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"present but not approved"* ]]
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if "mcpServers" in d else 1)' "$copy"
+  # approved: left out, and the launch says which form asked for it
+  trust "$PROJ"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"user-level MCP servers left out"*"via [claude] user-mcp"* ]]
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(1 if "mcpServers" in d else 0)' "$copy"
+  # and no "unknown key" complaint from either the engine or the profile
+  [[ "$output" != *"not one this profile reads"* ]]
+  [[ "$output" != *"unknown [claude] key"* ]]
+}
+
 @test "dot-file [ro]/[rw] paths still go through the secret-store refusal" {
   mkdir -p "$H/home/.aws"
   printf '[rw]\n%s/home/.aws\n' "$H" >"$PROJ/.agent-sandbox"

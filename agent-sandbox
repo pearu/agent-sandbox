@@ -1632,6 +1632,7 @@ agent_sandbox() (
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
   local _host_none=0 _agent_none=0 _do_wrap=0 _do_exec=0 _do_quiet=0
   local _sandbox_flag="" _sandbox_flag_set=0
+  local _user_mcp_flag="" _user_mcp_flag_set=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -1760,6 +1761,25 @@ agent_sandbox() (
       --sandbox=*)
         _sandbox_flag="${1#--sandbox=}"
         _sandbox_flag_set=1
+        shift
+        ;;
+      --user-mcp)
+        # Whether the claude profile carries the host's user-level mcpServers
+        # into this project's copy of the config file (inherit, the default) or
+        # leaves them out (none). A narrowing, so a launch-time choice like
+        # --sandbox; the dot-file form is [claude] user-mcp. See the profile's
+        # _claude_user_mcp_mode.
+        [[ $# -ge 2 && -n "$2" ]] || {
+          _as_msg "--user-mcp needs a value (inherit or none)"
+          return 2
+        }
+        _user_mcp_flag="$2"
+        _user_mcp_flag_set=1
+        shift 2
+        ;;
+      --user-mcp=*)
+        _user_mcp_flag="${1#--user-mcp=}"
+        _user_mcp_flag_set=1
         shift
         ;;
       --wrap)
@@ -2204,7 +2224,8 @@ agent_sandbox() (
   # continue with the normal sandboxed foreground flow below. It reads the engine
   # locals it needs (_sandbox_flag, _sandbox_flag_set, _df_profile_kv, cwd,
   # engine, profile_bin, profile) by dynamic scope, as the other profile hooks
-  # do. Wrapper spawns and `--trust` never route.
+  # do; profile_prepare reads _user_mcp_flag/_user_mcp_flag_set the same way.
+  # Wrapper spawns and `--trust` never route.
   if ((! _do_wrap && ! _do_trust)) && declare -F profile_route >/dev/null; then
     profile_route "$@" || return $?
   fi

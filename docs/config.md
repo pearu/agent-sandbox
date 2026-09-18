@@ -122,6 +122,17 @@ Sections:
   from a `--trust`-approved file; the `--sandbox` flag and
   `AGENT_SANDBOX_CLAUDE_SANDBOX` are the ungated launch-time forms. Default: `fg`
   on the host, `none` when the launcher itself runs inside a sandbox.
+  `user-mcp = inherit|none` decides whether the host's user-level MCP servers,
+  the `mcpServers` block of `~/.claude.json`, reach this project's sandbox (see
+  [The config file](#the-config-file-one-copy-per-project)). `inherit`, the
+  default, carries them into the project's copy and refreshes them at every
+  launch; `none` leaves them out, so nothing configured natively is loaded or
+  even visible inside. Leaving them out is a narrowing, so it needs no trust
+  beyond the file's own approval; `--user-mcp` and `AGENT_SANDBOX_CLAUDE_USER_MCP`
+  are the launch-time forms and win over the file. Per-project servers and a
+  project's own `.mcp.json` are not affected. Without a working `python3` the
+  block cannot be left out of a whole copy, and a launch that asked for `none`
+  is refused rather than run with it in.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
@@ -257,6 +268,9 @@ there is nothing at `~/.claude.json` inside.
 - **Refreshed** at every later launch in one key: the user-level `mcpServers`
   follow the host file, added and removed. Manage user-level MCP servers
   natively; one added from inside a sandbox is replaced at the next launch.
+  `user-mcp = none` (or `--user-mcp none`, `AGENT_SANDBOX_CLAUDE_USER_MCP=none`)
+  leaves the block out altogether, for a project whose sandbox should load no
+  server configured natively.
 - **Everything else stays with the project.** Trust, allowed tools, project
   MCP servers and app-state changes made inside persist across that project's
   sandboxed sessions and reach neither the host file nor another project. A
