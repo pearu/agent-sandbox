@@ -24,7 +24,8 @@ setup() {
   mkdir -p "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
     "$HOME/.local/share/keyrings" "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" \
     "$HOME/.local/share/agent-sandbox" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
-    "$HOME/.config/nvim" "$HOME/.local/share/fonts" "$HOME/.cargo" "$HOME/.sshfoo"
+    "$HOME/.local/state/agent-sandbox/claude" \
+    "$HOME/.config/nvim" "$HOME/.local/share/fonts" "$HOME/.cargo" "$HOME/.sshfoo" "$HOME/.local/state/other"
   : >"$HOME/.netrc"
   for knob in RO RW; do
     for p in "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
@@ -34,7 +35,7 @@ setup() {
       [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"the secret store"* ]]
     done
     for p in "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" "$HOME/.local/share/agent-sandbox" \
-      "$HOME/.local/bin" "$HOME/.config/systemd/user"; do
+      "$HOME/.local/bin" "$HOME/.config/systemd/user" "$HOME/.local/state/agent-sandbox/claude"; do
       run _as_check_paths "$knob" "$p"
       [ "$status" -eq 1 ]
       [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"the sandbox's own control plane"* ]]
@@ -46,7 +47,7 @@ setup() {
       [[ "$output" == *"contains"*"bind a specific subdirectory instead"* ]]
     done
     # siblings and look-alikes are fine: the match is exact or by path component
-    run _as_check_paths "$knob" "$HOME/.config/nvim:$HOME/.local/share/fonts:$HOME/.cargo:$HOME/.sshfoo"
+    run _as_check_paths "$knob" "$HOME/.config/nvim:$HOME/.local/share/fonts:$HOME/.cargo:$HOME/.sshfoo:$HOME/.local/state/other"
     [ "$status" -eq 0 ]
   done
 }

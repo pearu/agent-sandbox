@@ -80,11 +80,12 @@ reviewable in one place, the engine.
 
 `profiles/claude.sh` runs Claude Code: it finds the newest install under
 `~/.local/share/claude/versions/` (a single executable named after the version,
-or a directory containing `claude`), binds `~/.claude` read-write and
-`~/.claude.json` inside it at `~/.claude/.claude.json`, with `CLAUDE_CONFIG_DIR`
-pointing Claude Code there (it writes the file through a lock directory and a
-temp file beside it, which the read-only `$HOME` refused; the writes were then
-silently lost), forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+or a directory containing `claude`), binds `~/.claude` read-write and, inside
+it at `~/.claude/.claude.json`, the project's own copy of `~/.claude.json`
+(seeded and refreshed per launch, see [config.md](config.md)), with
+`CLAUDE_CONFIG_DIR` pointing Claude Code there (it writes the file through a
+lock directory and a temp file beside it, which the read-only `$HOME` refused;
+the writes were then silently lost), forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` and `ANTHROPIC_SMALL_FAST_MODEL`, sets
 `DISABLE_AUTOUPDATER=1`, refuses to forward `CLAUDE_CODE_PROJECT_DIR_NAME`, and
 routes `update`, `upgrade` and `install` to the host (see

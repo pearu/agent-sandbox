@@ -77,12 +77,114 @@ slug_vector() {
   [ -f "$H/home/.claude.json" ]
 }
 
-@test "the config file is bound inside the state directory and CLAUDE_CONFIG_DIR points Claude Code there: its lock and temp file need a writable parent, and \$HOME is not one" {
+# this project's copy of the config file, keyed by Claude Code's project slug
+copy_path() {
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  printf '%s' "$H/home/.local/state/agent-sandbox/claude/${proj//[^A-Za-z0-9-]/-}/claude.json"
+}
+
+# seed the host file with two projects: this one and another with a secret in it
+seed_host_config() {
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  printf '{"a":1,"mcpServers":{"host":{}},"projects":{"%s":{"t":true},"/elsewhere":{"lastSessionFirstPrompt":"SECRET"}}}' "$proj" >"$H/home/.claude.json"
+  cp "$H/home/.claude.json" "$H/host-before.json"
+}
+
+# json_get FILE EXPR -> python expression over d (the parsed file)
+json_get() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
+
+@test "the config file bound inside the state directory is this project's copy, and CLAUDE_CONFIG_DIR points Claude Code there: its lock and temp file need a writable parent, and \$HOME is not one" {
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
+  argv_has --bind "$(copy_path)" "$H/home/.claude/.claude.json"
   [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ]
+  # the host's own file is bound nowhere, at neither path
   run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"
+  run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
+}
+
+@test "the copy is seeded from ~/.claude.json with every top-level key and only this project's entry, mode 0600 in a 0700 directory; the host file is untouched" {
+  seed_host_config
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  local c
+  c="$(copy_path)"
+  [ -f "$c" ]
+  [ "$(stat -c %a "$c")" = 600 ]
+  [ "$(stat -c %a "$(dirname "$c")")" = 700 ]
+  [ "$(json_get "$c" 'd["a"]')" = 1 ]
+  [ "$(json_get "$c" 'sorted(d["mcpServers"])')" = "['host']" ]
+  [ "$(json_get "$c" 'len(d["projects"])')" = 1 ]
+  [ "$(json_get "$c" 'list(d["projects"].values())[0]["t"]')" = True ]
+  run ! grep -q SECRET "$c"
+  cmp "$H/home/.claude.json" "$H/host-before.json"
+}
+
+@test "later launches keep the project's own entry and follow the host file's user-level mcpServers, added and removed; other projects never arrive" {
+  seed_host_config
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  local c proj
+  c="$(copy_path)"
+  proj="$(cd "$H/proj" && pwd -P)"
+  # the session changed its copy: its own entry, and a user-level server added inside
+  python3 - "$c" "$proj" <<'PY'
+import json, sys
+p, proj = sys.argv[1:3]
+d = json.load(open(p))
+d["projects"][proj]["inside"] = 1
+d["mcpServers"] = {"inside": {}}
+json.dump(d, open(p, "w"))
+PY
+  # the host file changed too: a new user-level server, and a third project
+  printf '{"a":2,"mcpServers":{"native2":{}},"projects":{"%s":{"t":false},"/elsewhere":{"lastSessionFirstPrompt":"SECRET"},"/third":{}}}' "$proj" >"$H/home/.claude.json"
+  cp "$H/home/.claude.json" "$H/host-before.json"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [ "$(json_get "$c" 'd["projects"][sys.argv[2]]["inside"]' 2>/dev/null || json_get "$c" 'list(d["projects"].values())[0]["inside"]')" = 1 ]
+  [ "$(json_get "$c" 'list(d["projects"].values())[0]["t"]')" = True ] # the copy's entry, not the host's
+  [ "$(json_get "$c" 'len(d["projects"])')" = 1 ]
+  [ "$(json_get "$c" 'sorted(d["mcpServers"])')" = "['native2']" ] # followed the host: added there, and the one added inside is gone
+  [ "$(json_get "$c" 'd["a"]')" = 1 ]                              # other top-level keys are the project's own
+  cmp "$H/home/.claude.json" "$H/host-before.json"
+  # removed natively: removed from the copy too
+  printf '{"a":2,"projects":{}}' >"$H/home/.claude.json"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [ "$(json_get "$c" '"mcpServers" in d')" = False ]
+}
+
+@test "without python3 the copy is the whole host file, made once and never refreshed, and the launch says so" {
+  seed_host_config
+  # a PATH with every tool but python3
+  mkdir -p "$H/nopy"
+  local t
+  for t in /usr/bin/*; do
+    [[ "$(basename "$t")" == python3* ]] || ln -s "$t" "$H/nopy/$(basename "$t")" 2>/dev/null || true
+  done
+  run_engine PATH="$H/bin:$H/nopy" -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"python3 missing: this project's config file is a whole copy"* ]]
+  cmp "$(copy_path)" "$H/host-before.json"
+  printf '{"changed":true}' >"$H/home/.claude.json"
+  run_engine PATH="$H/bin:$H/nopy" -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not refreshed"* ]]
+  cmp "$(copy_path)" "$H/host-before.json"
+}
+
+@test "a python3 that fails degrades like a missing one: the whole file, made once, said out loud -- and never the host file itself" {
+  seed_host_config
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$H/bin/python3"
+  chmod +x "$H/bin/python3"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"python3 failed (exit 3): this project's config file is a whole copy"* ]]
+  cmp "$(copy_path)" "$H/host-before.json"
+  argv_has --bind "$(copy_path)" "$H/home/.claude/.claude.json"
+  run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
 }
 
 @test "the empty mount-point file bwrap leaves on the host for the config file is removed after the session; a file that was already there is kept" {

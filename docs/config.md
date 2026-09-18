@@ -232,6 +232,45 @@ Selecting the mode, from lowest to highest precedence:
    listed add those projects' memory read-only; a single `all` keeps everything
    visible even when the global default is `scoped`.
 
+## The config file: one copy per project
+
+Claude Code's top-level config file, `~/.claude.json`, holds app state
+(onboarding, tips, caches), the account, the user-level `mcpServers`, and one
+entry per project: folder trust, allowed tools, MCP servers added for that
+project, the last opening prompt. Bound whole into every sandbox it was two
+channels at once: a sandboxed session could read every other project's entry,
+and what it wrote reached every other session.
+
+Each project therefore gets its **own copy** of the file, kept on the host under
+`~/.local/state/agent-sandbox/claude/<slug>/claude.json` (`$XDG_STATE_HOME` is
+honoured; `<slug>` is Claude Code's project slug, the directory's path with
+every character outside `[A-Za-z0-9-]` turned into `-`). That directory is part
+of the sandbox's control plane: it is never bound into any sandbox, and
+`[ro]`/`[rw]` refuse it. Inside the sandbox the copy is bound at
+`~/.claude/.claude.json`, and `CLAUDE_CONFIG_DIR` points Claude Code there, so
+there is nothing at `~/.claude.json` inside.
+
+- **Seeded** at the project's first sandboxed launch from `~/.claude.json`:
+  every top-level key, and of the per-project entries only this project's. If
+  the host file has no entry for the project yet, Claude Code asks about folder
+  trust once, inside, and records the answer in the copy.
+- **Refreshed** at every later launch in one key: the user-level `mcpServers`
+  follow the host file, added and removed. Manage user-level MCP servers
+  natively; one added from inside a sandbox is replaced at the next launch.
+- **Everything else stays with the project.** Trust, allowed tools, project
+  MCP servers and app-state changes made inside persist across that project's
+  sandboxed sessions and reach neither the host file nor another project. A
+  native session in the same project keeps using `~/.claude.json`.
+- A background worker (`claude --bg`) is keyed by the project it was launched
+  for, not by the daemon's directory, and is pre-trusted in the copy as it is
+  in the host file.
+- Without a working `python3` the copy is the whole host file, made once and
+  never refreshed, and the launch says so. It is still the project's own copy:
+  the host file itself is never bound.
+
+To start a project's copy over, delete its directory; the next launch seeds it
+again.
+
 ## Where the machine-local state lives
 
 Both the trust store and the global config are under `~/.config/agent-sandbox`,
@@ -243,3 +282,4 @@ of it is bound into the sandbox.
 | `<project>/.agent-sandbox` | the per-project policy (git-ignored by default) |
 | `~/.config/agent-sandbox/config` | `memory_default` and future global settings |
 | `~/.config/agent-sandbox/trust/` | approved dot-file hashes, one file per project |
+| `~/.local/state/agent-sandbox/claude/<slug>/claude.json` | the project's copy of Claude Code's config file (see above) |

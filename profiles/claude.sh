@@ -88,9 +88,12 @@ profile_command=claude
 # bound INSIDE the state directory, at ~/.claude/.claude.json, and
 # CLAUDE_CONFIG_DIR (profile_env_set, below) points Claude Code there. The
 # rename onto a bind mount fails (EBUSY) and Claude Code then rewrites the file
-# in place, which reaches the host's ~/.claude.json. Order matters: the
-# directory first, the file inside it second.
-profile_config_binds=("$HOME/.claude" "$HOME/.claude.json"$'\t'"$HOME/.claude/.claude.json")
+# in place, which reaches the bound file.
+#
+# And the bound file is not the host's: it is THIS PROJECT'S copy of it, made
+# and refreshed by profile_prepare (see _claude_config_prepare), which appends
+# the second entry -- the directory first, the file inside it second.
+profile_config_binds=("$HOME/.claude")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -260,9 +263,109 @@ profile_memory_scope() {
 
 profile_prepare() {
   mkdir -p "$HOME/.claude"
-  # Ensure ~/.claude.json exists so it can be bound (bwrap refuses missing
-  # sources).
+  # Ensure ~/.claude.json exists: it seeds this project's copy of it.
   [[ -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
+  _claude_config_prepare || return 1
+  return 0
+}
+
+# ----- the config file: one copy per project ---------------------------------
+# ~/.claude.json is app state -- onboarding, tips, caches -- plus three things
+# that are per project or user-authored: the per-project entries (folder trust,
+# allowed tools, MCP servers added for that project, the last opening prompt),
+# the user-level mcpServers, and the account. Bound whole it was two channels at
+# once (leak study rows 10 and 11): a sandboxed session read every other
+# project's entry, and what it wrote reached every other session. So each
+# project gets its own copy, kept under the engine's state directory (a control
+# path: never bound into any sandbox), seeded from the host file with every
+# top-level key and only that project's entry, and refreshed on later launches
+# in ONE key: the user-level mcpServers, which the user maintains natively.
+# Everything else the session writes stays with the project -- trust, allowed
+# tools, app state -- which is what a native Claude Code whose config directory
+# this was would do.
+_claude_config_project() {
+  # The project the copy is keyed by: the background project for a wrapped
+  # worker (the daemon's cwd is not it), the session's cwd otherwise. _do_wrap
+  # and cwd are engine locals, seen by dynamic scope.
+  # shellcheck disable=SC2154
+  if ((${_do_wrap:-0})); then
+    local bg
+    bg="$(_as_bg_project)"
+    if [[ -n "$bg" ]]; then
+      printf '%s' "$bg"
+      return 0
+    fi
+  fi
+  printf '%s' "${cwd:-$PWD}"
+}
+_claude_config_copy() { # $1 = project dir
+  printf '%s/claude/%s/claude.json' "$(_as_state_dir)" "$(_claude_project_slug "$1")"
+}
+_claude_config_prepare() {
+  local native="$HOME/.claude.json" project copy dir
+  project="$(_claude_config_project)"
+  copy="$(_claude_config_copy "$project")"
+  dir="$(dirname -- "$copy")"
+  (umask 077 && mkdir -p -- "$dir") || {
+    _as_msg "cannot create $dir for this project's config file"
+    return 1
+  }
+  # Seed or refresh through python3. Without a working python3 the copy is
+  # still per project -- the whole host file, made once, never refreshed --
+  # and the launch says so; what it never does is fall back to binding the
+  # host file itself, which would silently reopen the channel this closes.
+  local why="" rc=0
+  if command -v python3 >/dev/null 2>&1; then
+    AS_NATIVE="$native" AS_COPY="$copy" AS_PROJECT="$project" python3 - <<'PY' 2>/dev/null || rc=$?
+import json, os
+native, copy, project = (os.environ[k] for k in ("AS_NATIVE", "AS_COPY", "AS_PROJECT"))
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+n = load(native) or {}
+c = load(copy)
+if c is None:
+    # seed: every top-level key, and of the per-project entries only this project's
+    c = {k: v for k, v in n.items() if k != "projects"}
+    projects = n.get("projects")
+    c["projects"] = {project: projects[project]} if isinstance(projects, dict) and project in projects else {}
+else:
+    # refresh: the user-level MCP servers follow the host file, added and removed
+    if "mcpServers" in n:
+        c["mcpServers"] = n["mcpServers"]
+    else:
+        c.pop("mcpServers", None)
+tmp = "%s.tmp.%d" % (copy, os.getpid())
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(c, fh)
+    os.replace(tmp, copy)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+    ((rc)) && why="python3 failed (exit $rc)"
+  else
+    why="python3 missing"
+  fi
+  if [[ -n "$why" && ! -e "$copy" ]]; then
+    (umask 077 && cp -- "$native" "$copy") || {
+      _as_msg "could not copy $native to $copy"
+      return 1
+    }
+    _as_msg "$why: this project's config file is a whole copy of ~/.claude.json, other projects' entries included, and will not be refreshed"
+  elif [[ -n "$why" ]]; then
+    _as_msg "$why: this project's config file is not refreshed from ~/.claude.json"
+  fi
+  profile_config_binds+=("$copy"$'\t'"$HOME/.claude/.claude.json")
   return 0
 }
 
@@ -452,15 +555,23 @@ _claude_bg_launch() {
 }
 
 # Record the project as trusted in ~/.claude.json so the bg worker does not stall
-# on the interactive trust prompt. python3-only; degrades to a note if missing.
+# on the interactive trust prompt -- and in the project's own copy of the file,
+# if one exists already: the worker reads the copy, and a copy made by an earlier
+# launch may predate the trust. python3-only; degrades to a note if missing.
 _claude_bg_autotrust() {
-  local proj="$1" cj="$HOME/.claude.json"
+  local proj="$1" cj="$HOME/.claude.json" f
   command -v python3 >/dev/null 2>&1 || {
     _as_msg "python3 missing: cannot pre-trust '$proj' for the bg worker; if it stalls, run 'claude' there once"
     return 0
   }
   [[ -e "$cj" ]] || printf '{}' >"$cj"
-  AS_CJ="$cj" AS_PROJ="$proj" python3 - <<'PY' 2>/dev/null || _as_msg "could not pre-trust bg project '$proj'"
+  for f in "$cj" "$(_claude_config_copy "$proj")"; do
+    [[ "$f" == "$cj" || -e "$f" ]] || continue
+    _claude_mark_trust "$f" "$proj"
+  done
+}
+_claude_mark_trust() { # $1 = a claude config file, $2 = project dir
+  AS_CJ="$1" AS_PROJ="$2" python3 - <<'PY' 2>/dev/null || _as_msg "could not pre-trust bg project '$2' in $1"
 import json, os
 cj, proj = os.environ["AS_CJ"], os.environ["AS_PROJ"]
 try:
@@ -730,10 +841,9 @@ if merged.get("disableAllHooks"):
 # project's source has broken the isolation the README promises.
 #
 # What stays visible, deliberately: CLAUDE.md and settings.json (the user's own
-# instructions), credentials, plugins, statsig, and .claude.json. That last one
-# is a known gap -- it lists every project path, but it is written live by the
-# agent and filtering it risks breaking Claude Code for a leak that is paths and
-# an email address, not project content. docs/design.md records it as a cap.
+# instructions), credentials, plugins and statsig. The config file .claude.json
+# is neither shared nor hidden: each project gets its own copy of it, seeded
+# with that project's entry alone (see _claude_config_prepare above).
 _claude_history_filter() { # $1 = history.jsonl, $2 = project dir
   # Records are compact JSON, one per line, each carrying "project":"<dir>".
   # A fixed-string match including the closing quote cannot match a different

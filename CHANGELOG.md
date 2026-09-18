@@ -20,6 +20,25 @@ break compatibility.
   a knob: the opt-in delivery, the host e2e confirming the pty-host/spare split,
   and CI via an extended `fake-claude.sh` are the remaining pieces of #45.
 
+### Changed
+
+- **Claude Code's config file is per project inside the sandbox.** `~/.claude.json`
+  holds the account, the user-level `mcpServers`, app state, and one entry per
+  project (folder trust, allowed tools, project MCP servers, the last opening
+  prompt). Bound whole it was two channels at once (leak study rows 10 and 11):
+  a sandboxed session read every other project's entry, and what it wrote
+  reached every other session. Each project's sandbox now gets its own copy,
+  kept under `~/.local/state/agent-sandbox/claude/<slug>/claude.json` (a new
+  control path, refused by `[ro]`/`[rw]`), seeded from the host file with every
+  top-level key and only that project's entry, and refreshed at each launch in
+  the user-level `mcpServers` alone -- manage those natively. Trust, allowed
+  tools and app state a session changes inside persist for that project and
+  reach neither the host file nor another project; a native session in the
+  same directory keeps using `~/.claude.json`. Background workers are keyed by
+  the project they were launched for and pre-trusted in the copy. Without a
+  working `python3` the copy is the whole file, made once, and the launch says
+  so. `docs/config.md` has the details.
+
 ### Fixed
 
 - **Every write a sandboxed Claude Code made to its own `~/.claude.json` was
