@@ -175,6 +175,53 @@ PY
   cmp "$(copy_path)" "$H/host-before.json"
 }
 
+@test "user-mcp: none leaves the host's user-level mcpServers out of the copy at seeding and at every refresh; env and flag set it, the flag wins, an unknown value keeps inherit and says so" {
+  seed_host_config # the host file carries mcpServers {"host": {}}
+  local c
+  c="$(copy_path)"
+  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=none -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"user-level MCP servers left out"*"via AGENT_SANDBOX_CLAUDE_USER_MCP"* ]]
+  [ "$(json_get "$c" '"mcpServers" in d')" = False ]
+  [ "$(json_get "$c" 'd["a"]')" = 1 ] # the rest of the seed is as before
+  # inherit at the next launch: the refresh brings the block back from the host
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [ "$(json_get "$c" 'sorted(d["mcpServers"])')" = "['host']" ]
+  # none again, by flag, both spellings: the refresh takes it out
+  run_engine -- claude --user-mcp none --version
+  [ "$status" -eq 0 ]
+  [ "$(json_get "$c" '"mcpServers" in d')" = False ]
+  run_engine -- claude --version # back
+  [ "$(json_get "$c" '"mcpServers" in d')" = True ]
+  run_engine -- claude --user-mcp=none --version
+  [ "$(json_get "$c" '"mcpServers" in d')" = False ]
+  # the flag wins over the environment
+  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=none -- claude --user-mcp inherit --version
+  [ "$status" -eq 0 ]
+  [ "$(json_get "$c" '"mcpServers" in d')" = True ]
+  # an unknown value is said and treated as inherit
+  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=maybe -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unknown value 'maybe'"*"keeping inherit"* ]]
+  [ "$(json_get "$c" '"mcpServers" in d')" = True ]
+  # the flag without a value is an error, not a silent inherit
+  run_engine -- claude --user-mcp
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--user-mcp needs a value"* ]]
+}
+
+@test "user-mcp = none without a working python3 refuses the launch: the block cannot be left out of a whole copy" {
+  seed_host_config
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$H/bin/python3"
+  chmod +x "$H/bin/python3"
+  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=none -- claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"needs python3 to leave the user-level mcpServers out"* ]]
+  [ ! -s "$H/argv" ]      # bwrap never invoked
+  [ ! -e "$(copy_path)" ] # and no whole copy was made either
+}
+
 @test "a python3 that fails degrades like a missing one: the whole file, made once, said out loud -- and never the host file itself" {
   seed_host_config
   printf '#!/usr/bin/env bash\nexit 3\n' >"$H/bin/python3"

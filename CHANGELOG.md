@@ -8,6 +8,16 @@ break compatibility.
 
 ### Added
 
+- **`user-mcp`**: whether the host's user-level MCP servers (the `mcpServers`
+  block of `~/.claude.json`) reach a project's sandbox. `inherit`, the default,
+  carries them into the project's copy of the config file and refreshes them
+  at every launch; `none` leaves them out, closing the one MCP channel that
+  copy keeps open (a server configured natively is otherwise live in every
+  project's sandbox, and a stdio server is a command that runs at session
+  start). Set with `--user-mcp`, `AGENT_SANDBOX_CLAUDE_USER_MCP` or
+  `[claude] user-mcp` in an approved dot-file, in that precedence. A launch that
+  asks for `none` without a working `python3` is refused rather than run with
+  the block in.
 - The engine has a **wrapper role** (`--wrap`), the mechanism for opt-in
   sandboxing of background `claude` workers (issue #45). Invoked as Claude
   Code's `CLAUDE_CODE_PROCESS_WRAPPER`, it runs the discovered native binary

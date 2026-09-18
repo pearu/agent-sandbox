@@ -132,7 +132,7 @@ profile_native_verbs=(daemon agents attach logs stop rm)
 # The single source of truth: the engine warns on any other [claude] key (a typo
 # must not silently do nothing), and the docs drift-check verifies each is
 # documented. `hide` is read in profile_isolate(); `sandbox` in profile_route().
-profile_dotfile_keys=(hide sandbox)
+profile_dotfile_keys=(hide sandbox user-mcp)
 
 # The native installer's layout: each entry under versions/ is either a
 # single executable file named after the version (e.g. 2.1.143) or a
@@ -301,11 +301,46 @@ _claude_config_project() {
 _claude_config_copy() { # $1 = project dir
   printf '%s/claude/%s/claude.json' "$(_as_state_dir)" "$(_claude_project_slug "$1")"
 }
+# The user-level mcpServers block: carried into the project's copy and refreshed
+# from the host file (inherit, the default), or left out (none). Leaving it out
+# closes the one MCP channel a per-project copy keeps open -- a server
+# configured natively is otherwise live in every project's sandbox, and a
+# stdio server is a command that runs at session start. Precedence: --user-mcp
+# > AGENT_SANDBOX_CLAUDE_USER_MCP > [claude] user-mcp (an approved dot-file) >
+# inherit. Closing is a narrowing, so none of the forms is trust-gated beyond
+# the dot-file's own approval. Prints "MODE SOURCE".
+_claude_user_mcp_mode() {
+  local raw="" src="default" _pkv
+  # shellcheck disable=SC2154 # engine locals, by dynamic scope
+  if ((${_user_mcp_flag_set:-0})); then
+    raw="$_user_mcp_flag" src="--user-mcp"
+  elif [[ -n "${AGENT_SANDBOX_CLAUDE_USER_MCP:-}" ]]; then
+    raw="$AGENT_SANDBOX_CLAUDE_USER_MCP" src="AGENT_SANDBOX_CLAUDE_USER_MCP"
+  else
+    for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+      [[ "$_pkv" == user-mcp=* ]] && {
+        raw="${_pkv#user-mcp=}"
+        src="[claude] user-mcp"
+      }
+    done
+  fi
+  raw="${raw//[[:space:]]/}"
+  case "$raw" in
+    "" | inherit) printf 'inherit %s' "$src" ;;
+    none) printf 'none %s' "$src" ;;
+    *)
+      _as_msg "user-mcp ($src): unknown value '$raw' (want inherit or none); keeping inherit"
+      printf 'inherit %s' "$src"
+      ;;
+  esac
+}
 _claude_config_prepare() {
-  local native="$HOME/.claude.json" project copy dir
+  local native="$HOME/.claude.json" project copy dir mcp mcp_src
   project="$(_claude_config_project)"
   copy="$(_claude_config_copy "$project")"
   dir="$(dirname -- "$copy")"
+  read -r mcp mcp_src <<<"$(_claude_user_mcp_mode)"
+  [[ "$mcp" == none ]] && _as_info "user-level MCP servers left out of this project's config file (user-mcp=none via $mcp_src)"
   (umask 077 && mkdir -p -- "$dir") || {
     _as_msg "cannot create $dir for this project's config file"
     return 1
@@ -316,9 +351,10 @@ _claude_config_prepare() {
   # host file itself, which would silently reopen the channel this closes.
   local why="" rc=0
   if command -v python3 >/dev/null 2>&1; then
-    AS_NATIVE="$native" AS_COPY="$copy" AS_PROJECT="$project" python3 - <<'PY' 2>/dev/null || rc=$?
+    AS_NATIVE="$native" AS_COPY="$copy" AS_PROJECT="$project" AS_USER_MCP="$mcp" python3 - <<'PY' 2>/dev/null || rc=$?
 import json, os
 native, copy, project = (os.environ[k] for k in ("AS_NATIVE", "AS_COPY", "AS_PROJECT"))
+inherit_mcp = os.environ["AS_USER_MCP"] != "none"
 def load(path):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -329,13 +365,15 @@ def load(path):
 n = load(native) or {}
 c = load(copy)
 if c is None:
-    # seed: every top-level key, and of the per-project entries only this project's
-    c = {k: v for k, v in n.items() if k != "projects"}
+    # seed: every top-level key (minus the user-level mcpServers when left out),
+    # and of the per-project entries only this project's
+    c = {k: v for k, v in n.items() if k != "projects" and (inherit_mcp or k != "mcpServers")}
     projects = n.get("projects")
     c["projects"] = {project: projects[project]} if isinstance(projects, dict) and project in projects else {}
 else:
-    # refresh: the user-level MCP servers follow the host file, added and removed
-    if "mcpServers" in n:
+    # refresh: the user-level MCP servers follow the host file, added and
+    # removed -- or stay out, when left out
+    if inherit_mcp and "mcpServers" in n:
         c["mcpServers"] = n["mcpServers"]
     else:
         c.pop("mcpServers", None)
@@ -356,7 +394,12 @@ PY
   else
     why="python3 missing"
   fi
-  if [[ -n "$why" && ! -e "$copy" ]]; then
+  if [[ -n "$why" && "$mcp" == none ]]; then
+    # An explicit narrowing that cannot be applied is refused, never skipped:
+    # a whole copy carries the block, and there is no way to strip it here.
+    _as_msg "$why: user-mcp=none (via $mcp_src) needs python3 to leave the user-level mcpServers out of this project's config file; refusing to launch with them in"
+    return 1
+  elif [[ -n "$why" && ! -e "$copy" ]]; then
     (umask 077 && cp -- "$native" "$copy") || {
       _as_msg "could not copy $native to $copy"
       return 1
@@ -908,6 +951,7 @@ profile_isolate() {
     key="${kv%%=*}"
     val="${kv#*=}"
     case "$key" in
+      sandbox | user-mcp) ;; # read by profile_route and _claude_user_mcp_mode
       hide)
         # Word-splitting $val is the point: the value is a space-separated list.
         # shellcheck disable=SC2086
