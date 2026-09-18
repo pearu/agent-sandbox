@@ -508,8 +508,10 @@ this document does not enumerate.
 
 ## Isolation dispositions
 
-The sandbox binds `~/.claude` and `~/.claude.json` **read-write**, then applies
-one disposition per path:
+The sandbox binds `~/.claude` **read-write** and, since engine 0.2.1, a
+**per-project copy** of `~/.claude.json` inside it (at `~/.claude/.claude.json`;
+there is nothing at `~/.claude.json` inside), then applies one disposition per
+path:
 
 | Disposition | Inside at start | Written back at exit |
 |---|---|---|
@@ -517,6 +519,7 @@ one disposition per path:
 | **copyout** | empty | entries the session *created*, merged back, never overwriting |
 | **append** | own / filtered view, or empty | new lines appended under flock |
 | **scoped** | only the current project | that project's own records |
+| **copy** (0.2.1; `.claude.json` only so far) | this project's copy of the host file: every top-level key, only this project's entry | stays in the copy; the user-level `mcpServers` follow the host file at the next launch, or are left out under `user-mcp = none` |
 | **(none — default)** | the host's real content | everything (shared, live) |
 
 The consequence matters for the study: for a **sandboxed reader**, tmpfs,
@@ -524,6 +527,150 @@ copyout, append and scoped all block reading *another* session's data. But
 copyout and append still propagate the **writer's own** new data to the host — so
 a **native** reader (or host inspection) can still see it. The isolation governs
 what a session *reads*, not whether a session *writes back*.
+
+## Channel classification: decision groups
+
+**Status: provisional**, filled from the valid runs at Claude Code 2.1.273 on engine
+0.2.0 and from the 0.2.1 changes; corrected as rows 15, 17, 18 settle and as level 2 and
+3 cells arrive. This is the study output that #56 promised: for each channel, what
+crosses, what was measured, what it costs if it stays open, whether Claude Code needs it,
+and the disposition that follows — so the decision to keep a channel open or closed is
+made knowing what it carries.
+
+The channels are grouped so that a decision applies to a **group**, not to a row. A row
+that turns out to behave differently from its group moves to another group; it does not
+get its own rule. Three vocabulary items recur:
+
+- **default disposition** — what a sandbox gets with no configuration;
+- **toggle** — how a project or a launch changes it: `live` reopens a channel in both
+  directions and immediately (today's behaviour), `none` closes it for this project,
+  `share-from <project>` opens a named project's material read-only (`[share-memory]`
+  generalised). Every toggle exists in three forms: `.agent-sandbox` key, environment
+  variable, engine flag; a narrowing needs no trust beyond the dot-file's own approval, a
+  widening is trust-gated. `user-mcp` (0.2.1) is the first instance;
+- **liveness** — whether a native edit reaches a running or a later sandbox: `live` means
+  at once (Claude Code reloads settings on change), the per-project copy means at the
+  next launch, `none` means never.
+
+"Inference" below means one project's material steering another session's behaviour;
+"disclosure" means content crossing without necessarily steering anything.
+
+### Group A — user-owned configuration read as instructions or code
+
+The #90 block. Every row is user-owned, needed by nobody's session in particular, and
+ingested by every project in every topology measured; `live` is the leak.
+
+| row | channel | what crosses | measured | consequence if open | Claude Code needs it |
+|---|---|---|---|---|---|
+| 5 | global `CLAUDE.md` | instructions, acted on | T1, T5, T2, T6 all `obtained` (level 2) | direct inference in every project | no |
+| 6 | `settings.json` hooks | code, runs with no prompt | T1, T5 `obtained`; reach bounded inside | inference; execution in B's sandbox | the file yes (`/model`, permissions); hooks no |
+| 7, 8 | `skills/`, `commands/` | instructions; embedded command | ingested T1, T5; command runs only with a grant | inference; capability once `Bash` is granted | no |
+| 9 | `plugins/` | bundled hooks and skills | hook fired T1, T5; reach bounded | as 6 and 7; 7 MB on this host | install inside needs write |
+| 19 | `rules/` | instructions, file-gated not project-gated | T1, T5 `obtained` | direct inference | no |
+| 20 | `output-styles/` | inert; the selection in `settings.json` carries it | selected style `obtained` | inference through style | no |
+| 21 | `agents/` | instructions and declared tools | ingested, invoked, tools ran; reach bounded | inference and capability | no |
+| 22 | `workflows/` | agent-authored code; its agents act | invoked T1, T5; `import()` refused | inference; execution via subagents | no |
+
+**Default:** a per-project copy, seeded from `~/.claude` and refreshed from it at every
+launch. T5 stays open by design (the user's configuration reaches every sandbox); T2 and
+T6 close. **Toggles:** `live`, `none`, `share-from`. **Open decisions for the group:**
+refresh mechanics (snapshot per launch plus a layer of changes, or a persistent copy with
+a three-way sync; measured cost is under 0.1 s and under 20 MB either way), whether a
+file the session changed shadows a later native change (warn) or is overwritten,
+deletions (forgotten at the next refresh, or tombstoned), and `plugins/` (copied, or
+bound native read-only). **Unmeasured:** level 2 for rows 6 and 9 with a benign payload
+(rows 7 and 8's native granted-execution cells are unstable for the reason recorded in
+the results); whether `agents/` self-declared tools bypass the permission gate; the T2/T6
+write cells for every row here, promised in #90 — they are `obtained` by construction
+against 0.2.1 and are the pre-fork arm.
+
+### Group B — the config file `.claude.json`
+
+Decided and shipped in 0.2.1; listed so the group is complete.
+
+| row | channel | what crosses | measured | consequence if open | Claude Code needs it |
+|---|---|---|---|---|---|
+| 10 | user-level `mcpServers` | capability; a stdio server is a command run at session start | config read T1, T2; a live tool in another project's session (14a) | capability and execution; disclosure of URLs and any token in `env` | no |
+| 11 | per-project entries | other projects' last prompts, paths, tools | `obtained` before 0.2.1 | disclosure | own entry yes |
+| — | app state, account | onboarding, tips, caches, e-mail | in the copy | disclosure of the e-mail | yes |
+
+**Disposition:** one copy per project, seeded with the project's own entry and every
+top-level key; the user-level `mcpServers` follow the host file at each launch.
+**Toggle:** `user-mcp = none` leaves that block out. **Unmeasured:** row 10's level 2 —
+a stdio server from the host block executing in B's sandbox, and the model invoking such
+a tool unprompted.
+
+### Group C — a project's own state, and other projects' (`projects/`)
+
+| row | channel | what crosses | measured | consequence if open | Claude Code needs it |
+|---|---|---|---|---|---|
+| 1 | project memory | notes, acted on at `context` | closed; `[share-memory]` opens read-only | direct inference | own yes |
+| 2 | transcripts | verbatim conversation | closed, every network mode | disclosure; indirect inference | own yes (resume) |
+| 3 | plans | documents | closed (copyout) | disclosure | own yes |
+| 4 | prompt history | every prompt typed | filtered (`not-obtained-absent`); #73 on the filter | disclosure | own yes |
+| 16 | session artefacts under `projects/` | subagent transcripts, tool results | closed | disclosure | own yes |
+| 15 | `agent-memory/` | subagent memory | `obtained`; #74 held, layout unknown | direct inference | own yes |
+
+**Disposition:** scoped to the project, own state native-backed, others closed; this is
+the sandbox's isolation target and is not up for a per-project toggle beyond
+`[share-memory]`. **One open item:** row 15 joins the group once its layout is known —
+scoped if keyed by project, blanked if not. **Unmeasured:** row 1 has no model cells;
+row 23's watch set lacks A's memory.
+
+### Group D — shared artefacts and caches outside `projects/`
+
+| row | channel | what crosses | measured | consequence if open | Claude Code needs it |
+|---|---|---|---|---|---|
+| 12 | `downloads/` | documents a session fetched | `obtained`; #52 | disclosure | no |
+| 17 | `backups/` | old copies of `.claude.json`, survive `claude project purge` | `obtained`; #75 held | disclosure, including purged projects | no |
+| 18 | `uploads/`, `image-cache/`, `tasks/`, `usage-data/`, `feedback-bundles/`, cached settings | attachments, task lists, usage | `obtained`; #76–#81 held | disclosure | no |
+| — | `cache/`, `telemetry/`, `stats-cache.json`, logs | caches; no project paths found in `telemetry/` | not measured as channels | none known | regenerated |
+
+**Default:** per project by construction — none of it is seeded from the host and none
+is refreshed, so each project's sandbox starts them empty and keeps its own. Rows 12,
+15, 17, 18 close with one rule and no per-row work; #52 becomes this. **Toggle:** `live`
+for a project that wants the shared directory. **Open decision:** whether `backups/` is
+excluded outright (it is a history of the config file, which is per project now).
+
+### Group E — identity and tooling that must stay shared
+
+| row | channel | what crosses | measured | consequence if open | Claude Code needs it |
+|---|---|---|---|---|---|
+| — | `.credentials.json` | the user's own token | shared | none across projects; exfiltration through any allowed host is the documented residual | yes, one login |
+| — | `gh/` | a GitHub token (Claude Code's bundled `gh`) | shared by choice | acting on GitHub as the user | yes, for sandboxed `gh` |
+| — | `ide/` | editor lockfiles | shared by choice | none known | yes, for an editor to connect |
+
+**Disposition:** shared, live; no per-project copy (N copies of a refresh token race).
+**Toggle:** `hide` for `gh/` or `ide/`. No decision open; the residual is stated in
+`docs/design.md`.
+
+### Group F — cross-session control plane and per-session scratch
+
+`daemon/` (control key, roster), `sessions/`, `session-env/`, `jobs/`, `shell-snapshots/`,
+`debug/`, `paste-cache/`, `file-history/`, `history.jsonl`, the hook logs. Already tmpfs,
+copyout or append; always closed to other sessions; a session's own new entries reach
+the host at exit. **No decision open**; the one measured gap is the wrapper's per-worker
+socket directory (issue #45), infra-only.
+
+### Group G — network-mediated
+
+| row | channel | what crosses | measured | consequence if open | Claude Code needs it |
+|---|---|---|---|---|---|
+| 13 | shared external medium | anything | open in every mode but `none`; `strict` enforces the allowlist, but the allowlist contains a writable medium | inference and disclosure via the medium | the API host, yes |
+| 14a | remote MCP capability | a live tool from any project's config | available in another project's session; the call blocked under `proxy` and `strict` | capability | no |
+| 14b | remote-backed state | — | blocked on an instance (#89) | — | — |
+
+**Disposition:** the network mode and the allowlist, plus `user-mcp` for the config half;
+outside the fork. **Open:** 14b; whether a writable medium on the default allowlist is
+acceptable is a policy question the study only records.
+
+### What follows for the fork
+
+The fork is not one snapshot with one liveness; it is Group A's disposition (a
+per-project copy, refreshed) with Group B already done, Group D closed by the same
+mechanism, Groups C, E and F unchanged, and a per-channel toggle in the three forms.
+Decisions still needed are the four listed under Group A and the one under Group D;
+everything else in the table is either shipped or settled by the study's method.
 
 ## Channel catalog
 
