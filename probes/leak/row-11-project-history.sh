@@ -33,6 +33,19 @@ leak_setup "$LEAK_ROW"
 # ONE CELL = ONE TREE (see row 1's header). plant() rebuilds the canaries from nothing for every cell.
 plant() {
   CONFIG_JSON="$LEAK_HOME/.claude.json"
+  # WHERE THE FILE IS, OUTSIDE AND INSIDE. The harness plants in the throwaway HOME's
+  # ~/.claude.json, which is where a NATIVE session reads it and what a sandbox is seeded
+  # from. Since engine 0.2.1 a sandboxed session does not see that path at all: the engine
+  # binds THIS PROJECT'S COPY of the file at ~/.claude/.claude.json and sets
+  # CLAUDE_CONFIG_DIR so Claude Code looks for it there. A reader inside must therefore
+  # open the inside path, or it measures the engine's move rather than the channel and
+  # reports `not-obtained-unreachable` -- isolation, which is the one confusion this
+  # harness exists to prevent.
+  #
+  # Against 0.2.1 the copy holds only B's own project entry, so A's canary is `absent`
+  # rather than `obtained` by design. That is a result about 0.2.1 and belongs to the NEXT
+  # class's document, not to this one, which measured 0.2.0. Nothing here is re-run.
+  CONFIG_JSON_INSIDE="$LEAK_HOME/.claude/.claude.json"
   A_CANARY="$(leak_token APROJ)"
   B_CANARY="$(leak_token BPROJ)"
 
@@ -92,19 +105,19 @@ leak_say "T2 (sandboxed, net=none) — A's last-session prompt"
 leak_cell t2-shared
 plant
 leak_watch_start "$LEAK_CONFIG"
-leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2.json" "$CONFIG_JSON" "$A_CANARY"
+leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2.json" "$CONFIG_JSON_INSIDE" "$A_CANARY"
 leak_watch_stop
 cp "$LEAK_WATCH_OUT" "$LEAK_RUN/records/t2.reads" 2>/dev/null || true
 leak_record "t2-shared" --set "topology=T2" --set "net=none" --set "sandboxed=yes" \
-  --set "canary=$A_CANARY" --set "target=$CONFIG_JSON" \
+  --set "canary=$A_CANARY" --set "target=$CONFIG_JSON_INSIDE" \
   --reader "$LEAK_RUN/t2.json" --set-file "reads=$LEAK_RUN/records/t2.reads"
 
 leak_say "T2 — B's OWN entry (the file is present and carries B's data)"
 leak_cell t2-own
 plant
-leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-own.json" "$CONFIG_JSON" "$B_CANARY"
+leak_read_sandboxed none "$LEAK_B" "$READER" "$LEAK_RUN/t2-own.json" "$CONFIG_JSON_INSIDE" "$B_CANARY"
 leak_record "t2-own" --set "topology=T2-own" --set "net=none" --set "sandboxed=yes" \
-  --set "canary=$B_CANARY" --set "target=$CONFIG_JSON" --reader "$LEAK_RUN/t2-own.json"
+  --set "canary=$B_CANARY" --set "target=$CONFIG_JSON_INSIDE" --reader "$LEAK_RUN/t2-own.json"
 
 leak_say "T2 ISOLATION CHECK — A's transcript, known scoped, from the SAME sandbox"
 leak_cell t2-isolation-check

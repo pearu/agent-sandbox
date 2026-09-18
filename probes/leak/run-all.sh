@@ -87,7 +87,13 @@ mkdir -p "$BATCH"
 SUMMARY="$BATCH/summary.txt"
 COMBINED="$BATCH/all.log"
 
-printf 'batch %s\n%d rows: %s\n\n' "$BATCH" "${#ROWS[@]}" "${ROWS[*]}" | tee "$SUMMARY"
+# The two versions name the results CLASS this batch belongs to (see the results
+# document's naming scheme: claude-<major.minor>-leak-results-<engine x.y.z>.md). Every
+# cell records them too; printing them here makes a batch's class visible in its log.
+printf 'batch %s\nclaude: %s\nengine: %s\n%d rows: %s\n\n' "$BATCH" \
+  "$(claude --version 2>/dev/null | head -1)" \
+  "$(claude --engine-version 2>/dev/null | head -1)" \
+  "${#ROWS[@]}" "${ROWS[*]}" | tee "$SUMMARY"
 : >"$COMBINED"
 
 started="$(date +%s)"

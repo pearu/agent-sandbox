@@ -1,4 +1,14 @@
-# Cross-project leak study: results
+# Cross-project leak study: results — Claude Code 2.1, agent-sandbox 0.2.0
+
+**This document is one results class: Claude Code 2.1 (2.1.273 in every run below) on
+agent-sandbox 0.2.0.** A result depends on both, so each pair gets its own document,
+named `claude-<claude major.minor>-leak-results-<engine major.minor.micro>.md`; versions
+differing only in Claude Code's micro or the engine's commit hash are one class, and a
+row is re-run within a class only on request. Engine 0.2.0 is the sandbox **before** the
+connections model ([connections.md](connections.md)): everything here therefore describes
+what that document calls the `shared` preset — `~/.claude` bound whole, read-write, with a
+disposition per path. The runs predate #91 and #92, so no cell carries an engine version;
+the harness records one per cell from this point on.
 
 Measured results for the experiment matrix in
 [cross-project-channels.md](cross-project-channels.md). The plan lives there; what
@@ -78,6 +88,26 @@ Topology labels follow the plan's revision: a **planted** canary is the state a 
 leaves behind, so those cells are **T5** (A native, B sandboxed). **T2** (both sandboxed)
 and **T6** (A sandboxed, B native) appear only where A's material was *produced by a
 sandboxed session*, which so far is row 5.
+
+### What this class does not contain, and why
+
+This document is complete for its class; the following are **not** gaps in it, they belong
+elsewhere:
+
+- **Row 14b** (remote-backed state) was never run: it is blocked on finding an instance
+  ([#89](https://github.com/pearu/agent-sandbox/issues/89)), not on the harness.
+- **Row 21's open cell** — do a subagent's self-declared `tools:` bypass the permission
+  gate? — is a question about Claude Code's permission system, not about the sandbox. It
+  is recorded in row 21 and left to whoever owns that gate.
+- **Rows 15, 17 and 18** (`agent-memory/`, `backups/`, the uncatalogued paths) were held
+  pending per-path dispositions. Under the connections model they need none: a path nobody
+  classified is private to the sandbox by construction, so their re-runs are cells of the
+  next study rather than unfinished business here.
+- **The write direction for the configuration channels** — the T2/T6 cells for rows 6–9
+  and 19–22 that [#90](https://github.com/pearu/agent-sandbox/issues/90) asks for, and any
+  re-run of rows 10 and 11 — measures an engine that has changed. Those are the first
+  lines of the **next** class's document (engine 0.2.1 or later), collected by the study
+  that measures channels by *mode* rather than by path.
 
 ---
 

@@ -958,12 +958,19 @@ leak_untrust() {
 }
 
 # leak_record NAME --set k=v ... -- one record per cell, under records/.
+#
+# BOTH VERSIONS ON EVERY CELL. A result is a statement about one Claude Code and one
+# ENGINE: 0.2.1 moved the config file inside the state directory and made it per project,
+# which changes what rows 10 and 11 measure without changing a line of the harness. The
+# engine version is what tells two lines of one table apart when that happens; before it
+# was recorded, a run's engine has to be read from the results document's class instead.
 leak_record() {
   local name="$1"
   shift
   python3 "$LEAK_RECORD" write --out "$LEAK_RUN/records/$name.json" \
     --set "row=${LEAK_ROW:-unknown}" \
     --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
+    --set "engine_version=$(claude --engine-version 2>/dev/null | head -1)" \
     --set "run=$LEAK_RUN" \
     --set "cell=${LEAK_CELL:-?}" \
     --set "cell_id=${LEAK_CELL_ID:-?}" \

@@ -1,11 +1,22 @@
 # Cross-project data channels: a leak study
 
-**Status: collecting.** This enumerates every channel through which data — or
-influence — can pass between Claude Code sessions in **different projects** of the
-same user, and defines a canary-based test of each, with and without the sandbox.
-The harness is built (`probes/leak/`) and rows are being measured; results land in
-[leak-results.md](leak-results.md). Interpretation is deferred until every row is
-in — the findings that matter are cross-row.
+**Status: complete for its class.** This enumerates every channel through which data —
+or influence — can pass between Claude Code sessions in **different projects** of the
+same user, and defines a canary-based test of each, with and without the sandbox. Every
+row of the matrix below has a valid run at **Claude Code 2.1.273 on agent-sandbox 0.2.0**,
+recorded in [claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md); that
+document's Status names the four things the class deliberately does not contain.
+
+**Superseded as a design input.** This plan measures channels by their *path* under
+`~/.claude`, one disposition each. Its own findings — six documented paths the profile had
+never classified, all shared, and a default of *shared* for anything unclassified — are
+what moved the design to [connections.md](connections.md), where a sandbox is an
+installation and what it shares is a set of explicit connections, each on a
+`none < copy < cow < ro < live` scale. The next study measures **channel × mode × source ×
+direction** and gets its own plan; the method below (canaries, levels, one tree per
+experiment, the validity gate, topologies) carries over to it, and the
+[channel classification](#channel-classification-decision-groups) is this study's output
+and that design's input.
 
 A *session* is one `claude` invocation and its process tree; a *project* is the
 directory it launches from (see "Units" below). The adversary (the sandbox's threat
@@ -771,7 +782,7 @@ advisory or enforced — documented in [network.md](network.md), with the guaran
 [design.md](design.md) scoped to "every client that honours `HTTPS_PROXY`". That is the
 design these rows are run against; what a reader in project B actually obtains under
 each mode is rows 13–14's measurement and is recorded in
-[leak-results.md](leak-results.md), not here.
+[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md), not here.
 
 This family is also the clearest case where a user may **want** the flow — a shared
 medium is how one project's session is kept current with another's progress. So its
@@ -881,7 +892,7 @@ each other.
 
 ## Experiment matrix
 
-**Measured results live in [leak-results.md](leak-results.md)**, one section per row,
+**Measured results live in [claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md)**, one section per row,
 each keeping a table that gains a line per run so results stay comparable without
 reading them out of git history. This document stays the plan.
 
@@ -962,7 +973,7 @@ not in the catalog is a channel we missed*. None of them appears in
 **Rows 15, 17 and 18 are measured but held.** Every path in them turned out to have no
 disposition at all, so each is a decision the engine has yet to make rather than
 behaviour to characterise — one issue per path (#74–#81), with #82 for the structural
-gap that let them go unnoticed. [leak-results.md](leak-results.md) mentions what was
+gap that let them go unnoticed. [claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md) mentions what was
 measured and points at the issues, and will carry the results once the dispositions are
 settled and the rows are re-run against them. Row 16 is not held: it confirms behaviour
 that is staying as it is.
@@ -1034,7 +1045,7 @@ a per-project leak the project scoping misses because the data isn't under
 `projects/`.
 
 Each row is one checklist item in the tracking issue (#56) and one section in
-[leak-results.md](leak-results.md) once measured. **Results are recorded there and
+[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md) once measured. **Results are recorded there and
 only there** — a finding restated in this document is a second copy to keep in step
 with the first, and the copy that drifts is the one a reader happens to open. What
 stays here is the question, the expectation, and the method; a follow-up issue is
