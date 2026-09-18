@@ -42,6 +42,27 @@ PY
   [ "$output" = "ok" ]
 }
 
+@test "_claude_bg_autotrust also pre-trusts the project in its own copy of the config file, when one exists" {
+  HOME="$BATS_TEST_TMPDIR/home3"
+  mkdir -p "$HOME"
+  printf '{}' >"$HOME/.claude.json"
+  local copy
+  copy="$(_claude_config_copy "/work/proj")"
+  mkdir -p "$(dirname "$copy")"
+  printf '{"projects":{"/work/proj":{"x":1}}}' >"$copy"
+  _claude_bg_autotrust "/work/proj"
+  run python3 - "$HOME/.claude.json" "$copy" <<'PY'
+import json, sys
+n, c = (json.load(open(p)) for p in sys.argv[1:3])
+assert n["projects"]["/work/proj"]["hasTrustDialogAccepted"] is True, "host file not marked"
+assert c["projects"]["/work/proj"]["hasTrustDialogAccepted"] is True, "copy not marked"
+assert c["projects"]["/work/proj"]["x"] == 1, "copy's entry lost"
+print("ok")
+PY
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}
+
 @test "_claude_bg_autotrust creates ~/.claude.json when it is absent" {
   HOME="$BATS_TEST_TMPDIR/home2"
   mkdir -p "$HOME"

@@ -6,6 +6,10 @@ setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   make_harness
   BIN="$H/home/.local/share/claude/versions/2.1.300/claude"
+  # this project's copy of the config file, keyed by Claude Code's project slug
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  COPY="$H/home/.local/state/agent-sandbox/claude/${proj//[^A-Za-z0-9-]/-}/claude.json"
 }
 
 @test "default (proxy): system read-only, fresh pseudo-filesystems, HOME tmpfs remounted ro after its binds, clearenv, profile state rw, CWD rw, proxy env, CA env" {
@@ -25,7 +29,12 @@ setup() {
   argv_has --clearenv
   argv_has --cap-drop ALL # capabilities dropped (matters in strict; no-op here)
   argv_has --bind "$H/home/.claude" "$H/home/.claude"
-  argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"
+  # the config file is bound INSIDE the state directory: Claude Code writes it
+  # through a lock directory and a temp file beside it, which a read-only $HOME
+  # refuses -- and the writer then gives up silently (measured, 2.1.274). And
+  # the file bound there is this project's copy, never the host's file.
+  argv_has --bind "$COPY" "$H/home/.claude/.claude.json"
+  run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
   argv_has --ro-bind "$BIN" "$BIN"
   argv_has --bind "$H/proj" "$H/proj"
   argv_has --chdir "$H/proj"
@@ -35,6 +44,7 @@ setup() {
   [ "$(setenv_value HTTP_PROXY)" = "http://127.0.0.1:8888" ]
   [ "$(setenv_value NO_PROXY)" = "" ]
   [ "$(setenv_value DISABLE_AUTOUPDATER)" = "1" ]
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ] # so Claude Code looks for the file where it is bound
   [ "$(setenv_value HOME)" = "$H/home" ]
   [ "$(setenv_value USER)" = "tester" ]
   [ "$(setenv_value AGENT_SANDBOX)" = "1" ] # marks the inside of a sandbox (nested-launcher detection)
@@ -44,6 +54,8 @@ setup() {
   # HOME's binds come before the final remount-ro; the HOME tmpfs before them
   [ "$(argv_index --remount-ro)" -gt "$(argv_index "$H/home/.claude")" ]
   [ "$(argv_index "$H/home/.claude")" -gt "$(argv_index --tmpfs)" ]
+  # the file bind layers on the directory bind, so it must come after it
+  [ "$(argv_index "$H/home/.claude/.claude.json")" -gt "$(argv_index "$H/home/.claude")" ]
   # the agent's own arguments are passed through untouched and in order, right
   # after the binary; the briefing's --settings is appended after them (it has
   # to come last, because Claude Code honours only the last --settings)
@@ -56,6 +68,8 @@ setup() {
   [ "${ARGV[i + 5]}" = "--settings" ]
   local n=${#ARGV[@]}
   [ "$n" -eq "$((i + 7))" ] # ...and nothing after the settings path
+  # nothing binds the config file at $HOME any more, where its writes were lost
+  run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"
 }
 
 @test "none: no network at all; open: host network without proxy; neither sets proxy or CA variables" {
@@ -85,6 +99,20 @@ setup() {
   [ "$(setenv_value GH_TOKEN)" = "y" ]
   [ "$(setenv_value FOO)" = "two words" ]
   run ! setenv_value BAR
+  # names the profile pins are not forwardable: a later --setenv of the same
+  # name would win over the profile's, and CLAUDE_CODE_PROJECT_DIR_NAME would
+  # move memory and transcripts out from under the scoping. Said, not dropped.
+  run_engine AGENT_SANDBOX_FORWARD="CLAUDE_CONFIG_DIR CLAUDE_CODE_PROJECT_DIR_NAME DISABLE_AUTOUPDATER OK_VAR" \
+    CLAUDE_CONFIG_DIR=/elsewhere CLAUDE_CODE_PROJECT_DIR_NAME=one DISABLE_AUTOUPDATER=0 OK_VAR=1 -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not forwarding CLAUDE_CONFIG_DIR"* ]]
+  [[ "$output" == *"not forwarding CLAUDE_CODE_PROJECT_DIR_NAME"* ]]
+  [[ "$output" == *"not forwarding DISABLE_AUTOUPDATER"* ]]
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ]
+  [ "$(setenv_value DISABLE_AUTOUPDATER)" = "1" ]
+  [ "$(setenv_value OK_VAR)" = "1" ]
+  [ "$(grep -c '^CLAUDE_CONFIG_DIR$' "$H/argv")" -eq 1 ]
+  run ! setenv_value CLAUDE_CODE_PROJECT_DIR_NAME
   run_engine PIP_CERT=/my/ca SSL_CERT_FILE=/my/bundle -- claude --version
   [ "$(setenv_value PIP_CERT)" = "/my/ca" ]
   [ "$(setenv_value SSL_CERT_FILE)" = "/my/bundle" ]

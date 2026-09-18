@@ -20,6 +20,51 @@ break compatibility.
   a knob: the opt-in delivery, the host e2e confirming the pty-host/spare split,
   and CI via an extended `fake-claude.sh` are the remaining pieces of #45.
 
+### Changed
+
+- **Claude Code's config file is per project inside the sandbox.** `~/.claude.json`
+  holds the account, the user-level `mcpServers`, app state, and one entry per
+  project (folder trust, allowed tools, project MCP servers, the last opening
+  prompt). Bound whole it was two channels at once (leak study rows 10 and 11):
+  a sandboxed session read every other project's entry, and what it wrote
+  reached every other session. Each project's sandbox now gets its own copy,
+  kept under `~/.local/state/agent-sandbox/claude/<slug>/claude.json` (a new
+  control path, refused by `[ro]`/`[rw]`), seeded from the host file with every
+  top-level key and only that project's entry, and refreshed at each launch in
+  the user-level `mcpServers` alone -- manage those natively. Trust, allowed
+  tools and app state a session changes inside persist for that project and
+  reach neither the host file nor another project; a native session in the
+  same directory keeps using `~/.claude.json`. Background workers are keyed by
+  the project they were launched for and pre-trusted in the copy. Without a
+  working `python3` the copy is the whole file, made once, and the launch says
+  so. `docs/config.md` has the details.
+
+### Fixed
+
+- **Every write a sandboxed Claude Code made to its own `~/.claude.json` was
+  silently lost.** Claude Code writes the file through a lock directory and a
+  temp file created *beside* it, then a rename over it. The engine bound the
+  file at `$HOME/.claude.json`, and beside it is the read-only `$HOME` tmpfs:
+  the lock and the temp file failed with EROFS, no fallback ran, and the
+  session reported success (measured with strace and against the real
+  launcher, Claude Code 2.1.274). Folder trust accepted inside, per-project
+  allowed tools, MCP servers added with `claude mcp add`, tips and app state:
+  none of it persisted. The claude profile now binds the host's `~/.claude.json`
+  *inside* the state directory, at `~/.claude/.claude.json`, and sets
+  `CLAUDE_CONFIG_DIR=$HOME/.claude` so Claude Code looks for it there (with the
+  variable at its own default value nothing else moves). The rename onto the
+  bind mount fails and Claude Code then rewrites the file in place, which
+  reaches the host. Visible from inside: the file is at
+  `~/.claude/.claude.json` and there is nothing at `~/.claude.json`.
+  `profile_config_binds` entries may now be `SRC<TAB>DEST`, and the engine
+  removes the empty mount-point file bwrap leaves on the host for such a bind
+  once no session uses it. Names a profile pins (`profile_env_set`, and a new
+  `profile_env_refuse`) are no longer forwardable through `[forward]` or
+  `AGENT_SANDBOX_FORWARD`; they are refused with a message. The claude profile
+  refuses `CLAUDE_CODE_PROJECT_DIR_NAME`, which Claude Code honours once
+  `CLAUDE_CONFIG_DIR` is set and which would move memory and transcripts out
+  from under the per-project scoping.
+
 ## 0.2.0 — 2026-09-12
 
 ### Fixed
