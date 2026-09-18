@@ -369,3 +369,11 @@ reasons attached in the repository history.
   `python3-venv` nor conda: `downloads.mitmproxy.org` serves a 119 MB tarball
   but publishes no checksums or signatures, so it needs a SHA256 pinned per
   version and architecture in this repository. Deliberately deferred.
+- **What passes between sandboxes** (issues #90, #55). The per-path
+  dispositions above default an unclassified path to *shared*, and the leak
+  study found six such paths. [connections.md](connections.md) proposes the
+  replacement: a sandbox is an installation keyed by project and role, and
+  what it shares is a set of explicit connections, each on a
+  `none < copy < cow < ro < live` scale, with identity and the project
+  directory the only mandatory ones. Proposed, not implemented; the config
+  file's per-project copy (0.2.1) is its first channel.

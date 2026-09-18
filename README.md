@@ -246,6 +246,9 @@ commented template in
 - [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git, `gh`,
   package installs, ports, editors — and how to tell what is blocking you.
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.
+- [docs/connections.md](docs/connections.md): proposed — sandboxes as
+  installations, connections between them under a `none < copy < cow < ro < live`
+  scale; the model for controlling what passes between projects, roles and agents.
 - [docs/updating.md](docs/updating.md), [docs/troubleshooting.md](docs/troubleshooting.md),
   [docs/prior-art.md](docs/prior-art.md).
 - [AGENTS.md](AGENTS.md): rules for AI maintainers; [CONTRIBUTING.md](CONTRIBUTING.md);
