@@ -13,8 +13,9 @@ never classified, all shared, and a default of *shared* for anything unclassifie
 what moved the design to [connections.md](connections.md), where a sandbox is an
 installation and what it shares is a set of explicit connections, each on a
 `none < copy < cow < ro < live` scale. The next study measures **channel × mode × source ×
-direction** and gets its own plan; the method below (canaries, levels, one tree per
-experiment, the validity gate, topologies) carries over to it, and the
+direction** and has its own plan, [connections-study.md](connections-study.md); the method
+below (canaries, levels, one tree per experiment, the validity gate, topologies) carries
+over to it, and the
 [channel classification](#channel-classification-decision-groups) is this study's output
 and that design's input.
 

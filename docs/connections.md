@@ -254,6 +254,10 @@ dot-file's own approval only; a step up needs the trust gate, as `[net] mode = o
 
 ## What the study measures under this model
 
+The experiments are planned in [connections-study.md](connections-study.md), whose
+level-1 cells are this model's acceptance suite: one assertion per mode promise, scripted
+and free, failing until the engine implements the mode. In outline:
+
 - **Connections**: for each channel and mode, does content flow as the mode says, in each
   direction and at the stated time (launch or live)? The study's rows map directly: rows 5–9
   and 19–22 measured instructions, settings, skills, agents, workflows and plugins at `live`
@@ -317,5 +321,11 @@ here rather than designed around; the project directory is where different agent
 
 ## Open questions
 
+- **Two sessions of one sandbox at once, under `cow`.** Two overlay mounts on one upper
+  directory. Measured on this host: the kernel allows it, both sessions see each other's
+  writes, the layer keeps both — and overlayfs documents a shared upper as undefined
+  behaviour. The engine must choose: refuse the second session, serialise, or give each
+  session its own layer and merge, which is the emulation. Under `copy` the question does
+  not arise, since two sessions write one persistent directory as two native sessions do.
 - **Named sandboxes** beyond roles, shared by several projects.
 - **Cross-kind projection** of instruction files, if a second profile ever wants it.
