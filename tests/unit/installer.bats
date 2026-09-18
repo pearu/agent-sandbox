@@ -140,6 +140,36 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
     "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
 }
 
+# a bwrap that only knows its version; any other invocation succeeds (the smoke test)
+stub_bwrap() {
+  cat >"$T/bin/bwrap" <<STUB
+#!/usr/bin/env bash
+[[ "\$1" == --version ]] && echo "bubblewrap $1"
+exit 0
+STUB
+  chmod +x "$T/bin/bwrap"
+}
+
+@test "--dry-run warns when bubblewrap is older than 0.12.0 (CVE-2026-87766), and not at 0.12.0 or newer" {
+  mkdir -p "$T/bin"
+  local v
+  for v in 0.9.0 0.11.1; do
+    stub_bwrap "$v"
+    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"bwrap installed:    bubblewrap $v"* ]]
+    [[ "$output" == *"bubblewrap $v is older than 0.12.0"*"CVE-2026-87766"* ]]
+    [[ "$output" == *"docs/troubleshooting.md"* ]]
+  done
+  for v in 0.12.0 0.12.1 1.0.0; do
+    stub_bwrap "$v"
+    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"bwrap installed:    bubblewrap $v"* ]]
+    [[ "$output" != *"older than 0.12.0"* ]]
+  done
+}
+
 # ---- --uninstall (issue #22) ----------------------------------------------
 # The launcher is a symlink to the engine, so a careless uninstall leaves no
 # `claude` on PATH at all. These pin the two rules: repoint rather than delete,

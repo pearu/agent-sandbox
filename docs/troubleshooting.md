@@ -253,3 +253,86 @@ automatic. With mamba/conda on PATH the rebuild is a dedicated conda env, which
 does not have this failure mode. Note that the running proxy service keeps
 working until its next restart, so a broken environment is a latent outage; the
 rebuild (and the restart the installer performs) is what removes it.
+
+
+## bubblewrap older than 0.12.0 (Ubuntu 24.04)
+
+`install.sh` warns when `bwrap --version` is below 0.12.0. That release fixes
+**CVE-2026-87766** (GHSA-pxhw-h44j-8pfx): during sandbox setup, a symlink in a
+directory the sandboxed process controls could redirect the files and
+directories bwrap creates as mount points onto the host, as the launching user.
+agent-sandbox creates mount points inside the agent's writable state directory
+(`~/.claude`), which is exactly that shape, so the fix matters here. 0.11.0 also
+added the overlay options (`--overlay-src`, `--overlay`, `--tmp-overlay`,
+`--ro-overlay`) that the connections design relies on.
+
+Ubuntu 24.04 ships 0.9.0. Canonical backported the fix in `0.9.0-1ubuntu0.2`,
+then **dropped it again** in `0.9.0-1ubuntu0.3` (noble-security, 2026-09-17,
+"Incompatibility with Flatpak"), so a routine `apt upgrade` on 24.04 removes the
+fix. Ubuntu 26.04 ships 0.11.1 with its own security updates; check its
+changelog (`zcat /usr/share/doc/bubblewrap/changelog.Debian.gz | head`) for the
+CVE. There is no supported PPA: take bubblewrap from Ubuntu's own source, rebuilt
+locally. The whole recipe is a few minutes and needs root only for `apt`.
+
+1. **Protect the installed version first**, so an `apt upgrade` in the meantime
+   cannot regress it, then install the build tools:
+
+   ```
+   sudo apt-mark hold bubblewrap
+   sudo apt update
+   sudo apt install debhelper docbook-xml docbook-xsl libcap-dev libselinux1-dev meson ninja-build pkgconf xsltproc fakeroot
+   ```
+
+2. **Fetch Ubuntu's 0.12.0-1 source from Launchpad and verify it.** The `.dsc`
+   lists SHA-256 sums for the two tarballs; the orig tarball is byte-identical to
+   upstream's release asset (verified 2026-09-18). The `.dsc` is signed by the
+   Debian maintainer's key `7A073AD1AE694FA25BFF62E5235C099D3EB33076`; with
+   `debian-keyring` installed, `gpg --verify --keyring
+   /usr/share/keyrings/debian-keyring.gpg bubblewrap_0.12.0-1.dsc` checks it.
+
+   ```
+   mkdir bwrap-0.12 && cd bwrap-0.12
+   B=https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/bubblewrap/0.12.0-1
+   for f in bubblewrap_0.12.0-1.dsc bubblewrap_0.12.0.orig.tar.xz bubblewrap_0.12.0-1.debian.tar.xz; do
+     curl -sSL -o "$f" "$B/$f"
+   done
+   sha256sum -c <<'SUMS'
+   9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  bubblewrap_0.12.0.orig.tar.xz
+   60691fa8488db2de4dd19d59fb0b084e692695c38616dcf8e20b08a4d372ab93  bubblewrap_0.12.0-1.debian.tar.xz
+   SUMS
+   dpkg-source -x bubblewrap_0.12.0-1.dsc src
+   ```
+
+3. **Give it a local version that outranks anything 24.04 will ship**, and build
+   without the package's test suite. The tests run the freshly built `bwrap`
+   from the build directory, which the AppArmor restriction on unprivileged user
+   namespaces refuses (only `/usr/bin/bwrap` has the installer's profile); the
+   installed binary is tested afterwards instead.
+
+   ```
+   cd src
+   { printf 'bubblewrap (0.12.0-1~noble1) noble; urgency=medium\n\n  * No-change rebuild of 0.12.0-1 for noble.\n\n -- %s <%s>  %s\n\n' \
+       "$(git config user.name)" "$(git config user.email)" "$(date -R)"; cat debian/changelog; } >debian/changelog.new
+   mv debian/changelog.new debian/changelog
+   DEB_BUILD_PROFILES=nocheck DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
+   ```
+
+4. **Install and release the hold.** The local version is higher than the
+   archive's, so apt will not replace it.
+
+   ```
+   sudo apt install ../bubblewrap_0.12.0-1~noble1_amd64.deb
+   sudo apt-mark unhold bubblewrap
+   bwrap --version
+   ```
+
+5. **Verify the sandbox still works.** The installer's AppArmor profile is keyed
+   on `/usr/bin/bwrap`, so it still applies; `bwrap --ro-bind / / --unshare-user
+   --unshare-pid -- /bin/true` must succeed. From a checkout, `tests/run.sh
+   integration` runs the real-bwrap suite. Measured on 24.04 with this recipe:
+   the suite passes unchanged, a launch through the installed engine behaves as
+   before, and an overlay mount works inside bubblewrap's user namespace with the
+   engine's own flags.
+
+Re-run `install.sh` afterwards only if you want its report to show the new
+version; nothing it installs depends on it.

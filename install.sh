@@ -584,7 +584,21 @@ if ((${#missing[@]} > 0)); then
   fi
 fi
 if command -v bwrap >/dev/null; then
-  ok "bwrap installed:    $(bwrap --version 2>/dev/null || echo unknown)"
+  bwrap_ver="$(bwrap --version 2>/dev/null | awk '{print $2}')"
+  ok "bwrap installed:    bubblewrap ${bwrap_ver:-unknown}"
+  # 0.12.0 fixes CVE-2026-87766: during sandbox setup, a symlink in a directory the
+  # sandboxed process controls could redirect the files and directories bwrap creates
+  # as mount points onto the host. agent-sandbox creates mount points inside the
+  # agent's writable state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0, and
+  # its noble-security 0.9.0-1ubuntu0.3 dropped Canonical's backport of the fix again
+  # (a Flatpak regression), so the version alone is what can be checked here.
+  if [[ -n "$bwrap_ver" && "$(printf '%s\n' 0.12.0 "$bwrap_ver" | sort -V | head -n1)" != 0.12.0 ]]; then
+    warn "bubblewrap $bwrap_ver is older than 0.12.0, which fixes CVE-2026-87766 (a sandbox escape during"
+    warn "  setup through symlinks in a directory the sandboxed process controls; this sandbox creates mount"
+    warn "  points inside the agent's writable state directory, so it is exposed). Ubuntu 24.04's security"
+    warn "  update 0.9.0-1ubuntu0.3 dropped the fix. Rebuild Ubuntu's own 0.12.0 source: see"
+    warn "  docs/troubleshooting.md, 'bubblewrap older than 0.12.0'."
+  fi
 fi
 if command -v pasta >/dev/null; then
   ok "passt/pasta installed (enables AGENT_SANDBOX_NET=strict)"
