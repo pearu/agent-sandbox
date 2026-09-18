@@ -96,6 +96,122 @@ print('ok')
   [ "$output" = ok ]
 }
 
+@test "write: a commit is marked dirty when the tree does not match it" {
+  # a result claims to be reproducible at the recorded commit; an edited-but-
+  # uncommitted script makes that false, and a bare HEAD would assert it anyway
+  repo="$T/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" -c user.email=t@e.invalid -c user.name=t commit -q --allow-empty -m x
+  reader_json '{"open":"ok","token_found":true}'
+
+  run bash -c "cd '$repo' && python3 '$R' write --out '$T/clean.json' --reader '$T/r.json'"
+  [ "$status" -eq 0 ]
+  clean="$(python3 -c "import json;print(json.load(open('$T/clean.json'))['harness_commit'])")"
+  [[ "$clean" != *-dirty ]] || {
+    echo "clean tree marked dirty: $clean"
+    return 1
+  }
+
+  # an UNTRACKED file outside the harness is someone's unrelated local work: it
+  # cannot change what ran, and counting it would mark every run on a working
+  # machine dirty -- a marker that always fires is one nobody reads
+  echo unrelated >"$repo/scratch.txt"
+  run bash -c "cd '$repo' && python3 '$R' write --out '$T/u.json' --reader '$T/r.json'"
+  still="$(python3 -c "import json;print(json.load(open('$T/u.json'))['harness_commit'])")"
+  [ "$still" = "$clean" ] || {
+    echo "unrelated untracked file marked the run dirty: $still"
+    return 1
+  }
+
+  # a TRACKED change does: the engine and profiles decide what a cell measures
+  git -C "$repo" add scratch.txt
+  git -C "$repo" -c user.email=t@e.invalid -c user.name=t commit -q -m y
+  head2="$(git -C "$repo" rev-parse HEAD)"
+  echo edited >"$repo/scratch.txt"
+  run bash -c "cd '$repo' && python3 '$R' write --out '$T/dirty.json' --reader '$T/r.json'"
+  [ "$status" -eq 0 ]
+  dirty="$(python3 -c "import json;print(json.load(open('$T/dirty.json'))['harness_commit'])")"
+  [[ "$dirty" == "$head2-dirty" ]] || {
+    echo "expected $head2-dirty, got $dirty"
+    return 1
+  }
+}
+
+@test "harness errors: a permission denial is read from structure, not from prose" {
+  # measured: a blocked skill made the model say "I declined to run it", which reads as
+  # a model refusal and is not one -- it was narrating the harness's denial
+  cat >"$T/t.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"Shell command permission check failed: This command requires approval"}]}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I declined to run it."}]}}
+EOF
+  run python3 "$R" write --out "$T/rec.json" --set topology=T2 --transcript "$T/t.jsonl"
+  [ "$status" -eq 0 ]
+  run python3 -c "
+import json
+d=json.load(open('$T/rec.json'))['harness_errors']
+assert d['count']==1, d
+assert 'permission check failed' in d['errors'][0], d
+print('ok')
+"
+  [ "$output" = ok ]
+
+  # a clean session records a count of zero, rather than an absent key a reader has to
+  # guess about -- "no denial" and "not looked for" must not be the same record
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"4"}]}}' >"$T/clean.jsonl"
+  run python3 "$R" write --out "$T/rec2.json" --set topology=T2 --transcript "$T/clean.jsonl"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;print(json.load(open('$T/rec2.json'))['harness_errors']['count'])"
+  [ "$output" = 0 ]
+}
+
+@test "tools: an MCP call is identified by namespace, from structure not prose" {
+  # a model may say it used a tool when it answered from memory, or say it could not
+  # when the call was refused -- the transcript's tool_use block is the harness's record
+  cat >"$T/t.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__deepwiki__read_wiki_structure"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"ok"}]}}
+EOF
+  run python3 "$R" tools "$T/t.jsonl"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"mcp__deepwiki__read_wiki_structure"'* ]]
+  [[ "$output" == *'"errors": 0'* ]]
+  # the built-in is listed under calls but must NOT count as an MCP call
+  run python3 -c "
+import json,subprocess
+d=json.loads(subprocess.run(['python3','$R','tools','$T/t.jsonl'],capture_output=True,text=True).stdout)
+assert d['mcp_calls']==['mcp__deepwiki__read_wiki_structure'], d
+assert 'Read' in d['calls'], d
+print('ok')"
+  [ "$output" = ok ]
+
+  # a CALL is not a tool that did anything: a Workflow whose script the runtime rejected
+  # still appears as a tool_use, and counting it as success records "the workflow ran"
+  # for one that never launched
+  cat >"$T/failed.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Workflow"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":"Workflow script has a syntax error and was not launched"}]}}
+EOF
+  run python3 -c "
+import json,subprocess
+d=json.loads(subprocess.run(['python3','$R','tools','$T/failed.jsonl'],capture_output=True,text=True).stdout)
+assert d['calls']==['Workflow'], d
+assert d['failed_calls']==['Workflow'], d
+assert d['ok_calls']==[], d
+print('ok')"
+  [ "$output" = ok ]
+
+  # a session that used no tools reports none, rather than an absent key
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"4"}]}}' >"$T/none.jsonl"
+  run python3 -c "
+import json,subprocess
+d=json.loads(subprocess.run(['python3','$R','tools','$T/none.jsonl'],capture_output=True,text=True).stdout)
+print(len(d['mcp_calls']), len(d['calls']))"
+  [ "$output" = "0 0" ]
+}
+
 # --- the validity gate ------------------------------------------------------
 # It decides whether a run is a RESULT at all. If it cannot fail, a run whose
 # controls never fired gets recorded as a finding.
@@ -156,6 +272,29 @@ mkrun() { # mkrun DIR -- a minimal valid run
   run python3 "$R" validate "$T/e"
   [ "$status" -eq 1 ]
   [[ "$output" == *"environment recorded"*FAIL* ]]
+}
+
+@test "gate: a level-2 cell where no real model served is invalid, not a negative" {
+  # measured: a sandboxed session whose TLS verification failed still wrote a transcript
+  # with the model recorded as "<synthetic>", and the cell would otherwise have read as
+  # "the file was not ingested"
+  mkrun "$T/g"
+  printf '{"topology":"T2","net":"proxy","claude_version":"x","verdict":"not-obtained-absent","serving_models":{"models":{"<synthetic>":1}}}' >"$T/g/records/t2.json"
+  run python3 "$R" validate "$T/g"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a real model served"*FAIL* ]]
+  [[ "$output" == *synthetic* ]] # names what served, rather than just counting
+
+  # a real model makes the same cell fine
+  printf '{"topology":"T2","net":"proxy","claude_version":"x","verdict":"not-obtained-absent","serving_models":{"models":{"claude-opus-5":3}}}' >"$T/g/records/t2.json"
+  run python3 "$R" validate "$T/g"
+  [ "$status" -eq 0 ]
+
+  # and the scripted rows, which carry no serving_models at all, are untouched
+  mkrun "$T/h"
+  run python3 "$R" validate "$T/h"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"a real model served"*PASS* ]]
 }
 
 @test "gate: an unclassified change to the real config stops the run; a known one does not" {

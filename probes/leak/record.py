@@ -51,6 +51,92 @@ def classify(reader):
     return VERDICT_OBTAINED if found else VERDICT_ABSENT
 
 
+def harness_errors(path):
+    """Tool results the HARNESS marked as errors, from a session transcript.
+
+    A permission denial is Claude Code's, not the model's, and it has a stable
+    machine-readable form: a tool_result carrying is_error. Measured the hard way --
+    a session whose skill was blocked reported in prose "I declined to run it", which
+    reads as a model refusal and is not one. The model was narrating a harness denial
+    in the first person, and a write-up that trusted the prose recorded the wrong
+    finding twice, in both directions.
+
+    So the method's rule -- assert on the token, never on prose -- extends here: a
+    denial is read out of the transcript's structure, never out of what the model said
+    about it.
+    """
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict) or c.get("type") != "tool_result":
+                        continue
+                    if not c.get("is_error"):
+                        continue
+                    text = c.get("content")
+                    if isinstance(text, list):
+                        text = " ".join(x.get("text", "") for x in text
+                                        if isinstance(x, dict))
+                    out.append(str(text))
+    except OSError as e:
+        return {"error": str(e)}
+    return {"count": len(out), "errors": out}
+
+
+def tools_used(path):
+    """Tool calls in a transcript, from its structure.
+
+    An MCP server's presence is not something to take a model's word for: it may say it
+    used a tool when it answered from memory, or say it could not when the call was
+    refused. A tool_use block with a matching tool_result is the harness's own record of
+    what happened, the same reasoning that put harness_errors here.
+
+    MCP tools are namespaced `mcp__<server>__<tool>`, so they are distinguishable from
+    built-ins without a list of built-in names to keep in step.
+    """
+    calls, errors, by_id, failed_ids = [], 0, {}, set()
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict):
+                        continue
+                    if c.get("type") == "tool_use" and c.get("name"):
+                        calls.append(c["name"])
+                        if c.get("id"):
+                            by_id[c["id"]] = c["name"]
+                    elif c.get("type") == "tool_result":
+                        if c.get("is_error"):
+                            errors += 1
+                            if c.get("tool_use_id"):
+                                failed_ids.add(c["tool_use_id"])
+    except OSError as e:
+        return {"error": str(e)}
+    # A tool CALL is not a tool that did anything. Measured: a Workflow call whose script
+    # the runtime rejected still appears as a tool_use, and counting it as success
+    # recorded "the workflow ran" for a workflow that never launched. Pairing each call
+    # with its result is what separates the two.
+    failed = sorted({by_id[i] for i in failed_ids if i in by_id})
+    ok = [n for i, n in by_id.items() if i not in failed_ids]
+    return {"calls": calls, "mcp_calls": [c for c in calls if c.startswith("mcp__")],
+            "ok_calls": sorted(set(ok)), "failed_calls": failed, "errors": errors}
+
+
 def models_served(path):
     """Which model served each message of a session, in order of first appearance,
     with counts. The requested model is not necessarily the one that served: a
@@ -138,6 +224,25 @@ def validate(rundir, known_ambient=None):
          "" if ok else "B must still reach its OWN project, or 'unreachable' just means nothing is mounted")
     )
 
+    # A level-2 cell asserts what a MODEL did, so a cell where no model ran cannot be a
+    # negative. Measured: a sandboxed session whose TLS verification failed still wrote a
+    # transcript, with the model recorded as "<synthetic>" -- no API turn happened, yet
+    # the cell would otherwise read as "the file was not ingested". Bracketed names are
+    # Claude Code's marker for a locally generated message rather than a served one.
+    # Only cells carrying serving_models are checked, so the scripted rows are unaffected.
+    synthetic = []
+    for r in records:
+        sm = r.get("serving_models")
+        if not isinstance(sm, dict):
+            continue
+        served = sm.get("models") or {}
+        if not any(m and not (m.startswith("<") and m.endswith(">")) for m in served):
+            synthetic.append("%s (%s)" % (r["_file"], ",".join(served) or "none"))
+    checks.append(
+        ("a real model served each level-2 cell", not synthetic,
+         "no model served: " + ", ".join(synthetic) if synthetic else "")
+    )
+
     distinct = set(v for v in verdicts if v)
     checks.append(
         ("verdicts not degenerate", len(distinct) >= 2,
@@ -153,12 +258,15 @@ def validate(rundir, known_ambient=None):
          "version/net/topology missing in: " + ", ".join(missing) if missing else "")
     )
 
-    # Changes to the REAL config that the noise floor does not explain. The floor
-    # samples an IDLE window, while an observing session writes on events (a turn
-    # ending, a hook firing), so it cannot capture those by construction. The tool
-    # cannot attribute a write to a process -- inotify carries no pid and fanotify
-    # needs root -- so classification is the operator's, made explicit here rather
-    # than left to a warning nobody reads.
+    # Changes to the REAL config that the noise floor does not explain AND that carry
+    # this run's id -- lib.sh's leak_real_config_after splits them. The floor samples an
+    # IDLE window while the session driving the study writes on events (a turn ending, a
+    # backup rotating), so a bare diff flags that session on every run; classifying those
+    # PATHS as ambient would blind the gate to .claude.json, backups/ and projects/,
+    # which is where this study's subject lives. Attribution by run id is the sharper
+    # question -- every canary carries it -- and a deletion is attributed regardless,
+    # since nothing is left to inspect. known_ambient still applies on top, for the paths
+    # a run may legitimately touch.
     att = os.path.join(rundir, "real-attributable")
     unexplained = []
     if os.path.exists(att):
@@ -208,17 +316,43 @@ def cmd_validate(argv):
     return 0
 
 
-def _harness_commit():
+def _git(*args):
     try:
         r = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            ["git", *args], capture_output=True, text=True, timeout=10
         )
-        return r.stdout.strip() if r.returncode == 0 else "unknown"
+        return r.stdout if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _harness_commit():
+    """HEAD, marked -dirty when the tree does not match it.
+
+    A result claims to be reproducible by re-running its script at the recorded
+    commit. That is false if the script was edited and not committed, and a bare
+    HEAD would assert it anyway -- naming a commit that does not contain the code
+    that ran. So the uncertainty is recorded rather than hidden: a run marked dirty
+    is still a run, but nobody can mistake it for one that is reproducible.
+    """
+    head = _git("rev-parse", "HEAD")
+    if head is None:
         return "unknown"
+    head = head.strip()
+    # TRACKED changes only, anywhere in the repository: the engine and the profiles
+    # decide what a cell measures just as much as the harness does, so an
+    # uncommitted edit to either means the run is not reproducible from this commit.
+    #
+    # Untracked files are deliberately NOT counted. On a working machine there are
+    # always some -- local scratch probes, editor droppings -- and none of them can
+    # change what ran, so counting them would mark every run dirty and a marker that
+    # always fires is one nobody reads. What that does not catch: a row script that
+    # has never been `git add`ed at all. In practice the workflow adds it before
+    # running the checks, and a staged addition IS a tracked change.
+    tracked = _git("status", "--porcelain", "--untracked-files=no")
+    if tracked is None:
+        return head + "-unknown-tree"
+    return head + "-dirty" if tracked.strip() else head
 
 
 def cmd_write(argv):
@@ -269,6 +403,8 @@ def cmd_write(argv):
         rec["verdict"] = classify(reader)
     if transcript:
         rec["serving_models"] = models_served(transcript)
+        rec["harness_errors"] = harness_errors(transcript)
+        rec["tools_used"] = tools_used(transcript)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(rec, fh, indent=2, sort_keys=True)
         fh.write("\n")
@@ -289,6 +425,10 @@ def main(argv):
         json.dump(models_served(argv[2]), sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         return 0
+    if len(argv) >= 3 and argv[1] == "tools":
+        json.dump(tools_used(argv[2]), sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
     if len(argv) >= 3 and argv[1] == "validate":
         return cmd_validate(argv[2:])
     if len(argv) >= 2 and argv[1] == "write":
@@ -297,6 +437,7 @@ def main(argv):
         "usage: record.py verdict READER.json\n"
         "       record.py models TRANSCRIPT.jsonl\n"
         "       record.py validate RUNDIR [--known-ambient REGEX]\n"
+        "       record.py tools TRANSCRIPT.jsonl\n"
         "       record.py write --out R.json [--set k=v] [--set-file k=PATH]\n"
         "                       [--reader READER.json] [--transcript T.jsonl]\n"
     )
