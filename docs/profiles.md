@@ -17,9 +17,10 @@ Variables a profile declares (all optional unless marked):
 | Variable | Meaning |
 |---|---|
 | `profile_command` | On-PATH name of the agent (default: the profile file's name). The installer symlinks `~/.local/bin/<profile_command>` at the engine. |
-| `profile_config_binds=(...)` | Host paths bound **read-write** into the sandbox: the agent's state and config. They must exist when the sandbox is built; create them in `profile_prepare()`. |
+| `profile_config_binds=(...)` | Host paths bound **read-write** into the sandbox: the agent's state and config. They must exist when the sandbox is built; create them in `profile_prepare()`. An entry is a path bound at itself, or `SRC<TAB>DEST` to bind `SRC` at `DEST` inside; a `DEST` under an earlier entry layers on it, so order the entries parent first. |
 | `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). |
 | `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. |
+| `profile_env_refuse=(...)` | Names a user may not forward with `[forward]` or `AGENT_SANDBOX_FORWARD`: refused with a message. Names in `profile_env_set` are refused the same way, so a forward cannot override what the profile pins. |
 | `profile_allowlist_seed` | Path of a file listing the hosts this agent must reach, in allowlist syntax. `install.sh` merges it into the global allowlist; the engine does not read it. |
 | `profile_host_subcommands=(...)` | Agent subcommands the engine hands to `profile_handle_subcommand()` to run on the host, unsandboxed, instead of launching the sandbox (self-update, typically). |
 | `profile_native_verbs=(...)` | Agent verbs the engine runs natively (unsandboxed) before any project machinery — for observing or managing a background service (so a project's `.agent-sandbox` never gates them). Unlike `profile_host_subcommands`, these get no `profile_handle_subcommand()` call; the engine just `exec`s the native binary. |
@@ -79,11 +80,15 @@ reviewable in one place, the engine.
 
 `profiles/claude.sh` runs Claude Code: it finds the newest install under
 `~/.local/share/claude/versions/` (a single executable named after the version,
-or a directory containing `claude`), binds `~/.claude` and `~/.claude.json`
-read-write, forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+or a directory containing `claude`), binds `~/.claude` read-write and
+`~/.claude.json` inside it at `~/.claude/.claude.json`, with `CLAUDE_CONFIG_DIR`
+pointing Claude Code there (it writes the file through a lock directory and a
+temp file beside it, which the read-only `$HOME` refused; the writes were then
+silently lost), forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` and `ANTHROPIC_SMALL_FAST_MODEL`, sets
-`DISABLE_AUTOUPDATER=1`, and routes `update`, `upgrade` and `install` to the
-host (see [updating.md](updating.md)).
+`DISABLE_AUTOUPDATER=1`, refuses to forward `CLAUDE_CODE_PROJECT_DIR_NAME`, and
+routes `update`, `upgrade` and `install` to the host (see
+[updating.md](updating.md)).
 
 ## Roadmap profiles
 

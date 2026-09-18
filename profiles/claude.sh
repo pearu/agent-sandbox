@@ -18,7 +18,10 @@
 #   profile_config_binds=(...)  host paths bound READ-WRITE into the sandbox:
 #                               the agent's state and config. They must exist
 #                               when the sandbox is built; create them in
-#                               profile_prepare().
+#                               profile_prepare(). An entry is a path bound at
+#                               itself, or SRC<TAB>DEST to bind SRC at DEST
+#                               inside; a DEST under an earlier entry layers
+#                               on it, so order the entries parent first.
 #   profile_tmpfs=(...)         paths to overlay with a fresh tmpfs AFTER the
 #   profile_rw_binds=(...)      state binds, then rebind read-write /
 #   profile_ro_binds=(...)      read-only. Populated by profile_memory_scope()
@@ -29,6 +32,11 @@
 #                               top of the engine's own list (locale, proxy,
 #                               TLS, CUDA).
 #   profile_env_set=(...)       NAME=VALUE pairs always set in the sandbox.
+#   profile_env_refuse=(...)    NAMES a user may not forward ([forward],
+#                               AGENT_SANDBOX_FORWARD): refused with a
+#                               message. Names in profile_env_set are refused
+#                               the same way, so a forward cannot override
+#                               what the profile pins.
 #   profile_allowlist_seed      path of a file listing the hosts this agent
 #                               must reach (allowlist syntax: one host per
 #                               line, leading dot = domain + subdomains). The
@@ -70,8 +78,19 @@
 profile_command=claude
 
 # Claude keeps its state in ~/.claude (sessions, OAuth/API tokens, settings)
-# and top-level config in ~/.claude.json. Both must be writable.
-profile_config_binds=("$HOME/.claude" "$HOME/.claude.json")
+# and top-level config in ~/.claude.json. Both must be writable -- and the
+# config file must be writable THE WAY CLAUDE CODE WRITES IT: a lock directory
+# and a temp file created beside it, then a rename over it (measured, 2.1.274).
+# Bound at $HOME/.claude.json, "beside it" is the read-only $HOME tmpfs: the
+# lock and the temp file fail with EROFS, no fallback runs, and every write --
+# folder trust accepted inside, per-project allowed tools and MCP servers, app
+# state -- was silently lost while the session reported success. So the file is
+# bound INSIDE the state directory, at ~/.claude/.claude.json, and
+# CLAUDE_CONFIG_DIR (profile_env_set, below) points Claude Code there. The
+# rename onto a bind mount fails (EBUSY) and Claude Code then rewrites the file
+# in place, which reaches the host's ~/.claude.json. Order matters: the
+# directory first, the file inside it second.
+profile_config_binds=("$HOME/.claude" "$HOME/.claude.json"$'\t'"$HOME/.claude/.claude.json")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -84,6 +103,17 @@ profile_env_pass=(
 # profile_handle_subcommand below) is the supported path. Note: the legacy
 # `autoUpdates: false` in ~/.claude.json is ignored for native installs.
 profile_env_set=(DISABLE_AUTOUPDATER=1)
+# CLAUDE_CONFIG_DIR at its own default value: nothing else moves, but Claude
+# Code then keeps its config file at ~/.claude/.claude.json (measured: with the
+# variable set, ~/.claude.json is never opened), which is where the bind above
+# puts it. HOME is the same path inside and out, so the value is right on both
+# sides.
+profile_env_set+=("CLAUDE_CONFIG_DIR=$HOME/.claude")
+# With CLAUDE_CONFIG_DIR set, Claude Code honours CLAUDE_CODE_PROJECT_DIR_NAME,
+# which stores every session's transcripts and memory under one name -- out from
+# under the per-project scoping, silently. Never forwarded, whatever a [forward]
+# section says.
+profile_env_refuse=(CLAUDE_CODE_PROJECT_DIR_NAME)
 
 profile_allowlist_seed="$(dirname -- "${BASH_SOURCE[0]}")/claude.allowlist"
 

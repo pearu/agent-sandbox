@@ -52,6 +52,11 @@ Sections:
 - **`[forward]`** — names of environment variables to carry from your shell
   into the sandbox (the values come from your shell, not this file), one per
   line, on top of the built-in set. Do not list secrets for unrelated services.
+  Names the profile pins inside are refused with a message rather than
+  forwarded, since a forwarded value would override the profile's: for `claude`
+  that is `DISABLE_AUTOUPDATER`, `CLAUDE_CONFIG_DIR` and
+  `CLAUDE_CODE_PROJECT_DIR_NAME` (the last would move memory and transcripts
+  out from under the scoping).
 - **`[conda]`** — key/value lines: `name = <env>` runs in that conda env
   (resolved under the active or a discoverable conda base) instead of the one
   active in your shell, and its `bin/` takes that env's place on PATH inside, so

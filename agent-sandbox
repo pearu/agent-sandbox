@@ -61,7 +61,15 @@
 #                                           a session sees only its own and
 #                                           approved projects -- see the
 #                                           per-project config in docs/config.md.
-#     $HOME/.claude.json                    read-write (claude's config file)
+#     $HOME/.claude/.claude.json            read-write: the host's ~/.claude.json
+#                                           (claude's config file), bound INSIDE
+#                                           the state dir. The profile sets
+#                                           CLAUDE_CONFIG_DIR=$HOME/.claude, so
+#                                           claude looks for it there -- where
+#                                           the lock and temp file it writes
+#                                           beside it can be created. Beside a
+#                                           read-only $HOME they cannot, and
+#                                           every write was silently lost.
 #     $CONDA_PREFIX  (if set)               read-only by default; the base
 #                                           conda install (conda/mamba, other
 #                                           envs, package cache) is bound
@@ -565,6 +573,14 @@ _as_session_cleanup() {
     _as_iso_flush "$_session_dir"
     rm -rf -- "$_session_dir"
   fi
+  # Empty mount-point files the state binds created on the host (see the
+  # state-bind loop). Still empty means nothing wrote through the placeholder
+  # itself; EBUSY means another session has it mounted and will remove it.
+  local _pf
+  for _pf in ${_as_placeholder_files[@]+"${_as_placeholder_files[@]}"}; do
+    { [[ -f "$_pf" && ! -s "$_pf" ]] && rm -f -- "$_pf"; } 2>/dev/null || true
+  done
+  _as_placeholder_files=()
   _ssh_agent_pid="" _session_dir=""
   return 0
 }
@@ -1492,10 +1508,11 @@ _as_fallback_hint() {
 }
 
 _as_launch() {
-  # When help is being shown, or a session dir must be cleaned up, run bwrap in
-  # this process (not exec) so we regain control -- to print the help footer
-  # and/or tear the session down -- then propagate the exit code.
-  if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" ]]; then
+  # When help is being shown, a session dir must be cleaned up, or a state bind
+  # left a mount-point file on the host, run bwrap in this process (not exec)
+  # so we regain control -- to print the help footer and/or tear the session
+  # down -- then propagate the exit code.
+  if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" || ${#_as_placeholder_files[@]} -gt 0 ]]; then
     local rc=0
     bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
     # 127 = bwrap not found, 126 = found but not executable. Any other code is
@@ -1845,9 +1862,13 @@ agent_sandbox() (
   local AGENT_SANDBOX_ENGINE="$engine" AGENT_SANDBOX_PROFILE="$profile" AGENT_SANDBOX_PROFILE_DIR="$profile_dir"
   # shellcheck disable=SC2034
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
-  local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_host_subcommands=()
+  local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
+  local -a profile_host_subcommands=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=()
   local -a profile_isolate_spec=()
+  # Mount-point files the state binds create on the host (see that loop); the
+  # cleanup removes them. Declared with _session_dir, for the same reason.
+  local -a _as_placeholder_files=()
   # Declared HERE, not down with the launch locals: state isolation opens the
   # session dir well before that point, and a later `local _session_dir=""`
   # would reset it -- so _as_session_begin would make a SECOND dir, and the
@@ -2301,14 +2322,29 @@ agent_sandbox() (
   )
 
   # Always-on bindings: the profile's state paths (read-write) and its binary.
-  local _p
+  # An entry is a host path bound at itself, or SRC<TAB>DEST to bind it at a
+  # different path inside: the claude profile binds ~/.claude.json INSIDE
+  # ~/.claude, where the lock and temp file Claude Code writes beside it can be
+  # created. When DEST is a file that does not exist yet, bwrap creates an
+  # empty one as the mount point -- on the HOST, if DEST sits inside a
+  # directory bound read-write. Those are recorded and removed again by the
+  # cleanup while still empty: left behind, an empty ~/.claude/.claude.json is
+  # a config that parses as nothing for anyone who later points
+  # CLAUDE_CONFIG_DIR there natively. The rm fails with EBUSY while another
+  # session still has it mounted; the last session out removes it.
+  local _p _src _dst
   for _p in "${profile_config_binds[@]}"; do
-    [[ -e "$_p" ]] \
+    IFS=$'\t' read -r _src _dst <<<"$_p"
+    _dst="${_dst:-$_src}"
+    [[ -e "$_src" ]] \
       || {
-        _as_msg "profile '$profile': state path '$_p' does not exist (create it in profile_prepare)"
+        _as_msg "profile '$profile': state path '$_src' does not exist (create it in profile_prepare)"
         return 1
       }
-    args+=(--bind "$_p" "$_p")
+    if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dst" ]]; then
+      _as_placeholder_files+=("$_dst")
+    fi
+    args+=(--bind "$_src" "$_dst")
   done
   args+=(--ro-bind "$profile_bin" "$profile_bin")
 
@@ -2412,8 +2448,32 @@ agent_sandbox() (
   # (space- or colon-separated).
   local -a _extra_passenv=()
   [[ -n "$_knob_forward" ]] && _as_split _extra_passenv $': \t\n' "$_knob_forward"
-  local _var
-  for _var in "${_locale_passenv[@]}" "${profile_env_pass[@]}" "${_network_passenv[@]}" "${_extra_passenv[@]}"; do
+  # ...except names the profile pins. A name in profile_env_set is set inside
+  # for a reason, and a later --setenv of the same name would win; a name in
+  # profile_env_refuse is one the profile knows to be unsafe inside (the claude
+  # profile lists CLAUDE_CODE_PROJECT_DIR_NAME: once CLAUDE_CONFIG_DIR is set
+  # it moves memory and transcripts out from under the scoping). Said, not
+  # silently dropped.
+  local -a _fwd=() _refuse=()
+  local _var _kv2 _r _hit
+  for _kv2 in "${profile_env_set[@]}"; do _refuse+=("${_kv2%%=*}"); done
+  _refuse+=(${profile_env_refuse[@]+"${profile_env_refuse[@]}"})
+  for _var in ${_extra_passenv[@]+"${_extra_passenv[@]}"}; do
+    [[ -z "$_var" ]] && continue
+    _hit=0
+    for _r in ${_refuse[@]+"${_refuse[@]}"}; do
+      [[ "$_r" == "$_var" ]] && {
+        _hit=1
+        break
+      }
+    done
+    if ((_hit)); then
+      _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
+      continue
+    fi
+    _fwd+=("$_var")
+  done
+  for _var in "${_locale_passenv[@]}" "${profile_env_pass[@]}" "${_network_passenv[@]}" ${_fwd[@]+"${_fwd[@]}"}; do
     [[ -z "$_var" ]] && continue
     # Indirect lookup; skip if unset (vs. set-empty).
     if [[ -n "${!_var+x}" ]]; then

@@ -77,6 +77,41 @@ slug_vector() {
   [ -f "$H/home/.claude.json" ]
 }
 
+@test "the config file is bound inside the state directory and CLAUDE_CONFIG_DIR points Claude Code there: its lock and temp file need a writable parent, and \$HOME is not one" {
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ]
+  run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"
+}
+
+@test "the empty mount-point file bwrap leaves on the host for the config file is removed after the session; a file that was already there is kept" {
+  # This stub bwrap creates the mount point the way the real one does when the
+  # bind's destination is missing inside a read-write directory: an empty file
+  # on the host. Left behind, it is a config file that parses as nothing for
+  # anyone who points CLAUDE_CONFIG_DIR at ~/.claude natively.
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+: >"${BWRAP_DUMP:?}"
+for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+[ -e "$HOME/.claude/.claude.json" ] || : >"$HOME/.claude/.claude.json"
+exit 0
+STUB
+  chmod +x "$H/bin/bwrap"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/home/.claude/.claude.json" ]
+  # a file that already existed there before the launch is not ours, whatever it holds
+  printf '{}' >"$H/home/.claude/.claude.json"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/home/.claude/.claude.json")" = '{}' ]
+  : >"$H/home/.claude/.claude.json"
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  [ -e "$H/home/.claude/.claude.json" ]
+}
+
 @test "update/upgrade/install run on the host: no bwrap, argv passed through, exit code propagated, engine flags ignored with a note" {
   cat >"$V/2.1.300/claude" <<'STUB'
 #!/usr/bin/env bash
