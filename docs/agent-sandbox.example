@@ -149,6 +149,21 @@
 #instructions = ro native
 #skills = none native
 
+# [overlay] -- what `cow` is implemented WITH, not whether channels are shared.
+#        mode = auto (default) uses a real copy-on-write overlay where your
+#        bubblewrap supports one (0.11 or newer) and falls back to `copy` where
+#        it does not, saying so. mode = off takes the fallback everywhere.
+#
+#        Worth turning off if overlayfs is unhappy on your filesystem. It can
+#        only ever move `cow` to `copy`, which is further from your native
+#        install, so it is never a widening. The two behave identically across
+#        launches; they differ only WITHIN a running session, where an overlay
+#        picks up an edit you make to your own copy and a snapshot does not.
+#        A channel path that names a FILE always uses the fallback: overlayfs
+#        mounts directories and cannot stack on a single file.
+#[overlay]
+#mode = auto
+
 #[claude]
 #hide = gh todos
 #sandbox = fg bg

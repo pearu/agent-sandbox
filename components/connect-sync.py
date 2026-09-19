@@ -20,13 +20,20 @@ The base is a manifest of hashes, not a copy of the files. Restoring never reads
 it -- a restore comes from the source -- so its content is dead weight, and the
 one thing it must record is what the source looked like, which a hash says.
 
-    sync  --kind file|dir --source S --copy C --base M
-    reset --kind file|dir --source S --copy C --base M
+    sync    --kind file|dir --source S --copy C --base M
+    reset   --kind file|dir --source S --copy C --base M
+    shadows --source S --upper U --seen M
 
 `sync` prints one `conflict <path>` line per file it refused to overwrite, for
 the engine to relay as a warning; the paths are relative for a directory channel
 and the channel's own name for a file one. `reset` throws the sandbox's copy away
 and re-seeds, which is the supported way back to the source.
+
+`shadows` answers the same question for `cow`, where the kernel does the hiding
+and nothing here copies anything. An overlay's upper layer IS the list of files
+the sandbox has written, so the scan is: for each of them, has the source changed
+since we first noticed the shadow? That is the one thing `cow` hides and it hides
+it loudly -- the source moved on and the sandbox will never see it.
 """
 
 import hashlib
@@ -196,6 +203,55 @@ def sync(kind, source, copy, base_path):
     return conflicts
 
 
+def shadows(source, upper, seen_path):
+    """Which of the sandbox's shadowed files has the source changed underneath?
+
+    A shadow is a regular file in the overlay's upper layer. Whiteouts are
+    character devices and are skipped: a file the sandbox DELETED is not one it
+    is holding a stale version of, and W5 already covers the hiding.
+
+    THE SNAPSHOT IS OF THE WHOLE SOURCE, TAKEN EVERY LAUNCH, not of shadowed
+    files when they are first noticed. That was the first version and it was a
+    launch too late: a shadow is created DURING a session, so the launch that
+    first sees it is already after any source edit the user made in between, and
+    recording the source's state then records the changed file as the baseline.
+    The warning never fired. Snapshotting every source file at every launch means
+    a shadow's baseline is the source as of the previous launch, which is what
+    "has your copy changed since" actually needs.
+    """
+    old = load_base(seen_path)
+    seen, conflicts = {}, []
+    shadowed = set(walk_regular(upper))
+    for rel in sorted(set(walk(source)) | shadowed | set(old)):
+        if rel == "":
+            continue  # a file-shaped path never gets here: overlays need a directory
+        cur = sha(os.path.join(source, rel))
+        if rel in shadowed and rel in old and old[rel] != cur:
+            # The source moved under a file this sandbox is holding. Keep the OLD
+            # hash rather than the current one, so the next launch says it again:
+            # the same reasoning as `copy`'s conflicts, and for the same reason --
+            # a single line at one launch is a line that scrolls past unseen.
+            conflicts.append(rel)
+            seen[rel] = old[rel]
+        elif cur is not None:
+            seen[rel] = cur
+    save_base(seen_path, seen)
+    return conflicts
+
+
+def walk_regular(root):
+    """Relative paths of the REGULAR files under root: no whiteouts, no dirs."""
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            full = os.path.join(dirpath, name)
+            # os.path.isfile is False for a character device, which is what an
+            # overlay whiteout is, so this filters them without naming them.
+            if os.path.isfile(full):
+                out.append(os.path.relpath(full, root))
+    return out
+
+
 def reset(kind, source, copy, base_path):
     """Throw the sandbox's copy away and seed again from the source."""
     if kind == "dir":
@@ -213,9 +269,10 @@ def reset(kind, source, copy, base_path):
 
 
 def main(argv):
-    if len(argv) < 1 or argv[0] not in ("sync", "reset"):
+    if len(argv) < 1 or argv[0] not in ("sync", "reset", "shadows"):
         sys.stderr.write("connect-sync.py sync|reset --kind file|dir "
-                         "--source S --copy C --base M\n")
+                         "--source S --copy C --base M\n"
+                         "connect-sync.py shadows --source S --upper U --seen M\n")
         return 2
     cmd, opts = argv[0], {}
     i = 1
@@ -225,19 +282,27 @@ def main(argv):
             return 2
         opts[argv[i].lstrip("-")] = argv[i + 1]
         i += 2
-    for need in ("kind", "source", "copy", "base"):
+    needed = ("source", "upper", "seen") if cmd == "shadows" \
+        else ("kind", "source", "copy", "base")
+    for need in needed:
         if need not in opts:
             sys.stderr.write("connect-sync.py: missing --%s\n" % need)
             return 2
-    if opts["kind"] not in ("file", "dir"):
+    if cmd != "shadows" and opts["kind"] not in ("file", "dir"):
         sys.stderr.write("connect-sync.py: --kind is file or dir\n")
         return 2
 
-    fn = sync if cmd == "sync" else reset
-    for rel in fn(opts["kind"], opts["source"], opts["copy"], opts["base"]):
+    if cmd == "shadows":
+        rels = shadows(opts["source"], opts["upper"], opts["seen"])
+        base_name = opts["source"]
+    else:
+        fn = sync if cmd == "sync" else reset
+        rels = fn(opts["kind"], opts["source"], opts["copy"], opts["base"])
+        base_name = opts["source"]
+    for rel in rels:
         # A file channel has one unnamed entry; name it after the source so the
         # warning reads as a path the user recognises.
-        sys.stdout.write("conflict %s\n" % (rel or os.path.basename(opts["source"])))
+        sys.stdout.write("conflict %s\n" % (rel or os.path.basename(base_name)))
     return 0
 
 

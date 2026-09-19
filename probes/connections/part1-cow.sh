@@ -57,6 +57,24 @@ conn_expect_said "$CONN_CHANNEL_FILE" \
 conn_read "$CONN_CHANNEL_FILE" "$newtok"
 conn_expect not-obtained-absent "the source's newer version is hidden by the shadow"
 
+# W4 above uses the channel's FILE-shaped path, which under `cow` falls back to
+# `copy` (overlayfs mounts a directory and cannot stack on a file), so it
+# exercises the copy conflict and never the overlay's own shadow warning. This
+# cell is the directory shape, where the overlay really is the mechanism. The gap
+# was not theoretical: the overlay warning was broken and every cell passed.
+conn_cell W4d cow "a source change under a shadowed file in the channel's DIRECTORY is named"
+tok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
+conn_read "$CONN_CHANNEL_DIR" "$tok"
+conn_expect obtained "launch 1 reads it through, and the source is noted"
+inside="$(leak_token INSIDE)"
+conn_write_inside "$CONN_CHANNEL_DIR/topic.md" "$inside"   # shadow it
+newtok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")" # then the source moves on
+conn_read "$CONN_CHANNEL_DIR" "$inside"
+conn_expect obtained "the sandbox's version still wins"
+conn_expect_said 'topic\.md' "and the launch NAMES the shadowed file"
+conn_read "$CONN_CHANNEL_DIR" "$newtok"
+conn_expect not-obtained-absent "the source's newer version is hidden by the shadow"
+
 conn_cell W5 cow "a delete inside is a persistent hide, not a change to the source"
 tok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
 conn_read "$CONN_CHANNEL_DIR" "$tok"

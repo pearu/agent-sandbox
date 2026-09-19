@@ -223,6 +223,79 @@ assert len(d["a.md"]) == 64, d          # a sha256, not a blob
   [ "$status" -eq 0 ]
 }
 
+# ----- `cow`: which shadows has the source changed underneath? ---------------
+
+shadows() { run python3 "$SYNC" shadows --source "$S" --upper "$U" --seen "$B"; }
+shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the overlay
+  mkdir -p "$(dirname "$U/$1")"
+  printf '%s\n' "$2" >"$U/$1"
+}
+
+@test "W4 a shadowed file whose source changed afterwards is reported, by name" {
+  # THE BUG THIS PINS: the baseline must be the source as of the PREVIOUS launch.
+  # A shadow is created during a session, so the launch that first sees it is
+  # already after any edit the user made in between -- recording the source then
+  # records the changed file as the baseline and the warning never fires. It did
+  # not, and no study cell caught it, because W4 uses the file-shaped path, which
+  # falls back to `copy` and takes a different code path entirely.
+  U="$BATS_TEST_TMPDIR/upper"
+  mkdir -p "$U"
+  plant a.md YOURS
+  shadows # launch 1: nothing shadowed yet, the source is snapshotted
+  [ -z "$output" ]
+  shadow a.md MINE   # the session writes, during launch 1
+  plant a.md CHANGED # and the user edits their own copy afterwards
+  shadows            # launch 2
+  [ "$output" = "conflict a.md" ]
+}
+
+@test "W4 it keeps reporting at every later launch, as a copy conflict does" {
+  U="$BATS_TEST_TMPDIR/upper"
+  mkdir -p "$U"
+  plant a.md YOURS
+  shadows
+  shadow a.md MINE
+  plant a.md CHANGED
+  shadows
+  shadows
+  [ "$output" = "conflict a.md" ]
+}
+
+@test "a shadow the source has NOT touched is not reported" {
+  U="$BATS_TEST_TMPDIR/upper"
+  mkdir -p "$U"
+  plant a.md YOURS
+  shadows
+  shadow a.md MINE
+  shadows
+  [ -z "$output" ]
+}
+
+@test "a file the sandbox created that the source never had is not a shadow of anything" {
+  U="$BATS_TEST_TMPDIR/upper"
+  mkdir -p "$U"
+  shadows
+  shadow own.md MINE
+  shadows
+  [ -z "$output" ]
+}
+
+@test "a whiteout is not a shadow: deleting is covered by W5, not by this warning" {
+  # An overlay records a deletion as a character device in the upper layer. It is
+  # not a stale copy of anything, so warning about it would be noise on top of a
+  # deliberate act.
+  U="$BATS_TEST_TMPDIR/upper"
+  mkdir -p "$U"
+  plant a.md YOURS
+  shadows
+  # a character device cannot be made without privilege here, so stand in with
+  # the property the scan actually tests for: not a regular file.
+  mkdir -p "$U/a.md"
+  plant a.md CHANGED
+  shadows
+  [ -z "$output" ]
+}
+
 @test "bad arguments are refused rather than half-applied" {
   run python3 "$SYNC" sync --kind dir --source "$S" --copy "$C"
   [ "$status" -eq 2 ]

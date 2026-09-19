@@ -26,6 +26,25 @@ slugify() {
   printf '%s' "${s#_}"
 }
 
+teardown() {
+  [[ -n "${FAKE_SESSION_PID:-}" ]] && kill "$FAKE_SESSION_PID" 2>/dev/null
+  return 0
+}
+
+# A session dir the engine will believe is live: the owner's PID and start-time,
+# which is the same pair the janitor uses and is immune to PID reuse, plus the
+# sandbox it is holding an overlay for. Detached from stdout, or a live child
+# holds bats' pipe open and the run hangs instead of finishing.
+fake_live_session() {
+  local d="$H/base/session.fake"
+  mkdir -p "$d"
+  sleep 120 >/dev/null 2>&1 &
+  FAKE_SESSION_PID=$!
+  printf '%s %s\n' "$FAKE_SESSION_PID" \
+    "$(awk '{print $22}' "/proc/$FAKE_SESSION_PID/stat")" >"$d/owner.id"
+  printf '%s\n' "$1" >"$d/connect.sandbox"
+}
+
 # Record approval of $H/proj/.agent-sandbox the way `--trust` would.
 approve_dotfile() {
   mkdir -p "$CFG/trust"
@@ -198,6 +217,141 @@ EOF
   run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
 }
 
+@test "cow asks bwrap for an overlay on a directory-shaped path" {
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$C/rules" --overlay \
+    "$SBOX/instructions/upper/$(slugify "$C/rules")" \
+    "$SBOX/instructions/work/$(slugify "$C/rules")" "$C/rules"
+}
+
+@test "cow on a FILE-shaped path is copy, permanently: overlayfs cannot stack on a file" {
+  printf 'YOURS\n' >"$C/CLAUDE.md"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")"
+  argv_has --bind "$slot" "$C/CLAUDE.md"
+  [ "$(cat "$slot")" = YOURS ]
+  # no overlay was attempted for it
+  run ! argv_has --overlay-src "$C/CLAUDE.md"
+}
+
+@test "--overlay off forces the copy fallback, and the launch SAYS so through --quiet" {
+  printf 'YOURS\n' >"$C/rules/topic.md"
+  run_engine -- claude --connect 'instructions=cow native' --overlay off --quiet --version
+  [ "$status" -eq 0 ]
+  # BEFORE the `run !` below, which replaces $output -- the helper warns about
+  # exactly this and it is easy to do anyway.
+  [[ "$output" == *"cow is using copy here"* ]]
+  [[ "$output" == *"overlay is turned off"* ]]
+  argv_has --bind "$SBOX/instructions/copy/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --overlay-src "$C/rules"
+}
+
+@test "the overlay knob takes all three forms, flag beating environment beating file" {
+  cat >"$H/proj/.agent-sandbox" <<'EOF'
+[overlay]
+mode = off
+EOF
+  approve_dotfile
+  run_engine -- claude --connect 'instructions=cow native' --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --overlay-src "$C/rules" # the file turned it off
+
+  run_engine AGENT_SANDBOX_OVERLAY=auto -- claude --connect 'instructions=cow native' --version
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$C/rules" # the environment overrode the file
+
+  run_engine AGENT_SANDBOX_OVERLAY=auto -- \
+    claude --connect 'instructions=cow native' --overlay off --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --overlay-src "$C/rules" # and the flag overrode the environment
+}
+
+@test "an unknown overlay mode keeps auto rather than guessing" {
+  run_engine AGENT_SANDBOX_OVERLAY=sideways -- \
+    claude --connect 'instructions=cow native' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unknown mode 'sideways'"* ]]
+  argv_has --overlay-src "$C/rules"
+}
+
+@test "--reset-connection clears an overlay's upper layer, whiteouts and all" {
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  local upper
+  upper="$SBOX/instructions/upper/$(slugify "$C/rules")"
+  mkdir -p "$upper"
+  printf 'SANDBOX\n' >"$upper/topic.md"
+  run_engine -- claude --reset-connection instructions
+  [ "$status" -eq 0 ]
+  [ ! -e "$upper/topic.md" ]
+}
+
+@test "--reset-connection REFUSES while a session of this sandbox is live" {
+  # It removes the very layers that session has mounted, and the conflict warning
+  # actively tells the user to run it -- reading that in one terminal while the
+  # session runs in another is the ordinary case, not an edge one.
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  fake_live_session "$SBOX"
+  run_engine -- claude --reset-connection instructions
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"session of this sandbox is running"* ]]
+}
+
+@test "and it goes ahead once that session is gone" {
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  fake_live_session "$SBOX"
+  kill "$FAKE_SESSION_PID" 2>/dev/null
+  local i
+  for ((i = 0; i < 100; i++)); do
+    [[ -d "/proc/$FAKE_SESSION_PID" ]] || break
+    sleep 0.05
+  done
+  run_engine -- claude --reset-connection instructions
+  [ "$status" -eq 0 ]
+}
+
+@test "a live session of ANOTHER sandbox does not block a reset" {
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  fake_live_session "$STATE/claude/some-other-project/default"
+  run_engine -- claude --reset-connection instructions
+  [ "$status" -eq 0 ]
+}
+
+@test "cow says so, once, when a second session of the sandbox is already running" {
+  # Two sessions today is two overlays over one layer, which overlayfs calls
+  # undefined. Said in the case that is actually risky rather than on every
+  # launch, which is how a notice becomes something people filter out.
+  fake_live_session "$SBOX"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --quiet --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"does not support that yet"* ]]
+  # once, not once per path in the channel
+  [ "$(grep -c 'does not support that yet' <<<"$output")" -eq 1 ]
+}
+
+@test "and says nothing when it is the only session" {
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"does not support that yet"* ]]
+}
+
+@test "cow never creates a directory in the user's own state to serve as a lower layer" {
+  # `cow`'s first promise is that nothing of the sandbox reaches the source, and
+  # the engine quietly making a directory there would be the engine breaking it.
+  rm -rf "$C/rules"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  local i src=""
+  for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == --overlay-src ]] && src="${ARGV[i + 1]}" && break
+  done
+  [ -n "$src" ]
+  [ "$src" != "$C/rules" ]    # an empty one from this session, not the source
+  [[ "$src" == "$H/base/"* ]] # and it is under the session base
+}
+
 # ----- refusals: every one of these would otherwise leave a channel wide open -
 
 @test "an unknown channel is REFUSED, not ignored: a typo must not read as 'closed'" {
@@ -241,15 +395,16 @@ EOF
   # This phrase is a contract with probes/connections/lib.sh (conn_mode_supported),
   # which tells "not implemented yet" apart from "implemented wrong" by reading it.
   # Reword it and an unimplemented mode starts looking like a broken one.
-  # `copy` came off this list when it landed; `cow` is what is left. A mode that
-  # stays here after it is implemented would have its study cells skipped, which
-  # is the quiet failure this wording exists to prevent.
-  run_engine -- claude --connect 'instructions=cow' --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: mode 'cow' is not implemented"* ]]
-  # and an implemented one is NOT refused
-  run_engine -- claude --connect 'instructions=copy' --version
-  [ "$status" -eq 0 ]
+  # Every mode on the scale is implemented now, so nothing triggers this any
+  # more and it cannot be asserted through a launch. The wording stays, and is
+  # pinned here, because the study's probe still reads it: the next mode added
+  # before it works needs this exact phrase, or its cells are reported as broken
+  # rather than as not built yet.
+  grep -q "connect: mode '\$mode' is not implemented" "$ENGINE"
+  for mode in none copy cow ro live; do
+    run_engine -- claude --connect "instructions=$mode" --version
+    [ "$status" -eq 0 ]
+  done
 }
 
 @test "copy seeds from the source and binds the sandbox's own copy, not the source" {

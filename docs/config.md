@@ -128,6 +128,18 @@ Sections:
   indistinguishable from one you made yourself. See
   [connections.md](connections.md).
 
+- **`[overlay]`** — key/value lines. `mode = auto|off` (default auto) says what
+  `cow` is implemented with, not whether anything is shared. `auto` uses a real
+  copy-on-write overlay where bubblewrap supports one (0.11 or newer) and falls
+  back to `copy` where it does not, saying so at launch; `off` takes the fallback
+  everywhere, which is worth doing if overlayfs is unhappy on your filesystem.
+  It can only move `cow` to `copy`, so it is never a widening. The two are
+  identical across launches and differ only *within* a running session, where an
+  overlay picks up an edit you make to your own copy and a snapshot does not. A
+  channel path naming a **file** always uses the fallback, because overlayfs
+  mounts directories and cannot stack on a single file. `AGENT_SANDBOX_OVERLAY`
+  and `--overlay` are the other two forms.
+
 - **`[claude]`** — key/value lines, read by the `claude` profile rather than by
   the engine (a section named after the active profile; a `[codex]` section in
   a claude run is an unknown section and does nothing). `hide = <paths>` is a
