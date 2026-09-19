@@ -84,7 +84,8 @@ whiteouts as well as copies. The cells below say so.
 | **C4** | `copy` | source changes Y (never touched inside); launch | the new Y is `obtained` inside (refresh) |
 | **C5** | `copy` | source changes X (already modified inside); launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
 | **C6** | `copy` | source deletes Z (never touched inside); launch | Z is absent inside |
-| **C7** | `copy` | delete W inside; exit; launch again | W stays absent (a deletion is not undone by a refresh) |
+| **C7** | `copy` | delete W (in the channel's *directory*) inside; exit; launch again | W stays absent (a deletion is not undone by a refresh) |
+| **C7f** | `copy` | delete the channel's *file*-shaped path inside | the delete is REFUSED (`EBUSY`) and the source is untouched — a file-shaped path is a mount point; see [connections.md](connections.md#settled-while-writing-this) |
 | **C8** | `copy` | from C5's state, launch and *see* the warning; `reset`; launch | the reset succeeds; the source's X is back; and this launch no longer names X |
 | **W1** | `cow` | plant; launch | `obtained` inside, on both shapes (read-through) |
 | **W2** | `cow` | source changes Y; launch | the new Y is `obtained` (read-through, no refresh step ran) |

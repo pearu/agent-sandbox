@@ -327,6 +327,10 @@ Engine flags (must precede the agent's own arguments):
                         --exec is the command, so engine flags come first.
                         The agent binary stays bound read-only, so an agent
                         started from inside runs natively there
+  --reset-connection CHANNEL
+                        discard what this sandbox holds at CHANNEL and take the
+                        source's again, then exit. What the conflict warning
+                        points at
   --connect SPEC        open one channel at one mode: 'channel=mode [source]',
                         repeatable. Lower on the scale none < copy < cow < ro <
                         live is more isolated; every channel is `live` by
@@ -1009,8 +1013,8 @@ _as_connect_parse() {
     return 1
   }
   case "$mode" in
-    none | ro | live) ;;
-    copy | cow)
+    none | copy | ro | live) ;;
+    cow)
       # THE WORDING BELOW IS A CONTRACT, not just a message. The connections
       # study probes each mode by asking for it and reading the refusal, so that
       # a mode the engine does not implement records `not-implemented` while a
@@ -1053,7 +1057,7 @@ _as_connect_channels() {
 _as_connect_apply() {
   ((${#profile_channels[@]})) || return 0
   ((${#_connect_mode[@]})) || return 0
-  local line ch mode entry kind path slot base empty
+  local line ch mode entry kind path slot base empty manifest
   local -a fields=()
   base="$(_as_sandbox_dir)"
   for line in "${profile_channels[@]}"; do
@@ -1076,6 +1080,21 @@ _as_connect_apply() {
             [[ -e "$slot" ]] || : >"$slot" || return 1
             _as_connect_placeholder "$path"
           fi
+          args+=(--bind "$slot" "$path")
+          ;;
+        copy)
+          # Seeded once and refreshed per file, never written back. The sync is
+          # a component with its own tests (components/connect-sync.py): the
+          # rules are a nine-case matrix and inline shell would hide it.
+          slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+          manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+          mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+          _as_connect_sync sync "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+          # A channel whose source has nothing yet still needs a mount point.
+          if [[ ! -e "$slot" ]]; then
+            if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+          fi
+          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
           args+=(--bind "$slot" "$path")
           ;;
         ro)
@@ -1104,6 +1123,43 @@ _as_connect_apply() {
   return 0
 }
 
+# _as_connect_sync VERB CHANNEL KIND SOURCE COPY MANIFEST -- run the three-way
+# sync (or a reset) for one path, and relay what it says.
+#
+# REFUSES WITHOUT python3 rather than binding an unsynced copy. An out-of-date
+# copy is not a smaller version of `copy`; it is a channel the user believes is
+# tracking their edits and is not. The config file takes the other route --
+# degrade and say so -- because there a stale copy still carries the account and
+# the project entry, and the alternative was no session at all.
+_as_connect_sync() {
+  local verb="$1" ch="$2" kind="$3" src="$4" copy="$5" manifest="$6" out rc=0
+  command -v python3 >/dev/null 2>&1 || {
+    _as_msg "connect: '$ch' asks for mode copy, which needs python3 to work out what changed. Refusing rather than binding a copy that silently stops tracking your edits."
+    return 1
+  }
+  [[ -r "$connect_sync" ]] || {
+    _as_msg "connect: cannot find the sync helper at $connect_sync (re-run install.sh, or set AGENT_SANDBOX_CONNECT_SYNC)"
+    return 1
+  }
+  out="$(python3 "$connect_sync" "$verb" --kind "$kind" --source "$src" \
+    --copy "$copy" --base "$manifest" 2>&1)" || rc=$?
+  ((rc == 0)) || {
+    _as_msg "connect: syncing '$ch' failed (exit $rc): $out"
+    return 1
+  }
+  # One line per file the sync refused to overwrite. A WARNING, never suppressed
+  # by --quiet: the sandbox is running with its own version of something the user
+  # has since changed, and saying so once quietly is how that goes unnoticed for
+  # a month.
+  local line f
+  while IFS= read -r line; do
+    [[ "$line" == conflict\ * ]] || continue
+    f="${line#conflict }"
+    _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $invoked --reset-connection $ch"
+  done <<<"$out"
+  return 0
+}
+
 # _as_connect_placeholder PATH -- record a mount point bwrap will CREATE on the
 # host, so the session cleanup removes it again while it is still empty.
 #
@@ -1117,6 +1173,40 @@ _as_connect_apply() {
 # user made, while an empty FILE is a channel that silently parses as nothing.
 _as_connect_placeholder() {
   [[ -e "$1" ]] || _as_placeholder_files+=("$1")
+}
+
+# _as_connect_reset CHANNEL -- discard what this sandbox holds at CHANNEL and
+# seed it from the source again.
+#
+# Destructive of the sandbox's own work at that channel and of nothing else, so
+# it says what it removed rather than working in silence. It resets whatever
+# state is there regardless of the channel's current mode: a channel moved back
+# to `live` still has its old copy on disk, and leaving it would surprise
+# whoever moves the channel back again.
+_as_connect_reset() {
+  local want="$1" line ch entry kind path slot manifest base found=0
+  local -a fields=()
+  base="$(_as_sandbox_dir)"
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    [[ "$ch" == "$want" ]] || continue
+    found=1
+    for entry in "${fields[@]:1}"; do
+      kind="${entry%%:*}"
+      path="${entry#*:}"
+      slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+      manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+      [[ -e "$slot" || -e "$manifest" ]] || continue
+      _as_connect_sync reset "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+      _as_msg "connect: reset '$ch' at $path from your own copy"
+    done
+  done
+  ((found)) || {
+    _as_msg "connect: profile '$profile' has no channel '$want'. It carries: $(_as_connect_channels)"
+    return 1
+  }
+  return 0
 }
 
 # _as_connect_report -- one line per channel that is not at its default, so a
@@ -1886,9 +1976,15 @@ _as_launch_pasta() {
 agent_sandbox() (
   set -euo pipefail
 
-  local engine profile_dir invoked
+  local engine profile_dir invoked connect_sync
   engine="$(readlink -f -- "${BASH_SOURCE[0]}")"
   profile_dir="${AGENT_SANDBOX_PROFILE_DIR:-$(dirname -- "$engine")/profiles}"
+  # The `copy` mode's three-way sync. Beside the engine in BOTH layouts: the
+  # checkout has components/ at its root, and install.sh writes the same file
+  # into the app directory next to the engine it copies there. The override is
+  # for the tests, which run the engine from a checkout but should not depend
+  # on the checkout's own copy being the one under test.
+  connect_sync="${AGENT_SANDBOX_CONNECT_SYNC:-$(dirname -- "$engine")/components/connect-sync.py}"
   invoked="$(basename -- "$0")"
 
   # ---- engine flags (must precede the agent's own arguments) ----
@@ -1907,7 +2003,7 @@ agent_sandbox() (
   # land, and the directory level is here so that arriving changes no layout.
   local -A _connect_mode=() _connect_where=()
   local -a _connect_flag=()
-  local _role=default
+  local _role=default _reset_connection=""
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -2071,6 +2167,23 @@ agent_sandbox() (
         ;;
       --connect=*)
         _connect_flag+=("${1#--connect=}")
+        shift
+        ;;
+      --reset-connection)
+        # Throw away what this sandbox has at a channel and take the source's
+        # again. The supported way back, and the one the conflict warning points
+        # at. Does its work and exits; it never launches the agent, so it cannot
+        # be confused with "reset and then run".
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || {
+            _as_msg "--reset-connection needs a channel name"
+            return 2
+          }
+        _reset_connection="$2"
+        shift 2
+        ;;
+      --reset-connection=*)
+        _reset_connection="${1#--reset-connection=}"
         shift
         ;;
       --wrap)
@@ -2535,6 +2648,12 @@ agent_sandbox() (
     _as_connect_parse "$_cs" --connect || return 1
   done
   _as_connect_report
+
+  # ---- --reset-connection: undo, then exit ----
+  if [[ -n "$_reset_connection" ]]; then
+    _as_connect_reset "$_reset_connection" || return 1
+    return 0
+  fi
 
   # ---- profile routing: sandbox this invocation, or hand it off ----
   # With the project's trusted .agent-sandbox now read, let the profile decide

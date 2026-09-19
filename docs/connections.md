@@ -382,6 +382,38 @@ here rather than designed around; the project directory is where different agent
   Bubblewrap takes an existing user namespace as a file descriptor, not a path. Under
   `copy` the question does not arise, since two sessions write one persistent directory as
   two native sessions do.
+- **A channel path that names a FILE cannot be deleted from inside, and that is a
+  limitation this model INTRODUCES.** Narrowing such a channel binds that one file, so
+  the path inside is a mount point in a directory the sandbox does not own, and a mount
+  point cannot be unlinked from within. Measured on this host: under `live`, where the
+  whole state directory is bound, a sandboxed session deletes `CLAUDE.md`,
+  `settings.json` and `rules/topic.md` without trouble; under `copy` the first two are
+  refused with `EBUSY` while the third, being an ordinary file inside a bound directory,
+  still goes. The config file has behaved this way since 0.2.1 for the same reason.
+
+  So `copy`'s promise that *a file the sandbox deleted stays deleted* holds for
+  directory-shaped paths and is unreachable for file-shaped ones. The study says so
+  rather than pretending otherwise: C7 asserts the promise on `rules/`, and a second
+  cell asserts what actually happens on `CLAUDE.md` — the delete is refused and the
+  source is untouched. When the fix below lands, that second cell fails, and that
+  failure is the prompt to change the specification deliberately.
+
+  What it costs in practice looks like nothing. Claude Code does not appear to delete
+  either file: of 64 delete call sites in 2.1.278, none is within 1500 bytes of either
+  name, which in a minified bundle with constructed paths is evidence of absence rather
+  than proof. A user deleting their own `CLAUDE.md` does it natively, where it works.
+
+  **The real fix is the architecture, not a workaround.** The end state of this model is
+  a sandbox with its OWN state directory, into which connections deliver content; there
+  the file is the sandbox's own and deletes like any other. That arrives with the preset
+  cutover, which is when unconnected paths stop being visible anyway. Interposing a
+  directory to bind instead would only move the mount point up one level, and treating
+  truncation as deletion would help nobody: the agent's own `rm` would still fail, so the
+  rule would exist only for whoever had been told about it.
+
+  **The same two paths settle `cow`.** Overlayfs mounts a directory and cannot stack on a
+  single file, so `cow` on a file-shaped path is `copy` whatever bubblewrap supports —
+  not a fallback for old hosts but a permanent property of the mechanism.
 - **Warning granularity.** File names at launch, one line per shadowed or conflicting file,
   and the differing lines on demand (`--connection-diff <channel>`). Warnings are never
   suppressed by `--quiet`, so a diff at every launch would be noise, and a warning is not

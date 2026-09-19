@@ -241,11 +241,60 @@ EOF
   # This phrase is a contract with probes/connections/lib.sh (conn_mode_supported),
   # which tells "not implemented yet" apart from "implemented wrong" by reading it.
   # Reword it and an unimplemented mode starts looking like a broken one.
-  for mode in copy cow; do
-    run_engine -- claude --connect "instructions=$mode" --version
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"connect: mode '$mode' is not implemented"* ]]
-  done
+  # `copy` came off this list when it landed; `cow` is what is left. A mode that
+  # stays here after it is implemented would have its study cells skipped, which
+  # is the quiet failure this wording exists to prevent.
+  run_engine -- claude --connect 'instructions=cow' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: mode 'cow' is not implemented"* ]]
+  # and an implemented one is NOT refused
+  run_engine -- claude --connect 'instructions=copy' --version
+  [ "$status" -eq 0 ]
+}
+
+@test "copy seeds from the source and binds the sandbox's own copy, not the source" {
+  printf 'YOURS\n' >"$C/CLAUDE.md"
+  printf 'YOURS\n' >"$C/rules/topic.md"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")"
+  argv_has --bind "$slot" "$C/CLAUDE.md"
+  [ "$(cat "$slot")" = YOURS ]
+  # the source itself is never the bind source, or a write inside would reach it
+  run ! argv_has --bind "$C/CLAUDE.md" "$C/CLAUDE.md"
+}
+
+@test "copy warns, naming the file, when both sides changed it -- and --quiet does not hide it" {
+  printf 'YOURS\n' >"$C/rules/topic.md"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  local slot
+  slot="$SBOX/instructions/copy/$(slugify "$C/rules")"
+  printf 'SANDBOX\n' >"$slot/topic.md"    # as if the session edited it
+  printf 'CHANGED\n' >"$C/rules/topic.md" # and the user changed theirs
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --quiet --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"topic.md"* ]]
+  [[ "$output" == *"reset-connection instructions"* ]] # it says how to resolve it
+  [ "$(cat "$slot/topic.md")" = SANDBOX ]              # and kept the sandbox's
+}
+
+@test "--reset-connection takes the source's version back, and does NOT launch" {
+  printf 'YOURS\n' >"$C/rules/topic.md"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  local slot
+  slot="$SBOX/instructions/copy/$(slugify "$C/rules")"
+  printf 'SANDBOX\n' >"$slot/topic.md"
+  run_engine -- claude --reset-connection instructions
+  [ "$status" -eq 0 ]
+  [ "$(cat "$slot/topic.md")" = YOURS ]
+  [ ! -s "$H/argv" ] # bwrap was never reached: it resets and exits
+}
+
+@test "--reset-connection on a channel the profile does not carry is refused" {
+  run_engine -- claude --reset-connection nosuch
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no channel 'nosuch'"* ]]
 }
 
 @test "a refusal stops the launch: bwrap is never reached" {
