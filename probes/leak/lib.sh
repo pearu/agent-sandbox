@@ -75,6 +75,9 @@ leak_setup() {
   [[ -z "${LEAK_CONNECT:-}" ]] \
     || leak_die "LEAK_CONNECT is set in the environment; a cell's connection is chosen
       by the cell, and an inherited one would silently change every measurement"
+  [[ -z "${LEAK_OVERLAY:-}" ]] \
+    || leak_die "LEAK_OVERLAY is set in the environment; it is set per cell, and an
+      inherited one would decide how every \`cow\` cell is implemented without saying so"
 
   # Results land under probes/results/<study>/. The leak study is the default; the
   # connections study (probes/connections/) sets LEAK_RESULTS_SUBDIR so two studies
@@ -421,6 +424,9 @@ leak_read_sandboxed() {
     # the array as one element -- never through an unquoted ${x:+...}, which would
     # split it and hand the engine two half-settings.
     [[ -n "${LEAK_CONNECT:-}" ]] && _env+=(AGENT_SANDBOX_CONNECT="$LEAK_CONNECT")
+    # Which implementation `cow` uses. Unset leaves the engine's own choice (an overlay
+    # where bubblewrap supports one), which is what every cell but W8 wants.
+    [[ -n "${LEAK_OVERLAY:-}" ]] && _env+=(AGENT_SANDBOX_OVERLAY="$LEAK_OVERLAY")
     env "${_env[@]}" claude --quiet --exec python3 "$script" "$@"
   ) >"$out" 2>"$out.err" || true
 }

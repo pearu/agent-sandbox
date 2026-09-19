@@ -100,8 +100,27 @@ conn_expect obtained "launch 2 sees the new entry (read-through is not only for 
 # W8 and W9 are recorded, not run. Each needs something this host cannot provide or the
 # design has not decided, and a cell that quietly does not run is worse than one that
 # says why.
-conn_cell_blocked W8 cow "the emulation gives the same verdicts on a host without overlay support" \
-  "needs a host with bubblewrap < 0.11 (this one has 0.12.0); run the W set there and diff the verdicts"
+# W8 was blocked on "a host we do not have". It is not any more, and not because the
+# question was dropped: on a host without an overlay `cow` IS `copy`, so the question
+# became "does the fallback work and say so", which `[overlay] mode = off` lets any host
+# ask. The other half of W8 -- that the two implementations agree at launch granularity --
+# is not a cell at all: run-all.sh runs this whole suite twice, once each way, and diffs
+# the verdicts, which compares the two implementations directly instead of comparing one
+# against a memory of the other.
+conn_cell W8 cow "with the overlay forced off, cow is copy, and the launch says so"
+conn_overlay off
+tok="$(conn_source_write "$CONN_CHANNEL_FILE")"
+conn_read "$CONN_CHANNEL_FILE" "$tok"
+conn_expect obtained "the channel still works with no overlay"
+conn_expect_said 'copy' "and the launch names the implementation it fell back to"
+before="$(conn_source_sha "$CONN_CHANNEL_FILE")"
+inside="$(leak_token INSIDE)"
+conn_write_inside "$CONN_CHANNEL_FILE" "$inside"
+conn_expect obtained "a write inside succeeds"
+conn_expect_host "$before" "$(conn_source_sha "$CONN_CHANNEL_FILE")" \
+  "and does not reach the source"
+conn_read "$CONN_CHANNEL_FILE" "$inside"
+conn_expect obtained "and it is still the sandbox's at the next launch, as copy promises"
 
 # W9 is no longer blocked: the engine's answer is settled (mount once, every session
 # joins), so there is a promise to assert. What is asserted here is the BEHAVIOUR a user

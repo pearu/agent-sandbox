@@ -66,13 +66,40 @@ for s in "${SUITES[@]}"; do
   total_ctrl_bad=$((total_ctrl_bad + $(field 'bad)' "$line")))
 done
 
+# ----- W8's other half: the two `cow` implementations, compared on one host ----------
+# Where bubblewrap cannot mount an overlay, `cow` is `copy`, and the claim that the two
+# agree at launch granularity used to need a second, older machine. It does not any more:
+# `[overlay] mode = off` forces the fallback here, so the suite runs twice and the
+# verdicts are diffed. That compares the two implementations AGAINST EACH OTHER, which the
+# original plan could not do -- it would have compared one of them against a memory of the
+# other, taken on different hardware at a different time.
+divergent=0
+cowlog="$OUT/part1-cow.log"
+if [[ -f "$cowlog" ]]; then
+  printf '%-18s running again, overlay forced off...\n' part1-cow
+  nolog="$OUT/part1-cow-nooverlay.log"
+  CONN_OVERLAY=off "$HERE/part1-cow.sh" >"$nolog" 2>&1 || true
+  reca="$(sed -n 's/^records: //p' "$cowlog" | tail -1)"
+  recb="$(sed -n 's/^records: //p' "$nolog" | tail -1)"
+  if [[ -d "$reca" && -d "$recb" ]]; then
+    divergent="$(python3 "$HERE/compare.py" "$reca" "$recb")"
+    printf 'cow with and without the overlay: %s assertion(s) differ\n' "$divergent" \
+      | tee -a "$OUT/summary.txt"
+  else
+    printf 'cow with and without the overlay: NOT COMPARED (a run produced no records)\n' \
+      | tee -a "$OUT/summary.txt"
+    divergent=1
+  fi
+fi
+
 {
   printf '\n----- acceptance -----\n'
   printf '%d pass, %d fail, %d not-implemented, %d blocked\n' \
     "$total_pass" "$total_fail" "$total_todo" "$total_blocked"
   ((broken)) && printf '%d suite(s) did not produce a usable result\n' "$broken"
   ((total_ctrl_bad)) && printf '%d control(s) did not hold\n' "$total_ctrl_bad"
+  ((divergent)) && printf '%d cow assertion(s) differ between the two implementations\n' "$divergent"
   printf 'logs: %s\n' "$OUT"
 } | tee -a "$OUT/summary.txt"
 
-((total_fail == 0 && broken == 0 && total_ctrl_bad == 0))
+((total_fail == 0 && broken == 0 && total_ctrl_bad == 0 && divergent == 0))

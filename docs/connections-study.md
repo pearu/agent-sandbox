@@ -93,7 +93,7 @@ whiteouts as well as copies. The cells below say so.
 | **W5** | `cow` | delete the source's Z from inside; exit; launch | Z is hidden inside, the source still has Z, and the hide persists (a whiteout, by the measurement above — but the cell asserts the behaviour, not the layer) |
 | **W6** | `cow` | shadow X, delete Z from inside; launch and *see* both; `reset`; launch | the reset succeeds and **both** halves are undone: the source's X reads through again and the hidden Z is visible again |
 | **W7** | `cow` | a file created in the source *directory*; launch | it is `obtained` (read-through applies to new entries, not only to changed ones) |
-| **W8** | `cow` | the whole W set on a host without overlay support | identical verdicts, except W2 within a *running* session (see Part 7); the launch says it is emulating |
+| **W8** | `cow` | `[overlay] mode = off`; plant; launch; write inside; launch | the channel works, the launch names the implementation it fell back to, and the write behaves as `copy` promises |
 | **W9** | `cow` | two sessions of **one** sandbox at once (T3) | both launch, neither is refused; a later launch has both sessions' work; the source is byte-identical |
 | **R1** | `ro` | plant; launch | `obtained` inside |
 | **R2** | `ro` | write inside (scripted) | the write fails, `EROFS` recorded, the source byte-identical |
@@ -140,6 +140,22 @@ promise, and the validity gate refuses a run in which one did not hold:
   independently of any connection, read from the same sandbox and required to stay closed.
   Without it, a cell that had somehow escaped the sandbox would report every `obtained` as
   a success.
+
+**W8, and why it is no longer "find an older host".** Where bubblewrap cannot mount an
+overlay, `cow` is `copy` — the two modes differ only *within* a running session, which is
+Part 7's subject, and are identical across launches. So there is no separate emulation
+whose fidelity is in doubt, and the question became one any host can ask:
+`[overlay] mode = off` forces the fallback on a machine that could use an overlay.
+
+That splits W8 in two. The cell above asserts the fallback **works and announces itself**.
+The claim that the two implementations **agree** is not a cell: `run-all.sh` runs the whole
+cow suite twice, once each way, and diffs the verdicts. That compares the two
+implementations against each other on one host, which is stronger than the original plan of
+comparing one of them against a memory of the other taken on a different machine.
+
+Measured in CI while writing this: 26.04 has overlay support, 24.04 ships bubblewrap 0.9.0
+and 22.04 ships 0.6.1. Two of the three supported releases take the fallback, so it is the
+common path and not an exotic one.
 
 **N2, C2 and W3 are the write-direction cells [#90](https://github.com/pearu/agent-sandbox/issues/90)
 asked for.** Each says, structurally, that what a sandboxed session writes to a channel

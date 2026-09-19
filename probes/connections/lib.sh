@@ -88,6 +88,11 @@ conn_cell() {
   else
     LEAK_CONNECT="instructions=$CONN_MODE native"
   fi
+  # How `cow` is implemented for this cell. Empty leaves the engine's own choice; the
+  # suite-wide default comes from CONN_OVERLAY, which the runner sets for its second pass
+  # over the cow suite so the two implementations can be compared on one host.
+  LEAK_OVERLAY="${CONN_OVERLAY:-}"
+  CONN_OVERLAY_EFF="${CONN_OVERLAY:-auto}"
   CONN_SOURCE="$LEAK_CONFIG"
   mkdir -p "$CONN_SOURCE/$CONN_CHANNEL_DIR"
   conn_write_probes
@@ -102,6 +107,14 @@ conn_cell() {
   # Cleared here, the failure mode is a missing verdict (which fails) rather than a
   # stale one (which can quietly pass).
   CONN_VERDICT="" CONN_READER_OUT="" CONN_LAUNCH_SAID=""
+}
+
+# conn_overlay auto|off -- force this cell's `cow` implementation, whatever the host
+# could do. W8 is the cell that needs it: the fallback is the path two of the three
+# supported releases take, and a path exercised only on old machines is a path that rots.
+conn_overlay() {
+  LEAK_OVERLAY="$1"
+  CONN_OVERLAY_EFF="$1"
 }
 
 # conn_controls -- the two controls docs/connections-study.md requires of every cell,
@@ -410,6 +423,7 @@ conn_record() {
     --set "preset=n/a" --set "launch=$CONN_LAUNCH" \
     --set "assertion=$desc" --set "expected=$expected" --set "actual=$actual" \
     --set "status=$status" --set "cell_desc=$CONN_DESC" \
+    --set "overlay=${CONN_OVERLAY_EFF:-auto}" \
     --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
     --set "engine_version=$(claude --engine-version 2>/dev/null | head -1)" \
     "$@" >/dev/null
