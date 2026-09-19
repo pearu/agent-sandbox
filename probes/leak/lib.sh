@@ -68,8 +68,21 @@ leak_setup() {
   [[ -z "${CLAUDE_CONFIG_DIR:-}" ]] \
     || leak_die "CLAUDE_CONFIG_DIR is set; isolation here is a throwaway HOME, and a
       config dir would send native and sandboxed cells to different configs"
+  # LEAK_CONNECT is the harness's own variable: leak_read_sandboxed turns it into
+  # AGENT_SANDBOX_CONNECT. Inherited from the caller's shell it would put every cell of
+  # every row -- including the leak study's, which knows nothing about connections --
+  # under a connection nobody asked for, and the rows would still report verdicts.
+  [[ -z "${LEAK_CONNECT:-}" ]] \
+    || leak_die "LEAK_CONNECT is set in the environment; a cell's connection is chosen
+      by the cell, and an inherited one would silently change every measurement"
+  [[ -z "${LEAK_OVERLAY:-}" ]] \
+    || leak_die "LEAK_OVERLAY is set in the environment; it is set per cell, and an
+      inherited one would decide how every \`cow\` cell is implemented without saying so"
 
-  LEAK_RUN="$LEAK_REPO_ROOT/probes/results/leak/$row-$(date +%Y%m%dT%H%M%S)"
+  # Results land under probes/results/<study>/. The leak study is the default; the
+  # connections study (probes/connections/) sets LEAK_RESULTS_SUBDIR so two studies
+  # sharing one instrument never share a results tree.
+  LEAK_RUN="$LEAK_REPO_ROOT/probes/results/${LEAK_RESULTS_SUBDIR:-leak}/$row-$(date +%Y%m%dT%H%M%S)"
   LEAK_RUN_ID="$(leak_hexid)"
   mkdir -p "$LEAK_RUN/records" "$LEAK_RUN/cells"
   LEAK_CELL_BASE=""
@@ -274,10 +287,17 @@ LEAK_CONTROL_SECONDS="${LEAK_CONTROL_SECONDS:-15}"
 # every row ran `--exec` and started no session; it matters from the real-session rows
 # on, which is why it is in the snapshot set rather than left to be noticed later.
 leak_real_roots() {
-  local d
+  local d s
   d="/tmp/cc-daemon-$(id -u)"
   printf '%s\n' "$HOME/.claude" "$HOME/.claude.json"
   [[ -e "$d" ]] && printf '%s\n' "$d"
+  # The ENGINE's state directory, where since 0.2.1 a sandbox keeps per-project state --
+  # the config-file copy today, a connection's copies and overlay layer under the
+  # connections model. Every cell pins XDG_STATE_HOME inside its throwaway HOME so
+  # nothing should land here; this root is what turns "should" into a checked claim, and
+  # it is read from the CALLER's environment, which is the real one.
+  s="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
+  [[ -e "$s" ]] && printf '%s\n' "$s"
   return 0
 }
 
@@ -386,13 +406,28 @@ leak_read_sandboxed() {
   : "${LEAK_CELL_BASE:?no cell is open: call leak_cell NAME before measuring}"
   local net="$1" cwd="$2" script="$3" out="$4"
   shift 4
-  # Arguments, never environment: the sandbox does --clearenv and re-exports an
-  # allowlist, so an exported variable does not cross -- and forwarding one would
-  # change the environment under test to measure it.
+  # Arguments, never environment, for what the READER needs: the sandbox does
+  # --clearenv and re-exports an allowlist, so an exported variable does not cross --
+  # and forwarding one would change the environment under test to measure it. The
+  # environment below is the ENGINE's, read on the host before the sandbox exists.
+  #
+  # XDG_STATE_HOME is pinned inside the throwaway HOME because since engine 0.2.1 a
+  # sandbox keeps per-project state (the config-file copy, and whatever a connection
+  # persists) under ${XDG_STATE_HOME:-~/.local/state}/agent-sandbox. Unset it lands in
+  # the throwaway HOME anyway; set in the caller's shell it would land in the REAL
+  # state directory, outside what the validity gate snapshots.
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" \
-      claude --quiet --exec python3 "$script" "$@"
+    local -a _env=(HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state"
+      AGENT_SANDBOX_NET="$net")
+    # A connection spec carries spaces ("instructions=copy native"), so it goes into
+    # the array as one element -- never through an unquoted ${x:+...}, which would
+    # split it and hand the engine two half-settings.
+    [[ -n "${LEAK_CONNECT:-}" ]] && _env+=(AGENT_SANDBOX_CONNECT="$LEAK_CONNECT")
+    # Which implementation `cow` uses. Unset leaves the engine's own choice (an overlay
+    # where bubblewrap supports one), which is what every cell but W8 wants.
+    [[ -n "${LEAK_OVERLAY:-}" ]] && _env+=(AGENT_SANDBOX_OVERLAY="$LEAK_OVERLAY")
+    env "${_env[@]}" claude --quiet --exec python3 "$script" "$@"
   ) >"$out" 2>"$out.err" || true
 }
 
@@ -403,7 +438,7 @@ leak_read_native() {
   shift 3
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" python3 "$script" "$@"
+    env HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state" python3 "$script" "$@"
   ) >"$out" 2>"$out.err" || true
 }
 

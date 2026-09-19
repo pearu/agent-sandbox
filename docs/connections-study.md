@@ -75,26 +75,26 @@ whiteouts as well as copies. The cells below say so.
 
 | id | mode | sequence | assertion |
 |---|---|---|---|
-| **N1** | `none` | plant in source; launch | the channel is empty or absent inside; the source's canary is `not-obtained-absent` |
+| **N1** | `none` | plant in source; launch | the source's canary is not inside: `not-obtained-absent` if the channel is there and empty, `not-obtained-unreachable` if it is not there at all — both are closed, and which one is the implementation's choice |
 | **N2** | `none` | write inside; exit; inspect source | the source is byte-identical |
 | **N3** | `none` | write inside; exit; launch again | what the sandbox wrote is still there |
 | **C1** | `copy` | plant; launch | the source's canary is `obtained` inside (seed) |
 | **C2** | `copy` | modify X inside; exit; inspect source | the source's X is byte-identical (no write-back, ever) |
 | **C3** | `copy` | launch again | the sandbox's X is still the sandbox's |
 | **C4** | `copy` | source changes Y (never touched inside); launch | the new Y is `obtained` inside (refresh) |
-| **C5** | `copy` | source changes X (already modified inside); launch | the sandbox's X wins **and the launch names X in a warning** |
+| **C5** | `copy` | source changes X (already modified inside); launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
 | **C6** | `copy` | source deletes Z (never touched inside); launch | Z is absent inside |
 | **C7** | `copy` | delete W inside; exit; launch again | W stays absent (a deletion is not undone by a refresh) |
-| **C8** | `copy` | `reset` the channel; launch | the source's X is back; the warning is gone |
-| **W1** | `cow` | plant; launch | `obtained` inside, and the private layer holds no copy of it |
+| **C8** | `copy` | from C5's state, launch and *see* the warning; `reset`; launch | the reset succeeds; the source's X is back; and this launch no longer names X |
+| **W1** | `cow` | plant; launch | `obtained` inside, on both shapes (read-through) |
 | **W2** | `cow` | source changes Y; launch | the new Y is `obtained` (read-through, no refresh step ran) |
-| **W3** | `cow` | write X inside | the layer holds X; the source's X is byte-identical |
-| **W4** | `cow` | source changes X after it was shadowed; launch | the sandbox's X wins **and the launch names X in a warning** |
-| **W5** | `cow` | delete the source's Z from inside; exit; launch | Z is hidden inside (a whiteout in the layer), the source still has Z, and the hide persists |
-| **W6** | `cow` | `reset` Z (or the channel); launch | the whiteout and the layer's copies are gone; the source's Z and X are visible again |
+| **W3** | `cow` | write X inside; exit; launch again | the source's X is byte-identical, and the sandbox's X is still the sandbox's at the next launch (it shadows) |
+| **W4** | `cow` | source changes X after it was shadowed; launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
+| **W5** | `cow` | delete the source's Z from inside; exit; launch | Z is hidden inside, the source still has Z, and the hide persists (a whiteout, by the measurement above — but the cell asserts the behaviour, not the layer) |
+| **W6** | `cow` | shadow X, delete Z from inside; launch and *see* both; `reset`; launch | the reset succeeds and **both** halves are undone: the source's X reads through again and the hidden Z is visible again |
 | **W7** | `cow` | a file created in the source *directory*; launch | it is `obtained` (read-through applies to new entries, not only to changed ones) |
-| **W8** | `cow` | the whole W set on a host without overlay support | identical verdicts, except W2 within a *running* session (see Part 7); the launch says it is emulating |
-| **W9** | `cow` | two sessions of **one** sandbox at once (T3) | see the concurrency note below |
+| **W8** | `cow` | `[overlay] mode = off`; plant; launch; write inside; launch | the channel works, the launch names the implementation it fell back to, and the write behaves as `copy` promises |
+| **W9** | `cow` | two sessions of **one** sandbox at once (T3) | both launch, neither is refused; a later launch has both sessions' work; the source is byte-identical |
 | **R1** | `ro` | plant; launch | `obtained` inside |
 | **R2** | `ro` | write inside (scripted) | the write fails, `EROFS` recorded, the source byte-identical |
 | **R3** | `ro` | source changes X; launch | the new X is `obtained` |
@@ -102,23 +102,82 @@ whiteouts as well as copies. The cells below say so.
 | **L2** | `live` | write inside; exit; inspect source | the source carries the write |
 | **L3** | `live` | source changes X; launch | the new X is `obtained` |
 
-**Controls for every one of these.** A positive control (the same read against the
-sandbox's *own* state, which must be `obtained` whatever the mode) and an isolation check
-(a canary in a path known closed, read from the same sandbox) — because a cell expected
-to be closed cannot use "the sandbox read its own data" as proof the sandbox applied.
+**No cell inspects where the implementation keeps anything.** W1 and W3 were first
+written against the private layer's contents; they are not, because a sandbox's copies and
+its overlay layer are the implementation's to place, and an assertion that reads them pins
+a layout the model never promised and would pass for the wrong reason after a refactor.
+Everything above is observable through the mount or on the source, and where a promise is
+*only* about layout there is no cell, by design.
+
+**The conflict warning is asserted on the first launch after the source moved**, never a
+later one. The model says "the launch says so" without settling once versus every time, so
+a cell reading a second launch's stderr would silently require the stronger of the two
+readings and fail an engine that warns once, correctly.
+
+**A cell that asserts something was *undone* first observes it done.** C8 and W6 are about
+`reset`, so each runs a launch that sees the warning, the shadow and the hide before
+resetting. Written without it — reset, then assert the absence — both cells pass against an
+engine whose `reset` does nothing at all, and against one that never shadowed in the first
+place: an absence is only evidence when the presence was established.
+
+**Controls for every one of these**, run by the harness at the start of each cell and kept
+out of the acceptance score — they say the measurement is valid, not that the engine kept a
+promise, and the validity gate refuses a run in which one did not hold:
+
+- a **positive control**: a canary in the working directory, which every mode binds
+  read-write, read from inside and required to be `obtained`. A cell expecting a *closed*
+  channel cannot otherwise tell "the mode closed it" from "the launch died", "the reader
+  never started" or "the canary was never planted" — all four read as not-obtained. It
+  deliberately does not read the channel under test: a control that shares the subject's
+  failure mode is not a control.
+- a **path-agreement control**: the reader reports the `HOME` it ran under, and the harness
+  requires it to be the throwaway `HOME` it plants into. The control above proves a launch
+  happened; this one proves the sandbox and the harness mean the same tree. Without it a
+  divergent prefix would pass the whole `none` suite — nothing found, the source untouched,
+  and the sandbox's own write read back from the same wrong place — for a reason that has
+  nothing to do with the mode. It needs no extra launch.
+- an **isolation check**: another project's transcript, which the engine scopes
+  independently of any connection, read from the same sandbox and required to stay closed.
+  Without it, a cell that had somehow escaped the sandbox would report every `obtained` as
+  a success.
+
+**W8, and why it is no longer "find an older host".** Where bubblewrap cannot mount an
+overlay, `cow` is `copy` — the two modes differ only *within* a running session, which is
+Part 7's subject, and are identical across launches. So there is no separate emulation
+whose fidelity is in doubt, and the question became one any host can ask:
+`[overlay] mode = off` forces the fallback on a machine that could use an overlay.
+
+That splits W8 in two. The cell above asserts the fallback **works and announces itself**.
+The claim that the two implementations **agree** is not a cell: `run-all.sh` runs the whole
+cow suite twice, once each way, and diffs the verdicts. That compares the two
+implementations against each other on one host, which is stronger than the original plan of
+comparing one of them against a memory of the other taken on a different machine.
+
+Measured in CI while writing this: 26.04 has overlay support, 24.04 ships bubblewrap 0.9.0
+and 22.04 ships 0.6.1. Two of the three supported releases take the fallback, so it is the
+common path and not an exotic one.
 
 **N2, C2 and W3 are the write-direction cells [#90](https://github.com/pearu/agent-sandbox/issues/90)
 asked for.** Each says, structurally, that what a sandboxed session writes to a channel
 reaches neither the source nor, therefore, any other session; T2 and T6 close together.
 That issue closes against these three cells and the `default` preset's positions.
 
-**Concurrency (W9).** Two sessions of one sandbox at once means two overlay mounts on one
-upper directory. Measured on this host: the kernel allows it (`index=off`), both sessions
-see each other's writes live, and the layer holds both — but overlayfs documents a shared
-upper as undefined behaviour, so this is a result about one kernel, not a guarantee. The
-cell records what happens; the engine must decide what it *does* about a second session
-(refuse it, serialise it, or give it a per-session layer, which is the emulation), and
-`connections.md` carries that as an open question.
+**Concurrency (W9), and why its two halves are asserted in different places.** A sandbox
+is keyed by project and role, so two terminals on one project are two sessions of one
+sandbox: the ordinary case, not an edge case. The engine's answer, settled in
+[connections.md](connections.md#settled-while-writing-this), is to mount a sandbox's
+overlay **once** and let every session join that mount, because what overlayfs documents
+as undefined is two *independent mounts* over one upper, not many users of one mount.
+
+W9 asserts the **behaviour** a user is promised: both sessions launch, neither is refused,
+a later launch still has both sessions' work, and the source never changes.
+
+The **platform premise** — that joining yields one superblock rather than a second mount —
+is asserted by `tests/integration/overlay-sharing.bats` on every platform CI covers, and
+deliberately not by a cell. No cell inspects layout; and a behavioural cell could not tell
+the safe arrangement from the undefined one in any case, because two independent mounts
+*also* see each other's writes. That is exactly why the premise needs its own test rather
+than an inference from a green cell.
 
 ## Part 2 — per-channel ingestion (levels 2 and 3, paid)
 

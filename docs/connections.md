@@ -239,6 +239,9 @@ connection they mean.
 role = reviewer            # the sandbox key's second half; default: default
 preset = default           # independent | default | shared
 
+[overlay]
+mode = auto                # auto | off -- what `cow` is implemented with
+
 [connect]                  # channel = mode [source]; source: native | sandbox:<project>[/<role>] | dir:<path>
 instructions = cow native
 skills = copy native
@@ -248,7 +251,8 @@ artefacts = live native
 ```
 
 Launch-time forms: `--connect 'memory=ro sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
-the same syntax, `--role`, `--preset`. A step down the scale is honoured from an unapproved
+the same syntax, `--role`, `--preset`, and `--overlay auto|off` with
+`AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does. A step down the scale is honoured from an unapproved
 dot-file's own approval only; a step up needs the trust gate, as `[net] mode = open` does.
 `reset` is an engine verb: `--reset-connection skills`, or the whole sandbox.
 
@@ -302,10 +306,31 @@ here rather than designed around; the project directory is where different agent
   [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404), which
   `install.sh` points at when it finds an older bubblewrap (0.12.0 also carries the fix for
   CVE-2026-87766, a setup-time symlink escape through directories the sandboxed process
-  controls, which noble-security's 0.9.0-1ubuntu0.3 dropped again). On a host without
-  overlay support, `cow` falls back to the emulation with the same semantics minus
-  mid-session liveness, and the launch says so; nothing stops working, which is why no
-  channel needs to be widened to `live` to accommodate an older bubblewrap.
+  controls, which noble-security's 0.9.0-1ubuntu0.3 dropped again). Measured in CI:
+  26.04 has overlay support, 24.04 ships 0.9.0 and 22.04 ships 0.6.1, so two of the three
+  supported releases take the fallback unless their bubblewrap is upgraded. Nothing may
+  therefore be designed as if the overlay path were the usual one.
+- **Where there is no overlay, `cow` is `copy`** — not a separate emulation to write and
+  keep in step. Compare the two definitions above and they differ in exactly one place.
+  Across launches they are identical: a source change to an untouched file arrives, a
+  touched file stays the sandbox's, a delete inside persists while the source keeps its
+  copy, a conflict warns. The only divergence is *within* a running session, where an
+  overlay reads through live and a snapshot cannot. So the fallback costs a branch and a
+  notice rather than a subsystem, and the launch says which one it used. Nothing stops
+  working on an old host, which is why no channel needs widening to `live` to accommodate
+  one.
+
+  Its cost is storage: `copy` duplicates the channel's files per sandbox where `cow`
+  stores only what was written. Measured on one developer machine, the channels a
+  connection covers came to 45 MB, dominated by `plugins/` at 7.4 MB and `skills/` at
+  4.3 MB; instructions and settings are kilobytes.
+
+  **`[overlay] mode = off`** forces the fallback on a host that could use an overlay. It
+  exists because overlayfs is not usable everywhere bubblewrap supports it — some
+  filesystems, some container hosts — and because a path that only ever runs on old
+  machines is a path that rots. It can only move `cow` to `copy`, a step *down* the scale,
+  so it needs no trust gate. It is also what lets the study compare the two
+  implementations on one host, which is W8.
 - **`plugins/`**: `cow`, like the rest of its group. Not `ro`: Claude Code writes into
   `plugins/` at every start (the `synced/` markers and manifest, a rename onto
   `installed_plugins_v2.json`, a lock beside `known_marketplaces_claudeai.json`), and under
@@ -314,6 +339,38 @@ here rather than designed around; the project directory is where different agent
   channel carries inference like `skills` does and `live` would keep T2 and T6 open for it.
   If overlay use is to be minimised, `copy` is the alternative that keeps the channel closed:
   plugins change rarely, so a refresh at launch loses nothing that matters.
+- **Two sessions of one sandbox at once, under `cow`: mount once, and let every session
+  join that mount.** A sandbox is keyed by project and role, so two terminals on one
+  project are two sessions of one sandbox; that is the ordinary case, and refusing it or
+  serialising behind an interactive session would break a daily workflow to avoid a
+  problem that can be dissolved instead. What overlayfs documents as undefined is two
+  *independent mounts* over one upper directory, not many users of one mount. So the
+  engine mounts a sandbox's overlay once and each session inherits it.
+
+  Measured, and now asserted on every platform CI covers by
+  `tests/integration/overlay-sharing.bats`: two concurrent independent mounts over one
+  upper really are two superblocks, which is what makes the rest of the measurement
+  meaningful; a session joining the holder's user and mount namespaces reports the
+  holder's superblock, and so does a full bubblewrap sandbox built inside that join. Two
+  such sandboxes at once saw each other's writes and each other's whiteouts coherently,
+  and the source was untouched. The study asserts that behaviour as W9; the superblock
+  identity is a platform premise and is asserted in the test rather than in a cell, which
+  inspects no layout.
+
+  Three consequences for the implementation. A **short lock** is needed, but only around
+  *creating* the holder, because two sessions racing to create one would make the two
+  mounts this avoids; it is held for milliseconds, not for the life of a session, which is
+  what made serialising unattractive. **No long-lived daemon is required**: the mount is
+  held by namespace membership, so once a session has joined, the holder may exit and the
+  session keeps reading and writing at the same superblock; killing the holder mid-session
+  did not pull the filesystem out from under it. And **teardown must chmod before it
+  deletes**: once anything has been written through an overlay, its workdir keeps a
+  mode-000 directory that removal cannot enter even as its owner, which `reset` and
+  sandbox deletion will both meet.
+
+  Bubblewrap takes an existing user namespace as a file descriptor, not a path. Under
+  `copy` the question does not arise, since two sessions write one persistent directory as
+  two native sessions do.
 - **Warning granularity.** File names at launch, one line per shadowed or conflicting file,
   and the differing lines on demand (`--connection-diff <channel>`). Warnings are never
   suppressed by `--quiet`, so a diff at every launch would be noise, and a warning is not
@@ -321,11 +378,5 @@ here rather than designed around; the project directory is where different agent
 
 ## Open questions
 
-- **Two sessions of one sandbox at once, under `cow`.** Two overlay mounts on one upper
-  directory. Measured on this host: the kernel allows it, both sessions see each other's
-  writes, the layer keeps both — and overlayfs documents a shared upper as undefined
-  behaviour. The engine must choose: refuse the second session, serialise, or give each
-  session its own layer and merge, which is the emulation. Under `copy` the question does
-  not arise, since two sessions write one persistent directory as two native sessions do.
 - **Named sandboxes** beyond roles, shared by several projects.
 - **Cross-kind projection** of instruction files, if a second profile ever wants it.
