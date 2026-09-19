@@ -37,8 +37,8 @@ step "shfmt -d (tracked files, formatting per .editorconfig)"
 shfmt -d "${fmt_files[@]}"
 
 step "python components compile"
-python3 -m py_compile components/*.py
-rm -rf components/__pycache__
+python3 -m py_compile components/*.py probes/*.py probes/*/*.py
+rm -rf components/__pycache__ probes/__pycache__ probes/*/__pycache__
 
 step "seccomp generator compiles a filter for x86_64 and aarch64 (pyseccomp)"
 if python3 -c 'import pyseccomp' 2>/dev/null; then
