@@ -101,6 +101,33 @@ Sections:
   `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
   be injected; `briefing.md` stays bound and readable either way.
+- **`[connect]`** — key/value lines, one per channel: `channel = mode [source]`.
+  A **channel** is named by what it carries (`instructions`, `settings`,
+  `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a
+  **mode** says how much of the source reaches this project's sandbox, on the
+  scale `none < copy < cow < ro < live` with lower more isolated. `none` gives
+  the sandbox nothing of yours and keeps what it writes there private and
+  persistent; `ro` gives it your files, live, and refuses its writes; `live` is
+  the default and is what the engine has always done. `copy` and `cow` are part
+  of the model but not yet in the engine, and asking for one is refused rather
+  than served as a different mode. The only **source** so far is `native`, your
+  own `~/.claude`, which is also the default.
+
+  Narrowing a channel needs nothing beyond this file's own approval. Widening
+  one back toward `live` is what the `--trust` review is for, the same as
+  `[net] mode = open`. The same syntax works as `--connect 'instructions=ro'`
+  and, semicolon-separated, as `AGENT_SANDBOX_CONNECT`; the flag beats the
+  variable, which beats this file. A channel name the profile does not carry
+  refuses the launch instead of being ignored, because a typo that quietly left
+  a channel at `live` would read to you as a channel you had closed.
+
+  One small side effect worth knowing rather than reporting: where a narrowed
+  channel names a **directory** your `~/.claude` does not have, an empty one is
+  left there. Empty files are cleaned up, because an empty `CLAUDE.md` is a
+  channel that silently parses as nothing, while an empty directory is
+  indistinguishable from one you made yourself. See
+  [connections.md](connections.md).
+
 - **`[claude]`** — key/value lines, read by the `claude` profile rather than by
   the engine (a section named after the active profile; a `[codex]` section in
   a claude run is an unknown section and does nothing). `hide = <paths>` is a

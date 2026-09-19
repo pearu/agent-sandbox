@@ -204,6 +204,7 @@ not exist. Values and defaults are in the last column.
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | default-deny syscall filter, compiled per machine by `install.sh`; `off` disables it (on) ([seccomp](components/seccomp/README.md)) |
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
+| `--connect SPEC` | `AGENT_SANDBOX_CONNECT` | `[connect]` | per-channel `channel = mode [source]`: how much of your native install this project's sandbox sees, on the scale `none < copy < cow < ro < live`; `;`-separated in the variable (`live`, i.e. everything, for every channel) ([connections.md](docs/connections.md)) |
 | `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |

@@ -252,8 +252,19 @@ artefacts = live native
 
 Launch-time forms: `--connect 'memory=ro sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
 the same syntax, `--role`, `--preset`, and `--overlay auto|off` with
-`AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does. A step down the scale is honoured from an unapproved
-dot-file's own approval only; a step up needs the trust gate, as `[net] mode = open` does.
+`AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does.
+
+**What the trust gate does and does not cover here.** The dot-file is parsed only when
+approved, so `[connect]` grants nothing from an unreviewed file, and a step *up* the scale
+written there is a widening the `--trust` review exists to show. The flag and the
+environment variable are not gated and never have been, for any knob: they are the user's
+own shell, and a user who can set them can equally run the agent unsandboxed. That
+distinction costs nothing while every channel defaults to `live`, since no launch-time
+form can widen anything. It starts to matter the day the `default` preset lowers those
+defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can quietly put a
+channel back at `live` for every project. Whoever lands presets decides whether that stays
+true and says so here.
+
 `reset` is an engine verb: `--reset-connection skills`, or the whole sandbox.
 
 ## What the study measures under this model

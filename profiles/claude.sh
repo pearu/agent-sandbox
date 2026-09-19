@@ -95,6 +95,34 @@ profile_command=claude
 # the second entry -- the directory first, the file inside it second.
 profile_config_binds=("$HOME/.claude")
 
+# ----- the channel map (profile contract item 3) -----------------------------
+# A CHANNEL is named by what it carries; this says where THIS agent keeps it.
+# The engine owns the modes and the mechanism, the profile owns the paths, and
+# nothing about the engine's connection machinery is agent-specific -- a second
+# profile fills in the same table for its own layout.
+#
+#   channel<TAB>kind:path<TAB>kind:path...      kind is `file` or `dir`
+#
+# The kind is declared rather than inferred because the engine must be able to
+# put an EMPTY slot where a path would be, and an empty file is not an empty
+# directory. Inferring from the source only works when the source is there,
+# which for `none` is exactly when it may not be.
+#
+# ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory,
+# transcripts, artefacts and tools each already have machinery of their own (the
+# credential bind, the working tree, memory scoping, the isolate spec, the
+# per-project config copy). Declaring them now would give two mechanisms a claim
+# on one path and the later one would silently win; folding them onto
+# connections is a separate step, per channel, with the study to show it.
+profile_channels=(
+  "instructions	file:$HOME/.claude/CLAUDE.md	dir:$HOME/.claude/rules"
+  "settings	file:$HOME/.claude/settings.json	dir:$HOME/.claude/output-styles"
+  "skills	dir:$HOME/.claude/skills	dir:$HOME/.claude/commands"
+  "agents	dir:$HOME/.claude/agents"
+  "workflows	dir:$HOME/.claude/workflows"
+  "plugins	dir:$HOME/.claude/plugins"
+)
+
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
   ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
@@ -285,18 +313,11 @@ profile_prepare() {
 # this was would do.
 _claude_config_project() {
   # The project the copy is keyed by: the background project for a wrapped
-  # worker (the daemon's cwd is not it), the session's cwd otherwise. _do_wrap
-  # and cwd are engine locals, seen by dynamic scope.
-  # shellcheck disable=SC2154
-  if ((${_do_wrap:-0})); then
-    local bg
-    bg="$(_as_bg_project)"
-    if [[ -n "$bg" ]]; then
-      printf '%s' "$bg"
-      return 0
-    fi
-  fi
-  printf '%s' "${cwd:-$PWD}"
+  # worker (the daemon's cwd is not it), the session's cwd otherwise. The engine
+  # asks the same question for a sandbox's connection state, so the answer lives
+  # there and this delegates -- two copies of it would drift, and the drift
+  # would key a worker's config copy and its connections differently.
+  _as_project_dir
 }
 _claude_config_copy() { # $1 = project dir
   printf '%s/claude/%s/claude.json' "$(_as_state_dir)" "$(_claude_project_slug "$1")"
