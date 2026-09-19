@@ -94,7 +94,7 @@ whiteouts as well as copies. The cells below say so.
 | **W6** | `cow` | shadow X, delete Z from inside; launch and *see* both; `reset`; launch | the reset succeeds and **both** halves are undone: the source's X reads through again and the hidden Z is visible again |
 | **W7** | `cow` | a file created in the source *directory*; launch | it is `obtained` (read-through applies to new entries, not only to changed ones) |
 | **W8** | `cow` | the whole W set on a host without overlay support | identical verdicts, except W2 within a *running* session (see Part 7); the launch says it is emulating |
-| **W9** | `cow` | two sessions of **one** sandbox at once (T3) | see the concurrency note below |
+| **W9** | `cow` | two sessions of **one** sandbox at once (T3) | both launch, neither is refused; a later launch has both sessions' work; the source is byte-identical |
 | **R1** | `ro` | plant; launch | `obtained` inside |
 | **R2** | `ro` | write inside (scripted) | the write fails, `EROFS` recorded, the source byte-identical |
 | **R3** | `ro` | source changes X; launch | the new X is `obtained` |
@@ -146,13 +146,22 @@ asked for.** Each says, structurally, that what a sandboxed session writes to a 
 reaches neither the source nor, therefore, any other session; T2 and T6 close together.
 That issue closes against these three cells and the `default` preset's positions.
 
-**Concurrency (W9).** Two sessions of one sandbox at once means two overlay mounts on one
-upper directory. Measured on this host: the kernel allows it (`index=off`), both sessions
-see each other's writes live, and the layer holds both — but overlayfs documents a shared
-upper as undefined behaviour, so this is a result about one kernel, not a guarantee. The
-cell records what happens; the engine must decide what it *does* about a second session
-(refuse it, serialise it, or give it a per-session layer, which is the emulation), and
-`connections.md` carries that as an open question.
+**Concurrency (W9), and why its two halves are asserted in different places.** A sandbox
+is keyed by project and role, so two terminals on one project are two sessions of one
+sandbox: the ordinary case, not an edge case. The engine's answer, settled in
+[connections.md](connections.md#settled-while-writing-this), is to mount a sandbox's
+overlay **once** and let every session join that mount, because what overlayfs documents
+as undefined is two *independent mounts* over one upper, not many users of one mount.
+
+W9 asserts the **behaviour** a user is promised: both sessions launch, neither is refused,
+a later launch still has both sessions' work, and the source never changes.
+
+The **platform premise** — that joining yields one superblock rather than a second mount —
+is asserted by `tests/integration/overlay-sharing.bats` on every platform CI covers, and
+deliberately not by a cell. No cell inspects layout; and a behavioural cell could not tell
+the safe arrangement from the undefined one in any case, because two independent mounts
+*also* see each other's writes. That is exactly why the premise needs its own test rather
+than an inference from a green cell.
 
 ## Part 2 — per-channel ingestion (levels 2 and 3, paid)
 

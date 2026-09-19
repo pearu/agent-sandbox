@@ -103,7 +103,29 @@ conn_expect obtained "launch 2 sees the new entry (read-through is not only for 
 conn_cell_blocked W8 cow "the emulation gives the same verdicts on a host without overlay support" \
   "needs a host with bubblewrap < 0.11 (this one has 0.12.0); run the W set there and diff the verdicts"
 
-conn_cell_blocked W9 cow "two sessions of one sandbox at once" \
-  "the engine has not decided: refuse the second session, serialise, or give each its own layer. Measured on this kernel: two overlay mounts on one upper directory are allowed and both sessions see each other's writes, which overlayfs documents as undefined -- so the cell asserts nothing until the engine chooses"
+# W9 is no longer blocked: the engine's answer is settled (mount once, every session
+# joins), so there is a promise to assert. What is asserted here is the BEHAVIOUR a user
+# is promised. The platform premise underneath it -- that joining yields one superblock
+# rather than a second mount over the same upper -- is asserted by
+# tests/integration/overlay-sharing.bats on every platform CI covers, and deliberately not
+# here: no cell inspects layout, and a behavioural cell could not tell the safe
+# arrangement from the undefined one anyway, because two independent mounts also see each
+# other's writes.
+conn_cell W9 cow "two sessions of one sandbox at once"
+conn_source_write "$CONN_CHANNEL_FILE" >/dev/null
+before="$(conn_source_sha "$CONN_CHANNEL_FILE")"
+seta="$(leak_token SESSA)"
+setb="$(leak_token SESSB)"
+conn_write_pair "$CONN_CHANNEL_DIR/a.md" "$seta" "$CONN_CHANNEL_DIR/b.md" "$setb"
+conn_pick A
+conn_expect obtained "session A's write succeeded"
+conn_pick B
+conn_expect obtained "session B's concurrent write succeeded (neither session is refused)"
+conn_read "$CONN_CHANNEL_DIR" "$seta"
+conn_expect obtained "a later launch still has A's work"
+conn_read "$CONN_CHANNEL_DIR" "$setb"
+conn_expect obtained "and B's: two sessions at once did not lose each other's writes"
+conn_expect_host "$before" "$(conn_source_sha "$CONN_CHANNEL_FILE")" \
+  "and the source is byte-identical throughout"
 
 conn_summary

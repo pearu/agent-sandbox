@@ -261,8 +261,7 @@ conn_read() {
   CONN_LAUNCH=$((CONN_LAUNCH + 1))
   local out="$LEAK_RUN/$CONN_ID-l$CONN_LAUNCH-read.json"
   leak_read_sandboxed none "$LEAK_B" "$CONN_READER" "$out" "$LEAK_CONFIG/$rel" "$tok"
-  CONN_VERDICT="$(python3 "$LEAK_RECORD" write --out "$out.rec" --reader "$out" \
-    --set "cell=$CONN_ID" 2>/dev/null || echo invalid-reader-output)"
+  CONN_VERDICT="$(conn_verdict_of "$out")"
   CONN_READER_OUT="$out"
   # What the LAUNCH said is an assertion target of its own (a conflict must be named),
   # so the engine's stderr is kept per launch rather than discarded.
@@ -280,10 +279,57 @@ conn_write_inside() {
   CONN_LAUNCH=$((CONN_LAUNCH + 1))
   local out="$LEAK_RUN/$CONN_ID-l$CONN_LAUNCH-write.json"
   leak_read_sandboxed none "$LEAK_B" "$CONN_WRITER" "$out" "$LEAK_CONFIG/$rel" "$text"
-  CONN_VERDICT="$(python3 "$LEAK_RECORD" write --out "$out.rec" --reader "$out" \
-    --set "cell=$CONN_ID" 2>/dev/null || echo invalid-reader-output)"
+  CONN_VERDICT="$(conn_verdict_of "$out")"
   CONN_READER_OUT="$out"
   CONN_LAUNCH_SAID="$out.err"
+}
+
+# conn_verdict_of READER.json -- the classifier's verdict for one launch's reader result.
+# A reader that produced nothing parseable is a FAILED EXPERIMENT, never a negative, so it
+# gets its own verdict and the validity gate refuses the run rather than reading it as a
+# closed channel.
+conn_verdict_of() {
+  python3 "$LEAK_RECORD" write --out "$1.rec" --reader "$1" --set "cell=$CONN_ID" \
+    2>/dev/null || echo invalid-reader-output
+}
+
+# conn_write_pair RELA TEXTA RELB TEXTB -- two launches of THIS sandbox at the SAME TIME.
+#
+# W9 is the only cell that needs this, and it needs it because concurrency is the ordinary
+# case: a sandbox is keyed by project and role, so two terminals open on one project are
+# two sessions of one sandbox. Every other cell is a sequence precisely because the
+# promises it tests are about what the NEXT launch sees.
+#
+# Both verdicts are kept and conn_pick chooses which one the next assertion grades, so a
+# session that failed is reported as its own failed assertion instead of disappearing into
+# a single "it worked".
+conn_write_pair() {
+  local relA="$1" txtA="$2" relB="$3" txtB="$4" pa pb
+  CONN_PAIR_A="" CONN_PAIR_B="" CONN_PAIR_AOUT="" CONN_PAIR_BOUT=""
+  ((CONN_SKIP)) && return 0
+  CONN_LAUNCH=$((CONN_LAUNCH + 1))
+  local oa="$LEAK_RUN/$CONN_ID-l$CONN_LAUNCH-A.json"
+  local ob="$LEAK_RUN/$CONN_ID-l$CONN_LAUNCH-B.json"
+  leak_read_sandboxed none "$LEAK_B" "$CONN_WRITER" "$oa" "$LEAK_CONFIG/$relA" "$txtA" &
+  pa=$!
+  leak_read_sandboxed none "$LEAK_B" "$CONN_WRITER" "$ob" "$LEAK_CONFIG/$relB" "$txtB" &
+  pb=$!
+  wait "$pa" 2>/dev/null || true
+  wait "$pb" 2>/dev/null || true
+  CONN_PAIR_A="$(conn_verdict_of "$oa")"
+  CONN_PAIR_B="$(conn_verdict_of "$ob")"
+  CONN_PAIR_AOUT="$oa" CONN_PAIR_BOUT="$ob"
+}
+
+# conn_pick A|B -- grade the next assertion against that session's launch.
+conn_pick() {
+  case "$1" in
+    A) CONN_VERDICT="$CONN_PAIR_A" CONN_READER_OUT="$CONN_PAIR_AOUT" ;;
+    B) CONN_VERDICT="$CONN_PAIR_B" CONN_READER_OUT="$CONN_PAIR_BOUT" ;;
+    *) leak_die "conn_pick takes A or B, not $1" ;;
+  esac
+  # Neither launch's stderr is "the launch" for a said-assertion when two ran at once.
+  CONN_LAUNCH_SAID=""
 }
 
 # ----- assertions -----------------------------------------------------------
