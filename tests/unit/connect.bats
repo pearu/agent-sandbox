@@ -337,6 +337,21 @@ EOF
   [[ "$output" != *"does not support that yet"* ]]
 }
 
+@test "a channel with TWO directories does not report the launch as a second session" {
+  # The session records the sandbox it is holding while the binds are still being
+  # assembled, so the second path of a channel found the first path's record --
+  # owner alive, sandbox matching -- and every launch warned about itself.
+  # `skills` is the only channel with two directories, which is why every test
+  # using `instructions` missed it.
+  mkdir -p "$C/skills" "$C/commands"
+  run_engine AGENT_SANDBOX_CONNECT='skills=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"does not support that yet"* ]]
+  # both paths still got their overlay
+  argv_has --overlay-src "$C/skills"
+  argv_has --overlay-src "$C/commands"
+}
+
 @test "cow never creates a directory in the user's own state to serve as a lower layer" {
   # `cow`'s first promise is that nothing of the sandbox reaches the source, and
   # the engine quietly making a directory there would be the engine breaking it.

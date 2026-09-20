@@ -71,6 +71,13 @@ teardown_file() {
   grep -qE "^ExecStart=$H/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ "$(readlink "$H/.local/bin/claude")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
   cmp -s "$H/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
+  # The components the ENGINE runs on the host land beside it, and byte-identical.
+  # A piped install has no checkout to copy from, so they travel embedded in
+  # install.sh -- which means a bundling mistake that dropped one would leave a
+  # perfectly working installer and a `copy` connection that refuses at launch.
+  # Nothing else here would notice: this is the assertion that does.
+  cmp -s "$H/.local/share/agent-sandbox/app/components/connect-sync.py" \
+    "$REPO_ROOT/components/connect-sync.py"
   [[ "$out" == *"bwrap can create user+pid namespaces"* ]]
   [[ "$out" == *"kernel does not restrict unprivileged userns"* ||
     "$out" == *"/etc/apparmor.d/bwrap already present"* ||

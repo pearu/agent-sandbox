@@ -1063,7 +1063,7 @@ _as_connect_apply() {
   ((${#_connect_mode[@]})) || return 0
   local line ch mode entry kind path slot base empty manifest upper work seen
   local -a _cow_fellback=()
-  local _cow_warned_concurrent=0
+  local _cow_warned_concurrent=0 _cow_recorded=0
   local -a fields=()
   base="$(_as_sandbox_dir)"
   for line in "${profile_channels[@]}"; do
@@ -1149,8 +1149,12 @@ _as_connect_apply() {
           # Record which sandbox this session is holding an overlay for, so a
           # --reset-connection from another terminal can refuse rather than pull
           # the layers out from under a running mount. See _as_connect_live.
-          _as_session_begin || return 1
-          printf '%s\n' "$base" >"$_session_dir/connect.sandbox"
+          # Once per launch: every path of every channel names the same sandbox.
+          if ((! _cow_recorded)); then
+            _as_session_begin || return 1
+            printf '%s\n' "$base" >"$_session_dir/connect.sandbox"
+            _cow_recorded=1
+          fi
           # What the sandbox is shadowing, and whether the source has moved under
           # it. The one thing `cow` hides, reported before the mount so the user
           # reads it whatever the session then does.
@@ -1323,6 +1327,14 @@ _as_connect_live() {
   shopt -s nullglob
   local found=1
   for d in "$base"/session.*; do
+    # NEVER this session's own directory. Its record is written while the binds
+    # are still being assembled, so a channel with two paths had the second one
+    # find the first one's record, owner alive and sandbox matching, and report
+    # the launch as a second session of itself. `skills` is the only channel
+    # with two directories today, which is why every test using `instructions`
+    # missed it. Empty during a reset, which begins no session, so nothing is
+    # skipped there.
+    [[ "$d" == "${_session_dir:-}" ]] && continue
     [[ -r "$d/owner.id" && -r "$d/connect.sandbox" ]] || continue
     [[ "$(cat "$d/connect.sandbox" 2>/dev/null)" == "$want" ]] || continue
     read -r opid ostart <"$d/owner.id" 2>/dev/null || continue
