@@ -116,13 +116,24 @@ conn_cell() {
   leak_cell "$CONN_ID"
   # After leak_cell, because the probe is a launch and needs this cell's tree.
   conn_mode_supported "$CONN_MODE" || CONN_SKIP=1
-  # The connection this cell's launches run under, in the form the engine's knob takes.
-  # Read by leak_read_sandboxed; empty for `live`, which is the default.
-  if [[ "$CONN_MODE" == live ]]; then
-    LEAK_CONNECT=""
-  else
-    LEAK_CONNECT="instructions=$CONN_MODE native"
-  fi
+  # The connection this cell's launches run under, in the form the engine's knob
+  # takes -- ALWAYS explicit, including for `live`.
+  #
+  # It used to leave the knob empty for `live`, because `live` was what the engine
+  # did with no knob at all. Presets ended that: the `default` preset puts every
+  # declared channel at `cow`, so an empty knob turns the live arm into a second
+  # cow arm. Measured rather than assumed -- L2 does fail there, because a write
+  # under `cow` never reaches the source, so this would not have passed in
+  # silence. But L1 and L3 keep passing while measuring the wrong mode, and a
+  # single failing assertion in an arm whose name says `live` is a confusing way
+  # to be told that the default moved.
+  #
+  # And the SUITE PINS THE PRESET to `shared` for every launch, so the channels a
+  # cell is not about stay where they have always been and the cell means the same
+  # thing whatever the engine's default becomes later. A study whose results move
+  # when a default moves is measuring the default, not the mode.
+  LEAK_CONNECT="instructions=$CONN_MODE native"
+  LEAK_PRESET=shared
   # How `cow` is implemented for this cell. Empty leaves the engine's own choice; the
   # suite-wide default comes from CONN_OVERLAY, which the runner sets for its second pass
   # over the cow suite so the two implementations can be compared on one host.

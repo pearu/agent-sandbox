@@ -17,6 +17,7 @@ setup() {
   # The engine's own sandbox key: <state>/<profile>/<project slug>/<role>/
   SBOX="$STATE/claude/${PROJ//[^A-Za-z0-9-]/-}/default"
   CFG="$H/home/.config/agent-sandbox"
+  COPY="$STATE/claude/${PROJ//[^A-Za-z0-9-]/-}/claude.json"
 }
 
 # The name a channel path gets inside a slot directory: the engine's _as_iso_slug,
@@ -319,22 +320,43 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "cow says so, once, when a second session of the sandbox is already running" {
-  # Two sessions today is two overlays over one layer, which overlayfs calls
-  # undefined. Said in the case that is actually risky rather than on every
-  # launch, which is how a notice becomes something people filter out.
+@test "WITHOUT a holder, a second live session is called out -- once" {
+  # With a holder there is nothing to warn about: every session shares one
+  # overlay. Without one, two sessions are two overlays over one layer, which
+  # overlayfs calls undefined. The stub bwrap exits immediately, so no holder
+  # ever records itself here and this is the fallback path by construction.
   fake_live_session "$SBOX"
   run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --quiet --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"does not support that yet"* ]]
+  [[ "$output" == *"without a shared overlay that is undefined"* ]]
   # once, not once per path in the channel
-  [ "$(grep -c 'does not support that yet' <<<"$output")" -eq 1 ]
+  [ "$(grep -c 'without a shared overlay' <<<"$output")" -eq 1 ]
 }
 
 @test "and says nothing when it is the only session" {
   run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"does not support that yet"* ]]
+  [[ "$output" != *"without a shared overlay"* ]]
+}
+
+@test "the overlay's lower layer is the SOURCE, so a directory made later shows up" {
+  # An earlier version used an empty placeholder when the source directory was
+  # missing, to avoid creating anything in the user's own state. With a holder
+  # that is actively wrong: the lower is fixed when the overlay is mounted, so a
+  # directory the user creates afterwards would stay invisible for as long as the
+  # holder lives. The study caught it. An overlay can only track the source if
+  # the source IS the lower, which means creating it when it is absent -- one
+  # empty directory, in a tree bwrap already creates mount points in.
+  rm -rf "$C/rules"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  local i src=""
+  for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == --overlay-src ]] && src="${ARGV[i + 1]}" && break
+  done
+  [ -n "$src" ]
+  [ "$src" = "$C/rules" ]
+  [ -d "$C/rules" ]
 }
 
 @test "a channel with TWO directories does not report the launch as a second session" {
@@ -344,27 +366,136 @@ EOF
   # `skills` is the only channel with two directories, which is why every test
   # using `instructions` missed it.
   mkdir -p "$C/skills" "$C/commands"
+  fake_live_session "$STATE/claude/some-other-project/default"
   run_engine AGENT_SANDBOX_CONNECT='skills=cow native' -- claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"does not support that yet"* ]]
+  [[ "$output" != *"without a shared overlay"* ]]
   # both paths still got their overlay
   argv_has --overlay-src "$C/skills"
   argv_has --overlay-src "$C/commands"
 }
 
-@test "cow never creates a directory in the user's own state to serve as a lower layer" {
-  # `cow`'s first promise is that nothing of the sandbox reaches the source, and
-  # the engine quietly making a directory there would be the engine breaking it.
-  rm -rf "$C/rules"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+# ----- presets: one position for every channel at once ----------------------
+#
+# These pass TEST_PRESET or the knob explicitly. Every other suite is pinned to
+# `shared` by the harness, so that a change to the engine's default does not
+# quietly change what they measure -- which means the default itself needs a test
+# that names it, and that is the first one here.
+
+@test "the engine's own default preset puts every declared channel at cow" {
+  TEST_PRESET="" run_engine -- claude --version
   [ "$status" -eq 0 ]
-  local i src=""
-  for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
-    [[ "${ARGV[i]}" == --overlay-src ]] && src="${ARGV[i + 1]}" && break
-  done
-  [ -n "$src" ]
-  [ "$src" != "$C/rules" ]    # an empty one from this session, not the source
-  [[ "$src" == "$H/base/"* ]] # and it is under the session base
+  argv_has --overlay-src "$C/rules"
+  argv_has --overlay-src "$C/skills"
+  argv_has --overlay-src "$C/agents"
+  # and the whole state directory is still bound underneath, as it always was
+  argv_has --bind "$C" "$C"
+}
+
+@test "independent gives the sandbox nothing of the native install" {
+  run_engine AGENT_SANDBOX_PRESET=independent -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills"
+  run ! argv_has --overlay-src "$C/rules"
+}
+
+@test "shared is the engine before 0.3: not one channel is layered over" {
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$C" "$C"
+  run ! argv_has --overlay-src "$C/rules"
+  run ! argv_has --ro-bind "$C/rules" "$C/rules"
+}
+
+@test "a [connect] line overrides the preset for its own channel and no other" {
+  run_engine AGENT_SANDBOX_PRESET=independent \
+    AGENT_SANDBOX_CONNECT='instructions=ro native' -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$C/rules" "$C/rules"                               # overridden
+  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills" # still the preset
+}
+
+@test "the preset takes all three forms, flag beating environment beating file" {
+  cat >"$H/proj/.agent-sandbox" <<'EOF'
+[sandbox]
+preset = independent
+EOF
+  approve_dotfile
+  TEST_PRESET="" run_engine -- claude --version
+  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
+  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --preset independent --version
+  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+}
+
+@test "an unknown preset is REFUSED, not defaulted" {
+  # Guessing which channels the user meant to move is the one thing a preset
+  # must never do: it positions all of them at once.
+  run_engine AGENT_SANDBOX_PRESET=paranoid -- claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown preset 'paranoid'"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "a preset moves ONLY the channels the engine manages as connections" {
+  # The design's table also lists memory, transcripts, the config file and the
+  # rest. Each still has machinery of its own, and a preset that silently claimed
+  # to position them would leave the user believing a channel was shut.
+  run_engine AGENT_SANDBOX_PRESET=independent -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$COPY" "$H/home/.claude/.claude.json" # the config file, untouched by presets
+}
+
+@test "native is refused from the environment: only the flag can turn isolation off" {
+  # Every other preset is takeable from the environment because none of them can
+  # widen much. This one switches state isolation off wholesale, and a line in a
+  # shell profile would do that for every project, every launch, unnoticed and
+  # with no project to approve. Hence a refusal rather than a trust gate.
+  run_engine AGENT_SANDBOX_PRESET=native -- claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only accepted as the --preset flag"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "native is refused from a project file too, even an APPROVED one" {
+  # Approval says the project is trusted, which is a different question: the file
+  # travels with the repository and would take isolation off for anyone who
+  # cloned it and said yes once.
+  cat >"$H/proj/.agent-sandbox" <<'EOF'
+[sandbox]
+preset = native
+EOF
+  approve_dotfile
+  TEST_PRESET="" run_engine -- claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only accepted as the --preset flag"* ]]
+}
+
+@test "--preset native opens every channel and SAYS SO on every launch" {
+  run_engine -- claude --preset native --version
+  [ "$status" -eq 0 ]
+  # every declared channel live: nothing layered, nothing shadowed, the state
+  # directory straight through
+  argv_has --bind "$C" "$C"
+  run ! argv_has --overlay-src "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  # and the notice is not suppressible: --quiet does not silence it
+  run_engine -- claude --preset native --quiet --version
+  [[ "$output" == *"state isolation is OFF"* ]]
+}
+
+@test "under native the config file is neither copied nor relocated" {
+  # The parity that first justified the preset: natively the file is the user's
+  # own at ~/.claude.json, and CLAUDE_CONFIG_DIR -- which exists only because a
+  # read-only $HOME loses the writes beside it -- has nothing left to work around.
+  run_engine -- claude --preset native --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --bind "$COPY" "$H/home/.claude/.claude.json"
+  run ! grep -q 'CLAUDE_CONFIG_DIR' "$H/argv"
 }
 
 # ----- refusals: every one of these would otherwise leave a channel wide open -

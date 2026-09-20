@@ -327,6 +327,15 @@ Engine flags (must precede the agent's own arguments):
                         --exec is the command, so engine flags come first.
                         The agent binary stays bound read-only, so an agent
                         started from inside runs natively there
+  --preset NAME         where every channel sits before any override:
+                        `independent` (nothing of your install), `default`
+                        (read your files live, keep the sandbox's writes to
+                        itself) or `shared` (one directory, both ways -- what
+                        the engine did before 0.3). Default: default.
+                        `native` is also accepted HERE ONLY, never from the
+                        environment or a project file: it turns state isolation
+                        off entirely so that any difference from --sandbox none
+                        is a bug in agent-sandbox
   --overlay auto|off    what `cow` is implemented with: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only ever moves `cow` to `copy`
@@ -357,6 +366,8 @@ Environment knobs:
                                 syntax as --connect and [connect] (modes:
                                 none|ro|live today; copy and cow are refused
                                 until implemented)
+  AGENT_SANDBOX_PRESET=independent|default|shared   where every channel sits
+                                (default: default)
   AGENT_SANDBOX_OVERLAY=auto|off  what `cow` uses (default: auto)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_HOST_PORTS="5432 11434"  (strict) same as --host-port, or none
@@ -978,6 +989,57 @@ _as_sandbox_dir() {
     "$(_as_path_slug "$(_as_project_dir)")" "${_role:-default}"
 }
 
+# ----- presets: one position for every channel at once -----------------------
+# `independent` is the two mandatory connections and nothing else; `default` is
+# the transparency principle stated as connections -- a sandbox that behaves like
+# a native install whose configuration is the user's, read live, with its own
+# writes kept to itself; `shared` is the engine before 0.2.
+#
+# A PRESET ONLY MOVES THE CHANNELS THE ENGINE MANAGES AS CONNECTIONS, which is
+# the six plain-path ones the profile declares. identity, project, tools, memory,
+# transcripts and artefacts appear in the design's table too, but each still has
+# machinery of its own (the credential bind, the working tree, the config copy,
+# memory scoping, the isolate spec) and keeps its own controls until it is folded
+# in. A preset that silently claimed to set them would be the more dangerous kind
+# of wrong: the user would believe a channel was positioned and it would not be.
+_as_preset_mode() {
+  case "$1" in
+    independent) printf none ;;
+    default) printf cow ;;
+    shared | native) printf live ;;
+    *) printf live ;;
+  esac
+}
+
+# ----- `native`: parity with no sandbox at all, for testing ------------------
+# `shared` is the widest position that is USEFUL. Native Claude Code shares a
+# good deal more that nobody chose to share -- the config file whole, the daemon
+# control directory, session environments, shell snapshots, the paste cache,
+# prompt history, plans, file history -- and the leak study measured what each of
+# those carries. `native` is the preset that reaches parity anyway, and its
+# contract is what makes it worth having:
+#
+#   --preset native must behave IDENTICALLY to --sandbox none, while going
+#   through every sandbox mechanism. A difference between the two is a bug here.
+#
+# So it is a differential oracle: it catches the sandbox DISTORTING the agent
+# rather than failing outright, which nothing else here can. It also bisects --
+# something that breaks under `native` but works under `--sandbox none` is broken
+# by a mechanism (binds, seccomp, the proxy) and not by state isolation, because
+# `native` holds state at "hide nothing". And it makes the scale a workflow:
+# start here and close channels, or start at `independent` and open them.
+#
+# It means parity of STATE. The egress proxy, the syscall filter and the
+# working-tree bind still apply, exactly as `[net] mode = open` means no
+# allowlist rather than no sandbox.
+#
+# FLAG ONLY. Every other knob takes three forms, and this one takes one: it
+# reopens every channel the study measured, so a shell profile or a repository's
+# dot-file must not be able to do it. You type it, per launch, or it does not
+# happen. That is a stronger gate than the trust review and a simpler one to
+# reason about.
+_as_preset_is_native() { [[ "${_preset:-}" == native ]]; }
+
 # _as_connect_parse SPEC WHERE -- record one `channel = mode [source]`.
 #
 # Refuses rather than warns, on every kind of bad input. A typo in a channel
@@ -1120,6 +1182,26 @@ _as_connect_apply() {
           work="$base/$ch/work/$(_as_iso_slug "$path")"
           seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
           mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
+          # THE HOLDER, asked for once per launch. With one, every session of
+          # this sandbox shares a single overlay and the concurrency question
+          # disappears; without one, each session mounts its own, which works and
+          # is undefined when two run at once. Never in `strict`, where pasta
+          # owns the namespaces and bwrap runs inside a script of its own --
+          # whether a session can join a holder's user namespace from inside
+          # pasta's is unmeasured, and guessing in the launch path is not the
+          # place to find out.
+          if ((! _holder_tried)); then
+            _holder_tried=1
+            # Before starting one of our own, clear out any that nothing is
+            # using -- including other projects'. See _as_holder_sweep.
+            _as_holder_sweep
+            if [[ "${_knob_net:-proxy}" == strict ]]; then
+              _holder_why="the strict network mode manages its own namespaces"
+            else
+              _holder_pid="$(_as_holder_ensure "$base")"
+              [[ -n "$_holder_pid" ]] || _holder_why="no holder could be started (nsenter or flock missing?)"
+            fi
+          fi
           # An overlay needs its lower layer to exist. Where the source has no
           # such directory, the lower is an EMPTY ONE FROM THIS SESSION, not a
           # directory created in the user's own state: `cow`'s first promise is
@@ -1133,18 +1215,13 @@ _as_connect_apply() {
             lower="$_session_dir/connect/$ch/lower-$(_as_iso_slug "$path")"
             mkdir -p -- "$lower" || return 1
           fi
-          # A SECOND SESSION OF ONE SANDBOX IS NOT YET SAFE UNDER `cow`, and this
-          # is where the user finds out -- once, in the case that is actually
-          # risky, rather than as a notice on every launch that people learn to
-          # skip. Two sessions today means two overlay mounts over one upper
-          # directory, which overlayfs documents as undefined: this kernel allows
-          # it and both sessions see each other's writes, but that is a result
-          # about one kernel and not a guarantee. The fix is the per-sandbox
-          # holder -- mount once, every session joins it -- which is measured in
-          # tests/integration/overlay-sharing.bats and not yet built.
-          if ((! _cow_warned_concurrent)) && _as_connect_live "$base"; then
+          # WITHOUT a holder, two sessions of one sandbox are two overlays over
+          # one upper directory, which overlayfs documents as undefined. Said
+          # once, in the case that is actually risky, rather than on every
+          # launch. With a holder there is nothing to warn about.
+          if [[ -z "$_holder_pid" ]] && ((! _cow_warned_concurrent)) && _as_connect_live "$base"; then
             _cow_warned_concurrent=1
-            _as_msg "connect: another session of this sandbox is already running, and \`cow\` does not support that yet: two sessions means two overlays over one layer, which the kernel allows and overlayfs calls undefined. Use one session at a time, or set this channel to copy."
+            _as_msg "connect: another session of this sandbox is already running, and without a shared overlay that is undefined: two sessions means two overlays over one layer. Here $_holder_why, so use one session at a time or set this channel to copy."
           fi
           # Record which sandbox this session is holding an overlay for, so a
           # --reset-connection from another terminal can refuse rather than pull
@@ -1159,7 +1236,17 @@ _as_connect_apply() {
           # it. The one thing `cow` hides, reported before the mount so the user
           # reads it whatever the session then does.
           _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
-          args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
+          if [[ -n "$_holder_pid" ]]; then
+            # The holder already mounted this overlay, at a staging path. Bind
+            # the merged view onto the real one: a channel at any other mode is
+            # simply not bound, which is why the holder can carry every path the
+            # sandbox might need without imposing them on a session that wants
+            # some of them live.
+            _holder_ns=(nsenter -t "$_holder_pid" -m -U --preserve-credentials --)
+            args+=(--bind "$base/$ch/merged/$(_as_iso_slug "$path")" "$path")
+          else
+            args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
+          fi
           ;;
         copy)
           # Seeded once and refreshed per file, never written back. The sync is
@@ -1306,6 +1393,208 @@ _as_connect_placeholder() {
   [[ -e "$1" ]] || _as_placeholder_files+=("$1")
 }
 
+# ----- the holder: one overlay per sandbox, joined by every session ----------
+# Two sessions of one sandbox used to mean two overlay mounts over one upper
+# directory, which overlayfs documents as undefined. The fix is not to arbitrate
+# between them: it is to mount ONCE. What overlayfs calls undefined is two
+# independent SUPERBLOCKS over one upper, not many users of one mount, so a
+# holder mounts the overlays and every session joins its namespaces and inherits
+# them. Measured in tests/integration/overlay-sharing.bats on every platform CI
+# covers, and the shape below was spiked before it was written.
+#
+# WHY THE HOLDER MOUNTS AT STAGING PATHS, not at the channel paths themselves. A
+# process lives in ONE mount namespace and cannot join two, so the holder has to
+# carry every overlay the sandbox could need. But a session that asked for a
+# channel at `live` must not find an overlay sitting on it. So the holder mounts
+# each one at <sandbox>/merged/<slug> and a session binds only the ones it asked
+# for onto the real paths. A channel at any other mode is simply not bound.
+#
+# WHY THE SET IS FIXED (every directory-shaped path the profile declares) rather
+# than "what this launch asked for": if it followed the launch, two sessions with
+# different specs would need different holders, and any path they shared would be
+# two overlays over one upper again -- the exact thing this removes. Seven mounts
+# per sandbox is cheap; an unused one costs an empty pair of directories.
+
+# _as_holder_paths -- `channel<TAB>slug<TAB>path` for every path a holder mounts.
+# The layout under the sandbox directory is the one `copy` already uses,
+# <sandbox>/<channel>/<kind>/<slug>, so reset and the shadow scan find cow's
+# state where they find everything else.
+_as_holder_paths() {
+  local line entry kind path ch
+  local -a fields=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    for entry in "${fields[@]:1}"; do
+      kind="${entry%%:*}"
+      path="${entry#*:}"
+      # Files never: overlayfs mounts a directory and cannot stack on one file.
+      [[ "$kind" == dir && -n "$path" ]] || continue
+      printf '%s\t%s\t%s\n' "$ch" "$(_as_iso_slug "$path")" "$path"
+    done
+  done
+}
+
+# _as_holder_pid SANDBOXDIR -- the live holder's PID, or nothing.
+#
+# Liveness by PID and start-time, the pair the janitor already uses, so a
+# recycled PID is never mistaken for the holder we recorded.
+_as_holder_pid() {
+  local f="$1/holder.id" pid start now
+  [[ -r "$f" ]] || return 1
+  read -r pid start <"$f" 2>/dev/null || return 1
+  [[ -n "$pid" && -r "/proc/$pid/stat" ]] || return 1
+  now="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
+  [[ -n "$now" && "$now" == "$start" ]] || return 1
+  printf '%s' "$pid"
+}
+
+# _as_holder_ensure SANDBOXDIR -- print the PID of this sandbox's holder,
+# starting one if there is none. Empty output means "could not", and the caller
+# falls back to a per-session overlay rather than failing the launch.
+#
+# CREATION IS SERIALISED, and only creation. Two launches racing here would make
+# two holders, which is two overlays over one upper -- the undefined case this
+# exists to remove, arrived at by the code that removes it. The lock is held for
+# the milliseconds of the check-and-start, never for the life of a session, which
+# is what made "just serialise the sessions" the wrong answer to begin with.
+_as_holder_ensure() {
+  local sb="$1" lock="$1/holder.lock" pid
+  mkdir -p -- "$sb" || return 0
+  command -v nsenter >/dev/null 2>&1 || return 0
+  command -v flock >/dev/null 2>&1 || return 0
+  (
+    exec 9>"$lock" || exit 1
+    # A BOUNDED WAIT. The lock is held for the milliseconds of a check-and-start,
+    # so ten seconds means something is wrong rather than busy -- and a launch
+    # that blocks for ever on a lock is worse than one that mounts its own
+    # overlay and says so.
+    flock -w 10 9 || exit 1
+    if pid="$(_as_holder_pid "$sb")"; then
+      printf '%s' "$pid"
+      exit 0
+    fi
+    local -a ov=()
+    local ch slug path
+    while IFS=$'\t' read -r ch slug path; do
+      [[ -n "${slug:-}" ]] || continue
+      # THE LOWER IS ALWAYS THE SOURCE ITSELF, and the directory is created if
+      # it is missing. An earlier version used an empty placeholder instead, to
+      # avoid writing anything into the user's own state -- and with a holder
+      # that is actively wrong: the lower is fixed when the overlay is mounted,
+      # so a channel directory the user creates AFTERWARDS stays invisible for
+      # as long as the holder lives. The study caught it (W1's directory read
+      # came back empty). An overlay can only track the source if the source IS
+      # the lower.
+      #
+      # What that costs is one empty directory under ~/.claude, in a tree the
+      # engine already binds read-write and already lets bwrap create mount
+      # points in. It is not something the SANDBOX wrote, which is the promise
+      # `cow` actually makes.
+      mkdir -p -- "$path" || exit 1
+      mkdir -p -- "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug" || exit 1
+      ov+=(--overlay-src "$path" --overlay "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug")
+    done < <(_as_holder_paths)
+    ((${#ov[@]})) || exit 1
+    # The holder is a bwrap that mounts and then does nothing. It must OUTLIVE
+    # every session: the mount lives on namespace membership, so a holder that
+    # exited after the first session joined would leave the second unable to find
+    # it, and the second would mount its own -- undefined again. Idle holders are
+    # reaped by the next launch that sees no session using them.
+    # 9>&- CLOSES THE LOCK IN THE HOLDER. Measured the hard way: without it the
+    # holder inherits the open descriptor, the exclusive lock is never released
+    # because the holder outlives the subshell that took it, and every later
+    # launch of this sandbox blocks here for ever. The first launch worked
+    # perfectly and the second hung.
+    # THE HOLDER CLOSES EVERY DESCRIPTOR IT INHERITED ABOVE stderr, before it
+    # settles down to sleep. It outlives the launch that created it, so anything
+    # it still holds open is held for ever: the lock (fixed once already, by
+    # 9>&-), a pipe someone is reading, a terminal. Measured the hard way a
+    # second time -- bats reads its results through a descriptor it passes to
+    # every child, so a holder started inside the test suite kept that pipe open
+    # and the whole run hung after the last assertion had already passed. The
+    # loop is general on purpose: enumerating the descriptors that matter is how
+    # this bug comes back with a different number.
+    setsid bwrap --dev-bind / / "${ov[@]}" -- \
+      bash -c "for _fd in /proc/\$\$/fd/*; do
+                 case \${_fd##*/} in 0 | 1 | 2) ;; *) eval \"exec \${_fd##*/}>&-\" 2>/dev/null ;; esac
+               done
+               printf '%s %s\n' \"\$\$\" \"\$(awk '{print \$22}' /proc/\$\$/stat)\" >'$sb/holder.id'
+               exec sleep infinity" \
+      >/dev/null 2>&1 <&- 9>&- &
+    local starter=$!
+    # A real holder records itself in well under a second, and a bwrap that
+    # cannot mount exits at once. So watch for BOTH: the id appearing, or the
+    # process group going away. Polling the full timeout when the holder is
+    # already dead is pure delay, and every launch on a host where it cannot
+    # start pays it -- which the test suite made obvious by paying it several
+    # hundred times.
+    local i
+    for ((i = 0; i < 60; i++)); do
+      pid="$(_as_holder_pid "$sb")" && {
+        printf '%s' "$pid"
+        exit 0
+      }
+      kill -0 "$starter" 2>/dev/null || break
+      sleep 0.05
+    done
+    exit 1
+  ) || return 0
+}
+
+# _as_holder_stop SANDBOXDIR -- stop this sandbox's holder unconditionally.
+#
+# A reset must do this before it removes anything. The holder's overlay keeps
+# REFERENCES to the layer directories, not their paths, so removing the upper
+# layer from under a live mount changes nothing the mount serves: the reset
+# reported success and the next launch still read the sandbox's old shadow.
+# Measured. The caller has already refused if a session is live, so nothing is
+# using the mount by the time this runs.
+_as_holder_stop() {
+  local pid
+  pid="$(_as_holder_pid "$1")" || {
+    rm -f -- "$1/holder.id" 2>/dev/null
+    return 0
+  }
+  kill "$pid" 2>/dev/null || true
+  local i
+  for ((i = 0; i < 100; i++)); do
+    [[ -d "/proc/$pid" ]] || break
+    sleep 0.05
+  done
+  rm -f -- "$1/holder.id" 2>/dev/null || true
+  return 0
+}
+
+# _as_holder_sweep -- stop every idle holder of this profile, not just this
+# sandbox's.
+#
+# A holder outlives the launch that made it, and only a launch OF THE SAME
+# SANDBOX would ever come back to it. Reaping just our own would therefore leave
+# one sleeping process for every project ever opened and closed -- which is
+# exactly what happened in the test suite, where each test is its own sandbox:
+# 44 holders were alive at once. So each launch sweeps the profile's whole state
+# directory. It is a handful of stat calls, and the liveness test is the same
+# owner stamp the session janitor already uses.
+_as_holder_sweep() {
+  local f sb pid
+  local _ng=0
+  shopt -q nullglob && _ng=1
+  shopt -s nullglob
+  for f in "$(_as_state_dir)/$profile"/*/*/holder.id; do
+    sb="$(dirname -- "$f")"
+    pid="$(_as_holder_pid "$sb")" || {
+      rm -f -- "$f" 2>/dev/null # a stamp whose process is gone
+      continue
+    }
+    _as_connect_live "$sb" && continue # someone is in its namespace
+    kill "$pid" 2>/dev/null || true
+    rm -f -- "$f" 2>/dev/null || true
+  done
+  ((_ng)) || shopt -u nullglob
+  return 0
+}
+
 # _as_connect_live SANDBOXDIR -- is a session of this sandbox running right now?
 #
 # MEASURED FIRST, because the obvious check does not work: bwrap passes the upper
@@ -1368,6 +1657,10 @@ _as_connect_reset() {
     _as_msg "connect: a session of this sandbox is running. Resetting would remove the layers it has mounted. Close it and run this again."
     return 1
   fi
+  # And stop the holder before touching anything: its mount holds references to
+  # the layer directories rather than their paths, so removing them underneath it
+  # would leave the old content still being served.
+  _as_holder_stop "$base"
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
@@ -1411,7 +1704,11 @@ _as_connect_reset() {
 _as_connect_report() {
   ((${#_connect_mode[@]})) || return 0
   local ch
+  _as_info "connect: preset $_preset ($(_as_preset_mode "$_preset") for every channel this profile declares)"
+  # Then only what differs from it. Listing all six every launch is how a report
+  # becomes something nobody reads.
   for ch in "${!_connect_mode[@]}"; do
+    [[ "${_connect_where[$ch]}" == "preset "* ]] && continue
     _as_info "connect: $ch = ${_connect_mode[$ch]} native (${_connect_where[$ch]})"
   done
   return 0
@@ -1758,7 +2055,7 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing | connect | overlay) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         "$profile") ;; # a section named after the active profile; see below
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
@@ -1825,6 +2122,23 @@ _as_dotfile_parse() {
         else
           _as_dotfile_kv "$line"
           _df_profile_kv+=("$ck=$cv")
+        fi
+        ;;
+      sandbox)
+        # The sandbox's own key and position. `role` is parsed and reserved; only
+        # `default` exists until roles land.
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [sandbox] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          case "$ck" in
+            preset) _df_preset="$cv" ;;
+            role)
+              [[ "$cv" == default ]] \
+                || _as_msg ".agent-sandbox: [sandbox] role '$cv': roles are not implemented yet; using default"
+              ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [sandbox] key '$ck'" ;;
+          esac
         fi
         ;;
       overlay)
@@ -2089,9 +2403,15 @@ _as_launch() {
   # left a mount-point file on the host, run bwrap in this process (not exec)
   # so we regain control -- to print the help footer and/or tear the session
   # down -- then propagate the exit code.
+  # ${_holder_ns[@]} is `nsenter -t PID -m -U --preserve-credentials --` when a
+  # `cow` channel joined this sandbox's holder, and empty otherwise. Entering the
+  # holder's mount namespace is what puts its overlays in view; bwrap then makes
+  # its own namespace from that one, inheriting the mounts as references to the
+  # SAME superblocks rather than mounting anything again.
+  local -a _hns=(${_holder_ns[@]+"${_holder_ns[@]}"})
   if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" || ${#_as_placeholder_files[@]} -gt 0 ]]; then
     local rc=0
-    bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
+    "${_hns[@]}" bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
     # 127 = bwrap not found, 126 = found but not executable. Any other code is
     # the AGENT's own exit status and means the sandbox worked fine.
     ((rc == 126 || rc == 127)) && _as_fallback_hint
@@ -2099,7 +2419,7 @@ _as_launch() {
     [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
     return "$rc"
   fi
-  exec bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}"
+  exec "${_hns[@]}" bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}"
 }
 
 # Launch for strict mode. pasta owns the network namespace and forwards it to
@@ -2210,7 +2530,12 @@ agent_sandbox() (
   # land, and the directory level is here so that arriving changes no layout.
   local -A _connect_mode=() _connect_where=()
   local -a _connect_flag=()
+  # The holder this launch joins, if any, and the nsenter that joins it. Set by
+  # _as_connect_apply and read by _as_launch.
+  local _holder_pid="" _holder_tried=0 _holder_why="this host has no shared overlay"
+  local -a _holder_ns=()
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
+  local _preset_flag="" _preset=default
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -2407,6 +2732,19 @@ agent_sandbox() (
         ;;
       --overlay=*)
         _overlay_flag="${1#--overlay=}"
+        shift
+        ;;
+      --preset)
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || {
+            _as_msg "--preset needs a name (independent, default or shared)"
+            return 2
+          }
+        _preset_flag="$2"
+        shift 2
+        ;;
+      --preset=*)
+        _preset_flag="${1#--preset=}"
         shift
         ;;
       --wrap)
@@ -2699,7 +3037,7 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_connect=()
-  local _df_overlay_mode=""
+  local _df_overlay_mode="" _df_preset=""
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
@@ -2874,6 +3212,49 @@ agent_sandbox() (
     esac
   fi
 
+  # ---- the preset: every channel's position, before any override ----
+  local _ps="" _ps_src=""
+  if [[ -n "$_preset_flag" ]]; then
+    _ps="$_preset_flag" _ps_src=--preset
+  elif [[ -n "${AGENT_SANDBOX_PRESET:-}" ]]; then
+    _ps="$AGENT_SANDBOX_PRESET" _ps_src=AGENT_SANDBOX_PRESET
+  elif [[ -n "$_df_preset" ]]; then
+    _ps="$_df_preset" _ps_src=".agent-sandbox [sandbox] preset"
+  fi
+  if [[ -n "$_ps" ]]; then
+    case "$_ps" in
+      independent | default | shared) _preset="$_ps" ;;
+      native)
+        # THE ONE KNOB WITH A SINGLE FORM. `native` turns state isolation off
+        # wholesale, so a shell profile or a repository's .agent-sandbox must not
+        # be able to reach it: you type it, per launch, or it does not happen.
+        if [[ "$_ps_src" != --preset ]]; then
+          _as_msg "preset ($_ps_src): 'native' turns this sandbox's state isolation off entirely, so it is only accepted as the --preset flag -- not from the environment or a project file, which could set it for every launch without you noticing."
+          return 1
+        fi
+        _preset=native
+        ;;
+      *)
+        _as_msg "preset ($_ps_src): unknown preset '$_ps' (independent|default|shared|native); refusing rather than guessing which channels you meant to move"
+        return 1
+        ;;
+    esac
+  fi
+  # Loud, every launch, never suppressed by --quiet: a session running with no
+  # state isolation should not be something you have to remember.
+  if _as_preset_is_native; then
+    _as_msg "preset native: state isolation is OFF -- every channel live, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--sandbox none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."
+  fi
+  # Seed every channel the profile declares from the preset. An explicit
+  # [connect] line, knob or flag then overwrites its own channel and nothing
+  # else, which is what makes "a preset plus overrides" the whole vocabulary.
+  local _pc _pm
+  _pm="$(_as_preset_mode "$_preset")"
+  for _pc in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    _connect_mode["${_pc%%$'\t'*}"]="$_pm"
+    _connect_where["${_pc%%$'\t'*}"]="preset $_preset"
+  done
+
   local _cs
   local -a _env_connect=()
   for _cs in ${_df_connect[@]+"${_df_connect[@]}"}; do
@@ -2924,6 +3305,8 @@ agent_sandbox() (
   else
     _memory_mode="$(_as_memory_default)"
   fi
+  # `native` is parity with no sandbox, and a native install scopes nothing.
+  _as_preset_is_native && _memory_mode=shared
 
   # ---- strict-mode ports: flags, knobs and the dot-file form a union ----
   local -a _knob_host_ports=() _knob_agent_ports=()
@@ -2988,6 +3371,46 @@ agent_sandbox() (
   _as_check_paths RO "$_knob_ro" || return 1
   _as_check_paths RW "$_knob_rw" || return 1
 
+  # The ephemeral view of the writable world: a blank $HOME and private /tmp,
+  # /var/tmp, /run, which is most of what "sandbox" means here.
+  #
+  # `native` replaces all of it with the host's own directories. Under
+  # `--sandbox none` the agent reads ~/.gitconfig, ~/.npmrc, ~/.ssh/config,
+  # whatever a tool it shells out to keeps in $HOME, and $XDG_RUNTIME_DIR --
+  # none of which any channel declares, because channels cover the state the
+  # profile knows about and this is everything else. MEASURED: with the tmpfs in
+  # place, $HOME inside `native` held two entries where the host had three and a
+  # different two, which is the whole class of difference this preset exists to
+  # surface. Leaving it would make `native` a weaker claim than it advertises,
+  # and every such gap reads as an agent-sandbox bug to whoever hits it.
+  # $HOME LAST, in both branches. It can live under /tmp -- every test tree's
+  # does -- and a --tmpfs /tmp mounted after one on $HOME buries it, so the
+  # remount-ro below then fails on a path whose tmpfs is no longer there. Caught
+  # by native-parity.bats the moment this block was first reordered.
+  local -a _world=(
+    --tmpfs /tmp
+    --tmpfs /var/tmp
+    --tmpfs /run
+    --tmpfs "$HOME"
+    --tmpfs "$HOME/.cache"
+  )
+  if _as_preset_is_native; then
+    # /run stays a tmpfs with only $XDG_RUNTIME_DIR punched through, which is the
+    # one place `native` knowingly stops short. It is root-owned, so binding it
+    # whole leaves nowhere to create /run/agent-sandbox and the launch dies on
+    # the briefing -- measured. The user runtime dir is the part a user-level
+    # agent actually reaches; the rest of /run is system sockets it does not.
+    local _ruid
+    _ruid="/run/user/$(id -u)"
+    _world=(
+      --bind /tmp /tmp
+      --bind-try /var/tmp /var/tmp
+      --tmpfs /run
+      --bind "$HOME" "$HOME"
+    )
+    [[ -d "$_ruid" ]] && _world+=(--bind "$_ruid" "$_ruid")
+  fi
+
   local -a args=(
     # Minimal system view (all read-only). Note: anything under /usr (incl.
     # /usr/local when it's a real directory) is already covered by the /usr
@@ -3004,16 +3427,13 @@ agent_sandbox() (
     # Ephemeral pseudo-filesystems.
     --proc /proc
     --dev /dev
-    --tmpfs /tmp
-    --tmpfs /var/tmp
-    --tmpfs /run
 
     # Blank $HOME — we punch through only what's needed below. ~/.cache is a
     # fresh, writable, session-private tmpfs so tools that expect a cache dir
     # (pip, uv, npm, conda's notices, model downloaders) just work; it vanishes
-    # with the session and never touches the host's ~/.cache.
-    --tmpfs "$HOME"
-    --tmpfs "$HOME/.cache"
+    # with the session and never touches the host's ~/.cache. Under `native`,
+    # the host's own $HOME, /tmp, /var/tmp and /run instead: see _world above.
+    "${_world[@]}"
 
     # Isolation. Network is left unshared here; we re-introduce it below
     # according to AGENT_SANDBOX_NET (default: through a host-side mitmproxy
@@ -3065,7 +3485,15 @@ agent_sandbox() (
     fi
     args+=(--bind "$_src" "$_dst")
   done
-  args+=(--ro-bind "$profile_bin" "$profile_bin")
+  # Under `native` the host's $HOME is bound whole, so a binary living in it is
+  # already inside; binding it again is a no-op that can still FAIL, because
+  # bwrap refuses to mount over a symlink and a versioned install may well be
+  # one. Measured. A binary outside $HOME still needs its bind.
+  if _as_preset_is_native && [[ "$profile_bin" == "$HOME"/* ]]; then
+    :
+  else
+    args+=(--ro-bind "$profile_bin" "$profile_bin")
+  fi
 
   # Profile-declared visibility adjustments, applied AFTER its state binds so
   # they layer on top: a tmpfs to hide a subtree, then read-write and
@@ -3100,7 +3528,11 @@ agent_sandbox() (
   # leak across sessions, the engine stages and binds them. After the binds
   # above for the same reason they come after the state binds -- these layer on
   # top of a directory that is already in place.
-  if declare -F profile_isolate >/dev/null; then
+  # The per-session scratch, skipped entirely under `native`. ONE SWITCH, not a
+  # per-path knob: the isolation this applies is deliberately unconditional, and
+  # the way to keep that true while still offering parity is to make the bypass
+  # all-or-nothing and impossible to reach by accident (see the preset's gate).
+  if declare -F profile_isolate >/dev/null && ! _as_preset_is_native; then
     # Only from an APPROVED dot-file: _df_profile_kv is empty unless the trust
     # gate honoured the file, so an unapproved [claude] section grants nothing.
     local -a profile_dotfile=("${_df_profile_kv[@]}")
@@ -3172,6 +3604,25 @@ agent_sandbox() (
   # (space- or colon-separated).
   local -a _extra_passenv=()
   [[ -n "$_knob_forward" ]] && _as_split _extra_passenv $': \t\n' "$_knob_forward"
+  # `native` forwards the WHOLE exported environment, because `--sandbox none`
+  # execs the agent with it and the preset's promise is that a difference is a
+  # bug. No allowlist can predict what an agent reads -- a proxy, a locale, an
+  # EDITOR, some tool's token or knob -- and a dropped name changes what it does
+  # without ever saying so. MEASURED while building the parity test: the probe's
+  # own REPORT_NAME never arrived inside, which is exactly the shape a real
+  # variable going missing takes.
+  #
+  # Not the five the engine pins just above: HOME/USER/TERM are the same value
+  # anyway, PATH must stay the one computed for inside or the agent may not find
+  # its own binary, and AGENT_SANDBOX=1 is the marker saying a sandbox is here --
+  # which is still true under `native`, bwrap runs either way.
+  local _explicit=${#_extra_passenv[@]} _swept
+  if _as_preset_is_native; then
+    while IFS= read -r _swept; do
+      case "$_swept" in HOME | USER | PATH | TERM | AGENT_SANDBOX) continue ;; esac
+      _extra_passenv+=("$_swept")
+    done < <(compgen -e)
+  fi
   # ...except names the profile pins. A name in profile_env_set is set inside
   # for a reason, and a later --setenv of the same name would win; a name in
   # profile_env_refuse is one the profile knows to be unsafe inside (the claude
@@ -3182,7 +3633,9 @@ agent_sandbox() (
   local _var _kv2 _r _hit
   for _kv2 in "${profile_env_set[@]}"; do _refuse+=("${_kv2%%=*}"); done
   _refuse+=(${profile_env_refuse[@]+"${profile_env_refuse[@]}"})
-  for _var in ${_extra_passenv[@]+"${_extra_passenv[@]}"}; do
+  local _ei
+  for ((_ei = 0; _ei < ${#_extra_passenv[@]}; _ei++)); do
+    _var="${_extra_passenv[_ei]}"
     [[ -z "$_var" ]] && continue
     _hit=0
     for _r in ${_refuse[@]+"${_refuse[@]}"}; do
@@ -3192,7 +3645,11 @@ agent_sandbox() (
       }
     done
     if ((_hit)); then
-      _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
+      # Said for a name the user asked for by name; silent for one the `native`
+      # sweep picked up, where a line per pinned variable is noise about a
+      # request nobody made.
+      ((_ei < _explicit)) \
+        && _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
       continue
     fi
     _fwd+=("$_var")
@@ -3314,7 +3771,12 @@ agent_sandbox() (
   # only blocks writes to $HOME proper — not to anything we intentionally
   # exposed. Must come AFTER every bind whose target is under $HOME, since
   # bwrap may need to create intermediate directories on the tmpfs.
-  args+=(--remount-ro "$HOME")
+  # ...except under `native`, where $HOME is the host's own and writable, as it
+  # is under `--sandbox none`. This lock is why the engine sets CLAUDE_CONFIG_DIR
+  # at all (#91: a lock and a rename beside a read-only ~/.claude.json are lost),
+  # so a `native` that kept it would have to keep that workaround too, and both
+  # would show up as differences.
+  _as_preset_is_native || args+=(--remount-ro "$HOME")
   # ----- seccomp (on by default) -----
   # AGENT_SANDBOX_SECCOMP: a default-deny syscall filter (Docker's default
   # profile as for a container with no capabilities; components/seccomp/README.md),

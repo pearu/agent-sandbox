@@ -702,15 +702,22 @@ def copy_file(src, dst):
     shutil.copy2(src, dst)
 
 
-def remove(path):
+def remove(path, root):
+    """Unlink PATH and prune the directories it left empty, STRICTLY BELOW root.
+
+    The bound never used to be enforced -- the comment claimed it and the loop
+    climbed until rmdir refused, which meant the channel's own copy directory
+    went as soon as it was empty. The engine binds that directory, and for a
+    file-shaped channel it then could not even recreate the slot inside it: the
+    launch died on a redirection into a directory that had just been pruned away.
+    """
     try:
         os.unlink(path)
     except OSError:
         pass
-    # Prune the directories that entry left empty, but never the channel root:
-    # the engine binds that root, and removing it would pull the mount point out.
-    d = os.path.dirname(path)
-    while d:
+    root = os.path.abspath(root)
+    d = os.path.dirname(os.path.abspath(path))
+    while d != root and d.startswith(root + os.sep):
         try:
             os.rmdir(d)
         except OSError:
@@ -737,7 +744,7 @@ def sync(kind, source, copy, base_path):
         if s is None:
             # the source deleted it
             if c == b:
-                remove(at(copy, rel))
+                remove(at(copy, rel), copy)
             base.pop(rel, None)
             continue
         if b is None:

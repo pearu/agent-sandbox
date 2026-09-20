@@ -48,7 +48,7 @@ run_claude() {
   # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
   run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
-    AGENT_SANDBOX_SESSION_BASE="$I/base" \
+    AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
     bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" --profile claude probe
   declare -gA M=()
   local k v

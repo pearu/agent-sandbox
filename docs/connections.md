@@ -159,6 +159,81 @@ between is a preset plus overrides.
 | artefacts | none | none | live |
 | network | `none` | `proxy` | `proxy` or `open` |
 
+**This table is where the model is going, not what the engine does today.** Only the
+`instructions, settings, skills, agents, workflows, plugins` row is implemented: those six
+are the channels the engine manages as connections, and a preset moves them and nothing
+else. identity, project, tools, memory, transcripts and artefacts each still have machinery
+of their own and keep their own controls until they are folded in, one at a time, with the
+study to show it. `docs/config.md` documents the rows that are live, so a user reading it
+is never told a channel is positioned when it is not.
+
+### `native`, the fourth preset, and why the ladder needs both ends
+
+`shared` is the widest position that is *useful*, not the widest that exists. Native
+Claude Code additionally shares a good deal that nobody chose to share: the configuration
+file bound whole, the daemon control directory, session environments, shell snapshots, the
+paste cache, prompt history, plans, file history. Those are open because nothing closed
+them, and the leak study measured what each of them carries. `shared` deliberately leaves
+them shut.
+
+`native` is the preset that does not. Its contract is exact and is the reason to build it:
+
+> **`--preset native` must behave identically to `--sandbox none`, while going through
+> every sandbox mechanism.** A difference between the two is a bug in agent-sandbox.
+
+That makes it a differential oracle, which is a test this repository does not otherwise
+have: it catches the sandbox quietly *distorting* the agent rather than failing outright.
+It also bisects a failure — something that breaks under `native` but works under
+`--sandbox none` is broken by a mechanism (binds, seccomp, the proxy) rather than by state
+isolation, because `native` holds state at "hide nothing".
+
+And it makes the scale a workflow rather than a taxonomy. With both extremes genuinely
+reachable, a policy can be built from either end: start at `native` and close channels
+until it is tight enough, or start at `independent` and open them until the job runs.
+That only works if the ends are real positions rather than approximations.
+
+Two requirements, both from what it reopens, and both as built:
+
+- **Loud on every launch**, not a suppressible line. It turns isolation off wholesale.
+- **The `--preset` flag only.** The design said trust-gated from the environment; what
+  shipped is stricter, because a trust gate answers "is this project allowed to" and the
+  problem here is different — `AGENT_SANDBOX_PRESET=native` in a shell profile reopens
+  every measured channel for every project, silently and forever, and there is no project
+  to approve. Refusing the environment and the project file outright costs a user who
+  genuinely wants it one flag per launch, which is the right price. The refusal says why.
+
+`native` means parity of STATE; the egress proxy, the syscall filter and the working-tree
+bind still apply, exactly as `[net] mode = open` means no allowlist rather than no sandbox.
+
+#### What parity actually cost
+
+Every channel at `live` was the easy part and was not nearly enough. Writing the
+differential test (`tests/integration/native-parity.bats`) found three divergences that
+the preset, believed finished, still had — each one invisible from inside a single run:
+
+- **`--clearenv` dropped the user's environment.** The engine re-exports a locale, network
+  and profile allowlist; everything else was gone. No allowlist can predict what an agent
+  reads — its own knobs, an `EDITOR`, some tool's token — and a variable that vanishes
+  changes behaviour without a message. `native` now forwards every exported name except
+  the five the engine pins (`HOME`, `USER`, `PATH`, `TERM`, `AGENT_SANDBOX`).
+- **`$HOME` was still a tmpfs.** Channels cover the state a profile declares; `~/.gitconfig`,
+  `~/.npmrc`, `~/.ssh/config` and everything else are exactly the state it does not, and
+  they simply did not exist inside. `native` binds the host's own `$HOME`, writable — which
+  also removes the read-only remount, and with it the `CLAUDE_CONFIG_DIR` relocation that
+  exists only because a lock and a rename beside a read-only config file are lost (#91).
+- **`/tmp` and `/var/tmp` were private.** Work left there by an earlier native run, or by
+  anything else on the host, was invisible.
+
+One gap remains, knowingly: `/run` stays a tmpfs with only `$XDG_RUNTIME_DIR` bound
+through. It is root-owned, so binding it whole leaves nowhere to create the sandbox's own
+briefing, and the launch dies. The rest of `/run` is system sockets a user-level agent does
+not reach.
+
+The pattern in all three is the same and is the argument for the preset existing: they are
+not failures. Nothing crashed, nothing warned, and every other test passed. They are the
+sandbox quietly handing the agent a different world, which is the one class of bug this
+repository had no way to see.
+
 `default` is the transparency principle stated as connections: a sandbox created from native
 with these connections behaves like a native Claude Code whose configuration is the user's,
 read live, with its own writes kept to itself. `independent` is the two mandatory

@@ -356,6 +356,39 @@ _claude_user_mcp_mode() {
   esac
 }
 _claude_config_prepare() {
+  # `native` means parity with no sandbox, and a native Claude Code reads
+  # ~/.claude.json itself -- the whole file, every project's entry, the account,
+  # the user's MCP servers. So the per-project copy is skipped and the host file
+  # is bound where the agent looks for it. This is the pre-0.2.1 behaviour that
+  # #90 closed, reachable only through a flag you have to type, which is the
+  # whole reason that gate exists. See _as_preset_is_native in the engine.
+  # shellcheck disable=SC2154 # engine local, by dynamic scope
+  if [[ "${_preset:-}" == native ]]; then
+    # NOTHING TO BIND AND NOTHING TO RELOCATE. Under `native` the engine binds the
+    # host's own $HOME, writable, so ~/.claude and ~/.claude.json are already
+    # there at their real paths -- and a bind of a path onto itself inside that
+    # HOME is at best a no-op and at worst a failure the native launch would not
+    # have had (measured: bwrap refuses to mount over a symlink, which a versioned
+    # install can perfectly well have).
+    #
+    # CLAUDE_CONFIG_DIR goes with it. The engine sets it because a read-only $HOME
+    # loses the lock and the rename Claude Code writes beside its config file
+    # (#91) -- and that remount is exactly what `native` skips. Keeping the
+    # workaround without the problem would leave the config at a path no native
+    # session uses, which was the first divergence this preset turned up.
+    #
+    # CLAUDE_CODE_PROJECT_DIR_NAME stops being refused for the same reason: it is
+    # only honoured when CLAUDE_CONFIG_DIR is set, and there is no per-project
+    # scoping left here for it to escape.
+    local -a _keep=()
+    local _kv
+    for _kv in "${profile_env_set[@]}"; do
+      [[ "$_kv" == CLAUDE_CONFIG_DIR=* ]] || _keep+=("$_kv")
+    done
+    profile_env_set=("${_keep[@]}")
+    profile_env_refuse=()
+    return 0
+  fi
   local native="$HOME/.claude.json" project copy dir mcp mcp_src
   project="$(_claude_config_project)"
   copy="$(_claude_config_copy "$project")"
