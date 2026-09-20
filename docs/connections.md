@@ -252,8 +252,19 @@ artefacts = live native
 
 Launch-time forms: `--connect 'memory=ro sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
 the same syntax, `--role`, `--preset`, and `--overlay auto|off` with
-`AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does. A step down the scale is honoured from an unapproved
-dot-file's own approval only; a step up needs the trust gate, as `[net] mode = open` does.
+`AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does.
+
+**What the trust gate does and does not cover here.** The dot-file is parsed only when
+approved, so `[connect]` grants nothing from an unreviewed file, and a step *up* the scale
+written there is a widening the `--trust` review exists to show. The flag and the
+environment variable are not gated and never have been, for any knob: they are the user's
+own shell, and a user who can set them can equally run the agent unsandboxed. That
+distinction costs nothing while every channel defaults to `live`, since no launch-time
+form can widen anything. It starts to matter the day the `default` preset lowers those
+defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can quietly put a
+channel back at `live` for every project. Whoever lands presets decides whether that stays
+true and says so here.
+
 `reset` is an engine verb: `--reset-connection skills`, or the whole sandbox.
 
 ## What the study measures under this model
@@ -357,6 +368,22 @@ here rather than designed around; the project directory is where different agent
   identity is a platform premise and is asserted in the test rather than in a cell, which
   inspects no layout.
 
+  **NOT YET BUILT, and `cow` ships before it.** Today each session mounts its own
+  overlay, so two sessions of one sandbox are the undefined arrangement above. It
+  is safe to ship in that state only because nothing selects `cow` by default and
+  nothing will until the preset cutover; it must not still be true then. Two
+  things stand in for the holder meanwhile: a launch that finds another live
+  session of the same sandbox says so, once, rather than a notice on every launch
+  that people learn to skip; and `--reset-connection` refuses outright while a
+  session is live, because it removes the very layers that session has mounted
+  and the conflict warning actively invites the user to run it.
+
+  Detecting a live session is not the obvious check. Measured: bubblewrap passes
+  the upper layer as `/proc/self/fd/N`, so the path appears in no mountinfo and
+  scanning `/proc` for it finds nothing. What works is the engine's own session
+  stamp, the owner's PID and start-time that the janitor already uses to tell a
+  live session from an orphan.
+
   Three consequences for the implementation. A **short lock** is needed, but only around
   *creating* the holder, because two sessions racing to create one would make the two
   mounts this avoids; it is held for milliseconds, not for the life of a session, which is
@@ -371,6 +398,42 @@ here rather than designed around; the project directory is where different agent
   Bubblewrap takes an existing user namespace as a file descriptor, not a path. Under
   `copy` the question does not arise, since two sessions write one persistent directory as
   two native sessions do.
+
+  Measured while implementing `cow`: an overlay mounts and reads through normally
+  under the `strict` network mode, where bubblewrap runs inside pasta's user
+  namespace. That was an open question and is not one.
+- **A channel path that names a FILE cannot be deleted from inside, and that is a
+  limitation this model INTRODUCES.** Narrowing such a channel binds that one file, so
+  the path inside is a mount point in a directory the sandbox does not own, and a mount
+  point cannot be unlinked from within. Measured on this host: under `live`, where the
+  whole state directory is bound, a sandboxed session deletes `CLAUDE.md`,
+  `settings.json` and `rules/topic.md` without trouble; under `copy` the first two are
+  refused with `EBUSY` while the third, being an ordinary file inside a bound directory,
+  still goes. The config file has behaved this way since 0.2.1 for the same reason.
+
+  So `copy`'s promise that *a file the sandbox deleted stays deleted* holds for
+  directory-shaped paths and is unreachable for file-shaped ones. The study says so
+  rather than pretending otherwise: C7 asserts the promise on `rules/`, and a second
+  cell asserts what actually happens on `CLAUDE.md` — the delete is refused and the
+  source is untouched. When the fix below lands, that second cell fails, and that
+  failure is the prompt to change the specification deliberately.
+
+  What it costs in practice looks like nothing. Claude Code does not appear to delete
+  either file: of 64 delete call sites in 2.1.278, none is within 1500 bytes of either
+  name, which in a minified bundle with constructed paths is evidence of absence rather
+  than proof. A user deleting their own `CLAUDE.md` does it natively, where it works.
+
+  **The real fix is the architecture, not a workaround.** The end state of this model is
+  a sandbox with its OWN state directory, into which connections deliver content; there
+  the file is the sandbox's own and deletes like any other. That arrives with the preset
+  cutover, which is when unconnected paths stop being visible anyway. Interposing a
+  directory to bind instead would only move the mount point up one level, and treating
+  truncation as deletion would help nobody: the agent's own `rm` would still fail, so the
+  rule would exist only for whoever had been told about it.
+
+  **The same two paths settle `cow`.** Overlayfs mounts a directory and cannot stack on a
+  single file, so `cow` on a file-shaped path is `copy` whatever bubblewrap supports —
+  not a fallback for old hosts but a permanent property of the mechanism.
 - **Warning granularity.** File names at launch, one line per shadowed or conflicting file,
   and the differing lines on demand (`--connection-diff <channel>`). Warnings are never
   suppressed by `--quiet`, so a diff at every launch would be noise, and a warning is not

@@ -327,6 +327,18 @@ Engine flags (must precede the agent's own arguments):
                         --exec is the command, so engine flags come first.
                         The agent binary stays bound read-only, so an agent
                         started from inside runs natively there
+  --overlay auto|off    what `cow` is implemented with: an overlay where
+                        bubblewrap supports one (auto), or the copy fallback
+                        everywhere (off). Only ever moves `cow` to `copy`
+  --reset-connection CHANNEL
+                        discard what this sandbox holds at CHANNEL and take the
+                        source's again, then exit. What the conflict warning
+                        points at
+  --connect SPEC        open one channel at one mode: 'channel=mode [source]',
+                        repeatable. Lower on the scale none < copy < cow < ro <
+                        live is more isolated; every channel is `live` by
+                        default, which is what the engine has always done. See
+                        docs/connections.md
   --engine-help         this text, even when a profile is selected
   --engine-version      print the agent-sandbox version and exit
   -h, --help            this text when no profile is selected; with a profile
@@ -340,6 +352,12 @@ Environment knobs:
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
+  AGENT_SANDBOX_CONNECT="instructions=ro native;skills=none native"
+                                per-channel connections, ';'-separated; same
+                                syntax as --connect and [connect] (modes:
+                                none|ro|live today; copy and cow are refused
+                                until implemented)
+  AGENT_SANDBOX_OVERLAY=auto|off  what `cow` uses (default: auto)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_HOST_PORTS="5432 11434"  (strict) same as --host-port, or none
   AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port, or none
@@ -873,6 +891,532 @@ _as_iso_flush() {
   return 0
 }
 
+# ----- connections: what of a source reaches this sandbox, per channel -------
+# A sandbox is an installation of the agent; a CONNECTION opens one CHANNEL
+# between it and a SOURCE, under a MODE from the scale
+#
+#   none < copy < cow < ro < live
+#
+# and lower is more isolated. See docs/connections.md. The profile says WHERE
+# each channel lives (profile_channels, its contract item 3); the engine owns
+# the modes, so nothing here is agent-specific.
+#
+#   none  nothing of the source reaches the sandbox and nothing of the sandbox
+#         reaches the source; what it creates there is its own and PERSISTS,
+#         which is why the slot is a directory under the engine's state and not
+#         a tmpfs -- an independent sandbox that forgot everything at exit would
+#         be a different thing, and a less useful one
+#   ro    the source's files, live, and no writing
+#   live  today's behaviour: one read-write bind, both ways, no delay
+#
+# `copy` and `cow` are not implemented yet. A spec asking for one is REFUSED at
+# launch: serving something else under the name the user asked for is how an
+# isolation knob silently becomes decoration.
+#
+# EVERY CHANNEL DEFAULTS TO `live`, which is exactly what the engine did before
+# connections existed. Changing those defaults is what the `default` preset is
+# for, and it is a separate, visible step.
+
+# _as_path_slug PATH -- a directory name for PATH, for the engine's own state.
+#
+# NOT the same thing as the claude profile's project slug, which exists to
+# reproduce Claude Code's own `projects/<slug>` naming and is pinned against
+# recorded output from the agent. This one names a directory only the engine
+# reads, so it is free to hash long paths its own way. They agree for paths up
+# to the truncation point and may differ past it; whoever later moves the
+# per-project config copy under a sandbox directory reconciles the two, and a
+# rename at that point is fine because nothing outside the engine reads either.
+_as_path_slug() {
+  local conv="${1//[^A-Za-z0-9-]/-}"
+  if ((${#conv} <= 200)); then
+    printf '%s' "$conv"
+    return 0
+  fi
+  printf '%s-%s' "${conv:0:200}" "$(_as_sha256_str "$1" | cut -c1-16)"
+}
+
+# _as_project_dir -- the PROJECT this launch belongs to.
+#
+# NOT always $cwd. A wrapped background worker runs from the daemon's directory,
+# which is not the project's, so the launcher records the project per `--bg` and
+# the wrapper reads it back here. Anything keyed by project must ask this rather
+# than read $cwd: a worker would otherwise get a different key from the
+# foreground session it belongs to -- one sandbox becoming two -- and every
+# worker of every project would share the daemon's key, which is a cross-project
+# channel of exactly the kind this model exists to close.
+#
+# The claude profile learned this the hard way for the config file copy and had
+# its own copy of the logic. It now calls this one, so the two cannot drift.
+# Reads $_do_wrap and $cwd by dynamic scope, as the profile hooks do.
+# shellcheck disable=SC2154
+_as_project_dir() {
+  if ((${_do_wrap:-0})); then
+    local bg
+    bg="$(_as_bg_project)"
+    [[ -n "$bg" ]] && {
+      printf '%s' "$bg"
+      return 0
+    }
+  fi
+  printf '%s' "${cwd:-$PWD}"
+}
+
+# _as_sandbox_dir -- this sandbox's own directory under the engine's state dir:
+#
+#   <state>/<profile>/<project slug>/<role>/
+#
+# A sandbox is keyed by PROJECT and ROLE. A project slug is an absolute path
+# with every character outside [A-Za-z0-9-] replaced by a dash, so it always
+# begins with a dash; a named sandbox shared by several projects, if that
+# arrives, takes the same position, which is why a name may not begin with one.
+# Nothing else about the key changes. The project comes from _as_project_dir,
+# never from $cwd directly -- see there for what a background worker does to a
+# key that reads $cwd. Uses the engine's $profile and $_role by dynamic scope.
+# shellcheck disable=SC2154
+_as_sandbox_dir() {
+  printf '%s/%s/%s/%s' "$(_as_state_dir)" "$profile" \
+    "$(_as_path_slug "$(_as_project_dir)")" "${_role:-default}"
+}
+
+# _as_connect_parse SPEC WHERE -- record one `channel = mode [source]`.
+#
+# Refuses rather than warns, on every kind of bad input. A typo in a channel
+# name that left it quietly at `live` would be the worst outcome this file can
+# produce: the user reads their dot-file, believes a channel is closed, and it
+# is wide open. Unknown mode, unknown source and unimplemented mode are refused
+# for the same reason.
+_as_connect_parse() {
+  local spec="$1" where="$2" ch rest mode src
+  spec="${spec#"${spec%%[![:space:]]*}"}"
+  spec="${spec%"${spec##*[![:space:]]}"}"
+  [[ -z "$spec" ]] && return 0
+  [[ "$spec" == *=* ]] || {
+    _as_msg "connect ($where): expected 'channel = mode [source]', got '$spec'"
+    return 1
+  }
+  ch="${spec%%=*}"
+  ch="${ch//[[:space:]]/}"
+  rest="${spec#*=}"
+  local extra
+  read -r mode src extra <<<"$rest"
+  [[ -z "$extra" ]] || {
+    _as_msg "connect ($where): trailing '$extra' in '$spec'; a spec is 'channel = mode [source]' and nothing more"
+    return 1
+  }
+  src="${src:-native}"
+
+  local known=0 line
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    [[ "${line%%$'\t'*}" == "$ch" ]] && {
+      known=1
+      break
+    }
+  done
+  ((known)) || {
+    _as_msg "connect ($where): profile '$profile' has no channel '$ch'. It carries: $(_as_connect_channels)"
+    return 1
+  }
+  case "$mode" in
+    none | copy | cow | ro | live) ;;
+    _never_)
+      # THE WORDING BELOW IS A CONTRACT, not just a message. The connections
+      # study probes each mode by asking for it and reading the refusal, so that
+      # a mode the engine does not implement records `not-implemented` while a
+      # mode it implements WRONGLY still runs its cells and fails. Rewording
+      # this makes an unimplemented mode look broken instead -- the safe
+      # direction, but not one to take by accident. See
+      # probes/connections/lib.sh, conn_mode_supported.
+      _as_msg "connect: mode '$mode' is not implemented in this engine ($where asked for '$ch'). Refusing rather than serving a different mode under that name."
+      return 1
+      ;;
+    *)
+      _as_msg "connect ($where): unknown mode '$mode' for '$ch' (none|copy|cow|ro|live)"
+      return 1
+      ;;
+  esac
+  [[ "$src" == native ]] || {
+    _as_msg "connect ($where): source '$src' is not supported yet; only 'native' is"
+    return 1
+  }
+  _connect_mode["$ch"]="$mode"
+  _connect_where["$ch"]="$where"
+  return 0
+}
+
+# The channels this profile carries, for a message.
+_as_connect_channels() {
+  local line out=""
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    out="${out:+$out, }${line%%$'\t'*}"
+  done
+  printf '%s' "${out:-none}"
+}
+
+# _as_connect_apply -- add this sandbox's connection binds to $args.
+#
+# Called AFTER the profile's own visibility binds, so a connection layers on top
+# of memory scoping rather than under it, and BEFORE the isolate spec, because
+# the per-session scratch must win over everything: a channel set to `live` must
+# still not hand over another session's paste cache.
+_as_connect_apply() {
+  ((${#profile_channels[@]})) || return 0
+  ((${#_connect_mode[@]})) || return 0
+  local line ch mode entry kind path slot base empty manifest upper work seen
+  local -a _cow_fellback=()
+  local _cow_warned_concurrent=0 _cow_recorded=0
+  local -a fields=()
+  base="$(_as_sandbox_dir)"
+  for line in "${profile_channels[@]}"; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    mode="${_connect_mode[$ch]:-live}"
+    [[ "$mode" == live ]] && continue
+    for entry in "${fields[@]:1}"; do
+      kind="${entry%%:*}"
+      path="${entry#*:}"
+      [[ -n "$path" ]] || continue
+      case "$mode" in
+        none)
+          # A private slot that OUTLIVES the session, per sandbox and channel.
+          slot="$base/$ch/none/$(_as_iso_slug "$path")"
+          if [[ "$kind" == dir ]]; then
+            mkdir -p -- "$slot" || return 1
+          else
+            mkdir -p -- "$(dirname -- "$slot")" || return 1
+            [[ -e "$slot" ]] || : >"$slot" || return 1
+            _as_connect_placeholder "$path"
+          fi
+          args+=(--bind "$slot" "$path")
+          ;;
+        cow)
+          # Copy-on-write: the source reads THROUGH until the sandbox writes, and
+          # the write lands in a private upper layer that shadows it from then on.
+          # No refresh step at all, which is what makes it the better default --
+          # nothing to run and nothing to go stale.
+          #
+          # THREE REASONS IT BECOMES `copy` INSTEAD, and only the first two are
+          # about this host:
+          #   - the knob says off
+          #   - bubblewrap is older than 0.11 and cannot mount an overlay
+          #   - THE PATH NAMES A FILE. overlayfs mounts a directory and cannot
+          #     stack on a single file, so this one is permanent and no newer
+          #     bubblewrap fixes it.
+          # Across launches `copy` and `cow` are indistinguishable anyway; they
+          # differ only WITHIN a session, where an overlay reads through live.
+          if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
+            [[ "$kind" == file ]] || _cow_fellback+=("$ch")
+            slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+            manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+            mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+            _as_connect_sync sync "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+            if [[ ! -e "$slot" ]]; then
+              if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+            fi
+            [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+            args+=(--bind "$slot" "$path")
+            continue
+          fi
+          upper="$base/$ch/upper/$(_as_iso_slug "$path")"
+          work="$base/$ch/work/$(_as_iso_slug "$path")"
+          seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
+          mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
+          # An overlay needs its lower layer to exist. Where the source has no
+          # such directory, the lower is an EMPTY ONE FROM THIS SESSION, not a
+          # directory created in the user's own state: `cow`'s first promise is
+          # that nothing of the sandbox reaches the source, and the engine
+          # quietly making a directory there is the engine breaking it. bwrap
+          # still creates the mount point, exactly as it does for `none` and
+          # `ro`, which is a consequence of mounting rather than a decision.
+          local lower="$path"
+          if [[ ! -e "$path" ]]; then
+            _as_session_begin || return 1
+            lower="$_session_dir/connect/$ch/lower-$(_as_iso_slug "$path")"
+            mkdir -p -- "$lower" || return 1
+          fi
+          # A SECOND SESSION OF ONE SANDBOX IS NOT YET SAFE UNDER `cow`, and this
+          # is where the user finds out -- once, in the case that is actually
+          # risky, rather than as a notice on every launch that people learn to
+          # skip. Two sessions today means two overlay mounts over one upper
+          # directory, which overlayfs documents as undefined: this kernel allows
+          # it and both sessions see each other's writes, but that is a result
+          # about one kernel and not a guarantee. The fix is the per-sandbox
+          # holder -- mount once, every session joins it -- which is measured in
+          # tests/integration/overlay-sharing.bats and not yet built.
+          if ((! _cow_warned_concurrent)) && _as_connect_live "$base"; then
+            _cow_warned_concurrent=1
+            _as_msg "connect: another session of this sandbox is already running, and \`cow\` does not support that yet: two sessions means two overlays over one layer, which the kernel allows and overlayfs calls undefined. Use one session at a time, or set this channel to copy."
+          fi
+          # Record which sandbox this session is holding an overlay for, so a
+          # --reset-connection from another terminal can refuse rather than pull
+          # the layers out from under a running mount. See _as_connect_live.
+          # Once per launch: every path of every channel names the same sandbox.
+          if ((! _cow_recorded)); then
+            _as_session_begin || return 1
+            printf '%s\n' "$base" >"$_session_dir/connect.sandbox"
+            _cow_recorded=1
+          fi
+          # What the sandbox is shadowing, and whether the source has moved under
+          # it. The one thing `cow` hides, reported before the mount so the user
+          # reads it whatever the session then does.
+          _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
+          args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
+          ;;
+        copy)
+          # Seeded once and refreshed per file, never written back. The sync is
+          # a component with its own tests (components/connect-sync.py): the
+          # rules are a nine-case matrix and inline shell would hide it.
+          slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+          manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+          mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+          _as_connect_sync sync "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+          # A channel whose source has nothing yet still needs a mount point.
+          if [[ ! -e "$slot" ]]; then
+            if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+          fi
+          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+          args+=(--bind "$slot" "$path")
+          ;;
+        ro)
+          if [[ -e "$path" ]]; then
+            args+=(--ro-bind "$path" "$path")
+          else
+            # Nothing to show, but the parent is bound read-write, so without a
+            # mount point here the sandbox could CREATE the file and author at a
+            # channel it was told it may only read. An empty, read-only one is
+            # the difference between "there is nothing" and "you may add one".
+            _as_session_begin || return 1
+            empty="$_session_dir/connect/$ch/$(_as_iso_slug "$path")"
+            if [[ "$kind" == dir ]]; then
+              mkdir -p -- "$empty" || return 1
+            else
+              mkdir -p -- "$(dirname -- "$empty")" || return 1
+              : >"$empty" || return 1
+              _as_connect_placeholder "$path"
+            fi
+            args+=(--ro-bind "$empty" "$path")
+          fi
+          ;;
+      esac
+    done
+  done
+  # ONE line, not one per channel: on a host without overlay support every `cow`
+  # channel falls back, and six identical lines a launch is how a notice becomes
+  # something people filter out. Said with _as_msg, never suppressed, because the
+  # session loses within-session liveness and that is a behaviour change.
+  #
+  # The file-shaped fallback is deliberately NOT announced: it is inherent to
+  # overlayfs rather than a property of this host, nothing the user can act on,
+  # and it is written down in docs/connections.md.
+  if ((${#_cow_fellback[@]})); then
+    local why="this bubblewrap cannot mount an overlay (needs 0.11 or newer)"
+    [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
+    _as_msg "connect: ${_cow_fellback[*]}: cow is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
+  fi
+  return 0
+}
+
+# _as_overlay_ok -- can this bubblewrap mount an overlay? (>= 0.11). Asked once
+# and cached: it is a fork per call otherwise, and the answer cannot change
+# mid-launch.
+_as_overlay_ok() {
+  if [[ -z "${_overlay_supported:-}" ]]; then
+    if bwrap --help 2>&1 | grep -q -- '--overlay '; then
+      _overlay_supported=yes
+    else
+      _overlay_supported=no
+    fi
+  fi
+  [[ "$_overlay_supported" == yes ]]
+}
+
+# _as_connect_sync VERB CHANNEL KIND SOURCE COPY MANIFEST -- run the three-way
+# sync (or a reset) for one path, and relay what it says.
+#
+# REFUSES WITHOUT python3 rather than binding an unsynced copy. An out-of-date
+# copy is not a smaller version of `copy`; it is a channel the user believes is
+# tracking their edits and is not. The config file takes the other route --
+# degrade and say so -- because there a stale copy still carries the account and
+# the project entry, and the alternative was no session at all.
+_as_connect_sync() {
+  local verb="$1" ch="$2" kind="$3" src="$4" copy="$5" manifest="$6" out rc=0
+  command -v python3 >/dev/null 2>&1 || {
+    _as_msg "connect: '$ch' asks for mode copy, which needs python3 to work out what changed. Refusing rather than binding a copy that silently stops tracking your edits."
+    return 1
+  }
+  [[ -r "$connect_sync" ]] || {
+    _as_msg "connect: cannot find the sync helper at $connect_sync (re-run install.sh, or set AGENT_SANDBOX_CONNECT_SYNC)"
+    return 1
+  }
+  out="$(python3 "$connect_sync" "$verb" --kind "$kind" --source "$src" \
+    --copy "$copy" --base "$manifest" 2>&1)" || rc=$?
+  ((rc == 0)) || {
+    _as_msg "connect: syncing '$ch' failed (exit $rc): $out"
+    return 1
+  }
+  # One line per file the sync refused to overwrite. A WARNING, never suppressed
+  # by --quiet: the sandbox is running with its own version of something the user
+  # has since changed, and saying so once quietly is how that goes unnoticed for
+  # a month.
+  local line f
+  while IFS= read -r line; do
+    [[ "$line" == conflict\ * ]] || continue
+    f="${line#conflict }"
+    _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $invoked --reset-connection $ch"
+  done <<<"$out"
+  return 0
+}
+
+# _as_connect_shadows CHANNEL SOURCE UPPER SEEN -- warn about files this sandbox
+# is shadowing whose source has changed underneath.
+#
+# The one thing `cow` hides, and the design says it hides it loudly: the user
+# edited their own copy, the sandbox has its own version, and without a word the
+# sandbox would go on using a file the user believes they have updated.
+_as_connect_shadows() {
+  local ch="$1" src="$2" upper="$3" seen="$4" out rc=0
+  command -v python3 >/dev/null 2>&1 || return 0 # nothing to warn WITH; the mount still works
+  [[ -r "$connect_sync" ]] || return 0
+  out="$(python3 "$connect_sync" shadows --source "$src" --upper "$upper" \
+    --seen "$seen" 2>&1)" || rc=$?
+  ((rc == 0)) || {
+    _as_msg "connect: could not check '$ch' for shadowed files (exit $rc): $out"
+    return 0 # a failed CHECK must not stop a launch the mount itself can serve
+  }
+  local line f
+  while IFS= read -r line; do
+    [[ "$line" == conflict\ * ]] || continue
+    f="${line#conflict }"
+    _as_msg "connect: $ch: this sandbox has its own '$f' and your copy of it has changed since. The sandbox goes on using its own. To take yours: $invoked --reset-connection $ch"
+  done <<<"$out"
+  return 0
+}
+
+# _as_connect_placeholder PATH -- record a mount point bwrap will CREATE on the
+# host, so the session cleanup removes it again while it is still empty.
+#
+# MEASURED, and it is not cosmetic. A channel bound over a path the source does
+# not have makes bwrap create the mount point inside the state directory, which
+# is bound read-write from the host -- so an empty, mode-444 `~/.claude/CLAUDE.md`
+# was left behind, and the next thing that tried to write there got EPERM. The
+# engine already had this exact problem with the config file and already solved
+# it; the connection binds simply have to use the same list. Files only, as
+# there: an empty leftover directory is indistinguishable from an empty one the
+# user made, while an empty FILE is a channel that silently parses as nothing.
+_as_connect_placeholder() {
+  [[ -e "$1" ]] || _as_placeholder_files+=("$1")
+}
+
+# _as_connect_live SANDBOXDIR -- is a session of this sandbox running right now?
+#
+# MEASURED FIRST, because the obvious check does not work: bwrap passes the upper
+# layer as /proc/self/fd/N, so the path never appears in any mountinfo and
+# scanning /proc for it finds nothing. What does work is the engine's own session
+# machinery -- a session dir stamped with its owner's PID and start-time, the
+# same pair the janitor uses to tell a live session from an orphan, and immune to
+# PID reuse for the same reason. A cow launch records its sandbox there.
+#
+# This matters because the conflict warning TELLS the user to run a reset, and
+# reading it in one terminal while the session runs in another is the ordinary
+# case. Reset removes the upper and work directories; doing that under a live
+# overlay is a busy error at best.
+_as_connect_live() {
+  local want="$1" base d opid ostart now
+  base="$(_as_session_base)"
+  local _ng=0
+  shopt -q nullglob && _ng=1
+  shopt -s nullglob
+  local found=1
+  for d in "$base"/session.*; do
+    # NEVER this session's own directory. Its record is written while the binds
+    # are still being assembled, so a channel with two paths had the second one
+    # find the first one's record, owner alive and sandbox matching, and report
+    # the launch as a second session of itself. `skills` is the only channel
+    # with two directories today, which is why every test using `instructions`
+    # missed it. Empty during a reset, which begins no session, so nothing is
+    # skipped there.
+    [[ "$d" == "${_session_dir:-}" ]] && continue
+    [[ -r "$d/owner.id" && -r "$d/connect.sandbox" ]] || continue
+    [[ "$(cat "$d/connect.sandbox" 2>/dev/null)" == "$want" ]] || continue
+    read -r opid ostart <"$d/owner.id" 2>/dev/null || continue
+    [[ -n "$opid" && -r "/proc/$opid/stat" ]] || continue
+    now="$(awk '{print $22}' "/proc/$opid/stat" 2>/dev/null || true)"
+    [[ -n "$now" && "$now" == "$ostart" ]] && {
+      found=0
+      break
+    }
+  done
+  ((_ng)) || shopt -u nullglob
+  return "$found"
+}
+
+# _as_connect_reset CHANNEL -- discard what this sandbox holds at CHANNEL and
+# seed it from the source again.
+#
+# Destructive of the sandbox's own work at that channel and of nothing else, so
+# it says what it removed rather than working in silence. It resets whatever
+# state is there regardless of the channel's current mode: a channel moved back
+# to `live` still has its old copy on disk, and leaving it would surprise
+# whoever moves the channel back again.
+_as_connect_reset() {
+  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen
+  local -a fields=()
+  base="$(_as_sandbox_dir)"
+  # Never while a session of this sandbox is running: its overlay's layers are
+  # these directories, and removing them under a live mount is the one way this
+  # verb can do damage rather than undo it.
+  if _as_connect_live "$base"; then
+    _as_msg "connect: a session of this sandbox is running. Resetting would remove the layers it has mounted. Close it and run this again."
+    return 1
+  fi
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    [[ "$ch" == "$want" ]] || continue
+    found=1
+    for entry in "${fields[@]:1}"; do
+      kind="${entry%%:*}"
+      path="${entry#*:}"
+      slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+      manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+      upper="$base/$ch/upper/$(_as_iso_slug "$path")"
+      work="$base/$ch/work/$(_as_iso_slug "$path")"
+      seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
+      [[ -e "$slot" || -e "$manifest" || -e "$upper" ]] || continue
+      # cow first: the upper layer holds the shadows AND the whiteouts, so
+      # removing it is what brings a file the sandbox deleted back into view.
+      # CHMOD BEFORE REMOVING -- measured: once anything has been written through
+      # an overlay its workdir keeps a mode-000 directory that `rm -rf` cannot
+      # enter, even as its owner.
+      if [[ -e "$upper" || -e "$work" ]]; then
+        chmod -R u+rwX -- "$upper" "$work" 2>/dev/null || true
+        rm -rf -- "$upper" "$work" "$seen" 2>/dev/null || true
+      fi
+      if [[ -e "$slot" || -e "$manifest" ]]; then
+        _as_connect_sync reset "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+      fi
+      _as_msg "connect: reset '$ch' at $path from your own copy"
+    done
+  done
+  ((found)) || {
+    _as_msg "connect: profile '$profile' has no channel '$want'. It carries: $(_as_connect_channels)"
+    return 1
+  }
+  return 0
+}
+
+# _as_connect_report -- one line per channel that is not at its default, so a
+# session can see what it was given. Routine state, like "using network mode
+# from .agent-sandbox", so --quiet suppresses it; the REFUSALS above never are,
+# and neither will the conflict warnings `copy` and `cow` bring.
+_as_connect_report() {
+  ((${#_connect_mode[@]})) || return 0
+  local ch
+  for ch in "${!_connect_mode[@]}"; do
+    _as_info "connect: $ch = ${_connect_mode[$ch]} native (${_connect_where[$ch]})"
+  done
+  return 0
+}
+
 # ----- briefing: the sandbox tells the agent what it may and may not do -----
 # AGENT_SANDBOX_BRIEFING / [briefing] mode, on by default. A session that does
 # not know it is sandboxed treats a deliberate block as a transient fault and
@@ -1214,7 +1758,7 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing | connect | overlay) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         "$profile") ;; # a section named after the active profile; see below
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
@@ -1281,6 +1825,27 @@ _as_dotfile_parse() {
         else
           _as_dotfile_kv "$line"
           _df_profile_kv+=("$ck=$cv")
+        fi
+        ;;
+      overlay)
+        # What `cow` is implemented with (validated at launch, with the knob).
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [overlay] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          case "$ck" in
+            mode) _df_overlay_mode="$cv" ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [overlay] key '$ck'" ;;
+          esac
+        fi
+        ;;
+      connect)
+        # channel = mode [source]. Collected here and validated at launch, with
+        # the flag and the environment, so one code path decides every form.
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [connect] expects 'channel = mode [source]', ignoring: $line"
+        else
+          _df_connect+=("$line")
         fi
         ;;
       briefing)
@@ -1618,9 +2183,15 @@ _as_launch_pasta() {
 agent_sandbox() (
   set -euo pipefail
 
-  local engine profile_dir invoked
+  local engine profile_dir invoked connect_sync
   engine="$(readlink -f -- "${BASH_SOURCE[0]}")"
   profile_dir="${AGENT_SANDBOX_PROFILE_DIR:-$(dirname -- "$engine")/profiles}"
+  # The `copy` mode's three-way sync. Beside the engine in BOTH layouts: the
+  # checkout has components/ at its root, and install.sh writes the same file
+  # into the app directory next to the engine it copies there. The override is
+  # for the tests, which run the engine from a checkout but should not depend
+  # on the checkout's own copy being the one under test.
+  connect_sync="${AGENT_SANDBOX_CONNECT_SYNC:-$(dirname -- "$engine")/components/connect-sync.py}"
   invoked="$(basename -- "$0")"
 
   # ---- engine flags (must precede the agent's own arguments) ----
@@ -1633,6 +2204,13 @@ agent_sandbox() (
   local _host_none=0 _agent_none=0 _do_wrap=0 _do_exec=0 _do_quiet=0
   local _sandbox_flag="" _sandbox_flag_set=0
   local _user_mcp_flag="" _user_mcp_flag_set=0
+  # Connections: the resolved channel -> mode map, and where each came from, so
+  # a refusal or a report can name the source the user has to go and edit.
+  # `_role` is the sandbox key's second half; only `default` exists until roles
+  # land, and the directory level is here so that arriving changes no layout.
+  local -A _connect_mode=() _connect_where=()
+  local -a _connect_flag=()
+  local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -1782,6 +2360,55 @@ agent_sandbox() (
         _user_mcp_flag_set=1
         shift
         ;;
+      --connect)
+        # One `channel = mode [source]`, repeatable. The highest-precedence
+        # form: it beats AGENT_SANDBOX_CONNECT and an approved dot-file, the
+        # same order --user-mcp already follows.
+        [[ $# -ge 2 && -n "$2" ]] \
+          || {
+            _as_msg "--connect needs a spec, e.g. --connect 'instructions=ro native'"
+            return 2
+          }
+        _connect_flag+=("$2")
+        shift 2
+        ;;
+      --connect=*)
+        _connect_flag+=("${1#--connect=}")
+        shift
+        ;;
+      --reset-connection)
+        # Throw away what this sandbox has at a channel and take the source's
+        # again. The supported way back, and the one the conflict warning points
+        # at. Does its work and exits; it never launches the agent, so it cannot
+        # be confused with "reset and then run".
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || {
+            _as_msg "--reset-connection needs a channel name"
+            return 2
+          }
+        _reset_connection="$2"
+        shift 2
+        ;;
+      --reset-connection=*)
+        _reset_connection="${1#--reset-connection=}"
+        shift
+        ;;
+      --overlay)
+        # What `cow` is implemented WITH. `off` forces the copy fallback on a
+        # host that could mount an overlay; it can only move `cow` to `copy`,
+        # which is a step down the scale, so it is never trust-gated.
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || {
+            _as_msg "--overlay needs a value (auto or off)"
+            return 2
+          }
+        _overlay_flag="$2"
+        shift 2
+        ;;
+      --overlay=*)
+        _overlay_flag="${1#--overlay=}"
+        shift
+        ;;
       --wrap)
         # Internal: set by opt-in wrapper mode as CLAUDE_CODE_PROCESS_WRAPPER.
         # Everything after it is `<binary> <argv...>` -- a process Claude Code
@@ -1897,6 +2524,8 @@ agent_sandbox() (
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
   local -a profile_host_subcommands=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=()
+  # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
+  local -a profile_channels=()
   local -a profile_isolate_spec=()
   # Mount-point files the state binds create on the host (see that loop); the
   # cleanup removes them. Declared with _session_dir, for the same reason.
@@ -2069,6 +2698,8 @@ agent_sandbox() (
   local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode=""
+  local -a _df_connect=()
+  local _df_overlay_mode=""
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
@@ -2212,6 +2843,59 @@ agent_sandbox() (
       done
       ((_known)) || _as_msg ".agent-sandbox: [$profile] key '$_pkn' is not one this profile reads; ignoring"
     done
+  fi
+
+  # ---- connections: resolve every form into one channel -> mode map ----
+  # The order below IS the precedence: an approved dot-file, then the
+  # environment, then the flag, each overwriting the last -- the order
+  # --user-mcp already follows. One code path validates all three, so a spec
+  # refused in the file is refused on the command line too.
+  #
+  # The dot-file is only parsed when APPROVED, so `[connect]` grants nothing
+  # from an unapproved file. Stepping UP the scale, toward `live`, is a
+  # widening and the `--trust` review is where it is seen; stepping down only
+  # narrows what this sandbox can reach.
+  # What `cow` is implemented with: flag, then environment, then approved
+  # dot-file, then `auto`. Same precedence as every other knob.
+  local _ov="" _ov_src=""
+  if [[ -n "$_overlay_flag" ]]; then
+    _ov="$_overlay_flag" _ov_src=--overlay
+  elif [[ -n "${AGENT_SANDBOX_OVERLAY:-}" ]]; then
+    _ov="$AGENT_SANDBOX_OVERLAY" _ov_src=AGENT_SANDBOX_OVERLAY
+  elif [[ -n "$_df_overlay_mode" ]]; then
+    _ov="$_df_overlay_mode" _ov_src=".agent-sandbox [overlay] mode"
+  fi
+  if [[ -n "$_ov" ]]; then
+    case "$_ov" in
+      auto | off) _overlay_mode="$_ov" ;;
+      *)
+        _as_msg "overlay ($_ov_src): unknown mode '$_ov' (auto|off); keeping auto"
+        ;;
+    esac
+  fi
+
+  local _cs
+  local -a _env_connect=()
+  for _cs in ${_df_connect[@]+"${_df_connect[@]}"}; do
+    _as_connect_parse "$_cs" ".agent-sandbox [connect]" || return 1
+  done
+  if [[ -n "${AGENT_SANDBOX_CONNECT:-}" ]]; then
+    # Semicolon-separated: a spec contains spaces, so a space cannot separate
+    # them. `read -a` rather than word splitting, which would also glob.
+    IFS=';' read -r -a _env_connect <<<"$AGENT_SANDBOX_CONNECT"
+    for _cs in ${_env_connect[@]+"${_env_connect[@]}"}; do
+      _as_connect_parse "$_cs" AGENT_SANDBOX_CONNECT || return 1
+    done
+  fi
+  for _cs in ${_connect_flag[@]+"${_connect_flag[@]}"}; do
+    _as_connect_parse "$_cs" --connect || return 1
+  done
+  _as_connect_report
+
+  # ---- --reset-connection: undo, then exit ----
+  if [[ -n "$_reset_connection" ]]; then
+    _as_connect_reset "$_reset_connection" || return 1
+    return 0
   fi
 
   # ---- profile routing: sandbox this invocation, or hand it off ----
@@ -2406,6 +3090,11 @@ agent_sandbox() (
       _as_msg "share-memory: nothing at '$_pv'; skipping"
     fi
   done
+
+  # Connections: a channel the user narrowed is bound over the profile's own
+  # visibility binds and under the per-session scratch. See the connections
+  # section above for why that order.
+  _as_connect_apply || return 1
 
   # State isolation: the profile declares which parts of its state directory
   # leak across sessions, the engine stages and binds them. After the binds

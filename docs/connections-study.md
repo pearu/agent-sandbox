@@ -84,12 +84,14 @@ whiteouts as well as copies. The cells below say so.
 | **C4** | `copy` | source changes Y (never touched inside); launch | the new Y is `obtained` inside (refresh) |
 | **C5** | `copy` | source changes X (already modified inside); launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
 | **C6** | `copy` | source deletes Z (never touched inside); launch | Z is absent inside |
-| **C7** | `copy` | delete W inside; exit; launch again | W stays absent (a deletion is not undone by a refresh) |
+| **C7** | `copy` | delete W (in the channel's *directory*) inside; exit; launch again | W stays absent (a deletion is not undone by a refresh) |
+| **C7f** | `copy` | delete the channel's *file*-shaped path inside | the delete is REFUSED (`EBUSY`) and the source is untouched — a file-shaped path is a mount point; see [connections.md](connections.md#settled-while-writing-this) |
 | **C8** | `copy` | from C5's state, launch and *see* the warning; `reset`; launch | the reset succeeds; the source's X is back; and this launch no longer names X |
 | **W1** | `cow` | plant; launch | `obtained` inside, on both shapes (read-through) |
 | **W2** | `cow` | source changes Y; launch | the new Y is `obtained` (read-through, no refresh step ran) |
 | **W3** | `cow` | write X inside; exit; launch again | the source's X is byte-identical, and the sandbox's X is still the sandbox's at the next launch (it shadows) |
 | **W4** | `cow` | source changes X after it was shadowed; launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
+| **W4d** | `cow` | the same on the channel's *directory*-shaped path | the same — and this is the one that exercises the overlay, since a file-shaped path falls back to `copy` |
 | **W5** | `cow` | delete the source's Z from inside; exit; launch | Z is hidden inside, the source still has Z, and the hide persists (a whiteout, by the measurement above — but the cell asserts the behaviour, not the layer) |
 | **W6** | `cow` | shadow X, delete Z from inside; launch and *see* both; `reset`; launch | the reset succeeds and **both** halves are undone: the source's X reads through again and the hidden Z is visible again |
 | **W7** | `cow` | a file created in the source *directory*; launch | it is `obtained` (read-through applies to new entries, not only to changed ones) |
@@ -171,6 +173,13 @@ as undefined is two *independent mounts* over one upper, not many users of one m
 
 W9 asserts the **behaviour** a user is promised: both sessions launch, neither is refused,
 a later launch still has both sessions' work, and the source never changes.
+
+**W9 passes today, and that is not the same as concurrency being safe.** The engine
+currently gives each session its own overlay, so a passing W9 is a pass on the *undefined*
+arrangement — the cell cannot tell the two apart, which is the whole reason the platform
+test exists beside it. Until the holder lands, read W9 as "a second session is not refused
+and loses nothing on this kernel", not as "concurrent sessions are supported". The engine
+says as much at launch when it finds a second live session.
 
 The **platform premise** — that joining yields one superblock rather than a second mount —
 is asserted by `tests/integration/overlay-sharing.bats` on every platform CI covers, and

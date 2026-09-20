@@ -44,13 +44,53 @@ source "$CONN_HERE/../leak/lib.sh"
 CONN_CHANNEL_FILE="CLAUDE.md" # instructions, file shape
 CONN_CHANNEL_DIR="rules"      # instructions, directory shape
 
-# ----- capability probe -----------------------------------------------------
-# Does this engine express connections at all? The knob is a documented environment
-# variable, so the engine's own help is the source of truth -- not a behavioural probe,
-# which cannot tell "not implemented" from "implemented wrong", and those are the two
-# outcomes this suite exists to distinguish.
-conn_modes_implemented() {
-  claude --engine-help 2>&1 | grep -q 'AGENT_SANDBOX_CONNECT'
+# ----- capability probe, PER MODE -------------------------------------------
+# Does this engine implement THIS mode? Asked once per suite, and asked of the
+# ENGINE'S BEHAVIOUR rather than of its help text.
+#
+# It began as one grep of `--engine-help` for the connect variable, which was enough
+# while the engine implemented nothing: the only question was whether the feature
+# existed. It stopped being enough the moment some modes landed and others had not,
+# because then every cell ran, a refused launch produced no reader output, and the
+# validity gate threw out the whole run as a broken experiment -- which is the one
+# thing this suite must never confuse with a closed channel.
+#
+# WHY BEHAVIOUR AND NOT THE HELP TEXT. An engine whose help omits `copy` but whose code
+# half-handles it without refusing would, under a help-text probe, have its cells
+# skipped and its half-implementation hidden. Here those cells run and fail, which is
+# what should happen: this study's whole premise is that documentation is not evidence,
+# and its own probe has to live by that.
+#
+# So: ask for the mode and run `true`. Accepted -> the mode is implemented, run the
+# cells. Refused with the engine's not-implemented wording -> record the expectation.
+# Refused for ANY OTHER reason -> treat it as implemented and let the cells run, so a
+# broken engine fails loudly instead of skipping quietly.
+conn_mode_supported() {
+  local mode="$1" out rc=0
+  [[ "$mode" == live ]] && return 0 # no knob at all; today's behaviour
+  [[ "${CONN_PROBED_MODE:-}" == "$mode" ]] && return "$CONN_PROBED_RC"
+  out="$(
+    cd "$LEAK_B" || exit 1
+    env HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state" \
+      AGENT_SANDBOX_NET=none AGENT_SANDBOX_CONNECT="instructions=$mode native" \
+      claude --quiet --exec true 2>&1
+  )" || rc=$?
+  CONN_PROBED_MODE="$mode"
+  # The phrase is the engine's; agent-sandbox says so beside it. Matched with the
+  # mode name in it, so a refusal about some OTHER mode cannot be mistaken for this
+  # one's.
+  if ((rc != 0)) && grep -qF "connect: mode '$mode' is not implemented" <<<"$out"; then
+    CONN_PROBED_RC=1
+    leak_say "engine does NOT implement \`$mode\` yet: its cells record the expectation"
+  else
+    CONN_PROBED_RC=0
+    if ((rc == 0)); then
+      leak_say "engine implements \`$mode\`: its cells run"
+    else
+      leak_say "engine refused \`$mode\` for some OTHER reason (exit $rc); its cells run and will fail"
+    fi
+  fi
+  return "$CONN_PROBED_RC"
 }
 
 # ----- run and cell ---------------------------------------------------------
@@ -60,13 +100,7 @@ conn_setup() {
   CONN_PASS=0 CONN_FAIL=0 CONN_TODO=0 CONN_BLOCKED=0
   CONN_CTRL_OK=0 CONN_CTRL_BAD=0
   CONN_SUITE="$name"
-  if conn_modes_implemented; then
-    CONN_MODES_OK=1
-    leak_say "engine expresses connections: every mode runs"
-  else
-    CONN_MODES_OK=0
-    leak_say "engine does NOT express connections yet: only \`live\` runs; other modes record not-implemented"
-  fi
+  CONN_PROBED_MODE="" CONN_PROBED_RC=0
   leak_real_config_before
 }
 
@@ -79,8 +113,9 @@ conn_cell() {
   CONN_ID="$1" CONN_MODE="$2" CONN_DESC="$3"
   CONN_LAUNCH=0
   CONN_SKIP=0
-  if [[ "$CONN_MODE" != live ]] && ((! CONN_MODES_OK)); then CONN_SKIP=1; fi
   leak_cell "$CONN_ID"
+  # After leak_cell, because the probe is a launch and needs this cell's tree.
+  conn_mode_supported "$CONN_MODE" || CONN_SKIP=1
   # The connection this cell's launches run under, in the form the engine's knob takes.
   # Read by leak_read_sandboxed; empty for `live`, which is the default.
   if [[ "$CONN_MODE" == live ]]; then

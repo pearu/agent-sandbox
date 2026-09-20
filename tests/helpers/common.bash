@@ -26,6 +26,17 @@ make_harness() {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
 # Stub bwrap: record argv, one token per line, then exit 0 (never sandboxes).
+#
+# It answers --help too, because the engine asks bwrap whether it can mount an
+# overlay before deciding how to implement `cow`. A stub that said nothing made
+# every overlay path fall back to copy, so the argv those tests exist to pin was
+# never produced. AGENT_SANDBOX_TEST_NO_OVERLAY makes it report a bubblewrap too
+# old for overlays, which is the other half of that decision.
+if [[ "${1:-}" == --help ]]; then
+  [[ -n "${AGENT_SANDBOX_TEST_NO_OVERLAY:-}" ]] \
+    || printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'
+  exit 0
+fi
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 exit 0

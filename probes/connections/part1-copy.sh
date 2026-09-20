@@ -68,16 +68,38 @@ conn_source_delete "$CONN_CHANNEL_DIR/topic.md"
 conn_read "$CONN_CHANNEL_DIR" "$tok"
 conn_expect "not-obtained-absent|not-obtained-unreachable" "launch 2 no longer has it"
 
-conn_cell C7 copy "a file the sandbox deletes stays deleted"
+# SPLIT BY SHAPE, because the promise is reachable for one shape and not the other.
+# A channel path that names a FILE is bound as that file, so inside it is a mount
+# point in a directory the sandbox does not own, and a mount point cannot be
+# unlinked. A file inside a bound DIRECTORY is an ordinary file and deletes
+# normally. Measured: under `live` all three of CLAUDE.md, settings.json and
+# rules/topic.md delete; under `copy` only the third does.
+conn_cell C7 copy "a file the sandbox deletes from the channel's directory stays deleted"
+tok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
+conn_read "$CONN_CHANNEL_DIR" "$tok"
+conn_expect obtained "launch 1 is seeded"
+conn_write_inside "$CONN_CHANNEL_DIR/topic.md" "" # empty text = delete
+conn_expect obtained "the delete succeeded inside"
+conn_read "$CONN_CHANNEL_DIR" "$tok"
+conn_expect "not-obtained-absent|not-obtained-unreachable" \
+  "the next launch does not resurrect it from the source"
+conn_expect_host yes "$(conn_source_exists "$CONN_CHANNEL_DIR/topic.md")" \
+  "and the source still has its own copy"
+
+# The limitation, asserted rather than hidden. This cell is EXPECTED TO FAIL the
+# day a sandbox owns its own state directory and native content arrives into it
+# through connections, because the file will be the sandbox's own and will delete
+# like any other. That failure is the prompt to change the promise deliberately,
+# which is the right direction for a specification to move.
+conn_cell C7f copy "the channel's FILE-shaped path cannot be deleted from inside"
 tok="$(conn_source_write "$CONN_CHANNEL_FILE")"
 conn_read "$CONN_CHANNEL_FILE" "$tok"
 conn_expect obtained "launch 1 is seeded"
+before="$(conn_source_sha "$CONN_CHANNEL_FILE")"
 conn_write_inside "$CONN_CHANNEL_FILE" "" # empty text = delete
-conn_read "$CONN_CHANNEL_FILE" "$tok"
-conn_expect "not-obtained-absent|not-obtained-unreachable" \
-  "the next launch does not resurrect it from the source"
-conn_expect_host yes "$(conn_source_exists "$CONN_CHANNEL_FILE")" \
-  "and the source still has its own copy"
+conn_expect not-obtained-unreachable "the delete is refused: it is a mount point"
+conn_expect_host "$before" "$(conn_source_sha "$CONN_CHANNEL_FILE")" \
+  "and the source is byte-identical, which is the promise that does hold"
 
 conn_cell C8 copy "reset re-seeds from the source, and the conflict is over"
 conn_source_write "$CONN_CHANNEL_FILE" >/dev/null

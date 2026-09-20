@@ -559,6 +559,14 @@ else
   chmod 755 "$APP_DIR/agent-sandbox"
   rm -rf "$APP_DIR/profiles"
   cp -a "$SCRIPT_DIR/profiles" "$APP_DIR/profiles"
+  # Components the ENGINE runs on the host, beside it in both layouts: the
+  # checkout has components/ at its root, the install gets this copy. Embedded
+  # rather than copied from $SCRIPT_DIR, because a piped install has no checkout.
+  mkdir -p "$APP_DIR/components"
+  cat >"$APP_DIR/components/connect-sync.py" <<'CONNECT_SYNC_EOF'
+@@INCLUDE components/connect-sync.py@@
+CONNECT_SYNC_EOF
+  chmod 644 "$APP_DIR/components/connect-sync.py"
   [[ -r "$SCRIPT_DIR/VERSION" ]] && cp -f "$SCRIPT_DIR/VERSION" "$APP_DIR/VERSION"
   # A build marker so the installed copy reports its exact source (helps tell a
   # stale install from a current one); best-effort, needs a git checkout.

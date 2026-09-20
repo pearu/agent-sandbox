@@ -204,6 +204,9 @@ not exist. Values and defaults are in the last column.
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | default-deny syscall filter, compiled per machine by `install.sh`; `off` disables it (on) ([seccomp](components/seccomp/README.md)) |
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
+| `--overlay MODE` | `AGENT_SANDBOX_OVERLAY` | `[overlay] mode` | `auto` or `off`: what `cow` is implemented with, an overlay where bubblewrap supports one or the copy fallback everywhere; it can only move `cow` to `copy` (auto) ([connections.md](docs/connections.md)) |
+| `--reset-connection CHANNEL` | — | — | discard what this sandbox holds at CHANNEL and take your own copy again, then exit; what a conflict warning points at ([connections.md](docs/connections.md)) |
+| `--connect SPEC` | `AGENT_SANDBOX_CONNECT` | `[connect]` | per-channel `channel = mode [source]`: how much of your native install this project's sandbox sees, on the scale `none < copy < cow < ro < live`; `;`-separated in the variable (`live`, i.e. everything, for every channel) ([connections.md](docs/connections.md)) |
 | `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |
@@ -223,10 +226,11 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until `--trust` approves
 it.
 
-Four more variables name locations rather than behaviour and are rarely set by
+Five more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
-`AGENT_SANDBOX_SESSION_BASE` and `AGENT_SANDBOX_SECCOMP_DIR`. `--engine-help`
-prints each with its default.
+`AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR` and
+`AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper, normally found
+beside the engine). `--engine-help` prints each with its default.
 
 Engine flags go before the agent's own arguments. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and
