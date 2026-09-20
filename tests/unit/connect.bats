@@ -450,6 +450,54 @@ EOF
   argv_has --bind "$COPY" "$H/home/.claude/.claude.json" # the config file, untouched by presets
 }
 
+@test "native is refused from the environment: only the flag can turn isolation off" {
+  # Every other preset is takeable from the environment because none of them can
+  # widen much. This one switches state isolation off wholesale, and a line in a
+  # shell profile would do that for every project, every launch, unnoticed and
+  # with no project to approve. Hence a refusal rather than a trust gate.
+  run_engine AGENT_SANDBOX_PRESET=native -- claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only accepted as the --preset flag"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "native is refused from a project file too, even an APPROVED one" {
+  # Approval says the project is trusted, which is a different question: the file
+  # travels with the repository and would take isolation off for anyone who
+  # cloned it and said yes once.
+  cat >"$H/proj/.agent-sandbox" <<'EOF'
+[sandbox]
+preset = native
+EOF
+  approve_dotfile
+  TEST_PRESET="" run_engine -- claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only accepted as the --preset flag"* ]]
+}
+
+@test "--preset native opens every channel and SAYS SO on every launch" {
+  run_engine -- claude --preset native --version
+  [ "$status" -eq 0 ]
+  # every declared channel live: nothing layered, nothing shadowed, the state
+  # directory straight through
+  argv_has --bind "$C" "$C"
+  run ! argv_has --overlay-src "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  # and the notice is not suppressible: --quiet does not silence it
+  run_engine -- claude --preset native --quiet --version
+  [[ "$output" == *"state isolation is OFF"* ]]
+}
+
+@test "under native the config file is neither copied nor relocated" {
+  # The parity that first justified the preset: natively the file is the user's
+  # own at ~/.claude.json, and CLAUDE_CONFIG_DIR -- which exists only because a
+  # read-only $HOME loses the writes beside it -- has nothing left to work around.
+  run_engine -- claude --preset native --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --bind "$COPY" "$H/home/.claude/.claude.json"
+  run ! grep -q 'CLAUDE_CONFIG_DIR' "$H/argv"
+}
+
 # ----- refusals: every one of these would otherwise leave a channel wide open -
 
 @test "an unknown channel is REFUSED, not ignored: a typo must not read as 'closed'" {

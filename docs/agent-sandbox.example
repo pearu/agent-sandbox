@@ -139,6 +139,10 @@
 #                       what it writes does not come back to you
 #          shared       one directory, both ways -- what the engine did before
 #                       0.3, and what to set if you want that back
+#        A fourth, `native`, is parity with --sandbox none and is NOT accepted
+#        here or from the environment: only the --preset flag, because it turns
+#        state isolation off entirely and a project file could set that for every
+#        launch unnoticed. It exists so a difference from --sandbox none is a bug.
 #        A preset moves only the channels the engine manages as connections.
 #        Memory, transcripts, the config file and the rest keep their own
 #        controls ([share-memory], [claude] user-mcp, and so on) until they are

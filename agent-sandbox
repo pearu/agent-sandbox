@@ -331,7 +331,11 @@ Engine flags (must precede the agent's own arguments):
                         `independent` (nothing of your install), `default`
                         (read your files live, keep the sandbox's writes to
                         itself) or `shared` (one directory, both ways -- what
-                        the engine did before 0.3). Default: default
+                        the engine did before 0.3). Default: default.
+                        `native` is also accepted HERE ONLY, never from the
+                        environment or a project file: it turns state isolation
+                        off entirely so that any difference from --sandbox none
+                        is a bug in agent-sandbox
   --overlay auto|off    what `cow` is implemented with: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only ever moves `cow` to `copy`
@@ -1002,10 +1006,39 @@ _as_preset_mode() {
   case "$1" in
     independent) printf none ;;
     default) printf cow ;;
-    shared) printf live ;;
+    shared | native) printf live ;;
     *) printf live ;;
   esac
 }
+
+# ----- `native`: parity with no sandbox at all, for testing ------------------
+# `shared` is the widest position that is USEFUL. Native Claude Code shares a
+# good deal more that nobody chose to share -- the config file whole, the daemon
+# control directory, session environments, shell snapshots, the paste cache,
+# prompt history, plans, file history -- and the leak study measured what each of
+# those carries. `native` is the preset that reaches parity anyway, and its
+# contract is what makes it worth having:
+#
+#   --preset native must behave IDENTICALLY to --sandbox none, while going
+#   through every sandbox mechanism. A difference between the two is a bug here.
+#
+# So it is a differential oracle: it catches the sandbox DISTORTING the agent
+# rather than failing outright, which nothing else here can. It also bisects --
+# something that breaks under `native` but works under `--sandbox none` is broken
+# by a mechanism (binds, seccomp, the proxy) and not by state isolation, because
+# `native` holds state at "hide nothing". And it makes the scale a workflow:
+# start here and close channels, or start at `independent` and open them.
+#
+# It means parity of STATE. The egress proxy, the syscall filter and the
+# working-tree bind still apply, exactly as `[net] mode = open` means no
+# allowlist rather than no sandbox.
+#
+# FLAG ONLY. Every other knob takes three forms, and this one takes one: it
+# reopens every channel the study measured, so a shell profile or a repository's
+# dot-file must not be able to do it. You type it, per launch, or it does not
+# happen. That is a stronger gate than the trust review and a simpler one to
+# reason about.
+_as_preset_is_native() { [[ "${_preset:-}" == native ]]; }
 
 # _as_connect_parse SPEC WHERE -- record one `channel = mode [source]`.
 #
@@ -3191,11 +3224,26 @@ agent_sandbox() (
   if [[ -n "$_ps" ]]; then
     case "$_ps" in
       independent | default | shared) _preset="$_ps" ;;
+      native)
+        # THE ONE KNOB WITH A SINGLE FORM. `native` turns state isolation off
+        # wholesale, so a shell profile or a repository's .agent-sandbox must not
+        # be able to reach it: you type it, per launch, or it does not happen.
+        if [[ "$_ps_src" != --preset ]]; then
+          _as_msg "preset ($_ps_src): 'native' turns this sandbox's state isolation off entirely, so it is only accepted as the --preset flag -- not from the environment or a project file, which could set it for every launch without you noticing."
+          return 1
+        fi
+        _preset=native
+        ;;
       *)
-        _as_msg "preset ($_ps_src): unknown preset '$_ps' (independent|default|shared); refusing rather than guessing which channels you meant to move"
+        _as_msg "preset ($_ps_src): unknown preset '$_ps' (independent|default|shared|native); refusing rather than guessing which channels you meant to move"
         return 1
         ;;
     esac
+  fi
+  # Loud, every launch, never suppressed by --quiet: a session running with no
+  # state isolation should not be something you have to remember.
+  if _as_preset_is_native; then
+    _as_msg "preset native: state isolation is OFF -- every channel live, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--sandbox none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."
   fi
   # Seed every channel the profile declares from the preset. An explicit
   # [connect] line, knob or flag then overwrites its own channel and nothing
@@ -3257,6 +3305,8 @@ agent_sandbox() (
   else
     _memory_mode="$(_as_memory_default)"
   fi
+  # `native` is parity with no sandbox, and a native install scopes nothing.
+  _as_preset_is_native && _memory_mode=shared
 
   # ---- strict-mode ports: flags, knobs and the dot-file form a union ----
   local -a _knob_host_ports=() _knob_agent_ports=()
@@ -3321,6 +3371,46 @@ agent_sandbox() (
   _as_check_paths RO "$_knob_ro" || return 1
   _as_check_paths RW "$_knob_rw" || return 1
 
+  # The ephemeral view of the writable world: a blank $HOME and private /tmp,
+  # /var/tmp, /run, which is most of what "sandbox" means here.
+  #
+  # `native` replaces all of it with the host's own directories. Under
+  # `--sandbox none` the agent reads ~/.gitconfig, ~/.npmrc, ~/.ssh/config,
+  # whatever a tool it shells out to keeps in $HOME, and $XDG_RUNTIME_DIR --
+  # none of which any channel declares, because channels cover the state the
+  # profile knows about and this is everything else. MEASURED: with the tmpfs in
+  # place, $HOME inside `native` held two entries where the host had three and a
+  # different two, which is the whole class of difference this preset exists to
+  # surface. Leaving it would make `native` a weaker claim than it advertises,
+  # and every such gap reads as an agent-sandbox bug to whoever hits it.
+  # $HOME LAST, in both branches. It can live under /tmp -- every test tree's
+  # does -- and a --tmpfs /tmp mounted after one on $HOME buries it, so the
+  # remount-ro below then fails on a path whose tmpfs is no longer there. Caught
+  # by native-parity.bats the moment this block was first reordered.
+  local -a _world=(
+    --tmpfs /tmp
+    --tmpfs /var/tmp
+    --tmpfs /run
+    --tmpfs "$HOME"
+    --tmpfs "$HOME/.cache"
+  )
+  if _as_preset_is_native; then
+    # /run stays a tmpfs with only $XDG_RUNTIME_DIR punched through, which is the
+    # one place `native` knowingly stops short. It is root-owned, so binding it
+    # whole leaves nowhere to create /run/agent-sandbox and the launch dies on
+    # the briefing -- measured. The user runtime dir is the part a user-level
+    # agent actually reaches; the rest of /run is system sockets it does not.
+    local _ruid
+    _ruid="/run/user/$(id -u)"
+    _world=(
+      --bind /tmp /tmp
+      --bind-try /var/tmp /var/tmp
+      --tmpfs /run
+      --bind "$HOME" "$HOME"
+    )
+    [[ -d "$_ruid" ]] && _world+=(--bind "$_ruid" "$_ruid")
+  fi
+
   local -a args=(
     # Minimal system view (all read-only). Note: anything under /usr (incl.
     # /usr/local when it's a real directory) is already covered by the /usr
@@ -3337,16 +3427,13 @@ agent_sandbox() (
     # Ephemeral pseudo-filesystems.
     --proc /proc
     --dev /dev
-    --tmpfs /tmp
-    --tmpfs /var/tmp
-    --tmpfs /run
 
     # Blank $HOME — we punch through only what's needed below. ~/.cache is a
     # fresh, writable, session-private tmpfs so tools that expect a cache dir
     # (pip, uv, npm, conda's notices, model downloaders) just work; it vanishes
-    # with the session and never touches the host's ~/.cache.
-    --tmpfs "$HOME"
-    --tmpfs "$HOME/.cache"
+    # with the session and never touches the host's ~/.cache. Under `native`,
+    # the host's own $HOME, /tmp, /var/tmp and /run instead: see _world above.
+    "${_world[@]}"
 
     # Isolation. Network is left unshared here; we re-introduce it below
     # according to AGENT_SANDBOX_NET (default: through a host-side mitmproxy
@@ -3398,7 +3485,15 @@ agent_sandbox() (
     fi
     args+=(--bind "$_src" "$_dst")
   done
-  args+=(--ro-bind "$profile_bin" "$profile_bin")
+  # Under `native` the host's $HOME is bound whole, so a binary living in it is
+  # already inside; binding it again is a no-op that can still FAIL, because
+  # bwrap refuses to mount over a symlink and a versioned install may well be
+  # one. Measured. A binary outside $HOME still needs its bind.
+  if _as_preset_is_native && [[ "$profile_bin" == "$HOME"/* ]]; then
+    :
+  else
+    args+=(--ro-bind "$profile_bin" "$profile_bin")
+  fi
 
   # Profile-declared visibility adjustments, applied AFTER its state binds so
   # they layer on top: a tmpfs to hide a subtree, then read-write and
@@ -3433,7 +3528,11 @@ agent_sandbox() (
   # leak across sessions, the engine stages and binds them. After the binds
   # above for the same reason they come after the state binds -- these layer on
   # top of a directory that is already in place.
-  if declare -F profile_isolate >/dev/null; then
+  # The per-session scratch, skipped entirely under `native`. ONE SWITCH, not a
+  # per-path knob: the isolation this applies is deliberately unconditional, and
+  # the way to keep that true while still offering parity is to make the bypass
+  # all-or-nothing and impossible to reach by accident (see the preset's gate).
+  if declare -F profile_isolate >/dev/null && ! _as_preset_is_native; then
     # Only from an APPROVED dot-file: _df_profile_kv is empty unless the trust
     # gate honoured the file, so an unapproved [claude] section grants nothing.
     local -a profile_dotfile=("${_df_profile_kv[@]}")
@@ -3505,6 +3604,25 @@ agent_sandbox() (
   # (space- or colon-separated).
   local -a _extra_passenv=()
   [[ -n "$_knob_forward" ]] && _as_split _extra_passenv $': \t\n' "$_knob_forward"
+  # `native` forwards the WHOLE exported environment, because `--sandbox none`
+  # execs the agent with it and the preset's promise is that a difference is a
+  # bug. No allowlist can predict what an agent reads -- a proxy, a locale, an
+  # EDITOR, some tool's token or knob -- and a dropped name changes what it does
+  # without ever saying so. MEASURED while building the parity test: the probe's
+  # own REPORT_NAME never arrived inside, which is exactly the shape a real
+  # variable going missing takes.
+  #
+  # Not the five the engine pins just above: HOME/USER/TERM are the same value
+  # anyway, PATH must stay the one computed for inside or the agent may not find
+  # its own binary, and AGENT_SANDBOX=1 is the marker saying a sandbox is here --
+  # which is still true under `native`, bwrap runs either way.
+  local _explicit=${#_extra_passenv[@]} _swept
+  if _as_preset_is_native; then
+    while IFS= read -r _swept; do
+      case "$_swept" in HOME | USER | PATH | TERM | AGENT_SANDBOX) continue ;; esac
+      _extra_passenv+=("$_swept")
+    done < <(compgen -e)
+  fi
   # ...except names the profile pins. A name in profile_env_set is set inside
   # for a reason, and a later --setenv of the same name would win; a name in
   # profile_env_refuse is one the profile knows to be unsafe inside (the claude
@@ -3515,7 +3633,9 @@ agent_sandbox() (
   local _var _kv2 _r _hit
   for _kv2 in "${profile_env_set[@]}"; do _refuse+=("${_kv2%%=*}"); done
   _refuse+=(${profile_env_refuse[@]+"${profile_env_refuse[@]}"})
-  for _var in ${_extra_passenv[@]+"${_extra_passenv[@]}"}; do
+  local _ei
+  for ((_ei = 0; _ei < ${#_extra_passenv[@]}; _ei++)); do
+    _var="${_extra_passenv[_ei]}"
     [[ -z "$_var" ]] && continue
     _hit=0
     for _r in ${_refuse[@]+"${_refuse[@]}"}; do
@@ -3525,7 +3645,11 @@ agent_sandbox() (
       }
     done
     if ((_hit)); then
-      _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
+      # Said for a name the user asked for by name; silent for one the `native`
+      # sweep picked up, where a line per pinned variable is noise about a
+      # request nobody made.
+      ((_ei < _explicit)) \
+        && _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
       continue
     fi
     _fwd+=("$_var")
@@ -3647,7 +3771,12 @@ agent_sandbox() (
   # only blocks writes to $HOME proper — not to anything we intentionally
   # exposed. Must come AFTER every bind whose target is under $HOME, since
   # bwrap may need to create intermediate directories on the tmpfs.
-  args+=(--remount-ro "$HOME")
+  # ...except under `native`, where $HOME is the host's own and writable, as it
+  # is under `--sandbox none`. This lock is why the engine sets CLAUDE_CONFIG_DIR
+  # at all (#91: a lock and a rename beside a read-only ~/.claude.json are lost),
+  # so a `native` that kept it would have to keep that workaround too, and both
+  # would show up as differences.
+  _as_preset_is_native || args+=(--remount-ro "$HOME")
   # ----- seccomp (on by default) -----
   # AGENT_SANDBOX_SECCOMP: a default-deny syscall filter (Docker's default
   # profile as for a container with no capabilities; components/seccomp/README.md),

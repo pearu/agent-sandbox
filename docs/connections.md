@@ -192,19 +192,47 @@ reachable, a policy can be built from either end: start at `native` and close ch
 until it is tight enough, or start at `independent` and open them until the job runs.
 That only works if the ends are real positions rather than approximations.
 
-Two requirements, both from what it reopens:
+Two requirements, both from what it reopens, and both as built:
 
 - **Loud on every launch**, not a suppressible line. It turns isolation off wholesale.
-- **Trust-gated even from the environment**, which no other knob is. Launch-time forms are
-  ungated because they are the user's own shell, and that costs nothing while no preset
-  can widen much. `AGENT_SANDBOX_PRESET=native` in a shell profile would reopen every
-  measured channel for every project, silently. This preset is where that stops being
-  tenable.
+- **The `--preset` flag only.** The design said trust-gated from the environment; what
+  shipped is stricter, because a trust gate answers "is this project allowed to" and the
+  problem here is different — `AGENT_SANDBOX_PRESET=native` in a shell profile reopens
+  every measured channel for every project, silently and forever, and there is no project
+  to approve. Refusing the environment and the project file outright costs a user who
+  genuinely wants it one flag per launch, which is the right price. The refusal says why.
 
-It needs the isolate spec to be bypassable — as a single switch, not per path — the
-configuration file bound whole, and memory scoping off. `native` means parity of STATE; the
-egress proxy, the syscall filter and the working-tree bind still apply, exactly as
-`[net] mode = open` means no allowlist rather than no sandbox.
+`native` means parity of STATE; the egress proxy, the syscall filter and the working-tree
+bind still apply, exactly as `[net] mode = open` means no allowlist rather than no sandbox.
+
+#### What parity actually cost
+
+Every channel at `live` was the easy part and was not nearly enough. Writing the
+differential test (`tests/integration/native-parity.bats`) found three divergences that
+the preset, believed finished, still had — each one invisible from inside a single run:
+
+- **`--clearenv` dropped the user's environment.** The engine re-exports a locale, network
+  and profile allowlist; everything else was gone. No allowlist can predict what an agent
+  reads — its own knobs, an `EDITOR`, some tool's token — and a variable that vanishes
+  changes behaviour without a message. `native` now forwards every exported name except
+  the five the engine pins (`HOME`, `USER`, `PATH`, `TERM`, `AGENT_SANDBOX`).
+- **`$HOME` was still a tmpfs.** Channels cover the state a profile declares; `~/.gitconfig`,
+  `~/.npmrc`, `~/.ssh/config` and everything else are exactly the state it does not, and
+  they simply did not exist inside. `native` binds the host's own `$HOME`, writable — which
+  also removes the read-only remount, and with it the `CLAUDE_CONFIG_DIR` relocation that
+  exists only because a lock and a rename beside a read-only config file are lost (#91).
+- **`/tmp` and `/var/tmp` were private.** Work left there by an earlier native run, or by
+  anything else on the host, was invisible.
+
+One gap remains, knowingly: `/run` stays a tmpfs with only `$XDG_RUNTIME_DIR` bound
+through. It is root-owned, so binding it whole leaves nowhere to create the sandbox's own
+briefing, and the launch dies. The rest of `/run` is system sockets a user-level agent does
+not reach.
+
+The pattern in all three is the same and is the argument for the preset existing: they are
+not failures. Nothing crashed, nothing warned, and every other test passed. They are the
+sandbox quietly handing the agent a different world, which is the one class of bug this
+repository had no way to see.
 
 `default` is the transparency principle stated as connections: a sandbox created from native
 with these connections behaves like a native Claude Code whose configuration is the user's,
