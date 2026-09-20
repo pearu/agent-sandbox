@@ -159,6 +159,53 @@ between is a preset plus overrides.
 | artefacts | none | none | live |
 | network | `none` | `proxy` | `proxy` or `open` |
 
+**This table is where the model is going, not what the engine does today.** Only the
+`instructions, settings, skills, agents, workflows, plugins` row is implemented: those six
+are the channels the engine manages as connections, and a preset moves them and nothing
+else. identity, project, tools, memory, transcripts and artefacts each still have machinery
+of their own and keep their own controls until they are folded in, one at a time, with the
+study to show it. `docs/config.md` documents the rows that are live, so a user reading it
+is never told a channel is positioned when it is not.
+
+### `native`, the fourth preset, and why the ladder needs both ends
+
+`shared` is the widest position that is *useful*, not the widest that exists. Native
+Claude Code additionally shares a good deal that nobody chose to share: the configuration
+file bound whole, the daemon control directory, session environments, shell snapshots, the
+paste cache, prompt history, plans, file history. Those are open because nothing closed
+them, and the leak study measured what each of them carries. `shared` deliberately leaves
+them shut.
+
+`native` is the preset that does not. Its contract is exact and is the reason to build it:
+
+> **`--preset native` must behave identically to `--sandbox none`, while going through
+> every sandbox mechanism.** A difference between the two is a bug in agent-sandbox.
+
+That makes it a differential oracle, which is a test this repository does not otherwise
+have: it catches the sandbox quietly *distorting* the agent rather than failing outright.
+It also bisects a failure — something that breaks under `native` but works under
+`--sandbox none` is broken by a mechanism (binds, seccomp, the proxy) rather than by state
+isolation, because `native` holds state at "hide nothing".
+
+And it makes the scale a workflow rather than a taxonomy. With both extremes genuinely
+reachable, a policy can be built from either end: start at `native` and close channels
+until it is tight enough, or start at `independent` and open them until the job runs.
+That only works if the ends are real positions rather than approximations.
+
+Two requirements, both from what it reopens:
+
+- **Loud on every launch**, not a suppressible line. It turns isolation off wholesale.
+- **Trust-gated even from the environment**, which no other knob is. Launch-time forms are
+  ungated because they are the user's own shell, and that costs nothing while no preset
+  can widen much. `AGENT_SANDBOX_PRESET=native` in a shell profile would reopen every
+  measured channel for every project, silently. This preset is where that stops being
+  tenable.
+
+It needs the isolate spec to be bypassable — as a single switch, not per path — the
+configuration file bound whole, and memory scoping off. `native` means parity of STATE; the
+egress proxy, the syscall filter and the working-tree bind still apply, exactly as
+`[net] mode = open` means no allowlist rather than no sandbox.
+
 `default` is the transparency principle stated as connections: a sandbox created from native
 with these connections behaves like a native Claude Code whose configuration is the user's,
 read live, with its own writes kept to itself. `independent` is the two mandatory

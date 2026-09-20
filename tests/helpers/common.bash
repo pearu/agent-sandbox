@@ -78,10 +78,25 @@ run_engine() {
   # tests exist to check. With no filter present the engine warns and runs on,
   # so every other suite sees the argv it saw before, plus that warning.
   run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
-    BWRAP_DUMP="$H/argv" AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" "${envs[@]}" "${kc[@]}" "$cmd" "$@"
+    BWRAP_DUMP="$H/argv" AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$cmd" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
 }
+
+# WHY EVERY RUN PINS A PRESET. The engine's default preset puts all six declared
+# channels at `cow`, so without this every launch in every suite would build
+# overlays and try to start a holder -- against a stub bwrap that never starts
+# one, so each paid the full fallback timeout. The suites that are not about
+# connections should see what they always saw, which is `shared`; the ones that
+# are set TEST_PRESET or pass the knob themselves. A test that wants the engine's
+# real default must say so, which is the right way round: a default that changes
+# should not silently change what every other test is measuring.
+#
+# `${TEST_PRESET-shared}` and not `:-`: a test that sets TEST_PRESET to the EMPTY
+# string is asking for the engine's own default, and `:-` would have quietly
+# handed it `shared` instead -- so the two tests that exist to pin that default
+# would have been testing the pin.
 
 # `run ! cmd` is how this suite asserts that a command fails. A bare `! cmd`
 # cannot: bash suppresses errexit -- and the ERR trap bats fails on -- for a

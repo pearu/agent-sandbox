@@ -128,6 +128,70 @@ Sections:
   indistinguishable from one you made yourself. See
   [connections.md](connections.md).
 
+- **`[sandbox]`** — key/value lines. `preset = independent|default|shared`
+  (default `default`) sets where every channel sits before any `[connect]`
+  override. `independent` gives the sandbox nothing of your native install;
+  `default` lets it read your instructions, settings, skills, agents, workflows
+  and plugins live while keeping its own writes to itself; `shared` is one
+  directory in both directions, which is what the engine did before 0.3 and what
+  to set if you want that back.
+
+  What each preset means, channel by channel, in the modes of the scale
+  `none < copy < cow < ro < live`. The mode columns are the whole model, not only
+  the part the engine drives from a preset today; the last column says what
+  actually governs each row now, so nothing here claims more than it does.
+
+  | channel | `independent` | `default` | `shared` | governed today by |
+  |---|---|---|---|---|
+  | identity — your login, and `gh/`/`ide/` | `live` | `live` | `live` | always live; a sandbox without your login is not your sandbox |
+  | project — the working tree | `live` | `live` | `live` | always live; it is what you opened |
+  | instructions — `CLAUDE.md`, `rules/` | `none` | `cow` | `live` | **the preset** |
+  | settings — `settings.json`, `output-styles/` | `none` | `cow` | `live` | **the preset** |
+  | skills — `skills/`, `commands/` | `none` | `cow` | `live` | **the preset** |
+  | agents — `agents/` | `none` | `cow` | `live` | **the preset** |
+  | workflows — `workflows/` | `none` | `cow` | `live` | **the preset** |
+  | plugins — `plugins/` | `none` | `cow` | `live` | **the preset** |
+  | tools — the `mcpServers` block | `none` | `copy` | `copy` | `[claude] user-mcp` (`inherit` = `copy`, the default; `none` = `none`) |
+  | memory — `projects/<slug>/memory/` | `none` | `none`, plus `ro` per share | `live` | `memory_default` (`scoped` by default) and `[share-memory]` |
+  | transcripts — conversations, plans, history | `none` | `none` | `live` | per-project scoping and the isolate spec |
+  | artefacts — `downloads/`, `uploads/`, `tasks/` | `none` | `none` | `live` | **nothing yet: they are `live` whatever the preset** |
+
+  Read the last column as the list of things left to fold in. When a row moves to
+  the preset its mode columns do not change, because they were chosen to match
+  what its own switch already does by default — with two exceptions, both
+  deliberate and both worth knowing now:
+
+  - **artefacts are `live` today and the table says `none`.** Downloads, uploads
+    and task lists are visible across every project, which is a known open
+    channel ([#52](https://github.com/pearu/agent-sandbox/issues/52),
+    [#76](https://github.com/pearu/agent-sandbox/issues/76),
+    [#78](https://github.com/pearu/agent-sandbox/issues/78)). Folding them in
+    will close it, and that is a behaviour change rather than a no-op.
+  - **`shared` gives tools `copy`, not `live`.** The original model said `live`,
+    which was the pre-0.2 behaviour: the config file bound whole, so every
+    project's entries and the user's MCP servers were readable from any sandbox.
+    0.2.1 closed that deliberately
+    ([#90](https://github.com/pearu/agent-sandbox/issues/90)), and `shared` will
+    not reopen it. `shared` means "the engine before 0.3", not "before 0.2".
+
+  `cow` is copy-on-write: reads fall through to your files until the sandbox
+  writes one, and the write goes to a private layer that shadows it from then on.
+  Where an overlay is unavailable — bubblewrap older than 0.11, `[overlay] mode =
+  off`, or a channel path naming a single **file**, which overlayfs cannot stack
+  on — it behaves as `copy`: seeded from your files and refreshed at each launch
+  for anything the sandbox has not touched. The two differ only *within* a
+  running session.
+
+  A fourth preset, `native`, is planned: parity with `--sandbox none` while still
+  going through every sandbox mechanism, so that any difference between the two
+  is a bug here. It is a testing and bootstrapping position — start there and
+  close channels, or start at `independent` and open them — and it will be loud
+  and trust-gated, because it reopens every channel the leak study measured. See
+  [connections.md](connections.md#native-the-fourth-preset-and-why-the-ladder-needs-both-ends).
+
+  `role` is parsed and reserved; only `default` exists. `AGENT_SANDBOX_PRESET` and
+  `--preset` are the other two forms.
+
 - **`[overlay]`** — key/value lines. `mode = auto|off` (default auto) says what
   `cow` is implemented with, not whether anything is shared. `auto` uses a real
   copy-on-write overlay where bubblewrap supports one (0.11 or newer) and falls

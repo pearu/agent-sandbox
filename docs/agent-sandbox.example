@@ -128,6 +128,26 @@
 #        workers), `fg bg`, or none. Default fg on the host, none inside a
 #        sandbox. Turning a scope off is a widening, so it needs --trust; the
 #        --sandbox flag and AGENT_SANDBOX_CLAUDE_SANDBOX are the ungated forms.
+# [sandbox] -- this sandbox's own position and key.
+#        preset = independent | default | shared  (default: default)
+#          independent  nothing of your native install reaches it; what it
+#                       creates is its own and persists
+#          default      it reads your instructions, settings, skills, agents,
+#                       workflows and plugins LIVE, and keeps its own writes to
+#                       itself. The transparency principle: it behaves like a
+#                       native install whose configuration is yours, except that
+#                       what it writes does not come back to you
+#          shared       one directory, both ways -- what the engine did before
+#                       0.3, and what to set if you want that back
+#        A preset moves only the channels the engine manages as connections.
+#        Memory, transcripts, the config file and the rest keep their own
+#        controls ([share-memory], [claude] user-mcp, and so on) until they are
+#        folded in. [connect] below overrides the preset per channel.
+#
+#        role is reserved and only `default` exists today.
+#[sandbox]
+#preset = default
+
 # [connect] -- per channel, how much of your NATIVE Claude Code install this
 #        project's sandbox sees: `channel = mode [source]` on the scale
 #        none < copy < cow < ro < live, lower being more isolated.

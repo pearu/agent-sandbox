@@ -327,6 +327,11 @@ Engine flags (must precede the agent's own arguments):
                         --exec is the command, so engine flags come first.
                         The agent binary stays bound read-only, so an agent
                         started from inside runs natively there
+  --preset NAME         where every channel sits before any override:
+                        `independent` (nothing of your install), `default`
+                        (read your files live, keep the sandbox's writes to
+                        itself) or `shared` (one directory, both ways -- what
+                        the engine did before 0.3). Default: default
   --overlay auto|off    what `cow` is implemented with: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only ever moves `cow` to `copy`
@@ -357,6 +362,8 @@ Environment knobs:
                                 syntax as --connect and [connect] (modes:
                                 none|ro|live today; copy and cow are refused
                                 until implemented)
+  AGENT_SANDBOX_PRESET=independent|default|shared   where every channel sits
+                                (default: default)
   AGENT_SANDBOX_OVERLAY=auto|off  what `cow` uses (default: auto)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_HOST_PORTS="5432 11434"  (strict) same as --host-port, or none
@@ -978,6 +985,28 @@ _as_sandbox_dir() {
     "$(_as_path_slug "$(_as_project_dir)")" "${_role:-default}"
 }
 
+# ----- presets: one position for every channel at once -----------------------
+# `independent` is the two mandatory connections and nothing else; `default` is
+# the transparency principle stated as connections -- a sandbox that behaves like
+# a native install whose configuration is the user's, read live, with its own
+# writes kept to itself; `shared` is the engine before 0.2.
+#
+# A PRESET ONLY MOVES THE CHANNELS THE ENGINE MANAGES AS CONNECTIONS, which is
+# the six plain-path ones the profile declares. identity, project, tools, memory,
+# transcripts and artefacts appear in the design's table too, but each still has
+# machinery of its own (the credential bind, the working tree, the config copy,
+# memory scoping, the isolate spec) and keeps its own controls until it is folded
+# in. A preset that silently claimed to set them would be the more dangerous kind
+# of wrong: the user would believe a channel was positioned and it would not be.
+_as_preset_mode() {
+  case "$1" in
+    independent) printf none ;;
+    default) printf cow ;;
+    shared) printf live ;;
+    *) printf live ;;
+  esac
+}
+
 # _as_connect_parse SPEC WHERE -- record one `channel = mode [source]`.
 #
 # Refuses rather than warns, on every kind of bad input. A typo in a channel
@@ -1130,6 +1159,9 @@ _as_connect_apply() {
           # place to find out.
           if ((! _holder_tried)); then
             _holder_tried=1
+            # Before starting one of our own, clear out any that nothing is
+            # using -- including other projects'. See _as_holder_sweep.
+            _as_holder_sweep
             if [[ "${_knob_net:-proxy}" == strict ]]; then
               _holder_why="the strict network mode manages its own namespaces"
             else
@@ -1441,19 +1473,36 @@ _as_holder_ensure() {
     # because the holder outlives the subshell that took it, and every later
     # launch of this sandbox blocks here for ever. The first launch worked
     # perfectly and the second hung.
+    # THE HOLDER CLOSES EVERY DESCRIPTOR IT INHERITED ABOVE stderr, before it
+    # settles down to sleep. It outlives the launch that created it, so anything
+    # it still holds open is held for ever: the lock (fixed once already, by
+    # 9>&-), a pipe someone is reading, a terminal. Measured the hard way a
+    # second time -- bats reads its results through a descriptor it passes to
+    # every child, so a holder started inside the test suite kept that pipe open
+    # and the whole run hung after the last assertion had already passed. The
+    # loop is general on purpose: enumerating the descriptors that matter is how
+    # this bug comes back with a different number.
     setsid bwrap --dev-bind / / "${ov[@]}" -- \
-      bash -c "printf '%s %s\n' \"\$\$\" \"\$(awk '{print \$22}' /proc/\$\$/stat)\" >'$sb/holder.id'; exec sleep infinity" \
-      >/dev/null 2>&1 9>&- &
-    # A real holder records itself in well under a second. This bound is what a
-    # launch waits before giving up and mounting its own overlay instead, so it
-    # is short on purpose: every launch on a host where the holder cannot start
-    # pays it, and a slow fallback is worse than an immediate one.
+      bash -c "for _fd in /proc/\$\$/fd/*; do
+                 case \${_fd##*/} in 0 | 1 | 2) ;; *) eval \"exec \${_fd##*/}>&-\" 2>/dev/null ;; esac
+               done
+               printf '%s %s\n' \"\$\$\" \"\$(awk '{print \$22}' /proc/\$\$/stat)\" >'$sb/holder.id'
+               exec sleep infinity" \
+      >/dev/null 2>&1 <&- 9>&- &
+    local starter=$!
+    # A real holder records itself in well under a second, and a bwrap that
+    # cannot mount exits at once. So watch for BOTH: the id appearing, or the
+    # process group going away. Polling the full timeout when the holder is
+    # already dead is pure delay, and every launch on a host where it cannot
+    # start pays it -- which the test suite made obvious by paying it several
+    # hundred times.
     local i
     for ((i = 0; i < 60; i++)); do
       pid="$(_as_holder_pid "$sb")" && {
         printf '%s' "$pid"
         exit 0
       }
+      kill -0 "$starter" 2>/dev/null || break
       sleep 0.05
     done
     exit 1
@@ -1484,15 +1533,32 @@ _as_holder_stop() {
   return 0
 }
 
-# _as_holder_reap SANDBOXDIR -- stop this sandbox's holder if no session is using
-# it. An idle holder is one sleeping process per sandbox; harmless, but it should
-# not accumulate for every project ever opened.
-_as_holder_reap() {
-  local sb="$1" pid
-  pid="$(_as_holder_pid "$sb")" || return 0
-  _as_connect_live "$sb" && return 0 # someone is in its namespace
-  kill "$pid" 2>/dev/null || true
-  rm -f -- "$sb/holder.id" 2>/dev/null || true
+# _as_holder_sweep -- stop every idle holder of this profile, not just this
+# sandbox's.
+#
+# A holder outlives the launch that made it, and only a launch OF THE SAME
+# SANDBOX would ever come back to it. Reaping just our own would therefore leave
+# one sleeping process for every project ever opened and closed -- which is
+# exactly what happened in the test suite, where each test is its own sandbox:
+# 44 holders were alive at once. So each launch sweeps the profile's whole state
+# directory. It is a handful of stat calls, and the liveness test is the same
+# owner stamp the session janitor already uses.
+_as_holder_sweep() {
+  local f sb pid
+  local _ng=0
+  shopt -q nullglob && _ng=1
+  shopt -s nullglob
+  for f in "$(_as_state_dir)/$profile"/*/*/holder.id; do
+    sb="$(dirname -- "$f")"
+    pid="$(_as_holder_pid "$sb")" || {
+      rm -f -- "$f" 2>/dev/null # a stamp whose process is gone
+      continue
+    }
+    _as_connect_live "$sb" && continue # someone is in its namespace
+    kill "$pid" 2>/dev/null || true
+    rm -f -- "$f" 2>/dev/null || true
+  done
+  ((_ng)) || shopt -u nullglob
   return 0
 }
 
@@ -1605,7 +1671,11 @@ _as_connect_reset() {
 _as_connect_report() {
   ((${#_connect_mode[@]})) || return 0
   local ch
+  _as_info "connect: preset $_preset ($(_as_preset_mode "$_preset") for every channel this profile declares)"
+  # Then only what differs from it. Listing all six every launch is how a report
+  # becomes something nobody reads.
   for ch in "${!_connect_mode[@]}"; do
+    [[ "${_connect_where[$ch]}" == "preset "* ]] && continue
     _as_info "connect: $ch = ${_connect_mode[$ch]} native (${_connect_where[$ch]})"
   done
   return 0
@@ -1952,7 +2022,7 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing | connect | overlay) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         "$profile") ;; # a section named after the active profile; see below
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
@@ -2019,6 +2089,23 @@ _as_dotfile_parse() {
         else
           _as_dotfile_kv "$line"
           _df_profile_kv+=("$ck=$cv")
+        fi
+        ;;
+      sandbox)
+        # The sandbox's own key and position. `role` is parsed and reserved; only
+        # `default` exists until roles land.
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [sandbox] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          case "$ck" in
+            preset) _df_preset="$cv" ;;
+            role)
+              [[ "$cv" == default ]] \
+                || _as_msg ".agent-sandbox: [sandbox] role '$cv': roles are not implemented yet; using default"
+              ;;
+            *) _as_msg ".agent-sandbox: ignoring unknown [sandbox] key '$ck'" ;;
+          esac
         fi
         ;;
       overlay)
@@ -2415,6 +2502,7 @@ agent_sandbox() (
   local _holder_pid="" _holder_tried=0 _holder_why="this host has no shared overlay"
   local -a _holder_ns=()
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
+  local _preset_flag="" _preset=default
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -2611,6 +2699,19 @@ agent_sandbox() (
         ;;
       --overlay=*)
         _overlay_flag="${1#--overlay=}"
+        shift
+        ;;
+      --preset)
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
+          || {
+            _as_msg "--preset needs a name (independent, default or shared)"
+            return 2
+          }
+        _preset_flag="$2"
+        shift 2
+        ;;
+      --preset=*)
+        _preset_flag="${1#--preset=}"
         shift
         ;;
       --wrap)
@@ -2903,7 +3004,7 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_connect=()
-  local _df_overlay_mode=""
+  local _df_overlay_mode="" _df_preset=""
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
@@ -3077,6 +3178,34 @@ agent_sandbox() (
         ;;
     esac
   fi
+
+  # ---- the preset: every channel's position, before any override ----
+  local _ps="" _ps_src=""
+  if [[ -n "$_preset_flag" ]]; then
+    _ps="$_preset_flag" _ps_src=--preset
+  elif [[ -n "${AGENT_SANDBOX_PRESET:-}" ]]; then
+    _ps="$AGENT_SANDBOX_PRESET" _ps_src=AGENT_SANDBOX_PRESET
+  elif [[ -n "$_df_preset" ]]; then
+    _ps="$_df_preset" _ps_src=".agent-sandbox [sandbox] preset"
+  fi
+  if [[ -n "$_ps" ]]; then
+    case "$_ps" in
+      independent | default | shared) _preset="$_ps" ;;
+      *)
+        _as_msg "preset ($_ps_src): unknown preset '$_ps' (independent|default|shared); refusing rather than guessing which channels you meant to move"
+        return 1
+        ;;
+    esac
+  fi
+  # Seed every channel the profile declares from the preset. An explicit
+  # [connect] line, knob or flag then overwrites its own channel and nothing
+  # else, which is what makes "a preset plus overrides" the whole vocabulary.
+  local _pc _pm
+  _pm="$(_as_preset_mode "$_preset")"
+  for _pc in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    _connect_mode["${_pc%%$'\t'*}"]="$_pm"
+    _connect_where["${_pc%%$'\t'*}"]="preset $_preset"
+  done
 
   local _cs
   local -a _env_connect=()

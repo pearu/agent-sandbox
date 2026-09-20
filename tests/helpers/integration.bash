@@ -26,6 +26,12 @@ make_integration() {
   export I IHOME IWORK IPROFILES
 }
 
+# Like run_engine, every launch here pins a preset. The engine's default puts the
+# declared channels at `cow`, so without this every integration suite -- conda,
+# memory, isolation, ssh -- would silently be testing the sandbox with overlays
+# layered over its state, which is not what any of them is about. A suite that
+# wants the real default sets TEST_PRESET to the empty string.
+
 # run_sandboxed [VAR=value ...] -- engine args (after --profile probe)
 # Runs the real engine from $IWORK with a clean environment; REPORT holds the
 # probe's key=value output afterwards. $status/$output from bats' run.
@@ -44,7 +50,8 @@ run_sandboxed() {
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
   run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
-    AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" "${envs[@]}" "${kc[@]}" "$ENGINE" --profile probe "$@"
+    AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" \
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$ENGINE" --profile probe "$@"
   popd >/dev/null || return 1
   declare -gA REPORT=()
   local k v

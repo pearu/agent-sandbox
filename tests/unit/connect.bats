@@ -17,6 +17,7 @@ setup() {
   # The engine's own sandbox key: <state>/<profile>/<project slug>/<role>/
   SBOX="$STATE/claude/${PROJ//[^A-Za-z0-9-]/-}/default"
   CFG="$H/home/.config/agent-sandbox"
+  COPY="$STATE/claude/${PROJ//[^A-Za-z0-9-]/-}/claude.json"
 }
 
 # The name a channel path gets inside a slot directory: the engine's _as_iso_slug,
@@ -372,6 +373,81 @@ EOF
   # both paths still got their overlay
   argv_has --overlay-src "$C/skills"
   argv_has --overlay-src "$C/commands"
+}
+
+# ----- presets: one position for every channel at once ----------------------
+#
+# These pass TEST_PRESET or the knob explicitly. Every other suite is pinned to
+# `shared` by the harness, so that a change to the engine's default does not
+# quietly change what they measure -- which means the default itself needs a test
+# that names it, and that is the first one here.
+
+@test "the engine's own default preset puts every declared channel at cow" {
+  TEST_PRESET="" run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$C/rules"
+  argv_has --overlay-src "$C/skills"
+  argv_has --overlay-src "$C/agents"
+  # and the whole state directory is still bound underneath, as it always was
+  argv_has --bind "$C" "$C"
+}
+
+@test "independent gives the sandbox nothing of the native install" {
+  run_engine AGENT_SANDBOX_PRESET=independent -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills"
+  run ! argv_has --overlay-src "$C/rules"
+}
+
+@test "shared is the engine before 0.3: not one channel is layered over" {
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$C" "$C"
+  run ! argv_has --overlay-src "$C/rules"
+  run ! argv_has --ro-bind "$C/rules" "$C/rules"
+}
+
+@test "a [connect] line overrides the preset for its own channel and no other" {
+  run_engine AGENT_SANDBOX_PRESET=independent \
+    AGENT_SANDBOX_CONNECT='instructions=ro native' -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$C/rules" "$C/rules"                               # overridden
+  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills" # still the preset
+}
+
+@test "the preset takes all three forms, flag beating environment beating file" {
+  cat >"$H/proj/.agent-sandbox" <<'EOF'
+[sandbox]
+preset = independent
+EOF
+  approve_dotfile
+  TEST_PRESET="" run_engine -- claude --version
+  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
+  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --preset independent --version
+  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+}
+
+@test "an unknown preset is REFUSED, not defaulted" {
+  # Guessing which channels the user meant to move is the one thing a preset
+  # must never do: it positions all of them at once.
+  run_engine AGENT_SANDBOX_PRESET=paranoid -- claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown preset 'paranoid'"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "a preset moves ONLY the channels the engine manages as connections" {
+  # The design's table also lists memory, transcripts, the config file and the
+  # rest. Each still has machinery of its own, and a preset that silently claimed
+  # to position them would leave the user believing a channel was shut.
+  run_engine AGENT_SANDBOX_PRESET=independent -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$COPY" "$H/home/.claude/.claude.json" # the config file, untouched by presets
 }
 
 # ----- refusals: every one of these would otherwise leave a channel wide open -

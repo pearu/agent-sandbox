@@ -78,6 +78,9 @@ leak_setup() {
   [[ -z "${LEAK_OVERLAY:-}" ]] \
     || leak_die "LEAK_OVERLAY is set in the environment; it is set per cell, and an
       inherited one would decide how every \`cow\` cell is implemented without saying so"
+  [[ -z "${LEAK_PRESET:-}" ]] \
+    || leak_die "LEAK_PRESET is set in the environment; the suite pins the preset so
+      that a cell means the same thing whatever the engine's default becomes"
 
   # Results land under probes/results/<study>/. The leak study is the default; the
   # connections study (probes/connections/) sets LEAK_RESULTS_SUBDIR so two studies
@@ -427,6 +430,10 @@ leak_read_sandboxed() {
     # Which implementation `cow` uses. Unset leaves the engine's own choice (an overlay
     # where bubblewrap supports one), which is what every cell but W8 wants.
     [[ -n "${LEAK_OVERLAY:-}" ]] && _env+=(AGENT_SANDBOX_OVERLAY="$LEAK_OVERLAY")
+    # The preset every other channel sits at. Pinned by the caller rather than
+    # inherited from the engine's default, so a cell keeps meaning what it says
+    # when that default changes.
+    [[ -n "${LEAK_PRESET:-}" ]] && _env+=(AGENT_SANDBOX_PRESET="$LEAK_PRESET")
     env "${_env[@]}" claude --quiet --exec python3 "$script" "$@"
   ) >"$out" 2>"$out.err" || true
 }
