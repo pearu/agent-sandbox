@@ -16,7 +16,10 @@ make_integration() {
   IHOME="$I/home"
   IWORK="$I/work"
   IPROFILES="$I/profiles"
-  mkdir -p "$IHOME" "$IWORK" "$IPROFILES"
+  # The probe profile's state directory and its channel paths: the engine
+  # refuses a state bind whose source is missing, and a channel needs somewhere
+  # to be. Cheap, and it means every integration test can ask for a connection.
+  mkdir -p "$IHOME" "$IWORK" "$IPROFILES" "$IHOME/.probe/docs" "$IHOME/.probe/extra"
   cp "$BATS_TEST_DIRNAME/../helpers/probe-profile.sh" "$IPROFILES/probe.sh"
   cat >"$I/probe.sh"
   chmod +x "$I/probe.sh"

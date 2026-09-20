@@ -1120,6 +1120,23 @@ _as_connect_apply() {
           work="$base/$ch/work/$(_as_iso_slug "$path")"
           seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
           mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
+          # THE HOLDER, asked for once per launch. With one, every session of
+          # this sandbox shares a single overlay and the concurrency question
+          # disappears; without one, each session mounts its own, which works and
+          # is undefined when two run at once. Never in `strict`, where pasta
+          # owns the namespaces and bwrap runs inside a script of its own --
+          # whether a session can join a holder's user namespace from inside
+          # pasta's is unmeasured, and guessing in the launch path is not the
+          # place to find out.
+          if ((! _holder_tried)); then
+            _holder_tried=1
+            if [[ "${_knob_net:-proxy}" == strict ]]; then
+              _holder_why="the strict network mode manages its own namespaces"
+            else
+              _holder_pid="$(_as_holder_ensure "$base")"
+              [[ -n "$_holder_pid" ]] || _holder_why="no holder could be started (nsenter or flock missing?)"
+            fi
+          fi
           # An overlay needs its lower layer to exist. Where the source has no
           # such directory, the lower is an EMPTY ONE FROM THIS SESSION, not a
           # directory created in the user's own state: `cow`'s first promise is
@@ -1133,18 +1150,13 @@ _as_connect_apply() {
             lower="$_session_dir/connect/$ch/lower-$(_as_iso_slug "$path")"
             mkdir -p -- "$lower" || return 1
           fi
-          # A SECOND SESSION OF ONE SANDBOX IS NOT YET SAFE UNDER `cow`, and this
-          # is where the user finds out -- once, in the case that is actually
-          # risky, rather than as a notice on every launch that people learn to
-          # skip. Two sessions today means two overlay mounts over one upper
-          # directory, which overlayfs documents as undefined: this kernel allows
-          # it and both sessions see each other's writes, but that is a result
-          # about one kernel and not a guarantee. The fix is the per-sandbox
-          # holder -- mount once, every session joins it -- which is measured in
-          # tests/integration/overlay-sharing.bats and not yet built.
-          if ((! _cow_warned_concurrent)) && _as_connect_live "$base"; then
+          # WITHOUT a holder, two sessions of one sandbox are two overlays over
+          # one upper directory, which overlayfs documents as undefined. Said
+          # once, in the case that is actually risky, rather than on every
+          # launch. With a holder there is nothing to warn about.
+          if [[ -z "$_holder_pid" ]] && ((! _cow_warned_concurrent)) && _as_connect_live "$base"; then
             _cow_warned_concurrent=1
-            _as_msg "connect: another session of this sandbox is already running, and \`cow\` does not support that yet: two sessions means two overlays over one layer, which the kernel allows and overlayfs calls undefined. Use one session at a time, or set this channel to copy."
+            _as_msg "connect: another session of this sandbox is already running, and without a shared overlay that is undefined: two sessions means two overlays over one layer. Here $_holder_why, so use one session at a time or set this channel to copy."
           fi
           # Record which sandbox this session is holding an overlay for, so a
           # --reset-connection from another terminal can refuse rather than pull
@@ -1159,7 +1171,17 @@ _as_connect_apply() {
           # it. The one thing `cow` hides, reported before the mount so the user
           # reads it whatever the session then does.
           _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
-          args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
+          if [[ -n "$_holder_pid" ]]; then
+            # The holder already mounted this overlay, at a staging path. Bind
+            # the merged view onto the real one: a channel at any other mode is
+            # simply not bound, which is why the holder can carry every path the
+            # sandbox might need without imposing them on a session that wants
+            # some of them live.
+            _holder_ns=(nsenter -t "$_holder_pid" -m -U --preserve-credentials --)
+            args+=(--bind "$base/$ch/merged/$(_as_iso_slug "$path")" "$path")
+          else
+            args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
+          fi
           ;;
         copy)
           # Seeded once and refreshed per file, never written back. The sync is
@@ -1306,6 +1328,174 @@ _as_connect_placeholder() {
   [[ -e "$1" ]] || _as_placeholder_files+=("$1")
 }
 
+# ----- the holder: one overlay per sandbox, joined by every session ----------
+# Two sessions of one sandbox used to mean two overlay mounts over one upper
+# directory, which overlayfs documents as undefined. The fix is not to arbitrate
+# between them: it is to mount ONCE. What overlayfs calls undefined is two
+# independent SUPERBLOCKS over one upper, not many users of one mount, so a
+# holder mounts the overlays and every session joins its namespaces and inherits
+# them. Measured in tests/integration/overlay-sharing.bats on every platform CI
+# covers, and the shape below was spiked before it was written.
+#
+# WHY THE HOLDER MOUNTS AT STAGING PATHS, not at the channel paths themselves. A
+# process lives in ONE mount namespace and cannot join two, so the holder has to
+# carry every overlay the sandbox could need. But a session that asked for a
+# channel at `live` must not find an overlay sitting on it. So the holder mounts
+# each one at <sandbox>/merged/<slug> and a session binds only the ones it asked
+# for onto the real paths. A channel at any other mode is simply not bound.
+#
+# WHY THE SET IS FIXED (every directory-shaped path the profile declares) rather
+# than "what this launch asked for": if it followed the launch, two sessions with
+# different specs would need different holders, and any path they shared would be
+# two overlays over one upper again -- the exact thing this removes. Seven mounts
+# per sandbox is cheap; an unused one costs an empty pair of directories.
+
+# _as_holder_paths -- `channel<TAB>slug<TAB>path` for every path a holder mounts.
+# The layout under the sandbox directory is the one `copy` already uses,
+# <sandbox>/<channel>/<kind>/<slug>, so reset and the shadow scan find cow's
+# state where they find everything else.
+_as_holder_paths() {
+  local line entry kind path ch
+  local -a fields=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    for entry in "${fields[@]:1}"; do
+      kind="${entry%%:*}"
+      path="${entry#*:}"
+      # Files never: overlayfs mounts a directory and cannot stack on one file.
+      [[ "$kind" == dir && -n "$path" ]] || continue
+      printf '%s\t%s\t%s\n' "$ch" "$(_as_iso_slug "$path")" "$path"
+    done
+  done
+}
+
+# _as_holder_pid SANDBOXDIR -- the live holder's PID, or nothing.
+#
+# Liveness by PID and start-time, the pair the janitor already uses, so a
+# recycled PID is never mistaken for the holder we recorded.
+_as_holder_pid() {
+  local f="$1/holder.id" pid start now
+  [[ -r "$f" ]] || return 1
+  read -r pid start <"$f" 2>/dev/null || return 1
+  [[ -n "$pid" && -r "/proc/$pid/stat" ]] || return 1
+  now="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
+  [[ -n "$now" && "$now" == "$start" ]] || return 1
+  printf '%s' "$pid"
+}
+
+# _as_holder_ensure SANDBOXDIR -- print the PID of this sandbox's holder,
+# starting one if there is none. Empty output means "could not", and the caller
+# falls back to a per-session overlay rather than failing the launch.
+#
+# CREATION IS SERIALISED, and only creation. Two launches racing here would make
+# two holders, which is two overlays over one upper -- the undefined case this
+# exists to remove, arrived at by the code that removes it. The lock is held for
+# the milliseconds of the check-and-start, never for the life of a session, which
+# is what made "just serialise the sessions" the wrong answer to begin with.
+_as_holder_ensure() {
+  local sb="$1" lock="$1/holder.lock" pid
+  mkdir -p -- "$sb" || return 0
+  command -v nsenter >/dev/null 2>&1 || return 0
+  command -v flock >/dev/null 2>&1 || return 0
+  (
+    exec 9>"$lock" || exit 1
+    # A BOUNDED WAIT. The lock is held for the milliseconds of a check-and-start,
+    # so ten seconds means something is wrong rather than busy -- and a launch
+    # that blocks for ever on a lock is worse than one that mounts its own
+    # overlay and says so.
+    flock -w 10 9 || exit 1
+    if pid="$(_as_holder_pid "$sb")"; then
+      printf '%s' "$pid"
+      exit 0
+    fi
+    local -a ov=()
+    local ch slug path
+    while IFS=$'\t' read -r ch slug path; do
+      [[ -n "${slug:-}" ]] || continue
+      # THE LOWER IS ALWAYS THE SOURCE ITSELF, and the directory is created if
+      # it is missing. An earlier version used an empty placeholder instead, to
+      # avoid writing anything into the user's own state -- and with a holder
+      # that is actively wrong: the lower is fixed when the overlay is mounted,
+      # so a channel directory the user creates AFTERWARDS stays invisible for
+      # as long as the holder lives. The study caught it (W1's directory read
+      # came back empty). An overlay can only track the source if the source IS
+      # the lower.
+      #
+      # What that costs is one empty directory under ~/.claude, in a tree the
+      # engine already binds read-write and already lets bwrap create mount
+      # points in. It is not something the SANDBOX wrote, which is the promise
+      # `cow` actually makes.
+      mkdir -p -- "$path" || exit 1
+      mkdir -p -- "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug" || exit 1
+      ov+=(--overlay-src "$path" --overlay "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug")
+    done < <(_as_holder_paths)
+    ((${#ov[@]})) || exit 1
+    # The holder is a bwrap that mounts and then does nothing. It must OUTLIVE
+    # every session: the mount lives on namespace membership, so a holder that
+    # exited after the first session joined would leave the second unable to find
+    # it, and the second would mount its own -- undefined again. Idle holders are
+    # reaped by the next launch that sees no session using them.
+    # 9>&- CLOSES THE LOCK IN THE HOLDER. Measured the hard way: without it the
+    # holder inherits the open descriptor, the exclusive lock is never released
+    # because the holder outlives the subshell that took it, and every later
+    # launch of this sandbox blocks here for ever. The first launch worked
+    # perfectly and the second hung.
+    setsid bwrap --dev-bind / / "${ov[@]}" -- \
+      bash -c "printf '%s %s\n' \"\$\$\" \"\$(awk '{print \$22}' /proc/\$\$/stat)\" >'$sb/holder.id'; exec sleep infinity" \
+      >/dev/null 2>&1 9>&- &
+    # A real holder records itself in well under a second. This bound is what a
+    # launch waits before giving up and mounting its own overlay instead, so it
+    # is short on purpose: every launch on a host where the holder cannot start
+    # pays it, and a slow fallback is worse than an immediate one.
+    local i
+    for ((i = 0; i < 60; i++)); do
+      pid="$(_as_holder_pid "$sb")" && {
+        printf '%s' "$pid"
+        exit 0
+      }
+      sleep 0.05
+    done
+    exit 1
+  ) || return 0
+}
+
+# _as_holder_stop SANDBOXDIR -- stop this sandbox's holder unconditionally.
+#
+# A reset must do this before it removes anything. The holder's overlay keeps
+# REFERENCES to the layer directories, not their paths, so removing the upper
+# layer from under a live mount changes nothing the mount serves: the reset
+# reported success and the next launch still read the sandbox's old shadow.
+# Measured. The caller has already refused if a session is live, so nothing is
+# using the mount by the time this runs.
+_as_holder_stop() {
+  local pid
+  pid="$(_as_holder_pid "$1")" || {
+    rm -f -- "$1/holder.id" 2>/dev/null
+    return 0
+  }
+  kill "$pid" 2>/dev/null || true
+  local i
+  for ((i = 0; i < 100; i++)); do
+    [[ -d "/proc/$pid" ]] || break
+    sleep 0.05
+  done
+  rm -f -- "$1/holder.id" 2>/dev/null || true
+  return 0
+}
+
+# _as_holder_reap SANDBOXDIR -- stop this sandbox's holder if no session is using
+# it. An idle holder is one sleeping process per sandbox; harmless, but it should
+# not accumulate for every project ever opened.
+_as_holder_reap() {
+  local sb="$1" pid
+  pid="$(_as_holder_pid "$sb")" || return 0
+  _as_connect_live "$sb" && return 0 # someone is in its namespace
+  kill "$pid" 2>/dev/null || true
+  rm -f -- "$sb/holder.id" 2>/dev/null || true
+  return 0
+}
+
 # _as_connect_live SANDBOXDIR -- is a session of this sandbox running right now?
 #
 # MEASURED FIRST, because the obvious check does not work: bwrap passes the upper
@@ -1368,6 +1558,10 @@ _as_connect_reset() {
     _as_msg "connect: a session of this sandbox is running. Resetting would remove the layers it has mounted. Close it and run this again."
     return 1
   fi
+  # And stop the holder before touching anything: its mount holds references to
+  # the layer directories rather than their paths, so removing them underneath it
+  # would leave the old content still being served.
+  _as_holder_stop "$base"
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
@@ -2089,9 +2283,15 @@ _as_launch() {
   # left a mount-point file on the host, run bwrap in this process (not exec)
   # so we regain control -- to print the help footer and/or tear the session
   # down -- then propagate the exit code.
+  # ${_holder_ns[@]} is `nsenter -t PID -m -U --preserve-credentials --` when a
+  # `cow` channel joined this sandbox's holder, and empty otherwise. Entering the
+  # holder's mount namespace is what puts its overlays in view; bwrap then makes
+  # its own namespace from that one, inheriting the mounts as references to the
+  # SAME superblocks rather than mounting anything again.
+  local -a _hns=(${_holder_ns[@]+"${_holder_ns[@]}"})
   if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" || ${#_as_placeholder_files[@]} -gt 0 ]]; then
     local rc=0
-    bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
+    "${_hns[@]}" bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
     # 127 = bwrap not found, 126 = found but not executable. Any other code is
     # the AGENT's own exit status and means the sandbox worked fine.
     ((rc == 126 || rc == 127)) && _as_fallback_hint
@@ -2099,7 +2299,7 @@ _as_launch() {
     [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
     return "$rc"
   fi
-  exec bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}"
+  exec "${_hns[@]}" bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}"
 }
 
 # Launch for strict mode. pasta owns the network namespace and forwards it to
@@ -2210,6 +2410,10 @@ agent_sandbox() (
   # land, and the directory level is here so that arriving changes no layout.
   local -A _connect_mode=() _connect_where=()
   local -a _connect_flag=()
+  # The holder this launch joins, if any, and the nsenter that joins it. Set by
+  # _as_connect_apply and read by _as_launch.
+  local _holder_pid="" _holder_tried=0 _holder_why="this host has no shared overlay"
+  local -a _holder_ns=()
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   while (($# > 0)); do
     case "$1" in

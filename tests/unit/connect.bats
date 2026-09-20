@@ -319,22 +319,43 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "cow says so, once, when a second session of the sandbox is already running" {
-  # Two sessions today is two overlays over one layer, which overlayfs calls
-  # undefined. Said in the case that is actually risky rather than on every
-  # launch, which is how a notice becomes something people filter out.
+@test "WITHOUT a holder, a second live session is called out -- once" {
+  # With a holder there is nothing to warn about: every session shares one
+  # overlay. Without one, two sessions are two overlays over one layer, which
+  # overlayfs calls undefined. The stub bwrap exits immediately, so no holder
+  # ever records itself here and this is the fallback path by construction.
   fake_live_session "$SBOX"
   run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --quiet --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"does not support that yet"* ]]
+  [[ "$output" == *"without a shared overlay that is undefined"* ]]
   # once, not once per path in the channel
-  [ "$(grep -c 'does not support that yet' <<<"$output")" -eq 1 ]
+  [ "$(grep -c 'without a shared overlay' <<<"$output")" -eq 1 ]
 }
 
 @test "and says nothing when it is the only session" {
   run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"does not support that yet"* ]]
+  [[ "$output" != *"without a shared overlay"* ]]
+}
+
+@test "the overlay's lower layer is the SOURCE, so a directory made later shows up" {
+  # An earlier version used an empty placeholder when the source directory was
+  # missing, to avoid creating anything in the user's own state. With a holder
+  # that is actively wrong: the lower is fixed when the overlay is mounted, so a
+  # directory the user creates afterwards would stay invisible for as long as the
+  # holder lives. The study caught it. An overlay can only track the source if
+  # the source IS the lower, which means creating it when it is absent -- one
+  # empty directory, in a tree bwrap already creates mount points in.
+  rm -rf "$C/rules"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  [ "$status" -eq 0 ]
+  local i src=""
+  for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == --overlay-src ]] && src="${ARGV[i + 1]}" && break
+  done
+  [ -n "$src" ]
+  [ "$src" = "$C/rules" ]
+  [ -d "$C/rules" ]
 }
 
 @test "a channel with TWO directories does not report the launch as a second session" {
@@ -344,27 +365,13 @@ EOF
   # `skills` is the only channel with two directories, which is why every test
   # using `instructions` missed it.
   mkdir -p "$C/skills" "$C/commands"
+  fake_live_session "$STATE/claude/some-other-project/default"
   run_engine AGENT_SANDBOX_CONNECT='skills=cow native' -- claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"does not support that yet"* ]]
+  [[ "$output" != *"without a shared overlay"* ]]
   # both paths still got their overlay
   argv_has --overlay-src "$C/skills"
   argv_has --overlay-src "$C/commands"
-}
-
-@test "cow never creates a directory in the user's own state to serve as a lower layer" {
-  # `cow`'s first promise is that nothing of the sandbox reaches the source, and
-  # the engine quietly making a directory there would be the engine breaking it.
-  rm -rf "$C/rules"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
-  [ "$status" -eq 0 ]
-  local i src=""
-  for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
-    [[ "${ARGV[i]}" == --overlay-src ]] && src="${ARGV[i + 1]}" && break
-  done
-  [ -n "$src" ]
-  [ "$src" != "$C/rules" ]    # an empty one from this session, not the source
-  [[ "$src" == "$H/base/"* ]] # and it is under the session base
 }
 
 # ----- refusals: every one of these would otherwise leave a channel wide open -
