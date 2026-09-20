@@ -77,6 +77,11 @@ sandbox syncs its own server skills on first start, measured at 3.6 MB on this h
 
 ## The scale
 
+> The mode and preset names below are the ones the engine uses today. Agreed renames --
+> `none` becomes `own` and the abbreviations are spelled out, and the presets become
+> `isolated`/`inherit`/`shared`/`native` plus an incomparable `none` -- are recorded in
+> [The vocabulary, revised](#the-vocabulary-revised).
+
 Every connection has a mode. The modes are ordered by how much of the source A reaches the
 sandbox B, and whether anything of B reaches A:
 
@@ -146,7 +151,8 @@ Two connections are **mandatory** and fixed:
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
-between is a preset plus overrides.
+between is a preset plus overrides. (Their agreed new names, and the scope axis that
+retires `--sandbox`, are in [The vocabulary, revised](#the-vocabulary-revised).)
 
 | channel | `independent` | `default` | `shared` (today) |
 |---|---|---|---|
@@ -238,6 +244,124 @@ repository had no way to see.
 with these connections behaves like a native Claude Code whose configuration is the user's,
 read live, with its own writes kept to itself. `independent` is the two mandatory
 connections and nothing else. `shared` is the engine before 0.2.
+
+## The vocabulary, revised
+
+**Agreed 2026-09-20, implemented nowhere.** The names used everywhere else in this
+document, and in the engine, are the ones that ship today; this section records what they
+become and why, so the reasoning is not lost between the decision and the work. Until it
+lands, a reader should treat the names above as current and this section as the plan.
+
+### The ladder is boundary permeability, and it is direction-dependent
+
+A preset says how permeable this sandbox's boundary is, not which files are listed. That
+reframing is what makes the ends belong on one axis:
+
+| today | becomes | what it means |
+|---|---|---|
+| `independent` | `isolated` | the boundary is sealed: nothing of yours reaches the sandbox, nothing of the sandbox reaches you |
+| `default` | `inherit` | one-way: your files are read live, the sandbox's writes stay inside |
+| `shared` | `shared` | both directions, for everything the boundary covers |
+| `native` | `native` | the whole boundary open, including the parts no channel declares |
+| `--sandbox none` | `none` | there is no boundary object at all |
+
+```
+isolated  <  inherit  <  shared  <  native        ordered
+none                                              incomparable
+```
+
+`none` is deliberately outside the order rather than below `isolated`: it is not a
+permeability, it is the absence of the thing that has one. `native` and `none` are
+different positions and the differential test depends on the difference — `native` is a
+sandbox that isolates nothing, `none` is no sandbox.
+
+`inherit` earns its name from the direction. `isolated` and `shared` say what crosses;
+only the middle rung needs to say *which way*, and inheritance already means "comes from
+the parent, does not go back". It also matches `user-mcp = inherit`, which means the same
+thing one channel down.
+
+### The channel mode `none` becomes `own`, and the abbreviations are spelled out
+
+    own  <  copy  <  copy-on-write  <  read-only  <  read-write
+
+The scale says what the sandbox has at a path in relation to yours: a copy, a
+copy-on-write layer, read-only access, read-write access -- and, at the bottom, its own,
+with no relation at all. `none` answered that question with "nothing", which is true and
+tells the reader less than "its own". `closed` was considered and answers a different
+question, in an open/closed metaphor the other four do not share.
+
+Spelling out `cow`, `ro` and `live` follows the same rule as the scope names: no
+abbreviations and no aliases. A dotfile is written once and read by people who did not
+write it.
+
+Renaming off `none` is also what frees that word for the terminal preset. With both in
+play, `preset = none` (no sandbox at all) and `skills = none` (nothing of yours) would be
+the same word at opposite ends of one model, and the failure mode is someone writing
+`preset = none` for maximum isolation and getting none of it.
+
+**The order is how much of YOUR files reach the sandbox, not what the sandbox may do.**
+Spelled out, that reads oddly at one step -- a sandbox can write under `copy-on-write` but
+not under `read-only`, yet `read-only` is the higher rung -- because `read-only` hands it
+the real file while `copy-on-write` gives it only a shadow of one.
+
+Two candidates were rejected. `blocked` already means *egress denied* here: there is a
+`~/.config/agent-sandbox/blocked.log`, the leak study uses it throughout for refused calls,
+and the agent's own briefing says "A blocked action is deliberate, so do not retry it". A
+channel at this mode denies nothing -- the sandbox gets a working, writable, persistent
+directory at that path; it simply is not yours. And `private` reads as *per session*, when
+this slot is per sandbox and persists across every session of it.
+
+### Scope: a second axis, orthogonal to role
+
+Foreground and background are not roles and not presets. They are a **scope**: which
+invocation this is. A role is the sandbox *key* — whose state — and a preset is policy.
+A role therefore *has* a preset; it is not one. Two roles at the same preset still need
+separate state, or they read each other's writes.
+
+Scopes are **profile-declared**, like channels, because not every agent has a background
+form; the set is expected to grow, a web service exposing the agent interface being the
+obvious next one. Names are spelled in full (`foreground`, `background`) and abbreviations
+are refused rather than accepted as aliases.
+
+The dotfile grammar is one form for both axes:
+
+```ini
+[sandbox]                      preset = inherit     # every role, every scope
+[role:reviewer]                preset = isolated    # every scope of this role
+[role:*reviewer@background]    skills = read-only   # globs on both halves
+```
+
+Globs are cheap here precisely because precedence is **later overrides earlier, per key** —
+there is no specificity ranking to compute and so none to get wrong. It does mean general
+rules belong first and specific ones last, which is a convention to document rather than a
+rule the parser enforces. Per key means a later `preset =` does not wipe an earlier
+`skills =`. The same qualification works in the launch-time forms, `;`-separated, with the
+unqualified spelling applying to every scope:
+
+    --preset 'reviewer@background=isolated'
+    AGENT_SANDBOX_PRESET='background=isolated'
+
+And the sandbox key gains scope as its own segment, always emitted, `foreground` included:
+
+    <state>/<profile>/<project slug>/<role>/<scope>/
+
+A separate segment rather than a mangled `<role>--<scope>` name: roles may contain dashes,
+so the mangled form is ambiguous, and a new path component lengthens no existing one and
+so cannot press against the 200-character cap `_as_path_slug` applies to the project slug.
+
+This is what retires `--sandbox`, tracked in
+[#100](https://github.com/pearu/agent-sandbox/issues/100). It carries two unrelated
+meanings — which invocations are sandboxed, and whether to sandbox at all — and the set
+form always has an inert half, since `profile_route` consults only `want_bg` once a launch
+is background and never reads `want_fg`. It stays as documented sugar until 1.0.
+
+### The transparency principle becomes the fidelity principle
+
+The word is needed for a preset, and the principle was under-placed anyway. It is not a
+property of one rung: the sandbox should reproduce the native experience faithfully, minus
+what the user explicitly asked to change. `inherit` expresses that for configuration and
+`native` asserts it absolutely, which is why a difference between `--preset native` and
+`--sandbox none` is a bug rather than a preference.
 
 ## Mechanisms
 
