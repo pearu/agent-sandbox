@@ -374,6 +374,6 @@ reasons attached in the repository history.
   study found six such paths. [connections.md](connections.md) proposes the
   replacement: a sandbox is an installation keyed by project and role, and
   what it shares is a set of explicit connections, each on a
-  `none < copy < cow < ro < live` scale, with identity and the project
+  `own < copy < copy-on-write < read-only < read-write` scale, with identity and the project
   directory the only mandatory ones. Proposed, not implemented; the config
   file's per-project copy (0.2.1) is its first channel.
