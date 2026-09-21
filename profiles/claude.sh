@@ -943,11 +943,35 @@ if merged.get("disableAllHooks"):
 # with that project's entry alone (see _claude_config_prepare above).
 _claude_history_filter() { # $1 = history.jsonl, $2 = project dir
   # Records are compact JSON, one per line, each carrying "project":"<dir>".
-  # A fixed-string match including the closing quote cannot match a different
-  # project (no prefix collision), so this can only ever return too few lines,
-  # never another project's -- the safe direction for a filter whose input
-  # format we do not control.
-  grep -F "\"project\":\"$2\"" -- "$1" 2>/dev/null || true
+  #
+  # MATCH THE FIELD, NOT THE BYTES. This was a fixed-string grep whose comment
+  # argued that including the closing quote made it safe in one direction: "can
+  # only ever return too few lines, never another project's". The closing quote
+  # does rule out prefix collisions, and nothing else -- `grep -F` matches that
+  # byte sequence ANYWHERE on the line, in any field, at any nesting depth. So a
+  # record belonging to another project reached this one as soon as it happened
+  # to quote or nest the target path. Measured as row 4 of the leak study (#73).
+  #
+  # FAILS CLOSED. No python3, a file that will not open, or a line that does not
+  # parse: the record is dropped, not passed. Too few lines really is the safe
+  # direction here; the old comment's mistake was believing grep gave it.
+  command -v python3 >/dev/null 2>&1 || return 0
+  AS_HIST="$1" AS_PROJECT="$2" python3 - <<'PY' 2>/dev/null || true
+import json, os, sys
+want = os.environ["AS_PROJECT"]
+try:
+    fh = open(os.environ["AS_HIST"], encoding="utf-8")
+except OSError:
+    sys.exit(0)
+with fh:
+    for line in fh:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("project") == want:
+            sys.stdout.write(line if line.endswith("\n") else line + "\n")
+PY
 }
 
 profile_isolate() {
