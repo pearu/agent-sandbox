@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Diff two runs of one suite: which assertions reached different verdicts?
 
-W8 asks whether `cow` behaves the same when it is implemented with an overlay and when it
+W8 asks whether `copy-on-write` behaves the same when it is implemented with an overlay and when it
 falls back to `copy`. That used to require a second, older machine, and would have
 compared one implementation against a memory of the other. `[overlay] mode = off` makes
 both runnable on one host, so the comparison is direct.
 
 Prints the number of assertions that differ, and writes each difference to stderr. A
-difference is not automatically a defect -- `cow` and `copy` are allowed to diverge WITHIN
+difference is not automatically a defect -- `copy-on-write` and `copy` are allowed to diverge WITHIN
 a running session, which is Part 7's subject -- but Part 1 only ever observes across
 launches, where they are claimed to be identical, so anything printed here contradicts a
 claim the model makes.

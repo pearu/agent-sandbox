@@ -999,7 +999,7 @@ _as_sandbox_dir() {
 
 # ----- presets: one position for every channel at once -----------------------
 # `isolated` is the two mandatory connections and nothing else; `inherit` is
-# the transparency principle stated as connections -- a sandbox that behaves like
+# the fidelity principle stated as connections -- a sandbox that behaves like
 # a native install whose configuration is the user's, read live, with its own
 # writes kept to itself; `shared` is the engine before 0.2.
 #

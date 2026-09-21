@@ -105,21 +105,31 @@ Sections:
   A **channel** is named by what it carries (`instructions`, `settings`,
   `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a
   **mode** says how much of the source reaches this project's sandbox, on the
-  scale `none < copy < cow < ro < live` with lower more isolated. `none` gives
-  the sandbox nothing of yours and keeps what it writes there private and
-  persistent; `ro` gives it your files, live, and refuses its writes; `live` is
-  the default and is what the engine has always done. `copy` and `cow` are part
-  of the model but not yet in the engine, and asking for one is refused rather
-  than served as a different mode. The only **source** so far is `native`, your
-  own `~/.claude`, which is also the default.
+  scale `own < copy < copy-on-write < read-only < read-write`, lower being more
+  isolated. `own` gives the sandbox nothing of yours and keeps what it writes
+  there private and persistent; `copy` seeds it from your files and refreshes
+  anything it has not touched; `copy-on-write` lets reads fall through until it
+  writes; `read-only` gives it your files, live, and refuses its writes;
+  `read-write` is one directory, both ways. The preset decides where each channel
+  starts. The only **source** so far is `native`, your own `~/.claude`, which is
+  also the default.
+
+  The order is how much of *your* files reach the sandbox, not what the sandbox
+  may do — it can write under `copy-on-write` but not under `read-only`, and
+  `read-only` is still the higher rung, because it hands over the real file where
+  `copy-on-write` gives only a shadow of one.
+
+  These names changed in 0.3. The old ones (`none`, `cow`, `ro`, `live`) are
+  refused rather than accepted as aliases, and the refusal says what to write
+  instead.
 
   Narrowing a channel needs nothing beyond this file's own approval. Widening
-  one back toward `live` is what the `--trust` review is for, the same as
-  `[net] mode = open`. The same syntax works as `--connect 'instructions=ro'`
+  one back toward `read-write` is what the `--trust` review is for, the same as
+  `[net] mode = open`. The same syntax works as `--connect 'instructions=read-only'`
   and, semicolon-separated, as `AGENT_SANDBOX_CONNECT`; the flag beats the
   variable, which beats this file. A channel name the profile does not carry
   refuses the launch instead of being ignored, because a typo that quietly left
-  a channel at `live` would read to you as a channel you had closed.
+  a channel at `read-write` would read to you as a channel you had closed.
 
   One small side effect worth knowing rather than reporting: where a narrowed
   channel names a **directory** your `~/.claude` does not have, an empty one is
@@ -128,47 +138,47 @@ Sections:
   indistinguishable from one you made yourself. See
   [connections.md](connections.md).
 
-- **`[sandbox]`** — key/value lines. `preset = independent|default|shared`
-  (default `default`) sets where every channel sits before any `[connect]`
-  override. `independent` gives the sandbox nothing of your native install;
-  `default` lets it read your instructions, settings, skills, agents, workflows
+- **`[sandbox]`** — key/value lines. `preset = isolated|inherit|shared`
+  (default `inherit`) sets where every channel sits before any `[connect]`
+  override. `isolated` gives the sandbox nothing of your native install;
+  `inherit` lets it read your instructions, settings, skills, agents, workflows
   and plugins live while keeping its own writes to itself; `shared` is one
   directory in both directions, which is what the engine did before 0.3 and what
   to set if you want that back. A fourth, `native`, is the `--preset` flag only
   and is described below.
 
   What each preset means, channel by channel, in the modes of the scale
-  `none < copy < cow < ro < live`. The mode columns are the whole model, not only
+  `own < copy < copy-on-write < read-only < read-write`. The mode columns are the whole model, not only
   the part the engine drives from a preset today; the last column says what
   actually governs each row now, so nothing here claims more than it does.
 
-  | channel | `independent` | `default` | `shared` | `native` | governed today by |
+  | channel | `isolated` | `inherit` | `shared` | `native` | governed today by |
   |---|---|---|---|---|---|
-  | identity — your login, and `gh/`/`ide/` | `live` | `live` | `live` | `live` | always live; a sandbox without your login is not your sandbox |
-  | project — the working tree | `live` | `live` | `live` | `live` | always live; it is what you opened |
-  | instructions — `CLAUDE.md`, `rules/` | `none` | `cow` | `live` | `live` | **the preset** |
-  | settings — `settings.json`, `output-styles/` | `none` | `cow` | `live` | `live` | **the preset** |
-  | skills — `skills/`, `commands/` | `none` | `cow` | `live` | `live` | **the preset** |
-  | agents — `agents/` | `none` | `cow` | `live` | `live` | **the preset** |
-  | workflows — `workflows/` | `none` | `cow` | `live` | `live` | **the preset** |
-  | plugins — `plugins/` | `none` | `cow` | `live` | `live` | **the preset** |
-  | tools — the `mcpServers` block | `none` | `copy` | `copy` | `live` | `[claude] user-mcp` (`inherit` = `copy`, the default; `none` = `none`) |
-  | memory — `projects/<slug>/memory/` | `none` | `none`, plus `ro` per share | `live` | `live` | `memory_default` (`scoped` by default) and `[share-memory]` |
-  | transcripts — conversations, plans, history | `none` | `none` | `live` | `live` | per-project scoping and the isolate spec |
-  | artefacts — `downloads/`, `uploads/`, `tasks/` | `none` | `none` | `live` | `live` | **nothing yet: they are `live` whatever the preset** |
+  | identity — your login, and `gh/`/`ide/` | `read-write` | `read-write` | `read-write` | `read-write` | always live; a sandbox without your login is not your sandbox |
+  | project — the working tree | `read-write` | `read-write` | `read-write` | `read-write` | always live; it is what you opened |
+  | instructions — `CLAUDE.md`, `rules/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
+  | settings — `settings.json`, `output-styles/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
+  | skills — `skills/`, `commands/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
+  | agents — `agents/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
+  | workflows — `workflows/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
+  | plugins — `plugins/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
+  | tools — the `mcpServers` block | `own` | `copy` | `copy` | `read-write` | `[claude] user-mcp` (`inherit` = `copy`, the default; `own` = `own`) |
+  | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | `memory_default` (`scoped` by default) and `[share-memory]` |
+  | transcripts — conversations, plans, history | `own` | `own` | `read-write` | `read-write` | per-project scoping and the isolate spec |
+  | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **nothing yet: they are `read-write` whatever the preset** |
 
   Read the last column as the list of things left to fold in. When a row moves to
   the preset its mode columns do not change, because they were chosen to match
   what its own switch already does by default — with two exceptions, both
   deliberate and both worth knowing now:
 
-  - **artefacts are `live` today and the table says `none`.** Downloads, uploads
+  - **artefacts are `read-write` today and the table says `own`.** Downloads, uploads
     and task lists are visible across every project, which is a known open
     channel ([#52](https://github.com/pearu/agent-sandbox/issues/52),
     [#76](https://github.com/pearu/agent-sandbox/issues/76),
     [#78](https://github.com/pearu/agent-sandbox/issues/78)). Folding them in
     will close it, and that is a behaviour change rather than a no-op.
-  - **`shared` gives tools `copy`, not `live`.** The original model said `live`,
+  - **`shared` gives tools `copy`, not `read-write`.** The original model said `read-write`,
     which was the pre-0.2 behaviour: the config file bound whole, so every
     project's entries and the user's MCP servers were readable from any sandbox.
     0.2.1 closed that deliberately
@@ -178,7 +188,7 @@ Sections:
     because that is what `--sandbox none` gives, and parity is the point of that
     preset and the reason it is flag-only.
 
-  `cow` is copy-on-write: reads fall through to your files until the sandbox
+  `copy-on-write` means reads fall through to your files until the sandbox
   writes one, and the write goes to a private layer that shadows it from then on.
   Where an overlay is unavailable — bubblewrap older than 0.11, `[overlay] mode =
   off`, or a channel path naming a single **file**, which overlayfs cannot stack
@@ -195,13 +205,13 @@ Sections:
   position: something that breaks under `native` but works under `--sandbox none`
   is broken in the sandbox mechanism, not in the isolation. It is also the far
   end for building a policy from either direction — start at `native` and close
-  channels until the use case is met, or start at `independent` and open them.
+  channels until the use case is met, or start at `isolated` and open them.
 
-  State isolation is off, which is more than every channel at `live`:
+  State isolation is off, which is more than every channel at `read-write`:
 
   | | `shared` | `native` |
   |---|---|---|
-  | the declared channels | `live` | `live` |
+  | the declared channels | `read-write` | `read-write` |
   | the rest of `$HOME` — `.gitconfig`, `.npmrc`, `.ssh/`, anything no channel names | hidden behind a tmpfs | the host's own, writable |
   | `/tmp`, `/var/tmp` | private to the session | the host's own |
   | the environment | an allowlist | every exported variable |
@@ -224,11 +234,11 @@ Sections:
   `--preset` are the other two forms.
 
 - **`[overlay]`** — key/value lines. `mode = auto|off` (default auto) says what
-  `cow` is implemented with, not whether anything is shared. `auto` uses a real
+  `copy-on-write` is implemented with, not whether anything is shared. `auto` uses a real
   copy-on-write overlay where bubblewrap supports one (0.11 or newer) and falls
   back to `copy` where it does not, saying so at launch; `off` takes the fallback
   everywhere, which is worth doing if overlayfs is unhappy on your filesystem.
-  It can only move `cow` to `copy`, so it is never a widening. The two are
+  It can only move `copy-on-write` to `copy`, so it is never a widening. The two are
   identical across launches and differ only *within* a running session, where an
   overlay picks up an edit you make to your own copy and a snapshot does not. A
   channel path naming a **file** always uses the fallback, because overlayfs

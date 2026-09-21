@@ -134,7 +134,7 @@
 #                       creates is its own and persists
 #          inherit      it reads your instructions, settings, skills, agents,
 #                       workflows and plugins LIVE, and keeps its own writes to
-#                       itself. The transparency principle: it behaves like a
+#                       itself. The fidelity principle: it behaves like a
 #                       native install whose configuration is yours, except that
 #                       what it writes does not come back to you
 #          shared       one directory, both ways -- what the engine did before

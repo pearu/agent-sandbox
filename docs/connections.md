@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: proposed, not implemented; `cow` measured end to end on this host.** A model for controlling what passes between agent
+**Status: the scale, the presets and the holder are implemented and under test; scope and roles are not.** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -50,7 +50,7 @@ the user curates for the purpose.
 **A connection** opens one **channel** between a sandbox and a source, under a **mode** from
 the scale below. A channel is named by what it carries, never by a path; the mapping from a
 channel to the agent's internal path is the profile's business and appears nowhere else.
-No connection for a channel means `none`.
+No connection for a channel means `own`.
 
 | channel | what it carries | Claude Code path (profile's mapping) |
 |---|---|---|
@@ -77,10 +77,7 @@ sandbox syncs its own server skills on first start, measured at 3.6 MB on this h
 
 ## The scale
 
-> The mode and preset names below are the ones the engine uses today. Agreed renames --
-> `none` becomes `own` and the abbreviations are spelled out, and the presets become
-> `isolated`/`inherit`/`shared`/`native` plus an incomparable `none` -- are recorded in
-> [The vocabulary, revised](#the-vocabulary-revised).
+> Why these names and not shorter ones: [Why these names](#why-these-names).
 
 Every connection has a mode. The modes are ordered by how much of the source A reaches the
 sandbox B, and whether anything of B reaches A:
@@ -91,11 +88,11 @@ none  <  copy  <  cow  <  ro  <  live
 
 | mode | A → B | B → A | B's own state | needs |
 |---|---|---|---|---|
-| `none` | never | never | B's own, from nothing | nothing |
+| `own` | never | never | B's own, from nothing | nothing |
 | `copy` | at launch, where B has not changed the file | never | private, persistent | a seed and a three-way refresh |
-| `cow` | live, for every file B has not written | never | private, persistent | an overlay, or its emulation |
-| `ro` | live | never | none | a read-only bind |
-| `live` | live | live | shared with A | a read-write bind (today) |
+| `copy-on-write` | live, for every file B has not written | never | private, persistent | an overlay, or its emulation |
+| `read-only` | live | never | none | a read-only bind |
+| `read-write` | live | live | shared with A | a read-write bind |
 
 Definitions, so the sub-decisions stop multiplying:
 
@@ -106,27 +103,27 @@ Definitions, so the sub-decisions stop multiplying:
   nothing of B's is overwritten without a word. A `reset` re-seeds a file, a channel or a
   sandbox from A on request. This is the rule the config file's `mcpServers` refresh already
   follows for one key, applied per file.
-- **`cow`**: copy-on-write. B reads A's files through until it writes one; the write creates
+- **`copy-on-write`**: B reads A's files through until it writes one; the write creates
   B's private copy, which shadows A's file from then on. A's edits reach B live for every
-  unshadowed file, so `cow` needs no refresh step at all; a shadowed file is B's until B
+  unshadowed file, so it needs no refresh step at all; a shadowed file is B's until B
   deletes its copy (which exposes A's again) or `reset`s it. The launch warns when a
-  shadowed file has since changed in A. Between `copy` and `ro` on the scale: it reads like
-  `ro`, writes like `copy`. A native edit to a shadowed file is the one thing it hides, and
+  shadowed file has since changed in A. Between `copy` and `read-only` on the scale: it
+  reads like `read-only`, writes like `copy`. A native edit to a shadowed file is the one thing it hides, and
   it hides it loudly.
-- **`ro`**: A's files, live, read-only. B cannot author at that channel; for `settings` this
-  breaks `/model` and permission saves, which is the cost of choosing `ro` for that channel.
-- **`live`**: today's behaviour. A and B steer each other with no delay. Races are the
+- **`read-only`**: A's files, live. B cannot author at that channel; for `settings` this
+  breaks `/model` and permission saves, the cost of choosing it for that channel.
+- **`read-write`**: A and B steer each other with no delay. Races are the
   agent's own, exactly as between two native sessions; the sandbox adds no arbitration.
-- **`none`**: no connection. B has whatever it created itself at that channel.
+- **`own`**: no connection. B has whatever it created itself at that channel.
 
 Two connections are **mandatory** and fixed:
 
-- **identity** is `live` to native. Two agents of one user are one login; cloning a refresh
+- **identity** is `read-write` to native. Two agents of one user are one login; cloning a refresh
   token multiplies a race (the study's harness notes it), so the token stays one file. This
   is the floor of the scale: "completely independent" sandboxes of one user still share who
   they are. Full independence needs two accounts, which is outside this tool. `hide` keeps
   the tooling parts (`gh/`, `ide/`) out of a sandbox that should not have them.
-- **project** is `live` to the working tree, by definition: it is where agents are meant to
+- **project** is `read-write` to the working tree, by definition: it is where agents are meant to
   communicate, including agents of different kinds, through files and a document convention
   such as `AGENTS.md`. Roles on one project share it. Exclusions inside it (a reviewer that
   must not read `.git`, issue #55) are a detail of this connection, not a mode.
@@ -136,34 +133,34 @@ Two connections are **mandatory** and fixed:
 1. **A connection moves one channel along the scale and does nothing else.** No knob has a
    side effect on another channel, so positions compose without interaction.
 2. **The independent extreme is reachable for every channel the study lists.** A channel
-   with no `none` is a gap. An unclassified path is private by construction, which is how
+   with no `own` is a gap. An unclassified path is private by construction, which is how
    this invariant holds for paths nobody has classified yet.
 3. **Every step up the scale from the default is a widening**: trust-gated in the dot-file,
    ungated at launch. Every step down is free. This is the rule the existing knobs follow.
-4. **Agents communicate only through `live` connections and the project directory.** A
-   `live` connection's interface is the agent's own file format; the sandbox neither adds
+4. **Agents communicate only through `read-write` connections and the project directory.** A
+   `read-write` connection's interface is the agent's own file format; the sandbox neither adds
    nor promises arbitration. Network-mediated communication has no interface at all and is
    governed by the network mode alone.
-5. **A mode is B's view of its source.** Two sandboxes at `live` see each other; a sandbox at
-   `copy` beside one at `live` receives the other's writes at its next launch and sends
+5. **A mode is B's view of its source.** Two sandboxes at `read-write` see each other; one at
+   `copy` beside one at `read-write` receives the other's writes at its next launch and sends
    nothing back. Asymmetric flows are predictable because each side's mode is its own.
 
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
-between is a preset plus overrides. (Their agreed new names, and the scope axis that
-retires `--sandbox`, are in [The vocabulary, revised](#the-vocabulary-revised).)
+between is a preset plus overrides. The scope axis that will retire `--sandbox` is
+[agreed but not built](#scope-and-roles-agreed-not-built).
 
-| channel | `independent` | `default` | `shared` (today) |
+| channel | `isolated` | `inherit` | `shared` |
 |---|---|---|---|
-| identity | live native | live native | live native |
-| project | live | live | live |
-| instructions, settings, skills, agents, workflows, plugins | none | `cow` from native, `copy` where no overlay | live native |
-| tools | none | `copy` from native (`user-mcp = none` is its `none`) | live native |
-| memory | none (own only) | none, plus `ro` from named sandboxes (`[share-memory]`) | live (`memory_default = shared`) |
-| transcripts | none | none | live |
-| artefacts | none | none | live |
-| network | `none` | `proxy` | `proxy` or `open` |
+| identity | read-write native | read-write native | read-write native |
+| project | read-write | read-write | read-write |
+| instructions, settings, skills, agents, workflows, plugins | own | `copy-on-write` from native, `copy` where no overlay | read-write native |
+| tools | own | `copy` from native (`user-mcp = none` is its `own`) | read-write native |
+| memory | own only | own, plus `read-only` from named sandboxes (`[share-memory]`) | read-write (`memory_default = shared`) |
+| transcripts | own | own | read-write |
+| artefacts | own | own | read-write |
+| network | `own` | `proxy` | `proxy` or `open` |
 
 **This table is where the model is going, not what the engine does today.** Only the
 `instructions, settings, skills, agents, workflows, plugins` row is implemented: those six
@@ -195,7 +192,7 @@ isolation, because `native` holds state at "hide nothing".
 
 And it makes the scale a workflow rather than a taxonomy. With both extremes genuinely
 reachable, a policy can be built from either end: start at `native` and close channels
-until it is tight enough, or start at `independent` and open them until the job runs.
+until it is tight enough, or start at `isolated` and open them until the job runs.
 That only works if the ends are real positions rather than approximations.
 
 Two requirements, both from what it reopens, and both as built:
@@ -213,7 +210,7 @@ bind still apply, exactly as `[net] mode = open` means no allowlist rather than 
 
 #### What parity actually cost
 
-Every channel at `live` was the easy part and was not nearly enough. Writing the
+Every channel at `read-write` was the easy part and was not nearly enough. Writing the
 differential test (`tests/integration/native-parity.bats`) found three divergences that
 the preset, believed finished, still had — each one invisible from inside a single run:
 
@@ -240,17 +237,20 @@ not failures. Nothing crashed, nothing warned, and every other test passed. They
 sandbox quietly handing the agent a different world, which is the one class of bug this
 repository had no way to see.
 
-`default` is the transparency principle stated as connections: a sandbox created from native
+`inherit` is the fidelity principle stated as connections: a sandbox created from native
 with these connections behaves like a native Claude Code whose configuration is the user's,
-read live, with its own writes kept to itself. `independent` is the two mandatory
+read live, with its own writes kept to itself. `isolated` is the two mandatory
 connections and nothing else. `shared` is the engine before 0.2.
 
-## The vocabulary, revised
+## Why these names
 
-**Agreed 2026-09-20, implemented nowhere.** The names used everywhere else in this
-document, and in the engine, are the ones that ship today; this section records what they
-become and why, so the reasoning is not lost between the decision and the work. Until it
-lands, a reader should treat the names above as current and this section as the plan.
+**Implemented in 0.3.** The names used everywhere in this document are the ones the engine
+uses. This section keeps the reasoning, which is the part that would otherwise be lost: a
+name that reads oddly gets renamed again by someone who cannot see why it was chosen.
+
+The scale never shipped under its old names -- v0.2.1 contains no `--preset`, no
+`AGENT_SANDBOX_PRESET` and no connections parser at all -- so the rename cost nobody a
+migration. It had to land before 0.3.0 for exactly that reason.
 
 ### The ladder is boundary permeability, and it is direction-dependent
 
@@ -280,7 +280,7 @@ only the middle rung needs to say *which way*, and inheritance already means "co
 the parent, does not go back". It also matches `user-mcp = inherit`, which means the same
 thing one channel down.
 
-### The channel mode `none` becomes `own`, and the abbreviations are spelled out
+### Why the mode is `own`, and why the abbreviations are spelled out
 
     own  <  copy  <  copy-on-write  <  read-only  <  read-write
 
@@ -294,10 +294,15 @@ Spelling out `cow`, `ro` and `live` follows the same rule as the scope names: no
 abbreviations and no aliases. A dotfile is written once and read by people who did not
 write it.
 
-Renaming off `none` is also what frees that word for the terminal preset. With both in
-play, `preset = none` (no sandbox at all) and `skills = none` (nothing of yours) would be
-the same word at opposite ends of one model, and the failure mode is someone writing
-`preset = none` for maximum isolation and getting none of it.
+Renaming off `none` is also what frees that word for the terminal preset, which is not
+built yet. With both in play, `preset = none` (no sandbox at all) and `skills = none`
+(nothing of yours) would be the same word at opposite ends of one model, and the failure
+mode is someone writing `preset = none` for maximum isolation and getting none of it.
+
+The old spellings are refused rather than aliased, and each refusal names its replacement
+(`_as_mode_renamed`, `_as_preset_renamed`). That is a courtesy to anyone tracking `main`
+between 0.2.1 and 0.3.0, not a compatibility promise -- there is no released version to be
+compatible with.
 
 **The order is how much of YOUR files reach the sandbox, not what the sandbox may do.**
 Spelled out, that reads oddly at one step -- a sandbox can write under `copy-on-write` but
@@ -310,6 +315,19 @@ and the agent's own briefing says "A blocked action is deliberate, so do not ret
 channel at this mode denies nothing -- the sandbox gets a working, writable, persistent
 directory at that path; it simply is not yours. And `private` reads as *per session*, when
 this slot is per sandbox and persists across every session of it.
+
+### Why the transparency principle became the fidelity principle
+
+The word is needed for a preset, and the principle was under-placed anyway. It is not a
+property of one rung: the sandbox should reproduce the native experience faithfully, minus
+what the user explicitly asked to change. `inherit` expresses that for configuration and
+`native` asserts it absolutely, which is why a difference between `--preset native` and
+`--sandbox none` is a bug rather than a preference.
+
+## Scope and roles: agreed, not built
+
+**None of this section is implemented.** It records decisions taken alongside the renames
+above, which did land. Tracked in [#102](https://github.com/pearu/agent-sandbox/issues/102).
 
 ### Scope: a second axis, orthogonal to role
 
@@ -355,14 +373,6 @@ meanings — which invocations are sandboxed, and whether to sandbox at all — 
 form always has an inert half, since `profile_route` consults only `want_bg` once a launch
 is background and never reads `want_fg`. It stays as documented sugar until 1.0.
 
-### The transparency principle becomes the fidelity principle
-
-The word is needed for a preset, and the principle was under-placed anyway. It is not a
-property of one rung: the sandbox should reproduce the native experience faithfully, minus
-what the user explicitly asked to change. `inherit` expresses that for configuration and
-`native` asserts it absolutely, which is why a difference between `--preset native` and
-`--sandbox none` is a bug rather than a preference.
-
 ## Mechanisms
 
 What exists: read-write and read-only binds of a source path at an inside path
@@ -373,14 +383,14 @@ directory and its control-path protection; a seeded, filtered, refreshed copy of
 needs. Measured on this host: the whole user-owned configuration copies into the session
 tmpfs in under 0.1 s and under 20 MB, hashes in under 0.1 s, and a stat walk takes 20 ms.
 
-What `cow` needs. bubblewrap gained `--overlay-src`, `--overlay`, `--tmp-overlay` and
+What `copy-on-write` needs. bubblewrap gained `--overlay-src`, `--overlay`, `--tmp-overlay` and
 `--ro-overlay` in release 0.11.0. Ubuntu 24.04 ships 0.9.0, which rejects them (measured);
 26.04 ships 0.11.1. Measured on this host after a local no-change rebuild of Ubuntu's own
 0.12.0-1 source for 24.04 (kernel 6.8, the installer's AppArmor profile, the engine's own
 flags: `--unshare-all`, uid and gid mapping, `--cap-drop ALL`): an overlay mount inside
 bubblewrap's user namespace works. Reads fall through to the lower directory, a write lands
 in the upper directory and the lower file is untouched, `--tmp-overlay` discards the writes,
-and the engine's integration suite passes unchanged on 0.12.0. So `cow` has two
+and the engine's integration suite passes unchanged on 0.12.0. So `copy-on-write` has two
 implementations with one semantics:
 
 - **real**: `--overlay-src <A> --overlay <upper> <work> <inside>` where bubblewrap allows it;
@@ -408,7 +418,7 @@ binds placed inside the overlay in the upper layer (an empty `.credentials.json`
 upper directory as well.
 
 `copy` needs the seed, a base manifest of what was last synced, and the three-way step at
-launch; it has no exit step, since B writes its persistent copy directly. `ro` and `live` are
+launch; it has no exit step, since B writes its persistent copy directly. `read-only` and `read-write` are
 binds. Every mode is per channel, and a channel that maps to several paths applies its mode to
 each.
 
@@ -418,7 +428,7 @@ A profile declares four things and no dispositions:
 
 1. where the agent keeps its state, and how to point the agent at the sandbox's copy of it
    (Claude Code: `~/.claude`, `CLAUDE_CONFIG_DIR`);
-2. the **identity** paths, always connected `live` to native (Claude Code: `.credentials.json`;
+2. the **identity** paths, always connected `read-write` to native (Claude Code: `.credentials.json`;
    `gh/`, `ide/` as hideable tooling);
 3. the **channel → path** table above, including what is server-owned state;
 4. the **per-session scratch** the isolate spec replaces per launch.
@@ -436,20 +446,20 @@ connection they mean.
 ```ini
 [sandbox]
 role = reviewer            # the sandbox key's second half; default: default
-preset = default           # independent | default | shared
+preset = inherit           # isolated | inherit | shared
 
 [overlay]
-mode = auto                # auto | off -- what `cow` is implemented with
+mode = auto                # auto | off -- what copy-on-write is implemented with
 
 [connect]                  # channel = mode [source]; source: native | sandbox:<project>[/<role>] | dir:<path>
-instructions = cow native
+instructions = copy-on-write native
 skills = copy native
-memory = ro sandbox:~/git/acme/app          # what [share-memory] means today
-tools = none                                # what user-mcp = none means today
-artefacts = live native
+memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today
+tools = own                                 # what user-mcp = none means today
+artefacts = read-write native
 ```
 
-Launch-time forms: `--connect 'memory=ro sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
+Launch-time forms: `--connect 'memory=read-only sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
 the same syntax, `--role`, `--preset`, and `--overlay auto|off` with
 `AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does.
 
@@ -458,10 +468,10 @@ approved, so `[connect]` grants nothing from an unreviewed file, and a step *up*
 written there is a widening the `--trust` review exists to show. The flag and the
 environment variable are not gated and never have been, for any knob: they are the user's
 own shell, and a user who can set them can equally run the agent unsandboxed. That
-distinction costs nothing while every channel defaults to `live`, since no launch-time
-form can widen anything. It starts to matter the day the `default` preset lowers those
+distinction costs nothing while every channel defaults to `read-write`, since no launch-time
+form can widen anything. It starts to matter the day the `inherit` preset lowers those
 defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can quietly put a
-channel back at `live` for every project. Whoever lands presets decides whether that stays
+channel back at `read-write` for every project. Whoever lands presets decides whether that stays
 true and says so here.
 
 `reset` is an engine verb: `--reset-connection skills`, or the whole sandbox.
@@ -474,10 +484,10 @@ and free, failing until the engine implements the mode. In outline:
 
 - **Connections**: for each channel and mode, does content flow as the mode says, in each
   direction and at the stated time (launch or live)? The study's rows map directly: rows 5–9
-  and 19–22 measured instructions, settings, skills, agents, workflows and plugins at `live`
+  and 19–22 measured instructions, settings, skills, agents, workflows and plugins at `read-write`
   (T5 `obtained`, and T2/T6 `obtained` for the write half by construction); the same rows at
-  `copy` and `cow` are the post-fork arm. Rows 1–4 and 16 measured memory and transcripts at
-  `none` with memory's `ro` share. Rows 10 and 11 measured tools and the config file, now at
+  `copy` and `copy-on-write` are the post-fork arm. Rows 1–4 and 16 measured memory and transcripts at
+  `own` with memory's `read-only` share. Rows 10 and 11 measured tools and the config file, now at
   `copy`.
 - **Escapes**: whatever reaches another sandbox outside any connection. Known: the daemon's
   directory keyed by uid (row 15's neighbour, issue #45), the MCP logs under `~/.cache` (a
@@ -503,7 +513,7 @@ here rather than designed around; the project directory is where different agent
   already at `~/.local/state/agent-sandbox/claude/<slug>/`; the directory becomes
   `<slug>/default/` when roles arrive, or stays as the default role's home.
 - `[share-memory]` becomes `memory = ro sandbox:<project>`; `memory_default = shared` becomes
-  the `shared` preset's memory row; `[claude] hide` becomes `none` for identity's tooling
+  the `shared` preset's memory row; `[claude] hide` becomes `own` for identity's tooling
   parts; `user-mcp = none` becomes `tools = none`. All four keys stay accepted.
 - The isolate spec keeps the per-session scratch and drops everything that "private by
   construction" now covers.
@@ -511,7 +521,7 @@ here rather than designed around; the project directory is where different agent
 
 ## Settled while writing this
 
-- **Overlay availability per host.** Real `cow` needs bubblewrap 0.11 or later. Ubuntu
+- **Overlay availability per host.** Real `copy-on-write` needs bubblewrap 0.11 or later. Ubuntu
   26.04 ships 0.11.1; 24.04 ships 0.9.0 and gets 0.12.0 through the rebuild recipe in
   [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404), which
   `install.sh` points at when it finds an older bubblewrap (0.12.0 also carries the fix for
@@ -520,17 +530,17 @@ here rather than designed around; the project directory is where different agent
   26.04 has overlay support, 24.04 ships 0.9.0 and 22.04 ships 0.6.1, so two of the three
   supported releases take the fallback unless their bubblewrap is upgraded. Nothing may
   therefore be designed as if the overlay path were the usual one.
-- **Where there is no overlay, `cow` is `copy`** — not a separate emulation to write and
+- **Where there is no overlay, `copy-on-write` is `copy`** — not a separate emulation to write and
   keep in step. Compare the two definitions above and they differ in exactly one place.
   Across launches they are identical: a source change to an untouched file arrives, a
   touched file stays the sandbox's, a delete inside persists while the source keeps its
   copy, a conflict warns. The only divergence is *within* a running session, where an
   overlay reads through live and a snapshot cannot. So the fallback costs a branch and a
   notice rather than a subsystem, and the launch says which one it used. Nothing stops
-  working on an old host, which is why no channel needs widening to `live` to accommodate
+  working on an old host, which is why no channel needs widening to `read-write` to accommodate
   one.
 
-  Its cost is storage: `copy` duplicates the channel's files per sandbox where `cow`
+  Its cost is storage: `copy` duplicates the channel's files per sandbox where `copy-on-write`
   stores only what was written. Measured on one developer machine, the channels a
   connection covers came to 45 MB, dominated by `plugins/` at 7.4 MB and `skills/` at
   4.3 MB; instructions and settings are kilobytes.
@@ -538,18 +548,18 @@ here rather than designed around; the project directory is where different agent
   **`[overlay] mode = off`** forces the fallback on a host that could use an overlay. It
   exists because overlayfs is not usable everywhere bubblewrap supports it — some
   filesystems, some container hosts — and because a path that only ever runs on old
-  machines is a path that rots. It can only move `cow` to `copy`, a step *down* the scale,
+  machines is a path that rots. It can only move `copy-on-write` to `copy`, a step *down* the scale,
   so it needs no trust gate. It is also what lets the study compare the two
   implementations on one host, which is W8.
-- **`plugins/`**: `cow`, like the rest of its group. Not `ro`: Claude Code writes into
+- **`plugins/`**: `copy-on-write`, like the rest of its group. Not `read-only`: Claude Code writes into
   `plugins/` at every start (the `synced/` markers and manifest, a rename onto
   `installed_plugins_v2.json`, a lock beside `known_marketplaces_claudeai.json`), and under
-  `ro` those fail silently at every launch, measured. Not `live`: a plugin bundles hooks and
+  `read-only` those fail silently at every launch, measured. Not `read-write`: a plugin bundles hooks and
   skills, and row 9 measured a plugin's hook firing in another project's sandbox, so the
-  channel carries inference like `skills` does and `live` would keep T2 and T6 open for it.
+  channel carries inference like `skills` does and `read-write` would keep T2 and T6 open for it.
   If overlay use is to be minimised, `copy` is the alternative that keeps the channel closed:
   plugins change rarely, so a refresh at launch loses nothing that matters.
-- **Two sessions of one sandbox at once, under `cow`: mount once, and let every session
+- **Two sessions of one sandbox at once, under `copy-on-write`: mount once, and let every session
   join that mount.** A sandbox is keyed by project and role, so two terminals on one
   project are two sessions of one sandbox; that is the ordinary case, and refusing it or
   serialising behind an interactive session would break a daily workflow to avoid a
@@ -567,10 +577,12 @@ here rather than designed around; the project directory is where different agent
   identity is a platform premise and is asserted in the test rather than in a cell, which
   inspects no layout.
 
-  **NOT YET BUILT, and `cow` ships before it.** Today each session mounts its own
-  overlay, so two sessions of one sandbox are the undefined arrangement above. It
-  is safe to ship in that state only because nothing selects `cow` by default and
-  nothing will until the preset cutover; it must not still be true then. Two
+  **BUILT, after this was written and before the preset cutover made it urgent.**
+  The paragraph below records why it could be deferred at all; the holder landed
+  in the same release, so the deferral never had to hold. Before it, each session
+  mounted its own overlay and two sessions of one sandbox were the undefined
+  arrangement above -- safe only while nothing selected `copy-on-write` by
+  default, which the `inherit` preset then did. Two
   things stand in for the holder meanwhile: a launch that finds another live
   session of the same sandbox says so, once, rather than a notice on every launch
   that people learn to skip; and `--reset-connection` refuses outright while a
@@ -598,13 +610,13 @@ here rather than designed around; the project directory is where different agent
   `copy` the question does not arise, since two sessions write one persistent directory as
   two native sessions do.
 
-  Measured while implementing `cow`: an overlay mounts and reads through normally
+  Measured while implementing `copy-on-write`: an overlay mounts and reads through normally
   under the `strict` network mode, where bubblewrap runs inside pasta's user
   namespace. That was an open question and is not one.
 - **A channel path that names a FILE cannot be deleted from inside, and that is a
   limitation this model INTRODUCES.** Narrowing such a channel binds that one file, so
   the path inside is a mount point in a directory the sandbox does not own, and a mount
-  point cannot be unlinked from within. Measured on this host: under `live`, where the
+  point cannot be unlinked from within. Measured on this host: under `read-write`, where the
   whole state directory is bound, a sandboxed session deletes `CLAUDE.md`,
   `settings.json` and `rules/topic.md` without trouble; under `copy` the first two are
   refused with `EBUSY` while the third, being an ordinary file inside a bound directory,
@@ -630,8 +642,8 @@ here rather than designed around; the project directory is where different agent
   truncation as deletion would help nobody: the agent's own `rm` would still fail, so the
   rule would exist only for whoever had been told about it.
 
-  **The same two paths settle `cow`.** Overlayfs mounts a directory and cannot stack on a
-  single file, so `cow` on a file-shaped path is `copy` whatever bubblewrap supports —
+  **The same two paths settle `copy-on-write`.** Overlayfs mounts a directory and cannot stack on a
+  single file, so `copy-on-write` on a file-shaped path is `copy` whatever bubblewrap supports —
   not a fallback for old hosts but a permanent property of the mechanism.
 - **Warning granularity.** File names at launch, one line per shadowed or conflicting file,
   and the differing lines on demand (`--connection-diff <channel>`). Warnings are never

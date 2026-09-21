@@ -17,7 +17,7 @@
 # the record writer and the validity gate. This file adds only what the connections
 # model needs and the leak study had no reason to build:
 #
-#   a LAUNCH SEQUENCE. `copy` and `cow` promise things that appear only at the NEXT
+#   a LAUNCH SEQUENCE. `copy` and `copy-on-write` promise things that appear only at the NEXT
 #   launch of the SAME sandbox -- a refresh that arrives, a change that persists, a
 #   conflict that warns. So a cell is several launches with source edits between them,
 #   and every record carries the launch index.
@@ -121,9 +121,9 @@ conn_cell() {
   #
   # It used to leave the knob empty for `live`, because `live` was what the engine
   # did with no knob at all. Presets ended that: the `default` preset puts every
-  # declared channel at `cow`, so an empty knob turns the live arm into a second
-  # cow arm. Measured rather than assumed -- L2 does fail there, because a write
-  # under `cow` never reaches the source, so this would not have passed in
+  # declared channel at `copy-on-write`, so an empty knob turns the live arm into a second
+  # copy-on-write arm. Measured rather than assumed -- L2 does fail there, because a write
+  # under `copy-on-write` never reaches the source, so this would not have passed in
   # silence. But L1 and L3 keep passing while measuring the wrong mode, and a
   # single failing assertion in an arm whose name says `live` is a confusing way
   # to be told that the default moved.
@@ -134,9 +134,9 @@ conn_cell() {
   # when a default moves is measuring the default, not the mode.
   LEAK_CONNECT="instructions=$CONN_MODE native"
   LEAK_PRESET=shared
-  # How `cow` is implemented for this cell. Empty leaves the engine's own choice; the
+  # How `copy-on-write` is implemented for this cell. Empty leaves the engine's own choice; the
   # suite-wide default comes from CONN_OVERLAY, which the runner sets for its second pass
-  # over the cow suite so the two implementations can be compared on one host.
+  # over the copy-on-write suite so the two implementations can be compared on one host.
   LEAK_OVERLAY="${CONN_OVERLAY:-}"
   CONN_OVERLAY_EFF="${CONN_OVERLAY:-auto}"
   CONN_SOURCE="$LEAK_CONFIG"
@@ -155,7 +155,7 @@ conn_cell() {
   CONN_VERDICT="" CONN_READER_OUT="" CONN_LAUNCH_SAID=""
 }
 
-# conn_overlay auto|off -- force this cell's `cow` implementation, whatever the host
+# conn_overlay auto|off -- force this cell's `copy-on-write` implementation, whatever the host
 # could do. W8 is the cell that needs it: the fallback is the path two of the three
 # supported releases take, and a path exercised only on old machines is a path that rots.
 conn_overlay() {
