@@ -6,6 +6,8 @@ break compatibility.
 
 ## Unreleased
 
+## 0.3.0 — 2026-09-21
+
 ### Added
 
 - `install.sh` warns when bubblewrap is older than 0.12.0. That release fixes
