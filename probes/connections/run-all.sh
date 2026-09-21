@@ -19,7 +19,7 @@
 # Free: no credentials, no network, no API calls. Host-only, like every probe here.
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SUITES=(part1-live.sh part1-none.sh part1-copy.sh part1-cow.sh part1-ro.sh)
+SUITES=(part1-read-write.sh part1-own.sh part1-copy.sh part1-copy-on-write.sh part1-read-only.sh)
 [[ $# -gt 0 ]] && SUITES=("$@")
 
 OUT="$(cd -- "$HERE/../.." && pwd)/probes/results/connections/batch-$(date +%Y%m%dT%H%M%S)"
@@ -66,27 +66,27 @@ for s in "${SUITES[@]}"; do
   total_ctrl_bad=$((total_ctrl_bad + $(field 'bad)' "$line")))
 done
 
-# ----- W8's other half: the two `cow` implementations, compared on one host ----------
-# Where bubblewrap cannot mount an overlay, `cow` is `copy`, and the claim that the two
+# ----- W8's other half: the two `copy-on-write` implementations, compared on one host ----------
+# Where bubblewrap cannot mount an overlay, `copy-on-write` is `copy`, and the claim that the two
 # agree at launch granularity used to need a second, older machine. It does not any more:
 # `[overlay] mode = off` forces the fallback here, so the suite runs twice and the
 # verdicts are diffed. That compares the two implementations AGAINST EACH OTHER, which the
 # original plan could not do -- it would have compared one of them against a memory of the
 # other, taken on different hardware at a different time.
 divergent=0
-cowlog="$OUT/part1-cow.log"
+cowlog="$OUT/part1-copy-on-write.log"
 if [[ -f "$cowlog" ]]; then
-  printf '%-18s running again, overlay forced off...\n' part1-cow
-  nolog="$OUT/part1-cow-nooverlay.log"
-  CONN_OVERLAY=off "$HERE/part1-cow.sh" >"$nolog" 2>&1 || true
+  printf '%-18s running again, overlay forced off...\n' part1-copy-on-write
+  nolog="$OUT/part1-copy-on-write-nooverlay.log"
+  CONN_OVERLAY=off "$HERE/part1-copy-on-write.sh" >"$nolog" 2>&1 || true
   reca="$(sed -n 's/^records: //p' "$cowlog" | tail -1)"
   recb="$(sed -n 's/^records: //p' "$nolog" | tail -1)"
   if [[ -d "$reca" && -d "$recb" ]]; then
     divergent="$(python3 "$HERE/compare.py" "$reca" "$recb")"
-    printf 'cow with and without the overlay: %s assertion(s) differ\n' "$divergent" \
+    printf 'copy-on-write with and without the overlay: %s assertion(s) differ\n' "$divergent" \
       | tee -a "$OUT/summary.txt"
   else
-    printf 'cow with and without the overlay: NOT COMPARED (a run produced no records)\n' \
+    printf 'copy-on-write with and without the overlay: NOT COMPARED (a run produced no records)\n' \
       | tee -a "$OUT/summary.txt"
     divergent=1
   fi
@@ -98,7 +98,7 @@ fi
     "$total_pass" "$total_fail" "$total_todo" "$total_blocked"
   ((broken)) && printf '%d suite(s) did not produce a usable result\n' "$broken"
   ((total_ctrl_bad)) && printf '%d control(s) did not hold\n' "$total_ctrl_bad"
-  ((divergent)) && printf '%d cow assertion(s) differ between the two implementations\n' "$divergent"
+  ((divergent)) && printf '%d copy-on-write assertion(s) differ between the two implementations\n' "$divergent"
   printf 'logs: %s\n' "$OUT"
 } | tee -a "$OUT/summary.txt"
 

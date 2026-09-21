@@ -268,3 +268,73 @@ profile_dotfile_keys() {
     }
   done
 }
+
+# ---- the scale and the presets, as SETS ------------------------------------
+#
+# Added after the 0.3 rename, which found three sentences that had been wrong
+# since presets landed: the engine claiming "`copy` and `cow` are not
+# implemented yet", the example dot-file saying the same, and the design doc's
+# own header reading "Status: proposed, not implemented". Nothing caught any of
+# them, because the existing checks in this file all diff a SET OF IDENTIFIERS
+# and those were prose claims with no identifier in them.
+#
+# These two close the part of that gap which can be closed mechanically: a mode
+# or preset list is a set, so it can be diffed like the others. The claim-shaped
+# half is covered by the second test, narrowly -- it only fires on a name the
+# engine actually implements, so a doc may still say the terminal `none` preset
+# is unbuilt, because it is.
+
+code_modes() { # the modes the engine accepts, from the validation case arm
+  grep -oE '^    own \| copy \|[^)]*' "$ENGINE" | head -1 \
+    | tr -d ' ' | tr '|' '\n' | sed '/^$/d' | sort -u
+}
+code_presets() { # the presets the engine accepts, from the resolution case arm
+  {
+    grep -oE '^      isolated \| inherit \| shared\)' "$ENGINE" \
+      | tr -d ' )' | tr '|' '\n'
+    grep -qE '^      native\)' "$ENGINE" && echo native
+  } | sed '/^$/d' | sort -u
+}
+
+@test "every doc that prints the scale prints the scale the engine accepts" {
+  local engine_scale doc line
+  engine_scale="$(code_modes | paste -sd' ')"
+  [ -n "$engine_scale" ]
+  for doc in README.md docs/config.md docs/connections.md docs/agent-sandbox.example; do
+    # any line that spells the scale out with the ordering operator
+    while IFS= read -r line; do
+      # the line's own words must be exactly the engine's five, nothing added
+      # or dropped -- a doc that lists four is the drift this catches
+      local got
+      got="$(printf '%s' "$line" | grep -oE '\b(own|copy|copy-on-write|read-only|read-write|none|cow|ro|live)\b' | sort -u | paste -sd' ')"
+      [ "$got" = "$engine_scale" ] || {
+        echo "in $doc, scale line disagrees with the engine"
+        echo "  engine: $engine_scale"
+        echo "  doc:    $got"
+        echo "  line:   $line"
+        return 1
+      }
+    done < <(grep -hE '(own|none) < copy <' "$REPO_ROOT/$doc" || true)
+  done
+}
+
+@test "no doc calls a mode or preset unimplemented when the engine implements it" {
+  local names name doc hit=0
+  names="$(
+    code_modes
+    code_presets
+  )"
+  for doc in README.md docs/config.md docs/connections.md docs/agent-sandbox.example CHANGELOG.md; do
+    [ -f "$REPO_ROOT/$doc" ] || continue
+    while IFS= read -r line; do
+      for name in $names; do
+        # the claim and the name on one line, for a name that DOES work
+        if [[ "$line" == *"\`$name\`"* ]]; then
+          echo "$doc claims an implemented name is not: $line"
+          hit=1
+        fi
+      done
+    done < <(grep -hiE 'not implemented|not yet in the engine|NOT YET BUILT|refused until implemented' "$REPO_ROOT/$doc" || true)
+  done
+  [ "$hit" -eq 0 ]
+}

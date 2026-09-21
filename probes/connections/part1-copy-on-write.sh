@@ -15,9 +15,9 @@
 set -euo pipefail
 # shellcheck source=probes/connections/lib.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-conn_setup part1-cow
+conn_setup part1-copy-on-write
 
-conn_cell W1 cow "the source reads through"
+conn_cell W1 copy-on-write "the source reads through"
 tok="$(conn_source_write "$CONN_CHANNEL_FILE")"
 conn_read "$CONN_CHANNEL_FILE" "$tok"
 conn_expect obtained "the source's canary is inside"
@@ -25,7 +25,7 @@ dtok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
 conn_read "$CONN_CHANNEL_DIR" "$dtok"
 conn_expect obtained "the directory shape too"
 
-conn_cell W2 cow "a source change to an untouched file arrives, with no refresh step"
+conn_cell W2 copy-on-write "a source change to an untouched file arrives, with no refresh step"
 tok1="$(conn_source_write "$CONN_CHANNEL_FILE")"
 conn_read "$CONN_CHANNEL_FILE" "$tok1"
 conn_expect obtained "launch 1 reads through"
@@ -33,7 +33,7 @@ tok2="$(conn_source_write "$CONN_CHANNEL_FILE")"
 conn_read "$CONN_CHANNEL_FILE" "$tok2"
 conn_expect obtained "launch 2 has the source's new version"
 
-conn_cell W3 cow "a write shadows, and does not reach the source"
+conn_cell W3 copy-on-write "a write shadows, and does not reach the source"
 tok="$(conn_source_write "$CONN_CHANNEL_FILE")"
 before="$(conn_source_sha "$CONN_CHANNEL_FILE")"
 inside="$(leak_token INSIDE)"
@@ -44,7 +44,7 @@ conn_expect_host "$before" "$(conn_source_sha "$CONN_CHANNEL_FILE")" \
 conn_read "$CONN_CHANNEL_FILE" "$inside"
 conn_expect obtained "and the shadow persists to the next launch"
 
-conn_cell W4 cow "a source change to a shadowed file is hidden, and named"
+conn_cell W4 copy-on-write "a source change to a shadowed file is hidden, and named"
 conn_source_write "$CONN_CHANNEL_FILE" >/dev/null
 inside="$(leak_token INSIDE)"
 conn_write_inside "$CONN_CHANNEL_FILE" "$inside"   # shadow it
@@ -62,7 +62,7 @@ conn_expect not-obtained-absent "the source's newer version is hidden by the sha
 # exercises the copy conflict and never the overlay's own shadow warning. This
 # cell is the directory shape, where the overlay really is the mechanism. The gap
 # was not theoretical: the overlay warning was broken and every cell passed.
-conn_cell W4d cow "a source change under a shadowed file in the channel's DIRECTORY is named"
+conn_cell W4d copy-on-write "a source change under a shadowed file in the channel's DIRECTORY is named"
 tok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
 conn_read "$CONN_CHANNEL_DIR" "$tok"
 conn_expect obtained "launch 1 reads it through, and the source is noted"
@@ -75,7 +75,7 @@ conn_expect_said 'topic\.md' "and the launch NAMES the shadowed file"
 conn_read "$CONN_CHANNEL_DIR" "$newtok"
 conn_expect not-obtained-absent "the source's newer version is hidden by the shadow"
 
-conn_cell W5 cow "a delete inside is a persistent hide, not a change to the source"
+conn_cell W5 copy-on-write "a delete inside is a persistent hide, not a change to the source"
 tok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
 conn_read "$CONN_CHANNEL_DIR" "$tok"
 conn_expect obtained "launch 1 reads it through"
@@ -85,7 +85,7 @@ conn_expect "not-obtained-absent|not-obtained-unreachable" "the next launch does
 conn_expect_host yes "$(conn_source_exists "$CONN_CHANNEL_DIR/topic.md")" \
   "and the source still has it (the sandbox hid it, it did not delete it)"
 
-conn_cell W6 cow "reset removes the shadow AND the whiteout"
+conn_cell W6 copy-on-write "reset removes the shadow AND the whiteout"
 # BOTH HALVES, because the whiteout is the half the measurement was about: a reset that
 # only drops the layer's copies leaves a deleted file hidden for ever, and a cell that
 # shadows without also deleting would never notice.
@@ -107,7 +107,7 @@ conn_expect obtained "the shadowed file reads through from the source again"
 conn_read "$CONN_CHANNEL_DIR" "$ztok"
 conn_expect obtained "and the hidden one is back, so the whiteout went too"
 
-conn_cell W7 cow "a file the source ADDS to a directory appears"
+conn_cell W7 copy-on-write "a file the source ADDS to a directory appears"
 dtok="$(conn_source_write "$CONN_CHANNEL_DIR/topic.md")"
 conn_read "$CONN_CHANNEL_DIR" "$dtok"
 conn_expect obtained "launch 1 reads the directory through"
@@ -125,7 +125,7 @@ conn_expect obtained "launch 2 sees the new entry (read-through is not only for 
 # is not a cell at all: run-all.sh runs this whole suite twice, once each way, and diffs
 # the verdicts, which compares the two implementations directly instead of comparing one
 # against a memory of the other.
-conn_cell W8 cow "with the overlay forced off, cow is copy, and the launch says so"
+conn_cell W8 copy-on-write "with the overlay forced off, cow is copy, and the launch says so"
 conn_overlay off
 tok="$(conn_source_write "$CONN_CHANNEL_FILE")"
 conn_read "$CONN_CHANNEL_FILE" "$tok"
@@ -148,7 +148,7 @@ conn_expect obtained "and it is still the sandbox's at the next launch, as copy 
 # here: no cell inspects layout, and a behavioural cell could not tell the safe
 # arrangement from the undefined one anyway, because two independent mounts also see each
 # other's writes.
-conn_cell W9 cow "two sessions of one sandbox at once"
+conn_cell W9 copy-on-write "two sessions of one sandbox at once"
 conn_source_write "$CONN_CHANNEL_FILE" >/dev/null
 before="$(conn_source_sha "$CONN_CHANNEL_FILE")"
 seta="$(leak_token SESSA)"

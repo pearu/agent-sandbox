@@ -595,10 +595,10 @@ the engine to relay as a warning; the paths are relative for a directory channel
 and the channel's own name for a file one. `reset` throws the sandbox's copy away
 and re-seeds, which is the supported way back to the source.
 
-`shadows` answers the same question for `cow`, where the kernel does the hiding
+`shadows` answers the same question for `copy-on-write`, where the kernel hides
 and nothing here copies anything. An overlay's upper layer IS the list of files
 the sandbox has written, so the scan is: for each of them, has the source changed
-since we first noticed the shadow? That is the one thing `cow` hides and it hides
+since we first noticed the shadow? That is the one thing the mode hides, and it hides
 it loudly -- the source moved on and the sandbox will never see it.
 """
 

@@ -19,6 +19,78 @@ break compatibility.
   measured on such a host, the engine's integration suite passes unchanged and
   overlay mounts work inside bubblewrap's user namespace.
 
+- **Connections**: what of your native Claude Code install reaches a project's
+  sandbox, per channel, under a mode from the scale
+  `own < copy < copy-on-write < read-only < read-write`. A **channel** is named
+  by what it carries (`instructions`, `settings`, `skills`, `agents`,
+  `workflows`, `plugins`); a **mode** says how much of the source reaches the
+  sandbox; the only **source** so far is `native`, your own `~/.claude`. The
+  order is how much of *your* files reach the sandbox, not what the sandbox may
+  do: it can write under `copy-on-write` but not under `read-only`, and
+  `read-only` is still the higher rung, because it hands over the real file
+  where `copy-on-write` gives only a shadow of one. Set with `[connect]` in an
+  approved `.agent-sandbox`, `--connect 'channel=mode [source]'`, or
+  `AGENT_SANDBOX_CONNECT` (`;`-separated), in that precedence. A channel name
+  the profile does not carry refuses the launch rather than being ignored,
+  because a typo that quietly left a channel open would read to you as a
+  channel you had closed. `--reset-connection CHANNEL` throws the sandbox's copy
+  away and re-seeds it from your files, which is the supported way back.
+- **`copy` and `copy-on-write`**, the two modes that let a sandbox read your
+  files without writing back. `copy` seeds from the source and refreshes
+  anything the sandbox has not touched, comparing source, copy and a manifest of
+  what the source held at the last sync; nothing is ever merged textually and
+  nothing is ever written back, and when both sides changed a file the sandbox
+  keeps its own and the launch says which file, at every launch until a reset.
+  `copy-on-write` layers an overlay instead, so reads fall through until the
+  sandbox writes. Where an overlay is unavailable — bubblewrap older than 0.11,
+  `[overlay] mode = off`, or a channel path naming a single **file**, which
+  overlayfs cannot stack on — it behaves as `copy`, and the launch says so. The
+  two differ only *within* a running session. `[overlay] mode = auto|off`,
+  `--overlay` and `AGENT_SANDBOX_OVERLAY` choose the implementation, never
+  whether a channel is shared.
+- **The holder**: one bubblewrap process per sandbox that mounts every overlay
+  the sandbox could need and then sleeps, which each session joins. Without it,
+  two sessions of one sandbox were two independent overlay mounts over one upper
+  directory — an arrangement overlayfs documents as undefined. They now report
+  the same superblock. No behavioural test can see this: both arrangements let
+  each session read the other's writes, so only the superblock tells them apart,
+  and it is asserted in `tests/integration/connect-holder.bats`. Where the
+  holder cannot run (no `nsenter`, no `flock`, or the `strict` network mode) the
+  per-session overlay remains, with the concurrency warning it always had.
+- **Presets**: one position for every channel at once. `isolated` gives the
+  sandbox nothing of your install; `inherit` lets it read your instructions,
+  settings, skills, agents, workflows and plugins live while keeping its own
+  writes to itself; `shared` is one directory in both directions. Set with
+  `[sandbox] preset`, `--preset` or `AGENT_SANDBOX_PRESET`; a `[connect]` line
+  overrides the preset for its own channel and nothing else, which is the whole
+  vocabulary. An unknown name is refused rather than defaulted, because a preset
+  positions everything at once and guessing is the one thing it must never do. A
+  preset moves only the channels the engine manages as connections; memory,
+  transcripts, the configuration file and the rest keep their own controls until
+  they are folded in, and `docs/config.md` carries the full twelve-row table
+  naming what governs each row today.
+- **`--preset native`**, whose contract is an equality: it must behave
+  identically to `--sandbox none` while still going through bubblewrap, the
+  network mode and the syscall filter, so a difference between the two is a bug
+  in agent-sandbox. It is a test instrument rather than a way to run — state
+  isolation is off, including the host's own `$HOME`, `/tmp` and the full
+  environment — and it is accepted as the `--preset` flag only, never from the
+  environment or a project file, with a notice on every launch that `--quiet`
+  does not suppress. `tests/integration/native-parity.bats` runs the same agent
+  both ways and diffs the whole report; writing it found four divergences that
+  nothing else had, none of which failed anything at the time.
+
+### Changed
+
+- **A sandboxed session's writes to your instructions, settings, skills,
+  agents, workflows and plugins no longer reach your own files.** The engine
+  now starts every one of those channels at `copy-on-write` (the `inherit`
+  preset) instead of binding the state directory through. A session still reads
+  your files live; what it writes stays in the sandbox, so a model choice or a
+  permission save made inside no longer edits your own settings. This is the
+  behaviour change in this release. `preset = shared`, in any of its three
+  forms, restores exactly what 0.2.1 did.
+
 ## 0.2.1 — 2026-09-18
 
 ### Added

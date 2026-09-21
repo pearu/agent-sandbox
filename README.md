@@ -205,10 +205,10 @@ not exist. Values and defaults are in the last column.
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
 | — | — | `[sandbox] role` | reserved for the sandbox key's second half; only `default` exists today ([connections.md](docs/connections.md)) |
-| `--preset NAME` | `AGENT_SANDBOX_PRESET` | `[sandbox] preset` | where every channel sits before any `[connect]` override: `independent`, `default` (read your files live, keep the sandbox's writes to itself) or `shared` (one directory, both ways -- the engine before 0.3) (default). `native` -- parity with `--sandbox none`, so that a difference is a bug -- is the flag only ([connections.md](docs/connections.md)) |
-| `--overlay MODE` | `AGENT_SANDBOX_OVERLAY` | `[overlay] mode` | `auto` or `off`: what `cow` is implemented with, an overlay where bubblewrap supports one or the copy fallback everywhere; it can only move `cow` to `copy` (auto) ([connections.md](docs/connections.md)) |
+| `--preset NAME` | `AGENT_SANDBOX_PRESET` | `[sandbox] preset` | where every channel sits before any `[connect]` override: `isolated`, `inherit` (read your files live, keep the sandbox's writes to itself) or `shared` (one directory, both ways -- the engine before 0.3) (inherit). `native` -- parity with `--sandbox none`, so that a difference is a bug -- is the flag only ([connections.md](docs/connections.md)) |
+| `--overlay MODE` | `AGENT_SANDBOX_OVERLAY` | `[overlay] mode` | `auto` or `off`: what `copy-on-write` is implemented with, an overlay where bubblewrap supports one or the copy fallback everywhere; it can only move `copy-on-write` to `copy` (auto) ([connections.md](docs/connections.md)) |
 | `--reset-connection CHANNEL` | — | — | discard what this sandbox holds at CHANNEL and take your own copy again, then exit; what a conflict warning points at ([connections.md](docs/connections.md)) |
-| `--connect SPEC` | `AGENT_SANDBOX_CONNECT` | `[connect]` | per-channel `channel = mode [source]`: how much of your native install this project's sandbox sees, on the scale `none < copy < cow < ro < live`; `;`-separated in the variable (`live`, i.e. everything, for every channel) ([connections.md](docs/connections.md)) |
+| `--connect SPEC` | `AGENT_SANDBOX_CONNECT` | `[connect]` | per-channel `channel = mode [source]`: how much of your native install this project's sandbox sees, on the scale `own < copy < copy-on-write < read-only < read-write`; `;`-separated in the variable (the preset decides where each channel starts) ([connections.md](docs/connections.md)) |
 | `--ssh HOST` | — | — | reach HOST over SSH through a per-session agent constrained to it; the key never enters the sandbox (no SSH) ([ssh.md](docs/ssh.md)) |
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |
@@ -253,7 +253,8 @@ commented template in
   package installs, ports, editors — and how to tell what is blocking you.
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.
 - [docs/connections.md](docs/connections.md): proposed — sandboxes as
-  installations, connections between them under a `none < copy < cow < ro < live`
+  installations, connections between them under an
+  `own < copy < copy-on-write < read-only < read-write`
   scale; the model for controlling what passes between projects, roles and agents,
   with its experiments planned in
   [docs/connections-study.md](docs/connections-study.md).

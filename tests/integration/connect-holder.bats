@@ -38,7 +38,7 @@ PROBE
   # these tests failed silently until they were.
   COW=(AGENT_SANDBOX_NET=none XDG_STATE_HOME="$IHOME/.local/state"
     AGENT_SANDBOX_FORWARD="REPORT_NAME PROBE_WRITE PROBE_HOLD"
-    AGENT_SANDBOX_CONNECT='docs=cow native')
+    AGENT_SANDBOX_CONNECT='docs=copy-on-write native')
 }
 
 teardown() {

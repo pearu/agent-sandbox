@@ -63,7 +63,7 @@ approve_dotfile() {
 }
 
 @test "live is spelled out and still changes nothing: it is today's behaviour named" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=live native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-write native' -- claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$C" "$C"
   run ! argv_has --ro-bind "$C/CLAUDE.md" "$C/CLAUDE.md"
@@ -71,7 +71,7 @@ approve_dotfile() {
 
 @test "ro rebinds each of the channel's paths read-only, over the read-write state bind" {
   : >"$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=ro native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/CLAUDE.md" "$C/CLAUDE.md"
   argv_has --ro-bind "$C/rules" "$C/rules"
@@ -83,7 +83,7 @@ approve_dotfile() {
   # Otherwise the parent is read-write and the sandbox could CREATE the file,
   # authoring at a channel it was told it may only read.
   rm -f "$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=ro native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
   [ "$status" -eq 0 ]
   # Scan for `--ro-bind SRC $C/CLAUDE.md` rather than indexing off the path:
   # with the source absent the path appears as the DESTINATION, not the source,
@@ -105,20 +105,20 @@ approve_dotfile() {
 @test "none binds a private slot from the engine's state, not a tmpfs" {
   # A tmpfs would forget what the sandbox wrote; `none` promises the sandbox
   # keeps its own (study cell N3).
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
   [ "$status" -eq 0 ]
-  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/CLAUDE.md")" "$C/CLAUDE.md"
-  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/CLAUDE.md")" "$C/CLAUDE.md"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
   run ! argv_has --tmpfs "$C/CLAUDE.md"
-  [ -d "$SBOX/instructions/none/$(slugify "$C/rules")" ]
+  [ -d "$SBOX/instructions/own/$(slugify "$C/rules")" ]
 }
 
 @test "the slot survives the session: it is state, not scratch" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- claude --version
-  printf 'the sandbox wrote this\n' >"$SBOX/instructions/none/$(slugify "$C/CLAUDE.md")"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
+  printf 'the sandbox wrote this\n' >"$SBOX/instructions/own/$(slugify "$C/CLAUDE.md")"
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
   [ "$status" -eq 0 ]
-  [ "$(cat "$SBOX/instructions/none/$(slugify "$C/CLAUDE.md")")" = "the sandbox wrote this" ]
+  [ "$(cat "$SBOX/instructions/own/$(slugify "$C/CLAUDE.md")")" = "the sandbox wrote this" ]
 }
 
 @test "a mount point the bind creates on the host is cleaned up again" {
@@ -126,38 +126,38 @@ approve_dotfile() {
   # behind, and the next write to it failed. The engine already had this problem
   # with the config file and already had the list that fixes it.
   rm -f "$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$C/CLAUDE.md" ]
 }
 
 @test "each form is honoured, and the flag beats the environment" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- \
-    claude --connect 'instructions=ro native' --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- \
+    claude --connect 'instructions=read-only native' --version
   [ "$status" -eq 0 ]
   : >"$C/CLAUDE.md"
   argv_has --ro-bind "$C/rules" "$C/rules"
-  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "several specs in the environment are separated by semicolons, since a spec has spaces" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=ro native;skills=none native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native;skills=own native' -- claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
-  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills"
+  argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills"
 }
 
 @test "an approved dot-file is honoured, and the environment beats it" {
   cat >"$H/proj/.agent-sandbox" <<'EOF'
 [connect]
-instructions = none native
+instructions = own native
 EOF
   approve_dotfile
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 
-  run_engine AGENT_SANDBOX_CONNECT='instructions=ro native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
 }
@@ -165,23 +165,23 @@ EOF
 @test "an UNAPPROVED dot-file grants nothing, so a channel is not closed by an unreviewed file" {
   cat >"$H/proj/.agent-sandbox" <<'EOF'
 [connect]
-instructions = none native
+instructions = own native
 EOF
   run_engine -- claude --version
   [ "$status" -eq 0 ]
-  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "--connect is repeatable, and the last spec for a channel wins" {
   : >"$C/CLAUDE.md"
-  run_engine -- claude --connect 'skills=none native' \
-    --connect 'instructions=none native' --connect 'instructions=ro native' --version
+  run_engine -- claude --connect 'skills=own native' \
+    --connect 'instructions=own native' --connect 'instructions=read-only native' --version
   [ "$status" -eq 0 ]
   # the other channel is untouched by the repetition
-  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills"
+  argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills"
   # and the later spec for instructions replaced the earlier one
   argv_has --ro-bind "$C/rules" "$C/rules"
-  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "connection binds come BEFORE the per-session scratch, so the scratch still wins" {
@@ -189,10 +189,10 @@ EOF
   # isolated one. The order is load-bearing all the same -- a channel at `live`
   # must still not hand over another session's paste cache -- and an overlap is
   # exactly the kind of thing a later channel addition introduces quietly.
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
   [ "$status" -eq 0 ]
   local connect scratch
-  connect="$(argv_index "$SBOX/instructions/none/$(slugify "$C/rules")")"
+  connect="$(argv_index "$SBOX/instructions/own/$(slugify "$C/rules")")"
   scratch="$(argv_index "$C/paste-cache")"
   [ -n "$connect" ]
   [ -n "$scratch" ]
@@ -209,17 +209,17 @@ EOF
   mkdir -p "$sock" /tmp/cc-daemon-1000/b1952d0c/ctl "$H/base"
   proj="$(mkdir -p "$H/bgproj" && cd "$H/bgproj" && pwd -P)"
   printf '%s' "$proj" >"$H/base/bg-project"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=none native' -- \
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- \
     claude --wrap "$H/bin/claude" --bg-spare "$sock/a.claim.sock"
   [ "$status" -eq 0 ]
   local want="$STATE/claude/${proj//[^A-Za-z0-9-]/-}/default"
-  argv_has --bind "$want/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$want/instructions/own/$(slugify "$C/rules")" "$C/rules"
   # and NOT keyed by the directory the wrapper happened to run from
-  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "cow asks bwrap for an overlay on a directory-shaped path" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$C/rules" --overlay \
     "$SBOX/instructions/upper/$(slugify "$C/rules")" \
@@ -228,7 +228,7 @@ EOF
 
 @test "cow on a FILE-shaped path is copy, permanently: overlayfs cannot stack on a file" {
   printf 'YOURS\n' >"$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")"
@@ -240,11 +240,11 @@ EOF
 
 @test "--overlay off forces the copy fallback, and the launch SAYS so through --quiet" {
   printf 'YOURS\n' >"$C/rules/topic.md"
-  run_engine -- claude --connect 'instructions=cow native' --overlay off --quiet --version
+  run_engine -- claude --connect 'instructions=copy-on-write native' --overlay off --quiet --version
   [ "$status" -eq 0 ]
   # BEFORE the `run !` below, which replaces $output -- the helper warns about
   # exactly this and it is easy to do anyway.
-  [[ "$output" == *"cow is using copy here"* ]]
+  [[ "$output" == *"copy-on-write is using copy here"* ]]
   [[ "$output" == *"overlay is turned off"* ]]
   argv_has --bind "$SBOX/instructions/copy/$(slugify "$C/rules")" "$C/rules"
   run ! argv_has --overlay-src "$C/rules"
@@ -256,30 +256,30 @@ EOF
 mode = off
 EOF
   approve_dotfile
-  run_engine -- claude --connect 'instructions=cow native' --version
+  run_engine -- claude --connect 'instructions=copy-on-write native' --version
   [ "$status" -eq 0 ]
   run ! argv_has --overlay-src "$C/rules" # the file turned it off
 
-  run_engine AGENT_SANDBOX_OVERLAY=auto -- claude --connect 'instructions=cow native' --version
+  run_engine AGENT_SANDBOX_OVERLAY=auto -- claude --connect 'instructions=copy-on-write native' --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$C/rules" # the environment overrode the file
 
   run_engine AGENT_SANDBOX_OVERLAY=auto -- \
-    claude --connect 'instructions=cow native' --overlay off --version
+    claude --connect 'instructions=copy-on-write native' --overlay off --version
   [ "$status" -eq 0 ]
   run ! argv_has --overlay-src "$C/rules" # and the flag overrode the environment
 }
 
 @test "an unknown overlay mode keeps auto rather than guessing" {
   run_engine AGENT_SANDBOX_OVERLAY=sideways -- \
-    claude --connect 'instructions=cow native' --version
+    claude --connect 'instructions=copy-on-write native' --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"unknown mode 'sideways'"* ]]
   argv_has --overlay-src "$C/rules"
 }
 
 @test "--reset-connection clears an overlay's upper layer, whiteouts and all" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   local upper
   upper="$SBOX/instructions/upper/$(slugify "$C/rules")"
   mkdir -p "$upper"
@@ -293,7 +293,7 @@ EOF
   # It removes the very layers that session has mounted, and the conflict warning
   # actively tells the user to run it -- reading that in one terminal while the
   # session runs in another is the ordinary case, not an edge one.
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   fake_live_session "$SBOX"
   run_engine -- claude --reset-connection instructions
   [ "$status" -ne 0 ]
@@ -301,7 +301,7 @@ EOF
 }
 
 @test "and it goes ahead once that session is gone" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   fake_live_session "$SBOX"
   kill "$FAKE_SESSION_PID" 2>/dev/null
   local i
@@ -314,7 +314,7 @@ EOF
 }
 
 @test "a live session of ANOTHER sandbox does not block a reset" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   fake_live_session "$STATE/claude/some-other-project/default"
   run_engine -- claude --reset-connection instructions
   [ "$status" -eq 0 ]
@@ -326,7 +326,7 @@ EOF
   # overlayfs calls undefined. The stub bwrap exits immediately, so no holder
   # ever records itself here and this is the fallback path by construction.
   fake_live_session "$SBOX"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --quiet --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --quiet --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"without a shared overlay that is undefined"* ]]
   # once, not once per path in the channel
@@ -334,7 +334,7 @@ EOF
 }
 
 @test "and says nothing when it is the only session" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
   [[ "$output" != *"without a shared overlay"* ]]
 }
@@ -348,7 +348,7 @@ EOF
   # the source IS the lower, which means creating it when it is absent -- one
   # empty directory, in a tree bwrap already creates mount points in.
   rm -rf "$C/rules"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
   local i src=""
   for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
@@ -367,7 +367,7 @@ EOF
   # using `instructions` missed it.
   mkdir -p "$C/skills" "$C/commands"
   fake_live_session "$STATE/claude/some-other-project/default"
-  run_engine AGENT_SANDBOX_CONNECT='skills=cow native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='skills=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
   [[ "$output" != *"without a shared overlay"* ]]
   # both paths still got their overlay
@@ -393,10 +393,10 @@ EOF
 }
 
 @test "independent gives the sandbox nothing of the native install" {
-  run_engine AGENT_SANDBOX_PRESET=independent -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=isolated -- claude --version
   [ "$status" -eq 0 ]
-  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
-  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills"
   run ! argv_has --overlay-src "$C/rules"
 }
 
@@ -409,27 +409,27 @@ EOF
 }
 
 @test "a [connect] line overrides the preset for its own channel and no other" {
-  run_engine AGENT_SANDBOX_PRESET=independent \
-    AGENT_SANDBOX_CONNECT='instructions=ro native' -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=isolated \
+    AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$C/rules" "$C/rules"                               # overridden
-  argv_has --bind "$SBOX/skills/none/$(slugify "$C/skills")" "$C/skills" # still the preset
+  argv_has --ro-bind "$C/rules" "$C/rules"                              # overridden
+  argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills" # still the preset
 }
 
 @test "the preset takes all three forms, flag beating environment beating file" {
   cat >"$H/proj/.agent-sandbox" <<'EOF'
 [sandbox]
-preset = independent
+preset = isolated
 EOF
   approve_dotfile
   TEST_PRESET="" run_engine -- claude --version
-  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 
   run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
-  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 
-  run_engine AGENT_SANDBOX_PRESET=shared -- claude --preset independent --version
-  argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run_engine AGENT_SANDBOX_PRESET=shared -- claude --preset isolated --version
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "an unknown preset is REFUSED, not defaulted" {
@@ -445,7 +445,7 @@ EOF
   # The design's table also lists memory, transcripts, the config file and the
   # rest. Each still has machinery of its own, and a preset that silently claimed
   # to position them would leave the user believing a channel was shut.
-  run_engine AGENT_SANDBOX_PRESET=independent -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=isolated -- claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$COPY" "$H/home/.claude/.claude.json" # the config file, untouched by presets
 }
@@ -482,7 +482,7 @@ EOF
   # directory straight through
   argv_has --bind "$C" "$C"
   run ! argv_has --overlay-src "$C/rules"
-  run ! argv_has --bind "$SBOX/instructions/none/$(slugify "$C/rules")" "$C/rules"
+  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
   # and the notice is not suppressible: --quiet does not silence it
   run_engine -- claude --preset native --quiet --version
   [[ "$output" == *"state isolation is OFF"* ]]
@@ -517,7 +517,7 @@ EOF
 }
 
 @test "a source other than native is refused while only native is supported" {
-  run_engine -- claude --connect 'instructions=ro sandbox:~/other' --version
+  run_engine -- claude --connect 'instructions=read-only sandbox:~/other' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"is not supported yet"* ]]
 }
@@ -532,7 +532,7 @@ EOF
   # Everything else malformed is refused, so silently discarding the tail would
   # be the one place a user could write something meaningless and be told
   # nothing about it.
-  run_engine -- claude --connect 'instructions=ro native extra' --version
+  run_engine -- claude --connect 'instructions=read-only native extra' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"trailing 'extra'"* ]]
 }
@@ -547,9 +547,37 @@ EOF
   # before it works needs this exact phrase, or its cells are reported as broken
   # rather than as not built yet.
   grep -q "connect: mode '\$mode' is not implemented" "$ENGINE"
-  for mode in none copy cow ro live; do
+  for mode in own copy copy-on-write read-only read-write; do
     run_engine -- claude --connect "instructions=$mode" --version
     [ "$status" -eq 0 ]
+  done
+}
+
+@test "every PRE-0.3 mode name is refused, and the refusal says what to write" {
+  # Renamed, not aliased. `none` is why: it was the most-closed mode and becomes
+  # the preset meaning no sandbox at all, so honouring it here would make one
+  # word mean opposite ends of one model -- someone asking for maximum isolation
+  # would get none of it. Once `none` cannot be carried, carrying the other three
+  # would leave a single special case nobody remembers.
+  local old new
+  for pair in "none own" "cow copy-on-write" "ro read-only" "live read-write"; do
+    read -r old new <<<"$pair"
+    run_engine -- claude --connect "instructions=$old" --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"mode '$old' was renamed"* ]]
+    [[ "$output" == *"write '$new'"* ]]
+    [ ! -s "$H/argv" ] # and nothing launched
+  done
+}
+
+@test "both renamed presets are refused by name too, not silently defaulted" {
+  local old new
+  for pair in "independent isolated" "default inherit"; do
+    read -r old new <<<"$pair"
+    run_engine "AGENT_SANDBOX_PRESET=$old" -- claude --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"'$old' was renamed"* ]]
+    [[ "$output" == *"write '$new'"* ]]
   done
 }
 

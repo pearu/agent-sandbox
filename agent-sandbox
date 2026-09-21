@@ -328,7 +328,7 @@ Engine flags (must precede the agent's own arguments):
                         The agent binary stays bound read-only, so an agent
                         started from inside runs natively there
   --preset NAME         where every channel sits before any override:
-                        `independent` (nothing of your install), `default`
+                        `isolated` (nothing of your install), `inherit`
                         (read your files live, keep the sandbox's writes to
                         itself) or `shared` (one directory, both ways -- what
                         the engine did before 0.3). Default: default.
@@ -336,16 +336,17 @@ Engine flags (must precede the agent's own arguments):
                         environment or a project file: it turns state isolation
                         off entirely so that any difference from --sandbox none
                         is a bug in agent-sandbox
-  --overlay auto|off    what `cow` is implemented with: an overlay where
+  --overlay auto|off    what `copy-on-write` uses: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
-                        everywhere (off). Only ever moves `cow` to `copy`
+                        everywhere (off). Only moves `copy-on-write` to `copy`
   --reset-connection CHANNEL
                         discard what this sandbox holds at CHANNEL and take the
                         source's again, then exit. What the conflict warning
                         points at
   --connect SPEC        open one channel at one mode: 'channel=mode [source]',
-                        repeatable. Lower on the scale none < copy < cow < ro <
-                        live is more isolated; every channel is `live` by
+                        repeatable. Lower on the scale own < copy <
+                        copy-on-write < read-only < read-write is more
+                        isolated; the preset sets where every channel is by
                         default, which is what the engine has always done. See
                         docs/connections.md
   --engine-help         this text, even when a profile is selected
@@ -361,14 +362,13 @@ Environment knobs:
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
   AGENT_SANDBOX_CONDA_PKGS=/dir sandbox-owned conda package cache (write mode)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
-  AGENT_SANDBOX_CONNECT="instructions=ro native;skills=none native"
+  AGENT_SANDBOX_CONNECT="instructions=read-only native;skills=own native"
                                 per-channel connections, ';'-separated; same
                                 syntax as --connect and [connect] (modes:
-                                none|ro|live today; copy and cow are refused
-                                until implemented)
-  AGENT_SANDBOX_PRESET=independent|default|shared   where every channel sits
-                                (default: default)
-  AGENT_SANDBOX_OVERLAY=auto|off  what `cow` uses (default: auto)
+                                own|copy|copy-on-write|read-only|read-write)
+  AGENT_SANDBOX_PRESET=isolated|inherit|shared   where every channel sits
+                                (default: inherit)
+  AGENT_SANDBOX_OVERLAY=auto|off  what `copy-on-write` uses (default: auto)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_HOST_PORTS="5432 11434"  (strict) same as --host-port, or none
   AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port, or none
@@ -906,27 +906,35 @@ _as_iso_flush() {
 # A sandbox is an installation of the agent; a CONNECTION opens one CHANNEL
 # between it and a SOURCE, under a MODE from the scale
 #
-#   none < copy < cow < ro < live
+#   own < copy < copy-on-write < read-only < read-write
 #
-# and lower is more isolated. See docs/connections.md. The profile says WHERE
-# each channel lives (profile_channels, its contract item 3); the engine owns
-# the modes, so nothing here is agent-specific.
+# and lower is more isolated. The scale says what the sandbox HAS at a path in
+# relation to yours, which is why the bottom rung names what it has instead of
+# a relation. THE ORDER IS HOW MUCH OF YOUR FILES REACH THE SANDBOX, not what
+# the sandbox may do: it can write under `copy-on-write` but not under
+# `read-only`, and `read-only` is still the higher rung, because it hands over
+# the real file where `copy-on-write` gives only a shadow of one.
 #
-#   none  nothing of the source reaches the sandbox and nothing of the sandbox
-#         reaches the source; what it creates there is its own and PERSISTS,
-#         which is why the slot is a directory under the engine's state and not
-#         a tmpfs -- an independent sandbox that forgot everything at exit would
-#         be a different thing, and a less useful one
-#   ro    the source's files, live, and no writing
-#   live  today's behaviour: one read-write bind, both ways, no delay
+# See docs/connections.md. The profile says WHERE each channel lives
+# (profile_channels, its contract item 3); the engine owns the modes, so nothing
+# here is agent-specific.
 #
-# `copy` and `cow` are not implemented yet. A spec asking for one is REFUSED at
-# launch: serving something else under the name the user asked for is how an
-# isolation knob silently becomes decoration.
+#   own        nothing of the source reaches the sandbox and nothing of the
+#              sandbox reaches the source; what it creates there is its own and
+#              PERSISTS, which is why the slot is a directory under the engine's
+#              state and not a tmpfs -- a sandbox that forgot everything at exit
+#              would be a different thing, and a less useful one
+#   copy       seeded from the source and refreshed at each launch for anything
+#              the sandbox has not touched; never written back
+#   copy-on-write
+#              reads fall through to the source until the sandbox writes, and
+#              the write goes to a private layer that shadows it from then on
+#   read-only  the source's files, live, and no writing
+#   read-write one read-write bind, both ways, no delay
 #
-# EVERY CHANNEL DEFAULTS TO `live`, which is exactly what the engine did before
-# connections existed. Changing those defaults is what the `default` preset is
-# for, and it is a separate, visible step.
+# THE NAMES CHANGED IN 0.3 (none, cow, ro, live) AND THE OLD ONES ARE REFUSED,
+# not aliased -- see _as_mode_renamed for why `none` in particular cannot be
+# carried forward.
 
 # _as_path_slug PATH -- a directory name for PATH, for the engine's own state.
 #
@@ -990,8 +998,8 @@ _as_sandbox_dir() {
 }
 
 # ----- presets: one position for every channel at once -----------------------
-# `independent` is the two mandatory connections and nothing else; `default` is
-# the transparency principle stated as connections -- a sandbox that behaves like
+# `isolated` is the two mandatory connections and nothing else; `inherit` is
+# the fidelity principle stated as connections -- a sandbox that behaves like
 # a native install whose configuration is the user's, read live, with its own
 # writes kept to itself; `shared` is the engine before 0.2.
 #
@@ -1004,10 +1012,38 @@ _as_sandbox_dir() {
 # of wrong: the user would believe a channel was positioned and it would not be.
 _as_preset_mode() {
   case "$1" in
-    independent) printf none ;;
-    default) printf cow ;;
-    shared | native) printf live ;;
-    *) printf live ;;
+    isolated) printf own ;;
+    inherit) printf copy-on-write ;;
+    shared | native) printf read-write ;;
+    *) printf read-write ;;
+  esac
+}
+
+# _as_mode_renamed OLD -- the 0.3 spelling of a mode name that used to be valid.
+#
+# The old names are REFUSED rather than accepted as aliases, and `none` is the
+# reason there is no alias table at all: it was the most-closed mode and is
+# becoming the preset that means no sandbox whatsoever, so honouring it here
+# would make one word mean opposite ends of one model -- someone writing it for
+# maximum isolation would get none of it. Once `none` cannot be carried forward,
+# carrying the other three would leave a single special case nobody remembers,
+# so all five move together and every one of them says what to write instead.
+_as_mode_renamed() {
+  case "$1" in
+    none) printf own ;;
+    cow) printf copy-on-write ;;
+    ro) printf read-only ;;
+    live) printf read-write ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# _as_preset_renamed OLD -- likewise for the two presets that were renamed.
+_as_preset_renamed() {
+  case "$1" in
+    independent) printf isolated ;;
+    default) printf inherit ;;
+    *) printf '%s' "$1" ;;
   esac
 }
 
@@ -1027,7 +1063,7 @@ _as_preset_mode() {
 # something that breaks under `native` but works under `--sandbox none` is broken
 # by a mechanism (binds, seccomp, the proxy) and not by state isolation, because
 # `native` holds state at "hide nothing". And it makes the scale a workflow:
-# start here and close channels, or start at `independent` and open them.
+# start here and close channels, or start at `isolated` and open them.
 #
 # It means parity of STATE. The egress proxy, the syscall filter and the
 # working-tree bind still apply, exactly as `[net] mode = open` means no
@@ -1043,7 +1079,7 @@ _as_preset_is_native() { [[ "${_preset:-}" == native ]]; }
 # _as_connect_parse SPEC WHERE -- record one `channel = mode [source]`.
 #
 # Refuses rather than warns, on every kind of bad input. A typo in a channel
-# name that left it quietly at `live` would be the worst outcome this file can
+# name that left it quietly at `read-write` would be the worst outcome this can
 # produce: the user reads their dot-file, believes a channel is closed, and it
 # is wide open. Unknown mode, unknown source and unimplemented mode are refused
 # for the same reason.
@@ -1079,7 +1115,11 @@ _as_connect_parse() {
     return 1
   }
   case "$mode" in
-    none | copy | cow | ro | live) ;;
+    own | copy | copy-on-write | read-only | read-write) ;;
+    none | cow | ro | live)
+      _as_msg "connect ($where): mode '$mode' was renamed in 0.3 -- write '$(_as_mode_renamed "$mode")' (own|copy|copy-on-write|read-only|read-write). Refusing rather than accepting the old name: see _as_mode_renamed for why 'none' cannot be an alias."
+      return 1
+      ;;
     _never_)
       # THE WORDING BELOW IS A CONTRACT, not just a message. The connections
       # study probes each mode by asking for it and reading the refusal, so that
@@ -1092,7 +1132,7 @@ _as_connect_parse() {
       return 1
       ;;
     *)
-      _as_msg "connect ($where): unknown mode '$mode' for '$ch' (none|copy|cow|ro|live)"
+      _as_msg "connect ($where): unknown mode '$mode' for '$ch' (own|copy|copy-on-write|read-only|read-write)"
       return 1
       ;;
   esac
@@ -1118,7 +1158,7 @@ _as_connect_channels() {
 #
 # Called AFTER the profile's own visibility binds, so a connection layers on top
 # of memory scoping rather than under it, and BEFORE the isolate spec, because
-# the per-session scratch must win over everything: a channel set to `live` must
+# the per-session scratch must win over everything: a `read-write` channel must
 # still not hand over another session's paste cache.
 _as_connect_apply() {
   ((${#profile_channels[@]})) || return 0
@@ -1132,15 +1172,15 @@ _as_connect_apply() {
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
     mode="${_connect_mode[$ch]:-live}"
-    [[ "$mode" == live ]] && continue
+    [[ "$mode" == read-write ]] && continue
     for entry in "${fields[@]:1}"; do
       kind="${entry%%:*}"
       path="${entry#*:}"
       [[ -n "$path" ]] || continue
       case "$mode" in
-        none)
+        own)
           # A private slot that OUTLIVES the session, per sandbox and channel.
-          slot="$base/$ch/none/$(_as_iso_slug "$path")"
+          slot="$base/$ch/own/$(_as_iso_slug "$path")"
           if [[ "$kind" == dir ]]; then
             mkdir -p -- "$slot" || return 1
           else
@@ -1150,7 +1190,7 @@ _as_connect_apply() {
           fi
           args+=(--bind "$slot" "$path")
           ;;
-        cow)
+        copy-on-write)
           # Copy-on-write: the source reads THROUGH until the sandbox writes, and
           # the write lands in a private upper layer that shadows it from then on.
           # No refresh step at all, which is what makes it the better default --
@@ -1163,7 +1203,7 @@ _as_connect_apply() {
           #   - THE PATH NAMES A FILE. overlayfs mounts a directory and cannot
           #     stack on a single file, so this one is permanent and no newer
           #     bubblewrap fixes it.
-          # Across launches `copy` and `cow` are indistinguishable anyway; they
+          # Across launches `copy` and `copy-on-write` are indistinguishable; they
           # differ only WITHIN a session, where an overlay reads through live.
           if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
             [[ "$kind" == file ]] || _cow_fellback+=("$ch")
@@ -1204,11 +1244,11 @@ _as_connect_apply() {
           fi
           # An overlay needs its lower layer to exist. Where the source has no
           # such directory, the lower is an EMPTY ONE FROM THIS SESSION, not a
-          # directory created in the user's own state: `cow`'s first promise is
+          # in the user's own state: `copy-on-write`'s first promise is
           # that nothing of the sandbox reaches the source, and the engine
           # quietly making a directory there is the engine breaking it. bwrap
-          # still creates the mount point, exactly as it does for `none` and
-          # `ro`, which is a consequence of mounting rather than a decision.
+          # still creates the mount point, exactly as for `own` and
+          # `read-only`, a consequence of mounting rather than a decision.
           local lower="$path"
           if [[ ! -e "$path" ]]; then
             _as_session_begin || return 1
@@ -1233,7 +1273,7 @@ _as_connect_apply() {
             _cow_recorded=1
           fi
           # What the sandbox is shadowing, and whether the source has moved under
-          # it. The one thing `cow` hides, reported before the mount so the user
+          # it. The one thing `copy-on-write` hides, reported before the mount so the user
           # reads it whatever the session then does.
           _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
           if [[ -n "$_holder_pid" ]]; then
@@ -1263,7 +1303,7 @@ _as_connect_apply() {
           [[ "$kind" == file ]] && _as_connect_placeholder "$path"
           args+=(--bind "$slot" "$path")
           ;;
-        ro)
+        read-only)
           if [[ -e "$path" ]]; then
             args+=(--ro-bind "$path" "$path")
           else
@@ -1286,7 +1326,7 @@ _as_connect_apply() {
       esac
     done
   done
-  # ONE line, not one per channel: on a host without overlay support every `cow`
+  # ONE line, not one per channel: on a host without overlay support every `copy-on-write`
   # channel falls back, and six identical lines a launch is how a notice becomes
   # something people filter out. Said with _as_msg, never suppressed, because the
   # session loses within-session liveness and that is a behaviour change.
@@ -1297,7 +1337,7 @@ _as_connect_apply() {
   if ((${#_cow_fellback[@]})); then
     local why="this bubblewrap cannot mount an overlay (needs 0.11 or newer)"
     [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
-    _as_msg "connect: ${_cow_fellback[*]}: cow is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
+    _as_msg "connect: ${_cow_fellback[*]}: copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
   fi
   return 0
 }
@@ -1356,7 +1396,7 @@ _as_connect_sync() {
 # _as_connect_shadows CHANNEL SOURCE UPPER SEEN -- warn about files this sandbox
 # is shadowing whose source has changed underneath.
 #
-# The one thing `cow` hides, and the design says it hides it loudly: the user
+# The one thing `copy-on-write` hides, and the design says it hides it loudly: the user
 # edited their own copy, the sandbox has its own version, and without a word the
 # sandbox would go on using a file the user believes they have updated.
 _as_connect_shadows() {
@@ -1417,7 +1457,7 @@ _as_connect_placeholder() {
 
 # _as_holder_paths -- `channel<TAB>slug<TAB>path` for every path a holder mounts.
 # The layout under the sandbox directory is the one `copy` already uses,
-# <sandbox>/<channel>/<kind>/<slug>, so reset and the shadow scan find cow's
+# <sandbox>/<channel>/<kind>/<slug>, so reset and the shadow scan find copy-on-write's
 # state where they find everything else.
 _as_holder_paths() {
   local line entry kind path ch
@@ -1490,7 +1530,7 @@ _as_holder_ensure() {
       # What that costs is one empty directory under ~/.claude, in a tree the
       # engine already binds read-write and already lets bwrap create mount
       # points in. It is not something the SANDBOX wrote, which is the promise
-      # `cow` actually makes.
+      # `copy-on-write` actually makes.
       mkdir -p -- "$path" || exit 1
       mkdir -p -- "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug" || exit 1
       ov+=(--overlay-src "$path" --overlay "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug")
@@ -1602,7 +1642,7 @@ _as_holder_sweep() {
 # scanning /proc for it finds nothing. What does work is the engine's own session
 # machinery -- a session dir stamped with its owner's PID and start-time, the
 # same pair the janitor uses to tell a live session from an orphan, and immune to
-# PID reuse for the same reason. A cow launch records its sandbox there.
+# PID reuse for the same reason. A copy-on-write launch records its sandbox there.
 #
 # This matters because the conflict warning TELLS the user to run a reset, and
 # reading it in one terminal while the session runs in another is the ordinary
@@ -1675,7 +1715,7 @@ _as_connect_reset() {
       work="$base/$ch/work/$(_as_iso_slug "$path")"
       seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
       [[ -e "$slot" || -e "$manifest" || -e "$upper" ]] || continue
-      # cow first: the upper layer holds the shadows AND the whiteouts, so
+      # copy-on-write first: the upper layer holds the shadows AND the whiteouts, so
       # removing it is what brings a file the sandbox deleted back into view.
       # CHMOD BEFORE REMOVING -- measured: once anything has been written through
       # an overlay its workdir keeps a mode-000 directory that `rm -rf` cannot
@@ -1700,7 +1740,7 @@ _as_connect_reset() {
 # _as_connect_report -- one line per channel that is not at its default, so a
 # session can see what it was given. Routine state, like "using network mode
 # from .agent-sandbox", so --quiet suppresses it; the REFUSALS above never are,
-# and neither will the conflict warnings `copy` and `cow` bring.
+# and neither will the conflict warnings `copy` and `copy-on-write` bring.
 _as_connect_report() {
   ((${#_connect_mode[@]})) || return 0
   local ch
@@ -2142,7 +2182,7 @@ _as_dotfile_parse() {
         fi
         ;;
       overlay)
-        # What `cow` is implemented with (validated at launch, with the knob).
+        # What `copy-on-write` is implemented with (validated at launch, with the knob).
         if [[ "$line" != *=* ]]; then
           _as_msg ".agent-sandbox: [overlay] expects 'key = value', ignoring: $line"
         else
@@ -2404,7 +2444,7 @@ _as_launch() {
   # so we regain control -- to print the help footer and/or tear the session
   # down -- then propagate the exit code.
   # ${_holder_ns[@]} is `nsenter -t PID -m -U --preserve-credentials --` when a
-  # `cow` channel joined this sandbox's holder, and empty otherwise. Entering the
+  # `copy-on-write` channel joined this sandbox's holder, and empty otherwise. Entering the
   # holder's mount namespace is what puts its overlays in view; bwrap then makes
   # its own namespace from that one, inheriting the mounts as references to the
   # SAME superblocks rather than mounting anything again.
@@ -2535,7 +2575,7 @@ agent_sandbox() (
   local _holder_pid="" _holder_tried=0 _holder_why="this host has no shared overlay"
   local -a _holder_ns=()
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
-  local _preset_flag="" _preset=default
+  local _preset_flag="" _preset=inherit
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -2691,7 +2731,7 @@ agent_sandbox() (
         # same order --user-mcp already follows.
         [[ $# -ge 2 && -n "$2" ]] \
           || {
-            _as_msg "--connect needs a spec, e.g. --connect 'instructions=ro native'"
+            _as_msg "--connect needs a spec, e.g. --connect 'instructions=read-only native'"
             return 2
           }
         _connect_flag+=("$2")
@@ -2719,8 +2759,8 @@ agent_sandbox() (
         shift
         ;;
       --overlay)
-        # What `cow` is implemented WITH. `off` forces the copy fallback on a
-        # host that could mount an overlay; it can only move `cow` to `copy`,
+        # What `copy-on-write` is implemented WITH. `off` forces the copy fallback on a
+        # host that could mount an overlay; it can only move `copy-on-write` to `copy`,
         # which is a step down the scale, so it is never trust-gated.
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
           || {
@@ -3193,7 +3233,7 @@ agent_sandbox() (
   # from an unapproved file. Stepping UP the scale, toward `live`, is a
   # widening and the `--trust` review is where it is seen; stepping down only
   # narrows what this sandbox can reach.
-  # What `cow` is implemented with: flag, then environment, then approved
+  # What `copy-on-write` is implemented with: flag, then environment, then approved
   # dot-file, then `auto`. Same precedence as every other knob.
   local _ov="" _ov_src=""
   if [[ -n "$_overlay_flag" ]]; then
@@ -3223,7 +3263,11 @@ agent_sandbox() (
   fi
   if [[ -n "$_ps" ]]; then
     case "$_ps" in
-      independent | default | shared) _preset="$_ps" ;;
+      isolated | inherit | shared) _preset="$_ps" ;;
+      independent | default)
+        _as_msg "preset ($_ps_src): '$_ps' was renamed in 0.3 -- write '$(_as_preset_renamed "$_ps")' (isolated|inherit|shared|native)"
+        return 1
+        ;;
       native)
         # THE ONE KNOB WITH A SINGLE FORM. `native` turns state isolation off
         # wholesale, so a shell profile or a repository's .agent-sandbox must not
@@ -3235,7 +3279,7 @@ agent_sandbox() (
         _preset=native
         ;;
       *)
-        _as_msg "preset ($_ps_src): unknown preset '$_ps' (independent|default|shared|native); refusing rather than guessing which channels you meant to move"
+        _as_msg "preset ($_ps_src): unknown preset '$_ps' (isolated|inherit|shared|native); refusing rather than guessing which channels you meant to move"
         return 1
         ;;
     esac
@@ -3243,7 +3287,7 @@ agent_sandbox() (
   # Loud, every launch, never suppressed by --quiet: a session running with no
   # state isolation should not be something you have to remember.
   if _as_preset_is_native; then
-    _as_msg "preset native: state isolation is OFF -- every channel live, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--sandbox none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."
+    _as_msg "preset native: state isolation is OFF -- every channel read-write, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--sandbox none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."
   fi
   # Seed every channel the profile declares from the preset. An explicit
   # [connect] line, knob or flag then overwrites its own channel and nothing
