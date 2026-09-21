@@ -3069,20 +3069,31 @@ agent_sandbox() (
   local cwd
   cwd="$(pwd -P)"
 
+  # THE PROJECT THIS LAUNCH SERVES, which is not always $cwd. A foreground session
+  # runs in its project, so the two agree; a WRAPPED BACKGROUND WORKER runs wherever
+  # the daemon happened to be, and its project is the one the launcher recorded. The
+  # dot-file and its trust record must follow the project or a project's own
+  # .agent-sandbox is silently ignored in the workers its sessions spawn -- [net],
+  # [allow], [ro], [seccomp], [connect], all of it, including a project that
+  # deliberately TIGHTENS. Same helper, and the same reasoning, as the config-file
+  # copy and the sandbox key, both of which were fixed for this earlier.
+  local _proj
+  _proj="$(_as_project_dir)"
+
   # ---- per-project config (.agent-sandbox), trust-gated ----
   local -a _df_allow=() _df_share=() _df_ro=() _df_rw=() _df_forward=()
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_mode=""
-  local _df_share_set=0 _memory_mode _dotfile="$cwd/.agent-sandbox"
+  local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
   local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset=""
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
-  _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")"
   if [[ -f "$_dotfile" ]]; then
-    if _as_dotfile_trusted "$cwd" "$_dotfile"; then
+    if _as_dotfile_trusted "$_proj" "$_dotfile"; then
       _as_dotfile_clean "$_dotfile" || return 1 # an approval recorded by other means does not get such a file honoured
       _as_dotfile_parse "$_dotfile"
       local _dh _dj
