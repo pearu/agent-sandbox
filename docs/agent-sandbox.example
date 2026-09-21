@@ -129,10 +129,10 @@
 #        sandbox. Turning a scope off is a widening, so it needs --trust; the
 #        --sandbox flag and AGENT_SANDBOX_CLAUDE_SANDBOX are the ungated forms.
 # [sandbox] -- this sandbox's own position and key.
-#        preset = independent | default | shared  (default: default)
-#          independent  nothing of your native install reaches it; what it
+#        preset = isolated | inherit | shared  (default: inherit)
+#          isolated     nothing of your native install reaches it; what it
 #                       creates is its own and persists
-#          default      it reads your instructions, settings, skills, agents,
+#          inherit      it reads your instructions, settings, skills, agents,
 #                       workflows and plugins LIVE, and keeps its own writes to
 #                       itself. The transparency principle: it behaves like a
 #                       native install whose configuration is yours, except that
@@ -150,36 +150,44 @@
 #
 #        role is reserved and only `default` exists today.
 #[sandbox]
-#preset = default
+#preset = inherit
 
 # [connect] -- per channel, how much of your NATIVE Claude Code install this
 #        project's sandbox sees: `channel = mode [source]` on the scale
-#        none < copy < cow < ro < live, lower being more isolated.
+#        own < copy < copy-on-write < read-only < read-write, lower being more
+#        isolated. The order is how much of YOUR files reach the sandbox, not
+#        what it may do: it can write under copy-on-write but not under
+#        read-only, and read-only is still higher, because it hands over the
+#        real file where copy-on-write gives only a shadow of one.
 #
-#        none  nothing of yours; what the sandbox writes there is its own and
-#              persists across its launches
-#        ro    your files, live, and the sandbox cannot write them
-#        live  the default and what the engine has always done: one directory,
-#              both ways, no delay
+#        own         nothing of yours; what the sandbox writes there is its own
+#                    and persists across its launches
+#        copy        seeded from your files and refreshed at each launch for
+#                    anything the sandbox has not touched; never written back
+#        copy-on-write
+#                    reads fall through to your files until the sandbox writes,
+#                    and the write goes to a private layer from then on
+#        read-only   your files, live, and the sandbox cannot write them
+#        read-write  one directory, both ways, no delay
 #
-#        `copy` and `cow` are in the model but not in the engine yet, and asking
-#        for one is refused rather than served as something else. The only
+#        These names changed in 0.3; the old ones (none, cow, ro, live) are
+#        refused, and the refusal says what to write instead. The only
 #        source today is `native` (your own ~/.claude), which is the default.
 #        Channels the claude profile carries: instructions, settings, skills,
 #        agents, workflows, plugins. Narrowing a channel needs nothing beyond
-#        this file's own approval; widening one back toward `live` is what the
+#        this file's own approval; widening one toward `read-write` is what the
 #        --trust review is for. See docs/connections.md.
 #[connect]
-#instructions = ro native
-#skills = none native
+#instructions = read-only native
+#skills = own native
 
-# [overlay] -- what `cow` is implemented WITH, not whether channels are shared.
+# [overlay] -- what `copy-on-write` is implemented WITH, not whether shared.
 #        mode = auto (default) uses a real copy-on-write overlay where your
 #        bubblewrap supports one (0.11 or newer) and falls back to `copy` where
 #        it does not, saying so. mode = off takes the fallback everywhere.
 #
 #        Worth turning off if overlayfs is unhappy on your filesystem. It can
-#        only ever move `cow` to `copy`, which is further from your native
+#        only ever move `copy-on-write` to `copy`, further from your native
 #        install, so it is never a widening. The two behave identically across
 #        launches; they differ only WITHIN a running session, where an overlay
 #        picks up an edit you make to your own copy and a snapshot does not.

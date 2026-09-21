@@ -98,7 +98,7 @@ capture() { # capture NAME engine-args...
   # The default preset isolates, so it MUST fail the same comparison -- if it
   # ever agrees, this file has stopped measuring anything.
   capture none --sandbox none
-  TEST_PRESET="" capture isolated --preset default
+  TEST_PRESET="" capture isolated --preset inherit
   run diff -q "$IWORK/isolated" "$IWORK/none"
   [ "$status" -ne 0 ]
 }
