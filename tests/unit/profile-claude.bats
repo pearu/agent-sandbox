@@ -349,3 +349,42 @@ STUB
   argv_has --bind "$H/home/.claude/projects/$slug" "$H/home/.claude/projects/$slug"
   [ "${#slug}" -le 207 ] # 200 + "-" + at most six characters, so under NAME_MAX
 }
+
+@test "the history filter matches the project FIELD, not the bytes anywhere on the line" {
+  # MEASURED, leak study row 4 (#73). The old filter was a fixed-string grep for
+  # "project":"<dir>", whose comment argued it "can only ever return too few
+  # lines, never another project's". The closing quote does rule out prefix
+  # collisions -- and nothing else: grep -F matches that byte sequence ANYWHERE
+  # on the line, so a record whose own project is someone else's reaches this
+  # sandbox as soon as it happens to quote or nest the target path.
+  local hist="$BATS_TEST_TMPDIR/history.jsonl"
+  {
+    printf '%s\n' '{"display":"MINE","project":"/home/u/mine"}'
+    printf '%s\n' '{"display":"THEIRS","project":"/home/u/other"}'
+    # another project's record that NESTS the target path
+    printf '%s\n' '{"display":"NESTED","meta":{"project":"/home/u/mine"},"project":"/home/u/other"}'
+    # and one that merely quotes it inside a string
+    printf '%s\n' '{"display":"\"project\":\"/home/u/mine\"","project":"/home/u/other"}'
+  } >"$hist"
+
+  run _claude_history_filter "$hist" /home/u/mine
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"display":"MINE"'* ]]
+  [[ "$output" != *THEIRS* ]]
+  [[ "$output" != *NESTED* ]]
+  [ "$(printf '%s\n' "$output" | grep -c .)" -eq 1 ]
+}
+
+@test "the history filter drops a line it cannot parse rather than passing it" {
+  # Fail closed: too few lines is the safe direction for a filter whose input
+  # format we do not control.
+  local hist="$BATS_TEST_TMPDIR/history.jsonl"
+  {
+    printf '%s\n' 'not json at all "project":"/home/u/mine"'
+    printf '%s\n' '{"display":"MINE","project":"/home/u/mine"}'
+  } >"$hist"
+  run _claude_history_filter "$hist" /home/u/mine
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c .)" -eq 1 ]
+  [[ "$output" == *MINE* ]]
+}

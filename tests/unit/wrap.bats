@@ -148,3 +148,29 @@ setup() {
   [ "$status" -eq 0 ]
   argv_has --bind "$proj" "$proj"
 }
+
+@test "a wrapped worker honours the BACKGROUND PROJECT's .agent-sandbox, not the daemon's cwd" {
+  # THE BUG THIS PINS. The dot-file path and its trust record are both derived
+  # from $cwd (`_dotfile="$cwd/.agent-sandbox"`, and the trust key is a hash of
+  # $cwd). For a wrapped worker $cwd is wherever the daemon happened to be, not
+  # the project -- which is exactly why _as_project_dir exists and why the
+  # config-file copy above is keyed through it.
+  #
+  # So a project's whole .agent-sandbox is silently ignored in its own background
+  # workers: [net], [allow], [ro], [seccomp], [connect], all of it. A project that
+  # TIGHTENS -- `[net] mode = strict` -- gets the looser global default in the
+  # workers its foreground session spawns, and nothing says so.
+  local proj extra
+  proj="$(mkdir -p "$H/bgproj" && cd "$H/bgproj" && pwd -P)"
+  extra="$H/extra-ro"
+  mkdir -p "$extra" "$H/base" "$H/home/.config/agent-sandbox/trust"
+  printf '[ro]\n%s\n' "$extra" >"$proj/.agent-sandbox"
+  # approve it for the PROJECT, the way `--trust` run there would
+  sha256sum -- "$proj/.agent-sandbox" | cut -d' ' -f1 \
+    >"$H/home/.config/agent-sandbox/trust/$(printf '%s' "$proj" | sha256sum | cut -d' ' -f1)"
+  printf '%s' "$proj" >"$H/base/bg-project"
+
+  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$extra" "$extra"
+}
