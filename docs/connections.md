@@ -83,7 +83,7 @@ Every connection has a mode. The modes are ordered by how much of the source A r
 sandbox B, and whether anything of B reaches A:
 
 ```
-none  <  copy  <  cow  <  ro  <  live
+own  <  copy  <  copy-on-write  <  read-only  <  read-write
 ```
 
 | mode | A → B | B → A | B's own state | needs |
@@ -451,7 +451,7 @@ preset = inherit           # isolated | inherit | shared
 [overlay]
 mode = auto                # auto | off -- what copy-on-write is implemented with
 
-[connect]                  # channel = mode [source]; source: native | sandbox:<project>[/<role>] | dir:<path>
+[connect]                  # channel = mode [source]; source: native | sandbox:<project>[/<role>] | outside:<path>
 instructions = copy-on-write native
 skills = copy native
 memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today

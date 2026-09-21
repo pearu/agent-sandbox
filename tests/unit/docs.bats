@@ -284,6 +284,22 @@ profile_dotfile_keys() {
 # engine actually implements, so a doc may still say the terminal `none` preset
 # is unbuilt, because it is.
 
+# Every shipped doc, EXCEPT recorded study results. Those are evidence of runs that
+# happened under the old vocabulary; rewriting them would falsify the record, exactly
+# as probes/results/ is left alone. Scoped by listing what to skip rather than what to
+# check, so a new doc is covered the day it is added -- the first version of these
+# checks listed four files by hand and missed docs/connections-study.md entirely.
+prose_docs() {
+  local f
+  for f in "$REPO_ROOT"/README.md "$REPO_ROOT"/docs/agent-sandbox.example "$REPO_ROOT"/docs/*.md; do
+    case "${f##*/}" in
+      leak-results-old1.md | claude-2.1-leak-results-0.2.0.md) continue ;;
+    esac
+    [ -f "$f" ] && printf '%s
+' "$f"
+  done
+}
+
 code_modes() { # the modes the engine accepts, from the validation case arm
   grep -oE '^    own \| copy \|[^)]*' "$ENGINE" | head -1 \
     | tr -d ' ' | tr '|' '\n' | sed '/^$/d' | sort -u
@@ -300,13 +316,15 @@ code_presets() { # the presets the engine accepts, from the resolution case arm
   local engine_scale doc line
   engine_scale="$(code_modes | paste -sd' ')"
   [ -n "$engine_scale" ]
-  for doc in README.md docs/config.md docs/connections.md docs/agent-sandbox.example; do
-    # any line that spells the scale out with the ordering operator
+  while IFS= read -r doc; do
+    # any line that spells the scale out with the ordering operator, at any spacing --
+    # the first version assumed single spaces and walked straight past a fenced block
+    # reading `none  <  copy  <  cow  <  ro  <  live`
     while IFS= read -r line; do
       # the line's own words must be exactly the engine's five, nothing added
       # or dropped -- a doc that lists four is the drift this catches
       local got
-      got="$(printf '%s' "$line" | grep -oE '\b(own|copy|copy-on-write|read-only|read-write|none|cow|ro|live)\b' | sort -u | paste -sd' ')"
+      got="$(printf '%s' "$line" | grep -oE '\b(copy-on-write|read-only|read-write|own|copy|none|cow|ro|live)\b' | sort -u | paste -sd' ')"
       [ "$got" = "$engine_scale" ] || {
         echo "in $doc, scale line disagrees with the engine"
         echo "  engine: $engine_scale"
@@ -314,8 +332,8 @@ code_presets() { # the presets the engine accepts, from the resolution case arm
         echo "  line:   $line"
         return 1
       }
-    done < <(grep -hE '(own|none) < copy <' "$REPO_ROOT/$doc" || true)
-  done
+    done < <(grep -hE '(own|none)[[:space:]]*<[[:space:]]*copy[[:space:]]*<' "$doc" || true)
+  done < <(prose_docs)
 }
 
 @test "no doc calls a mode or preset unimplemented when the engine implements it" {
@@ -324,8 +342,7 @@ code_presets() { # the presets the engine accepts, from the resolution case arm
     code_modes
     code_presets
   )"
-  for doc in README.md docs/config.md docs/connections.md docs/agent-sandbox.example CHANGELOG.md; do
-    [ -f "$REPO_ROOT/$doc" ] || continue
+  while IFS= read -r doc; do
     while IFS= read -r line; do
       for name in $names; do
         # the claim and the name on one line, for a name that DOES work
@@ -334,7 +351,10 @@ code_presets() { # the presets the engine accepts, from the resolution case arm
           hit=1
         fi
       done
-    done < <(grep -hiE 'not implemented|not yet in the engine|NOT YET BUILT|refused until implemented' "$REPO_ROOT/$doc" || true)
-  done
+    done < <(grep -hiE 'not implemented|not yet in the engine|NOT YET BUILT|refused until implemented' "$doc" || true)
+  done < <(
+    prose_docs
+    printf '%s\n' "$REPO_ROOT/CHANGELOG.md"
+  )
   [ "$hit" -eq 0 ]
 }

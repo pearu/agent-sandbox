@@ -12,7 +12,7 @@ document's Status names the four things the class deliberately does not contain.
 never classified, all shared, and a default of *shared* for anything unclassified — are
 what moved the design to [connections.md](connections.md), where a sandbox is an
 installation and what it shares is a set of explicit connections, each on a
-`none < copy < cow < ro < live` scale. The next study measures **channel × mode × source ×
+`own < copy < copy-on-write < read-only < read-write` scale. The next study measures **channel × mode × source ×
 direction** and has its own plan, [connections-study.md](connections-study.md); the method
 below (canaries, levels, one tree per experiment, the validity gate, topologies) carries
 over to it, and the
@@ -554,15 +554,15 @@ that turns out to behave differently from its group moves to another group; it d
 get its own rule. Three vocabulary items recur:
 
 - **default disposition** — what a sandbox gets with no configuration;
-- **toggle** — how a project or a launch changes it: `live` reopens a channel in both
-  directions and immediately (today's behaviour), `none` closes it for this project,
+- **toggle** — how a project or a launch changes it: `read-write` reopens a channel in both
+  directions and immediately (today's behaviour), `own` closes it for this project,
   `share-from <project>` opens a named project's material read-only (`[share-memory]`
   generalised). Every toggle exists in three forms: `.agent-sandbox` key, environment
   variable, engine flag; a narrowing needs no trust beyond the dot-file's own approval, a
   widening is trust-gated. `user-mcp` (0.2.1) is the first instance;
-- **liveness** — whether a native edit reaches a running or a later sandbox: `live` means
+- **liveness** — whether a native edit reaches a running or a later sandbox: `read-write` means
   at once (Claude Code reloads settings on change), the per-project copy means at the
-  next launch, `none` means never.
+  next launch, `own` means never.
 
 "Inference" below means one project's material steering another session's behaviour;
 "disclosure" means content crossing without necessarily steering anything.
@@ -570,7 +570,7 @@ get its own rule. Three vocabulary items recur:
 ### Group A — user-owned configuration read as instructions or code
 
 The #90 block. Every row is user-owned, needed by nobody's session in particular, and
-ingested by every project in every topology measured; `live` is the leak.
+ingested by every project in every topology measured; `read-write` is the leak.
 
 | row | channel | what crosses | measured | consequence if open | Claude Code needs it |
 |---|---|---|---|---|---|
@@ -585,7 +585,7 @@ ingested by every project in every topology measured; `live` is the leak.
 
 **Default:** a per-project copy, seeded from `~/.claude` and refreshed from it at every
 launch. T5 stays open by design (the user's configuration reaches every sandbox); T2 and
-T6 close. **Toggles:** `live`, `none`, `share-from`. **Open decisions for the group:**
+T6 close. **Toggles:** `read-write`, `own`, `share-from`. **Open decisions for the group:**
 refresh mechanics (snapshot per launch plus a layer of changes, or a persistent copy with
 a three-way sync; measured cost is under 0.1 s and under 20 MB either way), whether a
 file the session changed shadows a later native change (warn) or is overwritten,
@@ -640,7 +640,7 @@ row 23's watch set lacks A's memory.
 
 **Default:** per project by construction — none of it is seeded from the host and none
 is refreshed, so each project's sandbox starts them empty and keeps its own. Rows 12,
-15, 17, 18 close with one rule and no per-row work; #52 becomes this. **Toggle:** `live`
+15, 17, 18 close with one rule and no per-row work; #52 becomes this. **Toggle:** `read-write`
 for a project that wants the shared directory. **Open decision:** whether `backups/` is
 excluded outright (it is a history of the config file, which is per project now).
 
@@ -668,7 +668,7 @@ socket directory (issue #45), infra-only.
 
 | row | channel | what crosses | measured | consequence if open | Claude Code needs it |
 |---|---|---|---|---|---|
-| 13 | shared external medium | anything | open in every mode but `none`; `strict` enforces the allowlist, but the allowlist contains a writable medium | inference and disclosure via the medium | the API host, yes |
+| 13 | shared external medium | anything | open in every mode but `own`; `strict` enforces the allowlist, but the allowlist contains a writable medium | inference and disclosure via the medium | the API host, yes |
 | 14a | remote MCP capability | a live tool from any project's config | available in another project's session; the call blocked under `proxy` and `strict` | capability | no |
 | 14b | remote-backed state | — | blocked on an instance (#89) | — | — |
 
@@ -1108,7 +1108,7 @@ the combined bundle over the system trust path; `strict` wraps the same argv in
 pasta. **Nothing is removed and no `~/.claude` bind changes.** So rather than
 tripling every row, **row 2 is run in all three modes as an invariance control** and
 the result recorded; if it is invariant, the remaining filesystem rows are run in one
-mode — `none` for the deterministic ones (fastest, no proxy or credentials needed)
+mode — `own` for the deterministic ones (fastest, no proxy or credentials needed)
 and `proxy` for the real-claude ones (the default deployment, and the API must be
 reachable). If it is *not* invariant, that is a more interesting result than any
 single row and the plan changes.

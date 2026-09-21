@@ -3,7 +3,7 @@
 **Status: planned, nothing measured yet.** This defines the experiments for the model in
 [connections.md](connections.md): a sandbox is an installation of an agent, and what it
 shares is a set of explicit **connections**, each carrying one **channel** from one
-**source** under one **mode** on the scale `none < copy < cow < ro < live`.
+**source** under one **mode** on the scale `own < copy < copy-on-write < read-only < read-write`.
 
 It succeeds [cross-project-channels.md](cross-project-channels.md), whose results for
 Claude Code 2.1 on engine 0.2.0 are in
@@ -40,7 +40,7 @@ The method of the previous study is the method here, by reference rather than by
 
 ## What changes
 
-**A cell is a launch sequence, not a launch.** `copy` and `cow` promise things that only
+**A cell is a launch sequence, not a launch.** `copy` and `copy-on-write` promise things that only
 appear at the *next* launch of the *same* sandbox: a refresh that arrives, a change that
 persists, a conflict that warns. The unit becomes: build the tree, then run N launches of
 one sandbox with edits to the source between them, asserting after each. One tree per
@@ -67,17 +67,17 @@ are distinct files in the channel; the directory cells add a file *created* in t
 directory and a file *deleted* from it.
 
 Measured on this host (bubblewrap 0.12.0) while writing this: deleting a source's file
-from inside a `cow` mount does **not** expose anything — it writes a *whiteout* (a
+from inside a `copy-on-write` mount does **not** expose anything — it writes a *whiteout* (a
 character device of that name) into the private layer, and the file stays hidden at every
 later launch while the source still has it; removing the whiteout from the layer brings the
-source's file back. So "delete" under `cow` is a persistent hide, and `reset` must remove
+source's file back. So "delete" under `copy-on-write` is a persistent hide, and `reset` must remove
 whiteouts as well as copies. The cells below say so.
 
 | id | mode | sequence | assertion |
 |---|---|---|---|
-| **N1** | `none` | plant in source; launch | the source's canary is not inside: `not-obtained-absent` if the channel is there and empty, `not-obtained-unreachable` if it is not there at all — both are closed, and which one is the implementation's choice |
-| **N2** | `none` | write inside; exit; inspect source | the source is byte-identical |
-| **N3** | `none` | write inside; exit; launch again | what the sandbox wrote is still there |
+| **N1** | `own` | plant in source; launch | the source's canary is not inside: `not-obtained-absent` if the channel is there and empty, `not-obtained-unreachable` if it is not there at all — both are closed, and which one is the implementation's choice |
+| **N2** | `own` | write inside; exit; inspect source | the source is byte-identical |
+| **N3** | `own` | write inside; exit; launch again | what the sandbox wrote is still there |
 | **C1** | `copy` | plant; launch | the source's canary is `obtained` inside (seed) |
 | **C2** | `copy` | modify X inside; exit; inspect source | the source's X is byte-identical (no write-back, ever) |
 | **C3** | `copy` | launch again | the sandbox's X is still the sandbox's |
@@ -87,22 +87,22 @@ whiteouts as well as copies. The cells below say so.
 | **C7** | `copy` | delete W (in the channel's *directory*) inside; exit; launch again | W stays absent (a deletion is not undone by a refresh) |
 | **C7f** | `copy` | delete the channel's *file*-shaped path inside | the delete is REFUSED (`EBUSY`) and the source is untouched — a file-shaped path is a mount point; see [connections.md](connections.md#settled-while-writing-this) |
 | **C8** | `copy` | from C5's state, launch and *see* the warning; `reset`; launch | the reset succeeds; the source's X is back; and this launch no longer names X |
-| **W1** | `cow` | plant; launch | `obtained` inside, on both shapes (read-through) |
-| **W2** | `cow` | source changes Y; launch | the new Y is `obtained` (read-through, no refresh step ran) |
-| **W3** | `cow` | write X inside; exit; launch again | the source's X is byte-identical, and the sandbox's X is still the sandbox's at the next launch (it shadows) |
-| **W4** | `cow` | source changes X after it was shadowed; launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
-| **W4d** | `cow` | the same on the channel's *directory*-shaped path | the same — and this is the one that exercises the overlay, since a file-shaped path falls back to `copy` |
-| **W5** | `cow` | delete the source's Z from inside; exit; launch | Z is hidden inside, the source still has Z, and the hide persists (a whiteout, by the measurement above — but the cell asserts the behaviour, not the layer) |
-| **W6** | `cow` | shadow X, delete Z from inside; launch and *see* both; `reset`; launch | the reset succeeds and **both** halves are undone: the source's X reads through again and the hidden Z is visible again |
-| **W7** | `cow` | a file created in the source *directory*; launch | it is `obtained` (read-through applies to new entries, not only to changed ones) |
-| **W8** | `cow` | `[overlay] mode = off`; plant; launch; write inside; launch | the channel works, the launch names the implementation it fell back to, and the write behaves as `copy` promises |
-| **W9** | `cow` | two sessions of **one** sandbox at once (T3) | both launch, neither is refused; a later launch has both sessions' work; the source is byte-identical |
-| **R1** | `ro` | plant; launch | `obtained` inside |
-| **R2** | `ro` | write inside (scripted) | the write fails, `EROFS` recorded, the source byte-identical |
-| **R3** | `ro` | source changes X; launch | the new X is `obtained` |
-| **L1** | `live` | plant; launch | `obtained` inside |
-| **L2** | `live` | write inside; exit; inspect source | the source carries the write |
-| **L3** | `live` | source changes X; launch | the new X is `obtained` |
+| **W1** | `copy-on-write` | plant; launch | `obtained` inside, on both shapes (read-through) |
+| **W2** | `copy-on-write` | source changes Y; launch | the new Y is `obtained` (read-through, no refresh step ran) |
+| **W3** | `copy-on-write` | write X inside; exit; launch again | the source's X is byte-identical, and the sandbox's X is still the sandbox's at the next launch (it shadows) |
+| **W4** | `copy-on-write` | source changes X after it was shadowed; launch | the sandbox's X wins **and that launch — the first after the source moved — names X in a warning** |
+| **W4d** | `copy-on-write` | the same on the channel's *directory*-shaped path | the same — and this is the one that exercises the overlay, since a file-shaped path falls back to `copy` |
+| **W5** | `copy-on-write` | delete the source's Z from inside; exit; launch | Z is hidden inside, the source still has Z, and the hide persists (a whiteout, by the measurement above — but the cell asserts the behaviour, not the layer) |
+| **W6** | `copy-on-write` | shadow X, delete Z from inside; launch and *see* both; `reset`; launch | the reset succeeds and **both** halves are undone: the source's X reads through again and the hidden Z is visible again |
+| **W7** | `copy-on-write` | a file created in the source *directory*; launch | it is `obtained` (read-through applies to new entries, not only to changed ones) |
+| **W8** | `copy-on-write` | `[overlay] mode = off`; plant; launch; write inside; launch | the channel works, the launch names the implementation it fell back to, and the write behaves as `copy` promises |
+| **W9** | `copy-on-write` | two sessions of **one** sandbox at once (T3) | both launch, neither is refused; a later launch has both sessions' work; the source is byte-identical |
+| **R1** | `read-only` | plant; launch | `obtained` inside |
+| **R2** | `read-only` | write inside (scripted) | the write fails, `EROFS` recorded, the source byte-identical |
+| **R3** | `read-only` | source changes X; launch | the new X is `obtained` |
+| **L1** | `read-write` | plant; launch | `obtained` inside |
+| **L2** | `read-write` | write inside; exit; inspect source | the source carries the write |
+| **L3** | `read-write` | source changes X; launch | the new X is `obtained` |
 
 **No cell inspects where the implementation keeps anything.** W1 and W3 were first
 written against the private layer's contents; they are not, because a sandbox's copies and
@@ -135,7 +135,7 @@ promise, and the validity gate refuses a run in which one did not hold:
 - a **path-agreement control**: the reader reports the `HOME` it ran under, and the harness
   requires it to be the throwaway `HOME` it plants into. The control above proves a launch
   happened; this one proves the sandbox and the harness mean the same tree. Without it a
-  divergent prefix would pass the whole `none` suite — nothing found, the source untouched,
+  divergent prefix would pass the whole `own` suite — nothing found, the source untouched,
   and the sandbox's own write read back from the same wrong place — for a reason that has
   nothing to do with the mode. It needs no extra launch.
 - an **isolation check**: another project's transcript, which the engine scopes
@@ -144,14 +144,14 @@ promise, and the validity gate refuses a run in which one did not hold:
   a success.
 
 **W8, and why it is no longer "find an older host".** Where bubblewrap cannot mount an
-overlay, `cow` is `copy` — the two modes differ only *within* a running session, which is
+overlay, `copy-on-write` is `copy` — the two modes differ only *within* a running session, which is
 Part 7's subject, and are identical across launches. So there is no separate emulation
 whose fidelity is in doubt, and the question became one any host can ask:
 `[overlay] mode = off` forces the fallback on a machine that could use an overlay.
 
 That splits W8 in two. The cell above asserts the fallback **works and announces itself**.
 The claim that the two implementations **agree** is not a cell: `run-all.sh` runs the whole
-cow suite twice, once each way, and diffs the verdicts. That compares the two
+copy-on-write suite twice, once each way, and diffs the verdicts. That compares the two
 implementations against each other on one host, which is stronger than the original plan of
 comparing one of them against a memory of the other taken on a different machine.
 
@@ -191,10 +191,10 @@ than an inference from a green cell.
 ## Part 2 — per-channel ingestion (levels 2 and 3, paid)
 
 Mechanics say what the container does; this says what the **model** does with it. Per
-channel, two arms only: the channel's **default** mode and **`live`** as the comparison.
-The previous study measured the `live` arm for every channel of Group A at T5, for the
+channel, two arms only: the channel's **default** mode and **`read-write`** as the comparison.
+The previous study measured the `read-write` arm for every channel of Group A at T5, for the
 class Claude Code 2.1 × engine 0.2.0. The engine has since changed class, so this study's
-first document measures **both** arms; the old lines are the reference the `live` arm is
+first document measures **both** arms; the old lines are the reference the `read-write` arm is
 compared against, not a substitute for it.
 
 | channel | canary | acted on means |
@@ -212,7 +212,7 @@ Two cells the previous study never had, both about `tools`: whether a stdio serv
 connected source **executes** in the sandbox, and whether a model **calls** such a tool
 unprompted. Row 10 planted a command that did not exist, so nothing ran.
 
-One more, for `ro`: which of the agent's own features break when a channel is read-only —
+One more, for `read-only`: which of the agent's own features break when a channel is read-only —
 `/model` and permission saves for `settings`, `/workflows` for `workflows`, skill authoring
 for `skills` — recorded per class, since it is a property of Claude Code, not of the mount
 (R2 asserts the mount; this names the cost).
@@ -248,10 +248,10 @@ Two sandboxes, `<project>/implementer` and `<project>/reviewer`.
 
 ## Part 5 — sources other than native (level 1)
 
-- `sandbox:<project>/<role>` at `ro` for `memory` — what `[share-memory]` means today —
-  and at `ro` for `skills`, which `[share-memory]` cannot express;
-- `dir:<path>`, a curated directory, at `copy` and at `cow`;
-- and the asymmetry invariant: a sandbox at `copy` beside one at `live` receives the
+- `sandbox:<project>/<role>` at `read-only` for `memory` — what `[share-memory]` means today —
+  and at `read-only` for `skills`, which `[share-memory]` cannot express;
+- `outside:<path>`, a curated directory, at `copy` and at `copy-on-write`;
+- and the asymmetry invariant: a sandbox at `copy` beside one at `read-write` receives the
   other's writes at its next launch and sends nothing back.
 
 ## Part 6 — escapes
@@ -265,7 +265,7 @@ find; the model does not make them go away, it makes them the only thing left to
 
 ## Part 7 — liveness, and the one open method question
 
-`cow` and `ro` promise that a source change reaches the sandbox **live**, not at the next
+`copy-on-write` and `read-only` promise that a source change reaches the sandbox **live**, not at the next
 launch. Between launches it is trivial to assert. *Within a running session* it is not,
 and the instrument is undecided:
 
@@ -296,7 +296,7 @@ Everything in `probes/leak/` carries over. The additions:
 2. **Connection knobs, passed through.** `leak_read_sandboxed` and
    `leak_session_sandboxed` gain a way to set the preset, the role and per-channel
    connections, in whichever of the three forms the engine ships. Until the engine has
-   them, only the `live` and `shared` arms can run.
+   them, only the `read-write` and `shared` arms can run.
 3. **Source mutation between launches.** A helper that edits, deletes and restores a file
    in a source (native, another sandbox, a directory) and records what it did.
 4. **Warning capture.** C5, W4 and W7 assert on what the *launch* said, so a cell must
