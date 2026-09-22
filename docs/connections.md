@@ -167,6 +167,35 @@ write them does not merely leak across projects: it injects into channels Claude
 decided not to question, in every project, for every later session. `copy-on-write` is what
 keeps the sandbox's writes its own.
 
+### The channels are not independent
+
+The table above reads as six separate things. Two of them reach into the others, both
+measured rather than inferred (#112), and a preset is only as sound as the independence
+it assumes -- which is the real cost of tagging a channel with a position: it requires
+knowing what that channel is related to.
+
+- **`skills` can supply `agents` and `commands`.** Any folder under a skills directory
+  containing a `.claude-plugin/plugin.json` loads as a plugin, and such a plugin may
+  bundle agents. Measured: with `agents = own`, `~/.claude/agents/` is empty inside as
+  intended, while a plugin-bundled `skills/<plug>/agents/zorbagent.md` is still there.
+  Closing the agents channel does not close agent definitions. A `plugin.json` may also
+  declare `commands`, which *replaces* the default `commands/`.
+- **`instructions` can reach outside itself.** A `CLAUDE.md` may `@import` other files,
+  relative or **absolute**, expanded into context at launch. So the channel's effective
+  extent is not the paths it declares. Measured: when the target is missing the import
+  is **silent** -- no error, no warning, exit 0, and only the literal `@path` line
+  remains in the instructions.
+
+The silence is what makes the second one matter: splitting that group does not fail, it
+produces quietly incomplete instructions.
+
+A launch-time check is possible for it, but has to be narrow or it becomes noise. A
+dangling import is often DELIBERATE -- a user may import a host-specific file precisely
+so that it does not enter a sandboxed model. The case worth reporting is narrower: an
+import whose target lies inside a channel positioned DIFFERENTLY from the importing one,
+which is a split group rather than an intended exclusion. That is cheap to test and does
+not fire on the intentional case.
+
 **Two things this model does not cover, and should say so.**
 
 - **A managed tier above the user's.** Instructions have a policy scope outside `~/.claude`
