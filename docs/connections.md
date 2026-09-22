@@ -521,7 +521,9 @@ preset = inherit           # isolated | inherit | shared
 [overlay]
 mode = auto                # auto | off -- what copy-on-write is implemented with
 
-[connect]                  # channel = mode [source]; source: native | sandbox:<project>[/<role>] | outside:<path>
+[connect]                  # channel = mode [source] [scope]
+                           # source: native | sandbox:<project>[/<role>] | outside:<path>
+                           # scope:  sandbox-scoped (default); the rest are not built
 instructions = copy-on-write native
 skills = copy native
 memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today
