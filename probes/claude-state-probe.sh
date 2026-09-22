@@ -32,6 +32,14 @@ CB="$(ls -d "$HOME"/.local/share/claude/versions/*/claude 2>/dev/null | sort -V 
 [[ -x "$CB" ]] || die "no Claude Code binary under ~/.claude... (~/.local/share/claude/versions)"
 C="$HOME/.claude"
 DIRS=(paste-cache file-history session-env sessions jobs shell-snapshots plans)
+# Paths with NO disposition in profiles/claude.sh -- the leak study's rows 15-18 and
+# the issues they produced (#52, #74-#80, #83-#86). Each of those issues is blocked on
+# the same question this probe answers: does a session still work without it? A PASS
+# here does not settle a disposition on its own (a path can be unneeded at startup and
+# still matter to a feature, as usage-data does to /insights), but it is the input they
+# are waiting on.
+UNCLASSIFIED=(agent-memory usage-data feedback-bundles image-cache tasks backups
+  downloads uploads output-styles agents workflows rules)
 EMPTY="$(mktemp)"
 trap 'rm -f "$EMPTY"' EXIT
 
@@ -47,12 +55,40 @@ blank_args() {
   done
 }
 
+# inventory NAME...: what is actually on this host, before anything is blanked. Half
+# the blocked issues say "the directory does not exist on the host that measured this",
+# so this is the first thing they need.
+inventory() {
+  local n p
+  for n in "$@"; do
+    p="$C/$n"
+    if [[ -d "$p" ]]; then
+      printf '  %-20s dir   %5s entries  %7s\n' "$n" \
+        "$(find "$p" -mindepth 1 2>/dev/null | wc -l)" "$(du -sh "$p" 2>/dev/null | cut -f1)"
+    elif [[ -f "$p" ]]; then
+      printf '  %-20s file  %7s\n' "$n" "$(du -h "$p" 2>/dev/null | cut -f1)"
+    else
+      printf '  %-20s ABSENT\n' "$n"
+    fi
+  done
+}
+
 # try LABEL CWD -- NAMES...: one agent turn with NAMES blanked; prints PASS/FAIL
 try() {
   local label="$1" cwd="$2"
   shift 3
   local -a b=()
   mapfile -d '' -t b < <(blank_args "$@")
+  # A PATH THAT DOES NOT EXIST GETS NO --tmpfs, so the turn runs with nothing
+  # blanked and passes -- indistinguishable from "not needed". That is a false
+  # negative, and it is exactly the case several of these issues are in ("the
+  # directory does not exist on the host that measured this"). Say so instead.
+  # Only when names WERE given: a run with no names is a deliberate control
+  # (the harness check at the top, the slug check below), which must actually run.
+  if (($# > 0)) && ((${#b[@]} == 0)); then
+    printf '  %-46s SKIPPED (absent: nothing was blanked)\n' "$label"
+    return 0
+  fi
   local out rc
   out=$(cd "$cwd" && timeout 120 bwrap --bind / / --dev-bind /dev /dev --proc /proc --share-net \
     "${b[@]}" "$CB" -p 'Reply with the single word ok' --model "$MODEL" </dev/null 2>&1)
@@ -80,6 +116,15 @@ else
   echo "== bisecting: one path at a time =="
   for n in "${ALL[@]}"; do try "$n blanked" "$PWD" -- "$n"; done
 fi
+
+echo
+echo "== inventory: paths with no disposition, as they are on THIS host =="
+inventory "${UNCLASSIFIED[@]}"
+
+echo
+echo "== unclassified paths, one at a time =="
+echo "   (PASS = a session starts without it. Not a disposition on its own.)"
+for n in "${UNCLASSIFIED[@]}"; do try "$n blanked" "$PWD" -- "$n"; done
 
 echo
 echo "== how Claude Code names a project directory (the profile must match it) =="
