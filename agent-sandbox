@@ -1555,12 +1555,22 @@ _as_holder_ensure() {
     # and the whole run hung after the last assertion had already passed. The
     # loop is general on purpose: enumerating the descriptors that matter is how
     # this bug comes back with a different number.
+    # AND IT LIVES EXACTLY AS LONG AS IT IS THE RECORDED HOLDER OF A SANDBOX THAT
+    # STILL EXISTS. It used to `exec sleep infinity`, which knew nothing of either.
+    # Every way of stopping a holder -- a reset, the sweep -- finds it through
+    # holder.id, so a holder whose record vanishes is unreachable for good: delete
+    # the sandbox directory (every bats teardown deletes its tmpdir) and it lived
+    # for ever. Measured: 128 of them, up to a day and a half old, from two days of
+    # running this suite. It now rereads its record every few seconds and leaves
+    # once the file is gone or names another process -- the second being the same
+    # problem reached by a different route. Five seconds of lag costs nothing; a
+    # stat every five seconds per holder costs less.
     setsid bwrap --dev-bind / / "${ov[@]}" -- \
       bash -c "for _fd in /proc/\$\$/fd/*; do
                  case \${_fd##*/} in 0 | 1 | 2) ;; *) eval \"exec \${_fd##*/}>&-\" 2>/dev/null ;; esac
                done
                printf '%s %s\n' \"\$\$\" \"\$(awk '{print \$22}' /proc/\$\$/stat)\" >'$sb/holder.id'
-               exec sleep infinity" \
+               while read -r _p _ <'$sb/holder.id' 2>/dev/null && [ \"\$_p\" = \"\$\$\" ]; do sleep 5; done" \
       >/dev/null 2>&1 <&- 9>&- &
     local starter=$!
     # A real holder records itself in well under a second, and a bwrap that

@@ -134,3 +134,47 @@ teardown() {
   [[ "$output" == *"session of this sandbox is running"* ]]
   wait "$first" 2>/dev/null || true
 }
+
+@test "a holder whose sandbox directory is deleted exits on its own" {
+  # THE LEAK THIS PINS. The sweep finds holders through their holder.id files, so
+  # a holder whose sandbox directory is removed -- which is what every bats
+  # teardown does to its tmpdir -- became unreachable and lived for ever. 128 of
+  # them accumulated in two days of running this suite. A holder now watches its
+  # own record and leaves when it goes.
+  run_sandboxed "${COW[@]}" -- run
+  [ "$status" -eq 0 ]
+  local pid i alive=1
+  read -r pid _ <"$SB/holder.id"
+  [ -d "/proc/$pid" ]
+  chmod -R u+rwX "$SB" 2>/dev/null # overlayfs leaves a mode-000 work dir
+  rm -rf "$SB"
+  for ((i = 0; i < 60; i++)); do
+    [ -d "/proc/$pid" ] || {
+      alive=0
+      break
+    }
+    sleep 0.25
+  done
+  ((alive)) && kill "$pid" 2>/dev/null # do not leak it if this fails
+  [ "$alive" -eq 0 ]
+}
+
+@test "a holder that is no longer the recorded one exits too" {
+  # The second way to become unreachable: holder.id rewritten to name another
+  # process. Nothing would ever signal this one again, so it must notice.
+  run_sandboxed "${COW[@]}" -- run
+  [ "$status" -eq 0 ]
+  local pid i alive=1
+  read -r pid _ <"$SB/holder.id"
+  [ -d "/proc/$pid" ]
+  printf '1 0\n' >"$SB/holder.id"
+  for ((i = 0; i < 60; i++)); do
+    [ -d "/proc/$pid" ] || {
+      alive=0
+      break
+    }
+    sleep 0.25
+  done
+  ((alive)) && kill "$pid" 2>/dev/null
+  [ "$alive" -eq 0 ]
+}
