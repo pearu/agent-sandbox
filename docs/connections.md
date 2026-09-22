@@ -145,6 +145,68 @@ Two connections are **mandatory** and fixed:
    `copy` beside one at `read-write` receives the other's writes at its next launch and sends
    nothing back. Asymmetric flows are predictable because each side's mode is its own.
 
+## What each channel carries
+
+The table below places each channel under each preset. This is the evidence for those
+placements, taken from Anthropic's documentation rather than from reading our own code --
+which matters, because two of these channels are consumed with **no user action at all**,
+and one is explicitly exempted from the trust prompt Claude Code shows for project files.
+
+| channel | how it reaches the model | what the docs restrict or promise |
+|---|---|---|
+| **instructions** — `CLAUDE.md`, `rules/` | loaded into **every session** | "User-scope memory files, such as `~/.claude/CLAUDE.md` and `~/.claude/rules/`, are files you wrote yourself... Claude Code loads their imports **without the dialog** and trusts them like the rest of your personal configuration" ([memory](https://code.claude.com/docs/en/memory)) |
+| **agents** — `agents/*.md` | Claude **delegates automatically**, choosing by each subagent's description | a subagent runs "with a custom system prompt, **specific tool access, and independent permissions**" ([sub-agents](https://code.claude.com/docs/en/sub-agents)) |
+| **settings** — `settings.json`, `output-styles/` | a style is chosen with `/output-style` and the **selection is persisted**, applying to later sessions | the command also works headless, in Agent SDK sessions, and over Remote Control ([output styles](https://code.claude.com/docs/en/output-styles)) |
+| **skills** — `skills/`, `commands/` | invoked as `/name`; "Claude invokes some bundled skills automatically" | also loaded from `.claude/skills/` in the working directory **and every parent up to the repository root** ([skills](https://code.claude.com/docs/en/skills)) |
+| **workflows** — `workflows/*.js` | "a JavaScript script that orchestrates many subagents... **Claude writes the script**" | `/deep-research` "runs only when you invoke it" -- and "Before v2.1.218, Claude could also start it on its own" ([workflows](https://code.claude.com/docs/en/workflows)) |
+| **plugins** — `plugins/` | auto-load rules per plugin kind | carries its own **workspace-trust requirement**, so the agent already gates this one ([plugins](https://code.claude.com/docs/en/plugins-reference)) |
+
+**This is why `inherit` is the default.** `instructions` and `agents` are consumed with no
+user action, and the first is explicitly exempt from the trust dialog. A sandbox able to
+write them does not merely leak across projects: it injects into channels Claude Code has
+decided not to question, in every project, for every later session. `copy-on-write` is what
+keeps the sandbox's writes its own.
+
+### The channels are not independent
+
+The table above reads as six separate things. Two of them reach into the others, both
+measured rather than inferred (#112), and a preset is only as sound as the independence
+it assumes -- which is the real cost of tagging a channel with a position: it requires
+knowing what that channel is related to.
+
+- **`skills` can supply `agents` and `commands`.** Any folder under a skills directory
+  containing a `.claude-plugin/plugin.json` loads as a plugin, and such a plugin may
+  bundle agents. Measured: with `agents = own`, `~/.claude/agents/` is empty inside as
+  intended, while a plugin-bundled `skills/<plug>/agents/zorbagent.md` is still there.
+  Closing the agents channel does not close agent definitions. A `plugin.json` may also
+  declare `commands`, which *replaces* the default `commands/`.
+- **`instructions` can reach outside itself.** A `CLAUDE.md` may `@import` other files,
+  relative or **absolute**, expanded into context at launch. So the channel's effective
+  extent is not the paths it declares. Measured: when the target is missing the import
+  is **silent** -- no error, no warning, exit 0, and only the literal `@path` line
+  remains in the instructions.
+
+The silence is what makes the second one matter: splitting that group does not fail, it
+produces quietly incomplete instructions.
+
+A launch-time check is possible for it, but has to be narrow or it becomes noise. A
+dangling import is often DELIBERATE -- a user may import a host-specific file precisely
+so that it does not enter a sandboxed model. The case worth reporting is narrower: an
+import whose target lies inside a channel positioned DIFFERENTLY from the importing one,
+which is a split group rather than an intended exclusion. That is cheap to test and does
+not fire on the intentional case.
+
+**Two things this model does not cover, and should say so.**
+
+- **A managed tier above the user's.** Instructions have a policy scope outside `~/.claude`
+  entirely: `/etc/claude-code/CLAUDE.md` on Linux and WSL, with OS equivalents elsewhere. It
+  is not a channel here. The engine binds `/etc` read-only, so an organisation's
+  instructions do reach a sandboxed session and cannot be rewritten from inside -- the right
+  outcome, arrived at incidentally rather than by design.
+- **`skills` and `commands` are not purely user-level.** They also load from the project
+  tree, walking up to the repository root, so part of that channel arrives through the
+  always-live project bind rather than through the channel at all.
+
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
@@ -241,6 +303,14 @@ repository had no way to see.
 with these connections behaves like a native Claude Code whose configuration is the user's,
 read live, with its own writes kept to itself. `isolated` is the two mandatory
 connections and nothing else. `shared` is the engine before 0.2.
+
+**`shared` deserves more warning than "the engine before 0.2" gives it.** At
+`read-write`, a sandboxed session can write `~/.claude/rules/` or an `agents/*.md`
+carrying its own tool access -- and per the table above, both are consumed
+automatically, in every project, and the instruction files are trusted *without the
+dialog Claude Code shows for project files*. That is not only a cross-project leak; it
+is a write into a channel the agent has decided not to question. `shared` is for
+restoring old behaviour deliberately, not for convenience.
 
 ## Why these names
 
