@@ -343,7 +343,8 @@ Engine flags (must precede the agent's own arguments):
                         discard what this sandbox holds at CHANNEL and take the
                         source's again, then exit. What the conflict warning
                         points at
-  --connect SPEC        open one channel at one mode: 'channel=mode [source]',
+  --connect SPEC        open one channel at one mode: 'channel=mode [source]
+                        [scope]',
                         repeatable. Lower on the scale own < copy <
                         copy-on-write < read-only < read-write is more
                         isolated; the preset sets where every channel is by
@@ -1076,7 +1077,7 @@ _as_preset_renamed() {
 # reason about.
 _as_preset_is_native() { [[ "${_preset:-}" == native ]]; }
 
-# _as_connect_parse SPEC WHERE -- record one `channel = mode [source]`.
+# _as_connect_parse SPEC WHERE -- record one `channel = mode [source] [scope]`.
 #
 # Refuses rather than warns, on every kind of bad input. A typo in a channel
 # name that left it quietly at `read-write` would be the worst outcome this can
@@ -1089,19 +1090,44 @@ _as_connect_parse() {
   spec="${spec%"${spec##*[![:space:]]}"}"
   [[ -z "$spec" ]] && return 0
   [[ "$spec" == *=* ]] || {
-    _as_msg "connect ($where): expected 'channel = mode [source]', got '$spec'"
+    _as_msg "connect ($where): expected 'channel = mode [source] [scope]', got '$spec'"
     return 1
   }
   ch="${spec%%=*}"
   ch="${ch//[[:space:]]/}"
   rest="${spec#*=}"
-  local extra
-  read -r mode src extra <<<"$rest"
+  # After the mode come up to two optional tokens, in either order: a SOURCE and a
+  # SCOPE. They are told apart lexically -- every scope name ends in `-scoped`, no
+  # source does -- so neither needs a fixed position and neither needs a prefix.
+  local t2 t3 extra scope=""
+  read -r mode t2 t3 extra <<<"$rest"
   [[ -z "$extra" ]] || {
-    _as_msg "connect ($where): trailing '$extra' in '$spec'; a spec is 'channel = mode [source]' and nothing more"
+    _as_msg "connect ($where): trailing '$extra' in '$spec'; a spec is 'channel = mode [source] [scope]' and nothing more"
     return 1
   }
+  local tok
+  src=""
+  for tok in "$t2" "$t3"; do
+    [[ -z "$tok" ]] && continue
+    case "$tok" in
+      *-scoped)
+        [[ -z "$scope" ]] || {
+          _as_msg "connect ($where): two scopes in '$spec' ('$scope' and '$tok'); a spec carries one"
+          return 1
+        }
+        scope="$tok"
+        ;;
+      *)
+        [[ -z "$src" ]] || {
+          _as_msg "connect ($where): two sources in '$spec' ('$src' and '$tok'); a spec carries one"
+          return 1
+        }
+        src="$tok"
+        ;;
+    esac
+  done
   src="${src:-native}"
+  scope="${scope:-sandbox-scoped}"
 
   local known=0 line
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
@@ -1140,8 +1166,31 @@ _as_connect_parse() {
     _as_msg "connect ($where): source '$src' is not supported yet; only 'native' is"
     return 1
   }
+  # ---- the scope: which storage this channel's sandbox side uses ----
+  #
+  # THE READ-WRITE RULE IS PERMANENT, not a statement about what is built yet. At
+  # `read-write` the sandbox writes the source itself, so there is no sandbox-side
+  # storage left for a scope to apply to; asking for one means the spec does not mean
+  # what its author thinks. Checked before implementation status, because it is a fact
+  # about meaning rather than about this release.
+  if [[ "$mode" == read-write && "$scope" != sandbox-scoped ]]; then
+    _as_msg "connect ($where): '$ch = read-write $scope' does not mean anything -- at read-write the sandbox writes the source itself, so there is no sandbox-side storage for a scope to apply to. Drop the scope, or pick a mode that keeps the sandbox's writes its own."
+    return 1
+  fi
+  case "$scope" in
+    sandbox-scoped) ;; # today's behaviour, and the default
+    project-scoped | session-scoped | run-scoped | process-scoped)
+      _as_msg "connect ($where): scope '$scope' is not implemented in this engine (asked for '$ch'). Refusing rather than accepting it: a scope that parses and is never applied reads as isolation that is not there."
+      return 1
+      ;;
+    *)
+      _as_msg "connect ($where): unknown scope '$scope' for '$ch' (sandbox-scoped|project-scoped|session-scoped|run-scoped|process-scoped). Nothing wider than project-scoped exists: storage shared across projects is the leak this engine is for."
+      return 1
+      ;;
+  esac
   _connect_mode["$ch"]="$mode"
   _connect_where["$ch"]="$where"
+  _connect_scope["$ch"]="$scope"
   return 0
 }
 
@@ -2204,10 +2253,10 @@ _as_dotfile_parse() {
         fi
         ;;
       connect)
-        # channel = mode [source]. Collected here and validated at launch, with
+        # channel = mode [source] [scope]. Collected here, validated at launch, with
         # the flag and the environment, so one code path decides every form.
         if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [connect] expects 'channel = mode [source]', ignoring: $line"
+          _as_msg ".agent-sandbox: [connect] expects 'channel = mode [source] [scope]', ignoring: $line"
         else
           _df_connect+=("$line")
         fi
@@ -2578,7 +2627,7 @@ agent_sandbox() (
   # a refusal or a report can name the source the user has to go and edit.
   # `_role` is the sandbox key's second half; only `default` exists until roles
   # land, and the directory level is here so that arriving changes no layout.
-  local -A _connect_mode=() _connect_where=()
+  local -A _connect_mode=() _connect_where=() _connect_scope=()
   local -a _connect_flag=()
   # The holder this launch joins, if any, and the nsenter that joins it. Set by
   # _as_connect_apply and read by _as_launch.
@@ -2736,7 +2785,7 @@ agent_sandbox() (
         shift
         ;;
       --connect)
-        # One `channel = mode [source]`, repeatable. The highest-precedence
+        # One `channel = mode [source] [scope]`, repeatable. The highest-precedence
         # form: it beats AGENT_SANDBOX_CONNECT and an approved dot-file, the
         # same order --user-mcp already follows.
         [[ $# -ge 2 && -n "$2" ]] \
