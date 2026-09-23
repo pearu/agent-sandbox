@@ -101,7 +101,7 @@ Sections:
   `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
   be injected; `briefing.md` stays bound and readable either way.
-- **`[connect]`** — key/value lines, one per channel: `channel = mode [source]`.
+- **`[connect]`** — key/value lines, one per channel: `channel = mode [source] [scope]`.
   A **channel** is named by what it carries (`instructions`, `settings`,
   `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a
   **mode** says how much of the source reaches this project's sandbox, on the
@@ -122,6 +122,20 @@ Sections:
   These names changed in 0.3. The old ones (`none`, `cow`, `ro`, `live`) are
   refused rather than accepted as aliases, and the refusal says what to write
   instead.
+
+  A third token, the **scope**, says *which storage* the sandbox's side of a channel
+  uses. Only `sandbox-scoped` — keyed by project and role, the behaviour you already
+  have — is implemented; it is the default, so writing it changes nothing.
+  `project-scoped`, `session-scoped`, `run-scoped` and `process-scoped` parse and are
+  **refused**, because a scope that were accepted and never applied would read as
+  isolation that is not there. Nothing wider than `project-scoped` is nameable at all:
+  storage shared across projects is the leak this engine exists to prevent.
+
+  Source and scope may appear in either order — every scope ends in `-scoped` and no
+  source does — so `skills = copy native sandbox-scoped` and
+  `skills = copy sandbox-scoped native` are the same line. And `read-write` with any
+  scope is refused permanently rather than pending: at `read-write` the sandbox writes
+  the source itself, so there is no sandbox-side storage for a scope to apply to.
 
   Narrowing a channel needs nothing beyond this file's own approval. Widening
   one back toward `read-write` is what the `--trust` review is for, the same as
