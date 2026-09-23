@@ -717,3 +717,244 @@ EOF
   [ "$status" -ne 0 ]
   [ ! -s "$H/argv" ]
 }
+
+# ----- path declarations (#106 piece 2) -----------------------------------------
+# A [connect] key containing `/` names a PATH rather than a channel. The key is the
+# path inside the sandbox; with no source given, the source is the same path
+# outside. Relative keys resolve against the project, `~` against $HOME.
+
+@test "a key with a slash is a path: ./data = read-only binds the project's data read-only" {
+  mkdir -p "$PROJ/data"
+  run_engine -- claude --connect './data = read-only' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/data" "$PROJ/data"
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "a relative key resolves against the project, and ~ against HOME" {
+  mkdir -p "$PROJ/sub/dir" "$H/home/notes"
+  run_engine -- claude --connect 'sub/dir = read-only' --connect '~/notes = read-only' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/sub/dir" "$PROJ/sub/dir"
+  argv_has --ro-bind "$H/home/notes" "$H/home/notes"
+}
+
+@test "a path key keeps its spaces" {
+  mkdir -p "$PROJ/my data"
+  run_engine -- claude --connect './my data = read-only' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/my data" "$PROJ/my data"
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "read-write on a path binds the outside path through, as [rw] does" {
+  mkdir -p "$H/home/shared"
+  run_engine -- claude --connect '~/shared = read-write' --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/shared" "$H/home/shared"
+}
+
+@test "own on a path binds a private slot from the sandbox's state, and it persists" {
+  mkdir -p "$PROJ/scratch"
+  printf 'the real one\n' >"$PROJ/scratch/f"
+  run_engine -- claude --connect './scratch/ = own' --version
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$SBOX/@paths/own/$(slugify "$PROJ/scratch")"
+  argv_has --bind "$slot" "$PROJ/scratch"
+  [ -d "$slot" ]
+  [ ! -e "$slot/f" ] # never seeded from outside
+  : >"$slot/kept"
+  run_engine -- claude --connect './scratch/ = own' --version
+  [ -e "$slot/kept" ]
+}
+
+@test "own with a trailing slash on a directory that does not exist creates it, inside only" {
+  run_engine -- claude --connect './scratch/ = own' --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/scratch")" "$PROJ/scratch"
+}
+
+@test "a path that does not exist is skipped with a notice, in every other case" {
+  local spec
+  for spec in './gone/ = read-only' './gone = own' './gone = copy' './gone = read-write' './gone/ = copy-on-write'; do
+    run_engine -- claude --quiet --connect "$spec" --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"'./gone"*"does not exist"*"skipped"* ]]
+    run ! argv_has "$PROJ/gone"
+  done
+}
+
+@test "a trailing slash on something that is not a directory is refused" {
+  : >"$PROJ/AGENT.md"
+  run_engine -- claude --connect './AGENT.md/ = read-only' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a directory"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "copy on a path seeds the sandbox's own copy from the source" {
+  mkdir -p "$PROJ/tools"
+  printf 'v1\n' >"$PROJ/tools/t"
+  run_engine -- claude --connect './tools/ = copy' --version
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$SBOX/@paths/copy/$(slugify "$PROJ/tools")"
+  argv_has --bind "$slot" "$PROJ/tools"
+  [ "$(cat "$slot/t")" = v1 ]
+}
+
+@test "a file declaration says at launch that it cannot be deleted from inside" {
+  printf 'x\n' >"$PROJ/AGENT.md"
+  run_engine -- claude --quiet --connect './AGENT.md = read-only' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/AGENT.md" "$PROJ/AGENT.md"
+  [[ "$output" == *"'./AGENT.md' is a file"*"cannot be deleted"* ]]
+}
+
+@test "copy-on-write on a file is copy, and the launch says so" {
+  printf 'x\n' >"$PROJ/AGENT.md"
+  run_engine -- claude --quiet --connect './AGENT.md = copy-on-write' --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/AGENT.md")" "$PROJ/AGENT.md"
+  [[ "$output" == *"copy-on-write on a file is copy"* ]]
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "the root, HOME, and parents of HOME are refused as path keys, in every mode" {
+  local spec
+  for spec in '/ = own' '~/ = own' '~/.. = read-only'; do
+    run_engine -- claude --connect "$spec" --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"HOME or a parent of it"* ]]
+    [ ! -s "$H/argv" ]
+  done
+}
+
+@test "the project and its parents are refused: binding one would cover the project" {
+  # One level down, so the project's parent is not also a parent of HOME, which
+  # has a refusal of its own.
+  mkdir -p "$PROJ/sub"
+  local spec
+  for spec in './ = own' '../ = read-only' "$PROJ/ = own"; do
+    RUN_CWD="$PROJ/sub" run_engine -- claude --connect "$spec" --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"project"* ]]
+    [ ! -s "$H/argv" ]
+  done
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "secret stores are refused whatever the mode, own included" {
+  mkdir -p "$H/home/.ssh"
+  local spec
+  for spec in '~/.ssh = read-only' '~/.ssh/ = own' '~/.ssh/keys/ = own' '~/.config/ = own'; do
+    run_engine -- claude --connect "$spec" --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"secret store"* ]]
+    [ ! -s "$H/argv" ]
+  done
+}
+
+@test "a key that is a symlink into a secret store is refused" {
+  mkdir -p "$H/home/.ssh"
+  ln -s "$H/home/.ssh" "$PROJ/keys"
+  run_engine -- claude --connect './keys = read-only' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"secret store"* ]]
+}
+
+@test "two path declarations nested inside each other are refused" {
+  mkdir -p "$PROJ/a/b"
+  run_engine -- claude --connect './a/ = own' --connect './a/b/ = read-only' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"inside"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "the same path declared twice: the later one wins, as for a channel" {
+  mkdir -p "$PROJ/data"
+  run_engine AGENT_SANDBOX_CONNECT='./data = own' -- claude --connect './data = read-only' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/data" "$PROJ/data"
+  run ! argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/data")" "$PROJ/data"
+}
+
+@test "a path declaration takes no source yet: outside: is a follow-up" {
+  mkdir -p "$PROJ/data"
+  run_engine -- claude --connect './data = read-only native' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"source"* ]]
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "a path inside a channel is allowed, warned about, and wins there" {
+  mkdir -p "$C/rules/team"
+  run_engine -- claude --quiet --connect 'instructions = read-only native' --connect '~/.claude/rules/team/ = own' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"overlaps the channel 'instructions'"* ]]
+  local slot
+  slot="$SBOX/@paths/own/$(slugify "$C/rules/team")"
+  argv_has --bind "$slot" "$C/rules/team"
+  # after the channel's own bind, or the channel would cover it
+  [ "$(argv_index "$slot")" -gt "$(argv_index "$C/rules")" ]
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "a path under HOME, outside the project and every channel, is warned about" {
+  mkdir -p "$H/home/notes"
+  run_engine -- claude --quiet --connect '~/notes/ = own' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'~/notes/' is under your home directory"* ]]
+  # including when the directory does not exist yet and the launch creates it,
+  # which is the case the warning is chiefly for
+  run_engine -- claude --quiet --connect '~/fresh/ = own' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'~/fresh/' is under your home directory"* ]]
+  # and a path inside the project is not, even when the project is under HOME
+  mkdir -p "$H/home/work"
+  mkdir -p "$H/home/work/data"
+  RUN_CWD="$H/home/work" run_engine -- claude --quiet --connect './data/ = own' --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$STATE/claude/${H//[^A-Za-z0-9-]/-}-home-work/default/@paths/own/$(slugify "$H/home/work/data")" "$H/home/work/data"
+  [[ "$output" != *"under your home directory"* ]]
+}
+
+@test "a preset never moves a path declaration" {
+  mkdir -p "$PROJ/data"
+  TEST_PRESET=isolated run_engine -- claude --connect './data = read-only' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/data" "$PROJ/data"
+}
+
+@test "copy-on-write on a directory path is not implemented yet, and says so in the probed wording" {
+  mkdir -p "$PROJ/data"
+  run_engine -- claude --connect './data/ = copy-on-write' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not implemented in this engine"* ]]
+}
+
+@test "a path declaration from an approved dot-file is honoured" {
+  mkdir -p "$PROJ/data"
+  printf '[connect]\n./data = read-only\n' >"$PROJ/.agent-sandbox"
+  approve_dotfile
+  run_engine -- claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/data" "$PROJ/data"
+}
+
+@test "path declarations are bound AFTER the working tree, or the project would cover them" {
+  # Measured under the real bwrap (tests/integration/connect-paths.bats): bound
+  # before it, `./data = read-only` was writable and `./scratch/ = own` showed the
+  # project's files.
+  mkdir -p "$PROJ/data"
+  run_engine -- claude --connect './data = read-only' --version
+  [ "$status" -eq 0 ]
+  local i tree=-1 decl=-1
+  for ((i = 0; i + 2 < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == --bind && "${ARGV[i + 1]}" == "$PROJ" && "${ARGV[i + 2]}" == "$PROJ" ]] && tree=$i
+    [[ "${ARGV[i]}" == --ro-bind && "${ARGV[i + 2]}" == "$PROJ/data" ]] && decl=$i
+  done
+  [ "$tree" -ge 0 ]
+  [ "$decl" -gt "$tree" ]
+}

@@ -146,6 +146,16 @@ Sections:
   refuses the launch instead of being ignored, because a typo that quietly left
   a channel at `read-write` would read to you as a channel you had closed.
 
+  A key that contains **`/`** is a **path declaration** rather than a channel:
+  `./scratch/ = own` gives the sandbox a directory of its own at `./scratch`,
+  `/data = read-only` is what `[ro] /data` does. The key is the path inside the
+  sandbox, relative keys are relative to the project, `~` is `$HOME`, and the source
+  is the same path outside. Every mode is checked like `[ro]`/`[rw]`, and the project
+  or a parent of it is refused. A path that does not exist is skipped until it does,
+  except a trailing `/` under `own`, which creates it. A key with no `/` is still a
+  channel name, so a typo still refuses the launch. See
+  [connections.md](connections.md#path-declarations).
+
   One small side effect worth knowing rather than reporting: where a narrowed
   channel names a **directory** your `~/.claude` does not have, an empty one is
   left there. Empty files are cleaned up, because an empty `CLAUDE.md` is a

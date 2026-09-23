@@ -1094,7 +1094,14 @@ _as_connect_parse() {
     return 1
   }
   ch="${spec%%=*}"
-  ch="${ch//[[:space:]]/}"
+  # A key containing `/` is a PATH declaration, and a path may contain spaces, so
+  # only its ends are trimmed. A channel name has none to lose.
+  if [[ "$ch" == */* ]]; then
+    ch="${ch#"${ch%%[![:space:]]*}"}"
+    ch="${ch%"${ch##*[![:space:]]}"}"
+  else
+    ch="${ch//[[:space:]]/}"
+  fi
   rest="${spec#*=}"
   # After the mode come up to two optional tokens, in either order: a SOURCE and a
   # SCOPE. They are told apart lexically -- every scope name ends in `-scoped`, no
@@ -1126,10 +1133,12 @@ _as_connect_parse() {
         ;;
     esac
   done
+  local src_given="$src"
   src="${src:-native}"
   # No scope written means the role's own storage, which needs no name (#125).
 
   local known=0 line
+  [[ "$ch" == */* ]] && known=1 # a path; checked by _as_connect_parse_path below
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     [[ "${line%%$'\t'*}" == "$ch" ]] && {
       known=1
@@ -1162,10 +1171,20 @@ _as_connect_parse() {
       return 1
       ;;
   esac
-  [[ "$src" == native ]] || {
-    _as_msg "connect ($where): source '$src' is not supported yet; only 'native' is"
-    return 1
-  }
+  if [[ "$ch" == */* ]]; then
+    # The source of a path is the same path outside, and nothing else yet: the
+    # explicit form, outside:<path>, is a follow-up. `native` names the agent's
+    # own install, which a path is not part of.
+    [[ -z "$src_given" ]] || {
+      _as_msg "connect ($where): '$ch' is a path, and a path declaration takes no source yet -- its source is the same path outside. Drop '$src_given'."
+      return 1
+    }
+  else
+    [[ "$src" == native ]] || {
+      _as_msg "connect ($where): source '$src' is not supported yet; only 'native' is"
+      return 1
+    }
+  fi
   # ---- the scope: which storage this channel's sandbox side uses ----
   #
   # THE READ-WRITE RULE IS PERMANENT, not a statement about what is built yet. At
@@ -1204,9 +1223,84 @@ _as_connect_parse() {
       return 1
       ;;
   esac
+  if [[ "$ch" == */* ]]; then
+    _as_connect_parse_path "$ch" "$mode" "$where" || return 1
+    ch="$_path_key"
+  fi
   _connect_mode["$ch"]="$mode"
   _connect_where["$ch"]="$where"
   _connect_scope["$ch"]="$scope"
+  return 0
+}
+
+# _as_connect_parse_path KEY MODE WHERE -- validate a path declaration and record
+# it. Sets $_path_key to the path it resolves to, which is what the connection
+# maps are keyed by: a channel name never contains `/` and a resolved path always
+# does, so the two cannot collide.
+#
+# THE KEY IS ALWAYS A PATH INSIDE THE SANDBOX. A relative one is relative to the
+# project, whichever of the three forms it came from; `~` is $HOME. With no source,
+# the source is the same path outside -- so `/data = read-only` is what `[ro] /data`
+# already does, and `~/notes/ = own` is sandbox-only storage at ~/notes.
+#
+# EVERY MODE IS CHECKED ALIKE, `own` included, although `own` exposes nothing: one
+# rule is easier to state and to trust than one per mode, and loosening it later
+# breaks nobody while tightening it would. The rule is `[ro]`/`[rw]`'s --
+# not /, $HOME or a parent of it, nothing that is, is inside or contains a secret
+# store or the control plane -- plus one of its own: not the project or a parent
+# of it. Declarations are bound after the project, so one of those would cover it:
+# `~/git/ = own` hides the project, `~/git = read-only` makes it read-only.
+#
+# Both the key and what it resolves to are checked, since the key is where the
+# bind lands and the resolved path is what it shows.
+_as_connect_parse_path() {
+  local key="$1" mode="$2" where="$3" p dir=0 real proj other
+  local _prot_what _prot_path _prot_how
+  [[ "$key" == */ ]] && dir=1
+  p="$key"
+  case "$p" in
+    \~ | \~/*) p="$HOME${p#\~}" ;;
+    \~*)
+      _as_msg "connect ($where): '$key': only '~' and '~/' are expanded, not another user's home"
+      return 1
+      ;;
+    /*) ;;
+    *) p="$(_as_project_dir)/$p" ;;
+  esac
+  # Lexically, without resolving symlinks: the key is a place in the sandbox's
+  # tree, and ./a/../b means b whatever a is.
+  p="$(realpath -m -s -- "$p")"
+  real="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
+  proj="$(_as_project_dir)"
+  local c
+  for c in "$p" "$real"; do
+    if [[ "$c" == / || "$c" == "$HOME" || "$HOME" == "$c"/* ]]; then
+      _as_msg "connect ($where): refusing '$key' (it would cover all of '$c': / , \$HOME or a parent of it)."
+      return 1
+    fi
+    if [[ "$c" == "$proj" || "$proj" == "$c"/* ]]; then
+      _as_msg "connect ($where): refusing '$key' ('$c' is the project or a parent of it, and a declaration over it would cover the project). Declare a directory inside it instead."
+      return 1
+    fi
+    if _as_path_protected "$c"; then
+      _as_msg "connect ($where): refusing '$key' ('$c' $_prot_how $_prot_what '$_prot_path'), in every mode."
+      return 1
+    fi
+  done
+  # Two declarations nested inside each other would depend on bind order to mean
+  # anything, and which one wins is not something a reader of the dot-file should
+  # have to work out. The same path again is an override, as for a channel.
+  for other in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    [[ "$other" == "$p" ]] && continue
+    if [[ "$p" == "$other"/* || "$other" == "$p"/* ]]; then
+      _as_msg "connect ($where): '$key' and '${_connect_key[$other]}' are declared one inside the other; declare one of them."
+      return 1
+    fi
+  done
+  [[ -n "${_connect_key[$p]:-}" ]] || _connect_paths+=("$p")
+  _connect_key["$p"]="$key"
+  _connect_isdir["$p"]="$dir"
+  _path_key="$p"
   return 0
 }
 
@@ -1404,6 +1498,124 @@ _as_connect_apply() {
     [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
     _as_msg "connect: ${_cow_fellback[*]}: copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
   fi
+  return 0
+}
+
+# _as_connect_path_warn PATH KEY MODE -- what a path declaration should say about
+# where it lands, for every declaration that binds (including an `own` directory
+# the launch creates, which is the case the $HOME warning is chiefly for).
+_as_connect_path_warn() {
+  local p="$1" key="$2" mode="$3" line entry cpath ch overlap
+  local -a fields=()
+  # Inside a channel, or over one: allowed, and said, because the channel's mode
+  # no longer describes that part of it.
+  overlap=0
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    for entry in "${fields[@]:1}"; do
+      cpath="${entry#*:}"
+      [[ -n "$cpath" ]] || continue
+      if [[ "$p" == "$cpath" || "$p" == "$cpath"/* || "$cpath" == "$p"/* ]]; then
+        _as_msg "connect: '$key' overlaps the channel '$ch' ('$cpath'); the path declaration wins there, whatever the channel's mode."
+        overlap=1
+        break 2
+      fi
+    done
+  done
+  # $HOME is where a user is most likely to believe they are naming their real
+  # home directory. Inside, $HOME is empty.
+  if ((! overlap)) && [[ "$p" == "$HOME"/* ]] && [[ "$p" != "$(_as_project_dir)"/* ]]; then
+    if [[ "$mode" == own ]]; then
+      _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this is sandbox-only storage at '$p', and your real one stays hidden."
+    else
+      _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this puts your real '$p' there, at $mode."
+    fi
+  fi
+}
+
+# _as_connect_apply_paths -- add the path declarations' binds to $args.
+#
+# Called with the [ro]/[rw] binds it replaces, after the working tree and every
+# channel, so a declaration lands on top of whatever it is inside and wins there.
+# Presets never reach this: a path has no position until someone declares one.
+#
+# A PATH THAT DOES NOT EXIST IS SKIPPED, with a notice, in every mode but one. The
+# engine would otherwise have to create it on the host to have something to bind,
+# and every mode except `own` promises something about the path OUTSIDE. The
+# exception is a trailing slash under `own`, which reads as "a directory of the
+# sandbox's own here" and needs nothing outside. Anything the sandbox then creates
+# at a skipped path is picked up at the next launch.
+_as_connect_apply_paths() {
+  ((${#_connect_paths[@]})) || return 0
+  local p key mode base slot manifest real kind
+  local _prot_what _prot_path _prot_how
+  base="$(_as_sandbox_dir)/@paths"
+  for p in "${_connect_paths[@]}"; do
+    key="${_connect_key[$p]}"
+    mode="${_connect_mode[$p]}"
+    if [[ ! -e "$p" ]]; then
+      if [[ "$mode" == own ]] && ((${_connect_isdir[$p]})); then
+        _as_connect_path_warn "$p" "$key" "$mode"
+        slot="$base/own/$(_as_iso_slug "$p")"
+        mkdir -p -- "$slot" || return 1
+        args+=(--bind "$slot" "$p")
+      else
+        _as_msg "connect: '$key' does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
+      fi
+      continue
+    fi
+    kind="file"
+    [[ -d "$p" ]] && kind="dir"
+    if ((${_connect_isdir[$p]})) && [[ "$kind" != dir ]]; then
+      _as_msg "connect: '$key' ends in '/' but '$p' is not a directory. Refusing rather than guessing which was meant."
+      return 1
+    fi
+    # Resolved again at bind time and re-checked fail-closed, as _as_add_paths does:
+    # a symlink repointed after the parse must not mount a target that was refused.
+    real="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
+    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real"; then
+      _as_msg "connect: refusing to bind '$key': it resolves to a protected path ('$real')"
+      return 1
+    fi
+    _as_connect_path_warn "$p" "$key" "$mode"
+    if [[ "$kind" == file ]]; then
+      local cow_note=""
+      [[ "$mode" == copy-on-write ]] && cow_note=" And copy-on-write on a file is copy: overlayfs cannot stack on a single file."
+      _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
+    fi
+    case "$mode" in
+      own)
+        slot="$base/own/$(_as_iso_slug "$p")"
+        if [[ "$kind" == dir ]]; then
+          mkdir -p -- "$slot" || return 1
+        else
+          mkdir -p -- "$(dirname -- "$slot")" || return 1
+          [[ -e "$slot" ]] || : >"$slot" || return 1
+        fi
+        args+=(--bind "$slot" "$p")
+        ;;
+      copy | copy-on-write)
+        if [[ "$mode" == copy-on-write && "$kind" == dir ]]; then
+          # See the probed wording in _as_connect_parse. An overlay for a path the
+          # launch chooses cannot join the holder, whose set of mounts is fixed per
+          # sandbox (see _as_holder_paths), so this waits for that to be decided.
+          _as_msg "connect: mode 'copy-on-write' is not implemented in this engine (${_connect_where[$p]} asked for '$key', a directory). Refusing rather than serving a different mode under that name."
+          return 1
+        fi
+        slot="$base/copy/$(_as_iso_slug "$p")"
+        manifest="$base/base/$(_as_iso_slug "$p").json"
+        mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+        _as_connect_sync sync "$key" "$kind" "$real" "$slot" "$manifest" || return 1
+        if [[ ! -e "$slot" ]]; then
+          if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+        fi
+        args+=(--bind "$slot" "$p")
+        ;;
+      read-only) args+=(--ro-bind "$real" "$p") ;;
+      read-write) args+=(--bind "$real" "$p") ;;
+    esac
+  done
   return 0
 }
 
@@ -1764,6 +1976,10 @@ _as_connect_live() {
 _as_connect_reset() {
   local want="$1" line ch entry kind path slot manifest base found=0 upper work seen
   local -a fields=()
+  [[ "$want" == */* ]] && {
+    _as_msg "connect: --reset-connection takes a channel name; resetting a path declaration ('$want') is not supported yet."
+    return 1
+  }
   base="$(_as_sandbox_dir)"
   # Never while a session of this sandbox is running: its overlay's layers are
   # these directories, and removing them under a live mount is the one way this
@@ -1824,7 +2040,11 @@ _as_connect_report() {
   # becomes something nobody reads.
   for ch in "${!_connect_mode[@]}"; do
     [[ "${_connect_where[$ch]}" == "preset "* ]] && continue
-    _as_info "connect: $ch = ${_connect_mode[$ch]} native (${_connect_where[$ch]})"
+    if [[ "$ch" == */* ]]; then
+      _as_info "connect: ${_connect_key[$ch]} = ${_connect_mode[$ch]} (${_connect_where[$ch]})"
+    else
+      _as_info "connect: $ch = ${_connect_mode[$ch]} native (${_connect_where[$ch]})"
+    fi
   done
   return 0
 }
@@ -2644,6 +2864,11 @@ agent_sandbox() (
   # `_role` is the sandbox key's second half; only `default` exists until roles
   # land, and the directory level is here so that arriving changes no layout.
   local -A _connect_mode=() _connect_where=() _connect_scope=()
+  # Path declarations, in the order declared: the resolved path, what the user
+  # wrote, and whether they wrote a trailing slash.
+  local -a _connect_paths=()
+  local -A _connect_key=() _connect_isdir=()
+  local _path_key
   local -a _connect_flag=()
   # The holder this launch joins, if any, and the nsenter that joins it. Set by
   # _as_connect_apply and read by _as_launch.
@@ -3866,6 +4091,10 @@ agent_sandbox() (
   # User-supplied extra paths.
   _as_add_paths --ro-bind "$_knob_ro" || return 1
   _as_add_paths --bind "$_knob_rw" || return 1
+  # And the path declarations, which are what [ro]/[rw] become: here, after the
+  # working-tree bind, or the project would cover every declaration inside it --
+  # measured, under the real bwrap, the first time this ran (connect-paths.bats).
+  _as_connect_apply_paths || return 1
 
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and
