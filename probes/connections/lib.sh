@@ -101,6 +101,13 @@ conn_setup() {
   CONN_CTRL_OK=0 CONN_CTRL_BAD=0
   CONN_SUITE="$name"
   CONN_PROBED_MODE="" CONN_PROBED_RC=0
+  # THE VERSIONS ARE READ ONCE, not per record. `claude --version` is a full sandboxed
+  # launch, and stamping every record with it took half of a whole run (measured: 24.6 s
+  # of a 54 s suite). They are read again when the suite ends and written as one more
+  # record (see conn_summary), so the gate's "one claude/engine across the run" still
+  # catches an update in the middle -- per run now, not per record.
+  CONN_CLAUDE_VERSION="$(claude --version 2>/dev/null | head -1)"
+  CONN_ENGINE_VERSION="$(claude --engine-version 2>/dev/null | head -1)"
   leak_real_config_before
 }
 
@@ -470,8 +477,8 @@ conn_record() {
     --set "assertion=$desc" --set "expected=$expected" --set "actual=$actual" \
     --set "status=$status" --set "cell_desc=$CONN_DESC" \
     --set "overlay=${CONN_OVERLAY_EFF:-auto}" \
-    --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
-    --set "engine_version=$(claude --engine-version 2>/dev/null | head -1)" \
+    --set "claude_version=$CONN_CLAUDE_VERSION" \
+    --set "engine_version=$CONN_ENGINE_VERSION" \
     "$@" >/dev/null
   case "$status" in
     pass) CONN_PASS=$((CONN_PASS + 1)) ;;
@@ -534,6 +541,14 @@ conn_blocked() {
 # expresses, and "0 fail" is only good news beside "0 not-implemented".
 conn_summary() {
   leak_cell_finish
+  # The versions as they are NOW, in a record of their own: if either moved since
+  # conn_setup read them, the gate sees two values and the run is not a result. Written
+  # directly rather than through conn_record, so it counts towards no score.
+  python3 "$LEAK_RECORD" write --out "$LEAK_RUN/records/versions-end.json" \
+    --set "suite=$CONN_SUITE" --set "cell=versions-end" --set "status=control-pass" \
+    --set "assertion=the versions when the suite ends are the versions it started with" \
+    --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
+    --set "engine_version=$(claude --engine-version 2>/dev/null | head -1)" >/dev/null
   leak_real_config_after
   # THE GATE RUNS BEFORE THE SCORE IS BELIEVED. A `fail` is a result -- the engine broke
   # a promise -- so it does not invalidate anything; a control that did not hold, a
