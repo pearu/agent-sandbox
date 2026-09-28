@@ -101,7 +101,7 @@ Sections:
   `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
   be injected; `briefing.md` stays bound and readable either way.
-- **`[connect]`** — key/value lines, one per channel: `channel = mode [source]`.
+- **`[connect]`** — key/value lines, one per channel: `channel = mode [source] [scope]`.
   A **channel** is named by what it carries (`instructions`, `settings`,
   `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a
   **mode** says how much of the source reaches this project's sandbox, on the
@@ -122,6 +122,21 @@ Sections:
   These names changed in 0.3. The old ones (`none`, `cow`, `ro`, `live`) are
   refused rather than accepted as aliases, and the refusal says what to write
   instead.
+
+  A third token, the **scope**, names a lifetime *shorter* than the role's for the
+  sandbox's side of a channel. Written nothing, a channel's storage belongs to the role:
+  it persists across runs, the behaviour you already have. `run-scoped` (one run of the
+  role's launch) and `process-scoped` (one process in it) parse and are **refused** for
+  now, because a scope that were accepted and never applied would read as isolation that
+  is not there. The first draft's names are refused with what to write instead:
+  `sandbox-scoped` (the default has no name), `project-scoped` (sharing across roles is a
+  `sandbox:<project>/<role>` source, not a scope) and `session-scoped` (a store of its own
+  per conversation is a role of its own).
+
+  Source and scope may appear in either order — every scope ends in `-scoped` and no
+  source does. And `read-write` with any scope is refused permanently rather than
+  pending: at `read-write` the sandbox writes the source itself, so there is no
+  sandbox-side storage for a scope to apply to.
 
   Narrowing a channel needs nothing beyond this file's own approval. Widening
   one back toward `read-write` is what the `--trust` review is for, the same as
