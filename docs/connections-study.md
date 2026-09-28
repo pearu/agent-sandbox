@@ -3,7 +3,7 @@
 **Status: planned, nothing measured yet.** This defines the experiments for the model in
 [connections.md](connections.md): a sandbox is an installation of an agent, and what it
 shares is a set of explicit **connections**, each carrying one **channel** from one
-**source** under one **mode** on the scale `own < copy < copy-on-write < read-only < read-write`.
+**source** under one **mode** on the scale `own < seed-only < copy < copy-on-write < read-only < read-write`.
 
 It succeeds [cross-project-channels.md](cross-project-channels.md), whose results for
 Claude Code 2.1 on engine 0.2.0 are in

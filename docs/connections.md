@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets and the holder are implemented and under test; roles, the keeper, `seed-only` and the `config` and `transcripts` channels are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage-agreed-not-built)).** A model for controlling what passes between agent
+**Status: the scale, the presets and the holder are implemented and under test; roles, the keeper and the `config` and `transcripts` channels are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage-agreed-not-built)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -83,12 +83,13 @@ Every connection has a mode. The modes are ordered by how much of the source A r
 sandbox B, and whether anything of B reaches A:
 
 ```
-own  <  copy  <  copy-on-write  <  read-only  <  read-write
+own  <  seed-only  <  copy  <  copy-on-write  <  read-only  <  read-write
 ```
 
 | mode | A → B | B → A | B's own state | needs |
 |---|---|---|---|---|
 | `own` | never | never | B's own, from nothing | nothing |
+| `seed-only` | once, when B's store is first made | never | private, persistent | a seed |
 | `copy` | at launch, where B has not changed the file | never | private, persistent | a seed and a three-way refresh |
 | `copy-on-write` | live, for every file B has not written | never | private, persistent | an overlay, or its emulation |
 | `read-only` | live | never | none | a read-only bind |
@@ -96,6 +97,11 @@ own  <  copy  <  copy-on-write  <  read-only  <  read-write
 
 Definitions, so the sub-decisions stop multiplying:
 
+- **`seed-only`**: B's store is copied from A once, when it is first created, and is B's
+  from then on. A's later changes never arrive, so there is nothing to conflict and nothing
+  to warn about; a `reset` discards the store and the next launch seeds it again. It is
+  what `copy` amounts to on a file B writes at every launch, minus the warning `copy` would
+  then give at every launch.
 - **`copy`**: B's files are seeded once from A. At later launches A's changes arrive for
   every file B has not touched; a file B changed stays B's; when both changed, B's stays and
   the launch says so; a file A deleted goes from B if B never touched it; a file B deleted
@@ -352,7 +358,7 @@ thing one channel down.
 
 ### Why the mode is `own`, and why the abbreviations are spelled out
 
-    own  <  copy  <  copy-on-write  <  read-only  <  read-write
+    own  <  seed-only  <  copy  <  copy-on-write  <  read-only  <  read-write
 
 The scale says what the sandbox has at a path in relation to yours: a copy, a
 copy-on-write layer, read-only access, read-write access -- and, at the bottom, its own,
@@ -566,9 +572,7 @@ conversation. `read-write` with any scope stays refused: there is no store to sc
 
 ### Modes and channels decided alongside
 
-- **`seed-only`** (#120): copied from the source once, when the store is first created, and
-  the sandbox's own from then on; never refreshed, so never a both-changed warning. The scale
-  becomes `own < seed-only < copy < copy-on-write < read-only < read-write`.
+- **`seed-only`** (#120) is built: see [The scale](#the-scale).
 - **No merge-back at exit** (#120): `file-history/` and `plans/` at `own`, `history.jsonl` at
   `seed-only` seeded with this project's lines, the hook logs at `own`. So **`transcripts`
   becomes a managed channel**, `own` under `isolated` and `inherit` and `read-write` under

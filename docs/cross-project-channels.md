@@ -12,7 +12,7 @@ document's Status names the four things the class deliberately does not contain.
 never classified, all shared, and a default of *shared* for anything unclassified — are
 what moved the design to [connections.md](connections.md), where a sandbox is an
 installation and what it shares is a set of explicit connections, each on a
-`own < copy < copy-on-write < read-only < read-write` scale. The next study measures **channel × mode × source ×
+`own < seed-only < copy < copy-on-write < read-only < read-write` scale. The next study measures **channel × mode × source ×
 direction** and has its own plan, [connections-study.md](connections-study.md); the method
 below (canaries, levels, one tree per experiment, the validity gate, topologies) carries
 over to it, and the

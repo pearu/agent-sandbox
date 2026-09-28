@@ -105,10 +105,11 @@ Sections:
   A **channel** is named by what it carries (`instructions`, `settings`,
   `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a
   **mode** says how much of the source reaches this project's sandbox, on the
-  scale `own < copy < copy-on-write < read-only < read-write`, lower being more
+  scale `own < seed-only < copy < copy-on-write < read-only < read-write`, lower being more
   isolated. `own` gives the sandbox nothing of yours and keeps what it writes
-  there private and persistent; `copy` seeds it from your files and refreshes
-  anything it has not touched; `copy-on-write` lets reads fall through until it
+  there private and persistent; `seed-only` copies your files once, the first time,
+  and never refreshes them, so it never warns; `copy` seeds it from your files and
+  refreshes anything it has not touched; `copy-on-write` lets reads fall through until it
   writes; `read-only` gives it your files, live, and refuses its writes;
   `read-write` is one directory, both ways. The preset decides where each channel
   starts. The only **source** so far is `native`, your own `~/.claude`, which is
@@ -173,7 +174,7 @@ Sections:
   and is described below.
 
   What each preset means, channel by channel, in the modes of the scale
-  `own < copy < copy-on-write < read-only < read-write`. The mode columns are the whole model, not only
+  `own < seed-only < copy < copy-on-write < read-only < read-write`. The mode columns are the whole model, not only
   the part the engine drives from a preset today; the last column says what
   actually governs each row now, so nothing here claims more than it does.
 
