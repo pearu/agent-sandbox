@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets and the holder are implemented and under test; scope and roles are not.** A model for controlling what passes between agent
+**Status: the scale, the presets and the holder are implemented and under test; roles, the keeper, `seed-only` and the `config` and `transcripts` channels are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage-agreed-not-built)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -70,7 +70,7 @@ No connection for a channel means `own`.
 Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
 `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`) stays what
 the isolate spec makes of it today: replaced per launch, closed to other sessions, a session's
-own new entries merged back. **Server-owned state** (`skills/synced/`, `plugins/synced/`,
+own new entries merged back — until #120, which gives each of those paths a mode and ends the merge-back (agreed, not built; see below). **Server-owned state** (`skills/synced/`, `plugins/synced/`,
 `cache/`, `telemetry/`, `backups/`, the usage and stats files) is written by Claude Code
 itself from the service or as caches; it is private to each sandbox and never connected. A
 sandbox syncs its own server skills on first start, measured at 3.6 MB on this host.
@@ -210,8 +210,8 @@ not fire on the intentional case.
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
-between is a preset plus overrides. The scope axis that will retire `--sandbox` is
-[agreed but not built](#scope-and-roles-agreed-not-built).
+between is a preset plus overrides. `--sandbox` goes with the keeper, which is
+[agreed but not built](#roles-the-keeper-and-storage-agreed-not-built).
 
 | channel | `isolated` | `inherit` | `shared` |
 |---|---|---|---|
@@ -394,54 +394,112 @@ what the user explicitly asked to change. `inherit` expresses that for configura
 `native` asserts it absolutely, which is why a difference between `--preset native` and
 `--sandbox none` is a bug rather than a preference.
 
-## Scope and roles: agreed, not built
+## Roles, the keeper and storage: agreed, not built
 
-**None of this section is implemented.** It records decisions taken alongside the renames
-above, which did land. Tracked in [#102](https://github.com/pearu/agent-sandbox/issues/102).
+**None of this section is implemented.** It records the decisions of 2026-09-24 to 27, filed
+as [#119](https://github.com/pearu/agent-sandbox/issues/119),
+[#120](https://github.com/pearu/agent-sandbox/issues/120),
+[#121](https://github.com/pearu/agent-sandbox/issues/121),
+[#123](https://github.com/pearu/agent-sandbox/issues/123),
+[#125](https://github.com/pearu/agent-sandbox/issues/125) and
+[#126](https://github.com/pearu/agent-sandbox/issues/126), in the vocabulary of
+[glossary.md](glossary.md). It replaces the earlier "Scope and roles" section: the
+foreground/background scope axis and the `<scope>` key segment it planned are withdrawn.
 
-### Scope: a second axis, orthogonal to role
+### A role is one launch
 
-Foreground and background are not roles and not presets. They are a **scope**: which
-invocation this is. A role is the sandbox *key* — whose state — and a preset is policy.
-A role therefore *has* a preset; it is not one. Two roles at the same preset still need
-separate state, or they read each other's writes.
+- A **role** is a named, persistent instance of a project under a policy: `claude --role
+  impl-1`. The sandbox key stays `<project slug>/<role>`, and `default` is the unnamed role.
+  What the engine calls a launch is the role's running instance; "launch" stays internal.
+- **Policy is selected by glob and section order.** A `[role:<glob>]` section applies to every
+  role name it matches, later sections overriding earlier ones, per key. That is all the
+  inheritance there is: general sections first, specific ones last, `[role:*]` for every role.
+  A name that matches no section is refused, unless `[role:*]` exists. `[sandbox] role` names
+  the project's default role.
+- **The name is the identity; the policy is the variable part.** A role's policy may change
+  between runs. A store belongs to `(role, path, mode)`, so a channel that changes mode
+  switches to that mode's store; the previous store is kept, unbound, until `--reset` or
+  `--delete`. A snapshot before a policy change is what `clone:` is for (#115).
+- **Claude is an app like any other.** A Claude session id is derived from the role (the
+  first session's), never the reverse, and one role can hold several Claude sessions
+  (`/clear`, `/branch`, `--fork-session`, `claude` started inside `--exec bash`).
+  `claude --role foo -r` lists foo's sessions; a bare `claude -r` lists native ones only.
 
-Scopes are **profile-declared**, like channels, because not every agent has a background
-form; the set is expected to grow, a web service exposing the agent interface being the
-obvious next one. Names are spelled in full (`foreground`, `background`) and abbreviations
-are refused rather than accepted as aliases.
+### The keeper: one running instance per role (#121)
 
-The dotfile grammar is one form for both axes:
+- The running instance is a **keeper**: a process that holds every namespace of the sandbox
+  and does nothing else. Every app, the first included, is **joined** into it. The keeper
+  exits when nothing is joined, after a grace of one or two seconds, under a lock, so a join
+  in progress is never cut off.
+- A joined app is the keeper's equal: the same mounts, environment, working directory, uid and
+  gid, capabilities, `no_new_privs` and seccomp filter. Measured in net modes `none` and
+  `strict` (`probes/join-launch.py`). The join is `setns` from `python3`: bwrap nests a
+  capability-less user namespace when it is given `--dev /dev`, so no process inside lives in
+  the namespace that owns the mounts and `nsenter` has nothing to target.
+- Policy is evaluated when the keeper starts. A join under a dotfile changed since then warns
+  and joins; the change applies to the next keeper.
+- Two running instances of one role never exist, so `--exec` beside a running agent is a join,
+  and the undefined case of two overlays over one upper directory has nowhere to arise. Two
+  Claude processes on one conversation behave as they do natively — measured: the second marks
+  the first's in-flight tool call interrupted, the conversation forks, and the next resume
+  follows the branch of the process that exited last — and the consequences are the user's.
+- The keeper subsumes the holder: it mounts the channel overlays and the path declarations at
+  their real paths.
 
-```ini
-[sandbox]                      preset = inherit     # every role, every scope
-[role:reviewer]                preset = isolated    # every scope of this role
-[role:*reviewer@background]    skills = read-only   # globs on both halves
-```
+### Background sessions (#123)
 
-Globs are cheap here precisely because precedence is **later overrides earlier, per key** —
-there is no specificity ranking to compute and so none to get wrong. It does mean general
-rules belong first and specific ones last, which is a convention to document rather than a
-rule the parser enforces. Per key means a later `preset =` does not wipe an earlier
-`skills =`. The same qualification works in the launch-time forms, `;`-separated, with the
-unqualified spelling applying to every scope:
+- `claude --role x --bg` is "ensure x's keeper, join it, run `claude --bg` there". The daemon,
+  its spare workers and pty hosts start inside (measured on 2.1.283), and `agents`, `attach`,
+  `logs` and `stop` join too. Each role has its own daemon.
+- The wrapper machinery goes: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg` project
+  record, the auto-trust and the pool clearing compensated for a daemon on the host. With it go
+  `--sandbox` (refused, naming `--preset none`), the `@background` qualifier and the `<scope>`
+  key segment: `x@background` is `x`. Native foreground and background sessions are meant to
+  find each other (`--continue` loads a finished background session; `attach`; cross-session
+  messaging), so they share the role.
+- The daemon does not exit on its own when idle (measured), so a role with one ends by
+  `--shutdown`.
+- What survives from #104: the `none` preset (no sandbox at all, outside the order), the glob
+  grammar above, and keying the trust record on the project rather than the daemon's directory.
 
-    --preset 'reviewer@background=isolated'
-    AGENT_SANDBOX_PRESET='background=isolated'
+### The role verbs (#126)
 
-And the sandbox key gains scope as its own segment, always emitted, `foreground` included:
+| verb | does | refused when |
+|---|---|---|
+| `--status` | the keeper (running since when, under which dotfile), the processes joined into it, the daemon's sessions | — |
+| `--shutdown` | ends the keeper, every joined process, and the daemon with its pool | — |
+| `--delete` | removes the role's stores, all of them | anything is joined: it names `--shutdown` |
+| `--reset <channel\|path>` | discards one store and takes the source's version again, keeping the rest; renamed from `--reset-connection`, and takes a path declaration too | the keeper is running |
 
-    <state>/<profile>/<project slug>/<role>/<scope>/
+### Storage scope (#125)
 
-A separate segment rather than a mangled `<role>--<scope>` name: roles may contain dashes,
-so the mangled form is ambiguous, and a new path component lengthens no existing one and
-so cannot press against the 200-character cap `_as_path_slug` applies to the project slug.
+Storage is keyed by the role, so the scope token of a connection (`channel = mode [source]
+[scope]`) names only a *shorter* lifetime:
 
-This is what retires `--sandbox`, tracked in
-[#100](https://github.com/pearu/agent-sandbox/issues/100). It carries two unrelated
-meanings — which invocations are sandboxed, and whether to sandbox at all — and the set
-form always has an inert half, since `profile_route` consults only `want_bg` once a launch
-is background and never reads `want_fg`. It stays as documented sugar until 1.0.
+| written | lifetime |
+|---|---|
+| *(nothing)* | the role: across keepers, until `--delete` or `--reset` |
+| `run-scoped` | one keeper: created when it starts, gone when it exits (#105) |
+| `process-scoped` | one joined process |
+
+`sandbox-scoped` is not nameable (the default needs no word); `project-scoped` is a
+`sandbox:<project>/<role>` source at `read-write`, not a scope; `session-scoped` is a role per
+conversation. `read-write` with any scope stays refused: there is no store to scope.
+
+### Modes and channels decided alongside
+
+- **`seed-only`** (#120): copied from the source once, when the store is first created, and
+  the sandbox's own from then on; never refreshed, so never a both-changed warning. The scale
+  becomes `own < seed-only < copy < copy-on-write < read-only < read-write`.
+- **No merge-back at exit** (#120): `file-history/` and `plans/` at `own`, `history.jsonl` at
+  `seed-only` seeded with this project's lines, the hook logs at `own`. So **`transcripts`
+  becomes a managed channel**, `own` under `isolated` and `inherit` and `read-write` under
+  `shared`, with `memory` split from `projects/<slug>/` at the path level. Undo and plans work
+  wherever the conversation can be resumed, which is the role.
+- **The config file** (#119): channel **`config`**, one file following its mode, `seed-only`
+  under `inherit`; the engine never reads or writes `mcpServers`. `read-only` is valid but not
+  advocated: Claude Code's own writes to it fail silently and every project's entry is
+  readable. Under `read-only`, `claude mcp add --scope user` typed at your shell runs natively.
 
 ## Mechanisms
 
@@ -487,6 +545,12 @@ binds placed inside the overlay in the upper layer (an empty `.credentials.json`
 `projects/` directory), so the placeholder cleanup that exists for file binds applies to the
 upper directory as well.
 
+Agreed, not built: the **keeper** replaces the holder (see above). It holds every namespace
+of the sandbox, not only the mounts, and apps are joined into it with `setns`
+(`probes/join-launch.py` is the measured recipe: the user-namespace chain from the outermost
+down, each namespace right after entering its owner, then `no_new_privs` and the same seccomp
+filter, then the keeper's environment and working directory).
+
 `copy` needs the seed, a base manifest of what was last synced, and the three-way step at
 launch; it has no exit step, since B writes its persistent copy directly. `read-only` and `read-write` are
 binds. Every mode is per channel, and a channel that maps to several paths applies its mode to
@@ -501,7 +565,8 @@ A profile declares four things and no dispositions:
 2. the **identity** paths, always connected `read-write` to native (Claude Code: `.credentials.json`;
    `gh/`, `ide/` as hideable tooling);
 3. the **channel → path** table above, including what is server-owned state;
-4. the **per-session scratch** the isolate spec replaces per launch.
+4. the **per-session scratch** the isolate spec replaces per launch (until #120 gives those
+   paths modes of their own).
 
 Everything else in today's profile, memory scoping, `[claude] hide`, `user-mcp`, the config
 file copy and its exclusion list, becomes a connection statement or falls out of "private by
@@ -515,13 +580,17 @@ connection they mean.
 
 ```ini
 [sandbox]
-role = reviewer            # the sandbox key's second half; default: default
+role = reviewer            # the project's default role; --role overrides it
 preset = inherit           # isolated | inherit | shared
+
+[role:impl-*]              # agreed, not built: policy for every role the glob matches;
+skills = read-only         # later sections override earlier ones, per key
 
 [overlay]
 mode = auto                # auto | off -- what copy-on-write is implemented with
 
-[connect]                  # channel = mode [source]; source: native | sandbox:<project>[/<role>] | outside:<path>
+[connect]                  # channel = mode [source] [scope]; source: native | sandbox:<project>[/<role>] | outside:<path>
+                           # scope: nothing (the role) | run-scoped | process-scoped (agreed, not built)
 instructions = copy-on-write native
 skills = copy native
 memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today
@@ -544,7 +613,8 @@ defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can quietly pu
 channel back at `read-write` for every project. Whoever lands presets decides whether that stays
 true and says so here.
 
-`reset` is an engine verb: `--reset-connection skills`, or the whole sandbox.
+`--reset-connection skills` re-seeds one channel today. Agreed, not built: the role verbs
+`--status`, `--shutdown`, `--delete` and `--reset <channel|path>` (#126).
 
 ## What the study measures under this model
 
