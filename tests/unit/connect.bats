@@ -532,7 +532,7 @@ EOF
   # Everything else malformed is refused, so silently discarding the tail would
   # be the one place a user could write something meaningless and be told
   # nothing about it. A fourth token cannot be anything, so it is the tail.
-  run_engine -- claude --connect 'instructions=read-only native sandbox-scoped extra' --version
+  run_engine -- claude --connect 'instructions=read-only native run-scoped extra' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"trailing 'extra'"* ]]
 }
@@ -552,20 +552,22 @@ EOF
 # built; the rest parse and are refused, because a scope that is accepted and
 # never applied reads as isolation that is not there.
 
-@test "the scope is optional, and the default changes nothing" {
+@test "the scope is optional: writing none means the role, today's behaviour" {
   run_engine -- claude --connect 'instructions=read-only native' --version
-  [ "$status" -eq 0 ]
-  argv_has --ro-bind "$C/rules" "$C/rules"
-  # naming the default explicitly must produce the identical launch
-  run_engine -- claude --connect 'instructions=read-only native sandbox-scoped' --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
 }
 
 @test "source and scope are told apart by shape, so either order parses" {
-  run_engine -- claude --connect 'instructions=read-only sandbox-scoped native' --version
-  [ "$status" -eq 0 ]
-  argv_has --ro-bind "$C/rules" "$C/rules"
+  # Both orders reach the scope check and get the same refusal: the scope was
+  # recognised as a scope whichever side of the source it stood.
+  local a b
+  run_engine -- claude --connect 'instructions=copy native run-scoped' --version
+  a="$output"
+  run_engine -- claude --connect 'instructions=copy run-scoped native' --version
+  b="$output"
+  [[ "$a" == *"scope 'run-scoped' is not implemented"* ]]
+  [[ "$b" == *"scope 'run-scoped' is not implemented"* ]]
 }
 
 @test "read-write plus a scope is refused: there is nothing left to scope" {
@@ -573,15 +575,18 @@ EOF
   # writes the source itself, so no sandbox-side storage exists for a scope to
   # apply to -- the spec cannot mean what its author thinks. Checked before
   # implementation status, so it stays true once the scopes land.
-  run_engine -- claude --connect 'instructions=read-write session-scoped' --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"does not mean anything"* ]]
-  [ ! -s "$H/argv" ]
+  local sc
+  for sc in run-scoped process-scoped; do
+    run_engine -- claude --connect "instructions=read-write $sc" --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"does not mean anything"* ]]
+    [ ! -s "$H/argv" ]
+  done
 }
 
 @test "a scope that is not implemented is REFUSED, never quietly ignored" {
   local sc
-  for sc in project-scoped session-scoped run-scoped process-scoped; do
+  for sc in run-scoped process-scoped; do
     run_engine -- claude --connect "instructions=copy native $sc" --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"scope '$sc' is not implemented"* ]]
@@ -589,17 +594,31 @@ EOF
   done
 }
 
-@test "an unknown scope names the set, and says nothing wider than project exists" {
-  # The absence of a global scope is a decision, not an oversight: storage shared
-  # across projects is the leak this engine is for, so it must be un-nameable.
+@test "the withdrawn scopes are refused, each saying what to write instead" {
+  # #125: storage belongs to the role, so the default has no name, sharing across
+  # roles is a source, and a per-conversation store is a role of its own.
+  run_engine -- claude --connect 'instructions=copy native sandbox-scoped' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'sandbox-scoped' was withdrawn"*"write no scope"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine -- claude --connect 'instructions=copy native project-scoped' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'project-scoped' was withdrawn"*"sandbox:<project>/<role>"* ]]
+  run_engine -- claude --connect 'instructions=copy native session-scoped' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'session-scoped' was withdrawn"*"--role"* ]]
+}
+
+@test "an unknown scope names the set" {
   run_engine -- claude --connect 'instructions=copy native world-scoped' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown scope 'world-scoped'"* ]]
-  [[ "$output" == *"Nothing wider than project-scoped exists"* ]]
+  [[ "$output" == *"run-scoped|process-scoped"* ]]
+  [[ "$output" == *"nothing written means the role"* ]]
 }
 
 @test "two scopes in one spec are refused" {
-  run_engine -- claude --connect 'instructions=copy run-scoped session-scoped' --version
+  run_engine -- claude --connect 'instructions=copy run-scoped process-scoped' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"two scopes"* ]]
 }

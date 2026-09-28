@@ -1127,7 +1127,7 @@ _as_connect_parse() {
     esac
   done
   src="${src:-native}"
-  scope="${scope:-sandbox-scoped}"
+  # No scope written means the role's own storage, which needs no name (#125).
 
   local known=0 line
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
@@ -1173,18 +1173,34 @@ _as_connect_parse() {
   # storage left for a scope to apply to; asking for one means the spec does not mean
   # what its author thinks. Checked before implementation status, because it is a fact
   # about meaning rather than about this release.
-  if [[ "$mode" == read-write && "$scope" != sandbox-scoped ]]; then
+  if [[ "$mode" == read-write && -n "$scope" ]]; then
     _as_msg "connect ($where): '$ch = read-write $scope' does not mean anything -- at read-write the sandbox writes the source itself, so there is no sandbox-side storage for a scope to apply to. Drop the scope, or pick a mode that keeps the sandbox's writes its own."
     return 1
   fi
+  # A store belongs to the role, so a scope can only name a SHORTER lifetime: one
+  # run of the role's launch, or one process in it (#125). The three names the
+  # first draft of this axis had are refused with what to write instead, because
+  # each now means something that is not a scope.
   case "$scope" in
-    sandbox-scoped) ;; # today's behaviour, and the default
-    project-scoped | session-scoped | run-scoped | process-scoped)
+    "") ;; # the role: across runs, until reset or deleted
+    run-scoped | process-scoped)
       _as_msg "connect ($where): scope '$scope' is not implemented in this engine (asked for '$ch'). Refusing rather than accepting it: a scope that parses and is never applied reads as isolation that is not there."
       return 1
       ;;
+    sandbox-scoped)
+      _as_msg "connect ($where): scope 'sandbox-scoped' was withdrawn: storage belongs to the role by default, so write no scope for it."
+      return 1
+      ;;
+    project-scoped)
+      _as_msg "connect ($where): scope 'project-scoped' was withdrawn: storage shared across roles is a source, sandbox:<project>/<role> at read-write, not a scope."
+      return 1
+      ;;
+    session-scoped)
+      _as_msg "connect ($where): scope 'session-scoped' was withdrawn: storage of its own per conversation is a role of its own -- launch it with --role NAME."
+      return 1
+      ;;
     *)
-      _as_msg "connect ($where): unknown scope '$scope' for '$ch' (sandbox-scoped|project-scoped|session-scoped|run-scoped|process-scoped). Nothing wider than project-scoped exists: storage shared across projects is the leak this engine is for."
+      _as_msg "connect ($where): unknown scope '$scope' for '$ch' (run-scoped|process-scoped; nothing written means the role)."
       return 1
       ;;
   esac
