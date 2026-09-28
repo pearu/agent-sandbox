@@ -90,9 +90,9 @@ see [Presets](#presets-and-principles). *shipped*
 **Channel.** One kind of thing that can pass between a sandbox and the outside, named by
 what it carries, never by a path. The profile maps each channel to the agent's paths.
 For the `claude` profile the channels the engine manages as connections are
-`instructions`, `settings`, `skills`, `agents`, `workflows` and `plugins` (*shipped*);
-`identity`, `project`, `tools`, `memory`, `transcripts` and `artefacts` are channels in the
-model with machinery of their own, not yet folded in. The table of what each carries is
+`instructions`, `settings`, `skills`, `agents`, `workflows`, `plugins`, `config`,
+`transcripts` and `logs` (*shipped*); `identity`, `project`, `memory` and `artefacts` are
+channels in the model with machinery of their own, not yet folded in. The table of what each carries is
 in [connections.md](connections.md#the-three-objects).
 
 **`config`** is Claude Code's config file, `~/.claude.json`, as one file (*shipped*, #119):
@@ -135,9 +135,10 @@ not merged* — see [connections.md](connections.md#path-declarations) there.
 **Per-launch scratch** (the docs say *per-session scratch*). Parts of the agent's state
 that are replaced for every launch and closed to other launches — for Claude Code,
 `sessions/`, `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`,
-`daemon/` — declared by the profile's **isolate spec**, with a launch's own new entries
-merged back where the spec says so. It belongs to no channel. *shipped*; *agreed* (#120):
-each of these paths gets a mode instead, and nothing is merged back when a launch ends.
+`daemon/` — declared by the profile's **isolate spec**, and discarded at exit. It belongs to
+no channel. *shipped*. What used to be merged back at exit (file history, plans, prompt
+history, hook logs) is the `transcripts` and `logs` channels since #120: nothing is merged
+back when a launch ends.
 
 **Server-owned state.** What the agent writes from its service or as caches
 (`skills/synced/`, `plugins/synced/`, `cache/`, `telemetry/`, …). Private to each sandbox,
