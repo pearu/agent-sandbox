@@ -3,7 +3,7 @@
 **Status: planned, nothing measured yet.** This defines the experiments for the model in
 [connections.md](connections.md): a sandbox is an installation of an agent, and what it
 shares is a set of explicit **connections**, each carrying one **channel** from one
-**source** under one **mode** on the scale `own < copy < copy-on-write < read-only < read-write`.
+**source** under one **mode** on the scale `own < seed-only < copy < copy-on-write < read-only < read-write`.
 
 It succeeds [cross-project-channels.md](cross-project-channels.md), whose results for
 Claude Code 2.1 on engine 0.2.0 are in
@@ -78,6 +78,11 @@ whiteouts as well as copies. The cells below say so.
 | **N1** | `own` | plant in source; launch | the source's canary is not inside: `not-obtained-absent` if the channel is there and empty, `not-obtained-unreachable` if it is not there at all — both are closed, and which one is the implementation's choice |
 | **N2** | `own` | write inside; exit; inspect source | the source is byte-identical |
 | **N3** | `own` | write inside; exit; launch again | what the sandbox wrote is still there |
+| **S1** | `seed-only` | plant; discard the store the controls' launch seeded; launch | the source's canary is `obtained` inside, on both shapes (seed) |
+| **S2** | `seed-only` | write inside; exit; inspect source | the source is byte-identical (no write-back, ever) |
+| **S3** | `seed-only` | seed from Y; source changes Y; launch | the new Y is **not** inside, and that launch says nothing (no refresh, so no conflict) |
+| **S4** | `seed-only` | write inside; exit; launch again | what the sandbox wrote is still there |
+| **S5** | `seed-only` | write inside; source changes; `reset`; launch | the reset succeeds and the source's current version is the new seed |
 | **C1** | `copy` | plant; launch | the source's canary is `obtained` inside (seed) |
 | **C2** | `copy` | modify X inside; exit; inspect source | the source's X is byte-identical (no write-back, ever) |
 | **C3** | `copy` | launch again | the sandbox's X is still the sandbox's |
@@ -115,6 +120,12 @@ Everything above is observable through the mount or on the source, and where a p
 later one. The model says "the launch says so" without settling once versus every time, so
 a cell reading a second launch's stderr would silently require the stronger of the two
 readings and fail an engine that warns once, correctly.
+
+**The controls' launch is a `seed-only` store's first launch.** Every cell runs its positive
+controls before its body, and for `seed-only` that launch seeds the store from a source the
+cell has not planted yet; `copy` never shows this because its refresh brings the plant in
+later. So S1 and S3 plant, discard the store, and only then read. Measured: without it their
+first reads found an empty seed.
 
 **A cell that asserts something was *undone* first observes it done.** C8 and W6 are about
 `reset`, so each runs a launch that sees the warning, the shadow and the hide before

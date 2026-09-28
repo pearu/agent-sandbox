@@ -958,3 +958,91 @@ EOF
   [ "$tree" -ge 0 ]
   [ "$decl" -gt "$tree" ]
 }
+
+# ----- seed-only (#120) ------------------------------------------------------------
+# Copied from the source once, when the store is first created, and the role's own
+# from then on: never refreshed, so never a conflict warning.
+
+@test "seed-only seeds the store from the source at the first launch and binds it" {
+  printf 'NATIVE\n' >"$C/CLAUDE.md"
+  mkdir -p "$C/rules" && printf 'R1\n' >"$C/rules/a.md"
+  run_engine -- claude --connect 'instructions=seed-only native' --version
+  [ "$status" -eq 0 ]
+  local fslot dslot
+  fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
+  dslot="$SBOX/instructions/seed-only/$(slugify "$C/rules")"
+  argv_has --bind "$fslot" "$C/CLAUDE.md"
+  argv_has --bind "$dslot" "$C/rules"
+  [ "$(cat "$fslot")" = NATIVE ]
+  [ "$(cat "$dslot/a.md")" = R1 ]
+}
+
+@test "seed-only never refreshes, and never warns, when the source changes later" {
+  printf 'V1\n' >"$C/CLAUDE.md"
+  run_engine -- claude --connect 'instructions=seed-only native' --version
+  local fslot
+  fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
+  printf 'SANDBOX\n' >"$fslot"  # the role changed its own
+  printf 'V2\n' >"$C/CLAUDE.md" # and so did the source
+  mkdir -p "$C/rules" && printf 'NEW\n' >"$C/rules/new.md"
+  run_engine -- claude --quiet --connect 'instructions=seed-only native' --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$fslot")" = SANDBOX ]
+  [ ! -e "$SBOX/instructions/seed-only/$(slugify "$C/rules")/new.md" ]
+  [[ "$output" != *"kept this sandbox"* ]]
+  [[ "$output" != *"has changed since"* ]]
+}
+
+@test "seed-only over a source that does not exist binds an empty store" {
+  # The mount point bwrap would leave on the host is only created by a real bwrap, so
+  # its cleanup is asserted in tests/integration/connect-seed-only.bats, not here.
+  rm -f "$C/CLAUDE.md"
+  run_engine -- claude --connect 'instructions=seed-only native' --version
+  [ "$status" -eq 0 ]
+  local fslot
+  fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
+  argv_has --bind "$fslot" "$C/CLAUDE.md"
+  [ -f "$fslot" ] && [ ! -s "$fslot" ]
+}
+
+@test "seed-only keeps its own store, apart from copy's" {
+  printf 'V1\n' >"$C/CLAUDE.md"
+  run_engine -- claude --connect 'instructions=copy native' --version
+  run_engine -- claude --connect 'instructions=seed-only native' --version
+  [ "$status" -eq 0 ]
+  [ -e "$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")" ]
+  [ -e "$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")" ]
+  run ! argv_has --bind "$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")" "$C/CLAUDE.md"
+}
+
+@test "--reset-connection discards a seed-only store, so the next launch seeds again" {
+  printf 'V1\n' >"$C/CLAUDE.md"
+  run_engine -- claude --connect 'instructions=seed-only native' --version
+  local fslot
+  fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
+  printf 'V2\n' >"$C/CLAUDE.md"
+  run_engine -- claude --reset-connection instructions
+  [ "$status" -eq 0 ]
+  [ ! -e "$fslot" ]
+  run_engine -- claude --connect 'instructions=seed-only native' --version
+  [ "$(cat "$fslot")" = V2 ]
+}
+
+@test "a path declaration at seed-only is seeded once from the same path outside" {
+  mkdir -p "$PROJ/tools" && printf 'T1\n' >"$PROJ/tools/t"
+  run_engine -- claude --connect './tools/ = seed-only' --version
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$SBOX/@paths/seed-only/$(slugify "$PROJ/tools")"
+  argv_has --bind "$slot" "$PROJ/tools"
+  [ "$(cat "$slot/t")" = T1 ]
+  printf 'T2\n' >"$PROJ/tools/t"
+  run_engine -- claude --connect './tools/ = seed-only' --version
+  [ "$(cat "$slot/t")" = T1 ]
+}
+
+@test "seed-only sits between own and copy in every message that lists the scale" {
+  run_engine -- claude --connect 'instructions=nonsense native' --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"own|seed-only|copy|copy-on-write|read-only|read-write"* ]]
+}

@@ -301,7 +301,7 @@ prose_docs() {
 }
 
 code_modes() { # the modes the engine accepts, from the validation case arm
-  grep -oE '^    own \| copy \|[^)]*' "$ENGINE" | head -1 \
+  grep -oE '^    own \|[^)]*' "$ENGINE" | head -1 \
     | tr -d ' ' | tr '|' '\n' | sed '/^$/d' | sort -u
 }
 code_presets() { # the presets the engine accepts, from the resolution case arm
@@ -324,7 +324,7 @@ code_presets() { # the presets the engine accepts, from the resolution case arm
       # the line's own words must be exactly the engine's five, nothing added
       # or dropped -- a doc that lists four is the drift this catches
       local got
-      got="$(printf '%s' "$line" | grep -oE '\b(copy-on-write|read-only|read-write|own|copy|none|cow|ro|live)\b' | sort -u | paste -sd' ')"
+      got="$(printf '%s' "$line" | grep -oE '\b(copy-on-write|read-only|read-write|seed-only|own|copy|none|cow|ro|live)\b' | sort -u | paste -sd' ')"
       [ "$got" = "$engine_scale" ] || {
         echo "in $doc, scale line disagrees with the engine"
         echo "  engine: $engine_scale"
@@ -332,7 +332,7 @@ code_presets() { # the presets the engine accepts, from the resolution case arm
         echo "  line:   $line"
         return 1
       }
-    done < <(grep -hE '(own|none)[[:space:]]*<[[:space:]]*copy[[:space:]]*<' "$doc" || true)
+    done < <(grep -hE '(own|none)[[:space:]]*<[[:space:]]*(seed-only[[:space:]]*<[[:space:]]*)?copy[[:space:]]*<' "$doc" || true)
   done < <(prose_docs)
 }
 

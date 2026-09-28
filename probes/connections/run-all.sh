@@ -19,7 +19,7 @@
 # Free: no credentials, no network, no API calls. Host-only, like every probe here.
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SUITES=(part1-read-write.sh part1-own.sh part1-copy.sh part1-copy-on-write.sh part1-read-only.sh)
+SUITES=(part1-read-write.sh part1-own.sh part1-seed-only.sh part1-copy.sh part1-copy-on-write.sh part1-read-only.sh)
 [[ $# -gt 0 ]] && SUITES=("$@")
 
 OUT="$(cd -- "$HERE/../.." && pwd)/probes/results/connections/batch-$(date +%Y%m%dT%H%M%S)"

@@ -154,7 +154,7 @@
 
 # [connect] -- per channel, how much of your NATIVE Claude Code install this
 #        project's sandbox sees: `channel = mode [source]` on the scale
-#        own < copy < copy-on-write < read-only < read-write, lower being more
+#        own < seed-only < copy < copy-on-write < read-only < read-write, lower being more
 #        isolated. The order is how much of YOUR files reach the sandbox, not
 #        what it may do: it can write under copy-on-write but not under
 #        read-only, and read-only is still higher, because it hands over the

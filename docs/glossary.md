@@ -143,7 +143,7 @@ never connected. *shipped*
 **Scale.** The ordered set of **modes** a connection can take, by how much of the source
 reaches the sandbox:
 
-    own  <  copy  <  copy-on-write  <  read-only  <  read-write
+    own  <  seed-only  <  copy  <  copy-on-write  <  read-only  <  read-write
 
 The order is how much of *your* files reach the sandbox, not what the sandbox may do: it
 can write under `copy-on-write` and not under `read-only`, and `read-only` is still
@@ -154,9 +154,9 @@ higher, because it hands over the real file. *shipped*
 
 - **`own`** — the sandbox's own, from nothing; nothing of yours reaches it, nothing of its
   reaches you.
-- **`seed-only`** — *agreed, not built* (#120): copied from the source once, when the store
-  is first created, then the sandbox's own; never refreshed, so never a conflict warning.
-  Sits between `own` and `copy`.
+- **`seed-only`** — copied from the source once, when the store is first created, then the
+  role's own; never refreshed, so never a conflict warning. Sits between `own` and `copy`.
+  *shipped*
 - **`copy`** — seeded from the source, refreshed at each launch for every file the sandbox
   has not changed, never written back.
 - **`copy-on-write`** — the source reads through live until the sandbox writes a file,

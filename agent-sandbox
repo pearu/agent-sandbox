@@ -345,8 +345,8 @@ Engine flags (must precede the agent's own arguments):
                         points at
   --connect SPEC        open one channel at one mode: 'channel=mode [source]
                         [scope]',
-                        repeatable. Lower on the scale own < copy <
-                        copy-on-write < read-only < read-write is more
+                        repeatable. Lower on the scale own < seed-only <
+                        copy < copy-on-write < read-only < read-write is more
                         isolated; the preset sets where every channel is by
                         default, which is what the engine has always done. See
                         docs/connections.md
@@ -366,7 +366,7 @@ Environment knobs:
   AGENT_SANDBOX_CONNECT="instructions=read-only native;skills=own native"
                                 per-channel connections, ';'-separated; same
                                 syntax as --connect and [connect] (modes:
-                                own|copy|copy-on-write|read-only|read-write)
+                                own|seed-only|copy|copy-on-write|read-only|read-write)
   AGENT_SANDBOX_PRESET=isolated|inherit|shared   where every channel sits
                                 (default: inherit)
   AGENT_SANDBOX_OVERLAY=auto|off  what `copy-on-write` uses (default: auto)
@@ -907,7 +907,7 @@ _as_iso_flush() {
 # A sandbox is an installation of the agent; a CONNECTION opens one CHANNEL
 # between it and a SOURCE, under a MODE from the scale
 #
-#   own < copy < copy-on-write < read-only < read-write
+#   own < seed-only < copy < copy-on-write < read-only < read-write
 #
 # and lower is more isolated. The scale says what the sandbox HAS at a path in
 # relation to yours, which is why the bottom rung names what it has instead of
@@ -1150,9 +1150,9 @@ _as_connect_parse() {
     return 1
   }
   case "$mode" in
-    own | copy | copy-on-write | read-only | read-write) ;;
+    own | seed-only | copy | copy-on-write | read-only | read-write) ;;
     none | cow | ro | live)
-      _as_msg "connect ($where): mode '$mode' was renamed in 0.3 -- write '$(_as_mode_renamed "$mode")' (own|copy|copy-on-write|read-only|read-write). Refusing rather than accepting the old name: see _as_mode_renamed for why 'none' cannot be an alias."
+      _as_msg "connect ($where): mode '$mode' was renamed in 0.3 -- write '$(_as_mode_renamed "$mode")' (own|seed-only|copy|copy-on-write|read-only|read-write). Refusing rather than accepting the old name: see _as_mode_renamed for why 'none' cannot be an alias."
       return 1
       ;;
     _never_)
@@ -1167,7 +1167,7 @@ _as_connect_parse() {
       return 1
       ;;
     *)
-      _as_msg "connect ($where): unknown mode '$mode' for '$ch' (own|copy|copy-on-write|read-only|read-write)"
+      _as_msg "connect ($where): unknown mode '$mode' for '$ch' (own|seed-only|copy|copy-on-write|read-only|read-write)"
       return 1
       ;;
   esac
@@ -1313,6 +1313,32 @@ _as_connect_channels() {
   printf '%s' "${out:-none}"
 }
 
+# _as_connect_seed SOURCE STORE KIND -- make a `seed-only` store once: a copy of
+# SOURCE as it is now, or an empty one where SOURCE has nothing. Never touched
+# again once it exists -- that is the whole of `seed-only`: no refresh, so no
+# conflict and no warning, and the role's own writes are simply its own (#120).
+# Copied beside the store and renamed into place, so an interrupted first launch
+# leaves no half-seeded store that a later one would then keep for ever.
+_as_connect_seed() {
+  local src="$1" store="$2" kind="$3" tmp
+  [[ -e "$store" ]] && return 0
+  mkdir -p -- "$(dirname -- "$store")" || return 1
+  tmp="$store.seeding.$$"
+  rm -rf -- "$tmp" 2>/dev/null
+  if [[ -e "$src" ]]; then
+    cp -a -- "$src" "$tmp" || {
+      rm -rf -- "$tmp" 2>/dev/null
+      _as_msg "connect: could not seed '$store' from '$src'"
+      return 1
+    }
+  elif [[ "$kind" == dir ]]; then
+    mkdir -p -- "$tmp" || return 1
+  else
+    : >"$tmp" || return 1
+  fi
+  mv -T -- "$tmp" "$store"
+}
+
 # _as_connect_apply -- add this sandbox's connection binds to $args.
 #
 # Called AFTER the profile's own visibility binds, so a connection layers on top
@@ -1446,6 +1472,12 @@ _as_connect_apply() {
           else
             args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
           fi
+          ;;
+        seed-only)
+          slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
+          _as_connect_seed "$path" "$slot" "$kind" || return 1
+          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+          args+=(--bind "$slot" "$path")
           ;;
         copy)
           # Seeded once and refreshed per file, never written back. The sync is
@@ -1593,6 +1625,11 @@ _as_connect_apply_paths() {
           mkdir -p -- "$(dirname -- "$slot")" || return 1
           [[ -e "$slot" ]] || : >"$slot" || return 1
         fi
+        args+=(--bind "$slot" "$p")
+        ;;
+      seed-only)
+        slot="$base/seed-only/$(_as_iso_slug "$p")"
+        _as_connect_seed "$real" "$slot" "$kind" || return 1
         args+=(--bind "$slot" "$p")
         ;;
       copy | copy-on-write)
@@ -1974,7 +2011,7 @@ _as_connect_live() {
 # to `live` still has its old copy on disk, and leaving it would surprise
 # whoever moves the channel back again.
 _as_connect_reset() {
-  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen
+  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen seeded
   local -a fields=()
   [[ "$want" == */* ]] && {
     _as_msg "connect: --reset-connection takes a channel name; resetting a path declaration ('$want') is not supported yet."
@@ -2005,7 +2042,10 @@ _as_connect_reset() {
       upper="$base/$ch/upper/$(_as_iso_slug "$path")"
       work="$base/$ch/work/$(_as_iso_slug "$path")"
       seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
-      [[ -e "$slot" || -e "$manifest" || -e "$upper" ]] || continue
+      seeded="$base/$ch/seed-only/$(_as_iso_slug "$path")"
+      [[ -e "$slot" || -e "$manifest" || -e "$upper" || -e "$seeded" ]] || continue
+      # seed-only: discarding the store is the reset; the next launch seeds again.
+      [[ -e "$seeded" ]] && { rm -rf -- "$seeded" 2>/dev/null || true; }
       # copy-on-write first: the upper layer holds the shadows AND the whiteouts, so
       # removing it is what brings a file the sandbox deleted back into view.
       # CHMOD BEFORE REMOVING -- measured: once anything has been written through
