@@ -6,10 +6,6 @@ setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   make_harness
   BIN="$H/home/.local/share/claude/versions/2.1.300/claude"
-  # this project's copy of the config file, keyed by Claude Code's project slug
-  local proj
-  proj="$(cd "$H/proj" && pwd -P)"
-  COPY="$H/home/.local/state/agent-sandbox/claude/${proj//[^A-Za-z0-9-]/-}/claude.json"
 }
 
 @test "default (proxy): system read-only, fresh pseudo-filesystems, HOME tmpfs remounted ro after its binds, clearenv, profile state rw, CWD rw, proxy env, CA env" {
@@ -31,9 +27,10 @@ setup() {
   argv_has --bind "$H/home/.claude" "$H/home/.claude"
   # the config file is bound INSIDE the state directory: Claude Code writes it
   # through a lock directory and a temp file beside it, which a read-only $HOME
-  # refuses -- and the writer then gives up silently (measured, 2.1.274). And
-  # the file bound there is this project's copy, never the host's file.
-  argv_has --bind "$COPY" "$H/home/.claude/.claude.json"
+  # refuses -- and the writer then gives up silently (measured, 2.1.274). What is
+  # bound there is the role's seed-only store of it, never the host's file
+  # (tests/unit/config-channel.bats has the rest).
+  argv_has --bind "$H/home/.local/state/agent-sandbox/claude/$(printf '%s' "$(cd "$H/proj" && pwd -P)" | sed 's:[^A-Za-z0-9-]:-:g')/default/config/seed-only/$(printf '%s' "$H/home/.claude/.claude.json" | sed 's:^/::; s:/:_:g')" "$H/home/.claude/.claude.json"
   run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
   argv_has --ro-bind "$BIN" "$BIN"
   argv_has --bind "$H/proj" "$H/proj"

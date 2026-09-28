@@ -144,9 +144,9 @@
 #        state isolation off entirely and a project file could set that for every
 #        launch unnoticed. It exists so a difference from --sandbox none is a bug.
 #        A preset moves only the channels the engine manages as connections.
-#        Memory, transcripts, the config file and the rest keep their own
-#        controls ([share-memory], [claude] user-mcp, and so on) until they are
-#        folded in. [connect] below overrides the preset per channel.
+#        Memory, transcripts and the rest keep their own controls
+#        ([share-memory] and so on) until they are folded in. The config file
+#        is the `config` channel: seed-only under inherit, own under isolated. [connect] below overrides the preset per channel.
 #
 #        role is reserved and only `default` exists today.
 #[sandbox]
@@ -196,10 +196,12 @@
 #[overlay]
 #mode = auto
 
+#        [claude] user-mcp was removed: it is refused, naming its replacement.
+#        To keep your user-level MCP servers out of this project's sandbox, give
+#        it a config file of its own: `config = own` under [connect].
 #[claude]
 #hide = gh todos
 #sandbox = fg bg
-#user-mcp = inherit
 
 
 # Not settable here, on purpose:

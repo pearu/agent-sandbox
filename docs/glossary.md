@@ -94,6 +94,10 @@ For the `claude` profile the channels the engine manages as connections are
 model with machinery of their own, not yet folded in. The table of what each carries is
 in [connections.md](connections.md#the-three-objects).
 
+**`config`** is Claude Code's config file, `~/.claude.json`, as one file (*shipped*, #119):
+seeded filtered at the seeding modes, then Claude Code's alone; the user-level MCP servers
+are part of it, so `tools` is no longer a channel of its own (#132).
+
 The model also treats the **network** as a channel (`own` = no network, then
 `proxy`, then `open`), governed today by the network mode rather than by a connection. The
 channels that carry agent *behaviour* rather than data — `instructions`, `skills`,
@@ -351,4 +355,4 @@ A test that passes either way is recorded as proving nothing.
 | native | the host's unsandboxed agent and its state; the `native` **source**; the `native` **preset** (sandboxed, isolating nothing) | the source / the preset |
 | none | the old name of `own` (refused since 0.3); a network mode; `--sandbox none`; the agreed fifth preset | the full context |
 | shared | the `shared` preset; storage shared between launches; `memory_default = shared` | the preset by name |
-| copy | the `copy` mode; the per-project copy of Claude Code's config file (0.2.1) | *the config copy* |
+| copy | the `copy` mode; the per-project copy of Claude Code's config file (0.2.1), now the `config` channel's store | *the `config` channel* |

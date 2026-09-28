@@ -92,13 +92,15 @@ setup() {
   argv_has "$NATIVE" --bg-spare "$SOCKDIR/a.claim.sock"
 }
 
-@test "a wrapped worker's copy of the config file is keyed by the background project, not by the daemon's cwd" {
-  local proj
+@test "a wrapped worker's config store is keyed by the background project, not by the daemon's cwd" {
+  local proj inside
   proj="$(mkdir -p "$H/bgproj" && cd "$H/bgproj" && pwd -P)"
   printf '%s' "$proj" >"$H/base/bg-project"
-  run_engine -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
+  inside="$H/home/.claude/.claude.json"
+  inside="${inside//\//_}"
+  run_engine AGENT_SANDBOX_CONNECT='config=seed-only native' -- claude --wrap "$LAUNCHER" --bg-spare "$SOCKDIR/a.claim.sock"
   [ "$status" -eq 0 ]
-  argv_has --bind "$H/home/.local/state/agent-sandbox/claude/${proj//[^A-Za-z0-9-]/-}/claude.json" "$H/home/.claude/.claude.json"
+  argv_has --bind "$H/home/.local/state/agent-sandbox/claude/${proj//[^A-Za-z0-9-]/-}/default/config/seed-only/${inside#_}" "$H/home/.claude/.claude.json"
 }
 
 @test "no background project set: the worker binds no project (only ~/.claude etc.)" {

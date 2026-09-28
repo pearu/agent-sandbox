@@ -188,7 +188,7 @@ Sections:
   | agents — `agents/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | workflows — `workflows/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | plugins — `plugins/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
-  | tools — the `mcpServers` block | `own` | `copy` | `copy` | `read-write` | `[claude] user-mcp` (`inherit` = `copy`, the default; `own` = `own`) |
+  | config — `~/.claude.json`, the user-level MCP servers included | `own` | `seed-only` | `seed-only` | `read-write` | **the preset** ([below](#the-config-file-the-config-channel)) |
   | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | `memory_default` (`scoped` by default) and `[share-memory]` |
   | transcripts — conversations, plans, history | `own` | `own` | `read-write` | `read-write` | per-project scoping and the isolate spec |
   | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **nothing yet: they are `read-write` whatever the preset** |
@@ -204,15 +204,17 @@ Sections:
     [#76](https://github.com/pearu/agent-sandbox/issues/76),
     [#78](https://github.com/pearu/agent-sandbox/issues/78)). Folding them in
     will close it, and that is a behaviour change rather than a no-op.
-  - **`shared` gives tools `copy`, not `read-write`.** The original model said `read-write`,
-    which was the pre-0.2 behaviour: the config file bound whole, so every
-    project's entries and the user's MCP servers were readable from any sandbox.
-    0.2.1 closed that deliberately
+  - **`shared` gives `config` `seed-only`, not `read-write`.** The original model
+    said `read-write`, which was the pre-0.2 behaviour: the config file bound whole,
+    so every project's entries and the user's MCP servers were readable from any
+    sandbox. 0.2.1 closed that deliberately
     ([#90](https://github.com/pearu/agent-sandbox/issues/90)), and `shared` will
-    not reopen it. `shared` means "the engine before 0.3", not "before 0.2".
-    `native` does reopen it — the file whole, every project's entries readable —
-    because that is what `--sandbox none` gives, and parity is the point of that
-    preset and the reason it is flag-only.
+    not reopen it. `shared` means "the engine before 0.3", not "before 0.2". Under
+    `inherit` it is `seed-only` for the same reason as every file Claude Code
+    rewrites at every launch: `copy` would warn at every launch. `native` does
+    reopen it — the file whole, every project's entries readable — because that is
+    what `--sandbox none` gives, and parity is the point of that preset and the
+    reason it is flag-only.
 
   `copy-on-write` means reads fall through to your files until the sandbox
   writes one, and the write goes to a private layer that shadows it from then on.
@@ -292,17 +294,10 @@ Sections:
   from a `--trust`-approved file; the `--sandbox` flag and
   `AGENT_SANDBOX_CLAUDE_SANDBOX` are the ungated launch-time forms. Default: `fg`
   on the host, `none` when the launcher itself runs inside a sandbox.
-  `user-mcp = inherit|none` decides whether the host's user-level MCP servers,
-  the `mcpServers` block of `~/.claude.json`, reach this project's sandbox (see
-  [The config file](#the-config-file-one-copy-per-project)). `inherit`, the
-  default, carries them into the project's copy and refreshes them at every
-  launch; `none` leaves them out, so nothing configured natively is loaded or
-  even visible inside. Leaving them out is a narrowing, so it needs no trust
-  beyond the file's own approval; `--user-mcp` and `AGENT_SANDBOX_CLAUDE_USER_MCP`
-  are the launch-time forms and win over the file. Per-project servers and a
-  project's own `.mcp.json` are not affected. Without a working `python3` the
-  block cannot be left out of a whole copy, and a launch that asked for `none`
-  is refused rather than run with it in.
+  `user-mcp` is removed: it kept your user-level MCP servers out by editing the
+  config file, and the engine no longer edits anything inside it. It is refused,
+  naming the replacement, `config = own` under `[connect]` (see
+  [The config file](#the-config-file-the-config-channel)).
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
@@ -413,7 +408,7 @@ Selecting the mode, from lowest to highest precedence:
    listed add those projects' memory read-only; a single `all` keeps everything
    visible even when the global default is `scoped`.
 
-## The config file: one copy per project
+## The config file: the `config` channel
 
 Claude Code's top-level config file, `~/.claude.json`, holds app state
 (onboarding, tips, caches), the account, the user-level `mcpServers`, and one
@@ -422,38 +417,47 @@ project, the last opening prompt. Bound whole into every sandbox it was two
 channels at once: a sandboxed session could read every other project's entry,
 and what it wrote reached every other session.
 
-Each project therefore gets its **own copy** of the file, kept on the host under
-`~/.local/state/agent-sandbox/claude/<slug>/claude.json` (`$XDG_STATE_HOME` is
-honoured; `<slug>` is Claude Code's project slug, the directory's path with
-every character outside `[A-Za-z0-9-]` turned into `-`). That directory is part
-of the sandbox's control plane: it is never bound into any sandbox, and
-`[ro]`/`[rw]` refuse it. Inside the sandbox the copy is bound at
-`~/.claude/.claude.json`, and `CLAUDE_CONFIG_DIR` points Claude Code there, so
-there is nothing at `~/.claude.json` inside.
+It is the **`config` channel**, one file following its mode like any other
+channel. Inside the sandbox it is at `~/.claude/.claude.json`, and
+`CLAUDE_CONFIG_DIR` points Claude Code there, so there is nothing at
+`~/.claude.json` inside. Its source is your native `~/.claude.json`.
 
-- **Seeded** at the project's first sandboxed launch from `~/.claude.json`:
-  every top-level key, and of the per-project entries only this project's. If
-  the host file has no entry for the project yet, Claude Code asks about folder
-  trust once, inside, and records the answer in the copy.
-- **Refreshed** at every later launch in one key: the user-level `mcpServers`
-  follow the host file, added and removed. Manage user-level MCP servers
-  natively; one added from inside a sandbox is replaced at the next launch.
-  `user-mcp = none` (or `--user-mcp none`, `AGENT_SANDBOX_CLAUDE_USER_MCP=none`)
-  leaves the block out altogether, for a project whose sandbox should load no
-  server configured natively.
-- **Everything else stays with the project.** Trust, allowed tools, project
-  MCP servers and app-state changes made inside persist across that project's
-  sandboxed sessions and reach neither the host file nor another project. A
-  native session in the same project keeps using `~/.claude.json`.
-- A background worker (`claude --bg`) is keyed by the project it was launched
-  for, not by the daemon's directory, and is pre-trusted in the copy as it is
-  in the host file.
-- Without a working `python3` the copy is the whole host file, made once and
-  never refreshed, and the launch says so. It is still the project's own copy:
-  the host file itself is never bound.
+- **`seed-only`** (the default under `inherit` and `shared`) is the role's own
+  copy, made once: every top-level key, and of the per-project entries only
+  this project's. After that it is Claude Code's alone. The engine never reads
+  or writes anything inside it again, so a user-level MCP server added from
+  inside the sandbox stays, and one you add natively later does not arrive. If
+  the native file has no entry for the project yet, Claude Code asks about
+  folder trust once, inside, and records the answer in the role's copy.
+- **`copy`** is seeded the same way and takes your native file's changes only
+  while the role's copy is unchanged, which in practice is never: Claude Code
+  rewrites the file at every launch, so `copy` would warn at every launch.
+- **`own`** (the default under `isolated`) starts from `{}`. Claude Code runs on
+  it beside your credentials and rebuilds the account block itself (measured,
+  2.1.283); what the role gives up is your app state and the project's trust and
+  allowed tools, which it establishes again once.
+- **`read-only`** and **`read-write`** are the native file itself, whole: every
+  project's entry is readable inside. Under `read-only` Claude Code's own writes
+  to it fail silently, so it is valid but not advocated; there, a user-scope
+  `claude mcp add` typed at your shell runs natively, on your own file. Under
+  `read-write` the sandbox writes your native file.
+- Under `--preset native` nothing is copied or relocated: Claude Code reads your
+  native `~/.claude.json` as it would outside.
 
-To start a project's copy over, delete its directory; the next launch seeds it
-again.
+The role's copy is kept on the host under
+`~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/`, part of the
+sandbox's control plane: never bound into any sandbox, refused by `[ro]`/`[rw]`.
+The per-project copy of 0.3 (`claude/<slug>/claude.json`) becomes the default
+role's `seed-only` copy at the first launch that finds it. A background worker
+(`claude --bg`) is keyed by the project it was launched for, not by the daemon's
+directory, and is pre-trusted in the role's copy as it is in the native file.
+Without a working `python3` the seed is the whole native file, and the launch
+says so. `--reset-connection config` discards the role's copy; the next launch
+seeds it again.
+
+To keep your user-level MCP servers out of a project's sandbox, give it a config
+file of its own: `config = own` under `[connect]`. The `user-mcp` knob that did
+this by editing the file is removed and refused, naming this.
 
 ## Where the machine-local state lives
 

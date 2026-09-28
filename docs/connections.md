@@ -62,7 +62,8 @@ No connection for a channel means `own`.
 | agents | subagent definitions | `agents/` |
 | workflows | agent-authored workflow scripts | `workflows/` |
 | plugins | installed plugins and marketplaces | `plugins/` |
-| tools | user-level MCP servers | the `mcpServers` block of the config file |
+| config | the config file: app state, the account, the user-level MCP servers, this project's entry | `~/.claude.json`, bound inside at `~/.claude/.claude.json` (#119) |
+| tools | user-level MCP servers | part of `config`: the `mcpServers` block of that file (#132) |
 | memory | per-project auto memory | `projects/<slug>/memory/`; `agent-memory/` once its layout is known |
 | transcripts | conversations, plans, file history, prompt history | `projects/<slug>/*.jsonl`, `plans/`, `file-history/`, `history.jsonl` |
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
@@ -224,7 +225,7 @@ between is a preset plus overrides. `--sandbox` goes with the keeper, which is
 | identity | read-write native | read-write native | read-write native |
 | project | read-write | read-write | read-write |
 | instructions, settings, skills, agents, workflows, plugins | own | `copy-on-write` from native, `copy` where no overlay | read-write native |
-| tools | own | `copy` from native (`user-mcp = none` is its `own`) | read-write native |
+| config (tools part of it) | own | `seed-only` from native, this project's entry only | `seed-only` from native, this project's entry only |
 | memory | own only | own, plus `read-only` from named sandboxes (`[share-memory]`) | read-write (`memory_default = shared`) |
 | transcripts | own | own | read-write |
 | artefacts | own | own | read-write |
@@ -353,8 +354,7 @@ sandbox that isolates nothing, `none` is no sandbox.
 
 `inherit` earns its name from the direction. `isolated` and `shared` say what crosses;
 only the middle rung needs to say *which way*, and inheritance already means "comes from
-the parent, does not go back". It also matches `user-mcp = inherit`, which means the same
-thing one channel down.
+the parent, does not go back".
 
 ### Why the mode is `own`, and why the abbreviations are spelled out
 
@@ -578,10 +578,9 @@ conversation. `read-write` with any scope stays refused: there is no store to sc
   becomes a managed channel**, `own` under `isolated` and `inherit` and `read-write` under
   `shared`, with `memory` split from `projects/<slug>/` at the path level. Undo and plans work
   wherever the conversation can be resumed, which is the role.
-- **The config file** (#119): channel **`config`**, one file following its mode, `seed-only`
-  under `inherit`; the engine never reads or writes `mcpServers`. `read-only` is valid but not
-  advocated: Claude Code's own writes to it fail silently and every project's entry is
-  readable. Under `read-only`, `claude mcp add --scope user` typed at your shell runs natively.
+- **The config file** (#119) is built: the `config` channel, see
+  [config.md](config.md#the-config-file-the-config-channel). `seed-only` under `inherit` and
+  `shared`, `own` under `isolated`; `user-mcp` is removed and `tools` is part of it (#132).
 
 ## Mechanisms
 
@@ -650,8 +649,7 @@ A profile declares four things and no dispositions:
 4. the **per-session scratch** the isolate spec replaces per launch (until #120 gives those
    paths modes of their own).
 
-Everything else in today's profile, memory scoping, `[claude] hide`, `user-mcp`, the config
-file copy and its exclusion list, becomes a connection statement or falls out of "private by
+Everything else in today's profile, memory scoping and `[claude] hide`, becomes a connection statement or falls out of "private by
 construction". A second profile fills in the same four items; nothing about the engine's
 connection machinery is agent-specific.
 
@@ -677,7 +675,7 @@ mode = auto                # auto | off -- what copy-on-write is implemented wit
 instructions = copy-on-write native
 skills = copy native
 memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today
-tools = own                                 # what user-mcp = none means today
+config = own                                # what user-mcp = none meant (removed, #132)
 artefacts = read-write native
 ./scratch/ = own                            # a path, not a channel
 ```
@@ -733,12 +731,11 @@ here rather than designed around; the project directory is where different agent
 
 ## Migration from 0.2.1
 
-- The per-project config file copy is the `tools` and config-file channel at `copy`,
-  already at `~/.local/state/agent-sandbox/claude/<slug>/`; the directory becomes
-  `<slug>/default/` when roles arrive, or stays as the default role's home.
+- The per-project config file copy became the `config` channel's `seed-only` store of the
+  `default` role (#119), moved there at the first launch that finds it.
 - `[share-memory]` becomes `memory = ro sandbox:<project>`; `memory_default = shared` becomes
   the `shared` preset's memory row; `[claude] hide` becomes `own` for identity's tooling
-  parts; `user-mcp = none` becomes `tools = none`. All four keys stay accepted.
+  parts. `user-mcp` is removed and refused, naming `config = own` (#132).
 - The isolate spec keeps the per-session scratch and drops everything that "private by
   construction" now covers.
 - Existing measured results keep their meaning: they describe the `shared` preset.

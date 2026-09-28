@@ -42,12 +42,12 @@ PY
   [ "$output" = "ok" ]
 }
 
-@test "_claude_bg_autotrust also pre-trusts the project in its own copy of the config file, when one exists" {
+@test "_claude_bg_autotrust also pre-trusts the project in the role's config store, when one exists" {
   HOME="$BATS_TEST_TMPDIR/home3"
   mkdir -p "$HOME"
   printf '{}' >"$HOME/.claude.json"
   local copy
-  copy="$(_claude_config_copy "/work/proj")"
+  copy="$(_claude_config_store "/work/proj" seed-only)"
   mkdir -p "$(dirname "$copy")"
   printf '{"projects":{"/work/proj":{"x":1}}}' >"$copy"
   _claude_bg_autotrust "/work/proj"
