@@ -408,6 +408,46 @@ Selecting the mode, from lowest to highest precedence:
    listed add those projects' memory read-only; a single `all` keeps everything
    visible even when the global default is `scoped`.
 
+## Roles
+
+A **role** is a named, persistent instance of the project: `claude --role impl-1`.
+It has its own state, kept under
+`~/.local/state/agent-sandbox/claude/<slug>/<role>/`, so two roles of one
+project share the working tree and nothing else unless you connect them. The
+name comes from `--role`, then `AGENT_SANDBOX_ROLE`, then `[sandbox] role` in
+this file, else `default`. A name is a letter or digit followed by letters,
+digits, `.`, `_` or `-`, at most 200 characters; `--role default` is the same as
+no `--role`.
+
+What a role gets comes from **role-suffixed sections**:
+
+```ini
+[connect]
+skills = copy-on-write native     # every role
+
+[connect:impl-*]
+skills = read-only native         # every role whose name matches impl-*
+
+[sandbox:reviewer]
+preset = isolated                 # the reviewer role
+
+[connect:*]                       # accept any other role name too
+```
+
+`[<section>:<glob>]` is that section for the roles the glob matches (`*` and
+`?` as in the shell). It applies after the unsuffixed section, in file order,
+and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
+changes `skills` and leaves every other channel as `[connect]` put it. Only
+`[sandbox]` (its `preset`) and `[connect]` take a suffix so far; a suffix on any
+other section is said at launch and that section is skipped.
+
+**Once any suffixed section exists, a role name matching none of them is
+refused**, since it is most likely a typo of one; add `[connect:*]` to accept
+every name. A file without suffixed sections has one policy, and any role name
+runs under it as a separate instance. `--preset` and `--connect` apply to
+whichever role is launched. A role with `--bg` is refused for now: background
+sessions do not carry a role yet (#123).
+
 ## The config file: the `config` channel
 
 Claude Code's top-level config file, `~/.claude.json`, holds app state

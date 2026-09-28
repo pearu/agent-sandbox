@@ -495,11 +495,13 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 - A **role** is a named, persistent instance of a project under a policy: `claude --role
   impl-1`. The sandbox key stays `<project slug>/<role>`, and `default` is the unnamed role.
   What the engine calls a launch is the role's running instance; "launch" stays internal.
-- **Policy is selected by glob and section order.** A `[role:<glob>]` section applies to every
-  role name it matches, later sections overriding earlier ones, per key. That is all the
-  inheritance there is: general sections first, specific ones last, `[role:*]` for every role.
-  A name that matches no section is refused, unless `[role:*]` exists. `[sandbox] role` names
-  the project's default role.
+- **Policy is selected by glob and section order.** *Built* for `[sandbox]` and `[connect]`:
+  any section may take a role suffix, `[<section>:<glob>]`, which is that section for the
+  role names the glob matches, applied after the unsuffixed one, later overriding earlier,
+  per key. That is all the inheritance there is: general sections first, specific ones last.
+  A name matching no suffixed section is refused, but only when suffixed sections exist;
+  `[connect:*]` accepts every name. `[sandbox] role` names the project's default role. There
+  is no `[role:…]` section: it would say nothing the suffix does not.
 - **The name is the identity; the policy is the variable part.** A role's policy may change
   between runs. A store belongs to `(role, path, mode)`, so a channel that changes mode
   switches to that mode's store; the previous store is kept, unbound, until `--reset` or
@@ -663,7 +665,7 @@ connection they mean.
 role = reviewer            # the project's default role; --role overrides it
 preset = inherit           # isolated | inherit | shared
 
-[role:impl-*]              # agreed, not built: policy for every role the glob matches;
+[connect:impl-*]           # [connect] for every role the glob matches;
 skills = read-only         # later sections override earlier ones, per key
 
 [overlay]

@@ -146,11 +146,22 @@
 #        A preset moves only the channels the engine manages as connections.
 #        Memory, transcripts and the rest keep their own controls
 #        ([share-memory] and so on) until they are folded in. The config file
-#        is the `config` channel: seed-only under inherit, own under isolated. [connect] below overrides the preset per channel.
+#        is the `config` channel: seed-only under inherit, own under isolated.
+#        [connect] below overrides the preset per channel.
 #
-#        role is reserved and only `default` exists today.
+#        role names the project's default role; --role and AGENT_SANDBOX_ROLE
+#        pick another. A role is a named, persistent instance of this project with
+#        its own state. Any [sandbox] or [connect] section may take a role suffix,
+#        [sandbox:<glob>], for the roles the glob matches: it applies after the
+#        unsuffixed section, and later lines override earlier ones per key. Once
+#        any suffixed section exists, a role name matching none of them is refused
+#        (a typo, most likely); [connect:*] accepts every name.
 #[sandbox]
 #preset = inherit
+#role = default
+
+#[sandbox:reviewer]
+#preset = isolated
 
 # [connect] -- per channel, how much of your NATIVE Claude Code install this
 #        project's sandbox sees: `channel = mode [source]` on the scale
@@ -180,6 +191,12 @@
 #[connect]
 #instructions = read-only native
 #skills = own native
+
+#        The same for one role, and an empty [connect:*] so that every other role
+#        name (including default) is still accepted once suffixed sections exist.
+#[connect:reviewer]
+#skills = read-only native
+#[connect:*]
 
 # [overlay] -- what `copy-on-write` is implemented WITH, not whether shared.
 #        mode = auto (default) uses a real copy-on-write overlay where your

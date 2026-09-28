@@ -64,10 +64,11 @@ across runs, its policy is the variable part. Two roles on one project share the
 directory and nothing else unless connected (a reviewer that must not see the implementer's
 accumulated memory is the motivating case,
 [#55](https://github.com/pearu/agent-sandbox/issues/55)). Policy is selected by matching the
-name against `[role:<glob>]` sections, later overriding earlier, per key; a name matching no
-section is refused unless `[role:*]` exists. A role is not a security boundary beyond what
+name against role-suffixed sections, `[sandbox:<glob>]` and `[connect:<glob>]`, applied after
+the unsuffixed ones, later overriding earlier, per key; a name matching no suffixed section is
+refused when suffixed sections exist. A role is not a security boundary beyond what
 its channels close. *shipped as a key segment with the single value `default` (`[sandbox]
-role` is reserved); naming roles, `[role:<glob>]` and the role verbs are agreed, not built
+role`, `--role` and `AGENT_SANDBOX_ROLE` name it; the role sections are built; the role verbs are agreed, not built
 (#121, #126).*
 
 **Nesting.** Running the engine inside a sandbox, which creates a sandbox within it.
@@ -206,7 +207,7 @@ documented*
 
 **Invocation scope** (#104): `foreground`/`background` as a policy axis and key segment.
 *Withdrawn* (#123): a background session runs inside its role's launch, so `x@background`
-is `x`. What survives from #104 is the `none` preset, the `[role:<glob>]` grammar and keying
+is `x`. What survives from #104 is the `none` preset, the role-suffix grammar and keying
 trust on the project.
 
 **Storage scope** (#125). Storage is keyed by the role, so the scope token of a connection
