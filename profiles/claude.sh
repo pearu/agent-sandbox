@@ -596,6 +596,13 @@ profile_route() {
     }
   done
 
+  # A ROLE WITH --bg IS REFUSED until background sessions run inside their role's
+  # launch (#123). Today a worker is sandboxed by the wrapper, which knows the project
+  # but not the role, so it would run as `default` without a word.
+  if ((is_bg)) && [[ "${_role:-default}" != default ]]; then
+    _as_msg "--bg with --role $_role: background sessions do not carry a role yet (#123), so the worker would run as the default role. Refusing rather than running it there."
+    return 1
+  fi
   if ((is_bg)); then
     if ((want_bg)); then
       _claude_bg_launch "$@" || return $? # execs on success; only returns on a setup error
