@@ -122,7 +122,16 @@ profile_channels=(
   "workflows	dir:$HOME/.claude/workflows"
   "plugins	dir:$HOME/.claude/plugins"
   "config	file:$HOME/.claude/.claude.json"
+  "transcripts	dir:$HOME/.claude/file-history	dir:$HOME/.claude/plans	file:$HOME/.claude/history.jsonl"
+  "logs	file:$HOME/.claude/responses.log	file:$HOME/.claude/alerts.log"
 )
+# TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
+# and prompt history are its own, and so are the logs your hooks write -- `own` under
+# every preset but `native`, where they are yours. Nothing is merged back at exit. The
+# conversations' directory, projects/<slug>/, is added per launch by profile_prepare,
+# since it depends on the project. A role starts with none of your native
+# conversations; `transcripts = seed-only` seeds them once, and seeds the prompt
+# history FILTERED to this project's records.
 # THE CONFIG FILE IS A CHANNEL (#119), one file following its mode like any other.
 # Its source is the native ~/.claude.json; inside it sits in the state directory,
 # where CLAUDE_CONFIG_DIR (below) makes Claude Code look for it. The seeding modes read
@@ -140,11 +149,12 @@ profile_channels=(
 # shellcheck disable=SC2034 # read by the engine
 profile_channel_sources=("$HOME/.claude/.claude.json	$HOME/.claude.json")
 # shellcheck disable=SC2034
-profile_channel_filters=("config	_claude_config_filter")
+profile_channel_filters=("config	_claude_config_filter" "$HOME/.claude/history.jsonl	_claude_history_view")
 # shellcheck disable=SC2034
 profile_channel_empty=("config	{}")
 # shellcheck disable=SC2034
-profile_channel_presets=("config	inherit=seed-only shared=seed-only")
+profile_channel_presets=("config	inherit=seed-only shared=seed-only"
+  "transcripts	inherit=own shared=own" "logs	inherit=own shared=own")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -274,17 +284,35 @@ _claude_path_hash() {
 # each approved project's memory/ (read-only). In "shared" mode do nothing, so
 # every project's memory is visible -- the pre-0.2 default, now an opt-out. $cwd is the
 # engine's current working directory.
+# _claude_memory_on_top -- when `transcripts` has a store at projects/<slug>/, the
+# project's memory, inside it, is still the project's native memory: bound read-write
+# after the connections, on top of the store. Memory keeps its own machinery until it
+# is a managed channel; the store must not quietly take it over.
+_claude_memory_on_top() {
+  # shellcheck disable=SC2154 # engine locals, by dynamic scope
+  [[ "${_connect_mode[transcripts]:-read-write}" == read-write ]] && return 1
+  local mem
+  mem="$HOME/.claude/projects/$(_claude_project_slug "$(_as_project_dir)")/memory"
+  mkdir -p "$mem" 2>/dev/null || true
+  profile_late_rw_binds+=("$mem")
+  return 0
+}
 profile_memory_scope() {
   local mode="$1"
   shift
-  [[ "$mode" == scoped ]] || return 0
+  if [[ "$mode" != scoped ]]; then
+    _claude_memory_on_top || true
+    return 0
+  fi
   local projects="$HOME/.claude/projects" cur p slug
   # cwd is a local of the engine's agent_sandbox(), visible here by dynamic scope.
   # shellcheck disable=SC2154
   cur="$projects/$(_claude_project_slug "$cwd")"
   mkdir -p "$cur" 2>/dev/null || true
   profile_tmpfs+=("$projects")
-  profile_rw_binds+=("$cur")
+  # This project's directory is the native one only when `transcripts` is read-write;
+  # otherwise the role's store takes its place and memory goes on top of it.
+  _claude_memory_on_top || profile_rw_binds+=("$cur")
   # A share naming this project would rebind the memory the session is about to
   # write READ-ONLY over the read-write bind above, silently breaking its own
   # memory. Drop it instead: it is already there, writable.
@@ -318,6 +346,12 @@ profile_memory_scope() {
 
 profile_prepare() {
   mkdir -p "$HOME/.claude"
+  # This project's conversations are the `transcripts` channel's directory path.
+  local _i
+  for _i in "${!profile_channels[@]}"; do
+    [[ "${profile_channels[_i]%%$'\t'*}" == transcripts ]] \
+      && profile_channels[_i]+=$'\t'"dir:$HOME/.claude/projects/$(_claude_project_slug "$(_as_project_dir)")"
+  done
   # Ensure ~/.claude.json exists: it seeds this project's copy of it.
   [[ -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
   _claude_config_prepare || return 1
@@ -955,6 +989,12 @@ if merged.get("disableAllHooks"):
 # instructions), credentials, plugins and statsig. The config file .claude.json
 # is neither shared nor hidden: each project gets its own copy of it, seeded
 # with that project's entry alone (see _claude_config_prepare above).
+# _claude_history_view SOURCE VIEW -- the prompt history a seeding mode reads: this
+# project's records only, by the rule _claude_history_filter below states. Fails closed:
+# without python3 the view is empty.
+_claude_history_view() {
+  (umask 077 && _claude_history_filter "$1" "$(_as_project_dir)" >"$2")
+}
 _claude_history_filter() { # $1 = history.jsonl, $2 = project dir
   # Records are compact JSON, one per line, each carrying "project":"<dir>".
   #
@@ -991,20 +1031,9 @@ PY
 profile_isolate() {
   local c="$HOME/.claude"
   profile_isolate_spec=(
-    # Verbatim file contents from other sessions. Copied out so this session's
-    # own snapshots survive a resume, which is what makes undo work.
-    "copyout	$c/file-history"
-    # Plans are documents; leaving them shared is a leak, so copy out.
-    "copyout	$c/plans"
-    # Every prompt typed in any project. The session gets its own project's
-    # records back, and its new ones are appended on exit.
-    "append	$c/history.jsonl	_claude_history_filter"
-    # Not Claude Code's, but in the same directory and just as cross-session:
-    # logs written by the user's own Notification/Stop hooks. Not attributable
-    # to a project, so the session starts with an empty one and its lines are
-    # appended back -- the log stays complete on the host.
-    "append	$c/responses.log"
-    "append	$c/alerts.log"
+    # file-history/, plans/, history.jsonl and the hook logs used to be staged here and
+    # merged back at exit. They are channels now (`transcripts`, `logs`; #120), each the
+    # role's own, and nothing is merged back.
     # Not the agent's own state, despite living in its directory: daemon/ holds
     # the background supervisor's control key and a roster of other sessions'
     # ids, pids and sockets. A sandboxed session has no use for it -- those

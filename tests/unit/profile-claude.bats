@@ -188,9 +188,9 @@ STUB
   slug="$(_claude_project_slug "$real")"
   RUN_CWD="$deep" run_engine -- claude --version
   [ "$status" -eq 0 ]
-  run ! argv_has --bind "$H/home/.claude/projects/$plain" "$H/home/.claude/projects/$plain"
-  argv_has --bind "$H/home/.claude/projects/$slug" "$H/home/.claude/projects/$slug"
-  [ "${#slug}" -le 207 ] # 200 + "-" + at most six characters, so under NAME_MAX
+  run ! argv_has --bind "$H/home/.claude/projects/$plain/memory" "$H/home/.claude/projects/$plain/memory"
+  argv_has --bind "$H/home/.claude/projects/$slug/memory" "$H/home/.claude/projects/$slug/memory" # memory on top of the transcripts store
+  [ "${#slug}" -le 207 ]                                                                          # 200 + "-" + at most six characters, so under NAME_MAX
 }
 
 @test "the history filter matches the project FIELD, not the bytes anywhere on the line" {

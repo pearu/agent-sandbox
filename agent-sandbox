@@ -572,10 +572,6 @@ _as_session_sweep() {
       && [[ -n "$agent" && "$(cat "/proc/$agent/comm" 2>/dev/null)" == ssh-agent ]]; then
       kill "$agent" 2>/dev/null || true
     fi
-    # An orphan may hold un-flushed appends (the engine was SIGKILLed before
-    # its trap). Apply them before the dir goes, or the session's own new
-    # history lines are lost for good.
-    _as_iso_flush "$d"
     rm -rf -- "$d" 2>/dev/null || true
   done
   ((_ng)) || shopt -u nullglob
@@ -618,7 +614,6 @@ _as_session_cleanup() {
     kill "$_ssh_agent_pid" 2>/dev/null
   fi
   if [[ -n "${_session_dir:-}" ]]; then
-    _as_iso_flush "$_session_dir"
     rm -rf -- "$_session_dir"
   fi
   # Empty mount-point files the state binds created on the host (see the
@@ -808,104 +803,41 @@ _as_allow_setup() {
 # the mechanism. Each declaration is one line in profile_isolate_spec:
 #
 #   tmpfs<TAB>DIR              empty inside, discarded at exit
-#   copyout<TAB>DIR            empty inside; entries the session created are
-#                              merged back at exit, never overwriting
-#   append<TAB>FILE[<TAB>FN]   empty inside, or FN's filtered view of FILE;
-#                              lines beyond that baseline are appended to FILE
-#                              at exit, under flock
 #
-# Append-back rather than a live bind because a live bind is the leak: the
-# session could read every other session's lines. Deferring the write means a
-# crash can lose the session's own new lines, which is why the janitor flushes
-# a dead session's manifest before removing it (_as_session_sweep). Losing
-# lines is the failure we accept; showing another project's is not.
+# There used to be two more, `copyout` and `append`, which staged a path empty
+# and merged the session's new entries back into the host's copy at exit. Every
+# path that used them is a channel now, each the role's own (#120), and nothing
+# is merged back into the native state after the fact: a `copyout` or `append`
+# line is refused as unknown.
 _as_iso_slug() {
   local s="${1//\//_}"
-  printf '%s' "${s#_}"
+  s="${s#_}"
+  # ONE FILE NAME, SO AT MOST 255 BYTES. Measured: a project whose own slug is
+  # already 200 characters puts its conversations directory at a path whose
+  # flattened name is longer than that, and the store could not be created. Past
+  # 200 characters, the same scheme as _as_path_slug: truncated, plus a hash of the
+  # whole path. Every shorter name -- every store there is -- is unchanged.
+  if ((${#s} > 200)); then
+    s="${s:0:200}-$(_as_sha256_str "$1" | cut -c1-16)"
+  fi
+  printf '%s' "$s"
 }
 
-# Stage the declared paths, add their binds to args, and record a manifest for
-# the flush. Reads profile_isolate_spec; needs $cwd and $args from the caller.
+# Add the declared paths' binds to args. Reads profile_isolate_spec; needs $args
+# from the caller.
 _as_iso_prepare() {
   ((${#profile_isolate_spec[@]})) || return 0
-  _as_session_begin || return 1
-  local iso="$_session_dir/iso" man="$_session_dir/iso.manifest"
-  mkdir -p "$iso" || return 1
-  : >"$man" || return 1
-  local line mode path fn slug staged base
+  local line mode path
   for line in "${profile_isolate_spec[@]}"; do
-    IFS=$'\t' read -r mode path fn <<<"$line"
+    IFS=$'\t' read -r mode path _ <<<"$line"
     [[ -n "${path:-}" ]] || continue
-    slug="$(_as_iso_slug "$path")"
     case "$mode" in
       tmpfs)
         args+=(--tmpfs "$path")
         ;;
-      copyout)
-        staged="$iso/$slug"
-        mkdir -p "$staged" || continue
-        args+=(--bind "$staged" "$path")
-        printf 'copyout\t%s\t%s\t0\n' "$path" "$staged" >>"$man"
-        ;;
-      append)
-        staged="$iso/$slug"
-        : >"$staged" || continue
-        # A filter gives the session its OWN history back; without one it
-        # starts empty. Either way it never sees another project's lines.
-        if [[ -n "${fn:-}" ]] && declare -F "$fn" >/dev/null && [[ -r "$path" ]]; then
-          "$fn" "$path" "$cwd" >"$staged" 2>/dev/null || : >"$staged"
-        fi
-        base="$(wc -l <"$staged" 2>/dev/null || printf 0)"
-        args+=(--bind "$staged" "$path")
-        printf 'append\t%s\t%s\t%s\n' "$path" "$staged" "${base// /}" >>"$man"
-        ;;
       *) _as_msg "isolate: unknown mode '$mode' for $path; ignoring" ;;
     esac
   done
-  return 0
-}
-
-# Apply a session's manifest: append new lines, merge new entries. Safe to call
-# twice (the manifest is removed on success) and safe from a trap. $1 = session
-# dir. Runs on the HOST, after bwrap has exited.
-_as_iso_flush() {
-  local d="${1:-}"
-  local man="$d/iso.manifest"
-  [[ -n "$d" && -r "$man" ]] || return 0
-  local mode host staged base cur
-  while IFS=$'\t' read -r mode host staged base; do
-    [[ -n "${host:-}" && -e "${staged:-/nonexistent}" ]] || continue
-    case "$mode" in
-      append)
-        cur="$(wc -l <"$staged" 2>/dev/null || printf 0)"
-        cur="${cur// /}"
-        if ((cur < base)); then
-          # Rewritten rather than appended to: which lines are new is no longer
-          # knowable, so nothing is written back rather than write nonsense.
-          _as_msg "isolate: $host was rewritten inside the sandbox ($cur lines < $base); its new lines are not appended back"
-          continue
-        fi
-        # NOT `((cur == base)) && continue`: a false (( )) returns 1, and under
-        # `set -e` that aborts the flush -- which then never removes the
-        # session dir either.
-        if ((cur == base)); then continue; fi # nothing new
-        if command -v flock >/dev/null 2>&1; then
-          flock "$host.lock" -c "tail -n +$((base + 1)) \"\$1\" >>\"\$2\"" _ "$staged" "$host" 2>/dev/null \
-            || tail -n +$((base + 1)) "$staged" >>"$host" 2>/dev/null || true
-        else
-          tail -n +$((base + 1)) "$staged" >>"$host" 2>/dev/null || true
-        fi
-        ;;
-      copyout)
-        [[ -n "$(ls -A "$staged" 2>/dev/null)" ]] || continue
-        mkdir -p "$host" 2>/dev/null || continue
-        # -n: never overwrite what the host already has. The session's own new
-        # entries are what we are preserving, not a whole-tree sync.
-        cp -an "$staged/." "$host/" 2>/dev/null || true
-        ;;
-    esac
-  done <"$man"
-  rm -f -- "$man" 2>/dev/null || true
   return 0
 }
 
@@ -1372,7 +1304,8 @@ _as_connect_channels() {
 #
 #   profile_channel_sources  "DEST<TAB>SOURCE"      the path outside, when it is not DEST
 #   profile_channel_filters  "CHANNEL<TAB>FUNCTION" FUNCTION SOURCE VIEW writes what the
-#                                                   seeding modes read instead of SOURCE
+#                            or "DEST<TAB>FUNCTION" seeding modes read instead of SOURCE;
+#                                                   a DEST entry is for that path alone
 #   profile_channel_empty    "CHANNEL<TAB>TEXT"     what a new `own` file store holds
 #   profile_channel_presets  "CHANNEL<TAB>PRESET=MODE ..."  this channel's rung under a
 #                                                   preset, where it is not the preset's
@@ -1414,7 +1347,7 @@ _as_channel_preset_mode() {
   fi
   _as_preset_mode "$2"
 }
-# _as_connect_view CHANNEL SOURCE -- set $_connect_from to the path the seeding modes
+# _as_connect_view CHANNEL SOURCE DEST -- set $_connect_from to the path the seeding modes
 # read for SOURCE: SOURCE itself, or the profile's filtered view of it, written into
 # this launch's directory.
 #
@@ -1422,9 +1355,10 @@ _as_channel_preset_mode() {
 # directory it makes on a first use is the subshell's, the subshell's exit trap
 # removes it with the view inside, and the store was seeded from nothing.
 _as_connect_view() {
-  local ch="$1" src="$2" fn
+  local ch="$1" src="$2" dest="${3:-}" fn
   _connect_from="$src"
-  fn="$(_as_channel_hook profile_channel_filters "$ch")" || return 0
+  fn="$(_as_channel_hook profile_channel_filters "$dest")" \
+    || fn="$(_as_channel_hook profile_channel_filters "$ch")" || return 0
   _as_session_begin || return 1
   _connect_from="$_session_dir/connect/$ch/view-$(_as_iso_slug "$src")"
   mkdir -p -- "$(dirname -- "$_connect_from")" || return 1
@@ -1525,7 +1459,7 @@ _as_connect_apply() {
             slot="$base/$ch/copy/$(_as_iso_slug "$path")"
             manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
             mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-            _as_connect_view "$ch" "$src" || return 1
+            _as_connect_view "$ch" "$src" "$path" || return 1
             _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
             if [[ ! -e "$slot" ]]; then
               if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
@@ -1607,7 +1541,7 @@ _as_connect_apply() {
         seed-only)
           slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
           if [[ ! -e "$slot" ]]; then
-            _as_connect_view "$ch" "$src" || return 1
+            _as_connect_view "$ch" "$src" "$path" || return 1
             _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
           fi
           [[ "$kind" == file ]] && _as_connect_placeholder "$path"
@@ -1620,7 +1554,7 @@ _as_connect_apply() {
           slot="$base/$ch/copy/$(_as_iso_slug "$path")"
           manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
           mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-          _as_connect_view "$ch" "$src" || return 1
+          _as_connect_view "$ch" "$src" "$path" || return 1
           _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
           # A channel whose source has nothing yet still needs a mount point.
           if [[ ! -e "$slot" ]]; then
@@ -2192,7 +2126,7 @@ _as_connect_reset() {
         rm -rf -- "$upper" "$work" "$seen" 2>/dev/null || true
       fi
       if [[ -e "$slot" || -e "$manifest" ]]; then
-        _as_connect_view "$ch" "$(_as_channel_source "$path")" || return 1
+        _as_connect_view "$ch" "$(_as_channel_source "$path")" "$path" || return 1
         _as_connect_sync reset "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
       fi
       _as_msg "connect: reset '$ch' at $path from your own copy"
@@ -3412,7 +3346,7 @@ agent_sandbox() (
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
   local -a profile_host_subcommands=()
-  local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=()
+  local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()
@@ -4106,6 +4040,11 @@ agent_sandbox() (
   # visibility binds and under the per-session scratch. See the connections
   # section above for why that order.
   _as_connect_apply || return 1
+  # Binds a profile needs ON TOP of the connections: a path inside a channel that keeps
+  # machinery of its own (the claude profile's memory, inside `transcripts`).
+  for _pv in ${profile_late_rw_binds[@]+"${profile_late_rw_binds[@]}"}; do
+    args+=(--bind "$_pv" "$_pv")
+  done
 
   # State isolation: the profile declares which parts of its state directory
   # leak across sessions, the engine stages and binds them. After the binds

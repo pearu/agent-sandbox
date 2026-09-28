@@ -2,7 +2,9 @@
 # State isolation with the REAL bwrap: a stub Claude binary reports, from
 # INSIDE the sandbox, whether another session's leavings are reachable. The
 # unit suite asserts the argv; only this can show that the canary is actually
-# invisible rather than merely unbound.
+# invisible rather than merely unbound. Since #120 file-history/, plans/ and
+# history.jsonl are the role's own (`transcripts`): nothing of another session is in
+# them, and nothing the session writes is merged back into the native state.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -16,6 +18,7 @@ setup() {
 #!/usr/bin/env bash
 R="$PWD/report"; : >"$R"; say() { printf '%s=%s\n' "$1" "$2" >>"$R"; }
 c="$HOME/.claude"
+say persisted "$([ -f "$c/file-history/MY-SESSION/f@v1" ] && echo yes || echo no)"
 # the canary another session left: its verbatim file content, and its plan
 say canary_readable "$(grep -rqs CANARY-FILE-CONTENT "$c/file-history" && echo yes || echo no)"
 say plan_readable "$(grep -rqs CANARY-PLAN "$c/plans" && echo yes || echo no)"
@@ -58,20 +61,23 @@ run_claude() {
   [ "${M[plan_readable]}" = no ]
   [ "${M[history_theirs]}" = no ]
   [ "${M[paste_visible]}" = no ]
-  # ...while this project's own prompts are still there, and writing still works
-  [ "${M[history_mine]}" = yes ]
+  # the role starts with none of the native history, this project's included (#120),
+  # and writing works
+  [ "${M[history_mine]}" = no ]
   [ "${M[can_write]}" = yes ]
 }
 
-@test "what the session wrote reaches the host after it exits" {
+@test "what the session wrote stays in the role, persists to the next launch, and never reaches the native state" {
+  cp "$IHOME/.claude/history.jsonl" "$I/history.before"
   run_claude
   [ "$status" -eq 0 ]
-  # copied out
-  [ -f "$IHOME/.claude/file-history/MY-SESSION/f@v1" ]
-  # appended back, exactly once, without disturbing what was there
-  [ "$(grep -c NEW-PROMPT "$IHOME/.claude/history.jsonl")" -eq 1 ]
-  [ "$(grep -c THEIR-PROMPT "$IHOME/.claude/history.jsonl")" -eq 1 ]
-  [ "$(grep -c MY-PROMPT "$IHOME/.claude/history.jsonl")" -eq 1 ]
+  [ "${M[persisted]}" = no ] # the first launch
+  # nothing merged back
+  [ ! -e "$IHOME/.claude/file-history/MY-SESSION" ]
+  cmp "$IHOME/.claude/history.jsonl" "$I/history.before"
+  # the role has it at the next launch
+  run_claude
+  [ "${M[persisted]}" = yes ]
   # the other session's canary is exactly as it was
   grep -q CANARY-FILE-CONTENT "$IHOME/.claude/file-history/THEIR-SESSION/abc@v1"
   grep -q CANARY-PLAN "$IHOME/.claude/plans/theirs.md"

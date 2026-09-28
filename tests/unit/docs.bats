@@ -242,7 +242,7 @@ profile_dotfile_keys() { # the live ones: a retired key is read only to be refus
   # shellcheck disable=SC2016 # literal \$c: the profile spells its paths as "$c/<name>"
   paths="$(awk '/^profile_isolate\(\) \{/,/^\}$/' "$REPO_ROOT/profiles/claude.sh" \
     | grep -oE '\$c/[A-Za-z._-]+' | sed 's|\$c/||' | sort -u)"
-  enough profile_isolate_paths 8 <<<"$paths"
+  enough profile_isolate_paths 6 <<<"$paths"
   local row
   row="$(grep -F 'Cross-session state is isolated' "$REPO_ROOT/docs/design.md")"
   [ -n "$row" ] # the guarantee row is still findable

@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets and the holder are implemented and under test; roles, the keeper and the `config` and `transcripts` channels are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage-agreed-not-built)).** A model for controlling what passes between agent
+**Status: the scale, the presets, the holder, roles and the `config`, `transcripts` and `logs` channels are implemented and under test; the keeper and the role verbs are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage-agreed-not-built)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -65,13 +65,15 @@ No connection for a channel means `own`.
 | config | the config file: app state, the account, the user-level MCP servers, this project's entry | `~/.claude.json`, bound inside at `~/.claude/.claude.json` (#119) |
 | tools | user-level MCP servers | part of `config`: the `mcpServers` block of that file (#132) |
 | memory | per-project auto memory | `projects/<slug>/memory/`; `agent-memory/` once its layout is known |
-| transcripts | conversations, plans, file history, prompt history | `projects/<slug>/*.jsonl`, `plans/`, `file-history/`, `history.jsonl` |
+| transcripts | conversations, plans, file history, prompt history | `projects/<slug>/` (memory bound on top), `plans/`, `file-history/`, `history.jsonl` |
+| logs | what the user's own hooks write | `responses.log`, `alerts.log` |
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
 
 Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
 `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`) stays what
-the isolate spec makes of it today: replaced per launch, closed to other sessions, a session's
-own new entries merged back — until #120, which gives each of those paths a mode and ends the merge-back (agreed, not built; see below). **Server-owned state** (`skills/synced/`, `plugins/synced/`,
+the isolate spec makes of it: replaced per launch, closed to other sessions, and discarded at
+exit. (File history, plans, prompt history and the hook logs used to be merged back at exit;
+since #120 they are the `transcripts` and `logs` channels.) **Server-owned state** (`skills/synced/`, `plugins/synced/`,
 `cache/`, `telemetry/`, `backups/`, the usage and stats files) is written by Claude Code
 itself from the service or as caches; it is private to each sandbox and never connected. A
 sandbox syncs its own server skills on first start, measured at 3.6 MB on this host.
@@ -227,14 +229,17 @@ between is a preset plus overrides. `--sandbox` goes with the keeper, which is
 | instructions, settings, skills, agents, workflows, plugins | own | `copy-on-write` from native, `copy` where no overlay | read-write native |
 | config (tools part of it) | own | `seed-only` from native, this project's entry only | `seed-only` from native, this project's entry only |
 | memory | own only | own, plus `read-only` from named sandboxes (`[share-memory]`) | read-write (`memory_default = shared`) |
-| transcripts | own | own | read-write |
+| transcripts (conversations, file history, plans, prompt history) | own | own | own |
+| logs (the user's hook logs) | own | own | own |
 | artefacts | own | own | read-write |
 | network | `own` | `proxy` | `proxy` or `open` |
 
-**This table is where the model is going, not what the engine does today.** Only the
-`instructions, settings, skills, agents, workflows, plugins` row is implemented: those six
-are the channels the engine manages as connections, and a preset moves them and nothing
-else. identity, project, tools, memory, transcripts and artefacts each still have machinery
+**This table is where the model is going, not what the engine does today.** The rows
+implemented are the channels the engine manages as connections — `instructions, settings,
+skills, agents, workflows, plugins`, `config`, `transcripts` and `logs` — and a preset moves
+them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
+holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them.
+identity, project, memory and artefacts each still have machinery
 of their own and keep their own controls until they are folded in, one at a time, with the
 study to show it. `docs/config.md` documents the rows that are live, so a user reading it
 is never told a channel is positioned when it is not.
@@ -575,11 +580,12 @@ conversation. `read-write` with any scope stays refused: there is no store to sc
 ### Modes and channels decided alongside
 
 - **`seed-only`** (#120) is built: see [The scale](#the-scale).
-- **No merge-back at exit** (#120): `file-history/` and `plans/` at `own`, `history.jsonl` at
-  `seed-only` seeded with this project's lines, the hook logs at `own`. So **`transcripts`
-  becomes a managed channel**, `own` under `isolated` and `inherit` and `read-write` under
-  `shared`, with `memory` split from `projects/<slug>/` at the path level. Undo and plans work
-  wherever the conversation can be resumed, which is the role.
+- **No merge-back at exit** (#120) is built: `transcripts` (this project's conversations,
+  `file-history/`, `plans/`, `history.jsonl`) and `logs` (the hook logs) are channels, `own`
+  under every preset but `native`. A role starts with none of the native history;
+  `transcripts = seed-only` seeds it once, the prompt history filtered to this project's
+  records. The project's memory is bound on top of the role's store by its own machinery.
+  Undo and plans work wherever the conversation can be resumed, which is the role.
 - **The config file** (#119) is built: the `config` channel, see
   [config.md](config.md#the-config-file-the-config-channel). `seed-only` under `inherit` and
   `shared`, `own` under `isolated`; `user-mcp` is removed and `tools` is part of it (#132).
@@ -588,7 +594,7 @@ conversation. `read-write` with any scope stays refused: there is no store to sc
 
 What exists: read-write and read-only binds of a source path at an inside path
 (`profile_config_binds` with `SRC<TAB>DEST`, and the layered `profile_rw_binds`/`_ro_binds`);
-`tmpfs` over a path; `copyout` and `append` for per-session scratch; the engine's state
+`tmpfs` over a path for per-launch scratch; the engine's state
 directory and its control-path protection; a seeded, filtered, refreshed copy of one file
 (the config file, 0.2.1); the mount-point cleanup a file bind inside a read-write directory
 needs. Measured on this host: the whole user-owned configuration copies into the session

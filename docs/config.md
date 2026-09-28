@@ -190,7 +190,8 @@ Sections:
   | plugins — `plugins/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | config — `~/.claude.json`, the user-level MCP servers included | `own` | `seed-only` | `seed-only` | `read-write` | **the preset** ([below](#the-config-file-the-config-channel)) |
   | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | `memory_default` (`scoped` by default) and `[share-memory]` |
-  | transcripts — conversations, plans, history | `own` | `own` | `read-write` | `read-write` | per-project scoping and the isolate spec |
+  | transcripts — this project's conversations, file history, plans, prompt history | `own` | `own` | `own` | `read-write` | **the preset** ([below](#transcripts-and-logs)) |
+  | logs — `responses.log`, `alerts.log`, written by your own hooks | `own` | `own` | `own` | `read-write` | **the preset** |
   | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **nothing yet: they are `read-write` whatever the preset** |
 
   Read the last column as the list of things left to fold in. When a row moves to
@@ -352,14 +353,15 @@ Two modes:
 
 - **`shared`** — every project's memory stays visible, how agent-sandbox
   behaved before 0.2. An explicit opt-out now.
-- **`scoped`** (the default) — `~/.claude/projects` is hidden and only the current project is
-  rebound read-write (it keeps writing its own memory and transcripts), plus the
-  `memory/` directory of each project you name in `share-memory`, read-only.
-  Other projects are invisible.
+- **`scoped`** (the default) — `~/.claude/projects` is hidden and only the current
+  project's `memory/` is bound, read-write, plus the `memory/` directory of each
+  project you name in `share-memory`, read-only. Other projects are invisible.
 
-Scoping covers `~/.claude/projects`. Other state under `~/.claude` (global
-command history, session metadata) stays visible; this is about per-project
-memory and transcripts, not a full identity reset.
+Scoping is about memory. The project's conversations beside it are the
+`transcripts` channel ([below](#transcripts-and-logs)): the role's own, with the
+project's native memory bound on top, under either mode. Only at
+`transcripts = read-write` is the project's whole native directory bound, as
+before 0.4.
 
 ### What counts as "the project" inside the sandbox
 
@@ -407,6 +409,30 @@ Selecting the mode, from lowest to highest precedence:
    Present but empty means this project only; the paths or `~/dir/*` wildcards
    listed add those projects' memory read-only; a single `all` keeps everything
    visible even when the global default is `scoped`.
+
+## Transcripts and logs
+
+A role's history is its own. The **`transcripts`** channel is this project's
+conversations (`~/.claude/projects/<slug>/`), `file-history/` (what makes undo
+work), `plans/` and the prompt history, `history.jsonl`; the **`logs`** channel
+is what your own hooks write, `responses.log` and `alerts.log`. Both are `own`
+under every preset but `native`, and nothing is merged back into your native
+`~/.claude` when a launch ends.
+
+- **A role starts with none of your native history.** `claude --role foo -r`
+  lists foo's conversations; a plain `claude -r` outside any sandbox lists your
+  native ones. To give a role its project's native history once, write
+  `transcripts = seed-only` under `[connect]`: the conversations, file history
+  and plans are copied, and the prompt history is filtered to this project's
+  records, never another project's.
+- **The project's memory is still its native memory**, bound on top of the
+  role's conversations, and shared by the project's roles, until memory is a
+  channel of its own (see [Memory scoping](#memory-scoping)).
+- **`transcripts = read-write`** is your native files themselves, including the
+  whole prompt history with every project's prompts in it: valid, not advocated.
+- The role's stores are under
+  `~/.local/state/agent-sandbox/claude/<slug>/<role>/{transcripts,logs}/`, where a
+  watcher of a hook log points.
 
 ## Roles
 

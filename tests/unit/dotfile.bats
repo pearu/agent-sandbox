@@ -58,7 +58,7 @@ trust() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist:"*"pypi.org"*".github.com"* ]]
   argv_has --tmpfs "$H/home/.claude/projects"
-  argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")" "$H/home/.claude/projects/$(slug "$PROJ")"
+  argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory" # memory on top of the transcripts store
   run ! argv_has --ro-bind "$H/home/.claude/projects/-other/memory" "$H/home/.claude/projects/-other/memory"
   # tmpfs hides projects before the current one is rebound
   [ "$(argv_index --tmpfs)" -lt "$(argv_index "$H/home/.claude/projects/$(slug "$PROJ")")" ]
@@ -112,7 +112,7 @@ trust() {
   run_engine -- claude --version
   [ "$status" -eq 0 ]
   # the project stays writable; its memory must not also appear as a read-only bind
-  argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")" "$H/home/.claude/projects/$(slug "$PROJ")"
+  argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory" # memory on top of the transcripts store
   run ! argv_has --ro-bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory"
 }
 
@@ -463,6 +463,6 @@ trust() {
   RUN_CWD="$proj" run_engine -- claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
-  argv_has --bind "$H/home/.claude/projects/$s" "$H/home/.claude/projects/$s"
-  run ! argv_has --bind "$H/home/.claude/projects/$wrong" "$H/home/.claude/projects/$wrong"
+  argv_has --bind "$H/home/.claude/projects/$s/memory" "$H/home/.claude/projects/$s/memory" # memory on top of the transcripts store
+  run ! argv_has --bind "$H/home/.claude/projects/$wrong/memory" "$H/home/.claude/projects/$wrong/memory"
 }
