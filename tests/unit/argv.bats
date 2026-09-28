@@ -53,18 +53,21 @@ setup() {
   [ "$(argv_index "$H/home/.claude")" -gt "$(argv_index --tmpfs)" ]
   # the file bind layers on the directory bind, so it must come after it
   [ "$(argv_index "$H/home/.claude/.claude.json")" -gt "$(argv_index "$H/home/.claude")" ]
-  # the agent's own arguments are passed through untouched and in order, right
-  # after the binary; the briefing's --settings is appended after them (it has
-  # to come last, because Claude Code honours only the last --settings)
+  # the launch runs the keeper's payload, and the agent is joined into it: its own
+  # arguments passed through untouched and in order, right after the binary; the
+  # briefing's --settings appended after them (it has to come last, because Claude
+  # Code honours only the last --settings)
   local i
   i="$(argv_index --)"
-  [ "${ARGV[i + 1]}" = "$BIN" ]
-  [ "${ARGV[i + 2]}" = "--version" ]
-  [ "${ARGV[i + 3]}" = "--foo" ]
-  [ "${ARGV[i + 4]}" = "bar" ]
-  [ "${ARGV[i + 5]}" = "--settings" ]
-  local n=${#ARGV[@]}
-  [ "$n" -eq "$((i + 7))" ] # ...and nothing after the settings path
+  [ "${ARGV[i + 1]}" = bash ]
+  [ "${ARGV[-1]}" = agent-sandbox-keeper ]
+  [ "${JOINV[0]}" = "$BIN" ]
+  [ "${JOINV[1]}" = "--version" ]
+  [ "${JOINV[2]}" = "--foo" ]
+  [ "${JOINV[3]}" = "bar" ]
+  [ "${JOINV[4]}" = "--settings" ]
+  [ "${#JOINV[@]}" -eq 6 ]           # ...and nothing after the settings path
+  [ "${#ARGV[@]}" -eq "$((i + 5))" ] # and after bwrap's --, only the payload
   # nothing binds the config file at $HOME any more, where its writes were lost
   run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"
 }
@@ -186,7 +189,7 @@ setup() {
 #!/usr/bin/env bash
 : >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*; do printf '== %s\n' "$f"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1
-exit 0
+. "${0%/*}/keeper-tail"
 STUB
   run_engine BWRAP_PROBE="$H/probe" -- claude --allow pypi.org --allow=.example.org --version
   [ "$status" -eq 0 ]

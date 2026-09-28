@@ -38,10 +38,19 @@ is not guaranteed.
 - **Egress proxy**: a mitmproxy 12+ instance run as a systemd user service from
   a private environment under `~/.local/share/agent-sandbox`, loading the
   allowlist addon. It terminates TLS with its own CA. See [network.md](network.md).
+- **Keeper** (#121): one launch per role. The first invocation of a role starts
+  bwrap with a payload that only holds the sandbox's namespaces, and every app, the
+  first included, is joined into it by `components/join.py` (`setns`, then the same
+  capability set, `no_new_privs` and seccomp filter). A second invocation of a
+  running role builds nothing: it joins. The launch's host side is a supervisor, a
+  background copy of the engine, which ends the keeper once nothing is joined (after
+  a two-second grace) and then does what a launch's exit did. See
+  [connections.md](connections.md#the-keeper-one-running-instance-per-role-121).
 - **Session state**: `$XDG_RUNTIME_DIR/agent-sandbox.<uid>/session.XXXXXX/`
-  holds the liveness stamp (`owner.id`: the engine's PID and start time), the
-  SSH agent socket and PID, and the `--allow` hosts. `ca-bundle.crt` at the base
-  is shared by sessions. A janitor reaps orphans at every launch.
+  holds the liveness stamp (`owner.id`: the keeper's supervisor's PID and start
+  time), the SSH agent socket and PID, the `--allow` hosts and the briefing. One
+  per keeper. `ca-bundle.crt` at the base is shared by sessions. A janitor reaps
+  orphans at every launch.
 - **Installer** (`install.sh`, generated from `install.sh.in` and `components/`):
   host setup, per profile. See the repository `README.md`.
 
@@ -51,6 +60,12 @@ every bind under `$HOME`, and the SSH socket and `--allow` file exist before
 bwrap starts.
 
 ### Background sandboxing (wrapper mode)
+
+**Refused until #123.** With one launch per role, a wrapped worker would be a second
+launch of the role beside its keeper, so `--bg` with `bg` in the sandbox scope is
+refused, naming #123, until background sessions run inside the role. A `--bg`
+without `bg` in scope still runs natively, as described below. The mechanism stays
+described here until #123 removes it.
 
 A foreground `claude` is one process the engine execs into bwrap. A background
 session (`claude --bg`) is not: `--bg` hands the task to a per-user supervisor
@@ -150,7 +165,8 @@ that records the argv it receives; the argv is the contract.
 | Per-session `--allow` hosts are scoped to their session and lapse with it. The engine writes them to the session dir with a per-session token, carried in the sandbox's proxy URL; the addon applies them only for a request bearing that token, and only while the process stamped in `owner.id` is alive (PID and start time, so a recycled PID never counts). Another session's `--allow` is not reachable. | `_as_allow_setup` (token + hosts), `_session_allow`/`_token_from`/`_owner_alive` in the addon. | `tests/unit/addon.bats` (a host is reachable only with its session's token and while the owner is alive; dead, recycled-PID, unstamped and cross-session all denied; the CONNECT token carries into the tunnel's inner requests), `tests/unit/argv.bats` (the token is minted, stored 0600, and set as the proxy URL's userinfo). Verified live once: alive 200, owner killed 403. |
 | The proxy CA is trusted inside the sandbox only. The engine binds (system bundle + CA) over `/etc/ssl/certs/ca-certificates.crt` and points the CA variables of tools with private stores at it. The host trust store is never touched. | `_as_ca_bind`, `_as_ca_env`. | `tests/unit/helpers.bats` (`_as_ca_bind`, `_as_ca_env`), `tests/integration/sandbox.bats` (bundle inside is the system bundle plus the given CA; plain system bundle with a warning when the CA is missing). Python 3.14 strict verification through the live proxy was checked once by hand. |
 | SSH keys never enter. `--ssh HOST` starts a per-session ssh-agent on the host, loads the key with an OpenSSH destination constraint, binds only the socket (and the public `known_hosts`/`config`, also at uid 0's home, since in `strict` ssh resolves `~` to root's) (plus read-only `known_hosts` and `config`). The agent refuses to sign for any other host. Teardown kills the agent and removes the socket. | `_as_ssh_setup`, `_as_session_cleanup`. | `tests/integration/ssh.bats` (generated host key: constrained key listed inside, `~/.ssh` and the private key invisible, known_hosts read-only, agent dead and dir gone after exit; unknown host refused before any session exists). |
-| Concurrency-safe sessions. Each launch gets its own directory; the janitor reaps only directories whose owner (PID and start time) is gone and never touches unstamped or live ones. | `_as_session_begin`, `_as_session_sweep`. | `tests/unit/helpers.bats` (`_as_session_sweep`), `tests/integration/ssh.bats` (janitor at launch; `--ssh` and `--allow` share one dir). |
+| Concurrency-safe sessions. Each keeper gets its own directory; the janitor reaps only directories whose owner (PID and start time) is gone and never touches unstamped or live ones. | `_as_session_begin`, `_as_session_sweep`; the keeper's supervisor restamps the directory as its own. | `tests/unit/helpers.bats` (`_as_session_sweep`), `tests/unit/keeper.bats` (the supervisor owns it, and it goes with the keeper), `tests/integration/ssh.bats` (janitor at launch; `--ssh` and `--allow` share one dir). |
+| One launch per role. Two invocations of one role at once are one sandbox: the second is a process joined into the first one's launch, in the same mount namespace, so there is never a second set of mounts -- in particular never two overlays over one upper layer, which overlayfs calls undefined. A joined process is the launch's equal in mounts, uid and gid, capabilities, `no_new_privs` and seccomp; its environment is the launch's but for the terminal's variables. Policy is fixed when the launch starts: a join that sets a knob to a value other than the running one is refused, naming it, while anything is joined; an idle launch in its grace is replaced instead. A join parses the keeper's copy of the approved dot-file, so an unapproved edit to the live file refuses it only when the role has to be read from that file. The launch ends once nothing is joined, never while a join is in progress. | `_as_keeper_*` in the engine (the lock, the record, the supervisor, `_as_keeper_admit` for the policy), `components/join.py` (the `setns` chain, the bounding set, `no_new_privs`, the filter). | `tests/unit/keeper.bats` (a second invocation builds nothing and joins; the policy rule per knob; the dot-file warning; the terminal's variables; a failed start), `tests/integration/keeper.bats` (real bwrap: one mount namespace and one superblock for two sessions; the joined process's status lines and mounts equal the launch's, with the real filter; the environment split; stores shared; the keeper outliving any one join and ending after the last; a join during the grace; Ctrl-C; `proxy` and `strict`). Mutation-checked: the policy check, the terminal variables, the recount, the join's filter and the join count. |
 | Self-update runs on the host, never inside. The profile lists the subcommands; the engine runs them unsandboxed and restores the launcher symlink if an installer moves it. `DISABLE_AUTOUPDATER=1` inside. | `profile_host_subcommands`, `profile_handle_subcommand`. | `tests/unit/profile-claude.bats` (no bwrap call, exit code propagated, flags ignored with a note, launcher restored). |
 | Per-project policy is trust-gated. A project's `.agent-sandbox` (allow hosts, memory scoping, paths, environment, conda, network) is honored only after `--trust` records its SHA-256. A file with no approval on record is ignored with a note. Once approved, an edit by anyone, the agent included, or the file's removal refuses launches from that directory until `--trust` re-reviews it (or forgets the approval), because ignoring would fall back to the defaults, and a default can be wider than the policy you approved (a project pinning `[net] mode = strict` would drop to the default `proxy`). So the agent can neither grant itself anything nor quietly regain the defaults. The review shows the file escaped (`cat -v`) and a file containing control characters is refused at review and at launch, so no line can be hidden from the reviewer. The trust store and global config live under `~/.config/agent-sandbox`, which is never bound into the sandbox. | `_as_dotfile_trusted`, `_as_trust_record`, `_as_dotfile_parse`, `_as_dotfile_clean`, `_as_trust_review`, the trust-record check at launch. | `tests/unit/dotfile.bats` (unapproved ignored with a pointer to `--trust`; an edit and a deletion refuse to launch, bwrap never invoked, until `--trust` re-approves or forgets; an approved file adds allow hosts; `--trust` records the hash and offers to git-ignore; a file with an ESC sequence or a carriage return is refused at review and at launch, UTF-8 is shown escaped and accepted). |
 | Memory is scoped per project by default. In `scoped` mode `~/.claude/projects` is hidden and only the current project (read-write) and each approved project's `memory/` (read-only) are rebound, so a session cannot read other projects' notes or transcripts. "The current project" is the session's directory: the engine binds that directory and not its parents, so a session below a repository root has no `.git` in view and Claude Code keys its memory to the directory, not the repository -- subdirectories of one repository are separate projects inside the sandbox, though they share one memory natively. A share naming the current project is dropped rather than rebound read-only over the writable bind. `scoped` is the default, so this holds without configuration; a global `memory_default = shared` or a dot-file `[share-memory] all` opts out. | `profile_memory_scope` in the claude profile; `profile_tmpfs`/`_rw_binds`/`_ro_binds` applied by the engine after the state binds. | `tests/unit/dotfile.bats` (argv: tmpfs hide then current read-write then shared read-only, in that order; a share naming the current project, literal or matched by a wildcard, is dropped), `tests/integration/memory.bats` (real bwrap: other project invisible, shared `memory/` read-only, current writable). |
@@ -164,15 +180,16 @@ that records the argv it receives; the argv is the contract.
 ### Running something other than the agent: `--exec`
 
 `--exec CMD [ARGS...]` runs CMD in place of the agent, in the sandbox the profile
-would have built for it. It is a deliberately small mechanism -- the engine's
-launch is `bwrap <args> -- <command>`, and `--exec` substitutes only that last
-part -- which is what makes it **a simple but reliable way to run a command in an
+would have built for it. It is a deliberately small mechanism -- every launch is a
+keeper that the command is joined into, and `--exec` substitutes only the command
+joined -- which is what makes it **a simple but reliable way to run a command in an
 environment identical to a sandboxed agent session**. Identical is meant
 literally: the same binds, environment, PATH, network mode and allowlist,
 seccomp filter, state isolation and per-project `.agent-sandbox` policy, because
 they are computed by the same code before the command is chosen. A shell there is
 the agent's sandbox with a different entrypoint, which is why it needs no
-profile-composition machinery. That makes it the tool of choice for inspecting or
+profile-composition machinery. Beside a running agent of the same role it is not
+even a copy: it is a process in that agent's own sandbox. That makes it the tool of choice for inspecting or
 reproducing what a session sees, and for hosting agent sessions inside one
 sandbox: the agent binary stays bound read-only, so an agent started from within
 runs natively there.

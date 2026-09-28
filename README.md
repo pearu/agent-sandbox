@@ -109,12 +109,13 @@ reaches the launcher and is sandboxed — a terminal inside your editor included
 Anything that calls the agent's own binary by an absolute path is not, and
 nothing will tell you.
 
-One case rides *through* the launcher and is still not sandboxed by default:
-`claude --bg` background workers. Background sandboxing is opt-in (`--sandbox
-"fg bg"`, `AGENT_SANDBOX_CLAUDE_SANDBOX`, or a trusted `[claude] sandbox = fg bg`),
-and the launcher prints a note when it is off; until you opt in, a `--bg` worker
-runs natively with your full filesystem and every project's memory, like native
-`claude`. See [design.md](docs/design.md).
+One case rides *through* the launcher and is not sandboxed: `claude --bg`
+background workers. A `--bg` worker runs natively with your full filesystem and
+every project's memory, like native `claude`, and the launcher prints a note when
+it does. Sandboxed background sessions (`--sandbox "fg bg"`) are refused until
+they run inside the role's launch (#123): a wrapped worker would be a second launch
+of the role beside the one every other session joins. See
+[design.md](docs/design.md).
 
 The **VS Code extension is the second case**: it ships its own copy of Claude
 Code and runs that, so its sessions are outside the sandbox while a terminal in
@@ -135,8 +136,10 @@ system-wide mode; the installer refuses to run through `sudo`. See
 Requirements: Linux with unprivileged user namespaces, `bubblewrap` (0.12.0 or
 newer recommended: the installer warns below it, and
 [troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404)
-has the recipe for Ubuntu 24.04), `curl`, `git`, and either `python3 >= 3.12`
-with `venv` or conda/mamba (for the proxy runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
+has the recipe for Ubuntu 24.04), `curl`, `git`, `python3` on `PATH` when you
+launch (every session is joined into its role's running sandbox by a small
+standard-library helper), and either `python3 >= 3.12` with `venv` or conda/mamba
+(for the proxy runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
 AppArmor profile allowing bwrap to use user namespaces (and, if you use the
 strict network mode, one for pasta); nothing else needs root.
 
@@ -215,7 +218,7 @@ not exist. Values and defaults are in the last column.
 | `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
 | `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed ([config.md](docs/config.md)) |
 | `--user-mcp MODE` | `AGENT_SANDBOX_CLAUDE_USER_MCP` | `[claude] user-mcp` | **removed**, and refused in every form: it edited the MCP servers inside the config file, which the engine no longer does. To keep your user-level MCP servers out of a project's sandbox, write `config = own` under `[connect]` ([config.md](docs/config.md#the-config-file-the-config-channel)) |
-| `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | which invocations to sandbox for the claude profile: `fg`, `bg`, both (`fg bg`), or `none`; the flag and env are launch-time choices (not trust-gated), the dot-file key is (default: `fg` on the host, `none` inside a sandbox) ([design.md](docs/design.md)) |
+| `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | which invocations to sandbox for the claude profile: `fg`, `bg`, both (`fg bg`), or `none` (`bg` is refused until #123); the flag and env are launch-time choices (not trust-gated), the dot-file key is (default: `fg` on the host, `none` inside a sandbox) ([design.md](docs/design.md)) |
 | `--quiet` | `AGENT_SANDBOX_QUIET` | — | suppress the routine status lines a launch prints — which dot-file values were applied, the session allowlist, the seccomp filter in use. Refusals, warnings and notices that something is **not** sandboxed are never suppressed, so `--quiet` can hide noise but never a consequence (off) |
 | `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first (`claude --allow pypi.org --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
 | `--wrap` | — | — | internal: run as Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER` to sandbox a background worker Claude spawns; set by opt-in wrapper mode, not typed by hand ([design.md](docs/design.md)) |
@@ -228,11 +231,15 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until `--trust` approves
 it.
 
-Five more variables name locations rather than behaviour and are rarely set by
+Six more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
-`AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR` and
-`AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper, normally found
-beside the engine). `--engine-help` prints each with its default.
+`AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,
+`AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper) and
+`AGENT_SANDBOX_JOIN` (the helper that joins an app into its role's running
+launch), the last two normally found beside the engine. One more is timing:
+`AGENT_SANDBOX_KEEPER_GRACE`, how many seconds a role's launch waits once nothing
+is joined into it before it ends (2), so that commands run one after another
+share it. `--engine-help` prints each with its default.
 
 Engine flags go before the agent's own arguments. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and

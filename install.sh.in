@@ -567,6 +567,10 @@ else
 @@INCLUDE components/connect-sync.py@@
 CONNECT_SYNC_EOF
   chmod 644 "$APP_DIR/components/connect-sync.py"
+  cat >"$APP_DIR/components/join.py" <<'JOIN_EOF'
+@@INCLUDE components/join.py@@
+JOIN_EOF
+  chmod 644 "$APP_DIR/components/join.py"
   [[ -r "$SCRIPT_DIR/VERSION" ]] && cp -f "$SCRIPT_DIR/VERSION" "$APP_DIR/VERSION"
   # A build marker so the installed copy reports its exact source (helps tell a
   # stale install from a current one); best-effort, needs a git checkout.

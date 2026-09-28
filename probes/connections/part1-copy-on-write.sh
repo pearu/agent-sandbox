@@ -140,14 +140,13 @@ conn_expect_host "$before" "$(conn_source_sha "$CONN_CHANNEL_FILE")" \
 conn_read "$CONN_CHANNEL_FILE" "$inside"
 conn_expect obtained "and it is still the sandbox's at the next launch, as copy promises"
 
-# W9 is no longer blocked: the engine's answer is settled (mount once, every session
-# joins), so there is a promise to assert. What is asserted here is the BEHAVIOUR a user
-# is promised. The platform premise underneath it -- that joining yields one superblock
-# rather than a second mount over the same upper -- is asserted by
-# tests/integration/overlay-sharing.bats on every platform CI covers, and deliberately not
-# here: no cell inspects layout, and a behavioural cell could not tell the safe
-# arrangement from the undefined one anyway, because two independent mounts also see each
-# other's writes.
+# W9 asserts the BEHAVIOUR a user is promised when two sessions of one sandbox run at
+# once. The engine's answer is one launch per role (the keeper, #121): the second session
+# is joined into the first one's launch, so there is no second mount over the upper at
+# all. That premise -- one mount namespace, one superblock -- is asserted by
+# tests/integration/keeper.bats, and deliberately not here: no cell inspects layout, and
+# a behavioural cell could not tell the safe arrangement from the undefined one anyway,
+# because two independent mounts also see each other's writes.
 conn_cell W9 copy-on-write "two sessions of one sandbox at once"
 conn_source_write "$CONN_CHANNEL_FILE" >/dev/null
 before="$(conn_source_sha "$CONN_CHANNEL_FILE")"

@@ -167,6 +167,11 @@
 #   AGENT_SANDBOX_SESSION_BASE=/dir     where per-session state lives (default:
 #                                       $XDG_RUNTIME_DIR/agent-sandbox.<uid>,
 #                                       falling back to /tmp/agent-sandbox.<uid>)
+#   AGENT_SANDBOX_JOIN=/path            the join helper (default:
+#                                       components/join.py next to this file)
+#   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long a role's keeper waits once
+#                                       nothing is joined before it ends
+#                                       (default: 2; the test suites use 0)
 #
 # ============================================================================
 # ENGINE FLAGS
@@ -381,6 +386,9 @@ Environment knobs:
   AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port, or none
   AGENT_SANDBOX_PROFILE_DIR     where profiles live
   AGENT_SANDBOX_SESSION_BASE    where per-session state lives
+  AGENT_SANDBOX_JOIN            the join helper (default: components/join.py)
+  AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long an idle role's keeper waits
+                                before it ends (default: 2)
 USAGE
 }
 
@@ -708,7 +716,8 @@ _as_ssh_setup() {
   # A fresh agent for this session only. Its socket is the one secret-
   # bearing thing bound in; the key files themselves never are.
   local sock="$_session_dir/agent.sock"
-  eval "$(ssh-agent -s -a "$sock")" >/dev/null \
+  # 9>&-: the agent outlives this process, and fd 9 is the keeper lock.
+  eval "$(ssh-agent -s -a "$sock" 9>&-)" >/dev/null \
     || {
       _as_msg "ssh-agent failed to start"
       return 1
@@ -1403,7 +1412,6 @@ _as_connect_apply() {
   ((${#_connect_mode[@]})) || return 0
   local line ch mode entry kind path slot base empty manifest upper work seen src _connect_from
   local -a _cow_fellback=()
-  local _cow_warned_concurrent=0 _cow_recorded=0
   local -a fields=()
   base="$(_as_sandbox_dir)"
   for line in "${profile_channels[@]}"; do
@@ -1472,71 +1480,24 @@ _as_connect_apply() {
           work="$base/$ch/work/$(_as_iso_slug "$path")"
           seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
           mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
-          # THE HOLDER, asked for once per launch. With one, every session of
-          # this sandbox shares a single overlay and the concurrency question
-          # disappears; without one, each session mounts its own, which works and
-          # is undefined when two run at once. Never in `strict`, where pasta
-          # owns the namespaces and bwrap runs inside a script of its own --
-          # whether a session can join a holder's user namespace from inside
-          # pasta's is unmeasured, and guessing in the launch path is not the
-          # place to find out.
-          if ((! _holder_tried)); then
-            _holder_tried=1
-            # Before starting one of our own, clear out any that nothing is
-            # using -- including other projects'. See _as_holder_sweep.
-            _as_holder_sweep
-            if [[ "${_knob_net:-proxy}" == strict ]]; then
-              _holder_why="the strict network mode manages its own namespaces"
-            else
-              _holder_pid="$(_as_holder_ensure "$base")"
-              [[ -n "$_holder_pid" ]] || _holder_why="no holder could be started (nsenter or flock missing?)"
-            fi
-          fi
-          # An overlay needs its lower layer to exist. Where the source has no
-          # such directory, the lower is an EMPTY ONE FROM THIS SESSION, not a
-          # in the user's own state: `copy-on-write`'s first promise is
-          # that nothing of the sandbox reaches the source, and the engine
-          # quietly making a directory there is the engine breaking it. bwrap
-          # still creates the mount point, exactly as for `own` and
-          # `read-only`, a consequence of mounting rather than a decision.
-          local lower="$path"
-          if [[ ! -e "$path" ]]; then
-            _as_session_begin || return 1
-            lower="$_session_dir/connect/$ch/lower-$(_as_iso_slug "$path")"
-            mkdir -p -- "$lower" || return 1
-          fi
-          # WITHOUT a holder, two sessions of one sandbox are two overlays over
-          # one upper directory, which overlayfs documents as undefined. Said
-          # once, in the case that is actually risky, rather than on every
-          # launch. With a holder there is nothing to warn about.
-          if [[ -z "$_holder_pid" ]] && ((! _cow_warned_concurrent)) && _as_connect_live "$base"; then
-            _cow_warned_concurrent=1
-            _as_msg "connect: another session of this sandbox is already running, and without a shared overlay that is undefined: two sessions means two overlays over one layer. Here $_holder_why, so use one session at a time or set this channel to copy."
-          fi
-          # Record which sandbox this session is holding an overlay for, so a
-          # --reset-connection from another terminal can refuse rather than pull
-          # the layers out from under a running mount. See _as_connect_live.
-          # Once per launch: every path of every channel names the same sandbox.
-          if ((! _cow_recorded)); then
-            _as_session_begin || return 1
-            printf '%s\n' "$base" >"$_session_dir/connect.sandbox"
-            _cow_recorded=1
-          fi
+          # THE LOWER IS ALWAYS THE SOURCE ITSELF, created if it is missing. The
+          # lower is fixed when the overlay is mounted and the keeper outlives any
+          # one app, so an empty stand-in would keep a directory the user creates
+          # afterwards invisible for as long as the role runs -- the study caught
+          # that once, with the holder, whose lifetime this is. An overlay can only
+          # track the source if the source IS the lower. What that costs is one
+          # empty directory in a tree the engine already binds read-write and lets
+          # bwrap create mount points in; it is not something the SANDBOX wrote,
+          # which is the promise `copy-on-write` makes.
+          mkdir -p -- "$path" || return 1
           # What the sandbox is shadowing, and whether the source has moved under
           # it. The one thing `copy-on-write` hides, reported before the mount so the user
           # reads it whatever the session then does.
           _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
-          if [[ -n "$_holder_pid" ]]; then
-            # The holder already mounted this overlay, at a staging path. Bind
-            # the merged view onto the real one: a channel at any other mode is
-            # simply not bound, which is why the holder can carry every path the
-            # sandbox might need without imposing them on a session that wants
-            # some of them live.
-            _holder_ns=(nsenter -t "$_holder_pid" -m -U --preserve-credentials --)
-            args+=(--bind "$base/$ch/merged/$(_as_iso_slug "$path")" "$path")
-          else
-            args+=(--overlay-src "$lower" --overlay "$upper" "$work" "$path")
-          fi
+          # Mounted by the keeper at the real path. One launch per role is what makes
+          # that safe: two overlays over one upper directory, which overlayfs calls
+          # undefined, need two launches, and a second invocation joins this one.
+          args+=(--overlay-src "$path" --overlay "$upper" "$work" "$path")
           ;;
         seed-only)
           slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
@@ -1704,9 +1665,8 @@ _as_connect_apply_paths() {
         ;;
       copy | copy-on-write)
         if [[ "$mode" == copy-on-write && "$kind" == dir ]]; then
-          # See the probed wording in _as_connect_parse. An overlay for a path the
-          # launch chooses cannot join the holder, whose set of mounts is fixed per
-          # sandbox (see _as_holder_paths), so this waits for that to be decided.
+          # See the probed wording in _as_connect_parse. The keeper can mount one
+          # at the declared path; that is step 13 of #129, not built yet.
           _as_msg "connect: mode 'copy-on-write' is not implemented in this engine (${_connect_where[$p]} asked for '$key', a directory). Refusing rather than serving a different mode under that name."
           return 1
         fi
@@ -1817,259 +1777,532 @@ _as_connect_placeholder() {
   [[ -e "$1" ]] || _as_placeholder_files+=("$1")
 }
 
-# ----- the holder: one overlay per sandbox, joined by every session ----------
-# Two sessions of one sandbox used to mean two overlay mounts over one upper
-# directory, which overlayfs documents as undefined. The fix is not to arbitrate
-# between them: it is to mount ONCE. What overlayfs calls undefined is two
-# independent SUPERBLOCKS over one upper, not many users of one mount, so a
-# holder mounts the overlays and every session joins its namespaces and inherits
-# them. Measured in tests/integration/overlay-sharing.bats on every platform CI
-# covers, and the shape below was spiked before it was written.
+# ----- the keeper: one launch per role, and every app joins it (#121) ---------
+# A role's stores belong to one launch. A second launch of the same role at the
+# same time would bind them from a second sandbox -- for `copy-on-write` two
+# overlays over one upper directory, which overlayfs documents as undefined. The
+# answer is not to arbitrate between two launches but not to have two: the launch
+# is a KEEPER, a sandbox whose only process holds its namespaces, and every app,
+# the first included, is JOINED into it (components/join.py) as that process's
+# equal. So there is never a second set of mounts for anything to disagree about.
 #
-# WHY THE HOLDER MOUNTS AT STAGING PATHS, not at the channel paths themselves. A
-# process lives in ONE mount namespace and cannot join two, so the holder has to
-# carry every overlay the sandbox could need. But a session that asked for a
-# channel at `live` must not find an overlay sitting on it. So the holder mounts
-# each one at <sandbox>/merged/<slug> and a session binds only the ones it asked
-# for onto the real paths. A channel at any other mode is simply not bound.
+# WHAT RUNS WHERE. On the host, a supervisor -- a background copy of the engine that
+# started the keeper -- is the launch's parent: it owns what used to be the
+# launch's exit (the session directory, the ssh agent, the mount-point files), and
+# it ends the keeper once nothing is joined. Inside, the payload does nothing but
+# exist, marked in its argv so it can be found. Every join is accounted on the
+# HOST, in <sandbox>/keeper/joined/, under <sandbox>/keeper.lock: the state
+# directory is a control path the sandbox cannot see, and "joined" means what the
+# engine joined -- a stray that `--exec bash` left behind dies with the keeper, as
+# it died with bwrap before.
 #
-# WHY THE SET IS FIXED (every directory-shaped path the profile declares) rather
-# than "what this launch asked for": if it followed the launch, two sessions with
-# different specs would need different holders, and any path they shared would be
-# two overlays over one upper again -- the exact thing this removes. Seven mounts
-# per sandbox is cheap; an unused one costs an empty pair of directories.
+# POLICY IS FIXED WHEN THE KEEPER STARTS. A join runs under the running launch's
+# policy; it may repeat it but not change it (see _as_keeper_admit), and a changed
+# dot-file applies at the next keeper, once nothing is joined.
+#
+#   <sandbox>/keeper.lock       taken to start a keeper, to join one, and to end one
+#   <sandbox>/keeper.log        the supervisor's and the keeper's own output
+#   <sandbox>/keeper/id         SUPERVISOR START PAYLOAD START INIT START
+#   <sandbox>/keeper/policy     what the keeper was started with (_as_keeper_policy)
+#   <sandbox>/keeper/dotfile    the approved dot-file's hash then, or -
+#   <sandbox>/keeper/session    its session directory
+#   <sandbox>/keeper/seccomp    its syscall filter file, or empty
+#   <sandbox>/keeper/joined/N   one per join: the joining engine's PID and start time
 
-# _as_holder_paths -- `channel<TAB>slug<TAB>path` for every path a holder mounts.
-# The layout under the sandbox directory is the one `copy` already uses,
-# <sandbox>/<channel>/<kind>/<slug>, so reset and the shadow scan find copy-on-write's
-# state where they find everything else.
-_as_holder_paths() {
-  local line entry kind path ch
-  local -a fields=()
-  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
-    IFS=$'\t' read -r -a fields <<<"$line"
-    ch="${fields[0]}"
-    for entry in "${fields[@]:1}"; do
-      kind="${entry%%:*}"
-      path="${entry#*:}"
-      # Files never: overlayfs mounts a directory and cannot stack on one file.
-      [[ "$kind" == dir && -n "$path" ]] || continue
-      printf '%s\t%s\t%s\n' "$ch" "$(_as_iso_slug "$path")" "$path"
-    done
-  done
+# The payload's marker: argv[0] of the process that holds the namespaces.
+_as_keeper_marker='agent-sandbox-keeper'
+
+# _as_proc_start PID -- set _ps_start to the process's start time (field 22 of its
+# stat), empty if there is no such process. The comm field can hold spaces and
+# parentheses, so the fields are counted from the LAST `)`. It sets a variable and
+# reads with a builtin because it runs in polling loops, where a command substitution
+# (a fork of this whole shell) per call was most of the keeper's start-up time.
+_as_proc_start() {
+  local st
+  _ps_start=""
+  { read -r st <"/proc/$1/stat"; } 2>/dev/null || return 1
+  st="${st##*) }"
+  local -a f
+  read -r -a f <<<"$st"
+  _ps_start="${f[19]:-}"
+  [[ -n "$_ps_start" ]]
 }
 
-# _as_holder_pid SANDBOXDIR -- the live holder's PID, or nothing.
-#
-# Liveness by PID and start-time, the pair the janitor already uses, so a
-# recycled PID is never mistaken for the holder we recorded.
-_as_holder_pid() {
-  local f="$1/holder.id" pid start now
-  [[ -r "$f" ]] || return 1
-  read -r pid start <"$f" 2>/dev/null || return 1
-  [[ -n "$pid" && -r "/proc/$pid/stat" ]] || return 1
-  now="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
-  [[ -n "$now" && "$now" == "$start" ]] || return 1
-  printf '%s' "$pid"
+# _as_proc_is PID START -- is PID still the process that started at START?
+_as_proc_is() {
+  [[ -n "$1" && -n "$2" ]] || return 1
+  _as_proc_start "$1" && [[ "$_ps_start" == "$2" ]]
 }
 
-# _as_holder_ensure SANDBOXDIR -- print the PID of this sandbox's holder,
-# starting one if there is none. Empty output means "could not", and the caller
-# falls back to a per-session overlay rather than failing the launch.
+# _as_keeper_live SANDBOXDIR -- is this role's keeper running? Sets _keeper_target
+# (the host PID of the payload, what a join enters) and _keeper_spid (the supervisor).
+# Both the supervisor and the payload must be the processes recorded, by PID and start
+# time, so a recycled PID is never mistaken for them.
+_as_keeper_live() {
+  local spid sstart tpid tstart
+  read -r spid sstart tpid tstart _ 2>/dev/null <"$1/keeper/id" || return 1
+  _as_proc_is "$spid" "$sstart" && _as_proc_is "$tpid" "$tstart" || return 1
+  _keeper_target="$tpid" _keeper_spid="$spid"
+  return 0
+}
+
+# _as_keeper_lock SANDBOXDIR / _as_keeper_unlock -- the keeper lock, on fd 9.
 #
-# CREATION IS SERIALISED, and only creation. Two launches racing here would make
-# two holders, which is two overlays over one upper -- the undefined case this
-# exists to remove, arrived at by the code that removes it. The lock is held for
-# the milliseconds of the check-and-start, never for the life of a session, which
-# is what made "just serialise the sessions" the wrong answer to begin with.
-_as_holder_ensure() {
-  local sb="$1" lock="$1/holder.lock" pid
-  mkdir -p -- "$sb" || return 0
-  command -v nsenter >/dev/null 2>&1 || return 0
-  command -v flock >/dev/null 2>&1 || return 0
-  (
-    exec 9>"$lock" || exit 1
-    # A BOUNDED WAIT. The lock is held for the milliseconds of a check-and-start,
-    # so ten seconds means something is wrong rather than busy -- and a launch
-    # that blocks for ever on a lock is worse than one that mounts its own
-    # overlay and says so.
-    flock -w 10 9 || exit 1
-    if pid="$(_as_holder_pid "$sb")"; then
-      printf '%s' "$pid"
-      exit 0
+# A BOUNDED WAIT, and a long one. The lock is held while a keeper is started, which
+# includes seeding its stores, so a second invocation arriving then waits for the
+# first to finish and joins it. Thirty seconds means something is wrong, not busy.
+# Every process that outlives the engine is started with fd 9 closed (the
+# supervisor closes everything it inherited): a lock held by a leftover descriptor
+# is released by nothing, and every later launch of the role would hang on it.
+_as_keeper_lock() {
+  mkdir -p -- "$1" || return 1
+  command -v flock >/dev/null 2>&1 || {
+    _as_msg "the keeper needs flock (util-linux), which is not on PATH"
+    return 1
+  }
+  exec 9>"$1/keeper.lock" || return 1
+  flock -w 30 9 || {
+    _as_msg "role '${_role:-default}': another launch of this role has held its lock for 30 s; not waiting any longer ($1/keeper.lock)"
+    exec 9>&-
+    return 1
+  }
+}
+_as_keeper_unlock() {
+  { flock -u 9 && exec 9>&-; } 2>/dev/null || true
+}
+
+# _as_keeper_grace -- seconds an idle keeper waits before it ends, so that commands
+# run one after another (`--exec` in a script) share one launch instead of starting
+# a keeper each. AGENT_SANDBOX_KEEPER_GRACE is for the test suites, which run every
+# launch to completion and set it to 0; with 0 a join also waits for the keeper to
+# end before it returns, so the next launch never meets the previous one.
+_as_keeper_grace() {
+  local g="${AGENT_SANDBOX_KEEPER_GRACE:-2}"
+  [[ "$g" =~ ^[0-9]+(\.[0-9]+)?$ ]] || g=2
+  printf '%s' "$g"
+}
+
+# _as_keeper_policy all|set -- what this invocation resolved, one `key<TAB>value<TAB>
+# where` line per value. `all` is every knob, recorded when a keeper starts; `set` is
+# only the knobs THIS invocation set by flag or environment, which is what a join is
+# checked on. A key beginning with `+` is a list, where the join's values must each
+# be among the keeper's; any other key must be equal.
+#
+# The dot-file is not in `set`: a join cannot set it (it is the project's, and the
+# keeper read it when it started), and a changed one is a warning, not a refusal.
+# Uses the engine's resolved locals by dynamic scope.
+# shellcheck disable=SC2154
+_as_keeper_policy() {
+  local all=0 k v
+  [[ "$1" == all ]] && all=1
+  _kp() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+  if ((all)) || [[ -n "$_preset_flag" || -n "${AGENT_SANDBOX_PRESET:-}" ]]; then
+    _kp preset "$_preset" "$([[ -n "$_preset_flag" ]] && echo --preset || echo AGENT_SANDBOX_PRESET)"
+  fi
+  for k in "${!_connect_mode[@]}"; do
+    v="${_connect_where[$k]}"
+    if ((all)) || [[ "$v" == --connect || "$v" == AGENT_SANDBOX_CONNECT ]]; then
+      _kp "connect:$k" "${_connect_mode[$k]}${_connect_scope[$k]:+ ${_connect_scope[$k]}}" "$v"
     fi
-    local -a ov=()
-    local ch slug path
-    while IFS=$'\t' read -r ch slug path; do
-      [[ -n "${slug:-}" ]] || continue
-      # THE LOWER IS ALWAYS THE SOURCE ITSELF, and the directory is created if
-      # it is missing. An earlier version used an empty placeholder instead, to
-      # avoid writing anything into the user's own state -- and with a holder
-      # that is actively wrong: the lower is fixed when the overlay is mounted,
-      # so a channel directory the user creates AFTERWARDS stays invisible for
-      # as long as the holder lives. The study caught it (W1's directory read
-      # came back empty). An overlay can only track the source if the source IS
-      # the lower.
-      #
-      # What that costs is one empty directory under ~/.claude, in a tree the
-      # engine already binds read-write and already lets bwrap create mount
-      # points in. It is not something the SANDBOX wrote, which is the promise
-      # `copy-on-write` actually makes.
-      mkdir -p -- "$path" || exit 1
-      mkdir -p -- "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug" || exit 1
-      ov+=(--overlay-src "$path" --overlay "$sb/$ch/upper/$slug" "$sb/$ch/work/$slug" "$sb/$ch/merged/$slug")
-    done < <(_as_holder_paths)
-    ((${#ov[@]})) || exit 1
-    # The holder is a bwrap that mounts and then does nothing. It must OUTLIVE
-    # every session: the mount lives on namespace membership, so a holder that
-    # exited after the first session joined would leave the second unable to find
-    # it, and the second would mount its own -- undefined again. Idle holders are
-    # reaped by the next launch that sees no session using them.
-    # 9>&- CLOSES THE LOCK IN THE HOLDER. Measured the hard way: without it the
-    # holder inherits the open descriptor, the exclusive lock is never released
-    # because the holder outlives the subshell that took it, and every later
-    # launch of this sandbox blocks here for ever. The first launch worked
-    # perfectly and the second hung.
-    # THE HOLDER CLOSES EVERY DESCRIPTOR IT INHERITED ABOVE stderr, before it
-    # settles down to sleep. It outlives the launch that created it, so anything
-    # it still holds open is held for ever: the lock (fixed once already, by
-    # 9>&-), a pipe someone is reading, a terminal. Measured the hard way a
-    # second time -- bats reads its results through a descriptor it passes to
-    # every child, so a holder started inside the test suite kept that pipe open
-    # and the whole run hung after the last assertion had already passed. The
-    # loop is general on purpose: enumerating the descriptors that matter is how
-    # this bug comes back with a different number.
-    # AND IT LIVES EXACTLY AS LONG AS IT IS THE RECORDED HOLDER OF A SANDBOX THAT
-    # STILL EXISTS. It used to `exec sleep infinity`, which knew nothing of either.
-    # Every way of stopping a holder -- a reset, the sweep -- finds it through
-    # holder.id, so a holder whose record vanishes is unreachable for good: delete
-    # the sandbox directory (every bats teardown deletes its tmpdir) and it lived
-    # for ever. Measured: 128 of them, up to a day and a half old, from two days of
-    # running this suite. It now rereads its record every few seconds and leaves
-    # once the file is gone or names another process -- the second being the same
-    # problem reached by a different route. Five seconds of lag costs nothing; a
-    # stat every five seconds per holder costs less.
-    setsid bwrap --dev-bind / / "${ov[@]}" -- \
-      bash -c "for _fd in /proc/\$\$/fd/*; do
-                 case \${_fd##*/} in 0 | 1 | 2) ;; *) eval \"exec \${_fd##*/}>&-\" 2>/dev/null ;; esac
-               done
-               printf '%s %s\n' \"\$\$\" \"\$(awk '{print \$22}' /proc/\$\$/stat)\" >'$sb/holder.id'
-               while read -r _p _ <'$sb/holder.id' 2>/dev/null && [ \"\$_p\" = \"\$\$\" ]; do sleep 5; done" \
-      >/dev/null 2>&1 <&- 9>&- &
-    local starter=$!
-    # A real holder records itself in well under a second, and a bwrap that
-    # cannot mount exits at once. So watch for BOTH: the id appearing, or the
-    # process group going away. Polling the full timeout when the holder is
-    # already dead is pure delay, and every launch on a host where it cannot
-    # start pays it -- which the test suite made obvious by paying it several
-    # hundred times.
+  done
+  if ((all)) || [[ -n "$_overlay_flag" || -n "${AGENT_SANDBOX_OVERLAY:-}" ]]; then
+    _kp overlay "$_overlay_mode" "$([[ -n "$_overlay_flag" ]] && echo --overlay || echo AGENT_SANDBOX_OVERLAY)"
+  fi
+  if ((all)) || [[ -n "${AGENT_SANDBOX_NET:-}" ]]; then
+    _kp net "${_knob_net:-proxy}" AGENT_SANDBOX_NET
+  fi
+  v="${_knob_seccomp:-on}"
+  [[ "$v" == 1 ]] && v=on
+  [[ "$v" == 0 ]] && v=off
+  if ((all)) || [[ -n "${AGENT_SANDBOX_SECCOMP:-}" ]]; then _kp seccomp "$v" AGENT_SANDBOX_SECCOMP; fi
+  v="${_knob_briefing:-on}"
+  [[ "$v" == 1 ]] && v=on
+  [[ "$v" == 0 ]] && v=off
+  if ((all)) || [[ -n "${AGENT_SANDBOX_BRIEFING:-}" ]]; then _kp briefing "$v" AGENT_SANDBOX_BRIEFING; fi
+  if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_WRITE:-}" ]]; then _kp conda-write "${_knob_conda_write:-}" AGENT_SANDBOX_CONDA_WRITE; fi
+  if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_PKGS:-}" ]]; then _kp conda-pkgs "${_knob_conda_pkgs:-}" AGENT_SANDBOX_CONDA_PKGS; fi
+  local -a l=()
+  local item
+  # The lists. The keeper records the union it launched with (flags, environment
+  # and dot-file); a join is checked on what its own flags and environment named.
+  _as_split l : "${AGENT_SANDBOX_RO:-}"
+  ((all)) && l+=(${_df_ro[@]+"${_df_ro[@]}"})
+  for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +ro "$item" AGENT_SANDBOX_RO; done
+  l=()
+  _as_split l : "${AGENT_SANDBOX_RW:-}"
+  ((all)) && l+=(${_df_rw[@]+"${_df_rw[@]}"})
+  for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +rw "$item" AGENT_SANDBOX_RW; done
+  l=()
+  _as_split l $', \t\n' "${AGENT_SANDBOX_FORWARD:-}"
+  ((all)) && l+=(${_df_forward[@]+"${_df_forward[@]}"})
+  for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +forward "$item" AGENT_SANDBOX_FORWARD; done
+  l=(${_allow_hosts[@]+"${_allow_hosts[@]}"})
+  ((all)) && l+=(${_df_allow[@]+"${_df_allow[@]}"})
+  for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +allow "$item" --allow; done
+  for item in ${_ssh_hosts[@]+"${_ssh_hosts[@]}"}; do _kp +ssh "$item" --ssh; done
+  if ((all || _ssh_unrestricted)); then _kp ssh-unrestricted "$_ssh_unrestricted" --ssh-unrestricted; fi
+  if ((all)) || [[ -n "$_ssh_key" ]]; then _kp ssh-key "$_ssh_key" --ssh-key; fi
+  if ((all)) || [[ -n "$_ssh_timeout" ]]; then _kp ssh-timeout "$_ssh_timeout" --ssh-timeout; fi
+  # Ports: the keeper's are the merged set; a join's are what it named itself.
+  if ((all)); then
+    for item in ${_host_ports[@]+"${_host_ports[@]}"}; do _kp +host-port "$item" --host-port; done
+    for item in ${_agent_ports[@]+"${_agent_ports[@]}"}; do _kp +agent-port "$item" --agent-port; done
+    ((_host_none)) && _kp +host-port none --host-port
+    ((_agent_none)) && _kp +agent-port none --agent-port
+  else
+    for item in ${_keeper_join_host_ports[@]+"${_keeper_join_host_ports[@]}"}; do _kp +host-port "$item" "--host-port/AGENT_SANDBOX_HOST_PORTS"; done
+    for item in ${_keeper_join_agent_ports[@]+"${_keeper_join_agent_ports[@]}"}; do _kp +agent-port "$item" "--agent-port/AGENT_SANDBOX_AGENT_PORTS"; done
+  fi
+  unset -f _kp
+  return 0
+}
+
+# _as_keeper_admit SANDBOXDIR -- may this invocation join the running keeper?
+#
+# A JOIN MAY REPEAT THE KEEPER'S POLICY, NOT CHANGE IT. Only the knobs this invocation
+# set are compared, so a bare `claude --role x` always joins; one that asks for what
+# the keeper already has joins too; one that asks for something else is refused,
+# naming the knob. Refused rather than warned-and-ignored because a flag is a request
+# for THIS invocation: there is no next keeper for it to apply to, and ignoring it
+# would be asking for `isolated` and getting `shared`.
+#
+# A CHANGED DOT-FILE WARNS AND JOINS (the caller says so; this sets
+# _keeper_dotfile_changed). It is standing policy, and it applies at the next keeper by
+# itself, so saying so is complete information. With QUIET nothing is said: the caller
+# is asking about an idle keeper, which it replaces rather than refuses.
+_as_keeper_admit() {
+  local kd="$1/keeper" quiet="${2:-}" key val where have
+  _keeper_dotfile_changed=0
+  local -A kv=() kl=()
+  while IFS=$'\t' read -r key val where; do
+    [[ -n "$key" ]] || continue
+    if [[ "$key" == +* ]]; then
+      kl["$key"$'\t'"$val"]=1
+    else
+      kv["$key"]="$val"
+    fi
+  done <"$kd/policy"
+  while IFS=$'\t' read -r key val where; do
+    [[ -n "$key" ]] || continue
+    if [[ "$key" == +* ]]; then
+      [[ -n "${kl["$key"$'\t'"$val"]:-}" ]] && continue
+      have=""
+      local k2
+      for k2 in "${!kl[@]}"; do [[ "${k2%%$'\t'*}" == "$key" ]] && have+="${have:+, }${k2#*$'\t'}"; done
+      [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running, and $where $val is not part of its policy (${key#+}: ${have:-none}). A running role's policy cannot change: exit what is joined into it, then launch again."
+      return 1
+    fi
+    have="${kv[$key]-}"
+    [[ "$have" == "$val" ]] && continue
+    [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running with ${key} = ${have:-(none)}, and $where asks for '$val'. A running role's policy cannot change: exit what is joined into it, then launch again."
+    return 1
+  done < <(_as_keeper_policy set)
+  [[ "$(cat "$kd/dotfile" 2>/dev/null)" == "$(_as_keeper_dotfile_hash)" ]] || _keeper_dotfile_changed=1
+  return 0
+}
+
+# _as_keeper_dotfile_hash -- the approved dot-file's hash, or `-` when there is none:
+# a file that is present but not approved is not read, so it is not policy either.
+# shellcheck disable=SC2154
+_as_keeper_dotfile_hash() {
+  if [[ -f "$_dotfile" ]] && _as_dotfile_trusted "$_proj" "$_dotfile"; then
+    _as_sha256_file "$_dotfile"
+  else
+    printf -- '-'
+  fi
+}
+
+# _as_keeper_find BWRAPPID -- set _kf_found to the keeper's payload: the process at the
+# end of the single chain of children below the launch, with the marker as its argv[0].
+# `PAYLOAD INIT`, where INIT is its parent (bwrap's pid 1 in the sandbox), or the payload
+# itself when it has no parent of its own below the launch.
+_as_keeper_find() {
+  local c="$1" prev="" kids a0 f
+  _kf_found=""
+  while :; do
+    kids=""
+    for f in /proc/"$c"/task/*/children; do
+      # No trailing newline in this file, so `read` reports EOF having read it all.
+      _kf_kids=()
+      { read -r -a _kf_kids <"$f"; } 2>/dev/null
+      ((${#_kf_kids[@]})) && kids="${_kf_kids[0]}" && break
+    done
+    [[ -n "$kids" ]] || break
+    prev="$c" c="$kids"
+  done
+  { IFS= read -r -d '' a0 <"/proc/$c/cmdline"; } 2>/dev/null
+  [[ "${a0:-}" == "$_as_keeper_marker" ]] || return 1
+  _kf_found="$c ${prev:-$c}"
+}
+
+# _as_keeper_supervise SANDBOXDIR -- LAUNCHER... -- the keeper's host side. Runs in
+# the background, a fork of the engine, so it has the launch's whole state.
+_as_keeper_supervise() {
+  local sb="$1" kd="$1/keeper" fd
+  shift 2
+  # Nothing it inherited stays open: the lock, a pipe someone reads (bats reads its
+  # results through one it passes to every child, and a holder that kept it open once
+  # hung the whole suite), a terminal. The loop is general on purpose.
+  for fd in /proc/"$BASHPID"/fd/*; do
+    case "${fd##*/}" in 0 | 1 | 2) ;; *) eval "exec ${fd##*/}>&-" 2>/dev/null ;; esac
+  done
+  exec </dev/null >>"$sb/keeper.log" 2>&1
+  # The terminal it was started from is not its own: Ctrl-C there, or closing it,
+  # ends what is joined from there, never the launch other terminals joined too.
+  trap '' INT QUIT HUP TSTP TTIN TTOU
+  trap - EXIT TERM
+  trap ':' USR1
+  local me mestart
+  me="$BASHPID"
+  _as_proc_start "$me"
+  mestart="$_ps_start"
+  # The session directory is now this process's: the janitor and the proxy addon
+  # judge it by its owner, and the engine that made it is about to exit.
+  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$me" "$mestart" >"$_session_dir/owner.id"
+  "$@" &
+  local b=$! found="" t tstart init istart i
+  for ((i = 0; i < 1000; i++)); do
+    _as_keeper_find "$b" && found="$_kf_found" && break
+    kill -0 "$b" 2>/dev/null || break
+    sleep 0.01
+  done
+  if [[ -z "$found" ]]; then
+    # The launch's own status is what the engine reports: 127 and 126 mean bwrap
+    # itself could not run, which is when the unsandboxed way back is worth naming.
+    local brc=0
+    kill "$b" 2>/dev/null
+    { wait "$b"; } 2>/dev/null || brc=$?
+    printf '%s\n' "$brc" >"$kd/failed"
+    exit 1
+  fi
+  read -r t init <<<"$found"
+  _as_proc_start "$t"
+  tstart="$_ps_start"
+  _as_proc_start "$init"
+  istart="$_ps_start"
+  printf '%s %s %s %s %s %s\n' "$me" "$mestart" "$t" "$tstart" "$init" "$istart" >"$kd/id.new" \
+    && mv -f -- "$kd/id.new" "$kd/id"
+  local grace sl
+  grace="$(_as_keeper_grace)"
+  exec 8>"$sb/keeper.lock"
+  local again=0
+  while :; do
+    # Woken by a join's exit (USR1), or every five seconds to notice one that died
+    # without saying so.
+    if ((! again)); then
+      sleep 5 8>&- &
+      sl=$!
+      wait "$sl" 2>/dev/null
+      kill "$sl" 2>/dev/null
+    fi
+    again=0
+    _as_proc_is "$t" "$tstart" || break # the launch ended from inside
+    flock 8
+    _as_keeper_count "$kd"
+    flock -u 8
+    ((_kc_n == 0)) || continue
+    # The grace, interruptible: a reset that ends an idle keeper signals it here. Any
+    # other signal is a join that came and went meanwhile, and the grace starts over.
+    if [[ ! -e "$kd/stop" && "$grace" != 0 ]]; then
+      sleep "$grace" 8>&- &
+      sl=$!
+      local wrc=0
+      wait "$sl" 2>/dev/null || wrc=$?
+      kill "$sl" 2>/dev/null
+      if ((wrc > 128)) && [[ ! -e "$kd/stop" ]]; then
+        again=1
+        continue
+      fi
+    fi
+    flock 8
+    _as_keeper_count "$kd"
+    if ((_kc_n == 0)); then
+      rm -f -- "$kd/id"
+      break # the lock stays held until the launch is gone and cleaned up
+    fi
+    flock -u 8
+  done
+  # Ending it: pid 1 of the sandbox first, which takes every process in it along, and
+  # the launch with it. The watchdog is for a launch that does not follow (a pasta
+  # that outlived its child): five seconds, then it is killed too.
+  _as_proc_is "$init" "$istart" && kill -KILL "$init" 2>/dev/null
+  (sleep 5 && kill -KILL "$b") 2>/dev/null 8>&- &
+  local dog=$!
+  { wait "$b"; } 2>/dev/null
+  kill "$dog" 2>/dev/null
+  flock 8 # held already when it ended because it was idle; taken when it ended from inside
+  _as_session_cleanup
+  rm -rf -- "$kd"
+  flock -u 8
+  exit 0
+}
+
+# _as_keeper_count KEEPERDIR -- set _kc_n to how many joins are live, forgetting the
+# ones that are not. Called with the lock held.
+_as_keeper_count() {
+  local f pid start
+  _kc_n=0
+  for f in "$1"/joined/*; do
+    [[ -f "$f" ]] || continue
+    pid="" start=""
+    { read -r pid start <"$f"; } 2>/dev/null
+    if _as_proc_is "$pid" "$start"; then
+      _kc_n=$((_kc_n + 1))
+    else
+      rm -f -- "$f"
+    fi
+  done
+  return 0
+}
+
+# _as_keeper_start SANDBOXDIR LAUNCHER... -- start this role's keeper; the lock is held.
+# The launcher is the command line that runs the sandbox (bwrap, or pasta running
+# bwrap), ending in `--` and the payload.
+_as_keeper_start() {
+  local sb="$1" kd="$1/keeper" i
+  shift
+  _as_holder_legacy_stop "$sb"
+  # A record left by a keeper that did not end cleanly (a reboot, a SIGKILL) says
+  # nothing now: this is only reached when no keeper is live.
+  rm -rf -- "$kd"
+  mkdir -p -- "$kd/joined" || return 1
+  : >"$sb/keeper.log"
+  _as_keeper_policy all >"$kd/policy"
+  _as_keeper_dotfile_hash >"$kd/dotfile"
+  # The copy a join parses: the approved file as it is now (see the trust gate).
+  if [[ "$(cat "$kd/dotfile")" != - ]]; then
+    cp -- "$_dotfile" "$kd/dotfile.copy" || return 1
+  fi
+  printf '%s\n' "${_session_dir:-}" >"$kd/session"
+  printf '%s\n' "${_seccomp_bpf:-}" >"$kd/seccomp"
+  (_as_keeper_supervise "$sb" -- "$@") &
+  local sup=$!
+  for ((i = 0; i < 1500; i++)); do
+    _as_keeper_live "$sb" && return 0
+    kill -0 "$sup" 2>/dev/null || break
+    sleep 0.01
+  done
+  wait "$sup" 2>/dev/null
+  local frc=1
+  read -r frc 2>/dev/null <"$kd/failed" || frc=1
+  ((frc)) || frc=1
+  _as_msg "role '${_role:-default}': the sandbox did not start${frc:+ (exit $frc)}. Its output:"
+  sed 's/^/  /' "$sb/keeper.log" >&2
+  kill "$sup" 2>/dev/null
+  rm -rf -- "$kd"
+  return "$frc"
+}
+
+# _as_keeper_join SANDBOXDIR CMD... -- run CMD in the running keeper, as its equal, and
+# return its exit status. The lock is held on entry and released here, once this join
+# is on the record, so the keeper cannot count it out while it starts.
+#
+# THE ENVIRONMENT IS THE KEEPER'S, except what describes the terminal this join came
+# from: TERM and the locale group. The rest -- HOME, PATH, the conda variables, the
+# proxy and CA variables, the profile's own -- describes the sandbox, and that is the
+# keeper's. The working directory is the keeper's too, which is this invocation's:
+# the sandbox key is the project, and a join from another directory is another
+# project's keeper.
+# shellcheck disable=SC2154
+_as_keeper_join() {
+  local sb="$1" kd="$1/keeper" join rec rc=0 v g
+  shift
+  join="${AGENT_SANDBOX_JOIN:-$(dirname -- "$engine")/components/join.py}"
+  [[ -r "$join" ]] || {
+    _as_keeper_unlock
+    _as_msg "the keeper's join is missing ($join); re-run install.sh"
+    return 1
+  }
+  command -v python3 >/dev/null 2>&1 || {
+    _as_keeper_unlock
+    _as_msg "joining the sandbox needs python3, which is not on PATH"
+    return 1
+  }
+  rec="$kd/joined/$BASHPID"
+  _as_proc_start "$BASHPID"
+  printf '%s %s\n' "$BASHPID" "$_ps_start" >"$rec"
+  local spid="$_keeper_spid" target="$_keeper_target" bpf
+  bpf="$(cat "$kd/seccomp" 2>/dev/null)"
+  _as_keeper_unlock
+  local -a jargs=()
+  [[ -n "$bpf" ]] && jargs+=(--seccomp "$bpf")
+  jargs+=(--unset SHLVL --env "TERM=${TERM:-xterm-256color}")
+  for v in LANG LC_ALL LC_CTYPE LC_MESSAGES LC_NUMERIC LC_TIME LC_COLLATE TZ COLORTERM NO_COLOR FORCE_COLOR; do
+    if [[ -n "${!v+x}" ]]; then jargs+=(--env "$v=${!v}"); else jargs+=(--unset "$v"); fi
+  done
+  # The engine does not leave while the joined command runs: Ctrl-C reaches the join
+  # (which passes it on) and this process, which must still take its record off.
+  trap ':' INT QUIT
+  trap - HUP TERM
+  python3 "$join" "${jargs[@]}" "$target" -- "$@" || rc=$?
+  trap - INT QUIT
+  [[ -n "${_join_brief:-}" ]] && rm -rf -- "$_join_brief"
+  local last=0
+  if _as_keeper_lock "$sb" 2>/dev/null; then
+    rm -f -- "$rec"
+    _as_keeper_count "$kd"
+    ((_kc_n == 0)) && last=1
+    _as_keeper_unlock
+  else
+    rm -f -- "$rec"
+  fi
+  kill -USR1 "$spid" 2>/dev/null
+  # With no grace the keeper ends with its last join, and the join returns once it has.
+  g="$(_as_keeper_grace)"
+  if [[ "$g" == 0 && "$last" == 1 ]]; then
     local i
-    for ((i = 0; i < 60; i++)); do
-      pid="$(_as_holder_pid "$sb")" && {
-        printf '%s' "$pid"
-        exit 0
-      }
-      kill -0 "$starter" 2>/dev/null || break
+    for ((i = 0; i < 1000; i++)); do
+      [[ -d "/proc/$spid" ]] || break
+      kill -USR1 "$spid" 2>/dev/null
+      sleep 0.01
+    done
+  fi
+  return "$rc"
+}
+
+# _as_keeper_stop_idle SANDBOXDIR -- end this role's keeper if nothing is joined; fail
+# if something is. What a reset does first: the layers it removes are the keeper's
+# mounts.
+_as_keeper_stop_idle() {
+  local sb="$1" kd="$1/keeper" i spid
+  _as_keeper_lock "$sb" || return 1
+  if ! _as_keeper_live "$sb"; then
+    _as_keeper_unlock
+    return 0
+  fi
+  _as_keeper_count "$kd"
+  if ((_kc_n > 0)); then
+    _as_keeper_unlock
+    return 1
+  fi
+  spid="$_keeper_spid"
+  : >"$kd/stop"
+  _as_keeper_unlock
+  kill -USR1 "$spid" 2>/dev/null
+  for ((i = 0; i < 400; i++)); do
+    [[ -d "/proc/$spid" ]] || return 0
+    sleep 0.025
+  done
+  return 1
+}
+
+# _as_holder_legacy_stop SANDBOXDIR -- stop a holder an engine before the keeper left.
+# A holder mounted this role's copy-on-write overlays at staging paths and outlived
+# its launches; one still running would be a second overlay over the upper layers the
+# keeper is about to mount. It stayed alive only while <sandbox>/holder.id named it.
+_as_holder_legacy_stop() {
+  local f="$1/holder.id" pid start i
+  [[ -e "$f" ]] || return 0
+  read -r pid start 2>/dev/null <"$f"
+  if _as_proc_is "${pid:-}" "${start:-}"; then
+    kill "$pid" 2>/dev/null
+    for ((i = 0; i < 100; i++)); do
+      [[ -d "/proc/$pid" ]] || break
       sleep 0.05
     done
-    exit 1
-  ) || return 0
-}
-
-# _as_holder_stop SANDBOXDIR -- stop this sandbox's holder unconditionally.
-#
-# A reset must do this before it removes anything. The holder's overlay keeps
-# REFERENCES to the layer directories, not their paths, so removing the upper
-# layer from under a live mount changes nothing the mount serves: the reset
-# reported success and the next launch still read the sandbox's old shadow.
-# Measured. The caller has already refused if a session is live, so nothing is
-# using the mount by the time this runs.
-_as_holder_stop() {
-  local pid
-  pid="$(_as_holder_pid "$1")" || {
-    rm -f -- "$1/holder.id" 2>/dev/null
-    return 0
-  }
-  kill "$pid" 2>/dev/null || true
-  local i
-  for ((i = 0; i < 100; i++)); do
-    [[ -d "/proc/$pid" ]] || break
-    sleep 0.05
-  done
-  rm -f -- "$1/holder.id" 2>/dev/null || true
+  fi
+  rm -f -- "$f" "$1/holder.lock"
   return 0
-}
-
-# _as_holder_sweep -- stop every idle holder of this profile, not just this
-# sandbox's.
-#
-# A holder outlives the launch that made it, and only a launch OF THE SAME
-# SANDBOX would ever come back to it. Reaping just our own would therefore leave
-# one sleeping process for every project ever opened and closed -- which is
-# exactly what happened in the test suite, where each test is its own sandbox:
-# 44 holders were alive at once. So each launch sweeps the profile's whole state
-# directory. It is a handful of stat calls, and the liveness test is the same
-# owner stamp the session janitor already uses.
-_as_holder_sweep() {
-  local f sb pid
-  local _ng=0
-  shopt -q nullglob && _ng=1
-  shopt -s nullglob
-  for f in "$(_as_state_dir)/$profile"/*/*/holder.id; do
-    sb="$(dirname -- "$f")"
-    pid="$(_as_holder_pid "$sb")" || {
-      rm -f -- "$f" 2>/dev/null # a stamp whose process is gone
-      continue
-    }
-    _as_connect_live "$sb" && continue # someone is in its namespace
-    kill "$pid" 2>/dev/null || true
-    rm -f -- "$f" 2>/dev/null || true
-  done
-  ((_ng)) || shopt -u nullglob
-  return 0
-}
-
-# _as_connect_live SANDBOXDIR -- is a session of this sandbox running right now?
-#
-# MEASURED FIRST, because the obvious check does not work: bwrap passes the upper
-# layer as /proc/self/fd/N, so the path never appears in any mountinfo and
-# scanning /proc for it finds nothing. What does work is the engine's own session
-# machinery -- a session dir stamped with its owner's PID and start-time, the
-# same pair the janitor uses to tell a live session from an orphan, and immune to
-# PID reuse for the same reason. A copy-on-write launch records its sandbox there.
-#
-# This matters because the conflict warning TELLS the user to run a reset, and
-# reading it in one terminal while the session runs in another is the ordinary
-# case. Reset removes the upper and work directories; doing that under a live
-# overlay is a busy error at best.
-_as_connect_live() {
-  local want="$1" base d opid ostart now
-  base="$(_as_session_base)"
-  local _ng=0
-  shopt -q nullglob && _ng=1
-  shopt -s nullglob
-  local found=1
-  for d in "$base"/session.*; do
-    # NEVER this session's own directory. Its record is written while the binds
-    # are still being assembled, so a channel with two paths had the second one
-    # find the first one's record, owner alive and sandbox matching, and report
-    # the launch as a second session of itself. `skills` is the only channel
-    # with two directories today, which is why every test using `instructions`
-    # missed it. Empty during a reset, which begins no session, so nothing is
-    # skipped there.
-    [[ "$d" == "${_session_dir:-}" ]] && continue
-    [[ -r "$d/owner.id" && -r "$d/connect.sandbox" ]] || continue
-    [[ "$(cat "$d/connect.sandbox" 2>/dev/null)" == "$want" ]] || continue
-    read -r opid ostart <"$d/owner.id" 2>/dev/null || continue
-    [[ -n "$opid" && -r "/proc/$opid/stat" ]] || continue
-    now="$(awk '{print $22}' "/proc/$opid/stat" 2>/dev/null || true)"
-    [[ -n "$now" && "$now" == "$ostart" ]] && {
-      found=0
-      break
-    }
-  done
-  ((_ng)) || shopt -u nullglob
-  return "$found"
 }
 
 # _as_connect_reset CHANNEL -- discard what this sandbox holds at CHANNEL and
@@ -2088,17 +2321,16 @@ _as_connect_reset() {
     return 1
   }
   base="$(_as_sandbox_dir)"
-  # Never while a session of this sandbox is running: its overlay's layers are
-  # these directories, and removing them under a live mount is the one way this
-  # verb can do damage rather than undo it.
-  if _as_connect_live "$base"; then
-    _as_msg "connect: a session of this sandbox is running. Resetting would remove the layers it has mounted. Close it and run this again."
+  # Never while anything is joined into this role's keeper: its overlays' layers are
+  # these directories, and removing them under a live mount is the one way this verb
+  # can do damage rather than undo it. An IDLE keeper is ended first -- its mounts hold
+  # references to the layer directories rather than their paths, so removing them
+  # underneath it would leave the old content still being served.
+  if ! _as_keeper_stop_idle "$base"; then
+    _as_msg "connect: role '${_role:-default}' is running. Resetting would remove the layers it has mounted. Exit what is joined into it and run this again."
     return 1
   fi
-  # And stop the holder before touching anything: its mount holds references to
-  # the layer directories rather than their paths, so removing them underneath it
-  # would leave the old content still being served.
-  _as_holder_stop "$base"
+  _as_holder_legacy_stop "$base"
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
@@ -2258,7 +2490,12 @@ _as_briefing_write() {
     ((${#_agent_ports[@]} > 0)) && ports="${ports}ports published to the host: ${_agent_ports[*]}. "
   fi
 
-  local md="$_session_dir/briefing.md"
+  # ONE DIRECTORY, bound read-only at $inside, rather than a bind per file: the
+  # launch is a keeper that later joins also run in, and a join's own hook settings
+  # (profile_briefing_args) must appear inside after the mounts are made.
+  local bdir="$_session_dir/briefing"
+  mkdir -p -- "$bdir" || return 1
+  local md="$bdir/briefing.md"
   # The text below is literal: `$HOME` and the backticks name things for the
   # reader, they are not expansions.
   # shellcheck disable=SC2016
@@ -2305,13 +2542,10 @@ _as_briefing_write() {
   local ev
   for ev in SessionStart SubagentStart; do
     printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":%s}}\n' \
-      "$ev" "$(_as_json_str "$short")" >"$_session_dir/hook-$ev.json" || return 1
+      "$ev" "$(_as_json_str "$short")" >"$bdir/hook-$ev.json" || return 1
   done
 
-  args+=(--ro-bind "$md" "$inside/briefing.md")
-  for ev in SessionStart SubagentStart; do
-    args+=(--ro-bind "$_session_dir/hook-$ev.json" "$inside/hook-$ev.json")
-  done
+  args+=(--ro-bind "$bdir" "$inside")
   return 0
 }
 
@@ -2865,28 +3099,51 @@ _as_fallback_hint() {
   _as_msg "See docs/troubleshooting.md, section 'The sandbox will not start'."
 }
 
+# _as_launch -- -- CMD... -- run the launch that ${_launch[@]} names with CMD as its
+# payload, and return how that went.
+#
+# Every launch is a KEEPER that CMD then joins (see the keeper section), except a
+# wrapped background worker, which Claude Code's daemon spawns and which stays a
+# launch of its own until #123 runs the daemon inside the role. The launch command
+# is the same either way; only its payload differs.
+# shellcheck disable=SC2154
 _as_launch() {
-  # When help is being shown, a session dir must be cleaned up, or a state bind
-  # left a mount-point file on the host, run bwrap in this process (not exec)
-  # so we regain control -- to print the help footer and/or tear the session
-  # down -- then propagate the exit code.
-  # ${_holder_ns[@]} is `nsenter -t PID -m -U --preserve-credentials --` when a
-  # `copy-on-write` channel joined this sandbox's holder, and empty otherwise. Entering the
-  # holder's mount namespace is what puts its overlays in view; bwrap then makes
-  # its own namespace from that one, inheriting the mounts as references to the
-  # SAME superblocks rather than mounting anything again.
-  local -a _hns=(${_holder_ns[@]+"${_holder_ns[@]}"})
-  if [[ -n "${_session_dir:-}" || -n "${_help_footer:-}" || ${#_as_placeholder_files[@]} -gt 0 ]]; then
-    local rc=0
-    "${_hns[@]}" bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
+  shift # the --
+  local rc=0
+  if ((_do_wrap)); then
+    "${_launch[@]}" -- "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
     # 127 = bwrap not found, 126 = found but not executable. Any other code is
     # the AGENT's own exit status and means the sandbox worked fine.
     ((rc == 126 || rc == 127)) && _as_fallback_hint
     _as_session_cleanup
-    [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
     return "$rc"
   fi
-  exec "${_hns[@]}" bwrap "$@" 10<"${_seccomp_bpf:-/dev/null}"
+  # The payload: `sleep` under the marker as its argv[0] (bwrap's --argv0 is newer
+  # than the oldest bubblewrap this supports). The environment a join inherits is
+  # read from it, so the shell that sets argv[0] takes back what it added: PWD and
+  # OLDPWD here, and SHLVL, which `exec` sets anyway, is dropped by every join.
+  # shellcheck disable=SC2016 # $0 is the payload shell's own, inside the sandbox
+  _as_keeper_start "$_keeper_sb" _as_keeper_exec "${_launch[@]}" -- \
+    bash -c 'unset PWD OLDPWD; exec -a "$0" sleep infinity' "$_as_keeper_marker" || rc=$?
+  if ((rc)); then
+    _as_keeper_unlock
+    ((rc == 126 || rc == 127)) && _as_fallback_hint
+    return "$rc"
+  fi
+  # The launch's exit is the supervisor's now: it removes the session directory, stops
+  # the ssh agent and removes the mount-point files once the keeper ends.
+  trap - EXIT INT TERM HUP
+  _session_dir="" _ssh_agent_pid="" _as_placeholder_files=()
+  _as_keeper_join "$_keeper_sb" "$@" || rc=$?
+  [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
+  return "$rc"
+}
+
+# _as_keeper_exec LAUNCH... -- the keeper's launch, as the supervisor runs it: in a
+# session of its own, so nothing the terminal sends reaches it, with the syscall
+# filter on fd 10 where bwrap (or the strict wrapper) reads it.
+_as_keeper_exec() {
+  exec setsid "$@" 10<"${_seccomp_bpf:-/dev/null}"
 }
 
 # Launch for strict mode. pasta owns the network namespace and forwards it to
@@ -2921,12 +3178,11 @@ _as_launch() {
 _as_launch_pasta() {
   local nftbin="$1" sshrules="$2" proxy_auth="$3" tcp_ns="$4" tcp_host="$5" seccomp_bpf="$6"
   shift 6
-  local rc=0
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
   # IPs) is spliced into the chain after the proxy rule.
   # shellcheck disable=SC2016
-  pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
+  _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
     nftbin=$1 sshrules=$2 auth=$3 bpf=$4
     shift 4
     ipbin=$(command -v ip 2>/dev/null || true)
@@ -2958,10 +3214,7 @@ _as_launch_pasta() {
       --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
       --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" \
       "$@" 10<"${bpf:-/dev/null}"
-  ' agent-sandbox-strict "$nftbin" "$sshrules" "$proxy_auth" "$seccomp_bpf" "$@" || rc=$?
-  _as_session_cleanup
-  [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
-  return "$rc"
+  ' agent-sandbox-strict "$nftbin" "$sshrules" "$proxy_auth" "$seccomp_bpf" "$@")
 }
 
 # ---------------------------------------------------------------------------
@@ -3002,10 +3255,9 @@ agent_sandbox() (
   local -A _connect_key=() _connect_isdir=()
   local _path_key
   local -a _connect_flag=()
-  # The holder this launch joins, if any, and the nsenter that joins it. Set by
-  # _as_connect_apply and read by _as_launch.
-  local _holder_pid="" _holder_tried=0 _holder_why="this host has no shared overlay"
-  local -a _holder_ns=()
+  # The command line that runs the sandbox: bwrap, or pasta running bwrap. Set by the
+  # network mode, run by _as_launch.
+  local -a _launch=()
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   local _preset_flag="" _preset=inherit _role_flag="" _role_flag_set=0
   while (($# > 0)); do
@@ -3538,10 +3790,41 @@ agent_sandbox() (
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")"
-  if [[ -f "$_dotfile" ]]; then
-    if _as_dotfile_trusted "$_proj" "$_dotfile"; then
-      _as_dotfile_clean "$_dotfile" || return 1 # an approval recorded by other means does not get such a file honoured
-      _as_dotfile_parse "$_dotfile"
+  # A JOIN READS THE KEEPER'S DOT-FILE, NOT THE LIVE ONE. A running role's policy is
+  # the one its keeper started with, so the file a join parses is the copy the keeper
+  # kept of the approved dot-file -- and an edit to the live file that is not yet
+  # approved does not refuse the join: the trust gate's reason, that an ignored file
+  # would fall back to the defaults, has nothing to fall back to here. The live file is
+  # still read for two things: to find the role, when no --role or AGENT_SANDBOX_ROLE
+  # names it (and then only an approved file is read, so an unapproved edit refuses as
+  # before), and to say it has changed. Only a keeper with something joined is read
+  # this way: an idle one is replaced when the policy differs, and a replacement is a
+  # launch, which follows the live file's rules (see the keeper section).
+  local _df_src="$_dotfile" _df_from_keeper=0 _pre_role="" _pre_known=1
+  if ((_role_flag_set)); then
+    _pre_role="$_role_flag"
+  elif [[ -n "${AGENT_SANDBOX_ROLE:-}" ]]; then
+    _pre_role="$AGENT_SANDBOX_ROLE"
+  elif [[ -f "$_dotfile" ]] && _as_dotfile_trusted "$_proj" "$_dotfile"; then
+    _pre_role="$(_as_dotfile_parse "$_dotfile" 2>/dev/null && printf '%s' "$_df_role")"
+  elif [[ -f "$_trust_rec" ]]; then
+    _pre_known=0 # the role would come from an edit not approved, or a file now missing
+  fi
+  if ((! _do_wrap && _pre_known)) && [[ "${_pre_role:-default}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    local _kb
+    _kb="$(_role="${_pre_role:-default}" _as_sandbox_dir)"
+    if _as_keeper_live "$_kb" && { _as_keeper_count "$_kb/keeper" && ((_kc_n > 0)); }; then
+      _df_from_keeper=1
+      _df_src=""
+      [[ -f "$_kb/keeper/dotfile.copy" ]] && _df_src="$_kb/keeper/dotfile.copy"
+    fi
+  fi
+  if ((_df_from_keeper)) && [[ -z "$_df_src" ]]; then
+    : # the running keeper started with no approved dot-file, so there is none
+  elif ((_df_from_keeper)) || [[ -f "$_dotfile" ]]; then
+    if ((_df_from_keeper)) || _as_dotfile_trusted "$_proj" "$_dotfile"; then
+      _as_dotfile_clean "$_df_src" || return 1 # an approval recorded by other means does not get such a file honoured
+      _as_dotfile_parse "$_df_src"
       local _dh _dj
       for _dh in "${_df_allow[@]}"; do
         [[ -z "$_dh" ]] && continue
@@ -3710,6 +3993,9 @@ agent_sandbox() (
   fi
 
   # ---- the role: which instance of this project this launch is ----
+  # Read from the keeper's copy, `[sandbox] role` says what it said when the keeper
+  # started; the keeper being joined is the one the live file named.
+  ((_df_from_keeper)) && _df_role="$_pre_role"
   _as_role_resolve || return 1
   local _pb
   for _pb in ${_df_preset_by[@]+"${_df_preset_by[@]}"}; do
@@ -3829,8 +4115,106 @@ agent_sandbox() (
   local -a _knob_host_ports=() _knob_agent_ports=()
   [[ -n "${AGENT_SANDBOX_HOST_PORTS:-}" ]] && _as_split _knob_host_ports $', \t\n' "$AGENT_SANDBOX_HOST_PORTS"
   [[ -n "${AGENT_SANDBOX_AGENT_PORTS:-}" ]] && _as_split _knob_agent_ports $', \t\n' "$AGENT_SANDBOX_AGENT_PORTS"
+  # What this invocation named itself, before the dot-file's ports join them: a join
+  # is checked on these (see _as_keeper_policy).
+  local -a _keeper_join_host_ports=(${_host_ports[@]+"${_host_ports[@]}"} ${_knob_host_ports[@]+"${_knob_host_ports[@]}"})
+  local -a _keeper_join_agent_ports=(${_agent_ports[@]+"${_agent_ports[@]}"} ${_knob_agent_ports[@]+"${_knob_agent_ports[@]}"})
   _as_ports_merge --host-port _host_ports _host_none "${_host_ports[@]}" "${_knob_host_ports[@]}" "${_df_net_host_port[@]}" || return 1
   _as_ports_merge --agent-port _agent_ports _agent_none "${_agent_ports[@]}" "${_knob_agent_ports[@]}" "${_df_net_agent_port[@]}" || return 1
+
+  # ---- the keeper: join this role's running launch, or start it (#121) ----
+  # Everything above resolved what this invocation asks for and did nothing to the
+  # host; everything below builds a launch. So this is where a running keeper is
+  # joined instead. The lock taken here is held until this invocation is on the
+  # keeper's record -- through the whole build when there is no keeper -- so two
+  # first launches of one role at once are one keeper, not two. A wrapped
+  # background worker is its own launch until #123 runs the daemon inside.
+  local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0
+  if ((! _do_wrap)); then
+    # Checked before anything is built: without python3 there is no join, and a
+    # keeper started for nothing would have seeded its stores for nothing too.
+    command -v python3 >/dev/null 2>&1 || {
+      _as_msg "the sandbox needs python3 on PATH: every app is joined into its role's launch by a python3 helper (components/join.py)"
+      return 1
+    }
+    _keeper_sb="$(_as_sandbox_dir)"
+    # AN IDLE KEEPER IS REPLACED, NOT REFUSED. Within its grace nothing is joined, so
+    # there is nothing whose policy a different one would change: it is ended, and this
+    # invocation starts the next keeper -- the same as a reset does. Only a keeper with
+    # something joined holds its policy against a join that asks for another.
+    local _kpass _klocked=0
+    for _kpass in 1 2 3; do
+      _as_keeper_lock "$_keeper_sb" || return 1
+      _as_keeper_live "$_keeper_sb" || {
+        _klocked=1
+        break
+      }
+      _as_keeper_count "$_keeper_sb/keeper"
+      if ((_kc_n == 0)) && { ! _as_keeper_admit "$_keeper_sb" quiet || ((_keeper_dotfile_changed)); }; then
+        # Resolved from the keeper's copy of the dot-file, this invocation cannot be
+        # the next launch: that one follows the live file, approved.
+        if ((_df_from_keeper)); then
+          _as_keeper_unlock
+          _as_msg "role '${_role:-default}': its launch ended while this one was joining it; run it again"
+          return 1
+        fi
+        : >"$_keeper_sb/keeper/stop"
+        kill -USR1 "$_keeper_spid" 2>/dev/null
+        _as_keeper_unlock
+        local _kw
+        for ((_kw = 0; _kw < 500; _kw++)); do
+          [[ -d "/proc/$_keeper_spid" ]] || break
+          sleep 0.01
+        done
+        continue
+      fi
+      _as_keeper_admit "$_keeper_sb" || {
+        _as_keeper_unlock
+        return 2
+      }
+      ((_keeper_dotfile_changed)) \
+        && _as_msg "role '${_role:-default}': .agent-sandbox has changed since this role's keeper started. Joining it under the policy it started with; the change applies at the next keeper, once nothing is joined."
+      local -a _run_argv=()
+      if ((_do_exec)); then
+        _run_argv=("$@")
+      else
+        local -a profile_briefing_argv=()
+        local _ksess
+        _ksess="$(cat "$_keeper_sb/keeper/session" 2>/dev/null)"
+        if [[ -n "$_ksess" && -d "$_ksess/briefing" ]] && grep -q $'^briefing\ton\t' "$_keeper_sb/keeper/policy" \
+          && declare -F profile_briefing_args >/dev/null; then
+          # This join's own hook settings (they merge its --settings), beside the
+          # briefing the keeper already has in view.
+          _join_brief="$_ksess/briefing/join.$BASHPID"
+          mkdir -p -- "$_join_brief" || return 1
+          local _brief_out_host="$_join_brief" _brief_out_inside
+          _brief_out_inside="$(_as_briefing_inside)/join.$BASHPID"
+          profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
+        fi
+        _run_argv=("$profile_bin" "$@" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"})
+      fi
+      _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
+      local _jrc=0
+      _as_keeper_join "$_keeper_sb" "${_run_argv[@]}" || _jrc=$?
+      [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
+      return "$_jrc"
+    done
+    # Three idle keepers replaced and a fourth in the way: something else keeps
+    # starting this role. Not worth a fourth race.
+    if ((_df_from_keeper)); then
+      _as_keeper_unlock
+      _as_msg "role '${_role:-default}': its launch ended while this one was joining it; run it again"
+      return 1
+    fi
+    if ((! _klocked)); then
+      _as_keeper_lock "$_keeper_sb" || return 1
+      if _as_keeper_live "$_keeper_sb"; then
+        _as_keeper_unlock
+        _as_msg "role '${_role:-default}': another launch of this role keeps starting while this one tries to; try again"
+        return 1
+      fi
+    fi
+  fi
 
   if declare -F profile_prepare >/dev/null; then
     profile_prepare || return 1
@@ -4365,6 +4749,8 @@ agent_sandbox() (
     on | 1)
       if _as_briefing_write; then
         if ((_brief_args)) && declare -F profile_briefing_args >/dev/null; then
+          local _brief_out_host="$_session_dir/briefing" _brief_out_inside
+          _brief_out_inside="$(_as_briefing_inside)"
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
         fi
       else
@@ -4415,10 +4801,12 @@ agent_sandbox() (
   case "${_knob_net:-proxy}" in
     open)
       args+=(--share-net)
-      _as_launch "${args[@]}" -- "${_run_argv[@]}"
+      _launch=(bwrap "${args[@]}")
+      _as_launch -- "${_run_argv[@]}"
       ;;
     none)
-      _as_launch "${args[@]}" -- "${_run_argv[@]}"
+      _launch=(bwrap "${args[@]}")
+      _as_launch -- "${_run_argv[@]}"
       ;;
     proxy)
       local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:8888"
@@ -4433,7 +4821,8 @@ agent_sandbox() (
       )
       _as_ca_bind
       _as_ca_env
-      _as_launch "${args[@]}" -- "${_run_argv[@]}"
+      _launch=(bwrap "${args[@]}")
+      _as_launch -- "${_run_argv[@]}"
       ;;
     strict)
       # pasta owns an isolated netns; nftables inside it allows only the proxy.
@@ -4497,7 +4886,8 @@ agent_sandbox() (
           return 1
         }
       fi
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}" -- "${_run_argv[@]}"
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}"
+      _as_launch -- "${_run_argv[@]}"
       ;;
     *)
       _as_msg "unknown AGENT_SANDBOX_NET='${_knob_net}' (expected proxy|strict|open|none)"

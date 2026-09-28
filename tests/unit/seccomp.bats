@@ -12,7 +12,7 @@ setup() {
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 readlink /proc/self/fd/10 >"$BWRAP_DUMP.fd10" 2>/dev/null || echo "(no fd 10)" >"$BWRAP_DUMP.fd10"
-exit 0
+. "${0%/*}/keeper-tail"
 S
   chmod +x "$H/bin/bwrap"
   SC="$H/seccomp"

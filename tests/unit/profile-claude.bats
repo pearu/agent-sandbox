@@ -87,7 +87,7 @@ slug_vector() {
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 [ -e "$HOME/.claude/.claude.json" ] || : >"$HOME/.claude/.claude.json"
-exit 0
+. "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
   run_engine -- claude --version

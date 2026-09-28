@@ -39,9 +39,37 @@ if [[ "${1:-}" == --help ]]; then
 fi
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
-exit 0
+. "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
+  # The end of every stub bwrap, this one and the ones suites write for themselves: a
+  # keeper's launch (its payload is marked in its last argument) is played by running
+  # that payload here, on the host -- something has to stay alive for the engine to
+  # find and for the join to name. Any other launch, a wrapped worker, ends at once.
+  # Sourced, with the stub's own "$@".
+  cat >"$H/bin/keeper-tail" <<'STUB'
+if [[ "${!#}" == agent-sandbox-keeper ]]; then
+  while [[ $# -gt 0 && "$1" != -- ]]; do shift; done
+  shift
+  exec "$@"
+fi
+exit 0
+STUB
+  # Stub join (AGENT_SANDBOX_JOIN): record its argv, one token per line, and run
+  # nothing -- as the stub bwrap never ran the agent, this never runs the command. It
+  # exits with $JOIN_EXIT, which stands for the joined command's exit status, and
+  # while the file $JOIN_HOLD exists it stays joined (see engine_bg).
+  cat >"$H/bin/join-stub.py" <<'STUB'
+import os, sys
+with open(os.environ["JOIN_DUMP"], "w") as fh:
+    for a in sys.argv[1:]:
+        fh.write(a + "\n")
+hold = os.environ.get("JOIN_HOLD")
+while hold and os.path.exists(hold):
+    import time
+    time.sleep(0.02)
+sys.exit(int(os.environ.get("JOIN_EXIT", "0")))
+STUB
   printf '#!/usr/bin/env bash\necho "stub-agent argv: $*"\n' >"$H/home/.local/share/claude/versions/2.1.300/claude"
   chmod +x "$H/home/.local/share/claude/versions/2.1.300/claude"
   ln -s "$ENGINE" "$H/bin/claude"
@@ -64,6 +92,7 @@ run_engine() {
   shift
   [[ "$cmd" == */* ]] || cmd="$H/bin/$cmd"
   : >"$H/argv"
+  : >"$H/join"
   pushd "${RUN_CWD:-$H/proj}" >/dev/null || return 1
   # Coverage: when AGENT_SANDBOX_KCOV is set (scripts/coverage.sh), wrap the engine
   # with kcov as its DIRECT parent, INSIDE env -i -- env -i severs kcov's collection
@@ -78,16 +107,69 @@ run_engine() {
   # tests exist to check. With no filter present the engine warns and runs on,
   # so every other suite sees the argv it saw before, plus that warning.
   run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
-    BWRAP_DUMP="$H/argv" AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
+    BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
+    AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
     AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$cmd" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
+  # What was joined into the keeper: JOIN is the join's whole argv, JOINV the command
+  # after its `--` (what bwrap's argv used to end with).
+  mapfile -t JOIN <"$H/join"
+  JOINV=()
+  local _i
+  for ((_i = 0; _i < ${#JOIN[@]}; _i++)); do
+    [[ "${JOIN[_i]}" == -- ]] && {
+      JOINV=("${JOIN[@]:_i+1}")
+      break
+    }
+  done
 }
 
-# WHY EVERY RUN PINS A PRESET. The engine's default preset puts all six declared
-# channels at `cow`, so without this every launch in every suite would build
-# overlays and try to start a holder -- against a stub bwrap that never starts
-# one, so each paid the full fallback timeout. The suites that are not about
+# engine_bg [VAR=value ...] -- CMD ARGS... -- start the engine in the background as
+# run_engine would, joined into its keeper and HELD there until release_bg, so that a
+# test can act while a role is running. Returns once the join is on the record; sets
+# BG_PID. Its argv goes to $H/argv.bg, its join to $H/join.bg, its output to $H/bg.out.
+engine_bg() {
+  local -a envs=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    envs+=("$1")
+    shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  local cmd=$1 i
+  shift
+  [[ "$cmd" == */* ]] || cmd="$H/bin/$cmd"
+  : >"$H/hold"
+  rm -f "$H/join.bg"
+  (
+    cd "${RUN_CWD:-$H/proj}" || exit 1
+    exec env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
+      BWRAP_DUMP="$H/argv.bg" JOIN_DUMP="$H/join.bg" JOIN_HOLD="$H/hold" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" \
+      AGENT_SANDBOX_KEEPER_GRACE=0 AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
+      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$cmd" "$@"
+  ) </dev/null >"$H/bg.out" 2>&1 3>&- &
+  BG_PID=$!
+  for ((i = 0; i < 500; i++)); do
+    [[ -s "$H/join.bg" ]] && return 0
+    kill -0 "$BG_PID" 2>/dev/null || break
+    sleep 0.02
+  done
+  echo "engine_bg: the background launch did not join:" >&2
+  cat "$H/bg.out" >&2
+  return 1
+}
+
+# release_bg -- let the engine_bg launch's join end, and wait for it; sets BG_STATUS.
+# shellcheck disable=SC2034 # BG_STATUS is for the suites
+release_bg() {
+  rm -f "$H/hold"
+  BG_STATUS=0
+  wait "$BG_PID" || BG_STATUS=$?
+}
+
+# WHY EVERY RUN PINS A PRESET. The engine's default preset puts the declared
+# channels at `copy-on-write`, so without this every launch in every suite would be
+# measuring the sandbox with overlays layered over its state. The suites that are not about
 # connections should see what they always saw, which is `shared`; the ones that
 # are set TEST_PRESET or pass the knob themselves. A test that wants the engine's
 # real default must say so, which is the right way round: a default that changes
@@ -115,6 +197,19 @@ argv_has() {
   for ((i = 0; i + n <= ${#ARGV[@]}; i++)); do
     for ((j = 0; j < n; j++)); do
       [[ "${ARGV[i + j]}" == "${want[j]}" ]] || break
+    done
+    ((j == n)) && return 0
+  done
+  return 1
+}
+
+# True if the tokens appear consecutively in JOINV, the command joined into the keeper.
+join_has() {
+  local -a want=("$@")
+  local i j n=${#want[@]}
+  for ((i = 0; i + n <= ${#JOINV[@]}; i++)); do
+    for ((j = 0; j < n; j++)); do
+      [[ "${JOINV[i + j]}" == "${want[j]}" ]] || break
     done
     ((j == n)) && return 0
   done

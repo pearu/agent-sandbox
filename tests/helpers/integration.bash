@@ -50,7 +50,7 @@ run_sandboxed() {
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
   run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
-    AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" \
+    AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
     AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$ENGINE" --profile probe "$@"
   popd >/dev/null || return 1
   declare -gA REPORT=()

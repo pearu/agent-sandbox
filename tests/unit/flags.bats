@@ -22,8 +22,9 @@ setup() {
   [ "$status" -eq 0 ]
   # the briefing appends its own --settings after the agent's arguments, so
   # --help is the last argument the USER gave, not the last on the line
-  argv_has --help
-  [ "$(argv_index --help)" -lt "$(argv_index --settings)" ]
+  join_has --help
+  [ "${JOINV[1]}" = --help ]
+  [ "${JOINV[2]}" = --settings ]
   # the agent's help ends with a footer pointing at --engine-help
   [[ "$output" == *"--engine-help"* ]]
   [[ "$output" == *"runs inside a sandbox"* ]]
@@ -50,14 +51,10 @@ STUB
 }
 
 @test "a normal non-zero exit from the agent is NOT mistaken for a broken sandbox" {
-  # Only 126/127 mean bwrap could not run; anything else is the agent's own
-  # status, and suggesting the emergency exit there would be noise.
-  cat >"$H/bin/bwrap" <<'STUB'
-#!/usr/bin/env bash
-: >"${BWRAP_DUMP:?}"; exit 3
-STUB
-  chmod +x "$H/bin/bwrap"
-  run_engine -- claude --version
+  # Only 126/127 from the launch mean bwrap could not run; anything else is the
+  # agent's own status -- the joined command's -- and suggesting the emergency exit
+  # there would be noise.
+  run_engine JOIN_EXIT=3 -- claude --version
   [ "$status" -eq 3 ]
   [[ "$output" != *"the sandbox did not start"* ]]
 }
@@ -137,6 +134,7 @@ STUB
 @test "sourced mode: agent_sandbox() works with --profile and never infers a profile from \$0" {
   pushd "$H/proj" >/dev/null
   run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm BWRAP_DUMP="$H/argv" \
+    JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
     bash -c "source '$ENGINE'; agent_sandbox --profile claude --version"
   popd >/dev/null
   [ "$status" -eq 0 ]
@@ -207,16 +205,17 @@ STUB
   # the sandbox is still built; only the command at the end differs
   argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
     "$H/home/.local/share/claude/versions/2.1.300/claude"
-  argv_has -- /bin/echo hello world
+  # the command is what is joined into the keeper, exactly as given
+  [ "${JOINV[*]}" = "/bin/echo hello world" ]
   # the agent binary is NOT the thing being executed
-  run ! argv_has -- "$H/home/.local/share/claude/versions/2.1.300/claude"
+  run ! join_has "$H/home/.local/share/claude/versions/2.1.300/claude"
 }
 
 @test "--exec passes flags of its own through untouched, and needs a command" {
   # the command's flags must reach the command, not be eaten by the engine
   run_engine -- claude --exec python3 -c 'print(1)'
   [ "$status" -eq 0 ]
-  argv_has -- python3 -c 'print(1)'
+  [ "${#JOINV[@]}" -eq 3 ] && join_has python3 -c 'print(1)'
   run_engine -- claude --exec
   [ "$status" -eq 2 ]
   [[ "$output" == *"--exec needs a command"* ]]
@@ -227,7 +226,7 @@ STUB
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist: pypi.org"* ]]
   [[ "$output" != *evil.example* ]] # the second --allow is the command's argument
-  argv_has -- bash -l --allow evil.example
+  [ "${JOINV[*]}" = "bash -l --allow evil.example" ]
 }
 
 @test "--exec never routes to a host-side subcommand or a native verb" {
@@ -237,11 +236,12 @@ STUB
   run_engine -- claude --exec update --foo
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ] # bwrap WAS invoked; it did not take the host-side path
-  argv_has -- update --foo
+  [ "${JOINV[*]}" = "update --foo" ]
   [[ "$output" != *"on the host"* ]]
   run_engine -- claude --exec agents
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ]
+  [ "${JOINV[*]}" = agents ]
   [[ "$output" != *"runs natively"* ]]
 }
 

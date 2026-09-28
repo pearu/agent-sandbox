@@ -19,12 +19,12 @@ setup() {
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 if [ -n "${BWRAP_COPY:-}" ]; then
   mkdir -p "$BWRAP_COPY"
-  cp -r "$AGENT_SANDBOX_SESSION_BASE"/session.*/. "$BWRAP_COPY"/ 2>/dev/null || true
+  cp -r "$AGENT_SANDBOX_SESSION_BASE"/session.*/. "$BWRAP_COPY"/.. 2>/dev/null || true
 fi
-exit 0
+. "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
-  OUT="$H/copied"
+  OUT="$H/copied/briefing" # the session directory's briefing/, bound at $IN
 }
 
 trust() {
@@ -36,18 +36,20 @@ trust() {
 @test "on by default: the briefing is bound read-only and handed to the agent as session hooks" {
   run_engine BWRAP_COPY="$OUT" -- claude --version
   [ "$status" -eq 0 ]
-  # the artefacts are bound at fixed paths inside, once each
+  # the artefacts are one directory, bound once, read-only, at a fixed path inside:
+  # the launch is a keeper, and a later join's own settings file must appear in it
+  local i
+  i="$(argv_index "$IN")"
+  [ "$(grep -c "^$IN$" "$H/argv")" -eq 1 ]
+  [ "${ARGV[i - 2]}" = --ro-bind ]
+  [[ "${ARGV[i - 1]}" == "$H/base/session."*/briefing ]]
   local a
-  for a in briefing.md hook-SessionStart.json hook-SubagentStart.json; do
-    [ "$(grep -c "^$IN/$a$" "$H/argv")" -eq 1 ]
+  for a in briefing.md hook-SessionStart.json hook-SubagentStart.json settings.json; do
+    [ -s "$OUT/$a" ]
   done
-  # settings.json twice: the bind target, and the value of --settings
-  [ "$(grep -c "^$IN/settings.json$" "$H/argv")" -eq 2 ]
-  # ...and every one of them read-only
-  [ "$(grep -c '^--ro-bind$' "$H/argv")" -ge 4 ]
   # the agent is pointed at the settings file, last on the line
-  argv_has --settings "$IN/settings.json"
-  [ "${ARGV[-1]}" = "$IN/settings.json" ]
+  join_has --settings "$IN/settings.json"
+  [ "${JOINV[-1]}" = "$IN/settings.json" ]
   # SessionStart AND SubagentStart, each cat-ing its own payload
   grep -q '"SessionStart"' "$OUT/settings.json"
   grep -q '"SubagentStart"' "$OUT/settings.json"
@@ -100,7 +102,7 @@ trust() {
 @test "off suppresses every trace of it; a dot-file can ask for that, and the shell knob wins" {
   run_engine AGENT_SANDBOX_BRIEFING=off BWRAP_COPY="$OUT" -- claude --version
   [ "$status" -eq 0 ]
-  run ! argv_has --settings
+  run ! join_has --settings
   run ! grep -q "$IN" "$H/argv"
   [ ! -e "$OUT/briefing.md" ]
   # a trusted dot-file can turn it off...
@@ -111,10 +113,10 @@ trust() {
   # ...and says so, which is what distinguishes "the file was read" from "the
   # default happened to match"
   [[ "$output" == *"using briefing mode 'off' from .agent-sandbox"* ]]
-  run ! argv_has --settings
+  run ! join_has --settings
   # an explicit knob in the shell overrides the file, as everywhere else
   run_engine AGENT_SANDBOX_BRIEFING=on -- claude --version
-  argv_has --settings "$IN/settings.json"
+  join_has --settings "$IN/settings.json"
   [[ "$output" == *"overrides the .agent-sandbox briefing mode 'off'"* ]]
 }
 
@@ -138,8 +140,10 @@ trust() {
   # ours is last on the line, so it is the one Claude Code keeps. (Comparing
   # against argv_index of the path would prove nothing: it also appears earlier
   # as the bind target, and argv_index reports the first occurrence.)
-  [ "${ARGV[-1]}" = "$IN/settings.json" ]
-  [ "$(argv_index "$mine")" -lt "$((${#ARGV[@]} - 1))" ]
+  [ "${JOINV[-1]}" = "$IN/settings.json" ]
+  local i
+  for ((i = 0; i < ${#JOINV[@]}; i++)); do [[ "${JOINV[i]}" == "$mine" ]] && break; done
+  [ "$i" -lt "$((${#JOINV[@]} - 1))" ]
 }
 
 @test "--settings=VALUE spelling is recognised too, and a file path is read" {
@@ -169,7 +173,7 @@ trust() {
   grep -q '"disableAllHooks": true' "$OUT/settings.json" # their call stands
   [[ "$output" == *"will NOT be injected"* ]]
   # the readable copy is still there, so the information is not lost entirely
-  [ "$(grep -c "^$IN/briefing.md$" "$H/argv")" -eq 1 ]
+  [ "$(grep -c "^$IN$" "$H/argv")" -eq 1 ]
 }
 
 @test "the merge only appends two hook entries: no setting of the user's changes" {
@@ -198,21 +202,23 @@ CHECK
   run_engine BWRAP_COPY="$OUT" -- claude --settings '{"hooks":{"SessionStart":{"oops":1}}}' --version
   [ "$status" -eq 0 ] # the launch goes on
   [[ "$output" == *"not installed"* ]]
-  run ! argv_has --settings "$IN/settings.json"
-  argv_has --settings '{"hooks":{"SessionStart":{"oops":1}}}'
+  run ! join_has --settings "$IN/settings.json"
+  join_has --settings '{"hooks":{"SessionStart":{"oops":1}}}'
 }
 
 @test "when the merge cannot be done the USER's settings are kept and the loss is said out loud" {
   # A python3 that fails stands in for the interpreter being absent: both take
-  # the same branch, and losing a hint must never cost someone their settings.
-  printf '#!/bin/sh\nexit 3\n' >"$H/bin/python3"
+  # the same branch, and losing a hint must never cost someone their settings. It
+  # fails the merge (`python3 -c`) only: the join into the keeper is python3 too.
+  # shellcheck disable=SC2016 # the stub's own $1 and $@
+  printf '#!/bin/sh\n[ "$1" = -c ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
   run_engine BWRAP_COPY="$OUT" -- claude --settings '{"a":1}' --version
   [ "$status" -eq 0 ]           # the launch goes on
-  argv_has --settings '{"a":1}' # theirs, untouched
+  join_has --settings '{"a":1}' # theirs, untouched
   [[ "$output" == *"not installed"* ]]
   [[ "$output" == *"briefing.md"* ]] # ...and where to read it anyway
-  run ! argv_has --settings "$IN/settings.json"
+  run ! join_has --settings "$IN/settings.json"
   # the readable briefing is still bound: only the injection was lost
-  [ "$(grep -c "^$IN/briefing.md$" "$H/argv")" -eq 1 ]
+  [ "$(grep -c "^$IN$" "$H/argv")" -eq 1 ]
 }
