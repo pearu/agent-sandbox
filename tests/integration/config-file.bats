@@ -5,9 +5,11 @@
 # read-only $HOME tmpfs, so the lock and the temp file failed with EROFS, no
 # fallback ran, and every write a sandboxed session made -- folder trust,
 # per-project allowed tools and MCP servers, app state -- was silently lost
-# (measured, Claude Code 2.1.274). The profile therefore binds the host file
-# INSIDE ~/.claude and points CLAUDE_CONFIG_DIR there. This probe performs the
-# writer's steps from inside, one by one, and the test reads the host afterwards.
+# (measured, Claude Code 2.1.274). The profile therefore binds the file INSIDE
+# ~/.claude and points CLAUDE_CONFIG_DIR there. Since #119 the file is the `config`
+# channel: at a seeding mode what is bound is the role's store, at `read-write` the
+# native file itself. This probe performs the writer's steps from inside, one by
+# one, and the test reads the host afterwards.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -40,7 +42,9 @@ PROBE
   # the host file: this project's entry, and another project's with a secret in it
   printf '{"seed":1,"projects":{"%s":{"own":true},"/elsewhere":{"lastSessionFirstPrompt":"SECRET"}}}' "$IWORK" >"$IHOME/.claude.json"
   cp "$IHOME/.claude.json" "$I/host-before.json"
-  COPY="$IHOME/.local/state/agent-sandbox/claude/${IWORK//[^A-Za-z0-9-]/-}/claude.json"
+  local inside="$IHOME/.claude/.claude.json"
+  inside="${inside//\//_}"
+  STORE="$IHOME/.local/state/agent-sandbox/claude/${IWORK//[^A-Za-z0-9-]/-}/default/config/seed-only/${inside#_}"
 }
 
 run_claude() {
@@ -49,13 +53,14 @@ run_claude() {
   run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
+    AGENT_SANDBOX_CONNECT="${CFG_CONNECT-config=seed-only native}" \
     bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" --profile claude probe
   declare -gA M=()
   local k v
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
 }
 
-@test "inside: the config file is at ~/.claude/.claude.json and is this project's copy (its own entry, no other project's); CLAUDE_CONFIG_DIR points there; lock and temp file work beside it; the rename fails on the mount point; the in-place write reaches the copy and never the host file" {
+@test "seed-only: the config file is at ~/.claude/.claude.json and is the role's filtered seed (its own entry, no other project's); CLAUDE_CONFIG_DIR points there; lock and temp file work beside it; the rename fails on the mount point; the in-place write reaches the store and never the host file" {
   run_claude
   [ "$status" -eq 0 ]
   [ "${M[config_dir_env]}" = "$IHOME/.claude" ]
@@ -69,11 +74,22 @@ run_claude() {
   [ "${M[tmp_create]}" = yes ]
   [ "${M[rename_over]}" = no ] # EBUSY: a bind mount cannot be renamed over
   [ "${M[inplace_write]}" = yes ]
-  # the project's copy carries what was written inside; the host's file is untouched
-  [ "$(cat "$COPY")" = '{"written":"inside"}' ]
+  # the role's store carries what was written inside; the host's file is untouched
+  [ "$(cat "$STORE")" = '{"written":"inside"}' ]
   cmp "$IHOME/.claude.json" "$I/host-before.json"
   # the empty mount-point file bwrap created inside ~/.claude is gone again
   [ ! -e "$IHOME/.claude/.claude.json" ]
   # and no session dir is left behind
   [ -z "$(ls -A "$I/base" 2>/dev/null)" ]
+}
+
+@test "read-write: the native file itself, whole, and the in-place write reaches it" {
+  CFG_CONNECT='config=read-write native' run_claude
+  [ "$status" -eq 0 ]
+  [ "${M[config_dir_env]}" = "$IHOME/.claude" ]
+  [ "${M[new_path_present]}" = yes ]
+  [ "${M[other_project_visible]}" = yes ] # the whole file: why read-write is not advocated
+  [ "${M[inplace_write]}" = yes ]
+  [ "$(cat "$IHOME/.claude.json")" = '{"written":"inside"}' ]
+  [ ! -e "$IHOME/.claude/.claude.json" ] # the mount point is gone again
 }

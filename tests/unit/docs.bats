@@ -131,9 +131,11 @@ fail_missing() {
 # truth: it declares them in a profile_dotfile_keys=(...) array (read across its
 # handlers -- profile_isolate, profile_route -- and used by the engine to warn on
 # an unknown key).
-profile_dotfile_keys() {
+profile_dotfile_keys() { # the live ones: a retired key is read only to be refused
+  local retired
+  retired="$(sed -n 's/^profile_dotfile_retired=(\(.*\))/\1/p' "$REPO_ROOT/profiles/claude.sh" | tr ' ' '\n' | grep .)"
   sed -n 's/^profile_dotfile_keys=(\(.*\))/\1/p' "$REPO_ROOT/profiles/claude.sh" \
-    | tr ' ' '\n' | grep . | sort -u
+    | tr ' ' '\n' | grep . | grep -vxF -- "${retired:-\#none}" | sort -u
 }
 
 @test "README knobs: every [claude] key the profile reads is in the table" {

@@ -1313,6 +1313,76 @@ _as_connect_channels() {
   printf '%s' "${out:-none}"
 }
 
+# ----- what a profile may say about one channel path ----------------------------
+# Four small hooks, each an array of TAB-separated lines, all optional. The first
+# channel that needed them is Claude Code's config file (#119): its source is
+# ~/.claude.json, its path inside is ~/.claude/.claude.json, its seed must carry this
+# project's entry only, its `own` must still parse as JSON, and under `inherit` it is
+# seed-only rather than copy-on-write. None of that is about the config file as such,
+# so none of it is written for it: the engine knows paths, the profile knows the agent.
+#
+#   profile_channel_sources  "DEST<TAB>SOURCE"      the path outside, when it is not DEST
+#   profile_channel_filters  "CHANNEL<TAB>FUNCTION" FUNCTION SOURCE VIEW writes what the
+#                                                   seeding modes read instead of SOURCE
+#   profile_channel_empty    "CHANNEL<TAB>TEXT"     what a new `own` file store holds
+#   profile_channel_presets  "CHANNEL<TAB>PRESET=MODE ..."  this channel's rung under a
+#                                                   preset, where it is not the preset's
+#
+# A path with a SOURCE of its own is a RELOCATION, and under `native` -- parity with no
+# sandbox -- nothing is relocated, so such a path is not bound at all there.
+_as_channel_source() { # DEST -> the path outside it follows
+  local line
+  # shellcheck disable=SC2154 # declared by the profile, when at all
+  for line in ${profile_channel_sources[@]+"${profile_channel_sources[@]}"}; do
+    [[ "${line%%$'\t'*}" == "$1" ]] && {
+      printf '%s' "${line#*$'\t'}"
+      return 0
+    }
+  done
+  printf '%s' "$1"
+}
+_as_channel_hook() { # ARRAY-NAME CHANNEL -> the channel's value in that hook, if any
+  local -n _hook="$1"
+  local line
+  for line in ${_hook[@]+"${_hook[@]}"}; do
+    [[ "${line%%$'\t'*}" == "$2" ]] && {
+      printf '%s' "${line#*$'\t'}"
+      return 0
+    }
+  done
+  return 1
+}
+# _as_channel_preset_mode CHANNEL PRESET -- the channel's rung under PRESET.
+_as_channel_preset_mode() {
+  local spec tok
+  if spec="$(_as_channel_hook profile_channel_presets "$1")"; then
+    for tok in $spec; do
+      [[ "${tok%%=*}" == "$2" ]] && {
+        printf '%s' "${tok#*=}"
+        return 0
+      }
+    done
+  fi
+  _as_preset_mode "$2"
+}
+# _as_connect_view CHANNEL SOURCE -- set $_connect_from to the path the seeding modes
+# read for SOURCE: SOURCE itself, or the profile's filtered view of it, written into
+# this launch's directory.
+#
+# SETS A VARIABLE, NEVER PRINTS. Measured the hard way: called as $(...), the launch
+# directory it makes on a first use is the subshell's, the subshell's exit trap
+# removes it with the view inside, and the store was seeded from nothing.
+_as_connect_view() {
+  local ch="$1" src="$2" fn
+  _connect_from="$src"
+  fn="$(_as_channel_hook profile_channel_filters "$ch")" || return 0
+  _as_session_begin || return 1
+  _connect_from="$_session_dir/connect/$ch/view-$(_as_iso_slug "$src")"
+  mkdir -p -- "$(dirname -- "$_connect_from")" || return 1
+  rm -rf -- "$_connect_from" 2>/dev/null
+  "$fn" "$src" "$_connect_from"
+}
+
 # _as_connect_seed SOURCE STORE KIND -- make a `seed-only` store once: a copy of
 # SOURCE as it is now, or an empty one where SOURCE has nothing. Never touched
 # again once it exists -- that is the whole of `seed-only`: no refresh, so no
@@ -1348,7 +1418,7 @@ _as_connect_seed() {
 _as_connect_apply() {
   ((${#profile_channels[@]})) || return 0
   ((${#_connect_mode[@]})) || return 0
-  local line ch mode entry kind path slot base empty manifest upper work seen
+  local line ch mode entry kind path slot base empty manifest upper work seen src _connect_from
   local -a _cow_fellback=()
   local _cow_warned_concurrent=0 _cow_recorded=0
   local -a fields=()
@@ -1357,11 +1427,22 @@ _as_connect_apply() {
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
     mode="${_connect_mode[$ch]:-live}"
-    [[ "$mode" == read-write ]] && continue
     for entry in "${fields[@]:1}"; do
       kind="${entry%%:*}"
       path="${entry#*:}"
       [[ -n "$path" ]] || continue
+      src="$(_as_channel_source "$path")"
+      # A relocated path is not bound under `native`: see _as_channel_source.
+      [[ "$src" != "$path" ]] && _as_preset_is_native && continue
+      if [[ "$mode" == read-write ]]; then
+        # The source itself, both ways: already there when it IS the path, which the
+        # state bind covers; a relocated one is bound across.
+        if [[ "$src" != "$path" && -e "$src" ]]; then
+          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+          args+=(--bind "$src" "$path")
+        fi
+        continue
+      fi
       case "$mode" in
         own)
           # A private slot that OUTLIVES the session, per sandbox and channel.
@@ -1370,7 +1451,7 @@ _as_connect_apply() {
             mkdir -p -- "$slot" || return 1
           else
             mkdir -p -- "$(dirname -- "$slot")" || return 1
-            [[ -e "$slot" ]] || : >"$slot" || return 1
+            [[ -e "$slot" ]] || _as_channel_hook profile_channel_empty "$ch" >"$slot" || : >"$slot" || return 1
             _as_connect_placeholder "$path"
           fi
           args+=(--bind "$slot" "$path")
@@ -1395,7 +1476,8 @@ _as_connect_apply() {
             slot="$base/$ch/copy/$(_as_iso_slug "$path")"
             manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
             mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-            _as_connect_sync sync "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+            _as_connect_view "$ch" "$src" || return 1
+            _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
             if [[ ! -e "$slot" ]]; then
               if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
             fi
@@ -1475,7 +1557,10 @@ _as_connect_apply() {
           ;;
         seed-only)
           slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
-          _as_connect_seed "$path" "$slot" "$kind" || return 1
+          if [[ ! -e "$slot" ]]; then
+            _as_connect_view "$ch" "$src" || return 1
+            _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
+          fi
           [[ "$kind" == file ]] && _as_connect_placeholder "$path"
           args+=(--bind "$slot" "$path")
           ;;
@@ -1486,7 +1571,8 @@ _as_connect_apply() {
           slot="$base/$ch/copy/$(_as_iso_slug "$path")"
           manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
           mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-          _as_connect_sync sync "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+          _as_connect_view "$ch" "$src" || return 1
+          _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
           # A channel whose source has nothing yet still needs a mount point.
           if [[ ! -e "$slot" ]]; then
             if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
@@ -1495,8 +1581,9 @@ _as_connect_apply() {
           args+=(--bind "$slot" "$path")
           ;;
         read-only)
-          if [[ -e "$path" ]]; then
-            args+=(--ro-bind "$path" "$path")
+          if [[ -e "$src" ]]; then
+            [[ "$src" != "$path" && "$kind" == file ]] && _as_connect_placeholder "$path"
+            args+=(--ro-bind "$src" "$path")
           else
             # Nothing to show, but the parent is bound read-write, so without a
             # mount point here the sandbox could CREATE the file and author at a
@@ -2011,7 +2098,7 @@ _as_connect_live() {
 # to `live` still has its old copy on disk, and leaving it would surprise
 # whoever moves the channel back again.
 _as_connect_reset() {
-  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen seeded
+  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen seeded _connect_from
   local -a fields=()
   [[ "$want" == */* ]] && {
     _as_msg "connect: --reset-connection takes a channel name; resetting a path declaration ('$want') is not supported yet."
@@ -2056,7 +2143,8 @@ _as_connect_reset() {
         rm -rf -- "$upper" "$work" "$seen" 2>/dev/null || true
       fi
       if [[ -e "$slot" || -e "$manifest" ]]; then
-        _as_connect_sync reset "$ch" "$kind" "$path" "$slot" "$manifest" || return 1
+        _as_connect_view "$ch" "$(_as_channel_source "$path")" || return 1
+        _as_connect_sync reset "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
       fi
       _as_msg "connect: reset '$ch' at $path from your own copy"
     done
@@ -3051,7 +3139,7 @@ agent_sandbox() (
         # into this project's copy of the config file (inherit, the default) or
         # leaves them out (none). A narrowing, so a launch-time choice like
         # --sandbox; the dot-file form is [claude] user-mcp. See the profile's
-        # _claude_user_mcp_mode.
+        # _claude_user_mcp_refuse: the knob is removed, and refused (#132).
         [[ $# -ge 2 && -n "$2" ]] || {
           _as_msg "--user-mcp needs a value (inherit or none)"
           return 2
@@ -3646,7 +3734,7 @@ agent_sandbox() (
   local _pc _pm
   _pm="$(_as_preset_mode "$_preset")"
   for _pc in ${profile_channels[@]+"${profile_channels[@]}"}; do
-    _connect_mode["${_pc%%$'\t'*}"]="$_pm"
+    _connect_mode["${_pc%%$'\t'*}"]="$(_as_channel_preset_mode "${_pc%%$'\t'*}" "$_preset")"
     _connect_where["${_pc%%$'\t'*}"]="preset $_preset"
   done
 

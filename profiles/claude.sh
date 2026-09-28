@@ -121,7 +121,30 @@ profile_channels=(
   "agents	dir:$HOME/.claude/agents"
   "workflows	dir:$HOME/.claude/workflows"
   "plugins	dir:$HOME/.claude/plugins"
+  "config	file:$HOME/.claude/.claude.json"
 )
+# THE CONFIG FILE IS A CHANNEL (#119), one file following its mode like any other.
+# Its source is the native ~/.claude.json; inside it sits in the state directory,
+# where CLAUDE_CONFIG_DIR (below) makes Claude Code look for it. The seeding modes read
+# a FILTERED view -- every top-level key and only this project's entry, the fix for
+# leak study row 10 -- and after that the file is Claude Code's: the engine never reads
+# or writes mcpServers or anything else inside it. `own` starts from `{}`, which is
+# what Claude Code was measured to run on beside the credentials file (2.1.283:
+# it rebuilds the account block itself). Under `inherit` it is seed-only, not
+# copy-on-write: copy-on-write on a file is `copy`, and `copy` would warn at every
+# launch, because Claude Code rewrites the file at every launch. Under `shared` it is
+# seed-only too, not read-write: `shared` is "the engine before 0.3", and 0.2.1
+# already gave each project its own copy -- read-write here would reopen #90 for
+# everyone on `shared`. The whole native file is `--preset native` or an explicit
+# `config = read-write`.
+# shellcheck disable=SC2034 # read by the engine
+profile_channel_sources=("$HOME/.claude/.claude.json	$HOME/.claude.json")
+# shellcheck disable=SC2034
+profile_channel_filters=("config	_claude_config_filter")
+# shellcheck disable=SC2034
+profile_channel_empty=("config	{}")
+# shellcheck disable=SC2034
+profile_channel_presets=("config	inherit=seed-only shared=seed-only")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -161,6 +184,10 @@ profile_native_verbs=(daemon agents attach logs stop rm)
 # must not silently do nothing), and the docs drift-check verifies each is
 # documented. `hide` is read in profile_isolate(); `sandbox` in profile_route().
 profile_dotfile_keys=(hide sandbox user-mcp)
+# Keys still read only so that they can be REFUSED by name, naming what replaced them.
+# The docs describe them as removed rather than as settings.
+# shellcheck disable=SC2034 # read by tests/unit/docs.bats
+profile_dotfile_retired=(user-mcp)
 
 # The native installer's layout: each entry under versions/ is either a
 # single executable file named after the version (e.g. 2.1.143) or a
@@ -297,89 +324,103 @@ profile_prepare() {
   return 0
 }
 
-# ----- the config file: one copy per project ---------------------------------
-# ~/.claude.json is app state -- onboarding, tips, caches -- plus three things
-# that are per project or user-authored: the per-project entries (folder trust,
-# allowed tools, MCP servers added for that project, the last opening prompt),
-# the user-level mcpServers, and the account. Bound whole it was two channels at
-# once (leak study rows 10 and 11): a sandboxed session read every other
-# project's entry, and what it wrote reached every other session. So each
-# project gets its own copy, kept under the engine's state directory (a control
-# path: never bound into any sandbox), seeded from the host file with every
-# top-level key and only that project's entry, and refreshed on later launches
-# in ONE key: the user-level mcpServers, which the user maintains natively.
-# Everything else the session writes stays with the project -- trust, allowed
-# tools, app state -- which is what a native Claude Code whose config directory
-# this was would do.
+# ----- the config file: the `config` channel ----------------------------------
+# ~/.claude.json is app state -- onboarding, tips, caches -- plus three things that
+# are per project or user-authored: the per-project entries (folder trust, allowed
+# tools, MCP servers added for that project, the last opening prompt), the user-level
+# mcpServers, and the account. Bound whole it was two channels at once (leak study
+# rows 10 and 11): a sandboxed session read every other project's entry, and what it
+# wrote reached every other session. It is now the `config` channel (see
+# profile_channels above), and this is the profile's half of it.
 _claude_config_project() {
-  # The project the copy is keyed by: the background project for a wrapped
-  # worker (the daemon's cwd is not it), the session's cwd otherwise. The engine
-  # asks the same question for a sandbox's connection state, so the answer lives
-  # there and this delegates -- two copies of it would drift, and the drift
-  # would key a worker's config copy and its connections differently.
+  # The project the file is keyed by: the background project for a wrapped worker
+  # (the daemon's cwd is not it), the session's cwd otherwise. The engine asks the
+  # same question for a sandbox's connection state, so it answers here too.
   _as_project_dir
 }
-_claude_config_copy() { # $1 = project dir
+# The role's store for the config file at MODE, for a project.
+_claude_config_store() { # $1 = project dir, $2 = mode
+  local inside="$HOME/.claude/.claude.json"
+  inside="${inside//\//_}"
+  printf '%s/claude/%s/%s/config/%s/%s' "$(_as_state_dir)" "$(_claude_project_slug "$1")" \
+    "${_role:-default}" "$2" "${inside#_}"
+}
+# The 0.3 location: one copy per project, beside the role directories.
+_claude_config_legacy() { # $1 = project dir
   printf '%s/claude/%s/claude.json' "$(_as_state_dir)" "$(_claude_project_slug "$1")"
 }
-# The user-level mcpServers block: carried into the project's copy and refreshed
-# from the host file (inherit, the default), or left out (none). Leaving it out
-# closes the one MCP channel a per-project copy keeps open -- a server
-# configured natively is otherwise live in every project's sandbox, and a
-# stdio server is a command that runs at session start. Precedence: --user-mcp
-# > AGENT_SANDBOX_CLAUDE_USER_MCP > [claude] user-mcp (an approved dot-file) >
-# inherit. Closing is a narrowing, so none of the forms is trust-gated beyond
-# the dot-file's own approval. Prints "MODE SOURCE".
-_claude_user_mcp_mode() {
-  local raw="" src="default" _pkv
+# _claude_config_filter SOURCE VIEW -- the seed the seeding modes read: every
+# top-level key and, of the per-project entries, only this project's. Without a
+# working python3 the view is the whole file, and the launch says so: a seed that is
+# the whole file is the 0.2.0 exposure, but refusing the launch for it would be worse
+# than saying it, and the file is still never written back.
+_claude_config_filter() {
+  local src="$1" view="$2" why="" rc=0
+  if command -v python3 >/dev/null 2>&1; then
+    AS_SRC="$src" AS_VIEW="$view" AS_PROJECT="$(_claude_config_project)" python3 - <<'PY' 2>/dev/null || rc=$?
+import json, os
+src, view, project = (os.environ[k] for k in ("AS_SRC", "AS_VIEW", "AS_PROJECT"))
+try:
+    with open(src, encoding="utf-8") as fh:
+        n = json.load(fh)
+except (OSError, ValueError):
+    n = {}
+if not isinstance(n, dict):
+    n = {}
+v = {k: val for k, val in n.items() if k != "projects"}
+projects = n.get("projects")
+v["projects"] = {project: projects[project]} if isinstance(projects, dict) and project in projects else {}
+fd = os.open(view, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    json.dump(v, fh)
+PY
+    ((rc)) && why="python3 failed (exit $rc)"
+  else
+    why="python3 missing"
+  fi
+  if [[ -n "$why" ]]; then
+    rm -f -- "$view" 2>/dev/null
+    (umask 077 && cp -- "$src" "$view") || return 1
+    _as_msg "$why: this project's config file is seeded from the whole ~/.claude.json, other projects' entries included"
+  fi
+  return 0
+}
+# `user-mcp` is gone (#132): it worked by editing mcpServers in the project's copy,
+# and the engine no longer edits anything inside the config file. Refused in every
+# form, naming what to write instead, as the 0.3 renames were.
+_claude_user_mcp_refuse() {
+  local src="" _pkv
   # shellcheck disable=SC2154 # engine locals, by dynamic scope
   if ((${_user_mcp_flag_set:-0})); then
-    raw="$_user_mcp_flag" src="--user-mcp"
+    src="--user-mcp"
   elif [[ -n "${AGENT_SANDBOX_CLAUDE_USER_MCP:-}" ]]; then
-    raw="$AGENT_SANDBOX_CLAUDE_USER_MCP" src="AGENT_SANDBOX_CLAUDE_USER_MCP"
+    src="AGENT_SANDBOX_CLAUDE_USER_MCP"
   else
     for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
-      [[ "$_pkv" == user-mcp=* ]] && {
-        raw="${_pkv#user-mcp=}"
-        src="[claude] user-mcp"
-      }
+      [[ "$_pkv" == user-mcp=* ]] && src="[claude] user-mcp"
     done
   fi
-  raw="${raw//[[:space:]]/}"
-  case "$raw" in
-    "" | inherit) printf 'inherit %s' "$src" ;;
-    none) printf 'none %s' "$src" ;;
-    *)
-      _as_msg "user-mcp ($src): unknown value '$raw' (want inherit or none); keeping inherit"
-      printf 'inherit %s' "$src"
-      ;;
-  esac
+  [[ -z "$src" ]] && return 0
+  _as_msg "$src: user-mcp was removed -- the engine no longer edits the MCP servers inside the config file. To keep your user-level MCP servers out of this project's sandbox, give it a config file of its own: 'config = own' under [connect] (or --connect 'config=own native')."
+  return 1
 }
 _claude_config_prepare() {
+  _claude_user_mcp_refuse || return 1
   # `native` means parity with no sandbox, and a native Claude Code reads
-  # ~/.claude.json itself -- the whole file, every project's entry, the account,
-  # the user's MCP servers. So the per-project copy is skipped and the host file
-  # is bound where the agent looks for it. This is the pre-0.2.1 behaviour that
-  # #90 closed, reachable only through a flag you have to type, which is the
-  # whole reason that gate exists. See _as_preset_is_native in the engine.
+  # ~/.claude.json itself. The engine binds nothing for a relocated channel path
+  # under `native` (see _as_channel_source), and the profile drops the relocation:
+  #
+  # CLAUDE_CONFIG_DIR goes with it. The engine sets it because a read-only $HOME
+  # loses the lock and the rename Claude Code writes beside its config file
+  # (#91) -- and that remount is exactly what `native` skips. Keeping the
+  # workaround without the problem would leave the config at a path no native
+  # session uses, which was the first divergence this preset turned up.
+  #
+  # CLAUDE_CODE_PROJECT_DIR_NAME stops being refused for the same reason: it is
+  # only honoured when CLAUDE_CONFIG_DIR is set, and there is no per-project
+  # scoping left here for it to escape.
   # shellcheck disable=SC2154 # engine local, by dynamic scope
   if [[ "${_preset:-}" == native ]]; then
-    # NOTHING TO BIND AND NOTHING TO RELOCATE. Under `native` the engine binds the
-    # host's own $HOME, writable, so ~/.claude and ~/.claude.json are already
-    # there at their real paths -- and a bind of a path onto itself inside that
-    # HOME is at best a no-op and at worst a failure the native launch would not
-    # have had (measured: bwrap refuses to mount over a symlink, which a versioned
-    # install can perfectly well have).
-    #
-    # CLAUDE_CONFIG_DIR goes with it. The engine sets it because a read-only $HOME
-    # loses the lock and the rename Claude Code writes beside its config file
-    # (#91) -- and that remount is exactly what `native` skips. Keeping the
-    # workaround without the problem would leave the config at a path no native
-    # session uses, which was the first divergence this preset turned up.
-    #
-    # CLAUDE_CODE_PROJECT_DIR_NAME stops being refused for the same reason: it is
-    # only honoured when CLAUDE_CONFIG_DIR is set, and there is no per-project
-    # scoping left here for it to escape.
     local -a _keep=()
     local _kv
     for _kv in "${profile_env_set[@]}"; do
@@ -389,80 +430,20 @@ _claude_config_prepare() {
     profile_env_refuse=()
     return 0
   fi
-  local native="$HOME/.claude.json" project copy dir mcp mcp_src
+  # THE 0.3 COPY BECOMES THE DEFAULT ROLE'S SEED-ONLY STORE, moved once. It holds what
+  # the project's sessions wrote -- folder trust, allowed tools, onboarding -- and a
+  # fresh seed would lose all of it for no reason.
+  local project legacy store
   project="$(_claude_config_project)"
-  copy="$(_claude_config_copy "$project")"
-  dir="$(dirname -- "$copy")"
-  read -r mcp mcp_src <<<"$(_claude_user_mcp_mode)"
-  [[ "$mcp" == none ]] && _as_info "user-level MCP servers left out of this project's config file (user-mcp=none via $mcp_src)"
-  (umask 077 && mkdir -p -- "$dir") || {
-    _as_msg "cannot create $dir for this project's config file"
-    return 1
-  }
-  # Seed or refresh through python3. Without a working python3 the copy is
-  # still per project -- the whole host file, made once, never refreshed --
-  # and the launch says so; what it never does is fall back to binding the
-  # host file itself, which would silently reopen the channel this closes.
-  local why="" rc=0
-  if command -v python3 >/dev/null 2>&1; then
-    AS_NATIVE="$native" AS_COPY="$copy" AS_PROJECT="$project" AS_USER_MCP="$mcp" python3 - <<'PY' 2>/dev/null || rc=$?
-import json, os
-native, copy, project = (os.environ[k] for k in ("AS_NATIVE", "AS_COPY", "AS_PROJECT"))
-inherit_mcp = os.environ["AS_USER_MCP"] != "none"
-def load(path):
-    try:
-        with open(path, encoding="utf-8") as fh:
-            d = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    return d if isinstance(d, dict) else None
-n = load(native) or {}
-c = load(copy)
-if c is None:
-    # seed: every top-level key (minus the user-level mcpServers when left out),
-    # and of the per-project entries only this project's
-    c = {k: v for k, v in n.items() if k != "projects" and (inherit_mcp or k != "mcpServers")}
-    projects = n.get("projects")
-    c["projects"] = {project: projects[project]} if isinstance(projects, dict) and project in projects else {}
-else:
-    # refresh: the user-level MCP servers follow the host file, added and
-    # removed -- or stay out, when left out
-    if inherit_mcp and "mcpServers" in n:
-        c["mcpServers"] = n["mcpServers"]
-    else:
-        c.pop("mcpServers", None)
-tmp = "%s.tmp.%d" % (copy, os.getpid())
-fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(c, fh)
-    os.replace(tmp, copy)
-except BaseException:
-    try:
-        os.unlink(tmp)
-    except OSError:
-        pass
-    raise
-PY
-    ((rc)) && why="python3 failed (exit $rc)"
-  else
-    why="python3 missing"
+  legacy="$(_claude_config_legacy "$project")"
+  store="$(_claude_config_store "$project" seed-only)"
+  if [[ -f "$legacy" && ! -e "$store" && "${_role:-default}" == default ]]; then
+    if (umask 077 && mkdir -p -- "$(dirname -- "$store")") && mv -- "$legacy" "$store"; then
+      _as_info "config: this project's config file moved to the default role's store"
+    else
+      _as_msg "config: could not move $legacy to $store; it is left where it is"
+    fi
   fi
-  if [[ -n "$why" && "$mcp" == none ]]; then
-    # An explicit narrowing that cannot be applied is refused, never skipped:
-    # a whole copy carries the block, and there is no way to strip it here.
-    _as_msg "$why: user-mcp=none (via $mcp_src) needs python3 to leave the user-level mcpServers out of this project's config file; refusing to launch with them in"
-    return 1
-  elif [[ -n "$why" && ! -e "$copy" ]]; then
-    (umask 077 && cp -- "$native" "$copy") || {
-      _as_msg "could not copy $native to $copy"
-      return 1
-    }
-    _as_msg "$why: this project's config file is a whole copy of ~/.claude.json, other projects' entries included, and will not be refreshed"
-  elif [[ -n "$why" ]]; then
-    _as_msg "$why: this project's config file is not refreshed from ~/.claude.json"
-  fi
-  profile_config_binds+=("$copy"$'\t'"$HOME/.claude/.claude.json")
   return 0
 }
 
@@ -533,6 +514,21 @@ profile_handle_subcommand() {
   return "$rc"
 }
 
+# _claude_mcp_user_scope ARGV... -- is this `mcp ... --scope user`?
+_claude_mcp_user_scope() {
+  [[ "${1:-}" == mcp ]] || return 1
+  shift
+  while (($#)); do
+    case "$1" in
+      --scope=user | -s=user) return 0 ;;
+      --scope | -s) [[ "${2:-}" == user ]] && return 0 ;;
+      --) return 1 ;;
+    esac
+    shift
+  done
+  return 1
+}
+
 # profile_route [AGENT ARGS...] -- engine hook (see the engine's profile_route
 # call). Called for a launch that is neither a wrapper spawn, a --trust review,
 # nor a management verb (those are handled earlier). Decides from the effective
@@ -547,6 +543,16 @@ profile_handle_subcommand() {
 # shellcheck disable=SC2154
 profile_route() {
   local raw="" src="" tok
+  # UNDER `config = read-only`, A USER-SCOPE `claude mcp` TYPED AT YOUR SHELL RUNS
+  # NATIVELY (#119). The sandbox's config file is then the native file, read-only, so
+  # inside the command could only fail; what you mean by "user scope" is your own
+  # file, and this is you at your own shell. Never from inside a sandbox, where an
+  # agent could otherwise reach the native file through it, and never local scope,
+  # which is the project's own entry and stays inside in every mode.
+  if [[ -z "${AGENT_SANDBOX:-}" && "${_connect_mode[config]:-}" == read-only ]] && _claude_mcp_user_scope "$@"; then
+    _as_info "config is read-only here, so this user-scope 'claude mcp' runs natively, on your own ~/.claude.json"
+    exec "$profile_bin" "$@"
+  fi
   if ((_sandbox_flag_set)); then
     raw="$_sandbox_flag" src="--sandbox"
   elif [[ -n "${AGENT_SANDBOX_CLAUDE_SANDBOX:-}" ]]; then
@@ -662,7 +668,8 @@ _claude_bg_autotrust() {
     return 0
   }
   [[ -e "$cj" ]] || printf '{}' >"$cj"
-  for f in "$cj" "$(_claude_config_copy "$proj")"; do
+  for f in "$cj" "$(_claude_config_store "$proj" seed-only)" \
+    "$(_claude_config_store "$proj" copy)" "$(_claude_config_store "$proj" own)"; do
     [[ "$f" == "$cj" || -e "$f" ]] || continue
     _claude_mark_trust "$f" "$proj"
   done
@@ -1029,7 +1036,7 @@ profile_isolate() {
     key="${kv%%=*}"
     val="${kv#*=}"
     case "$key" in
-      sandbox | user-mcp) ;; # read by profile_route and _claude_user_mcp_mode
+      sandbox | user-mcp) ;; # read by profile_route and _claude_user_mcp_refuse
       hide)
         # Word-splitting $val is the point: the value is a space-separated list.
         # shellcheck disable=SC2086

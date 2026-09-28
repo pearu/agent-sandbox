@@ -17,7 +17,6 @@ setup() {
   # The engine's own sandbox key: <state>/<profile>/<project slug>/<role>/
   SBOX="$STATE/claude/${PROJ//[^A-Za-z0-9-]/-}/default"
   CFG="$H/home/.config/agent-sandbox"
-  COPY="$STATE/claude/${PROJ//[^A-Za-z0-9-]/-}/claude.json"
 }
 
 # The name a channel path gets inside a slot directory: the engine's _as_iso_slug,
@@ -442,12 +441,15 @@ EOF
 }
 
 @test "a preset moves ONLY the channels the engine manages as connections" {
-  # The design's table also lists memory, transcripts, the config file and the
-  # rest. Each still has machinery of its own, and a preset that silently claimed
-  # to position them would leave the user believing a channel was shut.
+  # The design's table also lists memory, transcripts and the rest. Each still has
+  # machinery of its own, and a preset that silently claimed to position them would
+  # leave the user believing a channel was shut. The config file is one of the
+  # managed ones since #119, so it moves: to its own store under `isolated`.
   run_engine AGENT_SANDBOX_PRESET=isolated -- claude --version
   [ "$status" -eq 0 ]
-  argv_has --bind "$COPY" "$H/home/.claude/.claude.json" # the config file, untouched by presets
+  argv_has --bind "$SBOX/config/own/$(slugify "$H/home/.claude/.claude.json")" "$H/home/.claude/.claude.json"
+  # memory is still scoped by its own machinery, whatever the preset
+  run ! grep -qF "$SBOX/memory" "$H/argv"
 }
 
 @test "native is refused from the environment: only the flag can turn isolation off" {
@@ -494,7 +496,7 @@ EOF
   # read-only $HOME loses the writes beside it -- has nothing left to work around.
   run_engine -- claude --preset native --version
   [ "$status" -eq 0 ]
-  run ! argv_has --bind "$COPY" "$H/home/.claude/.claude.json"
+  run ! grep -qF "$H/home/.claude/.claude.json" "$H/argv" # nothing bound where the config file would go
   run ! grep -q 'CLAUDE_CONFIG_DIR' "$H/argv"
 }
 
