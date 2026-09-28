@@ -394,6 +394,84 @@ what the user explicitly asked to change. `inherit` expresses that for configura
 `native` asserts it absolutely, which is why a difference between `--preset native` and
 `--sandbox none` is a bug rather than a preference.
 
+## Path declarations
+
+A `[connect]` key that contains `/` names a **path** instead of a channel, with the same
+modes ([#106](https://github.com/pearu/agent-sandbox/issues/106)):
+
+```ini
+[connect]
+./scratch/ = own         # a directory of the sandbox's own, at ./scratch
+./AGENT.md = read-only   # a file
+/data = read-only        # what [ro] /data does today
+instructions = copy-on-write native   # no slash: a channel name, exactly as before
+```
+
+**The lexical rule** is what keeps a typo safe. A key with no `/` is a channel name, so
+`instrutions = own` still refuses the launch instead of declaring something; `AGENT.md =
+own` is refused the same way and `./AGENT.md = own` is the path form. A trailing `/` says
+the path must be a directory. A mistyped *path* can still declare an unwanted one, which
+is the exposure `[ro]` already carries.
+
+**The key is always a path inside the sandbox**, and with no source given the source is
+the same path outside. A relative key is relative to the project, whichever form it came
+from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only storage
+while `~/notes = read-only` puts your real one there; a key under `$HOME`, outside the
+project and every channel, says which of the two it is at launch. No explicit source is
+accepted yet: `outside:<path>` is a follow-up.
+
+**Every mode is checked alike, `own` included**, although `own` exposes nothing — one
+rule is easier to state and to trust, and loosening it later breaks no one. It is
+`[ro]`/`[rw]`'s rule (not `/`, `$HOME` or a parent of it; nothing that is, is inside or
+contains a secret store or the sandbox's control plane) plus one of its own: **not the
+project or a parent of it**, because a declaration is bound after the project and would
+cover it. Both the key and what it resolves to are checked, and the resolved path is
+checked again at bind time, so a symlink repointed in between cannot mount a refused
+target. Two declarations one inside the other are refused; the same path declared twice
+is an override, later wins, as for a channel.
+
+**A path that does not exist is skipped**, with a notice, and takes effect at the first
+launch after it does — every mode but `own` promises something about the path outside,
+and the engine creating it there to have something to bind would break that. The one
+exception is a trailing `/` under `own`, which needs nothing outside and creates the
+sandbox's directory. bwrap still needs a mount point for it, so an empty directory
+appears at that path outside too — in the project, for `./scratch/` — the same side
+effect a narrowed channel has.
+
+**A file** is allowed, with two permanent limits said at launch: it is a mount point, so
+it cannot be deleted or renamed from inside, and `copy-on-write` on a file is `copy`,
+since overlayfs cannot stack on one file.
+
+**Inside a channel, or over one**, a declaration is allowed, says so, and wins there:
+`~/.claude/rules/team/ = own` under `instructions = read-only` gives the sandbox its own
+`team/` and leaves the rest of `rules/` read-only.
+
+**Presets never move a declaration.** A preset positions the channels the profile
+declares; a path has no position until someone writes one.
+
+Declarations are bound with the `[ro]`/`[rw]` binds they are meant to replace — after the
+working tree, which would otherwise cover every declaration inside the project. That was
+measured the first time this ran under the real bwrap: bound earlier, `./data =
+read-only` was writable and `./scratch/ = own` showed the project's files.
+
+**Not in this piece:** a directory path at `copy-on-write` is refused for now,
+because an overlay the launch chooses cannot join the holder, whose set of mounts is fixed
+per sandbox; the keeper (#121) removes that reason. `--reset-connection` takes channel names
+only until `--reset <channel|path>` (#126). A per-role scratchpad is already what
+`./scratch/ = own` gives, since a role is the instance.
+
+### Nested sandboxes: persistence is not enforced
+
+Every source and check resolves in the namespace where the engine runs, so an engine
+inside a sandbox applies these rules to the `/`, `$HOME` and project it sees, and can
+only bind what the outer sandbox shows it. Nesting only narrows.
+
+It also means **persistence across relaunches cannot be enforced when nesting.** The inner
+engine's state directory is under its `$HOME`, which in the outer sandbox is a tmpfs, and
+the outer never binds its own state directory in. So everything an inner sandbox keeps —
+`own` slots, `copy` copies, `copy-on-write` upper layers, for paths and channels alike —
+lasts as long as the outer session and no longer.
+
 ## Roles, the keeper and storage: agreed, not built
 
 **None of this section is implemented.** It records the decisions of 2026-09-24 to 27, filed
@@ -591,11 +669,13 @@ mode = auto                # auto | off -- what copy-on-write is implemented wit
 
 [connect]                  # channel = mode [source] [scope]; source: native | sandbox:<project>[/<role>] | outside:<path>
                            # scope: nothing (the role) | run-scoped | process-scoped (agreed, not built)
+                           # a key with a `/` is a path: see "Path declarations"
 instructions = copy-on-write native
 skills = copy native
 memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today
 tools = own                                 # what user-mcp = none means today
 artefacts = read-write native
+./scratch/ = own                            # a path, not a channel
 ```
 
 Launch-time forms: `--connect 'memory=read-only sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
