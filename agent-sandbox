@@ -1172,8 +1172,16 @@ _as_connect_parse() {
     "") ;;         # the role: across runs, until reset or deleted
     run-scoped) ;; # one run of the role's launch (#105): see _as_run_scoped_clear
     join-scoped)
-      _as_msg "connect ($where): scope 'join-scoped' is not implemented in this engine (asked for '$ch'): every process of a role is joined into one launch and shares its mounts (#121), so a store of one join's own needs a mount namespace of the join's own (#147). Refusing rather than accepting it: a scope that parses and is never applied reads as isolation that is not there."
-      return 1
+      # One join (#147): a store per joined command, in a mount namespace of the join's
+      # own. `own` is what it is for; `read-only` writes nothing, so it is the plain
+      # bind. A seeded store per join is not built yet.
+      case "$mode" in
+        own | read-only) ;;
+        *)
+          _as_msg "connect ($where): '$mode join-scoped' is not implemented in this engine (asked for '$ch'); a join-scoped store is built for 'own' so far (#147). Refusing rather than serving a store that outlives the join."
+          return 1
+          ;;
+      esac
       ;;
     process-scoped)
       _as_msg "connect ($where): scope 'process-scoped' was renamed: write 'join-scoped' -- a store for one join, which a joined command and everything it starts share (#147)."
@@ -1423,6 +1431,10 @@ _as_connect_apply() {
         fi
         continue
       fi
+      if [[ "$mode" == own && "${_connect_scope[$ch]:-}" == join-scoped ]]; then
+        _as_join_scoped_bind "$kind" "$path" || return 1
+        continue
+      fi
       case "$mode" in
         own)
           # A private slot that OUTLIVES the session, per sandbox and channel.
@@ -1608,6 +1620,16 @@ _as_connect_apply_paths() {
     mode="${_connect_mode[$p]}"
     base="$rolebase/@paths"
     [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
+    if [[ "$mode" == own && "${_connect_scope[$p]:-}" == join-scoped ]]; then
+      if ((${_connect_isdir[$p]})) || [[ -d "$p" ]]; then
+        _as_join_scoped_bind dir "$p" || return 1
+      elif [[ -e "$p" ]]; then
+        _as_join_scoped_bind file "$p" || return 1
+      else
+        _as_msg "connect: '$key' does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
+      fi
+      continue
+    fi
     if [[ ! -e "$p" ]]; then
       if [[ "$mode" == own ]] && ((${_connect_isdir[$p]})); then
         _as_connect_path_warn "$p" "$key" "$mode"
@@ -2130,6 +2152,7 @@ _as_keeper_supervise() {
   flock 8 # held already when it ended because it was idle; taken when it ended from inside
   _as_session_cleanup
   _as_run_scoped_clear "$sb"
+  _as_join_scoped_clear "$sb"
   rm -rf -- "$kd"
   flock -u 8
   exit 0
@@ -2148,6 +2171,7 @@ _as_keeper_count() {
       _kc_n=$((_kc_n + 1))
     else
       rm -f -- "$f"
+      _as_join_scoped_clear "${1%/keeper}" "j${f##*/}" # a join killed with -9
     fi
   done
   return 0
@@ -2223,6 +2247,52 @@ _as_keeper_shutdown() {
   return 1
 }
 
+# ----- join-scoped: a store for one join (#147) -------------------------------------
+# A joined process shares the keeper's mounts, so a store of one join's own lives in a
+# mount namespace of the join's own, which components/join.py makes (see there). What
+# the launch provides: an empty, read-only mount point at each join-scoped path -- what
+# the keeper, and anything not joined through join.py, sees there -- and a STAGING
+# directory, <sandbox>/@join-stage, bound read-write at a hidden inside path, through
+# which each join's stores reach the sandbox: a bind's source has to be inside the
+# caller's mount namespace, and the role's state directory is not (measured,
+# probes/join-scoped-spike.py). A join's stores then move out of staging to
+# <sandbox>/@join/<id> before its command starts, and go when the join ends.
+_as_join_stage_inside() { printf '/run/agent-sandbox-stage'; }
+
+# _as_join_scoped_bind KIND PATH -- the launch's side of one join-scoped path.
+# shellcheck disable=SC2154
+_as_join_scoped_bind() {
+  local kind="$1" path="$2" empty sb
+  _as_session_begin || return 1
+  empty="$_session_dir/connect/@join/$(_as_iso_slug "$path")"
+  if [[ "$kind" == dir ]]; then
+    mkdir -p -- "$empty" || return 1
+  else
+    mkdir -p -- "$(dirname -- "$empty")" || return 1
+    : >"$empty" || return 1
+    _as_connect_placeholder "$path"
+  fi
+  args+=(--ro-bind "$empty" "$path")
+  if ((! _join_stage_bound)); then
+    sb="$(_as_sandbox_dir)"
+    mkdir -p -- "$sb/@join-stage" "$sb/@join" || return 1
+    args+=(--bind "$sb/@join-stage" "$(_as_join_stage_inside)")
+    _join_stage_bound=1
+  fi
+  _join_scoped+=("$kind"$'\t'"$(_as_iso_slug "$path")"$'\t'"$path")
+}
+
+# _as_join_scoped_clear SANDBOXDIR [ID] -- remove one join's stores, or every join's.
+_as_join_scoped_clear() {
+  local d
+  for d in "$1/@join-stage${2:+/$2}" "$1/@join${2:+/$2}"; do
+    [[ -e "$d" ]] || continue
+    chmod -R u+rwX -- "$d" 2>/dev/null
+    rm -rf -- "$d"
+  done
+  return 0
+}
+
 # _as_run_scoped_clear SANDBOXDIR -- discard every run-scoped store of the role: its
 # @run directory (#105). Called at a keeper's COLD START, before anything is built or
 # mounted, and by the supervisor once the launch has ended. The start is what makes it
@@ -2257,6 +2327,8 @@ _as_keeper_start() {
   fi
   printf '%s\n' "${_session_dir:-}" >"$kd/session"
   printf '%s\n' "${_seccomp_bpf:-}" >"$kd/seccomp"
+  # The join-scoped paths, for each join to make its own stores for.
+  ((${#_join_scoped[@]})) && printf '%s\n' "${_join_scoped[@]}" >"$kd/join-scoped"
   (_as_keeper_supervise "$sb" -- "$@") &
   local sup=$!
   for ((i = 0; i < 1500; i++)); do
@@ -2309,6 +2381,18 @@ _as_keeper_join() {
   local -a jargs=()
   [[ -n "$bpf" ]] && jargs+=(--seccomp "$bpf")
   jargs+=(--unset SHLVL --env "TERM=${TERM:-xterm-256color}")
+  # This join's own stores, when the launch declares join-scoped paths.
+  local jid="" jkind jname jpath
+  if [[ -s "$kd/join-scoped" ]]; then
+    jid="j$BASHPID"
+    mkdir -p -- "$sb/@join-stage/$jid" "$sb/@join" || return 1
+    jargs+=(--private "$sb/@join-stage" "$(_as_join_stage_inside)" "$sb/@join" "$jid")
+    while IFS=$'\t' read -r jkind jname jpath; do
+      [[ -n "$jname" ]] || continue
+      if [[ "$jkind" == dir ]]; then mkdir -p -- "$sb/@join-stage/$jid/$jname"; else : >"$sb/@join-stage/$jid/$jname"; fi
+      jargs+=(--private-path "$jname" "$jpath")
+    done <"$kd/join-scoped"
+  fi
   for v in LANG LC_ALL LC_CTYPE LC_MESSAGES LC_NUMERIC LC_TIME LC_COLLATE TZ COLORTERM NO_COLOR FORCE_COLOR; do
     if [[ -n "${!v+x}" ]]; then jargs+=(--env "$v=${!v}"); else jargs+=(--unset "$v"); fi
   done
@@ -2319,6 +2403,7 @@ _as_keeper_join() {
   python3 "$join" "${jargs[@]}" "$target" -- "$@" || rc=$?
   trap - INT QUIT
   [[ -n "${_join_brief:-}" ]] && rm -rf -- "$_join_brief"
+  [[ -n "$jid" ]] && _as_join_scoped_clear "$sb" "$jid"
   local last=0
   if _as_keeper_lock "$sb" 2>/dev/null; then
     rm -f -- "$rec"
@@ -3430,6 +3515,9 @@ agent_sandbox() (
   # The command line that runs the sandbox: bwrap, or pasta running bwrap. Set by the
   # network mode, run by _as_launch.
   local -a _launch=()
+  # The join-scoped paths the launch declares (#147): `kind<TAB>name<TAB>path`.
+  local -a _join_scoped=()
+  local _join_stage_bound=0
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   local _preset_flag="" _preset=inherit _role_flag="" _role_flag_set=0
   while (($# > 0)); do
@@ -4404,6 +4492,7 @@ agent_sandbox() (
     # A COLD START: no keeper is live, the lock is held, and this invocation builds the
     # next launch. What a run-scoped store held belongs to a run that is over.
     _as_run_scoped_clear "$_keeper_sb"
+    _as_join_scoped_clear "$_keeper_sb"
   fi
 
   if declare -F profile_prepare >/dev/null; then

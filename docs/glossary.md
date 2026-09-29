@@ -213,8 +213,8 @@ is `x`. What survives from #104 is the `none` preset, the role-suffix grammar an
 trust on the project.
 
 **Storage scope** (#125). Storage is keyed by the role, so the scope token of a connection
-(`channel = mode [source] [scope]`) names only a *shorter* lifetime. `run-scoped` is
-*shipped*; `join-scoped` is *agreed, not built* (#147):
+(`channel = mode [source] [scope]`) names only a *shorter* lifetime. `run-scoped` and
+`join-scoped` (for `own`) are *shipped*:
 
 | written | lifetime |
 |---|---|

@@ -131,11 +131,13 @@ Sections:
   ends, so `own` starts empty, `copy` re-seeds and `copy-on-write` gets a fresh upper
   layer every run -- for what the agent itself authored and should not run again later
   (`workflows`, `agents`). Everything joined into that run shares it; at `read-only` it
-  changes nothing, since nothing is written. `join-scoped` (one join: a joined command
-  and all it starts) parses and is **refused**: every process of a role shares its
-  launch's mounts, so a store of one join's own needs a mount namespace of the join's
-  own, which is #147; a scope that were accepted and never applied would read as
-  isolation that is not there. `process-scoped`, its first name, is refused naming it.
+  changes nothing, since nothing is written. **`join-scoped`** is one join -- a joined
+  command and everything it starts: `./scratch/ = own join-scoped` gives every `claude
+  --exec` or session joined into a running role a scratch of its own, empty when it
+  starts and removed when it ends, which no other join can see. It is built for `own`
+  (and `read-only`, which is then the plain bind); a seeded store per join (`copy`,
+  `seed-only`, `copy-on-write`) is refused as not built (#147). `process-scoped`, its
+  first name, is refused naming it.
   The first draft's other names are refused with what to write instead:
   `sandbox-scoped` (the default has no name), `project-scoped` (sharing across roles is a
   `sandbox:<project>/<role>` source, not a scope) and `session-scoped` (a store of its own

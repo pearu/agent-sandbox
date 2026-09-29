@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets, roles, the keeper, background sessions inside a role, the role verbs, the `run-scoped` storage scope and the `config`, `transcripts` and `logs` channels are implemented and under test; the `join-scoped` scope is agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
+**Status: the scale, the presets, roles, the keeper, background sessions inside a role, the role verbs, the `run-scoped` and `join-scoped` storage scopes and the `config`, `transcripts` and `logs` channels are implemented and under test (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -485,8 +485,7 @@ lasts as long as the outer session and no longer.
 ## Roles, the keeper and storage
 
 **Built:** roles, the keeper, background sessions inside the role, the role verbs, `seed-only`,
-the config file, no merge-back and the `run-scoped` scope. **Agreed, not built:** the
-`join-scoped` scope (#147), marked below. The section records the decisions of 2026-09-24 to 28, filed
+the config file, no merge-back and the storage scopes (`join-scoped` for `own`, #147). The section records the decisions of 2026-09-24 to 28, filed
 as [#119](https://github.com/pearu/agent-sandbox/issues/119),
 [#120](https://github.com/pearu/agent-sandbox/issues/120),
 [#121](https://github.com/pearu/agent-sandbox/issues/121),
@@ -636,7 +635,7 @@ Storage is keyed by the role, so the scope token of a connection (`channel = mod
 |---|---|
 | *(nothing)* | the role: across keepers, until `--delete` or `--reset` |
 | `run-scoped` | one keeper: created when it starts, gone when it exits (#105). *Built*: the stores live under `<sandbox>/@run/`, cleared at every cold start (so a run killed with `-9` leaves nothing for the next) and by the supervisor once the launch has ended |
-| `join-scoped` | one join: a joined command and everything it starts. *Not built*, and refused: a joined process shares the launch's mounts (#121), so a store of one join's own needs a mount namespace of the join's own (#147). Renamed from `process-scoped`, which is refused with the new name |
+| `join-scoped` | one join: a joined command and everything it starts. *Built* for `own` (#147): the join gets a mount namespace of its own and binds its store over the path; the keeper shows an empty read-only mount point there. The stores reach the sandbox through a staging directory the keeper binds, and each moves out of it before its command starts, so no join can reach another's -- not even through the keeper payload's `/proc/<pid>/root`. Removed when the join ends, or at the supervisor's sweep for a join killed with `-9`. A seeded store per join is not built. Renamed from `process-scoped`, which is refused with the new name |
 
 `sandbox-scoped` is not nameable (the default needs no word); `project-scoped` is a
 `sandbox:<project>/<role>` source at `read-write`, not a scope; `session-scoped` is a role per
@@ -744,7 +743,7 @@ skills = read-only         # later sections override earlier ones, per key
 mode = auto                # auto | off -- what copy-on-write is implemented with
 
 [connect]                  # channel = mode [source] [scope]; source: native | sandbox:<project>[/<role>] | outside:<path>
-                           # scope: nothing (the role) | run-scoped | join-scoped (not built)
+                           # scope: nothing (the role) | run-scoped | join-scoped
                            # a key with a `/` is a path: see "Path declarations"
 instructions = copy-on-write native
 skills = copy native
