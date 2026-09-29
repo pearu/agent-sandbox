@@ -517,7 +517,7 @@ role's `seed-only` copy at the first launch that finds it. A background worker
 (`claude --bg`) is keyed by the project it was launched for, not by the daemon's
 directory, and is pre-trusted in the role's copy as it is in the native file.
 Without a working `python3` the seed is the whole native file, and the launch
-says so. `--reset-connection config` discards the role's copy; the next launch
+says so. `--reset config` discards the role's copy; the next launch
 seeds it again.
 
 To keep your user-level MCP servers out of a project's sandbox, give it a config

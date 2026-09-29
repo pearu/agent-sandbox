@@ -272,14 +272,15 @@ bubblewrap 0.11 or newer; cannot stack on a single file. *shipped*
 sandbox's copy and a recorded manifest of what was last seeded
 (`components/connect-sync.py`). *shipped*
 
-**Reset.** `--reset-connection CHANNEL`: discard what the sandbox holds at a channel and
-take the source's version again, then exit. Refused while anything is joined into the
-role's keeper; an idle keeper is ended first. *shipped*; *agreed* (#126): renamed `--reset <channel|path>`.
+**Reset.** `--reset <channel|path>`: discard what the role holds at one channel or declared
+path, in whatever mode, and take the source's version again, then exit. Refused while
+anything is joined into the role's keeper; an idle keeper is ended first. *shipped* (#126);
+renamed from `--reset-connection`, which is refused with the new name.
 
-**Role verbs.** `--shutdown` (ends the keeper and everything in it, the daemon with its
-pool) is *shipped* (#123). *agreed, not built* (#126): `--status` (the keeper, what is
-joined, the daemon's sessions), `--delete` (removes the role's stores; refused while
-anything is joined, naming `--shutdown`), `--reset`.
+**Role verbs.** *shipped* (#123, #126): `--status` (the keeper, what runs in it, the
+daemon's sessions), `--shutdown` (ends the keeper and everything in it, the daemon with its
+pool), `--delete` (removes the role's stores; refused while anything runs in it, naming
+`--shutdown`), `--reset`.
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*

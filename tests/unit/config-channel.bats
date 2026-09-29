@@ -126,12 +126,12 @@ PY
   argv_has --bind "$(store seed-only)" "$INSIDE"
 }
 
-@test "--reset-connection config discards the store, and the next launch seeds a fresh filtered view" {
+@test "--reset config discards the store, and the next launch seeds a fresh filtered view" {
   run_engine -- claude --connect 'config=seed-only native' --version
   local s
   s="$(store seed-only)"
   printf '{"a":9,"projects":{}}' >"$NATIVE_CFG"
-  run_engine -- claude --reset-connection config
+  run_engine -- claude --reset config
   [ "$status" -eq 0 ]
   [ ! -e "$s" ]
   run_engine -- claude --connect 'config=seed-only native' --version

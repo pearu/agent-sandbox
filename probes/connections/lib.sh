@@ -503,7 +503,7 @@ conn_reset() {
   ((CONN_SKIP)) && return 0
   local out="$LEAK_RUN/$CONN_ID-reset.out"
   # </dev/null and a timeout, because the verb's shape is a guess until it lands: if a
-  # future engine treats --reset-connection as a pre-launch flag and then starts a
+  # future engine treats --reset as a pre-launch flag and then starts a
   # session, an unguarded call would block forever on a terminal that is not there --
   # hanging the suite instead of failing it. The exit code is KEPT, not swallowed, and
   # C8 and W6 assert on it, so the placeholder cannot rot into a no-op that always looks
@@ -511,7 +511,7 @@ conn_reset() {
   (
     cd "$LEAK_B" || exit 1
     env HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state" \
-      timeout 60 claude --reset-connection instructions
+      timeout 60 claude --reset instructions
   ) >"$out" 2>&1 </dev/null || CONN_RESET_RC=$?
   ((CONN_RESET_RC == 0)) || leak_say "reset exited $CONN_RESET_RC (see $(basename "$out"))"
   return 0
