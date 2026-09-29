@@ -11,14 +11,26 @@
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   make_harness
+  # A stub pasta that records what it was given and then runs the wrapper, as pasta
+  # does: the launch is a keeper, which has to come up behind it for the engine to
+  # join. A stub `ip` feeds the wrapper the gateway it reads inside the netns.
   cat >"$H/bin/pasta" <<'S'
 #!/usr/bin/env bash
-: >"${PASTA_DUMP:?}"
-for a in "$@"; do printf '%s\n' "$a" >>"$PASTA_DUMP"; done
+if [ -n "${PASTA_DUMP:-}" ]; then
+  : >"$PASTA_DUMP"
+  for a in "$@"; do printf '%s\n' "$a" >>"$PASTA_DUMP"; done
+fi
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+S
+  cat >"$H/bin/ip" <<'S'
+#!/usr/bin/env bash
+[ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"
 exit 0
 S
   printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/nft"
-  chmod +x "$H/bin/pasta" "$H/bin/nft"
+  chmod +x "$H/bin/pasta" "$H/bin/nft" "$H/bin/ip"
   make_fake_ca "$H/ca.pem"
   PROJ="$(cd "$H/proj" && pwd -P)"
 }
@@ -58,7 +70,6 @@ pasta_argv() {
   grepd 'setenv HTTPS_PROXY "\$pxy"' # proxy env points at that URL
   run ! grepd '10\.9\.9\.1'          # no gateway is baked in on the host side
   run ! grepd '10.0.2.2'             # not the old slirp gateway
-  [ ! -s "$H/argv" ]                 # bwrap did not run directly; it went via pasta
 }
 
 @test "strict: --host-port/--agent-port, the knobs and a trusted [net] section open exactly those TCP ports in pasta; none closes a direction" {
@@ -210,7 +221,7 @@ S
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 readlink /proc/self/fd/10 >"$BWRAP_DUMP.fd10" 2>/dev/null || echo "(no fd 10)" >"$BWRAP_DUMP.fd10"
-exit 0
+. "${0%/*}/keeper-tail"
 S
   chmod +x "$H/bin/pasta" "$H/bin/ip" "$H/bin/bwrap"
   mkdir -p "$H/seccomp"

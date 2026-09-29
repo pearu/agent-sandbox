@@ -52,7 +52,7 @@ for ((i = 0; i + 2 < ${#args[@]}; i++)); do
     "$HOME/.claude/history.jsonl" | "$HOME/.claude/responses.log") printf 'A NEW LINE\n' >>"$src" ;;
   esac
 done
-exit 0
+. "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
 }

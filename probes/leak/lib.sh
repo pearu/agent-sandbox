@@ -421,8 +421,13 @@ leak_read_sandboxed() {
   # state directory, outside what the validity gate snapshots.
   (
     cd "$cwd" || exit 1
+    # No idle grace: every read is a launch of its own that ends before the harness
+    # touches the source again. With the default a launch would join the previous
+    # one's keeper, still waiting out its grace -- whose file binds point at the
+    # inode they were made on, and whose empty mount-point files (bwrap makes them
+    # read-only) are only removed when it ends.
     local -a _env=(HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state"
-      AGENT_SANDBOX_NET="$net")
+      AGENT_SANDBOX_NET="$net" AGENT_SANDBOX_KEEPER_GRACE=0)
     # A connection spec carries spaces ("instructions=copy native"), so it goes into
     # the array as one element -- never through an unquoted ${x:+...}, which would
     # split it and hand the engine two half-settings.
@@ -587,7 +592,7 @@ leak_session_sandboxed() {
   shift 4
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" claude --quiet "$@" -p "$prompt"
+    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" AGENT_SANDBOX_KEEPER_GRACE=0 claude --quiet "$@" -p "$prompt"
   ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 

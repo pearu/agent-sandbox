@@ -35,16 +35,6 @@ teardown() {
 # which is the same pair the janitor uses and is immune to PID reuse, plus the
 # sandbox it is holding an overlay for. Detached from stdout, or a live child
 # holds bats' pipe open and the run hangs instead of finishing.
-fake_live_session() {
-  local d="$H/base/session.fake"
-  mkdir -p "$d"
-  sleep 120 >/dev/null 2>&1 &
-  FAKE_SESSION_PID=$!
-  printf '%s %s\n' "$FAKE_SESSION_PID" \
-    "$(awk '{print $22}' "/proc/$FAKE_SESSION_PID/stat")" >"$d/owner.id"
-  printf '%s\n' "$1" >"$d/connect.sandbox"
-}
-
 # Record approval of $H/proj/.agent-sandbox the way `--trust` would.
 approve_dotfile() {
   mkdir -p "$CFG/trust"
@@ -288,64 +278,73 @@ EOF
   [ ! -e "$upper/topic.md" ]
 }
 
-@test "--reset-connection REFUSES while a session of this sandbox is live" {
-  # It removes the very layers that session has mounted, and the conflict warning
+@test "--reset-connection REFUSES while something is joined into this role's keeper" {
+  # It removes the very layers the keeper has mounted, and the conflict warning
   # actively tells the user to run it -- reading that in one terminal while the
-  # session runs in another is the ordinary case, not an edge one.
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
-  fake_live_session "$SBOX"
+  # role runs in another is the ordinary case, not an edge one.
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   run_engine -- claude --reset-connection instructions
   [ "$status" -ne 0 ]
-  [[ "$output" == *"session of this sandbox is running"* ]]
+  [[ "$output" == *"role 'default' is running"* ]]
+  release_bg
 }
 
-@test "and it goes ahead once that session is gone" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
-  fake_live_session "$SBOX"
-  kill "$FAKE_SESSION_PID" 2>/dev/null
-  local i
-  for ((i = 0; i < 100; i++)); do
-    [[ -d "/proc/$FAKE_SESSION_PID" ]] || break
-    sleep 0.05
-  done
+@test "and it goes ahead once that join is gone" {
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  release_bg
   run_engine -- claude --reset-connection instructions
   [ "$status" -eq 0 ]
 }
 
-@test "a live session of ANOTHER sandbox does not block a reset" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
-  fake_live_session "$STATE/claude/some-other-project/default"
+@test "an IDLE keeper does not block a reset: it is ended first" {
+  # Within its grace an idle keeper still has the overlays mounted; the reset ends it
+  # rather than refusing, since nothing is using them.
+  local upper
+  upper="$SBOX/instructions/upper/$(slugify "$C/rules")"
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  release_bg
+  [ -e "$SBOX/keeper/id" ] # still there, waiting out its grace
+  mkdir -p "$upper"
+  printf 'SANDBOX\n' >"$upper/topic.md"
   run_engine -- claude --reset-connection instructions
   [ "$status" -eq 0 ]
+  [ ! -e "$SBOX/keeper/id" ]
+  [ ! -e "$upper/topic.md" ]
 }
 
-@test "WITHOUT a holder, a second live session is called out -- once" {
-  # With a holder there is nothing to warn about: every session shares one
-  # overlay. Without one, two sessions are two overlays over one layer, which
-  # overlayfs calls undefined. The stub bwrap exits immediately, so no holder
-  # ever records itself here and this is the fallback path by construction.
-  fake_live_session "$SBOX"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --quiet --version
+@test "a running keeper of ANOTHER role does not block a reset" {
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --role other --version
+  run_engine -- claude --reset-connection instructions
   [ "$status" -eq 0 ]
-  [[ "$output" == *"without a shared overlay that is undefined"* ]]
-  # once, not once per path in the channel
-  [ "$(grep -c 'without a shared overlay' <<<"$output")" -eq 1 ]
+  release_bg
 }
 
-@test "and says nothing when it is the only session" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+@test "a second launch of a running role joins it: one keeper, one set of mounts" {
+  # Two launches of one role would be two overlays over one upper layer, which
+  # overlayfs calls undefined. There is never a second: the second invocation is a
+  # join into the first one's keeper, and nothing is mounted for it.
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --quiet -p hi
   [ "$status" -eq 0 ]
-  [[ "$output" != *"without a shared overlay"* ]]
+  [ ! -s "$H/argv" ] # no second launch
+  join_has "$H/home/.local/share/claude/versions/2.1.300/claude" -p hi
+  # both joins name the same process
+  local a b
+  a="$(grep -B1 -m1 '^--$' "$H/join.bg" | head -1)"
+  b="$(grep -B1 -m1 '^--$' "$H/join" | head -1)"
+  [ -n "$a" ] && [ "$a" = "$b" ]
+  release_bg
 }
 
 @test "the overlay's lower layer is the SOURCE, so a directory made later shows up" {
   # An earlier version used an empty placeholder when the source directory was
-  # missing, to avoid creating anything in the user's own state. With a holder
-  # that is actively wrong: the lower is fixed when the overlay is mounted, so a
-  # directory the user creates afterwards would stay invisible for as long as the
-  # holder lives. The study caught it. An overlay can only track the source if
-  # the source IS the lower, which means creating it when it is absent -- one
-  # empty directory, in a tree bwrap already creates mount points in.
+  # missing, to avoid creating anything in the user's own state. With a launch that
+  # outlives its apps -- the holder then, the keeper now -- that is actively wrong:
+  # the lower is fixed when the overlay is mounted, so a directory the user creates
+  # afterwards would stay invisible for as long as the role runs. The study caught
+  # it. An overlay can only track the source if the source IS the lower, which
+  # means creating it when it is absent -- one empty directory, in a tree bwrap
+  # already creates mount points in.
   rm -rf "$C/rules"
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
@@ -358,18 +357,10 @@ EOF
   [ -d "$C/rules" ]
 }
 
-@test "a channel with TWO directories does not report the launch as a second session" {
-  # The session records the sandbox it is holding while the binds are still being
-  # assembled, so the second path of a channel found the first path's record --
-  # owner alive, sandbox matching -- and every launch warned about itself.
-  # `skills` is the only channel with two directories, which is why every test
-  # using `instructions` missed it.
+@test "a channel with TWO directories gets an overlay on each" {
   mkdir -p "$C/skills" "$C/commands"
-  fake_live_session "$STATE/claude/some-other-project/default"
   run_engine AGENT_SANDBOX_CONNECT='skills=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"without a shared overlay"* ]]
-  # both paths still got their overlay
   argv_has --overlay-src "$C/skills"
   argv_has --overlay-src "$C/commands"
 }

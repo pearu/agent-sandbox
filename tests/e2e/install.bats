@@ -213,19 +213,14 @@ X
   "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }
 
-@test "wrapper mode: claude --bg sandboxes the pooled worker through the installed launcher (issue #45)" {
-  # The whole background path: profile_route -> _claude_bg_launch -> wrapper ->
-  # a bwrapped --bg-spare. The fake plays the daemon (spawns one spare through
-  # the wrapper) and the worker (reports whether it ran sandboxed, via the
-  # engine's AGENT_SANDBOX marker). No proxy/port needed -- the spare reports,
-  # it does not fetch -- so this runs even when 8888 is busy. Must run while the
-  # launcher is installed, i.e. before the --uninstall test below.
+@test "wrapper mode is refused through the installed launcher until background sessions run inside the role (#123)" {
+  # With one launch per role (#121), a wrapped worker would be a second launch of the
+  # role beside its keeper, so the sandboxed --bg route is refused before any daemon
+  # is started. #123 brings the background path back, inside the role's launch.
   run launch --sandbox "fg bg" --bg 'do a thing'
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"spare:"* ]] # the daemon spawned a pooled worker through the wrapper
-  # ...and that worker ran bwrapped. The engine's own stderr (e.g. the seccomp
-  # notice) can land between "spare:" and this line, so don't require adjacency.
-  [[ "$output" == *"--bg-spare ran SANDBOXED"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--bg"*"#123"* ]]
+  [[ "$output" != *"spare:"* ]] # no daemon, no pooled worker
 }
 
 @test "wrapper mode off (no bg scope): claude --bg runs the worker natively, no wrapper set" {

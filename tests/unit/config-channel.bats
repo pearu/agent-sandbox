@@ -138,20 +138,23 @@ PY
   [ "$(json_get "$s" 'd["a"]')" = 9 ]
 }
 
-@test "without python3 the seed is the whole native file, and the launch says so" {
+@test "without python3 nothing is seeded: the launch is refused first, since every app is joined by python3" {
   mkdir -p "$H/nopy"
   local t
   for t in /usr/bin/*; do
     [[ "$(basename "$t")" == python3* ]] || ln -s "$t" "$H/nopy/$(basename "$t")" 2>/dev/null || true
   done
   run_engine PATH="$H/bin:$H/nopy" -- claude --connect 'config=seed-only native' --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"python3 missing"*"whole"* ]]
-  cmp "$(store seed-only)" "$H/native-before.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"needs python3"* ]]
+  [ ! -e "$(store seed-only)" ]
+  [ ! -s "$H/argv" ]
 }
 
-@test "a python3 that fails degrades like a missing one: the whole native file, said out loud" {
-  printf '#!/usr/bin/env bash\nexit 3\n' >"$H/bin/python3"
+@test "a python3 that fails the filter degrades to the whole native file, said out loud" {
+  # It fails the filter (a script on stdin) only: the join into the keeper is python3 too.
+  # shellcheck disable=SC2016 # the stub's own $1 and $@
+  printf '#!/usr/bin/env bash\n[ "$1" = - ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
   run_engine -- claude --connect 'config=seed-only native' --version
   [ "$status" -eq 0 ]
@@ -177,7 +180,7 @@ if [[ "${1:-}" == --help ]]; then printf '    --overlay RWSRC WORKDIR DEST Mount
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 [ -e "$HOME/.claude/.claude.json" ] || : >"$HOME/.claude/.claude.json"
-exit 0
+. "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
   run_engine -- claude --connect 'config=seed-only native' --version

@@ -637,10 +637,15 @@ profile_route() {
     _as_msg "--bg with --role $_role: background sessions do not carry a role yet (#123), so the worker would run as the default role. Refusing rather than running it there."
     return 1
   fi
+  # AND A SANDBOXED --bg IS REFUSED FOR EVERY ROLE, the default included, until then.
+  # A wrapped worker is a launch of its own, and with one launch per role (#121) it
+  # would be a second one beside the role's keeper: for `copy-on-write`, a second
+  # overlay over the same upper layer. The native route below is not a launch at all.
+  if ((is_bg && want_bg)); then
+    _as_msg "--bg with background sandboxing on (via $src): a sandboxed background worker would be a second launch of this role beside the one every other session joins, so it is refused until background sessions run inside the role (#123)."
+    return 1
+  fi
   if ((is_bg)); then
-    if ((want_bg)); then
-      _claude_bg_launch "$@" || return $? # execs on success; only returns on a setup error
-    fi
     _as_msg "background sandboxing off (scope has no 'bg', via $src): running --bg natively"
     exec "$profile_bin" "$@"
   fi
@@ -882,10 +887,12 @@ _claude_bg_reap() {
 profile_briefing_args() {
   local inside="$1"
   shift
-  # _session_dir is a local of the engine's agent_sandbox(), reached here by
-  # dynamic scope -- the same arrangement profile_memory_scope uses for $cwd.
+  # Where this invocation's own file goes: _brief_out_host is a directory the engine
+  # has in view at _brief_out_inside -- the briefing directory itself for the launch
+  # that starts the keeper, a directory of its own inside it for a later join, whose
+  # --settings may differ. Engine locals, reached here by dynamic scope.
   # shellcheck disable=SC2154
-  local host_file="$_session_dir/settings.json" inside_file="$inside/settings.json"
+  local host_file="$_brief_out_host/settings.json" inside_file="$_brief_out_inside/settings.json"
   local ours user_val="" i
   ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]}}"
 
@@ -970,9 +977,6 @@ if merged.get("disableAllHooks"):
     }
   fi
 
-  # The session dir is host-side, so the file has to be bound in under its own
-  # name for the flag to resolve inside.
-  args+=(--ro-bind "$host_file" "$inside_file")
   profile_briefing_argv=(--settings "$inside_file")
   return 0
 }

@@ -103,7 +103,7 @@ except Exception:
 launch_strict() {
   rm -f "$IWORK/report" "$IWORK/listening" "$IWORK/done"
   (
-    cd "$IWORK" && exec env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+    cd "$IWORK" && exec env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
       AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
       AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_NET=strict \
       AGENT_SANDBOX_FORWARD="GW PROBE_BIND" GW="$GW" PROBE_BIND="${PROBE_BIND:-0.0.0.0}" \

@@ -238,25 +238,27 @@ conversation forks, and the next resume follows the branch of the process that e
 
 ## Mechanisms
 
-**Holder.** A long-lived bwrap process per sandbox that mounts the overlays for every
-directory-shaped channel path, so that every launch of that sandbox joins one overlay
-instead of mounting its own — two overlays over one upper layer are undefined. Recorded in
-`<sandbox>/holder.id`; exits once that record is gone or names another process. Its set of
-mounts is fixed when it starts. *shipped*; *agreed*: subsumed by the keeper (#121).
+**Holder.** A long-lived bwrap process per sandbox that mounted the overlays for every
+directory-shaped channel path at staging paths, so that every launch of that sandbox joined
+one overlay instead of mounting its own. *removed* (#121): the keeper replaced it. An engine
+that finds one left running by an older engine stops it before starting a keeper.
 
-**Keeper.** *agreed, not built* (#121): a role's running instance — a process that holds
-every namespace of the sandbox and does nothing else. Every app, the first included, is
-joined into it; it exits when nothing is joined, after a grace of one or two seconds, under
-a lock. Its policy is evaluated when it starts; a join under a changed dotfile warns and
-joins. It mounts the channel overlays and the path declarations at their real paths, which
-is what the holder did at staging paths.
+**Keeper.** *shipped* (#121): a role's running instance — a process that holds every
+namespace of the sandbox and does nothing else. Every app, the first included, is joined
+into it; it exits when nothing is joined, after a grace of two seconds, under a lock. Its
+policy is fixed when it starts: a join may repeat it, not change it (a different value for
+a knob the join set is refused, naming it), and a join under a changed dot-file warns and
+joins, parsing the keeper's copy of the approved dot-file; an idle keeper, in its grace,
+is replaced instead. A file bound on its own shows it as of the keeper's start. It mounts the channel overlays at their real paths. Its host side, the supervisor,
+owns the launch's exit and writes `<sandbox>/keeper.log`.
 
-**Join.** *agreed, not built* (#121): running a command inside the keeper as its equal —
-same mounts, environment, working directory, uid and gid, capabilities, `no_new_privs` and
-seccomp filter. Measured in net modes `none` and `strict` (`probes/join-launch.py`). It is
+**Join.** *shipped* (#121): running a command inside the keeper as its equal — same mounts,
+working directory, uid and gid, capabilities, `no_new_privs` and seccomp filter, and the
+keeper's environment but for the terminal's variables (`TERM`, the locale), which are the
+join's own. `components/join.py`, from the recipe measured in `probes/join-launch.py`: it is
 `setns` from `python3`, because bwrap nests a capability-less user namespace when given
 `--dev /dev` and `nsenter` cannot reach the namespace that owns the mounts. A foreground
-`claude`, `--exec`, `--bg` and the management verbs are all joins.
+`claude` and `--exec` are joins; `--bg` and the management verbs will be (#123, #126).
 
 **Overlay.** overlayfs: a merged view of a read-only lower layer (the source) and a
 writable upper layer (the sandbox's), which is how `copy-on-write` is implemented. Needs
@@ -270,8 +272,8 @@ sandbox's copy and a recorded manifest of what was last seeded
 (`components/connect-sync.py`). *shipped*
 
 **Reset.** `--reset-connection CHANNEL`: discard what the sandbox holds at a channel and
-take the source's version again, then exit. Refused while a launch of that sandbox is
-running. *shipped*; *agreed* (#126): renamed `--reset <channel|path>`.
+take the source's version again, then exit. Refused while anything is joined into the
+role's keeper; an idle keeper is ended first. *shipped*; *agreed* (#126): renamed `--reset <channel|path>`.
 
 **Role verbs.** *agreed, not built* (#126): `--status` (the keeper, what is joined, the
 daemon's sessions), `--shutdown` (ends the keeper and everything in it), `--delete` (removes
@@ -284,7 +286,8 @@ read-only, and a hook summary re-read on every launch, resume and compaction. *s
 and how — including handing a `--bg` invocation off to the background machinery. *shipped*
 
 **`--exec`.** Run a command other than the agent in the sandbox the profile would have
-built: same binds, environment, network and state isolation. *shipped*
+built: same binds, environment, network and state isolation. It is a join like any other,
+so beside a running agent of the role it runs in that agent's sandbox. *shipped*
 
 **Background worker, `--wrap`.** A process Claude Code spawns for `claude --bg`, sandboxed
 by the engine acting as Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER`. Opt-in. *shipped*;

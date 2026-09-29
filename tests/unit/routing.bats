@@ -69,22 +69,19 @@ native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
   [[ "$output" == *"background sandboxing off"* ]]
 }
 
-@test "--bg with bg scope: wrapper mode is set up and native claude --bg is run" {
+@test "--bg with bg scope is refused, for every role, until background sessions run inside the role (#123)" {
+  # A wrapped worker is a launch of its own: with one launch per role (#121) it would
+  # be a second one beside the role's keeper. The native route (no bg scope) is not a
+  # launch, and is untouched.
   run_engine -- claude --sandbox "fg bg" --bg 'do a thing'
-  [ "$status" -eq 0 ]
-  native # the --bg client itself is not sandboxed; its workers are, via the wrapper
-  [[ "$output" == *"stub-agent argv: --bg do a thing"* ]]
-  [ -x "$H/base/wrap-claude.sh" ]
-  grep -q -- '--profile claude --wrap' "$H/base/wrap-claude.sh"
-  [ "$(cat "$H/base/bg-project")" = "$H/proj" ]
-}
-
-@test "--bg: a caller's own CLAUDE_CODE_PROCESS_WRAPPER is replaced with a notice, not dropped silently" {
-  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/tmp/mine.sh -- claude --sandbox "fg bg" --bg 'do a thing'
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]]
-  [[ "$output" == *"--sandbox none"* ]] # points at the workaround
-  [ -x "$H/base/wrap-claude.sh" ]       # ours is what the workers get
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--bg"*"#123"* ]]
+  [[ "$output" != *"stub-agent argv"* ]]
+  [ ! -e "$H/base/wrap-claude.sh" ]
+  [ ! -s "$H/argv" ]
+  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/tmp/mine.sh -- claude --sandbox "fg bg" --role default --bg 'do a thing'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"#123"* ]]
 }
 
 @test "--sandbox none: --bg runs native and leaves a caller's CLAUDE_CODE_PROCESS_WRAPPER untouched (the documented workaround)" {

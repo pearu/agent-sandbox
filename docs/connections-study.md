@@ -185,19 +185,14 @@ as undefined is two *independent mounts* over one upper, not many users of one m
 W9 asserts the **behaviour** a user is promised: both sessions launch, neither is refused,
 a later launch still has both sessions' work, and the source never changes.
 
-**W9 passes today, and that is not the same as concurrency being safe.** The engine
-currently gives each session its own overlay, so a passing W9 is a pass on the *undefined*
-arrangement — the cell cannot tell the two apart, which is the whole reason the platform
-test exists beside it. Until the holder lands, read W9 as "a second session is not refused
-and loses nothing on this kernel", not as "concurrent sessions are supported". The engine
-says as much at launch when it finds a second live session.
-
-The **platform premise** — that joining yields one superblock rather than a second mount —
-is asserted by `tests/integration/overlay-sharing.bats` on every platform CI covers, and
-deliberately not by a cell. No cell inspects layout; and a behavioural cell could not tell
-the safe arrangement from the undefined one in any case, because two independent mounts
-*also* see each other's writes. That is exactly why the premise needs its own test rather
-than an inference from a green cell.
+**W9 is a pass on the supported arrangement.** With the keeper (#121) the second session is
+a process joined into the first one's launch, so both use one mount namespace and there is
+no second mount over the upper layer at all. Before the keeper, each session mounted its own
+overlay and a green W9 was a pass on the *undefined* arrangement — the cell cannot tell the
+two apart, because two independent mounts *also* see each other's writes. So the premise
+is asserted by a test rather than inferred from the cell:
+`tests/integration/keeper.bats` checks that two sessions of one role at once report one
+mount namespace and one superblock.
 
 ## Part 2 — per-channel ingestion (levels 2 and 3, paid)
 

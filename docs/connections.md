@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets, the holder, roles and the `config`, `transcripts` and `logs` channels are implemented and under test; the keeper and the role verbs are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage-agreed-not-built)).** A model for controlling what passes between agent
+**Status: the scale, the presets, roles, the keeper and the `config`, `transcripts` and `logs` channels are implemented and under test; background sessions inside a role and the role verbs are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -219,8 +219,8 @@ not fire on the intentional case.
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
-between is a preset plus overrides. `--sandbox` goes with the keeper, which is
-[agreed but not built](#roles-the-keeper-and-storage-agreed-not-built).
+between is a preset plus overrides. `--sandbox` goes with the wrapper machinery, when
+background sessions run inside the role ([agreed, not built](#background-sessions-123)).
 
 | channel | `isolated` | `inherit` | `shared` |
 |---|---|---|---|
@@ -465,9 +465,8 @@ working tree, which would otherwise cover every declaration inside the project. 
 measured the first time this ran under the real bwrap: bound earlier, `./data =
 read-only` was writable and `./scratch/ = own` showed the project's files.
 
-**Not in this piece:** a directory path at `copy-on-write` is refused for now,
-because an overlay the launch chooses cannot join the holder, whose set of mounts is fixed
-per sandbox; the keeper (#121) removes that reason. `--reset-connection` takes channel names
+**Not in this piece:** a directory path at `copy-on-write` is refused for now; the keeper
+can mount it at the declared path, and that is step 13 of #129. `--reset-connection` takes channel names
 only until `--reset <channel|path>` (#126). A per-role scratchpad is already what
 `./scratch/ = own` gives, since a role is the instance.
 
@@ -483,9 +482,11 @@ the outer never binds its own state directory in. So everything an inner sandbox
 `own` slots, `copy` copies, `copy-on-write` upper layers, for paths and channels alike —
 lasts as long as the outer session and no longer.
 
-## Roles, the keeper and storage: agreed, not built
+## Roles, the keeper and storage
 
-**None of this section is implemented.** It records the decisions of 2026-09-24 to 27, filed
+**Built:** roles, the keeper, `seed-only`, the config file and no merge-back. **Agreed, not
+built:** background sessions inside the role, the role verbs and the storage scopes, each
+marked below. The section records the decisions of 2026-09-24 to 28, filed
 as [#119](https://github.com/pearu/agent-sandbox/issues/119),
 [#120](https://github.com/pearu/agent-sandbox/issues/120),
 [#121](https://github.com/pearu/agent-sandbox/issues/121),
@@ -518,24 +519,74 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 ### The keeper: one running instance per role (#121)
 
+*Built.*
+
 - The running instance is a **keeper**: a process that holds every namespace of the sandbox
   and does nothing else. Every app, the first included, is **joined** into it. The keeper
-  exits when nothing is joined, after a grace of one or two seconds, under a lock, so a join
-  in progress is never cut off.
-- A joined app is the keeper's equal: the same mounts, environment, working directory, uid and
-  gid, capabilities, `no_new_privs` and seccomp filter. Measured in net modes `none` and
-  `strict` (`probes/join-launch.py`). The join is `setns` from `python3`: bwrap nests a
-  capability-less user namespace when it is given `--dev /dev`, so no process inside lives in
-  the namespace that owns the mounts and `nsenter` has nothing to target.
-- Policy is evaluated when the keeper starts. A join under a dotfile changed since then warns
-  and joins; the change applies to the next keeper.
-- Two running instances of one role never exist, so `--exec` beside a running agent is a join,
-  and the undefined case of two overlays over one upper directory has nowhere to arise. Two
-  Claude processes on one conversation behave as they do natively — measured: the second marks
-  the first's in-flight tool call interrupted, the conversation forks, and the next resume
-  follows the branch of the process that exited last — and the consequences are the user's.
-- The keeper subsumes the holder: it mounts the channel overlays and the path declarations at
-  their real paths.
+  exits when nothing is joined, after a grace of two seconds (`AGENT_SANDBOX_KEEPER_GRACE`),
+  under a lock, so a join in progress is never cut off and commands run one after another
+  share one launch.
+- A joined app is the keeper's equal: the same mounts, working directory, uid and gid,
+  capabilities, `no_new_privs` and seccomp filter. The join is `setns` from `python3`
+  (`components/join.py`): bwrap nests a capability-less user namespace when it is given
+  `--dev /dev`, so no process inside lives in the namespace that owns the mounts and
+  `nsenter` has nothing to target. `python3` is therefore needed on `PATH` to launch at all,
+  and the engine says so before it builds anything.
+- **The environment is the keeper's**, except what describes the terminal the join came
+  from: `TERM` and the locale group (`LANG`, `LC_*`, `TZ`, `COLORTERM`, `NO_COLOR`,
+  `FORCE_COLOR`), set or unset as in the joining shell. Everything else — `HOME`, `PATH`,
+  the conda variables, the proxy and CA variables, the profile's own, the
+  `AGENT_SANDBOX_FORWARD` names — describes the sandbox. A join's environment is fixed when
+  it starts; a later join never changes an earlier one's. The working directory needs no
+  rule: the sandbox key is the invocation's directory, so a join from another directory is
+  another project's keeper.
+- **Policy is fixed when the keeper starts.** A join may *repeat* it, not change it: only the
+  knobs this invocation set, by flag or environment, are compared with the keeper's, and a
+  different value is refused, naming the knob; a listed grant (`--allow`, `--ssh`, ports,
+  `[ro]`/`[rw]` paths) must be one the keeper has. A bare join always joins. A dot-file
+  changed since the keeper started warns and joins: it is standing policy and applies at
+  the next keeper by itself, whereas a flag is a request for this invocation, with no next
+  keeper to apply to. Both rules protect what is joined: a keeper in its grace, with nothing
+  joined, is ended and replaced by an invocation with another policy or under a changed
+  dot-file, so running commands one after another with different flags just works.
+- **A join reads the keeper's dot-file.** The keeper keeps a copy of the approved
+  `.agent-sandbox` it started with, and a join parses that copy. So an edit to the live
+  file that is not yet approved does not refuse a join: the trust gate exists because an
+  ignored file would fall back to the defaults, and a join falls back to nothing — its
+  policy is the keeper's. `--trust` matters at the next keeper, where the live file is
+  read again. The live file is still read to find the role when no `--role` or
+  `AGENT_SANDBOX_ROLE` names it, and then only an approved file is read, so there an
+  unapproved edit refuses the join as it refuses a launch.
+- **A file bound on its own shows the file as it was when the keeper started.** A bind
+  holds the inode it was made on, and a native save by temp file and rename (how editors
+  and Claude Code write) makes a new one, so `read-only` file paths (`CLAUDE.md`,
+  `settings.json`) and the relocated `config = read-write` do not see such a save until
+  the next keeper; a save in place is seen at once. Directories, and a `read-write` file
+  that is its own source (served by the directory bind around it, with no bind of its
+  own), are live. This was already true within one launch; with the keeper a later
+  terminal is inside that launch too. Rebinding a replaced file from the keeper's host
+  side is a follow-up.
+- **Per-launch state is per keeper**: the session directory, the proxy token, the `--allow`
+  include, the ssh agent and its `--ssh-timeout`, the briefing. A join's own hook settings
+  (when it passes `--settings`) get a file of their own beside the briefing.
+- `native` has a keeper too: it is a preset, and parity is about what the agent sees. The
+  bypass is `none`, which has no bwrap.
+- Two running instances of one role never exist, so `--exec` beside a running agent is a
+  join, and the undefined case of two overlays over one upper directory has nowhere to
+  arise. Two Claude processes on one conversation behave as they do natively — measured: the
+  second marks the first's in-flight tool call interrupted, the conversation forks, and the
+  next resume follows the branch of the process that exited last — and the consequences
+  are the user's.
+- The keeper subsumes the holder: it mounts the channel overlays at their real paths. The
+  path declarations at `copy-on-write` are next (#129 step 13).
+- Ctrl-C at a join ends that join's command, not the launch: the join passes the
+  terminal's signals to its own process group, and the keeper ignores them.
+- `--reset-connection` is refused while anything is joined; an idle keeper is ended first.
+- Until background sessions run inside the role (#123), `--bg` with `bg` in the sandbox
+  scope is refused: a wrapped worker would be a second launch beside the keeper.
+- Its host side is a supervisor, a background copy of the engine that started it: it owns
+  the launch's exit (the session directory, the ssh agent, the mount-point files) and writes
+  `<sandbox>/keeper.log`, which a launch that fails to start prints.
 
 ### Background sessions (#123)
 
@@ -634,11 +685,12 @@ binds placed inside the overlay in the upper layer (an empty `.credentials.json`
 `projects/` directory), so the placeholder cleanup that exists for file binds applies to the
 upper directory as well.
 
-Agreed, not built: the **keeper** replaces the holder (see above). It holds every namespace
-of the sandbox, not only the mounts, and apps are joined into it with `setns`
-(`probes/join-launch.py` is the measured recipe: the user-namespace chain from the outermost
-down, each namespace right after entering its owner, then `no_new_privs` and the same seccomp
-filter, then the keeper's environment and working directory).
+Built: the **keeper** replaced the holder (see above). It holds every namespace of the
+sandbox, not only the mounts, and apps are joined into it with `setns`
+(`components/join.py`, from the measured recipe in `probes/join-launch.py`: the
+user-namespace chain from the outermost down, each namespace right after entering its owner,
+then the capability bounding set emptied, `no_new_privs` and the same seccomp filter, then
+the keeper's environment and working directory).
 
 `copy` needs the seed, a base manifest of what was last synced, and the three-way step at
 launch; it has no exit step, since B writes its persistent copy directly. `read-only` and `read-write` are
@@ -788,55 +840,26 @@ here rather than designed around; the project directory is where different agent
   channel carries inference like `skills` does and `read-write` would keep T2 and T6 open for it.
   If overlay use is to be minimised, `copy` is the alternative that keeps the channel closed:
   plugins change rarely, so a refresh at launch loses nothing that matters.
-- **Two sessions of one sandbox at once, under `copy-on-write`: mount once, and let every session
-  join that mount.** A sandbox is keyed by project and role, so two terminals on one
-  project are two sessions of one sandbox; that is the ordinary case, and refusing it or
-  serialising behind an interactive session would break a daily workflow to avoid a
-  problem that can be dissolved instead. What overlayfs documents as undefined is two
-  *independent mounts* over one upper directory, not many users of one mount. So the
-  engine mounts a sandbox's overlay once and each session inherits it.
+- **Two sessions of one sandbox at once, under `copy-on-write`: there is one launch.** A
+  sandbox is keyed by project and role, so two terminals on one project are two sessions of
+  one sandbox; that is the ordinary case, and refusing it or serialising behind an
+  interactive session would break a daily workflow to avoid a problem that can be dissolved
+  instead. What overlayfs documents as undefined is two *independent mounts* over one upper
+  directory, not many users of one mount. The first answer was the holder: mount a
+  sandbox's overlays once, at staging paths, and let each session's bwrap inherit them
+  (measured, and asserted on every platform CI covered, by a test now retired with it). The
+  keeper replaced it: the second session is a process joined into the first one's launch,
+  so it is in the same mount namespace and there is no second mount of anything —
+  `tests/integration/keeper.bats` asserts that one mount namespace and one superblock are
+  what both see.
 
-  Measured, and now asserted on every platform CI covers by
-  `tests/integration/overlay-sharing.bats`: two concurrent independent mounts over one
-  upper really are two superblocks, which is what makes the rest of the measurement
-  meaningful; a session joining the holder's user and mount namespaces reports the
-  holder's superblock, and so does a full bubblewrap sandbox built inside that join. Two
-  such sandboxes at once saw each other's writes and each other's whiteouts coherently,
-  and the source was untouched. The study asserts that behaviour as W9; the superblock
-  identity is a platform premise and is asserted in the test rather than in a cell, which
-  inspects no layout.
+  **Teardown must chmod before it deletes**: once anything has been written through an
+  overlay, its workdir keeps a mode-000 directory that removal cannot enter even as its
+  owner, which `reset` and sandbox deletion both meet. And a reset of a running role is
+  refused, because it removes the very layers the keeper has mounted and the conflict
+  warning actively invites the user to run it; an idle keeper is ended first.
 
-  **BUILT, after this was written and before the preset cutover made it urgent.**
-  The paragraph below records why it could be deferred at all; the holder landed
-  in the same release, so the deferral never had to hold. Before it, each session
-  mounted its own overlay and two sessions of one sandbox were the undefined
-  arrangement above -- safe only while nothing selected `copy-on-write` by
-  default, which the `inherit` preset then did. Two
-  things stand in for the holder meanwhile: a launch that finds another live
-  session of the same sandbox says so, once, rather than a notice on every launch
-  that people learn to skip; and `--reset-connection` refuses outright while a
-  session is live, because it removes the very layers that session has mounted
-  and the conflict warning actively invites the user to run it.
-
-  Detecting a live session is not the obvious check. Measured: bubblewrap passes
-  the upper layer as `/proc/self/fd/N`, so the path appears in no mountinfo and
-  scanning `/proc` for it finds nothing. What works is the engine's own session
-  stamp, the owner's PID and start-time that the janitor already uses to tell a
-  live session from an orphan.
-
-  Three consequences for the implementation. A **short lock** is needed, but only around
-  *creating* the holder, because two sessions racing to create one would make the two
-  mounts this avoids; it is held for milliseconds, not for the life of a session, which is
-  what made serialising unattractive. **No long-lived daemon is required**: the mount is
-  held by namespace membership, so once a session has joined, the holder may exit and the
-  session keeps reading and writing at the same superblock; killing the holder mid-session
-  did not pull the filesystem out from under it. And **teardown must chmod before it
-  deletes**: once anything has been written through an overlay, its workdir keeps a
-  mode-000 directory that removal cannot enter even as its owner, which `reset` and
-  sandbox deletion will both meet.
-
-  Bubblewrap takes an existing user namespace as a file descriptor, not a path. Under
-  `copy` the question does not arise, since two sessions write one persistent directory as
+  Under `copy` the question does not arise, since two sessions write one persistent directory as
   two native sessions do.
 
   Measured while implementing `copy-on-write`: an overlay mounts and reads through normally
