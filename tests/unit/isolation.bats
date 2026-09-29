@@ -62,13 +62,51 @@ STUB
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local d
-  for d in session-env sessions jobs shell-snapshots debug paste-cache; do
+  for d in session-env sessions jobs shell-snapshots debug paste-cache backups feedback-bundles; do
     argv_has --tmpfs "$C/$d"
   done
   local p
   for p in file-history plans history.jsonl responses.log alerts.log; do
     [[ "$(bound_at "$C/$p")" == "$H/home/.local/state/agent-sandbox/claude/"*/default/* ]]
     run ! argv_has --bind "$C/$p" "$C/$p"
+  done
+}
+
+# artefacts (#52, #76, #78): downloads/, uploads/ and tasks/ are a channel, the role's
+# own under inherit and isolated, yours under shared and native.
+artefact_store() { # DIR -> the role's own store for ~/.claude/DIR
+  local s="$C/$1"
+  s="${s//\//_}"
+  printf '%s' "$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/default/artefacts/own/${s#_}"
+}
+
+@test "artefacts are the role's own under inherit and isolated: another project's download is not there" {
+  mkdir -p "$C/downloads" "$C/uploads/other-session" "$C/tasks"
+  printf 'THEIR DOCUMENT\n' >"$C/downloads/theirs.pdf"
+  printf 'THEIR TASKS\n' >"$C/tasks/list.json"
+  local p d
+  for p in inherit isolated; do
+    run_engine AGENT_SANDBOX_PRESET="$p" -- asb claude --version
+    [ "$status" -eq 0 ]
+    for d in downloads uploads tasks; do
+      argv_has --bind "$(artefact_store "$d")" "$C/$d"
+    done
+    [ ! -e "$(artefact_store downloads)/theirs.pdf" ]
+    [ -z "$(ls -A "$(artefact_store tasks)")" ]
+  done
+  # and the native directories are as they were
+  [ "$(cat "$C/downloads/theirs.pdf")" = "THEIR DOCUMENT" ]
+}
+
+@test "artefacts stay yours under shared and native, as before" {
+  local p d
+  for p in "AGENT_SANDBOX_PRESET=shared" "--preset native"; do
+    # shellcheck disable=SC2086 # an assignment or a flag and its value
+    if [[ "$p" == --* ]]; then run_engine -- asb $p claude --version; else run_engine "$p" -- asb claude --version; fi
+    [ "$status" -eq 0 ]
+    for d in downloads uploads tasks; do
+      run ! argv_has --bind "$(artefact_store "$d")" "$C/$d"
+    done
   done
 }
 

@@ -136,7 +136,7 @@ Sections:
   --exec` or session joined into a running role a scratch of its own, empty when it
   starts and removed when it ends, which no other join can see. It is built for `own`
   (and `read-only`, which is then the plain bind); a seeded store per join (`copy`,
-  `seed-only`, `copy-on-write`) is refused as not built (#147). `process-scoped`, its
+  `seed-only`, `copy-on-write`) is refused as not built yet. `process-scoped`, its
   first name, is refused naming it.
   The first draft's other names are refused with what to write instead:
   `sandbox-scoped` (the default has no name), `project-scoped` (sharing across roles is a
@@ -201,19 +201,21 @@ Sections:
   | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | `memory_default` (`scoped` by default) and `[share-memory]` |
   | transcripts — this project's conversations, file history, plans, prompt history | `own` | `own` | `own` | `read-write` | **the preset** ([below](#transcripts-and-logs)) |
   | logs — `responses.log`, `alerts.log`, written by your own hooks | `own` | `own` | `own` | `read-write` | **the preset** |
-  | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **nothing yet: they are `read-write` whatever the preset** |
+  | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **the preset** (#52, #76, #78) |
 
   Read the last column as the list of things left to fold in. When a row moves to
   the preset its mode columns do not change, because they were chosen to match
   what its own switch already does by default — with two exceptions, both
   deliberate and both worth knowing now:
 
-  - **artefacts are `read-write` today and the table says `own`.** Downloads, uploads
-    and task lists are visible across every project, which is a known open
-    channel ([#52](https://github.com/pearu/agent-sandbox/issues/52),
+  - **artefacts were `read-write` whatever the preset, and are `own` under
+    `inherit` now.** Downloads, uploads and task lists were visible across every
+    project ([#52](https://github.com/pearu/agent-sandbox/issues/52),
     [#76](https://github.com/pearu/agent-sandbox/issues/76),
-    [#78](https://github.com/pearu/agent-sandbox/issues/78)). Folding them in
-    will close it, and that is a behaviour change rather than a no-op.
+    [#78](https://github.com/pearu/agent-sandbox/issues/78)); folding them in closed
+    that, and it is a behaviour change rather than a no-op: a role starts with none of
+    your downloads, uploads or task lists, and what it gets there stays its own.
+    `artefacts = read-write native` under `[connect]` gives a role yours again.
   - **`shared` gives `config` `seed-only`, not `read-write`.** The original model
     said `read-write`, which was the pre-0.2 behaviour: the config file bound whole,
     so every project's entries and the user's MCP servers were readable from any

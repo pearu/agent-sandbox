@@ -62,7 +62,7 @@ what crosses its boundary, channel by channel, and the state kept for it under
 to the role; see [Instance storage](#instance-storage-decided).
 
 **Sandbox key.** What identifies a sandbox: `<project slug>/<role>` under the profile's
-state directory. *shipped* (role is always `default` today). The `<scope>` segment once
+state directory. *shipped*; `default` is the unnamed role. The `<scope>` segment once
 planned in #104 is withdrawn (#123): the key stays two segments.
 
 **Role.** A named, persistent instance of a project under a policy: `asb --role impl-1 claude`.
@@ -74,9 +74,8 @@ accumulated memory is the motivating case,
 name against role-suffixed sections, `[sandbox:<glob>]` and `[connect:<glob>]`, applied after
 the unsuffixed ones, later overriding earlier, per key; a name matching no suffixed section is
 refused when suffixed sections exist. A role is not a security boundary beyond what
-its channels close. *shipped as a key segment with the single value `default` (`[sandbox]
-role`, `--role` and `AGENT_SANDBOX_ROLE` name it; the role sections are built; the role verbs are agreed, not built
-(#121, #126).*
+its channels close. *shipped*: `--role`, `AGENT_SANDBOX_ROLE` and `[sandbox] role` name it,
+the role sections are built (#136), and so are the role verbs (#144, #145).
 
 **Nesting.** Running the engine inside a sandbox, which creates a sandbox within it.
 Every source and check resolves in the namespace where that engine runs, so an inner
@@ -98,7 +97,7 @@ see [Presets](#presets-and-principles). *shipped*
 what it carries, never by a path. The profile maps each channel to the agent's paths.
 For the `claude` profile the channels the engine manages as connections are
 `instructions`, `settings`, `skills`, `agents`, `workflows`, `plugins`, `config`,
-`transcripts` and `logs` (*shipped*); `identity`, `project`, `memory` and `artefacts` are
+`transcripts`, `logs` and `artefacts` (*shipped*); `identity`, `project` and `memory` are
 channels in the model with machinery of their own, not yet folded in. The table of what each carries is
 in [connections.md](connections.md#the-three-objects).
 
@@ -136,8 +135,8 @@ where agents are meant to communicate). *shipped*
 **Path declaration.** A `[connect]` key containing `/`, naming a path instead of a
 channel: `./scratch/ = own`. The key is the path inside the sandbox; relative keys are
 relative to the project; the source is the same path outside. It is what `[ro]`/`[rw]`
-become, before they are removed ahead of 1.0. *built on branch `feat/connect-paths`,
-not merged* — see [connections.md](connections.md#path-declarations) there.
+become, before they are removed ahead of 1.0. *shipped* (#130; `copy-on-write` on a
+directory, #150) — see [connections.md](connections.md#path-declarations).
 
 **Per-launch scratch** (the docs say *per-session scratch*). Parts of the agent's state
 that are replaced for every launch and closed to other launches — for Claude Code,
@@ -148,8 +147,11 @@ history, hook logs) is the `transcripts` and `logs` channels since #120: nothing
 back when a launch ends.
 
 **Server-owned state.** What the agent writes from its service or as caches
-(`skills/synced/`, `plugins/synced/`, `cache/`, `telemetry/`, …). Private to each sandbox,
-never connected. *shipped*
+(`skills/synced/`, `plugins/synced/`, `cache/`, `telemetry/`, …). What it gets depends on
+where it lives: the two `synced/` directories are inside the `skills` and `plugins`
+channels, so the role's own wherever those are; the rest is in no channel, so it is the
+native files, shared with every sandbox (see
+[connections.md](connections.md#the-three-objects)). *shipped*
 
 ## Scales
 
