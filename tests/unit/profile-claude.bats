@@ -84,6 +84,7 @@ slug_vector() {
   # anyone who points CLAUDE_CONFIG_DIR at ~/.claude natively.
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 [ -e "$HOME/.claude/.claude.json" ] || : >"$HOME/.claude/.claude.json"
@@ -107,6 +108,7 @@ STUB
 @test "update/upgrade/install run on the host: no bwrap, argv passed through, exit code propagated, engine flags ignored with a note" {
   cat >"$V/2.1.300/claude" <<'STUB'
 #!/usr/bin/env bash
+set +x
 echo "stub-agent argv: $*"
 [[ "$1" == upgrade ]] && exit 7
 exit 0
@@ -130,6 +132,7 @@ STUB
   ln -s "$ENGINE" "$H/home/.local/bin/claude"
   cat >"$V/2.1.300/claude" <<'STUB'
 #!/usr/bin/env bash
+set +x
 echo "stub-agent argv: $*"
 [[ "$1" == install ]] && ln -sfn "$0" "$HOME/.local/bin/claude"
 exit 0

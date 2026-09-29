@@ -15,6 +15,7 @@ setup() {
   # briefing and settings can be read after the engine cleans up
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 if [ -n "${BWRAP_COPY:-}" ]; then

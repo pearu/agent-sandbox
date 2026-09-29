@@ -139,11 +139,10 @@ PY
 }
 
 @test "without python3 nothing is seeded: the launch is refused first, since every app is joined by python3" {
+  # /usr/bin without python3, as symlinks made in one process rather than one each.
   mkdir -p "$H/nopy"
-  local t
-  for t in /usr/bin/*; do
-    [[ "$(basename "$t")" == python3* ]] || ln -s "$t" "$H/nopy/$(basename "$t")" 2>/dev/null || true
-  done
+  cp -s /usr/bin/* "$H/nopy/" 2>/dev/null || true
+  rm -f "$H/nopy"/python3*
   run_engine PATH="$H/bin:$H/nopy" -- claude --connect 'config=seed-only native' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"needs python3"* ]]
@@ -176,6 +175,7 @@ PY
 @test "the empty mount-point file bwrap leaves for the config file is removed after the launch" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 if [[ "${1:-}" == --help ]]; then printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'; exit 0; fi
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done

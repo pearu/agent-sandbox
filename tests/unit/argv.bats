@@ -187,6 +187,7 @@ setup() {
   # a probing stub: snapshot the session base while "inside"
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 : >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*; do printf '== %s\n' "$f"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1
 . "${0%/*}/keeper-tail"
