@@ -8,15 +8,22 @@ sandbox: a default-deny filesystem, an egress allowlist the agent cannot
 bypass with its normal HTTP clients, host-routed self-update, and an opt-in
 SSH broker whose keys never enter the sandbox. One bash script and a
 per-agent profile; no image to build. The flagship profile runs
-[Claude Code](https://docs.anthropic.com/claude-code) as `claude`, exactly as
-before, now inside the sandbox.
+[Claude Code](https://docs.anthropic.com/claude-code). You ask for the sandbox
+by name — `asb`, short for `agent-sandbox` — and `claude` alone stays Claude
+Code itself, however you installed it.
 
 ```
 cd ~/projects/thing
-claude                       # sandboxed: this directory read-write, little else
-claude --ssh github.com      # + git push through a per-session, host-constrained ssh-agent
-claude --allow pypi.org      # + one more host through the egress proxy, this session only
+asb claude                       # sandboxed: this directory read-write, little else
+asb --ssh github.com claude      # + git push through a per-session, host-constrained ssh-agent
+asb --allow pypi.org claude      # + one more host through the egress proxy, this session only
+asb --role reviewer claude -r    # another role of this project, resuming one of its sessions
+claude                           # Claude Code itself, not sandboxed
 ```
+
+The sandbox's options come before the command, the agent's after it:
+`asb [OPTIONS] CMD [AGENT OPTIONS]`. `CMD` is a name on your PATH or a path to
+the binary (`asb --profile claude /path/to/2.1.284`).
 
 ## Why
 
@@ -72,8 +79,8 @@ here, once, and then stop thinking about.
 - **Credentials**: an explicit, small environment allowlist; no `AWS_*`,
   `GH_TOKEN`, `KUBECONFIG`, `SSH_AUTH_SOCK`. With `--ssh HOST` a per-session
   ssh-agent on the host signs only for the hosts you name.
-- **Updates**: `claude update` runs the native updater on the host, never
-  inside.
+- **Updates**: `claude update` is Claude Code's own updater, untouched; the
+  sandbox runs whatever `claude` is next time.
 
 What it does **not** do is spelled out in [docs/design.md](docs/design.md):
 in the default `proxy` mode the sandbox shares the host network namespace, so a
@@ -90,7 +97,7 @@ agent-sandbox wraps a **local process**. If you launch an agent on your machine,
 it can run inside the sandbox; if the agent runs on someone else's machine,
 there is nothing here to put a boundary around.
 
-**Covered.** Any agent you start locally through a launcher: the engine is
+**Covered.** Any agent you start locally with `asb`: the engine is
 provider-agnostic and everything agent-specific lives in a profile, so a new
 agent needs a profile rather than engine changes
 ([profiles.md](docs/profiles.md)). Only the `claude` profile ships today. MCP
@@ -104,21 +111,21 @@ in the first place, so a local sandbox has nothing to protect. What it *can*
 reach — a connected GitHub account, say — is granted on the service side and can
 only be limited there.
 
-**Depends on how it is launched.** Anything that runs `claude` from your PATH
-reaches the launcher and is sandboxed — a terminal inside your editor included.
-Anything that calls the agent's own binary by an absolute path is not, and
-nothing will tell you.
+**Only what you start with `asb`.** Nothing shadows `claude`, so anything that
+runs it without `asb` — you at a shell, an editor's integration, a hook script —
+runs Claude Code natively, exactly as it would with agent-sandbox not installed
+(#151). That is deliberate: `claude` means one thing everywhere, and a sandboxed
+launch says so on its command line.
 
-Background sessions are sandboxed too, since 0.4: `claude --bg` runs inside its
+Background sessions are sandboxed too, since 0.4: `asb claude --bg` runs inside its
 role's sandbox, and so do the daemon it starts, its workers and the management
-verbs (`claude agents`, `attach`, `logs`, `stop`). The daemon keeps the role
-running until `claude --shutdown`. Before 0.4 a `--bg` worker ran natively unless
-you opted in; to run one natively now, `claude --preset none --bg ...`. See
+verbs (`asb claude agents`, `attach`, `logs`, `stop`). The daemon keeps the role
+running until `asb --shutdown claude`. See
 [design.md](docs/design.md#background-sessions-123).
 
-The **VS Code extension is the second case**: it ships its own copy of Claude
-Code and runs that, so its sessions are outside the sandbox while a terminal in
-the same window is inside it. To see which you have, with a session running:
+The **VS Code extension** ships its own copy of Claude Code and runs that, so its
+sessions are native; `asb claude` in the editor's terminal is sandboxed. To see
+which you have, with a session running:
 
 ```
 ./probes/whats-running.sh    # lists agent processes, sandboxed or not
@@ -150,7 +157,7 @@ cd agent-sandbox
 
 agent-sandbox is a **single-user tool**. Everything it installs belongs to one
 account: the proxy is a systemd *user* unit, the allowlist and trust store live
-in that account's `~/.config`, and the launcher goes on that account's PATH.
+in that account's `~/.config`, and `asb` goes on that account's PATH.
 There is no system-wide mode, and the installer refuses to run through `sudo` —
 it asks for sudo itself for the one step that needs it, the AppArmor profile.
 
@@ -162,27 +169,28 @@ installs the systemd user unit, and **copies the engine and profiles under
 can move or delete this clone afterward; re-run `./install.sh` after pulling to
 update.
 
-It then makes sure that typing the command reaches the sandbox, which is the
-only thing that decides whether any of this applies. If `claude` is already on
-your PATH in a directory you can write to — what Claude Code's own installer
-leaves — it is moved aside to `claude.pre-agent-sandbox` and the sandbox
-launcher takes its place, so PATH order is untouched. If it lives somewhere
-read-only such as `/usr/bin`, the launcher goes in the first writable PATH
-directory *before* it and shadows it, leaving the original alone. If there is
-no `claude` on PATH at all, the launcher goes in the first writable PATH
-directory. And if none of those is possible, the installer stops and shows how
-to fix your PATH, rather than installing something that would lose.
+It then puts two commands in `~/.local/bin`, both the engine: `agent-sandbox`
+and its short name `asb`. It puts nothing at `claude`, and does not need to know
+how Claude Code was installed: `asb claude` runs whatever `claude` your PATH
+finds, a package's `/usr/bin/claude` as much as the native installer's
+`~/.local/bin/claude`.
 
-Undo it with `./install.sh --uninstall`: it gives the original launcher back
-and removes the rest ([troubleshooting.md](docs/troubleshooting.md)).
-Working *on* agent-sandbox? `./install.sh --dev` points the launcher at the
+**Upgrading from an install before 0.4:** those put the engine at
+`~/.local/bin/claude` and moved Claude Code's own launcher aside. Running
+`./install.sh` again takes that back — your `claude` returns to where it was,
+and says so — and from then on `claude` is native and `asb claude` is sandboxed.
+Until you do, the old launcher refuses to run and says why.
+
+Undo it with `./install.sh --uninstall`: it removes `asb` and `agent-sandbox`
+and the rest ([troubleshooting.md](docs/troubleshooting.md)).
+Working *on* agent-sandbox? `./install.sh --dev` points `asb` at the
 checkout instead, so your edits take effect at the next launch (see
 [docs/design.md](docs/design.md) for why that is dev-only). Standalone:
 `curl -fsSL https://raw.githubusercontent.com/pearu/agent-sandbox/main/install.sh | bash`
 clones the repository under `~/.local/share/agent-sandbox/src` and installs
 the copy from there.
 
-Then open a fresh shell, `cd` into a project, and run `claude`.
+Then open a fresh shell, `cd` into a project, and run `asb claude`.
 
 ## Knobs and flags
 
@@ -191,7 +199,7 @@ not exist. Values and defaults are in the last column.
 
 | Command line | Environment | `.agent-sandbox` | What it does (default) |
 |---|---|---|---|
-| `--profile NAME` | — | — | which agent profile to run; inferred from the launcher's name ([profiles.md](docs/profiles.md)) |
+| `--profile NAME` | — | — | which agent profile to run; the command's basename otherwise (`asb claude` is the `claude` profile) ([profiles.md](docs/profiles.md)) |
 | `--allow HOST` | — | `[allow]` | extra hosts the agent may reach, on top of the global allowlist; one host per line in the file, and the flag lasts one session (none) ([network.md](docs/network.md)) |
 | — | `AGENT_SANDBOX_NET` | `[net] mode` | network mode: `proxy` (default), `strict`, `open`, `none` ([network.md](docs/network.md)) |
 | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS` | `[net] host-port` | `strict` only: host loopback ports the sandbox may reach, space-separated in the variable; `none` closes the direction (none) ([network.md](docs/network.md)) |
@@ -222,7 +230,7 @@ not exist. Values and defaults are in the last column.
 | `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | **removed**, and refused in every form: every session, background ones included, runs in its role's sandbox. To run without one, `--preset none` ([design.md](docs/design.md#background-sessions-123)) |
 | `--shutdown` | — | — | end this role's running sandbox: everything joined into it, and a background daemon with its workers; then exit. A later launch starts afresh under the policy then in force ([connections.md](docs/connections.md)) |
 | `--quiet` | `AGENT_SANDBOX_QUIET` | — | suppress the routine status lines a launch prints — which dot-file values were applied, the session allowlist, the seccomp filter in use. Refusals, warnings and notices that something is **not** sandboxed are never suppressed, so `--quiet` can hide noise but never a consequence (off) |
-| `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first (`claude --allow pypi.org --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
+| `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first and `--profile` names the sandbox (`asb --allow pypi.org --profile claude --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
 | `--wrap` | — | — | **removed**: it was the wrapper that sandboxed background workers from a daemon on the host. Refused with a note, since a daemon an earlier engine started may still call it ([design.md](docs/design.md#background-sessions-123)) |
 | `--engine-help`, `--engine-version` | — | — | print the engine's own flags, or its version, and exit |
 

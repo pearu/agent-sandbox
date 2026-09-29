@@ -18,13 +18,19 @@ them, and the entries say which one they mean.
 **Host.** The machine and user account the engine runs on, outside every sandbox.
 *shipped*
 
+**Engine.** `agent-sandbox`, and its alias **`asb`**: the command that runs an agent in a
+sandbox, asked for by name — `asb [OPTIONS] CMD [AGENT OPTIONS]`. Its options come
+before CMD, the agent's after it; CMD is a name on PATH or a path. `claude` alone is Claude
+Code itself: nothing shadows it, so it runs natively. *agreed* (#151); before it the
+installer put the engine at `~/.local/bin/claude`.
+
 **Agent.** The program being sandboxed: Claude Code for the `claude` profile. The engine
 itself is agent-agnostic; everything specific to one agent lives in its profile. *shipped*
 
 **Profile.** `profiles/<name>.sh`: the agent-specific half of the engine — where the
 agent keeps its state, which channels it has and which paths each maps to, how its argv is
-routed, which subcommands run on the host. Selected with `--profile` or inferred from the
-command name (`claude` → `profiles/claude.sh`). See [profiles.md](profiles.md). *shipped*
+routed, which subcommands run on the host. Selected with `--profile` or by the command's
+basename (`asb claude` → `profiles/claude.sh`). See [profiles.md](profiles.md). *shipped*
 
 **Project.** The directory a launch is started from — the working tree — bound read-write
 into the sandbox at the same path. It is one half of the sandbox key, and the one
@@ -41,12 +47,13 @@ with `--exec`. *shipped as behaviour* — the engine's code and older docs call 
 
 **Claude session.** A Claude Code conversation: what `claude -r <uuid-or-name>` resumes,
 identified by a UUID (`--session-id`) or a name. It is Claude Code's object, not the
-engine's. A launch can contain **no** Claude session (`claude --exec pytest`), **one** (a
-plain `claude`), or **several** (`claude --exec bash -l`, then `claude` started natively
-inside it, twice) — and every Claude session inside one launch sees that launch's binds.
+engine's. A launch can contain **no** Claude session (`asb --profile claude --exec
+pytest`), **one** (a plain `asb claude`), or **several** (`asb --profile claude --exec bash
+-l`, then `claude` started natively inside it, twice) — and every Claude session inside one launch sees that launch's binds.
 So the engine cannot give a Claude session storage of its own; it gives it to the role.
 *agreed*: a Claude session id is derived from the role (the first session's), never the
-reverse; `claude --role foo -r` lists foo's sessions and a bare `claude -r` native ones only.
+reverse; `asb --role foo claude -r` lists foo's sessions and a bare `claude -r` native ones
+only.
 
 **Sandbox.** An installation of one agent for one project and role: the policy that says
 what crosses its boundary, channel by channel, and the state kept for it under
@@ -58,7 +65,7 @@ to the role; see [Instance storage](#instance-storage-decided).
 state directory. *shipped* (role is always `default` today). The `<scope>` segment once
 planned in #104 is withdrawn (#123): the key stays two segments.
 
-**Role.** A named, persistent instance of a project under a policy: `claude --role impl-1`.
+**Role.** A named, persistent instance of a project under a policy: `asb --role impl-1 claude`.
 The second half of the sandbox key, and the thing you come back to: its stores persist
 across runs, its policy is the variable part. Two roles on one project share the project
 directory and nothing else unless connected (a reviewer that must not see the implementer's
@@ -287,13 +294,13 @@ pool), `--delete` (removes the role's stores; refused while anything runs in it,
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*
 
 **Route.** The profile's decision, from the agent's argv, whether a launch is sandboxed or
-run as it is (a `claude` typed inside a sandbox runs there without a second one). *shipped*
+run as it is (an `asb claude` typed inside a sandbox runs there without a second one). *shipped*
 
 **`--exec`.** Run a command other than the agent in the sandbox the profile would have
 built: same binds, environment, network and state isolation. It is a join like any other,
 so beside a running agent of the role it runs in that agent's sandbox. *shipped*
 
-**Background session.** `claude --bg`, run inside its role's launch like any other join;
+**Background session.** `asb claude --bg`, run inside its role's launch like any other join;
 the daemon it starts, the daemon's pooled workers and the management verbs are inside too,
 and the daemon holds the launch until `--shutdown`. *shipped* (#123). It replaced the
 **`--wrap`** machinery, which sandboxed each worker from a daemon on the host through
@@ -341,7 +348,7 @@ agent (`~/.ssh`, `~/.gnupg`, `~/.aws`, …). Refused as a bind in every mode, in
 read-only. *shipped*
 
 **Control plane.** The engine's own machinery on the host — the trust store, the proxy CA,
-the runtime, the state directory, the launcher, user units. Refused as a bind, because
+the runtime, the state directory, `~/.local/bin` where `asb` lives, user units. Refused as a bind, because
 writable from inside it would let the agent change its own sandbox. *shipped*
 
 ## Testing

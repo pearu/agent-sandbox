@@ -38,7 +38,7 @@ trust() {
   om="$H/home/.claude/projects/$(slug "$other")/memory"
   mkdir -p "$om"
   printf '[allow]\nevil.example\n[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
-  run_engine -- claude --allow good.example --version
+  run_engine -- asb --allow good.example claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
   [[ "$output" == *"--trust"* ]]
@@ -54,7 +54,7 @@ trust() {
   printf '# my project policy\n[allow]\npypi.org\n.github.com   # for pip\n[share-memory]\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   mkdir -p "$H/home/.claude/projects/-other/memory"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist:"*"pypi.org"*".github.com"* ]]
   argv_has --tmpfs "$H/home/.claude/projects"
@@ -69,7 +69,7 @@ trust() {
   mkdir -p "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$secret")/memory"
   printf '[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/home/.claude/projects/$(slug "$other")/memory" "$H/home/.claude/projects/$(slug "$other")/memory"
   run ! argv_has "$H/home/.claude/projects/$(slug "$secret")/memory"
@@ -85,7 +85,7 @@ trust() {
   mkdir -p "$H/home/.claude/projects/$(slug "$H/space-other")/memory"
   printf '[share-memory]\n%s/*\n' "$H/space" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory" "$H/home/.claude/projects/$(slug "$H/space/arrow")/memory"
   argv_has --ro-bind "$H/home/.claude/projects/$(slug "$H/space/lib")/memory" "$H/home/.claude/projects/$(slug "$H/space/lib")/memory"
@@ -97,7 +97,7 @@ trust() {
   mkdir -p "$H/empty"
   printf '[share-memory]\n%s/*\n' "$H/empty" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"matched no project with memory"* ]]
   argv_has --tmpfs "$H/home/.claude/projects" # still scoped to the current project
@@ -109,7 +109,7 @@ trust() {
   mkdir -p "$H/home/.claude/projects/$(slug "$PROJ")/memory"
   printf '[share-memory]\n%s\n' "$PROJ" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   # the project stays writable; its memory must not also appear as a read-only bind
   argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory" # memory on top of the transcripts store
@@ -120,7 +120,7 @@ trust() {
   mkdir -p "$H/home/.claude/projects/$(slug "$PROJ")/memory"
   printf '[share-memory]\n%s/*\n' "$(dirname "$PROJ")" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" != *"matched no project with memory"* ]] # it did match; it was our own
   run ! argv_has --ro-bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory"
@@ -130,7 +130,7 @@ trust() {
   mkdir -p "$H/ro-a" "$H/ro-b" "$H/rw-a"
   printf '[ro]\n%s/ro-a\n%s/ro-b\n[rw]\n%s/rw-a\n[forward]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine MY_TOOL=on CUDA_VISIBLE_DEVICES=1 -- claude --version
+  run_engine MY_TOOL=on CUDA_VISIBLE_DEVICES=1 -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/ro-a" "$H/ro-a"
   argv_has --ro-bind "$H/ro-b" "$H/ro-b"
@@ -142,12 +142,12 @@ trust() {
 @test "[claude] user-mcp from an approved dot-file is refused, naming config = own; an unapproved one changes nothing" {
   printf '[claude]\nuser-mcp = none\n' >"$PROJ/.agent-sandbox"
   # unapproved: the file is ignored, so nothing refuses
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
   # approved: refused, and the launch says which form asked for it and what to write
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"[claude] user-mcp: user-mcp was removed"*"config = own"* ]]
   [ ! -s "$H/argv" ]
@@ -157,7 +157,7 @@ trust() {
   mkdir -p "$H/home/.aws"
   printf '[rw]\n%s/home/.aws\n' "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 1 ]
   [ ! -s "$H/argv" ]
 }
@@ -166,7 +166,7 @@ trust() {
   mkdir -p "$H/env-rw" "$H/file-rw"
   printf '[rw]\n%s/file-rw\n' "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_RW="$H/env-rw" -- claude --version
+  run_engine AGENT_SANDBOX_RW="$H/env-rw" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$H/env-rw" "$H/env-rw"
   argv_has --bind "$H/file-rw" "$H/file-rw"
@@ -178,7 +178,7 @@ trust() {
   mkdir -p "$env" "$base/pkgs" "$H/pkgs"
   printf '[conda]\nname = proj-env\nwrite = 1\npkgs = %s/pkgs\n' "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine MAMBA_ROOT_PREFIX="$base" -- claude --version
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"using conda env 'proj-env' from .agent-sandbox"* ]]
   argv_has --ro-bind "$base" "$base"
@@ -198,7 +198,7 @@ trust() {
   trust "$PROJ"
   # launched from a shell with shell-env active, the way conda leaves PATH
   run_engine CONDA_PREFIX="$active" CONDA_DEFAULT_ENV=shell-env CONDA_SHLVL=1 \
-    PATH="$active/bin:$H/bin:/usr/bin:/bin" -- claude --version
+    PATH="$active/bin:$H/bin:/usr/bin:/bin" -- asb claude --version
   [ "$status" -eq 0 ]
   [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
   [ "$(setenv_value CONDA_DEFAULT_ENV)" = "proj-env" ]
@@ -216,7 +216,7 @@ trust() {
   # or the dot-file's env is bound but none of its tools are on PATH.
   mkdir -p "$base/bin"
   run_engine CONDA_PREFIX="$base" CONDA_DEFAULT_ENV=base CONDA_SHLVL=1 \
-    PATH="$base/bin:$H/bin:/usr/bin:/bin" -- claude --version
+    PATH="$base/bin:$H/bin:/usr/bin:/bin" -- asb claude --version
   [ "$status" -eq 0 ]
   [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
   [ "$(setenv_value PATH)" = "$env/bin:$H/bin:/usr/bin:/bin" ]
@@ -225,24 +225,24 @@ trust() {
 
 @test "[net] mode from an approved dot-file selects the network mode; AGENT_SANDBOX_NET wins; unknown values and unapproved files are ignored" {
   printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
-  run_engine -- claude --version # not yet approved: still the default, proxy
+  run_engine -- asb claude --version # not yet approved: still the default, proxy
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
   argv_has --share-net
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"using network mode 'none' from .agent-sandbox"* ]]
   run ! argv_has --share-net
   run ! setenv_value HTTPS_PROXY
-  run_engine AGENT_SANDBOX_NET=proxy -- claude --version # the shell's knob wins
+  run_engine AGENT_SANDBOX_NET=proxy -- asb claude --version # the shell's knob wins
   [ "$status" -eq 0 ]
   [[ "$output" == *"AGENT_SANDBOX_NET=proxy overrides the .agent-sandbox network mode 'none'"* ]]
   argv_has --share-net
   [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
   printf '[net]\nmode = bogus\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
   [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
@@ -251,7 +251,7 @@ trust() {
 @test "[proxy-ca], [profile-dir] and [session-base] are refused in the dot-file" {
   printf '[proxy-ca]\n/tmp/x.pem\n[profile-dir]\n/tmp\n[session-base]\n/tmp\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"[proxy-ca] is not allowed here"* ]]
   [[ "$output" == *"[profile-dir] is not allowed here"* ]]
@@ -263,17 +263,17 @@ trust() {
 @test "editing an approved dot-file refuses to launch until it is re-reviewed; the edit never applies unreviewed" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [[ "$output" == *"session allowlist: pypi.org"* ]]
   printf '[allow]\npypi.org\nevil.example\n' >"$PROJ/.agent-sandbox" # the agent could do this
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 1 ]
   [[ "$output" == *"has changed since you approved it"*"--trust"* ]]
   [[ "$output" != *"allowlist:"*evil.example* ]]
   [ ! -s "$H/argv" ] # bwrap never ran
   run_trust 'y\n'    # the user reviews the new content and approves it
   [ "$status" -eq 0 ]
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist:"*"evil.example"* ]]
 }
@@ -287,24 +287,24 @@ trust() {
   # default applied" stay distinguishable: it shares another project's memory
   printf '[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
   argv_has --ro-bind "$om" "$om" # the approved share is granted
   rm "$PROJ/.agent-sandbox"      # the agent could do this; falling back to defaults must not be silent
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 1 ]
   [[ "$output" == *"approved .agent-sandbox is missing"*"--trust"* ]]
   [ ! -s "$H/argv" ]
   run_trust 'n\n' # keep the approval: still refused
   [ "$status" -eq 0 ]
   [[ "$output" == *"one was approved earlier"*"kept"* ]]
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 1 ]
   run_trust 'y\n' # forget it: the defaults apply again, knowingly
   [ "$status" -eq 0 ]
   [[ "$output" == *"approval forgotten"* ]]
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   # the defaults apply again, knowingly: still scoped, since that is the default
   # now, but the share the dot-file used to grant is gone
@@ -318,12 +318,12 @@ trust() {
   printf 'not-a-real-bpf' >"$SC/$(uname -m).bpf"
   printf '[seccomp]\nmode = on\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --seccomp 10
   [[ "$output" == *"using seccomp mode 'on' from .agent-sandbox"* ]]
   # an explicit knob in the launching shell wins, as it does for [net] mode
-  run_engine AGENT_SANDBOX_SECCOMP=off AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP=off AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"overrides the .agent-sandbox seccomp mode 'on'"* ]]
   run ! argv_has --seccomp
@@ -333,7 +333,7 @@ trust() {
   # argv, so the file says `off` and the filter must still be there.
   printf '[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
   rm -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --seccomp 10
   [[ "$output" == *"present but not approved"* ]]
@@ -346,7 +346,7 @@ trust() {
   printf 'not-a-real-bpf' >"$SC/$(uname -m).bpf"
   printf '[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ]
   # ...and the engine says it took the value from the file. The filter is on by
   # default, so its absence here is already the file's doing; the message is
@@ -355,7 +355,7 @@ trust() {
   run ! argv_has --seccomp
   printf '[seccomp]\nmode = default\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ] # ignored, not fatal: the file is data, the launch goes on
   # "ignored" means the built-in default stands, and that default is ON. A
   # malformed line must not read as `off` -- that would be a project file
@@ -364,13 +364,13 @@ trust() {
   [[ "$output" == *"[seccomp] mode 'default' unknown (on|off)"* ]]
   printf '[seccomp]\non\n' >"$PROJ/.agent-sandbox" # a list line, not key = value
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --seccomp 10
   [[ "$output" == *"[seccomp] expects 'key = value'"* ]]
   printf '[seccomp]\nprofile = paranoid\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   argv_has --seccomp 10
   [[ "$output" == *"unknown [seccomp] key 'profile'"* ]]
 }
@@ -382,7 +382,7 @@ trust() {
   }
   printf '[share-memory]\nall\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --tmpfs "$H/home/.claude/projects"
 }
@@ -390,13 +390,13 @@ trust() {
 @test "the global default scopes memory with no dot-file present; unknown sections and ssh warn" {
   mkdir -p "$CFG"
   printf 'memory_default = scoped\n' >"$CFG/config"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
   # parsing feedback
   printf '[allow]\nok.example\n[ssh]\nignored.host\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [[ "$output" == *"[ssh] is not supported yet"* ]]
   [[ "$output" == *"unknown section [bogus]"* ]]
 }
@@ -412,7 +412,7 @@ trust() {
   [ -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
   grep -q '/.agent-sandbox' "$PROJ/.git/info/exclude"
   # and now the engine honours it
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
@@ -423,7 +423,7 @@ trust() {
   [[ "$output" == *"control characters"* && "$output" == *"not approved"* ]]
   [ ! -d "$CFG/trust" ] || [ -z "$(ls -A "$CFG/trust")" ]
   trust "$PROJ" # even a hash recorded by other means does not get such a file honoured
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
   printf '[allow]\npypi.org\r\n' >"$PROJ/.agent-sandbox" # a carriage return counts
   run_trust 'y\n'
@@ -432,7 +432,7 @@ trust() {
   run_trust 'y\n'
   [ "$status" -eq 0 ]
   [[ "$output" == *'M-CM-$'* && "$output" == *"approved."* ]]
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ] && [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
@@ -460,7 +460,7 @@ trust() {
   [[ "$s" == *"-proj-x-y" ]]
   wrong="${real//\//-}" # what the old "/"-only rule produced
   [[ "$wrong" == *.* ]] # and that one still carries the dot
-  RUN_CWD="$proj" run_engine -- claude --version
+  RUN_CWD="$proj" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$H/home/.claude/projects"
   argv_has --bind "$H/home/.claude/projects/$s/memory" "$H/home/.claude/projects/$s/memory" # memory on top of the transcripts store

@@ -275,7 +275,7 @@ find; the model does not make them go away, it makes them the only thing left to
 launch. Between launches it is trivial to assert. *Within a running session* it is not,
 and the instrument is undecided:
 
-- **Container liveness** is measurable today: `claude --exec` a script that reads, sleeps
+- **Container liveness** is measurable today: `asb --profile claude --exec` a script that reads, sleeps
   while the harness edits the source from outside, and reads again. That answers whether
   the *mount* is live, which is what the mode promises.
 - **Agent liveness** — whether Claude Code re-reads a changed file mid-session — is a

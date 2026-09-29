@@ -108,7 +108,7 @@ holds only refused destinations, no payloads.
 ## Per-session hosts: `--allow`
 
 ```
-claude --allow pypi.org --allow .example.org
+asb --allow pypi.org --allow .example.org claude
 ```
 
 opens those hosts for this session only, on top of the global allowlist. The
@@ -160,5 +160,5 @@ curl -sI https://example.com          # CONNECT tunnel failed, response 403
 Instead of passing `--allow` each time, a project can list hosts in an
 `[allow]` section of its `.agent-sandbox` file, one per line, which applies to
 every session run from that project once you approve the file with
-`claude --trust`. Same
+`asb --trust`. Same
 rules as `--allow`, same per-session lifetime. See [config.md](config.md).

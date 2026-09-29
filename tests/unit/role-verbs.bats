@@ -27,20 +27,20 @@ slugify() {
 }
 
 @test "--reset-connection is refused with its new name" {
-  run_engine -- claude --reset-connection instructions
+  run_engine -- asb --reset-connection claude instructions
   [ "$status" -eq 2 ]
   [[ "$output" == *"--reset-connection was renamed: write --reset"* ]]
   [ ! -s "$H/argv" ]
 }
 
 @test "--reset CHANNEL re-seeds that channel and leaves the others" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native;skills=copy native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native;skills=copy native' -- asb claude --version
   local ins sk
   ins="$SBOX/instructions/copy/$(slugify "$C/rules")"
   sk="$SBOX/skills/copy/$(slugify "$C/skills")"
   printf 'MINE\n' >"$ins/topic.md"
   printf 'MINE\n' >"$sk/s.md"
-  run_engine -- claude --reset instructions
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"reset 'instructions'"* ]]
   [ ! -s "$H/argv" ] # nothing launched
@@ -49,25 +49,25 @@ slugify() {
 }
 
 @test "--reset discards an own store too: its source's version is the empty start" {
-  run_engine AGENT_SANDBOX_CONNECT='skills=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='skills=own native' -- asb claude --version
   local own
   own="$SBOX/skills/own/$(slugify "$C/skills")"
   printf 'MINE\n' >"$own/x.md"
-  run_engine -- claude --reset skills
+  run_engine -- asb --reset skills claude
   [ "$status" -eq 0 ]
   [ ! -e "$own/x.md" ]
 }
 
 @test "--reset PATH resets one declared path and leaves the others" {
   mkdir -p "$PROJ/scratch" "$PROJ/other"
-  run_engine -- claude --connect './scratch/=own' --connect './other/=own' --version
+  run_engine -- asb --connect './scratch/=own' --connect './other/=own' claude --version
   [ "$status" -eq 0 ]
   local s o
   s="$SBOX/@paths/own/$(slugify "$PROJ/scratch")"
   o="$SBOX/@paths/own/$(slugify "$PROJ/other")"
   printf 'MINE\n' >"$s/x"
   printf 'MINE\n' >"$o/x"
-  run_engine -- claude --reset ./scratch/
+  run_engine -- asb --reset ./scratch/ claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"reset './scratch/'"* ]]
   [ ! -e "$s" ]
@@ -75,53 +75,53 @@ slugify() {
 }
 
 @test "--reset of a path that holds nothing says so; of a protected path it refuses" {
-  run_engine -- claude --reset ./nothing-here/
+  run_engine -- asb --reset ./nothing-here/ claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"holds nothing at './nothing-here/'"* ]]
   # shellcheck disable=SC2088 # the engine expands `~`, as a declaration's does
-  run_engine -- claude --reset '~/.ssh/'
+  run_engine -- asb --reset '~/.ssh/' claude
   [ "$status" -ne 0 ]
 }
 
 @test "--reset of a name that is neither a channel nor a path is refused, listing the channels" {
-  run_engine -- claude --reset nosuch
+  run_engine -- asb --reset nosuch claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"no channel 'nosuch'"*"It carries:"* ]]
 }
 
 @test "--delete removes every store of the role, and the next launch starts from the source" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   printf 'MINE\n' >"$SBOX/instructions/copy/$(slugify "$C/rules")/topic.md"
-  run_engine -- claude --delete
+  run_engine -- asb --delete claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"deleted its stores"* ]]
   [ ! -s "$H/argv" ]
   [ ! -e "$SBOX" ]
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   [ "$(cat "$SBOX/instructions/copy/$(slugify "$C/rules")/topic.md")" = NATIVE ]
 }
 
 @test "--delete removes a role whose overlays left an unreadable work directory" {
   # overlayfs leaves <work>/work at mode 000; du cannot read it and exits 1, which under
   # set -e ended --delete silently before the chmod that makes it removable
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   mkdir -p "$SBOX/skills/work/x/work"
   chmod 000 "$SBOX/skills/work/x/work"
-  run_engine -- claude --delete
+  run_engine -- asb --delete claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"deleted its stores"* ]]
   [ ! -e "$SBOX" ]
 }
 
 @test "--delete of a role with nothing stored says so" {
-  run_engine -- claude --role fresh --delete
+  run_engine -- asb --role fresh --delete claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"role 'fresh' has nothing stored"* ]]
 }
 
 @test "--delete is refused while anything is joined, naming --shutdown, and removes nothing" {
-  engine_bg -- claude --version
-  run_engine -- claude --delete
+  engine_bg -- asb claude --version
+  run_engine -- asb --delete claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"is running; end it first with:"*"--shutdown"* ]]
   [ -d "$SBOX" ]
@@ -129,36 +129,36 @@ slugify() {
 }
 
 @test "--delete ends an idle keeper first, as a reset does" {
-  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- claude --version
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb claude --version
   release_bg
   [ -e "$SBOX/keeper/id" ] # waiting out its grace
-  run_engine -- claude --delete
+  run_engine -- asb --delete claude
   [ "$status" -eq 0 ]
   [ ! -e "$SBOX" ]
 }
 
 @test "--delete names only its own role" {
-  run_engine -- claude --role keep --version
-  run_engine -- claude --role gone --version
-  run_engine -- claude --role gone --delete
+  run_engine -- asb --role keep claude --version
+  run_engine -- asb --role gone claude --version
+  run_engine -- asb --role gone --delete claude
   [ "$status" -eq 0 ]
   [ -d "${SBOX%/default}/keep" ]
   [ ! -e "${SBOX%/default}/gone" ]
 }
 
 @test "--status of a role that is not running says so, and where its stores are" {
-  run_engine -- claude --status
+  run_engine -- asb --status claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"role 'default' of $PROJ: not running, and nothing stored"* ]]
-  run_engine -- claude --version
-  run_engine -- claude --status
+  run_engine -- asb claude --version
+  run_engine -- asb --status claude
   [[ "$output" == *"not running; its stores"*"$SBOX"* ]]
   [ ! -s "$H/argv" ]
 }
 
 @test "--status of a running role shows the keeper, its dot-file, and no daemon" {
-  engine_bg -- claude --version
-  run_engine -- claude --status
+  engine_bg -- asb claude --version
+  run_engine -- asb --status claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"role 'default' of $PROJ: running since"*"supervisor pid"* ]]
   [[ "$output" == *"dot-file: none approved when it started"* ]]

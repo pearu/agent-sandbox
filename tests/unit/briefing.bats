@@ -35,7 +35,7 @@ trust() {
 }
 
 @test "on by default: the briefing is bound read-only and handed to the agent as session hooks" {
-  run_engine BWRAP_COPY="$OUT" -- claude --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
   [ "$status" -eq 0 ]
   # the artefacts are one directory, bound once, read-only, at a fixed path inside:
   # the launch is a keeper, and a later join's own settings file must appear in it
@@ -71,7 +71,7 @@ trust() {
   mkdir -p "$SC"
   printf 'x' >"$SC/$(uname -m).bpf"
   run_engine BWRAP_COPY="$OUT" AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$SC" \
-    AGENT_SANDBOX_RO="$H/ro1" AGENT_SANDBOX_RW="$H/rw1" -- claude --allow pypi.org --version
+    AGENT_SANDBOX_RO="$H/ro1" AGENT_SANDBOX_RW="$H/rw1" -- asb --allow pypi.org claude --version
   [ "$status" -eq 0 ]
   local md="$OUT/briefing.md"
   grep -q 'allowlist' "$md"     # egress is described
@@ -82,15 +82,15 @@ trust() {
   grep -q -- "$H/other" "$md"   # the project whose memory is shared
   grep -q 'seccomp is on' "$md" # the syscall filter
   grep -q 'trust-gated' "$md"   # ...and how to ask for more
-  grep -q 'claude --trust' "$md"
+  grep -q 'asb --trust' "$md"
   # names and paths only: nothing is read out of the shared project
   printf 'SECRET-CANARY\n' >"$H/home/.claude/projects/$(printf '%s' "$H/other" | sed 's:[^A-Za-z0-9-]:-:g')/memory/MEMORY.md"
-  run_engine BWRAP_COPY="$OUT" -- claude --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
   run ! grep -q 'SECRET-CANARY' "$OUT/briefing.md"
 }
 
 @test "the compact summary carries the actionable half, not just the prohibitions" {
-  run_engine BWRAP_COPY="$OUT" -- claude --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
   local h="$OUT/hook-SessionStart.json"
   grep -q 'deliberate' "$h"                 # a block is not a fault
   grep -q 'opened on purpose' "$h"          # ...and what is open should be used
@@ -101,7 +101,7 @@ trust() {
 }
 
 @test "off suppresses every trace of it; a dot-file can ask for that, and the shell knob wins" {
-  run_engine AGENT_SANDBOX_BRIEFING=off BWRAP_COPY="$OUT" -- claude --version
+  run_engine AGENT_SANDBOX_BRIEFING=off BWRAP_COPY="$OUT" -- asb claude --version
   [ "$status" -eq 0 ]
   run ! join_has --settings
   run ! grep -q "$IN" "$H/argv"
@@ -109,20 +109,20 @@ trust() {
   # a trusted dot-file can turn it off...
   printf '[briefing]\nmode = off\n' >"$PROJ/.agent-sandbox"
   trust
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   # ...and says so, which is what distinguishes "the file was read" from "the
   # default happened to match"
   [[ "$output" == *"using briefing mode 'off' from .agent-sandbox"* ]]
   run ! join_has --settings
   # an explicit knob in the shell overrides the file, as everywhere else
-  run_engine AGENT_SANDBOX_BRIEFING=on -- claude --version
+  run_engine AGENT_SANDBOX_BRIEFING=on -- asb claude --version
   join_has --settings "$IN/settings.json"
   [[ "$output" == *"overrides the .agent-sandbox briefing mode 'off'"* ]]
 }
 
 @test "an unknown briefing value is refused before bwrap runs" {
-  run_engine AGENT_SANDBOX_BRIEFING=verbose -- claude --version
+  run_engine AGENT_SANDBOX_BRIEFING=verbose -- asb claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"not recognised"* && "$output" == *"'on' or 'off'"* ]]
   [ ! -s "$H/argv" ]
@@ -130,7 +130,7 @@ trust() {
 
 @test "a user --settings is merged, not clobbered: Claude Code honours only the last one" {
   local mine='{"permissions":{"defaultMode":"plan"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}'
-  run_engine BWRAP_COPY="$OUT" -- claude --settings "$mine" --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"merged your --settings"* ]]
   # the user's own settings survive, ours are added alongside
@@ -149,7 +149,7 @@ trust() {
 
 @test "--settings=VALUE spelling is recognised too, and a file path is read" {
   printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo from-file"}]}]}}' >"$H/mine.json"
-  run_engine BWRAP_COPY="$OUT" -- claude "--settings=$H/mine.json" --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude "--settings=$H/mine.json" --version
   [ "$status" -eq 0 ]
   grep -q 'echo from-file' "$OUT/settings.json"
   grep -q "cat $IN/hook-SessionStart.json" "$OUT/settings.json"
@@ -161,7 +161,7 @@ trust() {
   # not resurrect it.
   local first='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo FIRST"}]}]}}'
   local last='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo LAST"}]}]}}'
-  run_engine BWRAP_COPY="$OUT" -- claude --settings "$first" --settings "$last" --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$first" --settings "$last" --version
   [ "$status" -eq 0 ]
   grep -q 'echo LAST' "$OUT/settings.json"
   run ! grep -q 'echo FIRST' "$OUT/settings.json" # overridden, as it would have been
@@ -169,7 +169,7 @@ trust() {
 }
 
 @test "settings that disable all hooks are respected, and the briefing says it will not arrive" {
-  run_engine BWRAP_COPY="$OUT" -- claude --settings '{"disableAllHooks":true}' --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings '{"disableAllHooks":true}' --version
   [ "$status" -eq 0 ]
   grep -q '"disableAllHooks": true' "$OUT/settings.json" # their call stands
   [[ "$output" == *"will NOT be injected"* ]]
@@ -182,7 +182,7 @@ trust() {
   # key it does not write must come through byte-identical.
   local mine
   mine='{"permissions":{"defaultMode":"plan","allow":["Bash(git *)"]},"env":{"FOO":"bar"},"model":"opus","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo theirs"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo stop"}]}]}}'
-  run_engine BWRAP_COPY="$OUT" -- claude --settings "$mine" --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
   [ "$status" -eq 0 ]
   python3 - "$OUT/settings.json" <<'CHECK'
 import json, sys
@@ -200,7 +200,7 @@ CHECK
 
 @test "a hooks shape we do not recognise is refused, never coerced" {
   # list() of a dict yields its keys, which would silently replace their data.
-  run_engine BWRAP_COPY="$OUT" -- claude --settings '{"hooks":{"SessionStart":{"oops":1}}}' --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings '{"hooks":{"SessionStart":{"oops":1}}}' --version
   [ "$status" -eq 0 ] # the launch goes on
   [[ "$output" == *"not installed"* ]]
   run ! join_has --settings "$IN/settings.json"
@@ -214,7 +214,7 @@ CHECK
   # shellcheck disable=SC2016 # the stub's own $1 and $@
   printf '#!/bin/sh\n[ "$1" = -c ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
-  run_engine BWRAP_COPY="$OUT" -- claude --settings '{"a":1}' --version
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings '{"a":1}' --version
   [ "$status" -eq 0 ]           # the launch goes on
   join_has --settings '{"a":1}' # theirs, untouched
   [[ "$output" == *"not installed"* ]]

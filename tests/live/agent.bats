@@ -34,7 +34,7 @@ strict_available() {
 reach() {
   local mode="$1"
   shift
-  env AGENT_SANDBOX_NET="$mode" timeout 120 "$ENGINE" --profile claude "$@" \
+  env AGENT_SANDBOX_NET="$mode" timeout 120 "$ENGINE" "$@" claude \
     --model claude-haiku-4-5-20251001 \
     -p 'Reply with the single word ok and nothing else.' </dev/null
 }
@@ -93,7 +93,7 @@ seccomp_available() {
 # path except the SessionStart hook, and the question forbids looking.
 
 @test "briefing: the real agent has the briefing in context at session start, without reading any file" {
-  run env AGENT_SANDBOX_NET=proxy timeout 120 "$ENGINE" --profile claude \
+  run env AGENT_SANDBOX_NET=proxy timeout 120 "$ENGINE" claude \
     --model claude-haiku-4-5-20251001 \
     -p 'Without using any tool, answer from what is already in your context: what absolute path were you told holds the details of this sandbox? Reply with the path and nothing else.' </dev/null
   [ "$status" -eq 0 ]
@@ -101,7 +101,7 @@ seccomp_available() {
 }
 
 @test "briefing off: the same question has no answer, so the hook is what put it there" {
-  run env AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_BRIEFING=off timeout 120 "$ENGINE" --profile claude \
+  run env AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_BRIEFING=off timeout 120 "$ENGINE" claude \
     --model claude-haiku-4-5-20251001 \
     -p 'Without using any tool, answer from what is already in your context: what absolute path were you told holds the details of this sandbox? Reply with the path, or the single word none.' </dev/null
   [ "$status" -eq 0 ]

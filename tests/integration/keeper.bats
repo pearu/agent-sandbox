@@ -57,10 +57,10 @@ bg_sandboxed() {
     shift
   done
   [[ "${1:-}" == "--" ]] && shift
-  (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
-    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
+  (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$ENGINE" --profile probe "$@") \
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$ENGINE" "$@") \
     </dev/null >"$I/$name.out" 2>&1 3>&- &
   BG_PID=$!
   BGS+=("$BG_PID")
@@ -92,9 +92,9 @@ wait_gone() { # wait_gone PID -- up to 10 s
 
 @test "two launches of one role at once are ONE launch: one mount namespace, one overlay" {
   bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- \
-    --exec sh -c "readlink /proc/self/ns/mnt >a.ns; awk -v m=\"\$HOME/.probe/docs\" '\$5 == m {print \$3}' /proc/self/mountinfo >a.dev; $(hold a)"
+    --profile probe --exec sh -c "readlink /proc/self/ns/mnt >a.ns; awk -v m=\"\$HOME/.probe/docs\" '\$5 == m {print \$3}' /proc/self/mountinfo >a.dev; $(hold a)"
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- \
-    --exec sh -c "readlink /proc/self/ns/mnt >b.ns; awk -v m=\"\$HOME/.probe/docs\" '\$5 == m {print \$3}' /proc/self/mountinfo >b.dev"
+    --profile probe --exec sh -c "readlink /proc/self/ns/mnt >b.ns; awk -v m=\"\$HOME/.probe/docs\" '\$5 == m {print \$3}' /proc/self/mountinfo >b.dev"
   [ "$status" -eq 0 ]
   [ -s "$IWORK/a.dev" ]
   [ "$(cat "$IWORK/a.ns")" = "$(cat "$IWORK/b.ns")" ]
@@ -116,13 +116,13 @@ wait_gone() { # wait_gone PID -- up to 10 s
     have_filter=1
     base+=(AGENT_SANDBOX_SECCOMP_DIR="$sc")
   fi
-  bg_sandboxed a "${base[@]}" -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${base[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
   if ((have_filter)); then
     grep -q '^Seccomp:[[:space:]]*2$' "/proc/$t/status"
   fi
-  run_sandboxed "${base[@]}" -- --exec sh -c 'grep -E "^(Uid|Gid|Cap[A-Za-z]+|NoNewPrivs|Seccomp):" /proc/self/status >status.b; cat /proc/self/mountinfo >mounts.b; readlink /proc/self/ns/pid /proc/self/ns/net /proc/self/ns/uts /proc/self/ns/ipc /proc/self/ns/user >ns.b; unshare -U true 2>/dev/null && echo yes >unshare.b || echo no >unshare.b'
+  run_sandboxed "${base[@]}" -- --profile probe --exec sh -c 'grep -E "^(Uid|Gid|Cap[A-Za-z]+|NoNewPrivs|Seccomp):" /proc/self/status >status.b; cat /proc/self/mountinfo >mounts.b; readlink /proc/self/ns/pid /proc/self/ns/net /proc/self/ns/uts /proc/self/ns/ipc /proc/self/ns/user >ns.b; unshare -U true 2>/dev/null && echo yes >unshare.b || echo no >unshare.b'
   [ "$status" -eq 0 ]
   diff <(grep -E "^(Uid|Gid|Cap[A-Za-z]+|NoNewPrivs|Seccomp):" "/proc/$t/status") "$IWORK/status.b"
   diff <(awk '{print $4, $5, $6, $9, $10}' "/proc/$t/mountinfo") <(awk '{print $4, $5, $6, $9, $10}' "$IWORK/mounts.b")
@@ -135,10 +135,10 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "a join's environment is the keeper's, except the terminal it came from" {
-  bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_FORWARD=MINE MINE=from-keeper -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_FORWARD=MINE MINE=from-keeper -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
-  run_sandboxed "${BASE[@]}" TERM=vt100 LANG=C MINE=from-join -- --exec sh -c 'env -0 >env.b'
+  run_sandboxed "${BASE[@]}" TERM=vt100 LANG=C MINE=from-join -- --profile probe --exec sh -c 'env -0 >env.b'
   [ "$status" -eq 0 ]
   # what describes the sandbox is the keeper's...
   grep -qz '^MINE=from-keeper$' "$IWORK/env.b"
@@ -154,8 +154,8 @@ wait_gone() { # wait_gone PID -- up to 10 s
 
 @test "what one join writes to an own store, another reads, and it is in the role's store" {
   bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_CONNECT='extra=own native' -- \
-    --exec sh -c "echo FROM-A >\"\$HOME/.probe/extra/x\"; $(hold a)"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='extra=own native' -- --exec sh -c 'cat "$HOME/.probe/extra/x" >seen.b'
+    --profile probe --exec sh -c "echo FROM-A >\"\$HOME/.probe/extra/x\"; $(hold a)"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='extra=own native' -- --profile probe --exec sh -c 'cat "$HOME/.probe/extra/x" >seen.b'
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/seen.b")" = FROM-A ]
   [ ! -e "$IHOME/.probe/extra/x" ] # nothing reached the native source
@@ -163,11 +163,11 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "the keeper ends when its last join ends, and not while one is still joined" {
-  bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t spid
   t="$(keeper_payload)"
   read -r spid _ <"$SB/keeper/id"
-  run_sandboxed "${BASE[@]}" -- --exec true
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec true
   [ "$status" -eq 0 ]
   sleep 0.3
   [ -d "/proc/$t" ] # a still joined: the keeper stays
@@ -179,24 +179,24 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "with a grace, commands run one after another share one keeper, which then ends on its own" {
-  KEEPER_GRACE=2 bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  KEEPER_GRACE=2 bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
   release a
   wait "$BG_PID"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_KEEPER_GRACE=2 -- --exec true
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_KEEPER_GRACE=2 -- --profile probe --exec true
   [ "$status" -eq 0 ]
   [ "$(keeper_payload)" = "$t" ] # joined the idle keeper within its grace
   wait_gone "$t"
 }
 
 @test "a join that arrives during the grace keeps the keeper: it is counted again before the end" {
-  KEEPER_GRACE=1 bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  KEEPER_GRACE=1 bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
   release a
   wait "$BG_PID" # the keeper is idle now, inside its grace
-  KEEPER_GRACE=1 bg_sandboxed b "${BASE[@]}" -- --exec sh -c "$(hold b)"
+  KEEPER_GRACE=1 bg_sandboxed b "${BASE[@]}" -- --profile probe --exec sh -c "$(hold b)"
   [ "$(keeper_payload)" = "$t" ]
   sleep 2 # past the grace that began before b joined
   [ -d "/proc/$t" ]
@@ -207,13 +207,13 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "a join may repeat the running policy, not change it" {
-  bg_sandboxed a "${BASE[@]}" -- --preset shared --exec sh -c "$(hold a)"
-  run_sandboxed "${BASE[@]}" -- --preset isolated --exec true
+  bg_sandboxed a "${BASE[@]}" -- --preset shared --profile probe --exec sh -c "$(hold a)"
+  run_sandboxed "${BASE[@]}" -- --preset isolated --profile probe --exec true
   [ "$status" -eq 2 ]
   [[ "$output" == *"preset = shared"*"isolated"* ]]
-  run_sandboxed "${BASE[@]}" -- --preset shared --exec true
+  run_sandboxed "${BASE[@]}" -- --preset shared --profile probe --exec true
   [ "$status" -eq 0 ]
-  run_sandboxed AGENT_SANDBOX_NET=proxy XDG_STATE_HOME="$IHOME/.local/state" -- --exec true
+  run_sandboxed AGENT_SANDBOX_NET=proxy XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec true
   [ "$status" -eq 2 ]
   [[ "$output" == *"net = none"* ]]
   release a
@@ -227,27 +227,27 @@ wait_gone() { # wait_gone PID -- up to 10 s
   }
   printf '[connect]\ndocs = read-only native\n' >"$IWORK/.agent-sandbox"
   trust_it
-  bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   printf '[connect]\ndocs = own native\n' >"$IWORK/.agent-sandbox"
   trust_it
-  run_sandboxed "${BASE[@]}" -- --exec sh -c 'echo X >"$HOME/.probe/docs/new.md" 2>/dev/null && echo wrote >w.b || echo refused >w.b'
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec sh -c 'echo X >"$HOME/.probe/docs/new.md" 2>/dev/null && echo wrote >w.b || echo refused >w.b'
   [ "$status" -eq 0 ]
   [[ "$output" == *".agent-sandbox has changed"* ]]
   [ "$(cat "$IWORK/w.b")" = refused ] # still read-only: the keeper's policy
   release a
   wait "$BG_PID"
-  run_sandboxed "${BASE[@]}" -- --exec sh -c 'echo X >"$HOME/.probe/docs/new.md" 2>/dev/null && echo wrote >w.c || echo refused >w.c'
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec sh -c 'echo X >"$HOME/.probe/docs/new.md" 2>/dev/null && echo wrote >w.c || echo refused >w.c'
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/w.c")" = wrote ] # the next keeper has the new policy
   [ ! -e "$IHOME/.probe/docs/new.md" ]
 }
 
 @test "Ctrl-C at one join ends that join's command, not the launch" {
-  bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
-  (cd "$IWORK" && exec setsid env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
-    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
+  (cd "$IWORK" && exec setsid env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE=0 AGENT_SANDBOX_PRESET=shared \
     "${BASE[@]}" "$ENGINE" --profile probe --exec sh -c 'touch b.in; exec sleep 60') \
     </dev/null >"$I/b.out" 2>&1 3>&- &
@@ -272,11 +272,11 @@ wait_gone() { # wait_gone PID -- up to 10 s
       continue
     fi
     rm -f "$IWORK"/*.in "$IWORK"/release.*
-    bg_sandboxed "a$mode" AGENT_SANDBOX_NET=$mode XDG_STATE_HOME="$IHOME/.local/state" -- --exec sh -c "$(hold "a$mode")"
+    bg_sandboxed "a$mode" AGENT_SANDBOX_NET=$mode XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec sh -c "$(hold "a$mode")"
     local t
     t="$(keeper_payload)"
     run_sandboxed AGENT_SANDBOX_NET=$mode XDG_STATE_HOME="$IHOME/.local/state" -- \
-      --exec sh -c 'readlink /proc/self/ns/net >net.b; printf "%s" "$HTTPS_PROXY" >proxy.b'
+      --profile probe --exec sh -c 'readlink /proc/self/ns/net >net.b; printf "%s" "$HTTPS_PROXY" >proxy.b'
     [ "$status" -eq 0 ]
     [ "$(readlink "/proc/$t/ns/net")" = "$(cat "$IWORK/net.b")" ]
     [[ "$(cat "$IWORK/proxy.b")" == http://*:8888 ]]
@@ -287,29 +287,29 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "a write inside lands in the layer, never in the source" {
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c 'echo MINE >"$HOME/.probe/docs/a.md"'
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --profile probe --exec sh -c 'echo MINE >"$HOME/.probe/docs/a.md"'
   [ "$status" -eq 0 ]
   [ "$(cat "$IHOME/.probe/docs/a.md")" = YOURS ]
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen'
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --profile probe --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen'
   [ "$(cat "$IWORK/seen")" = MINE ]
 }
 
 @test "--reset refuses while something is joined, and afterwards the source comes back" {
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c 'echo MINE >"$HOME/.probe/docs/a.md"'
-  bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c "$(hold a)"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset docs
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --profile probe --exec sh -c 'echo MINE >"$HOME/.probe/docs/a.md"'
+  bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --profile probe --exec sh -c "$(hold a)"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset docs probe
   [ "$status" -ne 0 ]
   [[ "$output" == *"is running"* ]]
   release a
   wait "$BG_PID"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset docs
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset docs probe
   [ "$status" -eq 0 ]
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen'
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --profile probe --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen'
   [ "$(cat "$IWORK/seen")" = YOURS ]
 }
 
 @test "nothing of a launch outlives it: no keeper process, no record, no session directory" {
-  run_sandboxed "${BASE[@]}" -- --exec true
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec true
   [ "$status" -eq 0 ]
   [ ! -e "$SB/keeper" ]
   [ -z "$(ls -A "$I/base" 2>/dev/null)" ]
@@ -334,7 +334,7 @@ wait_gone() { # wait_gone PID -- up to 10 s
   # every traced descendant -- which is when the daemon dies; a launch in the
   # foreground would wait out the daemon, and find the keeper gone when it came back.
   # So the 300 s here is an upper bound this test never reaches, traced or not.
-  bg_sandboxed a "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(300)" daemon run </dev/null >/dev/null 2>&1 & touch a.in'
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c 'setsid python3 -c "import time; time.sleep(300)" daemon run </dev/null >/dev/null 2>&1 & touch a.in'
   local t i
   for ((i = 0; i < 100; i++)); do
     t="$(keeper_payload 2>/dev/null)" && [ -n "$t" ] && break
@@ -343,7 +343,7 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ -n "$t" ]
   sleep 1.5 # the join is long gone; with no grace an unheld keeper would be too
   [ -d "/proc/$t" ]
-  run_sandboxed "${BASE[@]}" -- --shutdown
+  run_sandboxed "${BASE[@]}" -- --shutdown probe
   [ "$status" -eq 0 ]
   [[ "$output" == *"ended, with everything that ran in it"* ]]
   wait_gone "$t"
@@ -354,7 +354,7 @@ wait_gone() { # wait_gone PID -- up to 10 s
 @test "once the daemon exits, the keeper ends on its own" {
   # In the background for the same reason as above: traced, the launch returns only
   # once the daemon has gone.
-  bg_sandboxed a "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(2)" daemon run </dev/null >/dev/null 2>&1 & touch a.in'
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c 'setsid python3 -c "import time; time.sleep(2)" daemon run </dev/null >/dev/null 2>&1 & touch a.in'
   local t i
   for ((i = 0; i < 100; i++)); do
     t="$(keeper_payload 2>/dev/null)" && [ -n "$t" ] && break
@@ -368,10 +368,10 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "--shutdown ends what is joined too" {
-  bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t rc=0
   t="$(keeper_payload)"
-  run_sandboxed "${BASE[@]}" -- --shutdown
+  run_sandboxed "${BASE[@]}" -- --shutdown probe
   [ "$status" -eq 0 ]
   wait "$BG_PID" || rc=$?
   [ "$rc" -ne 0 ] # the held command did not finish on its own: it was ended
@@ -380,15 +380,15 @@ wait_gone() { # wait_gone PID -- up to 10 s
 
 @test "run-scoped copy-on-write: a write lasts the run, a join sees it, the next run starts from the source" {
   local cow=(AGENT_SANDBOX_CONNECT='docs=copy-on-write native run-scoped')
-  bg_sandboxed a "${BASE[@]}" "${cow[@]}" -- --exec sh -c "echo MINE >\"\$HOME/.probe/docs/a.md\"; $(hold a)"
-  run_sandboxed "${BASE[@]}" "${cow[@]}" -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen.b'
+  bg_sandboxed a "${BASE[@]}" "${cow[@]}" -- --profile probe --exec sh -c "echo MINE >\"\$HOME/.probe/docs/a.md\"; $(hold a)"
+  run_sandboxed "${BASE[@]}" "${cow[@]}" -- --profile probe --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen.b'
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/seen.b")" = MINE ]            # one run is one installation
   [ "$(cat "$IHOME/.probe/docs/a.md")" = YOURS ] # the source never saw it
   release a
   wait "$BG_PID"
   [ ! -e "$SB/@run" ] # gone with the run, overlay layers and all
-  run_sandboxed "${BASE[@]}" "${cow[@]}" -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen.c'
+  run_sandboxed "${BASE[@]}" "${cow[@]}" -- --profile probe --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen.c'
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/seen.c")" = YOURS ] # the next run reads the source again
 }
@@ -396,10 +396,10 @@ wait_gone() { # wait_gone PID -- up to 10 s
 @test "join-scoped: two joins into one running role each have a scratch of their own (#147)" {
   mkdir -p "$IWORK/scratch"
   local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')
-  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --exec sh -c "echo from-a >scratch/a; ls scratch >a.sees; $(hold a)"
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "echo from-a >scratch/a; ls scratch >a.sees; $(hold a)"
   local t
   t="$(keeper_payload)"
-  run_sandboxed "${BASE[@]}" "${js[@]}" -- --exec sh -c 'echo from-b >scratch/b; ls scratch >b.sees; ls -R /run/agent-sandbox-stage /proc/2/root/run/agent-sandbox-stage >b.stage 2>&1'
+  run_sandboxed "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c 'echo from-b >scratch/b; ls scratch >b.sees; ls -R /run/agent-sandbox-stage /proc/2/root/run/agent-sandbox-stage >b.stage 2>&1'
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/a.sees")" = a ] # each sees its own, and only its own
   [ "$(cat "$IWORK/b.sees")" = b ]
@@ -419,11 +419,11 @@ wait_gone() { # wait_gone PID -- up to 10 s
 @test "join-scoped: the store of a join killed with -9 goes at the supervisor's next sweep" {
   mkdir -p "$IWORK/scratch"
   local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')
-  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --exec sh -c "$(hold a)"
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local first=$BG_PID
   local before f
   before="$(printf '%s\n' "$SB"/keeper/joined/*)"
-  bg_sandboxed b "${BASE[@]}" "${js[@]}" -- --exec sh -c "echo x >scratch/x; $(hold b)"
+  bg_sandboxed b "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "echo x >scratch/x; $(hold b)"
   [ "$(compgen -G "$SB/@join/j*" | wc -l)" -eq 2 ]
   # b's join record names the engine process that holds the join (the launcher's own
   # shell is its parent): kill that one, so no exit step of it runs

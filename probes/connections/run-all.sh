@@ -26,7 +26,7 @@ OUT="$(cd -- "$HERE/../.." && pwd)/probes/results/connections/batch-$(date +%Y%m
 mkdir -p "$OUT"
 printf 'batch %s\nclaude: %s\nengine: %s\n\n' "$OUT" \
   "$(claude --version 2>/dev/null | head -1)" \
-  "$(claude --engine-version 2>/dev/null | head -1)" | tee "$OUT/summary.txt"
+  "$(asb --engine-version 2>/dev/null | head -1)" | tee "$OUT/summary.txt"
 
 # field N LINE -- the count labelled N on a summary line, or 0 if it is not there.
 field() { sed -n "s/.*[:,] \([0-9]*\) $1.*/\1/p" <<<"$2"; }

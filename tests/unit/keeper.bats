@@ -33,7 +33,7 @@ trust() {
 }
 
 @test "a launch is a keeper: bwrap runs the marked payload, and the agent is joined into it" {
-  run_engine -- claude -p hi
+  run_engine -- asb claude -p hi
   [ "$status" -eq 0 ]
   local i
   i="$(argv_index --)"
@@ -43,7 +43,7 @@ trust() {
 }
 
 @test "the join names the payload by its host pid, applies no filter it was not given, and drops SHLVL" {
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local pid
   pid="$(grep -B1 -m1 '^--$' "$H/join" | head -1)"
@@ -55,14 +55,14 @@ trust() {
 @test "with a filter compiled, the join is given the same file bwrap is" {
   mkdir -p "$H/sc"
   printf '\0\0\0\0\0\0\0\0' >"$H/sc/$(uname -m).bpf"
-  run_engine AGENT_SANDBOX_SECCOMP_DIR="$H/sc" -- claude --version
+  run_engine AGENT_SANDBOX_SECCOMP_DIR="$H/sc" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --seccomp 10
   grep -A1 -x -- --seccomp "$H/join" | tail -1 | grep -qx "$H/sc/$(uname -m).bpf"
 }
 
 @test "the terminal's variables are the join's own: set where they are set, unset where not" {
-  run_engine TERM=vt100 LC_ALL=C.UTF-8 -- claude --version
+  run_engine TERM=vt100 LC_ALL=C.UTF-8 -- asb claude --version
   [ "$status" -eq 0 ]
   grep -qx 'TERM=vt100' "$H/join"
   grep -qx 'LC_ALL=C.UTF-8' "$H/join"
@@ -74,8 +74,8 @@ trust() {
 }
 
 @test "a second invocation joins the running keeper and builds nothing" {
-  engine_bg -- claude --version
-  run_engine -- claude -p again
+  engine_bg -- asb claude --version
+  run_engine -- asb claude -p again
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ]
   join_has "$BIN" -p again
@@ -84,47 +84,47 @@ trust() {
 }
 
 @test "a bare join always joins, whatever the keeper was started with" {
-  engine_bg -- claude --preset isolated --connect 'skills=read-only native' --allow pypi.org --version
+  engine_bg -- asb --preset isolated --connect 'skills=read-only native' --allow pypi.org claude --version
   # TEST_PRESET empty: the harness otherwise sets AGENT_SANDBOX_PRESET, which is a knob set
-  TEST_PRESET="" run_engine -- claude --version
+  TEST_PRESET="" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/join" ]
   release_bg
 }
 
 @test "a join that repeats the keeper's knobs joins" {
-  engine_bg AGENT_SANDBOX_NET=none -- claude --preset isolated --connect 'skills=read-only native' --allow pypi.org --version
-  run_engine AGENT_SANDBOX_NET=none -- claude --preset isolated --connect 'skills=read-only native' --allow pypi.org --version
+  engine_bg AGENT_SANDBOX_NET=none -- asb --preset isolated --connect 'skills=read-only native' --allow pypi.org claude --version
+  run_engine AGENT_SANDBOX_NET=none -- asb --preset isolated --connect 'skills=read-only native' --allow pypi.org claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/join" ]
   release_bg
 }
 
 @test "a join that changes a knob is refused, naming it, and joins nothing" {
-  engine_bg -- claude --preset isolated --version
+  engine_bg -- asb --preset isolated claude --version
   local spec
   for spec in "--preset inherit" "--connect skills=own" "--overlay off"; do
     # shellcheck disable=SC2086 # the spec is flag and value
-    run_engine -- claude $spec --version
+    run_engine -- asb $spec claude --version
     [ "$status" -eq 2 ]
     [[ "$output" == *"role 'default' is running"*"cannot change"* ]]
     [ ! -s "$H/join" ]
   done
-  TEST_PRESET="" run_engine AGENT_SANDBOX_NET=none -- claude --version
+  TEST_PRESET="" run_engine AGENT_SANDBOX_NET=none -- asb claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"net = proxy"*"AGENT_SANDBOX_NET asks for 'none'"* ]]
-  TEST_PRESET="" run_engine AGENT_SANDBOX_SECCOMP=off -- claude --version
+  TEST_PRESET="" run_engine AGENT_SANDBOX_SECCOMP=off -- asb claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"seccomp = on"* ]]
   release_bg
 }
 
 @test "an IDLE keeper whose policy differs is replaced, not refused: nothing is joined to keep it for" {
-  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- claude --preset isolated --version
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb --preset isolated claude --version
   release_bg
   local spid
   read -r spid _ <"$SBOX/keeper/id" # still there, in its grace
-  run_engine -- claude --preset inherit --version
+  run_engine -- asb --preset inherit claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ] # a launch of its own
   [[ "$output" != *"cannot change"* ]]
@@ -134,22 +134,22 @@ trust() {
 @test "an IDLE keeper started under a different dot-file is replaced too, without a warning" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- claude --version
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb claude --version
   release_bg
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox"
   trust
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ]
   [[ "$output" != *"has changed"* ]]
 }
 
 @test "an IDLE keeper with the same policy is joined within its grace" {
-  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- claude --version
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb claude --version
   release_bg
   local spid
   read -r spid _ <"$SBOX/keeper/id"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ] # joined, nothing built
   # End it as a reset would, rather than leave it waiting out its grace. (Killing the
@@ -165,17 +165,17 @@ trust() {
 }
 
 @test "a listed grant the keeper does not have is refused; one it has joins" {
-  engine_bg -- claude --allow pypi.org --allow .example.org --version
-  run_engine -- claude --allow pypi.org --version
+  engine_bg -- asb --allow pypi.org --allow .example.org claude --version
+  run_engine -- asb --allow pypi.org claude --version
   [ "$status" -eq 0 ]
-  run_engine -- claude --allow evil.example --version
+  run_engine -- asb --allow evil.example claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"--allow evil.example is not part of its policy (allow: "*"pypi.org"* ]]
   release_bg
 }
 
 @test "the policy a join is checked against is the keeper's own record of it" {
-  engine_bg -- claude --preset isolated --version
+  engine_bg -- asb --preset isolated claude --version
   grep -qx $'preset\tisolated\t--preset' "$SBOX/keeper/policy"
   grep -q $'^connect:skills\town\t' "$SBOX/keeper/policy"
   grep -qx -- '-' "$SBOX/keeper/dotfile" # no approved dot-file
@@ -186,10 +186,10 @@ trust() {
 @test "a changed dot-file warns and joins; the running keeper's policy stands" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg -- claude --version
+  engine_bg -- asb claude --version
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox"
   trust
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *".agent-sandbox has changed since this role's keeper started"* ]]
   [ -s "$H/join" ]
@@ -200,11 +200,11 @@ trust() {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
   cp "$PROJ/.agent-sandbox" "$H/approved"
-  engine_bg -- claude --role r --version
+  engine_bg -- asb --role r claude --version
   local rsb="${SBOX%/default}/r"
   cmp "$rsb/keeper/dotfile.copy" "$H/approved"
   printf '[connect]\nskills = own native\n[net]\nmode = none\n' >"$PROJ/.agent-sandbox" # not approved
-  TEST_PRESET="" run_engine -- claude --role r --version
+  TEST_PRESET="" run_engine -- asb --role r claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *".agent-sandbox has changed since this role's keeper started"* ]]
   [[ "$output" != *"Refusing to launch"* ]]
@@ -215,9 +215,9 @@ trust() {
 @test "without --role, an unapproved edit still refuses a join: the role would come from that file" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg -- claude --version
+  engine_bg -- asb claude --version
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"changed since you approved it"* ]]
   [ ! -s "$H/join" ]
@@ -227,20 +227,20 @@ trust() {
 @test "once the keeper has ended, the unapproved edit refuses a launch named by --role too" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg -- claude --role r --version
+  engine_bg -- asb --role r claude --version
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox"
   release_bg
-  run_engine -- claude --role r --version
+  run_engine -- asb --role r claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"changed since you approved it"* ]]
   [ ! -s "$H/argv" ]
 }
 
 @test "a keeper started with no approved dot-file keeps no copy, and its joins read none" {
-  engine_bg -- claude --role r --version
+  engine_bg -- asb --role r claude --version
   [ ! -e "${SBOX%/default}/r/keeper/dotfile.copy" ]
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox" # present, never approved
-  run_engine -- claude --role r --version
+  run_engine -- asb --role r claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/join" ]
   release_bg
@@ -249,15 +249,15 @@ trust() {
 @test "an unchanged dot-file says nothing" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg -- claude --version
-  run_engine -- claude --version
+  engine_bg -- asb claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" != *"has changed"* ]]
   release_bg
 }
 
 @test "a join's own --settings get their own file beside the keeper's briefing, removed afterwards" {
-  engine_bg -- claude --version
+  engine_bg -- asb claude --version
   local sess
   sess="$(cat "$SBOX/keeper/session")"
   [ -d "$sess/briefing" ]
@@ -270,7 +270,7 @@ with open(os.environ["JOIN_DUMP"], "w") as fh:
 for f in glob.glob(os.environ["SESS"] + "/briefing/join.*/settings.json"):
     shutil.copy(f, os.environ["SNAP"])
 STUB
-  run_engine SESS="$sess" SNAP="$H/snap.json" -- claude --settings '{"x":1}' --version
+  run_engine SESS="$sess" SNAP="$H/snap.json" -- asb claude --settings '{"x":1}' --version
   [ "$status" -eq 0 ]
   [[ "${JOINV[-1]}" == /run/agent-sandbox/join.*/settings.json ]]
   grep -q '"x": 1' "$H/snap.json"
@@ -280,15 +280,15 @@ STUB
 }
 
 @test "different roles are different keepers" {
-  engine_bg -- claude --role one --version
-  run_engine -- claude --role two --preset isolated --version
+  engine_bg -- asb --role one claude --version
+  run_engine -- asb --role two --preset isolated claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ] # a launch of its own, not a join refused for its preset
   release_bg
 }
 
 @test "the session directory is the keeper's: its owner is the supervisor, not the engine that made it" {
-  engine_bg -- claude --version
+  engine_bg -- asb claude --version
   local sess pid spid
   sess="$(cat "$SBOX/keeper/session")"
   read -r pid _ <"$sess/owner.id"
@@ -304,7 +304,7 @@ STUB
 set +x
 exit 3
 STUB
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 3 ]
   [[ "$output" == *"the sandbox did not start (exit 3)"* ]]
   [ ! -e "$SBOX/keeper" ]
@@ -318,9 +318,9 @@ STUB
 set +x
 exit 3
 STUB
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 3 ]
   cp "$H/bwrap.working" "$H/bin/bwrap"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
 }

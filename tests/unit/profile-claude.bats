@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# The claude profile: binary discovery, state paths, host-routed subcommands.
+# The claude profile: where its own installer puts the binary, state paths, host-routed
+# subcommands.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -22,7 +23,17 @@ slug_vector() {
   printf '%s' "$p"
 }
 
-@test "discovers the highest version across the three layouts (file, dir/claude, dir/bin/claude)" {
+# profile_own_bin is for install.sh (#151): where Claude Code's own installer keeps
+# its binaries, so that a launcher an earlier install shadowed can be pointed back.
+# Called directly, against the harness's versions directory.
+own_bin() {
+  _as_msg() { printf '%s\n' "$*"; }
+  _claude_versions_dir="$V"
+  profile_bin="" profile_version=""
+  profile_own_bin
+}
+
+@test "profile_own_bin finds the highest version across the three layouts (file, dir/claude, dir/bin/claude)" {
   rm -rf "${V:?}"/*
   printf '#!/bin/sh\n' >"$V/2.1.100"
   mkdir -p "$V/2.1.300" "$V/2.1.301/bin" "$V/2.1.9"
@@ -30,49 +41,59 @@ slug_vector() {
   printf '#!/bin/sh\n' >"$V/2.1.301/bin/claude"
   printf '#!/bin/sh\n' >"$V/2.1.9/claude"
   chmod +x "$V/2.1.100" "$V/2.1.300/claude" "$V/2.1.301/bin/claude" "$V/2.1.9/claude"
-  run_engine -- claude --version
-  [ "$status" -eq 0 ]
-  argv_has --ro-bind "$V/2.1.301/bin/claude" "$V/2.1.301/bin/claude"
+  own_bin
+  [ "$profile_bin" = "$V/2.1.301/bin/claude" ] && [ "$profile_version" = 2.1.301 ]
   rm -rf "$V/2.1.301"
-  run_engine -- claude --version
-  argv_has --ro-bind "$V/2.1.300/claude" "$V/2.1.300/claude"
+  own_bin
+  [ "$profile_bin" = "$V/2.1.300/claude" ]
   rm -rf "$V/2.1.300" "$V/2.1.9"
-  run_engine -- claude --version
-  argv_has --ro-bind "$V/2.1.100" "$V/2.1.100"
+  own_bin
+  [ "$profile_bin" = "$V/2.1.100" ]
 }
 
-@test "no install: exit 1 with a message naming the versions directory" {
+@test "profile_own_bin with no install: fails, naming the versions directory" {
   rm -rf "$V"
-  run_engine -- claude --version
+  run own_bin
   [ "$status" -eq 1 ]
   [[ "$output" == *"missing $V"* ]]
   mkdir -p "$V"
-  run_engine -- claude --version
+  run own_bin
   [ "$status" -eq 1 ]
   [[ "$output" == *"no versions under"* ]]
   mkdir -p "$V/1.0.0"
-  run_engine -- claude --version
+  run own_bin
   [ "$status" -eq 1 ]
   [[ "$output" == *"no runnable Claude Code executable under $V"* ]]
 }
 
-@test "tolerates a phantom newest version (mid self-update): falls back to the newest runnable one" {
+@test "profile_own_bin tolerates a phantom newest version (mid self-update): the newest runnable one" {
   rm -rf "${V:?}"/*
   # 2.1.269 is runnable; 2.1.270 exists (as during a native self-update) but its
-  # binary has not landed yet -- so it must be skipped, not fail the launch.
+  # binary has not landed yet -- so it must be skipped.
   mkdir -p "$V/2.1.269"
   printf '#!/bin/sh\n' >"$V/2.1.269/claude"
   chmod +x "$V/2.1.269/claude"
   mkdir -p "$V/2.1.270" # phantom: directory, no executable inside
-  run_engine -- claude --version
+  own_bin
+  [ "$profile_bin" = "$V/2.1.269/claude" ]
+}
+
+@test "a launch does not look in versions/: it runs what the command resolves to" {
+  rm -rf "${V:?}"/*
+  mkdir -p "$H/pkg/bin"
+  printf '#!/bin/sh\n' >"$H/pkg/bin/claude"
+  chmod +x "$H/pkg/bin/claude"
+  rm "$H/bin/claude"
+  run_engine PATH="$H/bin:$H/pkg/bin:/usr/bin:/bin" -- asb claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$V/2.1.269/claude" "$V/2.1.269/claude"
+  argv_has --ro-bind "$H/pkg/bin/claude" "$H/pkg/bin/claude"
+  [ "${JOINV[0]}" = "$H/pkg/bin/claude" ]
 }
 
 @test "profile_prepare creates ~/.claude and ~/.claude.json for a launch, not for a host subcommand" {
-  run_engine -- claude update
+  run_engine -- asb claude update
   [ ! -e "$H/home/.claude" ]
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ -d "$H/home/.claude" ]
   [ -f "$H/home/.claude.json" ]
 }
@@ -91,16 +112,16 @@ for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 . "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$H/home/.claude/.claude.json" ]
   # a file that already existed there before the launch is not ours, whatever it holds
   printf '{}' >"$H/home/.claude/.claude.json"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$H/home/.claude/.claude.json")" = '{}' ]
   : >"$H/home/.claude/.claude.json"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ -e "$H/home/.claude/.claude.json" ]
 }
@@ -113,34 +134,17 @@ echo "stub-agent argv: $*"
 [[ "$1" == upgrade ]] && exit 7
 exit 0
 STUB
-  run_engine -- claude update --foo
+  run_engine -- asb claude update --foo
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ]
-  [[ "$output" == *"running '2.1.300 update --foo' on the host"* ]]
+  [[ "$output" == *"running '$V/2.1.300/claude update --foo' on the host"* ]]
   [[ "$output" == *"stub-agent argv: update --foo"* ]]
-  [[ "$output" == *"installed versions: 2.1.300"* ]]
-  run_engine -- claude upgrade
+  run_engine -- asb claude upgrade
   [ "$status" -eq 7 ]
-  run_engine -- claude --allow pypi.org --ssh-unrestricted update
+  run_engine -- asb --allow pypi.org --ssh-unrestricted claude update
   [ "$status" -eq 0 ]
   [[ "$output" == *"--ssh*/--allow flags are ignored for 'update'"* ]]
   [ -z "$(ls -A "$H/base")" ]
-}
-
-@test "install: if the native installer re-points the launcher, the engine restores it" {
-  mkdir -p "$H/home/.local/bin"
-  ln -s "$ENGINE" "$H/home/.local/bin/claude"
-  cat >"$V/2.1.300/claude" <<'STUB'
-#!/usr/bin/env bash
-set +x
-echo "stub-agent argv: $*"
-[[ "$1" == install ]] && ln -sfn "$0" "$HOME/.local/bin/claude"
-exit 0
-STUB
-  run_engine -- claude install latest
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"re-pointed"*"restored"* ]]
-  [ "$(readlink "$H/home/.local/bin/claude")" = "$ENGINE" ]
 }
 
 @test "project slug: a converted name of 200 characters or fewer is used unchanged" {
@@ -189,7 +193,7 @@ STUB
   plain="${real//[^A-Za-z0-9-]/-}"
   [ "${#plain}" -gt 200 ] # otherwise this test proves nothing
   slug="$(_claude_project_slug "$real")"
-  RUN_CWD="$deep" run_engine -- claude --version
+  RUN_CWD="$deep" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --bind "$H/home/.claude/projects/$plain/memory" "$H/home/.claude/projects/$plain/memory"
   argv_has --bind "$H/home/.claude/projects/$slug/memory" "$H/home/.claude/projects/$slug/memory" # memory on top of the transcripts store

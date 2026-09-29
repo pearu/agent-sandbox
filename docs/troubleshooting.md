@@ -3,11 +3,11 @@
 ## `install.sh: do not run this with sudo`
 
 agent-sandbox is a single-user tool: the proxy is a systemd *user* unit, and the
-allowlist, trust store and launcher belong to one account. Run the installer as
+allowlist, trust store and `asb` belong to one account. Run the installer as
 yourself — it asks for sudo itself for the one step that needs it (the AppArmor
 profile that lets `bwrap` use user namespaces).
 
-Through `sudo` it would either install for root (a launcher not on your PATH, a
+Through `sudo` it would either install for root (an `asb` not on your PATH, a
 proxy nobody uses) or leave root-owned files in your home that later runs and
 the proxy cannot write. `--uninstall` under sudo is worse: it would examine
 root's home, find nothing, and report success while your install stays where it
@@ -25,9 +25,13 @@ being root is ordinary rather than a mistake.
 
 It stops and removes the proxy's systemd unit, deletes
 `~/.local/share/agent-sandbox` (engine copy, proxy runtime, compiled seccomp
-filter), and puts the `claude` command back the way it was. Which of those it
-does depends on what the install did, recorded in
-`~/.local/share/agent-sandbox/install.manifest`:
+filter), and removes the `asb` and `agent-sandbox` commands it added, as
+recorded in `~/.local/share/agent-sandbox/install.manifest`. It never touched
+`claude`, so there is nothing to put back.
+
+An install from before 0.4 did put the engine at `~/.local/bin/claude` (#151).
+Running `./install.sh` again takes that back, and so does `--uninstall`,
+depending on what that install did:
 
 - it moved your launcher aside → the original is **restored** over ours;
 - it shadowed a launcher elsewhere on PATH → ours is **removed**, so that one
@@ -50,48 +54,48 @@ left off (`--purge-config` removes it). Never touched: the agent itself,
 and other tools may rely on them by now. The plan prints the command to remove
 those by hand.
 
-Anything the installer did not create is left alone and reported: a launcher
-that is not a symlink to the engine, for instance, is never rewritten.
+Anything the installer did not create is left alone and reported: an `asb` or
+a `claude` that is not a symlink to the engine, for instance, is never rewritten.
 
 ## The sandbox will not start
 
-The launcher on your `PATH` **is** agent-sandbox: `~/.local/bin/claude` is a
-symlink to the engine. So if the sandbox cannot start, `claude` is exactly what
-is broken, and you have no working agent to fix it with.
-
-The way back in is the agent's own binary. Claude Code's native installer keeps
-it under `~/.local/share/claude/versions/`, and agent-sandbox never modifies,
-moves or wraps it:
+`asb claude` fails, but `claude` itself is not affected: nothing shadows it
+(#151), so typing `claude` runs Claude Code natively, as it would without
+agent-sandbox installed. The engine names it, resolved, when it detects that
+`bwrap` could not be run:
 
 ```
-ls ~/.local/share/claude/versions/            # newest is the one to run
-~/.local/share/claude/versions/<version>      # a normal, unsandboxed session
+agent-sandbox: the sandbox did not start, so 'claude' cannot run in it. The agent itself is not affected; ...
+agent-sandbox:   claude    (/home/you/.local/share/claude/versions/2.1.284)
 ```
 
 That is a full agent with your ordinary environment and no sandbox at all — no
 allowlist, no read-only paths, no state isolation. Use it to repair the
-install, then go back to `claude`.
-
-The engine prints this path itself when it detects that `bwrap` could not be
-run. If you would rather have it to hand:
-
-```
-alias claude-raw='"$(ls -d ~/.local/share/claude/versions/* | sort -V | tail -1)"'
-```
+install, then go back to `asb claude`.
 
 There is deliberately **no `--no-sandbox` flag**. The escape should be
 documented and discoverable, not convenient: a one-flag bypass tends to become
 the habit rather than the last resort, and the point of the tool is that the
 limits do not depend on remembering to keep them.
 
-**`agent-sandbox: no profile selected`**
-Run through a profile symlink (`claude`) or pass `--profile NAME`. The
-message lists the profiles found.
+**`agent-sandbox: no command`** / **`'-r' is not an option of agent-sandbox`**
+Name the agent after the sandbox's options: `asb [OPTIONS] CMD [AGENT OPTIONS]`,
+so `asb --role reviewer claude -r`, not `asb claude --role reviewer -r` (there
+`--role` is Claude's) nor `asb -r claude`. The message lists the profiles found.
 
-**`<profile>: missing .../versions` or `no versions under ...`**
-The agent is not installed where its profile expects. For `claude`:
-`~/.local/share/claude/versions/`. Install the agent, then re-run
-`install.sh`, which reports each profile's binary.
+**`'.../2.1.284' names no profile`**
+The profile is the command's basename. A binary named otherwise needs it said:
+`asb --profile claude /path/to/2.1.284`.
+
+**`no 'claude' on PATH to run`**
+`asb claude` runs whatever `claude` your PATH finds, and there is none. Install
+Claude Code (any way: the native installer, a package), or name its binary with
+`asb --profile claude /path/to/claude`.
+
+**`agent-sandbox is no longer run as 'claude'`**
+`~/.local/bin/claude` is still the launcher an install from before 0.4 put there
+(#151). Run `./install.sh` again: it puts back the `claude` you had and installs
+`asb`. Then `claude` is Claude Code and `asb claude` is the sandbox.
 
 **`bwrap: setting up uid map: Permission denied` / `No permissions to create new namespace`**
 Ubuntu 24.04+ restricts unprivileged user namespaces
@@ -109,7 +113,7 @@ The coarser alternative is disabling the restriction system-wide:
 **`Can't bind mount ... on /newroot/usr/local`**
 `/usr/local` is a symlink whose target is not exposed. The engine handles the
 common case (a symlink off `/usr`, e.g. for CUDA). If you still hit it:
-`AGENT_SANDBOX_RO=/path/to/real/local claude`.
+`AGENT_SANDBOX_RO=/path/to/real/local asb claude`.
 
 **API or DNS errors such as `FailedToOpenSocket`**
 Usually `/etc/resolv.conf` is a symlink into `/run` on systemd-resolved
@@ -165,7 +169,7 @@ without that profile Ubuntu's userns restriction blocks pasta.
 
 **`.agent-sandbox has changed since you approved it ... Refusing to launch`**
 The project's `.agent-sandbox` no longer matches the content you approved:
-you edited it, or the agent did. Run `claude --trust` from the project
+you edited it, or the agent did. Run `asb --trust` from the project
 directory; it shows the current content, and approving it records the new
 hash. Do not approve a change you did not make without reading it.
 
@@ -178,24 +182,24 @@ they are gone; `cat -v .agent-sandbox` shows each as `^X`.
 **`this project's approved .agent-sandbox is missing ... Refusing to launch`**
 A `.agent-sandbox` you approved is gone. Launching anyway would replace its
 policy with the defaults, which for memory scoping is wider. Restore the file,
-or run `claude --trust` from the project directory: with the file missing it
+or run `asb --trust` from the project directory: with the file missing it
 offers to forget the approval.
 
-**`claude: command not found` (or it runs an old version) after moving or pulling the repo**
+**`asb: command not found` (or it runs an old version) after moving or pulling the repo**
 A normal install copies the engine and profiles under
-`~/.local/share/agent-sandbox` and the launcher points there, so moving the
+`~/.local/share/agent-sandbox` and `asb` points there, so moving the
 clone is fine but a `git pull` takes effect only after you re-run
-`./install.sh` (it re-copies). If you used `./install.sh --dev`, the launcher
+`./install.sh` (it re-copies). If you used `./install.sh --dev`, `asb`
 points at the checkout instead: moving or deleting it breaks the command
-(`~/.local/bin/<agent>` becomes a dangling symlink) — re-run `./install.sh`
+(`~/.local/bin/asb` becomes a dangling symlink) — re-run `./install.sh`
 from the new location.
 
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:
-`AGENT_SANDBOX_FORWARD="GH_TOKEN" claude`.
+`AGENT_SANDBOX_FORWARD="GH_TOKEN" asb claude`.
 
 **A tool inside cannot reach a file outside the project**
-Expose it: `AGENT_SANDBOX_RO=/some/dir claude` (or `AGENT_SANDBOX_RW`).
+Expose it: `AGENT_SANDBOX_RO=/some/dir asb claude` (or `AGENT_SANDBOX_RW`).
 Secret stores, the sandbox's own configuration (`~/.config/agent-sandbox`,
 `~/.mitmproxy`, `~/.local/share/agent-sandbox`, `~/.local/bin`,
 `~/.config/systemd`), any directory containing one of those (`~/.config`,

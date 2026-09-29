@@ -59,7 +59,7 @@ STUB
 }
 
 @test "the per-launch parts are tmpfs; the rest are the role's stores, never the host's own paths" {
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local d
   for d in session-env sessions jobs shell-snapshots debug paste-cache; do
@@ -73,7 +73,7 @@ STUB
 }
 
 @test "canary: another session's file contents, plans and prompts are not in what the role gets" {
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   run ! grep -rq 'SECRET FROM ANOTHER PROJECT' "$(bound_at "$C/file-history")"
   run ! grep -rq 'another project plan' "$(bound_at "$C/plans")"
@@ -83,7 +83,7 @@ STUB
 
 @test "what the session writes stays in the role: nothing is merged back into the native state" {
   agent_writes
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$C/file-history/MY-SESSION" ]
   [ ! -e "$C/plans/MY-SESSION" ]
@@ -107,7 +107,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
 @test "daemon/ is hidden by default; gh/ and ide/ are not" {
   mkdir -p "$C/daemon" "$C/gh" "$C/ide"
   printf 'control-key\n' >"$C/daemon/control.key"
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   # the supervisor's control key and session roster: a cross-session control
   # channel with no in-sandbox use
@@ -123,13 +123,13 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   printf '[claude]\nhide = gh ide\n' >"$PROJ/.agent-sandbox"
 
   # unapproved: the section grants nothing
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"present but not approved"* ]]
   run ! argv_has --tmpfs "$C/gh"
 
   trust_proj
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --tmpfs "$C/gh"
   argv_has --tmpfs "$C/ide"
@@ -139,7 +139,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
 @test "[claude] hide refuses to escape the state directory, and warns on unknown keys" {
   printf '[claude]\nhide = ../../etc /etc gh\nbogus = 1\n' >"$PROJ/.agent-sandbox"
   trust_proj
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"must be a relative path"* ]]
   [[ "$output" == *"unknown [claude] key"* ]]
@@ -152,7 +152,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   mkdir -p "$C/gh"
   printf '[codex]\nhide = gh\n' >"$PROJ/.agent-sandbox"
   trust_proj
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring unknown section [codex]"* ]]
   run ! argv_has --tmpfs "$C/gh"
@@ -170,7 +170,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   # host that has them.
   local mode
   for mode in none proxy open; do
-    run_engine AGENT_SANDBOX_NET="$mode" -- claude --version
+    run_engine AGENT_SANDBOX_NET="$mode" -- asb claude --version
     [ "$status" -eq 0 ]
     argv_has --uid "$(id -u)" --gid "$(id -g)"
   done

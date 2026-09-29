@@ -13,7 +13,7 @@ the same five explain tools that are not listed here.
 | **Host config** | identity and settings from your home are not there | set it per project |
 
 Anything under `[…]` goes in the project's `.agent-sandbox` and takes effect
-only after `claude --trust` ([config.md](config.md)).
+only after `asb --trust` ([config.md](config.md)).
 
 ## First: find out what is actually blocking you
 
@@ -39,7 +39,7 @@ Instead a per-session agent on the host holds it, constrained to the hosts you
 name:
 
 ```
-claude --ssh github.com
+asb --ssh github.com claude
 ```
 
 Inside, `~/.ssh` contains only `config` and `known_hosts` — no key material —
@@ -91,7 +91,7 @@ package that pulls from somewhere else fails, and `blocked.log` names it.
 For one session:
 
 ```
-claude --allow files.example.com
+asb --allow files.example.com claude
 ```
 
 For the project, in `.agent-sandbox`:
@@ -164,15 +164,15 @@ to install into it; the base install and every other environment stay read-only.
 
 ## Editors and IDEs
 
-**Crossing: none — it depends on what launches the agent.**
+**Crossing: none — only what you start with `asb` is sandboxed.**
 
-- **A terminal inside your editor is sandboxed.** It is an ordinary shell, so
-  `claude` resolves through `PATH` to the launcher. This is the supported way to
-  use an agent from an editor.
-- **The VS Code extension's own view is not.** It ships its own copy of Claude
-  Code (`resources/native-binary/claude`) and runs that directly, so nothing of
-  agent-sandbox applies to those sessions — while a terminal in the same window
-  is fully sandboxed. Nothing in the editor tells you this.
+- **`asb claude` in a terminal inside your editor is sandboxed.** It is an
+  ordinary shell. This is the supported way to use an agent from an editor.
+- **Anything else the editor starts is native.** The VS Code extension ships its
+  own copy of Claude Code (`resources/native-binary/claude`) and runs that
+  directly, and nothing shadows `claude` (#151), so an integration that runs
+  `claude` from your PATH is native too. Nothing of agent-sandbox applies to those
+  sessions.
 
 To see which you have, with a session running, from a host terminal:
 
@@ -184,13 +184,9 @@ It lists every agent process and whether a `bwrap` ancestor stands between it
 and its session leader. `sandboxed=no` means no limits apply to that process,
 whatever is configured.
 
-The extension has a `claudeCode.useTerminal` setting ("Launch Claude in the
-terminal instead of the native UI") which *may* route sessions through your
-shell, and so through the launcher. That is unverified — check it with the probe
-above before relying on it. If you do set it, or any other agent-related
-setting, put it in **User** settings rather than Workspace settings: a workspace
-`.vscode/settings.json` lives inside the project, where a sandboxed agent can
-edit it.
+If you set any agent-related editor setting, put it in **User** settings rather
+than Workspace settings: a workspace `.vscode/settings.json` lives inside the
+project, where a sandboxed agent can edit it.
 
 There is also `CLAUDE_CODE_PROCESS_WRAPPER`, which Claude Code honours when
 spawning its own processes. agent-sandbox does not use it: it is a boundary the
@@ -203,6 +199,6 @@ than honoured by it.
 You cannot widen the sandbox from inside — `.agent-sandbox` is trust-gated
 precisely so an agent cannot grant itself access, and the trust store is never
 bound in. The agent's part is to stop and tell you what it needs, what for, and
-the exact lines; yours is to decide, add them, and re-run `claude --trust`.
+the exact lines; yours is to decide, add them, and re-run `asb --trust`.
 
 One clear request costs less than twenty attempts to work around you.

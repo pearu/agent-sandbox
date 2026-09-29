@@ -132,7 +132,7 @@ Sections:
   layer every run -- for what the agent itself authored and should not run again later
   (`workflows`, `agents`). Everything joined into that run shares it; at `read-only` it
   changes nothing, since nothing is written. **`join-scoped`** is one join -- a joined
-  command and everything it starts: `./scratch/ = own join-scoped` gives every `claude
+  command and everything it starts: `./scratch/ = own join-scoped` gives every `asb
   --exec` or session joined into a running role a scratch of its own, empty when it
   starts and removed when it ends, which no other join can see. It is built for `own`
   (and `read-only`, which is then the plain bind); a seeded store per join (`copy`,
@@ -298,11 +298,11 @@ Sections:
   supervisor's control key and its roster of other sessions, a cross-session
   channel rather than this session's state); `gh` and `ide` are deliberately
   **not**, because both exist to let Claude Code work from inside a sandbox.
-  `sandbox` is removed (#123): every session, `claude --bg` included, runs in its
+  `sandbox` is removed (#123): every session, `asb claude --bg` included, runs in its
   role's sandbox, so there is no scope to choose. It is refused, as are the
   `--sandbox` flag and `AGENT_SANDBOX_CLAUDE_SANDBOX`, naming `--preset none`, which
   runs without a sandbox and is the flag only: a project cannot declare itself
-  unsandboxed. A `claude` typed inside a sandbox still runs in it as it is.
+  unsandboxed. An `asb claude` typed inside a sandbox still runs in it as it is.
   `user-mcp` is removed: it kept your user-level MCP servers out by editing the
   config file, and the engine no longer edits anything inside it. It is refused,
   naming the replacement, `config = own` under `[connect]` (see
@@ -311,7 +311,7 @@ Sections:
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
 engine at code to source. They stay command-line/environment knobs; see
-`claude --engine-help`. An `[ssh]`
+`asb --engine-help`. An `[ssh]`
 section is not accepted yet either; use `--ssh` on the command line. An unknown
 section, or a line before any section, is ignored with a warning.
 
@@ -323,7 +323,7 @@ section with commented examples.
 The file is inert until approved. From the project directory:
 
 ```sh
-claude --trust
+asb --trust
 ```
 
 This prints the file (through `cat -v`, so a control character or a byte
@@ -339,7 +339,7 @@ be committed.
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
 bound into the sandbox**, so the agent can neither read nor forge it. If the
 file changes afterward, or disappears, the next launch is **refused** until you
-run `claude --trust` again: it shows the new content to approve, or, when the
+run `asb --trust` again: it shows the new content to approve, or, when the
 file is gone, offers to forget the approval. Refusing rather than ignoring
 matters because ignoring would fall back to the defaults, and for memory
 scoping the default (`shared`) is wider than a scoped policy. A file with no
@@ -427,8 +427,8 @@ is what your own hooks write, `responses.log` and `alerts.log`. Both are `own`
 under every preset but `native`, and nothing is merged back into your native
 `~/.claude` when a launch ends.
 
-- **A role starts with none of your native history.** `claude --role foo -r`
-  lists foo's conversations; a plain `claude -r` outside any sandbox lists your
+- **A role starts with none of your native history.** `asb --role foo claude -r`
+  lists foo's conversations; a plain `claude -r`, not sandboxed, lists your
   native ones. To give a role its project's native history once, write
   `transcripts = seed-only` under `[connect]`: the conversations, file history
   and plans are copied, and the prompt history is filtered to this project's
@@ -444,7 +444,7 @@ under every preset but `native`, and nothing is merged back into your native
 
 ## Roles
 
-A **role** is a named, persistent instance of the project: `claude --role impl-1`.
+A **role** is a named, persistent instance of the project: `asb --role impl-1 claude`.
 It has its own state, kept under
 `~/.local/state/agent-sandbox/claude/<slug>/<role>/`, so two roles of one
 project share the working tree and nothing else unless you connect them. The
@@ -513,7 +513,8 @@ channel. Inside the sandbox it is at `~/.claude/.claude.json`, and
 - **`read-only`** and **`read-write`** are the native file itself, whole: every
   project's entry is readable inside. Under `read-only` Claude Code's own writes
   to it fail silently, so it is valid but not advocated; there, a user-scope
-  `claude mcp add` typed at your shell runs natively, on your own file. Under
+  `asb claude mcp add` typed at your shell runs natively, on your own file (as
+  `claude mcp add` itself does). Under
   `read-write` the sandbox writes your native file.
 - Under `--preset native` nothing is copied or relocated: Claude Code reads your
   native `~/.claude.json` as it would outside.
@@ -523,7 +524,7 @@ The role's copy is kept on the host under
 sandbox's control plane: never bound into any sandbox, refused by `[ro]`/`[rw]`.
 The per-project copy of 0.3 (`claude/<slug>/claude.json`) becomes the default
 role's `seed-only` copy at the first launch that finds it. A background worker
-(`claude --bg`) is keyed by the project it was launched for, not by the daemon's
+(`asb claude --bg`) is keyed by the project it was launched for, not by the daemon's
 directory, and is pre-trusted in the role's copy as it is in the native file.
 Without a working `python3` the seed is the whole native file, and the launch
 says so. `--reset config` discards the role's copy; the next launch

@@ -25,7 +25,7 @@ PROBE
 @test "own: the sandbox's directory, not the project's -- and it is there next launch" {
   mkdir -p "$IWORK/scratch"
   printf 'PROJECT\n' >"$IWORK/scratch/f"
-  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- --connect './scratch/ = own' run
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- --connect './scratch/ = own' probe run
   [ "$status" -eq 0 ]
   [ "$(report finished)" = yes ]
   [ "$(report scratch)" = "" ] # the project's file is hidden
@@ -35,7 +35,7 @@ PROBE
   slug="$(cd "$IWORK" && pwd -P)/scratch"
   slug="${slug//\//_}"
   [ "$(cat "$SB/@paths/own/${slug#_}/f")" = SANDBOX ] # it went to the slot
-  run_sandboxed "${ENV[@]}" -- --connect './scratch/ = own' run
+  run_sandboxed "${ENV[@]}" -- --connect './scratch/ = own' probe run
   [ "$status" -eq 0 ]
   [ "$(report scratch)" = SANDBOX ] # the sandbox's own write persisted
 }
@@ -43,18 +43,18 @@ PROBE
 @test "read-only: readable, and a write fails inside a project that is otherwise writable" {
   mkdir -p "$IWORK/data"
   printf 'DATA\n' >"$IWORK/data/a"
-  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- --connect './data = read-only' run
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- --connect './data = read-only' probe run
   [ "$status" -eq 0 ]
   [ "$(report data)" = DATA ]
   [ -z "$(report wrote_data)" ]
   [ ! -e "$IWORK/data/b" ]
   # the control: without the declaration, the same write lands
-  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- run
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- probe run
   [ "$(report wrote_data)" = yes ]
 }
 
 @test "own with a trailing slash on a missing directory: the sandbox's, and an empty mount point outside" {
-  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- --connect './scratch/ = own' run
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- --connect './scratch/ = own' probe run
   [ "$status" -eq 0 ]
   [ "$(report wrote_scratch)" = yes ]
   # bwrap made the mount point on the host, and it is empty: the write went to the slot
@@ -67,7 +67,7 @@ PROBE
     || skip "bubblewrap has no --overlay (needs >= 0.11; this host: $(bwrap --version))"
   mkdir -p "$IWORK/data"
   printf 'DATA\n' >"$IWORK/data/a"
-  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- --connect './data/ = copy-on-write' run
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- --connect './data/ = copy-on-write' probe run
   [ "$status" -eq 0 ]
   [ "$(report data)" = DATA ]      # read through from the project
   [ "$(report wrote_data)" = yes ] # writable inside
@@ -77,9 +77,9 @@ PROBE
   slug="${slug//\//_}"
   [ -e "$SB/@paths/upper/${slug#_}/b" ] # it is in the role's upper layer
   printf 'LATER\n' >"$IWORK/data/a"     # a source edit reaches a file the sandbox has not written
-  run_sandboxed "${ENV[@]}" -- --connect './data/ = copy-on-write' run
+  run_sandboxed "${ENV[@]}" -- --connect './data/ = copy-on-write' probe run
   [ "$(report data)" = LATER ]
-  run_sandboxed "${ENV[@]}" -- --reset ./data/
+  run_sandboxed "${ENV[@]}" -- --reset ./data/ probe
   [ "$status" -eq 0 ]
   [ ! -e "$SB/@paths/upper/${slug#_}" ] # and --reset takes the layer away
 }

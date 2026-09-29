@@ -18,9 +18,6 @@ setup() {
   PROF="$(mktemp -d)"
   cat >"$PROF/sshprobe.sh" <<'P'
 profile_command=sshprobe
-profile_bin_discover() {
-  profile_bin="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/sshprobe-bin.sh"
-}
 P
   cat >"$PROF/sshprobe-bin.sh" <<'P'
 #!/usr/bin/env bash
@@ -37,7 +34,7 @@ teardown() {
 
 @test "strict --ssh: the agent verifies github's host key and authenticates as uid 0" {
   run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=strict \
-    "$ENGINE" --profile sshprobe --ssh github.com run
+    "$ENGINE" --profile sshprobe --ssh github.com "$PROF/sshprobe-bin.sh" run
   echo "$output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"uid=0"* ]]                      # strict runs the agent as root in pasta's userns

@@ -10,9 +10,9 @@
 # The proxy token is redacted in the output. Paste the whole output back.
 set -uo pipefail
 
-launcher="${PROBE_LAUNCHER:-$(command -v claude || true)}"
+launcher="${PROBE_LAUNCHER:-$(command -v asb || true)}"
 [[ -n "$launcher" ]] || {
-  echo "netdiag: no 'claude' launcher on PATH; set PROBE_LAUNCHER=/path/to/launcher" >&2
+  echo "netdiag: no 'asb' on PATH; set PROBE_LAUNCHER=/path/to/agent-sandbox" >&2
   exit 2
 }
 ev="$("$launcher" --engine-version 2>/dev/null || true)"
@@ -35,10 +35,6 @@ trap 'rm -rf "$tmp"' EXIT
 
 cat >"$tmp/netdiag.sh" <<'PROF'
 profile_command=netdiag
-profile_bin_discover() {
-  profile_bin="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/netdiag-probe.sh"
-  [[ -x "$profile_bin" ]] || { _as_msg "netdiag: probe missing"; return 1; }
-}
 PROF
 
 cat >"$tmp/netdiag-probe.sh" <<'PROBE'
@@ -82,7 +78,7 @@ run() {
   echo
   echo "===================== $label ====================="
   AGENT_SANDBOX_PROFILE_DIR="$tmp" AGENT_SANDBOX_NET="$mode" \
-    "$launcher" --profile netdiag "$@" run 2>&1
+    "$launcher" --profile netdiag "$@" "$tmp/netdiag-probe.sh" run 2>&1
   echo "===================== end: $label ================"
 }
 

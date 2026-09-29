@@ -40,12 +40,12 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 }
 
 @test "transcripts and logs are channels the profile declares" {
-  run_engine -- claude --connect 'transcripts=own native' --connect 'logs=own native' --version
+  run_engine -- asb --connect 'transcripts=own native' --connect 'logs=own native' claude --version
   [ "$status" -eq 0 ]
 }
 
 @test "under inherit every transcripts path is the role's own store, and the native files are untouched" {
-  TEST_PRESET=inherit run_engine -- claude --version
+  TEST_PRESET=inherit run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$(store transcripts own "$CONV")" "$CONV"
   argv_has --bind "$(store transcripts own "$C/file-history")" "$C/file-history"
@@ -59,7 +59,7 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 @test "isolated and shared give transcripts and logs their own stores too" {
   local p
   for p in isolated shared; do
-    TEST_PRESET=$p run_engine -- claude --version
+    TEST_PRESET=$p run_engine -- asb claude --version
     [ "$status" -eq 0 ]
     argv_has --bind "$(store transcripts own "$CONV")" "$CONV"
     argv_has --bind "$(store logs own "$C/responses.log")" "$C/responses.log"
@@ -68,7 +68,7 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 }
 
 @test "memory is still the project's native memory, bound read-write ON TOP of the transcripts store" {
-  TEST_PRESET=inherit run_engine -- claude --version
+  TEST_PRESET=inherit run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local t m
   t="$(idx_of_bind "$(store transcripts own "$CONV")" "$CONV")"
@@ -80,7 +80,7 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 @test "with memory_default = shared, the project's memory is still bound on top of the store" {
   mkdir -p "$CFG"
   printf 'memory_default = shared\n' >"$CFG/config"
-  TEST_PRESET=inherit run_engine -- claude --version
+  TEST_PRESET=inherit run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local t m
   t="$(idx_of_bind "$(store transcripts own "$CONV")" "$CONV")"
@@ -90,7 +90,7 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 }
 
 @test "nothing is staged for a merge-back: no transcripts or logs path is bound from the launch directory" {
-  TEST_PRESET=inherit run_engine -- claude --version
+  TEST_PRESET=inherit run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local p i
   for p in "$C/file-history" "$C/plans" "$C/history.jsonl" "$C/responses.log" "$C/alerts.log"; do
@@ -104,7 +104,7 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 }
 
 @test "transcripts = seed-only seeds once: this project's conversations and history, and no other project's prompts" {
-  run_engine -- claude --connect 'transcripts=seed-only native' --version
+  run_engine -- asb --connect 'transcripts=seed-only native' claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$(store transcripts seed-only "$CONV")/old-session.jsonl")" = NATIVE-CONV ]
   [ "$(cat "$(store transcripts seed-only "$C/file-history")/s1/f")" = SNAP ]
@@ -115,22 +115,22 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
 }
 
 @test "transcripts = read-write is the native files themselves: no store is bound" {
-  run_engine -- claude --connect 'transcripts=read-write native' --version
+  run_engine -- asb --connect 'transcripts=read-write native' claude --version
   [ "$status" -eq 0 ]
   run ! grep -qF "$SBOX/transcripts/" "$H/argv"
   argv_has --bind "$CONV" "$CONV" # memory scoping binds this project's native directory, as in 0.3
 }
 
 @test "under native nothing of transcripts or logs is bound from a store" {
-  run_engine -- claude --preset native --version
+  run_engine -- asb --preset native claude --version
   [ "$status" -eq 0 ]
   run ! grep -qF "$SBOX/transcripts/" "$H/argv"
   run ! grep -qF "$SBOX/logs/" "$H/argv"
 }
 
 @test "two roles have two conversation stores" {
-  TEST_PRESET=inherit run_engine -- claude --role a --version
+  TEST_PRESET=inherit run_engine -- asb --role a claude --version
   argv_has --bind "$H/home/.local/state/agent-sandbox/claude/$SLUG/a/transcripts/own/$(slugify "$CONV")" "$CONV"
-  TEST_PRESET=inherit run_engine -- claude --role b --version
+  TEST_PRESET=inherit run_engine -- asb --role b claude --version
   argv_has --bind "$H/home/.local/state/agent-sandbox/claude/$SLUG/b/transcripts/own/$(slugify "$CONV")" "$CONV"
 }

@@ -35,7 +35,7 @@ PROBE
 teardown() { rm -f "${TMP_MARKER:-}"; }
 
 @test "filesystem: HOME read-only, CWD and ~/.cache writable, fresh /tmp, system read-only, secrets invisible; pid namespace; arguments pass through" {
-  run_sandboxed AGENT_SANDBOX_NET=none LEAKED=1 AGENT_SANDBOX_FORWARD=TMP_MARKER TMP_MARKER="$TMP_MARKER" -- --my-arg value
+  run_sandboxed AGENT_SANDBOX_NET=none LEAKED=1 AGENT_SANDBOX_FORWARD=TMP_MARKER TMP_MARKER="$TMP_MARKER" -- probe --my-arg value
   [ "$status" -eq 0 ]
   [ "$(report home_writable)" = no ]
   [ "$(report cwd_writable)" = yes ]
@@ -51,7 +51,7 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
 }
 
 @test "net=none: no interfaces but loopback, no proxy variables" {
-  run_sandboxed AGENT_SANDBOX_NET=none -- run
+  run_sandboxed AGENT_SANDBOX_NET=none -- probe run
   [ "$status" -eq 0 ]
   [ "$(report net_ifaces)" = "lo " ]
   [ "$(report proxy)" = unset ]
@@ -62,7 +62,7 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
   make_fake_ca "$I/ca.pem"
   local host_n
   host_n=$(grep -c 'BEGIN CERT' /etc/ssl/certs/ca-certificates.crt)
-  run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/ca.pem" AGENT_SANDBOX_FORWARD=CA_LINE2 CA_LINE2="$(sed -n 2p "$I/ca.pem")" -- run
+  run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/ca.pem" AGENT_SANDBOX_FORWARD=CA_LINE2 CA_LINE2="$(sed -n 2p "$I/ca.pem")" -- probe run
   [ "$status" -eq 0 ]
   [ "$(report proxy)" = "http://127.0.0.1:8888" ]
   [ "$(report ssl_cert_file)" = "/etc/ssl/certs/ca-certificates.crt" ]
@@ -74,7 +74,7 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
 @test "net=proxy without a CA file: warning, and the bundle inside is the plain system bundle" {
   local host_n
   host_n=$(grep -c 'BEGIN CERT' /etc/ssl/certs/ca-certificates.crt)
-  run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/missing.pem" -- run
+  run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/missing.pem" -- probe run
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning"*"not found"* ]]
   [ "$(report bundle_certs)" -eq "$host_n" ]

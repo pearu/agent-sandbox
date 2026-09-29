@@ -3,7 +3,7 @@
 # Copy this to `.agent-sandbox` in your project root, uncomment what you need,
 # then approve it from that directory with:
 #
-#     claude --trust
+#     asb --trust
 #
 # It is honored ONLY after approval; a file never approved is ignored with a
 # note, so one shipped by a cloned repo does nothing until you review it. Once
@@ -222,4 +222,4 @@
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project
 #               setting.
 #   profile-dir, session-base — engine internals.
-# See `claude --engine-help` for these.
+# See `asb --engine-help` for these.

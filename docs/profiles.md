@@ -5,10 +5,13 @@ profile, `profiles/<name>.sh`, sourced by the engine on the host after it has
 parsed its own flags and before the sandbox exists. The engine runs with
 `set -euo pipefail`; profile code is subject to it.
 
-A profile is selected with `--profile NAME`, or inferred from `argv[0]` when
-the engine is invoked through a symlink named after it. `install.sh` creates
-`~/.local/bin/<profile_command>` for every profile it finds, so each agent keeps
-its usual command name.
+The engine is asked for by name, and the agent is its command:
+`asb [OPTIONS] CMD [AGENT OPTIONS]` (#151). The profile is CMD's basename
+(`asb codex` → `profiles/codex.sh`), or `--profile NAME` when the binary is
+called otherwise (`asb --profile claude /path/to/2.1.284`). The agent that runs
+is CMD itself — looked up on PATH, or the path given — resolved through its
+symlinks; the profile does not find it. Nothing is installed at the agent's own
+name, so the agent's command stays the agent.
 
 ## The contract
 
@@ -16,7 +19,7 @@ Variables a profile declares (all optional unless marked):
 
 | Variable | Meaning |
 |---|---|
-| `profile_command` | On-PATH name of the agent (default: the profile file's name). The installer symlinks `~/.local/bin/<profile_command>` at the engine. |
+| `profile_command` | On-PATH name of the agent (default: the profile file's name): what the engine runs when no command is typed — a verb (`asb --profile NAME --status`) or `--exec`. |
 | `profile_config_binds=(...)` | Host paths bound **read-write** into the sandbox: the agent's state and config. They must exist when the sandbox is built; create them in `profile_prepare()`. An entry is a path bound at itself, or `SRC<TAB>DEST` to bind `SRC` at `DEST` inside; a `DEST` under an earlier entry layers on it, so order the entries parent first. |
 | `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). |
 | `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. |
@@ -31,14 +34,13 @@ Functions a profile defines:
 
 | Function | Meaning |
 |---|---|
-| `profile_bin_discover()` | **Required.** Locate the agent executable: set `profile_bin` (path) and `profile_version` (for messages). On failure print why with `_as_msg` and return non-zero. |
+| `profile_own_bin()` | Optional, and for `install.sh`, not the launch. Where the agent's own installer keeps its binary: set `profile_bin` and `profile_version`, or print why not with `_as_msg` and return non-zero. The installer reports it, and points a launcher an install before #151 put at the agent's name back at it. The engine provides `profile_bin` — the resolved command — to every hook below. |
 | `profile_prepare()` | Optional. Runs right before the sandbox is assembled; create state files here. Not run for host-side subcommands. |
 | `profile_handle_subcommand()` | Required iff `profile_host_subcommands` is non-empty. Receives the agent's full argv (`$1` is the subcommand); its return code is the exit code. |
 | `profile_memory_scope()` | Optional. Called with the resolved mode (`scoped`/`shared`) and the approved share paths. In `scoped` mode, hide the agent's per-project state and rebind the current project plus each share. Without it, a `scoped` setting is reported as ignored rather than silently doing nothing. |
 | `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR` lines: empty inside, discarded at exit. (`copyout` and `append`, which merged a session's entries back at exit, are gone since #120: state that should outlive a launch is a channel, with a mode.) Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
 | `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. Skipped when the briefing is off or could not be written. |
-| `profile_fallback_hint()` | Optional. Printed when the sandbox itself fails to start: name the agent's own unsandboxed executable, so the user has a way back in. The engine prints a generic line without it. |
-| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return (the claude profile: a `claude` typed inside a sandbox runs in it as it is). Refusing a retired knob belongs here too. |
+| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return (the claude profile: an `asb claude` typed inside a sandbox runs in it as it is). Refusing a retired knob belongs here too. |
 | `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
@@ -72,18 +74,19 @@ reviewable in one place, the engine.
    is the reference and has the contract in its header.
 2. Add `profiles/<name>.allowlist` with the hosts the agent must reach.
 3. Run `scripts/check.sh`, then `install.sh` (or `install.sh --dry-run` first):
-   the installer reports the agent binary via your `profile_bin_discover`,
-   merges the seed hosts, and creates the symlink.
-4. Add tests under `tests/` for discovery and for any host-side subcommands.
+   the installer reports the agent it finds on PATH and merges the seed hosts.
+   `asb <name>` then runs it.
+4. Add tests under `tests/` for the profile's hooks and any host-side subcommands.
 5. Nothing in the engine should need to change. If it does, the contract is
    missing something; extend the contract (and this document) rather than
    special-casing a profile.
 
 ## The flagship: `claude`
 
-`profiles/claude.sh` runs Claude Code: it finds the newest install under
-`~/.local/share/claude/versions/` (a single executable named after the version,
-or a directory containing `claude`), binds `~/.claude` read-write and, inside
+`profiles/claude.sh` runs Claude Code — whatever `claude` is on your PATH, from
+the native installer or a package (its `profile_own_bin` knows the native
+installer's `~/.local/share/claude/versions/`, for `install.sh`) — binds
+`~/.claude` read-write and, inside
 it at `~/.claude/.claude.json`, the project's own copy of `~/.claude.json`
 (seeded and refreshed per launch, see [config.md](config.md)), with
 `CLAUDE_CONFIG_DIR` pointing Claude Code there (it writes the file through a

@@ -2,14 +2,20 @@
 # agent-sandbox — run an AI coding agent inside a bubblewrap sandbox.
 #
 # The engine in this file is provider-agnostic. Everything specific to one
-# agent -- where its binary lives, which state paths it needs read-write,
-# which environment it wants, which subcommands must run on the host -- is a
-# PROFILE: profiles/<name>.sh next to this file, sourced at launch. The
-# flagship profile is `claude` (Claude Code). A profile is selected with
-# --profile NAME, or inferred from argv[0] when the engine is invoked through
-# a symlink named after a profile (~/.local/bin/claude -> agent-sandbox), so
-# `claude` keeps working exactly as before. profiles/claude.sh documents the
-# contract a profile implements.
+# agent -- which state paths it needs read-write, which environment it wants,
+# which subcommands must run on the host -- is a PROFILE: profiles/<name>.sh
+# next to this file, sourced at launch. The flagship profile is `claude`
+# (Claude Code). profiles/claude.sh documents the contract a profile implements.
+#
+# It is invoked explicitly (#151), as `agent-sandbox` or its alias `asb`:
+#
+#   asb [ENGINE OPTIONS] CMD [AGENT OPTIONS]
+#
+# The engine's options come first and CMD ends them: everything after it is the
+# agent's, untouched. CMD is a name looked up on PATH (`claude`) or a path
+# (`/path/to/2.1.284`), and its basename names the profile unless --profile does.
+# `claude` itself stays Claude Code: nothing shadows it, so typing it runs the
+# agent natively, exactly as without agent-sandbox installed.
 #
 # ============================================================================
 # QUICK START
@@ -17,32 +23,28 @@
 #
 # Prerequisites:
 #   - bubblewrap installed:   sudo apt install bubblewrap
-#   - the agent itself, installed where its profile expects. For `claude`:
-#     Claude Code under $HOME/.local/share/claude/versions/ (the native
-#     installer's default layout: each version is either a single executable
-#     file named after the version, e.g. "2.1.143", or a directory containing
-#     a "claude" binary).
+#   - the agent itself, on PATH or anywhere a path can name it. For `claude`:
+#     Claude Code from its native installer or a package; the engine runs
+#     whatever `claude` resolves to.
 #
 # Install (pick one):
 #   1. ./install.sh -- per-host setup: egress proxy + allowlist, AppArmor
-#      profile where needed, and the ~/.local/bin/claude symlink.
-#   2. By hand, just the symlink onto your PATH:
-#        ln -s "$PWD/agent-sandbox" "$HOME/.local/bin/claude"
-#      Ensure "$HOME/.local/bin" comes before any other claude in PATH.
-#   3. No symlink at all:
-#        agent-sandbox --profile claude [args]
+#      profile where needed, and `agent-sandbox` and `asb` in ~/.local/bin.
+#   2. By hand, just the command onto your PATH:
+#        ln -s "$PWD/agent-sandbox" "$HOME/.local/bin/asb"
+#   3. No symlink at all: /path/to/agent-sandbox claude [args]
 #
 # Use:
 #   cd /path/to/some/project
-#   conda activate myenv     # optional; the active env is forwarded
-#   claude                   # launches sandboxed claude with CWD writable
-#   claude update            # self-update; runs the native updater on the
-#                            # host, unsandboxed (see docs/updating.md)
-#   claude --ssh github.com  # + git push / ssh to github.com through a
-#                            # per-session ssh-agent; the private key never
-#                            # enters the sandbox (see docs/ssh.md)
-#   claude --allow pypi.org  # + HTTPS to pypi.org through the egress proxy,
-#                            # for this session only (see ENGINE FLAGS below)
+#   conda activate myenv          # optional; the active env is forwarded
+#   asb claude                    # sandboxed claude with CWD writable
+#   asb --ssh github.com claude   # + git push / ssh to github.com through a
+#                                 # per-session ssh-agent; the private key
+#                                 # never enters the sandbox (docs/ssh.md)
+#   asb --allow pypi.org claude   # + HTTPS to pypi.org through the egress
+#                                 # proxy, for this session only
+#   asb --role reviewer claude -r # another role of this project, resuming
+#   claude                        # Claude Code itself, not sandboxed
 #
 # ============================================================================
 # SANDBOX LAYOUT (what the agent sees)
@@ -177,10 +179,11 @@
 # ENGINE FLAGS
 # ============================================================================
 #
-# The engine's own flags must come BEFORE the agent's arguments and are
-# stripped before the agent sees the command line:
+# The engine's own flags come BEFORE the command, and the agent sees only what
+# follows the command:
 #
-#   --profile NAME        select the provider profile (see top of file)
+#   --profile NAME        select the provider profile, when the command's
+#                         basename does not name it (see top of file)
 #   --allow HOST          allow HOST through the egress proxy for THIS session
 #                         only, on top of the global allowlist. Repeatable.
 #                         ".example.com" matches the domain and its
@@ -221,8 +224,9 @@
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
 #   --engine-version      print the agent-sandbox version and exit
-#   -h, --help            engine usage (only when no profile is selected;
-#                         with a profile, --help goes to the agent)
+#   -h, --help            engine usage when it comes before any command;
+#                         after the command (`asb claude --help`) it is the
+#                         agent's
 #
 # Secret stores (~/.ssh, ~/.gnupg, ~/.aws, ~/.azure, ~/.kube, ~/.docker,
 # ~/.password-store, ~/.config/{gcloud,sops,gh}, ~/.local/share/keyrings,
@@ -298,15 +302,19 @@ _as_version() {
 
 _as_usage() {
   cat <<'USAGE'
-usage: agent-sandbox --profile NAME [ENGINE FLAGS] [AGENT ARGS...]
-       <profile-symlink> [ENGINE FLAGS] [AGENT ARGS...]     (e.g. `claude`)
+usage: asb [ENGINE FLAGS] CMD [AGENT ARGS...]        (asb = agent-sandbox)
+       asb [ENGINE FLAGS] --profile NAME VERB          (--status, --shutdown, ...)
+       asb [ENGINE FLAGS] --profile NAME --exec CMD [ARGS...]
 
-Runs an AI coding agent inside a bubblewrap sandbox. The profile picks the
-agent (profiles/<NAME>.sh next to this script, or $AGENT_SANDBOX_PROFILE_DIR);
-invoking the engine through a symlink named after a profile selects it.
+Runs an AI coding agent inside a bubblewrap sandbox: `asb claude`. CMD is the
+agent, a name looked up on PATH or a path; everything after it is the agent's.
+The profile (profiles/<NAME>.sh next to this script, or
+$AGENT_SANDBOX_PROFILE_DIR) is CMD's basename unless --profile names it:
+`asb --profile claude /path/to/2.1.284`. `claude` alone is Claude Code itself,
+not sandboxed.
 
-Engine flags (must precede the agent's own arguments):
-  --profile NAME        provider profile to run
+Engine flags (before CMD):
+  --profile NAME        provider profile, when CMD's basename is not its name
   --allow HOST          also allow HOST through the egress proxy, for this
                         session only; repeatable; ".example.com" matches the
                         domain and its subdomains
@@ -328,8 +336,9 @@ Engine flags (must precede the agent's own arguments):
                         Refusals, warnings and "not sandboxed" notices are
                         never suppressed
   --exec CMD [ARGS...]  run CMD instead of the agent, in the sandbox this
-                        profile would have built for it. Everything after
-                        --exec is the command, so engine flags come first.
+                        profile would have built for it (so --profile names
+                        the profile). Everything after --exec is the command,
+                        so engine flags come first.
                         The agent binary stays bound read-only, so an agent
                         started from inside runs natively there
   --role NAME           which role of this project to run: a named, persistent
@@ -368,8 +377,8 @@ Engine flags (must precede the agent's own arguments):
                         docs/connections.md
   --engine-help         this text, even when a profile is selected
   --engine-version      print the agent-sandbox version and exit
-  -h, --help            this text when no profile is selected; with a profile
-                        it goes to the agent (use --engine-help for this)
+  -h, --help            this text, before any command; after one
+                        (`asb claude --help`) it is the agent's
 
 Environment knobs:
   AGENT_SANDBOX_RO=/a:/b        extra read-only paths
@@ -1760,7 +1769,7 @@ _as_connect_sync() {
   while IFS= read -r line; do
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
-    _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $invoked --reset $ch"
+    _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $(_as_self_cmd --reset "$ch")"
   done <<<"$out"
   return 0
 }
@@ -1785,7 +1794,7 @@ _as_connect_shadows() {
   while IFS= read -r line; do
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
-    _as_msg "connect: $ch: this sandbox has its own '$f' and your copy of it has changed since. The sandbox goes on using its own. To take yours: $invoked --reset $ch"
+    _as_msg "connect: $ch: this sandbox has its own '$f' and your copy of it has changed since. The sandbox goes on using its own. To take yours: $(_as_self_cmd --reset "$ch")"
   done <<<"$out"
   return 0
 }
@@ -2506,7 +2515,7 @@ _as_connect_reset() {
   # references to the layer directories rather than their paths, so removing them
   # underneath it would leave the old content still being served.
   if ! _as_keeper_stop_idle "$base"; then
-    _as_msg "connect: role '${_role:-default}' is running. Resetting would remove the layers it has mounted. End it first ($invoked --role ${_role:-default} --shutdown) and run this again."
+    _as_msg "connect: role '${_role:-default}' is running. Resetting would remove the layers it has mounted. End it first ($(_as_self_cmd --role "${_role:-default}" --shutdown)) and run this again."
     return 1
   fi
   _as_holder_legacy_stop "$base"
@@ -2587,7 +2596,7 @@ _as_role_delete() {
     return 0
   fi
   if ! _as_keeper_stop_idle "$sb"; then
-    _as_msg "role '${_role:-default}' is running; end it first with: $invoked --role ${_role:-default} --shutdown"
+    _as_msg "role '${_role:-default}' is running; end it first with: $(_as_self_cmd --role "${_role:-default}" --shutdown)"
     return 1
   fi
   _as_holder_legacy_stop "$sb"
@@ -2821,7 +2830,7 @@ _as_briefing_write() {
     printf -- '- what it is for,\n'
     printf -- '- the exact lines to add to %s/.agent-sandbox, e.g.\n\n' "$cwd"
     printf '      [allow]\n      example.com\n\n'
-    printf 'then ask them to run `claude --trust` in that directory and relaunch.\n'
+    printf 'then ask them to run `asb --trust` in that directory and relaunch.\n'
     printf 'One clear request costs less than twenty workarounds.\n'
   } >"$md" || return 1
 
@@ -3370,21 +3379,77 @@ _as_strict_ssh_rules() {
   return 0
 }
 
-# If the sandbox itself cannot start, the user has no working agent to fix it
-# with -- the launcher on PATH is this engine, so `claude` is exactly what is
-# broken. Name the way back in: the agent's own binary, which the installer
-# never touches, run directly and unsandboxed. A profile that knows where its
-# binary lives says so via profile_fallback_hint; otherwise point at the docs.
-# Deliberately not a `--no-sandbox` flag: the way out should be documented and
-# discoverable, not ergonomic, or it becomes the habit rather than the last
+# _as_resolve_bin WORD -- set profile_bin to the agent WORD names (#151): a path
+# (`/path/to/2.1.284`, `./build/claude`), or a name looked up on PATH as a shell would.
+# Resolved through symlinks, because that is what is bound inside and executed there:
+# the native installer's ~/.local/bin/claude is a link into its versions/, and bwrap
+# refuses to bind over a symlink. A PATH entry that resolves to this engine is a
+# launcher an earlier install left (see the refusal in agent_sandbox); it is passed
+# over, with a note, and the agent is the next one on PATH -- as is a link to any other
+# copy of the engine (the installed one, when this is a checkout's): recognised the way
+# install.sh recognises its own, a file named agent-sandbox that defines agent_sandbox().
+# Reads the caller's engine and invoked by dynamic scope.
+# shellcheck disable=SC2154
+_as_resolve_bin() {
+  local w=$1 d c r shadow=""
+  profile_bin=""
+  if [[ "$w" == */* ]]; then
+    if [[ -f "$w" && -x "$w" ]]; then
+      profile_bin="$(readlink -f -- "$w")"
+    else
+      _as_msg "'$w' is not an executable file"
+      return 1
+    fi
+  else
+    local -a _dirs
+    _as_split _dirs : "$PATH"
+    for d in "${_dirs[@]}"; do
+      # An empty entry means the current directory, which in a project is the
+      # project's own files: not a place to pick up the agent from.
+      [[ -n "$d" ]] || continue
+      c="$d/$w"
+      [[ -f "$c" && -x "$c" ]] || continue
+      r="$(readlink -f -- "$c")"
+      if [[ "$r" == "$engine" ]] || { [[ "$(basename -- "$r")" == agent-sandbox ]] && grep -qE '^agent_sandbox\(\)' "$r" 2>/dev/null; }; then
+        shadow="$c"
+        continue
+      fi
+      profile_bin="$r"
+      break
+    done
+    [[ -n "$shadow" ]] \
+      && _as_msg "note: $shadow is a launcher an earlier install.sh left (#151); install.sh removes it and puts back the '$w' you had"
+    if [[ -z "$profile_bin" ]]; then
+      _as_msg "no '$w' on PATH to run. Install the agent, or name its binary: $invoked --profile $profile /path/to/$w"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# _as_self_cmd [FLAGS...] -- the command line that runs this engine for this profile
+# with FLAGS, for a message to print: `asb --reset skills claude`. The profile's own
+# spelling -- --profile when that is how it was chosen, else the command as typed.
+# Reads the caller's invoked, profile, _cmd_word and _profile_given by dynamic scope.
+# shellcheck disable=SC2154
+_as_self_cmd() {
+  printf '%s' "$invoked"
+  (($# == 0)) || printf ' %s' "$@"
+  if ((_profile_given)) || [[ -z "$_cmd_word" ]]; then
+    printf ' --profile %s' "$profile"
+  else
+    printf ' %s' "$_cmd_word"
+  fi
+}
+
+# If the sandbox itself cannot start, say so, and name the way to a working agent:
+# the agent itself, which agent-sandbox never touches and nothing shadows (#151), run
+# directly. Deliberately not a `--no-sandbox` flag: the way out should be documented
+# and discoverable, not ergonomic, or it becomes the habit rather than the last
 # resort.
 _as_fallback_hint() {
-  _as_msg "the sandbox did not start, so '$profile_command' cannot run. To get a working agent -- to fix this, for instance -- run its own binary directly, without the sandbox:"
-  if declare -F profile_fallback_hint >/dev/null; then
-    profile_fallback_hint
-  else
-    _as_msg "  the agent's own executable (agent-sandbox never modifies it); see docs/troubleshooting.md"
-  fi
+  _as_msg "the sandbox did not start, so '$profile_command' cannot run in it. The agent itself is not affected; to run it without the sandbox -- to fix this, for instance:"
+  _as_msg "  $profile_command    ($profile_bin)"
   _as_msg "See docs/troubleshooting.md, section 'The sandbox will not start'."
 }
 
@@ -3779,7 +3844,7 @@ agent_sandbox() (
         # Removed with the wrapper machinery (#123). A background daemon an earlier
         # engine started still has CLAUDE_CODE_PROCESS_WRAPPER pointing here, so its
         # workers arrive with this flag: say what to do instead of running them.
-        _as_msg "--wrap was removed: background sessions now run inside their role's sandbox (#123). A Claude Code background daemon started by an earlier agent-sandbox is still running with CLAUDE_CODE_PROCESS_WRAPPER set; stop it (claude --preset none daemon stop) and start --bg sessions again."
+        _as_msg "--wrap was removed: background sessions now run inside their role's sandbox (#123). A Claude Code background daemon started by an earlier agent-sandbox is still running with CLAUDE_CODE_PROCESS_WRAPPER set; stop it (claude daemon stop) and start --bg sessions again, with asb claude --bg."
         return 2
         ;;
       --shutdown)
@@ -3791,6 +3856,40 @@ agent_sandbox() (
       *) break ;;
     esac
   done
+  # ---- invoked through a launcher named after a profile: removed (#151) ----
+  # Earlier installs put this engine at ~/.local/bin/claude, so that `claude` meant
+  # the sandboxed agent. It no longer does: `claude` is Claude Code itself again, and
+  # the sandbox is asked for by name. Refused rather than run either way -- sandboxed
+  # would keep the ambiguity alive, native would quietly drop the sandbox someone
+  # typed `claude` expecting.
+  # Only a profile's name is that launcher: any other name for the engine -- asb, an
+  # alias of the user's own -- is the engine asked for by name.
+  if [[ "${BASH_SOURCE[0]}" == "$0" && "$invoked" != "$(basename -- "$engine")" && -r "$profile_dir/$invoked.sh" ]]; then
+    _as_msg "agent-sandbox is no longer run as '$invoked' (#151): '$invoked' is the agent itself again, and a sandboxed launch is: asb $invoked"
+    _as_msg "$0 is a launcher an earlier install.sh left. Run install.sh again: it puts back the '$invoked' you had, and installs asb."
+    return 2
+  fi
+  # ---- the command (#151): asb [ENGINE FLAGS] CMD [AGENT ARGS] ----
+  # The loop above stopped at the first word that is not the engine's. That word is
+  # CMD, the agent -- a name looked up on PATH or a path -- and everything after it is
+  # the agent's. No CMD is right for a verb, which needs a profile but no launch
+  # (`asb --profile claude --status`), and under --exec, where the words are another
+  # command's. A word starting with `-` there is an option the engine does not have.
+  local _cmd_word="" _profile_given=0
+  [[ -n "$profile" ]] && _profile_given=1
+  if ((! _do_exec)) && (($# > 0)); then
+    case "$1" in
+      -h | --help) ;;
+      -*)
+        _as_msg "'$1' is not an option of agent-sandbox. Its options come before the command, and the agent's after it: $invoked [ENGINE FLAGS] CMD [AGENT ARGS], e.g. $invoked --role reviewer claude -r"
+        return 2
+        ;;
+      *)
+        _cmd_word="$1"
+        shift
+        ;;
+    esac
+  fi
   # Resolve quiet before anything routine is printed: the dot-file notices, the
   # session allowlist and the seccomp line all come later, but the ssh-agent
   # status does not wait long.
@@ -3853,11 +3952,15 @@ agent_sandbox() (
   fi
 
   # ---- profile ----
-  # Explicit --profile wins; otherwise infer from argv[0] when we were
-  # executed through a symlink named after a profile (not when sourced and
-  # called as a function, where $0 is the shell).
-  if [[ -z "$profile" && "${BASH_SOURCE[0]}" == "$0" && "$invoked" != "$(basename -- "$engine")" ]]; then
-    profile="$invoked"
+  # --profile wins; otherwise CMD's basename names it (`claude`, `/usr/bin/claude`).
+  # A basename that names no profile -- a versioned binary, say -- needs --profile.
+  if [[ -z "$profile" && -n "$_cmd_word" ]]; then
+    profile="$(basename -- "$_cmd_word")"
+    if [[ ! "$profile" =~ ^[a-z][a-z0-9_-]*$ || ! -r "$profile_dir/$profile.sh" ]]; then
+      _as_msg "'$_cmd_word' names no profile. Say which one runs it: $invoked --profile NAME $_cmd_word"
+      _as_msg "profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+      return 2
+    fi
   fi
   if [[ -z "$profile" ]]; then
     case "${1:-}" in -h | --help)
@@ -3865,8 +3968,11 @@ agent_sandbox() (
       return 0
       ;;
     esac
-    _as_msg "no profile selected. Use --profile NAME, or invoke through a symlink named after" \
-      "a profile (e.g. ~/.local/bin/claude -> $engine)."
+    if ((_do_exec)); then
+      _as_msg "--exec needs the profile whose sandbox it runs in: $invoked --profile NAME --exec $1"
+    else
+      _as_msg "no command. Name the agent to run: $invoked [ENGINE FLAGS] CMD [AGENT ARGS], e.g. $invoked claude"
+    fi
     _as_msg "profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
     return 2
   fi
@@ -3912,17 +4018,9 @@ agent_sandbox() (
   local _session_dir=""
   # shellcheck source=profiles/claude.sh
   source "$profile_file"
-  declare -F profile_bin_discover >/dev/null \
-    || {
-      _as_msg "profile '$profile' does not define profile_bin_discover()"
-      return 2
-    }
-  profile_bin_discover || return 1
-  [[ -n "$profile_bin" && -x "$profile_bin" ]] \
-    || {
-      _as_msg "profile '$profile' selected no executable (profile_bin='$profile_bin')"
-      return 1
-    }
+  # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
+  # profile's command looked up on PATH.
+  _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
 
   # ---- host-side subcommands (e.g. `claude update`) ----
   # The profile lists verbs that must run on the HOST with the caller's

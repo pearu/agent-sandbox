@@ -27,9 +27,11 @@ is not guaranteed.
                                                     HTTPS_PROXY=http://127.0.0.1:8888
 ```
 
-- **Engine** (`agent-sandbox`): provider-agnostic bash. It parses its own flags,
-  selects a profile, asks the profile where the agent binary is, routes
-  host-side subcommands (such as `claude update`), assembles the bwrap
+- **Engine** (`agent-sandbox`, alias `asb`): provider-agnostic bash, invoked by
+  name -- `asb [OPTIONS] CMD [AGENT OPTIONS]` (#151). It parses its own flags,
+  takes the agent from CMD (a name on PATH, or a path, resolved), selects the
+  profile CMD's basename names, routes host-side subcommands (such as
+  `asb claude update`), assembles the bwrap
   invocation, sets up per-session state (SSH agent, `--allow` file, CA bundle)
   and launches. Everything the agent can see or reach is decided here.
 - **Profile** (`profiles/<name>.sh`): what is specific to one agent, behind a
@@ -61,7 +63,7 @@ bwrap starts.
 
 ### Background sessions (#123)
 
-A background session (`claude --bg`) hands its task to a per-user daemon that
+A background session (`asb claude --bg`) hands its task to a per-user daemon that
 pre-warms a pool of worker processes and dispatches the task to one. The engine does
 not launch those workers, so it does not wrap them: it runs `claude --bg` *inside the
 role's launch*, as a join like any other, and the daemon, its spares and its pty
@@ -73,7 +75,7 @@ nothing of it is left once the role's launch ends.
   --bg` returns as soon as the daemon has the task, so the keeper also counts a
   daemon among its processes (the profile names it: `profile_daemon_argv`, `daemon
   run` for Claude Code). The daemon does not exit when idle (measured), so a role
-  that has one ends by `claude --role x --shutdown`.
+  that has one ends by `asb --role x --shutdown claude`.
 - **The management verbs join** (`daemon`, `agents`, `attach`, `logs`, `stop`, `rm`):
   they run inside the role's launch, where its daemon is, and never start one. With
   no launch running, `agents` and `logs` answer that the role is not running and exit
@@ -82,7 +84,7 @@ nothing of it is left once the role's launch ends.
   of the project is running, that one is meant.
 - **Workspace trust.** A `--bg` worker cannot answer Claude Code's trust prompt, so
   the engine records the project as trusted in the role's own config file when it is
-  not there already, and says so; the user running `claude --bg` in the folder is
+  not there already, and says so; the user running `asb claude --bg` in the folder is
   the consent the prompt would ask for. Never in the native file.
 - **What went.** The wrapper machinery that sandboxed each worker from a daemon on
   the host: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg` project record,
@@ -124,7 +126,7 @@ that records the argv it receives; the argv is the contract.
 | SSH keys never enter. `--ssh HOST` starts a per-session ssh-agent on the host, loads the key with an OpenSSH destination constraint, binds only the socket (and the public `known_hosts`/`config`, also at uid 0's home, since in `strict` ssh resolves `~` to root's) (plus read-only `known_hosts` and `config`). The agent refuses to sign for any other host. Teardown kills the agent and removes the socket. | `_as_ssh_setup`, `_as_session_cleanup`. | `tests/integration/ssh.bats` (generated host key: constrained key listed inside, `~/.ssh` and the private key invisible, known_hosts read-only, agent dead and dir gone after exit; unknown host refused before any session exists). |
 | Concurrency-safe sessions. Each keeper gets its own directory; the janitor reaps only directories whose owner (PID and start time) is gone and never touches unstamped or live ones. | `_as_session_begin`, `_as_session_sweep`; the keeper's supervisor restamps the directory as its own. | `tests/unit/helpers.bats` (`_as_session_sweep`), `tests/unit/keeper.bats` (the supervisor owns it, and it goes with the keeper), `tests/integration/ssh.bats` (janitor at launch; `--ssh` and `--allow` share one dir). |
 | One launch per role. Two invocations of one role at once are one sandbox: the second is a process joined into the first one's launch, in the same mount namespace, so there is never a second set of mounts -- in particular never two overlays over one upper layer, which overlayfs calls undefined. A joined process is the launch's equal in mounts, uid and gid, capabilities, `no_new_privs` and seccomp; its environment is the launch's but for the terminal's variables. Policy is fixed when the launch starts: a join that sets a knob to a value other than the running one is refused, naming it, while anything is joined; an idle launch in its grace is replaced instead. A join parses the keeper's copy of the approved dot-file, so an unapproved edit to the live file refuses it only when the role has to be read from that file. The launch ends once nothing is joined, never while a join is in progress. | `_as_keeper_*` in the engine (the lock, the record, the supervisor, `_as_keeper_admit` for the policy), `components/join.py` (the `setns` chain, the bounding set, `no_new_privs`, the filter). | `tests/unit/keeper.bats` (a second invocation builds nothing and joins; the policy rule per knob; the dot-file warning; the terminal's variables; a failed start), `tests/integration/keeper.bats` (real bwrap: one mount namespace and one superblock for two sessions; the joined process's status lines and mounts equal the launch's, with the real filter; the environment split; stores shared; the keeper outliving any one join and ending after the last; a join during the grace; Ctrl-C; `proxy` and `strict`). Mutation-checked: the policy check, the terminal variables, the recount, the join's filter and the join count. |
-| Self-update runs on the host, never inside. The profile lists the subcommands; the engine runs them unsandboxed and restores the launcher symlink if an installer moves it. `DISABLE_AUTOUPDATER=1` inside. | `profile_host_subcommands`, `profile_handle_subcommand`. | `tests/unit/profile-claude.bats` (no bwrap call, exit code propagated, flags ignored with a note, launcher restored). |
+| Self-update runs on the host, never inside. `claude update` is the agent's own, since nothing shadows `claude` (#151); `asb claude update` is routed the same way: the profile lists the subcommands and the engine runs them unsandboxed. `DISABLE_AUTOUPDATER=1` inside. | `profile_host_subcommands`, `profile_handle_subcommand`. | `tests/unit/profile-claude.bats` (no bwrap call, exit code propagated, flags ignored with a note). |
 | Per-project policy is trust-gated. A project's `.agent-sandbox` (allow hosts, memory scoping, paths, environment, conda, network) is honored only after `--trust` records its SHA-256. A file with no approval on record is ignored with a note. Once approved, an edit by anyone, the agent included, or the file's removal refuses launches from that directory until `--trust` re-reviews it (or forgets the approval), because ignoring would fall back to the defaults, and a default can be wider than the policy you approved (a project pinning `[net] mode = strict` would drop to the default `proxy`). So the agent can neither grant itself anything nor quietly regain the defaults. The review shows the file escaped (`cat -v`) and a file containing control characters is refused at review and at launch, so no line can be hidden from the reviewer. The trust store and global config live under `~/.config/agent-sandbox`, which is never bound into the sandbox. | `_as_dotfile_trusted`, `_as_trust_record`, `_as_dotfile_parse`, `_as_dotfile_clean`, `_as_trust_review`, the trust-record check at launch. | `tests/unit/dotfile.bats` (unapproved ignored with a pointer to `--trust`; an edit and a deletion refuse to launch, bwrap never invoked, until `--trust` re-approves or forgets; an approved file adds allow hosts; `--trust` records the hash and offers to git-ignore; a file with an ESC sequence or a carriage return is refused at review and at launch, UTF-8 is shown escaped and accepted). |
 | Memory is scoped per project by default. In `scoped` mode `~/.claude/projects` is hidden and only the current project (read-write) and each approved project's `memory/` (read-only) are rebound, so a session cannot read other projects' notes or transcripts. "The current project" is the session's directory: the engine binds that directory and not its parents, so a session below a repository root has no `.git` in view and Claude Code keys its memory to the directory, not the repository -- subdirectories of one repository are separate projects inside the sandbox, though they share one memory natively. A share naming the current project is dropped rather than rebound read-only over the writable bind. `scoped` is the default, so this holds without configuration; a global `memory_default = shared` or a dot-file `[share-memory] all` opts out. | `profile_memory_scope` in the claude profile; `profile_tmpfs`/`_rw_binds`/`_ro_binds` applied by the engine after the state binds. | `tests/unit/dotfile.bats` (argv: tmpfs hide then current read-write then shared read-only, in that order; a share naming the current project, literal or matched by a wildcard, is dropped), `tests/integration/memory.bats` (real bwrap: other project invisible, shared `memory/` read-only, current writable). |
 | Conda write mode is bounded. Only the active env becomes writable; the base install, other envs, conda itself, its shell hook and the host package cache stay read-only. Downloads go to a sandbox-owned cache. | conda block in the engine; `CONDA_PKGS_DIRS`. | `tests/unit/argv.bats` (bind order and modes), `tests/integration/conda.bats` (fake layout: env writable only in write mode; base, other env and host cache never; sandbox cache first). A real nested `mamba install` was checked once at extraction. |
@@ -153,7 +155,7 @@ runs natively there.
 
 Three dispatches are bypassed under `--exec`, because each interprets the first
 argument and two of them would otherwise run the agent *outside* the sandbox:
-host-side subcommands (`claude update`), the management verbs (`claude agents`,
+host-side subcommands (`update`), the management verbs (`agents`,
 `daemon`), and `profile_briefing_args`, whose `--settings` flags would corrupt an
 arbitrary command line. `briefing.md` is still bound read-only.
 
@@ -216,9 +218,10 @@ Stated plainly. These are what the adversary above can still do.
   file can register arbitrary hook commands. So a session can add a hook or
   edit the global `CLAUDE.md`, and the result runs in **every later session of
   every project**, inside their sandboxes. (An `mcpServers` entry it adds to its
-  config file stays with the project: that file is a per-project copy.) It also runs on the host, unsandboxed, the moment the user takes
-  the documented recovery path (running the agent's own binary directly, see
-  troubleshooting) or `claude update`, which runs host-side by design.
+  config file stays with the project: that file is a per-project copy.) It also
+  runs on the host, unsandboxed, the next time the user runs `claude` itself --
+  which, with nothing shadowing it (#151), is Claude Code natively, on the same
+  `~/.claude` -- or `claude update`.
   There is no subset of these files that can be made read-only to close the
   channel while leaving the feature working, because `settings.json` *is* the
   channel: make it read-only and `/model` breaks; leave it writable and a hook
@@ -281,8 +284,8 @@ Stated plainly. These are what the adversary above can still do.
   long as it lives (`--ssh-timeout` bounds that).
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
-- **Host-side subcommands run unsandboxed.** `claude update` runs the native
-  binary on the host with your full environment.
+- **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
+  on the host with your full environment, as `claude update` does.
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.
