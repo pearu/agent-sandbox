@@ -352,10 +352,13 @@ Engine flags (must precede the agent's own arguments):
   --overlay auto|off    what `copy-on-write` uses: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only moves `copy-on-write` to `copy`
-  --reset-connection CHANNEL
-                        discard what this sandbox holds at CHANNEL and take the
-                        source's again, then exit. What the conflict warning
-                        points at
+  --reset CHANNEL|PATH  discard what this role holds at CHANNEL (or a declared
+                        PATH) and take the source's again, then exit. What the
+                        conflict warning points at
+  --status              show this role's sandbox: the keeper, what runs in it,
+                        the background daemon's sessions
+  --delete              remove every store of this role; refused while anything
+                        runs in it (see --shutdown)
   --connect SPEC        open one channel at one mode: 'channel=mode [source]
                         [scope]',
                         repeatable. Lower on the scale own < seed-only <
@@ -1707,7 +1710,7 @@ _as_connect_sync() {
   while IFS= read -r line; do
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
-    _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $invoked --reset-connection $ch"
+    _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $invoked --reset $ch"
   done <<<"$out"
   return 0
 }
@@ -1732,7 +1735,7 @@ _as_connect_shadows() {
   while IFS= read -r line; do
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
-    _as_msg "connect: $ch: this sandbox has its own '$f' and your copy of it has changed since. The sandbox goes on using its own. To take yours: $invoked --reset-connection $ch"
+    _as_msg "connect: $ch: this sandbox has its own '$f' and your copy of it has changed since. The sandbox goes on using its own. To take yours: $invoked --reset $ch"
   done <<<"$out"
   return 0
 }
@@ -2357,21 +2360,17 @@ _as_holder_legacy_stop() {
   return 0
 }
 
-# _as_connect_reset CHANNEL -- discard what this sandbox holds at CHANNEL and
-# seed it from the source again.
+# _as_connect_reset CHANNEL|PATH -- discard what this role holds at one channel or
+# one declared path, and take the source's version again (#126).
 #
-# Destructive of the sandbox's own work at that channel and of nothing else, so
-# it says what it removed rather than working in silence. It resets whatever
-# state is there regardless of the channel's current mode: a channel moved back
-# to `live` still has its old copy on disk, and leaving it would surprise
-# whoever moves the channel back again.
+# Destructive of the role's own work there and of nothing else, so it says what it
+# removed rather than working in silence. It resets whatever store is there whatever
+# the current mode: a channel moved back to `read-write` still has its old copy on
+# disk, and leaving it would surprise whoever moves it back again. Every mode's store
+# is discarded, `own` included, whose "source's version" is the empty start.
 _as_connect_reset() {
-  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen seeded _connect_from
+  local want="$1" line ch entry kind path slot manifest base found=0 upper work seen seeded own _connect_from
   local -a fields=()
-  [[ "$want" == */* ]] && {
-    _as_msg "connect: --reset-connection takes a channel name; resetting a path declaration ('$want') is not supported yet."
-    return 1
-  }
   base="$(_as_sandbox_dir)"
   # Never while anything is joined into this role's keeper: its overlays' layers are
   # these directories, and removing them under a live mount is the one way this verb
@@ -2379,10 +2378,30 @@ _as_connect_reset() {
   # references to the layer directories rather than their paths, so removing them
   # underneath it would leave the old content still being served.
   if ! _as_keeper_stop_idle "$base"; then
-    _as_msg "connect: role '${_role:-default}' is running. Resetting would remove the layers it has mounted. Exit what is joined into it and run this again."
+    _as_msg "connect: role '${_role:-default}' is running. Resetting would remove the layers it has mounted. End it first ($invoked --role ${_role:-default} --shutdown) and run this again."
     return 1
   fi
   _as_holder_legacy_stop "$base"
+  # A PATH DECLARATION: any key with a `/`, resolved as the declaration was.
+  if [[ "$want" == */* ]]; then
+    local _path_key
+    _as_connect_parse_path "$want" own --reset || return 1
+    path="$_path_key"
+    local pb="$base/@paths" s1
+    for s1 in "$pb/own/$(_as_iso_slug "$path")" "$pb/seed-only/$(_as_iso_slug "$path")" \
+      "$pb/copy/$(_as_iso_slug "$path")" "$pb/base/$(_as_iso_slug "$path").json"; do
+      [[ -e "$s1" ]] || continue
+      chmod -R u+rwX -- "$s1" 2>/dev/null
+      rm -rf -- "$s1" || return 1
+      found=1
+    done
+    if ((found)); then
+      _as_msg "connect: reset '$want' ($path); the next launch starts it from the source again"
+    else
+      _as_msg "connect: role '${_role:-default}' holds nothing at '$want' ($path)"
+    fi
+    return 0
+  fi
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
@@ -2397,9 +2416,12 @@ _as_connect_reset() {
       work="$base/$ch/work/$(_as_iso_slug "$path")"
       seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
       seeded="$base/$ch/seed-only/$(_as_iso_slug "$path")"
-      [[ -e "$slot" || -e "$manifest" || -e "$upper" || -e "$seeded" ]] || continue
-      # seed-only: discarding the store is the reset; the next launch seeds again.
+      own="$base/$ch/own/$(_as_iso_slug "$path")"
+      [[ -e "$slot" || -e "$manifest" || -e "$upper" || -e "$seeded" || -e "$own" ]] || continue
+      # seed-only and own: discarding the store is the reset; the next launch seeds
+      # again, or starts empty.
       [[ -e "$seeded" ]] && { rm -rf -- "$seeded" 2>/dev/null || true; }
+      [[ -e "$own" ]] && { rm -rf -- "$own" 2>/dev/null || true; }
       # copy-on-write first: the upper layer holds the shadows AND the whiteouts, so
       # removing it is what brings a file the sandbox deleted back into view.
       # CHMOD BEFORE REMOVING -- measured: once anything has been written through
@@ -2417,9 +2439,92 @@ _as_connect_reset() {
     done
   done
   ((found)) || {
-    _as_msg "connect: profile '$profile' has no channel '$want'. It carries: $(_as_connect_channels)"
+    _as_msg "connect: profile '$profile' has no channel '$want', and it is not a path (a path has a '/'). It carries: $(_as_connect_channels)"
     return 1
   }
+  return 0
+}
+
+# _as_role_delete -- remove every store of this role (#126). Refused while anything
+# holds its keeper, naming --shutdown: keeping processes running on stores that are
+# gone makes no sense, and the refusal is what stands between a typo and a lost role.
+# An idle keeper is ended first, as a reset does.
+_as_role_delete() {
+  local sb
+  sb="$(_as_sandbox_dir)"
+  if [[ ! -d "$sb" ]]; then
+    _as_msg "role '${_role:-default}' has nothing stored"
+    return 0
+  fi
+  if ! _as_keeper_stop_idle "$sb"; then
+    _as_msg "role '${_role:-default}' is running; end it first with: $invoked --role ${_role:-default} --shutdown"
+    return 1
+  fi
+  _as_holder_legacy_stop "$sb"
+  local size
+  size="$(du -sh -- "$sb" 2>/dev/null | cut -f1)"
+  chmod -R u+rwX -- "$sb" 2>/dev/null
+  rm -rf -- "$sb" || {
+    _as_msg "role '${_role:-default}': could not remove all of $sb"
+    return 1
+  }
+  _as_msg "role '${_role:-default}': deleted its stores (${size:-?}, $sb); the next launch starts from the source"
+  return 0
+}
+
+# _as_role_status -- what --shutdown would end (#123, #126): the keeper (running since
+# when, under which dot-file), the processes in its namespace -- a host-side view --
+# and the background daemon's sessions, which only a join can ask for.
+# shellcheck disable=SC2154
+_as_role_status() {
+  local sb kd spid since dot now
+  sb="$(_as_sandbox_dir)" kd="$sb/keeper"
+  if ! _as_keeper_live "$sb"; then
+    if [[ -d "$sb" ]]; then
+      printf "role '%s' of %s: not running; its stores (%s) are at %s\n" "${_role:-default}" "$_proj" \
+        "$(du -sh -- "$sb" 2>/dev/null | cut -f1)" "$sb"
+    else
+      printf "role '%s' of %s: not running, and nothing stored\n" "${_role:-default}" "$_proj"
+    fi
+    return 0
+  fi
+  spid="$_keeper_spid"
+  since="$(date -d "@$(stat -c %Y "$kd/id")" '+%F %T' 2>/dev/null)"
+  dot="$(cat "$kd/dotfile" 2>/dev/null)"
+  now="$(_as_keeper_dotfile_hash)"
+  printf "role '%s' of %s: running since %s (supervisor pid %s)\n" "${_role:-default}" "$_proj" "$since" "$spid"
+  if [[ "$dot" == - ]]; then
+    printf '  dot-file: none approved when it started'
+  else
+    printf '  dot-file: the approved one of then (%s)' "${dot:0:12}"
+  fi
+  [[ "$dot" == "$now" ]] && printf '\n' || printf ', changed since\n'
+  printf '  processes:\n'
+  python3 - "$_keeper_target" <<'PY'
+import os, sys
+t = sys.argv[1]
+ns = os.readlink(f"/proc/{t}/ns/pid")
+for p in sorted((x for x in os.listdir("/proc") if x.isdigit()), key=int):
+    try:
+        if os.readlink(f"/proc/{p}/ns/pid") != ns or p == t:
+            continue
+        a = open(f"/proc/{p}/cmdline", "rb").read().split(b"\0")
+    except OSError:
+        continue
+    cmd = " ".join(x.decode(errors="replace") for x in a if x)
+    if cmd.startswith("bwrap "):
+        continue  # the sandbox's own pid 1
+    print(f"    {p:>8}  {cmd[:120]}")
+PY
+  if _as_keeper_daemon "$kd"; then
+    if ((${#profile_status_argv[@]})); then
+      printf '  background sessions:\n'
+      _as_keeper_lock "$sb" && _as_keeper_live "$sb" || return 0
+      _as_keeper_join "$sb" "$profile_bin" "${profile_status_argv[@]}" 2>&1 | sed 's/^/    /'
+    fi
+  else
+    printf '  no background daemon\n'
+  fi
   return 0
 }
 
@@ -3281,7 +3386,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
-  local _host_none=0 _agent_none=0 _do_exec=0 _do_quiet=0 _do_shutdown=0
+  local _host_none=0 _agent_none=0 _do_exec=0 _do_quiet=0 _do_shutdown=0 _do_delete=0 _do_status=0
   local _user_mcp_flag="" _user_mcp_flag_set=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -3457,21 +3562,40 @@ agent_sandbox() (
         _connect_flag+=("${1#--connect=}")
         shift
         ;;
-      --reset-connection)
-        # Throw away what this sandbox has at a channel and take the source's
-        # again. The supported way back, and the one the conflict warning points
-        # at. Does its work and exits; it never launches the agent, so it cannot
-        # be confused with "reset and then run".
+      --reset)
+        # Throw away what this role has at one channel or path declaration and take
+        # the source's again, keeping the rest (#126). The supported way back, and the
+        # one the conflict warning points at. Does its work and exits; it never
+        # launches the agent, so it cannot be confused with "reset and then run".
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
           || {
-            _as_msg "--reset-connection needs a channel name"
+            _as_msg "--reset needs a channel name or a declared path"
             return 2
           }
         _reset_connection="$2"
         shift 2
         ;;
+      --reset=*)
+        _reset_connection="${1#--reset=}"
+        shift
+        ;;
+      --reset-connection)
+        # Renamed in 0.4 (#126), refused with the new name as the 0.3 renames were.
+        _as_msg "--reset-connection was renamed: write --reset (it takes a declared path too)"
+        return 2
+        ;;
       --reset-connection=*)
-        _reset_connection="${1#--reset-connection=}"
+        _as_msg "--reset-connection was renamed: write --reset (it takes a declared path too)"
+        return 2
+        ;;
+      --delete)
+        # Remove every store of the role (#126). Refused while anything holds it.
+        _do_delete=1
+        shift
+        ;;
+      --status)
+        # What --shutdown would end: the keeper, what runs in it, the daemon's sessions.
+        _do_status=1
         shift
         ;;
       --overlay)
@@ -3636,6 +3760,8 @@ agent_sandbox() (
   # one (the observing ones answer "not running" when there is none), and the argv
   # tokens that mark the daemon, which holds the role's keeper while it runs.
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=()
+  # What --status joins to list the daemon's sessions (claude: `agents`).
+  local -a profile_status_argv=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
@@ -3777,7 +3903,8 @@ agent_sandbox() (
   # read from the file, the one role of this project that is running is meant; with
   # none there is nothing to ask, and with several the user has to say which.
   local _do_manage=0
-  ((_do_verb || _do_shutdown)) && _do_manage=1
+  ((_do_verb || _do_shutdown || _do_status)) && _do_manage=1
+  ((_do_status)) && _verb_observe=1
   if ((_do_manage && ! _pre_known)); then
     local -a _running=()
     local _rk
@@ -4084,7 +4211,17 @@ agent_sandbox() (
     return $?
   fi
 
-  # ---- --reset-connection: undo, then exit ----
+  # ---- --status and --delete: the role's own verbs, then exit (#126) ----
+  if ((_do_status)); then
+    _as_role_status
+    return $?
+  fi
+  if ((_do_delete)); then
+    _as_role_delete
+    return $?
+  fi
+
+  # ---- --reset: undo one channel or path, then exit ----
   if [[ -n "$_reset_connection" ]]; then
     _as_connect_reset "$_reset_connection" || return 1
     return 0

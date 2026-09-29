@@ -294,15 +294,15 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ "$(cat "$IWORK/seen")" = MINE ]
 }
 
-@test "--reset-connection refuses while something is joined, and afterwards the source comes back" {
+@test "--reset refuses while something is joined, and afterwards the source comes back" {
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c 'echo MINE >"$HOME/.probe/docs/a.md"'
   bg_sandboxed a "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c "$(hold a)"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset-connection docs
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset docs
   [ "$status" -ne 0 ]
   [[ "$output" == *"is running"* ]]
   release a
   wait "$BG_PID"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset-connection docs
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --reset docs
   [ "$status" -eq 0 ]
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen'
   [ "$(cat "$IWORK/seen")" = YOURS ]

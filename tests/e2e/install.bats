@@ -230,6 +230,13 @@ X
   run launch agents
   [ "$status" -eq 0 ]
   [[ "$output" == *"agents: daemon running"* ]]
+  # --status shows what --shutdown would end: the daemon among its processes, and the
+  # sessions a joined `agents` lists
+  run launch --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"running since"* ]]
+  [[ "$output" == *"daemon run"* ]]
+  [[ "$output" == *"background sessions:"*"agents: daemon running"* ]]
   run launch --shutdown
   [ "$status" -eq 0 ]
   [[ "$output" == *"ended, with everything that ran in it"* ]]

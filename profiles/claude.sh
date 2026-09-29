@@ -194,6 +194,8 @@ profile_verbs=(daemon agents attach logs stop rm)
 profile_verbs_observe=(agents logs)
 # shellcheck disable=SC2034
 profile_daemon_argv=(daemon run)
+# shellcheck disable=SC2034
+profile_status_argv=(agents)
 
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the engine warns on any other [claude] key (a typo

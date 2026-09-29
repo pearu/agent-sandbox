@@ -248,23 +248,23 @@ EOF
   argv_has --overlay-src "$C/rules"
 }
 
-@test "--reset-connection clears an overlay's upper layer, whiteouts and all" {
+@test "--reset clears an overlay's upper layer, whiteouts and all" {
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   local upper
   upper="$SBOX/instructions/upper/$(slugify "$C/rules")"
   mkdir -p "$upper"
   printf 'SANDBOX\n' >"$upper/topic.md"
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -eq 0 ]
   [ ! -e "$upper/topic.md" ]
 }
 
-@test "--reset-connection REFUSES while something is joined into this role's keeper" {
+@test "--reset REFUSES while something is joined into this role's keeper" {
   # It removes the very layers the keeper has mounted, and the conflict warning
   # actively tells the user to run it -- reading that in one terminal while the
   # role runs in another is the ordinary case, not an edge one.
   engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -ne 0 ]
   [[ "$output" == *"role 'default' is running"* ]]
   release_bg
@@ -273,7 +273,7 @@ EOF
 @test "and it goes ahead once that join is gone" {
   engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   release_bg
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -eq 0 ]
 }
 
@@ -287,7 +287,7 @@ EOF
   [ -e "$SBOX/keeper/id" ] # still there, waiting out its grace
   mkdir -p "$upper"
   printf 'SANDBOX\n' >"$upper/topic.md"
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -eq 0 ]
   [ ! -e "$SBOX/keeper/id" ]
   [ ! -e "$upper/topic.md" ]
@@ -295,7 +295,7 @@ EOF
 
 @test "a running keeper of ANOTHER role does not block a reset" {
   engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --role other --version
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -eq 0 ]
   release_bg
 }
@@ -664,24 +664,24 @@ EOF
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --quiet --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"topic.md"* ]]
-  [[ "$output" == *"reset-connection instructions"* ]] # it says how to resolve it
-  [ "$(cat "$slot/topic.md")" = SANDBOX ]              # and kept the sandbox's
+  [[ "$output" == *"--reset instructions"* ]] # it says how to resolve it
+  [ "$(cat "$slot/topic.md")" = SANDBOX ]     # and kept the sandbox's
 }
 
-@test "--reset-connection takes the source's version back, and does NOT launch" {
+@test "--reset takes the source's version back, and does NOT launch" {
   printf 'YOURS\n' >"$C/rules/topic.md"
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/rules")"
   printf 'SANDBOX\n' >"$slot/topic.md"
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -eq 0 ]
   [ "$(cat "$slot/topic.md")" = YOURS ]
   [ ! -s "$H/argv" ] # bwrap was never reached: it resets and exits
 }
 
-@test "--reset-connection on a channel the profile does not carry is refused" {
-  run_engine -- claude --reset-connection nosuch
+@test "--reset on a channel the profile does not carry is refused" {
+  run_engine -- claude --reset nosuch
   [ "$status" -ne 0 ]
   [[ "$output" == *"no channel 'nosuch'"* ]]
 }
@@ -989,13 +989,13 @@ EOF
   run ! argv_has --bind "$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")" "$C/CLAUDE.md"
 }
 
-@test "--reset-connection discards a seed-only store, so the next launch seeds again" {
+@test "--reset discards a seed-only store, so the next launch seeds again" {
   printf 'V1\n' >"$C/CLAUDE.md"
   run_engine -- claude --connect 'instructions=seed-only native' --version
   local fslot
   fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
   printf 'V2\n' >"$C/CLAUDE.md"
-  run_engine -- claude --reset-connection instructions
+  run_engine -- claude --reset instructions
   [ "$status" -eq 0 ]
   [ ! -e "$fslot" ]
   run_engine -- claude --connect 'instructions=seed-only native' --version

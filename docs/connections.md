@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets, roles, the keeper, background sessions inside a role, `--shutdown` and the `config`, `transcripts` and `logs` channels are implemented and under test; the other role verbs are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
+**Status: the scale, the presets, roles, the keeper, background sessions inside a role, the role verbs and the `config`, `transcripts` and `logs` channels are implemented and under test; the storage scopes are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -466,8 +466,8 @@ measured the first time this ran under the real bwrap: bound earlier, `./data =
 read-only` was writable and `./scratch/ = own` showed the project's files.
 
 **Not in this piece:** a directory path at `copy-on-write` is refused for now; the keeper
-can mount it at the declared path, and that is step 13 of #129. `--reset-connection` takes channel names
-only until `--reset <channel|path>` (#126). A per-role scratchpad is already what
+can mount it at the declared path, and that is step 13 of #129. `--reset ./scratch/` takes a
+declaration back to its source, as `--reset <channel>` does a channel (#126). A per-role scratchpad is already what
 `./scratch/ = own` gives, since a role is the instance.
 
 ### Nested sandboxes: persistence is not enforced
@@ -484,9 +484,8 @@ lasts as long as the outer session and no longer.
 
 ## Roles, the keeper and storage
 
-**Built:** roles, the keeper, background sessions inside the role, `--shutdown`, `seed-only`,
-the config file and no merge-back. **Agreed, not built:** the other role verbs and the storage
-scopes, each marked below. The section records the decisions of 2026-09-24 to 28, filed
+**Built:** roles, the keeper, background sessions inside the role, the role verbs, `seed-only`,
+the config file and no merge-back. **Agreed, not built:** the storage scopes, marked below. The section records the decisions of 2026-09-24 to 28, filed
 as [#119](https://github.com/pearu/agent-sandbox/issues/119),
 [#120](https://github.com/pearu/agent-sandbox/issues/120),
 [#121](https://github.com/pearu/agent-sandbox/issues/121),
@@ -581,7 +580,7 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   path declarations at `copy-on-write` are next (#129 step 13).
 - Ctrl-C at a join ends that join's command, not the launch: the join passes the
   terminal's signals to its own process group, and the keeper ignores them.
-- `--reset-connection` is refused while anything is joined; an idle keeper is ended first.
+- `--reset` is refused while anything is joined; an idle keeper is ended first.
 - Its host side is a supervisor, a background copy of the engine that started it: it owns
   the launch's exit (the session directory, the ssh agent, the mount-point files) and writes
   `<sandbox>/keeper.log`, which a launch that fails to start prints.
@@ -618,12 +617,14 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 ### The role verbs (#126)
 
+*Built.* Each takes `--role x` (the default role when omitted), does its work and exits.
+
 | verb | does | refused when |
 |---|---|---|
-| `--status` | the keeper (running since when, under which dotfile), the processes joined into it, the daemon's sessions | — |
-| `--shutdown` | ends the keeper, every joined process, and the daemon with its pool. *Built* (#123) | — |
-| `--delete` | removes the role's stores, all of them | anything is joined: it names `--shutdown` |
-| `--reset <channel\|path>` | discards one store and takes the source's version again, keeping the rest; renamed from `--reset-connection`, and takes a path declaration too | the keeper is running |
+| `--status` | the keeper (running since when, under which dot-file), the processes in its namespace (a host-side view), and the daemon's sessions (a joined `agents`); for a role not running, where its stores are | — |
+| `--shutdown` | ends the keeper, every joined process, and the daemon with its pool | — |
+| `--delete` | removes the role's stores, all of them; the next launch starts from the source | anything is joined, or a daemon runs: it names `--shutdown`. An idle keeper is ended first |
+| `--reset <channel\|path>` | discards one store, in whatever mode, and takes the source's version again (for `own`, the empty start), keeping the rest; renamed from `--reset-connection`, which is refused with the new name, and takes a path declaration too | the same as `--delete` |
 
 ### Storage scope (#125)
 
@@ -767,8 +768,8 @@ defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can quietly pu
 channel back at `read-write` for every project. Whoever lands presets decides whether that stays
 true and says so here.
 
-`--reset-connection skills` re-seeds one channel today. Agreed, not built: the role verbs
-`--status`, `--shutdown`, `--delete` and `--reset <channel|path>` (#126).
+`--reset skills` re-seeds one channel, and `--reset ./scratch/` one declared path; `--status`,
+`--shutdown` and `--delete` are the role's own verbs (#126).
 
 ## What the study measures under this model
 
