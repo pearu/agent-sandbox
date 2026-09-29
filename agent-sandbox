@@ -1678,10 +1678,25 @@ _as_connect_apply_paths() {
         ;;
       copy | copy-on-write)
         if [[ "$mode" == copy-on-write && "$kind" == dir ]]; then
-          # See the probed wording in _as_connect_parse. The keeper can mount one
-          # at the declared path; that is step 13 of #129, not built yet.
-          _as_msg "connect: mode 'copy-on-write' is not implemented in this engine (${_connect_where[$p]} asked for '$key', a directory). Refusing rather than serving a different mode under that name."
-          return 1
+          if [[ "$_overlay_mode" != off ]] && _as_overlay_ok; then
+            # An overlay at the declared path, mounted by the keeper as a channel's is:
+            # the source reads through, a write lands in the role's upper layer and
+            # shadows it from then on. The lower is the path itself, which exists
+            # (a declaration of a missing path is skipped above). One launch per role
+            # (#121) is what makes an overlay the launch chooses safe: there is never a
+            # second one over the same upper layer.
+            local upper work seen
+            upper="$base/upper/$(_as_iso_slug "$p")"
+            work="$base/work/$(_as_iso_slug "$p")"
+            seen="$base/seen/$(_as_iso_slug "$p").json"
+            mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
+            _as_connect_shadows "$key" "$real" "$upper" "$seen" || return 1
+            args+=(--overlay-src "$real" --overlay "$upper" "$work" "$p")
+            continue
+          fi
+          local why="this bubblewrap cannot mount an overlay (it needs 0.11)"
+          [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
+          _as_msg "connect: '$key': copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
         fi
         slot="$base/copy/$(_as_iso_slug "$p")"
         manifest="$base/base/$(_as_iso_slug "$p").json"
@@ -2502,7 +2517,9 @@ _as_connect_reset() {
     path="$_path_key"
     local pb="$base/@paths" s1
     for s1 in "$pb/own/$(_as_iso_slug "$path")" "$pb/seed-only/$(_as_iso_slug "$path")" \
-      "$pb/copy/$(_as_iso_slug "$path")" "$pb/base/$(_as_iso_slug "$path").json"; do
+      "$pb/copy/$(_as_iso_slug "$path")" "$pb/base/$(_as_iso_slug "$path").json" \
+      "$pb/upper/$(_as_iso_slug "$path")" "$pb/work/$(_as_iso_slug "$path")" \
+      "$pb/seen/$(_as_iso_slug "$path").json"; do
       [[ -e "$s1" ]] || continue
       chmod -R u+rwX -- "$s1" 2>/dev/null
       rm -rf -- "$s1" || return 1
