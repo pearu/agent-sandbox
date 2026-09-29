@@ -24,8 +24,16 @@ run_install() {
   )
 }
 
-# launch ARGS: the installed launcher, from the project dir, HOME = the throwaway home
+# launch ARGS: the installed launcher, from the project dir, HOME = the throwaway home.
+# A missing launcher means the install in setup_file did not complete. Say so, with the
+# install's own output, rather than let every later test fail on a bare 127 that reads
+# like a bug in the test itself.
 launch() {
+  if [[ ! -x "$H/.local/bin/claude" ]]; then
+    echo "launch: no installed launcher at $H/.local/bin/claude -- the install did not complete (exit $(cat "$E/install1.out.rc" 2>/dev/null)); its output:"
+    sed 's/^/  | /' "$E/install1.out" 2>/dev/null | tail -40
+    return 127
+  fi
   (cd "$E/proj" && HOME="$H" PATH="$B:$PATH" "$H/.local/bin/claude" "$@")
 }
 
