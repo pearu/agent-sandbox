@@ -213,13 +213,14 @@ is `x`. What survives from #104 is the `none` preset, the role-suffix grammar an
 trust on the project.
 
 **Storage scope** (#125). Storage is keyed by the role, so the scope token of a connection
-(`channel = mode [source] [scope]`) names only a *shorter* lifetime. *agreed, not built*:
+(`channel = mode [source] [scope]`) names only a *shorter* lifetime. `run-scoped` is
+*shipped*; `join-scoped` is *agreed, not built* (#147):
 
 | written | lifetime |
 |---|---|
 | *(nothing)* | the role: across keepers, until `--delete` or `--reset` |
 | `run-scoped` | one keeper ([#105](https://github.com/pearu/agent-sandbox/issues/105)) |
-| `process-scoped` | one joined process |
+| `join-scoped` | one join: a joined command and everything it starts; renamed from `process-scoped` |
 
 `sandbox-scoped`, `project-scoped` and `session-scoped` are withdrawn: the first is the
 unnamed default, the second is a `sandbox:<project>/<role>` source at `read-write`, the
