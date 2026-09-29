@@ -214,7 +214,7 @@ Sections:
     `inherit` it is `seed-only` for the same reason as every file Claude Code
     rewrites at every launch: `copy` would warn at every launch. `native` does
     reopen it — the file whole, every project's entries readable — because that is
-    what `--sandbox none` gives, and parity is the point of that preset and the
+    what `--preset none` gives, and parity is the point of that preset and the
     reason it is flag-only.
 
   `copy-on-write` means reads fall through to your files until the sandbox
@@ -227,11 +227,11 @@ Sections:
 
   **`native` is the fourth preset, and it is not a fourth step on the same
   ladder.** Its contract is parity: `--preset native` must behave exactly as
-  `--sandbox none` does, while still going through bubblewrap, the network mode
+  `--preset none` does, while still going through bubblewrap, the network mode
   and the syscall filter — so any difference between the two is a bug in
   agent-sandbox, and `tests/integration/native-parity.bats` runs the same agent
   both ways and fails when they disagree. That makes it a bisector as much as a
-  position: something that breaks under `native` but works under `--sandbox none`
+  position: something that breaks under `native` but works under `--preset none`
   is broken in the sandbox mechanism, not in the isolation. It is also the far
   end for building a policy from either direction — start at `native` and close
   channels until the use case is met, or start at `isolated` and open them.
@@ -289,13 +289,11 @@ Sections:
   supervisor's control key and its roster of other sessions, a cross-session
   channel rather than this session's state); `gh` and `ide` are deliberately
   **not**, because both exist to let Claude Code work from inside a sandbox.
-  `sandbox = <scopes>` selects which invocations this project sandboxes — `fg`
-  (foreground sessions), `bg` (`claude --bg` background workers), both (`fg bg`),
-  or `none`; `bg` is refused until background sessions run inside the role (#123).
-  Turning a scope off is a widening, so this key takes effect only
-  from a `--trust`-approved file; the `--sandbox` flag and
-  `AGENT_SANDBOX_CLAUDE_SANDBOX` are the ungated launch-time forms. Default: `fg`
-  on the host, `none` when the launcher itself runs inside a sandbox.
+  `sandbox` is removed (#123): every session, `claude --bg` included, runs in its
+  role's sandbox, so there is no scope to choose. It is refused, as are the
+  `--sandbox` flag and `AGENT_SANDBOX_CLAUDE_SANDBOX`, naming `--preset none`, which
+  runs without a sandbox and is the flag only: a project cannot declare itself
+  unsandboxed. A `claude` typed inside a sandbox still runs in it as it is.
   `user-mcp` is removed: it kept your user-level MCP servers out by editing the
   config file, and the engine no longer edits anything inside it. It is refused,
   naming the replacement, `config = own` under `[connect]` (see

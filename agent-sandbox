@@ -342,10 +342,13 @@ Engine flags (must precede the agent's own arguments):
                         (read your files live, keep the sandbox's writes to
                         itself) or `shared` (one directory, both ways -- what
                         the engine did before 0.3). Default: default.
-                        `native` is also accepted HERE ONLY, never from the
-                        environment or a project file: it turns state isolation
-                        off entirely so that any difference from --sandbox none
-                        is a bug in agent-sandbox
+                        `native` and `none` are also accepted HERE ONLY, never
+                        from the environment or a project file: `none` runs the
+                        agent with no sandbox at all, and `native` turns state
+                        isolation off so that any difference from `none` is a
+                        bug in agent-sandbox
+  --shutdown            end this role's running sandbox -- everything joined
+                        into it, and a background daemon -- then exit
   --overlay auto|off    what `copy-on-write` uses: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only moves `copy-on-write` to `copy`
@@ -531,18 +534,6 @@ _as_add_paths() {
 # find it deterministically: $AGENT_SANDBOX_SESSION_BASE if set, else
 # $XDG_RUNTIME_DIR/agent-sandbox.<uid>, else /tmp/agent-sandbox.<uid>. The
 # mitmproxy addon derives the same path (it runs as the same user).
-_as_bg_project() {
-  # The project directory a wrapped background worker should see, bound like a
-  # foreground session's CWD. The launcher records it per `--bg` in wrapper mode
-  # (a fresh daemon is started per launch, so this file is the current project);
-  # the wrapper reads it here. Empty means "no project" -> the worker gets only
-  # ~/.claude, like a foreground session started from $HOME.
-  local f
-  f="$(_as_session_base)/bg-project"
-  [[ -r "$f" ]] && cat -- "$f"
-  return 0
-}
-
 _as_session_base() {
   if [[ -n "${AGENT_SANDBOX_SESSION_BASE:-}" ]]; then
     printf '%s' "$AGENT_SANDBOX_SESSION_BASE"
@@ -902,29 +893,13 @@ _as_path_slug() {
   printf '%s-%s' "${conv:0:200}" "$(_as_sha256_str "$1" | cut -c1-16)"
 }
 
-# _as_project_dir -- the PROJECT this launch belongs to.
-#
-# NOT always $cwd. A wrapped background worker runs from the daemon's directory,
-# which is not the project's, so the launcher records the project per `--bg` and
-# the wrapper reads it back here. Anything keyed by project must ask this rather
-# than read $cwd: a worker would otherwise get a different key from the
-# foreground session it belongs to -- one sandbox becoming two -- and every
-# worker of every project would share the daemon's key, which is a cross-project
-# channel of exactly the kind this model exists to close.
-#
-# The claude profile learned this the hard way for the config file copy and had
-# its own copy of the logic. It now calls this one, so the two cannot drift.
-# Reads $_do_wrap and $cwd by dynamic scope, as the profile hooks do.
+# _as_project_dir -- the PROJECT this launch belongs to: the directory it runs in.
+# Anything keyed by project asks this rather than reading $cwd itself, so there is
+# one place that says what the key is. (It was once not always $cwd: a wrapped
+# background worker ran from the daemon's directory. Background sessions now run
+# inside their role's launch, #123.)
 # shellcheck disable=SC2154
 _as_project_dir() {
-  if ((${_do_wrap:-0})); then
-    local bg
-    bg="$(_as_bg_project)"
-    [[ -n "$bg" ]] && {
-      printf '%s' "$bg"
-      return 0
-    }
-  fi
   printf '%s' "${cwd:-$PWD}"
 }
 
@@ -2097,10 +2072,16 @@ _as_keeper_supervise() {
     fi
     again=0
     _as_proc_is "$t" "$tstart" || break # the launch ended from inside
+    if [[ -e "$kd/force" ]]; then       # --shutdown: whatever is joined or running
+      flock 8
+      rm -f -- "$kd/id"
+      break
+    fi
     flock 8
     _as_keeper_count "$kd"
     flock -u 8
     ((_kc_n == 0)) || continue
+    _as_keeper_daemon "$kd" && continue
     # The grace, interruptible: a reset that ends an idle keeper signals it here. Any
     # other signal is a join that came and went meanwhile, and the grace starts over.
     if [[ ! -e "$kd/stop" && "$grace" != 0 ]]; then
@@ -2116,7 +2097,7 @@ _as_keeper_supervise() {
     fi
     flock 8
     _as_keeper_count "$kd"
-    if ((_kc_n == 0)); then
+    if ((_kc_n == 0)) && { [[ -e "$kd/force" ]] || ! _as_keeper_daemon "$kd"; }; then
       rm -f -- "$kd/id"
       break # the lock stays held until the launch is gone and cleaned up
     fi
@@ -2153,6 +2134,76 @@ _as_keeper_count() {
     fi
   done
   return 0
+}
+
+# _as_keeper_daemon KEEPERDIR -- is a background daemon running inside this keeper?
+#
+# A DAEMON HOLDS THE KEEPER, as a join does (#123): the rule is "something the user
+# started in this role is still running", and `claude --bg` returns once it has
+# handed its task to a daemon that outlives it. The profile says what a daemon looks
+# like (profile_daemon_argv: tokens that appear in order in its argv). It detaches, so
+# inside the sandbox it is reparented to pid 1 -- bwrap's init, the keeper payload's
+# parent -- and it is found among that process's descendants, which the host can walk
+# without entering anything. Claude Code's daemon does not exit when idle (measured),
+# so a role that has one ends by --shutdown.
+_as_keeper_daemon() {
+  ((${#profile_daemon_argv[@]})) || return 1
+  local init istart
+  read -r _ _ _ _ init istart 2>/dev/null <"$1/id" || return 1
+  _as_proc_is "$init" "$istart" || return 1
+  local -a todo=("$init") kids a
+  local p f want
+  want=" ${profile_daemon_argv[*]} "
+  while ((${#todo[@]})); do
+    p="${todo[0]}"
+    todo=("${todo[@]:1}")
+    for f in /proc/"$p"/task/*/children; do
+      kids=()
+      { read -r -a kids <"$f"; } 2>/dev/null
+      todo+=(${kids[@]+"${kids[@]}"})
+    done
+    [[ "$p" == "$init" ]] && continue
+    a=()
+    { mapfile -d '' -t a <"/proc/$p/cmdline"; } 2>/dev/null
+    ((${#a[@]} > 1)) || continue
+    [[ " ${a[*]:1} " == *"$want"* ]] && return 0
+  done
+  return 1
+}
+
+# _as_keeper_busy SANDBOXDIR -- is anything holding this role's keeper: a join, or a
+# daemon? Called with the lock held; sets _kc_n as _as_keeper_count does.
+_as_keeper_busy() {
+  _as_keeper_count "$1/keeper"
+  ((_kc_n > 0)) && return 0
+  _as_keeper_daemon "$1/keeper"
+}
+
+# _as_keeper_shutdown SANDBOXDIR -- end this role's launch: the keeper, everything
+# joined into it, and a daemon with its pool. What --shutdown does. A later launch of
+# the role starts a fresh keeper under the policy then in force.
+_as_keeper_shutdown() {
+  local sb="$1" kd="$1/keeper" i spid
+  _as_keeper_lock "$sb" || return 1
+  if ! _as_keeper_live "$sb"; then
+    _as_keeper_unlock
+    _as_info "role '${_role:-default}' is not running"
+    return 0
+  fi
+  spid="$_keeper_spid"
+  : >"$kd/stop"
+  : >"$kd/force"
+  _as_keeper_unlock
+  kill -USR1 "$spid" 2>/dev/null
+  for ((i = 0; i < 1500; i++)); do
+    if [[ ! -d "/proc/$spid" ]]; then
+      _as_msg "role '${_role:-default}': ended, with everything that ran in it"
+      return 0
+    fi
+    sleep 0.01
+  done
+  _as_msg "role '${_role:-default}': its keeper did not end within 15 s (supervisor $spid); see $sb/keeper.log"
+  return 1
 }
 
 # _as_keeper_start SANDBOXDIR LAUNCHER... -- start this role's keeper; the lock is held.
@@ -2251,8 +2302,10 @@ _as_keeper_join() {
   g="$(_as_keeper_grace)"
   if [[ "$g" == 0 && "$last" == 1 ]]; then
     local i
+    # ...unless something else holds it: a daemon this join left behind.
     for ((i = 0; i < 1000; i++)); do
       [[ -d "/proc/$spid" ]] || break
+      _as_keeper_daemon "$kd" && break
       kill -USR1 "$spid" 2>/dev/null
       sleep 0.01
     done
@@ -2270,8 +2323,7 @@ _as_keeper_stop_idle() {
     _as_keeper_unlock
     return 0
   fi
-  _as_keeper_count "$kd"
-  if ((_kc_n > 0)); then
+  if _as_keeper_busy "$sb"; then
     _as_keeper_unlock
     return 1
   fi
@@ -3099,25 +3151,12 @@ _as_fallback_hint() {
   _as_msg "See docs/troubleshooting.md, section 'The sandbox will not start'."
 }
 
-# _as_launch -- -- CMD... -- run the launch that ${_launch[@]} names with CMD as its
-# payload, and return how that went.
-#
-# Every launch is a KEEPER that CMD then joins (see the keeper section), except a
-# wrapped background worker, which Claude Code's daemon spawns and which stays a
-# launch of its own until #123 runs the daemon inside the role. The launch command
-# is the same either way; only its payload differs.
+# _as_launch -- -- CMD... -- start the keeper that ${_launch[@]} names and join CMD
+# into it; return CMD's status. Every launch is a keeper (see the keeper section).
 # shellcheck disable=SC2154
 _as_launch() {
   shift # the --
   local rc=0
-  if ((_do_wrap)); then
-    "${_launch[@]}" -- "$@" 10<"${_seccomp_bpf:-/dev/null}" || rc=$?
-    # 127 = bwrap not found, 126 = found but not executable. Any other code is
-    # the AGENT's own exit status and means the sandbox worked fine.
-    ((rc == 126 || rc == 127)) && _as_fallback_hint
-    _as_session_cleanup
-    return "$rc"
-  fi
   # The payload: `sleep` under the marker as its argv[0] (bwrap's --argv0 is newer
   # than the oldest bubblewrap this supports). The environment a join inherits is
   # read from it, so the shell that sets argv[0] takes back what it added: PWD and
@@ -3134,6 +3173,7 @@ _as_launch() {
   # the ssh agent and removes the mount-point files once the keeper ends.
   trap - EXIT INT TERM HUP
   _session_dir="" _ssh_agent_pid="" _as_placeholder_files=()
+  ((_do_exec)) || ! declare -F profile_before_join >/dev/null || profile_before_join "$@"
   _as_keeper_join "$_keeper_sb" "$@" || rc=$?
   [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
   return "$rc"
@@ -3241,8 +3281,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
-  local _host_none=0 _agent_none=0 _do_wrap=0 _do_exec=0 _do_quiet=0
-  local _sandbox_flag="" _sandbox_flag_set=0
+  local _host_none=0 _agent_none=0 _do_exec=0 _do_quiet=0 _do_shutdown=0
   local _user_mcp_flag="" _user_mcp_flag_set=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -3373,22 +3412,15 @@ agent_sandbox() (
         shift
         ;;
       --sandbox)
-        # Which invocations to sandbox, as a scope list the profile interprets
-        # (e.g. claude: "fg", "bg", "fg bg", or "none"). A launch-time choice, so
-        # it overrides the dot-file's [<profile>] sandbox key and is not
-        # trust-gated (widening your own launch is yours to do). See profile_route.
-        [[ $# -ge 2 && -n "$2" ]] || {
-          _as_msg "--sandbox needs a scope list (e.g. 'fg bg', or none)"
-          return 2
-        }
-        _sandbox_flag="$2"
-        _sandbox_flag_set=1
-        shift 2
+        # Removed with the wrapper machinery (#123): foreground and background
+        # sessions both run in the role's sandbox, so there is no scope to choose.
+        # Running without a sandbox is the `none` preset, typed per launch.
+        _as_msg "--sandbox was removed: every session, --bg included, runs in its role's sandbox (#123). To run without one: --preset none"
+        return 2
         ;;
       --sandbox=*)
-        _sandbox_flag="${1#--sandbox=}"
-        _sandbox_flag_set=1
-        shift
+        _as_msg "--sandbox was removed: every session, --bg included, runs in its role's sandbox (#123). To run without one: --preset none"
+        return 2
         ;;
       --user-mcp)
         # Whether the claude profile carries the host's user-level mcpServers
@@ -3485,10 +3517,16 @@ agent_sandbox() (
         shift
         ;;
       --wrap)
-        # Internal: set by opt-in wrapper mode as CLAUDE_CODE_PROCESS_WRAPPER.
-        # Everything after it is `<binary> <argv...>` -- a process Claude Code
-        # spawns -- to sandbox. See the wrapper role below and issue #45.
-        _do_wrap=1
+        # Removed with the wrapper machinery (#123). A background daemon an earlier
+        # engine started still has CLAUDE_CODE_PROCESS_WRAPPER pointing here, so its
+        # workers arrive with this flag: say what to do instead of running them.
+        _as_msg "--wrap was removed: background sessions now run inside their role's sandbox (#123). A Claude Code background daemon started by an earlier agent-sandbox is still running with CLAUDE_CODE_PROCESS_WRAPPER set; stop it (claude --preset none daemon stop) and start --bg sessions again."
+        return 2
+        ;;
+      --shutdown)
+        # End the role's launch: its keeper, everything joined into it, and a
+        # background daemon with its pool (#123, #126). Does its work and exits.
+        _do_shutdown=1
         shift
         ;;
       *) break ;;
@@ -3511,10 +3549,6 @@ agent_sandbox() (
       _as_msg "--exec needs a command, e.g. --exec bash -l"
       return 2
     }
-    if ((_do_wrap)); then
-      _as_msg "--wrap and --exec are mutually exclusive"
-      return 2
-    fi
   fi
   ((${#_ssh_hosts[@]} > 0 || _ssh_unrestricted)) && _ssh_want=1
   if ((_ssh_unrestricted && ${#_ssh_hosts[@]} > 0)); then
@@ -3598,6 +3632,10 @@ agent_sandbox() (
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
   local -a profile_host_subcommands=()
+  # Background service (#123): the verbs that join the role's launch and never start
+  # one (the observing ones answer "not running" when there is none), and the argv
+  # tokens that mark the daemon, which holds the role's keeper while it runs.
+  local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
@@ -3625,93 +3663,6 @@ agent_sandbox() (
       return 1
     }
 
-  # ---- wrapper role (CLAUDE_CODE_PROCESS_WRAPPER) ----
-  # Invoked as `agent-sandbox --wrap <binary> <argv...>` to sandbox a process
-  # Claude Code spawns. We always run our discovered native binary
-  # ($profile_bin) and DISCARD the <binary> Claude passed: it is
-  # ~/.local/bin/claude, our launcher, which would re-enter the engine. The
-  # switch on the worker's own argv decides what stays host-side (trusted infra
-  # that must run on the host to spawn -- and itself wrap -- its children) from
-  # what is sandboxed (the process that runs the agent):
-  #   daemon run     the background supervisor. Host-side; it keeps the wrapper
-  #                  in its environment, so the workers it spawns are wrapped.
-  #   --bg-pty-host  a PTY provider (its argv carries the terminal WxH and,
-  #                  after `--`, the wrapper + the spare command). Host-side, so
-  #                  the spare it spawns is wrapped -> sandboxed.
-  #   --bg-spare/*   the pooled worker that claims and runs a session: SANDBOX.
-  #                  An unknown verb defaults here -- fail safe: sandbox it.
-  # The pty-host/spare split is read from the argv (WxH, "pty-host" vs the
-  # claimed "spare"); confirm end-to-end on the host before wrapper mode ships
-  # enabled (issue #45).
-  if ((_do_wrap)); then
-    [[ $# -ge 1 ]] || {
-      _as_msg "--wrap needs the wrapped command"
-      return 2
-    }
-    shift # drop the <binary> Claude passed; we use $profile_bin (native)
-    case "${1:-}" in
-      daemon | --bg-pty-host)
-        exec "$profile_bin" "$@"
-        ;;
-      *)
-        # Sandbox this worker. Bind the rendezvous sockets named in its argv so
-        # it can reach the daemon -- and nothing else of the daemon's. The
-        # sockets live in the daemon's per-instance dir under /tmp; bind that
-        # dir read-write (a worker both creates and connects sockets there).
-        # This is broader than a per-socket bind (it exposes sibling workers'
-        # sockets in the same dir) but not the roster, which stays hidden in
-        # ~/.claude/daemon; narrowing it is tracked in issue #45.
-        local _wtok _wdir _wb _wseen _prot_what _prot_path _prot_how
-        for _wtok in "$@"; do
-          [[ "$_wtok" == /*.sock ]] || continue
-          _wdir="$(dirname -- "$_wtok")"
-          # A socket directory is named in the worker's argv, so validate it
-          # before an rw bind rather than trust it -- the same guard the
-          # background-project bind below applies. In practice these live under
-          # /tmp/cc-daemon-<uid>/ and pass; refusing a $HOME/parent or a secret
-          # store keeps the two argv-fed binds symmetric and fail-closed.
-          if [[ "$_wdir" == / || "$_wdir" == "$HOME" || "$HOME" == "$_wdir"/* ]]; then
-            _as_msg "wrap: refusing to bind socket directory '$_wdir' (\$HOME or a parent of it)"
-            return 1
-          fi
-          if _as_path_protected "$_wdir"; then
-            _as_msg "wrap: refusing to bind socket directory '$_wdir': it $_prot_how $_prot_what '$_prot_path'"
-            return 1
-          fi
-          _wseen=0
-          for _wb in ${profile_rw_binds[@]+"${profile_rw_binds[@]}"}; do
-            [[ "$_wb" == "$_wdir" ]] && {
-              _wseen=1
-              break
-            }
-          done
-          ((_wseen)) || profile_rw_binds+=("$_wdir")
-        done
-        # Bind the background session's PROJECT the same way a foreground
-        # session binds its CWD: skip when it is $HOME (secrets stay hidden),
-        # refuse a secret store or the control plane, otherwise bind read-write.
-        # There is no bg_roots knob: the project is whatever `--bg` was launched
-        # from, recorded by the launcher (see _as_bg_project).
-        local _bgproj _prot_what _prot_path _prot_how
-        _bgproj="$(_as_bg_project)"
-        if [[ -n "$_bgproj" ]]; then
-          if [[ ! -d "$_bgproj" ]]; then
-            _as_msg "wrap: background project '$_bgproj' does not exist; not binding it"
-          elif [[ "$_bgproj" == "$HOME" ]]; then
-            _as_msg "wrap: background project is \$HOME -- not binding it (secrets stay hidden)"
-          elif _as_path_protected "$_bgproj"; then
-            _as_msg "wrap: refusing to bind background project '$_bgproj': it $_prot_how $_prot_what '$_prot_path'"
-            return 1
-          else
-            profile_rw_binds+=("$_bgproj")
-          fi
-        fi
-        # A wrapped worker's argv is not a session prompt; no briefing is
-        # injected (it would append --settings to the worker's own arguments).
-        ;;
-    esac
-  fi
-
   # ---- host-side subcommands (e.g. `claude update`) ----
   # The profile lists verbs that must run on the HOST with the caller's
   # environment, unsandboxed; see docs/updating.md. Not under --exec: there the
@@ -3734,22 +3685,33 @@ agent_sandbox() (
     done
   fi
 
-  # ---- profile management verbs: run natively, before any project machinery ----
-  # Verbs that observe or manage the agent's background service (e.g. claude
-  # daemon/agents/attach/logs/stop/rm). They are never sandboxed, and must not be
-  # gated by this project's .agent-sandbox (a changed/unapproved dot-file must not
-  # stop you listing or stopping sessions), so this runs before the dot-file is
-  # read. Not for wrapper spawns, and not when engine --ssh/--allow were given.
-  # Not under --exec either: `--exec agents` names a program to run INSIDE the
-  # sandbox, and matching it here would run the agent natively and unsandboxed
-  # instead -- the one outcome --exec must never produce.
-  if ((! _do_wrap && ! _do_exec)) && [[ -n "${1:-}" ]] && declare -p profile_native_verbs >/dev/null 2>&1; then
-    local _pv
-    for _pv in ${profile_native_verbs[@]+"${profile_native_verbs[@]}"}; do
-      [[ "$1" == "$_pv" ]] || continue
-      ((_ssh_want || ${#_allow_hosts[@]} > 0)) && _as_msg "--ssh*/--allow flags are ignored for '$1'"
-      _as_msg "'$1' runs natively (unsandboxed): it manages the background service"
-      exec "$profile_bin" "$@"
+  # ---- --preset none: no sandbox at all, before any project machinery ----
+  # The flag is its only form (see the preset block), and with no sandbox there is no
+  # policy to apply, so neither the project's .agent-sandbox nor a running role can
+  # stand in its way.
+  if [[ "$_preset_flag" == none ]]; then
+    ((_ssh_want || ${#_allow_hosts[@]} > 0)) && _as_msg "--ssh*/--allow do nothing under --preset none: there is no sandbox to open"
+    if ((_do_exec)); then
+      _as_msg "preset none: running '$1' with no sandbox"
+      exec "$@"
+    fi
+    _as_msg "preset none: running $profile_command with no sandbox"
+    exec "$profile_bin" "$@"
+  fi
+
+  # ---- management verbs: they join the role's launch, and never start one ----
+  # Verbs that observe or manage the agent's background service (claude agents,
+  # logs, attach, stop, rm, daemon). The daemon runs inside its role's launch (#123),
+  # so a verb is a join like any other -- but a verb with no running launch starts
+  # none: there is no daemon to ask. See the keeper's join point. Not under --exec,
+  # where the words are a program to run inside the sandbox.
+  local _do_verb=0 _verb_observe=0 _pv
+  if ((! _do_exec)) && [[ -n "${1:-}" ]]; then
+    for _pv in ${profile_verbs[@]+"${profile_verbs[@]}"}; do
+      [[ "$1" == "$_pv" ]] && _do_verb=1
+    done
+    for _pv in ${profile_verbs_observe[@]+"${profile_verbs_observe[@]}"}; do
+      [[ "$1" == "$_pv" ]] && _verb_observe=1
     done
   fi
 
@@ -3810,10 +3772,42 @@ agent_sandbox() (
   elif [[ -f "$_trust_rec" ]]; then
     _pre_known=0 # the role would come from an edit not approved, or a file now missing
   fi
-  if ((! _do_wrap && _pre_known)) && [[ "${_pre_role:-default}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  # A MANAGEMENT VERB OR --shutdown NEEDS THE DOT-FILE ONLY TO FIND THE ROLE, and an
+  # unapproved edit must not stop you stopping sessions. So when the role cannot be
+  # read from the file, the one role of this project that is running is meant; with
+  # none there is nothing to ask, and with several the user has to say which.
+  local _do_manage=0
+  ((_do_verb || _do_shutdown)) && _do_manage=1
+  if ((_do_manage && ! _pre_known)); then
+    local -a _running=()
+    local _rk
+    for _rk in "$(_as_state_dir)/$profile/$(_as_path_slug "$_proj")"/*/keeper/id; do
+      [[ -e "$_rk" ]] || continue
+      _rk="${_rk%/keeper/id}"
+      _as_keeper_live "$_rk" && _running+=("${_rk##*/}")
+    done
+    case "${#_running[@]}" in
+      0)
+        ((_verb_observe)) && {
+          _as_msg "no role of this project is running"
+          return 0
+        }
+        _as_msg "no role of this project is running, so there is nothing to ${1:-shut down}"
+        return 1
+        ;;
+      1) _pre_role="${_running[0]}" _pre_known=1 ;;
+      *)
+        _as_msg ".agent-sandbox has changed since you approved it, so it cannot say which role is meant, and ${#_running[@]} are running (${_running[*]}): name one with --role"
+        return 1
+        ;;
+    esac
+  fi
+  if ((_pre_known)) && [[ "${_pre_role:-default}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
     local _kb
     _kb="$(_role="${_pre_role:-default}" _as_sandbox_dir)"
-    if _as_keeper_live "$_kb" && { _as_keeper_count "$_kb/keeper" && ((_kc_n > 0)); }; then
+    # A verb or --shutdown never builds, so any running keeper's copy will do; a
+    # launch reads the copy only while something holds the keeper (see above).
+    if _as_keeper_live "$_kb" && { ((_do_manage)) || _as_keeper_busy "$_kb"; }; then
       _df_from_keeper=1
       _df_src=""
       [[ -f "$_kb/keeper/dotfile.copy" ]] && _df_src="$_kb/keeper/dotfile.copy"
@@ -4016,7 +4010,7 @@ agent_sandbox() (
     case "$_ps" in
       isolated | inherit | shared) _preset="$_ps" ;;
       independent | default)
-        _as_msg "preset ($_ps_src): '$_ps' was renamed in 0.3 -- write '$(_as_preset_renamed "$_ps")' (isolated|inherit|shared|native)"
+        _as_msg "preset ($_ps_src): '$_ps' was renamed in 0.3 -- write '$(_as_preset_renamed "$_ps")' (isolated|inherit|shared|native|none)"
         return 1
         ;;
       native)
@@ -4029,8 +4023,16 @@ agent_sandbox() (
         fi
         _preset=native
         ;;
+      none)
+        # NO SANDBOX AT ALL, and the flag is its only form -- for a stronger reason
+        # than `native`'s: this also drops the network policy and the syscall filter.
+        # A project cannot declare itself unsandboxed; you type it, or alias it.
+        # The flag itself was acted on before any project machinery (see there).
+        _as_msg "preset ($_ps_src): 'none' runs the agent with no sandbox at all -- no network policy, no syscall filter -- so it is only accepted as the --preset flag, not from the environment or a project file."
+        return 1
+        ;;
       *)
-        _as_msg "preset ($_ps_src): unknown preset '$_ps' (isolated|inherit|shared|native); refusing rather than guessing which channels you meant to move"
+        _as_msg "preset ($_ps_src): unknown preset '$_ps' (isolated|inherit|shared|native|none); refusing rather than guessing which channels you meant to move"
         return 1
         ;;
     esac
@@ -4076,6 +4078,12 @@ agent_sandbox() (
   done
   _as_connect_report
 
+  # ---- --shutdown: end the role's launch, then exit ----
+  if ((_do_shutdown)); then
+    _as_keeper_shutdown "$(_as_sandbox_dir)"
+    return $?
+  fi
+
   # ---- --reset-connection: undo, then exit ----
   if [[ -n "$_reset_connection" ]]; then
     _as_connect_reset "$_reset_connection" || return 1
@@ -4094,7 +4102,7 @@ agent_sandbox() (
   # engine, profile_bin, profile) by dynamic scope, as the other profile hooks
   # do; profile_prepare reads _user_mcp_flag/_user_mcp_flag_set the same way.
   # Wrapper spawns and `--trust` never route.
-  if ((! _do_wrap && ! _do_trust)) && declare -F profile_route >/dev/null; then
+  if ((! _do_trust)) && declare -F profile_route >/dev/null; then
     profile_route "$@" || return $?
   fi
 
@@ -4127,10 +4135,9 @@ agent_sandbox() (
   # host; everything below builds a launch. So this is where a running keeper is
   # joined instead. The lock taken here is held until this invocation is on the
   # keeper's record -- through the whole build when there is no keeper -- so two
-  # first launches of one role at once are one keeper, not two. A wrapped
-  # background worker is its own launch until #123 runs the daemon inside.
+  # first launches of one role at once are one keeper, not two.
   local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0
-  if ((! _do_wrap)); then
+  if :; then
     # Checked before anything is built: without python3 there is no join, and a
     # keeper started for nothing would have seeded its stores for nothing too.
     command -v python3 >/dev/null 2>&1 || {
@@ -4149,8 +4156,8 @@ agent_sandbox() (
         _klocked=1
         break
       }
-      _as_keeper_count "$_keeper_sb/keeper"
-      if ((_kc_n == 0)) && { ! _as_keeper_admit "$_keeper_sb" quiet || ((_keeper_dotfile_changed)); }; then
+      # (Never for a verb: it builds nothing, so it has no reason to replace anything.)
+      if ((! _do_verb)) && ! _as_keeper_busy "$_keeper_sb" && { ! _as_keeper_admit "$_keeper_sb" quiet || ((_keeper_dotfile_changed)); }; then
         # Resolved from the keeper's copy of the dot-file, this invocation cannot be
         # the next launch: that one follows the live file, approved.
         if ((_df_from_keeper)); then
@@ -4177,6 +4184,8 @@ agent_sandbox() (
       local -a _run_argv=()
       if ((_do_exec)); then
         _run_argv=("$@")
+      elif ((_do_verb)); then
+        _run_argv=("$profile_bin" "$@") # a verb's argv is not a session: no briefing
       else
         local -a profile_briefing_argv=()
         local _ksess
@@ -4195,12 +4204,25 @@ agent_sandbox() (
       fi
       _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
       local _jrc=0
+      ((_do_exec)) || ! declare -F profile_before_join >/dev/null || profile_before_join "$@"
       _as_keeper_join "$_keeper_sb" "${_run_argv[@]}" || _jrc=$?
       [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
       return "$_jrc"
     done
     # Three idle keepers replaced and a fourth in the way: something else keeps
     # starting this role. Not worth a fourth race.
+    # A VERB WITH NO KEEPER STARTS NONE (#123): with no launch there is no daemon to
+    # ask. A question gets the empty answer; an action on a session that cannot exist
+    # is refused.
+    if ((_do_verb)); then
+      _as_keeper_unlock
+      if ((_verb_observe)); then
+        _as_msg "role '${_role:-default}' is not running, so it has no background sessions"
+        return 0
+      fi
+      _as_msg "role '${_role:-default}' is not running, so it has no background session to $1"
+      return 1
+    fi
     if ((_df_from_keeper)); then
       _as_keeper_unlock
       _as_msg "role '${_role:-default}': its launch ended while this one was joining it; run it again"
@@ -4735,15 +4757,12 @@ agent_sandbox() (
   # it to the agent and may decline, in which case briefing.md is still bound so
   # the agent can read it.
   local -a profile_briefing_argv=()
-  # A wrapped worker (wrapper role) gets no briefing: its argv is a spawn
-  # command, not a session prompt, and appending --settings would corrupt it.
   local _brief="${_knob_briefing:-on}"
-  ((_do_wrap)) && _brief=off
   # Under --exec the argv is an arbitrary command, so the agent-specific hook
   # args (claude's --settings) must not be appended to it. briefing.md is still
   # written and bound read-only, so whatever runs can read the policy.
   local _brief_args=1
-  ((_do_exec)) && _brief_args=0
+  ((_do_exec || _do_verb)) && _brief_args=0
   case "$_brief" in
     off | 0) ;;
     on | 1)

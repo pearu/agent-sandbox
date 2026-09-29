@@ -324,3 +324,41 @@ wait_gone() { # wait_gone PID -- up to 10 s
     fi
   done
 }
+
+@test "a daemon started inside holds the keeper after its join has ended, and --shutdown ends both" {
+  # The probe profile's daemon is any process with `daemon run` in its argv. Started
+  # detached, it is reparented to the sandbox's pid 1 and outlives the join.
+  run_sandboxed "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(300)" daemon run </dev/null >/dev/null 2>&1 & echo started'
+  [ "$status" -eq 0 ]
+  local t
+  t="$(keeper_payload)"
+  [ -n "$t" ]
+  sleep 1.5 # the join is long gone; with no grace an unheld keeper would be too
+  [ -d "/proc/$t" ]
+  run_sandboxed "${BASE[@]}" -- --shutdown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ended, with everything that ran in it"* ]]
+  wait_gone "$t"
+  [ ! -e "$SB/keeper" ]
+}
+
+@test "once the daemon exits, the keeper ends on its own" {
+  run_sandboxed "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(2)" daemon run </dev/null >/dev/null 2>&1 &'
+  [ "$status" -eq 0 ]
+  local t
+  t="$(keeper_payload)"
+  sleep 1
+  [ -d "/proc/$t" ] # held
+  wait_gone "$t"    # the daemon is gone after 2 s, and the supervisor notices within 5
+}
+
+@test "--shutdown ends what is joined too" {
+  bg_sandboxed a "${BASE[@]}" -- --exec sh -c "$(hold a)"
+  local t rc=0
+  t="$(keeper_payload)"
+  run_sandboxed "${BASE[@]}" -- --shutdown
+  [ "$status" -eq 0 ]
+  wait "$BG_PID" || rc=$?
+  [ "$rc" -ne 0 ] # the held command did not finish on its own: it was ended
+  wait_gone "$t"
+}

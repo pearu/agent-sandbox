@@ -23,7 +23,9 @@ Variables a profile declares (all optional unless marked):
 | `profile_env_refuse=(...)` | Names a user may not forward with `[forward]` or `AGENT_SANDBOX_FORWARD`: refused with a message. Names in `profile_env_set` are refused the same way, so a forward cannot override what the profile pins. |
 | `profile_allowlist_seed` | Path of a file listing the hosts this agent must reach, in allowlist syntax. `install.sh` merges it into the global allowlist; the engine does not read it. |
 | `profile_host_subcommands=(...)` | Agent subcommands the engine hands to `profile_handle_subcommand()` to run on the host, unsandboxed, instead of launching the sandbox (self-update, typically). |
-| `profile_native_verbs=(...)` | Agent verbs the engine runs natively (unsandboxed) before any project machinery — for observing or managing a background service (so a project's `.agent-sandbox` never gates them). Unlike `profile_host_subcommands`, these get no `profile_handle_subcommand()` call; the engine just `exec`s the native binary. |
+| `profile_verbs=(...)` | Agent verbs that observe or manage a background service. The engine joins them into the role's running launch, where the service is, and never starts a launch for one: with none running, a verb in `profile_verbs_observe` answers that the role is not running (exit 0) and any other is refused. They get no briefing arguments. |
+| `profile_verbs_observe=(...)` | The subset of `profile_verbs` that only ask questions. |
+| `profile_daemon_argv=(...)` | Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
 
 Functions a profile defines:
 
@@ -36,7 +38,8 @@ Functions a profile defines:
 | `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR` lines: empty inside, discarded at exit. (`copyout` and `append`, which merged a session's entries back at exit, are gone since #120: state that should outlive a launch is a channel, with a mode.) Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
 | `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. Skipped when the briefing is off or could not be written. |
 | `profile_fallback_hint()` | Optional. Printed when the sandbox itself fails to start: name the agent's own unsandboxed executable, so the user has a way back in. The engine prints a generic line without it. |
-| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a wrapper spawn, a `--trust` review, or a `profile_native_verbs` verb. Decides, from the effective sandbox scopes (`--sandbox` flag > `[<profile>] sandbox` key > a context default), whether to `return 0` so the engine sandboxes this (foreground) launch, or to run the invocation itself and not return (e.g. foreground scope off → native; a background launch → sandbox its workers). |
+| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return (the claude profile: a `claude` typed inside a sandbox runs in it as it is). Refusing a retired knob belongs here too. |
+| `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# `--preset native` against `--sandbox none`: the differential test.
+# `--preset native` against `--preset none`: the differential test.
 #
 # THIS IS THE ORACLE, not another feature test. Every other suite asserts what
 # the sandbox SHOULD do; this one asserts that when it is told to isolate
@@ -48,7 +48,7 @@ say tmp-writable "$(touch "$TMP_MARKER.w" 2>/dev/null && echo yes || echo no)"; 
 # a write reaching the real file, which is what `live` means
 printf 'WROTE\n' >"$HOME/.probe/docs/w.md" 2>/dev/null; say write-docs "$?"
 # the environment the agent is handed. AGENT_SANDBOX is the marker saying a
-# sandbox is present, which is TRUE under native and false under --sandbox
+# sandbox is present, which is TRUE under native and false under --preset
 # none, so it is the one name excluded rather than asserted.
 say env "$(env | sed 's/=.*//' | grep -vE '^(_|AGENT_SANDBOX)$' | sort | tr '\n' ' ')"
 say path "$PATH"
@@ -84,9 +84,9 @@ capture() { # capture NAME engine-args...
   sort "$IWORK/report" >"$IWORK/$name"
 }
 
-@test "THE ORACLE: --preset native and --sandbox none agree on everything" {
+@test "THE ORACLE: --preset native and --preset none agree on everything" {
   capture native --preset native
-  capture none --sandbox none
+  capture none --preset none
   # diff, not [ = ], so a failure names the fields rather than dumping both.
   run diff -u "$IWORK/native" "$IWORK/none"
   [ "$status" -eq 0 ]
@@ -97,7 +97,7 @@ capture() { # capture NAME engine-args...
   # because the probe reads nothing that a sandbox touches, is worse than none.
   # The default preset isolates, so it MUST fail the same comparison -- if it
   # ever agrees, this file has stopped measuring anything.
-  capture none --sandbox none
+  capture none --preset none
   TEST_PRESET="" capture isolated --preset inherit
   run diff -q "$IWORK/isolated" "$IWORK/none"
   [ "$status" -ne 0 ]

@@ -187,12 +187,13 @@ is always free. *shipped*
 - **`inherit`** — every managed channel `copy-on-write` from native: the sandbox reads your
   configuration live and keeps its own writes to itself.
 - **`shared`** — every managed channel `read-write`: the engine before 0.3.
-- **`native`** — sandboxed, but isolating no state: must behave identically to `--sandbox
+- **`native`** — sandboxed, but isolating no state: must behave identically to `--preset
   none`, so any difference is a bug. Flag only, never from a file or the environment.
 
 A `[connect]` line then moves one channel and nothing else. A preset moves only the
-channels the profile declares, never a path declaration. *shipped*. *agreed*: **`none`**,
-a fifth preset, incomparable with the rest, meaning no sandbox at all.
+channels the profile declares, never a path declaration. *shipped*. **`none`**, a fifth
+preset, incomparable with the rest, is no sandbox at all: the flag only, and acted on
+before any project machinery. *shipped* (#123), replacing `--sandbox none`.
 
 The axis the ladder measures is **boundary permeability**, and it is direction-dependent:
 `inherit` is the rung where reads pass in and writes do not pass out.
@@ -275,24 +276,26 @@ sandbox's copy and a recorded manifest of what was last seeded
 take the source's version again, then exit. Refused while anything is joined into the
 role's keeper; an idle keeper is ended first. *shipped*; *agreed* (#126): renamed `--reset <channel|path>`.
 
-**Role verbs.** *agreed, not built* (#126): `--status` (the keeper, what is joined, the
-daemon's sessions), `--shutdown` (ends the keeper and everything in it), `--delete` (removes
-the role's stores; refused while anything is joined, naming `--shutdown`), `--reset`.
+**Role verbs.** `--shutdown` (ends the keeper and everything in it, the daemon with its
+pool) is *shipped* (#123). *agreed, not built* (#126): `--status` (the keeper, what is
+joined, the daemon's sessions), `--delete` (removes the role's stores; refused while
+anything is joined, naming `--shutdown`), `--reset`.
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*
 
-**Route.** The profile's decision, from the agent's argv, whether a launch is sandboxed
-and how — including handing a `--bg` invocation off to the background machinery. *shipped*
+**Route.** The profile's decision, from the agent's argv, whether a launch is sandboxed or
+run as it is (a `claude` typed inside a sandbox runs there without a second one). *shipped*
 
 **`--exec`.** Run a command other than the agent in the sandbox the profile would have
 built: same binds, environment, network and state isolation. It is a join like any other,
 so beside a running agent of the role it runs in that agent's sandbox. *shipped*
 
-**Background worker, `--wrap`.** A process Claude Code spawns for `claude --bg`, sandboxed
-by the engine acting as Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER`. Opt-in. *shipped*;
-*agreed* (#123): goes. `claude --role x --bg` joins x's keeper and runs `claude --bg` there,
-so the daemon, its workers and the management verbs are inside; measured on 2.1.283.
+**Background session.** `claude --bg`, run inside its role's launch like any other join;
+the daemon it starts, the daemon's pooled workers and the management verbs are inside too,
+and the daemon holds the launch until `--shutdown`. *shipped* (#123). It replaced the
+**`--wrap`** machinery, which sandboxed each worker from a daemon on the host through
+Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER`; removed.
 
 **Try-run.** Run a launch against cloned sources, then inspect or discard the result.
 *proposed* ([#115](https://github.com/pearu/agent-sandbox/issues/115)).
@@ -345,7 +348,7 @@ writable from inside it would let the agent change its own sandbox. *shipped*
 [cross-project-channels.md](cross-project-channels.md) (the leak study) and
 [connections-study.md](connections-study.md) (whether each mode does what it says).
 
-**Differential oracle.** Using `--preset native` against `--sandbox none`: any difference
+**Differential oracle.** Using `--preset native` against `--preset none`: any difference
 is the sandbox distorting the agent rather than failing outright.
 
 **Mutation check.** Breaking the thing a test is for, and confirming the test then fails.
@@ -358,6 +361,6 @@ A test that passes either way is recorded as proving nothing.
 | session | a **Claude session** (a conversation, `-r`-able); one **launch** of the engine (the code's `_session_dir`, "per-session scratch"), which is a **role**'s running instance | *Claude session*, *role* |
 | scope | **invocation scope** (foreground/background, #104; withdrawn); **storage scope** (a shorter-than-role lifetime, #125) | *storage scope*, or name the lifetime |
 | native | the host's unsandboxed agent and its state; the `native` **source**; the `native` **preset** (sandboxed, isolating nothing) | the source / the preset |
-| none | the old name of `own` (refused since 0.3); a network mode; `--sandbox none`; the agreed fifth preset | the full context |
+| none | the old name of `own` (refused since 0.3); a network mode; the fifth preset, no sandbox (once `--sandbox none`) | the full context |
 | shared | the `shared` preset; storage shared between launches; `memory_default = shared` | the preset by name |
 | copy | the `copy` mode; the per-project copy of Claude Code's config file (0.2.1), now the `config` channel's store | *the `config` channel* |

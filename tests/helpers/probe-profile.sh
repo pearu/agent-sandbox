@@ -18,14 +18,11 @@ profile_bin_discover() {
   profile_version="test"
 }
 
-# The same fg/none routing claude.sh has, and for the same reason: `--sandbox
-# none` is a PROFILE decision, so without a route here the flag is accepted and
-# does nothing, and native-parity.bats would compare a sandbox against itself.
-# No `bg` -- the probe has no background form to route.
-# shellcheck disable=SC2154  # engine locals, by dynamic scope
-profile_route() {
-  local raw="fg"
-  ((_sandbox_flag_set)) && raw="$_sandbox_flag"
-  [[ " $raw " == *" none "* ]] && exec "$profile_bin" "$@"
-  return 0
-}
+# A background daemon, for the keeper's hold (tests/integration/keeper.bats): a
+# process with these argv tokens, inside the launch, keeps the role running.
+# shellcheck disable=SC2034 # engine contract
+profile_daemon_argv=(daemon run)
+# shellcheck disable=SC2034
+profile_verbs=(agents stop)
+# shellcheck disable=SC2034
+profile_verbs_observe=(agents)

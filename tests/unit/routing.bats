@@ -1,137 +1,225 @@
 #!/usr/bin/env bats
-# profile_route: sandbox scopes (--sandbox / [claude] sandbox / context default),
-# foreground vs background vs management routing. A sandboxed launch runs the stub
-# bwrap (so $H/argv is non-empty); a native one execs the stub agent directly
-# (bwrap never runs, so $H/argv is empty and the stub echoes its argv).
+# Routing (#123): every session runs in its role's sandbox, `--bg` included; the scope
+# that once chose between foreground and background is refused in every form; running
+# without a sandbox is `--preset none`, typed per launch. The management verbs join the
+# role's launch and never start one. A sandboxed launch runs the stub bwrap ($H/argv
+# non-empty) and joins the command ($H/join); a native one execs the stub agent
+# directly, which echoes its argv.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   make_harness
+  PROJ="$(cd "$H/proj" && pwd -P)"
+  SBOX="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
+  CFG="$H/home/.config/agent-sandbox"
+  BIN="$H/home/.local/share/claude/versions/2.1.300/claude"
 }
 
-sandboxed() { [ -s "$H/argv" ]; } # bwrap ran
-native() { [ ! -s "$H/argv" ]; }  # bwrap did not run
+teardown() {
+  rm -f "$H/hold" 2>/dev/null
+  [[ -n "${BG_PID:-}" ]] && wait "$BG_PID" 2>/dev/null
+  return 0
+}
 
-@test "default: a foreground session is sandboxed (fg scope on outside a sandbox)" {
+sandboxed() { [ -s "$H/argv" ] && [ -s "$H/join" ]; }
+native() { [ ! -s "$H/argv" ] && [ ! -s "$H/join" ]; }
+trust() {
+  mkdir -p "$CFG/trust"
+  sha256sum -- "$PROJ/.agent-sandbox" | cut -d' ' -f1 \
+    >"$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+}
+
+@test "a foreground session is sandboxed" {
   run_engine -- claude -p hello
   [ "$status" -eq 0 ]
   sandboxed
-  argv_has --chdir "$H/proj"
+  join_has "$BIN" -p hello
 }
 
-@test "--sandbox none: a foreground session runs natively (no bwrap)" {
-  run_engine -- claude --sandbox none -p hello
+@test "--bg is sandboxed too: joined into the role's launch, with no wrapper anywhere" {
+  run_engine -- claude --bg 'do a thing'
   [ "$status" -eq 0 ]
-  native
-  [[ "$output" == *"stub-agent argv: -p hello"* ]]
-  [[ "$output" == *"foreground sandboxing off"* ]]
-}
-
-@test "--sandbox bg: foreground has no fg scope, so it runs natively" {
-  run_engine -- claude --sandbox bg -p hello
-  native
-  [[ "$output" == *"stub-agent argv: -p hello"* ]]
-}
-
-@test "--sandbox 'fg bg': a foreground session is still sandboxed" {
-  run_engine -- claude --sandbox "fg bg" -p hello
   sandboxed
+  join_has "$BIN" --bg 'do a thing'
+  run ! grep -q CLAUDE_CODE_PROCESS_WRAPPER "$H/argv"
+  run ! grep -q CLAUDE_CODE_PROCESS_WRAPPER "$H/join"
+  [ ! -e "$H/base/wrap-claude.sh" ]
 }
 
-@test "context default: inside a sandbox (AGENT_SANDBOX=1) a foreground session is native" {
-  run_engine AGENT_SANDBOX=1 -- claude -p hello
-  native
-  [[ "$output" == *"stub-agent argv: -p hello"* ]]
-}
-
-@test "management verbs run natively, before any project machinery" {
-  local v
-  for v in daemon agents attach logs stop rm; do
-    run_engine -- claude "$v" --json
+@test "--sandbox is refused in both spellings, naming --preset none" {
+  local f
+  for f in "--sandbox none" "--sandbox=fg" "--sandbox bg"; do
+    # shellcheck disable=SC2086 # flag and value
+    run_engine -- claude $f -p hello
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--sandbox was removed"*"--preset none"* ]]
     native
-    [[ "$output" == *"stub-agent argv: $v --json"* ]]
-    [[ "$output" == *"runs natively"* ]]
   done
 }
 
-@test "a management verb is native even with an unapproved, changed .agent-sandbox" {
-  # A dot-file that would block a normal launch must not block managing sessions.
-  printf '[claude]\nsandbox = none\n' >"$H/proj/.agent-sandbox"
-  run_engine -- claude agents
-  native
-  [[ "$output" == *"stub-agent argv: agents"* ]]
-}
-
-@test "--bg without bg scope: runs natively (passthrough), not sandboxed" {
-  run_engine -- claude --bg 'do a thing'
-  native
-  [[ "$output" == *"stub-agent argv: --bg do a thing"* ]]
-  [[ "$output" == *"background sandboxing off"* ]]
-}
-
-@test "--bg with bg scope is refused, for every role, until background sessions run inside the role (#123)" {
-  # A wrapped worker is a launch of its own: with one launch per role (#121) it would
-  # be a second one beside the role's keeper. The native route (no bg scope) is not a
-  # launch, and is untouched.
-  run_engine -- claude --sandbox "fg bg" --bg 'do a thing'
+@test "AGENT_SANDBOX_CLAUDE_SANDBOX is refused, naming --preset none" {
+  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude -p hello
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--bg"*"#123"* ]]
-  [[ "$output" != *"stub-agent argv"* ]]
-  [ ! -e "$H/base/wrap-claude.sh" ]
-  [ ! -s "$H/argv" ]
-  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/tmp/mine.sh -- claude --sandbox "fg bg" --role default --bg 'do a thing'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"#123"* ]]
+  [[ "$output" == *"AGENT_SANDBOX_CLAUDE_SANDBOX was removed"*"--preset none"* ]]
+  native
 }
 
-@test "--sandbox none: --bg runs native and leaves a caller's CLAUDE_CODE_PROCESS_WRAPPER untouched (the documented workaround)" {
-  run_engine CLAUDE_CODE_PROCESS_WRAPPER=/caller/wrap.sh -- claude --sandbox none --bg 'do a thing'
+@test "[claude] sandbox in an approved dot-file is refused, naming --preset none" {
+  printf '[claude]\nsandbox = none\n' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine -- claude -p hello
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[claude] sandbox was removed"*"--preset none"* ]]
+  native
+}
+
+@test "--preset none runs the agent with no sandbox, and says so" {
+  run_engine -- claude --preset none -p hello
   [ "$status" -eq 0 ]
   native
+  [[ "$output" == *"stub-agent argv: -p hello"* ]]
+  [[ "$output" == *"preset none"*"no sandbox"* ]]
+  run_engine -- claude --preset none --bg 'do a thing'
+  native
   [[ "$output" == *"stub-agent argv: --bg do a thing"* ]]
-  [ ! -e "$H/base/wrap-claude.sh" ]                                # our shim not written
-  [[ "$output" != *"replaces your CLAUDE_CODE_PROCESS_WRAPPER"* ]] # caller wrapper left alone
 }
 
-@test "[claude] sandbox = none in a trusted dot-file makes foreground native" {
-  printf '[claude]\nsandbox = none\n' >"$H/proj/.agent-sandbox"
-  run_engine -- claude --trust <<<"yes" # approve it
-  run_engine -- claude -p hello
+@test "--preset none with --exec runs the command with no sandbox" {
+  run_engine -- claude --preset none --exec /bin/echo plain
+  [ "$status" -eq 0 ]
   native
+  [[ "$output" == *"plain"* ]]
+}
+
+@test "none is the flag only: from the environment or a project file it is refused" {
+  run_engine AGENT_SANDBOX_PRESET=none -- claude -p hello
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'none' runs the agent with no sandbox at all"* ]]
+  native
+  printf '[sandbox]\npreset = none\n' >"$PROJ/.agent-sandbox"
+  trust
+  TEST_PRESET="" run_engine -- claude -p hello
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only accepted as the --preset flag"* ]]
+  native
+}
+
+@test "--preset none is not stopped by an unapproved dot-file: there is no policy to apply" {
+  printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
+  trust
+  printf '[net]\nmode = open\n' >"$PROJ/.agent-sandbox" # changed since approved
+  run_engine -- claude --preset none -p hello
+  [ "$status" -eq 0 ]
   [[ "$output" == *"stub-agent argv: -p hello"* ]]
 }
 
-@test "--sandbox flag overrides the [claude] sandbox dot-file key" {
-  printf '[claude]\nsandbox = none\n' >"$H/proj/.agent-sandbox"
-  run_engine -- claude --trust <<<"yes"
-  run_engine -- claude --sandbox fg -p hello
-  sandboxed
-}
-
-@test "[claude] sandbox = none is ignored while the dot-file is unapproved (foreground stays sandboxed)" {
-  # Disabling sandboxing is a widening: it must not take effect from an untrusted
-  # dot-file (the scope key is trust-gated, like [net] mode = open).
-  printf '[claude]\nsandbox = none\n' >"$H/proj/.agent-sandbox"
-  run_engine -- claude -p hello
-  sandboxed
-  [[ "$output" == *"not approved"* ]]
-}
-
-@test "AGENT_SANDBOX_CLAUDE_SANDBOX=none: a foreground session runs native (env layer)" {
-  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude -p hello
+@test "inside a sandbox, claude runs in it as it is; --preset asks for a nested one" {
+  run_engine AGENT_SANDBOX=1 -- claude -p hello
   native
   [[ "$output" == *"stub-agent argv: -p hello"* ]]
+  run_engine AGENT_SANDBOX=1 -- claude --preset isolated -p hello
+  sandboxed
 }
 
-@test "the --sandbox flag overrides the AGENT_SANDBOX_CLAUDE_SANDBOX env var" {
-  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude --sandbox fg -p hello
-  sandboxed
+@test "a management verb with no running role starts none: a question gets the empty answer" {
+  local v
+  for v in agents logs; do
+    run_engine -- claude "$v" --json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"role 'default' is not running"* ]]
+    native
+  done
+}
+
+@test "a management verb that acts on a session is refused when the role is not running" {
+  local v
+  for v in attach stop rm daemon; do
+    run_engine -- claude "$v" x
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"role 'default' is not running"* ]]
+    native
+  done
+}
+
+@test "a management verb joins the running role, with no briefing on its argv" {
+  engine_bg -- claude --bg 'a task'
+  run_engine -- claude agents --json
+  [ "$status" -eq 0 ]
+  [ ! -s "$H/argv" ] # nothing built
+  [ "${JOINV[*]}" = "$BIN agents --json" ]
+  release_bg
+}
+
+@test "under an unapproved edit, a verb finds the one running role; with none it answers, with two it asks" {
+  printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
+  trust
+  engine_bg -- claude --role r --version
+  printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox" # not approved
+  run_engine -- claude agents
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]}" = "$BIN agents" ]
+  release_bg
+  run_engine -- claude agents
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no role of this project is running"* ]]
+  run_engine -- claude stop x
+  [ "$status" -ne 0 ]
+}
+
+@test "under an unapproved edit, with two roles running, a verb asks for --role" {
+  printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
+  trust
+  engine_bg -- claude --role r --version
+  local first=$BG_PID
+  engine_bg -- claude --role s --version
+  printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox"
+  run_engine -- claude agents
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"2 are running"*"--role"* ]]
+  release_bg
+  wait "$first" 2>/dev/null
+}
+
+@test "--shutdown ends the role's launch; with none running it says so" {
+  run_engine -- claude --shutdown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default' is not running"* ]]
+  engine_bg -- claude --version
+  [ -e "$SBOX/default/keeper/id" ]
+  run_engine -- claude --shutdown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ended, with everything that ran in it"* ]]
+  [ ! -e "$SBOX/default/keeper" ]
+  release_bg
+}
+
+@test "--shutdown names the role it ends, and ends no other" {
+  engine_bg -- claude --role one --version
+  run_engine -- claude --role two --shutdown
+  [[ "$output" == *"role 'two' is not running"* ]]
+  [ -e "$SBOX/one/keeper/id" ]
+  release_bg
+}
+
+@test "a --bg records workspace trust in the role's own config file when it is not there, once" {
+  TEST_PRESET=isolated run_engine -- claude --bg 'a task'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"recorded workspace trust for $PROJ in role 'default'"* ]]
+  local store
+  store="$(find "$SBOX/default/config" -name '*claude.json' | head -1)"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["projects"][sys.argv[2]]["hasTrustDialogAccepted"]' "$store" "$PROJ"
+  TEST_PRESET=isolated run_engine -- claude --bg 'another'
+  [[ "$output" != *"recorded workspace trust"* ]]
+  # a foreground session records nothing: it can ask
+  rm -rf "$SBOX"
+  TEST_PRESET=isolated run_engine -- claude -p hi
+  [[ "$output" != *"recorded workspace trust"* ]]
 }
 
 @test "an unknown [claude] key in a trusted dot-file warns (typo guard), known ones do not" {
-  printf '[claude]\nsandbox = fg\nbogus = x\n' >"$H/proj/.agent-sandbox"
-  run_engine -- claude --trust <<<"yes"
+  printf '[claude]\nhide = ide\nbogus = x\n' >"$PROJ/.agent-sandbox"
+  trust
   run_engine -- claude -p hello
   [[ "$output" == *"[claude] key 'bogus' is not one this profile reads"* ]]
-  [[ "$output" != *"key 'sandbox' is not one"* ]]
+  [[ "$output" != *"key 'hide' is not one"* ]]
 }

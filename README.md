@@ -109,13 +109,12 @@ reaches the launcher and is sandboxed — a terminal inside your editor included
 Anything that calls the agent's own binary by an absolute path is not, and
 nothing will tell you.
 
-One case rides *through* the launcher and is not sandboxed: `claude --bg`
-background workers. A `--bg` worker runs natively with your full filesystem and
-every project's memory, like native `claude`, and the launcher prints a note when
-it does. Sandboxed background sessions (`--sandbox "fg bg"`) are refused until
-they run inside the role's launch (#123): a wrapped worker would be a second launch
-of the role beside the one every other session joins. See
-[design.md](docs/design.md).
+Background sessions are sandboxed too, since 0.4: `claude --bg` runs inside its
+role's sandbox, and so do the daemon it starts, its workers and the management
+verbs (`claude agents`, `attach`, `logs`, `stop`). The daemon keeps the role
+running until `claude --shutdown`. Before 0.4 a `--bg` worker ran natively unless
+you opted in; to run one natively now, `claude --preset none --bg ...`. See
+[design.md](docs/design.md#background-sessions-123).
 
 The **VS Code extension is the second case**: it ships its own copy of Claude
 Code and runs that, so its sessions are outside the sandbox while a terminal in
@@ -208,7 +207,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
 | `--role NAME` | `AGENT_SANDBOX_ROLE` | `[sandbox] role` | which role of this project to run: a named, persistent instance with its own state, under the policy the dot-file's `[sandbox:<glob>]` and `[connect:<glob>]` sections give the names they match (`default`) ([config.md](docs/config.md#roles)) |
-| `--preset NAME` | `AGENT_SANDBOX_PRESET` | `[sandbox] preset` | where every channel sits before any `[connect]` override: `isolated`, `inherit` (read your files live, keep the sandbox's writes to itself) or `shared` (one directory, both ways -- the engine before 0.3) (inherit). `native` -- parity with `--sandbox none`, so that a difference is a bug -- is the flag only ([connections.md](docs/connections.md)) |
+| `--preset NAME` | `AGENT_SANDBOX_PRESET` | `[sandbox] preset` | where every channel sits before any `[connect]` override: `isolated`, `inherit` (read your files live, keep the sandbox's writes to itself) or `shared` (one directory, both ways -- the engine before 0.3) (inherit). Two more are the flag only: `native` -- parity with `none`, so that a difference is a bug -- and `none`, no sandbox at all ([connections.md](docs/connections.md)) |
 | `--overlay MODE` | `AGENT_SANDBOX_OVERLAY` | `[overlay] mode` | `auto` or `off`: what `copy-on-write` is implemented with, an overlay where bubblewrap supports one or the copy fallback everywhere; it can only move `copy-on-write` to `copy` (auto) ([connections.md](docs/connections.md)) |
 | `--reset-connection CHANNEL` | — | — | discard what this sandbox holds at CHANNEL and take your own copy again, then exit; what a conflict warning points at ([connections.md](docs/connections.md)) |
 | `--connect SPEC` | `AGENT_SANDBOX_CONNECT` | `[connect]` | per-channel `channel = mode [source] [scope]`: how much of your native install this project's sandbox sees, on the scale `own < seed-only < copy < copy-on-write < read-only < read-write`; a key with a `/` is a path instead (`./scratch/ = own`); `;`-separated in the variable (the preset decides where each channel starts) ([connections.md](docs/connections.md)) |
@@ -218,10 +217,11 @@ not exist. Values and defaults are in the last column.
 | `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
 | `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed ([config.md](docs/config.md)) |
 | `--user-mcp MODE` | `AGENT_SANDBOX_CLAUDE_USER_MCP` | `[claude] user-mcp` | **removed**, and refused in every form: it edited the MCP servers inside the config file, which the engine no longer does. To keep your user-level MCP servers out of a project's sandbox, write `config = own` under `[connect]` ([config.md](docs/config.md#the-config-file-the-config-channel)) |
-| `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | which invocations to sandbox for the claude profile: `fg`, `bg`, both (`fg bg`), or `none` (`bg` is refused until #123); the flag and env are launch-time choices (not trust-gated), the dot-file key is (default: `fg` on the host, `none` inside a sandbox) ([design.md](docs/design.md)) |
+| `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | **removed**, and refused in every form: every session, background ones included, runs in its role's sandbox. To run without one, `--preset none` ([design.md](docs/design.md#background-sessions-123)) |
+| `--shutdown` | — | — | end this role's running sandbox: everything joined into it, and a background daemon with its workers; then exit. A later launch starts afresh under the policy then in force ([connections.md](docs/connections.md)) |
 | `--quiet` | `AGENT_SANDBOX_QUIET` | — | suppress the routine status lines a launch prints — which dot-file values were applied, the session allowlist, the seccomp filter in use. Refusals, warnings and notices that something is **not** sandboxed are never suppressed, so `--quiet` can hide noise but never a consequence (off) |
 | `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first (`claude --allow pypi.org --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
-| `--wrap` | — | — | internal: run as Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER` to sandbox a background worker Claude spawns; set by opt-in wrapper mode, not typed by hand ([design.md](docs/design.md)) |
+| `--wrap` | — | — | **removed**: it was the wrapper that sandboxed background workers from a daemon on the host. Refused with a note, since a daemon an earlier engine started may still call it ([design.md](docs/design.md#background-sessions-123)) |
 | `--engine-help`, `--engine-version` | — | — | print the engine's own flags, or its version, and exit |
 
 When a setting can be given more than one way, they combine like this. Hosts,

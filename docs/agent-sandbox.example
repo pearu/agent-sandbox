@@ -124,10 +124,6 @@
 #        hidden already; `gh` and `ide` are not, because both exist to let
 #        Claude Code work from inside a sandbox. Hiding something the agent
 #        needs breaks that feature.
-# sandbox : which invocations to sandbox -- fg (foreground), bg (`claude --bg`
-#        workers), `fg bg`, or none. Default fg on the host, none inside a
-#        sandbox. Turning a scope off is a widening, so it needs --trust; the
-#        --sandbox flag and AGENT_SANDBOX_CLAUDE_SANDBOX are the ungated forms.
 # [sandbox] -- this sandbox's own position and key.
 #        preset = isolated | inherit | shared  (default: inherit)
 #          isolated     nothing of your native install reaches it; what it
@@ -139,10 +135,10 @@
 #                       what it writes does not come back to you
 #          shared       one directory, both ways -- what the engine did before
 #                       0.3, and what to set if you want that back
-#        A fourth, `native`, is parity with --sandbox none and is NOT accepted
-#        here or from the environment: only the --preset flag, because it turns
-#        state isolation off entirely and a project file could set that for every
-#        launch unnoticed. It exists so a difference from --sandbox none is a bug.
+#        Two more, `native` (parity with no sandbox, so that a difference is a
+#        bug) and `none` (no sandbox at all), are NOT accepted here or from the
+#        environment: only the --preset flag, because they turn isolation off
+#        and a project file could set that for every launch unnoticed.
 #        A preset moves only the channels the engine manages as connections.
 #        Memory, transcripts and the rest keep their own controls
 #        ([share-memory] and so on) until they are folded in. The config file
@@ -213,12 +209,13 @@
 #[overlay]
 #mode = auto
 
-#        [claude] user-mcp was removed: it is refused, naming its replacement.
-#        To keep your user-level MCP servers out of this project's sandbox, give
-#        it a config file of its own: `config = own` under [connect].
+#        [claude] user-mcp and [claude] sandbox were removed: each is refused,
+#        naming its replacement. To keep your user-level MCP servers out of this
+#        project's sandbox, give it a config file of its own: `config = own`
+#        under [connect]. Every session, --bg included, is sandboxed; to run one
+#        without a sandbox, type --preset none.
 #[claude]
 #hide = gh todos
-#sandbox = fg bg
 
 
 # Not settable here, on purpose:

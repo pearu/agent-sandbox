@@ -279,6 +279,6 @@ STUB
   [ "$status" -eq 0 ]
   [[ "$output" == *"skipping missing path"* ]]
   # and a notice that something runs OUTSIDE the sandbox
-  run_engine -- claude --quiet agents
-  [[ "$output" == *"runs natively (unsandboxed)"* ]]
+  run_engine -- claude --quiet --preset none -p hi
+  [[ "$output" == *"preset none: running claude with no sandbox"* ]]
 }
