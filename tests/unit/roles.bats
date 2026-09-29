@@ -137,8 +137,9 @@ own_bind() { argv_has --bind "$STATE/$1/$2/own/$(slugify "$3")" "$3"; }
   argv_has --share-net # the skipped section's `mode = none` did not apply to anyone
 }
 
-@test "a non-default role with --bg is refused until background sessions know roles (#123)" {
-  run_engine -- claude --role impl-1 --bg 'do it'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--bg"*"role"*"#123"* ]]
+@test "a non-default role with --bg runs in that role's launch (#123)" {
+  run_engine -- claude --role impl-1 --connect 'skills=own native' --bg 'do it'
+  [ "$status" -eq 0 ]
+  own_bind impl-1 skills "$C/skills"
+  join_has "$H/home/.local/share/claude/versions/2.1.300/claude" --bg 'do it'
 }

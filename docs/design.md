@@ -59,79 +59,36 @@ before the env inside it, the CA bundle after `/etc`, `--remount-ro $HOME` after
 every bind under `$HOME`, and the SSH socket and `--allow` file exist before
 bwrap starts.
 
-### Background sandboxing (wrapper mode)
+### Background sessions (#123)
 
-**Refused until #123.** With one launch per role, a wrapped worker would be a second
-launch of the role beside its keeper, so `--bg` with `bg` in the sandbox scope is
-refused, naming #123, until background sessions run inside the role. A `--bg`
-without `bg` in scope still runs natively, as described below. The mechanism stays
-described here until #123 removes it.
+A background session (`claude --bg`) hands its task to a per-user daemon that
+pre-warms a pool of worker processes and dispatches the task to one. The engine does
+not launch those workers, so it does not wrap them: it runs `claude --bg` *inside the
+role's launch*, as a join like any other, and the daemon, its spares and its pty
+hosts start there (measured on 2.1.283, `probes/claude-bg-in-launch-probe.sh`). They
+are in the role's namespaces by construction, each role gets its own daemon, and
+nothing of it is left once the role's launch ends.
 
-A foreground `claude` is one process the engine execs into bwrap. A background
-session (`claude --bg`) is not: `--bg` hands the task to a per-user supervisor
-daemon that pre-warms a pool of worker processes and dispatches the task to one.
-Those workers are the thing that runs the agent, and the engine never launched
-them — so foreground sandboxing does not cover them. Claude Code does expose a
-seam: `CLAUDE_CODE_PROCESS_WRAPPER`, a command it prepends when it spawns a
-worker. The engine's `--wrap` role is that command — it sandboxes each worker
-with the same bwrap policy as a foreground session, binding the launching
-project (recorded per launch under the session base) the way a foreground
-session binds its CWD.
-
-This is opt-in per project, because it is newer and it changes how `--bg`
-behaves. The `sandbox` scope (the `--sandbox` flag, or the trust-gated
-`[claude] sandbox` key) lists which invocations to sandbox: `fg`, `bg`, both, or
-`none`. The default is `fg` on the host and `none` inside a sandbox (detected by
-the `AGENT_SANDBOX` marker the engine sets in every sandbox, so a nested `claude`
-does not try to sandbox itself again). Management verbs
-(`daemon`/`agents`/`attach`/`logs`/`stop`/`rm`) always run natively — they
-observe or manage the daemon — and run before any project machinery, so a
-changed or unapproved `.agent-sandbox` never stops you listing or stopping
-sessions.
-
-With `bg` in scope, a `claude --bg` launch (`_claude_bg_launch` in the profile):
-records the project for the wrapper; **auto-trusts** it (a non-interactive
-worker cannot answer the workspace-trust prompt, and the sandbox is strictly more
-restrictive than native, which itself auto-proceeds for `--bg`); ensures the live
-daemon is **one we started with this wrapper** — a daemon started otherwise
-(e.g. by `claude agents`) would, by Claude Code's own contract, spawn its workers
-*unwrapped*, so a foreign or unwrapped daemon is restarted (active sessions
-survive: the fresh daemon re-adopts them); and **reaps the idle pool** so the
-re-warmed spares bind this project, keeping per-project isolation exact without a
-fragile restart on every launch. The reap is keyed on the daemon's roster and
-matches workers **structurally**: a process is selected only when its executable
-is a claude version binary *and* `--bg-spare`/`--bg-pty-host` is an exact `argv`
-element (never a substring of some process's joined command line) *and* its
-ancestry holds no rostered (active) session; its subtree is then taken. Matching
-the executable and an exact argv element is what keeps a shell or test that merely
-*mentions* the token — or that shell's children — from being selected and killed.
-The selection is a pure function of the roster and `/proc`, unit-tested against a
-synthetic process table (`tests/unit/bg-reap.bats`). Pool maintenance uses
-`python3`; without it the step is skipped with a note (idle sandboxes may then
-accumulate until cleared).
-
-**Why the environment variable, not a configured launcher.** Claude Code offers
-two ways to deliver a process wrapper: the per-launch `CLAUDE_CODE_PROCESS_WRAPPER`
-environment variable (what the launcher exports before it execs `claude --bg`),
-and a persistently *configured* launcher the daemon records. Wrapper mode uses the
-environment variable, because it is transient and scoped to the launch that opted
-in: nothing is written to Claude Code's own settings, and a session that did not
-ask for `bg` sandboxing is unaffected. A configured launcher is the wrong
-granularity — it is machine-global and persistent, so it would route *every*
-background session, for every project, through the wrapper until unset. The cost
-of the environment-variable path is Claude Code's "launcher contract #3": a daemon
-already running without the variable dispatches its workers *unwrapped*
-(unsandboxed) — which is exactly why `_claude_bg_launch` verifies the live
-supervisor's environment carries this wrapper and restarts it otherwise.
-
-If the caller already set their own `CLAUDE_CODE_PROCESS_WRAPPER`, wrapper mode
-**replaces** it for the background workers (they run in the engine's sandbox, not
-the caller's wrapper) and says so rather than dropping it silently; the caller's
-wrapper is not chained. Composing a caller-supplied wrapper — running it *inside*
-the sandbox, applied to the claude workers rather than to the arbitrary sandbox
-around them — is a separate feature, tracked in #49. To keep your own wrapper
-today, run `--sandbox none` (or otherwise leave `bg` out of scope), which runs
-`--bg` natively through it.
+- **The daemon holds the launch.** A keeper ends when nothing is joined; `claude
+  --bg` returns as soon as the daemon has the task, so the keeper also counts a
+  daemon among its processes (the profile names it: `profile_daemon_argv`, `daemon
+  run` for Claude Code). The daemon does not exit when idle (measured), so a role
+  that has one ends by `claude --role x --shutdown`.
+- **The management verbs join** (`daemon`, `agents`, `attach`, `logs`, `stop`, `rm`):
+  they run inside the role's launch, where its daemon is, and never start one. With
+  no launch running, `agents` and `logs` answer that the role is not running and exit
+  0; the others refuse. A verb needs the project's `.agent-sandbox` only to find the
+  role: when an unapproved edit keeps the file from being read and exactly one role
+  of the project is running, that one is meant.
+- **Workspace trust.** A `--bg` worker cannot answer Claude Code's trust prompt, so
+  the engine records the project as trusted in the role's own config file when it is
+  not there already, and says so; the user running `claude --bg` in the folder is
+  the consent the prompt would ask for. Never in the native file.
+- **What went.** The wrapper machinery that sandboxed each worker from a daemon on
+  the host: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg` project record,
+  the pool reap and the daemon restart, and the `sandbox` scope that made it opt-in
+  (`--sandbox`, `AGENT_SANDBOX_CLAUDE_SANDBOX`, `[claude] sandbox`, each refused by
+  name). A session runs without a sandbox only by `--preset none`, typed per launch.
 
 ## Threat model
 
@@ -173,7 +130,7 @@ that records the argv it receives; the argv is the contract.
 | Conda write mode is bounded. Only the active env becomes writable; the base install, other envs, conda itself, its shell hook and the host package cache stay read-only. Downloads go to a sandbox-owned cache. | conda block in the engine; `CONDA_PKGS_DIRS`. | `tests/unit/argv.bats` (bind order and modes), `tests/integration/conda.bats` (fake layout: env writable only in write mode; base, other env and host cache never; sandbox cache first). A real nested `mamba install` was checked once at extraction. |
 | All capabilities are dropped. The agent's effective and bounding capability sets are empty in every network mode, so a setuid binary or a capability-checking syscall gains it nothing. Needed most in `strict`, where bwrap runs inside pasta's root-owned user namespace and would otherwise start the agent as uid 0 with the full set. | `--cap-drop ALL` in the base bwrap arguments. | `tests/unit/argv.bats` (the flag is in the argv for every mode). Confirmed on a host that a root-in-userns bwrap goes from `CapEff: 000001ffffffffff` to `0000000000000000` with it. |
 | Cross-session state is isolated, unconditionally. Scoping `~/.claude/projects` leaves the rest of the state directory readable, and most of it is keyed by session rather than by project. The per-launch parts are replaced by a tmpfs at every launch: `session-env`, `sessions`, `jobs`, `shell-snapshots`, `debug`, `paste-cache`, and `daemon`, the background supervisor's control key and its roster of other sessions, a channel between sessions rather than this session's state. The rest are channels since #120, each the role's own under every preset but `native`: `transcripts` -- this project's conversations under `projects/<slug>/`, `file-history` (verbatim file contents -- 40M across twelve sessions and thirty projects on one developer machine), `plans`, `history.jsonl` (every prompt typed anywhere) -- and `logs`, what the user's own hooks write (`responses.log`, `alerts.log`). Nothing is merged back into the native state when a launch ends. A role starts with none of the native history; `transcripts = seed-only` seeds it once, the prompt history filtered to this project's records by the JSON `project` field, so another project's records cannot pass. The project's memory, inside `projects/<slug>/`, is still its native memory, bound on top of the role's store. What is left visible in `~/.claude` is visible on purpose (`gh` and `ide` exist to let Claude Code work from inside a sandbox), and `[claude] hide` is there for a user who disagrees about a particular path. The list is ours to maintain and will lag what upstream adds -- `ide` appeared after this isolation was built. | `_as_iso_prepare` in the engine (the tmpfs mechanism); `profile_isolate` in the claude profile (which paths); the `transcripts` and `logs` channels in `profile_channels`, `_claude_history_view` for the seed filter, `_claude_memory_on_top` and the engine's `profile_late_rw_binds` for memory. | `tests/unit/isolation.bats` (tmpfs for the per-launch parts, the role's stores for the rest, a canary from another session absent, nothing merged back), `tests/unit/transcripts.bats` (every preset, the seed filter, memory on top, two roles), `tests/integration/isolation.bats` (real bwrap: a canary in another session's `file-history` and `plans` unreadable from inside, the session's writes persisting to the next launch in the role and never reaching the host). |
-| The config file `.claude.json` is the `config` channel (#119): one file following its mode. The native file holds the account, the user-level `mcpServers`, app state, and one entry per project (trust, allowed tools, project MCP servers, the last opening prompt). Under `inherit` and `shared` the role gets its **own copy**, `seed-only`: seeded once with every top-level key and only this project's entry, kept under `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/` (a control path, never bound in), and after that Claude Code's alone -- the engine never reads or writes anything inside it again, `mcpServers` included. `own` (under `isolated`) starts from `{}`; Claude Code runs on it beside the credentials file and rebuilds the account block itself (measured, 2.1.283). `read-only`/`read-write` bind the native file whole, valid but not advocated; `native` binds and relocates nothing. The file is bound **inside** the state directory at `~/.claude/.claude.json`, with `CLAUDE_CONFIG_DIR` pointing Claude Code there, because Claude Code writes it through a lock directory and a temp file created beside it, and beside the read-only `$HOME` those failed silently: before this, every write a sandboxed session made to it was lost while the session reported success. The rename onto the bind mount fails and Claude Code rewrites the file in place; that write is not atomic. `user-mcp` is removed and refused, naming `config = own` (#132). `telemetry/` stays a deliberate cap: no project paths were found in it. | the engine's channel hooks (`profile_channel_sources`, `profile_channel_filters`, `profile_channel_empty`, `profile_channel_presets`); `profiles/claude.sh` (the `config` channel, `_claude_config_filter`, `_claude_config_prepare` for the migration and the `user-mcp` refusal, `profile_env_set`, `profile_env_refuse`); the engine's `_as_state_dir` is in `_as_control_paths`, and the engine removes the empty mount-point file bwrap leaves on the host. | `tests/unit/config-channel.bats` (every mode, the filter, the presets, the migration, reset, a missing and a failing python3, the `user-mcp` refusal, the native `mcp` routing), `tests/unit/argv.bats` (the bind and the variable), `tests/unit/helpers.bats` (the state dir is refused), `tests/unit/wrap.bats` (a worker is keyed by the background project), `tests/integration/config-file.bats` (inside: the role's filtered seed, the write lands in the store and the native file is byte-identical; at `read-write` it lands in the native file). |
+| The config file `.claude.json` is the `config` channel (#119): one file following its mode. The native file holds the account, the user-level `mcpServers`, app state, and one entry per project (trust, allowed tools, project MCP servers, the last opening prompt). Under `inherit` and `shared` the role gets its **own copy**, `seed-only`: seeded once with every top-level key and only this project's entry, kept under `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/` (a control path, never bound in), and after that Claude Code's alone -- the engine never reads or writes anything inside it again, `mcpServers` included. `own` (under `isolated`) starts from `{}`; Claude Code runs on it beside the credentials file and rebuilds the account block itself (measured, 2.1.283). `read-only`/`read-write` bind the native file whole, valid but not advocated; `native` binds and relocates nothing. The file is bound **inside** the state directory at `~/.claude/.claude.json`, with `CLAUDE_CONFIG_DIR` pointing Claude Code there, because Claude Code writes it through a lock directory and a temp file created beside it, and beside the read-only `$HOME` those failed silently: before this, every write a sandboxed session made to it was lost while the session reported success. The rename onto the bind mount fails and Claude Code rewrites the file in place; that write is not atomic. `user-mcp` is removed and refused, naming `config = own` (#132). `telemetry/` stays a deliberate cap: no project paths were found in it. | the engine's channel hooks (`profile_channel_sources`, `profile_channel_filters`, `profile_channel_empty`, `profile_channel_presets`); `profiles/claude.sh` (the `config` channel, `_claude_config_filter`, `_claude_config_prepare` for the migration and the `user-mcp` refusal, `profile_env_set`, `profile_env_refuse`); the engine's `_as_state_dir` is in `_as_control_paths`, and the engine removes the empty mount-point file bwrap leaves on the host. | `tests/unit/config-channel.bats` (every mode, the filter, the presets, the migration, reset, a missing and a failing python3, the `user-mcp` refusal, the native `mcp` routing), `tests/unit/argv.bats` (the bind and the variable), `tests/unit/helpers.bats` (the state dir is refused), `tests/integration/config-file.bats` (inside: the role's filtered seed, the write lands in the store and the native file is byte-identical; at `read-write` it lands in the native file). |
 | The sandbox tells the agent what it allows. Each launch writes a briefing from the resolved policy -- egress mode and allowlist size, session `--allow` hosts, extra writable and read-only paths, which projects' memory is readable, `--ssh` hosts, seccomp state -- bound read-only at `/run/agent-sandbox/`, plus the recipe for asking the user to open something. Names and paths only, never the contents of anything shared. On by default: the sessions that most need it are the ones nobody configured. | `_as_briefing_write` in the engine composes it; `profile_briefing_args` in the claude profile delivers it as `SessionStart`/`SubagentStart` hooks via `--settings`. Hooks rather than `--append-system-prompt`, which switches system-prompt snapshotting off; with snapshotting on a recorded prompt is reused until compaction, so a resumed session would keep describing a policy the user had since changed. A hook is re-run every launch, resume and compaction instead. Claude Code honours only the last `--settings`, so a user-supplied one is merged (python3, on that path only) and ours goes last; if the merge is impossible the user's is kept and the loss is announced. | `tests/unit/briefing.bats` (binds and flag present and read-only, both hook payloads, the policy actually stated, the canary never read out of a shared project, `off` suppresses everything, dot-file and knob precedence, an unknown value refused, a user `--settings` merged both spellings, and the merge-failure fallback keeping the user's file). |
 | Syscall filtering. With the filter on (the default) every syscall not on an allowlist fails with `EPERM`: `unshare`, `setns`, `mount`, `pivot_root`, `chroot`, `bpf` and the capability-gated `ptrace` family stay denied, `clone` is allowed only without namespace flags and `clone3` returns `ENOSYS`, so the agent cannot create a user namespace to regain capabilities. On by default (issue #4). It is not merely defence in depth on a machine where `install.sh` ran: the AppArmor profile it installs for bwrap is `flags=(unconfined)` with `userns,`, and an AppArmor profile is inherited by children -- so every process under bwrap is exempt from `kernel.apparmor_restrict_unprivileged_userns=1`, the very restriction that would otherwise stop a sandboxed agent creating a user namespace. With the filter off, nothing else does. Found by a probe run, 2026-09-11; the behaviour was already asserted by `tests/live/seccomp.bats` ("without seccomp (control) ... a user namespace can be created") but its cause was not written down. If no filter is compiled for the architecture the engine warns each launch and runs without it, rather than refusing a tool the user never asked to change. | Docker's default seccomp profile (vendored, Apache-2.0) compiled *as for a container with no capabilities* by `components/seccomp/gen-seccomp.py`; `install.sh` builds it per machine against that host's libseccomp; the engine passes `--seccomp` with the blob on fd 10 (opened by `_as_launch`, or by the strict wrapper inside pasta). | `tests/unit/seccomp.bats` (flag and fd only when enabled, per-arch, refusals), `tests/unit/strict.bats` (the wrapper opens the fd), `tests/live/seccomp.bats` (filter active inside; creating a user namespace refused, versus a control launch), `tests/live/agent.bats` (the real agent completes a turn under it, in proxy and strict). |
 
@@ -196,10 +153,9 @@ runs natively there.
 
 Three dispatches are bypassed under `--exec`, because each interprets the first
 argument and two of them would otherwise run the agent *outside* the sandbox:
-host-side subcommands (`claude update`), native verbs (`claude agents`,
+host-side subcommands (`claude update`), the management verbs (`claude agents`,
 `daemon`), and `profile_briefing_args`, whose `--settings` flags would corrupt an
-arbitrary command line. `briefing.md` is still bound read-only. `--wrap` and
-`--exec` are mutually exclusive.
+arbitrary command line. `briefing.md` is still bound read-only.
 
 **Scope note.** A project's `.agent-sandbox`, once approved, grants its policy to
 whatever `--exec` runs there, not only to an agent session. This is not an
@@ -327,32 +283,6 @@ Stated plainly. These are what the adversary above can still do.
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `claude update` runs the native
   binary on the host with your full environment.
-- **In wrapper mode the background daemon runs unsandboxed.** With `bg` in the
-  sandbox scope, each background *worker* is sandboxed, but the per-user
-  supervisor that spawns and manages them (`claude daemon run`) stays on the
-  host, unsandboxed — it has to, so it can build the bwrap for each worker (a
-  sandbox cannot nest another). It is trusted vendor infrastructure, not
-  agent-authored code, and it holds no project data; the LLM's decisions and its
-  generated code run only in the sandboxed workers. Compromise of the vendor
-  binary is out of scope, exactly as for the foreground agent binary. The
-  management verbs (`daemon`/`agents`/`stop`/…) likewise run natively.
-- **A wrapped worker's sandbox binds its daemon socket *directory*, not a single
-  socket.** The wrapper binds the directory that holds the rendezvous sockets
-  named in the worker's own argv (read-write — a worker both creates and
-  connects sockets there), which also exposes sibling workers' sockets in that
-  directory: broader than a per-socket bind. The daemon's roster and control key
-  are not there (they live under `~/.claude/daemon`, unbound), so this is a
-  `daemon/`-class, infra-only hole between workers — not a path to the roster or
-  to another project's data. Narrowing it to a per-socket bind is tracked in
-  issue #45.
-- **The background-pool reap kills host process trees.** With `bg` in scope, a
-  `claude --bg` launch sends SIGTERM then SIGKILL to the leaked idle-pool worker
-  trees it finds on the host (see "Background sandboxing"). It selects
-  structurally — a claude version binary with an exact `--bg-spare`/`--bg-pty-host`
-  argv element and no rostered ancestor — so unrelated processes are not targets,
-  but it is real process-killing on the host and fires only for an opted-in `bg`
-  launch. A bug in the selection would kill the wrong thing, so the selection is
-  isolated as a pure function and unit-tested (`tests/unit/bg-reap.bats`).
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.

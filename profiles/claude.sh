@@ -183,21 +183,28 @@ profile_allowlist_seed="$(dirname -- "${BASH_SOURCE[0]}")/claude.allowlist"
 
 profile_host_subcommands=(update upgrade install)
 
-# Management verbs that observe or manage the background service. The engine runs
-# these natively (unsandboxed), before any project machinery, so a project's
-# .agent-sandbox never gates listing or stopping sessions. See profile_route for
-# foreground/background routing (which does depend on the dot-file's scope).
-profile_native_verbs=(daemon agents attach logs stop rm)
+# The background service (#123). Its daemon runs inside the role's launch, so the
+# verbs that observe or manage it join that launch -- and never start one: the
+# observing ones answer "not running" when there is none, the others refuse. The
+# daemon's argv marks it for the keeper, which it holds while it runs (it does not
+# exit when idle, measured on 2.1.283, so a role with one ends by --shutdown).
+# shellcheck disable=SC2034 # engine contract, read by the engine
+profile_verbs=(daemon agents attach logs stop rm)
+# shellcheck disable=SC2034
+profile_verbs_observe=(agents logs)
+# shellcheck disable=SC2034
+profile_daemon_argv=(daemon run)
 
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the engine warns on any other [claude] key (a typo
 # must not silently do nothing), and the docs drift-check verifies each is
-# documented. `hide` is read in profile_isolate(); `sandbox` in profile_route().
+# documented. `hide` is read in profile_isolate().
 profile_dotfile_keys=(hide sandbox user-mcp)
 # Keys still read only so that they can be REFUSED by name, naming what replaced them.
-# The docs describe them as removed rather than as settings.
+# The docs describe them as removed rather than as settings. `sandbox` is refused in
+# profile_route(), `user-mcp` in _claude_user_mcp_refuse().
 # shellcheck disable=SC2034 # read by tests/unit/docs.bats
-profile_dotfile_retired=(user-mcp)
+profile_dotfile_retired=(user-mcp sandbox)
 
 # The native installer's layout: each entry under versions/ is either a
 # single executable file named after the version (e.g. 2.1.143) or a
@@ -564,19 +571,13 @@ _claude_mcp_user_scope() {
 }
 
 # profile_route [AGENT ARGS...] -- engine hook (see the engine's profile_route
-# call). Called for a launch that is neither a wrapper spawn, a --trust review,
-# nor a management verb (those are handled earlier). Decides from the effective
-# sandbox scopes whether to sandbox this invocation (return 0 -> the engine
-# continues its foreground flow) or to run it here and NOT return (exec). Reads
-# the engine's locals by dynamic scope, as the other hooks do.
-#   scope precedence: --sandbox flag > AGENT_SANDBOX_CLAUDE_SANDBOX env >
-#   [claude] sandbox dot-file key > context default (none inside a sandbox, else
-#   fg). Tokens: fg, bg, none.
-# _sandbox_flag,_sandbox_flag_set,_df_profile_kv,profile_bin are engine locals,
-# seen here by dynamic scope (as cwd is elsewhere); shellcheck can't know that.
+# call). Decides whether this invocation is sandboxed (return 0: the engine goes on
+# and joins the role's launch) or run here, natively (exec, never returns). Every
+# session is sandboxed, `--bg` included (#123): the scope that once chose between
+# foreground and background is gone, and running without a sandbox is the engine's
+# `--preset none`. Reads the engine's locals by dynamic scope, as the other hooks do.
 # shellcheck disable=SC2154
 profile_route() {
-  local raw="" src="" tok
   # UNDER `config = read-only`, A USER-SCOPE `claude mcp` TYPED AT YOUR SHELL RUNS
   # NATIVELY (#119). The sandbox's config file is then the native file, read-only, so
   # inside the command could only fail; what you mean by "user scope" is your own
@@ -587,141 +588,60 @@ profile_route() {
     _as_info "config is read-only here, so this user-scope 'claude mcp' runs natively, on your own ~/.claude.json"
     exec "$profile_bin" "$@"
   fi
-  if ((_sandbox_flag_set)); then
-    raw="$_sandbox_flag" src="--sandbox"
-  elif [[ -n "${AGENT_SANDBOX_CLAUDE_SANDBOX:-}" ]]; then
-    raw="$AGENT_SANDBOX_CLAUDE_SANDBOX" src="AGENT_SANDBOX_CLAUDE_SANDBOX"
-  else
-    local _pkv _dfp="" _dfp_set=0
-    for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
-      [[ "$_pkv" == sandbox=* ]] && {
-        _dfp="${_pkv#sandbox=}"
-        _dfp_set=1
-      }
-    done
-    if ((_dfp_set)); then
-      raw="$_dfp" src="[claude] sandbox"
-    elif [[ -n "${AGENT_SANDBOX:-}" ]]; then
-      raw="none" src="default (inside a sandbox)"
-    else
-      raw="fg" src="default"
-    fi
-  fi
-
-  local want_fg=0 want_bg=0
-  for tok in $raw; do
-    case "$tok" in
-      fg) want_fg=1 ;;
-      bg) want_bg=1 ;;
-      none)
-        want_fg=0
-        want_bg=0
-        ;;
-      *) _as_msg "sandbox scope ($src): ignoring unknown token '$tok' (want: fg, bg, none)" ;;
-    esac
-  done
-
-  # A background launch iff --bg appears anywhere in the agent's own argv.
-  local a is_bg=0
-  for a in "$@"; do
-    [[ "$a" == "--bg" ]] && {
-      is_bg=1
-      break
-    }
-  done
-
-  # A ROLE WITH --bg IS REFUSED until background sessions run inside their role's
-  # launch (#123). Today a worker is sandboxed by the wrapper, which knows the project
-  # but not the role, so it would run as `default` without a word.
-  if ((is_bg)) && [[ "${_role:-default}" != default ]]; then
-    _as_msg "--bg with --role $_role: background sessions do not carry a role yet (#123), so the worker would run as the default role. Refusing rather than running it there."
+  # THE SCOPE IS REMOVED IN EVERY FORM, and refused by name rather than ignored: a
+  # `sandbox = none` that went quiet would sandbox a project that asked not to be,
+  # and a `bg` that went quiet would look like a no-op.
+  if [[ -n "${AGENT_SANDBOX_CLAUDE_SANDBOX:-}" ]]; then
+    _as_msg "AGENT_SANDBOX_CLAUDE_SANDBOX was removed: every session, --bg included, runs in its role's sandbox (#123). To run without one: --preset none"
     return 1
   fi
-  # AND A SANDBOXED --bg IS REFUSED FOR EVERY ROLE, the default included, until then.
-  # A wrapped worker is a launch of its own, and with one launch per role (#121) it
-  # would be a second one beside the role's keeper: for `copy-on-write`, a second
-  # overlay over the same upper layer. The native route below is not a launch at all.
-  if ((is_bg && want_bg)); then
-    _as_msg "--bg with background sandboxing on (via $src): a sandboxed background worker would be a second launch of this role beside the one every other session joins, so it is refused until background sessions run inside the role (#123)."
+  local _pkv
+  for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+    [[ "$_pkv" == sandbox=* ]] || continue
+    _as_msg ".agent-sandbox [claude] sandbox was removed: every session, --bg included, runs in its role's sandbox (#123). Remove the line; to run without a sandbox, type --preset none."
     return 1
-  fi
-  if ((is_bg)); then
-    _as_msg "background sandboxing off (scope has no 'bg', via $src): running --bg natively"
+  done
+  # Inside a sandbox, a `claude` typed there runs in it as it is, not in a second
+  # sandbox of its own: nesting happens only when asked for, with --preset.
+  if [[ -n "${AGENT_SANDBOX:-}" && -z "${_preset_flag:-}" ]]; then
     exec "$profile_bin" "$@"
   fi
-  ((want_fg)) && return 0 # a foreground session: let the engine sandbox it
-  _as_msg "foreground sandboxing off (scope has no 'fg', via $src): running natively"
-  exec "$profile_bin" "$@"
+  return 0
 }
 
-# Sandbox a background launch: bind the project into each worker via the wrapper
-# role, keeping the pool project-current without a fragile daemon restart. Execs
-# native `claude --bg ...` with CLAUDE_CODE_PROCESS_WRAPPER set; only returns on a
-# setup error the caller should propagate.
-# cwd,engine,profile,profile_bin are engine locals, seen here by dynamic scope.
+# profile_before_join [AGENT ARGS...] -- engine hook, called just before an agent
+# command is joined into the role's launch. A `--bg` cannot answer Claude Code's
+# workspace-trust prompt, and its worker waits on it (measured, 2.1.283); the user
+# running `claude --bg` in this folder is the consent the prompt would ask for. So
+# the trust is recorded in the role's own config file when it is not there -- an
+# `isolated` role, or a project never trusted natively (under `inherit` the seed
+# carries the native entry's trust). Only in a store the role owns: never the native
+# file, which `read-write` and `native` bind.
 # shellcheck disable=SC2154
-_claude_bg_launch() {
-  local proj="$cwd" _prot_what _prot_path _prot_how base shim
-  if [[ "$proj" == "$HOME" ]]; then
-    _as_msg "background launch from \$HOME: the worker gets only ~/.claude, not \$HOME (secrets stay hidden)"
-    proj="" # no project bind, like a foreground session started from $HOME
-  elif _as_path_protected "$proj"; then
-    _as_msg "refusing background launch: the cwd $_prot_how $_prot_what '$_prot_path'"
-    return 1
-  fi
-
-  # Auto-trust the project: a non-interactive bg worker cannot answer the
-  # workspace-trust prompt, and the sandbox is strictly more restrictive than
-  # native (which itself auto-proceeds for --bg). Documented; disable by not
-  # opting bg into the sandbox scope.
-  [[ -n "$proj" ]] && _claude_bg_autotrust "$proj"
-
-  base="$(_as_session_base)"
-  mkdir -p "$base" 2>/dev/null || true
-  printf '%s' "$proj" >"$base/bg-project" # the wrapper (3c) reads this per worker
-
-  # The wrapper Claude Code invokes for every worker: our engine, this profile,
-  # --wrap. A shim file, so a multi-word CLAUDE_CODE_PROCESS_WRAPPER is never
-  # assumed, and so the daemon's recorded wrapper is a stable path we can match.
-  shim="$base/wrap-$profile.sh"
-  printf '#!/bin/sh\nexec "%s" --profile %s --wrap "$@"\n' "$engine" "$profile" >"$shim"
-  chmod +x "$shim"
-
-  _claude_bg_prepare_daemon "$shim"
-
-  _as_msg "background session sandboxed (wrapper mode)${proj:+, project: $proj}"
-  # If the caller already set CLAUDE_CODE_PROCESS_WRAPPER (their own wrapper),
-  # wrapper mode replaces it -- the workers run in OUR sandbox, not the caller's
-  # wrapper, and it is not chained. Say so rather than dropping it silently, and
-  # point at the escape hatch: --sandbox none runs --bg natively, so the caller's
-  # wrapper takes effect. Composing a caller wrapper (running it INSIDE the
-  # sandbox) is a separate feature, deliberately not built here.
-  if [[ -n "${CLAUDE_CODE_PROCESS_WRAPPER:-}" && "$CLAUDE_CODE_PROCESS_WRAPPER" != "$shim" ]]; then
-    _as_msg "note: wrapper mode replaces your CLAUDE_CODE_PROCESS_WRAPPER ('$CLAUDE_CODE_PROCESS_WRAPPER') for background workers and does not chain it; use --sandbox none to keep your own wrapper"
-  fi
-  export CLAUDE_CODE_PROCESS_WRAPPER="$shim"
-  exec "$profile_bin" "$@"
+profile_before_join() {
+  local a is_bg=0 mode store proj
+  for a in "$@"; do [[ "$a" == --bg ]] && is_bg=1; done
+  ((is_bg)) || return 0
+  mode="${_connect_mode[config]:-}"
+  case "$mode" in own | seed-only | copy) ;; *) return 0 ;; esac
+  proj="$(_claude_config_project)"
+  store="$(_claude_config_store "$proj" "$mode")"
+  [[ -f "$store" ]] || return 0
+  AS_CJ="$store" AS_PROJ="$proj" python3 - <<'PY' 2>/dev/null && return 0
+import json, os, sys
+d = json.load(open(os.environ["AS_CJ"]))
+sys.exit(0 if (d.get("projects") or {}).get(os.environ["AS_PROJ"], {}).get("hasTrustDialogAccepted") else 1)
+PY
+  _claude_mark_trust "$store" "$proj" \
+    && _as_msg "recorded workspace trust for $proj in role '${_role:-default}' (a --bg cannot ask)"
+  return 0
 }
 
-# Record the project as trusted in ~/.claude.json so the bg worker does not stall
-# on the interactive trust prompt -- and in the project's own copy of the file,
-# if one exists already: the worker reads the copy, and a copy made by an earlier
-# launch may predate the trust. python3-only; degrades to a note if missing.
-_claude_bg_autotrust() {
-  local proj="$1" cj="$HOME/.claude.json" f
-  command -v python3 >/dev/null 2>&1 || {
-    _as_msg "python3 missing: cannot pre-trust '$proj' for the bg worker; if it stalls, run 'claude' there once"
-    return 0
-  }
-  [[ -e "$cj" ]] || printf '{}' >"$cj"
-  for f in "$cj" "$(_claude_config_store "$proj" seed-only)" \
-    "$(_claude_config_store "$proj" copy)" "$(_claude_config_store "$proj" own)"; do
-    [[ "$f" == "$cj" || -e "$f" ]] || continue
-    _claude_mark_trust "$f" "$proj"
-  done
-}
-_claude_mark_trust() { # $1 = a claude config file, $2 = project dir
-  AS_CJ="$1" AS_PROJ="$2" python3 - <<'PY' 2>/dev/null || _as_msg "could not pre-trust bg project '$2' in $1"
+# _claude_mark_trust FILE PROJECT -- record PROJECT as trusted in the config FILE, in
+# place: the file is bind-mounted into the running launch, and a rename would leave
+# the launch on the old one.
+_claude_mark_trust() {
+  AS_CJ="$1" AS_PROJ="$2" python3 - <<'PY' 2>/dev/null || _as_msg "could not record workspace trust for '$2' in $1"
 import json, os
 cj, proj = os.environ["AS_CJ"], os.environ["AS_PROJ"]
 try:
@@ -731,139 +651,11 @@ except Exception:
 if not isinstance(d, dict):
     d = {}
 d.setdefault("projects", {}).setdefault(proj, {})["hasTrustDialogAccepted"] = True
-json.dump(d, open(cj, "w"))
+with open(cj, "r+") as fh:
+    fh.seek(0)
+    json.dump(d, fh)
+    fh.truncate()
 PY
-}
-
-# Ensure the background daemon that will serve this launch is one WE started with
-# THIS wrapper (else contract #3 makes its workers run unwrapped -- unsandboxed),
-# and flush the idle pool so the re-warmed spares bind THIS project. A foreign or
-# unwrapped daemon is restarted (active sessions survive: the fresh daemon adopts
-# them); then the idle/orphaned sandbox trees are reaped. python3-only.
-_claude_bg_prepare_daemon() {
-  local shim="$1" roster="$HOME/.claude/daemon/roster.json" sup envw
-  command -v python3 >/dev/null 2>&1 || {
-    _as_msg "python3 missing: skipping bg pool maintenance (idle sandboxes may accumulate; clear with probes/bg-cleanup.sh)"
-    return 0
-  }
-  [[ -r "$roster" ]] || return 0 # no daemon yet: the one this launch starts is wrapped
-  sup="$(_claude_roster_supervisor "$roster")"
-  { [[ -n "$sup" ]] && kill -0 "$sup" 2>/dev/null; } || return 0 # no live daemon
-  envw=""
-  [[ -r "/proc/$sup/environ" ]] \
-    && envw="$(tr '\0' '\n' <"/proc/$sup/environ" 2>/dev/null | sed -n 's/^CLAUDE_CODE_PROCESS_WRAPPER=//p' | head -1)"
-  if [[ "$envw" != "$shim" ]]; then
-    _as_msg "restarting the background daemon so its workers are sandboxed (it was not started by wrapper mode)"
-    kill "$sup" 2>/dev/null || true
-    sleep 1
-  fi
-  _claude_bg_reap "$roster"
-}
-
-_claude_roster_supervisor() {
-  AS_ROSTER="$1" python3 - <<'PY' 2>/dev/null
-import json, os
-try:
-    v = json.load(open(os.environ["AS_ROSTER"])).get("supervisorPid")
-    if isinstance(v, int):
-        print(v)
-except Exception:
-    pass
-PY
-}
-
-# Reap leaked background sandbox trees. KEEP = the rostered worker launchers (the
-# active sessions); kill every process in a bg tree (rooted at a --bg-pty-host /
-# --bg-spare worker) whose ancestry contains no rostered launcher -- i.e. idle
-# pool spares and orphans. A worker is matched STRUCTURALLY: its executable is a
-# claude version binary AND --bg-spare/--bg-pty-host is an EXACT argv element --
-# never a substring of some process's joined command line. That is what keeps a
-# shell or test that merely MENTIONS the token (this repo's own suites and probes
-# do), and its children, from being selected and killed. python3-only.
-#
-# _claude_bg_reap_select prints the pids to reap and is pure: it reads $AS_PROC
-# (default /proc) so it is unit-testable against a synthetic process table.
-# $AS_VERSIONS_DIR/$AS_BIN identify a claude executable. cwd/profile_bin are
-# engine locals seen here by dynamic scope.
-# shellcheck disable=SC2154
-_claude_bg_reap_select() {
-  AS_ROSTER="$1" AS_VERSIONS_DIR="$_claude_versions_dir" AS_BIN="${profile_bin:-}" python3 - <<'PY' 2>/dev/null
-import json, os
-proc = os.environ.get("AS_PROC", "/proc")
-vroot = os.environ.get("AS_VERSIONS_DIR", "").rstrip("/")
-binpath = os.environ.get("AS_BIN", "")
-keep = set()
-try:
-    d = json.load(open(os.environ["AS_ROSTER"]))
-    for w in (d.get("workers", {}) or {}).values():
-        if isinstance(w, dict) and isinstance(w.get("pid"), int):
-            keep.add(w["pid"])
-except Exception:
-    pass
-info = {}
-for e in os.listdir(proc):
-    if not e.isdigit():
-        continue
-    pid = int(e)
-    try:
-        with open("%s/%d/stat" % (proc, pid), "rb") as f:
-            ppid = int(f.read().rsplit(b") ", 1)[1].split()[1])
-        argv = [a.decode("utf-8", "replace") for a in open("%s/%d/cmdline" % (proc, pid), "rb").read().split(b"\0") if a]
-        try:
-            exe = os.readlink("%s/%d/exe" % (proc, pid))
-        except OSError:
-            exe = ""
-        if exe.endswith(" (deleted)"):
-            exe = exe[: -len(" (deleted)")]
-    except Exception:
-        continue
-    info[pid] = (ppid, argv, exe)
-def kept_ancestor(pid):
-    seen = 0
-    while pid and pid != 1 and seen < 50:
-        if pid in keep:
-            return True
-        pr = info.get(pid)
-        if not pr:
-            return False
-        pid = pr[0]
-        seen += 1
-    return False
-children = {}
-for pid, (pp, argv, exe) in info.items():
-    children.setdefault(pp, []).append(pid)
-def subtree(root):
-    out, stack = [], [root]
-    while stack:
-        x = stack.pop()
-        out.append(x)
-        stack.extend(children.get(x, []))
-    return out
-def is_worker(argv, exe):
-    if not exe:
-        return False
-    if not (exe == binpath or (vroot and exe.startswith(vroot + "/"))):
-        return False
-    return "--bg-spare" in argv or "--bg-pty-host" in argv
-leaked = set()
-for pid, (pp, argv, exe) in info.items():
-    if is_worker(argv, exe) and not kept_ancestor(pid):
-        leaked.update(subtree(pid))
-leaked.discard(1)
-leaked.discard(os.getpid())
-print(" ".join(str(x) for x in sorted(leaked)))
-PY
-}
-
-_claude_bg_reap() {
-  local roster="$1" pids p n
-  pids="$(_claude_bg_reap_select "$roster")"
-  [[ -n "$pids" ]] || return 0
-  for p in $pids; do kill "$p" 2>/dev/null || true; done
-  sleep 1
-  for p in $pids; do kill -9 "$p" 2>/dev/null || true; done
-  n="$(printf '%s\n' "$pids" | wc -w | tr -d ' ')"
-  _as_msg "background pool: reaped $n leaked sandbox process(es)"
 }
 
 # profile_briefing_args INSIDE_DIR [AGENT ARGS...] -- engine hook. Hands the

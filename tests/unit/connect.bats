@@ -188,25 +188,6 @@ EOF
   [ "$connect" -lt "$scratch" ]
 }
 
-@test "a wrapped background worker is keyed by ITS project, not by the daemon's directory" {
-  # Without this the worker gets a different sandbox from the foreground session
-  # on the same project -- one sandbox becoming two -- and every worker of every
-  # project shares the daemon's key, which is a cross-project channel. The
-  # profile already knew this for the config file; the engine now asks the same
-  # function, so the two cannot drift.
-  local proj sock="/tmp/cc-daemon-1000/b1952d0c/spare"
-  mkdir -p "$sock" /tmp/cc-daemon-1000/b1952d0c/ctl "$H/base"
-  proj="$(mkdir -p "$H/bgproj" && cd "$H/bgproj" && pwd -P)"
-  printf '%s' "$proj" >"$H/base/bg-project"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- \
-    claude --wrap "$H/bin/claude" --bg-spare "$sock/a.claim.sock"
-  [ "$status" -eq 0 ]
-  local want="$STATE/claude/${proj//[^A-Za-z0-9-]/-}/default"
-  argv_has --bind "$want/instructions/own/$(slugify "$C/rules")" "$C/rules"
-  # and NOT keyed by the directory the wrapper happened to run from
-  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
-}
-
 @test "cow asks bwrap for an overlay on a directory-shaped path" {
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
   [ "$status" -eq 0 ]

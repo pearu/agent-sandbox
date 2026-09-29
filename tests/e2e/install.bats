@@ -221,21 +221,23 @@ X
   "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }
 
-@test "wrapper mode is refused through the installed launcher until background sessions run inside the role (#123)" {
-  # With one launch per role (#121), a wrapped worker would be a second launch of the
-  # role beside its keeper, so the sandboxed --bg route is refused before any daemon
-  # is started. #123 brings the background path back, inside the role's launch.
-  run launch --sandbox "fg bg" --bg 'do a thing'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--bg"*"#123"* ]]
-  [[ "$output" != *"spare:"* ]] # no daemon, no pooled worker
-}
-
-@test "wrapper mode off (no bg scope): claude --bg runs the worker natively, no wrapper set" {
+@test "claude --bg runs in the role: sandboxed, its daemon inside and holding the launch, ended by --shutdown (#123)" {
   run launch --bg 'do a thing'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"background sandboxing off"* ]]
-  [[ "$output" == *"no wrapper set"* ]]
+  [[ "$output" == *"backgrounded"*"SANDBOXED, wrapper=none"* ]]
+  # the daemon the --bg left behind holds the role's launch, and a verb joins it
+  sleep 3 # past the keeper's idle grace
+  run launch agents
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agents: daemon running"* ]]
+  run launch --shutdown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ended, with everything that ran in it"* ]]
+  # and afterwards a question gets the empty answer, without starting anything
+  run launch agents
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is not running"* ]]
+  [[ "$output" != *"agents:"* ]]
 }
 
 @test "a native launcher is taken over, and --uninstall gives it back (issue #22)" {

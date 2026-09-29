@@ -1,6 +1,6 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets, roles, the keeper and the `config`, `transcripts` and `logs` channels are implemented and under test; background sessions inside a role and the role verbs are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
+**Status: the scale, the presets, roles, the keeper, background sessions inside a role, `--shutdown` and the `config`, `transcripts` and `logs` channels are implemented and under test; the other role verbs are agreed, not built (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
 sessions on one machine, written after the cross-project leak study
 ([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
 find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
@@ -219,8 +219,8 @@ not fire on the intentional case.
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
-between is a preset plus overrides. `--sandbox` goes with the wrapper machinery, when
-background sessions run inside the role ([agreed, not built](#background-sessions-123)).
+between is a preset plus overrides. Running without a sandbox is not one of them: that is
+`--preset none`, the flag only (see [Background sessions](#background-sessions-123)).
 
 | channel | `isolated` | `inherit` | `shared` |
 |---|---|---|---|
@@ -255,13 +255,13 @@ them shut.
 
 `native` is the preset that does not. Its contract is exact and is the reason to build it:
 
-> **`--preset native` must behave identically to `--sandbox none`, while going through
+> **`--preset native` must behave identically to `--preset none`, while going through
 > every sandbox mechanism.** A difference between the two is a bug in agent-sandbox.
 
 That makes it a differential oracle, which is a test this repository does not otherwise
 have: it catches the sandbox quietly *distorting* the agent rather than failing outright.
 It also bisects a failure — something that breaks under `native` but works under
-`--sandbox none` is broken by a mechanism (binds, seccomp, the proxy) rather than by state
+`--preset none` is broken by a mechanism (binds, seccomp, the proxy) rather than by state
 isolation, because `native` holds state at "hide nothing".
 
 And it makes the scale a workflow rather than a taxonomy. With both extremes genuinely
@@ -345,7 +345,7 @@ reframing is what makes the ends belong on one axis:
 | `default` | `inherit` | one-way: your files are read live, the sandbox's writes stay inside |
 | `shared` | `shared` | both directions, for everything the boundary covers |
 | `native` | `native` | the whole boundary open, including the parts no channel declares |
-| `--sandbox none` | `none` | there is no boundary object at all |
+| `--preset none` | `none` | there is no boundary object at all |
 
 ```
 isolated  <  inherit  <  shared  <  native        ordered
@@ -403,7 +403,7 @@ The word is needed for a preset, and the principle was under-placed anyway. It i
 property of one rung: the sandbox should reproduce the native experience faithfully, minus
 what the user explicitly asked to change. `inherit` expresses that for configuration and
 `native` asserts it absolutely, which is why a difference between `--preset native` and
-`--sandbox none` is a bug rather than a preference.
+`--preset none` is a bug rather than a preference.
 
 ## Path declarations
 
@@ -484,9 +484,9 @@ lasts as long as the outer session and no longer.
 
 ## Roles, the keeper and storage
 
-**Built:** roles, the keeper, `seed-only`, the config file and no merge-back. **Agreed, not
-built:** background sessions inside the role, the role verbs and the storage scopes, each
-marked below. The section records the decisions of 2026-09-24 to 28, filed
+**Built:** roles, the keeper, background sessions inside the role, `--shutdown`, `seed-only`,
+the config file and no merge-back. **Agreed, not built:** the other role verbs and the storage
+scopes, each marked below. The section records the decisions of 2026-09-24 to 28, filed
 as [#119](https://github.com/pearu/agent-sandbox/issues/119),
 [#120](https://github.com/pearu/agent-sandbox/issues/120),
 [#121](https://github.com/pearu/agent-sandbox/issues/121),
@@ -582,34 +582,46 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 - Ctrl-C at a join ends that join's command, not the launch: the join passes the
   terminal's signals to its own process group, and the keeper ignores them.
 - `--reset-connection` is refused while anything is joined; an idle keeper is ended first.
-- Until background sessions run inside the role (#123), `--bg` with `bg` in the sandbox
-  scope is refused: a wrapped worker would be a second launch beside the keeper.
 - Its host side is a supervisor, a background copy of the engine that started it: it owns
   the launch's exit (the session directory, the ssh agent, the mount-point files) and writes
   `<sandbox>/keeper.log`, which a launch that fails to start prints.
 
 ### Background sessions (#123)
 
+*Built.*
+
 - `claude --role x --bg` is "ensure x's keeper, join it, run `claude --bg` there". The daemon,
   its spare workers and pty hosts start inside (measured on 2.1.283), and `agents`, `attach`,
-  `logs` and `stop` join too. Each role has its own daemon.
-- The wrapper machinery goes: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg` project
-  record, the auto-trust and the pool clearing compensated for a daemon on the host. With it go
-  `--sandbox` (refused, naming `--preset none`), the `@background` qualifier and the `<scope>`
-  key segment: `x@background` is `x`. Native foreground and background sessions are meant to
-  find each other (`--continue` loads a finished background session; `attach`; cross-session
-  messaging), so they share the role.
-- The daemon does not exit on its own when idle (measured), so a role with one ends by
-  `--shutdown`.
-- What survives from #104: the `none` preset (no sandbox at all, outside the order), the glob
-  grammar above, and keying the trust record on the project rather than the daemon's directory.
+  `logs`, `stop`, `rm` and `daemon` join too. Each role has its own daemon. A `--bg` is
+  sandboxed by default; `--preset none --bg` runs one natively.
+- **The daemon holds the keeper**, as a join does: the keeper ends when no join remains *and*
+  no daemon runs in its namespace (the profile says what one looks like). The daemon does not
+  exit on its own when idle (measured), so a role with one ends by `--shutdown`.
+- **A verb with no keeper starts none.** `agents` and `logs` answer that the role is not
+  running (exit 0); `attach`, `stop`, `rm` and `daemon` refuse. A verb needs the dot-file
+  only to find the role: when an unapproved edit keeps the file from being read and exactly
+  one role of the project is running, that one is meant; with several, `--role` is asked for.
+- **Workspace trust** is recorded in the role's own config file on `--bg`, when it is not
+  there: a `--bg` cannot answer the prompt, and the user running it in the folder is the
+  consent the prompt asks for.
+- The wrapper machinery went: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg` project
+  record and the pool clearing compensated for a daemon on the host. With it went `--sandbox`,
+  `AGENT_SANDBOX_CLAUDE_SANDBOX` and `[claude] sandbox` (each refused, naming `--preset none`),
+  the `@background` qualifier and the `<scope>` key segment: `x@background` is `x`. Native
+  foreground and background sessions are meant to find each other (`--continue` loads a
+  finished background session; `attach`; cross-session messaging), so they share the role.
+- **`none`** is the fifth preset: no sandbox at all, the flag only (it drops the network
+  policy and the syscall filter too, so no file or environment may set it), acted on before
+  any project machinery.
+- What survives from #104: the `none` preset, the glob grammar above, and keying the trust
+  record on the project rather than the daemon's directory.
 
 ### The role verbs (#126)
 
 | verb | does | refused when |
 |---|---|---|
 | `--status` | the keeper (running since when, under which dotfile), the processes joined into it, the daemon's sessions | — |
-| `--shutdown` | ends the keeper, every joined process, and the daemon with its pool | — |
+| `--shutdown` | ends the keeper, every joined process, and the daemon with its pool. *Built* (#123) | — |
 | `--delete` | removes the role's stores, all of them | anything is joined: it names `--shutdown` |
 | `--reset <channel\|path>` | discards one store and takes the source's version again, keeping the rest; renamed from `--reset-connection`, and takes a path declaration too | the keeper is running |
 
