@@ -61,3 +61,25 @@ PROBE
   [ -d "$IWORK/scratch" ]
   [ -z "$(ls -A "$IWORK/scratch")" ]
 }
+
+@test "copy-on-write: the project's files read through, a write lands in the role's layer, the project is untouched" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11; this host: $(bwrap --version))"
+  mkdir -p "$IWORK/data"
+  printf 'DATA\n' >"$IWORK/data/a"
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- --connect './data/ = copy-on-write' run
+  [ "$status" -eq 0 ]
+  [ "$(report data)" = DATA ]      # read through from the project
+  [ "$(report wrote_data)" = yes ] # writable inside
+  [ ! -e "$IWORK/data/b" ]         # the write did not reach the project
+  local slug
+  slug="$(cd "$IWORK" && pwd -P)/data"
+  slug="${slug//\//_}"
+  [ -e "$SB/@paths/upper/${slug#_}/b" ] # it is in the role's upper layer
+  printf 'LATER\n' >"$IWORK/data/a"     # a source edit reaches a file the sandbox has not written
+  run_sandboxed "${ENV[@]}" -- --connect './data/ = copy-on-write' run
+  [ "$(report data)" = LATER ]
+  run_sandboxed "${ENV[@]}" -- --reset ./data/
+  [ "$status" -eq 0 ]
+  [ ! -e "$SB/@paths/upper/${slug#_}" ] # and --reset takes the layer away
+}

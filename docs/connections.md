@@ -465,8 +465,10 @@ working tree, which would otherwise cover every declaration inside the project. 
 measured the first time this ran under the real bwrap: bound earlier, `./data =
 read-only` was writable and `./scratch/ = own` showed the project's files.
 
-**Not in this piece:** a directory path at `copy-on-write` is refused for now; the keeper
-can mount it at the declared path, and that is step 13 of #129. `--reset ./scratch/` takes a
+A directory path at `copy-on-write` is an overlay the keeper mounts at the declared path,
+as it does a channel's: the project's files read through, live, and a write lands in the
+role's upper layer and shadows the source's file from then on. Where the overlay is off or
+this bubblewrap cannot mount one, it is `copy` with a message saying so. `--reset ./scratch/` takes a
 declaration back to its source, as `--reset <channel>` does a channel (#126). A per-role scratchpad is already what
 `./scratch/ = own` gives, since a role is the instance.
 
@@ -576,8 +578,8 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   second marks the first's in-flight tool call interrupted, the conversation forks, and the
   next resume follows the branch of the process that exited last — and the consequences
   are the user's.
-- The keeper subsumes the holder: it mounts the channel overlays at their real paths. The
-  path declarations at `copy-on-write` are next (#129 step 13).
+- The keeper subsumes the holder: it mounts the channel overlays at their real paths, and
+  the overlays of directory paths declared `copy-on-write`.
 - Ctrl-C at a join ends that join's command, not the launch: the join passes the
   terminal's signals to its own process group, and the keeper ignores them.
 - `--reset` is refused while anything is joined; an idle keeper is ended first.

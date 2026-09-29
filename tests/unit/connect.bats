@@ -1003,11 +1003,49 @@ EOF
   argv_has --ro-bind "$PROJ/data" "$PROJ/data"
 }
 
-@test "copy-on-write on a directory path is not implemented yet, and says so in the probed wording" {
+@test "copy-on-write on a directory path is an overlay at that path, the path itself its lower layer" {
   mkdir -p "$PROJ/data"
   run_engine -- claude --connect './data/ = copy-on-write' --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"is not implemented in this engine"* ]]
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$PROJ/data" --overlay "$SBOX/@paths/upper/$(slugify "$PROJ/data")" \
+    "$SBOX/@paths/work/$(slugify "$PROJ/data")" "$PROJ/data"
+  # after the project bind, or the project would cover it
+  [ "$(argv_index --overlay-src)" -gt "$(argv_index "$PROJ")" ]
+}
+
+@test "with the overlay off, a copy-on-write path is copy, and the launch says so" {
+  mkdir -p "$PROJ/data"
+  run_engine AGENT_SANDBOX_OVERLAY=off -- claude --connect './data/ = copy-on-write' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'./data/': copy-on-write is using copy here -- the overlay is turned off"* ]]
+  argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/data")" "$PROJ/data"
+  run ! argv_has --overlay-src "$PROJ/data"
+}
+
+@test "on a bubblewrap too old for overlays, a copy-on-write path is copy, and the launch says so" {
+  mkdir -p "$PROJ/data"
+  run_engine AGENT_SANDBOX_TEST_NO_OVERLAY=1 -- claude --connect './data/ = copy-on-write' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"copy-on-write is using copy here -- this bubblewrap cannot mount an overlay"* ]]
+  argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/data")" "$PROJ/data"
+}
+
+@test "a run-scoped copy-on-write path keeps its layers under @run" {
+  mkdir -p "$PROJ/data"
+  run_engine -- claude --connect './data/ = copy-on-write run-scoped' --version
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$PROJ/data" --overlay "$SBOX/@run/@paths/upper/$(slugify "$PROJ/data")"
+}
+
+@test "--reset of a copy-on-write path discards its upper layer, whiteouts and all" {
+  mkdir -p "$PROJ/data"
+  run_engine -- claude --connect './data/ = copy-on-write' --version
+  local up
+  up="$SBOX/@paths/upper/$(slugify "$PROJ/data")"
+  printf 'MINE\n' >"$up/x"
+  run_engine -- claude --reset ./data/
+  [ "$status" -eq 0 ]
+  [ ! -e "$up" ]
 }
 
 @test "a path declaration from an approved dot-file is honoured" {
