@@ -13,6 +13,8 @@ setup() {
   KL="$REPO_ROOT/tests/helpers/keeper-leaks.sh"
   export AS_KEEPER_SETTLE=2
   export AS_REAL_HOME="$BATS_TEST_TMPDIR/realhome"
+  # Only this test's fake keepers: other suites may be running keepers beside it.
+  export AS_KEEPER_SCOPE="$BATS_TEST_TMPDIR"
   FAKES=()
 }
 

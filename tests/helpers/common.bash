@@ -25,6 +25,9 @@ make_harness() {
   mkdir -p "$H/bin" "$H/home/.local/share/claude/versions/2.1.300" "$H/proj" "$H/base"
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+# Not measured, so not traced: under coverage kcov traces every bash process the
+# engine starts, and a stub's trace only slows it and pollutes what it captures.
+set +x
 # Stub bwrap: record argv, one token per line, then exit 0 (never sandboxes).
 #
 # It answers --help too, because the engine asks bwrap whether it can mount an

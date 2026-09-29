@@ -21,6 +21,10 @@
 # killed.
 #   AS_KEEPER_SETTLE  seconds to wait before the recount (default 7)
 #   AS_REAL_HOME      the real home directory (default: $HOME)
+#   AS_KEEPER_SCOPE   count only keepers whose HOME is under this directory (default:
+#                     all). The check's own tests set it: suites may run side by side
+#                     (scripts/coverage.sh runs files in parallel), and a check that
+#                     kills every new keeper on the machine kills other tests' keepers.
 set -euo pipefail
 
 real_home="${AS_REAL_HOME:-$HOME}"
@@ -31,10 +35,11 @@ keepers() {
   for c in /proc/[0-9]*/cmdline; do
     p="${c#/proc/}" p="${p%/cmdline}"
     a0=""
-    IFS= read -r -d '' a0 <"$c" 2>/dev/null || true
+    { IFS= read -r -d '' a0 <"$c"; } 2>/dev/null || true # it may exit while we look
     [[ "$a0" == agent-sandbox-keeper ]] || continue
     home="$(tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | sed -n 's/^HOME=//p' | head -1)"
     [[ -n "$home" && "$home" == "$real_home" ]] && continue
+    [[ -z "${AS_KEEPER_SCOPE:-}" || "$home" == "$AS_KEEPER_SCOPE"/* ]] || continue
     printf '%s\t%s\n' "$p" "${home:-?}"
   done
 }

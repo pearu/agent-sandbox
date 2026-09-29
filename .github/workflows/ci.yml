@@ -174,12 +174,21 @@ jobs:
         with:
           environment-file: environment.yml
           cache-environment: true
-      - name: Build kcov (conda-forge deps) and run coverage
+      # One step per stage, so the Actions UI times each: the step summary gets each
+      # stage's slowest files and tests (scripts/coverage.sh times every bats file).
+      - name: Build kcov (conda-forge deps)
         run: |
           micromamba install -y -n agent-sandbox -c conda-forge \
             cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
           micromamba run -n agent-sandbox scripts/install-kcov.sh
-          micromamba run -n agent-sandbox scripts/coverage.sh | tee "$GITHUB_STEP_SUMMARY"
+      - name: "Coverage: engine, unit suites"
+        run: micromamba run -n agent-sandbox scripts/coverage.sh engine-unit | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: "Coverage: engine, integration suites"
+        run: micromamba run -n agent-sandbox scripts/coverage.sh engine-integration | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: "Coverage: merge the engine's runs"
+        run: micromamba run -n agent-sandbox scripts/coverage.sh engine-merge | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: "Coverage: addon"
+        run: micromamba run -n agent-sandbox scripts/coverage.sh addon | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:

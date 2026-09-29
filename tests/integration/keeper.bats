@@ -328,10 +328,18 @@ wait_gone() { # wait_gone PID -- up to 10 s
 @test "a daemon started inside holds the keeper after its join has ended, and --shutdown ends both" {
   # The probe profile's daemon is any process with `daemon run` in its argv. Started
   # detached, it is reparented to the sandbox's pid 1 and outlives the join.
-  run_sandboxed "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(300)" daemon run </dev/null >/dev/null 2>&1 & echo started'
-  [ "$status" -eq 0 ]
-  local t
-  t="$(keeper_payload)"
+  #
+  # THE LAUNCH RUNS IN THE BACKGROUND, and the daemon is ended from outside. Under
+  # coverage the engine returns only when its keeper's supervisor exits -- kcov waits for
+  # every traced descendant -- which is when the daemon dies; a launch in the
+  # foreground would wait out the daemon, and find the keeper gone when it came back.
+  # So the 300 s here is an upper bound this test never reaches, traced or not.
+  bg_sandboxed a "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(300)" daemon run </dev/null >/dev/null 2>&1 & touch a.in'
+  local t i
+  for ((i = 0; i < 100; i++)); do
+    t="$(keeper_payload 2>/dev/null)" && [ -n "$t" ] && break
+    sleep 0.05
+  done
   [ -n "$t" ]
   sleep 1.5 # the join is long gone; with no grace an unheld keeper would be too
   [ -d "/proc/$t" ]
@@ -339,17 +347,24 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ "$status" -eq 0 ]
   [[ "$output" == *"ended, with everything that ran in it"* ]]
   wait_gone "$t"
+  wait "$BG_PID"
   [ ! -e "$SB/keeper" ]
 }
 
 @test "once the daemon exits, the keeper ends on its own" {
-  run_sandboxed "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(2)" daemon run </dev/null >/dev/null 2>&1 &'
-  [ "$status" -eq 0 ]
-  local t
-  t="$(keeper_payload)"
+  # In the background for the same reason as above: traced, the launch returns only
+  # once the daemon has gone.
+  bg_sandboxed a "${BASE[@]}" -- --exec sh -c 'setsid python3 -c "import time; time.sleep(2)" daemon run </dev/null >/dev/null 2>&1 & touch a.in'
+  local t i
+  for ((i = 0; i < 100; i++)); do
+    t="$(keeper_payload 2>/dev/null)" && [ -n "$t" ] && break
+    sleep 0.05
+  done
+  [ -n "$t" ]
   sleep 1
   [ -d "/proc/$t" ] # held
   wait_gone "$t"    # the daemon is gone after 2 s, and the supervisor notices within 5
+  wait "$BG_PID"
 }
 
 @test "--shutdown ends what is joined too" {

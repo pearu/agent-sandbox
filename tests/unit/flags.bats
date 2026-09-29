@@ -38,6 +38,7 @@ setup() {
   # work: the lookup then finds the real bwrap further along PATH).
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 : >"${BWRAP_DUMP:?}"; exit 127
 STUB
   chmod +x "$H/bin/bwrap"

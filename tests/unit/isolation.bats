@@ -40,6 +40,7 @@ bound_at() {
 agent_writes() {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 if [[ "${1:-}" == --help ]]; then printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'; exit 0; fi
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done

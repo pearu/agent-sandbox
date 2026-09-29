@@ -301,6 +301,7 @@ STUB
 @test "a launch that cannot start reports the launch's own status and leaves no record" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 exit 3
 STUB
   run_engine -- claude --version
@@ -314,6 +315,7 @@ STUB
   cp "$H/bin/bwrap" "$H/bwrap.working"
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+set +x
 exit 3
 STUB
   run_engine -- claude --version

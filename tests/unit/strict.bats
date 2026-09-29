@@ -16,6 +16,7 @@ setup() {
   # join. A stub `ip` feeds the wrapper the gateway it reads inside the netns.
   cat >"$H/bin/pasta" <<'S'
 #!/usr/bin/env bash
+set +x
 if [ -n "${PASTA_DUMP:-}" ]; then
   : >"$PASTA_DUMP"
   for a in "$@"; do printf '%s\n' "$a" >>"$PASTA_DUMP"; done
@@ -26,6 +27,7 @@ exec "$@"
 S
   cat >"$H/bin/ip" <<'S'
 #!/usr/bin/env bash
+set +x
 [ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"
 exit 0
 S
@@ -119,6 +121,7 @@ pasta_argv() {
   # a real agent or a trusted key; the engine's pasta argv is the contract.
   cat >"$H/bin/ssh" <<'X'
 #!/usr/bin/env bash
+set +x
 [[ "$1" == -G ]] && { printf 'hostname %s
 user tester
 port 22
@@ -133,12 +136,14 @@ exit 0
 ' >"$H/bin/ssh-add"
   cat >"$H/bin/ssh-agent" <<'X'
 #!/usr/bin/env bash
+set +x
 sock=""; while [[ $# -gt 0 ]]; do [[ "$1" == -a ]] && sock="$2"; shift; done
 : >"$sock" 2>/dev/null
 echo "SSH_AGENT_PID=99999; export SSH_AGENT_PID;"
 X
   cat >"$H/bin/getent" <<'X'
 #!/usr/bin/env bash
+set +x
 [[ "$1" == ahostsv4 ]] && { printf '10.20.30.40 STREAM %s
 10.20.30.41 STREAM %s
 ' "$2" "$2"; exit 0; }
@@ -173,6 +178,7 @@ X
   # the wrapper reads inside the netns; the harness stub bwrap records that argv.
   cat >"$H/bin/pasta" <<'S'
 #!/usr/bin/env bash
+set +x
 # Skip pasta's own options up to the first '--', then run the wrapper it was given.
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
 shift
@@ -180,6 +186,7 @@ exec "$@"
 S
   cat >"$H/bin/ip" <<'S'
 #!/usr/bin/env bash
+set +x
 # Enough for the wrapper's `ip -4 route show default`.
 [ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"
 exit 0
@@ -207,17 +214,20 @@ S
 @test "strict: the wrapper opens the seccomp filter on fd 10 for bwrap when AGENT_SANDBOX_SECCOMP=on" {
   cat >"$H/bin/pasta" <<'S'
 #!/usr/bin/env bash
+set +x
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
 shift
 exec "$@"
 S
   cat >"$H/bin/ip" <<'S'
 #!/usr/bin/env bash
+set +x
 [ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"
 exit 0
 S
   cat >"$H/bin/bwrap" <<'S'
 #!/usr/bin/env bash
+set +x
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 readlink /proc/self/fd/10 >"$BWRAP_DUMP.fd10" 2>/dev/null || echo "(no fd 10)" >"$BWRAP_DUMP.fd10"
