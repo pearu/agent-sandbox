@@ -522,9 +522,10 @@ EOF
 
 # ----- the scope axis ---------------------------------------------------------
 #
-# A scope says WHICH STORAGE a channel's sandbox side uses. Only the default is
-# built; the rest parse and are refused, because a scope that is accepted and
-# never applied reads as isolation that is not there.
+# A scope says WHICH STORAGE a channel's sandbox side uses: nothing written is the
+# role's, `run-scoped` is one run of the role's launch (#105). `join-scoped` parses
+# and is refused, because a scope that is accepted and never applied reads as
+# isolation that is not there.
 
 @test "the scope is optional: writing none means the role, today's behaviour" {
   run_engine -- claude --connect 'instructions=read-only native' --version
@@ -533,15 +534,14 @@ EOF
 }
 
 @test "source and scope are told apart by shape, so either order parses" {
-  # Both orders reach the scope check and get the same refusal: the scope was
-  # recognised as a scope whichever side of the source it stood.
-  local a b
+  # Both orders bind the same run-scoped store: the scope was recognised as a scope
+  # whichever side of the source it stood.
   run_engine -- claude --connect 'instructions=copy native run-scoped' --version
-  a="$output"
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/@run/instructions/copy/$(slugify "$C/rules")" "$C/rules"
   run_engine -- claude --connect 'instructions=copy run-scoped native' --version
-  b="$output"
-  [[ "$a" == *"scope 'run-scoped' is not implemented"* ]]
-  [[ "$b" == *"scope 'run-scoped' is not implemented"* ]]
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/@run/instructions/copy/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "read-write plus a scope is refused: there is nothing left to scope" {
@@ -550,7 +550,7 @@ EOF
   # apply to -- the spec cannot mean what its author thinks. Checked before
   # implementation status, so it stays true once the scopes land.
   local sc
-  for sc in run-scoped process-scoped; do
+  for sc in run-scoped join-scoped; do
     run_engine -- claude --connect "instructions=read-write $sc" --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"does not mean anything"* ]]
@@ -558,14 +558,71 @@ EOF
   done
 }
 
-@test "a scope that is not implemented is REFUSED, never quietly ignored" {
-  local sc
-  for sc in run-scoped process-scoped; do
-    run_engine -- claude --connect "instructions=copy native $sc" --version
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"scope '$sc' is not implemented"* ]]
-    [ ! -s "$H/argv" ]
-  done
+@test "join-scoped is REFUSED, never quietly ignored, and says why it is not built" {
+  run_engine -- claude --connect "instructions=copy native join-scoped" --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"scope 'join-scoped' is not implemented"*"shares its mounts"*"#147"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "process-scoped is refused with its new name" {
+  run_engine -- claude --connect "instructions=copy native process-scoped" --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'process-scoped' was renamed: write 'join-scoped'"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "run-scoped stores live apart from the role's, under @run" {
+  run_engine -- claude --connect 'skills=own native run-scoped' --connect 'instructions=own native' --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/@run/skills/own/$(slugify "$C/skills")" "$C/skills"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
+}
+
+@test "a run-scoped store is gone when the run ends, and the role's own store stays" {
+  run_engine -- claude --connect 'skills=own native run-scoped' --connect 'instructions=own native' --version
+  [ "$status" -eq 0 ]
+  [ ! -e "$SBOX/@run" ]                                 # the supervisor cleared it at exit
+  [ -d "$SBOX/instructions/own/$(slugify "$C/rules")" ] # the role's store is kept
+}
+
+@test "a run-scoped store left by a run that did not end cleanly is cleared at the next cold start" {
+  # A keeper killed with -9 runs no exit step; the next launch is what clears.
+  local st
+  st="$SBOX/@run/skills/own/$(slugify "$C/skills")"
+  mkdir -p "$st"
+  printf 'LEFT\n' >"$st/stale.md"
+  engine_bg -- claude --connect 'skills=own native run-scoped' --version
+  [ -d "$st" ]
+  [ ! -e "$st/stale.md" ]
+  release_bg
+}
+
+@test "a join into a running launch shares its run-scoped store: one run is one installation" {
+  engine_bg -- claude --connect 'skills=own native run-scoped' --version
+  local st
+  st="$SBOX/@run/skills/own/$(slugify "$C/skills")"
+  printf 'THIS RUN\n' >"$st/x.md"
+  run_engine -- claude --connect 'skills=own native run-scoped' --version
+  [ "$status" -eq 0 ]
+  [ ! -s "$H/argv" ]                   # joined, not rebuilt
+  [ "$(cat "$st/x.md")" = "THIS RUN" ] # and not cleared
+  release_bg
+  [ ! -e "$SBOX/@run" ]
+}
+
+@test "read-only run-scoped is accepted, and is the plain read-only bind: nothing is ever written" {
+  run_engine -- claude --connect 'instructions=read-only native run-scoped' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$C/rules" "$C/rules"
+}
+
+@test "a declared path can be run-scoped too" {
+  mkdir -p "$PROJ/scratch"
+  run_engine -- claude --connect './scratch/=own run-scoped' --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$SBOX/@run/@paths/own/$(slugify "$PROJ/scratch")" "$PROJ/scratch"
+  [ ! -e "$SBOX/@run" ]
 }
 
 @test "the withdrawn scopes are refused, each saying what to write instead" {
@@ -587,12 +644,12 @@ EOF
   run_engine -- claude --connect 'instructions=copy native world-scoped' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown scope 'world-scoped'"* ]]
-  [[ "$output" == *"run-scoped|process-scoped"* ]]
+  [[ "$output" == *"run-scoped|join-scoped"* ]]
   [[ "$output" == *"nothing written means the role"* ]]
 }
 
 @test "two scopes in one spec are refused" {
-  run_engine -- claude --connect 'instructions=copy run-scoped process-scoped' --version
+  run_engine -- claude --connect 'instructions=copy run-scoped join-scoped' --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"two scopes"* ]]
 }

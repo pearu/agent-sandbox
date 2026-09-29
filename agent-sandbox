@@ -1169,9 +1169,14 @@ _as_connect_parse() {
   # first draft of this axis had are refused with what to write instead, because
   # each now means something that is not a scope.
   case "$scope" in
-    "") ;; # the role: across runs, until reset or deleted
-    run-scoped | process-scoped)
-      _as_msg "connect ($where): scope '$scope' is not implemented in this engine (asked for '$ch'). Refusing rather than accepting it: a scope that parses and is never applied reads as isolation that is not there."
+    "") ;;         # the role: across runs, until reset or deleted
+    run-scoped) ;; # one run of the role's launch (#105): see _as_run_scoped_clear
+    join-scoped)
+      _as_msg "connect ($where): scope 'join-scoped' is not implemented in this engine (asked for '$ch'): every process of a role is joined into one launch and shares its mounts (#121), so a store of one join's own needs a mount namespace of the join's own (#147). Refusing rather than accepting it: a scope that parses and is never applied reads as isolation that is not there."
+      return 1
+      ;;
+    process-scoped)
+      _as_msg "connect ($where): scope 'process-scoped' was renamed: write 'join-scoped' -- a store for one join, which a joined command and everything it starts share (#147)."
       return 1
       ;;
     sandbox-scoped)
@@ -1187,7 +1192,7 @@ _as_connect_parse() {
       return 1
       ;;
     *)
-      _as_msg "connect ($where): unknown scope '$scope' for '$ch' (run-scoped|process-scoped; nothing written means the role)."
+      _as_msg "connect ($where): unknown scope '$scope' for '$ch' (run-scoped|join-scoped; nothing written means the role)."
       return 1
       ;;
   esac
@@ -1391,11 +1396,17 @@ _as_connect_apply() {
   local line ch mode entry kind path slot base empty manifest upper work seen src _connect_from
   local -a _cow_fellback=()
   local -a fields=()
-  base="$(_as_sandbox_dir)"
+  local rolebase
+  rolebase="$(_as_sandbox_dir)"
   for line in "${profile_channels[@]}"; do
     IFS=$'\t' read -r -a fields <<<"$line"
     ch="${fields[0]}"
     mode="${_connect_mode[$ch]:-live}"
+    # A run-scoped channel's stores live apart, under @run, which lasts one run of the
+    # role's launch (_as_run_scoped_clear); every mode then does what it always does
+    # there -- `own` starts empty, `copy` seeds, `copy-on-write` gets a fresh upper.
+    base="$rolebase"
+    [[ "${_connect_scope[$ch]:-}" == run-scoped ]] && base="$rolebase/@run"
     for entry in "${fields[@]:1}"; do
       kind="${entry%%:*}"
       path="${entry#*:}"
@@ -1589,12 +1600,14 @@ _as_connect_path_warn() {
 # at a skipped path is picked up at the next launch.
 _as_connect_apply_paths() {
   ((${#_connect_paths[@]})) || return 0
-  local p key mode base slot manifest real kind
+  local p key mode base slot manifest real kind rolebase
   local _prot_what _prot_path _prot_how
-  base="$(_as_sandbox_dir)/@paths"
+  rolebase="$(_as_sandbox_dir)"
   for p in "${_connect_paths[@]}"; do
     key="${_connect_key[$p]}"
     mode="${_connect_mode[$p]}"
+    base="$rolebase/@paths"
+    [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
     if [[ ! -e "$p" ]]; then
       if [[ "$mode" == own ]] && ((${_connect_isdir[$p]})); then
         _as_connect_path_warn "$p" "$key" "$mode"
@@ -2116,6 +2129,7 @@ _as_keeper_supervise() {
   kill "$dog" 2>/dev/null
   flock 8 # held already when it ended because it was idle; taken when it ended from inside
   _as_session_cleanup
+  _as_run_scoped_clear "$sb"
   rm -rf -- "$kd"
   flock -u 8
   exit 0
@@ -2207,6 +2221,20 @@ _as_keeper_shutdown() {
   done
   _as_msg "role '${_role:-default}': its keeper did not end within 15 s (supervisor $spid); see $sb/keeper.log"
   return 1
+}
+
+# _as_run_scoped_clear SANDBOXDIR -- discard every run-scoped store of the role: its
+# @run directory (#105). Called at a keeper's COLD START, before anything is built or
+# mounted, and by the supervisor once the launch has ended. The start is what makes it
+# crash-safe -- a launch killed with -9 runs no exit step, and the next one clears what it
+# left -- and the exit is what makes the store "gone when the run ends" (#125) rather
+# than lying on disk until the next run. A process that joins a running launch shares
+# what is there: one run of a role is one installation.
+_as_run_scoped_clear() {
+  [[ -e "$1/@run" ]] || return 0
+  # CHMOD BEFORE REMOVING: an overlay's workdir keeps a mode-000 directory.
+  chmod -R u+rwX -- "$1/@run" 2>/dev/null
+  rm -rf -- "$1/@run"
 }
 
 # _as_keeper_start SANDBOXDIR LAUNCHER... -- start this role's keeper; the lock is held.
@@ -4373,6 +4401,9 @@ agent_sandbox() (
         return 1
       fi
     fi
+    # A COLD START: no keeper is live, the lock is held, and this invocation builds the
+    # next launch. What a run-scoped store held belongs to a run that is over.
+    _as_run_scoped_clear "$_keeper_sb"
   fi
 
   if declare -F profile_prepare >/dev/null; then

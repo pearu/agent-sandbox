@@ -377,3 +377,18 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ "$rc" -ne 0 ] # the held command did not finish on its own: it was ended
   wait_gone "$t"
 }
+
+@test "run-scoped copy-on-write: a write lasts the run, a join sees it, the next run starts from the source" {
+  local cow=(AGENT_SANDBOX_CONNECT='docs=copy-on-write native run-scoped')
+  bg_sandboxed a "${BASE[@]}" "${cow[@]}" -- --exec sh -c "echo MINE >\"\$HOME/.probe/docs/a.md\"; $(hold a)"
+  run_sandboxed "${BASE[@]}" "${cow[@]}" -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen.b'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/seen.b")" = MINE ]            # one run is one installation
+  [ "$(cat "$IHOME/.probe/docs/a.md")" = YOURS ] # the source never saw it
+  release a
+  wait "$BG_PID"
+  [ ! -e "$SB/@run" ] # gone with the run, overlay layers and all
+  run_sandboxed "${BASE[@]}" "${cow[@]}" -- --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen.c'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/seen.c")" = YOURS ] # the next run reads the source again
+}

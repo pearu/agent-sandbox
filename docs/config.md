@@ -126,10 +126,17 @@ Sections:
 
   A third token, the **scope**, names a lifetime *shorter* than the role's for the
   sandbox's side of a channel. Written nothing, a channel's storage belongs to the role:
-  it persists across runs, the behaviour you already have. `run-scoped` (one run of the
-  role's launch) and `process-scoped` (one process in it) parse and are **refused** for
-  now, because a scope that were accepted and never applied would read as isolation that
-  is not there. The first draft's names are refused with what to write instead:
+  it persists across runs, the behaviour you already have. **`run-scoped`** is one run of
+  the role's launch: the store is made fresh when the launch starts and removed when it
+  ends, so `own` starts empty, `copy` re-seeds and `copy-on-write` gets a fresh upper
+  layer every run -- for what the agent itself authored and should not run again later
+  (`workflows`, `agents`). Everything joined into that run shares it; at `read-only` it
+  changes nothing, since nothing is written. `join-scoped` (one join: a joined command
+  and all it starts) parses and is **refused**: every process of a role shares its
+  launch's mounts, so a store of one join's own needs a mount namespace of the join's
+  own, which is #147; a scope that were accepted and never applied would read as
+  isolation that is not there. `process-scoped`, its first name, is refused naming it.
+  The first draft's other names are refused with what to write instead:
   `sandbox-scoped` (the default has no name), `project-scoped` (sharing across roles is a
   `sandbox:<project>/<role>` source, not a scope) and `session-scoped` (a store of its own
   per conversation is a role of its own).
