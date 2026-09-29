@@ -2591,9 +2591,11 @@ _as_role_delete() {
     return 1
   fi
   _as_holder_legacy_stop "$sb"
+  # The chmod comes first: an overlay leaves <work>/work at mode 000, and du, unable to
+  # read it, would fail -- ending this function under set -e with no message.
   local size
-  size="$(du -sh -- "$sb" 2>/dev/null | cut -f1)"
   chmod -R u+rwX -- "$sb" 2>/dev/null
+  size="$(du -sh -- "$sb" 2>/dev/null | cut -f1)"
   rm -rf -- "$sb" || {
     _as_msg "role '${_role:-default}': could not remove all of $sb"
     return 1

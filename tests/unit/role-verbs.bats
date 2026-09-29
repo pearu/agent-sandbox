@@ -101,6 +101,18 @@ slugify() {
   [ "$(cat "$SBOX/instructions/copy/$(slugify "$C/rules")/topic.md")" = NATIVE ]
 }
 
+@test "--delete removes a role whose overlays left an unreadable work directory" {
+  # overlayfs leaves <work>/work at mode 000; du cannot read it and exits 1, which under
+  # set -e ended --delete silently before the chmod that makes it removable
+  run_engine -- claude --version
+  mkdir -p "$SBOX/skills/work/x/work"
+  chmod 000 "$SBOX/skills/work/x/work"
+  run_engine -- claude --delete
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deleted its stores"* ]]
+  [ ! -e "$SBOX" ]
+}
+
 @test "--delete of a role with nothing stored says so" {
   run_engine -- claude --role fresh --delete
   [ "$status" -eq 0 ]
