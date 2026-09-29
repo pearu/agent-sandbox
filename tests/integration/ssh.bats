@@ -30,7 +30,7 @@ PROBE
 teardown() { rm -rf "${SHORT_BASE:-}"; }
 
 @test "--ssh HOST: the constrained key is in the agent inside, known_hosts read-only, the private key invisible; clean teardown" {
-  run_sandboxed AGENT_SANDBOX_NET=none -- --ssh example.test --ssh-key "$IHOME/.ssh/id_ed25519" run
+  run_sandboxed AGENT_SANDBOX_NET=none -- --ssh example.test --ssh-key "$IHOME/.ssh/id_ed25519" probe run
   [ "$status" -eq 0 ]
   [[ "$output" == *"constrained to: example.test"* ]]
   [[ "$(report sock)" == "$SHORT_BASE"/session.*/agent.sock ]]
@@ -45,7 +45,7 @@ teardown() { rm -rf "${SHORT_BASE:-}"; }
 }
 
 @test "--ssh to a host without a trusted key is refused before any session exists" {
-  run_sandboxed AGENT_SANDBOX_NET=none -- --ssh nowhere.test --ssh-key "$IHOME/.ssh/id_ed25519" run
+  run_sandboxed AGENT_SANDBOX_NET=none -- --ssh nowhere.test --ssh-key "$IHOME/.ssh/id_ed25519" probe run
   [ "$status" -eq 1 ]
   [[ "$output" == *"no trusted host key for 'nowhere.test'"* ]]
   [ -z "$(ls -A "$SHORT_BASE")" ]
@@ -58,7 +58,7 @@ teardown() { rm -rf "${SHORT_BASE:-}"; }
   mkdir -p "$SHORT_BASE/session.dead" "$SHORT_BASE/session.live"
   echo "999999 1" >"$SHORT_BASE/session.dead/owner.id"
   printf '%s %s\n' "$live" "$(awk '{print $22}' "/proc/$live/stat")" >"$SHORT_BASE/session.live/owner.id"
-  run_sandboxed AGENT_SANDBOX_NET=none -- --ssh example.test --ssh-key "$IHOME/.ssh/id_ed25519" run
+  run_sandboxed AGENT_SANDBOX_NET=none -- --ssh example.test --ssh-key "$IHOME/.ssh/id_ed25519" probe run
   kill "$live"
   [ "$status" -eq 0 ]
   [ ! -d "$SHORT_BASE/session.dead" ]
@@ -66,7 +66,7 @@ teardown() { rm -rf "${SHORT_BASE:-}"; }
 }
 
 @test "--allow and --ssh share one session directory and are cleaned up together" {
-  run_sandboxed -- --ssh example.test --ssh-key "$IHOME/.ssh/id_ed25519" --allow pypi.org run
+  run_sandboxed -- --ssh example.test --ssh-key "$IHOME/.ssh/id_ed25519" --allow pypi.org probe run
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist: pypi.org"* ]]
   [ "$(report agent_keys)" = 1 ]

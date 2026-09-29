@@ -30,14 +30,14 @@ trust() {
 }
 
 @test "a foreground session is sandboxed" {
-  run_engine -- claude -p hello
+  run_engine -- asb claude -p hello
   [ "$status" -eq 0 ]
   sandboxed
   join_has "$BIN" -p hello
 }
 
 @test "--bg is sandboxed too: joined into the role's launch, with no wrapper anywhere" {
-  run_engine -- claude --bg 'do a thing'
+  run_engine -- asb claude --bg 'do a thing'
   [ "$status" -eq 0 ]
   sandboxed
   join_has "$BIN" --bg 'do a thing'
@@ -50,7 +50,7 @@ trust() {
   local f
   for f in "--sandbox none" "--sandbox=fg" "--sandbox bg"; do
     # shellcheck disable=SC2086 # flag and value
-    run_engine -- claude $f -p hello
+    run_engine -- asb $f claude -p hello
     [ "$status" -eq 2 ]
     [[ "$output" == *"--sandbox was removed"*"--preset none"* ]]
     native
@@ -58,7 +58,7 @@ trust() {
 }
 
 @test "AGENT_SANDBOX_CLAUDE_SANDBOX is refused, naming --preset none" {
-  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- claude -p hello
+  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- asb claude -p hello
   [ "$status" -ne 0 ]
   [[ "$output" == *"AGENT_SANDBOX_CLAUDE_SANDBOX was removed"*"--preset none"* ]]
   native
@@ -67,38 +67,38 @@ trust() {
 @test "[claude] sandbox in an approved dot-file is refused, naming --preset none" {
   printf '[claude]\nsandbox = none\n' >"$PROJ/.agent-sandbox"
   trust
-  run_engine -- claude -p hello
+  run_engine -- asb claude -p hello
   [ "$status" -ne 0 ]
   [[ "$output" == *"[claude] sandbox was removed"*"--preset none"* ]]
   native
 }
 
 @test "--preset none runs the agent with no sandbox, and says so" {
-  run_engine -- claude --preset none -p hello
+  run_engine -- asb --preset none claude -p hello
   [ "$status" -eq 0 ]
   native
   [[ "$output" == *"stub-agent argv: -p hello"* ]]
   [[ "$output" == *"preset none"*"no sandbox"* ]]
-  run_engine -- claude --preset none --bg 'do a thing'
+  run_engine -- asb --preset none claude --bg 'do a thing'
   native
   [[ "$output" == *"stub-agent argv: --bg do a thing"* ]]
 }
 
 @test "--preset none with --exec runs the command with no sandbox" {
-  run_engine -- claude --preset none --exec /bin/echo plain
+  run_engine -- asb --preset none --profile claude --exec /bin/echo plain
   [ "$status" -eq 0 ]
   native
   [[ "$output" == *"plain"* ]]
 }
 
 @test "none is the flag only: from the environment or a project file it is refused" {
-  run_engine AGENT_SANDBOX_PRESET=none -- claude -p hello
+  run_engine AGENT_SANDBOX_PRESET=none -- asb claude -p hello
   [ "$status" -ne 0 ]
   [[ "$output" == *"'none' runs the agent with no sandbox at all"* ]]
   native
   printf '[sandbox]\npreset = none\n' >"$PROJ/.agent-sandbox"
   trust
-  TEST_PRESET="" run_engine -- claude -p hello
+  TEST_PRESET="" run_engine -- asb claude -p hello
   [ "$status" -ne 0 ]
   [[ "$output" == *"only accepted as the --preset flag"* ]]
   native
@@ -108,23 +108,23 @@ trust() {
   printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
   trust
   printf '[net]\nmode = open\n' >"$PROJ/.agent-sandbox" # changed since approved
-  run_engine -- claude --preset none -p hello
+  run_engine -- asb --preset none claude -p hello
   [ "$status" -eq 0 ]
   [[ "$output" == *"stub-agent argv: -p hello"* ]]
 }
 
 @test "inside a sandbox, claude runs in it as it is; --preset asks for a nested one" {
-  run_engine AGENT_SANDBOX=1 -- claude -p hello
+  run_engine AGENT_SANDBOX=1 -- asb claude -p hello
   native
   [[ "$output" == *"stub-agent argv: -p hello"* ]]
-  run_engine AGENT_SANDBOX=1 -- claude --preset isolated -p hello
+  run_engine AGENT_SANDBOX=1 -- asb --preset isolated claude -p hello
   sandboxed
 }
 
 @test "a management verb with no running role starts none: a question gets the empty answer" {
   local v
   for v in agents logs; do
-    run_engine -- claude "$v" --json
+    run_engine -- asb claude "$v" --json
     [ "$status" -eq 0 ]
     [[ "$output" == *"role 'default' is not running"* ]]
     native
@@ -134,7 +134,7 @@ trust() {
 @test "a management verb that acts on a session is refused when the role is not running" {
   local v
   for v in attach stop rm daemon; do
-    run_engine -- claude "$v" x
+    run_engine -- asb claude "$v" x
     [ "$status" -ne 0 ]
     [[ "$output" == *"role 'default' is not running"* ]]
     native
@@ -142,8 +142,8 @@ trust() {
 }
 
 @test "a management verb joins the running role, with no briefing on its argv" {
-  engine_bg -- claude --bg 'a task'
-  run_engine -- claude agents --json
+  engine_bg -- asb claude --bg 'a task'
+  run_engine -- asb claude agents --json
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ] # nothing built
   [ "${JOINV[*]}" = "$BIN agents --json" ]
@@ -153,27 +153,27 @@ trust() {
 @test "under an unapproved edit, a verb finds the one running role; with none it answers, with two it asks" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg -- claude --role r --version
+  engine_bg -- asb --role r claude --version
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox" # not approved
-  run_engine -- claude agents
+  run_engine -- asb claude agents
   [ "$status" -eq 0 ]
   [ "${JOINV[*]}" = "$BIN agents" ]
   release_bg
-  run_engine -- claude agents
+  run_engine -- asb claude agents
   [ "$status" -eq 0 ]
   [[ "$output" == *"no role of this project is running"* ]]
-  run_engine -- claude stop x
+  run_engine -- asb claude stop x
   [ "$status" -ne 0 ]
 }
 
 @test "under an unapproved edit, with two roles running, a verb asks for --role" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust
-  engine_bg -- claude --role r --version
+  engine_bg -- asb --role r claude --version
   local first=$BG_PID
-  engine_bg -- claude --role s --version
+  engine_bg -- asb --role s claude --version
   printf '[connect]\nskills = own native\n' >"$PROJ/.agent-sandbox"
-  run_engine -- claude agents
+  run_engine -- asb claude agents
   [ "$status" -ne 0 ]
   [[ "$output" == *"2 are running"*"--role"* ]]
   release_bg
@@ -181,12 +181,12 @@ trust() {
 }
 
 @test "--shutdown ends the role's launch; with none running it says so" {
-  run_engine -- claude --shutdown
+  run_engine -- asb --shutdown claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"role 'default' is not running"* ]]
-  engine_bg -- claude --version
+  engine_bg -- asb claude --version
   [ -e "$SBOX/default/keeper/id" ]
-  run_engine -- claude --shutdown
+  run_engine -- asb --shutdown claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"ended, with everything that ran in it"* ]]
   [ ! -e "$SBOX/default/keeper" ]
@@ -194,32 +194,32 @@ trust() {
 }
 
 @test "--shutdown names the role it ends, and ends no other" {
-  engine_bg -- claude --role one --version
-  run_engine -- claude --role two --shutdown
+  engine_bg -- asb --role one claude --version
+  run_engine -- asb --role two --shutdown claude
   [[ "$output" == *"role 'two' is not running"* ]]
   [ -e "$SBOX/one/keeper/id" ]
   release_bg
 }
 
 @test "a --bg records workspace trust in the role's own config file when it is not there, once" {
-  TEST_PRESET=isolated run_engine -- claude --bg 'a task'
+  TEST_PRESET=isolated run_engine -- asb claude --bg 'a task'
   [ "$status" -eq 0 ]
   [[ "$output" == *"recorded workspace trust for $PROJ in role 'default'"* ]]
   local store
   store="$(find "$SBOX/default/config" -name '*claude.json' | head -1)"
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["projects"][sys.argv[2]]["hasTrustDialogAccepted"]' "$store" "$PROJ"
-  TEST_PRESET=isolated run_engine -- claude --bg 'another'
+  TEST_PRESET=isolated run_engine -- asb claude --bg 'another'
   [[ "$output" != *"recorded workspace trust"* ]]
   # a foreground session records nothing: it can ask
   rm -rf "$SBOX"
-  TEST_PRESET=isolated run_engine -- claude -p hi
+  TEST_PRESET=isolated run_engine -- asb claude -p hi
   [[ "$output" != *"recorded workspace trust"* ]]
 }
 
 @test "an unknown [claude] key in a trusted dot-file warns (typo guard), known ones do not" {
   printf '[claude]\nhide = ide\nbogus = x\n' >"$PROJ/.agent-sandbox"
   trust
-  run_engine -- claude -p hello
+  run_engine -- asb claude -p hello
   [[ "$output" == *"[claude] key 'bogus' is not one this profile reads"* ]]
   [[ "$output" != *"key 'hide' is not one"* ]]
 }

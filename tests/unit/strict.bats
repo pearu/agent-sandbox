@@ -50,7 +50,7 @@ pasta_argv() {
 }
 
 @test "strict: pasta owns the netns, the wrapper derives the gateway inside it and builds the nft rule + proxy env there, bwrap shares the net, CA bound, port forwarding off both ways" {
-  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- claude --version
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
   [ "$status" -eq 0 ]
   local -a P
   mapfile -t P <"$H/pasta_argv"
@@ -78,7 +78,7 @@ pasta_argv() {
   printf '[net]\nhost-port = 11434\nagent-port = 3000   # vite\n' >"$PROJ/.agent-sandbox"
   trust
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_HOST_PORTS="5432, 11434" -- claude --host-port 5432 --agent-port 8000 --version
+    AGENT_SANDBOX_HOST_PORTS="5432, 11434" -- asb --host-port 5432 --agent-port 8000 claude --version
   [ "$status" -eq 0 ]
   pasta_argv
   [[ "$JOINED" == *" -T 5432,11434 "* ]]                         # flags, knob, dot-file: a union, deduplicated
@@ -88,7 +88,7 @@ pasta_argv() {
   [[ "$output" == *"agent ports published at the host's 127.0.0.1: 8000 3000"* ]]
   # none anywhere closes that direction for the session, whatever the others list
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_AGENT_PORTS=none -- claude --host-port none --agent-port 8000 --version
+    AGENT_SANDBOX_AGENT_PORTS=none -- asb --host-port none --agent-port 8000 claude --version
   [ "$status" -eq 0 ]
   pasta_argv
   [[ "$JOINED" == *" -T none "* && "$JOINED" == *" -t none "* ]]
@@ -101,7 +101,7 @@ pasta_argv() {
   # refuse here on a host-side gateway guess). The refusal for a gateway-less
   # netns now lives in the wrapper the engine hands pasta.
   rm -f "$H/bin/ip"
-  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- claude --version
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/pasta_argv" ]                                                 # pasta WAS invoked
   grep -q 'no IPv4 gateway inside the network namespace' "$H/pasta_argv" # the wrapper refuses if the netns has none
@@ -109,7 +109,7 @@ pasta_argv() {
 
 @test "strict: --ssh-unrestricted is refused (the firewall must pin named hosts), before any agent starts" {
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_SESSION_BASE="$H/base" -- claude --ssh-unrestricted --version
+    AGENT_SANDBOX_SESSION_BASE="$H/base" -- asb --ssh-unrestricted claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"--ssh-unrestricted is not supported in strict mode"* ]]
   [ -z "$(find "$H/base" -name agent.sock 2>/dev/null)" ] # no agent socket created
@@ -155,7 +155,7 @@ X
   : >"$H/home/.ssh/known_hosts"
   : >"$H/key"
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_SESSION_BASE="$H/base" -- claude --ssh git.example --ssh-key "$H/key" --version
+    AGENT_SANDBOX_SESSION_BASE="$H/base" -- asb --ssh git.example --ssh-key "$H/key" claude --version
   [ "$status" -eq 0 ]
   pasta_argv
   # both resolved IPs pinned on port 22, spliced into the ruleset
@@ -193,7 +193,7 @@ exit 0
 S
   chmod +x "$H/bin/pasta" "$H/bin/ip"
 
-  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- claude --version
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
   [ "$status" -eq 0 ]
   local -a ARGV
   mapfile -t ARGV <"$H/argv" # what the real bwrap would have received
@@ -237,7 +237,7 @@ S
   mkdir -p "$H/seccomp"
   printf 'not-a-real-bpf' >"$H/seccomp/$(uname -m).bpf"
   run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
-    AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$H/seccomp" -- claude --version
+    AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$H/seccomp" -- asb claude --version
   [ "$status" -eq 0 ]
   local -a ARGV
   mapfile -t ARGV <"$H/argv"

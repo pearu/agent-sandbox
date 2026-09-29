@@ -46,7 +46,7 @@ run_claude() {
     AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
     AGENT_SANDBOX_FORWARD="SHARED_SLUG OTHER_SLUG" SHARED_SLUG="$SHARED_SLUG" OTHER_SLUG="$OTHER_SLUG" \
     "$@" \
-    bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" --profile claude probe
+    bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe
   declare -gA M=()
   local k v
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true

@@ -25,14 +25,14 @@ store() { printf '%s/config/%s/%s' "$SBOX" "$1" "$(slugify "$INSIDE")"; }
 json_get() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
 
 @test "config is a channel the profile declares, and a spec for it parses" {
-  run_engine -- claude --connect 'config=seed-only native' --version
+  run_engine -- asb --connect 'config=seed-only native' claude --version
   [ "$status" -eq 0 ]
-  run_engine -- claude --connect 'nosuch=own native' --version
+  run_engine -- asb --connect 'nosuch=own native' claude --version
   [[ "$output" == *"It carries:"*"config"* ]]
 }
 
 @test "under inherit, config is seed-only: this project's filtered seed, bound inside, CLAUDE_CONFIG_DIR set, the native file untouched" {
-  TEST_PRESET=inherit run_engine -- claude --version
+  TEST_PRESET=inherit run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local s
   s="$(store seed-only)"
@@ -49,7 +49,7 @@ json_get() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(
 }
 
 @test "seed-only config is never touched again: a server added inside stays, a native change never arrives (#119)" {
-  run_engine -- claude --connect 'config=seed-only native' --version
+  run_engine -- asb --connect 'config=seed-only native' claude --version
   local s
   s="$(store seed-only)"
   python3 - "$s" <<'PY'
@@ -60,14 +60,14 @@ json.dump(d, open(sys.argv[1], "w"))
 PY
   cp "$s" "$H/store-before.json"
   printf '{"a":2,"mcpServers":{"native2":{}},"projects":{"/third":{}}}' >"$NATIVE_CFG"
-  run_engine -- claude --quiet --connect 'config=seed-only native' --version
+  run_engine -- asb --quiet --connect 'config=seed-only native' claude --version
   [ "$status" -eq 0 ]
   cmp "$s" "$H/store-before.json" # byte-identical: the engine did not rewrite it
   [[ "$output" != *"mcpServers"* ]]
 }
 
 @test "copy config is seeded from the same filtered view, and other projects never arrive" {
-  run_engine -- claude --connect 'config=copy native' --version
+  run_engine -- asb --connect 'config=copy native' claude --version
   [ "$status" -eq 0 ]
   local s
   s="$(store copy)"
@@ -76,32 +76,32 @@ PY
   run ! grep -q SECRET "$s"
   # the store is untouched, the source moves: the next launch takes the new view
   printf '{"a":3,"projects":{"%s":{"t":false},"/elsewhere":{"lastSessionFirstPrompt":"SECRET2"}}}' "$PROJ" >"$NATIVE_CFG"
-  run_engine -- claude --connect 'config=copy native' --version
+  run_engine -- asb --connect 'config=copy native' claude --version
   [ "$(json_get "$s" 'd["a"]')" = 3 ]
   run ! grep -q SECRET2 "$s"
 }
 
 @test "own config is the role's own, starting from {} with nothing of yours" {
-  run_engine -- claude --connect 'config=own native' --version
+  run_engine -- asb --connect 'config=own native' claude --version
   [ "$status" -eq 0 ]
   local s
   s="$(store own)"
   argv_has --bind "$s" "$INSIDE"
   [ "$(cat "$s")" = '{}' ]
-  TEST_PRESET=isolated run_engine -- claude --version
+  TEST_PRESET=isolated run_engine -- asb claude --version
   argv_has --bind "$s" "$INSIDE"
 }
 
 @test "read-only and read-write bind the native file itself, whole, only when asked for" {
-  run_engine -- claude --connect 'config=read-only native' --version
+  run_engine -- asb --connect 'config=read-only native' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$NATIVE_CFG" "$INSIDE"
-  run_engine -- claude --connect 'config=read-write native' --version
+  run_engine -- asb --connect 'config=read-write native' claude --version
   argv_has --bind "$NATIVE_CFG" "$INSIDE"
 }
 
 @test "under shared, config is seed-only: shared is the engine before 0.3, and 0.2.1 already had the per-project copy (#90 stays closed)" {
-  TEST_PRESET=shared run_engine -- claude --version
+  TEST_PRESET=shared run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$(store seed-only)" "$INSIDE"
   run ! argv_has --bind "$NATIVE_CFG" "$INSIDE"
@@ -109,7 +109,7 @@ PY
 }
 
 @test "under native the config file is neither copied nor relocated" {
-  run_engine -- claude --preset native --version
+  run_engine -- asb --preset native claude --version
   [ "$status" -eq 0 ]
   run ! grep -qF "$INSIDE" "$H/argv"
   run ! grep -q CLAUDE_CONFIG_DIR "$H/argv"
@@ -119,7 +119,7 @@ PY
 @test "the per-project copy of 0.3 becomes the default role's seed-only store, moved once" {
   mkdir -p "$(dirname "$OLD_COPY")"
   printf '{"kept":"from 0.3"}' >"$OLD_COPY"
-  TEST_PRESET=inherit run_engine -- claude --version
+  TEST_PRESET=inherit run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$(store seed-only)")" = '{"kept":"from 0.3"}' ]
   [ ! -e "$OLD_COPY" ]
@@ -127,14 +127,14 @@ PY
 }
 
 @test "--reset config discards the store, and the next launch seeds a fresh filtered view" {
-  run_engine -- claude --connect 'config=seed-only native' --version
+  run_engine -- asb --connect 'config=seed-only native' claude --version
   local s
   s="$(store seed-only)"
   printf '{"a":9,"projects":{}}' >"$NATIVE_CFG"
-  run_engine -- claude --reset config
+  run_engine -- asb --reset config claude
   [ "$status" -eq 0 ]
   [ ! -e "$s" ]
-  run_engine -- claude --connect 'config=seed-only native' --version
+  run_engine -- asb --connect 'config=seed-only native' claude --version
   [ "$(json_get "$s" 'd["a"]')" = 9 ]
 }
 
@@ -143,7 +143,7 @@ PY
   mkdir -p "$H/nopy"
   cp -s /usr/bin/* "$H/nopy/" 2>/dev/null || true
   rm -f "$H/nopy"/python3*
-  run_engine PATH="$H/bin:$H/nopy" -- claude --connect 'config=seed-only native' --version
+  run_engine PATH="$H/bin:$H/nopy" -- asb --connect 'config=seed-only native' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"needs python3"* ]]
   [ ! -e "$(store seed-only)" ]
@@ -155,7 +155,7 @@ PY
   # shellcheck disable=SC2016 # the stub's own $1 and $@
   printf '#!/usr/bin/env bash\n[ "$1" = - ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
-  run_engine -- claude --connect 'config=seed-only native' --version
+  run_engine -- asb --connect 'config=seed-only native' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"python3 failed (exit 3): this project's config file is seeded from the whole"* ]]
   cmp "$(store seed-only)" "$H/native-before.json"
@@ -163,11 +163,11 @@ PY
 }
 
 @test "user-mcp is refused in every form, naming config = own (#132)" {
-  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=none -- claude --version
+  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=none -- asb claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"user-mcp"*"removed"*"config = own"* ]]
   [ ! -s "$H/argv" ]
-  run_engine -- claude --user-mcp none --version
+  run_engine -- asb --user-mcp none claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"config = own"* ]]
 }
@@ -183,17 +183,17 @@ for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 . "${0%/*}/keeper-tail"
 STUB
   chmod +x "$H/bin/bwrap"
-  run_engine -- claude --connect 'config=seed-only native' --version
+  run_engine -- asb --connect 'config=seed-only native' claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$INSIDE" ]
 }
 
 @test "under read-only, claude mcp add --scope user typed at the shell runs natively" {
-  run_engine -- claude --connect 'config=read-only native' mcp add --scope user foo -- true
+  run_engine -- asb --connect 'config=read-only native' claude mcp add --scope user foo -- true
   [ "$status" -eq 0 ]
   [[ "$output" == *"stub-agent argv: mcp add --scope user foo -- true"* ]]
   [ ! -s "$H/argv" ] # no sandbox was built
   # local scope is the project's own entry: it stays inside
-  run_engine -- claude --connect 'config=read-only native' mcp add --scope local foo -- true
+  run_engine -- asb --connect 'config=read-only native' claude mcp add --scope local foo -- true
   [ -s "$H/argv" ]
 }

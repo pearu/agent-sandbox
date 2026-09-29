@@ -18,8 +18,9 @@ source_engine() {
 }
 
 # A fake HOME with a stub Claude install, a stub agent binary, a project dir,
-# and a stub bwrap on PATH; the engine is reachable as `claude` (argv[0]
-# inference) and as `agent-sandbox`. Sets H.
+# and a stub bwrap on PATH. `claude` on PATH is the stub agent, linked from its
+# versions/ directory as Claude Code's native installer links it; the engine is
+# `asb` and `agent-sandbox` (#151). Sets H.
 make_harness() {
   H="$BATS_TEST_TMPDIR/h"
   mkdir -p "$H/bin" "$H/home/.local/share/claude/versions/2.1.300" "$H/proj" "$H/base"
@@ -75,13 +76,14 @@ sys.exit(int(os.environ.get("JOIN_EXIT", "0")))
 STUB
   printf '#!/usr/bin/env bash\necho "stub-agent argv: $*"\n' >"$H/home/.local/share/claude/versions/2.1.300/claude"
   chmod +x "$H/home/.local/share/claude/versions/2.1.300/claude"
-  ln -s "$ENGINE" "$H/bin/claude"
+  ln -s "$H/home/.local/share/claude/versions/2.1.300/claude" "$H/bin/claude"
+  ln -s "$ENGINE" "$H/bin/asb"
   ln -s "$ENGINE" "$H/bin/agent-sandbox"
   export H
 }
 
 # run_engine [VAR=value ...] -- CMD ARGS...
-# Runs CMD (claude | agent-sandbox | a path) from $H/proj with a clean
+# Runs CMD (asb | agent-sandbox | a path) from $H/proj with a clean
 # environment plus the given variables, the stub bwrap first on PATH, and the
 # argv recorded in $H/argv. Uses bats' `run`, so $status and $output are set.
 run_engine() {

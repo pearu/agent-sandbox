@@ -25,7 +25,7 @@ trust() {
   # The example's [net] mode is strict and its [seccomp] mode is on; pin both
   # from the shell (which wins) so this stays a parser check and never needs
   # pasta or a compiled filter.
-  run_engine AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_SECCOMP=off -- claude --version
+  run_engine AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_SECCOMP=off -- asb claude --version
   [ "$status" -eq 0 ]
   # Any unrecognized section or key would produce one of these:
   [[ "$output" != *"ignoring unknown section"* ]]

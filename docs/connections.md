@@ -499,8 +499,8 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 ### A role is one launch
 
-- A **role** is a named, persistent instance of a project under a policy: `claude --role
-  impl-1`. The sandbox key stays `<project slug>/<role>`, and `default` is the unnamed role.
+- A **role** is a named, persistent instance of a project under a policy: `asb --role
+  impl-1 claude`. The sandbox key stays `<project slug>/<role>`, and `default` is the unnamed role.
   What the engine calls a launch is the role's running instance; "launch" stays internal.
 - **Policy is selected by glob and section order.** *Built* for `[sandbox]` and `[connect]`:
   any section may take a role suffix, `[<section>:<glob>]`, which is that section for the
@@ -516,7 +516,7 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 - **Claude is an app like any other.** A Claude session id is derived from the role (the
   first session's), never the reverse, and one role can hold several Claude sessions
   (`/clear`, `/branch`, `--fork-session`, `claude` started inside `--exec bash`).
-  `claude --role foo -r` lists foo's sessions; a bare `claude -r` lists native ones only.
+  `asb --role foo claude -r` lists foo's sessions; a bare `claude -r` lists native ones only.
 
 ### The keeper: one running instance per role (#121)
 
@@ -591,7 +591,7 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 *Built.*
 
-- `claude --role x --bg` is "ensure x's keeper, join it, run `claude --bg` there". The daemon,
+- `asb --role x claude --bg` is "ensure x's keeper, join it, run `claude --bg` there". The daemon,
   its spare workers and pty hosts start inside (measured on 2.1.283), and `agents`, `attach`,
   `logs`, `stop`, `rm` and `daemon` join too. Each role has its own daemon. A `--bg` is
   sandboxed by default; `--preset none --bg` runs one natively.

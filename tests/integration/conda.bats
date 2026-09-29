@@ -27,7 +27,7 @@ PROBE
 }
 
 @test "default: env, base, other envs and host cache all read-only; ~/.conda writable; .condarc visible" {
-  run_sandboxed "${CENV[@]}" -- run
+  run_sandboxed "${CENV[@]}" -- probe run
   [ "$status" -eq 0 ]
   [ "$(report env_writable)" = no ]
   [ "$(report base_writable)" = no ]
@@ -39,7 +39,7 @@ PROBE
 }
 
 @test "write mode: only the active env becomes writable; downloads go to the sandbox-owned cache listed first" {
-  run_sandboxed "${CENV[@]}" AGENT_SANDBOX_CONDA_WRITE=1 AGENT_SANDBOX_CONDA_PKGS="$I/pkgs" -- run
+  run_sandboxed "${CENV[@]}" AGENT_SANDBOX_CONDA_WRITE=1 AGENT_SANDBOX_CONDA_PKGS="$I/pkgs" -- probe run
   [ "$status" -eq 0 ]
   [ "$(report env_writable)" = yes ]
   [ "$(report base_writable)" = no ]

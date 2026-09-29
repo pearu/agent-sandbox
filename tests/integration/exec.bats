@@ -23,7 +23,7 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
   # unambiguous, and reports what it can see of the host
   # shellcheck disable=SC2016 # deliberate: the inner sh expands these, not bats
   run_sandboxed AGENT_SANDBOX_NET=none AGENT_SANDBOX_FORWARD=TMP_MARKER \
-    TMP_MARKER="$TMP_MARKER" -- --exec /bin/sh -c '
+    TMP_MARKER="$TMP_MARKER" -- --profile probe --exec /bin/sh -c '
       R="$PWD/report"; : >"$R"
       printf "who=command\n" >>"$R"
       printf "home_writable=%s\n" "$(touch "$HOME/x" 2>/dev/null && echo yes || echo no)" >>"$R"
@@ -46,14 +46,14 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
 @test "--exec: the agent binary is still bound, so an agent started from inside can run" {
   # this is what makes one sandbox able to host agent sessions: --exec replaces
   # the entrypoint, not the contents
-  # AGENT_SANDBOX_TEST_BIN names the profile's binary on the host; forward it so
-  # the command inside can look for it at that same path
+  # PROBE_BIN names the profile's binary on the host (what `probe` on PATH resolves
+  # to); forward it so the command inside can look for it at that same path
   # shellcheck disable=SC2016 # deliberate: the inner sh expands these, not bats
-  run_sandboxed AGENT_SANDBOX_NET=none AGENT_SANDBOX_FORWARD=AGENT_SANDBOX_TEST_BIN \
-    -- --exec /bin/sh -c '
+  run_sandboxed AGENT_SANDBOX_NET=none AGENT_SANDBOX_FORWARD=PROBE_BIN PROBE_BIN="$I/probe.sh" \
+    -- --profile probe --exec /bin/sh -c '
       R="$PWD/report"; : >"$R"
       printf "who=command\n" >>"$R"
-      printf "agent_bin_present=%s\n" "$([ -x "$AGENT_SANDBOX_TEST_BIN" ] && echo yes || echo no)" >>"$R"
+      printf "agent_bin_present=%s\n" "$([ -x "$PROBE_BIN" ] && echo yes || echo no)" >>"$R"
     '
   [ "$status" -eq 0 ]
   [ "$(report who)" = command ]

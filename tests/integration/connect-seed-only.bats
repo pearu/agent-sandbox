@@ -21,20 +21,20 @@ PROBE
 
 @test "seed-only: the sandbox reads the seed, keeps its own writes, and the source never changes" {
   printf 'SEED\n' >"$IHOME/.probe/docs/a.md"
-  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- run
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- probe run
   [ "$status" -eq 0 ]
   [ "$(report finished)" = yes ]
   [ "$(report doc)" = SEED ]
   [ "$(report wrote)" = yes ]
   [ "$(cat "$IHOME/.probe/docs/a.md")" = SEED ] # the source is untouched
   printf 'LATER\n' >"$IHOME/.probe/docs/a.md"   # and a later source change never arrives
-  run_sandboxed "${ENV[@]}" -- run
+  run_sandboxed "${ENV[@]}" -- probe run
   [ "$(report doc)" = SANDBOX ]
 }
 
 @test "seed-only over a file the source does not have leaves no mount point on the host" {
   rm -f "$IHOME/.probe/NOTES.md"
-  run_sandboxed "${ENV[@]}" -- run
+  run_sandboxed "${ENV[@]}" -- probe run
   [ "$status" -eq 0 ]
   [ "$(report finished)" = yes ]
   [ "$(report notes)" = "" ]

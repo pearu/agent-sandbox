@@ -11,10 +11,11 @@
 #
 # Variables a profile declares (all optional unless marked REQUIRED):
 #
-#   profile_command             on-PATH name of the agent. The installer
-#                               symlinks ~/.local/bin/<profile_command> at the
-#                               engine, and the engine infers the profile from
-#                               argv[0]. Defaults to the profile's file name.
+#   profile_command             on-PATH name of the agent: what the engine
+#                               runs when no command is typed (a verb, --exec,
+#                               `asb --profile NAME`). Defaults to the profile's
+#                               file name, which is also what a typed command's
+#                               basename must be to select the profile (#151).
 #   profile_config_binds=(...)  host paths bound READ-WRITE into the sandbox:
 #                               the agent's state and config. They must exist
 #                               when the sandbox is built; create them in
@@ -49,10 +50,14 @@
 #
 # Functions a profile defines:
 #
-#   profile_bin_discover()      REQUIRED. Locate the agent executable: set
-#                               profile_bin (path) and profile_version (for
-#                               messages). On failure print why (use _as_msg)
-#                               and return non-zero.
+#   profile_own_bin()           optional; for install.sh, not the launch. Where
+#                               the agent's own installer put its binary: set
+#                               profile_bin and profile_version, or print why
+#                               not and return non-zero. The installer points
+#                               a launcher an earlier install shadowed back at
+#                               it (#151). The engine never calls it: the agent
+#                               a launch runs is the typed command, resolved,
+#                               in profile_bin.
 #   profile_prepare()           optional. Runs right before the sandbox is
 #                               assembled; create state files here.
 #   profile_memory_scope(MODE [PATH...])  optional. Called with the memory
@@ -65,8 +70,9 @@
 #                               ($1 is the subcommand); its return code is
 #                               the exit code.
 #
-# What the engine provides to a profile: AGENT_SANDBOX_ENGINE (real path of
-# the engine file), AGENT_SANDBOX_PROFILE (this profile's name),
+# What the engine provides to a profile: profile_bin (the agent executable,
+# resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),
+# AGENT_SANDBOX_PROFILE (this profile's name),
 # AGENT_SANDBOX_PROFILE_DIR, and _as_msg (prefixed stderr messages). A
 # profile must not touch the engine's bwrap argument list directly -- the
 # declarations above are the whole interface, so that the sandbox's isolation
@@ -490,7 +496,7 @@ _claude_config_prepare() {
   return 0
 }
 
-profile_bin_discover() {
+profile_own_bin() {
   [[ -d "$_claude_versions_dir" ]] || {
     _as_msg "missing $_claude_versions_dir"
     return 1
@@ -533,28 +539,13 @@ profile_bin_discover() {
   return 0
 }
 
-# `claude update` (alias `upgrade`) and `claude install [target]` run the
-# newest installed binary directly on the host with the caller's environment;
-# the sandbox would block the download and has no writable versions directory.
-# The native updater installs under versions/<version>, and
-# profile_bin_discover always runs the highest version found there, so the
-# update takes effect on the next launch. As of Claude Code 2.1.263 the
-# updater refuses to overwrite a launcher at ~/.local/bin/claude that is not
-# its own versions/ symlink (it logs "Not replacing ..." and still reports
-# success), so the engine stays on PATH. Should an installer re-point the
-# launcher anyway, restore it right after the subcommand finishes.
+# `asb claude update` (alias `upgrade`) and `asb claude install [target]` run the
+# agent directly on the host with the caller's environment -- what `claude update`
+# does anyway, since nothing shadows `claude` (#151): the sandbox would block the
+# download and has no writable versions directory.
 profile_handle_subcommand() {
-  local launcher="$HOME/.local/bin/$profile_command" before after rc=0
-  before="$(readlink -f -- "$launcher" 2>/dev/null || true)"
-  _as_msg "running '$profile_version $*' on the host (unsandboxed)"
-  "$profile_bin" "$@" || rc=$?
-  after="$(readlink -f -- "$launcher" 2>/dev/null || true)"
-  if [[ "$before" == "$AGENT_SANDBOX_ENGINE" && "$after" != "$AGENT_SANDBOX_ENGINE" ]]; then
-    ln -sfn -- "$AGENT_SANDBOX_ENGINE" "$launcher"
-    _as_msg "installer re-pointed $launcher -> $after; restored -> $AGENT_SANDBOX_ENGINE"
-  fi
-  _as_msg "installed versions: $(_claude_list_versions | tr '\n' ' ')"
-  return "$rc"
+  _as_msg "running '$profile_bin $*' on the host (unsandboxed)"
+  exec "$profile_bin" "$@"
 }
 
 # _claude_mcp_user_scope ARGV... -- is this `mcp ... --scope user`?
@@ -887,18 +878,4 @@ profile_isolate() {
       *) _as_msg ".agent-sandbox: ignoring unknown [claude] key \"$key\"" ;;
     esac
   done
-}
-
-# profile_fallback_hint -- engine hook, printed when the sandbox cannot start.
-# Claude Code's native installer keeps its binaries under versions/ and
-# agent-sandbox never touches them, so the newest one is a working, unsandboxed
-# agent. This is the emergency exit; see docs/troubleshooting.md.
-profile_fallback_hint() {
-  local newest=""
-  [[ -d "$_claude_versions_dir" ]] && newest="$(_claude_list_versions | tail -n1)"
-  if [[ -n "$newest" && -x "$_claude_versions_dir/$newest" ]]; then
-    _as_msg "  $_claude_versions_dir/$newest"
-  else
-    _as_msg "  the newest entry under $_claude_versions_dir (none found there now)"
-  fi
 }

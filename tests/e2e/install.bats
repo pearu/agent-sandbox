@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # End to end: install.sh for real (no --dry-run) against a throwaway HOME, with
-# a fake Claude binary planted where the claude profile looks and `systemctl
-# --user` replaced by a shim that runs the unit's ExecStart itself; then the
-# installed launcher runs the fake agent through the installed proxy.
+# a fake Claude installed the way Claude Code's native installer does it (a binary
+# under versions/, linked from ~/.local/bin/claude) and `systemctl --user`
+# replaced by a shim that runs the unit's ExecStart itself; then the installed
+# `asb claude` runs the fake agent through the installed proxy (#151).
 #
 # Opt-in (AGENT_SANDBOX_E2E=1). It installs mitmproxy into the throwaway HOME
 # (network, about a minute) unless AGENT_SANDBOX_E2E_MITMDUMP names an existing
@@ -17,24 +18,25 @@ REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 # stdout+stderr to OUT, exit code to OUT.rc
 run_install() {
   (
-    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME='' \
+    cd "$E" && HOME="$H" PATH="$H/.local/bin:$B:$PATH" AGENT_SANDBOX_HOME='' \
       SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
-      "$REPO_ROOT/install.sh" >"$1" 2>&1
+      "$REPO_ROOT/install.sh" "${@:2}" >"$1" 2>&1
     echo $? >"$1.rc"
   )
 }
 
-# launch ARGS: the installed launcher, from the project dir, HOME = the throwaway home.
-# A missing launcher means the install in setup_file did not complete. Say so, with the
+# launch ARGS: the installed asb, from the project dir, HOME = the throwaway home and
+# its ~/.local/bin first on PATH, as a user's would be. ARGS as typed after `asb`.
+# A missing asb means the install in setup_file did not complete. Say so, with the
 # install's own output, rather than let every later test fail on a bare 127 that reads
 # like a bug in the test itself.
 launch() {
-  if [[ ! -x "$H/.local/bin/claude" ]]; then
-    echo "launch: no installed launcher at $H/.local/bin/claude -- the install did not complete (exit $(cat "$E/install1.out.rc" 2>/dev/null)); its output:"
+  if [[ ! -x "$H/.local/bin/asb" ]]; then
+    echo "launch: no installed asb at $H/.local/bin/asb -- the install did not complete (exit $(cat "$E/install1.out.rc" 2>/dev/null)); its output:"
     sed 's/^/  | /' "$E/install1.out" 2>/dev/null | tail -40
     return 127
   fi
-  (cd "$E/proj" && HOME="$H" PATH="$B:$PATH" "$H/.local/bin/claude" "$@")
+  (cd "$E/proj" && HOME="$H" PATH="$H/.local/bin:$B:$PATH" "$H/.local/bin/asb" "$@")
 }
 
 setup_file() {
@@ -43,10 +45,11 @@ setup_file() {
   E="$BATS_FILE_TMPDIR/e2e"
   H="$E/home"
   B="$E/bin"
-  mkdir -p "$H/.local/share/claude/versions/9.9.9" "$B" "$E/proj" "$E/state"
+  mkdir -p "$H/.local/share/claude/versions/9.9.9" "$H/.local/bin" "$B" "$E/proj" "$E/state"
   cp "$BATS_TEST_DIRNAME/../helpers/fake-claude.sh" "$H/.local/share/claude/versions/9.9.9/claude"
   cp "$BATS_TEST_DIRNAME/../helpers/systemctl-shim.sh" "$B/systemctl"
   chmod +x "$H/.local/share/claude/versions/9.9.9/claude" "$B/systemctl"
+  ln -s "$H/.local/share/claude/versions/9.9.9/claude" "$H/.local/bin/claude"
   if [[ -n "${AGENT_SANDBOX_E2E_MITMDUMP:-}" ]]; then
     mkdir -p "$H/.local/share/agent-sandbox/proxy-venv/bin"
     ln -s "$AGENT_SANDBOX_E2E_MITMDUMP" "$H/.local/share/agent-sandbox/proxy-venv/bin/mitmdump"
@@ -63,21 +66,25 @@ teardown_file() {
   [[ -n "${B:-}" && -x "$B/systemctl" ]] && "$B/systemctl" --user stop agent-sandbox-mitmproxy.service || true
 }
 
-@test "install.sh completes: fake agent found, proxy runtime, CA generated, config seeded, unit rendered, launcher symlinked, namespaces work" {
+@test "install.sh completes: fake agent found, proxy runtime, CA generated, config seeded, unit rendered, asb symlinked, namespaces work" {
   [ "$(cat "$E/install1.out.rc")" -eq 0 ] || {
     cat "$E/install1.out"
     false
   }
   local out
   out=$(cat "$E/install1.out")
-  [[ "$out" == *"claude: version 9.9.9 at $H/.local/share/claude/versions/9.9.9/claude"* ]]
+  [[ "$out" == *"claude: \`claude\` is $H/.local/share/claude/versions/9.9.9/claude"* ]]
   [[ "$out" == *"mitmdump 12."* ]]
   [[ "$out" == *"CA generated: $H/.mitmproxy/mitmproxy-ca-cert.pem"* ]]
   [ -f "$H/.mitmproxy/mitmproxy-ca-cert.pem" ]
   grep -q '^api.anthropic.com$' "$H/.config/agent-sandbox/allowlist.txt"
   cmp -s "$H/.config/agent-sandbox/allowlist_addon.py" "$REPO_ROOT/components/allowlist_addon.py"
   grep -qE "^ExecStart=$H/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
-  [ "$(readlink "$H/.local/bin/claude")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
+  [ "$(readlink "$H/.local/bin/asb")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
+  [ "$(readlink "$H/.local/bin/agent-sandbox")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ]
+  # and `claude` is still Claude Code's own launcher, untouched (#151)
+  [ "$(readlink "$H/.local/bin/claude")" = "$H/.local/share/claude/versions/9.9.9/claude" ]
+  [[ "$out" == *"\`asb\` on PATH resolves to the agent-sandbox engine"* ]]
   cmp -s "$H/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
   # The components the ENGINE runs on the host land beside it, and byte-identical.
   # A piped install has no checkout to copy from, so they travel embedded in
@@ -145,29 +152,29 @@ teardown_file() {
   grep -q $'\t127.0.0.1\t' "$blog"
 }
 
-@test "the launcher runs the fake agent sandboxed: proxy variables set, TLS verified by the bound CA, allowed host reached, others refused and logged" {
+@test "asb claude runs the fake agent sandboxed: proxy variables set, TLS verified by the bound CA, allowed host reached, others refused and logged" {
   ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
-  run launch env
+  run launch claude env
   [ "$status" -eq 0 ]
   [[ "$output" == *"HTTPS_PROXY=http://127.0.0.1:8888"* ]]
   [[ "$output" == *"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"* ]]
   [[ "$output" == *"HOME=$H"* ]]
-  run launch fetch https://api.anthropic.com/v1/models
+  run launch claude fetch https://api.anthropic.com/v1/models
   [[ "$output" == *"code=401 rc=0"* || "$output" == *"code=200 rc=0"* ]]
-  run launch fetch https://example.com/
+  run launch claude fetch https://example.com/
   # A refused CONNECT yields no HTTP response (code=000) and the proxy's 403 in
   # the error; curl's exit code for it varies by version (56, or 97 since 7.83),
   # so assert on those two facts, not the exit number.
   [[ "$output" == *"code=000"* && "$output" == *"403"* ]]
-  run launch fetch http://example.com/
+  run launch claude fetch http://example.com/
   [[ "$output" == *"code=403 rc=0"* ]]
   [ "$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log")" -ge 3 ]
 }
 
-@test "a host-routed subcommand runs the fake agent unsandboxed through the installed launcher" {
-  run launch update
+@test "a host-routed subcommand runs the fake agent unsandboxed through asb" {
+  run launch claude update
   [ "$status" -eq 0 ]
-  [[ "$output" == *"running '9.9.9 update' on the host"* ]]
+  [[ "$output" == *"running '$H/.local/share/claude/versions/9.9.9/claude update' on the host"* ]]
   [[ "$output" == *"fake-claude: 'update' ran unsandboxed as $(id -un) in $E/proj"* ]]
 }
 
@@ -221,72 +228,76 @@ X
   "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }
 
-@test "claude --bg runs in the role: sandboxed, its daemon inside and holding the launch, ended by --shutdown (#123)" {
-  run launch --bg 'do a thing'
+@test "asb claude --bg runs in the role: sandboxed, its daemon inside and holding the launch, ended by --shutdown (#123)" {
+  run launch claude --bg 'do a thing'
   [ "$status" -eq 0 ]
   [[ "$output" == *"backgrounded"*"SANDBOXED, wrapper=none"* ]]
   # the daemon the --bg left behind holds the role's launch, and a verb joins it
   sleep 3 # past the keeper's idle grace
-  run launch agents
+  run launch claude agents
   [ "$status" -eq 0 ]
   [[ "$output" == *"agents: daemon running"* ]]
   # --status shows what --shutdown would end: the daemon among its processes, and the
   # sessions a joined `agents` lists
-  run launch --status
+  run launch --status claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"running since"* ]]
   [[ "$output" == *"daemon run"* ]]
   [[ "$output" == *"background sessions:"*"agents: daemon running"* ]]
-  run launch --shutdown
+  run launch --shutdown claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"ended, with everything that ran in it"* ]]
   # and afterwards a question gets the empty answer, without starting anything
-  run launch agents
+  run launch claude agents
   [ "$status" -eq 0 ]
   [[ "$output" == *"is not running"* ]]
   [[ "$output" != *"agents:"* ]]
 }
 
-@test "a native launcher is taken over, and --uninstall gives it back (issue #22)" {
+@test "an earlier install's claude launcher is undone by install.sh, and --uninstall removes asb (#151)" {
   # The real round trip, which --dry-run cannot show: dry runs deliberately do
-  # not move a launcher aside. This is the ordinary case -- Claude Code's own
-  # installer leaves ~/.local/bin/claude pointing at its binary -- and before
-  # this the installer declined it and left the agent unsandboxed.
-  local native="$H/.local/share/claude/versions/9.9.9/claude"
-  rm -f "$H/.local/bin/claude"
-  ln -sfn "$native" "$H/.local/bin/claude"
+  # not move a command you depend on. Before #151 the installer moved Claude
+  # Code's own ~/.local/bin/claude aside and put the engine there, recording both
+  # in the manifest; that state is built here, and a new install.sh must hand the
+  # user their own `claude` back.
+  local native="$H/.local/share/claude/versions/9.9.9/claude" app="$H/.local/share/agent-sandbox/app/agent-sandbox"
+  local m="$H/.local/share/agent-sandbox/install.manifest"
+  mv "$H/.local/bin/claude" "$H/.local/bin/claude.pre-agent-sandbox"
+  ln -sfn "$app" "$H/.local/bin/claude"
+  printf 'renamed\t%s\t%s\t%s\n' "$H/.local/bin/claude" "$H/.local/bin/claude.pre-agent-sandbox" \
+    "symlink $(readlink "$H/.local/bin/claude.pre-agent-sandbox")" >>"$m"
+  printf 'launcher\t%s\t%s\n' "$H/.local/bin/claude" "symlink $app" >>"$m"
+  # meanwhile the old launcher refuses, naming asb and install.sh
+  run bash -c "cd '$E/proj' && HOME='$H' '$H/.local/bin/claude' -p hi"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no longer run as 'claude'"*"asb claude"* ]]
 
-  run_install "$E/install-takeover.out"
-  [ "$(cat "$E/install-takeover.out.rc")" -eq 0 ] || {
-    cat "$E/install-takeover.out"
+  run_install "$E/install-migrate.out"
+  [ "$(cat "$E/install-migrate.out.rc")" -eq 0 ] || {
+    cat "$E/install-migrate.out"
     false
   }
-  grep -q 'moved your claude aside' "$E/install-takeover.out"
-  # typing `claude` now reaches the engine, which is the only thing that matters
-  [ "$(readlink -f "$H/.local/bin/claude")" = "$(readlink -f "$H/.local/share/agent-sandbox/app/agent-sandbox")" ]
-  [ -e "$H/.local/bin/claude.pre-agent-sandbox" ]
-  # Not asserting "resolves to the agent-sandbox engine": this harness runs with
-  # a PATH that does not include the throwaway ~/.local/bin, so the installer
-  # rightly reports the command as not yet reachable. The readlink above is what
-  # proves the launcher is in place.
-  grep -q 'is not on your PATH' "$E/install-takeover.out"
-  # and the manifest records it, so the undo is exact rather than inferred
-  grep -q '^renamed' "$H/.local/share/agent-sandbox/install.manifest"
+  grep -q "an earlier install put the sandbox at your agent's own command" "$E/install-migrate.out"
+  grep -q "restored $H/.local/bin/claude from $H/.local/bin/claude.pre-agent-sandbox" "$E/install-migrate.out"
+  # `claude` is Claude Code again, exactly as its installer left it, and asb is there
+  [ "$(readlink "$H/.local/bin/claude")" = "$native" ]
+  [ ! -e "$H/.local/bin/claude.pre-agent-sandbox" ]
+  [ "$(readlink "$H/.local/bin/asb")" = "$app" ]
+  # the undone entries are gone from the manifest; the commands are in it
+  run ! grep -qE '^(renamed|launcher)' "$m"
+  grep -q "^command	$H/.local/bin/asb	" "$m"
+  run launch claude --version
+  [ "$status" -eq 0 ]
 
-  (
-    cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME='' \
-      SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
-      "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall.out" 2>&1
-    echo $? >"$E/uninstall.out.rc"
-  )
+  run_install "$E/uninstall.out" --uninstall --yes
   [ "$(cat "$E/uninstall.out.rc")" -eq 0 ] || {
     cat "$E/uninstall.out"
     false
   }
-  # the machine is as it was before agent-sandbox: the original launcher back
-  # under its own name, no backup left over, and our state gone
-  [ "$(readlink -f "$H/.local/bin/claude")" = "$(readlink -f "$native")" ]
-  [ ! -e "$H/.local/bin/claude.pre-agent-sandbox" ]
+  # the machine is as it was before agent-sandbox: its own claude, no asb, our state gone
+  [ "$(readlink "$H/.local/bin/claude")" = "$native" ]
+  [ ! -e "$H/.local/bin/asb" ]
+  [ ! -e "$H/.local/bin/agent-sandbox" ]
   [ ! -d "$H/.local/share/agent-sandbox" ]
   [ ! -f "$H/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
   # the allowlist and trust store are kept, as a reinstall should find them

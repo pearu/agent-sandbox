@@ -17,23 +17,24 @@
 #                             ~/.local/share/agent-sandbox/src first
 #   ./install.sh --dry-run    no sudo, no systemctl, no environment creation;
 #                             everything else runs against $HOME (CI uses this
-#                             with a throwaway HOME). The one exception: an
-#                             existing launcher is never moved aside by a
-#                             dry run -- a preview must not move a command you
-#                             depend on. It reports what it would move.
+#                             with a throwaway HOME). The one exception: a
+#                             launcher an earlier install put at the agent's
+#                             own name is never touched by a dry run -- a
+#                             preview must not move a command you depend on.
+#                             It reports what it would do.
 #   ./install.sh --yes, -y    do not ask for confirmation (--uninstall)
 #   ./install.sh --purge-config
 #                             with --uninstall, also remove
 #                             ~/.config/agent-sandbox (allowlist, trust store)
 #   ./install.sh --uninstall  undo an install: stop and remove the proxy unit,
-#                             point the launcher back at the agent's own binary,
-#                             and remove agent-sandbox's state. Shows the plan
+#                             remove `asb` and `agent-sandbox`, and remove
+#                             agent-sandbox's state. Shows the plan
 #                             and asks before touching anything (-y skips the
 #                             question, --dry-run only prints). Your allowlist
 #                             and trust approvals are KEPT unless
 #                             --purge-config. The AppArmor profiles and the
 #                             agent itself are never touched.
-#   ./install.sh --dev        point the launcher at THIS checkout (a symlink)
+#   ./install.sh --dev        point `asb` at THIS checkout (a symlink)
 #                             instead of installing a copy; for developing
 #                             agent-sandbox. Edits to the checked-out engine or
 #                             profiles then run at the next launch, so this is
@@ -165,6 +166,8 @@ profile_query() { # $1 = profile file, $2.. = variable names to print, one per l
     for v in "$@"; do printf '%s\n' "${!v}"; done
   )
 }
+# Where the agent's own installer put its binary (the profile's profile_own_bin), for
+# pointing a launcher an earlier install shadowed back at it (#151).
 profile_probe_bin() { # $1 = profile file; prints "ok <version> <path>" or "missing <reason>"
   local f=$1
   (
@@ -179,7 +182,7 @@ profile_probe_bin() { # $1 = profile file; prints "ok <version> <path>" or "miss
     source "$f"
     # Run discovery in this shell (not a $(...) subshell) so its results are visible.
     reason_file=$(mktemp)
-    if profile_bin_discover 2>"$reason_file"; then
+    if declare -F profile_own_bin >/dev/null && profile_own_bin 2>"$reason_file"; then
       printf 'ok %s %s\n' "$profile_version" "$profile_bin"
     else
       printf 'missing %s\n' "$(tr '\n' ' ' <"$reason_file")"
@@ -214,32 +217,26 @@ is_our_launcher() {
   grep -qE '^agent_sandbox\(\)' "$t" 2>/dev/null
 }
 
-# is_legacy_wrapper PATH -- the pre-engine claude.sh shim earlier versions
-# installed. Treated as ours: re-pointed rather than backed up, since keeping a
-# copy of a wrapper this project itself wrote would only confuse.
-is_legacy_wrapper() {
-  [[ -L "$1" ]] || return 1
-  [[ "$(basename -- "$(readlink -f "$1" 2>/dev/null || readlink "$1")")" == claude.sh ]]
+# is_launcher_gone PATH -- a launcher of ours, or a symlink that runs nothing: either
+# way nobody's agent is there, and the undo may take the name back.
+is_launcher_gone() {
+  is_our_launcher "$1" || [[ -L "$1" && ! -e "$1" ]]
 }
 
-# writable_path_dirs_before DIR -- PATH entries that exist, are writable, and
-# come strictly before DIR. With DIR empty, every writable PATH entry.
-writable_path_dirs_before() {
-  local stop=$1 d
+# agent_on_path CMD -- the first CMD on PATH that is not a launcher of ours,
+# resolved through its symlinks; what `asb CMD` runs. Fails if there is none.
+agent_on_path() {
+  local d c
   local IFS=:
   for d in $PATH; do
     [[ -n "$d" ]] || continue
-    [[ -n "$stop" && "$d" == "$stop" ]] && return 0
-    if [[ -d "$d" && -w "$d" ]]; then
-      printf '%s\n' "$d"
-    elif [[ ! -e "$d" && "$d" == "$HOME"/* ]]; then
-      # On PATH but not created yet -- conventional for ~/.local/bin, and a
-      # directory under $HOME we can make is as good as one that exists. Only
-      # under $HOME: creating a missing /opt/bin would be presumptuous.
-      printf '%s\n' "$d"
-    fi
+    c="$d/$1"
+    [[ -f "$c" && -x "$c" ]] || continue
+    is_our_launcher "$c" && continue
+    readlink -f -- "$c"
+    return 0
   done
-  return 0
+  return 1
 }
 
 # other_on_path_after LINK CMD -- once LINK is gone, does CMD still resolve to
@@ -260,38 +257,29 @@ other_on_path_after() {
   return 1
 }
 
-# ----- uninstall -----
-# Reverses what this installer does, and nothing else. Two rules shape it.
-#
-# It never removes what it did not create: a launcher that is not a symlink to
-# the engine is left alone, an absent path is reported rather than forced.
-#
-# And it REPOINTS the launcher rather than deleting it. ~/.local/bin/claude is
-# a symlink to the engine, so removing it would leave no `claude` on PATH at
-# all -- the same dead end docs/troubleshooting.md exists for. The agent's own
-# binary is still there, untouched, so the launcher goes back to pointing at it.
-uninstall_plan_and_run() {
-  local purge_config="${1:-0}" assume_yes="${2:-0}"
-  section "Uninstall"
-
-  # ---- what is actually here ----
-  local -a to_remove=()
-  local unit="$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
-  local unit_present=0
-  [[ -f "$unit" ]] && unit_present=1
-  [[ -d "$STATE_DIR" ]] && to_remove+=("$STATE_DIR")
-  ((purge_config)) && [[ -d "$CONFIG_DIR" ]] && to_remove+=("$CONFIG_DIR")
-
+# ----- the launchers an earlier install put at the agent's own name -----
+# Until #151 the installer put the engine where the agent's command was --
+# ~/.local/bin/claude -- so that typing `claude` meant the sandbox. Both the
+# uninstall and an upgrade take that back, and this decides how, for each such
+# launcher. Its results are globals, for the caller to report and then apply:
+#   restore_from/restore_to  a launcher we displaced: its original comes back
+#   remove_only              removing ours IS the restore: another one on PATH
+#   relink_cmd/relink_to     repoint ours at the agent's own binary
+#   leave_alone, dangling    reported; nothing is guessed at
+#   keep_lines               manifest entries still to act on (skipped ones)
+#   skipped                  1 if anything had changed since the install
+# Reads $manifest. With `install`, the agent's own command found where a launcher
+# of ours might have been goes unmentioned.
+unshadow_plan() {
+  relink_cmd=() relink_to=() leave_alone=() dangling=() remove_link=() remove_only=()
+  restore_from=() restore_to=() keep_lines=()
+  skipped=0
+  local f cmd link target probe
   # What to do with each launcher, decided from the manifest when there is one.
   # The manifest says what the installer did; the FINGERPRINT says whether the
   # path is still as it left it. Anything changed since is skipped, explained,
   # and reported at the end -- a manifest records intent, and the machine is
   # the authority on what is actually there.
-  local -a relink_cmd=() relink_to=() leave_alone=() dangling=() remove_link=() remove_only=()
-  local -a restore_from=() restore_to=()
-  local f cmd link target probe
-  local manifest="$STATE_DIR/install.manifest"
-  local skipped=0
 
   if [[ -r "$manifest" ]]; then
     info "reading $manifest"
@@ -331,9 +319,10 @@ uninstall_plan_and_run() {
           if [[ "$now" != "$fp" ]]; then
             leave_alone+=("$b (changed since install: recorded '$fp', found '$now')")
             skipped=1
+            keep_lines+=("$line")
             continue
           fi
-          if is_our_launcher "$a"; then
+          if is_launcher_gone "$a"; then
             restore_from+=("$b")
             restore_to+=("$a")
           else
@@ -342,6 +331,7 @@ uninstall_plan_and_run() {
             # launcher would be a downgrade nobody asked for.
             leave_alone+=("$a (no longer our launcher; $b left in place for you to decide)")
             skipped=1
+            keep_lines+=("$line")
           fi
           ;;
         launcher)
@@ -351,9 +341,19 @@ uninstall_plan_and_run() {
             continue
           fi
           if [[ "$now" != "$fp" ]]; then
-            leave_alone+=("$a (changed since install: recorded '$fp', found '$now')")
-            skipped=1
-            continue
+            if is_launcher_gone "$a"; then
+              # Still a link to AN engine (another install's copy, a --dev checkout),
+              # or a link to nothing -- which runs nothing, so taking it back costs
+              # nobody anything. Measured on a real host: a local e2e run of the
+              # installer before #151 re-pointed ~/.local/bin/claude into its
+              # throwaway HOME, which then went, leaving `claude` dangling.
+              info "$a changed since install (recorded '$fp', found '$now'), but runs no agent: taking it back"
+            else
+              # Someone else's now -- most likely the agent's own installer. There is
+              # nothing of ours left there to undo.
+              info "$a is no longer a launcher of ours (found '$now'); nothing to undo there"
+              continue
+            fi
           fi
           # Whether this one is removed or repointed is decided below, once the
           # renamed entries are known: a launcher we displaced gets its original
@@ -384,7 +384,9 @@ uninstall_plan_and_run() {
       link="$BIN_DIR/$cmd"
       if is_our_launcher "$link"; then
         decide+=("$link")
-      elif [[ -e "$link" || -L "$link" ]]; then
+      elif [[ "${1:-}" != install && (-e "$link" || -L "$link") ]]; then
+        # Worth a word when undoing an install; at install time it is simply the
+        # agent's own command, which is where it belongs.
         leave_alone+=("$link (not our launcher)")
       fi
     done
@@ -413,9 +415,10 @@ uninstall_plan_and_run() {
       dangling+=("$d")
     fi
   done
+}
 
-  # ---- say what will happen, before anything happens ----
-  ((unit_present)) && info "stop, disable and remove $unit"
+# unshadow_report / unshadow_apply -- say, then do, what unshadow_plan decided.
+unshadow_report() {
   local i
   for ((i = 0; i < ${#restore_from[@]}; i++)); do
     info "restore ${restore_from[i]} -> ${restore_to[i]} (the $(basename -- "${restore_to[i]}") you had before)"
@@ -426,7 +429,77 @@ uninstall_plan_and_run() {
   for ((i = 0; i < ${#relink_cmd[@]}; i++)); do
     info "repoint ${relink_cmd[i]} -> ${relink_to[i]}"
   done
+}
+unshadow_apply() {
+  local i
+  for ((i = 0; i < ${#restore_from[@]}; i++)); do
+    mv -f -- "${restore_from[i]}" "${restore_to[i]}"
+    ok "restored ${restore_to[i]} from ${restore_from[i]}"
+  done
+  for ((i = 0; i < ${#remove_only[@]}; i++)); do
+    rm -f -- "${remove_only[i]}"
+    ok "removed ${remove_only[i]}"
+  done
+  for ((i = 0; i < ${#relink_cmd[@]}; i++)); do
+    ln -sfn "${relink_to[i]}" "${relink_cmd[i]}"
+    ok "repointed ${relink_cmd[i]} -> ${relink_to[i]}"
+  done
+}
+
+# ----- uninstall -----
+# Reverses what this installer does, and nothing else. Two rules shape it.
+#
+# It never removes what it did not create: a launcher that is not a symlink to
+# the engine is left alone, an absent path is reported rather than forced.
+#
+# And a launcher an install before #151 put at the agent's own name is
+# REPOINTED rather than deleted (see unshadow_plan): removing it would leave no
+# `claude` on PATH at all. The commands it adds today, `asb` and
+# `agent-sandbox`, are its own, and simply go.
+uninstall_plan_and_run() {
+  local purge_config="${1:-0}" assume_yes="${2:-0}"
+  section "Uninstall"
+
+  # ---- what is actually here ----
+  local -a to_remove=()
+  local unit="$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
+  local unit_present=0
+  [[ -f "$unit" ]] && unit_present=1
+  [[ -d "$STATE_DIR" ]] && to_remove+=("$STATE_DIR")
+  ((purge_config)) && [[ -d "$CONFIG_DIR" ]] && to_remove+=("$CONFIG_DIR")
+
+  local manifest="$STATE_DIR/install.manifest"
+  local -a relink_cmd=() relink_to=() leave_alone=() dangling=() remove_link=() remove_only=()
+  local -a restore_from=() restore_to=() keep_lines=()
+  local skipped=0
+  unshadow_plan
+
+  # The commands this installer adds (#151): `asb` and `agent-sandbox`, each a
+  # symlink to the engine. Nobody else's, so removing them is the whole undo --
+  # unless they changed since, like anything else here.
+  local -a remove_cmds=()
+  if [[ -r "$manifest" ]]; then
+    local kind f1 f2 f3 now line
+    while IFS= read -r line; do
+      IFS=$'\t' read -r kind f1 f2 f3 <<<"$line"
+      [[ "$kind" == command ]] || continue
+      now="$(fingerprint "$f1")"
+      if [[ "$now" == absent ]]; then
+        info "$f1 is already gone"
+      elif [[ "$now" != "$f2" ]]; then
+        leave_alone+=("$f1 (changed since install: recorded '$f2', found '$now')")
+        skipped=1
+      else
+        remove_cmds+=("$f1")
+      fi
+    done <"$manifest"
+  fi
+
+  # ---- say what will happen, before anything happens ----
+  ((unit_present)) && info "stop, disable and remove $unit"
+  unshadow_report
   local p
+  for p in "${remove_cmds[@]}"; do info "remove $p"; done
   for p in "${to_remove[@]}"; do info "remove $p"; done
   for p in "${leave_alone[@]}"; do warn "leave alone: $p"; done
   ((purge_config)) || [[ -d "$CONFIG_DIR" ]] \
@@ -463,17 +536,10 @@ uninstall_plan_and_run() {
     run_sys systemctl --user daemon-reload || true
     ok "removed $unit"
   fi
-  for ((i = 0; i < ${#restore_from[@]}; i++)); do
-    mv -f -- "${restore_from[i]}" "${restore_to[i]}"
-    ok "restored ${restore_to[i]} from ${restore_from[i]}"
-  done
-  for ((i = 0; i < ${#remove_only[@]}; i++)); do
-    rm -f -- "${remove_only[i]}"
-    ok "removed ${remove_only[i]}"
-  done
-  for ((i = 0; i < ${#relink_cmd[@]}; i++)); do
-    ln -sfn "${relink_to[i]}" "${relink_cmd[i]}"
-    ok "repointed ${relink_cmd[i]} -> ${relink_to[i]}"
+  unshadow_apply
+  for p in "${remove_cmds[@]}"; do
+    rm -f -- "$p"
+    ok "removed $p"
   done
   for p in "${to_remove[@]}"; do
     if ((skipped)) && [[ "$p" == "$STATE_DIR" ]]; then
@@ -627,18 +693,27 @@ else
 fi
 
 # ----- 3. the agents themselves, one per profile -----
-section "Agent binaries"
+# What `asb <cmd>` will run: the first <cmd> on PATH that is not a launcher of
+# ours, resolved -- exactly as the engine looks it up (#151). Failing that, where
+# the agent's own installer keeps it, which a launcher an earlier install moved
+# aside may be hiding until step 9 puts it back.
+section "Agents"
 for f in "${profiles[@]}"; do
   name=$(basename -- "${f%.sh}")
+  cmd=$(profile_query "$f" profile_command)
+  if bin="$(agent_on_path "$cmd")"; then
+    ok "$name: \`$cmd\` is $bin"
+    continue
+  fi
   probe=$(profile_probe_bin "$f")
   case "$probe" in
     ok\ *)
       read -r _ ver bin <<<"$probe"
-      ok "$name: version $ver at $bin"
+      info "$name: \`$cmd\` is not on PATH; its own install has version $ver at $bin"
       ;;
     *)
       warn "$name: not installed yet (${probe#missing })"
-      info "Install it, then re-run; the sandbox launcher is set up regardless."
+      info "Install it, then re-run. asb runs it once \`$cmd\` is on PATH (or: asb --profile $name /path/to/it)."
       ;;
   esac
 done
@@ -947,54 +1022,48 @@ else
   fi
 fi
 
-# ----- 9. the launcher: one per profile command, pointing at the engine -----
-# The launcher has to WIN on PATH, or the sandbox silently does not apply: the
-# user types `claude`, the agent's own binary answers, and nothing is enforced.
-# Before this was thought through the installer simply declined when
-# ~/.local/bin/claude already existed -- which is what a normal Claude Code
-# install leaves there -- so the common case ended with a warning and an
-# unsandboxed agent.
+# ----- 9. the commands: `asb` and `agent-sandbox`, pointing at the engine -----
+# The sandbox is asked for by name (#151): `asb claude`. Nothing is put at the
+# agent's own name any more, so `claude` stays Claude Code, installed however it
+# was -- the native installer, a package, anything on PATH.
 #
-# Four cases, in order:
-#   1. `cmd` on PATH is already our launcher      -> leave it, record it
-#   2. `cmd` on PATH sits in a WRITABLE directory -> rename it aside
-#      (<cmd>.pre-agent-sandbox) and take its place, so PATH order is untouched
-#   3. its directory is read-only (/usr/bin)      -> put ours in the first
-#      writable PATH directory that comes BEFORE it; the original stays put
-#   4. `cmd` is not on PATH at all                -> first writable PATH
-#      directory (the agent is installed, it just has no launcher)
-# and if no writable directory qualifies, stop and explain, because installing
-# somewhere that loses on PATH would be worse than not installing.
-#
-# Everything done here is recorded in the manifest with a fingerprint, so the
-# uninstall can undo exactly this and nothing else. See uninstall_plan_and_run.
-section "Launcher (\`<agent>\` on PATH -> agent-sandbox)"
-
-# preferred_dir_before STOP -- where to put the launcher. ~/.local/bin is the
-# conventional home for a user's commands, so prefer it whenever it qualifies;
-# "the first writable directory on PATH" alone is too arbitrary a target (it
-# could be /usr/local/bin, or whatever a script happened to prepend).
-preferred_dir_before() {
-  local stop=$1 d
-  local conventional="$HOME/.local/bin"
-  while read -r d; do
-    [[ "$d" == "$conventional" ]] && {
-      printf '%s' "$conventional"
-      return 0
-    }
-  done < <(writable_path_dirs_before "$stop")
-  writable_path_dirs_before "$stop" | head -n1
-}
+# An install from before #151 did put the engine there, and moved the agent's
+# own launcher aside to make room. That is undone first, exactly as --uninstall
+# would undo it (unshadow_plan): the original comes back, or ours is repointed at
+# the agent's own binary. After this step `claude` on this host is native.
+section "Commands (\`asb\` and \`agent-sandbox\` -> the engine)"
 
 MANIFEST="$STATE_DIR/install.manifest"
+manifest="$MANIFEST"
 manifest_lines=()
+relink_cmd=() relink_to=() leave_alone=() dangling=() remove_link=() remove_only=()
+restore_from=() restore_to=() keep_lines=()
+skipped=0
+unshadow_plan install
+if ((${#restore_from[@]} + ${#remove_only[@]} + ${#relink_cmd[@]} > 0)); then
+  info "an earlier install put the sandbox at your agent's own command; that goes now (#151):"
+  unshadow_report
+  if ((DRY_RUN)); then
+    info "(dry-run) nothing was changed"
+  else
+    unshadow_apply
+  fi
+fi
+for p in "${leave_alone[@]}"; do warn "leave alone: $p"; done
+for p in "${dangling[@]}"; do
+  warn "$p is an earlier install's launcher, and the agent's own binary was not found to point it back at."
+  warn "  Reinstall the agent, or remove $p by hand."
+done
+# What could not be undone stays on record, so that a later run or --uninstall
+# still knows what those paths were meant to be.
+manifest_lines+=(${keep_lines[@]+"${keep_lines[@]}"})
 
-# place_launcher DIR CMD -- put our launcher at DIR/CMD, deciding by what is
-# there already. Separate from CHOOSING the directory because the two questions
-# are independent: a launcher can occupy the target path without being on PATH
-# at all, and it still has to be moved aside rather than declined.
-place_launcher() {
-  local dir=$1 cmd=$2 link="$1/$2" backup
+# place_command DIR NAME -- put a symlink to the engine at DIR/NAME, a dry run
+# included (it installs into $HOME like the rest). The names are agent-sandbox's
+# own, so a file there that is not ours is someone else's program of that name:
+# left alone, and said so, never moved aside.
+place_command() {
+  local link="$1/$2"
   if is_our_launcher "$link"; then
     if [[ "$(readlink -f "$link")" != "$LAUNCH_TARGET" ]]; then
       ln -sfn "$LAUNCH_TARGET" "$link"
@@ -1002,120 +1071,65 @@ place_launcher() {
     else
       ok "$link already points at the engine"
     fi
-    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
-    return 0
-  fi
-  if is_legacy_wrapper "$link"; then
-    ln -sfn "$LAUNCH_TARGET" "$link"
-    ok "re-pointed $link from the legacy claude.sh wrapper -> $LAUNCH_TARGET"
-    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
-    return 0
-  fi
-  if [[ -L "$link" && ! -e "$link" ]]; then
-    # A broken symlink runs nothing, so taking the name costs nobody anything.
+  elif [[ -L "$link" && ! -e "$link" ]]; then
     ln -sfn "$LAUNCH_TARGET" "$link"
     ok "replaced dangling symlink $link -> $LAUNCH_TARGET"
-    manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+  elif [[ -e "$link" ]]; then
+    warn "$link exists and is not agent-sandbox (left untouched)"
+    info "Another program is called $2 here. Use the other name, or remove it and re-run."
     return 0
+  else
+    ln -sfn "$LAUNCH_TARGET" "$link"
+    ok "symlinked $link -> $LAUNCH_TARGET"
   fi
-  if [[ -e "$link" ]]; then
-    if [[ -x "$link" && -w "$dir" ]]; then
-      # A working launcher of someone else's: move it aside and take the name,
-      # so that typing the command reaches the sandbox. Keeping a copy is what
-      # makes this reversible.
-      backup="$link.pre-agent-sandbox"
-      if [[ -e "$backup" ]]; then
-        warn "$backup already exists, so $link is left untouched"
-        info "That backup is from an earlier install; overwriting it would destroy the only"
-        info "copy of your original $cmd. Decide which you want to keep, then re-run."
-        return 0
-      fi
-      if ((DRY_RUN)); then
-        info "(dry-run) would move $link -> $backup and symlink $link -> $LAUNCH_TARGET"
-        manifest_lines+=("renamed	$link	$backup	$(fingerprint "$link")")
-        return 0
-      fi
-      mv -- "$link" "$backup"
-      ln -sfn "$LAUNCH_TARGET" "$link"
-      ok "moved your $cmd aside to $backup and put the sandbox launcher in its place"
-      manifest_lines+=("renamed	$link	$backup	$(fingerprint "$backup")")
-      manifest_lines+=("launcher	$link	$(fingerprint "$link")")
-      return 0
-    fi
-    warn "$link exists and is not our launcher (left untouched)"
-    info "It is not executable, or its directory is not writable, so we cannot take the name."
-    info "Remove it and re-run, or put a writable directory earlier on your PATH."
-    return 0
-  fi
-  ln -sfn "$LAUNCH_TARGET" "$link"
-  ok "symlinked $link -> $LAUNCH_TARGET"
-  manifest_lines+=("launcher	$link	$(fingerprint "$link")")
+  manifest_lines+=("command	$link	$(fingerprint "$link")")
 }
 
-commands=()
-for f in "${profiles[@]}"; do
-  cmd=$(profile_query "$f" profile_command)
-  commands+=("$cmd")
-  existing="$(command -v "$cmd" 2>/dev/null || true)"
-  # `command -v` is not a reliable executability test across users: as root it
-  # can return a mode-644 file that nothing can actually run. Check explicitly,
-  # so the branch taken is the same for root and for everyone else.
-  [[ -n "$existing" && ! -x "$existing" ]] && existing=""
-
-  # Choose the directory. Only this part cares about PATH.
-  if [[ -n "$existing" ]]; then
-    existing_dir="$(cd -- "$(dirname -- "$existing")" && pwd -P)"
-    if [[ -w "$existing_dir" ]]; then
-      target_dir="$existing_dir"
-    else
-      target_dir="$(preferred_dir_before "$existing_dir")"
-      if [[ -z "$target_dir" ]]; then
-        err "\`$cmd\` is at $existing, whose directory is not writable, and no writable directory
-    on your PATH comes before it -- so the sandbox launcher cannot win.
-    Create one and put it first, for example:
-        mkdir -p $HOME/.local/bin
-        export PATH=\"\$HOME/.local/bin:\$PATH\"   # add this to your shell profile
-    then re-run this installer."
-      fi
-      info "$existing is not writable; shadowing it from $target_dir (earlier on PATH)"
-    fi
-  else
-    # The conventional place, not whatever PATH happens to list first: a
-    # launcher in ~/.local/bin needing one PATH edit beats one installed
-    # somewhere surprising.
-    target_dir="$HOME/.local/bin"
-    case ":$PATH:" in
-      *":$target_dir:"*) ;;
-      *)
-        warn "$target_dir is not on your PATH, so \`$cmd\` will not be found yet. Add it:"
-        info "    export PATH=\"\$HOME/.local/bin:\$PATH\"   # in your shell profile"
-        ;;
-    esac
-  fi
-  if ! mkdir -p -- "$target_dir" 2>/dev/null; then
-    err "cannot create $target_dir, so there is nowhere to put the \`$cmd\` launcher.
-    Create a writable directory, put it first on your PATH, and re-run:
+# Always ~/.local/bin, the conventional home of a user's own commands, and never
+# "the first writable directory on PATH": that can lie outside this HOME entirely.
+target_dir="$HOME/.local/bin"
+case ":$PATH:" in
+  *":$target_dir:"*) ;;
+  *)
+    warn "$target_dir is not on your PATH, so \`asb\` will not be found yet. Add it:"
+    info "    export PATH=\"\$HOME/.local/bin:\$PATH\"   # in your shell profile"
+    ;;
+esac
+if ! mkdir -p -- "$target_dir" 2>/dev/null; then
+  err "cannot create $target_dir, so there is nowhere to put \`asb\`.
+    Create a writable directory, put it on your PATH, and re-run:
         mkdir -p $HOME/.local/bin
         export PATH=\"\$HOME/.local/bin:\$PATH\"   # add this to your shell profile"
-  fi
-  place_launcher "$target_dir" "$cmd"
+fi
+for name in agent-sandbox asb; do
+  place_command "$target_dir" "$name"
 done
 
-# The only check that matters: does typing the command now reach the engine? If
-# it does not, the sandbox does not apply, whatever was installed where.
-for cmd in "${commands[@]}"; do
-  if command -v "$cmd" >/dev/null; then
-    resolved=$(readlink -f "$(command -v "$cmd")")
-    if [[ "$resolved" == "$LAUNCH_TARGET" ]]; then
-      ok "\`$cmd\` on PATH resolves to the agent-sandbox engine"
-    else
-      warn "\`$cmd\` on PATH resolves to $resolved (NOT the engine): it would run unsandboxed"
-      info "Something earlier on PATH is winning. Check: type -a $cmd"
+# Does typing them now reach the engine? And is the agent's own command the
+# agent's -- not a launcher of ours that something above could not remove?
+if true; then
+  for name in agent-sandbox asb; do
+    if command -v "$name" >/dev/null; then
+      resolved=$(readlink -f "$(command -v "$name")")
+      if [[ "$resolved" == "$LAUNCH_TARGET" ]]; then
+        ok "\`$name\` on PATH resolves to the agent-sandbox engine"
+      else
+        warn "\`$name\` on PATH resolves to $resolved, not the engine. Check: type -a $name"
+      fi
     fi
-  else
-    warn "\`$cmd\` is still not on PATH"
-  fi
-done
+  done
+  for f in "${profiles[@]}"; do
+    cmd=$(profile_query "$f" profile_command)
+    existing="$(command -v "$cmd" 2>/dev/null || true)"
+    if [[ -n "$existing" ]] && is_our_launcher "$existing"; then
+      warn "\`$cmd\` on PATH is still a launcher of ours ($existing); it runs nothing now. See 'leave alone' above."
+    elif [[ -n "$existing" ]]; then
+      ok "\`$cmd\` is the agent itself ($existing); a sandboxed launch is: asb $cmd"
+    else
+      info "\`$cmd\` is not on PATH; asb runs it once it is (or: asb --profile $cmd /path/to/it)"
+    fi
+  done
+fi
 
 # Record what was done, with a fingerprint per path, so the uninstall undoes
 # exactly this. A manifest states intent; the fingerprints are what let the
@@ -1255,9 +1269,10 @@ fi
 section "Done"
 cat <<SUMMARY
 Next steps:
-  - Open a fresh shell (or \`hash -r\`) so the new command(s) are on PATH: ${commands[*]}
-  - cd into a project and run one of them.
+  - Open a fresh shell (or \`hash -r\`) so \`asb\` is on PATH.
+  - cd into a project and run:  asb claude
+    (\`claude\` alone is Claude Code itself, not sandboxed.)
   - Tail blocked requests:  tail -f $CONFIG_DIR/blocked.log
   - Edit the allowlist:     \$EDITOR $CONFIG_DIR/allowlist.txt
-  - Bypass proxy one-shot:  AGENT_SANDBOX_NET=open ${commands[0]}
+  - Bypass proxy one-shot:  AGENT_SANDBOX_NET=open asb claude
 SUMMARY

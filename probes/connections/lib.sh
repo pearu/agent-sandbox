@@ -73,7 +73,7 @@ conn_mode_supported() {
     cd "$LEAK_B" || exit 1
     env HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state" \
       AGENT_SANDBOX_NET=none AGENT_SANDBOX_CONNECT="instructions=$mode native" \
-      claude --quiet --exec true 2>&1
+      asb --quiet --profile claude --exec true 2>&1
   )" || rc=$?
   CONN_PROBED_MODE="$mode"
   # The phrase is the engine's; agent-sandbox says so beside it. Matched with the
@@ -101,13 +101,13 @@ conn_setup() {
   CONN_CTRL_OK=0 CONN_CTRL_BAD=0
   CONN_SUITE="$name"
   CONN_PROBED_MODE="" CONN_PROBED_RC=0
-  # THE VERSIONS ARE READ ONCE, not per record. `claude --version` is a full sandboxed
-  # launch, and stamping every record with it took half of a whole run (measured: 24.6 s
-  # of a 54 s suite). They are read again when the suite ends and written as one more
+  # THE VERSIONS ARE READ ONCE, not per record. `claude --version` was a full sandboxed
+  # launch before #151 (the engine sat at `claude`), and stamping every record with it
+  # took half of a whole run (measured: 24.6 s of a 54 s suite). They are read again when the suite ends and written as one more
   # record (see conn_summary), so the gate's "one claude/engine across the run" still
   # catches an update in the middle -- per run now, not per record.
   CONN_CLAUDE_VERSION="$(claude --version 2>/dev/null | head -1)"
-  CONN_ENGINE_VERSION="$(claude --engine-version 2>/dev/null | head -1)"
+  CONN_ENGINE_VERSION="$(asb --engine-version 2>/dev/null | head -1)"
   leak_real_config_before
 }
 
@@ -511,7 +511,7 @@ conn_reset() {
   (
     cd "$LEAK_B" || exit 1
     env HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state" \
-      timeout 60 claude --reset instructions
+      timeout 60 asb --reset instructions claude
   ) >"$out" 2>&1 </dev/null || CONN_RESET_RC=$?
   ((CONN_RESET_RC == 0)) || leak_say "reset exited $CONN_RESET_RC (see $(basename "$out"))"
   return 0
@@ -548,7 +548,7 @@ conn_summary() {
     --set "suite=$CONN_SUITE" --set "cell=versions-end" --set "status=control-pass" \
     --set "assertion=the versions when the suite ends are the versions it started with" \
     --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
-    --set "engine_version=$(claude --engine-version 2>/dev/null | head -1)" >/dev/null
+    --set "engine_version=$(asb --engine-version 2>/dev/null | head -1)" >/dev/null
   leak_real_config_after
   # THE GATE RUNS BEFORE THE SCORE IS BELIEVED. A `fail` is a result -- the engine broke
   # a promise -- so it does not invalidate anything; a control that did not hold, a

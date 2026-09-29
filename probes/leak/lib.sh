@@ -62,6 +62,7 @@ leak_setup() {
   [[ -r "$LEAK_SNAPSHOT" && -r "$LEAK_WATCH" ]] \
     || leak_die "instruments missing: expected $LEAK_SNAPSHOT and $LEAK_WATCH"
   command -v claude >/dev/null || leak_die "no 'claude' on PATH"
+  command -v asb >/dev/null || leak_die "no 'asb' on PATH (the engine, #151)"
   [[ -z "${CLAUDE_CODE_PROJECT_DIR_NAME:-}" ]] \
     || leak_die "CLAUDE_CODE_PROJECT_DIR_NAME is set; it would store every session's
       transcripts AND memory under one name, collapsing the variable under test"
@@ -439,7 +440,7 @@ leak_read_sandboxed() {
     # inherited from the engine's default, so a cell keeps meaning what it says
     # when that default changes.
     [[ -n "${LEAK_PRESET:-}" ]] && _env+=(AGENT_SANDBOX_PRESET="$LEAK_PRESET")
-    env "${_env[@]}" claude --quiet --exec python3 "$script" "$@"
+    env "${_env[@]}" asb --quiet --profile claude --exec python3 "$script" "$@"
   ) >"$out" 2>"$out.err" || true
 }
 
@@ -570,16 +571,15 @@ leak_secrets_clean() {
 # leak_session_native CWD PROMPT OUT [FLAG...] -- one real turn, NOT sandboxed.
 # Trailing FLAGs are passed to claude before -p, for cells that deliberately widen the
 # deployment (a permission grant, say) and must say so in the command.
-# `claude` on PATH is the launcher, so a bare call would sandbox. --sandbox none is the
-# documented way to route a launch past it, and says so in the command rather than by
-# setting a marker that claims the session is already inside a sandbox.
+# `claude` on PATH is Claude Code itself (#151): nothing shadows it, so a bare call is
+# the native session this is.
 leak_session_native() {
   : "${LEAK_CELL_BASE:?no cell is open: call leak_cell NAME before measuring}"
   local cwd="$1" prompt="$2" out="$3"
   shift 3
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" claude --quiet --sandbox none "$@" -p "$prompt"
+    env HOME="$LEAK_HOME" claude "$@" -p "$prompt"
   ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 
@@ -592,7 +592,7 @@ leak_session_sandboxed() {
   shift 4
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" AGENT_SANDBOX_KEEPER_GRACE=0 claude --quiet "$@" -p "$prompt"
+    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" AGENT_SANDBOX_KEEPER_GRACE=0 asb --quiet claude "$@" -p "$prompt"
   ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 
@@ -1017,7 +1017,7 @@ leak_record() {
   python3 "$LEAK_RECORD" write --out "$LEAK_RUN/records/$name.json" \
     --set "row=${LEAK_ROW:-unknown}" \
     --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
-    --set "engine_version=$(claude --engine-version 2>/dev/null | head -1)" \
+    --set "engine_version=$(asb --engine-version 2>/dev/null | head -1)" \
     --set "run=$LEAK_RUN" \
     --set "cell=${LEAK_CELL:-?}" \
     --set "cell_id=${LEAK_CELL_ID:-?}" \

@@ -43,7 +43,7 @@ approve_dotfile() {
 }
 
 @test "no connection asked for: not one bind changes, so the feature is invisible by default" {
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   # The whole state directory, read-write, exactly as before.
   argv_has --bind "$C" "$C"
@@ -52,7 +52,7 @@ approve_dotfile() {
 }
 
 @test "live is spelled out and still changes nothing: it is today's behaviour named" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=read-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-write native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$C" "$C"
   run ! argv_has --ro-bind "$C/CLAUDE.md" "$C/CLAUDE.md"
@@ -60,7 +60,7 @@ approve_dotfile() {
 
 @test "ro rebinds each of the channel's paths read-only, over the read-write state bind" {
   : >"$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/CLAUDE.md" "$C/CLAUDE.md"
   argv_has --ro-bind "$C/rules" "$C/rules"
@@ -72,7 +72,7 @@ approve_dotfile() {
   # Otherwise the parent is read-write and the sandbox could CREATE the file,
   # authoring at a channel it was told it may only read.
   rm -f "$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- asb claude --version
   [ "$status" -eq 0 ]
   # Scan for `--ro-bind SRC $C/CLAUDE.md` rather than indexing off the path:
   # with the source absent the path appears as the DESTINATION, not the source,
@@ -94,7 +94,7 @@ approve_dotfile() {
 @test "none binds a private slot from the engine's state, not a tmpfs" {
   # A tmpfs would forget what the sandbox wrote; `none` promises the sandbox
   # keeps its own (study cell N3).
-  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/CLAUDE.md")" "$C/CLAUDE.md"
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
@@ -103,9 +103,9 @@ approve_dotfile() {
 }
 
 @test "the slot survives the session: it is state, not scratch" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- asb claude --version
   printf 'the sandbox wrote this\n' >"$SBOX/instructions/own/$(slugify "$C/CLAUDE.md")"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- asb claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$SBOX/instructions/own/$(slugify "$C/CLAUDE.md")")" = "the sandbox wrote this" ]
 }
@@ -115,14 +115,14 @@ approve_dotfile() {
   # behind, and the next write to it failed. The engine already had this problem
   # with the config file and already had the list that fixes it.
   rm -f "$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- asb claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$C/CLAUDE.md" ]
 }
 
 @test "each form is honoured, and the flag beats the environment" {
   run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- \
-    claude --connect 'instructions=read-only native' --version
+    asb --connect 'instructions=read-only native' claude --version
   [ "$status" -eq 0 ]
   : >"$C/CLAUDE.md"
   argv_has --ro-bind "$C/rules" "$C/rules"
@@ -130,7 +130,7 @@ approve_dotfile() {
 }
 
 @test "several specs in the environment are separated by semicolons, since a spec has spaces" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native;skills=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native;skills=own native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
   argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills"
@@ -142,11 +142,11 @@ approve_dotfile() {
 instructions = own native
 EOF
   approve_dotfile
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 
-  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=read-only native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
 }
@@ -156,15 +156,15 @@ EOF
 [connect]
 instructions = own native
 EOF
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "--connect is repeatable, and the last spec for a channel wins" {
   : >"$C/CLAUDE.md"
-  run_engine -- claude --connect 'skills=own native' \
-    --connect 'instructions=own native' --connect 'instructions=read-only native' --version
+  run_engine -- asb --connect 'skills=own native' \
+    --connect 'instructions=own native' --connect 'instructions=read-only native' claude --version
   [ "$status" -eq 0 ]
   # the other channel is untouched by the repetition
   argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills"
@@ -178,7 +178,7 @@ EOF
   # isolated one. The order is load-bearing all the same -- a channel at `live`
   # must still not hand over another session's paste cache -- and an overlap is
   # exactly the kind of thing a later channel addition introduces quietly.
-  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=own native' -- asb claude --version
   [ "$status" -eq 0 ]
   local connect scratch
   connect="$(argv_index "$SBOX/instructions/own/$(slugify "$C/rules")")"
@@ -189,7 +189,7 @@ EOF
 }
 
 @test "cow asks bwrap for an overlay on a directory-shaped path" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$C/rules" --overlay \
     "$SBOX/instructions/upper/$(slugify "$C/rules")" \
@@ -198,7 +198,7 @@ EOF
 
 @test "cow on a FILE-shaped path is copy, permanently: overlayfs cannot stack on a file" {
   printf 'YOURS\n' >"$C/CLAUDE.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
   [ "$status" -eq 0 ]
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")"
@@ -210,7 +210,7 @@ EOF
 
 @test "--overlay off forces the copy fallback, and the launch SAYS so through --quiet" {
   printf 'YOURS\n' >"$C/rules/topic.md"
-  run_engine -- claude --connect 'instructions=copy-on-write native' --overlay off --quiet --version
+  run_engine -- asb --connect 'instructions=copy-on-write native' --overlay off --quiet claude --version
   [ "$status" -eq 0 ]
   # BEFORE the `run !` below, which replaces $output -- the helper warns about
   # exactly this and it is easy to do anyway.
@@ -226,35 +226,35 @@ EOF
 mode = off
 EOF
   approve_dotfile
-  run_engine -- claude --connect 'instructions=copy-on-write native' --version
+  run_engine -- asb --connect 'instructions=copy-on-write native' claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --overlay-src "$C/rules" # the file turned it off
 
-  run_engine AGENT_SANDBOX_OVERLAY=auto -- claude --connect 'instructions=copy-on-write native' --version
+  run_engine AGENT_SANDBOX_OVERLAY=auto -- asb --connect 'instructions=copy-on-write native' claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$C/rules" # the environment overrode the file
 
   run_engine AGENT_SANDBOX_OVERLAY=auto -- \
-    claude --connect 'instructions=copy-on-write native' --overlay off --version
+    asb --connect 'instructions=copy-on-write native' --overlay off claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --overlay-src "$C/rules" # and the flag overrode the environment
 }
 
 @test "an unknown overlay mode keeps auto rather than guessing" {
   run_engine AGENT_SANDBOX_OVERLAY=sideways -- \
-    claude --connect 'instructions=copy-on-write native' --version
+    asb --connect 'instructions=copy-on-write native' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"unknown mode 'sideways'"* ]]
   argv_has --overlay-src "$C/rules"
 }
 
 @test "--reset clears an overlay's upper layer, whiteouts and all" {
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
   local upper
   upper="$SBOX/instructions/upper/$(slugify "$C/rules")"
   mkdir -p "$upper"
   printf 'SANDBOX\n' >"$upper/topic.md"
-  run_engine -- claude --reset instructions
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
   [ ! -e "$upper/topic.md" ]
 }
@@ -263,17 +263,17 @@ EOF
   # It removes the very layers the keeper has mounted, and the conflict warning
   # actively tells the user to run it -- reading that in one terminal while the
   # role runs in another is the ordinary case, not an edge one.
-  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
-  run_engine -- claude --reset instructions
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
+  run_engine -- asb --reset instructions claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"role 'default' is running"* ]]
   release_bg
 }
 
 @test "and it goes ahead once that join is gone" {
-  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
   release_bg
-  run_engine -- claude --reset instructions
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
 }
 
@@ -282,20 +282,20 @@ EOF
   # rather than refusing, since nothing is using them.
   local upper
   upper="$SBOX/instructions/upper/$(slugify "$C/rules")"
-  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
   release_bg
   [ -e "$SBOX/keeper/id" ] # still there, waiting out its grace
   mkdir -p "$upper"
   printf 'SANDBOX\n' >"$upper/topic.md"
-  run_engine -- claude --reset instructions
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
   [ ! -e "$SBOX/keeper/id" ]
   [ ! -e "$upper/topic.md" ]
 }
 
 @test "a running keeper of ANOTHER role does not block a reset" {
-  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --role other --version
-  run_engine -- claude --reset instructions
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb --role other claude --version
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
   release_bg
 }
@@ -304,8 +304,8 @@ EOF
   # Two launches of one role would be two overlays over one upper layer, which
   # overlayfs calls undefined. There is never a second: the second invocation is a
   # join into the first one's keeper, and nothing is mounted for it.
-  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --quiet -p hi
+  engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb --quiet claude -p hi
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ] # no second launch
   join_has "$H/home/.local/share/claude/versions/2.1.300/claude" -p hi
@@ -327,7 +327,7 @@ EOF
   # means creating it when it is absent -- one empty directory, in a tree bwrap
   # already creates mount points in.
   rm -rf "$C/rules"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
   [ "$status" -eq 0 ]
   local i src=""
   for ((i = 0; i + 1 < ${#ARGV[@]}; i++)); do
@@ -340,7 +340,7 @@ EOF
 
 @test "a channel with TWO directories gets an overlay on each" {
   mkdir -p "$C/skills" "$C/commands"
-  run_engine AGENT_SANDBOX_CONNECT='skills=copy-on-write native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='skills=copy-on-write native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$C/skills"
   argv_has --overlay-src "$C/commands"
@@ -354,7 +354,7 @@ EOF
 # that names it, and that is the first one here.
 
 @test "the engine's own default preset puts every declared channel at cow" {
-  TEST_PRESET="" run_engine -- claude --version
+  TEST_PRESET="" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$C/rules"
   argv_has --overlay-src "$C/skills"
@@ -364,7 +364,7 @@ EOF
 }
 
 @test "independent gives the sandbox nothing of the native install" {
-  run_engine AGENT_SANDBOX_PRESET=isolated -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=isolated -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
   argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills"
@@ -372,7 +372,7 @@ EOF
 }
 
 @test "shared is the engine before 0.3: not one channel is layered over" {
-  run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=shared -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$C" "$C"
   run ! argv_has --overlay-src "$C/rules"
@@ -381,7 +381,7 @@ EOF
 
 @test "a [connect] line overrides the preset for its own channel and no other" {
   run_engine AGENT_SANDBOX_PRESET=isolated \
-    AGENT_SANDBOX_CONNECT='instructions=read-only native' -- claude --version
+    AGENT_SANDBOX_CONNECT='instructions=read-only native' -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"                              # overridden
   argv_has --bind "$SBOX/skills/own/$(slugify "$C/skills")" "$C/skills" # still the preset
@@ -393,20 +393,20 @@ EOF
 preset = isolated
 EOF
   approve_dotfile
-  TEST_PRESET="" run_engine -- claude --version
+  TEST_PRESET="" run_engine -- asb claude --version
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 
-  run_engine AGENT_SANDBOX_PRESET=shared -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=shared -- asb claude --version
   run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 
-  run_engine AGENT_SANDBOX_PRESET=shared -- claude --preset isolated --version
+  run_engine AGENT_SANDBOX_PRESET=shared -- asb --preset isolated claude --version
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "an unknown preset is REFUSED, not defaulted" {
   # Guessing which channels the user meant to move is the one thing a preset
   # must never do: it positions all of them at once.
-  run_engine AGENT_SANDBOX_PRESET=paranoid -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=paranoid -- asb claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown preset 'paranoid'"* ]]
   [ ! -s "$H/argv" ]
@@ -417,7 +417,7 @@ EOF
   # machinery of its own, and a preset that silently claimed to position them would
   # leave the user believing a channel was shut. The config file is one of the
   # managed ones since #119, so it moves: to its own store under `isolated`.
-  run_engine AGENT_SANDBOX_PRESET=isolated -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=isolated -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/config/own/$(slugify "$H/home/.claude/.claude.json")" "$H/home/.claude/.claude.json"
   # memory is still scoped by its own machinery, whatever the preset
@@ -429,7 +429,7 @@ EOF
   # widen much. This one switches state isolation off wholesale, and a line in a
   # shell profile would do that for every project, every launch, unnoticed and
   # with no project to approve. Hence a refusal rather than a trust gate.
-  run_engine AGENT_SANDBOX_PRESET=native -- claude --version
+  run_engine AGENT_SANDBOX_PRESET=native -- asb claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"only accepted as the --preset flag"* ]]
   [ ! -s "$H/argv" ]
@@ -444,13 +444,13 @@ EOF
 preset = native
 EOF
   approve_dotfile
-  TEST_PRESET="" run_engine -- claude --version
+  TEST_PRESET="" run_engine -- asb claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"only accepted as the --preset flag"* ]]
 }
 
 @test "--preset native opens every channel and SAYS SO on every launch" {
-  run_engine -- claude --preset native --version
+  run_engine -- asb --preset native claude --version
   [ "$status" -eq 0 ]
   # every declared channel live: nothing layered, nothing shadowed, the state
   # directory straight through
@@ -458,7 +458,7 @@ EOF
   run ! argv_has --overlay-src "$C/rules"
   run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
   # and the notice is not suppressible: --quiet does not silence it
-  run_engine -- claude --preset native --quiet --version
+  run_engine -- asb --preset native --quiet claude --version
   [[ "$output" == *"state isolation is OFF"* ]]
 }
 
@@ -466,7 +466,7 @@ EOF
   # The parity that first justified the preset: natively the file is the user's
   # own at ~/.claude.json, and CLAUDE_CONFIG_DIR -- which exists only because a
   # read-only $HOME loses the writes beside it -- has nothing left to work around.
-  run_engine -- claude --preset native --version
+  run_engine -- asb --preset native claude --version
   [ "$status" -eq 0 ]
   run ! grep -qF "$H/home/.claude/.claude.json" "$H/argv" # nothing bound where the config file would go
   run ! grep -q 'CLAUDE_CONFIG_DIR' "$H/argv"
@@ -478,26 +478,26 @@ EOF
   # The worst outcome this code can produce is a user reading their own dot-file,
   # believing a channel is shut, and it being open. So a name the profile does
   # not carry stops the launch and lists the ones it does.
-  run_engine -- claude --connect 'instrctions=none' --version
+  run_engine -- asb --connect 'instrctions=none' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"no channel 'instrctions'"* ]]
   [[ "$output" == *instructions* ]] # it names what the profile does carry
 }
 
 @test "an unknown mode is refused" {
-  run_engine -- claude --connect 'instructions=readonly' --version
+  run_engine -- asb --connect 'instructions=readonly' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown mode 'readonly'"* ]]
 }
 
 @test "a source other than native is refused while only native is supported" {
-  run_engine -- claude --connect 'instructions=read-only sandbox:~/other' --version
+  run_engine -- asb --connect 'instructions=read-only sandbox:~/other' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"is not supported yet"* ]]
 }
 
 @test "a malformed spec is refused" {
-  run_engine -- claude --connect 'instructions' --version
+  run_engine -- asb --connect 'instructions' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"expected 'channel = mode [source] [scope]'"* ]]
 }
@@ -506,7 +506,7 @@ EOF
   # Everything else malformed is refused, so silently discarding the tail would
   # be the one place a user could write something meaningless and be told
   # nothing about it. A fourth token cannot be anything, so it is the tail.
-  run_engine -- claude --connect 'instructions=read-only native run-scoped extra' --version
+  run_engine -- asb --connect 'instructions=read-only native run-scoped extra' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"trailing 'extra'"* ]]
 }
@@ -514,7 +514,7 @@ EOF
 @test "a second SOURCE is named as such, not reported as a vague tail" {
   # `read-only native extra` is three legal-looking tokens; `extra` has no
   # `-scoped` suffix so it can only be a source, and there is already one.
-  run_engine -- claude --connect 'instructions=read-only native extra' --version
+  run_engine -- asb --connect 'instructions=read-only native extra' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"two sources"* ]]
   [[ "$output" == *"'native' and 'extra'"* ]]
@@ -528,7 +528,7 @@ EOF
 # and never applied reads as isolation that is not there.
 
 @test "the scope is optional: writing none means the role, today's behaviour" {
-  run_engine -- claude --connect 'instructions=read-only native' --version
+  run_engine -- asb --connect 'instructions=read-only native' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
 }
@@ -536,10 +536,10 @@ EOF
 @test "source and scope are told apart by shape, so either order parses" {
   # Both orders bind the same run-scoped store: the scope was recognised as a scope
   # whichever side of the source it stood.
-  run_engine -- claude --connect 'instructions=copy native run-scoped' --version
+  run_engine -- asb --connect 'instructions=copy native run-scoped' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@run/instructions/copy/$(slugify "$C/rules")" "$C/rules"
-  run_engine -- claude --connect 'instructions=copy run-scoped native' --version
+  run_engine -- asb --connect 'instructions=copy run-scoped native' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@run/instructions/copy/$(slugify "$C/rules")" "$C/rules"
 }
@@ -551,7 +551,7 @@ EOF
   # implementation status, so it stays true once the scopes land.
   local sc
   for sc in run-scoped join-scoped; do
-    run_engine -- claude --connect "instructions=read-write $sc" --version
+    run_engine -- asb --connect "instructions=read-write $sc" claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"does not mean anything"* ]]
     [ ! -s "$H/argv" ]
@@ -561,12 +561,12 @@ EOF
 @test "join-scoped is built for own and read-only; a seeded store per join is refused, naming #147" {
   local m
   for m in copy seed-only copy-on-write; do
-    run_engine -- claude --connect "instructions=$m native join-scoped" --version
+    run_engine -- asb --connect "instructions=$m native join-scoped" claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"'$m join-scoped' is not implemented"*"#147"* ]]
     [ ! -s "$H/argv" ]
   done
-  run_engine -- claude --connect 'instructions=read-only native join-scoped' --version
+  run_engine -- asb --connect 'instructions=read-only native join-scoped' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules" # nothing is written, so it is the plain bind
   run ! grep -q -- '--private' "$H/join"
@@ -574,7 +574,7 @@ EOF
 
 @test "own join-scoped: the launch shows an empty read-only mount point and binds the staging directory" {
   mkdir -p "$PROJ/scratch"
-  run_engine -- claude --connect './scratch/=own join-scoped' --version
+  run_engine -- asb --connect './scratch/=own join-scoped' claude --version
   [ "$status" -eq 0 ]
   local i
   i="$(argv_index "$PROJ/scratch")"
@@ -585,7 +585,7 @@ EOF
 
 @test "own join-scoped: each join is given its own store to bind, and it is removed when the join ends" {
   mkdir -p "$PROJ/scratch"
-  run_engine -- claude --connect './scratch/=own join-scoped' --version
+  run_engine -- asb --connect './scratch/=own join-scoped' claude --version
   [ "$status" -eq 0 ]
   local i jid=""
   for ((i = 0; i + 4 < ${#JOIN[@]}; i++)); do
@@ -604,28 +604,28 @@ EOF
 
 @test "a channel can be own join-scoped too" {
   mkdir -p "$C/skills" "$C/commands"
-  run_engine -- claude --connect 'skills=own native join-scoped' --version
+  run_engine -- asb --connect 'skills=own native join-scoped' claude --version
   [ "$status" -eq 0 ]
   grep -A2 -x -- --private-path "$H/join" | grep -qx "$C/skills"
   grep -A2 -x -- --private-path "$H/join" | grep -qx "$C/commands"
 }
 
 @test "process-scoped is refused with its new name" {
-  run_engine -- claude --connect "instructions=copy native process-scoped" --version
+  run_engine -- asb --connect "instructions=copy native process-scoped" claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"'process-scoped' was renamed: write 'join-scoped'"* ]]
   [ ! -s "$H/argv" ]
 }
 
 @test "run-scoped stores live apart from the role's, under @run" {
-  run_engine -- claude --connect 'skills=own native run-scoped' --connect 'instructions=own native' --version
+  run_engine -- asb --connect 'skills=own native run-scoped' --connect 'instructions=own native' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@run/skills/own/$(slugify "$C/skills")" "$C/skills"
   argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
 }
 
 @test "a run-scoped store is gone when the run ends, and the role's own store stays" {
-  run_engine -- claude --connect 'skills=own native run-scoped' --connect 'instructions=own native' --version
+  run_engine -- asb --connect 'skills=own native run-scoped' --connect 'instructions=own native' claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$SBOX/@run" ]                                 # the supervisor cleared it at exit
   [ -d "$SBOX/instructions/own/$(slugify "$C/rules")" ] # the role's store is kept
@@ -637,18 +637,18 @@ EOF
   st="$SBOX/@run/skills/own/$(slugify "$C/skills")"
   mkdir -p "$st"
   printf 'LEFT\n' >"$st/stale.md"
-  engine_bg -- claude --connect 'skills=own native run-scoped' --version
+  engine_bg -- asb --connect 'skills=own native run-scoped' claude --version
   [ -d "$st" ]
   [ ! -e "$st/stale.md" ]
   release_bg
 }
 
 @test "a join into a running launch shares its run-scoped store: one run is one installation" {
-  engine_bg -- claude --connect 'skills=own native run-scoped' --version
+  engine_bg -- asb --connect 'skills=own native run-scoped' claude --version
   local st
   st="$SBOX/@run/skills/own/$(slugify "$C/skills")"
   printf 'THIS RUN\n' >"$st/x.md"
-  run_engine -- claude --connect 'skills=own native run-scoped' --version
+  run_engine -- asb --connect 'skills=own native run-scoped' claude --version
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ]                   # joined, not rebuilt
   [ "$(cat "$st/x.md")" = "THIS RUN" ] # and not cleared
@@ -657,14 +657,14 @@ EOF
 }
 
 @test "read-only run-scoped is accepted, and is the plain read-only bind: nothing is ever written" {
-  run_engine -- claude --connect 'instructions=read-only native run-scoped' --version
+  run_engine -- asb --connect 'instructions=read-only native run-scoped' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$C/rules" "$C/rules"
 }
 
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
-  run_engine -- claude --connect './scratch/=own run-scoped' --version
+  run_engine -- asb --connect './scratch/=own run-scoped' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@run/@paths/own/$(slugify "$PROJ/scratch")" "$PROJ/scratch"
   [ ! -e "$SBOX/@run" ]
@@ -673,20 +673,20 @@ EOF
 @test "the withdrawn scopes are refused, each saying what to write instead" {
   # #125: storage belongs to the role, so the default has no name, sharing across
   # roles is a source, and a per-conversation store is a role of its own.
-  run_engine -- claude --connect 'instructions=copy native sandbox-scoped' --version
+  run_engine -- asb --connect 'instructions=copy native sandbox-scoped' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"'sandbox-scoped' was withdrawn"*"write no scope"* ]]
   [ ! -s "$H/argv" ]
-  run_engine -- claude --connect 'instructions=copy native project-scoped' --version
+  run_engine -- asb --connect 'instructions=copy native project-scoped' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"'project-scoped' was withdrawn"*"sandbox:<project>/<role>"* ]]
-  run_engine -- claude --connect 'instructions=copy native session-scoped' --version
+  run_engine -- asb --connect 'instructions=copy native session-scoped' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"'session-scoped' was withdrawn"*"--role"* ]]
 }
 
 @test "an unknown scope names the set" {
-  run_engine -- claude --connect 'instructions=copy native world-scoped' --version
+  run_engine -- asb --connect 'instructions=copy native world-scoped' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown scope 'world-scoped'"* ]]
   [[ "$output" == *"run-scoped|join-scoped"* ]]
@@ -694,7 +694,7 @@ EOF
 }
 
 @test "two scopes in one spec are refused" {
-  run_engine -- claude --connect 'instructions=copy run-scoped join-scoped' --version
+  run_engine -- asb --connect 'instructions=copy run-scoped join-scoped' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"two scopes"* ]]
 }
@@ -710,7 +710,7 @@ EOF
   # rather than as not built yet.
   grep -q "connect: mode '\$mode' is not implemented" "$ENGINE"
   for mode in own copy copy-on-write read-only read-write; do
-    run_engine -- claude --connect "instructions=$mode" --version
+    run_engine -- asb --connect "instructions=$mode" claude --version
     [ "$status" -eq 0 ]
   done
 }
@@ -724,7 +724,7 @@ EOF
   local old new
   for pair in "none own" "cow copy-on-write" "ro read-only" "live read-write"; do
     read -r old new <<<"$pair"
-    run_engine -- claude --connect "instructions=$old" --version
+    run_engine -- asb --connect "instructions=$old" claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"mode '$old' was renamed"* ]]
     [[ "$output" == *"write '$new'"* ]]
@@ -736,7 +736,7 @@ EOF
   local old new
   for pair in "independent isolated" "default inherit"; do
     read -r old new <<<"$pair"
-    run_engine "AGENT_SANDBOX_PRESET=$old" -- claude --version
+    run_engine "AGENT_SANDBOX_PRESET=$old" -- asb claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"'$old' was renamed"* ]]
     [[ "$output" == *"write '$new'"* ]]
@@ -746,7 +746,7 @@ EOF
 @test "copy seeds from the source and binds the sandbox's own copy, not the source" {
   printf 'YOURS\n' >"$C/CLAUDE.md"
   printf 'YOURS\n' >"$C/rules/topic.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   [ "$status" -eq 0 ]
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")"
@@ -758,12 +758,12 @@ EOF
 
 @test "copy warns, naming the file, when both sides changed it -- and --quiet does not hide it" {
   printf 'YOURS\n' >"$C/rules/topic.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/rules")"
   printf 'SANDBOX\n' >"$slot/topic.md"    # as if the session edited it
   printf 'CHANGED\n' >"$C/rules/topic.md" # and the user changed theirs
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --quiet --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb --quiet claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"topic.md"* ]]
   [[ "$output" == *"--reset instructions"* ]] # it says how to resolve it
@@ -772,24 +772,24 @@ EOF
 
 @test "--reset takes the source's version back, and does NOT launch" {
   printf 'YOURS\n' >"$C/rules/topic.md"
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- claude --version
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/rules")"
   printf 'SANDBOX\n' >"$slot/topic.md"
-  run_engine -- claude --reset instructions
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
   [ "$(cat "$slot/topic.md")" = YOURS ]
   [ ! -s "$H/argv" ] # bwrap was never reached: it resets and exits
 }
 
 @test "--reset on a channel the profile does not carry is refused" {
-  run_engine -- claude --reset nosuch
+  run_engine -- asb --reset nosuch claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"no channel 'nosuch'"* ]]
 }
 
 @test "a refusal stops the launch: bwrap is never reached" {
-  run_engine -- claude --connect 'instructions=nonsense' --version
+  run_engine -- asb --connect 'instructions=nonsense' claude --version
   [ "$status" -ne 0 ]
   [ ! -s "$H/argv" ]
 }
@@ -801,7 +801,7 @@ EOF
 
 @test "a key with a slash is a path: ./data = read-only binds the project's data read-only" {
   mkdir -p "$PROJ/data"
-  run_engine -- claude --connect './data = read-only' --version
+  run_engine -- asb --connect './data = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/data" "$PROJ/data"
 }
@@ -809,7 +809,7 @@ EOF
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "a relative key resolves against the project, and ~ against HOME" {
   mkdir -p "$PROJ/sub/dir" "$H/home/notes"
-  run_engine -- claude --connect 'sub/dir = read-only' --connect '~/notes = read-only' --version
+  run_engine -- asb --connect 'sub/dir = read-only' --connect '~/notes = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/sub/dir" "$PROJ/sub/dir"
   argv_has --ro-bind "$H/home/notes" "$H/home/notes"
@@ -817,7 +817,7 @@ EOF
 
 @test "a path key keeps its spaces" {
   mkdir -p "$PROJ/my data"
-  run_engine -- claude --connect './my data = read-only' --version
+  run_engine -- asb --connect './my data = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/my data" "$PROJ/my data"
 }
@@ -825,7 +825,7 @@ EOF
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "read-write on a path binds the outside path through, as [rw] does" {
   mkdir -p "$H/home/shared"
-  run_engine -- claude --connect '~/shared = read-write' --version
+  run_engine -- asb --connect '~/shared = read-write' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$H/home/shared" "$H/home/shared"
 }
@@ -833,7 +833,7 @@ EOF
 @test "own on a path binds a private slot from the sandbox's state, and it persists" {
   mkdir -p "$PROJ/scratch"
   printf 'the real one\n' >"$PROJ/scratch/f"
-  run_engine -- claude --connect './scratch/ = own' --version
+  run_engine -- asb --connect './scratch/ = own' claude --version
   [ "$status" -eq 0 ]
   local slot
   slot="$SBOX/@paths/own/$(slugify "$PROJ/scratch")"
@@ -841,12 +841,12 @@ EOF
   [ -d "$slot" ]
   [ ! -e "$slot/f" ] # never seeded from outside
   : >"$slot/kept"
-  run_engine -- claude --connect './scratch/ = own' --version
+  run_engine -- asb --connect './scratch/ = own' claude --version
   [ -e "$slot/kept" ]
 }
 
 @test "own with a trailing slash on a directory that does not exist creates it, inside only" {
-  run_engine -- claude --connect './scratch/ = own' --version
+  run_engine -- asb --connect './scratch/ = own' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/scratch")" "$PROJ/scratch"
 }
@@ -854,7 +854,7 @@ EOF
 @test "a path that does not exist is skipped with a notice, in every other case" {
   local spec
   for spec in './gone/ = read-only' './gone = own' './gone = copy' './gone = read-write' './gone/ = copy-on-write'; do
-    run_engine -- claude --quiet --connect "$spec" --version
+    run_engine -- asb --quiet --connect "$spec" claude --version
     [ "$status" -eq 0 ]
     [[ "$output" == *"'./gone"*"does not exist"*"skipped"* ]]
     run ! argv_has "$PROJ/gone"
@@ -863,7 +863,7 @@ EOF
 
 @test "a trailing slash on something that is not a directory is refused" {
   : >"$PROJ/AGENT.md"
-  run_engine -- claude --connect './AGENT.md/ = read-only' --version
+  run_engine -- asb --connect './AGENT.md/ = read-only' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"not a directory"* ]]
   [ ! -s "$H/argv" ]
@@ -872,7 +872,7 @@ EOF
 @test "copy on a path seeds the sandbox's own copy from the source" {
   mkdir -p "$PROJ/tools"
   printf 'v1\n' >"$PROJ/tools/t"
-  run_engine -- claude --connect './tools/ = copy' --version
+  run_engine -- asb --connect './tools/ = copy' claude --version
   [ "$status" -eq 0 ]
   local slot
   slot="$SBOX/@paths/copy/$(slugify "$PROJ/tools")"
@@ -882,7 +882,7 @@ EOF
 
 @test "a file declaration says at launch that it cannot be deleted from inside" {
   printf 'x\n' >"$PROJ/AGENT.md"
-  run_engine -- claude --quiet --connect './AGENT.md = read-only' --version
+  run_engine -- asb --quiet --connect './AGENT.md = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/AGENT.md" "$PROJ/AGENT.md"
   [[ "$output" == *"'./AGENT.md' is a file"*"cannot be deleted"* ]]
@@ -890,7 +890,7 @@ EOF
 
 @test "copy-on-write on a file is copy, and the launch says so" {
   printf 'x\n' >"$PROJ/AGENT.md"
-  run_engine -- claude --quiet --connect './AGENT.md = copy-on-write' --version
+  run_engine -- asb --quiet --connect './AGENT.md = copy-on-write' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/AGENT.md")" "$PROJ/AGENT.md"
   [[ "$output" == *"copy-on-write on a file is copy"* ]]
@@ -900,7 +900,7 @@ EOF
 @test "the root, HOME, and parents of HOME are refused as path keys, in every mode" {
   local spec
   for spec in '/ = own' '~/ = own' '~/.. = read-only'; do
-    run_engine -- claude --connect "$spec" --version
+    run_engine -- asb --connect "$spec" claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"HOME or a parent of it"* ]]
     [ ! -s "$H/argv" ]
@@ -913,7 +913,7 @@ EOF
   mkdir -p "$PROJ/sub"
   local spec
   for spec in './ = own' '../ = read-only' "$PROJ/ = own"; do
-    RUN_CWD="$PROJ/sub" run_engine -- claude --connect "$spec" --version
+    RUN_CWD="$PROJ/sub" run_engine -- asb --connect "$spec" claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"project"* ]]
     [ ! -s "$H/argv" ]
@@ -925,7 +925,7 @@ EOF
   mkdir -p "$H/home/.ssh"
   local spec
   for spec in '~/.ssh = read-only' '~/.ssh/ = own' '~/.ssh/keys/ = own' '~/.config/ = own'; do
-    run_engine -- claude --connect "$spec" --version
+    run_engine -- asb --connect "$spec" claude --version
     [ "$status" -ne 0 ]
     [[ "$output" == *"secret store"* ]]
     [ ! -s "$H/argv" ]
@@ -935,14 +935,14 @@ EOF
 @test "a key that is a symlink into a secret store is refused" {
   mkdir -p "$H/home/.ssh"
   ln -s "$H/home/.ssh" "$PROJ/keys"
-  run_engine -- claude --connect './keys = read-only' --version
+  run_engine -- asb --connect './keys = read-only' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"secret store"* ]]
 }
 
 @test "two path declarations nested inside each other are refused" {
   mkdir -p "$PROJ/a/b"
-  run_engine -- claude --connect './a/ = own' --connect './a/b/ = read-only' --version
+  run_engine -- asb --connect './a/ = own' --connect './a/b/ = read-only' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"inside"* ]]
   [ ! -s "$H/argv" ]
@@ -950,7 +950,7 @@ EOF
 
 @test "the same path declared twice: the later one wins, as for a channel" {
   mkdir -p "$PROJ/data"
-  run_engine AGENT_SANDBOX_CONNECT='./data = own' -- claude --connect './data = read-only' --version
+  run_engine AGENT_SANDBOX_CONNECT='./data = own' -- asb --connect './data = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/data" "$PROJ/data"
   run ! argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/data")" "$PROJ/data"
@@ -958,7 +958,7 @@ EOF
 
 @test "a path declaration takes no source yet: outside: is a follow-up" {
   mkdir -p "$PROJ/data"
-  run_engine -- claude --connect './data = read-only native' --version
+  run_engine -- asb --connect './data = read-only native' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"source"* ]]
 }
@@ -966,7 +966,7 @@ EOF
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "a path inside a channel is allowed, warned about, and wins there" {
   mkdir -p "$C/rules/team"
-  run_engine -- claude --quiet --connect 'instructions = read-only native' --connect '~/.claude/rules/team/ = own' --version
+  run_engine -- asb --quiet --connect 'instructions = read-only native' --connect '~/.claude/rules/team/ = own' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"overlaps the channel 'instructions'"* ]]
   local slot
@@ -979,18 +979,18 @@ EOF
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "a path under HOME, outside the project and every channel, is warned about" {
   mkdir -p "$H/home/notes"
-  run_engine -- claude --quiet --connect '~/notes/ = own' --version
+  run_engine -- asb --quiet --connect '~/notes/ = own' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"'~/notes/' is under your home directory"* ]]
   # including when the directory does not exist yet and the launch creates it,
   # which is the case the warning is chiefly for
-  run_engine -- claude --quiet --connect '~/fresh/ = own' --version
+  run_engine -- asb --quiet --connect '~/fresh/ = own' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"'~/fresh/' is under your home directory"* ]]
   # and a path inside the project is not, even when the project is under HOME
   mkdir -p "$H/home/work"
   mkdir -p "$H/home/work/data"
-  RUN_CWD="$H/home/work" run_engine -- claude --quiet --connect './data/ = own' --version
+  RUN_CWD="$H/home/work" run_engine -- asb --quiet --connect './data/ = own' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$STATE/claude/${H//[^A-Za-z0-9-]/-}-home-work/default/@paths/own/$(slugify "$H/home/work/data")" "$H/home/work/data"
   [[ "$output" != *"under your home directory"* ]]
@@ -998,14 +998,14 @@ EOF
 
 @test "a preset never moves a path declaration" {
   mkdir -p "$PROJ/data"
-  TEST_PRESET=isolated run_engine -- claude --connect './data = read-only' --version
+  TEST_PRESET=isolated run_engine -- asb --connect './data = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/data" "$PROJ/data"
 }
 
 @test "copy-on-write on a directory path is an overlay at that path, the path itself its lower layer" {
   mkdir -p "$PROJ/data"
-  run_engine -- claude --connect './data/ = copy-on-write' --version
+  run_engine -- asb --connect './data/ = copy-on-write' claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$PROJ/data" --overlay "$SBOX/@paths/upper/$(slugify "$PROJ/data")" \
     "$SBOX/@paths/work/$(slugify "$PROJ/data")" "$PROJ/data"
@@ -1015,7 +1015,7 @@ EOF
 
 @test "with the overlay off, a copy-on-write path is copy, and the launch says so" {
   mkdir -p "$PROJ/data"
-  run_engine AGENT_SANDBOX_OVERLAY=off -- claude --connect './data/ = copy-on-write' --version
+  run_engine AGENT_SANDBOX_OVERLAY=off -- asb --connect './data/ = copy-on-write' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"'./data/': copy-on-write is using copy here -- the overlay is turned off"* ]]
   argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/data")" "$PROJ/data"
@@ -1024,7 +1024,7 @@ EOF
 
 @test "on a bubblewrap too old for overlays, a copy-on-write path is copy, and the launch says so" {
   mkdir -p "$PROJ/data"
-  run_engine AGENT_SANDBOX_TEST_NO_OVERLAY=1 -- claude --connect './data/ = copy-on-write' --version
+  run_engine AGENT_SANDBOX_TEST_NO_OVERLAY=1 -- asb --connect './data/ = copy-on-write' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"copy-on-write is using copy here -- this bubblewrap cannot mount an overlay"* ]]
   argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/data")" "$PROJ/data"
@@ -1032,18 +1032,18 @@ EOF
 
 @test "a run-scoped copy-on-write path keeps its layers under @run" {
   mkdir -p "$PROJ/data"
-  run_engine -- claude --connect './data/ = copy-on-write run-scoped' --version
+  run_engine -- asb --connect './data/ = copy-on-write run-scoped' claude --version
   [ "$status" -eq 0 ]
   argv_has --overlay-src "$PROJ/data" --overlay "$SBOX/@run/@paths/upper/$(slugify "$PROJ/data")"
 }
 
 @test "--reset of a copy-on-write path discards its upper layer, whiteouts and all" {
   mkdir -p "$PROJ/data"
-  run_engine -- claude --connect './data/ = copy-on-write' --version
+  run_engine -- asb --connect './data/ = copy-on-write' claude --version
   local up
   up="$SBOX/@paths/upper/$(slugify "$PROJ/data")"
   printf 'MINE\n' >"$up/x"
-  run_engine -- claude --reset ./data/
+  run_engine -- asb --reset ./data/ claude
   [ "$status" -eq 0 ]
   [ ! -e "$up" ]
 }
@@ -1052,7 +1052,7 @@ EOF
   mkdir -p "$PROJ/data"
   printf '[connect]\n./data = read-only\n' >"$PROJ/.agent-sandbox"
   approve_dotfile
-  run_engine -- claude --version
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/data" "$PROJ/data"
 }
@@ -1062,7 +1062,7 @@ EOF
   # before it, `./data = read-only` was writable and `./scratch/ = own` showed the
   # project's files.
   mkdir -p "$PROJ/data"
-  run_engine -- claude --connect './data = read-only' --version
+  run_engine -- asb --connect './data = read-only' claude --version
   [ "$status" -eq 0 ]
   local i tree=-1 decl=-1
   for ((i = 0; i + 2 < ${#ARGV[@]}; i++)); do
@@ -1080,7 +1080,7 @@ EOF
 @test "seed-only seeds the store from the source at the first launch and binds it" {
   printf 'NATIVE\n' >"$C/CLAUDE.md"
   mkdir -p "$C/rules" && printf 'R1\n' >"$C/rules/a.md"
-  run_engine -- claude --connect 'instructions=seed-only native' --version
+  run_engine -- asb --connect 'instructions=seed-only native' claude --version
   [ "$status" -eq 0 ]
   local fslot dslot
   fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
@@ -1093,13 +1093,13 @@ EOF
 
 @test "seed-only never refreshes, and never warns, when the source changes later" {
   printf 'V1\n' >"$C/CLAUDE.md"
-  run_engine -- claude --connect 'instructions=seed-only native' --version
+  run_engine -- asb --connect 'instructions=seed-only native' claude --version
   local fslot
   fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
   printf 'SANDBOX\n' >"$fslot"  # the role changed its own
   printf 'V2\n' >"$C/CLAUDE.md" # and so did the source
   mkdir -p "$C/rules" && printf 'NEW\n' >"$C/rules/new.md"
-  run_engine -- claude --quiet --connect 'instructions=seed-only native' --version
+  run_engine -- asb --quiet --connect 'instructions=seed-only native' claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$fslot")" = SANDBOX ]
   [ ! -e "$SBOX/instructions/seed-only/$(slugify "$C/rules")/new.md" ]
@@ -1111,7 +1111,7 @@ EOF
   # The mount point bwrap would leave on the host is only created by a real bwrap, so
   # its cleanup is asserted in tests/integration/connect-seed-only.bats, not here.
   rm -f "$C/CLAUDE.md"
-  run_engine -- claude --connect 'instructions=seed-only native' --version
+  run_engine -- asb --connect 'instructions=seed-only native' claude --version
   [ "$status" -eq 0 ]
   local fslot
   fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
@@ -1121,8 +1121,8 @@ EOF
 
 @test "seed-only keeps its own store, apart from copy's" {
   printf 'V1\n' >"$C/CLAUDE.md"
-  run_engine -- claude --connect 'instructions=copy native' --version
-  run_engine -- claude --connect 'instructions=seed-only native' --version
+  run_engine -- asb --connect 'instructions=copy native' claude --version
+  run_engine -- asb --connect 'instructions=seed-only native' claude --version
   [ "$status" -eq 0 ]
   [ -e "$SBOX/instructions/copy/$(slugify "$C/CLAUDE.md")" ]
   [ -e "$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")" ]
@@ -1131,32 +1131,32 @@ EOF
 
 @test "--reset discards a seed-only store, so the next launch seeds again" {
   printf 'V1\n' >"$C/CLAUDE.md"
-  run_engine -- claude --connect 'instructions=seed-only native' --version
+  run_engine -- asb --connect 'instructions=seed-only native' claude --version
   local fslot
   fslot="$SBOX/instructions/seed-only/$(slugify "$C/CLAUDE.md")"
   printf 'V2\n' >"$C/CLAUDE.md"
-  run_engine -- claude --reset instructions
+  run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
   [ ! -e "$fslot" ]
-  run_engine -- claude --connect 'instructions=seed-only native' --version
+  run_engine -- asb --connect 'instructions=seed-only native' claude --version
   [ "$(cat "$fslot")" = V2 ]
 }
 
 @test "a path declaration at seed-only is seeded once from the same path outside" {
   mkdir -p "$PROJ/tools" && printf 'T1\n' >"$PROJ/tools/t"
-  run_engine -- claude --connect './tools/ = seed-only' --version
+  run_engine -- asb --connect './tools/ = seed-only' claude --version
   [ "$status" -eq 0 ]
   local slot
   slot="$SBOX/@paths/seed-only/$(slugify "$PROJ/tools")"
   argv_has --bind "$slot" "$PROJ/tools"
   [ "$(cat "$slot/t")" = T1 ]
   printf 'T2\n' >"$PROJ/tools/t"
-  run_engine -- claude --connect './tools/ = seed-only' --version
+  run_engine -- asb --connect './tools/ = seed-only' claude --version
   [ "$(cat "$slot/t")" = T1 ]
 }
 
 @test "seed-only sits between own and copy in every message that lists the scale" {
-  run_engine -- claude --connect 'instructions=nonsense native' --version
+  run_engine -- asb --connect 'instructions=nonsense native' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"own|seed-only|copy|copy-on-write|read-only|read-write"* ]]
 }

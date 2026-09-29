@@ -23,6 +23,10 @@ make_integration() {
   cp "$BATS_TEST_DIRNAME/../helpers/probe-profile.sh" "$IPROFILES/probe.sh"
   cat >"$I/probe.sh"
   chmod +x "$I/probe.sh"
+  # The probe is the agent, and a launch names it as a user names theirs (#151):
+  # `probe` on PATH, whose basename selects the probe profile.
+  mkdir -p "$I/bin"
+  ln -sfn "$I/probe.sh" "$I/bin/probe"
   export I IHOME IWORK IPROFILES
 }
 
@@ -32,7 +36,8 @@ make_integration() {
 # layered over its state, which is not what any of them is about. A suite that
 # wants the real default sets TEST_PRESET to the empty string.
 
-# run_sandboxed [VAR=value ...] -- engine args (after --profile probe)
+# run_sandboxed [VAR=value ...] -- [ENGINE FLAGS] probe [PROBE ARGS]
+# (or -- [ENGINE FLAGS] --profile probe --exec CMD...)
 # Runs the real engine from $IWORK with a clean environment; REPORT holds the
 # probe's key=value output afterwards. $status/$output from bats' run.
 run_sandboxed() {
@@ -48,10 +53,10 @@ run_sandboxed() {
   # run_engine in common.bash). Empty on a normal run.
   local -a kc=()
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
-  run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
-    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_TEST_BIN="$I/probe.sh" \
+  run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$ENGINE" --profile probe "$@"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$ENGINE" "$@"
   popd >/dev/null || return 1
   declare -gA REPORT=()
   local k v

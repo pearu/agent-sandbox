@@ -13,9 +13,6 @@ setup() {
   PROF="$(mktemp -d)"
   cat >"$PROF/scprobe.sh" <<'P'
 profile_command=scprobe
-profile_bin_discover() {
-  profile_bin="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/scprobe-bin.sh"
-}
 P
   cat >"$PROF/scprobe-bin.sh" <<'P'
 #!/usr/bin/env bash
@@ -32,7 +29,7 @@ teardown() {
 }
 
 @test "without seccomp (control): no filter, and a user namespace can be created" {
-  run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=proxy "$ENGINE" --profile scprobe run
+  run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=proxy "$ENGINE" --profile scprobe "$PROF/scprobe-bin.sh" run
   [ "$status" -eq 0 ]
   [[ "$output" == *"seccomp_mode=0"* ]]
   [[ "$output" == *"userns=created"* ]]
@@ -40,7 +37,7 @@ teardown() {
 
 @test "with AGENT_SANDBOX_SECCOMP=on: a filter is active and creating a user namespace is refused" {
   run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_SECCOMP=on \
-    "$ENGINE" --profile scprobe run
+    "$ENGINE" --profile scprobe "$PROF/scprobe-bin.sh" run
   [ "$status" -eq 0 ]
   [[ "$output" == *"seccomp_mode=2"* ]]
   [[ "$output" == *"userns=refused"* ]]

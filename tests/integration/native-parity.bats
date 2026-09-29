@@ -76,7 +76,7 @@ capture() { # capture NAME engine-args...
   local name="$1"
   shift
   rm -f "$IHOME/.probe/docs/w.md" # each run must start from the same source
-  run_sandboxed "${PAR[@]}" -- "$@" run
+  run_sandboxed "${PAR[@]}" -- "$@" probe run
   [ "$status" -eq 0 ] || {
     echo "$name launch failed ($status): $output"
     return 1
@@ -106,7 +106,7 @@ capture() { # capture NAME engine-args...
 @test "native is refused from the environment, so only a flag can turn it on" {
   # The parity above is exactly what makes native dangerous to reach by accident:
   # it is state isolation off. Belongs here, next to what it protects.
-  TEST_PRESET=native run_sandboxed "${PAR[@]}" -- run
+  TEST_PRESET=native run_sandboxed "${PAR[@]}" -- probe run
   [ "$status" -ne 0 ]
   [[ "$output" == *"only accepted as the --preset flag"* ]]
 }

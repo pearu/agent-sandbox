@@ -54,7 +54,7 @@ run_claude() {
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
     AGENT_SANDBOX_CONNECT="${CFG_CONNECT-config=seed-only native}" \
-    bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" --profile claude probe
+    bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe
   declare -gA M=()
   local k v
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true

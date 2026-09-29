@@ -9,7 +9,7 @@ setup() {
 }
 
 @test "default (proxy): system read-only, fresh pseudo-filesystems, HOME tmpfs remounted ro after its binds, clearenv, profile state rw, CWD rw, proxy env, CA env" {
-  run_engine LEAKED=secret -- claude --version --foo bar
+  run_engine LEAKED=secret -- asb claude --version --foo bar
   [ "$status" -eq 0 ]
   argv_has --ro-bind /usr /usr
   argv_has --ro-bind-try /etc /etc
@@ -73,13 +73,13 @@ setup() {
 }
 
 @test "none: no network at all; open: host network without proxy; neither sets proxy or CA variables" {
-  run_engine AGENT_SANDBOX_NET=none -- claude --version
+  run_engine AGENT_SANDBOX_NET=none -- asb claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --share-net
   run ! setenv_value HTTPS_PROXY
   run ! setenv_value SSL_CERT_FILE
   run ! argv_has --ro-bind "$H/base/ca-bundle.crt"
-  run_engine AGENT_SANDBOX_NET=open -- claude --version
+  run_engine AGENT_SANDBOX_NET=open -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --share-net
   run ! setenv_value HTTPS_PROXY
@@ -87,7 +87,7 @@ setup() {
 }
 
 @test "environment allowlist: locale, profile, proxy/CA and CUDA names are forwarded only when set; FORWARD adds names; caller-set CA variables win" {
-  run_engine LANG=C.UTF-8 TZ=UTC ANTHROPIC_API_KEY=k CUDA_HOME=/usr/local/cuda AWS_SECRET_ACCESS_KEY=x GH_TOKEN=y -- claude --version
+  run_engine LANG=C.UTF-8 TZ=UTC ANTHROPIC_API_KEY=k CUDA_HOME=/usr/local/cuda AWS_SECRET_ACCESS_KEY=x GH_TOKEN=y -- asb claude --version
   [ "$(setenv_value LANG)" = "C.UTF-8" ]
   [ "$(setenv_value TZ)" = "UTC" ]
   [ "$(setenv_value ANTHROPIC_API_KEY)" = "k" ]
@@ -95,7 +95,7 @@ setup() {
   run ! setenv_value AWS_SECRET_ACCESS_KEY
   run ! setenv_value GH_TOKEN
   run ! setenv_value TERM_PROGRAM
-  run_engine AGENT_SANDBOX_FORWARD="GH_TOKEN FOO:BAR" GH_TOKEN=y FOO="two words" -- claude --version
+  run_engine AGENT_SANDBOX_FORWARD="GH_TOKEN FOO:BAR" GH_TOKEN=y FOO="two words" -- asb claude --version
   [ "$(setenv_value GH_TOKEN)" = "y" ]
   [ "$(setenv_value FOO)" = "two words" ]
   run ! setenv_value BAR
@@ -103,7 +103,7 @@ setup() {
   # name would win over the profile's, and CLAUDE_CODE_PROJECT_DIR_NAME would
   # move memory and transcripts out from under the scoping. Said, not dropped.
   run_engine AGENT_SANDBOX_FORWARD="CLAUDE_CONFIG_DIR CLAUDE_CODE_PROJECT_DIR_NAME DISABLE_AUTOUPDATER OK_VAR" \
-    CLAUDE_CONFIG_DIR=/elsewhere CLAUDE_CODE_PROJECT_DIR_NAME=one DISABLE_AUTOUPDATER=0 OK_VAR=1 -- claude --version
+    CLAUDE_CONFIG_DIR=/elsewhere CLAUDE_CODE_PROJECT_DIR_NAME=one DISABLE_AUTOUPDATER=0 OK_VAR=1 -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"not forwarding CLAUDE_CONFIG_DIR"* ]]
   [[ "$output" == *"not forwarding CLAUDE_CODE_PROJECT_DIR_NAME"* ]]
@@ -113,7 +113,7 @@ setup() {
   [ "$(setenv_value OK_VAR)" = "1" ]
   [ "$(grep -c '^CLAUDE_CONFIG_DIR$' "$H/argv")" -eq 1 ]
   run ! setenv_value CLAUDE_CODE_PROJECT_DIR_NAME
-  run_engine PIP_CERT=/my/ca SSL_CERT_FILE=/my/bundle -- claude --version
+  run_engine PIP_CERT=/my/ca SSL_CERT_FILE=/my/bundle -- asb claude --version
   [ "$(setenv_value PIP_CERT)" = "/my/ca" ]
   [ "$(setenv_value SSL_CERT_FILE)" = "/my/bundle" ]
   [ "$(setenv_value CONDA_SSL_VERIFY)" = "/my/bundle" ]
@@ -122,7 +122,7 @@ setup() {
 
 @test "RO and RW knobs bind the listed paths; a missing path is skipped with a warning" {
   mkdir -p "$H/ro1" "$H/rw1"
-  run_engine AGENT_SANDBOX_RO="$H/ro1:$H/nope" AGENT_SANDBOX_RW="$H/rw1" -- claude --version
+  run_engine AGENT_SANDBOX_RO="$H/ro1:$H/nope" AGENT_SANDBOX_RW="$H/rw1" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/ro1" "$H/ro1"
   argv_has --bind "$H/rw1" "$H/rw1"
@@ -135,7 +135,7 @@ setup() {
   mkdir -p "$env" "$base/pkgs" "$base/condabin" "$H/pkgs"
   : >"$H/home/.condarc"
   local -a cenv=(CONDA_PREFIX="$env" CONDA_DEFAULT_ENV=myenv CONDA_SHLVL=1)
-  run_engine "${cenv[@]}" -- claude --version
+  run_engine "${cenv[@]}" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$base" "$base"
   argv_has --ro-bind "$env" "$env"
@@ -146,7 +146,7 @@ setup() {
   [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
   [ "$(setenv_value CONDA_DEFAULT_ENV)" = "myenv" ]
   run ! setenv_value CONDA_PKGS_DIRS
-  run_engine "${cenv[@]}" AGENT_SANDBOX_CONDA_WRITE=1 AGENT_SANDBOX_CONDA_PKGS="$H/pkgs" -- claude --version
+  run_engine "${cenv[@]}" AGENT_SANDBOX_CONDA_WRITE=1 AGENT_SANDBOX_CONDA_PKGS="$H/pkgs" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$base" "$base"
   argv_has --bind "$env" "$env"
@@ -156,30 +156,30 @@ setup() {
 }
 
 @test "CWD: \$HOME itself is not bound; /, a parent of \$HOME, and secret stores are refused" {
-  RUN_CWD="$H/home" run_engine -- claude --version
+  RUN_CWD="$H/home" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"CWD is \$HOME"* ]]
-  RUN_CWD=/ run_engine -- claude --version
+  RUN_CWD=/ run_engine -- asb claude --version
   [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
-  RUN_CWD="$(dirname "$H/home")" run_engine -- claude --version
+  RUN_CWD="$(dirname "$H/home")" run_engine -- asb claude --version
   [ "$status" -eq 1 ] && [[ "$output" == *"contains \$HOME"* ]]
   mkdir -p "$H/home/.ssh" "$H/home/.config/agent-sandbox"
-  RUN_CWD="$H/home/.ssh" run_engine -- claude --version
+  RUN_CWD="$H/home/.ssh" run_engine -- asb claude --version
   [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it is the secret store"* ]] && [ ! -s "$H/argv" ]
-  RUN_CWD="$H/home/.config/agent-sandbox" run_engine -- claude --version
+  RUN_CWD="$H/home/.config/agent-sandbox" run_engine -- asb claude --version
   [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it is the sandbox's own control plane"* ]]
-  RUN_CWD="$H/home/.config" run_engine -- claude --version # contains the trust store
+  RUN_CWD="$H/home/.config" run_engine -- asb claude --version # contains the trust store
   [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it contains"* ]] && [ ! -s "$H/argv" ]
   run ! argv_has --bind "$H/home" "$H/home"
 }
 
 @test "RW into a secret store or a parent of HOME is refused before bwrap runs" {
   mkdir -p "$H/home/.aws"
-  run_engine AGENT_SANDBOX_RW="$H/home/.aws" -- claude --version
+  run_engine AGENT_SANDBOX_RW="$H/home/.aws" -- asb claude --version
   [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
-  run_engine AGENT_SANDBOX_RO="$H/home/.aws" -- claude --version
+  run_engine AGENT_SANDBOX_RO="$H/home/.aws" -- asb claude --version
   [ "$status" -eq 1 ]
-  run_engine AGENT_SANDBOX_RW="$(dirname "$H/home")" -- claude --version
+  run_engine AGENT_SANDBOX_RW="$(dirname "$H/home")" -- asb claude --version
   [ "$status" -eq 1 ]
 }
 
@@ -192,7 +192,7 @@ set +x
 for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*; do printf '== %s\n' "$f"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1
 . "${0%/*}/keeper-tail"
 STUB
-  run_engine BWRAP_PROBE="$H/probe" -- claude --allow pypi.org --allow=.example.org --version
+  run_engine BWRAP_PROBE="$H/probe" -- asb --allow pypi.org --allow=.example.org claude --version
   [ "$status" -eq 0 ]
   grep -q '^== .*/allow.txt$' "$H/probe"
   grep -q '^pypi.org$' "$H/probe"

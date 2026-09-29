@@ -73,9 +73,15 @@ if ! HOME="$tmp/home" PATH="$tmp/home/.local/bin:/usr/bin:/bin" ./install.sh --d
   cat "$tmp/dry.out" >&2
   exit 1
 fi
-grep -qE '(would symlink|symlinked) .*/claude' "$tmp/dry.out" || {
-  echo "dry run did not create the claude symlink:" >&2
+grep -qE 'symlinked .*/\.local/bin/asb ' "$tmp/dry.out" || {
+  echo "dry run did not create the asb symlink:" >&2
   cat "$tmp/dry.out" >&2
+  exit 1
+}
+# and nothing at the agent's own name (#151)
+[[ ! -e "$tmp/home/.local/bin/claude" ]] || {
+  echo "dry run put something at ~/.local/bin/claude:" >&2
+  ls -l "$tmp/home/.local/bin/claude" >&2
   exit 1
 }
 

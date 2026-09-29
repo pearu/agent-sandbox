@@ -82,16 +82,17 @@ the integration suites, so run it where those work.
   (`argv_has`, `setenv_value`, `argv_index`). Helper-level tests `source` the
   engine and call the `_as_*` functions directly.
 - **Integration suites use the real bwrap** through a test profile whose
-  "agent" is a probe script (`AGENT_SANDBOX_TEST_BIN`) that writes key=value
-  lines to `$PWD/report` from inside the sandbox. They `skip` when unprivileged
+  "agent" is a probe script, the command `probe` on the harness's PATH (so a
+  launch reads `-- [ENGINE FLAGS] probe [ARGS]`, as a user's `asb … claude`
+  does), that writes key=value lines to `$PWD/report` from inside the sandbox. They `skip` when unprivileged
   user namespaces are unavailable. SSH tests need a short session base because
   of the unix-socket path limit; `make_short_base` provides one.
 - **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): a
-  fake Claude binary (`tests/helpers/fake-claude.sh`) is planted where the
-  profile discovers it, `systemctl --user` is a shim
-  (`tests/helpers/systemctl-shim.sh`) that records calls and runs the unit's
-  ExecStart itself, and the installed launcher then runs the fake agent through
-  the installed proxy. The proxy-dependent tests need port 8888 free and skip
+  fake Claude binary (`tests/helpers/fake-claude.sh`) is installed the way the
+  native installer does it (`versions/`, linked from `~/.local/bin/claude`),
+  `systemctl --user` is a shim (`tests/helpers/systemctl-shim.sh`) that records
+  calls and runs the unit's ExecStart itself, and the installed `asb claude`
+  then runs the fake agent through the installed proxy. The proxy-dependent tests need port 8888 free and skip
   otherwise, which is the case on a machine that already runs the proxy;
   `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips the pip install.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
@@ -122,8 +123,9 @@ the integration suites, so run it where those work.
 - **Naming.** Anything generic says `agent` (`agent-sandbox`, `AGENT_SANDBOX_*`,
   `~/.config/agent-sandbox`, `agent-sandbox-mitmproxy.service`). Only genuinely
   Claude-specific things say `claude`: the `claude` profile and its files,
-  `~/.claude`, `~/.claude.json`, `versions/`, `ANTHROPIC_*`, the `claude` command
-  and symlink.
+  `~/.claude`, `~/.claude.json`, `versions/`, `ANTHROPIC_*`, the `claude`
+  command. The engine's own commands are `agent-sandbox` and `asb` (#151);
+  nothing of ours is ever installed at `claude`.
 - **Shell.** bash 4.4+ (`local -n`, `${!var+x}`). `set -euo pipefail` inside the
   engine function. Helpers live at top level so tests can `source` the engine
   and call them. Messages go through `_as_msg`. Keep `IFS` changes inside a
@@ -166,7 +168,7 @@ If you are an agent running inside this sandbox while maintaining it:
   the host.
 - The engine and profiles you edit here are the checkout; a normal install
   runs a *copy* under `~/.local/share/agent-sandbox`, so your edits reach a
-  real `claude` launch only after the human re-runs `install.sh`. Under
+  real `asb claude` launch only after the human re-runs `install.sh`. Under
   `--dev` they are live at the next launch — do not rely on either; test with
   the bats suites, which run the checkout's engine directly.
 
@@ -212,7 +214,7 @@ If you are an agent running inside this sandbox while maintaining it:
   the agent's writable state directory, which is the shape that CVE describes.
 - **install.sh is a true install (copy), not an in-place symlink.** It copies
   the engine and profiles under `~/.local/share/agent-sandbox/app` and points
-  the launcher there, so the installed command does not depend on the checkout
+  `asb` there, so the installed command does not depend on the checkout
   (delete it and the command still works) and an edit to a checked-out engine
   or profile is inert until the next `install.sh`. `--dev` keeps the old
   symlink-into-the-checkout for people developing agent-sandbox; it warns that
