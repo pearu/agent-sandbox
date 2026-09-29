@@ -523,9 +523,9 @@ EOF
 # ----- the scope axis ---------------------------------------------------------
 #
 # A scope says WHICH STORAGE a channel's sandbox side uses: nothing written is the
-# role's, `run-scoped` is one run of the role's launch (#105). `join-scoped` parses
-# and is refused, because a scope that is accepted and never applied reads as
-# isolation that is not there.
+# role's, `run-scoped` is one run of the role's launch (#105), `join-scoped` one join
+# (#147). A combination that is not built is refused, because a scope that is accepted
+# and never applied reads as isolation that is not there.
 
 @test "the scope is optional: writing none means the role, today's behaviour" {
   run_engine -- claude --connect 'instructions=read-only native' --version
@@ -558,11 +558,56 @@ EOF
   done
 }
 
-@test "join-scoped is REFUSED, never quietly ignored, and says why it is not built" {
-  run_engine -- claude --connect "instructions=copy native join-scoped" --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"scope 'join-scoped' is not implemented"*"shares its mounts"*"#147"* ]]
-  [ ! -s "$H/argv" ]
+@test "join-scoped is built for own and read-only; a seeded store per join is refused, naming #147" {
+  local m
+  for m in copy seed-only copy-on-write; do
+    run_engine -- claude --connect "instructions=$m native join-scoped" --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"'$m join-scoped' is not implemented"*"#147"* ]]
+    [ ! -s "$H/argv" ]
+  done
+  run_engine -- claude --connect 'instructions=read-only native join-scoped' --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$C/rules" "$C/rules" # nothing is written, so it is the plain bind
+  run ! grep -q -- '--private' "$H/join"
+}
+
+@test "own join-scoped: the launch shows an empty read-only mount point and binds the staging directory" {
+  mkdir -p "$PROJ/scratch"
+  run_engine -- claude --connect './scratch/=own join-scoped' --version
+  [ "$status" -eq 0 ]
+  local i
+  i="$(argv_index "$PROJ/scratch")"
+  [ "${ARGV[i - 2]}" = --ro-bind ]
+  [[ "${ARGV[i - 1]}" == "$H/base/session."*/connect/@join/* ]]
+  argv_has --bind "$SBOX/@join-stage" /run/agent-sandbox-stage
+}
+
+@test "own join-scoped: each join is given its own store to bind, and it is removed when the join ends" {
+  mkdir -p "$PROJ/scratch"
+  run_engine -- claude --connect './scratch/=own join-scoped' --version
+  [ "$status" -eq 0 ]
+  local i jid=""
+  for ((i = 0; i + 4 < ${#JOIN[@]}; i++)); do
+    if [[ "${JOIN[i]}" == --private ]]; then
+      [ "${JOIN[i + 1]}" = "$SBOX/@join-stage" ]
+      [ "${JOIN[i + 2]}" = /run/agent-sandbox-stage ]
+      [ "${JOIN[i + 3]}" = "$SBOX/@join" ]
+      jid="${JOIN[i + 4]}"
+    fi
+  done
+  [[ "$jid" == j[0-9]* ]]
+  grep -A2 -x -- --private-path "$H/join" | grep -qx "$PROJ/scratch"
+  [ ! -e "$SBOX/@join-stage/$jid" ] # gone with the join
+  [ ! -e "$SBOX/@join/$jid" ]
+}
+
+@test "a channel can be own join-scoped too" {
+  mkdir -p "$C/skills" "$C/commands"
+  run_engine -- claude --connect 'skills=own native join-scoped' --version
+  [ "$status" -eq 0 ]
+  grep -A2 -x -- --private-path "$H/join" | grep -qx "$C/skills"
+  grep -A2 -x -- --private-path "$H/join" | grep -qx "$C/commands"
 }
 
 @test "process-scoped is refused with its new name" {

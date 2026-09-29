@@ -392,3 +392,54 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/seen.c")" = YOURS ] # the next run reads the source again
 }
+
+@test "join-scoped: two joins into one running role each have a scratch of their own (#147)" {
+  mkdir -p "$IWORK/scratch"
+  local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --exec sh -c "echo from-a >scratch/a; ls scratch >a.sees; $(hold a)"
+  local t
+  t="$(keeper_payload)"
+  run_sandboxed "${BASE[@]}" "${js[@]}" -- --exec sh -c 'echo from-b >scratch/b; ls scratch >b.sees; ls -R /run/agent-sandbox-stage /proc/2/root/run/agent-sandbox-stage >b.stage 2>&1'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/a.sees")" = a ] # each sees its own, and only its own
+  [ "$(cat "$IWORK/b.sees")" = b ]
+  # B cannot reach A's store, not even through the keeper's view: both staging listings
+  # hold nothing but their own headers
+  [ "$(grep -c ':$' "$IWORK/b.stage")" -eq 2 ]
+  run ! grep -q -v -e ':$' -e '^$' "$IWORK/b.stage"
+  [ -z "$(ls -A "$IWORK/scratch")" ]              # the project's own directory is untouched
+  [ -z "$(ls -A "/proc/$t/root$IWORK/scratch")" ] # and the keeper sees an empty mount point
+  compgen -G "$SB/@join/j*/*scratch" >/dev/null   # A's store is out of staging, under @join
+  [ -z "$(ls -A "$SB/@join-stage")" ]
+  release a
+  wait "$BG_PID"
+  [ ! -e "$SB/@join" ] # gone with the join, and with the launch
+}
+
+@test "join-scoped: the store of a join killed with -9 goes at the supervisor's next sweep" {
+  mkdir -p "$IWORK/scratch"
+  local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --exec sh -c "$(hold a)"
+  local first=$BG_PID
+  local before f
+  before="$(printf '%s\n' "$SB"/keeper/joined/*)"
+  bg_sandboxed b "${BASE[@]}" "${js[@]}" -- --exec sh -c "echo x >scratch/x; $(hold b)"
+  [ "$(compgen -G "$SB/@join/j*" | wc -l)" -eq 2 ]
+  # b's join record names the engine process that holds the join (the launcher's own
+  # shell is its parent): kill that one, so no exit step of it runs
+  local rec=""
+  for f in "$SB"/keeper/joined/*; do
+    [[ $'\n'"$before"$'\n' == *$'\n'"$f"$'\n'* ]] || rec="${f##*/}"
+  done
+  [ -n "$rec" ]
+  kill -KILL "$rec"
+  local i n=2
+  for ((i = 0; i < 160; i++)); do # the sweep runs at least every five seconds
+    n="$(compgen -G "$SB/@join/j*" | wc -l)"
+    ((n == 1)) && break
+    sleep 0.05
+  done
+  [ "$n" -eq 1 ] # b's store is gone, a's is still there
+  release a
+  wait "$first"
+}

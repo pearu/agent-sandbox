@@ -887,7 +887,9 @@ CONNECT_SYNC_EOF
 #!/usr/bin/env python3
 """Join a running keeper: run a command inside a role's launch as its equal.
 
-    join.py [--seccomp FILE] [--env NAME=VALUE]... [--unset NAME]... PID -- CMD [ARG]...
+    join.py [--seccomp FILE] [--env NAME=VALUE]... [--unset NAME]...
+            [--private STAGE_HOST STAGE_INSIDE DEST_HOST ID [--private-path NAME PATH]...]
+            PID -- CMD [ARG]...
 
 PID is a host pid of a process inside the launch (the keeper's payload). The
 command runs with that process's mounts, namespaces, working directory and
@@ -911,6 +913,17 @@ return its exit status. It forwards the terminal's signals to the joined process
 group: the child starts a session of its own, as bwrap's --new-session does, so it
 has no controlling terminal and nothing the terminal sends reaches it otherwise.
 
+A JOIN'S OWN STORES (`join-scoped`, #147). With --private, the join gets a mount
+namespace of its own: the child unshares one while it still holds capabilities in the
+inner user namespace, binds STAGE_INSIDE/ID/NAME over each PATH, and covers STAGE_INSIDE
+with an empty tmpfs; then the parent moves STAGE_HOST/ID to DEST_HOST/ID, out of the
+staging directory the keeper binds, and only then does the command start. The move is
+what keeps other joins out: every join shares the keeper's pid namespace, and through
+/proc/<keeper payload>/root the staging directory is visible to all of them, whatever one
+join covers in its own view. A bind survives its source directory being moved (measured,
+probes/join-scoped-spike.py). The stores stay private for the life of the join: mounting
+is denied to it afterwards by the dropped capabilities and the seccomp filter.
+
 Exit status: the command's, 128+N if it died of signal N, 127 if it could not be
 executed, 125 if the join itself failed.
 """
@@ -923,6 +936,7 @@ import sys
 
 NS_GET_USERNS, NS_GET_PARENT = 0xB701, 0xB702
 PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, PR_CAPBSET_DROP = 38, 22, 24
+CLONE_NEWNS, MS_BIND, MS_REC, MS_PRIVATE = 0x00020000, 4096, 16384, 1 << 18
 SECCOMP_MODE_FILTER = 2
 KINDS = ("ipc", "uts", "net", "pid", "mnt", "cgroup")
 
@@ -939,27 +953,43 @@ class Fprog(ctypes.Structure):
 
 
 def parse(argv):
-    seccomp, sets, unsets = None, {}, []
+    seccomp, sets, unsets, private, ppaths = None, {}, [], None, []
+    arity = {"--seccomp": 1, "--env": 1, "--unset": 1, "--private": 4, "--private-path": 2}
     i = 0
     while i < len(argv) and argv[i].startswith("--"):
         opt = argv[i]
-        if opt == "--seccomp" and i + 1 < len(argv):
-            seccomp = argv[i + 1]
-        elif opt == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
-            k, v = argv[i + 1].split("=", 1)
-            sets[k] = v
-        elif opt == "--unset" and i + 1 < len(argv):
-            unsets.append(argv[i + 1])
-        else:
+        n = arity.get(opt)
+        if n is None or i + n >= len(argv):
             die(f"bad option {opt!r}")
-        i += 2
+        val = argv[i + 1 : i + 1 + n]
+        if opt == "--seccomp":
+            seccomp = val[0]
+        elif opt == "--env":
+            if "=" not in val[0]:
+                die(f"bad --env {val[0]!r}")
+            k, v = val[0].split("=", 1)
+            sets[k] = v
+        elif opt == "--unset":
+            unsets.append(val[0])
+        elif opt == "--private":
+            private = val
+        else:
+            ppaths.append(val)
+        i += 1 + n
+    if ppaths and not private:
+        die("--private-path needs --private")
     if len(argv) < i + 3 or argv[i + 1] != "--":
-        die("usage: join.py [--seccomp FILE] [--env K=V]... [--unset K]... PID -- CMD...")
-    return seccomp, sets, unsets, argv[i], argv[i + 2 :]
+        die("usage: join.py [--seccomp FILE] [--env K=V]... [--unset K]... [--private ...] PID -- CMD...")
+    return seccomp, sets, unsets, private, ppaths, argv[i], argv[i + 2 :]
+
+
+def mount(src, dst, fstype, flags):
+    if libc.mount(src.encode() if src else None, dst.encode(), fstype.encode() if fstype else None, flags, None) != 0:
+        raise OSError(ctypes.get_errno(), f"mount {src or fstype} on {dst}")
 
 
 def main(argv):
-    seccomp, sets, unsets, pid, cmd = parse(argv)
+    seccomp, sets, unsets, private, ppaths, pid, cmd = parse(argv)
 
     def ident(fd):
         return os.readlink(f"/proc/self/fd/{fd}")
@@ -984,6 +1014,11 @@ def main(argv):
         owner = {k: fcntl.ioctl(fd, NS_GET_USERNS) for k, fd in ns.items()}
         inner = os.open(f"/proc/{pid}/ns/user", os.O_RDONLY)
         host_user = ident(os.open("/proc/self/ns/user", os.O_RDONLY))
+        # The staging and destination directories on the HOST, for the move out of
+        # staging: opened now, they are reachable by handle once this process has joined.
+        if private:
+            stage_fd = os.open(private[0], os.O_RDONLY | os.O_DIRECTORY)
+            dest_fd = os.open(private[2], os.O_RDONLY | os.O_DIRECTORY)
     except OSError as exc:
         die(f"cannot read the launch's process {pid}: {exc}")
     env = {}
@@ -1042,11 +1077,29 @@ def main(argv):
     sigs = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
     for s in sigs:
         signal.signal(s, forward)
+    if private:
+        ready_r, ready_w = os.pipe()
+        ack_r, ack_w = os.pipe()
     pid_ = os.fork()
     if pid_ == 0:
         for s in sigs:
             signal.signal(s, signal.SIG_DFL)
         try:
+            if private:
+                # A mount namespace of the join's own, made while the capabilities to do
+                # it are still held; / private, so nothing propagates back to the keeper.
+                os.close(ready_r)
+                os.close(ack_w)
+                if libc.unshare(CLONE_NEWNS) != 0:
+                    raise OSError(ctypes.get_errno(), "unshare a mount namespace")
+                mount(None, "/", None, MS_REC | MS_PRIVATE)
+                stage_in, jid = private[1], private[3]
+                for name, path in ppaths:
+                    mount(f"{stage_in}/{jid}/{name}", path, None, MS_BIND)
+                mount("tmpfs", stage_in, "tmpfs", 0)
+                os.write(ready_w, b"1")  # bound: the host may move the stores away now
+                if os.read(ack_r, 1) != b"1":  # and the command starts only once it has
+                    raise OSError(0, "the stores were not moved out of staging")
             os.chdir(cwd)
             os.setsid()
             # The capability bounding set, as bwrap's --cap-drop ALL leaves it: empty.
@@ -1068,6 +1121,21 @@ def main(argv):
             sys.stderr.write(f"agent-sandbox: join: {cmd[0]}: {exc.strerror}\n")
             os._exit(127)
     child = pid_
+    if private:
+        os.close(ready_w)
+        os.close(ack_r)
+        ok = b"0"
+        if os.read(ready_r, 1) == b"1":
+            try:
+                os.rename(private[3], private[3], src_dir_fd=stage_fd, dst_dir_fd=dest_fd)
+                ok = b"1"
+            except OSError as exc:
+                sys.stderr.write(f"agent-sandbox: join: moving the join's stores out of staging: {exc.strerror}\n")
+        try:
+            os.write(ack_w, ok)
+        except BrokenPipeError:  # the child failed before it asked, and said why
+            pass
+        os.close(ack_w)
     for s in pending:
         forward(s, None)
     try:
