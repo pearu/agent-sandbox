@@ -130,6 +130,33 @@ run_engine() {
   done
 }
 
+# run_engine_tty ANSWERS [VAR=value ...] -- CMD ARGS... -- run_engine, but at a terminal:
+# the engine's stdin and stderr are a pty (script(1)), and ANSWERS (printf %b) is what is
+# typed into it. For the reviews a launch runs only when someone can answer (#143).
+run_engine_tty() {
+  local answers="$1"
+  shift
+  local -a envs=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    envs+=("$1")
+    shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  local cmd=$1
+  shift
+  [[ "$cmd" == */* ]] || cmd="$H/bin/$cmd"
+  : >"$H/argv"
+  : >"$H/join"
+  local -a line=(env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8
+    BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0
+    AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$cmd" "$@")
+  printf 'cd %q && exec' "${RUN_CWD:-$H/proj}" >"$H/tty.sh"
+  printf ' %q' "${line[@]}" >>"$H/tty.sh"
+  run bash -c 'printf "%b" "$1" | script -qec "bash $2" /dev/null' _ "$answers" "$H/tty.sh"
+  mapfile -t ARGV <"$H/argv"
+}
+
 # engine_bg [VAR=value ...] -- CMD ARGS... -- start the engine in the background as
 # run_engine would, joined into its keeper and HELD there until release_bg, so that a
 # test can act while a role is running. Returns once the join is on the record; sets

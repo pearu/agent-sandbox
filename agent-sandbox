@@ -215,11 +215,10 @@
 #   --trust               review and approve this project's .agent-sandbox
 #                         file (per-project policy: allow hosts, memory
 #                         scoping, paths, environment, conda, network), then
-#                         exit. See docs/config.md. A file never approved is
-#                         ignored with a note; once approved, any edit or its
-#                         removal refuses launches from that directory until
-#                         you run --trust again (it re-approves, or offers to
-#                         forget the approval when the file is gone).
+#                         exit: the review a launch at a terminal runs itself
+#                         (#143), for when there is none. Without a terminal
+#                         a launch refuses a new, changed or missing file
+#                         until it is reviewed. See docs/config.md.
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -2679,7 +2678,7 @@ _as_connect_report() {
   # Then only what differs from it. Listing all six every launch is how a report
   # becomes something nobody reads.
   for ch in "${!_connect_mode[@]}"; do
-    [[ "${_connect_where[$ch]}" == "preset "* ]] && continue
+    [[ "${_connect_where[$ch]}" == "preset "* || "${_connect_where[$ch]}" == "built in"* ]] && continue
     if [[ "$ch" == */* ]]; then
       _as_info "connect: ${_connect_key[$ch]} = ${_connect_mode[$ch]} (${_connect_where[$ch]})"
     else
@@ -2861,7 +2860,7 @@ _as_briefing_write() {
 # ignores HTTPS_PROXY reaches the network unfiltered. So the agent can neither
 # grant itself anything nor quietly get the defaults back; it can only stop
 # the next launch until you look. A file with no approval on record (a cloned
-# repo's) is ignored with a note. The trust store and global config live under
+# repo's) refuses in the same way (#143). The trust store and global config live under
 # ~/.config/agent-sandbox, which is never bound into the sandbox, so the agent
 # can neither read nor forge them.
 _as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
@@ -2983,23 +2982,122 @@ _as_conda_base() {
 }
 
 # Is the .agent-sandbox at $2 (for project dir $1) approved? Trust file is
-# <config>/trust/<sha256(path)> holding the approved <sha256(content)>.
+# <config>/trust/<sha256(path)> holding the approved <sha256(content)>, and beside it
+# <sha256(path)>.approved, the approved content itself, so that a later review can show
+# what changed (#143). Inside a sandbox there is no gate at all (_as_inside_sandbox):
+# the file there is what the outer launch approved, bound read-only, or a copy an
+# inner agent changed -- and a nested sandbox can only narrow the one it is inside.
 _as_dotfile_trusted() {
   local cwd="$1" file="$2" want have
+  [[ -f "$file" ]] && _as_inside_sandbox && return 0
   want="$(_as_sha256_file "$file")"
   [[ -n "$want" ]] || return 1
   have="$(cat -- "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" 2>/dev/null || true)"
   [[ -n "$have" && "$have" == "$want" ]]
 }
 
+# _as_inside_sandbox -- is this engine running inside one of its own sandboxes? Not the
+# AGENT_SANDBOX marker alone: that is a UX hint any process can set, and a project's own
+# shell setup (a direnv .envrc, say) setting it on the host must not switch the review
+# off for the file that project ships. Pid 1 being bubblewrap is the part no process on
+# the host can arrange: inside, the sandbox's pid namespace starts with it.
+_as_inside_sandbox() {
+  [[ -n "${AGENT_SANDBOX:-}" ]] || return 1
+  local a0=""
+  { IFS= read -r -d '' a0 </proc/1/cmdline; } 2>/dev/null || true
+  [[ "$(basename -- "${a0:-/}")" == bwrap ]]
+}
+
+# _as_has_terminal -- can the user answer a question here? Decided by the terminal, not
+# by the agent's flags: an `asb claude -p ...` typed at a shell can be asked (#143).
+_as_has_terminal() { [[ -t 0 && -t 2 ]]; }
+
 _as_trust_record() {
-  local cwd="$1" file="$2" dir
+  local cwd="$1" file="$2" dir rec
   dir="$(_as_config_dir)/trust"
   mkdir -p "$dir" 2>/dev/null || {
     _as_msg "cannot create trust store $dir"
     return 1
   }
-  _as_sha256_file "$file" >"$dir/$(_as_sha256_str "$cwd")" || return 1
+  rec="$dir/$(_as_sha256_str "$cwd")"
+  cp -- "$file" "$rec.approved.tmp" && mv -f -- "$rec.approved.tmp" "$rec.approved" || return 1
+  _as_sha256_file "$file" >"$rec" || return 1
+  return 0
+}
+
+# _as_trust_forget CWD -- drop the approval of CWD's dot-file, hash and content.
+_as_trust_forget() {
+  local rec
+  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$1")"
+  rm -f -- "$rec" "$rec.approved"
+}
+
+# _as_trust_show FILE -- a file as the review shows it: through cat -v, so nothing in
+# it can act on the terminal.
+_as_trust_show() {
+  printf -- '----\n'
+  cat -v -- "$1"
+  printf -- '----\n'
+}
+
+# _as_trust_prompt CWD -- the review of CWD's .agent-sandbox (#143), as a launch and
+# --trust both run it: what is there, against what was approved, and a question.
+#   - changed since approved: the difference, approved -> now (the whole file, when the
+#     approval is older than the kept content)
+#   - new: the whole file
+#   - gone, though one was approved: what was approved, and whether to forget it
+# Returns 0 when approved (or forgotten), 1 when not. Reads the answer from stdin and
+# writes everything else to stderr.
+_as_trust_prompt() {
+  local cwd="$1" file rec ans
+  file="$cwd/.agent-sandbox"
+  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  if [[ ! -f "$file" ]]; then
+    [[ -f "$rec" ]] || return 1
+    {
+      printf '\nagent-sandbox: %s has no .agent-sandbox, but one was approved earlier' "$cwd"
+      if [[ -f "$rec.approved" ]]; then
+        printf ':\n'
+        _as_trust_show "$rec.approved"
+      else
+        printf '.\n'
+      fi
+      printf 'Launching without it would put its policy (memory scoping, paths, ports, ...) back to the defaults.\n'
+      printf 'agent-sandbox: forget that approval, and launch from here with the defaults? [y/N] '
+    } >&2
+    read -r ans || true
+    case "$ans" in
+      y | Y | yes | YES)
+        _as_trust_forget "$cwd"
+        _as_msg "approval forgotten; launches from here use the defaults."
+        return 0
+        ;;
+    esac
+    return 1
+  fi
+  _as_dotfile_clean "$file" || return 1
+  {
+    if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+      printf '\n%s has changed since you approved it (by you, by the agent, or by a pull). What changed, approved -> now (through cat -v):\n----\n' "$file"
+      diff -u --label approved --label now -- "$rec.approved" "$file" | cat -v
+      printf -- '----\n'
+    elif [[ -f "$rec" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+      printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
+      _as_trust_show "$file"
+    else
+      printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
+      _as_trust_show "$file"
+    fi
+  } >&2
+  _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
+  printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
+  read -r ans || true
+  case "$ans" in
+    y | Y | yes | YES) ;;
+    *) return 1 ;;
+  esac
+  _as_trust_record "$cwd" "$file" || return 1
+  _as_msg "approved."
   return 0
 }
 
@@ -3194,52 +3292,29 @@ _as_dotfile_clean() { # $1 = file
   return 0
 }
 
-# The --trust command: show the project's .agent-sandbox (escaped with cat -v,
-# so nothing in it can act on the terminal), ask to approve it, record the
-# approval, and offer to keep it out of git (it is machine-local).
+# The --trust command: the review a launch runs (_as_trust_prompt), without a launch
+# after it, and so the form that works without a terminal (`printf y | asb --trust`).
+# Also offers to keep the file out of git: it is machine-local.
 _as_trust_review() {
-  local cwd="$1" file ans rec
+  local cwd="$1" file ans
   file="$cwd/.agent-sandbox"
-  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
-  [[ -f "$file" ]] || {
-    if [[ -f "$rec" ]]; then
-      # The approved file is gone; launches are refused until the approval is
-      # forgotten (or the file restored), so offer to forget it here.
-      printf 'agent-sandbox: no .agent-sandbox in %s, but one was approved earlier. Forget that approval? [y/N] ' "$cwd" >&2
-      read -r ans || true
-      case "$ans" in
-        y | Y | yes | YES)
-          rm -f -- "$rec"
-          _as_msg "approval forgotten; launches from here use the defaults again."
-          ;;
-        *) _as_msg "kept; launches from here stay refused until the file is restored or the approval forgotten." ;;
-      esac
-      return 0
-    fi
+  if [[ ! -f "$file" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]; then
     _as_msg "no .agent-sandbox in $cwd"
     return 1
-  }
-  _as_dotfile_clean "$file" || {
+  fi
+  if [[ -f "$file" ]] && ! _as_dotfile_clean "$file"; then
     _as_msg "not approved."
     return 1
-  }
-  {
-    printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n----\n' "$file" "$(_as_sha256_file "$file")"
-    cat -v -- "$file"
-    printf -- '----\n'
-  } >&2
-  _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
-  printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
-  read -r ans || true
-  case "$ans" in
-    y | Y | yes | YES) ;;
-    *)
-      _as_msg "not approved; the file stays ignored."
-      return 0
-      ;;
-  esac
-  _as_trust_record "$cwd" "$file" || return 1
-  _as_msg "approved."
+  fi
+  if ! _as_trust_prompt "$cwd"; then
+    if [[ -f "$file" ]]; then
+      _as_msg "not approved; launches from here refuse until it is."
+    else
+      _as_msg "kept; launches from here stay refused until the file is restored or the approval forgotten."
+    fi
+    return 0
+  fi
+  [[ -f "$file" ]] || return 0
   if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1 && ! git -C "$cwd" check-ignore -q .agent-sandbox 2>/dev/null; then
     local _ex
     _ex="$(git -C "$cwd" rev-parse --absolute-git-dir)/info/exclude"
@@ -4110,6 +4185,24 @@ agent_sandbox() (
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")"
+  # THE REVIEW IS PART OF THE LAUNCH (#143). A dot-file that is new, changed since it
+  # was approved, or gone though one was approved is shown -- the difference, when the
+  # approved content was kept -- and asked about, when someone is at a terminal to
+  # answer. Yes records the approval and the launch goes on under it. No leaves
+  # nothing recorded: a launch then refuses below, as it does with no terminal, and a
+  # join still joins under its keeper's policy, which is what it would get anyway.
+  # Before the role is read from the file, so an approval here counts from here on.
+  # Not for the verbs, which never need a policy to stop what runs, and not inside a
+  # sandbox, where there is no gate (_as_dotfile_trusted).
+  local _df_needs_review=0
+  if [[ -f "$_dotfile" ]]; then
+    _as_dotfile_trusted "$_proj" "$_dotfile" || _df_needs_review=1
+  elif [[ -f "$_trust_rec" ]] && ! _as_inside_sandbox; then
+    _df_needs_review=1
+  fi
+  if ((_df_needs_review && ! (_do_verb || _do_shutdown || _do_status))) && _as_has_terminal; then
+    _as_trust_prompt "$_proj" || _as_msg "not approved."
+  fi
   # A JOIN READS THE KEEPER'S DOT-FILE, NOT THE LIVE ONE. A running role's policy is
   # the one its keeper started with, so the file a join parses is the copy the keeper
   # kept of the approved dot-file -- and an edit to the live file that is not yet
@@ -4284,16 +4377,24 @@ agent_sandbox() (
     elif [[ -f "$_trust_rec" ]]; then
       # Approved once, changed since (by you, or by the agent): refuse rather
       # than ignore, or the defaults would apply in place of what you approved.
-      _as_msg ".agent-sandbox has changed since you approved it (by you, or by the agent)." \
-        "Refusing to launch until you review it: $invoked --trust"
+      _as_msg ".agent-sandbox has changed since you approved it (by you, by the agent, or by a pull)." \
+        "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: $invoked --trust"
       return 1
     else
-      _as_msg ".agent-sandbox present but not approved; ignoring it." \
-        "Review and approve with: $invoked --trust"
+      # A new file refuses too (#143): ignoring it would give whoever wrote it the
+      # defaults, with a note they may never see, which is the silent fall-back the
+      # gate exists to prevent. Not for a verb, which reads no policy to do its work.
+      if ((_do_verb || _do_shutdown || _do_status)); then
+        _as_msg ".agent-sandbox is here but has never been approved; this command does not need it."
+      else
+        _as_msg ".agent-sandbox is here but has never been approved." \
+          "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: $invoked --trust (printf y | $invoked --trust approves it without a terminal)"
+        return 1
+      fi
     fi
-  elif [[ -f "$_trust_rec" ]]; then
+  elif [[ -f "$_trust_rec" ]] && ! _as_inside_sandbox; then
     _as_msg "this project's approved .agent-sandbox is missing; its policy (memory scoping, paths, ports, ...) would" \
-      "silently fall back to the defaults. Refusing to launch: restore the file, or forget the approval with: $invoked --trust"
+      "silently fall back to the defaults. Refusing to launch: restore the file, launch from a terminal to be asked, or forget the approval with: $invoked --trust"
     return 1
   fi
 
@@ -4435,6 +4536,26 @@ agent_sandbox() (
   for _cs in ${_connect_flag[@]+"${_connect_flag[@]}"}; do
     _as_connect_parse "$_cs" --connect || return 1
   done
+  # THE AGENT IS NEVER AN AUTHOR OF ITS OWN POLICY (#143). The dot-file sits in the
+  # project, which is bound read-write, so without this a session could edit what
+  # configures its sandbox; the gate caught that at the next launch, but only as an
+  # edit it could not tell from yours. So it is a path declaration of its own,
+  # `read-only` unless one is written for it. Any mode but `read-write` keeps the
+  # sandbox's writes inside (`copy` gives an inner engine, or a `git pull` run inside,
+  # a copy to change). Not under `native`, whose whole claim is that it differs from
+  # `none` in nothing; a declaration written for it still applies there. And not when
+  # there is no file: a read-only mount point would leave an empty `.agent-sandbox`
+  # in the repository. One the agent creates is new at the next launch, and reviewed.
+  local _dfp
+  _dfp="$(realpath -m -s -- "$_dotfile")"
+  if [[ -n "${_connect_key[$_dfp]:-}" ]]; then
+    if [[ "${_connect_mode[$_dfp]}" == read-write ]]; then
+      _as_msg "connect (${_connect_where[$_dfp]}): '${_connect_key[$_dfp]} = read-write' is refused: the sandbox's own policy file is never the agent's to write (#143). Any other mode keeps its writes inside; 'copy' gives it a copy of its own."
+      return 1
+    fi
+  elif [[ -f "$_dotfile" ]] && ! _as_preset_is_native; then
+    _as_connect_parse "./.agent-sandbox = read-only" "built in, #143" || return 1
+  fi
   _as_connect_report
 
   # ---- --shutdown: end the role's launch, then exit ----

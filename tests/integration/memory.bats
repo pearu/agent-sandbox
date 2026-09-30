@@ -99,13 +99,10 @@ trust_here() {
   [ "${M[shared_readable]}" = yes ]
 }
 
-@test "an unapproved dot-file grants nothing: its share is ignored and the isolated default applies" {
+@test "an unapproved dot-file grants nothing: the launch refuses, and its share is never made (#143)" {
   printf '[share-memory]\n%s\n' "$SHARED" >"$IWORK/.agent-sandbox"
   run_claude
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"present but not approved"* ]]
-  # the file would have shared $SHARED; unapproved, it grants nothing, and the
-  # default is isolation rather than the old wide-open view
-  [ "${M[shared_readable]}" = no ]
-  [ "${M[other_visible]}" = no ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -e "$IWORK/report" ] # the agent never ran, so nothing of $SHARED was read
 }

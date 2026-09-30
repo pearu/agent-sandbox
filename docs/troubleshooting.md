@@ -169,9 +169,17 @@ without that profile Ubuntu's userns restriction blocks pasta.
 
 **`.agent-sandbox has changed since you approved it ... Refusing to launch`**
 The project's `.agent-sandbox` no longer matches the content you approved:
-you edited it, or the agent did. Run `asb --trust` from the project
-directory; it shows the current content, and approving it records the new
-hash. Do not approve a change you did not make without reading it.
+you edited it, or a pull did (inside the sandbox it is read-only, so not the
+agent). The launch refuses like this only without a terminal; from a terminal it
+shows what changed and asks. Or run `asb --trust` from the project directory: the
+same review, without a launch. Do not approve a change you did not make without
+reading it.
+
+**`.agent-sandbox is here but has never been approved ... Refusing to launch`**
+A new `.agent-sandbox` — yours, or one a cloned repository ships. From a terminal
+the launch shows it and asks; from a script, approve it first with
+`asb --trust` (`printf y | asb --trust` answers yes without a terminal, so read the
+file before you do).
 
 **`.agent-sandbox contains control characters ... refusing it`**
 The file holds a byte other than tab, newline, printable ASCII or UTF-8 text:
@@ -182,8 +190,8 @@ they are gone; `cat -v .agent-sandbox` shows each as `^X`.
 **`this project's approved .agent-sandbox is missing ... Refusing to launch`**
 A `.agent-sandbox` you approved is gone. Launching anyway would replace its
 policy with the defaults, which for memory scoping is wider. Restore the file,
-or run `asb --trust` from the project directory: with the file missing it
-offers to forget the approval.
+launch from a terminal to be asked, or run `asb --trust` from the project
+directory: with the file missing, either offers to forget the approval.
 
 **`asb: command not found` (or it runs an old version) after moving or pulling the repo**
 A normal install copies the engine and profiles under

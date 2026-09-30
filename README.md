@@ -225,7 +225,7 @@ not exist. Values and defaults are in the last column.
 | `--ssh-unrestricted` | — | — | any host the key is trusted by; refused in `strict`, which must pin named hosts (off) ([ssh.md](docs/ssh.md)) |
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |
 | `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
-| `--trust` | — | — | review and approve this project's `.agent-sandbox`; an unapproved file is ignored, an edited one blocks launches until re-reviewed ([config.md](docs/config.md)) |
+| `--trust` | — | — | review and approve this project's `.agent-sandbox` without launching; a launch at a terminal runs the same review itself, and without one a new, changed or missing file refuses the launch ([config.md](docs/config.md#trust)) |
 | `--user-mcp MODE` | `AGENT_SANDBOX_CLAUDE_USER_MCP` | `[claude] user-mcp` | **removed**, and refused in every form: it edited the MCP servers inside the config file, which the engine no longer does. To keep your user-level MCP servers out of a project's sandbox, write `config = own` under `[connect]` ([config.md](docs/config.md#the-config-file-the-config-channel)) |
 | `--sandbox SCOPES` | `AGENT_SANDBOX_CLAUDE_SANDBOX` | `[claude] sandbox` | **removed**, and refused in every form: every session, background ones included, runs in its role's sandbox. To run without one, `--preset none` ([design.md](docs/design.md#background-sessions-123)) |
 | `--shutdown` | — | — | end this role's running sandbox: everything joined into it, and a background daemon with its workers; then exit. A later launch starts afresh under the policy then in force ([connections.md](docs/connections.md)) |
@@ -238,8 +238,8 @@ When a setting can be given more than one way, they combine like this. Hosts,
 paths, forwarded names and ports **add up** across all three, so the dot-file's
 grants and your shell's grants are a union. The network mode and the conda
 settings are **taken over** by the environment variable when it is set, and the
-engine says so. Nothing in a `.agent-sandbox` applies until `--trust` approves
-it.
+engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
+the launch, which shows it and asks, or with `--trust`.
 
 Six more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
