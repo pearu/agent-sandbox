@@ -1324,6 +1324,9 @@ _as_connect_channels() {
 #                            or "DEST<TAB>FUNCTION" seeding modes read instead of SOURCE;
 #                                                   a DEST entry is for that path alone
 #   profile_channel_empty    "CHANNEL<TAB>TEXT"     what a new `own` file store holds
+#   profile_channel_vendor   "CHANNEL<TAB>PREFIX..." paths in the channel the agent itself
+#                                                 rewrites on both sides (a server sync):
+#                                                 no conflict warning names them
 #   profile_channel_presets  "CHANNEL<TAB>PRESET=MODE ..."  this channel's rung under a
 #                                                   preset, where it is not the preset's
 #
@@ -1340,6 +1343,19 @@ _as_channel_source() { # DEST -> the path outside it follows
   done
   printf '%s' "$1"
 }
+# _as_channel_vendor_file CHANNEL FILE -- is FILE (relative to the channel's source)
+# under a path the profile says the agent itself writes, on both sides, as a matter of
+# course (profile_channel_vendor)? Its "your copy has changed" is the agent's own sync,
+# not an edit of yours, so the conflict warnings do not name it: measured, a server
+# skill sync's `.last-complete-round` otherwise warned at every launch.
+_as_channel_vendor_file() {
+  local pfx
+  for pfx in $(_as_channel_hook profile_channel_vendor "$1" || true); do
+    [[ "$2" == "$pfx"* ]] && return 0
+  done
+  return 1
+}
+
 # _as_channel_seed_plain CHANNEL -- is every path of CHANNEL seeded as a plain copy of
 # the same path outside, with no filter and no relocated source?
 _as_channel_seed_plain() {
@@ -1702,7 +1718,9 @@ _as_connect_apply_paths() {
       return 1
     fi
     _as_connect_path_warn "$p" "$key" "$mode"
-    if [[ "$kind" == file ]]; then
+    # Not for the built-in dot-file declaration (#143): nobody wrote it, so there is
+    # nothing for this to tell them.
+    if [[ "$kind" == file && "${_connect_where[$p]}" != "built in"* ]]; then
       local cow_note=""
       [[ "$mode" == copy-on-write ]] && cow_note=" And copy-on-write on a file is copy: overlayfs cannot stack on a single file."
       _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
@@ -1807,6 +1825,7 @@ _as_connect_sync() {
   while IFS= read -r line; do
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
+    _as_channel_vendor_file "$ch" "$f" && continue
     _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $(_as_self_cmd --reset "$ch")"
   done <<<"$out"
   return 0
@@ -1832,6 +1851,7 @@ _as_connect_shadows() {
   while IFS= read -r line; do
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
+    _as_channel_vendor_file "$ch" "$f" && continue
     _as_msg "connect: $ch: this sandbox has its own '$f' and your copy of it has changed since. The sandbox goes on using its own. To take yours: $(_as_self_cmd --reset "$ch")"
   done <<<"$out"
   return 0

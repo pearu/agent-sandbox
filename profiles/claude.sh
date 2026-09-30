@@ -177,6 +177,11 @@ profile_channel_sources=("$HOME/.claude/.claude.json	$HOME/.claude.json")
 profile_channel_filters=("config	_claude_config_filter" "$HOME/.claude/history.jsonl	_claude_history_view")
 # shellcheck disable=SC2034
 profile_channel_empty=("config	{}" "policy	{}")
+# The server skills and plugins Claude Code syncs itself, inside a sandbox and natively
+# alike: their bookkeeping changes on both sides at every sync, which is not an edit of
+# yours for a conflict warning to report.
+# shellcheck disable=SC2034
+profile_channel_vendor=("skills	synced/" "plugins	synced/")
 # shellcheck disable=SC2034
 profile_channel_presets=("config	inherit=seed-only shared=seed-only"
   "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"

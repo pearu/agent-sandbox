@@ -134,7 +134,8 @@ approve() { # approve the project's dot-file the way --trust does, content kept
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/.agent-sandbox" "$PROJ/.agent-sandbox"
-  [[ "$output" != *"connect: ./.agent-sandbox"* ]] # built in, so not reported at every launch
+  [[ "$output" != *"connect: ./.agent-sandbox"* ]]    # built in, so not reported at every launch
+  [[ "$output" != *"'./.agent-sandbox' is a file"* ]] # nor its bind explained: nobody declared it
 }
 
 @test "not under --preset native, whose claim is that it differs from none in nothing" {

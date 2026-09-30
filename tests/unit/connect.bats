@@ -1187,6 +1187,44 @@ seeded_run_scoped() { # MODE
   [[ "$output" != *"has changed since"* ]]
 }
 
+# A conflict names a file of yours, never the agent's own sync bookkeeping: the profile
+# lists what it rewrites on both sides (profile_channel_vendor; skills/synced/ here).
+# Measured: a server skill sync's .last-complete-round otherwise warned at every launch.
+both_sides() { # STORE -- change synced/ bookkeeping and a skill, in the store and at home
+  local st="$1"
+  printf 'r2\n' >"$C/skills/synced/x/.last-complete-round"
+  printf 'MINE\n' >"$C/skills/s.md"
+  mkdir -p "$st/synced/x"
+  printf 'r3\n' >"$st/synced/x/.last-complete-round"
+  printf 'SANDBOX\n' >"$st/s.md"
+}
+
+@test "copy: a conflict warning names your file, not the agent's synced/ bookkeeping" {
+  mkdir -p "$C/skills/synced/x" "$C/commands"
+  printf 'r1\n' >"$C/skills/synced/x/.last-complete-round"
+  printf 'V1\n' >"$C/skills/s.md"
+  run_engine -- asb --connect 'skills=copy native' claude --version
+  [ "$status" -eq 0 ]
+  both_sides "$SBOX/skills/copy/$(slugify "$C/skills")"
+  run_engine -- asb --connect 'skills=copy native' claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept this sandbox's 's.md'"* ]]
+  [[ "$output" != *"synced/"* ]]
+}
+
+@test "copy-on-write: a shadow warning names your file, not the agent's synced/ bookkeeping" {
+  mkdir -p "$C/skills/synced/x" "$C/commands"
+  printf 'r1\n' >"$C/skills/synced/x/.last-complete-round"
+  printf 'V1\n' >"$C/skills/s.md"
+  run_engine -- asb --connect 'skills=copy-on-write native' claude --version
+  [ "$status" -eq 0 ]
+  both_sides "$SBOX/skills/upper/$(slugify "$C/skills")"
+  run_engine -- asb --connect 'skills=copy-on-write native' claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"this sandbox has its own 's.md'"* ]]
+  [[ "$output" != *"synced/"* ]]
+}
+
 @test "seed-only over a source that does not exist binds an empty store" {
   # The mount point bwrap would leave on the host is only created by a real bwrap, so
   # its cleanup is asserted in tests/integration/connect-seed-only.bats, not here.
