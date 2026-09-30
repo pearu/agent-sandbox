@@ -441,8 +441,11 @@ the same path outside. A relative key is relative to the project, whichever form
 from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only storage
 while `~/notes = read-only` puts your real one there; the dot-file's review
 (`--trust`, or the one a launch at a terminal runs) says which of the two a key under
-`$HOME`, outside the project, is. No explicit source is
-accepted yet: `outside:<path>` is a follow-up.
+`$HOME`, outside the project, is. `outside:<path>` names another source outside
+(#174): the key is where it lands, the source is what the mode reads, seeds from and
+binds. The source is absolute or under `~` (outside there is no project to be relative
+to), is checked as a key is, takes no `own`, and a relocated path is not bound at all
+under `--preset native`, which relocates nothing.
 
 **Every mode is checked alike, `own` included**, although `own` exposes nothing — one
 rule is easier to state and to trust, and loosening it later breaks no one. The rule:
