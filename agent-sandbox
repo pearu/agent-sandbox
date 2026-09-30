@@ -1181,11 +1181,21 @@ _as_connect_parse() {
     join-scoped)
       # One join (#147): a store per joined command, in a mount namespace of the join's
       # own. `own` is what it is for; `read-only` writes nothing, so it is the plain
-      # bind. A seeded store per join is not built yet.
+      # bind. `copy` and `seed-only` are one thing per join (#153): a store that is new
+      # at every join has nothing earlier to refresh or to conflict with, so both are
+      # seeded from the source when the join starts. Not for a channel whose seed is
+      # filtered or relocated (the config file, the prompt history): that view is made
+      # per launch, and a per-join copy of it is not something anyone has asked for.
       case "$mode" in
         own | read-only) ;;
+        copy | seed-only)
+          if [[ "$ch" != */* ]] && ! _as_channel_seed_plain "$ch"; then
+            _as_msg "connect ($where): '$mode join-scoped' is refused for '$ch': its seed is a filtered view of your file, made per launch, not a plain copy. Use '$mode' for the role, or 'own join-scoped'."
+            return 1
+          fi
+          ;;
         *)
-          _as_msg "connect ($where): '$mode join-scoped' is not implemented in this engine (asked for '$ch'); a join-scoped store is built for 'own' and 'read-only', not yet for a mode that seeds it. Refusing rather than serving a store that outlives the join."
+          _as_msg "connect ($where): '$mode join-scoped' is not implemented in this engine (asked for '$ch'); a join-scoped store is built for 'own', 'copy', 'seed-only' and 'read-only', not yet for an overlay per join (#153). Refusing rather than serving a store that outlives the join."
           return 1
           ;;
       esac
@@ -1330,6 +1340,23 @@ _as_channel_source() { # DEST -> the path outside it follows
   done
   printf '%s' "$1"
 }
+# _as_channel_seed_plain CHANNEL -- is every path of CHANNEL seeded as a plain copy of
+# the same path outside, with no filter and no relocated source?
+_as_channel_seed_plain() {
+  local line entry path
+  _as_channel_hook profile_channel_filters "$1" >/dev/null && return 1
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    [[ "${line%%$'\t'*}" == "$1" ]] || continue
+    local -a _f=()
+    IFS=$'\t' read -r -a _f <<<"$line"
+    for entry in "${_f[@]:1}"; do
+      path="${entry#*:}"
+      _as_channel_hook profile_channel_filters "$path" >/dev/null && return 1
+      [[ "$(_as_channel_source "$path")" == "$path" ]] || return 1
+    done
+  done
+  return 0
+}
 _as_channel_hook() { # ARRAY-NAME CHANNEL -> the channel's value in that hook, if any
   local -n _hook="$1"
   local line
@@ -1438,8 +1465,13 @@ _as_connect_apply() {
         fi
         continue
       fi
-      if [[ "$mode" == own && "${_connect_scope[$ch]:-}" == join-scoped ]]; then
-        _as_join_scoped_bind "$kind" "$path" || return 1
+      if [[ "${_connect_scope[$ch]:-}" == join-scoped && "$mode" != read-only ]]; then
+        # own starts empty; copy and seed-only are seeded from the source at each join
+        if [[ "$mode" == own ]]; then
+          _as_join_scoped_bind "$kind" "$path" || return 1
+        else
+          _as_join_scoped_bind "$kind" "$path" "$src" || return 1
+        fi
         continue
       fi
       case "$mode" in
@@ -1512,6 +1544,12 @@ _as_connect_apply() {
           if [[ ! -e "$slot" ]]; then
             _as_connect_view "$ch" "$src" "$path" || return 1
             _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
+            # Nothing to seed from: a file store starts as an `own` one would, from
+            # the channel's empty text when it has one (a JSON file wants `{}`, not
+            # zero bytes).
+            if [[ "$kind" == file && ! -e "$_connect_from" && ! -s "$slot" ]]; then
+              _as_channel_hook profile_channel_empty "$ch" >"$slot" || : >"$slot"
+            fi
           fi
           [[ "$kind" == file ]] && _as_connect_placeholder "$path"
           args+=(--bind "$slot" "$path")
@@ -1627,11 +1665,13 @@ _as_connect_apply_paths() {
     mode="${_connect_mode[$p]}"
     base="$rolebase/@paths"
     [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
-    if [[ "$mode" == own && "${_connect_scope[$p]:-}" == join-scoped ]]; then
+    if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
+      local _jseed=""
+      [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
       if ((${_connect_isdir[$p]})) || [[ -d "$p" ]]; then
-        _as_join_scoped_bind dir "$p" || return 1
+        _as_join_scoped_bind dir "$p" "$_jseed" || return 1
       elif [[ -e "$p" ]]; then
-        _as_join_scoped_bind file "$p" || return 1
+        _as_join_scoped_bind file "$p" "$_jseed" || return 1
       else
         _as_msg "connect: '$key' does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
       fi
@@ -2281,10 +2321,11 @@ _as_keeper_shutdown() {
 # <sandbox>/@join/<id> before its command starts, and go when the join ends.
 _as_join_stage_inside() { printf '/run/agent-sandbox-stage'; }
 
-# _as_join_scoped_bind KIND PATH -- the launch's side of one join-scoped path.
+# _as_join_scoped_bind KIND PATH [SEED] -- the launch's side of one join-scoped path.
+# SEED is what each join's store starts as a copy of (#153); none, and it starts empty.
 # shellcheck disable=SC2154
 _as_join_scoped_bind() {
-  local kind="$1" path="$2" empty sb
+  local kind="$1" path="$2" seed="${3:-}" empty sb
   _as_session_begin || return 1
   empty="$_session_dir/connect/@join/$(_as_iso_slug "$path")"
   if [[ "$kind" == dir ]]; then
@@ -2301,7 +2342,7 @@ _as_join_scoped_bind() {
     args+=(--bind "$sb/@join-stage" "$(_as_join_stage_inside)")
     _join_stage_bound=1
   fi
-  _join_scoped+=("$kind"$'\t'"$(_as_iso_slug "$path")"$'\t'"$path")
+  _join_scoped+=("$kind"$'\t'"$(_as_iso_slug "$path")"$'\t'"$path"$'\t'"$seed")
 }
 
 # _as_join_scoped_clear SANDBOXDIR [ID] -- remove one join's stores, or every join's.
@@ -2404,14 +2445,22 @@ _as_keeper_join() {
   [[ -n "$bpf" ]] && jargs+=(--seccomp "$bpf")
   jargs+=(--unset SHLVL --env "TERM=${TERM:-xterm-256color}")
   # This join's own stores, when the launch declares join-scoped paths.
-  local jid="" jkind jname jpath
+  local jid="" jkind jname jpath jseed jst
   if [[ -s "$kd/join-scoped" ]]; then
     jid="j$BASHPID"
     mkdir -p -- "$sb/@join-stage/$jid" "$sb/@join" || return 1
     jargs+=(--private "$sb/@join-stage" "$(_as_join_stage_inside)" "$sb/@join" "$jid")
-    while IFS=$'\t' read -r jkind jname jpath; do
+    while IFS=$'\t' read -r jkind jname jpath jseed; do
       [[ -n "$jname" ]] || continue
-      if [[ "$jkind" == dir ]]; then mkdir -p -- "$sb/@join-stage/$jid/$jname"; else : >"$sb/@join-stage/$jid/$jname"; fi
+      jst="$sb/@join-stage/$jid/$jname"
+      if [[ -n "$jseed" && -e "$jseed" ]]; then
+        # seeded (#153): a copy of the source as it is at this join
+        cp -a -- "$jseed" "$jst" || return 1
+      elif [[ "$jkind" == dir ]]; then
+        mkdir -p -- "$jst"
+      else
+        : >"$jst"
+      fi
       jargs+=(--private-path "$jname" "$jpath")
     done <"$kd/join-scoped"
   fi

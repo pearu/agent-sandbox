@@ -226,8 +226,8 @@ Stated plainly. These are what the adversary above can still do.
     the host the next time you run `claude` itself.
   - Under **every** preset, what no channel declares is the native directory,
     bound read-write: the scripts your hooks run (a `response-hook.py` wired to
-    `Stop`, say), `cache/`, `telemetry/`, `usage-data/`, `stats-cache.json`, the
-    cached policy and settings files, and whatever else you keep there. A session
+    `Stop`, say), the rest of `cache/`, `telemetry/`, `usage-data/`,
+    `stats-cache.json`, and whatever else you keep there. A session
     that rewrites a hook script runs code in every later native `claude` session
     -- which, with nothing shadowing `claude` (#151), is every one you start without
     `asb` -- and in every role whose settings register it. Where such files should

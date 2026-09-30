@@ -416,6 +416,22 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ ! -e "$SB/@join" ] # gone with the join, and with the launch
 }
 
+@test "copy join-scoped: two joins each start from the source, write their own, and the source is untouched (#153)" {
+  mkdir -p "$IWORK/data"
+  printf 'SRC\n' >"$IWORK/data/f"
+  local js=(AGENT_SANDBOX_CONNECT='./data/=copy join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "cat data/f >a.saw; echo from-a >data/f; $(hold a)"
+  run_sandboxed "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c 'cat data/f >b.saw; echo from-b >data/f; cat data/f >b.after'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/a.saw")" = SRC ] # both seeded from the source,
+  [ "$(cat "$IWORK/b.saw")" = SRC ] # B not seeing A's write
+  [ "$(cat "$IWORK/b.after")" = from-b ]
+  [ "$(cat "$IWORK/data/f")" = SRC ] # and the source never written
+  release a
+  wait "$BG_PID"
+  [ ! -e "$SB/@join" ]
+}
+
 @test "join-scoped: the store of a join killed with -9 goes at the supervisor's next sweep" {
   mkdir -p "$IWORK/scratch"
   local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')

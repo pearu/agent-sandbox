@@ -559,13 +559,15 @@ EOF
   done
 }
 
-@test "join-scoped is built for own and read-only; a seeded store per join is refused, saying which are built" {
+@test "join-scoped is built for own, copy, seed-only and read-only; an overlay per join is refused, naming #153" {
+  run_engine -- asb --connect "instructions=copy-on-write native join-scoped" claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'copy-on-write join-scoped' is not implemented"*"'own', 'copy', 'seed-only' and 'read-only'"*"#153"* ]]
+  [ ! -s "$H/argv" ]
   local m
-  for m in copy seed-only copy-on-write; do
+  for m in copy seed-only; do
     run_engine -- asb --connect "instructions=$m native join-scoped" claude --version
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"'$m join-scoped' is not implemented"*"built for 'own' and 'read-only'"* ]]
-    [ ! -s "$H/argv" ]
+    [ "$status" -eq 0 ]
   done
   run_engine -- asb --connect 'instructions=read-only native join-scoped' claude --version
   [ "$status" -eq 0 ]
@@ -601,6 +603,55 @@ EOF
   grep -A2 -x -- --private-path "$H/join" | grep -qx "$PROJ/scratch"
   [ ! -e "$SBOX/@join-stage/$jid" ] # gone with the join
   [ ! -e "$SBOX/@join/$jid" ]
+}
+
+# The seeded modes per join (#153): each join's store starts as a copy of the source as
+# it is at that join. The stub join does not move the store out of staging, so while a
+# join is held it can be looked at there.
+join_store() { # PATH -> the held join's store for PATH
+  local s="${1//\//_}" d
+  for d in "$SBOX/@join-stage"/j*; do
+    [[ -e "$d/${s#_}" ]] && printf '%s' "$d/${s#_}"
+  done
+}
+
+@test "copy join-scoped: each join's store is seeded from the source as it is at that join" {
+  mkdir -p "$PROJ/data"
+  printf 'FIRST\n' >"$PROJ/data/a"
+  engine_bg -- asb --connect './data/ = copy join-scoped' claude --version
+  local st
+  st="$(join_store "$PROJ/data")"
+  [ -n "$st" ]
+  [ "$(cat "$st/a")" = FIRST ]
+  printf 'THE JOIN\n' >"$st/a" # what this join writes is its own
+  release_bg
+  [ "$(cat "$PROJ/data/a")" = FIRST ]
+  printf 'SECOND\n' >"$PROJ/data/a"
+  engine_bg -- asb --connect './data/ = copy join-scoped' claude --version
+  st="$(join_store "$PROJ/data")"
+  [ "$(cat "$st/a")" = SECOND ] # the next join starts from the source again
+  release_bg
+}
+
+@test "seed-only join-scoped on a channel: seeded per join from your files" {
+  mkdir -p "$C/skills" "$C/commands"
+  printf 'NATIVE\n' >"$C/skills/s.md"
+  engine_bg -- asb --connect 'skills=seed-only native join-scoped' claude --version
+  local st
+  st="$(join_store "$C/skills")"
+  [ -n "$st" ]
+  [ "$(cat "$st/s.md")" = NATIVE ]
+  release_bg
+}
+
+@test "a channel whose seed is a filtered view refuses the seeded modes per join" {
+  local ch
+  for ch in config transcripts; do
+    run_engine -- asb --connect "$ch=copy native join-scoped" claude --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"'copy join-scoped' is refused for '$ch'"*"filtered view"* ]]
+    [ ! -s "$H/argv" ]
+  done
 }
 
 @test "a channel can be own join-scoped too" {
