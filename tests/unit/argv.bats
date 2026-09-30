@@ -55,9 +55,9 @@ setup() {
   # the file bind layers on the directory bind, so it must come after it
   [ "$(argv_index "$H/home/.claude/.claude.json")" -gt "$(argv_index "$H/home/.claude")" ]
   # the launch runs the keeper's payload, and the agent is joined into it: its own
-  # arguments passed through untouched and in order, right after the binary; the
-  # briefing's --settings appended after them (it has to come last, because Claude
-  # Code honours only the last --settings)
+  # arguments passed through untouched and in order; the briefing's --settings goes
+  # before them (a subcommand refuses it after it), which the harness splits off
+  # into JOINB
   local i
   i="$(argv_index --)"
   [ "${ARGV[i + 1]}" = bash ]
@@ -66,8 +66,8 @@ setup() {
   [ "${JOINV[1]}" = "--version" ]
   [ "${JOINV[2]}" = "--foo" ]
   [ "${JOINV[3]}" = "bar" ]
-  [ "${JOINV[4]}" = "--settings" ]
-  [ "${#JOINV[@]}" -eq 6 ]           # ...and nothing after the settings path
+  [ "${#JOINV[@]}" -eq 4 ]           # ...and nothing after them
+  [ "${JOINB[0]}" = "--settings" ]   # the briefing's, first
   [ "${#ARGV[@]}" -eq "$((i + 5))" ] # and after bwrap's --, only the payload
   # nothing binds the config file at $HOME any more, where its writes were lost
   run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude.json"

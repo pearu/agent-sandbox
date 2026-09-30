@@ -28,11 +28,10 @@ setup() {
   [[ "$output" == usage:* ]]
   run_engine -- asb claude --help
   [ "$status" -eq 0 ]
-  # the briefing appends its own --settings after the agent's arguments, so
-  # --help is the last argument the USER gave, not the last on the line
-  join_has --help
+  # the briefing's own --settings goes before the agent's arguments (JOINB), and
+  # --help is the user's, as typed
   [ "${JOINV[1]}" = --help ]
-  [ "${JOINV[2]}" = --settings ]
+  [ "${JOINB[0]}" = --settings ]
   # the agent's help ends with a footer pointing at --engine-help
   [[ "$output" == *"--engine-help"* ]]
   [[ "$output" == *"runs inside a sandbox"* ]]

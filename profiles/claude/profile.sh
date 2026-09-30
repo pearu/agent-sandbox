@@ -499,7 +499,9 @@ PY
 # briefing to Claude Code as SessionStart and SubagentStart hooks, which fire on
 # every launch, on --continue/--resume, and again after compaction, so what the
 # session is told can never be older than this launch. Sets
-# profile_briefing_argv; the engine appends it AFTER the user's own arguments.
+# profile_briefing_argv, which the engine puts BEFORE the user's own arguments:
+# a subcommand refuses --settings after it (`claude mcp list --settings X` is
+# "unknown option"; `claude --settings X mcp list` works, measured on 2.1.285).
 #
 # Deliberately not --append-system-prompt: passing that turns system-prompt
 # snapshotting off, and with snapshotting on the recorded prompt is reused until
@@ -507,9 +509,9 @@ PY
 # describing the old policy. A hook is re-run rather than recorded.
 #
 # Claude Code honours only ONE --settings: passing it twice keeps the last and
-# silently drops the first (measured, as is the fact that flags still parse
-# after a positional prompt -- which is why ours goes last). So when the user
-# passes their own, the two are merged into one file. That merge needs a JSON
+# silently drops the first (measured). So when the user passes their own, the two
+# are merged into one file, and theirs is dropped from the arguments
+# (profile_agent_argv), or it would win over ours. That merge needs a JSON
 # parser: python3 is used ONLY on this path, and if it is missing the USER's
 # --settings is kept and the briefing's hooks are dropped with a loud note.
 # Losing a hint beats changing how someone's tools behave.
@@ -530,10 +532,12 @@ profile_briefing_args() {
   # earlier one would resurrect settings they had overridden. A wrapper that
   # appends --settings to override an earlier one keeps working unchanged; the
   # only difference this feature makes is the two hook entries added on top,
-  # which is what [briefing] mode = off is for.
-  local -a rest=("$@")
+  # which is what [briefing] mode = off is for. Only before a `--`: what follows it
+  # is another command's (`claude mcp add NAME -- CMD ARGS`), never Claude Code's.
+  local -a rest=("$@") kept=()
   for ((i = 0; i < ${#rest[@]}; i++)); do
     case "${rest[i]}" in
+      --) break ;;
       --settings) user_val="${rest[i + 1]:-}" ;;
       --settings=*) user_val="${rest[i]#--settings=}" ;;
     esac
@@ -597,6 +601,19 @@ if merged.get("disableAllHooks"):
       return 0
     fi
     _as_msg "briefing: merged your --settings with the briefing's session hooks"
+    # Theirs is in ours now; left on the command line it would be the last, and win.
+    for ((i = 0; i < ${#rest[@]}; i++)); do
+      case "${rest[i]}" in
+        --)
+          kept+=("${rest[@]:i}")
+          break
+          ;;
+        --settings) ((i++)) || true ;;
+        --settings=*) ;;
+        *) kept+=("${rest[i]}") ;;
+      esac
+    done
+    profile_agent_argv=(${kept[@]+"${kept[@]}"})
     [[ "$_merge_note" == *hooks-disabled* ]] \
       && _as_msg "briefing: your settings set disableAllHooks, so the briefing will NOT be injected into the session; $inside/briefing.md is bound read-only and can be read on request"
   else

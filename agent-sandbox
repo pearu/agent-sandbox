@@ -4711,7 +4711,7 @@ agent_sandbox() (
       elif ((_do_verb)); then
         _run_argv=("$profile_bin" "$@") # a verb's argv is not a session: no briefing
       else
-        local -a profile_briefing_argv=()
+        local -a profile_briefing_argv=() profile_agent_argv=("$@") # see the briefing block
         local _ksess
         _ksess="$(cat "$_keeper_sb/keeper/session" 2>/dev/null)"
         if [[ -n "$_ksess" && -d "$_ksess/briefing" ]] && grep -q $'^briefing\ton\t' "$_keeper_sb/keeper/policy" \
@@ -4724,7 +4724,7 @@ agent_sandbox() (
           _brief_out_inside="$(_as_briefing_inside)/join.$BASHPID"
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
         fi
-        _run_argv=("$profile_bin" "$@" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"})
+        _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"})
       fi
       _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
       local _jrc=0
@@ -5281,8 +5281,13 @@ agent_sandbox() (
   # Default on (opt-out): the sessions that most need to know they are sandboxed
   # are the ones nobody configured. `profile_briefing_args` decides how to hand
   # it to the agent and may decline, in which case briefing.md is still bound so
-  # the agent can read it.
-  local -a profile_briefing_argv=()
+  # the agent can read it. Its arguments go FIRST, before the agent's own: an agent's
+  # subcommand (`claude mcp list`) takes options of its own after it, and refuses the
+  # agent's (measured: `claude mcp list --settings X` is "unknown option",
+  # `claude --settings X mcp list` works, 2.1.285). The profile may hand the agent's
+  # arguments back changed, in profile_agent_argv -- claude drops the user's
+  # --settings once it has merged it into its own, since only one is honoured.
+  local -a profile_briefing_argv=() profile_agent_argv=("$@")
   local _brief="${_knob_briefing:-on}"
   # Under --exec the argv is an arbitrary command, so the agent-specific hook
   # args (claude's --settings) must not be appended to it. briefing.md is still
@@ -5317,7 +5322,7 @@ agent_sandbox() (
   if ((_do_exec)); then
     _run_argv=("$@")
   else
-    _run_argv=("$profile_bin" "$@" "${profile_briefing_argv[@]}")
+    _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"})
   fi
 
   # ----- Network mode -----
