@@ -37,8 +37,9 @@ setup() {
   argv_has --chdir "$H/proj"
   argv_has --remount-ro "$H/home"
   argv_has --share-net
-  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
-  [ "$(setenv_value HTTP_PROXY)" = "http://127.0.0.1:8888" ]
+  # the session token: the profile's [allow] opens its hosts for every launch (#181)
+  [[ "$(setenv_value HTTPS_PROXY)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8888$ ]]
+  [ "$(setenv_value HTTP_PROXY)" = "$(setenv_value HTTPS_PROXY)" ]
   [ "$(setenv_value NO_PROXY)" = "" ]
   [ "$(setenv_value DISABLE_AUTOUPDATER)" = "1" ]
   [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ] # so Claude Code looks for the file where it is bound

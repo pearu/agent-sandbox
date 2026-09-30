@@ -14,7 +14,7 @@ sandbox. It is a security tool. Treat every change to it as one.
 | Path | Role |
 |---|---|
 | `agent-sandbox` | The engine (bash). Provider-agnostic: bwrap layout, network modes, CA handling, SSH broker + janitor, conda passthrough, launch. Security-sensitive. |
-| `profiles/<name>.sh`, `profiles/<name>.allowlist` | One provider profile per agent. `profiles/claude.sh` is the flagship and documents the profile contract in its header. |
+| `profiles/<name>/profile.sh`, `profiles/<name>/agent-sandbox` | One provider profile per agent: its script and its own dot-file (#181). `profiles/claude/` is the flagship; `profile.sh` documents the profile contract in its header. |
 | `components/` | The files the installer places on a host: the mitmproxy allowlist addon, the starter allowlist, the systemd unit template, AppArmor profiles. **Source of truth.** |
 | `install.sh.in` | The installer template, with `@@INCLUDE components/...@@` markers. **Source of truth.** |
 | `install.sh` | **Generated** by `scripts/bundle.sh` from the two above. Never edit it by hand; edit the template or a component and rebundle. It is committed so `curl -fsSL .../install.sh | bash` works from one self-contained file. A normal run copies the engine + profiles under `~/.local/share/agent-sandbox/app` and points the launcher there (a true install, source-independent); `--dev` symlinks the launcher at the checkout for development. |

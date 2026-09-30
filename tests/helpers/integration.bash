@@ -20,7 +20,7 @@ make_integration() {
   # refuses a state bind whose source is missing, and a channel needs somewhere
   # to be. Cheap, and it means every integration test can ask for a connection.
   mkdir -p "$IHOME" "$IWORK" "$IPROFILES" "$IHOME/.probe/docs" "$IHOME/.probe/extra"
-  cp "$BATS_TEST_DIRNAME/../helpers/probe-profile.sh" "$IPROFILES/probe.sh"
+  mkdir -p "$IPROFILES/probe" && cp "$BATS_TEST_DIRNAME/../helpers/probe-profile.sh" "$IPROFILES/probe/profile.sh"
   cat >"$I/probe.sh"
   chmod +x "$I/probe.sh"
   # The probe is the agent, and a launch names it as a user names theirs (#151):

@@ -102,7 +102,7 @@ printf '%s\n' '{"hasCompletedOnboarding":true,"autoUpdates":false}' >"$ccd/.clau
 
 snap() { python3 "$SNAP" manifest "$HOME/.claude" "$HOME/.claude.json" >"$1"; }
 
-# Claude Code's project-slug scheme, as derived by probe in profiles/claude.sh.
+# Claude Code's project-slug scheme, as derived by probe in profiles/claude/profile.sh.
 slug() { printf '%s\n' "${1//[^A-Za-z0-9-]/-}"; }
 
 tree_root=

@@ -103,7 +103,7 @@ STUB
   # How the profile was selected is what this test is about -- and normalising
   # beats switching those features off, since then the argv compared is the one
   # a real launch produces.
-  norm() { sed 's/session\.[A-Za-z0-9]\{6\}/session.NORMALISED/g' "$1"; }
+  norm() { sed 's/session\.[A-Za-z0-9]\{6\}/session.NORMALISED/g; s/[0-9a-f]\{32\}:x@/TOKEN:x@/g' "$1"; }
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   norm "$H/argv" >"$H/argv.a"
@@ -230,11 +230,20 @@ STUB
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"names no profile"*"profiles available in $H/profiles2: (none)"* ]]
-  # a profile's own command is what a verb or --exec runs, looked up on PATH
-  printf 'profile_command=x\n' >"$H/profiles2/other.sh"
+  # a profile is a directory holding profile.sh (#181); its own command is what a verb
+  # or --exec runs, looked up on PATH
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=x\n' >"$H/profiles2/other/profile.sh"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
   [ "$status" -ne 0 ]
   [[ "$output" == *"no 'x' on PATH to run"* ]]
+  # and its dot-file's [agent] command wins over the script's
+  printf '[agent]\ncommand = y\n' >"$H/profiles2/other/agent-sandbox"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no 'y' on PATH to run"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb
+  [[ "$output" == *"profiles available in $H/profiles2: other"* ]]
 }
 
 @test "sourced mode: agent_sandbox() takes the command as run, and never infers a profile from \$0" {

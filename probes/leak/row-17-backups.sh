@@ -14,7 +14,7 @@
 #   1. It survives removal. The purge documentation says so itself -- "backups/ may
 #      still contain this project entry in old .claude.json snapshots". So the one
 #      user-facing remedy row 11 could offer is incomplete by design.
-#   2. It is not isolated. backups/ appears nowhere in profiles/claude.sh, so even a
+#   2. It is not isolated. backups/ appears nowhere in profiles/claude/profile.sh, so even a
 #      future scoping of .claude.json would leave the snapshots beside it readable.
 #
 # Expected to leak, so the control is leak_isolation_canary (see lib.sh).

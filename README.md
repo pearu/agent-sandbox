@@ -163,8 +163,7 @@ it asks for sudo itself for the one step that needs it, the AppArmor profile.
 
 The installer is idempotent: it sets up the proxy (mitmproxy 12+ in a private
 environment under `~/.local/share/agent-sandbox`), generates the CA, writes
-the allowlist (keeping your edits on re-runs) and adds each profile's hosts,
-installs the systemd user unit, and **copies the engine and profiles under
+the allowlist (keeping your edits on re-runs), installs the systemd user unit, and **copies the engine and profiles under
 `~/.local/share/agent-sandbox`**. Because the command runs from the copy, you
 can move or delete this clone afterward; re-run `./install.sh` after pulling to
 update.

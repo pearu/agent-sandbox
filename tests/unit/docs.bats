@@ -132,7 +132,7 @@ fail_missing() {
 # handlers -- profile_isolate, profile_route -- and used by the engine to warn on
 # an unknown key).
 profile_dotfile_keys() {
-  sed -n 's/^profile_dotfile_keys=(\(.*\))/\1/p' "$REPO_ROOT/profiles/claude.sh" \
+  sed -n 's/^profile_dotfile_keys=(\(.*\))/\1/p' "$REPO_ROOT/profiles/claude/profile.sh" \
     | tr ' ' '\n' | grep . | sort -u
 }
 
@@ -237,9 +237,9 @@ profile_dotfile_keys() {
   # be a promise the code stopped keeping. responses.log and alerts.log were
   # missing for both reasons: added in the same release, never written down.
   local paths
-  # shellcheck disable=SC2016 # literal \$c: the profile spells its paths as "$c/<name>"
-  paths="$(awk '/^profile_isolate\(\) \{/,/^\}$/' "$REPO_ROOT/profiles/claude.sh" \
-    | grep -oE '\$c/[A-Za-z._-]+' | sed 's|\$c/||' | sort -u)"
+  # The profile's dot-file lists them, as [agent] hide lines (#181).
+  paths="$(sed -n '/^\[agent\]/,/^\[/{s/^hide[[:space:]]*=[[:space:]]*//p}' "$REPO_ROOT/profiles/claude/agent-sandbox" \
+    | tr ' ' '\n' | grep . | sort -u)"
   enough profile_isolate_paths 6 <<<"$paths"
   local row
   row="$(grep -F 'Cross-session state is isolated' "$REPO_ROOT/docs/design.md")"

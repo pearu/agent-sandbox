@@ -77,7 +77,8 @@ teardown_file() {
   [[ "$out" == *"mitmdump 12."* ]]
   [[ "$out" == *"CA generated: $H/.mitmproxy/mitmproxy-ca-cert.pem"* ]]
   [ -f "$H/.mitmproxy/mitmproxy-ca-cert.pem" ]
-  grep -q '^api.anthropic.com$' "$H/.config/agent-sandbox/allowlist.txt"
+  grep -q '^api.github.com$' "$H/.config/agent-sandbox/allowlist.txt"
+  run ! grep -q '^api.anthropic.com$' "$H/.config/agent-sandbox/allowlist.txt" # the profile's [allow], per launch
   cmp -s "$H/.config/agent-sandbox/allowlist_addon.py" "$REPO_ROOT/components/allowlist_addon.py"
   grep -qE "^ExecStart=$H/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ "$(readlink "$H/.local/bin/asb")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
@@ -108,7 +109,7 @@ teardown_file() {
   local out
   out=$(cat "$E/install1.out")
   [[ "$out" == *"agent-sandbox-mitmproxy.service is active"* ]]
-  [[ "$out" == *"proxy reaches an allowlisted host (api.anthropic.com)"* ]]
+  [[ "$out" == *"proxy reaches an allowlisted host (api.github.com)"* ]]
   # the installer's own negative smoke check asserts the other half of the contract
   [[ "$out" == *"proxy refuses a non-allowlisted host (example.com blocked at CONNECT)"* ]]
   [[ "$out" != *"SECURITY:"* ]]
@@ -156,7 +157,8 @@ teardown_file() {
   ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
   run launch claude env
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HTTPS_PROXY=http://127.0.0.1:8888"* ]]
+  # the session token: the profile's [allow] opens api.anthropic.com for this launch (#181)
+  [[ "$output" =~ HTTPS_PROXY=http://[0-9a-f]{32}:x@127\.0\.0\.1:8888 ]]
   [[ "$output" == *"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"* ]]
   [[ "$output" == *"HOME=$H"* ]]
   run launch claude fetch https://api.anthropic.com/v1/models
@@ -192,7 +194,7 @@ teardown_file() {
   [[ "$out" == *"already exists (kept as-is)"* ]]
   [[ "$out" == *"already points at the engine"* ]]
   grep -q '^my.custom.host$' "$H/.config/agent-sandbox/allowlist.txt"
-  [ "$(grep -c '^api.anthropic.com$' "$H/.config/agent-sandbox/allowlist.txt")" -eq 1 ]
+  [ "$(grep -c '^api.github.com$' "$H/.config/agent-sandbox/allowlist.txt")" -eq 1 ]
   [ "$(grep -c '^--user restart agent-sandbox-mitmproxy.service$' "$SYSTEMCTL_SHIM_LOG")" -eq 2 ]
   if ((PORT_FREE)); then
     sleep 1

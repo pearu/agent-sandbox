@@ -17,13 +17,15 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" "${envs[@]}" "$REPO_ROOT/install.sh" --dry-run "$@"
 }
 
-@test "--dry-run: writes config, seeds the profile hosts, renders the unit with the proxy path, symlinks asb and agent-sandbox; nothing privileged" {
+@test "--dry-run: writes config, renders the unit with the proxy path, symlinks asb and agent-sandbox; nothing privileged" {
   dry
   [ "$status" -eq 0 ]
   [ -f "$T/home/.config/agent-sandbox/allowlist_addon.py" ]
   [ -f "$T/home/.config/agent-sandbox/allowlist.txt" ]
-  grep -q '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt"
-  grep -q 'claude profile (added by install.sh)' "$T/home/.config/agent-sandbox/allowlist.txt"
+  # a profile's hosts are its dot-file's [allow], opened per launch, not seeded here (#181)
+  [ "$(grep -c '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt")" -eq 0 ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/profile.sh" ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/agent-sandbox" ]
   local unit="$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ -f "$unit" ]
   grep -qE "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$unit"
@@ -36,7 +38,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
     || [[ "$output" == *"(dry-run) would record"* ]]
   [ -f "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # a real copy, not the checkout
   cmp -s "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
-  [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude.sh" ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/profile.sh" ]
   [ "$(cat "$T/home/.local/share/agent-sandbox/app/VERSION")" = "$(cat "$REPO_ROOT/VERSION")" ] # version copied with the engine
   [[ "$output" == *"(dry-run) would run: systemctl --user daemon-reload"* ]]
   [[ "$output" == *"(dry-run) proxy request skipped"* ]]
@@ -45,15 +47,14 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   cmp -s "$T/home/.config/agent-sandbox/allowlist_addon.py" "$REPO_ROOT/components/allowlist_addon.py"
 }
 
-@test "re-run is idempotent: allowlist kept, seed hosts not duplicated, symlink already correct" {
+@test "re-run is idempotent: allowlist kept, symlink already correct" {
   dry
   echo "my.custom.host" >>"$T/home/.config/agent-sandbox/allowlist.txt"
   dry
   [ "$status" -eq 0 ]
   [[ "$output" == *"already exists (kept as-is)"* ]]
-  [[ "$output" == *"claude profile hosts already present"* ]]
   [[ "$output" == *"already points at the engine"* ]]
-  [ "$(grep -c '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt")" -eq 1 ]
+  grep -qx my.custom.host "$T/home/.config/agent-sandbox/allowlist.txt"
   grep -q '^my.custom.host$' "$T/home/.config/agent-sandbox/allowlist.txt"
 }
 

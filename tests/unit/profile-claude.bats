@@ -6,7 +6,7 @@ setup() {
   make_harness
   V="$H/home/.local/share/claude/versions"
   # the slug tests call the profile's functions directly
-  source "$REPO_ROOT/profiles/claude.sh"
+  source "$REPO_ROOT/profiles/claude/profile.sh"
 }
 
 # Two slugs RECORDED from Claude Code 2.1.270 by probes/config-dir-check.sh
