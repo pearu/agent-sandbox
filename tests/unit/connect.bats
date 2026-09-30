@@ -558,12 +558,12 @@ EOF
   done
 }
 
-@test "join-scoped is built for own and read-only; a seeded store per join is refused, naming #147" {
+@test "join-scoped is built for own and read-only; a seeded store per join is refused, saying which are built" {
   local m
   for m in copy seed-only copy-on-write; do
     run_engine -- asb --connect "instructions=$m native join-scoped" claude --version
     [ "$status" -ne 0 ]
-    [[ "$output" == *"'$m join-scoped' is not implemented"*"#147"* ]]
+    [[ "$output" == *"'$m join-scoped' is not implemented"*"built for 'own' and 'read-only'"* ]]
     [ ! -s "$H/argv" ]
   done
   run_engine -- asb --connect 'instructions=read-only native join-scoped' claude --version
@@ -654,6 +654,34 @@ EOF
   [ "$(cat "$st/x.md")" = "THIS RUN" ] # and not cleared
   release_bg
   [ ! -e "$SBOX/@run" ]
+}
+
+# The seeding modes run-scoped: seeded from the source when the run starts, the run's own
+# while it lasts, gone at its end -- and the next run seeds afresh rather than finding the
+# last one's writes.
+seeded_run_scoped() { # MODE
+  local m="$1" st
+  st="$SBOX/@run/instructions/$m/$(slugify "$C/rules")"
+  printf 'NATIVE\n' >"$C/rules/topic.md"
+  engine_bg -- asb --connect "instructions=$m native run-scoped" claude --version
+  grep -qxF -- "$st" "$H/argv.bg"      # the run's store is what is bound
+  [ "$(cat "$st/topic.md")" = NATIVE ] # seeded
+  printf 'THIS RUN\n' >"$st/topic.md"  # what the run writes
+  release_bg
+  [ ! -e "$SBOX/@run" ]
+  engine_bg -- asb --connect "instructions=$m native run-scoped" claude --version
+  [ "$(cat "$st/topic.md")" = NATIVE ] # the next run starts from the source
+  release_bg
+  [ "$(cat "$C/rules/topic.md")" = NATIVE ] # which was never written
+  [ ! -e "$SBOX/instructions/$m" ]          # and nothing went to the role's own store
+}
+
+@test "copy run-scoped: seeded when the run starts, its own while it lasts, afresh at the next run" {
+  seeded_run_scoped copy
+}
+
+@test "seed-only run-scoped: seeded when the run starts, its own while it lasts, afresh at the next run" {
+  seeded_run_scoped seed-only
 }
 
 @test "read-only run-scoped is accepted, and is the plain read-only bind: nothing is ever written" {

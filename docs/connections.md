@@ -70,13 +70,21 @@ No connection for a channel means `own`.
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
 
 Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
-`session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`) stays what
-the isolate spec makes of it: replaced per launch, closed to other sessions, and discarded at
-exit. (File history, plans, prompt history and the hook logs used to be merged back at exit;
-since #120 they are the `transcripts` and `logs` channels.) **Server-owned state** (`skills/synced/`, `plugins/synced/`,
-`cache/`, `telemetry/`, `backups/`, the usage and stats files) is written by Claude Code
-itself from the service or as caches; it is private to each sandbox and never connected. A
-sandbox syncs its own server skills on first start, measured at 3.6 MB on this host.
+`session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`, and since
+#75 and #80 `backups/` and `feedback-bundles/`) stays what the isolate spec makes of it:
+replaced per launch, closed to other sessions, and discarded at exit. (File history, plans,
+prompt history and the hook logs used to be merged back at exit; since #120 they are the
+`transcripts` and `logs` channels.) **Server-owned state** is what Claude Code writes itself,
+from the service or as caches, and what it gets depends on where it lives:
+
+- `skills/synced/` and `plugins/synced/` sit inside the `skills` and `plugins` channels, so
+  they are the role's own wherever those are (`copy-on-write` under `inherit`). A sandbox
+  syncs its own server skills on first start, measured at 3.6 MB on this host.
+- `cache/`, `telemetry/`, `usage-data/`, `stats-cache.json` and the cached policy and settings
+  files are in no channel: they are the native files, readable and writable from every
+  sandbox, as everything in `~/.claude` outside a channel is. `stats-cache.json` is left so
+  deliberately — aggregated token and cost counts, nothing of any session's work (#81). The
+  policy and changelog caches are #109, `usage-data/` is #79.
 
 ## The scale
 
@@ -236,10 +244,10 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 
 **This table is where the model is going, not what the engine does today.** The rows
 implemented are the channels the engine manages as connections — `instructions, settings,
-skills, agents, workflows, plugins`, `config`, `transcripts` and `logs` — and a preset moves
+skills, agents, workflows, plugins`, `config`, `transcripts`, `logs` and `artefacts` — and a preset moves
 them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
 holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them.
-identity, project, memory and artefacts each still have machinery
+identity, project and memory each still have machinery
 of their own and keep their own controls until they are folded in, one at a time, with the
 study to show it. `docs/config.md` documents the rows that are live, so a user reading it
 is never told a channel is positioned when it is not.
@@ -692,7 +700,9 @@ reach the model. The config file was rewritten thirteen times by temp file and r
 inside the overlay, none failing; `settings.json` was copied up on first touch; the
 server-synced skills and plugin markers, `backups/`, `sessions/` and the policy and
 remote-settings files all landed in the upper layer, which is the per-sandbox privacy the
-model wants for server-owned state; the lower layer was byte-identical afterwards; the
+model wants for server-owned state (the engine does not lay one overlay over the whole state
+directory, so outside the channels that privacy is not what it gets: see
+[The three objects](#the-three-objects)); the lower layer was byte-identical afterwards; the
 transcript went through the live `projects/` bind. The only failing calls were the skill
 sync's unlink-then-rmdir on its staging directories, and the native trace shows the same
 sequence. One mechanical detail for the engine: bubblewrap creates the mount points for

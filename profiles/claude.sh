@@ -114,10 +114,9 @@ profile_config_binds=("$HOME/.claude")
 # directory. Inferring from the source only works when the source is there,
 # which for `none` is exactly when it may not be.
 #
-# ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory,
-# transcripts, artefacts and tools each already have machinery of their own (the
-# credential bind, the working tree, memory scoping, the isolate spec, the
-# per-project config copy). Declaring them now would give two mechanisms a claim
+# ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory and
+# tools each already have machinery of their own (the credential bind, the working
+# tree, memory scoping). Declaring them now would give two mechanisms a claim
 # on one path and the later one would silently win; folding them onto
 # connections is a separate step, per channel, with the study to show it.
 profile_channels=(
@@ -130,7 +129,14 @@ profile_channels=(
   "config	file:$HOME/.claude/.claude.json"
   "transcripts	dir:$HOME/.claude/file-history	dir:$HOME/.claude/plans	file:$HOME/.claude/history.jsonl"
   "logs	file:$HOME/.claude/responses.log	file:$HOME/.claude/alerts.log"
+  "artefacts	dir:$HOME/.claude/downloads	dir:$HOME/.claude/uploads	dir:$HOME/.claude/tasks"
 )
+# ARTEFACTS ARE A CHANNEL: what sessions leave for each other to pick up -- downloaded
+# documents, uploaded files, task lists (#52, #76, #78). The leak study measured
+# uploads/ and tasks/ readable from another project's sandbox (row 18, 2.1.272), and
+# a task list is there to be picked up by a resumed session, so it is a way in too. `own` under `inherit`, as under `isolated`: a
+# role's downloads and tasks are its own, and nobody else's reach it. `shared` and
+# `native` keep the directories yours, both ways, as before.
 # TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
 # and prompt history are its own, and so are the logs your hooks write -- `own` under
 # every preset but `native`, where they are yours. Nothing is merged back at exit. The
@@ -160,7 +166,8 @@ profile_channel_filters=("config	_claude_config_filter" "$HOME/.claude/history.j
 profile_channel_empty=("config	{}")
 # shellcheck disable=SC2034
 profile_channel_presets=("config	inherit=seed-only shared=seed-only"
-  "transcripts	inherit=own shared=own" "logs	inherit=own shared=own")
+  "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"
+  "artefacts	inherit=own")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -844,6 +851,15 @@ profile_isolate() {
     "tmpfs	$c/shell-snapshots"
     "tmpfs	$c/debug"
     "tmpfs	$c/paste-cache"
+    # backups/ holds Claude Code's snapshots of the config file, and a project entry
+    # `claude project purge` removed from the live file was still readable there, from
+    # another project's sandbox (#75; leak study row 17, 2.1.272). A role's config is
+    # its own copy since #119, so nothing inside has a use for the native snapshots.
+    "tmpfs	$c/backups"
+    # feedback-bundles/ holds "feedback and bug-report archives you haven't yet sent"
+    # (Claude Code's docs), readable from another project's sandbox (#80; row 18). Per
+    # launch, so a bundle a sandboxed session did not send is gone when it exits.
+    "tmpfs	$c/feedback-bundles"
   )
 
   # [claude] hide = a b c -- extra paths under the state directory to blank.

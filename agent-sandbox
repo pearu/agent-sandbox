@@ -982,11 +982,10 @@ _as_role_resolve() {
 # writes kept to itself; `shared` is the engine before 0.2.
 #
 # A PRESET ONLY MOVES THE CHANNELS THE ENGINE MANAGES AS CONNECTIONS, which is
-# the six plain-path ones the profile declares. identity, project, tools, memory,
-# transcripts and artefacts appear in the design's table too, but each still has
-# machinery of its own (the credential bind, the working tree, the config copy,
-# memory scoping, the isolate spec) and keeps its own controls until it is folded
-# in. A preset that silently claimed to set them would be the more dangerous kind
+# the plain-path ones the profile declares. identity, project, tools and memory
+# appear in the design's table too, but each still has machinery of its own (the
+# credential bind, the working tree, memory scoping) and keeps its own controls
+# until it is folded in. A preset that silently claimed to set them would be the more dangerous kind
 # of wrong: the user would believe a channel was positioned and it would not be.
 _as_preset_mode() {
   case "$1" in
@@ -1187,7 +1186,7 @@ _as_connect_parse() {
       case "$mode" in
         own | read-only) ;;
         *)
-          _as_msg "connect ($where): '$mode join-scoped' is not implemented in this engine (asked for '$ch'); a join-scoped store is built for 'own' so far (#147). Refusing rather than serving a store that outlives the join."
+          _as_msg "connect ($where): '$mode join-scoped' is not implemented in this engine (asked for '$ch'); a join-scoped store is built for 'own' and 'read-only', not yet for a mode that seeds it. Refusing rather than serving a store that outlives the join."
           return 1
           ;;
       esac

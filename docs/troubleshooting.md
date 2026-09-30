@@ -194,6 +194,19 @@ points at the checkout instead: moving or deleting it breaks the command
 (`~/.local/bin/asb` becomes a dangling symlink) — re-run `./install.sh`
 from the new location.
 
+**Processes left behind after a sandbox's parent was killed**
+A keeper whose supervisor was killed with `-9`, or the overlay holder of an engine before
+0.4, can outlive what started it, holding its namespaces and mounts. List them, then end
+them, with:
+
+```
+probes/orphans.sh           # lists what it finds; changes nothing
+probes/orphans.sh --kill
+```
+
+It matches by structure only -- a keeper payload, or a holder's `sleep infinity` in a
+mount namespace of its own, reparented to pid 1 -- so a running sandbox is never touched.
+
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:
 `AGENT_SANDBOX_FORWARD="GH_TOKEN" asb claude`.
