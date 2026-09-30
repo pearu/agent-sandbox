@@ -43,6 +43,11 @@ setup() {
     _as_path_protected "$p"
     [ "$_prot_how" = contains ]
   done
+  # ~/.local/bin, and what is in it, is not protected read-only; what contains it still is
+  run ! _as_path_protected "$HOME/.local/bin" read-only
+  run ! _as_path_protected "$HOME/.local/bin/claude" read-only
+  _as_path_protected "$HOME/.local/bin" copy
+  _as_path_protected "$HOME/.local" read-only
   # siblings and look-alikes are fine: the match is exact or by path component
   for p in "$HOME/.config/nvim" "$HOME/.local/share/fonts" "$HOME/.cargo" "$HOME/.sshfoo" "$HOME/.local/state/other"; do
     run ! _as_path_protected "$p"

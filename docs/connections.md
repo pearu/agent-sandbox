@@ -446,7 +446,8 @@ accepted yet: `outside:<path>` is a follow-up.
 **Every mode is checked alike, `own` included**, although `own` exposes nothing — one
 rule is easier to state and to trust, and loosening it later breaks no one. The rule:
 not `/`, `$HOME` or a parent of it; nothing that is, is inside or contains a secret
-store or the sandbox's control plane; and **not the
+store or the sandbox's control plane, except `~/.local/bin` read-only, which puts
+your commands on the sandbox's PATH and whose harm is only a write; and **not the
 project or a parent of it**, because a declaration is bound after the project and would
 cover it. Both the key and what it resolves to are checked, and the resolved path is
 checked again at bind time, so a symlink repointed in between cannot mount a refused
