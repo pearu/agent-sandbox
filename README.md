@@ -233,6 +233,7 @@ not exist. Values and defaults are in the last column.
 | `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first and `--profile` names the sandbox (`asb --allow pypi.org --profile claude --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
 | `--wrap` | — | — | **removed**: it was the wrapper that sandboxed background workers from a daemon on the host. Refused with a note, since a daemon an earlier engine started may still call it ([design.md](docs/design.md#background-sessions-123)) |
 | `--engine-help`, `--version` | — | — | print the engine's own flags, or its version, and exit; after the command, `--version` is the agent's (`asb claude --version`) |
+| `--engine-version` | — | — | **renamed** `--version`, and refused with that name |
 
 When a setting can be given more than one way, they combine like this. Hosts,
 paths, forwarded names and ports **add up** across all three, so the dot-file's
