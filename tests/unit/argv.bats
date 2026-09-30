@@ -86,12 +86,13 @@ setup() {
   run ! setenv_value SSL_CERT_FILE
 }
 
-@test "bwrap itself runs with no environment: inside it is pid 1, whose environment the sandbox can read" {
+@test "bwrap itself runs with no environment and its options off its command line: inside it is pid 1, readable there" {
   # Its --clearenv clears only the command's. The command's environment is all --setenv.
   run_engine SECRETISH=1 -- asb claude --version
   [ "$status" -eq 0 ]
   [ -f "$H/argv.env" ]
-  [ ! -s "$H/argv.env" ] # the stub was given nothing
+  [ ! -s "$H/argv.env" ]         # the stub was given nothing
+  grep -qx args-fd "$H/argv.via" # and its options came through --args, not its command line
   argv_has --clearenv
   argv_has --setenv HOME "$H/home"
 }

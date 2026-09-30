@@ -61,11 +61,14 @@ pasta_argv() {
   [[ "$joined" == *" -T none "* && "$joined" == *" -U none "* ]] # no host port is mirrored into the netns
   [[ "$joined" == *" -t none "* && "$joined" == *" -u none "* ]] # no sandbox listener is published on the host
   has bwrap                                                      # bwrap is the command pasta execs
-  has --share-net                                                # bwrap shares pasta's netns (not the host's)
-  has /etc/ssl/certs/ca-certificates.crt                         # CA bound as in proxy mode
-  grepd -- '-4 route show default'                               # the gateway is read INSIDE the netns
-  grepd 'policy drop'                                            # the firewall drops by default
-  grepd 'ip daddr %s tcp dport 8888 accept'                      # allows only the gateway proxy (filled in from $gw)
+  run ! has --share-net                                          # but its options are not on pasta's command line:
+  run ! has /etc/ssl/certs/ca-certificates.crt                   # they reach bwrap through a file (--args)
+  grep -qx args-fd "$H/argv.via"
+  grep -qx -- --share-net "$H/argv"                     # bwrap shares pasta's netns (not the host's)
+  grep -qx /etc/ssl/certs/ca-certificates.crt "$H/argv" # CA bound as in proxy mode
+  grepd -- '-4 route show default'                      # the gateway is read INSIDE the netns
+  grepd 'policy drop'                                   # the firewall drops by default
+  grepd 'ip daddr %s tcp dport 8888 accept'             # allows only the gateway proxy (filled in from $gw)
   # shellcheck disable=SC2016 # literal \$: these are patterns for the wrapper's own text
   grepd 'pxy="http://\${auth:+\$auth@}\$gw:8888"' # proxy URL built inside, gateway + optional per-session token
   # shellcheck disable=SC2016
@@ -80,6 +83,18 @@ pasta_argv() {
   [ -f "$H/argv.env" ]
   [ ! -s "$H/argv.env" ]
   grep -A1 -x HTTPS_PROXY "$H/argv" | grep -qE '^http://([^@]*@)?10.9.9.1:8888$' # the wrapper's own work still reaches it
+}
+
+@test "strict: the --allow token reaches bwrap's proxy URL but never pasta's command line, which the host lists" {
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    -- asb --allow pypi.org claude --version
+  [ "$status" -eq 0 ]
+  local url
+  url="$(grep -A1 -x HTTPS_PROXY "$H/argv" | tail -1)"
+  [[ "$url" =~ ^http://[0-9a-f]{32}:x@10\.9\.9\.1:8888$ ]]
+  local tok="${url#http://}"
+  tok="${tok%%:*}"
+  run ! grep -qF -- "$tok" "$H/pasta_argv"
 }
 
 @test "strict: --host-port/--agent-port, the knobs and a trusted [net] section open exactly those TCP ports in pasta; none closes a direction" {
@@ -165,7 +180,9 @@ X
   run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
     AGENT_SANDBOX_SESSION_BASE="$H/base" -- asb --ssh git.example --ssh-key "$H/key" claude --version
   [ "$status" -eq 0 ]
-  pasta_argv
+  # bwrap's options reach it through a file, not pasta's command line
+  mapfile -t P <"$H/argv"
+  JOINED=" ${P[*]} "
   # both resolved IPs pinned on port 22, spliced into the ruleset
   grep -q 'ip daddr 10.20.30.40 tcp dport 22 accept' "$H/pasta_argv"
   grep -q 'ip daddr 10.20.30.41 tcp dport 22 accept' "$H/pasta_argv"

@@ -64,7 +64,8 @@ STUB
   # environment of its own, so a stub takes back the one of its nearest ancestor that
   # has one -- the engine's -- to find the dump path and the rest of its test's knobs.
   # What it was given itself goes to $BWRAP_DUMP.env, one name per line, for the tests
-  # that pin that it was nothing.
+  # that pin that it was nothing. It also reads back the options the engine passes
+  # through `--args` (below).
   cat >"$H/bin/stub-env" <<'STUB'
 _stub_given=()
 while IFS= read -r -d '' _kv; do _stub_given+=("${_kv%%=*}"); done </proc/$$/environ
@@ -78,6 +79,18 @@ done
 if [[ -n "${BWRAP_DUMP:-}" && "${1:-}" != --help && "${1:-}" != --version ]]; then
   : >"$BWRAP_DUMP.env"
   for _kv in ${_stub_given[@]+"${_stub_given[@]}"}; do printf '%s\n' "$_kv" >>"$BWRAP_DUMP.env"; done
+fi
+# The engine hands bwrap its options as `--args FD`, NUL-separated, and keeps only the
+# command on the command line. Put them back in "$@" (sourced without arguments, this
+# sets the stub's own), so a dump records what bwrap was told, as it always has; and
+# note that they came that way, in $BWRAP_DUMP.via.
+if [[ "${1:-}" == --args ]]; then
+  _stub_fd="$2"
+  shift 2
+  _stub_opts=()
+  while IFS= read -r -d '' _kv; do _stub_opts+=("$_kv"); done <&"$_stub_fd"
+  set -- ${_stub_opts[@]+"${_stub_opts[@]}"} "$@"
+  [[ -n "${BWRAP_DUMP:-}" ]] && printf 'args-fd\n' >"$BWRAP_DUMP.via"
 fi
 STUB
   # Stub join (AGENT_SANDBOX_JOIN): record its argv, one token per line, and run

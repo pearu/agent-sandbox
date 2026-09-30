@@ -3533,6 +3533,15 @@ _as_fallback_hint() {
 _as_launch() {
   shift # the --
   local rc=0
+  # BWRAP'S OPTIONS GO THROUGH A FILE, NOT ITS COMMAND LINE: bwrap is pid 1 inside, and
+  # its argv -- every bind, the proxy URL -- is readable there. They are written here,
+  # NUL-separated, to the session directory, which is never bound into the sandbox;
+  # whoever execs bwrap opens the file as fd 11, removes it, and runs `bwrap --args 11`
+  # with only the payload left on the command line (bwrap takes the command from argv,
+  # never from the file). A path rather than a pipe, because it has to survive setsid
+  # and pasta, as the seccomp filter's does.
+  _as_session_begin || return 1
+  (umask 077 && printf '%s\0' "${_bwrap_opts[@]}" >"$_session_dir/bwrap.args") || return 1
   # The payload: `sleep` under the marker as its argv[0] (bwrap's --argv0 is newer
   # than the oldest bubblewrap this supports). The environment a join inherits is
   # read from it, so the shell that sets argv[0] takes back what it added: PWD and
@@ -3573,7 +3582,9 @@ _as_keeper_exec() {
       return 127
     }
     shift
-    exec -c setsid "$bin" "$@" 10<"${_seccomp_bpf:-/dev/null}"
+    exec 11<"$_session_dir/bwrap.args"
+    rm -f -- "$_session_dir/bwrap.args"
+    exec -c setsid "$bin" --args 11 "$@" 10<"${_seccomp_bpf:-/dev/null}"
   fi
   exec setsid "$@" 10<"${_seccomp_bpf:-/dev/null}"
 }
@@ -3595,8 +3606,8 @@ _as_keeper_exec() {
 # used, and refuses if the netns has no IPv4 gateway.
 #
 # pasta's port forwarding is off in both directions unless the user opened
-# ports: $2 is the -T spec (host TCP ports the sandbox may reach at 127.0.0.1,
-# or none) and $3 the -t spec (agent TCP ports published at the host's
+# ports: $3 is the -T spec (host TCP ports the sandbox may reach at 127.0.0.1,
+# or none) and $4 the -t spec (agent TCP ports published at the host's
 # 127.0.0.1, or none); UDP stays off. pasta's defaults ("auto") would bind
 # every port listening on the host inside the netns, which the lo accept rule
 # below lets the agent reach, and publish every sandbox listener on the host.
@@ -3604,19 +3615,23 @@ _as_keeper_exec() {
 # 127.0.0.1 listener was reachable from inside and a sandbox listener appeared
 # on the host; with none, neither.
 # $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes,
-# or empty), $3 = per-session proxy token (userinfo for the proxy URL, or empty),
-# $4 = -T spec, $5 = -t spec, $6 = seccomp filter path (or empty), $7.. = the full
-# "bwrap ... -- agent" line.
+# or empty), $3 = -T spec, $4 = -t spec, $5 = seccomp filter path (or empty),
+# $6.. = "bwrap -- agent": its options are in the session directory's bwrap.args
+# (_as_launch), and the per-session proxy token in its proxy.token.
 _as_launch_pasta() {
-  local nftbin="$1" sshrules="$2" proxy_auth="$3" tcp_ns="$4" tcp_host="$5" seccomp_bpf="$6"
-  shift 6
+  local nftbin="$1" sshrules="$2" tcp_ns="$3" tcp_host="$4" seccomp_bpf="$5"
+  shift 5
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
   # IPs) is spliced into the chain after the proxy rule.
   # shellcheck disable=SC2016
   _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
-    nftbin=$1 sshrules=$2 auth=$3 bpf=$4
+    nftbin=$1 sshrules=$2 sd=$3 bpf=$4
     shift 4
+    # The per-session proxy token, from the file the proxy addon reads too: not on
+    # this command line, which the host shows to anyone who lists processes.
+    auth=""
+    [ -s "$sd/proxy.token" ] && auth="$(cat "$sd/proxy.token"):x"
     ipbin=$(command -v ip 2>/dev/null || true)
     [ -n "$ipbin" ] || for c in /usr/sbin/ip /sbin/ip; do [ -x "$c" ] && ipbin=$c && break; done
     gw=$([ -n "$ipbin" ] && "$ipbin" -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
@@ -3637,20 +3652,16 @@ _as_launch_pasta() {
     # The proxy env must be set AFTER the base args reach their --clearenv, or
     # bwrap clears it and the agent launches with no proxy -- it then resolves
     # api.anthropic.com directly, which strict mode has no DNS route for, and
-    # fails with ENOTFOUND. Split the bwrap options from the "-- command" tail
-    # and insert the proxy env between them, past --clearenv.
-    opts=()
-    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
-      opts+=("$1")
-      shift
-    done
+    # fails with ENOTFOUND. So it goes at the END of the options file (see
+    # _as_launch), past --clearenv; what is left here is "-- command".
+    printf "%s\0" --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
+      --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" >>"$sd/bwrap.args" || exit 1
+    exec 11<"$sd/bwrap.args"
+    rm -f -- "$sd/bwrap.args"
     # fd 10 carries the seccomp filter when AGENT_SANDBOX_SECCOMP is on (else /dev/null).
     # No environment for bwrap itself (see _as_keeper_exec).
-    exec -c "$bwrapbin" "${opts[@]}" \
-      --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
-      --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" \
-      "$@" 10<"${bpf:-/dev/null}"
-  ' agent-sandbox-strict "$nftbin" "$sshrules" "$proxy_auth" "$seccomp_bpf" "$@")
+    exec -c "$bwrapbin" --args 11 "$@" 10<"${bpf:-/dev/null}"
+  ' agent-sandbox-strict "$nftbin" "$sshrules" "$_session_dir" "$seccomp_bpf" "$@")
 }
 
 # ---------------------------------------------------------------------------
@@ -3690,8 +3701,9 @@ agent_sandbox() (
   local _path_key
   local -a _connect_flag=()
   # The command line that runs the sandbox: bwrap, or pasta running bwrap. Set by the
-  # network mode, run by _as_launch.
-  local -a _launch=()
+  # network mode, run by _as_launch. bwrap's options are not on it: they are in
+  # _bwrap_opts, which reach bwrap through a file (see _as_launch).
+  local -a _launch=() _bwrap_opts=()
   # The join-scoped paths the launch declares (#147): `kind<TAB>name<TAB>path`.
   local -a _join_scoped=()
   local _join_stage_bound=0
@@ -5253,11 +5265,11 @@ agent_sandbox() (
   case "${_knob_net:-proxy}" in
     open)
       args+=(--share-net)
-      _launch=(bwrap "${args[@]}")
+      _launch=(bwrap) _bwrap_opts=("${args[@]}")
       _as_launch -- "${_run_argv[@]}"
       ;;
     none)
-      _launch=(bwrap "${args[@]}")
+      _launch=(bwrap) _bwrap_opts=("${args[@]}")
       _as_launch -- "${_run_argv[@]}"
       ;;
     proxy)
@@ -5273,7 +5285,7 @@ agent_sandbox() (
       )
       _as_ca_bind
       _as_ca_env
-      _launch=(bwrap "${args[@]}")
+      _launch=(bwrap) _bwrap_opts=("${args[@]}")
       _as_launch -- "${_run_argv[@]}"
       ;;
     strict)
@@ -5338,7 +5350,9 @@ agent_sandbox() (
           return 1
         }
       fi
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_proxy_auth" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap "${args[@]}"
+      _bwrap_opts=("${args[@]}")
+      _as_session_begin || return 1 # the wrapper is given its path now
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap
       _as_launch -- "${_run_argv[@]}"
       ;;
     *)
