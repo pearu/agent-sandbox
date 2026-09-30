@@ -322,32 +322,67 @@ section with commented examples.
 
 ## Trust
 
-The file is inert until approved. From the project directory:
+The file is inert until you approve it, and the approval is part of the launch
+(#143). Run `asb claude` in a project whose `.agent-sandbox` is new, has changed
+since you approved it, or has gone although you approved one, and the launch
+shows it and asks:
+
+- **new**: the whole file;
+- **changed**: what changed, as a diff from the content you approved to what is
+  there now — the approved content is kept for this, not only its hash;
+- **gone**: what you approved, and whether to forget it and use the defaults.
+
+Everything is shown through `cat -v`, so a control character or a byte outside
+ASCII shows escaped instead of acting on your terminal; a file containing a
+control character other than tab and newline is refused outright, at review and
+again at launch — the format never needs one, and nothing can hide a line from
+you. **Yes** records the approval and the launch goes on under it. **No** records
+nothing and launches nothing.
+
+Asking needs someone to answer: a terminal on stdin and stderr, whatever the
+agent's flags (`asb claude -p …` typed at a shell is asked). **Without one** — a
+script, a pipe, a service — a launch under a new, changed or missing file is
+**refused**, naming the way to approve it. That includes a new file, such as one a
+cloned repository ships: ignoring it would give whoever wrote it the defaults with
+a note they may never see. The same review without a launch is
 
 ```sh
-asb --trust
+asb --trust              # asks on stdin: printf y | asb --trust approves without a terminal
 ```
 
-This prints the file (through `cat -v`, so a control character or a byte
-outside ASCII shows escaped instead of acting on your terminal), asks you to
-approve, and on yes records the file's SHA-256. A file containing a control
-character other than tab and newline is refused outright, at review and again
-at launch: the format never needs one, and nothing can hide a line from you.
-It then offers to add
-`.agent-sandbox` to the repository's `.git/info/exclude`, since its contents
-(your other project paths, your hosts) are machine-local and usually should not
-be committed.
+which also offers to add `.agent-sandbox` to the repository's
+`.git/info/exclude`, since its contents (your other project paths, your hosts)
+are machine-local and usually should not be committed.
+
+A launch that **joins** a running role is asked the same way, and joins under the
+policy the role's keeper started with whatever the answer: a running role's
+policy does not change. The answer applies at the next keeper. The management
+verbs (`--status`, `--shutdown`, `agents`, …) are never asked or refused over the
+file: stopping what runs needs no policy.
 
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
-bound into the sandbox**, so the agent can neither read nor forge it. If the
-file changes afterward, or disappears, the next launch is **refused** until you
-run `asb --trust` again: it shows the new content to approve, or, when the
-file is gone, offers to forget the approval. Refusing rather than ignoring
-matters because ignoring would fall back to the defaults, and for memory
-scoping the default (`shared`) is wider than a scoped policy. A file with no
-approval on record, such as one shipped by a cloned repo, is ignored with a
-note. The practical consequence: the agent cannot widen its own permissions by
-writing or deleting the file; it can only stop the next launch until you look.
+bound into the sandbox**, so the agent can neither read nor forge it. Refusing
+rather than ignoring a changed or missing file matters because ignoring would
+fall back to the defaults, and for memory scoping the default is wider than a
+scoped policy.
+
+**Inside the sandbox the file is read-only** (#143): the agent is never an author
+of its own policy, whoever wrote the rest of the project. A declaration can give
+the sandbox a copy of its own instead — `./.agent-sandbox = copy` under
+`[connect]`, for an inner engine or a `git pull` run inside — and any mode but
+`read-write`, which is refused. Two exceptions, both deliberate: under
+`--preset native`, which differs from `none` in nothing, the file is left as the
+project has it (a declaration still applies); and a project with **no** dot-file
+gets no mount point for one, which would leave an empty `.agent-sandbox` in your
+repository. A file the agent creates there is new at the next launch, and
+reviewed.
+
+**Inside a sandbox there is no gate.** An engine run in a sandbox honours the
+dot-file it sees without approval: the file there is the one the outer launch
+approved, bound read-only, or a copy of its own, and a nested sandbox can only
+narrow the one it is in. The engine counts itself inside only when pid 1 is
+bubblewrap, not from the `AGENT_SANDBOX` marker alone, which any process on the
+host could set.
 
 ## Memory scoping
 

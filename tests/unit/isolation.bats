@@ -160,11 +160,11 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   mkdir -p "$C/gh" "$C/ide"
   printf '[claude]\nhide = gh ide\n' >"$PROJ/.agent-sandbox"
 
-  # unapproved: the section grants nothing
+  # unapproved: the launch refuses (#143), so the section grants nothing
   run_engine -- asb claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"present but not approved"* ]]
-  run ! argv_has --tmpfs "$C/gh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
 
   trust_proj
   run_engine -- asb claude --version

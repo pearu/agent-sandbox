@@ -562,8 +562,8 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   `.agent-sandbox` it started with, and a join parses that copy. So an edit to the live
   file that is not yet approved does not refuse a join: the trust gate exists because an
   ignored file would fall back to the defaults, and a join falls back to nothing — its
-  policy is the keeper's. `--trust` matters at the next keeper, where the live file is
-  read again. The live file is still read to find the role when no `--role` or
+  policy is the keeper's. At a terminal the join still shows the change and asks (#143),
+  and the answer applies at the next keeper, where the live file is read again. The live file is still read to find the role when no `--role` or
   `AGENT_SANDBOX_ROLE` names it, and then only an approved file is read, so there an
   unapproved edit refuses the join as it refuses a launch.
 - **A file bound on its own shows the file as it was when the keeper started.** A bind

@@ -157,8 +157,9 @@ EOF
 instructions = own native
 EOF
   run_engine -- asb claude --version
-  [ "$status" -eq 0 ]
-  run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
 }
 
 @test "--connect is repeatable, and the last spec for a channel wins" {

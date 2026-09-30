@@ -320,9 +320,11 @@ variable, which beats the file. *shipped*
 **Dot-file.** `.agent-sandbox` in the project: the project's knobs. Data only, never
 executed. *shipped*
 
-**Trust.** A dot-file is read only after the user approves its exact content with
-`--trust`; approval is recorded as a hash, so any edit needs approval again. An unapproved
-dot-file grants nothing. *shipped*
+**Trust.** A dot-file is read only after the user approves its exact content; the hash and
+the content are recorded, so any edit needs approval again, shown as a diff. The review is
+part of the launch at a terminal, and `--trust` without one; a launch with no terminal
+refuses an unapproved file. Inside the sandbox the file is read-only, and an engine run
+inside a sandbox has no gate. *shipped* (#143)
 
 **State directory.** `~/.local/state/agent-sandbox/`: every sandbox's state. Persistent,
 host-only, a control path. Distinct from the **session base** (runtime, per launch) and

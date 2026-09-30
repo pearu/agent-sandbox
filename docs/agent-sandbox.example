@@ -1,16 +1,17 @@
 # .agent-sandbox — per-project policy for the agent-sandbox sandbox.
 #
-# Copy this to `.agent-sandbox` in your project root, uncomment what you need,
-# then approve it from that directory with:
+# Copy this to `.agent-sandbox` in your project root and uncomment what you need.
+# The next `asb claude` there shows it and asks you to approve it; or approve it
+# without launching, from that directory:
 #
 #     asb --trust
 #
-# It is honored ONLY after approval; a file never approved is ignored with a
-# note, so one shipped by a cloned repo does nothing until you review it. Once
-# approved, any edit or removal (by you or the agent) refuses launches from
-# this directory until you run --trust again. Keep it out of git;
-# `--trust` offers to add it to .git/info/exclude, since its contents are
-# machine-local.
+# It is honored ONLY after approval, and a launch refuses a file you have not
+# approved -- one shipped by a cloned repo included -- until you review it. Once
+# approved, any edit or removal is shown to you again, as a diff, at the next
+# launch. Inside the sandbox the file is read-only, so the agent cannot edit it.
+# Keep it out of git; `--trust` offers to add it to .git/info/exclude, since its
+# contents are machine-local.
 #
 # Format: INI-like. `[section]` headers, one item per line, `#` starts a
 # comment (a whole line or the end of one). One item per line, so paths and

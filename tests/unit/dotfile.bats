@@ -32,22 +32,18 @@ trust() {
     >"$t/$(printf '%s' "$d" | sha256sum | cut -d' ' -f1)"
 }
 
-@test "an unapproved dot-file is ignored, with a pointer to --trust; a command-line --allow still works" {
+@test "an unapproved dot-file refuses the launch, naming --trust, and grants nothing (#143)" {
   local other="$H/other-proj" om
   mkdir -p "$other"
   om="$H/home/.claude/projects/$(slug "$other")/memory"
   mkdir -p "$om"
   printf '[allow]\nevil.example\n[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
   run_engine -- asb --allow good.example claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"present but not approved"* ]]
-  [[ "$output" == *"--trust"* ]]
-  [[ "$output" == *"session allowlist: good.example"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
+  [[ "$output" == *"printf y | asb --trust"* ]] # the way without a terminal
   [[ "$output" != *evil.example* ]]
-  # the share it asked for is not granted; scoping still applies, because
-  # isolation is the default rather than something the dot-file switches on
-  argv_has --tmpfs "$H/home/.claude/projects"
-  run ! argv_has --ro-bind "$om" "$om"
 }
 
 @test "an approved dot-file adds its allow hosts and scopes memory to the current project" {
@@ -141,10 +137,11 @@ trust() {
 
 @test "[claude] user-mcp from an approved dot-file is refused, naming config = own; an unapproved one changes nothing" {
   printf '[claude]\nuser-mcp = none\n' >"$PROJ/.agent-sandbox"
-  # unapproved: the file is ignored, so nothing refuses
+  # unapproved: the launch refuses before the file is read at all
   run_engine -- asb claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"present but not approved"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
   # approved: refused, and the launch says which form asked for it and what to write
   trust "$PROJ"
   run_engine -- asb claude --version
@@ -223,12 +220,12 @@ trust() {
   [[ "$(setenv_value PATH)" != *"$base/bin:"* ]]
 }
 
-@test "[net] mode from an approved dot-file selects the network mode; AGENT_SANDBOX_NET wins; unknown values and unapproved files are ignored" {
+@test "[net] mode from an approved dot-file selects the network mode; AGENT_SANDBOX_NET wins; unknown values are ignored and unapproved files refused" {
   printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
-  run_engine -- asb claude --version # not yet approved: still the default, proxy
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"present but not approved"* ]]
-  argv_has --share-net
+  run_engine -- asb claude --version # not yet approved: refused, nothing applied
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
   trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
@@ -327,16 +324,14 @@ trust() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"overrides the .agent-sandbox seccomp mode 'on'"* ]]
   run ! argv_has --seccomp
-  # ...and without approval the file asks for nothing. It has to ask for the
-  # OPPOSITE of the built-in default to show that: with the filter on by
-  # default, an ignored `mode = on` and an honoured one look identical in the
-  # argv, so the file says `off` and the filter must still be there.
+  # ...and without approval the file asks for nothing: a file never approved refuses
+  # the launch (#143), so its `mode = off` never takes the filter away.
   printf '[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
-  rm -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  rm -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"*
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
-  [ "$status" -eq 0 ]
-  argv_has --seccomp 10
-  [[ "$output" == *"present but not approved"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has never been approved"*"--trust"* ]]
+  [ ! -s "$H/argv" ]
   [[ "$output" != *"using seccomp mode 'off' from .agent-sandbox"* ]]
 }
 
