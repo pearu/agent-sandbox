@@ -34,13 +34,12 @@ Functions a profile defines:
 
 | Function | Meaning |
 |---|---|
-| `profile_own_bin()` | Optional, and for `install.sh`, not the launch. Where the agent's own installer keeps its binary: set `profile_bin` and `profile_version`, or print why not with `_as_msg` and return non-zero. The installer reports it, and points a launcher an install before #151 put at the agent's name back at it. The engine provides `profile_bin` — the resolved command — to every hook below. |
 | `profile_prepare()` | Optional. Runs right before the sandbox is assembled; create state files here. Not run for host-side subcommands. |
 | `profile_handle_subcommand()` | Required iff `profile_host_subcommands` is non-empty. Receives the agent's full argv (`$1` is the subcommand); its return code is the exit code. |
 | `profile_memory_scope()` | Optional. Called with the resolved mode (`scoped`/`shared`) and the approved share paths. In `scoped` mode, hide the agent's per-project state and rebind the current project plus each share. Without it, a `scoped` setting is reported as ignored rather than silently doing nothing. |
 | `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR` lines: empty inside, discarded at exit. (`copyout` and `append`, which merged a session's entries back at exit, are gone since #120: state that should outlive a launch is a channel, with a mode.) Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
 | `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. Skipped when the briefing is off or could not be written. |
-| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return (the claude profile: an `asb claude` typed inside a sandbox runs in it as it is). Refusing a retired knob belongs here too. |
+| `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return (the claude profile: an `asb claude` typed inside a sandbox runs in it as it is). |
 | `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
@@ -84,9 +83,7 @@ reviewable in one place, the engine.
 ## The flagship: `claude`
 
 `profiles/claude.sh` runs Claude Code — whatever `claude` is on your PATH, from
-the native installer or a package (its `profile_own_bin` knows the native
-installer's `~/.local/share/claude/versions/`, for `install.sh`) — binds
-`~/.claude` read-write and, inside
+the native installer or a package — binds `~/.claude` read-write and, inside
 it at `~/.claude/.claude.json`, the project's own copy of `~/.claude.json`
 (seeded and refreshed per launch, see [config.md](config.md)), with
 `CLAUDE_CONFIG_DIR` pointing Claude Code there (it writes the file through a

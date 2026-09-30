@@ -662,13 +662,6 @@ join_store() { # PATH -> the held join's store for PATH
   grep -A2 -x -- --private-path "$H/join" | grep -qx "$C/commands"
 }
 
-@test "process-scoped is refused with its new name" {
-  run_engine -- asb --connect "instructions=copy native process-scoped" claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'process-scoped' was renamed: write 'join-scoped'"* ]]
-  [ ! -s "$H/argv" ]
-}
-
 @test "run-scoped stores live apart from the role's, under @run" {
   run_engine -- asb --connect 'skills=own native run-scoped' --connect 'instructions=own native' claude --version
   [ "$status" -eq 0 ]
@@ -750,21 +743,6 @@ seeded_run_scoped() { # MODE
   [ ! -e "$SBOX/@run" ]
 }
 
-@test "the withdrawn scopes are refused, each saying what to write instead" {
-  # #125: storage belongs to the role, so the default has no name, sharing across
-  # roles is a source, and a per-conversation store is a role of its own.
-  run_engine -- asb --connect 'instructions=copy native sandbox-scoped' claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'sandbox-scoped' was withdrawn"*"write no scope"* ]]
-  [ ! -s "$H/argv" ]
-  run_engine -- asb --connect 'instructions=copy native project-scoped' claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'project-scoped' was withdrawn"*"sandbox:<project>/<role>"* ]]
-  run_engine -- asb --connect 'instructions=copy native session-scoped' claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'session-scoped' was withdrawn"*"--role"* ]]
-}
-
 @test "an unknown scope names the set" {
   run_engine -- asb --connect 'instructions=copy native world-scoped' claude --version
   [ "$status" -ne 0 ]
@@ -792,34 +770,6 @@ seeded_run_scoped() { # MODE
   for mode in own copy copy-on-write read-only read-write; do
     run_engine -- asb --connect "instructions=$mode" claude --version
     [ "$status" -eq 0 ]
-  done
-}
-
-@test "every PRE-0.3 mode name is refused, and the refusal says what to write" {
-  # Renamed, not aliased. `none` is why: it was the most-closed mode and becomes
-  # the preset meaning no sandbox at all, so honouring it here would make one
-  # word mean opposite ends of one model -- someone asking for maximum isolation
-  # would get none of it. Once `none` cannot be carried, carrying the other three
-  # would leave a single special case nobody remembers.
-  local old new
-  for pair in "none own" "cow copy-on-write" "ro read-only" "live read-write"; do
-    read -r old new <<<"$pair"
-    run_engine -- asb --connect "instructions=$old" claude --version
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"mode '$old' was renamed"* ]]
-    [[ "$output" == *"write '$new'"* ]]
-    [ ! -s "$H/argv" ] # and nothing launched
-  done
-}
-
-@test "both renamed presets are refused by name too, not silently defaulted" {
-  local old new
-  for pair in "independent isolated" "default inherit"; do
-    read -r old new <<<"$pair"
-    run_engine "AGENT_SANDBOX_PRESET=$old" -- asb claude --version
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"'$old' was renamed"* ]]
-    [[ "$output" == *"write '$new'"* ]]
   done
 }
 

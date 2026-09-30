@@ -135,21 +135,6 @@ trust() {
   [ "$(setenv_value CUDA_VISIBLE_DEVICES)" = 1 ]
 }
 
-@test "[claude] user-mcp from an approved dot-file is refused, naming config = own; an unapproved one changes nothing" {
-  printf '[claude]\nuser-mcp = none\n' >"$PROJ/.agent-sandbox"
-  # unapproved: the launch refuses before the file is read at all
-  run_engine -- asb claude --version
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"has never been approved"*"--trust"* ]]
-  [ ! -s "$H/argv" ]
-  # approved: refused, and the launch says which form asked for it and what to write
-  trust "$PROJ"
-  run_engine -- asb claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"[claude] user-mcp: user-mcp was removed"*"config = own"* ]]
-  [ ! -s "$H/argv" ]
-}
-
 @test "a dot-file path declaration still goes through the secret-store refusal" {
   mkdir -p "$H/home/.aws"
   printf '[connect]\n%s/home/.aws = read-write\n' "$H" >"$PROJ/.agent-sandbox"

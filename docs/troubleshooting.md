@@ -92,11 +92,6 @@ The profile is the command's basename. A binary named otherwise needs it said:
 Claude Code (any way: the native installer, a package), or name its binary with
 `asb --profile claude /path/to/claude`.
 
-**`agent-sandbox is no longer run as 'claude'`**
-`~/.local/bin/claude` is still the launcher an install from before 0.4 put there
-(#151). Run `./install.sh` again: it puts back the `claude` you had and installs
-`asb`. Then `claude` is Claude Code and `asb claude` is the sandbox.
-
 **`bwrap: setting up uid map: Permission denied` / `No permissions to create new namespace`**
 Ubuntu 24.04+ restricts unprivileged user namespaces
 (`kernel.apparmor_restrict_unprivileged_userns = 1`) and ships no AppArmor

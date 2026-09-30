@@ -57,19 +57,6 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   grep -q '^my.custom.host$' "$T/home/.config/agent-sandbox/allowlist.txt"
 }
 
-@test "legacy layout is migrated: config dir moved, old unit reported" {
-  mkdir -p "$T/home/.config/claude-sandbox" "$T/home/.config/systemd/user" "$T/home/.local/bin"
-  echo "github.com" >"$T/home/.config/claude-sandbox/allowlist.txt"
-  : >"$T/home/.config/systemd/user/claude-mitmproxy.service"
-  dry
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"migrated ~/.config/claude-sandbox"* ]]
-  [ ! -d "$T/home/.config/claude-sandbox" ]
-  grep -q '^github.com$' "$T/home/.config/agent-sandbox/allowlist.txt"
-  grep -q '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt"
-  [[ "$output" == *"would disable and remove the legacy claude-mitmproxy.service"* ]]
-}
-
 @test "--dev points asb at the checkout and warns; a later true install re-points it to the copy" {
   dry -- --dev
   [ "$status" -eq 0 ]
@@ -176,36 +163,37 @@ STUB
 }
 
 # ---- --uninstall (issue #22) ----------------------------------------------
-# The launcher is a symlink to the engine, so a careless uninstall leaves no
-# `claude` on PATH at all. These pin the two rules: repoint rather than delete,
-# and never touch what the installer did not create.
+# It removes what the installer created, and never touches what it did not.
 
 uninst() { # uninst [extra args...] -- a real (not dry) uninstall, no prompt
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
     "$REPO_ROOT/install.sh" --uninstall --yes "$@"
 }
 
-# a HOME that looks like a completed install
+# a HOME that looks like a completed install, the manifest as install.sh writes it
 fake_install() {
-  mkdir -p "$T/home/.local/bin" "$T/home/.local/share/agent-sandbox/app" \
-    "$T/home/.local/share/claude/versions" "$T/home/.config/agent-sandbox/trust" \
+  local st="$T/home/.local/share/agent-sandbox" c
+  mkdir -p "$T/home/.local/bin" "$st/app" "$T/home/.config/agent-sandbox/trust" \
     "$T/home/.config/systemd/user"
-  printf '#!/bin/sh\necho real-claude\n' >"$T/home/.local/share/claude/versions/9.9.9"
-  chmod +x "$T/home/.local/share/claude/versions/9.9.9"
-  cp "$REPO_ROOT/agent-sandbox" "$T/home/.local/share/agent-sandbox/app/agent-sandbox"
-  ln -sfn "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$T/home/.local/bin/claude"
+  cp "$REPO_ROOT/agent-sandbox" "$st/app/agent-sandbox"
+  printf 'version\t1\n' >"$st/install.manifest"
+  for c in asb agent-sandbox; do
+    ln -sfn "$st/app/agent-sandbox" "$T/home/.local/bin/$c"
+    printf 'command\t%s\t%s\n' "$T/home/.local/bin/$c" "symlink $st/app/agent-sandbox" >>"$st/install.manifest"
+  done
   printf 'example.com\n' >"$T/home/.config/agent-sandbox/allowlist.txt"
   : >"$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
 }
 
-@test "--uninstall: the launcher is repointed at the agent's own binary, not deleted" {
+@test "--uninstall removes the engine, its commands and the unit; the agent's own command is untouched" {
   fake_install
+  native_launcher
   uninst
   [ "$status" -eq 0 ]
-  [ -L "$T/home/.local/bin/claude" ]
-  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
-  [ "$("$T/home/.local/bin/claude")" = "real-claude" ] # still a working agent
-  [ ! -d "$T/home/.local/share/agent-sandbox" ]        # engine and proxy runtime gone
+  [ ! -e "$T/home/.local/bin/asb" ]
+  [ ! -e "$T/home/.local/bin/agent-sandbox" ]
+  [ "$("$T/home/.local/bin/claude")" = native ] # still a working agent
+  [ ! -d "$T/home/.local/share/agent-sandbox" ] # engine and proxy runtime gone
   [ ! -f "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
 }
 
@@ -224,34 +212,13 @@ fake_install() {
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
     "$REPO_ROOT/install.sh" --uninstall --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"repoint"* ]]
-  [ -d "$T/home/.local/share/agent-sandbox" ] # still there
+  [[ "$output" == *"remove $T/home/.local/bin/asb"* ]]
+  [ -L "$T/home/.local/bin/asb" ] # still there
+  [ -d "$T/home/.local/share/agent-sandbox" ]
   [ -f "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
   # and the engine was NOT copied in on the way past: the uninstall must run
   # before the install work, or it installs what it is about to delete
   [ ! -d "$T/home/.local/share/agent-sandbox/app/profiles" ]
-}
-
-@test "--uninstall leaves a launcher that is not ours alone" {
-  fake_install
-  rm -f "$T/home/.local/bin/claude"
-  printf '#!/bin/sh\necho someone-elses\n' >"$T/home/.local/bin/claude"
-  chmod +x "$T/home/.local/bin/claude"
-  uninst
-  [ "$status" -eq 0 ]
-  [ "$("$T/home/.local/bin/claude")" = "someone-elses" ]
-  [[ "$output" == *"leave alone"* ]]
-}
-
-@test "--uninstall does not repoint into nothing when the agent's binary is gone" {
-  fake_install
-  rm -rf "$T/home/.local/share/claude"
-  uninst
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"leave alone"* ]]
-  # ...and it says the launcher is now broken, rather than leaving that to be
-  # discovered the next time the user types the command
-  [[ "$output" == *"broken link"* ]]
 }
 
 @test "--uninstall removes the asb and agent-sandbox it added, and only while they are as it left them" {
@@ -278,15 +245,11 @@ fake_install() {
   uninst
   [ "$status" -eq 0 ]
   [[ "$output" != *"removed"* ]]
-  [[ "$output" != *"repoint"* ]]
+  [[ "$output" != *"leave alone"* ]]
 }
 
 # ---- the agent's own command is left alone (#151) --------------------------
-# Until #151 the installer put the engine at ~/.local/bin/claude, moving Claude
-# Code's own launcher aside. Now nothing is put there, and an earlier install's
-# launcher is taken back. These use --dry-run, which acts under $HOME but
-# deliberately never moves a command you depend on; the real round trip is in
-# tests/e2e/install.bats.
+# The installer adds `asb` and `agent-sandbox` and nothing at the agent's own name.
 
 native_launcher() { # a machine with Claude Code installed the normal way
   mkdir -p "$T/home/.local/bin" "$T/home/.local/share/claude/versions"
@@ -305,110 +268,9 @@ native_launcher() { # a machine with Claude Code installed the normal way
   [[ "$output" == *"\`claude\` is the agent itself"*"asb claude"* ]]
 }
 
-@test "an earlier install's launcher at claude is reported for undoing; a dry run changes nothing" {
-  installed_over_native
-  dry
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"an earlier install put the sandbox at your agent's own command"* ]]
-  [[ "$output" == *"restore $T/home/.local/bin/claude.pre-agent-sandbox -> $T/home/.local/bin/claude"* ]]
-  # a dry run reports it and does not do it
-  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
-  [ -e "$T/home/.local/bin/claude.pre-agent-sandbox" ]
-}
-
-@test "with no manifest, an earlier install's launcher is found where it used to be put" {
-  fake_install
-  dry
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"repoint $T/home/.local/bin/claude -> $T/home/.local/share/claude/versions/9.9.9"* ]]
-}
-
-# ---- uninstall: the manifest and its fingerprints -------------------------
-# The post-install state is built by hand rather than by installing, which also
-# exercises the manifest READER: these are the entries install.sh writes.
-
-fp() { # fingerprint, the way install.sh records it
-  if [[ -L "$1" ]]; then printf 'symlink %s' "$(readlink "$1")"; else
-    printf 'sha256 %s' "$(sha256sum -- "$1" | cut -d' ' -f1)"
-  fi
-}
-
-installed_over_native() { # ours in place, the original backed up, manifest written
-  native_launcher
-  local st="$T/home/.local/share/agent-sandbox"
-  mkdir -p "$st/app" "$T/home/.config/systemd/user"
-  cp "$REPO_ROOT/agent-sandbox" "$st/app/agent-sandbox"
-  mv "$T/home/.local/bin/claude" "$T/home/.local/bin/claude.pre-agent-sandbox"
-  ln -sfn "$st/app/agent-sandbox" "$T/home/.local/bin/claude"
-  : >"$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
-  {
-    printf 'version\t1\n'
-    printf 'statedir\t%s\n' "$st"
-    printf 'unit\t%s\t%s\n' "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" \
-      "$(fp "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service")"
-    printf 'renamed\t%s\t%s\t%s\n' "$T/home/.local/bin/claude" \
-      "$T/home/.local/bin/claude.pre-agent-sandbox" "$(fp "$T/home/.local/bin/claude.pre-agent-sandbox")"
-    printf 'launcher\t%s\t%s\n' "$T/home/.local/bin/claude" "$(fp "$T/home/.local/bin/claude")"
-  } >"$st/install.manifest"
-}
-
-@test "uninstall restores the launcher it moved aside" {
-  installed_over_native
-  uninst
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"restore"* ]]
-  # the machine is as it was: the original back under its own name
-  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
-  [ ! -e "$T/home/.local/bin/claude.pre-agent-sandbox" ]
-  [ "$("$T/home/.local/bin/claude")" = "native" ]
-}
-
-@test "uninstall refuses to act on a path changed since the install, and keeps its state" {
-  installed_over_native
-  # The user replaces the backup afterwards: it is no longer what we set aside.
-  # Note the rm: the backup is a SYMLINK, and writing through one edits its
-  # target, leaving the link (and so its fingerprint) unchanged.
-  rm -f "$T/home/.local/bin/claude.pre-agent-sandbox"
-  printf '#!/bin/sh\necho MINE-NOW\n' >"$T/home/.local/bin/claude.pre-agent-sandbox"
-  uninst
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"changed since install"* ]]
-  grep -q MINE-NOW "$T/home/.local/bin/claude.pre-agent-sandbox" # not overwritten
-  # the manifest survives, so a second run can still finish the job
-  [ -f "$T/home/.local/share/agent-sandbox/install.manifest" ]
-  [[ "$output" == *"re-run --uninstall"* ]]
-}
-
-@test "a recorded launcher left dangling is taken back: it runs nothing, so it is still the undo's" {
-  installed_over_native
-  # what a local e2e run of the installer before #151 did to a real host: re-pointed
-  # the launcher into its throwaway HOME, which then went
-  ln -sfn "$T/gone/app/agent-sandbox" "$T/home/.local/bin/claude"
-  uninst
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"runs no agent: taking it back"* ]]
-  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
-  [ "$("$T/home/.local/bin/claude")" = native ]
-}
-
-@test "a recorded launcher that is someone else's now is not ours to undo, and is not a finding" {
-  installed_over_native
-  rm -f "$T/home/.local/bin/claude.pre-agent-sandbox"
-  sed -i '/^renamed/d' "$T/home/.local/share/agent-sandbox/install.manifest"
-  # the agent's own installer put its launcher back
-  ln -sfn "$T/home/.local/share/claude/versions/9.9.9" "$T/home/.local/bin/claude"
-  uninst
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"is no longer a launcher of ours"*"nothing to undo there"* ]]
-  [[ "$output" != *"leave alone"* ]]
-  [ "$(readlink "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
-  [ ! -d "$T/home/.local/share/agent-sandbox" ] # nothing held the state back
-}
-
-@test "the install writes only into its own HOME: a launcher of ours elsewhere on PATH is left as it is" {
-  # The mechanism of that host damage: the installer before #151 followed PATH out of
-  # the HOME it was installing into, found the user's real launcher there, and
-  # re-pointed it. Now nothing looks for the agent's command to take over.
+@test "the install writes only into its own HOME: a link to the engine at the agent's name elsewhere on PATH is left as it is" {
+  # A local e2e run of the installer before #151 followed PATH out of the HOME it
+  # was installing into and re-pointed the user's real launcher.
   mkdir -p "$T/elsewhere" "$T/home/.local/bin"
   ln -s "$REPO_ROOT/agent-sandbox" "$T/elsewhere/claude"
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" \
@@ -417,7 +279,7 @@ installed_over_native() { # ours in place, the original backed up, manifest writ
   [ "$(readlink "$T/elsewhere/claude")" = "$REPO_ROOT/agent-sandbox" ]
   [ ! -e "$T/elsewhere/asb" ]
   [ "$(readlink "$T/home/.local/bin/asb")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ]
-  [[ "$output" == *"\`claude\` on PATH is still a launcher of ours ($T/elsewhere/claude)"* ]]
+  [[ "$output" == *"\`claude\` on PATH is agent-sandbox, not the agent ($T/elsewhere/claude)"* ]]
 }
 
 @test "asb goes in ~/.local/bin even when that is not on PATH, with the line to add" {
@@ -431,32 +293,14 @@ installed_over_native() { # ours in place, the original backed up, manifest writ
 }
 
 @test "uninstall is re-runnable: what is already gone is reported, not an error" {
-  installed_over_native
+  fake_install
+  rm "$T/home/.local/bin/asb"
   uninst
   [ "$status" -eq 0 ]
+  [[ "$output" == *"$T/home/.local/bin/asb is already gone"* ]]
+  [ ! -e "$T/home/.local/bin/agent-sandbox" ]
   uninst # again, on a machine that is already clean
   [ "$status" -eq 0 ]
-  [ "$(readlink -f "$T/home/.local/bin/claude")" = "$T/home/.local/share/claude/versions/9.9.9" ]
-}
-
-@test "uninstall removes our launcher when another one on PATH takes over again" {
-  # the read-only case: we shadowed a system claude, so the restore is removal
-  mkdir -p "$T/home/.local/bin" "$T/sysdir" "$T/home/.local/share/agent-sandbox/app"
-  printf '#!/bin/sh\necho system-claude\n' >"$T/sysdir/claude"
-  chmod +x "$T/sysdir/claude"
-  cp "$REPO_ROOT/agent-sandbox" "$T/home/.local/share/agent-sandbox/app/agent-sandbox"
-  ln -sfn "$T/home/.local/share/agent-sandbox/app/agent-sandbox" "$T/home/.local/bin/claude"
-  {
-    printf 'version\t1\n'
-    printf 'statedir\t%s\n' "$T/home/.local/share/agent-sandbox"
-    printf 'launcher\t%s\t%s\n' "$T/home/.local/bin/claude" "$(fp "$T/home/.local/bin/claude")"
-  } >"$T/home/.local/share/agent-sandbox/install.manifest"
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" \
-    PATH="$T/home/.local/bin:$T/sysdir:/usr/bin:/bin" "$REPO_ROOT/install.sh" --uninstall --yes
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"takes over again"* ]]
-  [ ! -e "$T/home/.local/bin/claude" ] # ours gone
-  [ -x "$T/sysdir/claude" ]            # theirs wins on PATH once more
 }
 
 # ---- single-user tool: not through sudo -----------------------------------

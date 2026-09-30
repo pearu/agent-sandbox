@@ -254,41 +254,9 @@ X
   [[ "$output" != *"agents:"* ]]
 }
 
-@test "an earlier install's claude launcher is undone by install.sh, and --uninstall removes asb (#151)" {
-  # The real round trip, which --dry-run cannot show: dry runs deliberately do
-  # not move a command you depend on. Before #151 the installer moved Claude
-  # Code's own ~/.local/bin/claude aside and put the engine there, recording both
-  # in the manifest; that state is built here, and a new install.sh must hand the
-  # user their own `claude` back.
-  local native="$H/.local/share/claude/versions/9.9.9/claude" app="$H/.local/share/agent-sandbox/app/agent-sandbox"
-  local m="$H/.local/share/agent-sandbox/install.manifest"
-  mv "$H/.local/bin/claude" "$H/.local/bin/claude.pre-agent-sandbox"
-  ln -sfn "$app" "$H/.local/bin/claude"
-  printf 'renamed\t%s\t%s\t%s\n' "$H/.local/bin/claude" "$H/.local/bin/claude.pre-agent-sandbox" \
-    "symlink $(readlink "$H/.local/bin/claude.pre-agent-sandbox")" >>"$m"
-  printf 'launcher\t%s\t%s\n' "$H/.local/bin/claude" "symlink $app" >>"$m"
-  # meanwhile the old launcher refuses, naming asb and install.sh
-  run bash -c "cd '$E/proj' && HOME='$H' '$H/.local/bin/claude' -p hi"
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"no longer run as 'claude'"*"asb claude"* ]]
-
-  run_install "$E/install-migrate.out"
-  [ "$(cat "$E/install-migrate.out.rc")" -eq 0 ] || {
-    cat "$E/install-migrate.out"
-    false
-  }
-  grep -q "an earlier install put the sandbox at your agent's own command" "$E/install-migrate.out"
-  grep -q "restored $H/.local/bin/claude from $H/.local/bin/claude.pre-agent-sandbox" "$E/install-migrate.out"
-  # `claude` is Claude Code again, exactly as its installer left it, and asb is there
+@test "--uninstall removes asb, agent-sandbox and our state, leaves the agent's claude alone, and is re-runnable" {
+  local native="$H/.local/share/claude/versions/9.9.9/claude"
   [ "$(readlink "$H/.local/bin/claude")" = "$native" ]
-  [ ! -e "$H/.local/bin/claude.pre-agent-sandbox" ]
-  [ "$(readlink "$H/.local/bin/asb")" = "$app" ]
-  # the undone entries are gone from the manifest; the commands are in it
-  run ! grep -qE '^(renamed|launcher)' "$m"
-  grep -q "^command	$H/.local/bin/asb	" "$m"
-  run launch claude --version
-  [ "$status" -eq 0 ]
-
   run_install "$E/uninstall.out" --uninstall --yes
   [ "$(cat "$E/uninstall.out.rc")" -eq 0 ] || {
     cat "$E/uninstall.out"
