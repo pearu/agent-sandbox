@@ -164,6 +164,15 @@ run_engine() {
   done
 }
 
+# run_review [DIR] -- the dot-file review of DIR ($PROJ, else $H/proj), as `--trust`
+# runs it, answered no: sets $output to what it says before the question. Records
+# nothing. What follows from the file's text alone is said here, not at a launch.
+run_review() {
+  local dir="${1:-${PROJ:-$H/proj}}"
+  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ \
+    "$dir" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+}
+
 # run_engine_tty ANSWERS [VAR=value ...] -- CMD ARGS... -- run_engine, but at a terminal:
 # the engine's stdin and stderr are a pty (script(1)), and ANSWERS (printf %b) is what is
 # typed into it. For the reviews a launch runs only when someone can answer (#143).

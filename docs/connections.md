@@ -463,7 +463,7 @@ sandbox's directory. bwrap still needs a mount point for it, so an empty directo
 appears at that path outside too — in the project, for `./scratch/` — the same side
 effect a narrowed channel has.
 
-**A file** is allowed, with two permanent limits said at launch: it is a mount point, so
+**A file** is allowed, with two permanent limits said at the dot-file's review: it is a mount point, so
 it cannot be deleted or renamed from inside, and `copy-on-write` on a file is `copy`,
 since overlayfs cannot stack on one file.
 

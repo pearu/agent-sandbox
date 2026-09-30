@@ -52,13 +52,13 @@ A project's `.agent-sandbox` may carry a section named after the **active**
 profile — `[claude]` in a claude run. The engine does not interpret those
 lines: it checks they are `key = value`, collects them, and hands them to the
 profile in `profile_dotfile` (a `key=value` array) for the duration of
-`profile_isolate()`. A section naming a different profile is an unknown
-section, ignored with a warning, so a `[codex]` block says nothing in a claude
-run.
+`profile_isolate()`. A section naming a different profile is skipped at a launch;
+the dot-file's review reads every profile, and warns of a section that names none
+and of a key a profile does not list in `profile_dotfile_keys`.
 
-This exists because only a profile knows what its agent keeps where. Validate
-the keys in the profile and warn on ones you do not know — a typo must not
-silently do nothing. The pairs reach you **only from an approved dot-file**, so
+This exists because only a profile knows what its agent keeps where. List the
+keys you read in `profile_dotfile_keys`, so the review can warn of any other — a
+typo must not silently do nothing. The pairs reach you **only from an approved dot-file**, so
 an unreviewed file grants nothing; the trust gate is the engine's, not yours.
 `profiles/claude.sh` uses it for one key, `hide`
 ([config.md](config.md#the-file)).

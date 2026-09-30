@@ -127,14 +127,17 @@ own_bind() { argv_has --bind "$STATE/$1/$2/own/$(slugify "$3")" "$3"; }
 @test "role is a key of the unsuffixed [sandbox] only" {
   dotfile $'[sandbox:x]\nrole = y\n'
   run_engine -- asb --role x claude --version
+  [[ "$output" != *"[sandbox:x] role"* ]] # ignored quietly: the review said it
+  run_review
   [[ "$output" == *"[sandbox:x] role"* ]]
 }
 
 @test "a suffix on a section that does not take one yet is said, not silently honoured" {
   dotfile $'[net:impl-*]\nmode = none\n'
   run_engine -- asb --role impl-1 claude --version
-  [[ "$output" == *"[net:impl-*]"*"role suffix"* ]]
   argv_has --share-net # the skipped section's `mode = none` did not apply to anyone
+  run_review
+  [[ "$output" == *"[net:impl-*]"*"role suffix"* ]]
 }
 
 @test "a non-default role with --bg runs in that role's launch (#123)" {

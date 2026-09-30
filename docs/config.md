@@ -317,6 +317,17 @@ shows it and asks:
   there now — the approved content is kept for this, not only its hash;
 - **gone**: what you approved, and whether to forget it and use the defaults.
 
+Before the question, the review says what follows from the file's text alone, so
+that a launch need not repeat it: a line it will ignore (malformed, an unknown
+section or key, a role suffix a section does not take, a bad host, an unknown mode),
+a widening (network mode `open`, seccomp `off`), a `[<profile>]` key that profile
+does not read, and per path declaration what it gives -- over a profile's channel, it
+wins there; under `$HOME`, outside the project, `own` is sandbox-only storage and any
+other mode shows your real one; a file is bound over, so it cannot be deleted or
+renamed inside. It reads every profile, so `asb --trust` checks `[claude]` without a
+profile named. What depends on the host or the moment -- a path that does not exist
+yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at launch.
+
 Everything is shown through `cat -v`, so a control character or a byte outside
 ASCII shows escaped instead of acting on your terminal; a file containing a
 control character other than tab and newline is refused outright, at review and
@@ -495,7 +506,7 @@ preset = isolated                 # the reviewer role
 and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
 changes `skills` and leaves every other channel as `[connect]` put it. Only
 `[sandbox]` (its `preset`) and `[connect]` take a suffix so far; a suffix on any
-other section is said at launch and that section is skipped.
+other section is said at the file's review and that section is skipped.
 
 **Once any suffixed section exists, a role name matching none of them is
 refused**, since it is most likely a typo of one; add `[connect:*]` to accept

@@ -241,8 +241,10 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   trust_proj
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ignoring unknown section [codex]"* ]]
   run ! argv_has --tmpfs "$C/gh"
+  [[ "$output" != *"[codex]"* ]]
+  run_review # which reads every profile there is, and there is no codex
+  [[ "$output" == *"ignoring unknown section [codex]"* ]]
 }
 
 @test "the sandbox runs as the invoking user, and identically in every network mode" {

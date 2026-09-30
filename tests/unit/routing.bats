@@ -189,10 +189,12 @@ trust() {
   [[ "$output" != *"recorded workspace trust"* ]]
 }
 
-@test "an unknown [claude] key in a trusted dot-file warns (typo guard), known ones do not" {
+@test "an unknown [claude] key is warned of at the review (typo guard), known ones are not; a launch ignores it quietly" {
   printf '[claude]\nhide = ide\nbogus = x\n' >"$PROJ/.agent-sandbox"
   trust
   run_engine -- asb claude -p hello
+  [[ "$output" != *"is not one this profile reads"* ]]
+  run_review
   [[ "$output" == *"[claude] key 'bogus' is not one this profile reads"* ]]
   [[ "$output" != *"key 'hide' is not one"* ]]
 }
