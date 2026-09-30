@@ -272,15 +272,18 @@
 _as_msg() { echo "agent-sandbox: $*" >&2; }
 
 # Routine status: what the resolved policy IS on a normal launch (the dot-file
-# values applied, the session allowlist, the seccomp filter in use). Silenced by
-# --quiet / AGENT_SANDBOX_QUIET, which exists so a script or harness invoking the
-# engine repeatedly is not drowned in banner lines.
+# values applied, the session allowlist, the seccomp filter in use). Shown only with
+# --verbose / AGENT_SANDBOX_VERBOSE: the same lines at every launch are how a report
+# becomes something nobody reads, and the review of the dot-file is where its values
+# are seen and decided.
 #
 # Refusals, warnings, and anything announcing that something is NOT sandboxed
-# stay on _as_msg deliberately: --quiet must never be able to hide why a launch
+# stay on _as_msg deliberately, whatever the verbosity: nothing can hide why a launch
 # was refused, why a path did not bind, or that a command is running outside the
-# sandbox. Quiet is about noise, never about consequences.
-_as_quiet=0
+# sandbox. Quiet is about noise, never about consequences -- which is also why a
+# dot-file that widens the sandbox (the network open, seccomp off) says so as a
+# warning, not a status line.
+_as_quiet=1
 _as_info() { ((_as_quiet)) || _as_msg "$@"; }
 
 # The agent-sandbox version: the VERSION file next to the engine, plus a build
@@ -331,10 +334,10 @@ Engine flags (before CMD):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
-  --quiet               suppress the routine status lines (dot-file values
+  --verbose             also print the routine status lines (dot-file values
                         applied, session allowlist, seccomp filter in use).
                         Refusals, warnings and "not sandboxed" notices are
-                        never suppressed
+                        always printed
   --exec CMD [ARGS...]  run CMD instead of the agent, in the sandbox this
                         profile would have built for it (so --profile names
                         the profile). Everything after --exec is the command,
@@ -1820,7 +1823,7 @@ _as_connect_sync() {
     return 1
   }
   # One line per file the sync refused to overwrite. A WARNING, never suppressed
-  # by --quiet: the sandbox is running with its own version of something the user
+  # by the default quiet: the sandbox is running with its own version of something the user
   # has since changed, and saying so once quietly is how that goes unnoticed for
   # a month.
   local line f
@@ -2747,7 +2750,7 @@ PY
 
 # _as_connect_report -- one line per channel that is not at its default, so a
 # session can see what it was given. Routine state, like "using network mode
-# from .agent-sandbox", so --quiet suppresses it; the REFUSALS above never are,
+# from .agent-sandbox", so it is shown only with --verbose; the REFUSALS above never are,
 # and neither will the conflict warnings `copy` and `copy-on-write` bring.
 _as_connect_report() {
   ((${#_connect_mode[@]})) || return 0
@@ -3735,7 +3738,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
-  local _host_none=0 _agent_none=0 _do_exec=0 _do_quiet=0 _do_shutdown=0 _do_delete=0 _do_status=0
+  local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   local _user_mcp_flag="" _user_mcp_flag_set=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -3787,9 +3790,13 @@ agent_sandbox() (
         profile="${1#--profile=}"
         shift
         ;;
-      --quiet)
-        _do_quiet=1
+      --verbose)
+        _do_verbose=1
         shift
+        ;;
+      --quiet)
+        _as_msg "--quiet was removed: quiet is the default now. --verbose shows the routine status lines."
+        return 2
         ;;
       --exec)
         # Run a command INSTEAD of the agent, in the sandbox this profile would
@@ -4052,18 +4059,23 @@ agent_sandbox() (
         ;;
     esac
   fi
-  # Resolve quiet before anything routine is printed: the dot-file notices, the
-  # session allowlist and the seccomp line all come later, but the ssh-agent
-  # status does not wait long.
-  case "${AGENT_SANDBOX_QUIET:-}" in
+  # Resolve the verbosity before anything routine is printed: the dot-file notices,
+  # the session allowlist and the seccomp line all come later, but the ssh-agent
+  # status does not wait long. Quiet is the default; AGENT_SANDBOX_QUIET, which asked
+  # for it, is refused with what to write instead, as renamed knobs are.
+  if [[ -n "${AGENT_SANDBOX_QUIET+x}" ]]; then
+    _as_msg "AGENT_SANDBOX_QUIET was removed: quiet is the default now. Unset it; AGENT_SANDBOX_VERBOSE=on shows the routine status lines."
+    return 2
+  fi
+  case "${AGENT_SANDBOX_VERBOSE:-}" in
     "" | off | 0) ;;
-    on | 1) _as_quiet=1 ;;
+    on | 1) _as_quiet=0 ;;
     *)
-      _as_msg "AGENT_SANDBOX_QUIET='$AGENT_SANDBOX_QUIET' is not recognised (use 'on' or 'off')"
+      _as_msg "AGENT_SANDBOX_VERBOSE='$AGENT_SANDBOX_VERBOSE' is not recognised (use 'on' or 'off')"
       return 2
       ;;
   esac
-  ((_do_quiet)) && _as_quiet=1
+  ((_do_verbose)) && _as_quiet=0
   if ((_do_exec)); then
     [[ $# -ge 1 ]] || {
       _as_msg "--exec needs a command, e.g. --exec bash -l"
@@ -4393,7 +4405,12 @@ agent_sandbox() (
           proxy | strict | open | none)
             if [[ -z "$_knob_net" ]]; then
               _knob_net="$_df_net_mode"
-              _as_info "using network mode '$_df_net_mode' from .agent-sandbox"
+              # `open` filters nothing: a widening, so a warning, not a status line
+              if [[ "$_df_net_mode" == open ]]; then
+                _as_msg "using network mode 'open' from .agent-sandbox: the egress allowlist is off for this project"
+              else
+                _as_info "using network mode '$_df_net_mode' from .agent-sandbox"
+              fi
             else
               _as_msg "AGENT_SANDBOX_NET=$_knob_net overrides the .agent-sandbox network mode '$_df_net_mode'"
             fi
@@ -4414,7 +4431,12 @@ agent_sandbox() (
           on | 1 | off | 0)
             if [[ -z "$_knob_seccomp" ]]; then
               _knob_seccomp="$_df_seccomp_mode"
-              _as_info "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
+              # the filter is on by default, so turning it off is a widening: a warning
+              if [[ "$_df_seccomp_mode" == off || "$_df_seccomp_mode" == 0 ]]; then
+                _as_msg "using seccomp mode 'off' from .agent-sandbox: the default-deny syscall filter is off for this project"
+              else
+                _as_info "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
+              fi
             else
               _as_msg "AGENT_SANDBOX_SECCOMP=$_knob_seccomp overrides the .agent-sandbox seccomp mode '$_df_seccomp_mode'"
             fi
@@ -4585,7 +4607,7 @@ agent_sandbox() (
         ;;
     esac
   fi
-  # Loud, every launch, never suppressed by --quiet: a session running with no
+  # Loud, every launch, shown whatever the verbosity: a session running with no
   # state isolation should not be something you have to remember.
   if _as_preset_is_native; then
     _as_msg "preset native: state isolation is OFF -- every channel read-write, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--sandbox none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."

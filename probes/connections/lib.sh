@@ -73,7 +73,7 @@ conn_mode_supported() {
     cd "$LEAK_B" || exit 1
     env HOME="$LEAK_HOME" XDG_STATE_HOME="$LEAK_HOME/.local/state" \
       AGENT_SANDBOX_NET=none AGENT_SANDBOX_CONNECT="instructions=$mode native" \
-      asb --quiet --profile claude --exec true 2>&1
+      asb --profile claude --exec true 2>&1
   )" || rc=$?
   CONN_PROBED_MODE="$mode"
   # The phrase is the engine's; agent-sandbox says so beside it. Matched with the

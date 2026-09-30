@@ -309,6 +309,22 @@ trust() {
   run ! argv_has --ro-bind "$om" "$om"
 }
 
+@test "a dot-file that widens the sandbox says so even when quiet: the network open, seccomp off" {
+  printf '[net]\nmode = open\n[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"using network mode 'open' from .agent-sandbox: the egress allowlist is off"* ]]
+  [[ "$output" == *"using seccomp mode 'off' from .agent-sandbox: the default-deny syscall filter is off"* ]]
+  # a mode that narrows is routine, and quiet (seccomp `on` is not tried here: the
+  # harness has no compiled filter, and asking for one without it refuses)
+  printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"using network mode"* ]]
+}
+
 @test "[seccomp] mode: an approved file turns the filter on; the shell knob wins; unapproved grants nothing" {
   local SC="$H/seccomp"
   mkdir -p "$SC"

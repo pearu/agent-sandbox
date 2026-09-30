@@ -60,7 +60,7 @@ json.dump(d, open(sys.argv[1], "w"))
 PY
   cp "$s" "$H/store-before.json"
   printf '{"a":2,"mcpServers":{"native2":{}},"projects":{"/third":{}}}' >"$NATIVE_CFG"
-  run_engine -- asb --quiet --connect 'config=seed-only native' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect 'config=seed-only native' claude --version
   [ "$status" -eq 0 ]
   cmp "$s" "$H/store-before.json" # byte-identical: the engine did not rewrite it
   [[ "$output" != *"mcpServers"* ]]
