@@ -72,6 +72,19 @@ approve() { # approve the project's dot-file the way --trust does, content kept
   [[ "$output" == *"session allowlist: files.example"* ]]
 }
 
+@test "the review says what a path under HOME gives, before the question; the launch does not repeat it" {
+  mkdir -p "$H/home/.local/bin" "$PROJ/data"
+  printf '[connect]\n~/.local/bin = read-only\n~/notes/ = own\n./data/ = own\n' >"$PROJ/.agent-sandbox"
+  run bash -c "cd '$PROJ' && printf 'y\nn\n' | env -i HOME='$H/home' PATH='$H/bin:/usr/bin:/bin' '$ENGINE' --trust 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'~/.local/bin' is under your home directory"*"puts your real '$H/home/.local/bin' there, at read-only."*"approve this .agent-sandbox"* ]]
+  [[ "$output" == *"'~/notes/' is under your home directory"*"sandbox-only storage at '$H/home/notes'"* ]]
+  [[ "$output" != *"'./data/' is under"* ]] # inside the project
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"under your home directory"* ]]
+}
+
 @test "a missing approved dot-file at a terminal offers to forget the approval; no refuses, yes launches with the defaults" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   approve
