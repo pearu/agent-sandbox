@@ -223,16 +223,18 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   argv_has --tmpfs "$C/daemon" # the default still applies alongside
 }
 
-@test "[claude] hide refuses to escape the state directory, and warns on unknown keys" {
+@test "[claude] hide refuses to escape the state directory; an unknown key is warned of at the review" {
   printf '[claude]\nhide = ../../etc /etc gh\nbogus = 1\n' >"$PROJ/.agent-sandbox"
   trust_proj
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"must be a relative path"* ]]
-  [[ "$output" == *"unknown [claude] key"* ]]
+  [[ "$output" != *"bogus"* ]]
   run ! argv_has --tmpfs /etc
   run ! grep -q '\.\./\.\./etc' "$H/argv"
   argv_has --tmpfs "$C/gh" # the valid entry on the same line still applies
+  run_review
+  [[ "$output" == *"[claude] key 'bogus' is not one this profile reads"* ]]
 }
 
 @test "a section named for another profile is ignored, not applied" {

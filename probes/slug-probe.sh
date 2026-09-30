@@ -3,7 +3,7 @@
 #
 #   bash probes/slug-probe.sh        RUN ON THE HOST (not in a sandbox)
 #
-# profiles/claude.sh maps a project path to ~/.claude/projects/<slug> by replacing
+# profiles/claude/profile.sh maps a project path to ~/.claude/projects/<slug> by replacing
 # "/" with "-". A probe showed it also rewrites "." , so the profile is wrong for
 # any path containing one -- scoping then binds a directory that does not exist and
 # the project's own memory and transcripts vanish silently. One data point is not a

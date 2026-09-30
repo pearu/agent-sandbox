@@ -6,7 +6,7 @@
 # `/en/claude-directory` inventories paths the study's catalog did not have. Row 15
 # took agent-memory/ and row 17 took backups/, because each is its own kind of channel.
 # What remains is measured here in one row, because they share one mechanism: NONE of
-# them appears in profiles/claude.sh, so none has a disposition, and each is simply part
+# them appears in profiles/claude/profile.sh, so none has a disposition, and each is simply part
 # of the read-write bind of ~/.claude.
 #
 # Reachability is therefore the easy half and the expected answer is `obtained` for all

@@ -27,10 +27,10 @@ installer put the engine at `~/.local/bin/claude`.
 **Agent.** The program being sandboxed: Claude Code for the `claude` profile. The engine
 itself is agent-agnostic; everything specific to one agent lives in its profile. *shipped*
 
-**Profile.** `profiles/<name>.sh`: the agent-specific half of the engine — where the
+**Profile.** `profiles/<name>/` (`profile.sh` and its dot-file, `agent-sandbox`): the agent-specific half of the engine — where the
 agent keeps its state, which channels it has and which paths each maps to, how its argv is
 routed, which subcommands run on the host. Selected with `--profile` or by the command's
-basename (`asb claude` → `profiles/claude.sh`). See [profiles.md](profiles.md). *shipped*
+basename (`asb claude` → `profiles/claude/profile.sh`). See [profiles.md](profiles.md). *shipped*
 
 **Project.** The directory a launch is started from — the working tree — bound read-write
 into the sandbox at the same path. It is one half of the sandbox key, and the one

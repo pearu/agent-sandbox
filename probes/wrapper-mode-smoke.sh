@@ -20,7 +20,7 @@
 set -uo pipefail
 
 ENGINE="$(cd -- "$(dirname -- "$0")/.." && pwd)/agent-sandbox"
-grep -q 'profile_route' "$(cd -- "$(dirname -- "$0")/.." && pwd)/profiles/claude.sh" || {
+grep -q 'profile_route' "$(cd -- "$(dirname -- "$0")/.." && pwd)/profiles/claude/profile.sh" || {
   echo "profile has no profile_route (need the 3b branch): $ENGINE"
   exit 1
 }

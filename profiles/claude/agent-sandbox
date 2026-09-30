@@ -1,0 +1,70 @@
+# profiles/claude/agent-sandbox -- the claude profile's own dot-file (#173, #181).
+#
+# The same grammar as a project's .agent-sandbox, read by the engine right after
+# profile.sh, for every launch of this profile. It ships with the engine, so it is
+# not reviewed the way a project's file is. It stands below a project's file:
+# lists add up (a project's [claude] hide adds to [agent] hide, its [forward] and
+# [allow] to these), and a project's value overrides a single-valued one.
+#
+# [agent] is this profile's own section; in a project's file the same section is
+# named after the profile, [claude]. Of its keys a project may set only those
+# profile.sh lists in profile_dotfile_keys (hide); the rest are the profile's.
+
+[agent]
+# The verbs that observe or manage the background service (#123). Its daemon runs
+# inside the role's launch, so these join that launch -- and never start one: the
+# observing ones answer "not running" when there is none, the others refuse.
+verbs = daemon agents attach logs stop rm
+verbs-observe = agents logs
+# The daemon's argv marks it for the keeper, which it holds while it runs (it does
+# not exit when idle, measured on 2.1.283, so a role with one ends by --shutdown).
+daemon = daemon run
+# What --status joins to list the daemon's sessions.
+status = agents
+
+# Paths under ~/.claude blanked for every launch: empty inside, gone at exit.
+#
+# Not the agent's own state, despite living in its directory: daemon/ holds the
+# background supervisor's control key and a roster of other sessions' ids, pids
+# and sockets. A sandboxed session has no use for it -- those sockets live under
+# /tmp, which is a fresh tmpfs inside, so the key has nothing to talk to -- and it
+# is a cross-session control channel, which is the one thing isolation exists to
+# prevent.
+#
+# gh/ and ide/ are deliberately NOT here. Both exist to make Claude Code work from
+# inside a sandbox: gh/ is a GH_CONFIG_DIR that lives in a bound directory because
+# ~/.config/gh is not one, and ide/ carries the lockfiles an editor connects
+# through. Hiding either would break the feature it was created for. A project's
+# [claude] hide can add them.
+hide = daemon
+# Nothing below needs to outlive the session: a probe established that a session
+# starts, and a resume completes, with the whole set blanked.
+hide = session-env sessions jobs shell-snapshots debug paste-cache
+# backups/ holds Claude Code's snapshots of the config file, and a project entry
+# `claude project purge` removed from the live file was still readable there, from
+# another project's sandbox (#75; leak study row 17, 2.1.272). A role's config is
+# its own copy since #119, so nothing inside has a use for the native snapshots.
+hide = backups
+# feedback-bundles/ holds "feedback and bug-report archives you haven't yet sent"
+# (Claude Code's docs), readable from another project's sandbox (#80; row 18). Per
+# launch, so a bundle a sandboxed session did not send is gone when it exits.
+hide = feedback-bundles
+
+# Environment variables forwarded into the sandbox when set in the launching shell.
+[forward]
+ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
+
+# Hosts Claude Code must reach: this launch's session allowlist, on top of the
+# global one. One host per line; a leading dot matches the domain and its
+# subdomains.
+[allow]
+api.anthropic.com
+.anthropic.com
+# OAuth sign-in. `/login` makes requests to this host from inside the sandbox;
+# without it sign-in fails with "OAuth error: proxy refused the connection" and the
+# only way through is AGENT_SANDBOX_NET=open, which turns egress filtering off
+# entirely -- a wide door for a narrow need.
+platform.claude.com
+statsigapi.net
+.statsig.com

@@ -141,9 +141,10 @@ run_sys() {
 }
 
 # ----- profiles -----
-# Everything agent-specific lives in profiles/<name>.sh (see the contract in
-# profiles/claude.sh). The installer loads a profile the way the engine does,
-# in a subshell, to ask it for its command name, allowlist seed and binary.
+# Everything agent-specific lives in profiles/<name>/: its script, profile.sh (see
+# the contract in profiles/claude/profile.sh), and its dot-file, agent-sandbox. The
+# installer loads a profile the way the engine does, in a subshell, to ask it for its
+# command name; a dot-file's `[agent] command` wins, as in the engine.
 profile_query() { # $1 = profile file, $2.. = variable names to print, one per line
   local f=$1
   shift
@@ -153,11 +154,15 @@ profile_query() { # $1 = profile file, $2.. = variable names to print, one per l
     _as_msg() { :; }
     # shellcheck disable=SC2034
     AGENT_SANDBOX_ENGINE=$ENGINE AGENT_SANDBOX_PROFILE_DIR=$SCRIPT_DIR/profiles
-    AGENT_SANDBOX_PROFILE=$(basename -- "${f%.sh}")
+    AGENT_SANDBOX_PROFILE=$(basename -- "$(dirname -- "$f")")
     # shellcheck disable=SC2034
-    profile_command=$AGENT_SANDBOX_PROFILE profile_allowlist_seed=""
+    profile_command=$AGENT_SANDBOX_PROFILE
     # shellcheck disable=SC1090
     source "$f"
+    local c
+    c=$(sed -n '/^\[agent\]/,/^\[/{s/^[[:space:]]*command[[:space:]]*=[[:space:]]*\([^#[:space:]]*\).*/\1/p}' "${f%/*}/agent-sandbox" 2>/dev/null | tail -1)
+    # shellcheck disable=SC2034 # printed below by name
+    [[ -n "$c" ]] && profile_command=$c
     for v in "$@"; do printf '%s\n' "${!v}"; done
   )
 }
@@ -329,11 +334,11 @@ fi
 ENGINE="$SCRIPT_DIR/agent-sandbox"
 [[ -f "$ENGINE" ]] || err "agent-sandbox engine not found at $ENGINE"
 shopt -s nullglob
-profiles=("$SCRIPT_DIR"/profiles/*.sh)
+profiles=("$SCRIPT_DIR"/profiles/*/profile.sh)
 shopt -u nullglob
 ((${#profiles[@]} > 0)) || err "no profiles found under $SCRIPT_DIR/profiles/"
 ok "engine: $ENGINE"
-ok "profiles: $(for f in "${profiles[@]}"; do basename -- "${f%.sh}"; done | tr '\n' ' ')"
+ok "profiles: $(for f in "${profiles[@]}"; do basename -- "$(dirname -- "$f")"; done | tr '\n' ' ')"
 
 # ----- 1b. engine: a true install (copy) unless --dev -----
 # The launcher runs the engine on the HOST, and the engine sources its profiles
@@ -1060,7 +1065,7 @@ fi
 # itself, resolved -- exactly as the engine looks it up.
 section "Agents"
 for f in "${profiles[@]}"; do
-  name=$(basename -- "${f%.sh}")
+  name=$(basename -- "$(dirname -- "$f")")
   cmd=$(profile_query "$f" profile_command)
   if bin="$(agent_on_path "$cmd")"; then
     ok "$name: \`$cmd\` is $bin"
@@ -2610,7 +2615,7 @@ ADDON_EOF
 ok "wrote $CONFIG_DIR/allowlist_addon.py"
 
 # 7b. allowlist.txt: the generic starter is written only if absent (re-runs keep
-# your edits); then every profile's seed hosts are appended if missing.
+# your edits). A profile's hosts are its dot-file's [allow], opened per launch.
 if [[ -f "$CONFIG_DIR/allowlist.txt" ]]; then
   ok "$CONFIG_DIR/allowlist.txt already exists (kept as-is)"
 else
@@ -2624,8 +2629,8 @@ else
 # Blocked requests are logged to ~/.config/agent-sandbox/blocked.log;
 # tail it (`tail -f ~/.config/agent-sandbox/blocked.log`) to see what
 # the agent is trying to reach and add hosts here as needed. Hosts an agent
-# profile needs (e.g. api.anthropic.com for claude) are appended by install.sh
-# from profiles/<name>.allowlist.
+# profile needs (e.g. api.anthropic.com for claude) are not listed here: they are
+# its dot-file's [allow] (profiles/<name>/agent-sandbox), opened for each launch.
 #
 # The allowlist gates PUBLIC hosts only. A host here that resolves to a
 # non-public address -- loopback, a private/LAN range, or link-local (incl.
@@ -2664,25 +2669,6 @@ code.claude.com
 ALLOW_EOF
   ok "wrote starter $CONFIG_DIR/allowlist.txt"
 fi
-seed_allowlist() { # $1 = profile name, $2 = its seed file
-  local name=$1 seed=$2 line host added=0
-  [[ -r "$seed" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    host=${line%%#*}
-    host=${host//[[:space:]]/}
-    [[ -z "$host" ]] && continue
-    if sed 's/#.*//; s/[[:space:]]//g' "$CONFIG_DIR/allowlist.txt" | grep -qxF -- "$host"; then
-      continue
-    fi
-    ((added == 0)) && printf '\n# ---- %s profile (added by install.sh) ----\n' "$name" >>"$CONFIG_DIR/allowlist.txt"
-    printf '%s\n' "$host" >>"$CONFIG_DIR/allowlist.txt"
-    added=$((added + 1))
-  done <"$seed"
-  if ((added > 0)); then ok "allowlist: added $added host(s) for the $name profile"; else ok "allowlist: $name profile hosts already present"; fi
-}
-for f in "${profiles[@]}"; do
-  seed_allowlist "$(basename -- "${f%.sh}")" "$(profile_query "$f" profile_allowlist_seed)"
-done
 
 # 7c. systemd user unit (static; safe to overwrite)
 cat >"$SYSTEMD_DIR/agent-sandbox-mitmproxy.service" <<'UNIT_EOF'
@@ -2847,11 +2833,11 @@ fi
 # loopback -- checked just below when passt/nftables are present; `open` filters
 # nothing; `none` has no network. The user picks the mode per launch and owns
 # its residual risk.)
-# api.anthropic.com answers 401 for /v1/models without a key, proving the
-# request reached Anthropic through the proxy; example.com is not in the
-# starter allowlist, so it must be refused at CONNECT (curl gets no response,
-# code 000). A non-000 code for example.com means the allowlist is not
-# enforcing.
+# api.github.com, in the starter allowlist, answers 200, proving the request went
+# out through the proxy (a profile's own hosts are opened per launch, not here);
+# example.com is not in the starter allowlist, so it must be refused at CONNECT
+# (curl gets no response, code 000). A non-000 code for example.com means the
+# allowlist is not enforcing.
 proxy_get() { # $1 = url; echoes the HTTP code (000 = refused/failed)
   curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 \
     -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || true
@@ -2859,9 +2845,9 @@ proxy_get() { # $1 = url; echoes the HTTP code (000 = refused/failed)
 if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
 else
-  case "$(proxy_get https://api.anthropic.com/v1/models)" in
-    200 | 401)
-      ok "proxy reaches an allowlisted host (api.anthropic.com)"
+  case "$(proxy_get https://api.github.com/)" in
+    200 | 403)
+      ok "proxy reaches an allowlisted host (api.github.com)"
       # The other half of the contract: a non-allowlisted host is refused.
       block_code=$(proxy_get https://example.com/)
       if [[ "$block_code" == 000 ]]; then
@@ -2870,8 +2856,8 @@ else
         warn "SECURITY: non-allowlisted example.com returned HTTP $block_code through the proxy — the allowlist is NOT enforcing; check $CONFIG_DIR/allowlist_addon.py is loaded"
       fi
       ;;
-    000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.anthropic.com is in $CONFIG_DIR/allowlist.txt" ;;
-    *) warn "unexpected response from api.anthropic.com via the proxy" ;;
+    000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.github.com is in $CONFIG_DIR/allowlist.txt" ;;
+    *) warn "unexpected response from api.github.com via the proxy" ;;
   esac
 fi
 

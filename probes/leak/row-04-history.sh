@@ -5,7 +5,7 @@
 # the container alone and the result is model-independent.
 #
 # A THIRD MECHANISM, and the first one that is a FILTER rather than an absence.
-# history.jsonl is `append` with _claude_history_filter (profiles/claude.sh): at
+# history.jsonl is `append` with _claude_history_filter (profiles/claude/profile.sh): at
 # launch the engine writes B's OWN lines into a staging file and binds that over the
 # host path, and at exit appends back whatever B added. So unlike rows 1-3 the file is
 # present and readable inside -- a negative here is `not-obtained-absent`, not

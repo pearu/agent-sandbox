@@ -5,7 +5,7 @@
 # agent -- which state paths it needs read-write, which environment it wants,
 # which subcommands must run on the host -- is a PROFILE: profiles/<name>.sh
 # next to this file, sourced at launch. The flagship profile is `claude`
-# (Claude Code). profiles/claude.sh documents the contract a profile implements.
+# (Claude Code). profiles/claude/profile.sh documents the contract a profile implements.
 #
 # It is invoked explicitly (#151), as `agent-sandbox` or its alias `asb`:
 #
@@ -413,8 +413,8 @@ _as_hostre='^\.?([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-
 _as_list_profiles() {
   local d="$1" f
   local -a names=()
-  for f in "$d"/*.sh; do
-    [[ -r "$f" ]] && names+=("$(basename -- "${f%.sh}")")
+  for f in "$d"/*/profile.sh; do
+    [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
   if ((${#names[@]} > 0)); then printf '%s' "${names[*]}"; else printf '(none)'; fi
   return 0
@@ -751,9 +751,12 @@ _as_allow_setup() {
     printf '# agent-sandbox --allow for %s. Honoured by the proxy addon only while\n' "$(basename -- "$_session_dir")"
     printf '# the process recorded in owner.id is alive. One host per line; a leading\n'
     printf '# dot matches the domain and its subdomains.\n'
-    printf '%s\n' "${_allow_hosts[@]}"
+    printf '%s\n' ${_allow_hosts[@]+"${_allow_hosts[@]}"} ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"}
   } >"$_session_dir/allow.txt"
-  _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
+  ((${#_allow_hosts[@]})) \
+    && _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
+  ((${#_profile_allow_hosts[@]})) \
+    && _as_info "profile '$profile' allows: ${_profile_allow_hosts[*]} (its dot-file's [allow], every launch)"
   return 0
 }
 
@@ -2629,7 +2632,7 @@ _as_connect_report() {
 #   briefing.md          the full text, to read on demand
 #   hook-*.json          a compact summary wrapped as a SessionStart /
 #                        SubagentStart hook payload. The profile hands these to
-#                        the agent (profiles/claude.sh), which re-reads them on
+#                        the agent (profiles/claude/profile.sh), which re-reads them on
 #                        every launch, resume and compaction -- so nothing here
 #                        can go stale, and nothing is recorded in a system
 #                        prompt that would outlive a policy change.
@@ -2980,6 +2983,59 @@ _as_trust_show() {
   printf -- '----\n'
 }
 
+# _as_profile_dotfile FILE -- read a profile's own dot-file (#181) into the profile
+# contract, when the profile has one. The same grammar as a project's .agent-sandbox;
+# the profile's section is [agent]. What it sets:
+#   [agent] verbs, verbs-observe, daemon, status -- profile_verbs, profile_verbs_observe,
+#           profile_daemon_argv, profile_status_argv (space-separated words)
+#   [agent] command -- profile_command
+#   [agent] hide    -- profile_hide: paths under the agent's state directory blanked
+#                      every launch (the profile's profile_isolate reads it)
+#   [forward]       -- profile_env_pass
+#   [allow]         -- _profile_allow_hosts: this launch's session allowlist
+# Lists add to what the script declared; a project's file adds to them in turn. It
+# ships with the engine and is read every launch, not reviewed: what it gets wrong is
+# said every time, and nothing else in it is read yet.
+_as_profile_dotfile() {
+  local file="$1" pname="$profile" kv k v h line
+  [[ -f "$file" ]] || return 0
+  local -a _df_allow=() _df_share=() _df_forward=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
+  local -a _df_profile_names=() words=()
+  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local profile=agent # the section the parse hands over as the profile's
+  _as_dotfile_parse "$file"
+  for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+    k="${kv%%=*}" v="${kv#*=}"
+    read -r -a words <<<"$v"
+    case "$k" in
+      command) profile_command="$v" ;;
+      verbs) profile_verbs+=(${words[@]+"${words[@]}"}) ;;
+      verbs-observe) profile_verbs_observe+=(${words[@]+"${words[@]}"}) ;;
+      daemon) profile_daemon_argv+=(${words[@]+"${words[@]}"}) ;;
+      status) profile_status_argv+=(${words[@]+"${words[@]}"}) ;;
+      hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
+      *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
+    esac
+  done
+  for line in ${_df_forward[@]+"${_df_forward[@]}"}; do
+    read -r -a words <<<"$line"
+    profile_env_pass+=(${words[@]+"${words[@]}"})
+  done
+  for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
+    if [[ "$h" =~ $_as_hostre ]]; then
+      _profile_allow_hosts+=("$h")
+    else
+      _as_msg "profile '$pname': $file: bad [allow] host '$h'; ignoring"
+    fi
+  done
+  if ((${#_df_connect[@]} + _df_share_set)) || [[ -n "$_df_net_mode$_df_seccomp_mode$_df_briefing_mode$_df_overlay_mode$_df_preset$_df_role$_df_conda_name" ]]; then
+    _as_msg "profile '$pname': $file: only [agent], [forward] and [allow] are read from a profile's dot-file so far; ignoring the rest"
+  fi
+  return 0
+}
+
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
 # profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...` and
 # `key<TAB>NAME<TAB>KEY` lines. Sourced in a subshell; a profile's top level only
@@ -2987,7 +3043,7 @@ _as_trust_show() {
 _as_profile_facts() {
   (
     local name l
-    name="$(basename -- "${1%.sh}")"
+    name="$(basename -- "$(dirname -- "$1")")"
     local -a profile_channels=() profile_dotfile_keys=()
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
@@ -3018,9 +3074,9 @@ _as_trust_notes() {
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  for f in "${profile_dir:-}"/*.sh; do
+  for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
-    _df_profile_names+=("$(basename -- "${f%.sh}")")
+    _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
     while IFS= read -r line; do facts+=("$line"); done < <(_as_profile_facts "$f")
   done
   _as_dotfile_parse "$file" # what it ignores, it says
@@ -4066,7 +4122,7 @@ agent_sandbox() (
   # A basename that names no profile -- a versioned binary, say -- needs --profile.
   if [[ -z "$profile" && -n "$_cmd_word" ]]; then
     profile="$(basename -- "$_cmd_word")"
-    if [[ ! "$profile" =~ ^[a-z][a-z0-9_-]*$ || ! -r "$profile_dir/$profile.sh" ]]; then
+    if [[ ! "$profile" =~ ^[a-z][a-z0-9_-]*$ || ! -r "$profile_dir/$profile/profile.sh" ]]; then
       _as_msg "'$_cmd_word' names no profile. Say which one runs it: $invoked --profile NAME $_cmd_word"
       _as_msg "profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
       return 2
@@ -4090,7 +4146,7 @@ agent_sandbox() (
     _as_msg "bad profile name '$profile'"
     return 2
   }
-  local profile_file="$profile_dir/$profile.sh"
+  local profile_file="$profile_dir/$profile/profile.sh"
   [[ -r "$profile_file" ]] \
     || {
       _as_msg "no profile '$profile' ($profile_file not found). Available: $(_as_list_profiles "$profile_dir")"
@@ -4098,7 +4154,7 @@ agent_sandbox() (
     }
 
   # Contract defaults; the profile overrides what it needs. The contract is
-  # documented in profiles/claude.sh.
+  # documented in profiles/claude/profile.sh.
   # These are the profile contract: set here as defaults, read by the sourced
   # profile and (profile_allowlist_seed) by install.sh; not all are used here.
   # shellcheck disable=SC2034
@@ -4111,6 +4167,9 @@ agent_sandbox() (
   # one (the observing ones answer "not running" when there is none), and the argv
   # tokens that mark the daemon, which holds the role's keeper while it runs.
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=()
+  # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
+  # [allow] opens for every launch (the session allowlist, beside --allow's).
+  local -a profile_hide=() _profile_allow_hosts=()
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
@@ -4126,8 +4185,11 @@ agent_sandbox() (
   # cleanup trap would only ever know about the last one, leaving the first
   # behind with its staged files.
   local _session_dir=""
-  # shellcheck source=profiles/claude.sh
+  # shellcheck source=profiles/claude/profile.sh
   source "$profile_file"
+  # The profile's own dot-file, beside its script (#181): what the profile states as
+  # data rather than code.
+  _as_profile_dotfile "$profile_dir/$profile/agent-sandbox" || return 1
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
   _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
@@ -5169,9 +5231,14 @@ agent_sandbox() (
       return 1
     }
   fi
-  if ((${#_allow_hosts[@]} > 0)); then
+  # The session allowlist: --allow and the dot-file's hosts, and the profile's own
+  # (#181). Only where a proxy filters; the note is for hosts someone asked for.
+  if ((${#_allow_hosts[@]} + ${#_profile_allow_hosts[@]} > 0)); then
     case "${_knob_net:-proxy}" in
-      open | none) _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)" ;;
+      open | none)
+        ((${#_allow_hosts[@]} > 0)) \
+          && _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+        ;;
       *) _as_allow_setup || {
         _as_session_cleanup
         return 1

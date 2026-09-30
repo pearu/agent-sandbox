@@ -73,11 +73,12 @@ then the allowlist hook runs after the upstream connection is made.
 comment; a leading dot (`.github.com`) matches the domain and its subdomains.
 It is re-read on every request; edits take effect immediately.
 
-`install.sh` writes a generic starter list once (never overwriting your edits)
-and then appends each installed profile's seed hosts (`profiles/<name>.allowlist`)
-that are missing. The claude profile seeds `api.anthropic.com`,
-`.anthropic.com`, `platform.claude.com` (OAuth sign-in), `statsigapi.net`,
-`.statsig.com`.
+`install.sh` writes a generic starter list once (never overwriting your edits).
+The hosts an agent itself needs are not in it: they are the `[allow]` of its
+profile's dot-file (`profiles/<name>/agent-sandbox`), opened for every launch of
+that profile as its session allowlist, beside `--allow`'s. The claude profile's are
+`api.anthropic.com`, `.anthropic.com`, `platform.claude.com` (OAuth sign-in),
+`statsigapi.net`, `.statsig.com`.
 
 Enforcement happens twice:
 

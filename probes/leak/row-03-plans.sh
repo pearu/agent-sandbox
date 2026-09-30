@@ -5,7 +5,7 @@
 # the container alone and the result is model-independent.
 #
 # A DIFFERENT MECHANISM from rows 1-2, which is why the cells differ. `plans/` is not
-# scoped like `projects/` -- it is COPYOUT (profiles/claude.sh, profile_isolate): the
+# scoped like `projects/` -- it is COPYOUT (profiles/claude/profile.sh, profile_isolate): the
 # engine binds an EMPTY staging directory over it, and at exit merges back the entries
 # the session created (`cp -an`, never overwriting). Two consequences the cells have to
 # respect:

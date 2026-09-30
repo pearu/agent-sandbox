@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# profiles/claude.sh — agent-sandbox profile for Claude Code (the flagship).
+# profiles/claude/profile.sh — agent-sandbox profile for Claude Code (the flagship).
 #
 # Sourced by the engine (agent-sandbox) after it has parsed its own flags,
 # on the HOST, before the sandbox exists. The engine runs with
 # `set -euo pipefail`; profile code is subject to it.
+#
+# What the profile states as data is in its dot-file beside this script,
+# profiles/claude/agent-sandbox (#181): the verbs, the paths blanked every launch,
+# the forwarded variables and the hosts it must reach. This script keeps the rest.
 #
 # ============================================================================
 # THE PROFILE CONTRACT
@@ -31,18 +35,13 @@
 #   profile_env_pass=(...)      environment variable NAMES forwarded into the
 #                               sandbox IF set in the caller's environment, on
 #                               top of the engine's own list (locale, proxy,
-#                               TLS, CUDA).
+#                               TLS, CUDA). Also the dot-file's [forward].
 #   profile_env_set=(...)       NAME=VALUE pairs always set in the sandbox.
 #   profile_env_refuse=(...)    NAMES a user may not forward ([forward],
 #                               AGENT_SANDBOX_FORWARD): refused with a
 #                               message. Names in profile_env_set are refused
 #                               the same way, so a forward cannot override
 #                               what the profile pins.
-#   profile_allowlist_seed      path of a file listing the hosts this agent
-#                               must reach (allowlist syntax: one host per
-#                               line, leading dot = domain + subdomains). The
-#                               installer merges it into the global egress
-#                               allowlist; the engine does not read it.
 #   profile_host_subcommands=() agent subcommands the engine hands to
 #                               profile_handle_subcommand() to run on the
 #                               host, unsandboxed, instead of launching the
@@ -179,11 +178,6 @@ profile_channel_presets=("config	inherit=seed-only shared=seed-only"
   "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"
   "artefacts	inherit=own" "policy	inherit=seed-only")
 
-profile_env_pass=(
-  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-  ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
-)
-
 # Never let the sandboxed claude try to self-update. Downloads are blocked by
 # the proxy allowlist and the versions directory is not bound, so the attempt
 # could only fail; `claude update` (run on the host via
@@ -202,28 +196,14 @@ profile_env_set+=("CLAUDE_CONFIG_DIR=$HOME/.claude")
 # section says.
 profile_env_refuse=(CLAUDE_CODE_PROJECT_DIR_NAME)
 
-profile_allowlist_seed="$(dirname -- "${BASH_SOURCE[0]}")/claude.allowlist"
-
 profile_host_subcommands=(update upgrade install)
 
-# The background service (#123). Its daemon runs inside the role's launch, so the
-# verbs that observe or manage it join that launch -- and never start one: the
-# observing ones answer "not running" when there is none, the others refuse. The
-# daemon's argv marks it for the keeper, which it holds while it runs (it does not
-# exit when idle, measured on 2.1.283, so a role with one ends by --shutdown).
-# shellcheck disable=SC2034 # engine contract, read by the engine
-profile_verbs=(daemon agents attach logs stop rm)
-# shellcheck disable=SC2034
-profile_verbs_observe=(agents logs)
-# shellcheck disable=SC2034
-profile_daemon_argv=(daemon run)
-# shellcheck disable=SC2034
-profile_status_argv=(agents)
-
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
-# The single source of truth: the engine warns on any other [claude] key (a typo
+# The single source of truth: the review warns on any other [claude] key (a typo
 # must not silently do nothing), and the docs drift-check verifies each is
-# documented. `hide` is read in profile_isolate().
+# documented. `hide` is read in profile_isolate(). The profile's own [agent] keys
+# (the verbs, in agent-sandbox beside this file) are not among them: a project's
+# file may not set those.
 profile_dotfile_keys=(hide)
 
 # Map a project directory to Claude Code's per-project state slug: the absolute
@@ -745,42 +725,16 @@ PY
 }
 
 profile_isolate() {
-  local c="$HOME/.claude"
-  profile_isolate_spec=(
-    # file-history/, plans/, history.jsonl and the hook logs used to be staged here and
-    # merged back at exit. They are channels now (`transcripts`, `logs`; #120), each the
-    # role's own, and nothing is merged back.
-    # Not the agent's own state, despite living in its directory: daemon/ holds
-    # the background supervisor's control key and a roster of other sessions'
-    # ids, pids and sockets. A sandboxed session has no use for it -- those
-    # sockets live under /tmp, which is a fresh tmpfs inside, so the key has
-    # nothing to talk to -- and it is a cross-session control channel, which is
-    # the one thing isolation exists to prevent.
-    #
-    # gh/ and ide/ are deliberately NOT here. Both exist to make Claude Code
-    # work from inside a sandbox: gh/ is a GH_CONFIG_DIR that lives in a bound
-    # directory because ~/.config/gh is not one, and ide/ carries the lockfiles
-    # an editor connects through. Hiding either would break the feature it was
-    # created for. Use [claude] hide if you want them gone.
-    "tmpfs	$c/daemon"
-    # Nothing below needs to outlive the session: a probe established that a
-    # session starts, and a resume completes, with the whole set blanked.
-    "tmpfs	$c/session-env"
-    "tmpfs	$c/sessions"
-    "tmpfs	$c/jobs"
-    "tmpfs	$c/shell-snapshots"
-    "tmpfs	$c/debug"
-    "tmpfs	$c/paste-cache"
-    # backups/ holds Claude Code's snapshots of the config file, and a project entry
-    # `claude project purge` removed from the live file was still readable there, from
-    # another project's sandbox (#75; leak study row 17, 2.1.272). A role's config is
-    # its own copy since #119, so nothing inside has a use for the native snapshots.
-    "tmpfs	$c/backups"
-    # feedback-bundles/ holds "feedback and bug-report archives you haven't yet sent"
-    # (Claude Code's docs), readable from another project's sandbox (#80; row 18). Per
-    # launch, so a bundle a sandboxed session did not send is gone when it exits.
-    "tmpfs	$c/feedback-bundles"
-  )
+  local c="$HOME/.claude" name
+  # The paths blanked every launch are the dot-file's [agent] hide (profile_hide, set by
+  # the engine); why each is there is said beside it, in agent-sandbox. file-history/,
+  # plans/, history.jsonl and the hook logs used to be staged here and merged back at
+  # exit; they are channels now (`transcripts`, `logs`; #120), each the role's own.
+  profile_isolate_spec=()
+  # shellcheck disable=SC2154 # set by the engine from the profile's dot-file
+  for name in ${profile_hide[@]+"${profile_hide[@]}"}; do
+    profile_isolate_spec+=("tmpfs	$c/$name")
+  done
 
   # [claude] hide = a b c -- extra paths under the state directory to blank.
   # ~/.claude is bound read-write and is a catch-all: Claude Code keeps its own
@@ -792,7 +746,7 @@ profile_isolate() {
   # by dynamic scope like $cwd in profile_memory_scope.
   # shellcheck disable=SC2154
   local -a _opts=(${profile_dotfile[@]+"${profile_dotfile[@]}"})
-  local kv key val name
+  local kv key val
   for kv in ${_opts[@]+"${_opts[@]}"}; do
     key="${kv%%=*}"
     val="${kv#*=}"
@@ -810,7 +764,7 @@ profile_isolate() {
           profile_isolate_spec+=("tmpfs	$c/$name")
         done
         ;;
-      *) _as_msg ".agent-sandbox: ignoring unknown [claude] key \"$key\"" ;;
+      *) ;; # another key: the review warned of it (profile_dotfile_keys)
     esac
   done
 }

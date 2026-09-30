@@ -221,12 +221,12 @@ trust() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"AGENT_SANDBOX_NET=proxy overrides the .agent-sandbox network mode 'none'"* ]]
   argv_has --share-net
-  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
+  [[ "$(setenv_value HTTPS_PROXY)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8888$ ]]
   printf '[net]\nmode = bogus\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
+  [[ "$(setenv_value HTTPS_PROXY)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8888$ ]]
   [[ "$output" != *"unknown"* ]]
   run_review
   [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
@@ -238,7 +238,7 @@ trust() {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --share-net
-  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied
+  [[ "$(setenv_value HTTPS_PROXY)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8888$ ]] # still proxied
   run_review
   [[ "$output" == *"[proxy-ca] is not allowed here"* ]]
   [[ "$output" == *"[profile-dir] is not allowed here"* ]]

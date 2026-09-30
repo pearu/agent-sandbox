@@ -139,10 +139,12 @@ jobs:
         run: |
           set -euo pipefail
           ca="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+          # api.github.com is in the starter allowlist; an agent's own hosts (api.anthropic.com)
+          # are its profile's [allow], opened per launch, not globally (#181)
           code=$(curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
-            -o /dev/null -w '%{http_code}' https://api.anthropic.com/v1/models || true)
+            -o /dev/null -w '%{http_code}' https://api.github.com/ || true)
           case "$code" in
-            200 | 401) echo "allowed host reached through the proxy (HTTP $code)" ;;
+            200 | 403) echo "allowed host reached through the proxy (HTTP $code)" ;;
             *) echo "unexpected HTTP $code from an allowed host" >&2; exit 1 ;;
           esac
           if curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \

@@ -32,7 +32,7 @@ CB="$(ls -d "$HOME"/.local/share/claude/versions/*/claude 2>/dev/null | sort -V 
 [[ -x "$CB" ]] || die "no Claude Code binary under ~/.claude... (~/.local/share/claude/versions)"
 C="$HOME/.claude"
 DIRS=(paste-cache file-history session-env sessions jobs shell-snapshots plans)
-# Paths with NO disposition in profiles/claude.sh -- the leak study's rows 15-18 and
+# Paths with NO disposition in profiles/claude/profile.sh -- the leak study's rows 15-18 and
 # the issues they produced (#52, #74-#80, #83-#86). Each of those issues is blocked on
 # the same question this probe answers: does a session still work without it? A PASS
 # here does not settle a disposition on its own (a path can be unneeded at startup and
@@ -147,7 +147,7 @@ if try "create a session in '$(basename "$SLUGWORK")'" "$SLUGWORK" --; then
     printf '  %-46s MISMATCH\n' "slug scheme"
     echo "    profile would compute: $EXPECT"
     echo "    Claude Code actually used: $ACTUAL"
-    echo "    -> profiles/claude.sh _claude_project_slug is wrong for such paths"
+    echo "    -> profiles/claude/profile.sh _claude_project_slug is wrong for such paths"
   fi
 fi
 rm -f "$STAMP"

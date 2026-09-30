@@ -962,7 +962,7 @@ characters so no slug is truncated.
 [claude-directory](https://code.claude.com/docs/en/claude-directory) rather than the
 code, which is why they are here at all: the plan's own rule is that *any changed path
 not in the catalog is a channel we missed*. None of them appears in
-`profiles/claude.sh`, so none has a disposition:
+`profiles/claude/profile.sh`, so none has a disposition:
 
 | # | Channel | Expected [T1](#t1) (native) | Expected [T5](#t5) (A native, B sandboxed) | Probe |
 |---|---|---|---|---|
@@ -985,7 +985,7 @@ the same file-scope table in
 file Claude Code reads and the scope it applies at. Rows 15–18 were *state* the catalog
 lacked; these are *configuration*, the group rows 5–9 cover. Each is documented as
 **"Project and global"**, so the global form reaches every project, and none appears in
-`profiles/claude.sh`:
+`profiles/claude/profile.sh`:
 
 | # | Channel | Expected [T1](#t1) (native) | Expected [T5](#t5) (A native, B sandboxed) | Probe |
 |---|---|---|---|---|
