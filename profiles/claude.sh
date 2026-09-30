@@ -130,7 +130,20 @@ profile_channels=(
   "transcripts	dir:$HOME/.claude/file-history	dir:$HOME/.claude/plans	file:$HOME/.claude/history.jsonl"
   "logs	file:$HOME/.claude/responses.log	file:$HOME/.claude/alerts.log"
   "artefacts	dir:$HOME/.claude/downloads	dir:$HOME/.claude/uploads	dir:$HOME/.claude/tasks"
+  "policy	file:$HOME/.claude/remote-settings.json	file:$HOME/.claude/policy-limits.json	file:$HOME/.claude/policy-limits.json.stamp.json"
+  "changelog	file:$HOME/.claude/cache/changelog.md"
 )
+# POLICY AND CHANGELOG ARE CHANNELS (#109): Claude Code's caches of server-managed
+# settings and policy flags, and of the vendor changelog. Each was writable from every
+# sandbox and read at every startup -- a cross-project write channel into what the user
+# and the agent take as Anthropic's (leak study; see the issue). The stamp moves with
+# its policy file: a private cache beside a shared stamp would split the pair.
+# `policy` is seed-only under `inherit`: Claude Code refetches it inside, through the
+# allowlist, and rewrites it, so `copy` would warn at every launch -- the reason `config`
+# is seed-only. `own` starts it from `{}` (measured: with no policy files at all a
+# session runs normally and fetches fresh ones). `changelog` stays at the preset's
+# `copy-on-write`, which on a single file is `copy`: its feed is not allowlisted, so
+# only your side writes it, and `copy` refreshes it without a conflict.
 # ARTEFACTS ARE A CHANNEL: what sessions leave for each other to pick up -- downloaded
 # documents, uploaded files, task lists (#52, #76, #78). The leak study measured
 # uploads/ and tasks/ readable from another project's sandbox (row 18, 2.1.272), and
@@ -163,11 +176,11 @@ profile_channel_sources=("$HOME/.claude/.claude.json	$HOME/.claude.json")
 # shellcheck disable=SC2034
 profile_channel_filters=("config	_claude_config_filter" "$HOME/.claude/history.jsonl	_claude_history_view")
 # shellcheck disable=SC2034
-profile_channel_empty=("config	{}")
+profile_channel_empty=("config	{}" "policy	{}")
 # shellcheck disable=SC2034
 profile_channel_presets=("config	inherit=seed-only shared=seed-only"
   "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"
-  "artefacts	inherit=own")
+  "artefacts	inherit=own" "policy	inherit=seed-only")
 
 profile_env_pass=(
   ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL

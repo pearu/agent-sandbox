@@ -68,6 +68,8 @@ No connection for a channel means `own`.
 | transcripts | conversations, plans, file history, prompt history | `projects/<slug>/` (memory bound on top), `plans/`, `file-history/`, `history.jsonl` |
 | logs | what the user's own hooks write | `responses.log`, `alerts.log` |
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
+| policy | the caches of server-managed settings and policy flags, with the stamp | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109) |
+| changelog | the cached vendor changelog | `cache/changelog.md` (#109) |
 
 Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
 `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`, and since
@@ -80,11 +82,13 @@ from the service or as caches, and what it gets depends on where it lives:
 - `skills/synced/` and `plugins/synced/` sit inside the `skills` and `plugins` channels, so
   they are the role's own wherever those are (`copy-on-write` under `inherit`). A sandbox
   syncs its own server skills on first start, measured at 3.6 MB on this host.
-- `cache/`, `telemetry/`, `usage-data/`, `stats-cache.json` and the cached policy and settings
-  files are in no channel: they are the native files, readable and writable from every
-  sandbox, as everything in `~/.claude` outside a channel is. `stats-cache.json` is left so
-  deliberately — aggregated token and cost counts, nothing of any session's work (#81). The
-  policy and changelog caches are #109, `usage-data/` is #79.
+- The caches of managed settings and policy flags, and of the vendor changelog, are the
+  `policy` and `changelog` channels (#109): `seed-only` and `copy` under `inherit`, so a
+  sandbox's write to them stays its own.
+- The rest of `cache/`, `telemetry/`, `usage-data/` and `stats-cache.json` are in no channel:
+  they are the native files, readable and writable from every sandbox, as everything in
+  `~/.claude` outside a channel is. `stats-cache.json` is left so deliberately — aggregated
+  token and cost counts, nothing of any session's work (#81). `usage-data/` is #79.
 
 ## The scale
 
@@ -244,7 +248,7 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 
 **This table is where the model is going, not what the engine does today.** The rows
 implemented are the channels the engine manages as connections — `instructions, settings,
-skills, agents, workflows, plugins`, `config`, `transcripts`, `logs` and `artefacts` — and a preset moves
+skills, agents, workflows, plugins`, `config`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` — and a preset moves
 them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
 holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them.
 identity, project and memory each still have machinery
@@ -645,7 +649,7 @@ Storage is keyed by the role, so the scope token of a connection (`channel = mod
 |---|---|
 | *(nothing)* | the role: across keepers, until `--delete` or `--reset` |
 | `run-scoped` | one keeper: created when it starts, gone when it exits (#105). *Built*: the stores live under `<sandbox>/@run/`, cleared at every cold start (so a run killed with `-9` leaves nothing for the next) and by the supervisor once the launch has ended |
-| `join-scoped` | one join: a joined command and everything it starts. *Built* for `own` (#147): the join gets a mount namespace of its own and binds its store over the path; the keeper shows an empty read-only mount point there. The stores reach the sandbox through a staging directory the keeper binds, and each moves out of it before its command starts, so no join can reach another's -- not even through the keeper payload's `/proc/<pid>/root`. Removed when the join ends, or at the supervisor's sweep for a join killed with `-9`. A seeded store per join is not built. Renamed from `process-scoped`, which is refused with the new name |
+| `join-scoped` | one join: a joined command and everything it starts. *Built* for `own` (#147), and for `copy` and `seed-only`, each seeded from the source at the join (#153; `copy-on-write` per join is not built): the join gets a mount namespace of its own and binds its store over the path; the keeper shows an empty read-only mount point there. The stores reach the sandbox through a staging directory the keeper binds, and each moves out of it before its command starts, so no join can reach another's -- not even through the keeper payload's `/proc/<pid>/root`. Removed when the join ends, or at the supervisor's sweep for a join killed with `-9`. A seeded store per join is not built. Renamed from `process-scoped`, which is refused with the new name |
 
 `sandbox-scoped` is not nameable (the default needs no word); `project-scoped` is a
 `sandbox:<project>/<role>` source at `read-write`, not a scope; `session-scoped` is a role per

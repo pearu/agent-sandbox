@@ -134,9 +134,12 @@ Sections:
   changes nothing, since nothing is written. **`join-scoped`** is one join -- a joined
   command and everything it starts: `./scratch/ = own join-scoped` gives every `asb
   --exec` or session joined into a running role a scratch of its own, empty when it
-  starts and removed when it ends, which no other join can see. It is built for `own`
-  (and `read-only`, which is then the plain bind); a seeded store per join (`copy`,
-  `seed-only`, `copy-on-write`) is refused as not built yet. `process-scoped`, its
+  starts and removed when it ends, which no other join can see. It is built for `own`,
+  for `copy` and `seed-only` (#153) -- one thing per join: the store is seeded from the
+  source when the join starts, since a store new at every join has nothing earlier to
+  refresh or conflict with; not for the `config` and `transcripts` channels, whose seed
+  is a filtered view -- and for `read-only`, which is then the plain bind. An overlay per
+  join, `copy-on-write join-scoped`, is refused as not built yet (#153). `process-scoped`, its
   first name, is refused naming it.
   The first draft's other names are refused with what to write instead:
   `sandbox-scoped` (the default has no name), `project-scoped` (sharing across roles is a
@@ -202,6 +205,8 @@ Sections:
   | transcripts — this project's conversations, file history, plans, prompt history | `own` | `own` | `own` | `read-write` | **the preset** ([below](#transcripts-and-logs)) |
   | logs — `responses.log`, `alerts.log`, written by your own hooks | `own` | `own` | `own` | `read-write` | **the preset** |
   | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **the preset** (#52, #76, #78) |
+  | policy — `remote-settings.json`, `policy-limits.json` and its `.stamp.json` | `own` (from `{}`) | `seed-only` | `read-write` | `read-write` | **the preset** (#109): Claude Code refetches them inside and rewrites them, so `copy` would warn at every launch |
+  | changelog — `cache/changelog.md` | `own` | `copy` | `read-write` | `read-write` | **the preset** (#109): only your side fetches it, so a copy refreshes cleanly; a sandbox cannot plant an entry you would read as the vendor's |
 
   Read the last column as the list of things left to fold in. When a row moves to
   the preset its mode columns do not change, because they were chosen to match

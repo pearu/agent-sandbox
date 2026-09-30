@@ -110,6 +110,54 @@ artefact_store() { # DIR -> the role's own store for ~/.claude/DIR
   done
 }
 
+# policy and changelog (#109): the caches of managed settings and policy flags are
+# seed-only under inherit, the vendor changelog copy; both the role's own under
+# isolated, yours under shared.
+chan_store() { # CHANNEL MODE PATH -> the role's store for that channel path
+  local s="${3//\//_}"
+  printf '%s' "$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/default/$1/$2/${s#_}"
+}
+
+@test "policy is seeded once under inherit, and the changelog is a copy: another project's write reaches neither" {
+  mkdir -p "$C/cache"
+  printf '{"restrictions":{}}\n' >"$C/policy-limits.json"
+  printf '{"sha256":"x"}\n' >"$C/policy-limits.json.stamp.json"
+  printf '{}\n' >"$C/remote-settings.json"
+  printf '## 2.1.285\n' >"$C/cache/changelog.md"
+  run_engine AGENT_SANDBOX_PRESET=inherit -- asb claude --version
+  [ "$status" -eq 0 ]
+  local f
+  for f in remote-settings.json policy-limits.json policy-limits.json.stamp.json; do
+    argv_has --bind "$(chan_store policy seed-only "$C/$f")" "$C/$f"
+  done
+  argv_has --bind "$(chan_store changelog copy "$C/cache/changelog.md")" "$C/cache/changelog.md"
+  [ "$(cat "$(chan_store policy seed-only "$C/policy-limits.json")")" = '{"restrictions":{}}' ] # seeded
+  # what a sandbox writes stays the role's: the native files are untouched
+  printf 'FORGED\n' >"$(chan_store changelog copy "$C/cache/changelog.md")"
+  printf 'FORGED\n' >"$(chan_store policy seed-only "$C/policy-limits.json")"
+  [ "$(cat "$C/cache/changelog.md")" = '## 2.1.285' ]
+  [ "$(cat "$C/policy-limits.json")" = '{"restrictions":{}}' ]
+}
+
+@test "under isolated they are the role's own, a policy file starting from {}; under shared they stay yours" {
+  run_engine AGENT_SANDBOX_PRESET=isolated -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$(chan_store policy own "$C/policy-limits.json")" "$C/policy-limits.json"
+  [ "$(cat "$(chan_store policy own "$C/policy-limits.json")")" = '{}' ]
+  argv_has --bind "$(chan_store changelog own "$C/cache/changelog.md")" "$C/cache/changelog.md"
+  run_engine AGENT_SANDBOX_PRESET=shared -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --bind "$(chan_store policy seed-only "$C/policy-limits.json")" "$C/policy-limits.json"
+  run ! argv_has --bind "$(chan_store policy own "$C/policy-limits.json")" "$C/policy-limits.json"
+}
+
+@test "a seed-only policy file with nothing native to seed from starts from {}, not zero bytes" {
+  rm -f "$C/remote-settings.json"
+  run_engine AGENT_SANDBOX_PRESET=inherit -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$(chan_store policy seed-only "$C/remote-settings.json")")" = '{}' ]
+}
+
 @test "canary: another session's file contents, plans and prompts are not in what the role gets" {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
