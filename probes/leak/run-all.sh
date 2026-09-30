@@ -92,7 +92,7 @@ COMBINED="$BATCH/all.log"
 # cell records them too; printing them here makes a batch's class visible in its log.
 printf 'batch %s\nclaude: %s\nengine: %s\n%d rows: %s\n\n' "$BATCH" \
   "$(claude --version 2>/dev/null | head -1)" \
-  "$(asb --engine-version 2>/dev/null | head -1)" \
+  "$(asb --version 2>/dev/null | head -1)" \
   "${#ROWS[@]}" "${ROWS[*]}" | tee "$SUMMARY"
 : >"$COMBINED"
 

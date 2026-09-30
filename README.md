@@ -232,7 +232,7 @@ not exist. Values and defaults are in the last column.
 | `--quiet` | `AGENT_SANDBOX_QUIET` | — | suppress the routine status lines a launch prints — which dot-file values were applied, the session allowlist, the seccomp filter in use. Refusals, warnings and notices that something is **not** sandboxed are never suppressed, so `--quiet` can hide noise but never a consequence (off) |
 | `--exec CMD [ARGS...]` | — | — | run CMD instead of the agent, in the sandbox this profile would have built: same binds, environment, network, seccomp and state isolation. Everything after `--exec` is the command, so engine flags come first and `--profile` names the sandbox (`asb --allow pypi.org --profile claude --exec bash -l`). The agent binary stays bound read-only, so an agent started from inside runs natively there |
 | `--wrap` | — | — | **removed**: it was the wrapper that sandboxed background workers from a daemon on the host. Refused with a note, since a daemon an earlier engine started may still call it ([design.md](docs/design.md#background-sessions-123)) |
-| `--engine-help`, `--engine-version` | — | — | print the engine's own flags, or its version, and exit |
+| `--engine-help`, `--version` | — | — | print the engine's own flags, or its version, and exit; after the command, `--version` is the agent's (`asb claude --version`) |
 
 When a setting can be given more than one way, they combine like this. Hosts,
 paths, forwarded names and ports **add up** across all three, so the dot-file's

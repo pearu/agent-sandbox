@@ -1017,7 +1017,7 @@ leak_record() {
   python3 "$LEAK_RECORD" write --out "$LEAK_RUN/records/$name.json" \
     --set "row=${LEAK_ROW:-unknown}" \
     --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
-    --set "engine_version=$(asb --engine-version 2>/dev/null | head -1)" \
+    --set "engine_version=$(asb --version 2>/dev/null | head -1)" \
     --set "run=$LEAK_RUN" \
     --set "cell=${LEAK_CELL:-?}" \
     --set "cell_id=${LEAK_CELL_ID:-?}" \

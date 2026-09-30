@@ -107,7 +107,7 @@ conn_setup() {
   # record (see conn_summary), so the gate's "one claude/engine across the run" still
   # catches an update in the middle -- per run now, not per record.
   CONN_CLAUDE_VERSION="$(claude --version 2>/dev/null | head -1)"
-  CONN_ENGINE_VERSION="$(asb --engine-version 2>/dev/null | head -1)"
+  CONN_ENGINE_VERSION="$(asb --version 2>/dev/null | head -1)"
   leak_real_config_before
 }
 
@@ -548,7 +548,7 @@ conn_summary() {
     --set "suite=$CONN_SUITE" --set "cell=versions-end" --set "status=control-pass" \
     --set "assertion=the versions when the suite ends are the versions it started with" \
     --set "claude_version=$(claude --version 2>/dev/null | head -1)" \
-    --set "engine_version=$(asb --engine-version 2>/dev/null | head -1)" >/dev/null
+    --set "engine_version=$(asb --version 2>/dev/null | head -1)" >/dev/null
   leak_real_config_after
   # THE GATE RUNS BEFORE THE SCORE IS BELIEVED. A `fail` is a result -- the engine broke
   # a promise -- so it does not invalidate anything; a control that did not hold, a
