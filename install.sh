@@ -1208,9 +1208,19 @@ def main(argv):
         _, st = os.waitpid(child, 0)
     except ChildProcessError:
         return 125
+    return exit_status(st)
+
+
+def exit_status(st):
+    """The shell's exit status for a waitpid() status: the code, or 128 + the signal.
+    Spelled with the W* macros rather than os.waitstatus_to_exitcode, which needs Python
+    3.9: the join runs under whatever python3 is first on PATH, an old conda env's
+    included (measured: an AttributeError there, after the command had already run)."""
     if os.WIFSIGNALED(st):
         return 128 + os.WTERMSIG(st)
-    return os.waitstatus_to_exitcode(st)
+    if os.WIFEXITED(st):
+        return os.WEXITSTATUS(st)
+    return 125
 
 
 if __name__ == "__main__":
