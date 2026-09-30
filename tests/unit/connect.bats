@@ -910,20 +910,19 @@ seeded_run_scoped() { # MODE
   [ "$(cat "$slot/t")" = v1 ]
 }
 
-@test "a file declaration says at launch that it cannot be deleted from inside" {
+@test "a file declaration is bound over, and the launch does not say so: the dot-file's review does, once" {
   printf 'x\n' >"$PROJ/AGENT.md"
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect './AGENT.md = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/AGENT.md" "$PROJ/AGENT.md"
-  [[ "$output" == *"'./AGENT.md' is a file"*"cannot be deleted"* ]]
+  [[ "$output" != *"is a file"* ]]
 }
 
-@test "copy-on-write on a file is copy, and the launch says so" {
+@test "copy-on-write on a file is copy" {
   printf 'x\n' >"$PROJ/AGENT.md"
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect './AGENT.md = copy-on-write' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/AGENT.md")" "$PROJ/AGENT.md"
-  [[ "$output" == *"copy-on-write on a file is copy"* ]]
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
@@ -1026,16 +1025,21 @@ seeded_run_scoped() { # MODE
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
-@test "a path inside a channel is allowed, warned about, and wins there" {
+@test "a path inside a channel is allowed, wins there, and the review says so" {
   mkdir -p "$C/rules/team"
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect 'instructions = read-only native' --connect '~/.claude/rules/team/ = own' claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"overlaps the channel 'instructions'"* ]]
+  [[ "$output" != *"overlaps"* ]] # the launch does not repeat it
   local slot
   slot="$SBOX/@paths/own/$(slugify "$C/rules/team")"
   argv_has --bind "$slot" "$C/rules/team"
   # after the channel's own bind, or the channel would cover it
   [ "$(argv_index "$slot")" -gt "$(argv_index "$C/rules")" ]
+  # the review knows the channels without a profile loaded: it reads every profile
+  printf '[connect]\n~/.claude/rules/team/ = own\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"'~/.claude/rules/team/' overlaps the claude profile's channel 'instructions'"* ]]
+  [[ "$output" != *"under your home directory"* ]] # a channel's path, not an empty $HOME
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it

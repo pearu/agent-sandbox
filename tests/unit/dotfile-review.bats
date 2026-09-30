@@ -85,6 +85,21 @@ approve() { # approve the project's dot-file the way --trust does, content kept
   [[ "$output" != *"under your home directory"* ]]
 }
 
+@test "the review says a declared file is bound over, and that copy-on-write on one is copy; the launch does not" {
+  printf 'x\n' >"$PROJ/AGENT.md"
+  printf 'y\n' >"$PROJ/NOTES.md"
+  mkdir -p "$PROJ/data"
+  printf '[connect]\n./AGENT.md = read-only\n./NOTES.md = copy-on-write\n./data/ = own\n' >"$PROJ/.agent-sandbox"
+  run bash -c "cd '$PROJ' && printf 'y\nn\n' | env -i HOME='$H/home' PATH='$H/bin:/usr/bin:/bin' '$ENGINE' --trust 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'./AGENT.md' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox."*"approve this .agent-sandbox"* ]]
+  [[ "$output" == *"'./NOTES.md' is a file."*"copy-on-write on a file is copy"* ]]
+  [[ "$output" != *"'./data/' is a file"* ]]
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is a file"* ]]
+}
+
 @test "a missing approved dot-file at a terminal offers to forget the approval; no refuses, yes launches with the defaults" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   approve

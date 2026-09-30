@@ -407,6 +407,9 @@ Environment knobs:
 USAGE
 }
 
+# A hostname, or .domain: what --allow and [allow] accept.
+_as_hostre='^\.?([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$'
+
 _as_list_profiles() {
   local d="$1" f
   local -a names=()
@@ -1528,28 +1531,6 @@ _as_connect_apply() {
   return 0
 }
 
-# _as_connect_path_warn PATH KEY -- what a path declaration should say about where it
-# lands, for every declaration that binds. What one under $HOME gives is said once, at
-# the dot-file's review (_as_trust_path_notes), not at every launch.
-_as_connect_path_warn() {
-  local p="$1" key="$2" line entry cpath ch
-  local -a fields=()
-  # Inside a channel, or over one: allowed, and said, because the channel's mode
-  # no longer describes that part of it.
-  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
-    IFS=$'\t' read -r -a fields <<<"$line"
-    ch="${fields[0]}"
-    for entry in "${fields[@]:1}"; do
-      cpath="${entry#*:}"
-      [[ -n "$cpath" ]] || continue
-      if [[ "$p" == "$cpath" || "$p" == "$cpath"/* || "$cpath" == "$p"/* ]]; then
-        _as_msg "connect: '$key' overlaps the channel '$ch' ('$cpath'); the path declaration wins there, whatever the channel's mode."
-        return 0
-      fi
-    done
-  done
-}
-
 # _as_connect_apply_paths -- add the path declarations' binds to $args.
 #
 # Called after the working tree and every channel, so a declaration lands on top of whatever it is inside and wins there.
@@ -1585,7 +1566,6 @@ _as_connect_apply_paths() {
     fi
     if [[ ! -e "$p" ]]; then
       if [[ "$mode" == own ]] && ((${_connect_isdir[$p]})); then
-        _as_connect_path_warn "$p" "$key"
         slot="$base/own/$(_as_iso_slug "$p")"
         mkdir -p -- "$slot" || return 1
         args+=(--bind "$slot" "$p")
@@ -1607,14 +1587,8 @@ _as_connect_apply_paths() {
       _as_msg "connect: refusing to bind '$key': it resolves to a protected path ('$real')"
       return 1
     fi
-    _as_connect_path_warn "$p" "$key"
-    # Not for the built-in dot-file declaration (#143): nobody wrote it, so there is
-    # nothing for this to tell them.
-    if [[ "$kind" == file && "${_connect_where[$p]}" != "built in"* ]]; then
-      local cow_note=""
-      [[ "$mode" == copy-on-write ]] && cow_note=" And copy-on-write on a file is copy: overlayfs cannot stack on a single file."
-      _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
-    fi
+    # What a declaration means -- a file bound over, a path under $HOME, one over a
+    # channel -- is said at the dot-file's review (_as_trust_notes), not at every launch.
     case "$mode" in
       own)
         slot="$base/own/$(_as_iso_slug "$p")"
@@ -3006,19 +2980,74 @@ _as_trust_show() {
   printf -- '----\n'
 }
 
-# _as_trust_path_notes CWD FILE -- for the review: what each path declaration under
-# $HOME, outside the project, gives. $HOME is where a reader most likely believes a
-# key names their real home directory, and inside it is empty: `own` is sandbox-only
-# storage there, any other mode shows the real one. Said here, once, rather than at
-# every launch. The file is parsed as a launch parses it; what it would warn about is
-# left for the launch to say.
-_as_trust_path_notes() {
-  local cwd="$1" file="$2" cs spec key mode p
+# _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
+# profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...` and
+# `key<TAB>NAME<TAB>KEY` lines. Sourced in a subshell; a profile's top level only
+# declares. What a profile adds at a launch (profile_prepare) is not here.
+_as_profile_facts() {
+  (
+    local name l
+    name="$(basename -- "${1%.sh}")"
+    local -a profile_channels=() profile_dotfile_keys=()
+    # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
+    _as_msg() { :; }
+    # shellcheck disable=SC1090
+    source "$1" >/dev/null 2>&1 || exit 0
+    for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done
+    for l in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do printf 'key\t%s\t%s\n' "$name" "$l"; done
+  )
+}
+
+# _as_trust_notes CWD FILE -- what the review says about the file, before the question:
+# everything that follows from its text alone, said here, once, and not at every launch.
+#   - what the parse ignores: a malformed line, an unknown section or key, a role
+#     suffix a section does not take, a bad [allow] host, an unknown mode;
+#   - a widening: network mode `open` (no allowlist), seccomp `off` (no filter);
+#   - a [<profile>] key that profile does not read (profile_dotfile_keys);
+#   - per path declaration: one over a profile's channel (the declaration wins there);
+#     else one under $HOME, outside the project -- $HOME is empty inside, so `own` is
+#     sandbox-only storage and any other mode shows the real one; and a file -- bound
+#     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy).
+# Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
+# serves them all. What depends on the host or the moment -- a path that does not
+# exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
+_as_trust_notes() {
+  local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over
   local -a _df_allow=() _df_share=() _df_forward=() _df_net_host_port=() _df_net_agent_port=()
-  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
+  local -a _df_profile_names=() facts=() fields=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  _as_dotfile_parse "$file" 2>/dev/null
+  for f in "${profile_dir:-}"/*.sh; do
+    [[ -r "$f" ]] || continue
+    _df_profile_names+=("$(basename -- "${f%.sh}")")
+    while IFS= read -r line; do facts+=("$line"); done < <(_as_profile_facts "$f")
+  done
+  _as_dotfile_parse "$file" # what it ignores, it says
+  for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
+    [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg ".agent-sandbox allow: bad host '$h'; ignoring"
+  done
+  case "$_df_net_mode" in
+    "" | proxy | strict | none) ;;
+    open) _as_msg ".agent-sandbox: network mode 'open': the egress allowlist is off for this project" ;;
+    *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
+  esac
+  case "$_df_seccomp_mode" in
+    "" | on | 1) ;;
+    off | 0) _as_msg ".agent-sandbox: seccomp mode 'off': the default-deny syscall filter is off for this project" ;;
+    *) _as_msg ".agent-sandbox: [seccomp] mode '$_df_seccomp_mode' unknown (on|off); ignoring" ;;
+  esac
+  case "$_df_briefing_mode" in
+    "" | on | 1 | off | 0) ;;
+    *) _as_msg ".agent-sandbox: [briefing] mode '$_df_briefing_mode' unknown (on|off); ignoring" ;;
+  esac
+  for pair in ${_df_profile_pairs[@]+"${_df_profile_pairs[@]}"}; do
+    n="${pair%%$'\t'*}" k="${pair#*$'\t'}" over=""
+    for line in ${facts[@]+"${facts[@]}"}; do
+      [[ "$line" == "key"$'\t'"$n"$'\t'"$k" ]] && over=1 && break
+    done
+    [[ -n "$over" ]] || _as_msg ".agent-sandbox: [$n] key '$k' is not one this profile reads; ignoring"
+  done
   for cs in ${_df_connect[@]+"${_df_connect[@]}"}; do
     spec="${cs#*$'\t'}"
     key="${spec%%=*}"
@@ -3029,14 +3058,35 @@ _as_trust_path_notes() {
     case "$key" in
       \~/*) p="$HOME${key#\~}" ;;
       /*) p="$key" ;;
-      *) continue ;; # relative: inside the project
+      *) p="$cwd/$key" ;;
     esac
     p="$(realpath -m -s -- "$p")"
-    [[ "$p" == "$HOME"/* && "$p" != "$cwd" && "$p" != "$cwd"/* ]] || continue
-    if [[ "$mode" == own ]]; then
-      _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this is sandbox-only storage at '$p', and your real one stays hidden."
-    else
-      _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this puts your real '$p' there, at $mode."
+    over=""
+    for line in ${facts[@]+"${facts[@]}"}; do
+      [[ "$line" == channel$'\t'* ]] || continue
+      IFS=$'\t' read -r -a fields <<<"$line"
+      ch="${fields[2]}"
+      for entry in "${fields[@]:3}"; do
+        cpath="${entry#*:}"
+        [[ -n "$cpath" ]] || continue
+        if [[ "$p" == "$cpath" || "$p" == "$cpath"/* || "$cpath" == "$p"/* ]]; then
+          over=1
+          _as_msg "connect: '$key' overlaps the ${fields[1]} profile's channel '$ch' ('$cpath'); the path declaration wins there, whatever the channel's mode."
+          break 2
+        fi
+      done
+    done
+    if [[ -z "$over" && "$p" == "$HOME"/* && "$p" != "$cwd" && "$p" != "$cwd"/* ]]; then
+      if [[ "$mode" == own ]]; then
+        _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this is sandbox-only storage at '$p', and your real one stays hidden."
+      else
+        _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this puts your real '$p' there, at $mode."
+      fi
+    fi
+    if [[ "$key" != */ && -f "$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")" ]]; then
+      local cow_note=""
+      [[ "$mode" == copy-on-write ]] && cow_note=" And copy-on-write on a file is copy: overlayfs cannot stack on a single file."
+      _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
     fi
   done
   return 0
@@ -3091,7 +3141,7 @@ _as_trust_prompt() {
       _as_trust_show "$file"
     fi
   } >&2
-  _as_trust_path_notes "$cwd" "$file"
+  _as_trust_notes "$cwd" "$file"
   _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
   printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
   read -r ans || true
@@ -3137,7 +3187,7 @@ _as_dotfile_parse() {
       # [sandbox] and [connect] take one so far; on any other section it is said
       # and the section is skipped, never quietly applied to every role.
       sglob="*"
-      if [[ "$section" == *:* && "$section" != "$profile" ]]; then
+      if [[ "$section" == *:* ]] && ! _as_dotfile_is_profile "$section"; then
         sglob="${section#*:}"
         section="${section%%:*}"
         case "$section" in
@@ -3149,9 +3199,9 @@ _as_dotfile_parse() {
             ;;
         esac
       fi
+      _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
         allow | share-memory | forward | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
-        "$profile") ;; # a section named after the active profile; see below
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
@@ -3205,19 +3255,7 @@ _as_dotfile_parse() {
           esac
         fi
         ;;
-      "$profile")
-        # A section named after the ACTIVE profile. The engine does not
-        # interpret these: it collects the pairs and hands them to the profile,
-        # which is the only thing that knows what its agent keeps where. See
-        # docs/profiles.md. A dot-file naming a different profile's section is
-        # ignored as unknown, so [codex] in a claude run says nothing.
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [$profile] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          _df_profile_kv+=("$ck=$cv")
-        fi
-        ;;
+      "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
       sandbox)
         # The sandbox's own key and position. `role` is parsed and reserved; only
         # `default` exists until roles land.
@@ -3272,11 +3310,36 @@ _as_dotfile_parse() {
         fi
         ;;
       ssh) ;;
-      "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
-      *) ;;
+      *)
+        # A section named after a profile (the active one at a launch; any, at the
+        # review). The engine does not interpret these: it collects the pairs and
+        # hands them to the profile, which is the only thing that knows what its
+        # agent keeps where (docs/profiles.md). At a launch, another profile's
+        # section is skipped; the review checks every profile's.
+        _as_dotfile_is_profile "$section" || continue
+        if [[ "$line" != *=* ]]; then
+          _as_msg ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
+        else
+          _as_dotfile_kv "$line"
+          [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
+          _df_profile_pairs+=("$section"$'\t'"$ck")
+        fi
+        ;;
     esac
   done <"$file"
   return 0
+}
+
+# _as_dotfile_is_profile NAME -- does [NAME] name a profile's section? The active
+# profile's at a launch; at the review, any of _df_profile_names.
+_as_dotfile_is_profile() {
+  [[ -n "$1" ]] || return 1
+  [[ "$1" == "${profile:-}" ]] && return 0
+  local n
+  for n in ${_df_profile_names[@]+"${_df_profile_names[@]}"}; do
+    [[ "$1" == "$n" ]] && return 0
+  done
+  return 1
 }
 
 # A .agent-sandbox must be plain text: tab, newline, printable ASCII and bytes
@@ -3972,7 +4035,7 @@ agent_sandbox() (
     _as_msg "--ssh-key: cannot read '$_ssh_key'"
     return 2
   fi
-  local _hostre='^\.?([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$' _h
+  local _hostre="$_as_hostre" _h
   for _h in "${_allow_hosts[@]}"; do
     [[ "$_h" =~ $_hostre ]] || {
       _as_msg "--allow: bad host '$_h' (expected a hostname, or .domain)"
@@ -4243,15 +4306,13 @@ agent_sandbox() (
   elif ((_df_from_keeper)) || [[ -f "$_dotfile" ]]; then
     if ((_df_from_keeper)) || _as_dotfile_trusted "$_proj" "$_dotfile"; then
       _as_dotfile_clean "$_df_src" || return 1 # an approval recorded by other means does not get such a file honoured
-      _as_dotfile_parse "$_df_src"
+      # Quietly: what the file's own text gets wrong, and what it means, the review
+      # said when it was approved (_as_trust_notes); a launch does not repeat it.
+      _as_dotfile_parse "$_df_src" 2>/dev/null
       local _dh _dj
       for _dh in "${_df_allow[@]}"; do
         [[ -z "$_dh" ]] && continue
-        if [[ "$_dh" =~ $_hostre ]]; then
-          _allow_hosts+=("$_dh")
-        else
-          _as_msg ".agent-sandbox allow: bad host '$_dh'; ignoring"
-        fi
+        [[ "$_dh" =~ $_hostre ]] && _allow_hosts+=("$_dh") # a bad one: the review said so
       done
       ((${#_df_forward[@]})) && _knob_forward="${_knob_forward:+$_knob_forward }${_df_forward[*]}"
       # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
@@ -4262,17 +4323,13 @@ agent_sandbox() (
           proxy | strict | open | none)
             if [[ -z "$_knob_net" ]]; then
               _knob_net="$_df_net_mode"
-              # `open` filters nothing: a widening, so a warning, not a status line
-              if [[ "$_df_net_mode" == open ]]; then
-                _as_msg "using network mode 'open' from .agent-sandbox: the egress allowlist is off for this project"
-              else
-                _as_info "using network mode '$_df_net_mode' from .agent-sandbox"
-              fi
+              # `open` is a widening: the review warned of it when the file was approved
+              _as_info "using network mode '$_df_net_mode' from .agent-sandbox"
             else
               _as_msg "AGENT_SANDBOX_NET=$_knob_net overrides the .agent-sandbox network mode '$_df_net_mode'"
             fi
             ;;
-          *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
+          *) ;; # unknown: ignored, as the review said
         esac
       fi
       # seccomp: an explicit AGENT_SANDBOX_SECCOMP in your shell wins over the
@@ -4288,17 +4345,13 @@ agent_sandbox() (
           on | 1 | off | 0)
             if [[ -z "$_knob_seccomp" ]]; then
               _knob_seccomp="$_df_seccomp_mode"
-              # the filter is on by default, so turning it off is a widening: a warning
-              if [[ "$_df_seccomp_mode" == off || "$_df_seccomp_mode" == 0 ]]; then
-                _as_msg "using seccomp mode 'off' from .agent-sandbox: the default-deny syscall filter is off for this project"
-              else
-                _as_info "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
-              fi
+              # `off` is a widening: the review warned of it when the file was approved
+              _as_info "using seccomp mode '$_df_seccomp_mode' from .agent-sandbox"
             else
               _as_msg "AGENT_SANDBOX_SECCOMP=$_knob_seccomp overrides the .agent-sandbox seccomp mode '$_df_seccomp_mode'"
             fi
             ;;
-          *) _as_msg ".agent-sandbox: [seccomp] mode '$_df_seccomp_mode' unknown (on|off); ignoring" ;;
+          *) ;; # unknown: the default (on) stays, as the review said
         esac
       fi
       # briefing: an explicit AGENT_SANDBOX_BRIEFING in your shell wins over the
@@ -4314,7 +4367,7 @@ agent_sandbox() (
               _as_msg "AGENT_SANDBOX_BRIEFING=$_knob_briefing overrides the .agent-sandbox briefing mode '$_df_briefing_mode'"
             fi
             ;;
-          *) _as_msg ".agent-sandbox: [briefing] mode '$_df_briefing_mode' unknown (on|off); ignoring" ;;
+          *) ;; # unknown: ignored, as the review said
         esac
       fi
       # conda scalars: an explicit environment knob wins over the file.
@@ -4365,24 +4418,8 @@ agent_sandbox() (
     return 1
   fi
 
-  # A [<profile>] dot-file key the profile does not declare is almost always a
-  # typo; warn rather than silently ignore it. The profile lists the keys it
-  # reads in profile_dotfile_keys -- its single source of truth, also checked by
-  # the docs drift test.
-  if declare -p profile_dotfile_keys >/dev/null 2>&1; then
-    local _pk _pkn _kk _known
-    for _pk in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
-      _pkn="${_pk%%=*}"
-      _known=0
-      for _kk in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do
-        [[ "$_pkn" == "$_kk" ]] && {
-          _known=1
-          break
-        }
-      done
-      ((_known)) || _as_msg ".agent-sandbox: [$profile] key '$_pkn' is not one this profile reads; ignoring"
-    done
-  fi
+  # A [<profile>] key the profile does not read (profile_dotfile_keys) is warned of at
+  # the review (_as_trust_notes), and ignored here.
 
   # ---- connections: resolve every form into one channel -> mode map ----
   # The order below IS the precedence: an approved dot-file, then the

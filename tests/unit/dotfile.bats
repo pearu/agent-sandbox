@@ -226,8 +226,10 @@ trust() {
   trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
   [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ]
+  [[ "$output" != *"unknown"* ]]
+  run_review
+  [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
 }
 
 @test "[proxy-ca], [profile-dir] and [session-base] are refused in the dot-file" {
@@ -235,11 +237,12 @@ trust() {
   trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
+  argv_has --share-net
+  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied
+  run_review
   [[ "$output" == *"[proxy-ca] is not allowed here"* ]]
   [[ "$output" == *"[profile-dir] is not allowed here"* ]]
   [[ "$output" == *"[session-base] is not allowed here"* ]]
-  argv_has --share-net
-  [ "$(setenv_value HTTPS_PROXY)" = "http://127.0.0.1:8888" ] # still proxied
 }
 
 @test "editing an approved dot-file refuses to launch until it is re-reviewed; the edit never applies unreviewed" {
@@ -294,13 +297,15 @@ trust() {
   run ! argv_has --ro-bind "$om" "$om"
 }
 
-@test "a dot-file that widens the sandbox says so even when quiet: the network open, seccomp off" {
+@test "a dot-file that widens the sandbox says so at its review: the network open, seccomp off" {
   printf '[net]\nmode = open\n[seccomp]\nmode = off\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"network mode 'open': the egress allowlist is off"*"approve this"* ]]
+  [[ "$output" == *"seccomp mode 'off': the default-deny syscall filter is off"*"approve this"* ]]
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_VERBOSE= -- asb claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb claude --version # approved: the launch does not repeat it
   [ "$status" -eq 0 ]
-  [[ "$output" == *"using network mode 'open' from .agent-sandbox: the egress allowlist is off"* ]]
-  [[ "$output" == *"using seccomp mode 'off' from .agent-sandbox: the default-deny syscall filter is off"* ]]
+  [[ "$output" != *"is off for this project"* ]]
   # a mode that narrows is routine, and quiet (seccomp `on` is not tried here: the
   # harness has no compiled filter, and asking for one without it refuses)
   printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
@@ -357,17 +362,20 @@ trust() {
   # malformed line must not read as `off` -- that would be a project file
   # switching the filter off by being wrong, the one outcome nobody asked for.
   argv_has --seccomp 10
+  run_review
   [[ "$output" == *"[seccomp] mode 'default' unknown (on|off)"* ]]
   printf '[seccomp]\non\n' >"$PROJ/.agent-sandbox" # a list line, not key = value
   trust "$PROJ"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --seccomp 10
+  run_review
   [[ "$output" == *"[seccomp] expects 'key = value'"* ]]
   printf '[seccomp]\nprofile = paranoid\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine AGENT_SANDBOX_SECCOMP_DIR="$SC" -- asb claude --version
   argv_has --seccomp 10
+  run_review
   [[ "$output" == *"unknown [seccomp] key 'profile'"* ]]
 }
 
@@ -383,7 +391,7 @@ trust() {
   run ! argv_has --tmpfs "$H/home/.claude/projects"
 }
 
-@test "the global default scopes memory with no dot-file present; unknown sections and ssh warn" {
+@test "the global default scopes memory with no dot-file present; unknown sections and ssh warn at the review" {
   mkdir -p "$CFG"
   printf 'memory_default = scoped\n' >"$CFG/config"
   run_engine -- asb claude --version
@@ -393,6 +401,8 @@ trust() {
   printf '[allow]\nok.example\n[ssh]\nignored.host\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
+  [[ "$output" != *"[bogus]"* ]]
+  run_review
   [[ "$output" == *"[ssh] is not supported yet"* ]]
   [[ "$output" == *"unknown section [bogus]"* ]]
 }
