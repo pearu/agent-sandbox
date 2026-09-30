@@ -592,8 +592,13 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   are the user's.
 - The keeper subsumes the holder: it mounts the channel overlays at their real paths, and
   the overlays of directory paths declared `copy-on-write`.
-- Ctrl-C at a join ends that join's command, not the launch: the join passes the
-  terminal's signals to its own process group, and the keeper ignores them.
+- Ctrl-C at a join ends that join's command, not the launch: the keeper is in a session
+  of its own, and ignores the terminal. The joined command keeps the terminal where the
+  kernel blocks `TIOCSTI` (`/proc/sys/dev/tty/legacy_tiocsti` is 0), so a resize, Ctrl-Z
+  and job control reach it as they would natively. Where the kernel does not block it,
+  the command starts a session of its own, as bwrap's `--new-session` does, against
+  keystroke injection, and the join forwards Ctrl-C to it; there it has no job control and
+  no `SIGWINCH` (#165).
 - `--reset` is refused while anything is joined; an idle keeper is ended first.
 - Its host side is a supervisor, a background copy of the engine that started it: it owns
   the launch's exit (the session directory, the ssh agent, the mount-point files) and writes
