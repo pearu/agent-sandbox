@@ -162,16 +162,6 @@ PY
   argv_has --bind "$(store seed-only)" "$INSIDE"
 }
 
-@test "user-mcp is refused in every form, naming config = own (#132)" {
-  run_engine AGENT_SANDBOX_CLAUDE_USER_MCP=none -- asb claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"user-mcp"*"removed"*"config = own"* ]]
-  [ ! -s "$H/argv" ]
-  run_engine -- asb --user-mcp none claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"config = own"* ]]
-}
-
 @test "the empty mount-point file bwrap leaves for the config file is removed after the launch" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash

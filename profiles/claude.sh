@@ -50,14 +50,6 @@
 #
 # Functions a profile defines:
 #
-#   profile_own_bin()           optional; for install.sh, not the launch. Where
-#                               the agent's own installer put its binary: set
-#                               profile_bin and profile_version, or print why
-#                               not and return non-zero. The installer points
-#                               a launcher an earlier install shadowed back at
-#                               it (#151). The engine never calls it: the agent
-#                               a launch runs is the typed command, resolved,
-#                               in profile_bin.
 #   profile_prepare()           optional. Runs right before the sandbox is
 #                               assembled; create state files here.
 #   profile_memory_scope(MODE [PATH...])  optional. Called with the memory
@@ -232,22 +224,7 @@ profile_status_argv=(agents)
 # The single source of truth: the engine warns on any other [claude] key (a typo
 # must not silently do nothing), and the docs drift-check verifies each is
 # documented. `hide` is read in profile_isolate().
-profile_dotfile_keys=(hide sandbox user-mcp)
-# Keys still read only so that they can be REFUSED by name, naming what replaced them.
-# The docs describe them as removed rather than as settings. `sandbox` is refused in
-# profile_route(), `user-mcp` in _claude_user_mcp_refuse().
-# shellcheck disable=SC2034 # read by tests/unit/docs.bats
-profile_dotfile_retired=(user-mcp sandbox)
-
-# The native installer's layout: each entry under versions/ is either a
-# single executable file named after the version (e.g. 2.1.143) or a
-# directory containing a `claude` binary.
-_claude_versions_dir="$HOME/.local/share/claude/versions"
-
-_claude_list_versions() {
-  find "$_claude_versions_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) \
-    -printf '%f\n' 2>/dev/null | sort -V
-}
+profile_dotfile_keys=(hide)
 
 # Map a project directory to Claude Code's per-project state slug: the absolute
 # path with every character outside [A-Za-z0-9-] turned into "-", one for one
@@ -459,27 +436,7 @@ PY
   fi
   return 0
 }
-# `user-mcp` is gone (#132): it worked by editing mcpServers in the project's copy,
-# and the engine no longer edits anything inside the config file. Refused in every
-# form, naming what to write instead, as the 0.3 renames were.
-_claude_user_mcp_refuse() {
-  local src="" _pkv
-  # shellcheck disable=SC2154 # engine locals, by dynamic scope
-  if ((${_user_mcp_flag_set:-0})); then
-    src="--user-mcp"
-  elif [[ -n "${AGENT_SANDBOX_CLAUDE_USER_MCP:-}" ]]; then
-    src="AGENT_SANDBOX_CLAUDE_USER_MCP"
-  else
-    for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
-      [[ "$_pkv" == user-mcp=* ]] && src="[claude] user-mcp"
-    done
-  fi
-  [[ -z "$src" ]] && return 0
-  _as_msg "$src: user-mcp was removed -- the engine no longer edits the MCP servers inside the config file. To keep your user-level MCP servers out of this project's sandbox, give it a config file of its own: 'config = own' under [connect] (or --connect 'config=own native')."
-  return 1
-}
 _claude_config_prepare() {
-  _claude_user_mcp_refuse || return 1
   # `native` means parity with no sandbox, and a native Claude Code reads
   # ~/.claude.json itself. The engine binds nothing for a relocated channel path
   # under `native` (see _as_channel_source), and the profile drops the relocation:
@@ -521,53 +478,11 @@ _claude_config_prepare() {
   return 0
 }
 
-profile_own_bin() {
-  [[ -d "$_claude_versions_dir" ]] || {
-    _as_msg "missing $_claude_versions_dir"
-    return 1
-  }
-  local -a _vers
-  mapfile -t _vers < <(_claude_list_versions)
-  ((${#_vers[@]})) || {
-    _as_msg "no versions under $_claude_versions_dir"
-    return 1
-  }
-  # Highest version first, but skip an entry whose executable is missing and
-  # fall back to the newest version that actually has a runnable binary. A native
-  # self-update creates versions/<new> before its binary lands, so for a window
-  # the highest-sorted entry is a phantom; failing the launch on it would break
-  # every sandboxed run (and every background worker) mid-update. Tolerate the
-  # skew instead -- the older, runnable version is the right thing to launch.
-  profile_bin=""
-  profile_version=""
-  local i v cand
-  for ((i = ${#_vers[@]} - 1; i >= 0; i--)); do
-    v="${_vers[i]}"
-    if [[ -x "$_claude_versions_dir/$v" && ! -d "$_claude_versions_dir/$v" ]]; then
-      profile_bin="$_claude_versions_dir/$v"
-      profile_version="$v"
-      break
-    fi
-    for cand in "$_claude_versions_dir/$v/claude" "$_claude_versions_dir/$v/bin/claude"; do
-      [[ -x "$cand" ]] && {
-        profile_bin="$cand"
-        profile_version="$v"
-        break
-      }
-    done
-    [[ -n "$profile_bin" ]] && break
-  done
-  [[ -n "$profile_bin" ]] || {
-    _as_msg "no runnable Claude Code executable under $_claude_versions_dir"
-    return 1
-  }
-  return 0
-}
-
 # `asb claude update` (alias `upgrade`) and `asb claude install [target]` run the
 # agent directly on the host with the caller's environment -- what `claude update`
 # does anyway, since nothing shadows `claude` (#151): the sandbox would block the
 # download and has no writable versions directory.
+# shellcheck disable=SC2154 # profile_bin: set by the engine before any hook runs
 profile_handle_subcommand() {
   _as_msg "running '$profile_bin $*' on the host (unsandboxed)"
   exec "$profile_bin" "$@"
@@ -606,19 +521,6 @@ profile_route() {
     _as_info "config is read-only here, so this user-scope 'claude mcp' runs natively, on your own ~/.claude.json"
     exec "$profile_bin" "$@"
   fi
-  # THE SCOPE IS REMOVED IN EVERY FORM, and refused by name rather than ignored: a
-  # `sandbox = none` that went quiet would sandbox a project that asked not to be,
-  # and a `bg` that went quiet would look like a no-op.
-  if [[ -n "${AGENT_SANDBOX_CLAUDE_SANDBOX:-}" ]]; then
-    _as_msg "AGENT_SANDBOX_CLAUDE_SANDBOX was removed: every session, --bg included, runs in its role's sandbox (#123). To run without one: --preset none"
-    return 1
-  fi
-  local _pkv
-  for _pkv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
-    [[ "$_pkv" == sandbox=* ]] || continue
-    _as_msg ".agent-sandbox [claude] sandbox was removed: every session, --bg included, runs in its role's sandbox (#123). Remove the line; to run without a sandbox, type --preset none."
-    return 1
-  done
   # Inside a sandbox, a `claude` typed there runs in it as it is, not in a second
   # sandbox of its own: nesting happens only when asked for, with --preset.
   if [[ -n "${AGENT_SANDBOX:-}" && -z "${_preset_flag:-}" ]]; then
@@ -895,7 +797,6 @@ profile_isolate() {
     key="${kv%%=*}"
     val="${kv#*=}"
     case "$key" in
-      sandbox | user-mcp) ;; # read by profile_route and _claude_user_mcp_refuse
       hide)
         # Word-splitting $val is the point: the value is a space-separated list.
         # shellcheck disable=SC2086

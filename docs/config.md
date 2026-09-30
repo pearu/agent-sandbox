@@ -115,10 +115,6 @@ Sections:
   `read-only` is still the higher rung, because it hands over the real file where
   `copy-on-write` gives only a shadow of one.
 
-  These names changed in 0.3. The old ones (`none`, `cow`, `ro`, `live`) are
-  refused rather than accepted as aliases, and the refusal says what to write
-  instead.
-
   A third token, the **scope**, names a lifetime *shorter* than the role's for the
   sandbox's side of a channel. Written nothing, a channel's storage belongs to the role:
   it persists across runs, the behaviour you already have. **`run-scoped`** is one run of
@@ -134,12 +130,7 @@ Sections:
   source when the join starts, since a store new at every join has nothing earlier to
   refresh or conflict with; not for the `config` and `transcripts` channels, whose seed
   is a filtered view -- and for `read-only`, which is then the plain bind. An overlay per
-  join, `copy-on-write join-scoped`, is refused as not built yet (#153). `process-scoped`, its
-  first name, is refused naming it.
-  The first draft's other names are refused with what to write instead:
-  `sandbox-scoped` (the default has no name), `project-scoped` (sharing across roles is a
-  `sandbox:<project>/<role>` source, not a scope) and `session-scoped` (a store of its own
-  per conversation is a role of its own).
+  join, `copy-on-write join-scoped`, is refused as not built yet (#153).
 
   Source and scope may appear in either order — every scope ends in `-scoped` and no
   source does. And `read-write` with any scope is refused permanently rather than
@@ -303,15 +294,6 @@ Sections:
   supervisor's control key and its roster of other sessions, a cross-session
   channel rather than this session's state); `gh` and `ide` are deliberately
   **not**, because both exist to let Claude Code work from inside a sandbox.
-  `sandbox` is removed (#123): every session, `asb claude --bg` included, runs in its
-  role's sandbox, so there is no scope to choose. It is refused, as are the
-  `--sandbox` flag and `AGENT_SANDBOX_CLAUDE_SANDBOX`, naming `--preset none`, which
-  runs without a sandbox and is the flag only: a project cannot declare itself
-  unsandboxed. An `asb claude` typed inside a sandbox still runs in it as it is.
-  `user-mcp` is removed: it kept your user-level MCP servers out by editing the
-  config file, and the engine no longer edits anything inside it. It is refused,
-  naming the replacement, `config = own` under `[connect]` (see
-  [The config file](#the-config-file-the-config-channel)).
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
@@ -571,8 +553,7 @@ says so. `--reset config` discards the role's copy; the next launch
 seeds it again.
 
 To keep your user-level MCP servers out of a project's sandbox, give it a config
-file of its own: `config = own` under `[connect]`. The `user-mcp` knob that did
-this by editing the file is removed and refused, naming this.
+file of its own: `config = own` under `[connect]`.
 
 ## Where the machine-local state lives
 

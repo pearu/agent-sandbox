@@ -350,8 +350,8 @@ Engine flags (before CMD):
   --preset NAME         where every channel sits before any override:
                         `isolated` (nothing of your install), `inherit`
                         (read your files live, keep the sandbox's writes to
-                        itself) or `shared` (one directory, both ways -- what
-                        the engine did before 0.3). Default: default.
+                        itself) or `shared` (one directory, both ways).
+                        Default: inherit.
                         `native` and `none` are also accepted HERE ONLY, never
                         from the environment or a project file: `none` runs the
                         agent with no sandbox at all, and `native` turns state
@@ -829,10 +829,6 @@ _as_iso_prepare() {
 #              the write goes to a private layer that shadows it from then on
 #   read-only  the source's files, live, and no writing
 #   read-write one read-write bind, both ways, no delay
-#
-# THE NAMES CHANGED IN 0.3 (none, cow, ro, live) AND THE OLD ONES ARE REFUSED,
-# not aliased -- see _as_mode_renamed for why `none` in particular cannot be
-# carried forward.
 
 # _as_path_slug PATH -- a directory name for PATH, for the engine's own state.
 #
@@ -943,34 +939,6 @@ _as_preset_mode() {
   esac
 }
 
-# _as_mode_renamed OLD -- the 0.3 spelling of a mode name that used to be valid.
-#
-# The old names are REFUSED rather than accepted as aliases, and `none` is the
-# reason there is no alias table at all: it was the most-closed mode and is
-# becoming the preset that means no sandbox whatsoever, so honouring it here
-# would make one word mean opposite ends of one model -- someone writing it for
-# maximum isolation would get none of it. Once `none` cannot be carried forward,
-# carrying the other three would leave a single special case nobody remembers,
-# so all five move together and every one of them says what to write instead.
-_as_mode_renamed() {
-  case "$1" in
-    none) printf own ;;
-    cow) printf copy-on-write ;;
-    ro) printf read-only ;;
-    live) printf read-write ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
-
-# _as_preset_renamed OLD -- likewise for the two presets that were renamed.
-_as_preset_renamed() {
-  case "$1" in
-    independent) printf isolated ;;
-    default) printf inherit ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
-
 # ----- `native`: parity with no sandbox at all, for testing ------------------
 # `shared` is the widest position that is USEFUL. Native Claude Code shares a
 # good deal more that nobody chose to share -- the config file whole, the daemon
@@ -979,12 +947,12 @@ _as_preset_renamed() {
 # those carries. `native` is the preset that reaches parity anyway, and its
 # contract is what makes it worth having:
 #
-#   --preset native must behave IDENTICALLY to --sandbox none, while going
+#   --preset native must behave IDENTICALLY to --preset none, while going
 #   through every sandbox mechanism. A difference between the two is a bug here.
 #
 # So it is a differential oracle: it catches the sandbox DISTORTING the agent
 # rather than failing outright, which nothing else here can. It also bisects --
-# something that breaks under `native` but works under `--sandbox none` is broken
+# something that breaks under `native` but works under `--preset none` is broken
 # by a mechanism (binds, seccomp, the proxy) and not by state isolation, because
 # `native` holds state at "hide nothing". And it makes the scale a workflow:
 # start here and close channels, or start at `isolated` and open them.
@@ -1074,10 +1042,6 @@ _as_connect_parse() {
   }
   case "$mode" in
     own | seed-only | copy | copy-on-write | read-only | read-write) ;;
-    none | cow | ro | live)
-      _as_msg "connect ($where): mode '$mode' was renamed in 0.3 -- write '$(_as_mode_renamed "$mode")' (own|seed-only|copy|copy-on-write|read-only|read-write). Refusing rather than accepting the old name: see _as_mode_renamed for why 'none' cannot be an alias."
-      return 1
-      ;;
     _never_)
       # THE WORDING BELOW IS A CONTRACT, not just a message. The connections
       # study probes each mode by asking for it and reading the refusal, so that
@@ -1147,22 +1111,6 @@ _as_connect_parse() {
           return 1
           ;;
       esac
-      ;;
-    process-scoped)
-      _as_msg "connect ($where): scope 'process-scoped' was renamed: write 'join-scoped' -- a store for one join, which a joined command and everything it starts share (#147)."
-      return 1
-      ;;
-    sandbox-scoped)
-      _as_msg "connect ($where): scope 'sandbox-scoped' was withdrawn: storage belongs to the role by default, so write no scope for it."
-      return 1
-      ;;
-    project-scoped)
-      _as_msg "connect ($where): scope 'project-scoped' was withdrawn: storage shared across roles is a source, sandbox:<project>/<role> at read-write, not a scope."
-      return 1
-      ;;
-    session-scoped)
-      _as_msg "connect ($where): scope 'session-scoped' was withdrawn: storage of its own per conversation is a role of its own -- launch it with --role NAME."
-      return 1
       ;;
     *)
       _as_msg "connect ($where): unknown scope '$scope' for '$ch' (run-scoped|join-scoped; nothing written means the role)."
@@ -3477,11 +3425,10 @@ _as_strict_ssh_rules() {
 # (`/path/to/2.1.284`, `./build/claude`), or a name looked up on PATH as a shell would.
 # Resolved through symlinks, because that is what is bound inside and executed there:
 # the native installer's ~/.local/bin/claude is a link into its versions/, and bwrap
-# refuses to bind over a symlink. A PATH entry that resolves to this engine is a
-# launcher an earlier install left (see the refusal in agent_sandbox); it is passed
-# over, with a note, and the agent is the next one on PATH -- as is a link to any other
-# copy of the engine (the installed one, when this is a checkout's): recognised the way
-# install.sh recognises its own, a file named agent-sandbox that defines agent_sandbox().
+# refuses to bind over a symlink. A PATH entry that is agent-sandbox itself -- this
+# engine, or any other copy of it, recognised as install.sh recognises its own: a file
+# named agent-sandbox that defines agent_sandbox() -- is passed over, with a note, so
+# the engine never runs itself as the agent; the agent is the next one on PATH.
 # Reads the caller's engine and invoked by dynamic scope.
 # shellcheck disable=SC2154
 _as_resolve_bin() {
@@ -3512,7 +3459,7 @@ _as_resolve_bin() {
       break
     done
     [[ -n "$shadow" ]] \
-      && _as_msg "note: $shadow is a launcher an earlier install.sh left (#151); install.sh removes it and puts back the '$w' you had"
+      && _as_msg "note: $shadow is agent-sandbox itself, not the agent; passing over it"
     if [[ -z "$profile_bin" ]]; then
       _as_msg "no '$w' on PATH to run. Install the agent, or name its binary: $invoked --profile $profile /path/to/$w"
       return 1
@@ -3678,7 +3625,6 @@ agent_sandbox() (
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
-  local _user_mcp_flag="" _user_mcp_flag_set=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
   # `_role` is the sandbox key's second half; only `default` exists until roles
@@ -3698,22 +3644,6 @@ agent_sandbox() (
   local _join_stage_bound=0
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   local _preset_flag="" _preset=inherit _role_flag="" _role_flag_set=0
-  # ---- invoked through a launcher named after a profile: removed (#151) ----
-  # Earlier installs put this engine at ~/.local/bin/claude, so that `claude` meant
-  # the sandboxed agent. It no longer does: `claude` is Claude Code itself again, and
-  # the sandbox is asked for by name. Refused rather than run either way -- sandboxed
-  # would keep the ambiguity alive, native would quietly drop the sandbox someone
-  # typed `claude` expecting.
-  # Only a profile's name is that launcher: any other name for the engine -- asb, an
-  # alias of the user's own -- is the engine asked for by name.
-  # Before the flags, so that no flag of the engine's answers in the agent's name
-  # (`claude --version` must not print agent-sandbox's) -- but not for --wrap, whose own
-  # refusal below says what a daemon an earlier engine started needs.
-  if [[ "${BASH_SOURCE[0]}" == "$0" && "$invoked" != "$(basename -- "$engine")" && -r "$profile_dir/$invoked.sh" && "${1:-}" != --wrap ]]; then
-    _as_msg "agent-sandbox is no longer run as '$invoked' (#151): '$invoked' is the agent itself again, and a sandboxed launch is: asb $invoked"
-    _as_msg "$0 is a launcher an earlier install.sh left. Run install.sh again: it puts back the '$invoked' you had, and installs asb."
-    return 2
-  fi
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -3732,10 +3662,6 @@ agent_sandbox() (
       --verbose)
         _do_verbose=1
         shift
-        ;;
-      --quiet)
-        _as_msg "--quiet was removed: quiet is the default now. --verbose shows the routine status lines."
-        return 2
         ;;
       --exec)
         # Run a command INSTEAD of the agent, in the sandbox this profile would
@@ -3828,49 +3754,13 @@ agent_sandbox() (
         _as_version
         return 0
         ;;
-      --engine-version)
-        # Renamed once the calling convention made the short name the engine's alone.
-        _as_msg "--engine-version was renamed: write --version (before the command; after it, --version is the agent's: asb claude --version)"
-        return 2
-        ;;
       --trust)
         _do_trust=1
         shift
         ;;
-      --sandbox)
-        # Removed with the wrapper machinery (#123): foreground and background
-        # sessions both run in the role's sandbox, so there is no scope to choose.
-        # Running without a sandbox is the `none` preset, typed per launch.
-        _as_msg "--sandbox was removed: every session, --bg included, runs in its role's sandbox (#123). To run without one: --preset none"
-        return 2
-        ;;
-      --sandbox=*)
-        _as_msg "--sandbox was removed: every session, --bg included, runs in its role's sandbox (#123). To run without one: --preset none"
-        return 2
-        ;;
-      --user-mcp)
-        # Whether the claude profile carries the host's user-level mcpServers
-        # into this project's copy of the config file (inherit, the default) or
-        # leaves them out (none). A narrowing, so a launch-time choice like
-        # --sandbox; the dot-file form is [claude] user-mcp. See the profile's
-        # _claude_user_mcp_refuse: the knob is removed, and refused (#132).
-        [[ $# -ge 2 && -n "$2" ]] || {
-          _as_msg "--user-mcp needs a value (inherit or none)"
-          return 2
-        }
-        _user_mcp_flag="$2"
-        _user_mcp_flag_set=1
-        shift 2
-        ;;
-      --user-mcp=*)
-        _user_mcp_flag="${1#--user-mcp=}"
-        _user_mcp_flag_set=1
-        shift
-        ;;
       --connect)
         # One `channel = mode [source] [scope]`, repeatable. The highest-precedence
-        # form: it beats AGENT_SANDBOX_CONNECT and an approved dot-file, the
-        # same order --user-mcp already follows.
+        # form: it beats AGENT_SANDBOX_CONNECT and an approved dot-file.
         [[ $# -ge 2 && -n "$2" ]] \
           || {
             _as_msg "--connect needs a spec, e.g. --connect 'instructions=read-only native'"
@@ -3899,15 +3789,6 @@ agent_sandbox() (
       --reset=*)
         _reset_connection="${1#--reset=}"
         shift
-        ;;
-      --reset-connection)
-        # Renamed in 0.4 (#126), refused with the new name as the 0.3 renames were.
-        _as_msg "--reset-connection was renamed: write --reset (it takes a declared path too)"
-        return 2
-        ;;
-      --reset-connection=*)
-        _as_msg "--reset-connection was renamed: write --reset (it takes a declared path too)"
-        return 2
         ;;
       --delete)
         # Remove every store of the role (#126). Refused while anything holds it.
@@ -3961,13 +3842,6 @@ agent_sandbox() (
         _preset_flag="${1#--preset=}"
         shift
         ;;
-      --wrap)
-        # Removed with the wrapper machinery (#123). A background daemon an earlier
-        # engine started still has CLAUDE_CODE_PROCESS_WRAPPER pointing here, so its
-        # workers arrive with this flag: say what to do instead of running them.
-        _as_msg "--wrap was removed: background sessions now run inside their role's sandbox (#123). A Claude Code background daemon started by an earlier agent-sandbox is still running with CLAUDE_CODE_PROCESS_WRAPPER set; stop it (claude daemon stop) and start --bg sessions again, with asb claude --bg."
-        return 2
-        ;;
       --shutdown)
         # End the role's launch: its keeper, everything joined into it, and a
         # background daemon with its pool (#123, #126). Does its work and exits.
@@ -4000,12 +3874,7 @@ agent_sandbox() (
   fi
   # Resolve the verbosity before anything routine is printed: the dot-file notices,
   # the session allowlist and the seccomp line all come later, but the ssh-agent
-  # status does not wait long. Quiet is the default; AGENT_SANDBOX_QUIET, which asked
-  # for it, is refused with what to write instead, as renamed knobs are.
-  if [[ -n "${AGENT_SANDBOX_QUIET+x}" ]]; then
-    _as_msg "AGENT_SANDBOX_QUIET was removed: quiet is the default now. Unset it; AGENT_SANDBOX_VERBOSE=on shows the routine status lines."
-    return 2
-  fi
+  # status does not wait long. Quiet is the default.
   case "${AGENT_SANDBOX_VERBOSE:-}" in
     "" | off | 0) ;;
     on | 1) _as_quiet=0 ;;
@@ -4452,8 +4321,8 @@ agent_sandbox() (
 
   # ---- connections: resolve every form into one channel -> mode map ----
   # The order below IS the precedence: an approved dot-file, then the
-  # environment, then the flag, each overwriting the last -- the order
-  # --user-mcp already follows. One code path validates all three, so a spec
+  # environment, then the flag, each overwriting the last. One code path validates
+  # all three, so a spec
   # refused in the file is refused on the command line too.
   #
   # The dot-file is only parsed when APPROVED, so `[connect]` grants nothing
@@ -4502,10 +4371,6 @@ agent_sandbox() (
   if [[ -n "$_ps" ]]; then
     case "$_ps" in
       isolated | inherit | shared) _preset="$_ps" ;;
-      independent | default)
-        _as_msg "preset ($_ps_src): '$_ps' was renamed in 0.3 -- write '$(_as_preset_renamed "$_ps")' (isolated|inherit|shared|native|none)"
-        return 1
-        ;;
       native)
         # THE ONE KNOB WITH A SINGLE FORM. `native` turns state isolation off
         # wholesale, so a shell profile or a repository's .agent-sandbox must not
@@ -4533,7 +4398,7 @@ agent_sandbox() (
   # Loud, every launch, shown whatever the verbosity: a session running with no
   # state isolation should not be something you have to remember.
   if _as_preset_is_native; then
-    _as_msg "preset native: state isolation is OFF -- every channel read-write, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--sandbox none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."
+    _as_msg "preset native: state isolation is OFF -- every channel read-write, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--preset none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter and the CWD bind still apply."
   fi
   # Seed every channel the profile declares from the preset. An explicit
   # [connect] line, knob or flag then overwrites its own channel and nothing
@@ -4614,17 +4479,12 @@ agent_sandbox() (
   fi
 
   # ---- profile routing: sandbox this invocation, or hand it off ----
-  # With the project's trusted .agent-sandbox now read, let the profile decide
-  # what to do with the agent's own argv against the effective sandbox scopes
-  # (--sandbox flag > AGENT_SANDBOX_<PROFILE>_SANDBOX env > [<profile>] sandbox
-  # dot-file key > a context default: none inside a sandbox, else fg). It either
-  # runs the invocation itself (e.g. a foreground scope turned off -> native; a
-  # background launch -> sandbox the workers) and never returns, or returns 0 to
-  # continue with the normal sandboxed foreground flow below. It reads the engine
-  # locals it needs (_sandbox_flag, _sandbox_flag_set, _df_profile_kv, cwd,
-  # engine, profile_bin, profile) by dynamic scope, as the other profile hooks
-  # do; profile_prepare reads _user_mcp_flag/_user_mcp_flag_set the same way.
-  # Wrapper spawns and `--trust` never route.
+  # With the project's trusted .agent-sandbox now read, let the profile decide what
+  # to do with the agent's own argv: run it here itself (a command that must not be
+  # sandboxed, such as one typed inside a sandbox) and never return, or return 0 to
+  # go on to the role's launch. It reads the engine locals it needs (_df_profile_kv,
+  # cwd, engine, profile_bin, profile) by dynamic scope, as the other profile hooks
+  # do. `--trust` never routes.
   if ((! _do_trust)) && declare -F profile_route >/dev/null; then
     profile_route "$@" || return $?
   fi
@@ -4822,7 +4682,7 @@ agent_sandbox() (
   # /var/tmp, /run, which is most of what "sandbox" means here.
   #
   # `native` replaces all of it with the host's own directories. Under
-  # `--sandbox none` the agent reads ~/.gitconfig, ~/.npmrc, ~/.ssh/config,
+  # `--preset none` the agent reads ~/.gitconfig, ~/.npmrc, ~/.ssh/config,
   # whatever a tool it shells out to keeps in $HOME, and $XDG_RUNTIME_DIR --
   # none of which any channel declares, because channels cover the state the
   # profile knows about and this is everything else. MEASURED: with the tmpfs in
@@ -5056,7 +4916,7 @@ agent_sandbox() (
   # (space- or colon-separated).
   local -a _extra_passenv=()
   [[ -n "$_knob_forward" ]] && _as_split _extra_passenv $': \t\n' "$_knob_forward"
-  # `native` forwards the WHOLE exported environment, because `--sandbox none`
+  # `native` forwards the WHOLE exported environment, because `--preset none`
   # execs the agent with it and the preset's promise is that a difference is a
   # bug. No allowlist can predict what an agent reads -- a proxy, a locale, an
   # EDITOR, some tool's token or knob -- and a dropped name changes what it does
@@ -5224,7 +5084,7 @@ agent_sandbox() (
   # exposed. Must come AFTER every bind whose target is under $HOME, since
   # bwrap may need to create intermediate directories on the tmpfs.
   # ...except under `native`, where $HOME is the host's own and writable, as it
-  # is under `--sandbox none`. This lock is why the engine sets CLAUDE_CONFIG_DIR
+  # is under `--preset none`. This lock is why the engine sets CLAUDE_CONFIG_DIR
   # at all (#91: a lock and a rename beside a read-only ~/.claude.json are lost),
   # so a `native` that kept it would have to keep that workaround too, and both
   # would show up as differences.

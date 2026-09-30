@@ -46,33 +46,6 @@ trust() {
   [ ! -e "$H/base/wrap-claude.sh" ]
 }
 
-@test "--sandbox is refused in both spellings, naming --preset none" {
-  local f
-  for f in "--sandbox none" "--sandbox=fg" "--sandbox bg"; do
-    # shellcheck disable=SC2086 # flag and value
-    run_engine -- asb $f claude -p hello
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"--sandbox was removed"*"--preset none"* ]]
-    native
-  done
-}
-
-@test "AGENT_SANDBOX_CLAUDE_SANDBOX is refused, naming --preset none" {
-  run_engine AGENT_SANDBOX_CLAUDE_SANDBOX=none -- asb claude -p hello
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"AGENT_SANDBOX_CLAUDE_SANDBOX was removed"*"--preset none"* ]]
-  native
-}
-
-@test "[claude] sandbox in an approved dot-file is refused, naming --preset none" {
-  printf '[claude]\nsandbox = none\n' >"$PROJ/.agent-sandbox"
-  trust
-  run_engine -- asb claude -p hello
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"[claude] sandbox was removed"*"--preset none"* ]]
-  native
-}
-
 @test "--preset none runs the agent with no sandbox, and says so" {
   run_engine -- asb --preset none claude -p hello
   [ "$status" -eq 0 ]

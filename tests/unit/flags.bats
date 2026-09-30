@@ -80,11 +80,6 @@ STUB
   [ "$status" -eq 0 ]
   join_has --version
   [[ "$output" != "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]]
-  # and the old spelling is refused with the new one
-  run_engine -- asb --engine-version
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--engine-version was renamed: write --version"* ]]
-  [ ! -s "$H/argv" ]
 }
 
 @test "--engine-help prints the engine usage even with a profile, and does not launch the agent" {
@@ -180,45 +175,36 @@ STUB
   [ ! -s "$H/argv" ]
 }
 
-@test "the engine run through a launcher named after a profile is refused, naming asb and install.sh (#151)" {
-  mkdir -p "$H/old"
-  ln -s "$ENGINE" "$H/old/claude"
-  run_engine -- "$H/old/claude" --version
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"no longer run as 'claude'"*"asb claude"* ]]
-  [[ "$output" == *"$H/old/claude is a launcher an earlier install.sh left"*"install.sh"* ]]
-  [ ! -s "$H/argv" ]
-  [[ "$output" != "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]] # no engine flag answers as the agent
-  # except --wrap, from a daemon an earlier engine started: its own message says what to do
-  run_engine -- "$H/old/claude" --wrap
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--wrap was removed"*"claude daemon stop"* ]]
-}
-
-@test "any other name for the engine is the engine: only a profile's name is refused" {
+@test "any name for the engine is the engine, a profile's name too" {
   mkdir -p "$H/mine"
   ln -s "$ENGINE" "$H/mine/sb"
   run_engine -- "$H/mine/sb" claude --version
   [ "$status" -eq 0 ]
   [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
+  mkdir -p "$H/old"
+  ln -s "$ENGINE" "$H/old/claude"
+  run_engine -- "$H/old/claude" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]]
+  [ ! -s "$H/argv" ]
 }
 
-@test "a launcher to ANOTHER copy of the engine is passed over too: an installed copy, run from a checkout" {
+@test "a link to ANOTHER copy of the engine is passed over too: an installed copy, run from a checkout" {
   mkdir -p "$H/old" "$H/app"
   cp "$ENGINE" "$H/app/agent-sandbox"
   ln -s "$H/app/agent-sandbox" "$H/old/claude"
   run_engine PATH="$H/old:$H/bin:/usr/bin:/bin" -- asb claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"note: $H/old/claude is a launcher an earlier install.sh left"* ]]
+  [[ "$output" == *"note: $H/old/claude is agent-sandbox itself, not the agent; passing over it"* ]]
   [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
 }
 
-@test "such a launcher earlier on PATH is passed over, with a note: the agent is the next claude" {
+@test "a link to the engine at the agent's name earlier on PATH is passed over, with a note: the agent is the next claude" {
   mkdir -p "$H/old"
   ln -s "$ENGINE" "$H/old/claude"
   run_engine PATH="$H/old:$H/bin:/usr/bin:/bin" -- asb claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"note: $H/old/claude is a launcher an earlier install.sh left"* ]]
+  [[ "$output" == *"note: $H/old/claude is agent-sandbox itself, not the agent; passing over it"* ]]
   [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
 }
 
@@ -384,17 +370,6 @@ STUB
   run_engine AGENT_SANDBOX_VERBOSE=maybe -- asb claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"AGENT_SANDBOX_VERBOSE='maybe' is not recognised"* ]]
-}
-
-@test "--quiet and AGENT_SANDBOX_QUIET are refused: quiet is the default, --verbose the way back" {
-  run_engine -- asb --quiet claude --version
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--quiet was removed: quiet is the default now"*"--verbose"* ]]
-  [ ! -s "$H/argv" ]
-  run_engine AGENT_SANDBOX_QUIET=on -- asb claude --version
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"AGENT_SANDBOX_QUIET was removed"*"AGENT_SANDBOX_VERBOSE=on"* ]]
-  [ ! -s "$H/argv" ]
 }
 
 @test "quiet never hides a refusal, a warning, or an unsandboxed notice" {

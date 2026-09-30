@@ -26,13 +26,6 @@ slugify() {
   printf '%s' "${s#_}"
 }
 
-@test "--reset-connection is refused with its new name" {
-  run_engine -- asb --reset-connection claude instructions
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--reset-connection was renamed: write --reset"* ]]
-  [ ! -s "$H/argv" ]
-}
-
 @test "--reset CHANNEL re-seeds that channel and leaves the others" {
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy native;skills=copy native' -- asb claude --version
   local ins sk

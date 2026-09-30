@@ -1,6 +1,5 @@
 #!/usr/bin/env bats
-# The claude profile: where its own installer puts the binary, state paths, host-routed
-# subcommands.
+# The claude profile: the binary, state paths, host-routed subcommands.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -21,61 +20,6 @@ slug_vector() {
   p="/tmp/as-leak-matrix.3WbHJO/$tag"
   for ((i = 1; i <= n; i++)); do p="$p/$seg$i"; done
   printf '%s' "$p"
-}
-
-# profile_own_bin is for install.sh (#151): where Claude Code's own installer keeps
-# its binaries, so that a launcher an earlier install shadowed can be pointed back.
-# Called directly, against the harness's versions directory.
-own_bin() {
-  _as_msg() { printf '%s\n' "$*"; }
-  _claude_versions_dir="$V"
-  profile_bin="" profile_version=""
-  profile_own_bin
-}
-
-@test "profile_own_bin finds the highest version across the three layouts (file, dir/claude, dir/bin/claude)" {
-  rm -rf "${V:?}"/*
-  printf '#!/bin/sh\n' >"$V/2.1.100"
-  mkdir -p "$V/2.1.300" "$V/2.1.301/bin" "$V/2.1.9"
-  printf '#!/bin/sh\n' >"$V/2.1.300/claude"
-  printf '#!/bin/sh\n' >"$V/2.1.301/bin/claude"
-  printf '#!/bin/sh\n' >"$V/2.1.9/claude"
-  chmod +x "$V/2.1.100" "$V/2.1.300/claude" "$V/2.1.301/bin/claude" "$V/2.1.9/claude"
-  own_bin
-  [ "$profile_bin" = "$V/2.1.301/bin/claude" ] && [ "$profile_version" = 2.1.301 ]
-  rm -rf "$V/2.1.301"
-  own_bin
-  [ "$profile_bin" = "$V/2.1.300/claude" ]
-  rm -rf "$V/2.1.300" "$V/2.1.9"
-  own_bin
-  [ "$profile_bin" = "$V/2.1.100" ]
-}
-
-@test "profile_own_bin with no install: fails, naming the versions directory" {
-  rm -rf "$V"
-  run own_bin
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"missing $V"* ]]
-  mkdir -p "$V"
-  run own_bin
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"no versions under"* ]]
-  mkdir -p "$V/1.0.0"
-  run own_bin
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"no runnable Claude Code executable under $V"* ]]
-}
-
-@test "profile_own_bin tolerates a phantom newest version (mid self-update): the newest runnable one" {
-  rm -rf "${V:?}"/*
-  # 2.1.269 is runnable; 2.1.270 exists (as during a native self-update) but its
-  # binary has not landed yet -- so it must be skipped.
-  mkdir -p "$V/2.1.269"
-  printf '#!/bin/sh\n' >"$V/2.1.269/claude"
-  chmod +x "$V/2.1.269/claude"
-  mkdir -p "$V/2.1.270" # phantom: directory, no executable inside
-  own_bin
-  [ "$profile_bin" = "$V/2.1.269/claude" ]
 }
 
 @test "a launch does not look in versions/: it runs what the command resolves to" {
