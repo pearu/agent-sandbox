@@ -2,6 +2,9 @@
 # A stand-in for the Claude Code binary for the end-to-end installer test,
 # planted where the claude profile discovers it. Inside the sandbox it acts as
 # a network probe; on the host it answers the update subcommands.
+# Root options come before a subcommand, as Claude Code's do (`claude --settings X
+# mcp list`): the briefing's --settings is first on the line.
+while [ "${1-}" = --settings ]; do shift 2; done
 case ${1-} in
   --version) echo "9.9.9 (fake-claude)" ;;
   update | upgrade | install)

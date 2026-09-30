@@ -5,7 +5,7 @@
 
 Run an AI coding agent inside a [bubblewrap](https://github.com/containers/bubblewrap)
 sandbox: a default-deny filesystem, an egress allowlist the agent cannot
-bypass with its normal HTTP clients, host-routed self-update, and an opt-in
+bypass with its normal HTTP clients, and an opt-in
 SSH broker whose keys never enter the sandbox. One bash script and a
 per-agent profile; no image to build. The flagship profile runs
 [Claude Code](https://docs.anthropic.com/claude-code). You ask for the sandbox

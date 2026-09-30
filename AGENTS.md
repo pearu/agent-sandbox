@@ -6,7 +6,7 @@ welcome to read it too; the human-facing docs live in `README.md` and `docs/`.
 
 agent-sandbox runs an AI coding agent inside a bubblewrap sandbox with a
 default-deny filesystem, an egress allowlist enforced by a host-side mitmproxy,
-host-routed self-update, and an opt-in SSH broker whose keys never enter the
+and an opt-in SSH broker whose keys never enter the
 sandbox. It is a security tool. Treat every change to it as one.
 
 ## Layout and what is source of truth

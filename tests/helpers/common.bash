@@ -154,7 +154,8 @@ run_engine() {
   # What was joined into the keeper: JOIN is the join's whole argv, JOINV the command
   # after its `--` (what bwrap's argv used to end with).
   mapfile -t JOIN <"$H/join"
-  JOINV=()
+  # shellcheck disable=SC2034 # JOINB is read by the suites
+  JOINV=() JOINB=()
   local _i
   for ((_i = 0; _i < ${#JOIN[@]}; _i++)); do
     [[ "${JOIN[_i]}" == -- ]] && {
@@ -162,6 +163,14 @@ run_engine() {
       break
     }
   done
+  # The briefing's own arguments come first, before the agent's (a subcommand refuses
+  # them after it): JOINB holds them, and JOINV is the agent and its own arguments, as
+  # typed -- what every test that is not about the briefing means by it.
+  if [[ "${JOINV[1]:-}" == --settings && "${JOINV[2]:-}" == /run/agent-sandbox/*settings.json ]]; then
+    # shellcheck disable=SC2034 # read by the suites
+    JOINB=("${JOINV[@]:1:2}")
+    JOINV=("${JOINV[0]}" "${JOINV[@]:3}")
+  fi
 }
 
 # run_review [DIR] -- the dot-file review of DIR ($PROJ, else $H/proj), as `--trust`

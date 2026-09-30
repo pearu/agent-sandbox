@@ -15,14 +15,12 @@ claude update      # alias: upgrade
 updater, run as it would be without agent-sandbox installed. `asb claude` then
 runs whatever `claude` is next time.
 
-For convenience the profile also lists these subcommands as host-side, so that
-`asb claude update` (and `upgrade`, `install [target]`) does the same thing: the
-engine runs the agent directly on the host, unsandboxed, with your full
-environment, instead of starting a sandbox that could not do it. The engine's
-`--ssh*` and `--allow` flags are ignored for them, with a note.
+`asb claude update` is not special: it runs inside the sandbox like any other
+command, where the download is blocked and the versions directory is not bound,
+so it fails. Type `claude update` at your shell.
 
 Updating agent-sandbox itself: pull the repository and re-run `./install.sh`.
-It is idempotent, keeps your allowlist edits, migrates older layouts, and
+It is idempotent, keeps your allowlist edits, and
 replaces the addon, the unit, and the installed copy of the engine and
 profiles with the current ones. A plain `git pull` alone does not take effect:
 the command runs from the copy under `~/.local/share/agent-sandbox`, not from

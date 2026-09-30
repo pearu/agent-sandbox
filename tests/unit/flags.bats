@@ -28,11 +28,10 @@ setup() {
   [[ "$output" == usage:* ]]
   run_engine -- asb claude --help
   [ "$status" -eq 0 ]
-  # the briefing appends its own --settings after the agent's arguments, so
-  # --help is the last argument the USER gave, not the last on the line
-  join_has --help
+  # the briefing's own --settings goes before the agent's arguments (JOINB), and
+  # --help is the user's, as typed
   [ "${JOINV[1]}" = --help ]
-  [ "${JOINV[2]}" = --settings ]
+  [ "${JOINB[0]}" = --settings ]
   # the agent's help ends with a footer pointing at --engine-help
   [[ "$output" == *"--engine-help"* ]]
   [[ "$output" == *"runs inside a sandbox"* ]]
@@ -344,10 +343,9 @@ STUB
   [ "${JOINV[*]}" = "bash -l --allow evil.example" ]
 }
 
-@test "--exec never routes to a host-side subcommand or a native verb" {
-  # `claude update` runs on the host unsandboxed, and `claude agents` runs
-  # natively; under --exec both name a program to run INSIDE the sandbox, and
-  # matching them here would run the agent outside the sandbox instead
+@test "--exec runs the words as a command inside, whatever agent verb they spell" {
+  # `claude agents` is a verb the engine joins into the role's launch; under --exec
+  # the words name a program to run INSIDE the sandbox instead
   run_engine -- asb --profile claude --exec update --foo
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ] # bwrap WAS invoked; it did not take the host-side path

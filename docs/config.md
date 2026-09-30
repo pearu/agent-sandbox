@@ -545,9 +545,8 @@ channel. Inside the sandbox it is at `~/.claude/.claude.json`, and
   allowed tools, which it establishes again once.
 - **`read-only`** and **`read-write`** are the native file itself, whole: every
   project's entry is readable inside. Under `read-only` Claude Code's own writes
-  to it fail silently, so it is valid but not advocated; there, a user-scope
-  `asb claude mcp add` typed at your shell runs natively, on your own file (as
-  `claude mcp add` itself does). Under
+  to it fail silently, so it is valid but not advocated; to change your user-level
+  MCP servers, type `claude mcp add` at your shell, which is Claude Code itself. Under
   `read-write` the sandbox writes your native file.
 - Under `--preset native` nothing is copied or relocated: Claude Code reads your
   native `~/.claude.json` as it would outside.
@@ -555,8 +554,7 @@ channel. Inside the sandbox it is at `~/.claude/.claude.json`, and
 The role's copy is kept on the host under
 `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/`, part of the
 sandbox's control plane: never bound into any sandbox, refused as a path declaration.
-The per-project copy of 0.3 (`claude/<slug>/claude.json`) becomes the default
-role's `seed-only` copy at the first launch that finds it. A background worker
+A background worker
 (`asb claude --bg`) is keyed by the project it was launched for, not by the daemon's
 directory, and is pre-trusted in the role's copy as it is in the native file.
 Without a working `python3` the seed is the whole native file, and the launch
@@ -577,4 +575,4 @@ of it is bound into the sandbox.
 | `<project>/.agent-sandbox` | the per-project policy (git-ignored by default) |
 | `~/.config/agent-sandbox/config` | `memory_default` and future global settings |
 | `~/.config/agent-sandbox/trust/` | approved dot-file hashes, one file per project |
-| `~/.local/state/agent-sandbox/claude/<slug>/claude.json` | the project's copy of Claude Code's config file (see above) |
+| `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/` | the role's copy of Claude Code's config file (see above) |

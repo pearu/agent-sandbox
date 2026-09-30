@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# The claude profile: the binary, state paths, host-routed subcommands.
+# The claude profile: the binary, state paths.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -34,8 +34,7 @@ slug_vector() {
   [ "${JOINV[0]}" = "$H/pkg/bin/claude" ]
 }
 
-@test "profile_prepare creates ~/.claude and ~/.claude.json for a launch, not for a host subcommand" {
-  run_engine -- asb claude update
+@test "profile_prepare creates ~/.claude and ~/.claude.json for a launch" {
   [ ! -e "$H/home/.claude" ]
   run_engine -- asb claude --version
   [ -d "$H/home/.claude" ]
@@ -71,25 +70,12 @@ STUB
   [ -e "$H/home/.claude/.claude.json" ]
 }
 
-@test "update/upgrade/install run on the host: no bwrap, argv passed through, exit code propagated, engine flags ignored with a note" {
-  cat >"$V/2.1.300/claude" <<'STUB'
-#!/usr/bin/env bash
-set +x
-echo "stub-agent argv: $*"
-[[ "$1" == upgrade ]] && exit 7
-exit 0
-STUB
+@test "asb claude update runs in the sandbox like any command: claude update typed natively is the update" {
   run_engine -- asb claude update --foo
   [ "$status" -eq 0 ]
-  [ ! -s "$H/argv" ]
-  [[ "$output" == *"running '$V/2.1.300/claude update --foo' on the host"* ]]
-  [[ "$output" == *"stub-agent argv: update --foo"* ]]
-  run_engine -- asb claude upgrade
-  [ "$status" -eq 7 ]
-  run_engine -- asb --allow pypi.org --ssh-unrestricted claude update
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--ssh*/--allow flags are ignored for 'update'"* ]]
-  [ -z "$(ls -A "$H/base")" ]
+  [ -s "$H/argv" ] # the sandbox was built, and the command joined into it
+  [[ " ${JOINV[*]} " == *"/claude update --foo "* ]]
+  [[ "$output" != *"on the host"* ]]
 }
 
 @test "project slug: a converted name of 200 characters or fewer is used unchanged" {

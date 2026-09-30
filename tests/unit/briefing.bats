@@ -49,9 +49,9 @@ trust() {
   for a in briefing.md hook-SessionStart.json hook-SubagentStart.json settings.json; do
     [ -s "$OUT/$a" ]
   done
-  # the agent is pointed at the settings file, last on the line
-  join_has --settings "$IN/settings.json"
-  [ "${JOINV[-1]}" = "$IN/settings.json" ]
+  # the agent is pointed at the settings file, first on the line, before its own
+  # arguments: a subcommand refuses --settings after it
+  [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
   # SessionStart AND SubagentStart, each cat-ing its own payload
   grep -q '"SessionStart"' "$OUT/settings.json"
   grep -q '"SubagentStart"' "$OUT/settings.json"
@@ -104,6 +104,7 @@ trust() {
 @test "off suppresses every trace of it; a dot-file can ask for that, and the shell knob wins" {
   run_engine AGENT_SANDBOX_BRIEFING=off BWRAP_COPY="$OUT" -- asb claude --version
   [ "$status" -eq 0 ]
+  [ "${#JOINB[@]}" -eq 0 ]
   run ! join_has --settings
   run ! grep -q "$IN" "$H/argv"
   [ ! -e "$OUT/briefing.md" ]
@@ -115,10 +116,10 @@ trust() {
   # ...and says so, which is what distinguishes "the file was read" from "the
   # default happened to match"
   [[ "$output" == *"using briefing mode 'off' from .agent-sandbox"* ]]
-  run ! join_has --settings
+  [ "${#JOINB[@]}" -eq 0 ]
   # an explicit knob in the shell overrides the file, as everywhere else
   run_engine AGENT_SANDBOX_BRIEFING=on -- asb claude --version
-  join_has --settings "$IN/settings.json"
+  [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
   [[ "$output" == *"overrides the .agent-sandbox briefing mode 'off'"* ]]
 }
 
@@ -139,13 +140,10 @@ trust() {
   grep -q 'echo mine' "$OUT/settings.json"
   grep -q "cat $IN/hook-SessionStart.json" "$OUT/settings.json"
   grep -q '"SubagentStart"' "$OUT/settings.json"
-  # ours is last on the line, so it is the one Claude Code keeps. (Comparing
-  # against argv_index of the path would prove nothing: it also appears earlier
-  # as the bind target, and argv_index reports the first occurrence.)
-  [ "${JOINV[-1]}" = "$IN/settings.json" ]
-  local i
-  for ((i = 0; i < ${#JOINV[@]}; i++)); do [[ "${JOINV[i]}" == "$mine" ]] && break; done
-  [ "$i" -lt "$((${#JOINV[@]} - 1))" ]
+  # ours is the only one on the line, so it is the one Claude Code keeps: theirs is
+  # in it now, and dropped from their arguments, which are otherwise as typed
+  [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
+  [ "${JOINV[*]:1}" = "--version" ]
 }
 
 @test "--settings=VALUE spelling is recognised too, and a file path is read" {
@@ -199,12 +197,26 @@ assert "hook-SessionStart.json" in ss[1]["hooks"][0]["command"], ss
 CHECK
 }
 
+@test "a subcommand gets the briefing before it, and what follows a -- is never read as Claude Code's" {
+  # `claude mcp list --settings X` is "unknown option"; `claude --settings X mcp list`
+  # works (measured, 2.1.285)
+  run_engine -- asb claude mcp list
+  [ "$status" -eq 0 ]
+  [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
+  [ "${JOINV[*]:1}" = "mcp list" ]
+  # after `--` the words are an MCP server's command line: a --settings there is its own
+  run_engine -- asb claude mcp add srv -- tool --settings keep.json
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"merged your --settings"* ]]
+  [ "${JOINV[*]:1}" = "mcp add srv -- tool --settings keep.json" ]
+}
+
 @test "a hooks shape we do not recognise is refused, never coerced" {
   # list() of a dict yields its keys, which would silently replace their data.
   run_engine BWRAP_COPY="$OUT" -- asb claude --settings '{"hooks":{"SessionStart":{"oops":1}}}' --version
   [ "$status" -eq 0 ] # the launch goes on
   [[ "$output" == *"not installed"* ]]
-  run ! join_has --settings "$IN/settings.json"
+  [ "${#JOINB[@]}" -eq 0 ]
   join_has --settings '{"hooks":{"SessionStart":{"oops":1}}}'
 }
 
@@ -220,7 +232,7 @@ CHECK
   join_has --settings '{"a":1}' # theirs, untouched
   [[ "$output" == *"not installed"* ]]
   [[ "$output" == *"briefing.md"* ]] # ...and where to read it anyway
-  run ! join_has --settings "$IN/settings.json"
+  [ "${#JOINB[@]}" -eq 0 ]
   # the readable briefing is still bound: only the injection was lost
   [ "$(grep -c "^$IN$" "$H/argv")" -eq 1 ]
 }

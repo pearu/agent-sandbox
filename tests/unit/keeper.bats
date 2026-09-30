@@ -313,7 +313,8 @@ for f in glob.glob(os.environ["SESS"] + "/briefing/join.*/settings.json"):
 STUB
   run_engine SESS="$sess" SNAP="$H/snap.json" -- asb claude --settings '{"x":1}' --version
   [ "$status" -eq 0 ]
-  [[ "${JOINV[-1]}" == /run/agent-sandbox/join.*/settings.json ]]
+  [[ "${JOINB[1]}" == /run/agent-sandbox/join.*/settings.json ]]
+  [ "${JOINV[*]:1}" = --version ] # theirs merged into it, and off the line
   grep -q '"x": 1' "$H/snap.json"
   grep -q 'hook-SessionStart.json' "$H/snap.json"
   [ -z "$(find "$sess/briefing" -name 'join.*')" ]
