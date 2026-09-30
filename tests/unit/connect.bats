@@ -1039,22 +1039,10 @@ seeded_run_scoped() { # MODE
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
-@test "a path under HOME, outside the project and every channel, is warned about" {
+@test "a path under HOME is not noted at launch: the dot-file's review says it, once" {
   mkdir -p "$H/home/notes"
-  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect '~/notes/ = own' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect '~/notes/ = own' --connect '~/fresh/ = own' claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"'~/notes/' is under your home directory"* ]]
-  # including when the directory does not exist yet and the launch creates it,
-  # which is the case the warning is chiefly for
-  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect '~/fresh/ = own' claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"'~/fresh/' is under your home directory"* ]]
-  # and a path inside the project is not, even when the project is under HOME
-  mkdir -p "$H/home/work"
-  mkdir -p "$H/home/work/data"
-  RUN_CWD="$H/home/work" run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect './data/ = own' claude --version
-  [ "$status" -eq 0 ]
-  argv_has --bind "$STATE/claude/${H//[^A-Za-z0-9-]/-}-home-work/default/@paths/own/$(slugify "$H/home/work/data")" "$H/home/work/data"
   [[ "$output" != *"under your home directory"* ]]
 }
 

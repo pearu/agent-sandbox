@@ -439,8 +439,9 @@ exposure any path grant carries.
 **The key is always a path inside the sandbox**, and with no source given the source is
 the same path outside. A relative key is relative to the project, whichever form it came
 from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only storage
-while `~/notes = read-only` puts your real one there; a key under `$HOME`, outside the
-project and every channel, says which of the two it is at launch. No explicit source is
+while `~/notes = read-only` puts your real one there; the dot-file's review
+(`--trust`, or the one a launch at a terminal runs) says which of the two a key under
+`$HOME`, outside the project, is. No explicit source is
 accepted yet: `outside:<path>` is a follow-up.
 
 **Every mode is checked alike, `own` included**, although `own` exposes nothing — one
