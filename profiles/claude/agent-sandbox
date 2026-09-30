@@ -11,6 +11,10 @@
 # profile.sh lists in profile_dotfile_keys (hide); the rest are the profile's.
 
 [agent]
+# Claude Code keeps its state in ~/.claude: sessions, OAuth/API tokens, settings. It is
+# bound read-write before anything else, and every channel below layers on it.
+base = ~/.claude
+
 # The verbs that observe or manage the background service (#123). Its daemon runs
 # inside the role's launch, so these join that launch -- and never start one: the
 # observing ones answer "not running" when there is none, the others refuse.
