@@ -41,7 +41,7 @@ trust() {
 @test "the example shows every section and every [conda]/[net]/[seccomp] key the engine supports (nothing missing)" {
   # The parser's list of accepted sections is the source of truth.
   local accepted
-  accepted=$(grep -E 'allow \| share-memory \| ro' "$ENGINE" | head -1 | sed -E 's/\).*//' | tr -d ' ' | tr '|' ' ')
+  accepted=$(grep -E 'allow \| share-memory \| forward' "$ENGINE" | head -1 | sed -E 's/\).*//' | tr -d ' ' | tr '|' ' ')
   [ -n "$accepted" ]
   local s
   for s in $accepted; do

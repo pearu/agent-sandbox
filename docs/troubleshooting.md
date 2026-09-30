@@ -113,7 +113,7 @@ The coarser alternative is disabling the restriction system-wide:
 **`Can't bind mount ... on /newroot/usr/local`**
 `/usr/local` is a symlink whose target is not exposed. The engine handles the
 common case (a symlink off `/usr`, e.g. for CUDA). If you still hit it:
-`AGENT_SANDBOX_RO=/path/to/real/local asb claude`.
+`asb --connect '/path/to/real/local = read-only' claude`.
 
 **API or DNS errors such as `FailedToOpenSocket`**
 Usually `/etc/resolv.conf` is a symlink into `/run` on systemd-resolved
@@ -220,7 +220,7 @@ By design: only an explicit allowlist of variables is forwarded. Per session:
 `AGENT_SANDBOX_FORWARD="GH_TOKEN" asb claude`.
 
 **A tool inside cannot reach a file outside the project**
-Expose it: `AGENT_SANDBOX_RO=/some/dir asb claude` (or `AGENT_SANDBOX_RW`).
+Expose it: `asb --connect '/some/dir = read-only' claude` (or `= read-write`), or a path declaration under `[connect]`.
 Secret stores, the sandbox's own configuration (`~/.config/agent-sandbox`,
 `~/.mitmproxy`, `~/.local/share/agent-sandbox`, `~/.local/bin`,
 `~/.config/systemd`), any directory containing one of those (`~/.config`,

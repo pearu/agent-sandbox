@@ -903,7 +903,7 @@ seeded_run_scoped() { # MODE
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
-@test "read-write on a path binds the outside path through, as [rw] does" {
+@test "read-write on a path binds the outside path through" {
   mkdir -p "$H/home/shared"
   run_engine -- asb --connect '~/shared = read-write' claude --version
   [ "$status" -eq 0 ]
@@ -1018,6 +1018,19 @@ seeded_run_scoped() { # MODE
   run_engine -- asb --connect './keys = read-only' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"secret store"* ]]
+}
+
+@test "a key that is a symlink binds its resolved target, at the declared name" {
+  # Binding the link would let bwrap resolve it again at mount time, and a link
+  # repointed after the check could mount a refused target; the bind is of the target
+  # just validated, mounted at the key.
+  local d
+  d="$(readlink -f "$H")"
+  mkdir -p "$d/realdir"
+  ln -s "$d/realdir" "$d/link"
+  run_engine -- asb --connect "$d/link = read-only" claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$d/realdir" "$d/link"
 }
 
 @test "two path declarations nested inside each other are refused" {

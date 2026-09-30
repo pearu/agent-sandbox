@@ -71,7 +71,7 @@ trust() {
   mkdir -p "$SC"
   printf 'x' >"$SC/$(uname -m).bpf"
   run_engine BWRAP_COPY="$OUT" AGENT_SANDBOX_SECCOMP=on AGENT_SANDBOX_SECCOMP_DIR="$SC" \
-    AGENT_SANDBOX_RO="$H/ro1" AGENT_SANDBOX_RW="$H/rw1" -- asb --allow pypi.org claude --version
+    -- asb --allow pypi.org --connect "$H/ro1 = read-only" --connect "$H/rw1 = read-write" claude --version
   [ "$status" -eq 0 ]
   local md="$OUT/briefing.md"
   grep -q 'allowlist' "$md"     # egress is described

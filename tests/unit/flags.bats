@@ -400,14 +400,14 @@ STUB
 @test "quiet never hides a refusal, a warning, or an unsandboxed notice" {
   # a refusal: the launch must still explain itself, and still fail
   mkdir -p "$H/home/.aws"
-  run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_RW="$H/home/.aws" -- asb claude --version
-  [ "$status" -eq 1 ]
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect "$H/home/.aws = read-write" claude --version
+  [ "$status" -ne 0 ]
   [[ "$output" == *refusing* ]]
   [ ! -s "$H/argv" ]
   # a warning about a path that is not there
-  run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_RO="$H/home/no-such-dir" -- asb claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect "$H/no-such-dir = read-only" claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"skipping missing path"* ]]
+  [[ "$output" == *"does not exist, so its declaration is skipped"* ]]
   # and a notice that something runs OUTSIDE the sandbox
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --preset none claude -p hi
   [[ "$output" == *"preset none: running claude with no sandbox"* ]]

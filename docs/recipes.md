@@ -9,7 +9,7 @@ the same five explain tools that are not listed here.
 | **Egress** | a host must be reachable through the proxy | `[allow]`, the global allowlist |
 | **Credentials** | a secret must cross — or deliberately must not | `[forward]`, `--ssh` |
 | **Loopback** | something outside must reach in, or inside must reach out | `--host-port`, `--agent-port` (strict only) |
-| **Paths** | a directory outside the project must be visible | `[ro]`, `[rw]` |
+| **Paths** | a directory outside the project must be visible | path declarations under `[connect]` |
 | **Host config** | identity and settings from your home are not there | set it per project |
 
 Anything under `[…]` goes in the project's `.agent-sandbox` and takes effect
@@ -137,16 +137,16 @@ model server running on the host that the agent must reach. Both are TCP,
 **Crossing: paths.** Only the current project is writable. To see more:
 
 ```ini
-[ro]
-~/datasets/corpus
-
-[rw]
-~/scratch/build-cache
+[connect]
+~/datasets/corpus = read-only
+~/scratch/build-cache/ = read-write
 ```
 
-Refused regardless: secret stores (`~/.ssh`, `~/.aws`, …), the sandbox's own
-configuration, `$HOME` itself and any parent of it. A monorepo sibling is a
-normal `[ro]` entry; a shared build cache is a normal `[rw]` one.
+A key with a `/` is a path: the path inside the sandbox, with the same path outside
+as its source. Refused regardless: secret stores (`~/.ssh`, `~/.aws`, …), the
+sandbox's own configuration, `$HOME` itself and any parent of it. A monorepo sibling
+is a `read-only` declaration; a shared build cache a `read-write` one — or `own`, if
+the sandbox should build a cache of its own there.
 
 ## A specific conda environment
 

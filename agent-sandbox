@@ -116,8 +116,6 @@
 # OPTIONAL KNOBS (set in the calling shell)
 # ============================================================================
 #
-#   AGENT_SANDBOX_RO=/path/a:/path/b   extra read-only paths (colon-sep)
-#   AGENT_SANDBOX_RW=/path/c           extra read-write paths (colon-sep)
 #   (RO/RW, FORWARD, the conda knobs, the network mode and the strict-mode
 #    ports can also be set per-project in a trusted .agent-sandbox file; an
 #    explicit knob in your shell wins over the file -- see docs/config.md.)
@@ -234,7 +232,7 @@
 # control plane (~/.config/agent-sandbox, ~/.mitmproxy,
 # ~/.local/share/agent-sandbox, ~/.local/state/agent-sandbox, ~/.local/bin,
 # ~/.config/systemd) are refused as
-# CWD and as AGENT_SANDBOX_RO or _RW targets, and so is any directory that
+# CWD and as the target of a path declaration, and so is any directory that
 # contains one of them (~/.config, ~/.local): bind a specific subdirectory
 # instead. Paths that resolve to "/", "$HOME" or a parent of $HOME are refused
 # outright, as CWD too. The list is a blocklist and cannot be complete;
@@ -385,8 +383,6 @@ Engine flags (before CMD):
                         (`asb claude --help`) it is the agent's
 
 Environment knobs:
-  AGENT_SANDBOX_RO=/a:/b        extra read-only paths
-  AGENT_SANDBOX_RW=/c           extra read-write paths
   AGENT_SANDBOX_FORWARD="A B"   extra environment variables to forward
   AGENT_SANDBOX_SECCOMP=on|off  default-deny seccomp syscall filter (default: on)
   AGENT_SANDBOX_CONDA_WRITE=1   bind the active conda env read-write
@@ -490,59 +486,6 @@ _as_path_protected() {
     done < <("_as_${kind}_paths")
   done
   return 1
-}
-
-# Refuse user-supplied RO/RW paths that pull the rug out from under the sandbox
-# (/, $HOME, or any parent of $HOME) or expose a protected path (above).
-_as_check_paths() { # $1 = knob suffix (RO|RW), $2 = colon-separated list
-  local knob=$1 raw="${2:-}" p real
-  local -a parts=()
-  local _prot_what _prot_path _prot_how
-  [[ -z "$raw" ]] && return 0
-  _as_split parts ':' "$raw"
-  for p in "${parts[@]}"; do
-    [[ -z "$p" ]] && continue
-    real="$(readlink -f -- "$p" 2>/dev/null || echo "$p")"
-    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]]; then
-      _as_msg "refusing AGENT_SANDBOX_$knob='$p' (would expose all of '$real': \$HOME or a parent of it)."
-      return 1
-    fi
-    if _as_path_protected "$real"; then
-      _as_msg "refusing AGENT_SANDBOX_$knob='$p' ('$real' $_prot_how $_prot_what '$_prot_path')."
-      [[ "$_prot_how" == contains ]] && _as_msg "bind a specific subdirectory instead."
-      return 1
-    fi
-  done
-  return 0
-}
-
-# User-supplied extra paths: append "$1 path path" to args for each existing
-# entry of the colon-separated list $2.
-_as_add_paths() {
-  local mode="$1" raw="${2:-}" p real
-  local _prot_what _prot_path _prot_how
-  local -a parts=()
-  [[ -z "$raw" ]] && return 0
-  _as_split parts ':' "$raw"
-  for p in "${parts[@]}"; do
-    [[ -z "$p" ]] && continue
-    if [[ ! -e "$p" ]]; then
-      _as_msg "warning — skipping missing path '$p'"
-      continue
-    fi
-    # Bind the RESOLVED target, not the symlink. _as_check_paths validated the
-    # resolved path, but binding "$p" lets bwrap re-resolve it at mount time, so a
-    # symlink repointed after the check could mount a different, refused target.
-    # Resolve here, re-check fail-closed, and bind the real path at the original
-    # name: the mounted target is exactly the one just validated.
-    real="$(readlink -f -- "$p" 2>/dev/null || echo "$p")"
-    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real"; then
-      _as_msg "refusing to bind '$p': it resolves to a protected path ('$real')"
-      return 1
-    fi
-    args+=("$mode" "$real" "$p")
-  done
-  return 0
 }
 
 # ----- per-session state: ssh agent socket, --allow include -----
@@ -1243,15 +1186,14 @@ _as_connect_parse() {
 #
 # THE KEY IS ALWAYS A PATH INSIDE THE SANDBOX. A relative one is relative to the
 # project, whichever of the three forms it came from; `~` is $HOME. With no source,
-# the source is the same path outside -- so `/data = read-only` is what `[ro] /data`
-# already does, and `~/notes/ = own` is sandbox-only storage at ~/notes.
+# the source is the same path outside -- so `/data = read-only` shows the outside
+# /data read-only, and `~/notes/ = own` is sandbox-only storage at ~/notes.
 #
 # EVERY MODE IS CHECKED ALIKE, `own` included, although `own` exposes nothing: one
 # rule is easier to state and to trust than one per mode, and loosening it later
-# breaks nobody while tightening it would. The rule is `[ro]`/`[rw]`'s --
-# not /, $HOME or a parent of it, nothing that is, is inside or contains a secret
-# store or the control plane -- plus one of its own: not the project or a parent
-# of it. Declarations are bound after the project, so one of those would cover it:
+# breaks nobody while tightening it would. The rule: not /, $HOME or a parent of it;
+# nothing that is, is inside or contains a secret store or the control plane; and not
+# the project or a parent of it. Declarations are bound after the project, so one of those would cover it:
 # `~/git/ = own` hides the project, `~/git = read-only` makes it read-only.
 #
 # Both the key and what it resolves to are checked, since the key is where the
@@ -1666,8 +1608,7 @@ _as_connect_path_warn() {
 
 # _as_connect_apply_paths -- add the path declarations' binds to $args.
 #
-# Called with the [ro]/[rw] binds it replaces, after the working tree and every
-# channel, so a declaration lands on top of whatever it is inside and wins there.
+# Called after the working tree and every channel, so a declaration lands on top of whatever it is inside and wins there.
 # Presets never reach this: a path has no position until someone declares one.
 #
 # A PATH THAT DOES NOT EXIST IS SKIPPED, with a notice, in every mode but one. The
@@ -1715,7 +1656,7 @@ _as_connect_apply_paths() {
       _as_msg "connect: '$key' ends in '/' but '$p' is not a directory. Refusing rather than guessing which was meant."
       return 1
     fi
-    # Resolved again at bind time and re-checked fail-closed, as _as_add_paths does:
+    # Resolved again at bind time and re-checked fail-closed:
     # a symlink repointed after the parse must not mount a target that was refused.
     real="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
     if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real"; then
@@ -2025,14 +1966,6 @@ _as_keeper_policy() {
   local item
   # The lists. The keeper records the union it launched with (flags, environment
   # and dot-file); a join is checked on what its own flags and environment named.
-  _as_split l : "${AGENT_SANDBOX_RO:-}"
-  ((all)) && l+=(${_df_ro[@]+"${_df_ro[@]}"})
-  for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +ro "$item" AGENT_SANDBOX_RO; done
-  l=()
-  _as_split l : "${AGENT_SANDBOX_RW:-}"
-  ((all)) && l+=(${_df_rw[@]+"${_df_rw[@]}"})
-  for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +rw "$item" AGENT_SANDBOX_RW; done
-  l=()
   _as_split l $', \t\n' "${AGENT_SANDBOX_FORWARD:-}"
   ((all)) && l+=(${_df_forward[@]+"${_df_forward[@]}"})
   for item in ${l[@]+"${l[@]}"}; do [[ -n "$item" ]] && _kp +forward "$item" AGENT_SANDBOX_FORWARD; done
@@ -2855,8 +2788,16 @@ _as_briefing_write() {
     fi ;;
   esac
   rw_line="$cwd"
-  [[ -n "${_knob_rw:-}" ]] && rw_line="$rw_line, ${_knob_rw//:/, }"
-  [[ -n "${_knob_ro:-}" ]] && ro_line="${_knob_ro//:/, }"
+  # The paths declared read-write or read-only. Not the built-in read-only dot-file,
+  # which is no grant.
+  local _bp
+  for _bp in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    [[ "${_connect_where[$_bp]:-}" == "built in"* ]] && continue
+    case "${_connect_mode[$_bp]:-}" in
+      read-write) rw_line="$rw_line, $_bp" ;;
+      read-only) ro_line="${ro_line:+$ro_line, }$_bp" ;;
+    esac
+  done
 
   local sec="off"
   case "${_knob_seccomp:-}" in on | 1) sec="on: syscalls outside an allowlist fail with EPERM" ;; esac
@@ -3228,7 +3169,7 @@ _as_dotfile_parse() {
         esac
       fi
       case "$section" in
-        allow | share-memory | ro | rw | forward | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | forward | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         "$profile") ;; # a section named after the active profile; see below
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
@@ -3242,8 +3183,6 @@ _as_dotfile_parse() {
       -skip-) ;;
       allow) _df_allow+=("$line") ;;
       share-memory) _df_share+=("${line/#\~/$HOME}") ;;
-      ro) _df_ro+=("${line/#\~/$HOME}") ;;
-      rw) _df_rw+=("${line/#\~/$HOME}") ;;
       forward) _df_forward+=("$line") ;;
       conda)
         if [[ "$line" != *=* ]]; then
@@ -4249,7 +4188,7 @@ agent_sandbox() (
   fi
 
   # ---- knobs (AGENT_SANDBOX_*) ----
-  local _knob_ro="${AGENT_SANDBOX_RO:-}" _knob_rw="${AGENT_SANDBOX_RW:-}" _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
+  local _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_briefing="${AGENT_SANDBOX_BRIEFING:-}"
@@ -4266,14 +4205,14 @@ agent_sandbox() (
   # the daemon happened to be, and its project is the one the launcher recorded. The
   # dot-file and its trust record must follow the project or a project's own
   # .agent-sandbox is silently ignored in the workers its sessions spawn -- [net],
-  # [allow], [ro], [seccomp], [connect], all of it, including a project that
+  # [allow], [seccomp], [connect], all of it, including a project that
   # deliberately TIGHTENS. Same helper, and the same reasoning, as the config-file
   # copy and the sandbox key, both of which were fixed for this earlier.
   local _proj
   _proj="$(_as_project_dir)"
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
-  local -a _df_allow=() _df_share=() _df_ro=() _df_rw=() _df_forward=()
+  local -a _df_allow=() _df_share=() _df_forward=()
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
@@ -4380,22 +4319,6 @@ agent_sandbox() (
           _as_msg ".agent-sandbox allow: bad host '$_dh'; ignoring"
         fi
       done
-      # ro/rw paths and forwarded names: add to the knobs (validated later by
-      # _as_check_paths, which still refuses secret stores, /, $HOME, parents).
-      if ((${#_df_ro[@]})); then
-        _dj="$(
-          IFS=:
-          printf '%s' "${_df_ro[*]}"
-        )"
-        _knob_ro="${_knob_ro:+$_knob_ro:}$_dj"
-      fi
-      if ((${#_df_rw[@]})); then
-        _dj="$(
-          IFS=:
-          printf '%s' "${_df_rw[*]}"
-        )"
-        _knob_rw="${_knob_rw:+$_knob_rw:}$_dj"
-      fi
       ((${#_df_forward[@]})) && _knob_forward="${_knob_forward:+$_knob_forward }${_df_forward[*]}"
       # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
       # file. Note a trusted `mode = open` switches the allowlist off for this
@@ -4895,9 +4818,6 @@ agent_sandbox() (
     return 1
   fi
 
-  _as_check_paths RO "$_knob_ro" || return 1
-  _as_check_paths RW "$_knob_rw" || return 1
-
   # The ephemeral view of the writable world: a blank $HOME and private /tmp,
   # /var/tmp, /run, which is most of what "sandbox" means here.
   #
@@ -5265,11 +5185,7 @@ agent_sandbox() (
     fi
   fi
 
-  # User-supplied extra paths.
-  _as_add_paths --ro-bind "$_knob_ro" || return 1
-  _as_add_paths --bind "$_knob_rw" || return 1
-  # And the path declarations, which are what [ro]/[rw] become: here, after the
-  # working-tree bind, or the project would cover every declaration inside it --
+  # The path declarations: here, after the working-tree bind, or the project would cover every declaration inside it --
   # measured, under the real bwrap, the first time this ran (connect-paths.bats).
   _as_connect_apply_paths || return 1
 
