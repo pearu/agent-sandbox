@@ -86,6 +86,16 @@ setup() {
   run ! setenv_value SSL_CERT_FILE
 }
 
+@test "bwrap itself runs with no environment: inside it is pid 1, whose environment the sandbox can read" {
+  # Its --clearenv clears only the command's. The command's environment is all --setenv.
+  run_engine SECRETISH=1 -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -f "$H/argv.env" ]
+  [ ! -s "$H/argv.env" ] # the stub was given nothing
+  argv_has --clearenv
+  argv_has --setenv HOME "$H/home"
+}
+
 @test "environment allowlist: locale, profile, proxy/CA and CUDA names are forwarded only when set; FORWARD adds names; caller-set CA variables win" {
   run_engine LANG=C.UTF-8 TZ=UTC ANTHROPIC_API_KEY=k CUDA_HOME=/usr/local/cuda AWS_SECRET_ACCESS_KEY=x GH_TOKEN=y -- asb claude --version
   [ "$(setenv_value LANG)" = "C.UTF-8" ]
@@ -188,6 +198,7 @@ setup() {
   # a probing stub: snapshot the session base while "inside"
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+. "${0%/*}/stub-env"
 set +x
 : >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*; do printf '== %s\n' "$f"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1

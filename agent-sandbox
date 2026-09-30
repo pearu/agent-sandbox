@@ -3558,7 +3558,23 @@ _as_launch() {
 # _as_keeper_exec LAUNCH... -- the keeper's launch, as the supervisor runs it: in a
 # session of its own, so nothing the terminal sends reaches it, with the syscall
 # filter on fd 10 where bwrap (or the strict wrapper) reads it.
+#
+# BWRAP RUNS WITH NO ENVIRONMENT OF ITS OWN. Its --clearenv clears the command's, not
+# bwrap's, and bwrap is pid 1 inside, where /proc/1/environ is readable: the launching
+# shell's whole environment would reach the agent whatever [forward] says. It needs
+# nothing from it -- the command's environment is all --setenv -- so it gets none, and
+# its path is resolved here, since with no PATH nothing would find it. The strict
+# wrapper does the same at its own exec of bwrap; pasta keeps its environment, outside.
 _as_keeper_exec() {
+  if [[ "$1" == bwrap ]]; then
+    local bin
+    bin="$(command -v bwrap)" || {
+      _as_msg "bwrap not found on PATH"
+      return 127
+    }
+    shift
+    exec -c setsid "$bin" "$@" 10<"${_seccomp_bpf:-/dev/null}"
+  fi
   exec setsid "$@" 10<"${_seccomp_bpf:-/dev/null}"
 }
 
@@ -3612,7 +3628,10 @@ _as_launch_pasta() {
       echo "agent-sandbox: strict-mode egress firewall failed to load; refusing to launch" >&2
       exit 1
     }
-    bwrapbin=$1
+    bwrapbin=$(command -v "$1") || {
+      echo "agent-sandbox: bwrap not found on PATH" >&2
+      exit 127
+    }
     shift
     pxy="http://${auth:+$auth@}$gw:8888"
     # The proxy env must be set AFTER the base args reach their --clearenv, or
@@ -3626,7 +3645,8 @@ _as_launch_pasta() {
       shift
     done
     # fd 10 carries the seccomp filter when AGENT_SANDBOX_SECCOMP is on (else /dev/null).
-    exec "$bwrapbin" "${opts[@]}" \
+    # No environment for bwrap itself (see _as_keeper_exec).
+    exec -c "$bwrapbin" "${opts[@]}" \
       --setenv HTTP_PROXY "$pxy" --setenv HTTPS_PROXY "$pxy" \
       --setenv http_proxy "$pxy" --setenv https_proxy "$pxy" \
       "$@" 10<"${bpf:-/dev/null}"

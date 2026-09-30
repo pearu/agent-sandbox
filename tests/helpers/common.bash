@@ -26,6 +26,7 @@ make_harness() {
   mkdir -p "$H/bin" "$H/home/.local/share/claude/versions/2.1.300" "$H/proj" "$H/base"
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+. "${0%/*}/stub-env"
 # Not measured, so not traced: under coverage kcov traces every bash process the
 # engine starts, and a stub's trace only slows it and pollutes what it captures.
 set +x
@@ -58,6 +59,26 @@ if [[ "${!#}" == agent-sandbox-keeper ]]; then
   exec "$@"
 fi
 exit 0
+STUB
+  # The start of every stub bwrap, sourced first: the engine runs bwrap with no
+  # environment of its own, so a stub takes back the one of its nearest ancestor that
+  # has one -- the engine's -- to find the dump path and the rest of its test's knobs.
+  # What it was given itself goes to $BWRAP_DUMP.env, one name per line, for the tests
+  # that pin that it was nothing.
+  cat >"$H/bin/stub-env" <<'STUB'
+_stub_given=()
+while IFS= read -r -d '' _kv; do _stub_given+=("${_kv%%=*}"); done </proc/$$/environ
+_stub_p=$PPID
+while [[ -z "${HOME:-}" && "${_stub_p:-1}" -gt 1 ]]; do
+  { while IFS= read -r -d '' _kv; do export "${_kv?}" 2>/dev/null; done <"/proc/$_stub_p/environ"; } 2>/dev/null
+  _stub_n=""
+  { while IFS=$' \t' read -r _k _v; do [[ "$_k" == PPid: ]] && _stub_n="$_v"; done <"/proc/$_stub_p/status"; } 2>/dev/null
+  _stub_p="$_stub_n"
+done
+if [[ -n "${BWRAP_DUMP:-}" && "${1:-}" != --help && "${1:-}" != --version ]]; then
+  : >"$BWRAP_DUMP.env"
+  for _kv in ${_stub_given[@]+"${_stub_given[@]}"}; do printf '%s\n' "$_kv" >>"$BWRAP_DUMP.env"; done
+fi
 STUB
   # Stub join (AGENT_SANDBOX_JOIN): record its argv, one token per line, and run
   # nothing -- as the stub bwrap never ran the agent, this never runs the command. It

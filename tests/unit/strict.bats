@@ -74,6 +74,14 @@ pasta_argv() {
   run ! grepd '10.0.2.2'             # not the old slirp gateway
 }
 
+@test "strict: bwrap runs with no environment of its own, though pasta and the wrapper keep theirs" {
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" SECRETISH=1 -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -f "$H/argv.env" ]
+  [ ! -s "$H/argv.env" ]
+  grep -A1 -x HTTPS_PROXY "$H/argv" | grep -qE '^http://([^@]*@)?10.9.9.1:8888$' # the wrapper's own work still reaches it
+}
+
 @test "strict: --host-port/--agent-port, the knobs and a trusted [net] section open exactly those TCP ports in pasta; none closes a direction" {
   printf '[net]\nhost-port = 11434\nagent-port = 3000   # vite\n' >"$PROJ/.agent-sandbox"
   trust
@@ -227,6 +235,7 @@ exit 0
 S
   cat >"$H/bin/bwrap" <<'S'
 #!/usr/bin/env bash
+. "${0%/*}/stub-env"
 set +x
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done

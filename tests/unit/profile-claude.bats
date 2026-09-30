@@ -49,6 +49,7 @@ slug_vector() {
   # anyone who points CLAUDE_CONFIG_DIR at ~/.claude natively.
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+. "${0%/*}/stub-env"
 set +x
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
