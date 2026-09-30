@@ -165,6 +165,7 @@ PY
 @test "the empty mount-point file bwrap leaves for the config file is removed after the launch" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
+. "${0%/*}/stub-env"
 set +x
 if [[ "${1:-}" == --help ]]; then printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'; exit 0; fi
 : >"${BWRAP_DUMP:?}"

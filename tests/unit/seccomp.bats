@@ -9,6 +9,7 @@ setup() {
   make_harness
   cat >"$H/bin/bwrap" <<'S'
 #!/usr/bin/env bash
+. "${0%/*}/stub-env"
 set +x
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done

@@ -25,6 +25,7 @@ say net_ifaces "$(awk -F: 'NR>2{gsub(/ /,"",$1); printf "%s ", $1}' /proc/net/de
 say bundle_certs "$(grep -c 'BEGIN CERT' /etc/ssl/certs/ca-certificates.crt 2>/dev/null)"
 say has_marker_ca "$([[ -n ${CA_LINE2-} ]] && grep -c "$CA_LINE2" /etc/ssl/certs/ca-certificates.crt || echo n/a)"
 say pid1 "$(cat /proc/1/comm 2>/dev/null)"
+say pid1_environ "$(tr '\0' '\n' </proc/1/environ 2>/dev/null | wc -l)"
 say argv "$*"
 PROBE
   mkdir -p "$IHOME/.ssh"
@@ -48,6 +49,8 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
   [ "$(report home_env)" = "$IHOME" ]
   [ "$(report argv)" = "--my-arg value" ]
   [ "$(report pid1)" != "$(cat /proc/1/comm)" ] || [ "$(report pid1)" = "bwrap" ]
+  # pid 1 is bwrap, readable from inside: it runs with no environment, so LEAKED is not there either
+  [ "$(report pid1_environ)" = 0 ]
 }
 
 @test "net=none: no interfaces but loopback, no proxy variables" {
