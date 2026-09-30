@@ -131,6 +131,47 @@ trust() {
   [ ! -d "/proc/$spid" ] # the idle one was ended
 }
 
+# The agent binary is part of a running role's policy: the keeper binds the one it
+# launched with, and another does not exist inside (measured by tests/live/seccomp.bats:
+# a join found nothing at its binary's path, exit 127).
+other_agent() { # a second claude, as an update or another install would give
+  mkdir -p "$H/other"
+  printf '#!/usr/bin/env bash\necho other-agent\n' >"$H/other/claude"
+  chmod +x "$H/other/claude"
+}
+
+@test "a join that runs another agent binary than its busy keeper's is refused, naming both" {
+  other_agent
+  engine_bg -- asb claude --version
+  run_engine -- asb "$H/other/claude" --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"running with agent = $BIN, and this launch's agent asks for '$H/other/claude'"* ]]
+  [ ! -s "$H/join" ]
+  release_bg
+}
+
+@test "an IDLE keeper is replaced by a launch with another agent binary: an update just works" {
+  other_agent
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb claude --version
+  release_bg
+  local spid
+  read -r spid _ <"$SBOX/keeper/id"
+  run_engine PATH="$H/other:$H/bin:/usr/bin:/bin" -- asb claude --version # `claude` moved
+  [ "$status" -eq 0 ]
+  [ -s "$H/argv" ] # a launch of its own
+  argv_has --ro-bind "$H/other/claude" "$H/other/claude"
+  [ ! -d "/proc/$spid" ]
+}
+
+@test "--exec is not compared on the agent binary: it runs a command of its own" {
+  other_agent
+  engine_bg -- asb claude --version
+  run_engine PATH="$H/other:$H/bin:/usr/bin:/bin" -- asb --profile claude --exec true
+  [ "$status" -eq 0 ]
+  [ -s "$H/join" ] # joined
+  release_bg
+}
+
 @test "an IDLE keeper started under a different dot-file is replaced too, without a warning" {
   printf '[connect]\nskills = read-only native\n' >"$PROJ/.agent-sandbox"
   trust

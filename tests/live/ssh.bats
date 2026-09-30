@@ -32,11 +32,11 @@ teardown() {
   return 0
 }
 
-@test "strict --ssh: the agent verifies github's host key and authenticates as uid 0" {
+@test "strict --ssh: the agent verifies github's host key and authenticates, as your own uid" {
   run env AGENT_SANDBOX_PROFILE_DIR="$PROF" AGENT_SANDBOX_NET=strict \
     "$ENGINE" --profile sshprobe --ssh github.com "$PROF/sshprobe-bin.sh" run
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"uid=0"* ]]                      # strict runs the agent as root in pasta's userns
-  [[ "$output" == *"successfully authenticated"* ]] # host key verified (from uid 0's ~) + agent key accepted
+  [[ "$output" == *"uid=$(id -u)"* ]]               # your uid in every network mode, strict included (#63)
+  [[ "$output" == *"successfully authenticated"* ]] # host key verified + agent key accepted
 }

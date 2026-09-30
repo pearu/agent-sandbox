@@ -752,11 +752,11 @@ _as_ssh_setup() {
     --ro-bind "$kh" "$kh"
   )
   [[ -r "$cfg" ]] && args+=(--ro-bind "$cfg" "$cfg")
-  # In strict mode the agent runs as uid 0 (pasta maps the one uid to root), so
-  # ssh resolves ~ through getpwuid(0) to root's home rather than $HOME and would
-  # not find the binds above -- host-key verification then fails. Bind the same
-  # read-only files at uid 0's home too, so --ssh works in strict as in proxy.
-  # Harmless in the other modes, where the agent is your uid and uses $HOME.
+  # Strict mode once ran the agent as uid 0 (pasta maps the one uid to root), and ssh
+  # then resolved ~ through getpwuid(0) to root's home rather than $HOME, missing the
+  # binds above. Since #63 the sandbox runs as your uid in every network mode (measured
+  # by tests/live/ssh.bats), so this copy at uid 0's home is a fallback only: harmless,
+  # and kept for a strict launch that ever maps root again.
   local _root_home
   _root_home="$(getent passwd 0 2>/dev/null | cut -d: -f6)"
   if [[ -n "$_root_home" && "$_root_home" != "$HOME" ]]; then
@@ -2028,6 +2028,13 @@ _as_keeper_policy() {
     for item in ${_keeper_join_host_ports[@]+"${_keeper_join_host_ports[@]}"}; do _kp +host-port "$item" "--host-port/AGENT_SANDBOX_HOST_PORTS"; done
     for item in ${_keeper_join_agent_ports[@]+"${_keeper_join_agent_ports[@]}"}; do _kp +agent-port "$item" "--agent-port/AGENT_SANDBOX_AGENT_PORTS"; done
   fi
+  # THE AGENT ITSELF: the keeper binds the binary it launched with, so a join that runs
+  # another one would find nothing at that path inside (measured: "No such file", exit
+  # 127). Every join names one -- CMD resolved, or the profile's command on PATH -- so it
+  # is always compared, but for --exec, which runs a command of its own. After an update
+  # moves `claude` to a new binary, an idle keeper is replaced and a busy one refuses,
+  # which is the rule for every other part of a running role's policy.
+  if ((all || ! _do_exec)); then _kp agent "$profile_bin" "this launch's agent"; fi
   unset -f _kp
   return 0
 }
