@@ -12,7 +12,6 @@ setup() {
   SBOX="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/default"
   INSIDE="$H/home/.claude/.claude.json"
   NATIVE_CFG="$H/home/.claude.json"
-  OLD_COPY="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/claude.json"
   printf '{"a":1,"mcpServers":{"host":{}},"projects":{"%s":{"t":true},"/elsewhere":{"lastSessionFirstPrompt":"SECRET"}}}' "$PROJ" >"$NATIVE_CFG"
   cp "$NATIVE_CFG" "$H/native-before.json"
 }
@@ -116,16 +115,6 @@ PY
   [ ! -e "$SBOX/config" ]
 }
 
-@test "the per-project copy of 0.3 becomes the default role's seed-only store, moved once" {
-  mkdir -p "$(dirname "$OLD_COPY")"
-  printf '{"kept":"from 0.3"}' >"$OLD_COPY"
-  TEST_PRESET=inherit run_engine -- asb claude --version
-  [ "$status" -eq 0 ]
-  [ "$(cat "$(store seed-only)")" = '{"kept":"from 0.3"}' ]
-  [ ! -e "$OLD_COPY" ]
-  argv_has --bind "$(store seed-only)" "$INSIDE"
-}
-
 @test "--reset config discards the store, and the next launch seeds a fresh filtered view" {
   run_engine -- asb --connect 'config=seed-only native' claude --version
   local s
@@ -179,12 +168,9 @@ STUB
   [ ! -e "$INSIDE" ]
 }
 
-@test "under read-only, claude mcp add --scope user typed at the shell runs natively" {
+@test "a user-scope claude mcp under asb runs in the sandbox like any command: typed natively, claude is Claude Code" {
   run_engine -- asb --connect 'config=read-only native' claude mcp add --scope user foo -- true
   [ "$status" -eq 0 ]
-  [[ "$output" == *"stub-agent argv: mcp add --scope user foo -- true"* ]]
-  [ ! -s "$H/argv" ] # no sandbox was built
-  # local scope is the project's own entry: it stays inside
-  run_engine -- asb --connect 'config=read-only native' claude mcp add --scope local foo -- true
-  [ -s "$H/argv" ]
+  [ -s "$H/argv" ] # the sandbox was built, and the command joined into it
+  [[ " ${JOINV[*]} " == *"/claude mcp add --scope user foo -- true "* ]]
 }

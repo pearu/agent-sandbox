@@ -253,7 +253,7 @@
 #   docs/config.md           the per-project .agent-sandbox file, its trust
 #                            gate, and per-project memory scoping
 #   docs/profiles.md         the profile contract; adding an agent
-#   docs/updating.md         host-routed agent updates (claude update)
+#   docs/updating.md         updating the agent (outside the sandbox)
 #   docs/troubleshooting.md  error messages and their fixes
 # README.md has install and quick start; AGENTS.md has the rules for
 # maintainers. Read docs/design.md before changing anything below: the engine
@@ -4162,7 +4162,6 @@ agent_sandbox() (
   # shellcheck disable=SC2034
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
-  local -a profile_host_subcommands=()
   # Background service (#123): the verbs that join the role's launch and never start
   # one (the observing ones answer "not running" when there is none), and the argv
   # tokens that mark the daemon, which holds the role's keeper while it runs.
@@ -4193,28 +4192,6 @@ agent_sandbox() (
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
   _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
-
-  # ---- host-side subcommands (e.g. `claude update`) ----
-  # The profile lists verbs that must run on the HOST with the caller's
-  # environment, unsandboxed; see docs/updating.md. Not under --exec: there the
-  # words are a command line of the caller's choosing, so `--exec update` must
-  # run the program named `update` inside the sandbox, never the agent's
-  # host-side updater.
-  if [[ -n "${1:-}" ]] && ((! _do_exec)); then
-    local _sub _rc
-    for _sub in "${profile_host_subcommands[@]}"; do
-      [[ "$1" == "$_sub" ]] || continue
-      ((_ssh_want || ${#_allow_hosts[@]} > 0)) && _as_msg "--ssh*/--allow flags are ignored for '$1'"
-      declare -F profile_handle_subcommand >/dev/null \
-        || {
-          _as_msg "profile '$profile' lists '$1' as host-side but defines no profile_handle_subcommand()"
-          return 2
-        }
-      _rc=0
-      profile_handle_subcommand "$@" || _rc=$?
-      return "$_rc"
-    done
-  fi
 
   # ---- --preset none: no sandbox at all, before any project machinery ----
   # The flag is its only form (see the preset block), and with no sandbox there is no

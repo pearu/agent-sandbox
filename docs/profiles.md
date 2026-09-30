@@ -26,7 +26,6 @@ Variables a profile declares (all optional unless marked):
 | `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). The dot-file's `[forward]` adds to it. |
 | `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. |
 | `profile_env_refuse=(...)` | Names a user may not forward with `[forward]` or `AGENT_SANDBOX_FORWARD`: refused with a message. Names in `profile_env_set` are refused the same way, so a forward cannot override what the profile pins. |
-| `profile_host_subcommands=(...)` | Agent subcommands the engine hands to `profile_handle_subcommand()` to run on the host, unsandboxed, instead of launching the sandbox (self-update, typically). |
 | `profile_verbs=(...)` | (Or `[agent] verbs` in the dot-file.) Agent verbs that observe or manage a background service. The engine joins them into the role's running launch, where the service is, and never starts a launch for one: with none running, a verb in `profile_verbs_observe` answers that the role is not running (exit 0) and any other is refused. They get no briefing arguments. |
 | `profile_verbs_observe=(...)` | (Or `[agent] verbs-observe`.) The subset of `profile_verbs` that only ask questions. |
 | `profile_daemon_argv=(...)` | (Or `[agent] daemon`.) Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
@@ -35,8 +34,7 @@ Functions a profile defines:
 
 | Function | Meaning |
 |---|---|
-| `profile_prepare()` | Optional. Runs right before the sandbox is assembled; create state files here. Not run for host-side subcommands. |
-| `profile_handle_subcommand()` | Required iff `profile_host_subcommands` is non-empty. Receives the agent's full argv (`$1` is the subcommand); its return code is the exit code. |
+| `profile_prepare()` | Optional. Runs right before the sandbox is assembled; create state files here. |
 | `profile_memory_scope()` | Optional. Called with the resolved mode (`scoped`/`shared`) and the approved share paths. In `scoped` mode, hide the agent's per-project state and rebind the current project plus each share. Without it, a `scoped` setting is reported as ignored rather than silently doing nothing. |
 | `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR` lines: empty inside, discarded at exit. (`copyout` and `append`, which merged a session's entries back at exit, are gone since #120: state that should outlive a launch is a channel, with a mode.) Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
 | `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. Skipped when the briefing is off or could not be written. |
@@ -99,7 +97,7 @@ in a profile's dot-file are not read yet: the launch says so.
 3. Run `scripts/check.sh`, then `install.sh` (or `install.sh --dry-run` first):
    the installer reports the agent it finds on PATH.
    `asb <name>` then runs it.
-4. Add tests under `tests/` for the profile's hooks and any host-side subcommands.
+4. Add tests under `tests/` for the profile's hooks.
 5. Nothing in the engine should need to change. If it does, the contract is
    missing something; extend the contract (and this document) rather than
    special-casing a profile.

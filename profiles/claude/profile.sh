@@ -42,10 +42,6 @@
 #                               message. Names in profile_env_set are refused
 #                               the same way, so a forward cannot override
 #                               what the profile pins.
-#   profile_host_subcommands=() agent subcommands the engine hands to
-#                               profile_handle_subcommand() to run on the
-#                               host, unsandboxed, instead of launching the
-#                               sandbox (e.g. self-update).
 #
 # Functions a profile defines:
 #
@@ -56,10 +52,6 @@
 #                               paths; appends to profile_tmpfs/_rw_binds/
 #                               _ro_binds to scope per-project memory. See
 #                               docs/config.md.
-#   profile_handle_subcommand() required iff profile_host_subcommands is
-#                               non-empty. Receives the agent's full argv
-#                               ($1 is the subcommand); its return code is
-#                               the exit code.
 #
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),
@@ -180,8 +172,8 @@ profile_channel_presets=("config	inherit=seed-only shared=seed-only"
 
 # Never let the sandboxed claude try to self-update. Downloads are blocked by
 # the proxy allowlist and the versions directory is not bound, so the attempt
-# could only fail; `claude update` (run on the host via
-# profile_handle_subcommand below) is the supported path. Note: the legacy
+# could only fail; `claude update` typed at your own shell -- Claude Code itself,
+# since nothing shadows `claude` (#151) -- is the supported path. Note: the legacy
 # `autoUpdates: false` in ~/.claude.json is ignored for native installs.
 profile_env_set=(DISABLE_AUTOUPDATER=1)
 # CLAUDE_CONFIG_DIR at its own default value: nothing else moves, but Claude
@@ -195,8 +187,6 @@ profile_env_set+=("CLAUDE_CONFIG_DIR=$HOME/.claude")
 # under the per-project scoping, silently. Never forwarded, whatever a [forward]
 # section says.
 profile_env_refuse=(CLAUDE_CODE_PROJECT_DIR_NAME)
-
-profile_host_subcommands=(update upgrade install)
 
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the review warns on any other [claude] key (a typo
@@ -376,10 +366,6 @@ _claude_config_store() { # $1 = project dir, $2 = mode
   printf '%s/claude/%s/%s/config/%s/%s' "$(_as_state_dir)" "$(_claude_project_slug "$1")" \
     "${_role:-default}" "$2" "${inside#_}"
 }
-# The 0.3 location: one copy per project, beside the role directories.
-_claude_config_legacy() { # $1 = project dir
-  printf '%s/claude/%s/claude.json' "$(_as_state_dir)" "$(_claude_project_slug "$1")"
-}
 # _claude_config_filter SOURCE VIEW -- the seed the seeding modes read: every
 # top-level key and, of the per-project entries, only this project's. Without a
 # working python3 the view is the whole file, and the launch says so: a seed that is
@@ -441,46 +427,7 @@ _claude_config_prepare() {
     profile_env_refuse=()
     return 0
   fi
-  # THE 0.3 COPY BECOMES THE DEFAULT ROLE'S SEED-ONLY STORE, moved once. It holds what
-  # the project's sessions wrote -- folder trust, allowed tools, onboarding -- and a
-  # fresh seed would lose all of it for no reason.
-  local project legacy store
-  project="$(_claude_config_project)"
-  legacy="$(_claude_config_legacy "$project")"
-  store="$(_claude_config_store "$project" seed-only)"
-  if [[ -f "$legacy" && ! -e "$store" && "${_role:-default}" == default ]]; then
-    if (umask 077 && mkdir -p -- "$(dirname -- "$store")") && mv -- "$legacy" "$store"; then
-      _as_info "config: this project's config file moved to the default role's store"
-    else
-      _as_msg "config: could not move $legacy to $store; it is left where it is"
-    fi
-  fi
   return 0
-}
-
-# `asb claude update` (alias `upgrade`) and `asb claude install [target]` run the
-# agent directly on the host with the caller's environment -- what `claude update`
-# does anyway, since nothing shadows `claude` (#151): the sandbox would block the
-# download and has no writable versions directory.
-# shellcheck disable=SC2154 # profile_bin: set by the engine before any hook runs
-profile_handle_subcommand() {
-  _as_msg "running '$profile_bin $*' on the host (unsandboxed)"
-  exec "$profile_bin" "$@"
-}
-
-# _claude_mcp_user_scope ARGV... -- is this `mcp ... --scope user`?
-_claude_mcp_user_scope() {
-  [[ "${1:-}" == mcp ]] || return 1
-  shift
-  while (($#)); do
-    case "$1" in
-      --scope=user | -s=user) return 0 ;;
-      --scope | -s) [[ "${2:-}" == user ]] && return 0 ;;
-      --) return 1 ;;
-    esac
-    shift
-  done
-  return 1
 }
 
 # profile_route [AGENT ARGS...] -- engine hook (see the engine's profile_route
@@ -491,16 +438,6 @@ _claude_mcp_user_scope() {
 # `--preset none`. Reads the engine's locals by dynamic scope, as the other hooks do.
 # shellcheck disable=SC2154
 profile_route() {
-  # UNDER `config = read-only`, A USER-SCOPE `claude mcp` TYPED AT YOUR SHELL RUNS
-  # NATIVELY (#119). The sandbox's config file is then the native file, read-only, so
-  # inside the command could only fail; what you mean by "user scope" is your own
-  # file, and this is you at your own shell. Never from inside a sandbox, where an
-  # agent could otherwise reach the native file through it, and never local scope,
-  # which is the project's own entry and stays inside in every mode.
-  if [[ -z "${AGENT_SANDBOX:-}" && "${_connect_mode[config]:-}" == read-only ]] && _claude_mcp_user_scope "$@"; then
-    _as_info "config is read-only here, so this user-scope 'claude mcp' runs natively, on your own ~/.claude.json"
-    exec "$profile_bin" "$@"
-  fi
   # Inside a sandbox, a `claude` typed there runs in it as it is, not in a second
   # sandbox of its own: nesting happens only when asked for, with --preset.
   if [[ -n "${AGENT_SANDBOX:-}" && -z "${_preset_flag:-}" ]]; then

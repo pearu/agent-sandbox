@@ -344,10 +344,9 @@ STUB
   [ "${JOINV[*]}" = "bash -l --allow evil.example" ]
 }
 
-@test "--exec never routes to a host-side subcommand or a native verb" {
-  # `claude update` runs on the host unsandboxed, and `claude agents` runs
-  # natively; under --exec both name a program to run INSIDE the sandbox, and
-  # matching them here would run the agent outside the sandbox instead
+@test "--exec runs the words as a command inside, whatever agent verb they spell" {
+  # `claude agents` is a verb the engine joins into the role's launch; under --exec
+  # the words name a program to run INSIDE the sandbox instead
   run_engine -- asb --profile claude --exec update --foo
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ] # bwrap WAS invoked; it did not take the host-side path

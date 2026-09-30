@@ -173,13 +173,6 @@ teardown_file() {
   [ "$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log")" -ge 3 ]
 }
 
-@test "a host-routed subcommand runs the fake agent unsandboxed through asb" {
-  run launch claude update
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"running '$H/.local/share/claude/versions/9.9.9/claude update' on the host"* ]]
-  [[ "$output" == *"fake-claude: 'update' ran unsandboxed as $(id -un) in $E/proj"* ]]
-}
-
 @test "re-running install.sh reuses the proxy environment and CA, keeps the allowlist, restarts the service" {
   echo "my.custom.host" >>"$H/.config/agent-sandbox/allowlist.txt"
   run_install "$E/install2.out"
