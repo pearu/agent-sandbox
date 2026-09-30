@@ -234,9 +234,9 @@
 # ~/.config/systemd) are refused as
 # CWD and as the target of a path declaration, and so is any directory that
 # contains one of them (~/.config, ~/.local): bind a specific subdirectory
-# instead. Paths that resolve to "/", "$HOME" or a parent of $HOME are refused
-# outright, as CWD too. The list is a blocklist and cannot be complete;
-# see _as_secret_paths below.
+# instead; the one exception is ~/.local/bin declared read-only. Paths that
+# resolve to "/", "$HOME" or a parent of $HOME are refused outright, as CWD too.
+# The list is a blocklist and cannot be complete; see _as_secret_paths below.
 #
 # ============================================================================
 # DOCUMENTATION
@@ -442,7 +442,9 @@ _as_split() {
 #                      per-project state (~/.local/state/agent-sandbox),
 #                      re-point the launcher (~/.local/bin) or install a user
 #                      unit that runs at login (~/.config/systemd). Refused
-#                      read-only too, for one rule instead of two.
+#                      read-only too, for one rule instead of two -- except
+#                      ~/.local/bin, whose harm is a write: read-only, it
+#                      puts your commands on the sandbox's PATH.
 # A blocklist cannot be complete: anything you bind that is not listed here is
 # yours to judge. Paths are compared resolved (readlink -f), as-is.
 _as_secret_paths() {
@@ -463,11 +465,12 @@ _as_control_paths() {
 # config file here, under claude/<slug>/.
 _as_state_dir() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"; }
 
-# Is the resolved path $1 protected? On yes, sets the caller's _prot_what ("the
-# secret store" / "the sandbox's own control plane"), _prot_path (the listed
-# path) and _prot_how ("is" / "is inside" / "contains") for its message.
+# Is the resolved path $1 protected, bound in mode $2 (none: as CWD)? On yes, sets
+# the caller's _prot_what ("the secret store" / "the sandbox's own control plane"),
+# _prot_path (the listed path) and _prot_how ("is" / "is inside" / "contains") for
+# its message. ~/.local/bin, and what is inside it, is not protected read-only.
 _as_path_protected() {
-  local real="$1" kind p
+  local real="$1" mode="${2:-}" kind p
   _prot_what="" _prot_path="" _prot_how=""
   for kind in secret control; do
     while IFS= read -r p; do
@@ -480,6 +483,7 @@ _as_path_protected() {
       else
         continue
       fi
+      [[ "$mode" == read-only && "$p" == "$HOME"/.local/bin && "$_prot_how" != contains ]] && continue
       _prot_path="$p"
       if [[ "$kind" == secret ]]; then _prot_what="the secret store"; else _prot_what="the sandbox's own control plane"; fi
       return 0
@@ -1140,7 +1144,8 @@ _as_connect_parse() {
 # EVERY MODE IS CHECKED ALIKE, `own` included, although `own` exposes nothing: one
 # rule is easier to state and to trust than one per mode, and loosening it later
 # breaks nobody while tightening it would. The rule: not /, $HOME or a parent of it;
-# nothing that is, is inside or contains a secret store or the control plane; and not
+# nothing that is, is inside or contains a secret store or the control plane (but
+# ~/.local/bin read-only, see _as_path_protected); and not
 # the project or a parent of it. Declarations are bound after the project, so one of those would cover it:
 # `~/git/ = own` hides the project, `~/git = read-only` makes it read-only.
 #
@@ -1175,8 +1180,10 @@ _as_connect_parse_path() {
       _as_msg "connect ($where): refusing '$key' ('$c' is the project or a parent of it, and a declaration over it would cover the project). Declare a directory inside it instead."
       return 1
     fi
-    if _as_path_protected "$c"; then
-      _as_msg "connect ($where): refusing '$key' ('$c' $_prot_how $_prot_what '$_prot_path'), in every mode."
+    if _as_path_protected "$c" "$mode"; then
+      local every="in every mode"
+      [[ "$_prot_path" == "$HOME"/.local/bin && "$_prot_how" != contains ]] && every="in every mode but read-only"
+      _as_msg "connect ($where): refusing '$key' ('$c' $_prot_how $_prot_what '$_prot_path'), $every."
       return 1
     fi
   done
@@ -1607,7 +1614,7 @@ _as_connect_apply_paths() {
     # Resolved again at bind time and re-checked fail-closed:
     # a symlink repointed after the parse must not mount a target that was refused.
     real="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
-    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real"; then
+    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real" "$mode"; then
       _as_msg "connect: refusing to bind '$key': it resolves to a protected path ('$real')"
       return 1
     fi

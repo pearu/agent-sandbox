@@ -962,6 +962,25 @@ seeded_run_scoped() { # MODE
   done
 }
 
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "~/.local/bin is the one control path declarable read-only; every other mode is refused" {
+  mkdir -p "$H/home/.local/bin"
+  run_engine -- asb --connect '~/.local/bin = read-only' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/home/.local/bin" "$H/home/.local/bin"
+  local spec
+  for spec in '~/.local/bin/ = own' '~/.local/bin = copy' '~/.local/bin = read-write'; do
+    run_engine -- asb --connect "$spec" claude --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"control plane"*"in every mode but read-only"* ]]
+    [ ! -s "$H/argv" ]
+  done
+  # what contains it contains other protected paths too
+  run_engine -- asb --connect '~/.local = read-only' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"contains the"*"in every mode."* ]]
+}
+
 @test "a key that is a symlink into a secret store is refused" {
   mkdir -p "$H/home/.ssh"
   ln -s "$H/home/.ssh" "$PROJ/keys"

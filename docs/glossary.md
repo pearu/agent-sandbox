@@ -353,7 +353,7 @@ read-only. *shipped*
 
 **Control plane.** The engine's own machinery on the host — the trust store, the proxy CA,
 the runtime, the state directory, `~/.local/bin` where `asb` lives, user units. Refused as a bind, because
-writable from inside it would let the agent change its own sandbox. *shipped*
+writable from inside it would let the agent change its own sandbox; `~/.local/bin` alone may be bound read-only. *shipped*
 
 ## Testing
 
