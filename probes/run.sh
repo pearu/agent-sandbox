@@ -79,10 +79,10 @@ fi
 launcher="${PROBE_LAUNCHER:-$(command -v claude || true)}"
 engine_ver=""
 if [[ -n "$launcher" ]]; then
-  engine_ver="$("$launcher" --engine-version 2>/dev/null || true)"
+  engine_ver="$("$launcher" --version 2>/dev/null || true)"
 fi
 if [[ "$engine_ver" != agent-sandbox* ]]; then
-  ((dry)) || die "no agent-sandbox launcher found ('claude' on PATH must answer --engine-version); set PROBE_LAUNCHER"
+  ((dry)) || die "no agent-sandbox launcher found ('claude' on PATH must answer --version); set PROBE_LAUNCHER"
   engine_ver="(launcher not found)"
 fi
 

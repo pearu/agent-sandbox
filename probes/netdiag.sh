@@ -15,11 +15,11 @@ launcher="${PROBE_LAUNCHER:-$(command -v asb || true)}"
   echo "netdiag: no 'asb' on PATH; set PROBE_LAUNCHER=/path/to/agent-sandbox" >&2
   exit 2
 }
-ev="$("$launcher" --engine-version 2>/dev/null || true)"
+ev="$("$launcher" --version 2>/dev/null || true)"
 case "$ev" in
   agent-sandbox*) : ;;
   *)
-    echo "netdiag: '$launcher' is not the agent-sandbox launcher (--engine-version: ${ev:-nothing})" >&2
+    echo "netdiag: '$launcher' is not the agent-sandbox launcher (--version: ${ev:-nothing})" >&2
     exit 2
     ;;
 esac

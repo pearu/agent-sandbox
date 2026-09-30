@@ -13,9 +13,9 @@ setup() {
   [[ "$output" == *"profiles available"*"claude"* ]]
   [ ! -s "$H/argv" ]
   # an agent option before any command is an option the engine does not have
-  run_engine -- asb --version
+  run_engine -- asb --json
   [ "$status" -eq 2 ]
-  [[ "$output" == *"'--version' is not an option of agent-sandbox"*"asb --role reviewer claude -r"* ]]
+  [[ "$output" == *"'--json' is not an option of agent-sandbox"*"asb --role reviewer claude -r"* ]]
   [ ! -s "$H/argv" ]
   run_engine -- asb --role x -r claude
   [ "$status" -eq 2 ]
@@ -68,12 +68,22 @@ STUB
   [[ "$output" != *"the sandbox did not start"* ]]
 }
 
-@test "--engine-version prints the version and exits without launching" {
-  run_engine -- asb --engine-version claude
+@test "--version before the command prints the engine's version and exits without launching" {
+  run_engine -- asb --version
   [ "$status" -eq 0 ]
   # derived from the VERSION file next to the engine, not hardcoded, so a
   # release bump does not need to touch this test; a build marker may follow.
   [[ "$output" == "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]]
+  [ ! -s "$H/argv" ]
+  # after the command it is the agent's, untouched
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  join_has --version
+  [[ "$output" != "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]]
+  # and the old spelling is refused with the new one
+  run_engine -- asb --engine-version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--engine-version was renamed: write --version"* ]]
   [ ! -s "$H/argv" ]
 }
 
@@ -178,6 +188,11 @@ STUB
   [[ "$output" == *"no longer run as 'claude'"*"asb claude"* ]]
   [[ "$output" == *"$H/old/claude is a launcher an earlier install.sh left"*"install.sh"* ]]
   [ ! -s "$H/argv" ]
+  [[ "$output" != "agent-sandbox $(cat "$REPO_ROOT/VERSION")"* ]] # no engine flag answers as the agent
+  # except --wrap, from a daemon an earlier engine started: its own message says what to do
+  run_engine -- "$H/old/claude" --wrap
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--wrap was removed"*"claude daemon stop"* ]]
 }
 
 @test "any other name for the engine is the engine: only a profile's name is refused" {

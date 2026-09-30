@@ -222,7 +222,8 @@
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
-#   --engine-version      print the agent-sandbox version and exit
+#   --version             print the agent-sandbox version and exit (after the
+#                         command it is the agent's: asb claude --version)
 #   -h, --help            engine usage when it comes before any command;
 #                         after the command (`asb claude --help`) it is the
 #                         agent's
@@ -375,7 +376,8 @@ Engine flags (before CMD):
                         default, which is what the engine has always done. See
                         docs/connections.md
   --engine-help         this text, even when a profile is selected
-  --engine-version      print the agent-sandbox version and exit
+  --version             print the agent-sandbox version and exit; after the
+                        command it is the agent's (asb claude --version)
   -h, --help            this text, before any command; after one
                         (`asb claude --help`) it is the agent's
 
@@ -3734,6 +3736,22 @@ agent_sandbox() (
   local _join_stage_bound=0
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   local _preset_flag="" _preset=inherit _role_flag="" _role_flag_set=0
+  # ---- invoked through a launcher named after a profile: removed (#151) ----
+  # Earlier installs put this engine at ~/.local/bin/claude, so that `claude` meant
+  # the sandboxed agent. It no longer does: `claude` is Claude Code itself again, and
+  # the sandbox is asked for by name. Refused rather than run either way -- sandboxed
+  # would keep the ambiguity alive, native would quietly drop the sandbox someone
+  # typed `claude` expecting.
+  # Only a profile's name is that launcher: any other name for the engine -- asb, an
+  # alias of the user's own -- is the engine asked for by name.
+  # Before the flags, so that no flag of the engine's answers in the agent's name
+  # (`claude --version` must not print agent-sandbox's) -- but not for --wrap, whose own
+  # refusal below says what a daemon an earlier engine started needs.
+  if [[ "${BASH_SOURCE[0]}" == "$0" && "$invoked" != "$(basename -- "$engine")" && -r "$profile_dir/$invoked.sh" && "${1:-}" != --wrap ]]; then
+    _as_msg "agent-sandbox is no longer run as '$invoked' (#151): '$invoked' is the agent itself again, and a sandboxed launch is: asb $invoked"
+    _as_msg "$0 is a launcher an earlier install.sh left. Run install.sh again: it puts back the '$invoked' you had, and installs asb."
+    return 2
+  fi
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -3838,9 +3856,16 @@ agent_sandbox() (
         _do_engine_help=1
         shift
         ;;
-      --engine-version)
+      --version)
+        # Before the command it is the engine's (#151): `asb --version`. After the
+        # command it is the agent's, untouched: `asb claude --version`.
         _as_version
         return 0
+        ;;
+      --engine-version)
+        # Renamed once the calling convention made the short name the engine's alone.
+        _as_msg "--engine-version was renamed: write --version (before the command; after it, --version is the agent's: asb claude --version)"
+        return 2
         ;;
       --trust)
         _do_trust=1
@@ -3986,19 +4011,6 @@ agent_sandbox() (
       *) break ;;
     esac
   done
-  # ---- invoked through a launcher named after a profile: removed (#151) ----
-  # Earlier installs put this engine at ~/.local/bin/claude, so that `claude` meant
-  # the sandboxed agent. It no longer does: `claude` is Claude Code itself again, and
-  # the sandbox is asked for by name. Refused rather than run either way -- sandboxed
-  # would keep the ambiguity alive, native would quietly drop the sandbox someone
-  # typed `claude` expecting.
-  # Only a profile's name is that launcher: any other name for the engine -- asb, an
-  # alias of the user's own -- is the engine asked for by name.
-  if [[ "${BASH_SOURCE[0]}" == "$0" && "$invoked" != "$(basename -- "$engine")" && -r "$profile_dir/$invoked.sh" ]]; then
-    _as_msg "agent-sandbox is no longer run as '$invoked' (#151): '$invoked' is the agent itself again, and a sandboxed launch is: asb $invoked"
-    _as_msg "$0 is a launcher an earlier install.sh left. Run install.sh again: it puts back the '$invoked' you had, and installs asb."
-    return 2
-  fi
   # ---- the command (#151): asb [ENGINE FLAGS] CMD [AGENT ARGS] ----
   # The loop above stopped at the first word that is not the engine's. That word is
   # CMD, the agent -- a name looked up on PATH or a path -- and everything after it is
