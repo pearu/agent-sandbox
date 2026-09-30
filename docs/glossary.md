@@ -118,9 +118,9 @@ upper layer. `read-only` and `read-write` have none. Each store belongs to `(rol
 mode)`. *agreed*
 
 **Source.** Where a connection reads from, and where a sandbox is created from.
-*shipped*: `native` only. *agreed*: `sandbox:<project>[/<role>]` (another sandbox),
-`outside:<path>` (a path one level out — the parent's filesystem when nested, never the
-machine's), and `clone:<source>` (a throwaway, discardable copy of a source, made per
+*shipped*: `native` for a channel, and `outside:<path>` for a path declaration (the
+same path outside when none is written; #174). *agreed*: `sandbox:<project>[/<role>]`
+(another sandbox), and `clone:<source>` (a throwaway, discardable copy of a source, made per
 measurement or run and shared by every launch in it,
 [#106 comment](https://github.com/pearu/agent-sandbox/issues/106)).
 

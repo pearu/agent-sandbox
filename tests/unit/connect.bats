@@ -735,6 +735,62 @@ seeded_run_scoped() { # MODE
   argv_has --ro-bind "$C/rules" "$C/rules"
 }
 
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "outside: a declaration's source is another path outside, bound or seeded at the key (#174)" {
+  mkdir -p "$H/data/tpl"
+  printf 'OUT\n' >"$H/data/out.txt"
+  printf 'T\n' >"$H/data/tpl/t.md"
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect "~/in.txt = read-only outside:$H/data/out.txt" \
+    --connect "./cfg/ = seed-only outside:$H/data/tpl" claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/data/out.txt" "$H/home/in.txt"
+  local slot
+  slot="$SBOX/@paths/seed-only/$(slugify "$PROJ/cfg")"
+  argv_has --bind "$slot" "$PROJ/cfg"
+  [ "$(cat "$slot/t.md")" = T ] # seeded from the outside source
+  [ ! -e "$PROJ/cfg" ]          # the key needs no path of its own outside
+  # `~` in the source is expanded
+  mkdir -p "$H/home/dot"
+  run_engine -- asb --connect "/srv/x/ = read-only outside:~/dot" claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/home/dot" /srv/x
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "outside: refused for own, relative, over / or HOME, or protected; another source token is not a path's" {
+  mkdir -p "$H/home/.ssh" "$H/data"
+  local spec
+  for spec in "./a/ = own outside:$H/data" './a = read-only outside:data' "./a/ = read-only outside:/" \
+    './a/ = read-only outside:~' './a/ = read-only outside:~/.ssh' './a = read-only native'; do
+    run_engine -- asb --connect "$spec" claude --version
+    [ "$status" -ne 0 ]
+    [ ! -s "$H/argv" ]
+  done
+  run_engine -- asb --connect './a/ = read-only outside:~/.ssh' claude --version
+  [[ "$output" == *"secret store"* ]]
+}
+
+@test "outside: an absent source is skipped this launch, naming it; under --preset native nothing is relocated" {
+  run_engine -- asb --connect "./a.txt = read-only outside:$H/nope.txt" claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'./a.txt' (outside:$H/nope.txt) does not exist"* ]]
+  run ! grep -qx "$PROJ/a.txt" "$H/argv"
+  printf 'x\n' >"$H/there.txt"
+  run_engine -- asb --preset native --connect "./a.txt = read-only outside:$H/there.txt" claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qx "$H/there.txt" "$H/argv"
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "outside: the review names the source, and says a file is bound over" {
+  printf 'x\n' >"$H/home/real.json"
+  printf '[connect]\n~/.agent/config.json = seed-only outside:~/real.json\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"'~/.agent/config.json' follows '$H/home/real.json' outside"* ]]
+  [[ "$output" == *"this puts your real '$H/home/real.json' there, at seed-only"* ]]
+  [[ "$output" == *"'~/.agent/config.json' is a file"* ]]
+}
+
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
   run_engine -- asb --connect './scratch/=own run-scoped' claude --version
@@ -1015,13 +1071,6 @@ seeded_run_scoped() { # MODE
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/data" "$PROJ/data"
   run ! argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/data")" "$PROJ/data"
-}
-
-@test "a path declaration takes no source yet: outside: is a follow-up" {
-  mkdir -p "$PROJ/data"
-  run_engine -- asb --connect './data = read-only native' claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"source"* ]]
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it

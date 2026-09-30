@@ -150,7 +150,10 @@ Sections:
   `/data = read-only` shows the outside `/data` read-only, `~/cache/ = read-write`
   shares a directory both ways. This is how any path outside the project is exposed.
   The key is the path inside the sandbox, relative keys are relative to the project,
-  `~` is `$HOME`, and the source is the same path outside. Every mode is checked alike:
+  `~` is `$HOME`, and the source is the same path outside -- or another, written
+  `outside:<path>` after the mode (`~/.agent/config.json = seed-only
+  outside:~/templates/config.json`): absolute or under `~`, never with `own`, and not
+  bound at all under `--preset native`. Every mode is checked alike, key and source:
   secret stores (`~/.ssh`, `~/.aws`, ...), the sandbox's own configuration, any
   directory containing one of them, `/`, `$HOME`, any parent of `$HOME`, and the
   project or a parent of it are refused. A path that does not exist is skipped until it does,

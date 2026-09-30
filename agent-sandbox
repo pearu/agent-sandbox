@@ -1068,14 +1068,19 @@ _as_connect_parse() {
       return 1
       ;;
   esac
+  local outside=""
   if [[ "$ch" == */* ]]; then
-    # The source of a path is the same path outside, and nothing else yet: the
-    # explicit form, outside:<path>, is a follow-up. `native` names the agent's
-    # own install, which a path is not part of.
-    [[ -z "$src_given" ]] || {
-      _as_msg "connect ($where): '$ch' is a path, and a path declaration takes no source yet -- its source is the same path outside. Drop '$src_given'."
-      return 1
-    }
+    # The source of a path is the same path outside, unless `outside:<path>` names
+    # another (#174): what the sandbox sees at the key follows that path instead.
+    # `native` names the agent's own install, which a path is not part of.
+    case "$src_given" in
+      "") ;;
+      outside:?*) outside="${src_given#outside:}" ;;
+      *)
+        _as_msg "connect ($where): '$ch' is a path; its source is the same path outside, or another written 'outside:<path>'. '$src_given' is neither."
+        return 1
+        ;;
+    esac
   else
     [[ "$src" == native ]] || {
       _as_msg "connect ($where): source '$src' is not supported yet; only 'native' is"
@@ -1128,7 +1133,7 @@ _as_connect_parse() {
       ;;
   esac
   if [[ "$ch" == */* ]]; then
-    _as_connect_parse_path "$ch" "$mode" "$where" || return 1
+    _as_connect_parse_path "$ch" "$mode" "$where" "$outside" || return 1
     ch="$_path_key"
   fi
   _connect_mode["$ch"]="$mode"
@@ -1158,7 +1163,7 @@ _as_connect_parse() {
 # Both the key and what it resolves to are checked, since the key is where the
 # bind lands and the resolved path is what it shows.
 _as_connect_parse_path() {
-  local key="$1" mode="$2" where="$3" p dir=0 real proj other
+  local key="$1" mode="$2" where="$3" outside="${4:-}" p dir=0 real proj other
   local _prot_what _prot_path _prot_how
   [[ "$key" == */ ]] && dir=1
   p="$key"
@@ -1203,9 +1208,40 @@ _as_connect_parse_path() {
       return 1
     fi
   done
+  # AN OUTSIDE SOURCE (#174) is checked as the key is, for what it shows: not /, $HOME
+  # or a parent of it, nothing protected, lexically and resolved. It is absolute or
+  # under `~`: outside the sandbox there is no project for it to be relative to. `own`
+  # takes nothing from outside, so a source there means something other than written.
+  local src=""
+  if [[ -n "$outside" ]]; then
+    [[ "$mode" != own ]] || {
+      _as_msg "connect ($where): '$key = own outside:$outside' -- own is the sandbox's own storage and takes nothing from outside; drop the source, or pick a mode that reads it."
+      return 1
+    }
+    case "$outside" in
+      \~ | \~/*) src="$HOME${outside#\~}" ;;
+      /*) src="$outside" ;;
+      *)
+        _as_msg "connect ($where): 'outside:$outside' is relative; an outside source is absolute or under '~' (there is no project outside to be relative to)."
+        return 1
+        ;;
+    esac
+    src="$(realpath -m -s -- "$src")"
+    for c in "$src" "$(readlink -f -- "$src" 2>/dev/null || printf '%s' "$src")"; do
+      if [[ "$c" == / || "$c" == "$HOME" || "$HOME" == "$c"/* ]]; then
+        _as_msg "connect ($where): refusing 'outside:$outside' (it would show all of '$c': / , \$HOME or a parent of it)."
+        return 1
+      fi
+      if _as_path_protected "$c" "$mode"; then
+        _as_msg "connect ($where): refusing 'outside:$outside' ('$c' $_prot_how $_prot_what '$_prot_path')."
+        return 1
+      fi
+    done
+  fi
   [[ -n "${_connect_key[$p]:-}" ]] || _connect_paths+=("$p")
   _connect_key["$p"]="$key"
   _connect_isdir["$p"]="$dir"
+  _connect_src["$p"]="$src"
   _path_key="$p"
   return 0
 }
@@ -1545,51 +1581,68 @@ _as_connect_apply() {
 # exception is a trailing slash under `own`, which reads as "a directory of the
 # sandbox's own here" and needs nothing outside. Anything the sandbox then creates
 # at a skipped path is picked up at the next launch.
+#
+# THE SOURCE is the path itself, or its `outside:` path (#174): what the modes read,
+# seed from and bind is the source, and where they land is the key. A relocated path
+# is not bound at all under `native`, whose claim is parity with no sandbox: there the
+# agent finds its file where it keeps it.
 _as_connect_apply_paths() {
   ((${#_connect_paths[@]})) || return 0
-  local p key mode base slot manifest real kind rolebase
+  local p key mode base slot manifest real kind rolebase s what
   local _prot_what _prot_path _prot_how
   rolebase="$(_as_sandbox_dir)"
   for p in "${_connect_paths[@]}"; do
     key="${_connect_key[$p]}"
     mode="${_connect_mode[$p]}"
+    s="${_connect_src[$p]:-}"
+    if [[ -n "$s" ]] && _as_preset_is_native; then
+      _as_info "connect: '$key' follows 'outside:$s', and --preset native relocates nothing; not bound"
+      continue
+    fi
+    what="'$key'"
+    [[ -n "$s" ]] && what="'$key' (outside:$s)"
+    s="${s:-$p}"
     base="$rolebase/@paths"
     [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
     if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
       local _jseed=""
-      [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
-      if ((${_connect_isdir[$p]})) || [[ -d "$p" ]]; then
+      [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
+      if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
         _as_join_scoped_bind dir "$p" "$_jseed" || return 1
-      elif [[ -e "$p" ]]; then
+      elif [[ -e "$s" ]]; then
         _as_join_scoped_bind file "$p" "$_jseed" || return 1
       else
-        _as_msg "connect: '$key' does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
+        _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
       fi
       continue
     fi
-    if [[ ! -e "$p" ]]; then
+    if [[ ! -e "$s" ]]; then
       if [[ "$mode" == own ]] && ((${_connect_isdir[$p]})); then
         slot="$base/own/$(_as_iso_slug "$p")"
         mkdir -p -- "$slot" || return 1
         args+=(--bind "$slot" "$p")
       else
-        _as_msg "connect: '$key' does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
+        _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
       fi
       continue
     fi
     kind="file"
-    [[ -d "$p" ]] && kind="dir"
+    [[ -d "$s" ]] && kind="dir"
     if ((${_connect_isdir[$p]})) && [[ "$kind" != dir ]]; then
-      _as_msg "connect: '$key' ends in '/' but '$p' is not a directory. Refusing rather than guessing which was meant."
+      _as_msg "connect: $what ends in '/' but '$s' is not a directory. Refusing rather than guessing which was meant."
       return 1
     fi
     # Resolved again at bind time and re-checked fail-closed:
     # a symlink repointed after the parse must not mount a target that was refused.
-    real="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
+    real="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
     if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real" "$mode"; then
-      _as_msg "connect: refusing to bind '$key': it resolves to a protected path ('$real')"
+      _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
       return 1
     fi
+    # A relocated FILE whose key is not there yet: bwrap creates the mount point, which
+    # lands on the host when the key's directory is bound from it; the cleanup removes
+    # it again if it is still empty (as for a channel's relocated file).
+    [[ "$s" != "$p" && "$kind" == file ]] && _as_connect_placeholder "$p"
     # What a declaration means -- a file bound over, a path under $HOME, one over a
     # channel -- is said at the dot-file's review (_as_trust_notes), not at every launch.
     case "$mode" in
@@ -3110,7 +3163,14 @@ _as_trust_notes() {
     key="${key#"${key%%[![:space:]]*}"}"
     key="${key%"${key##*[![:space:]]}"}"
     [[ "$key" == */* ]] || continue
-    read -r mode _ <<<"${spec#*=}"
+    local t2="" t3="" src=""
+    read -r mode t2 t3 _ <<<"${spec#*=}"
+    for f in "$t2" "$t3"; do
+      [[ "$f" == outside:?* ]] || continue
+      src="${f#outside:}"
+      [[ "$src" == \~ || "$src" == \~/* ]] && src="$HOME${src#\~}"
+      src="$(realpath -m -s -- "$src")"
+    done
     case "$key" in
       \~/*) p="$HOME${key#\~}" ;;
       /*) p="$key" ;;
@@ -3136,10 +3196,13 @@ _as_trust_notes() {
       if [[ "$mode" == own ]]; then
         _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this is sandbox-only storage at '$p', and your real one stays hidden."
       else
-        _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this puts your real '$p' there, at $mode."
+        _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this puts your real '${src:-$p}' there, at $mode."
       fi
     fi
-    if [[ "$key" != */ && -f "$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")" ]]; then
+    if [[ -n "$src" ]]; then
+      _as_msg "connect: '$key' follows '$src' outside, not the path of the same name; under --preset native it is not bound at all."
+    fi
+    if [[ "$key" != */ && -f "$(readlink -f -- "${src:-$p}" 2>/dev/null || printf '%s' "${src:-$p}")" ]]; then
       local cow_note=""
       [[ "$mode" == copy-on-write ]] && cow_note=" And copy-on-write on a file is copy: overlayfs cannot stack on a single file."
       _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
@@ -3816,7 +3879,7 @@ agent_sandbox() (
   # Path declarations, in the order declared: the resolved path, what the user
   # wrote, and whether they wrote a trailing slash.
   local -a _connect_paths=()
-  local -A _connect_key=() _connect_isdir=()
+  local -A _connect_key=() _connect_isdir=() _connect_src=()
   local _path_key
   local -a _connect_flag=()
   # The command line that runs the sandbox: bwrap, or pasta running bwrap. Set by the
