@@ -122,9 +122,9 @@ trust() {
   run ! argv_has --ro-bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory"
 }
 
-@test "an approved dot-file adds [ro]/[rw] paths and [forward] names to the sandbox" {
+@test "an approved dot-file adds declared paths and [forward] names to the sandbox" {
   mkdir -p "$H/ro-a" "$H/ro-b" "$H/rw-a"
-  printf '[ro]\n%s/ro-a\n%s/ro-b\n[rw]\n%s/rw-a\n[forward]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"
+  printf '[connect]\n%s/ro-a = read-only\n%s/ro-b = read-only\n%s/rw-a = read-write\n[forward]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine MY_TOOL=on CUDA_VISIBLE_DEVICES=1 -- asb claude --version
   [ "$status" -eq 0 ]
@@ -150,20 +150,20 @@ trust() {
   [ ! -s "$H/argv" ]
 }
 
-@test "dot-file [ro]/[rw] paths still go through the secret-store refusal" {
+@test "a dot-file path declaration still goes through the secret-store refusal" {
   mkdir -p "$H/home/.aws"
-  printf '[rw]\n%s/home/.aws\n' "$H" >"$PROJ/.agent-sandbox"
+  printf '[connect]\n%s/home/.aws = read-write\n' "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
-  [ "$status" -eq 1 ]
+  [ "$status" -ne 0 ]
   [ ! -s "$H/argv" ]
 }
 
-@test "a command-line env knob and the dot-file combine: RW paths union" {
+@test "a declaration on the command line and one in the dot-file combine: both paths bind" {
   mkdir -p "$H/env-rw" "$H/file-rw"
-  printf '[rw]\n%s/file-rw\n' "$H" >"$PROJ/.agent-sandbox"
+  printf '[connect]\n%s/file-rw = read-write\n' "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
-  run_engine AGENT_SANDBOX_RW="$H/env-rw" -- asb claude --version
+  run_engine -- asb --connect "$H/env-rw = read-write" claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$H/env-rw" "$H/env-rw"
   argv_has --bind "$H/file-rw" "$H/file-rw"

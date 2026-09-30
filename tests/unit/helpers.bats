@@ -19,7 +19,7 @@ setup() {
   [ "${e[*]}" = 'FOO BAR BAZ' ]
 }
 
-@test "_as_check_paths refuses secret stores, the control plane and directories containing them, for RO and for RW; siblings pass" {
+@test "_as_path_protected: secret stores, the control plane and directories containing them; siblings pass" {
   HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
     "$HOME/.local/share/keyrings" "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" \
@@ -27,63 +27,26 @@ setup() {
     "$HOME/.local/state/agent-sandbox/claude" \
     "$HOME/.config/nvim" "$HOME/.local/share/fonts" "$HOME/.cargo" "$HOME/.sshfoo" "$HOME/.local/state/other"
   : >"$HOME/.netrc"
-  for knob in RO RW; do
-    for p in "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
-      "$HOME/.local/share/keyrings" "$HOME/.netrc" "$HOME/.git-credentials"; do
-      run _as_check_paths "$knob" "$p"
-      [ "$status" -eq 1 ]
-      [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"the secret store"* ]]
-    done
-    for p in "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" "$HOME/.local/share/agent-sandbox" \
-      "$HOME/.local/bin" "$HOME/.config/systemd/user" "$HOME/.local/state/agent-sandbox/claude"; do
-      run _as_check_paths "$knob" "$p"
-      [ "$status" -eq 1 ]
-      [[ "$output" == *"refusing AGENT_SANDBOX_$knob="*"the sandbox's own control plane"* ]]
-    done
-    # a directory that contains a protected path exposes it: refused, with the hint
-    for p in "$HOME/.config" "$HOME/.local" "$HOME/.local/share"; do
-      run _as_check_paths "$knob" "$p"
-      [ "$status" -eq 1 ]
-      [[ "$output" == *"contains"*"bind a specific subdirectory instead"* ]]
-    done
-    # siblings and look-alikes are fine: the match is exact or by path component
-    run _as_check_paths "$knob" "$HOME/.config/nvim:$HOME/.local/share/fonts:$HOME/.cargo:$HOME/.sshfoo:$HOME/.local/state/other"
-    [ "$status" -eq 0 ]
+  local p _prot_what _prot_path _prot_how
+  for p in "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \
+    "$HOME/.local/share/keyrings" "$HOME/.netrc" "$HOME/.git-credentials"; do
+    _as_path_protected "$p"
+    [ "$_prot_what" = "the secret store" ]
   done
-}
-
-@test "_as_check_paths refuses /, \$HOME and any parent of \$HOME; allows others" {
-  HOME="$BATS_TEST_TMPDIR/deep/home"
-  mkdir -p "$HOME" "$BATS_TEST_TMPDIR/ok"
-  for p in / "$HOME" "$BATS_TEST_TMPDIR/deep" "$BATS_TEST_TMPDIR"; do
-    run _as_check_paths RW "$p"
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"HOME or a parent of it"* ]]
+  for p in "$HOME/.config/agent-sandbox/trust" "$HOME/.mitmproxy" "$HOME/.local/share/agent-sandbox" \
+    "$HOME/.local/bin" "$HOME/.config/systemd/user" "$HOME/.local/state/agent-sandbox/claude"; do
+    _as_path_protected "$p"
+    [ "$_prot_what" = "the sandbox's own control plane" ]
   done
-  run _as_check_paths RO "$BATS_TEST_TMPDIR/ok:/opt"
-  [ "$status" -eq 0 ]
-  run _as_check_paths RW ""
-  [ "$status" -eq 0 ]
-}
-
-@test "_as_add_paths binds a symlink's resolved target, and refuses one resolving to a protected path" {
-  local d
-  d="$(readlink -f "$BATS_TEST_TMPDIR")"
-  HOME="$d/home"
-  mkdir -p "$d/realdir" "$HOME/.ssh"
-  ln -s "$d/realdir" "$d/link"
-  local -a args=()
-  _as_add_paths --bind "$d/link"
-  [ "${#args[@]}" -eq 3 ]
-  [ "${args[0]}" = "--bind" ]
-  [ "${args[1]}" = "$d/realdir" ] # the resolved target, not the symlink
-  [ "${args[2]}" = "$d/link" ]    # mounted at the original name
-  # a symlink that resolves to a protected path (a secret store) is refused
-  ln -s "$HOME/.ssh" "$d/badlink"
-  args=()
-  run _as_add_paths --bind "$d/badlink"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"protected path"* ]]
+  # a directory that contains a protected path exposes it
+  for p in "$HOME/.config" "$HOME/.local" "$HOME/.local/share"; do
+    _as_path_protected "$p"
+    [ "$_prot_how" = contains ]
+  done
+  # siblings and look-alikes are fine: the match is exact or by path component
+  for p in "$HOME/.config/nvim" "$HOME/.local/share/fonts" "$HOME/.cargo" "$HOME/.sshfoo" "$HOME/.local/state/other"; do
+    run ! _as_path_protected "$p"
+  done
 }
 
 @test "_as_ssh_pick_key returns the first readable identity, skipping FIDO *_sk keys" {

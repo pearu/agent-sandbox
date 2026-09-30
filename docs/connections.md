@@ -34,7 +34,7 @@ and the study measures connections and escapes instead of an inventory.
 created once from a source and then its own. Inside, it is bound where the agent expects
 its state (`~/.claude` for Claude Code, with `CLAUDE_CONFIG_DIR` pointing there). On the
 host it lives under the engine's state directory, `~/.local/state/agent-sandbox/<profile>/`,
-which is a control path: never bound into any sandbox, refused by `[ro]`/`[rw]`.
+which is a control path: never bound into any sandbox, refused as a path declaration.
 
 A sandbox is keyed by **project and role**: `<project slug>/<role>`, with `default` as the
 role nobody names. Two roles on one project are two sandboxes that share the project
@@ -426,15 +426,15 @@ modes ([#106](https://github.com/pearu/agent-sandbox/issues/106)):
 [connect]
 ./scratch/ = own         # a directory of the sandbox's own, at ./scratch
 ./AGENT.md = read-only   # a file
-/data = read-only        # what [ro] /data does today
+/data = read-only        # the outside /data, read-only
 instructions = copy-on-write native   # no slash: a channel name, exactly as before
 ```
 
 **The lexical rule** is what keeps a typo safe. A key with no `/` is a channel name, so
 `instrutions = own` still refuses the launch instead of declaring something; `AGENT.md =
 own` is refused the same way and `./AGENT.md = own` is the path form. A trailing `/` says
-the path must be a directory. A mistyped *path* can still declare an unwanted one, which
-is the exposure `[ro]` already carries.
+the path must be a directory. A mistyped *path* can still declare an unwanted one: the
+exposure any path grant carries.
 
 **The key is always a path inside the sandbox**, and with no source given the source is
 the same path outside. A relative key is relative to the project, whichever form it came
@@ -444,9 +444,9 @@ project and every channel, says which of the two it is at launch. No explicit so
 accepted yet: `outside:<path>` is a follow-up.
 
 **Every mode is checked alike, `own` included**, although `own` exposes nothing — one
-rule is easier to state and to trust, and loosening it later breaks no one. It is
-`[ro]`/`[rw]`'s rule (not `/`, `$HOME` or a parent of it; nothing that is, is inside or
-contains a secret store or the sandbox's control plane) plus one of its own: **not the
+rule is easier to state and to trust, and loosening it later breaks no one. The rule:
+not `/`, `$HOME` or a parent of it; nothing that is, is inside or contains a secret
+store or the sandbox's control plane; and **not the
 project or a parent of it**, because a declaration is bound after the project and would
 cover it. Both the key and what it resolves to are checked, and the resolved path is
 checked again at bind time, so a symlink repointed in between cannot mount a refused
@@ -472,7 +472,7 @@ since overlayfs cannot stack on one file.
 **Presets never move a declaration.** A preset positions the channels the profile
 declares; a path has no position until someone writes one.
 
-Declarations are bound with the `[ro]`/`[rw]` binds they are meant to replace — after the
+Declarations are bound after the
 working tree, which would otherwise cover every declaration inside the project. That was
 measured the first time this ran under the real bwrap: bound earlier, `./data =
 read-only` was writable and `./scratch/ = own` showed the project's files.
@@ -556,7 +556,7 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 - **Policy is fixed when the keeper starts.** A join may *repeat* it, not change it: only the
   knobs this invocation set, by flag or environment, are compared with the keeper's, and a
   different value is refused, naming the knob; a listed grant (`--allow`, `--ssh`, ports,
-  `[ro]`/`[rw]` paths) must be one the keeper has. A bare join always joins. A dot-file
+  declared paths) must be one the keeper has. A bare join always joins. A dot-file
   changed since the keeper started warns and joins: it is standing policy and applies at
   the next keeper by itself, whereas a flag is a request for this invocation, with no next
   keeper to apply to. Both rules protect what is joined: a keeper in its grace, with nothing

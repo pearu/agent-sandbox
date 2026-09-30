@@ -44,11 +44,6 @@ Sections:
   path level, so `~/git/acme/*` does not match a sibling `~/git/acme-notes`
   or descend past one level.
 
-- **`[ro]` / `[rw]`** — extra host paths to expose in the sandbox, one per
-  line, added to any `AGENT_SANDBOX_RO` / `AGENT_SANDBOX_RW` from your shell.
-  The same refusals apply as on the command line: secret stores (`~/.ssh`,
-  `~/.aws`, ...), the sandbox's own configuration, any directory containing
-  one of them, `/`, `$HOME` and any parent of `$HOME` are rejected.
 - **`[forward]`** — names of environment variables to carry from your shell
   into the sandbox (the values come from your shell, not this file), one per
   line, on top of the built-in set. Do not list secrets for unrelated services.
@@ -161,10 +156,13 @@ Sections:
 
   A key that contains **`/`** is a **path declaration** rather than a channel:
   `./scratch/ = own` gives the sandbox a directory of its own at `./scratch`,
-  `/data = read-only` is what `[ro] /data` does. The key is the path inside the
-  sandbox, relative keys are relative to the project, `~` is `$HOME`, and the source
-  is the same path outside. Every mode is checked like `[ro]`/`[rw]`, and the project
-  or a parent of it is refused. A path that does not exist is skipped until it does,
+  `/data = read-only` shows the outside `/data` read-only, `~/cache/ = read-write`
+  shares a directory both ways. This is how any path outside the project is exposed.
+  The key is the path inside the sandbox, relative keys are relative to the project,
+  `~` is `$HOME`, and the source is the same path outside. Every mode is checked alike:
+  secret stores (`~/.ssh`, `~/.aws`, ...), the sandbox's own configuration, any
+  directory containing one of them, `/`, `$HOME`, any parent of `$HOME`, and the
+  project or a parent of it are refused. A path that does not exist is skipped until it does,
   except a trailing `/` under `own`, which creates it. A key with no `/` is still a
   channel name, so a typo still refuses the launch. See
   [connections.md](connections.md#path-declarations).
@@ -435,7 +433,7 @@ Two consequences:
   not share memory: the sandboxed one keeps memory per directory, the native
   one shares it across the repository. Sandboxed and native runs already differ
   in more fundamental ways, so treat this as one more of them.
-- **Known limitation.** If a `[ro]` or `[rw]` entry exposes a parent directory
+- **Known limitation.** If a path declaration exposes a parent directory
   that contains `.git`, the repository is visible again and Claude Code keys
   that session's memory to the repository root — a directory the engine does
   not bind, so the memory does not survive the session. Run from the repository
@@ -563,7 +561,7 @@ channel. Inside the sandbox it is at `~/.claude/.claude.json`, and
 
 The role's copy is kept on the host under
 `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/`, part of the
-sandbox's control plane: never bound into any sandbox, refused by `[ro]`/`[rw]`.
+sandbox's control plane: never bound into any sandbox, refused as a path declaration.
 The per-project copy of 0.3 (`claude/<slug>/claude.json`) becomes the default
 role's `seed-only` copy at the first launch that finds it. A background worker
 (`asb claude --bg`) is keyed by the project it was launched for, not by the daemon's

@@ -134,8 +134,8 @@ where agents are meant to communicate). *shipped*
 
 **Path declaration.** A `[connect]` key containing `/`, naming a path instead of a
 channel: `./scratch/ = own`. The key is the path inside the sandbox; relative keys are
-relative to the project; the source is the same path outside. It is what `[ro]`/`[rw]`
-become, before they are removed ahead of 1.0. *shipped* (#130; `copy-on-write` on a
+relative to the project; the source is the same path outside. The one way to expose a
+path outside the project: `[ro]`/`[rw]` and `AGENT_SANDBOX_RO`/`RW` were removed (#161). *shipped* (#130; `copy-on-write` on a
 directory, #150) — see [connections.md](connections.md#path-declarations).
 
 **Per-launch scratch** (the docs say *per-session scratch*). Parts of the agent's state

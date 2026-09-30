@@ -120,13 +120,14 @@ setup() {
   [ "$(grep -c '^PIP_CERT$' "$H/argv")" -eq 1 ]
 }
 
-@test "RO and RW knobs bind the listed paths; a missing path is skipped with a warning" {
+@test "a path declared read-only or read-write binds the path; a missing one is skipped with a note" {
   mkdir -p "$H/ro1" "$H/rw1"
-  run_engine AGENT_SANDBOX_RO="$H/ro1:$H/nope" AGENT_SANDBOX_RW="$H/rw1" -- asb claude --version
+  run_engine -- asb --connect "$H/ro1 = read-only" --connect "$H/nope = read-only" \
+    --connect "$H/rw1 = read-write" claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$H/ro1" "$H/ro1"
   argv_has --bind "$H/rw1" "$H/rw1"
-  [[ "$output" == *"skipping missing path"* ]]
+  [[ "$output" == *"'$H/nope' does not exist, so its declaration is skipped"* ]]
   run ! argv_has "$H/nope"
 }
 
@@ -173,14 +174,14 @@ setup() {
   run ! argv_has --bind "$H/home" "$H/home"
 }
 
-@test "RW into a secret store or a parent of HOME is refused before bwrap runs" {
+@test "a path declaration into a secret store or a parent of HOME is refused before bwrap runs" {
   mkdir -p "$H/home/.aws"
-  run_engine AGENT_SANDBOX_RW="$H/home/.aws" -- asb claude --version
-  [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
-  run_engine AGENT_SANDBOX_RO="$H/home/.aws" -- asb claude --version
-  [ "$status" -eq 1 ]
-  run_engine AGENT_SANDBOX_RW="$(dirname "$H/home")" -- asb claude --version
-  [ "$status" -eq 1 ]
+  run_engine -- asb --connect "$H/home/.aws = read-write" claude --version
+  [ "$status" -ne 0 ] && [ ! -s "$H/argv" ]
+  run_engine -- asb --connect "$H/home/.aws = read-only" claude --version
+  [ "$status" -ne 0 ]
+  run_engine -- asb --connect "$(dirname "$H/home") = read-write" claude --version
+  [ "$status" -ne 0 ]
 }
 
 @test "--allow writes the session file with a header and the hosts, and the session dir is removed after bwrap exits" {

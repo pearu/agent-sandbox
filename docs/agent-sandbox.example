@@ -39,17 +39,6 @@
 #~/work/*
 
 
-# --- Extra paths ---------------------------------------------------------
-# Host paths to expose in the sandbox, added to any AGENT_SANDBOX_RO / _RW from
-# your shell. Secret stores (~/.ssh, ~/.aws, ~/.gnupg, ...), the sandbox's own
-# configuration, any directory containing one of them, `/`, $HOME and any
-# parent of $HOME are always refused, here as on the command line.
-#[ro]
-#/opt/shared-data
-#[rw]
-#/scratch/thisproject
-
-
 # --- Forwarded environment ----------------------------------------------
 # NAMES of environment variables to carry from your shell into the sandbox
 # (the values come from your shell, not this file), on top of the built-in set
@@ -188,6 +177,15 @@
 #[connect]
 #instructions = read-only native
 #skills = own native
+#
+#        A key with a `/` is a PATH, not a channel: how a path outside the
+#        project is exposed. The key is the path inside the sandbox, the source
+#        the same path outside, and every mode above applies. Secret stores (~/.ssh, ~/.aws, ~/.gnupg, ...), the
+#        sandbox's own configuration, any directory containing one of them, `/`,
+#        $HOME, any parent of $HOME and the project itself are always refused.
+#/opt/shared-data = read-only
+#/scratch/thisproject/ = read-write
+#./scratch/ = own
 
 #        The same for one role, and an empty [connect:*] so that every other role
 #        name (including default) is still accepted once suffixed sections exist.
