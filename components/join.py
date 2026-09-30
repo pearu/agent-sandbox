@@ -23,9 +23,19 @@ process's own user namespace last. nsenter cannot express that order. Measured
 2026-09-27 in `none` and `strict` (probes/join-launch.py, #121).
 
 THE PARENT STAYS ON THE HOST and waits, so the engine can account for the join and
-return its exit status. It forwards the terminal's signals to the joined process
-group: the child starts a session of its own, as bwrap's --new-session does, so it
-has no controlling terminal and nothing the terminal sends reaches it otherwise.
+return its exit status.
+
+THE TERMINAL. Where the kernel still lets an unprivileged process push keystrokes into
+its terminal (TIOCSTI, CVE-2017-5226; /proc/sys/dev/tty/legacy_tiocsti is 1), the child
+starts a session of its own, as bwrap's --new-session does: it has no controlling
+terminal, and the parent forwards the terminal's signals to it. The price is no job
+control and no SIGWINCH (measured, 2026-09-30: a joined shell never saw a resize). Where
+the kernel blocks TIOCSTI (legacy_tiocsti is 0), there is nothing for that to protect,
+so the child stays in the terminal's session and foreground group: Ctrl-C, Ctrl-Z and
+resizes come from the terminal itself, as for any command. Then the parent forwards
+only SIGTERM and SIGHUP, which may be sent to it alone: a Ctrl-C forwarded on top of the
+terminal's own would arrive twice, and twice is how Claude Code is told to exit. A pty
+per join would give both, everywhere (#165).
 
 A JOIN'S OWN STORES (`join-scoped`, #147). With --private, the join gets a mount
 namespace of its own: the child unshares one while it still holds capabilities in the
@@ -170,6 +180,9 @@ def main(argv):
             if owner_id[k] == user_id and libc.setns(fd, 0) != 0:
                 die(f"setns {k}: {os.strerror(ctypes.get_errno())}")
 
+    # With TIOCSTI blocked, the joined command keeps the terminal (see the docstring).
+    keep_terminal = tiocsti_blocked()
+
     # The pid namespace applies to children, hence the fork. A terminal signal that
     # arrives before the child exists is held and sent once it does; after that the
     # handler sends it straight to the child's group (waitpid is retried after a
@@ -177,6 +190,8 @@ def main(argv):
     child, pending = 0, []
 
     def forward(signum, _frame):
+        if keep_terminal and signum in (signal.SIGINT, signal.SIGQUIT):
+            return  # the terminal gave it to the child already
         if not child:
             pending.append(signum)
             return
@@ -198,6 +213,11 @@ def main(argv):
     if pid_ == 0:
         for s in sigs:
             signal.signal(s, signal.SIG_DFL)
+        # Python ignores SIGPIPE and SIGXFSZ at startup, and an ignored signal survives
+        # exec: without this every joined command would start with both ignored, and
+        # `yes | head` inside would print "Broken pipe" errors instead of stopping.
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+        signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
         try:
             if private:
                 # A mount namespace of the join's own, made while the capabilities to do
@@ -215,7 +235,8 @@ def main(argv):
                 if os.read(ack_r, 1) != b"1":  # and the command starts only once it has
                     raise OSError(0, "the stores were not moved out of staging")
             os.chdir(cwd)
-            os.setsid()
+            if not keep_terminal:
+                os.setsid()
             # The capability bounding set, as bwrap's --cap-drop ALL leaves it: empty.
             # Entering a user namespace grants every capability in it, and exec as a
             # non-root uid clears the effective set but not the bounding one.
@@ -257,6 +278,16 @@ def main(argv):
     except ChildProcessError:
         return 125
     return exit_status(st)
+
+
+def tiocsti_blocked():
+    """Does the kernel refuse TIOCSTI to unprivileged processes? legacy_tiocsti exists
+    since Linux 6.2 and reads 0 where it does; absent or unreadable is taken as no."""
+    try:
+        with open("/proc/sys/dev/tty/legacy_tiocsti") as fh:
+            return fh.read().strip() == "0"
+    except OSError:
+        return False
 
 
 def exit_status(st):

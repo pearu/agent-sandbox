@@ -59,3 +59,20 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
   [ "$(report who)" = command ]
   [ "$(report agent_bin_present)" = yes ]
 }
+
+@test "--exec: the command starts with SIGPIPE and SIGXFSZ at their defaults, not the join's ignored ones" {
+  # Python ignores both at startup, and an ignored signal survives exec; measured
+  # before the fix, SigIgn of a joined command had SIGXFSZ (bit 25) set.
+  run_sandboxed AGENT_SANDBOX_NET=none -- --profile probe --exec sh -c 'sed -n "s/^SigIgn:[[:space:]]*//p" /proc/self/status'
+  [ "$status" -eq 0 ]
+  local ign=$((16#${output##*$'\n'}))
+  (((ign >> 12) & 1)) && {
+    echo "SIGPIPE is ignored in the joined command"
+    false
+  }
+  (((ign >> 24) & 1)) && {
+    echo "SIGXFSZ is ignored in the joined command"
+    false
+  }
+  true
+}
