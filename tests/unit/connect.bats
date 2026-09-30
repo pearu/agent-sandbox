@@ -209,9 +209,9 @@ EOF
   run ! argv_has --overlay-src "$C/CLAUDE.md"
 }
 
-@test "--overlay off forces the copy fallback, and the launch SAYS so through --quiet" {
+@test "--overlay off forces the copy fallback, and the launch SAYS so even when quiet" {
   printf 'YOURS\n' >"$C/rules/topic.md"
-  run_engine -- asb --connect 'instructions=copy-on-write native' --overlay off --quiet claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect 'instructions=copy-on-write native' --overlay off claude --version
   [ "$status" -eq 0 ]
   # BEFORE the `run !` below, which replaces $output -- the helper warns about
   # exactly this and it is easy to do anyway.
@@ -306,7 +306,7 @@ EOF
   # overlayfs calls undefined. There is never a second: the second invocation is a
   # join into the first one's keeper, and nothing is mounted for it.
   engine_bg AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb --quiet claude -p hi
+  run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude -p hi
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ] # no second launch
   join_has "$H/home/.local/share/claude/versions/2.1.300/claude" -p hi
@@ -458,8 +458,8 @@ EOF
   argv_has --bind "$C" "$C"
   run ! argv_has --overlay-src "$C/rules"
   run ! argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
-  # and the notice is not suppressible: --quiet does not silence it
-  run_engine -- asb --preset native --quiet claude --version
+  # and the notice is not suppressible: the quiet default does not silence it
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --preset native claude --version
   [[ "$output" == *"state isolation is OFF"* ]]
 }
 
@@ -836,14 +836,14 @@ seeded_run_scoped() { # MODE
   run ! argv_has --bind "$C/CLAUDE.md" "$C/CLAUDE.md"
 }
 
-@test "copy warns, naming the file, when both sides changed it -- and --quiet does not hide it" {
+@test "copy warns, naming the file, when both sides changed it -- and quiet does not hide it" {
   printf 'YOURS\n' >"$C/rules/topic.md"
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   local slot
   slot="$SBOX/instructions/copy/$(slugify "$C/rules")"
   printf 'SANDBOX\n' >"$slot/topic.md"    # as if the session edited it
   printf 'CHANGED\n' >"$C/rules/topic.md" # and the user changed theirs
-  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb --quiet claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"topic.md"* ]]
   [[ "$output" == *"--reset instructions"* ]] # it says how to resolve it
@@ -934,7 +934,7 @@ seeded_run_scoped() { # MODE
 @test "a path that does not exist is skipped with a notice, in every other case" {
   local spec
   for spec in './gone/ = read-only' './gone = own' './gone = copy' './gone = read-write' './gone/ = copy-on-write'; do
-    run_engine -- asb --quiet --connect "$spec" claude --version
+    run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect "$spec" claude --version
     [ "$status" -eq 0 ]
     [[ "$output" == *"'./gone"*"does not exist"*"skipped"* ]]
     run ! argv_has "$PROJ/gone"
@@ -962,7 +962,7 @@ seeded_run_scoped() { # MODE
 
 @test "a file declaration says at launch that it cannot be deleted from inside" {
   printf 'x\n' >"$PROJ/AGENT.md"
-  run_engine -- asb --quiet --connect './AGENT.md = read-only' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect './AGENT.md = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$PROJ/AGENT.md" "$PROJ/AGENT.md"
   [[ "$output" == *"'./AGENT.md' is a file"*"cannot be deleted"* ]]
@@ -970,7 +970,7 @@ seeded_run_scoped() { # MODE
 
 @test "copy-on-write on a file is copy, and the launch says so" {
   printf 'x\n' >"$PROJ/AGENT.md"
-  run_engine -- asb --quiet --connect './AGENT.md = copy-on-write' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect './AGENT.md = copy-on-write' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/AGENT.md")" "$PROJ/AGENT.md"
   [[ "$output" == *"copy-on-write on a file is copy"* ]]
@@ -1046,7 +1046,7 @@ seeded_run_scoped() { # MODE
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "a path inside a channel is allowed, warned about, and wins there" {
   mkdir -p "$C/rules/team"
-  run_engine -- asb --quiet --connect 'instructions = read-only native' --connect '~/.claude/rules/team/ = own' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect 'instructions = read-only native' --connect '~/.claude/rules/team/ = own' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"overlaps the channel 'instructions'"* ]]
   local slot
@@ -1059,18 +1059,18 @@ seeded_run_scoped() { # MODE
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "a path under HOME, outside the project and every channel, is warned about" {
   mkdir -p "$H/home/notes"
-  run_engine -- asb --quiet --connect '~/notes/ = own' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect '~/notes/ = own' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"'~/notes/' is under your home directory"* ]]
   # including when the directory does not exist yet and the launch creates it,
   # which is the case the warning is chiefly for
-  run_engine -- asb --quiet --connect '~/fresh/ = own' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect '~/fresh/ = own' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"'~/fresh/' is under your home directory"* ]]
   # and a path inside the project is not, even when the project is under HOME
   mkdir -p "$H/home/work"
   mkdir -p "$H/home/work/data"
-  RUN_CWD="$H/home/work" run_engine -- asb --quiet --connect './data/ = own' claude --version
+  RUN_CWD="$H/home/work" run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect './data/ = own' claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$STATE/claude/${H//[^A-Za-z0-9-]/-}-home-work/default/@paths/own/$(slugify "$H/home/work/data")" "$H/home/work/data"
   [[ "$output" != *"under your home directory"* ]]
@@ -1179,7 +1179,7 @@ seeded_run_scoped() { # MODE
   printf 'SANDBOX\n' >"$fslot"  # the role changed its own
   printf 'V2\n' >"$C/CLAUDE.md" # and so did the source
   mkdir -p "$C/rules" && printf 'NEW\n' >"$C/rules/new.md"
-  run_engine -- asb --quiet --connect 'instructions=seed-only native' claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect 'instructions=seed-only native' claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$fslot")" = SANDBOX ]
   [ ! -e "$SBOX/instructions/seed-only/$(slugify "$C/rules")/new.md" ]

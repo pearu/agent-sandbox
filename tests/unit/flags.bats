@@ -364,40 +364,51 @@ STUB
   [[ "$output" != *"runs natively"* ]]
 }
 
-@test "--quiet suppresses the routine status lines a launch prints" {
-  run_engine -- asb --allow pypi.org claude --version
+@test "quiet by default: the routine status lines appear only with --verbose" {
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --allow pypi.org claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"session allowlist: pypi.org"* ]] # loud by default
-  run_engine -- asb --quiet --allow pypi.org claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"session allowlist"* ]]
+  [[ "$output" != *"session allowlist"* ]] # quiet by default
   argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
     "$H/home/.local/share/claude/versions/2.1.300/claude" # and the launch is unchanged
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --verbose --allow pypi.org claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
-@test "AGENT_SANDBOX_QUIET does the same, and rejects a value it does not understand" {
-  run_engine AGENT_SANDBOX_QUIET=on -- asb --allow pypi.org claude --version
+@test "AGENT_SANDBOX_VERBOSE does the same, and rejects a value it does not understand" {
+  run_engine AGENT_SANDBOX_VERBOSE=on -- asb --allow pypi.org claude --version
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  run_engine AGENT_SANDBOX_VERBOSE=off -- asb --allow pypi.org claude --version
   [ "$status" -eq 0 ]
   [[ "$output" != *"session allowlist"* ]]
-  run_engine AGENT_SANDBOX_QUIET=off -- asb --allow pypi.org claude --version
-  [[ "$output" == *"session allowlist: pypi.org"* ]]
-  run_engine AGENT_SANDBOX_QUIET=maybe -- asb claude --version
+  run_engine AGENT_SANDBOX_VERBOSE=maybe -- asb claude --version
   [ "$status" -eq 2 ]
-  [[ "$output" == *"AGENT_SANDBOX_QUIET='maybe' is not recognised"* ]]
+  [[ "$output" == *"AGENT_SANDBOX_VERBOSE='maybe' is not recognised"* ]]
 }
 
-@test "--quiet never hides a refusal, a warning, or an unsandboxed notice" {
+@test "--quiet and AGENT_SANDBOX_QUIET are refused: quiet is the default, --verbose the way back" {
+  run_engine -- asb --quiet claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--quiet was removed: quiet is the default now"*"--verbose"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine AGENT_SANDBOX_QUIET=on -- asb claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"AGENT_SANDBOX_QUIET was removed"*"AGENT_SANDBOX_VERBOSE=on"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "quiet never hides a refusal, a warning, or an unsandboxed notice" {
   # a refusal: the launch must still explain itself, and still fail
   mkdir -p "$H/home/.aws"
-  run_engine AGENT_SANDBOX_RW="$H/home/.aws" -- asb --quiet claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_RW="$H/home/.aws" -- asb claude --version
   [ "$status" -eq 1 ]
   [[ "$output" == *refusing* ]]
   [ ! -s "$H/argv" ]
   # a warning about a path that is not there
-  run_engine AGENT_SANDBOX_RO="$H/home/no-such-dir" -- asb --quiet claude --version
+  run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_RO="$H/home/no-such-dir" -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"skipping missing path"* ]]
   # and a notice that something runs OUTSIDE the sandbox
-  run_engine -- asb --quiet --preset none claude -p hi
+  run_engine AGENT_SANDBOX_VERBOSE= -- asb --preset none claude -p hi
   [[ "$output" == *"preset none: running claude with no sandbox"* ]]
 }

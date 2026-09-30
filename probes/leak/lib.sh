@@ -440,7 +440,7 @@ leak_read_sandboxed() {
     # inherited from the engine's default, so a cell keeps meaning what it says
     # when that default changes.
     [[ -n "${LEAK_PRESET:-}" ]] && _env+=(AGENT_SANDBOX_PRESET="$LEAK_PRESET")
-    env "${_env[@]}" asb --quiet --profile claude --exec python3 "$script" "$@"
+    env "${_env[@]}" asb --profile claude --exec python3 "$script" "$@"
   ) >"$out" 2>"$out.err" || true
 }
 
@@ -592,7 +592,7 @@ leak_session_sandboxed() {
   shift 4
   (
     cd "$cwd" || exit 1
-    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" AGENT_SANDBOX_KEEPER_GRACE=0 asb --quiet claude "$@" -p "$prompt"
+    env HOME="$LEAK_HOME" AGENT_SANDBOX_NET="$net" AGENT_SANDBOX_KEEPER_GRACE=0 asb claude "$@" -p "$prompt"
   ) >"$out" 2>"$out.err" && LEAK_SESSION_STATUS=0 || LEAK_SESSION_STATUS=$?
 }
 

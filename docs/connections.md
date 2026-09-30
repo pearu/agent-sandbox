@@ -927,8 +927,8 @@ here rather than designed around; the project directory is where different agent
   single file, so `copy-on-write` on a file-shaped path is `copy` whatever bubblewrap supports —
   not a fallback for old hosts but a permanent property of the mechanism.
 - **Warning granularity.** File names at launch, one line per shadowed or conflicting file,
-  and the differing lines on demand (`--connection-diff <channel>`). Warnings are never
-  suppressed by `--quiet`, so a diff at every launch would be noise, and a warning is not
+  and the differing lines on demand (`--connection-diff <channel>`). Warnings are always
+  printed, verbose or not, so a diff at every launch would be noise, and a warning is not
   the place to print instruction content into a terminal log.
 
 ## Open questions

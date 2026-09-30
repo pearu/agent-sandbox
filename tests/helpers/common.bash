@@ -114,7 +114,7 @@ run_engine() {
   run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
     BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${kc[@]}" "$cmd" "$@"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${kc[@]}" "$cmd" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
   # What was joined into the keeper: JOIN is the join's whole argv, JOINV the command
@@ -150,7 +150,7 @@ run_engine_tty() {
   local -a line=(env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8
     BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0
     AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp"
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$cmd" "$@")
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "$cmd" "$@")
   printf 'cd %q && exec' "${RUN_CWD:-$H/proj}" >"$H/tty.sh"
   printf ' %q' "${line[@]}" >>"$H/tty.sh"
   run bash -c 'printf "%b" "$1" | script -qec "bash $2" /dev/null' _ "$answers" "$H/tty.sh"
@@ -178,7 +178,7 @@ engine_bg() {
     exec env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
       BWRAP_DUMP="$H/argv.bg" JOIN_DUMP="$H/join.bg" JOIN_HOLD="$H/hold" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" \
       AGENT_SANDBOX_KEEPER_GRACE=0 AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$cmd" "$@"
+      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "$cmd" "$@"
   ) </dev/null >"$H/bg.out" 2>&1 3>&- &
   BG_PID=$!
   for ((i = 0; i < 500; i++)); do
@@ -199,6 +199,10 @@ release_bg() {
   wait "$BG_PID" || BG_STATUS=$?
 }
 
+# EVERY RUN IS VERBOSE: the suites assert on the routine status lines (the session
+# allowlist, what the dot-file applied), which a launch prints only with --verbose. A
+# test of the quiet default passes AGENT_SANDBOX_VERBOSE= (empty: the default).
+#
 # WHY EVERY RUN PINS A PRESET. The engine's default preset puts the declared
 # channels at `copy-on-write`, so without this every launch in every suite would be
 # measuring the sandbox with overlays layered over its state. The suites that are not about
