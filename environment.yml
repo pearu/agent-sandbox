@@ -16,6 +16,7 @@ dependencies:
   - go-shfmt          # provides `shfmt`: formatting check, also run in CI
   - bats-core         # test runner for tests/ (tests/run.sh); CI installs this file too
   - coverage          # Python line coverage of the addon (scripts/coverage.sh)
+  - pyyaml            # validates .github/workflows/*.yml locally before a push
   - pip               # for the pip-only dependencies below
   - pip:
       # pyseccomp (libseccomp's Python binding, PyPI-only -- not on conda-forge;
