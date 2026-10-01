@@ -71,7 +71,7 @@ profile_command=claude
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the review warns on any other [claude] key (a typo
 # must not silently do nothing), and the docs drift-check verifies each is
-# documented. `hide` is read in profile_isolate(). The profile's own [agent] keys
+# documented. The engine reads `hide` (_as_hide_spec). The profile's own [agent] keys
 # (the verbs, in agent-sandbox beside this file) are not among them: a project's
 # file may not set those.
 profile_dotfile_keys=(hide)
@@ -149,11 +149,13 @@ _claude_path_hash() {
   printf '%s' "$out"
 }
 
+# ~/.claude.json is NOT created when absent. Measured on 2.1.286: with none, Claude Code
+# runs and writes its own; with a 0-byte one it reports the file "corrupted", backs it
+# up and fails -- which is what creating one here did under `native` and `config =
+# read-write`, where it is the file Claude Code reads. The seeding modes need nothing
+# there: the filter seeds {"projects": {}} from a missing file, and `own` starts from
+# config.json.
 profile_prepare() {
-  # Ensure ~/.claude.json exists: it seeds this project's copy of it. With
-  # CLAUDE_CONFIG_DIR set, Claude Code keeps it in the base instead (see
-  # _claude_config_prepare), which the engine creates.
-  [[ -n "${CLAUDE_CONFIG_DIR:-}" || -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
   _claude_config_prepare || return 1
   return 0
 }
@@ -166,20 +168,6 @@ profile_prepare() {
 # rows 10 and 11): a sandboxed session read every other project's entry, and what it
 # wrote reached every other session. It is now the `config` channel (see
 # profile_channels above), and this is the profile's half of it.
-_claude_config_project() {
-  # The project the file is keyed by: the background project for a wrapped worker
-  # (the daemon's cwd is not it), the session's cwd otherwise. The engine asks the
-  # same question for a sandbox's connection state, so it answers here too.
-  _as_project_dir
-}
-# The role's store for the config file at MODE, for a project.
-_claude_config_store() { # $1 = project dir, $2 = mode
-  # shellcheck disable=SC2154 # profile_base: set by the engine from [agent] base
-  local inside="$profile_base/.claude.json"
-  inside="${inside//\//_}"
-  printf '%s/claude/%s/%s/config/%s/%s' "$(_as_state_dir)" "$(_claude_project_slug "$1")" \
-    "${_role:-default}" "$2" "${inside#_}"
-}
 # _claude_config_filter SOURCE VIEW -- the seed the seeding modes read: every
 # top-level key and, of the per-project entries, only this project's. Without a
 # working python3 the view is the whole file, and the launch says so: a seed that is
@@ -188,7 +176,7 @@ _claude_config_store() { # $1 = project dir, $2 = mode
 _claude_config_filter() {
   local src="$1" view="$2" why="" rc=0
   if command -v python3 >/dev/null 2>&1; then
-    AS_SRC="$src" AS_VIEW="$view" AS_PROJECT="$(_claude_config_project)" python3 - <<'PY' 2>/dev/null || rc=$?
+    AS_SRC="$src" AS_VIEW="$view" AS_PROJECT="$(_as_project_dir)" python3 - <<'PY' 2>/dev/null || rc=$?
 import json, os
 src, view, project = (os.environ[k] for k in ("AS_SRC", "AS_VIEW", "AS_PROJECT"))
 try:
@@ -250,6 +238,7 @@ _claude_config_prepare() {
     local -a _src=()
     local _s
     for _s in ${profile_channel_sources[@]+"${profile_channel_sources[@]}"}; do
+      # shellcheck disable=SC2154 # profile_base: set by the engine from [agent] base
       [[ "${_s%%$'\t'*}" == "$profile_base/.claude.json" ]] || _src+=("$_s")
     done
     profile_channel_sources=(${_src[@]+"${_src[@]}"})
@@ -272,8 +261,8 @@ profile_before_join() {
   ((is_bg)) || return 0
   mode="${_connect_mode[config]:-}"
   case "$mode" in own | seed-only | copy) ;; *) return 0 ;; esac
-  proj="$(_claude_config_project)"
-  store="$(_claude_config_store "$proj" "$mode")"
+  proj="$(_as_project_dir)"
+  store="$(_as_channel_store config "$profile_base/.claude.json" "$mode")"
   [[ -f "$store" ]] || return 0
   AS_CJ="$store" AS_PROJ="$proj" python3 - <<'PY' 2>/dev/null && return 0
 import json, os, sys
@@ -438,18 +427,6 @@ if merged.get("disableAllHooks"):
   return 0
 }
 
-# Claude Code's own state directory holds far more than per-project memory, and
-# most of it is keyed by session rather than by project, so scoping
-# ~/.claude/projects leaves it all readable. Measured on one developer machine:
-# file-history alone was 40M of VERBATIM file contents from twelve sessions
-# across thirty projects, and history.jsonl held every prompt typed in any of
-# them. None of it was asked for by the user, and a session that reads another
-# project's source has broken the isolation the README promises.
-#
-# What stays visible, deliberately: CLAUDE.md and settings.json (the user's own
-# instructions), credentials, plugins and statsig. The config file .claude.json
-# is neither shared nor hidden: each project gets its own copy of it, seeded
-# with that project's entry alone (see _claude_config_prepare above).
 # _claude_history_view SOURCE VIEW -- the prompt history a seeding mode reads: this
 # project's records only, by the rule _claude_history_filter below states. Fails closed:
 # without python3 the view is empty.
@@ -487,49 +464,4 @@ with fh:
         if isinstance(rec, dict) and rec.get("project") == want:
             sys.stdout.write(line if line.endswith("\n") else line + "\n")
 PY
-}
-
-profile_isolate() {
-  local c="$profile_base" name
-  # The paths blanked every launch are the dot-file's [agent] hide (profile_hide, set by
-  # the engine); why each is there is said beside it, in agent-sandbox. file-history/,
-  # plans/, history.jsonl and the hook logs used to be staged here and merged back at
-  # exit; they are channels now (`transcripts`, `logs`; #120), each the role's own.
-  profile_isolate_spec=()
-  # shellcheck disable=SC2154 # set by the engine from the profile's dot-file
-  for name in ${profile_hide[@]+"${profile_hide[@]}"}; do
-    profile_isolate_spec+=("tmpfs	$c/$name")
-  done
-
-  # [claude] hide = a b c -- extra paths under the state directory to blank.
-  # ~/.claude is bound read-write and is a catch-all: Claude Code keeps its own
-  # state there, and so does anything a user puts there (a GH_CONFIG_DIR, say).
-  # The engine cannot know which of those hold secrets, so the user says.
-  # Additive to the list above, and only from an approved dot-file.
-  #
-  # profile_dotfile is set by the engine from the [claude] section, reached here
-  # by dynamic scope, as the other engine locals are.
-  # shellcheck disable=SC2154
-  local -a _opts=(${profile_dotfile[@]+"${profile_dotfile[@]}"})
-  local kv key val
-  for kv in ${_opts[@]+"${_opts[@]}"}; do
-    key="${kv%%=*}"
-    val="${kv#*=}"
-    case "$key" in
-      hide)
-        # Word-splitting $val is the point: the value is a space-separated list.
-        # shellcheck disable=SC2086
-        for name in $val; do
-          case "$name" in
-            /* | *..*)
-              _as_msg ".agent-sandbox: [claude] hide: ignoring \"$name\" (must be a relative path under the state dir)"
-              continue
-              ;;
-          esac
-          profile_isolate_spec+=("tmpfs	$c/$name")
-        done
-        ;;
-      *) ;; # another key: the review warned of it (profile_dotfile_keys)
-    esac
-  done
 }

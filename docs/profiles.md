@@ -36,7 +36,6 @@ Functions a profile defines:
 |---|---|
 | `profile_prepare()` | Optional. Runs right before the sandbox is assembled; create state files here. |
 | `profile_slug()` | Optional. Called with a project directory; prints this agent's name for it in its own per-project state (claude: the directory under `~/.claude/projects/`). `{slug}` expands to it in the channel table, in a path declaration's key and in its `outside:` source (#176); without this hook a `{slug}` is refused. Any other `{name}` is refused too. |
-| `profile_isolate()` | Optional. Declare which of the agent's cross-session state is replaced per launch, by filling `profile_isolate_spec` with `tmpfs<TAB>DIR` lines: empty inside, discarded at exit. (`copyout` and `append`, which merged a session's entries back at exit, are gone since #120: state that should outlive a launch is a channel, with a mode.) Pairs from a `[<profile>]` dot-file section arrive in `profile_dotfile` (below). |
 | `profile_briefing_args()` | Optional. Called with the sandbox-side path of the briefing directory and the agent's argv when the briefing is on; append to `profile_briefing_argv` whatever makes the agent read it. The engine puts those arguments **before** the agent's own (a subcommand such as `claude mcp list` refuses an option of the agent's after it). To change the agent's own arguments -- claude drops the user's `--settings` once it has merged it into its own -- set `profile_agent_argv`, which starts as they were typed. Skipped when the briefing is off or could not be written. |
 | `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return. Inside a sandbox it is not reached: there the engine itself runs what an `asb` names as it is, with no second sandbox (#197). |
 | `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. |
@@ -48,19 +47,16 @@ engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
 ### A dot-file section named after the profile
 
 A project's `.agent-sandbox` may carry a section named after the **active**
-profile — `[claude]` in a claude run. The engine does not interpret those
-lines: it checks they are `key = value`, collects them, and hands them to the
-profile in `profile_dotfile` (a `key=value` array) for the duration of
-`profile_isolate()`. A section naming a different profile is skipped at a launch;
-the dot-file's review reads every profile, and warns of a section that names none
-and of a key a profile does not list in `profile_dotfile_keys`.
-
-This exists because only a profile knows what its agent keeps where. List the
-keys you read in `profile_dotfile_keys`, so the review can warn of any other — a
-typo must not silently do nothing. The pairs reach you **only from an approved dot-file**, so
-an unreviewed file grants nothing; the trust gate is the engine's, not yours.
-`profiles/claude/profile.sh` uses it for one key, `hide`
-([config.md](config.md#the-file)).
+profile — `[claude]` in a claude run. The engine checks its lines are `key = value`
+and reads the one key a project may set there today, `hide`: paths under the
+profile's base blanked every launch, on top of the profile's own `[agent] hide`
+(relative paths only; `/` and `..` are ignored with a note). A profile allows it by
+listing it in `profile_dotfile_keys`, which is also how the review knows to warn of
+any other key — a typo must not silently do nothing. A section naming a different
+profile is skipped at a launch; the dot-file's review reads every profile, and warns
+of a section that names none. The pairs count **only from an approved dot-file**, so
+an unreviewed file grants nothing; the trust gate is the engine's, not the profile's.
+`profiles/claude/profile.sh` lists `hide` ([config.md](config.md#the-file)).
 
 A profile must **not** touch the engine's bwrap argument list. The declarations
 above are the whole interface, so that the sandbox's isolation guarantees stay
@@ -81,7 +77,7 @@ single-valued one.
 | `[agent] command` | `profile_command` |
 | `[agent] base` | the agent's state directory (`~/.claude`), bound **read-write** before anything else, so every channel and declaration layers on it; created when absent; checked as any read-write bind is (never `/`, `$HOME` or a parent of it, nothing protected), and resolved again at bind time (#175) |
 | `[agent] base-env` | the variable the agent itself reads to move its state (claude: `CLAUDE_CONFIG_DIR`); set and non-empty in the launching shell, it wins over `base` (#190). `{base}` in the dot-file is the base so resolved |
-| `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch; the claude profile's `profile_isolate` turns them into tmpfs mounts |
+| `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch: a tmpfs each, empty inside and gone at exit |
 | `[env]` | `NAME`: `profile_env_pass`; `NAME = VALUE`: `profile_env_set` (a leading `~` is `$HOME`, and `{base}` expands); `-NAME`: `profile_env_refuse` |
 | `[allow]` | hosts opened for every launch of the profile, as its session allowlist beside `--allow`'s (proxy and strict) |
 | `[channel:<name>]` | `profile_channels`, one section per channel and a path per line, a trailing `/` for a directory; a path's value sets `outside:SRC` (`profile_channel_sources`), `filter:FN` (`profile_channel_filters`) `vendor:PREFIX` (`profile_channel_vendor`) and `start:FILE` (`profile_channel_start`: the template a file store starts as with nothing to seed from). `{base}` and `{slug}` expand (#190) |
