@@ -126,6 +126,15 @@ setup() {
   [ "$(setenv_value OK_VAR)" = "1" ]
   [ "$(grep -c '^CLAUDE_CONFIG_DIR$' "$H/argv")" -eq 1 ]
   run ! setenv_value CLAUDE_CODE_PROJECT_DIR_NAME
+  # Under `native` a refusal guards nothing and does not apply; a pin is policy and
+  # still does; the base variable is the engine's to set, and native sets none (#173).
+  TEST_PRESET="" run_engine CLAUDE_CODE_PROJECT_DIR_NAME=one DISABLE_AUTOUPDATER=0 -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CLAUDE_CODE_PROJECT_DIR_NAME)" = one ]
+  [ "$(setenv_value DISABLE_AUTOUPDATER)" = "1" ]
+  run ! setenv_value CLAUDE_CONFIG_DIR
+  TEST_PRESET="" run_engine CLAUDE_CONFIG_DIR="$H/home/elsewhere" -- asb --preset native claude --version
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/elsewhere" ] # the user's, swept as under none
   run_engine PIP_CERT=/my/ca SSL_CERT_FILE=/my/bundle -- asb claude --version
   [ "$(setenv_value PIP_CERT)" = "/my/ca" ]
   [ "$(setenv_value SSL_CERT_FILE)" = "/my/bundle" ]

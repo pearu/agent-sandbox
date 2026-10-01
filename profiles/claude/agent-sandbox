@@ -17,6 +17,11 @@
 # built on the state Claude Code really uses. That is {base} below; it is bound
 # read-write before anything else, and every channel layers on it.
 base = ~/.claude
+# Inside, the engine sets it to the base it built (every preset but `native`): at its own
+# default value nothing else moves, but Claude Code then keeps its config file at
+# ~/.claude/.claude.json (measured: with the variable set, ~/.claude.json is never
+# opened), which is where the config channel puts it. HOME is the same path inside and
+# out, so the value is right on both sides.
 base-env = CLAUDE_CONFIG_DIR
 
 # The verbs that observe or manage the background service (#123). Its daemon runs
@@ -69,11 +74,6 @@ ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
 # `claude` (#151) -- is the supported path. The legacy `autoUpdates: false` in
 # ~/.claude.json is ignored for native installs.
 DISABLE_AUTOUPDATER = 1
-# CLAUDE_CONFIG_DIR at its own default value: nothing else moves, but Claude Code then
-# keeps its config file at ~/.claude/.claude.json (measured: with the variable set,
-# ~/.claude.json is never opened), which is where the config channel puts it. HOME is
-# the same path inside and out, so the value is right on both sides.
-CLAUDE_CONFIG_DIR = {base}
 # With CLAUDE_CONFIG_DIR set, Claude Code honours CLAUDE_CODE_PROJECT_DIR_NAME, which
 # stores every session's transcripts and memory under one name -- out from under the
 # per-project scoping, silently. Never forwarded.

@@ -64,9 +64,9 @@ profile_command=claude
 # its source, filter, vendor prefixes and starting template (#191), and the presets'
 # rungs are its [preset:<name>] sections (#191), with the reasons beside them.
 
-# The environment it pins and refuses is the dot-file's [env] (#177): DISABLE_AUTOUPDATER,
-# CLAUDE_CONFIG_DIR, and the refusal of CLAUDE_CODE_PROJECT_DIR_NAME, each with its
-# reason. Under `native`, _claude_config_prepare drops the second and the third.
+# The environment it pins and refuses is the dot-file's [env] (#177): DISABLE_AUTOUPDATER
+# and the refusal of CLAUDE_CODE_PROJECT_DIR_NAME, each with its reason. CLAUDE_CONFIG_DIR
+# is the engine's: `base-env`, set to the base it built (not under `native`).
 
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the review warns on any other [claude] key (a typo
@@ -205,30 +205,6 @@ PY
   return 0
 }
 _claude_config_prepare() {
-  # `native` means parity with no sandbox, and a native Claude Code reads
-  # ~/.claude.json itself. The engine binds nothing for a relocated channel path
-  # under `native` (see _as_channel_source), and the profile drops the relocation:
-  #
-  # CLAUDE_CONFIG_DIR goes with it. The engine sets it because a read-only $HOME
-  # loses the lock and the rename Claude Code writes beside its config file
-  # (#91) -- and that remount is exactly what `native` skips. Keeping the
-  # workaround without the problem would leave the config at a path no native
-  # session uses, which was the first divergence this preset turned up.
-  #
-  # CLAUDE_CODE_PROJECT_DIR_NAME stops being refused for the same reason: it is
-  # only honoured when CLAUDE_CONFIG_DIR is set, and there is no per-project
-  # scoping left here for it to escape.
-  # shellcheck disable=SC2154 # engine local, by dynamic scope
-  if [[ "${_preset:-}" == native ]]; then
-    local -a _keep=()
-    local _kv
-    for _kv in "${profile_env_set[@]}"; do
-      [[ "$_kv" == CLAUDE_CONFIG_DIR=* ]] || _keep+=("$_kv")
-    done
-    profile_env_set=("${_keep[@]}")
-    profile_env_refuse=()
-    return 0
-  fi
   # THE CONFIG FILE'S SOURCE DEPENDS ON THE BASE. With the default base, native Claude
   # Code keeps it at ~/.claude.json, which the dot-file's `outside:` relocates into the
   # base. With CLAUDE_CONFIG_DIR set, it keeps it at $CLAUDE_CONFIG_DIR/.claude.json
