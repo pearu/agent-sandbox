@@ -568,8 +568,8 @@ sandbox's control plane: never bound into any sandbox, refused as a path declara
 A background worker
 (`asb claude --bg`) is keyed by the project it was launched for, not by the daemon's
 directory, and is pre-trusted in the role's copy as it is in the native file.
-Without a working `python3` the seed is the whole native file, and the launch
-says so. `--reset config` discards the role's copy; the next launch
+A view that cannot be made refuses the launch rather than seeding the whole native
+file, other projects' entries included. `--reset config` discards the role's copy; the next launch
 seeds it again.
 
 To keep your user-level MCP servers out of a project's sandbox, give it a config

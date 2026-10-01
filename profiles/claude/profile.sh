@@ -168,41 +168,24 @@ profile_prepare() {
 # rows 10 and 11): a sandboxed session read every other project's entry, and what it
 # wrote reached every other session. It is now the `config` channel (see
 # profile_channels above), and this is the profile's half of it.
-# _claude_config_filter SOURCE VIEW -- the seed the seeding modes read: every
-# top-level key and, of the per-project entries, only this project's. Without a
-# working python3 the view is the whole file, and the launch says so: a seed that is
-# the whole file is the 0.2.0 exposure, but refusing the launch for it would be worse
-# than saying it, and the file is still never written back.
+# _claude_py SUBCOMMAND ARGS... -- run this profile's helper, profile.py beside this file:
+# Claude Code's file formats, one subcommand each (see its docstring). python3 is there:
+# the engine refuses a launch without it, since every command is joined by python3
+# (components/join.py), so nothing here is written twice, once in bash for its absence.
+# Through AGENT_SANDBOX_TEST_PYTHON when set, so the coverage stage can trace it.
+_claude_py() {
+  # shellcheck disable=SC2154 # profile_home: the engine's, by dynamic scope ({profile})
+  ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$profile_home/profile.py" "$@"
+}
+
+# _claude_config_filter SOURCE VIEW -- the seed the seeding modes read: every top-level
+# key and, of the per-project entries, only this project's. A view that cannot be made
+# refuses the launch: seeding the whole file instead would hand this project every
+# other project's entry, which is what the filter is for (leak study row 10).
 _claude_config_filter() {
-  local src="$1" view="$2" why="" rc=0
-  if command -v python3 >/dev/null 2>&1; then
-    AS_SRC="$src" AS_VIEW="$view" AS_PROJECT="$(_as_project_dir)" python3 - <<'PY' 2>/dev/null || rc=$?
-import json, os
-src, view, project = (os.environ[k] for k in ("AS_SRC", "AS_VIEW", "AS_PROJECT"))
-try:
-    with open(src, encoding="utf-8") as fh:
-        n = json.load(fh)
-except (OSError, ValueError):
-    n = {}
-if not isinstance(n, dict):
-    n = {}
-v = {k: val for k, val in n.items() if k != "projects"}
-projects = n.get("projects")
-v["projects"] = {project: projects[project]} if isinstance(projects, dict) and project in projects else {}
-fd = os.open(view, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-with os.fdopen(fd, "w", encoding="utf-8") as fh:
-    json.dump(v, fh)
-PY
-    ((rc)) && why="python3 failed (exit $rc)"
-  else
-    why="python3 missing"
-  fi
-  if [[ -n "$why" ]]; then
-    rm -f -- "$view" 2>/dev/null
-    (umask 077 && cp -- "$src" "$view") || return 1
-    _as_msg "$why: this project's config file is seeded from the whole ~/.claude.json, other projects' entries included"
-  fi
-  return 0
+  _claude_py config-view "$1" "$2" --project "$(_as_project_dir)" && return 0
+  _as_msg "config: could not make this project's view of $1; refusing rather than seeding the whole file"
+  return 1
 }
 _claude_config_prepare() {
   # THE CONFIG FILE'S SOURCE DEPENDS ON THE BASE. With the default base, native Claude
@@ -240,35 +223,13 @@ profile_before_join() {
   proj="$(_as_project_dir)"
   store="$(_as_channel_store config "$profile_base/.claude.json" "$mode")"
   [[ -f "$store" ]] || return 0
-  AS_CJ="$store" AS_PROJ="$proj" python3 - <<'PY' 2>/dev/null && return 0
-import json, os, sys
-d = json.load(open(os.environ["AS_CJ"]))
-sys.exit(0 if (d.get("projects") or {}).get(os.environ["AS_PROJ"], {}).get("hasTrustDialogAccepted") else 1)
-PY
-  _claude_mark_trust "$store" "$proj" \
-    && _as_msg "recorded workspace trust for $proj in role '${_role:-default}' (a --bg cannot ask)"
+  _claude_py trust-recorded "$store" --project "$proj" 2>/dev/null && return 0
+  if _claude_py mark-trust "$store" --project "$proj" 2>/dev/null; then
+    _as_msg "recorded workspace trust for $proj in role '${_role:-default}' (a --bg cannot ask)"
+  else
+    _as_msg "could not record workspace trust for '$proj' in $store"
+  fi
   return 0
-}
-
-# _claude_mark_trust FILE PROJECT -- record PROJECT as trusted in the config FILE, in
-# place: the file is bind-mounted into the running launch, and a rename would leave
-# the launch on the old one.
-_claude_mark_trust() {
-  AS_CJ="$1" AS_PROJ="$2" python3 - <<'PY' 2>/dev/null || _as_msg "could not record workspace trust for '$2' in $1"
-import json, os
-cj, proj = os.environ["AS_CJ"], os.environ["AS_PROJ"]
-try:
-    d = json.load(open(cj))
-except Exception:
-    d = {}
-if not isinstance(d, dict):
-    d = {}
-d.setdefault("projects", {}).setdefault(proj, {})["hasTrustDialogAccepted"] = True
-with open(cj, "r+") as fh:
-    fh.seek(0)
-    json.dump(d, fh)
-    fh.truncate()
-PY
 }
 
 # profile_briefing_args INSIDE_DIR [AGENT ARGS...] -- engine hook. Hands the
@@ -287,10 +248,10 @@ PY
 # Claude Code honours only ONE --settings: passing it twice keeps the last and
 # silently drops the first (measured). So when the user passes their own, the two
 # are merged into one file, and theirs is dropped from the arguments
-# (profile_agent_argv), or it would win over ours. That merge needs a JSON
-# parser: python3 is used ONLY on this path, and if it is missing the USER's
-# --settings is kept and the briefing's hooks are dropped with a loud note.
-# Losing a hint beats changing how someone's tools behave.
+# (profile_agent_argv), or it would win over ours. When the merge is refused (a
+# shape profile.py does not recognise), the USER's --settings is kept and the
+# briefing's hooks are dropped with a loud note. Losing a hint beats changing how
+# someone's tools behave.
 profile_briefing_args() {
   local inside="$1"
   shift
@@ -320,59 +281,8 @@ profile_briefing_args() {
   done
 
   if [[ -n "$user_val" ]]; then
-    if ! command -v python3 >/dev/null 2>&1; then
-      _as_msg "briefing: keeping your --settings, NOT installing the briefing's hooks. Claude Code honours only the last --settings, so merging is the only way to keep both, and that needs python3, which is not on PATH. Install python3 (or read $inside/briefing.md, bound read-only either way)."
-      return 0
-    fi
     local _merge_note=""
-    if ! _merge_note=$(AS_OURS="$ours" AS_USER="$user_val" AS_OUT="$host_file" python3 -c '
-import json, os, sys
-def load(v):
-    v = v.strip()
-    if v.startswith("{"):
-        return json.loads(v)
-    with open(os.path.expanduser(v)) as fh:
-        return json.load(fh)
-try:
-    user = load(os.environ["AS_USER"])
-    ours = json.loads(os.environ["AS_OURS"])
-except Exception as exc:
-    sys.exit(f"cannot read --settings: {exc}")
-# There is nothing to resolve here: this whole contribution is a list of two
-# hook entries, appended. Only "hooks" is touched, and only by
-# APPENDING to the two events the briefing uses -- hook entries merge across
-# settings levels, so a per-event union is what Claude Code itself would do with
-# two sources. Their entries stay first. Nothing else is read, rewritten or
-# merged, so no other setting of theirs can be changed by this.
-try:
-    if not isinstance(user, dict):
-        raise TypeError("top level is not an object")
-    hooks = user.get("hooks", {})
-    if not isinstance(hooks, dict):
-        raise TypeError("hooks is not an object")
-    hooks = dict(hooks)
-    for event, entries in ours["hooks"].items():
-        mine = hooks.get(event, [])
-        # A shape we do not recognise is left alone rather than coerced:
-        # list() of a dict would silently replace their data with its keys.
-        if not isinstance(mine, list):
-            raise TypeError(f"hooks.{event} is not an array")
-        # Order is cosmetic here, not precedence: matching hooks run in
-        # parallel, and these two events are context-only with no decision
-        # control, so their additionalContext and ours are both added and
-        # neither suppresses the other. Theirs reads first because it is
-        # theirs, not because position confers anything.
-        hooks[event] = mine + entries
-    merged = dict(user)
-    merged["hooks"] = hooks
-except Exception as exc:
-    sys.exit(f"refusing to merge --settings, leaving yours untouched: {exc}")
-with open(os.environ["AS_OUT"], "w") as fh:
-    json.dump(merged, fh, indent=2)
-# Their setting stands, but say so: with hooks off the briefing never arrives.
-if merged.get("disableAllHooks"):
-    print("hooks-disabled")
-'); then
+    if ! _merge_note=$(_claude_py merge-settings --ours "$ours" --user "$user_val" --out "$host_file"); then
       _as_msg "briefing: keeping your --settings unchanged; the briefing's hooks were not installed. $inside/briefing.md is bound read-only either way."
       return 0
     fi
@@ -404,40 +314,10 @@ if merged.get("disableAllHooks"):
 }
 
 # _claude_history_view SOURCE VIEW -- the prompt history a seeding mode reads: this
-# project's records only, by the rule _claude_history_filter below states. Fails closed:
-# without python3 the view is empty.
+# project's records only, matched by the field, not the bytes (profile.py). A view that
+# cannot be made refuses the launch, as the config file's does.
 _claude_history_view() {
-  (umask 077 && _claude_history_filter "$1" "$(_as_project_dir)" >"$2")
-}
-_claude_history_filter() { # $1 = history.jsonl, $2 = project dir
-  # Records are compact JSON, one per line, each carrying "project":"<dir>".
-  #
-  # MATCH THE FIELD, NOT THE BYTES. This was a fixed-string grep whose comment
-  # argued that including the closing quote made it safe in one direction: "can
-  # only ever return too few lines, never another project's". The closing quote
-  # does rule out prefix collisions, and nothing else -- `grep -F` matches that
-  # byte sequence ANYWHERE on the line, in any field, at any nesting depth. So a
-  # record belonging to another project reached this one as soon as it happened
-  # to quote or nest the target path. Measured as row 4 of the leak study (#73).
-  #
-  # FAILS CLOSED. No python3, a file that will not open, or a line that does not
-  # parse: the record is dropped, not passed. Too few lines really is the safe
-  # direction here; the old comment's mistake was believing grep gave it.
-  command -v python3 >/dev/null 2>&1 || return 0
-  AS_HIST="$1" AS_PROJECT="$2" python3 - <<'PY' 2>/dev/null || true
-import json, os, sys
-want = os.environ["AS_PROJECT"]
-try:
-    fh = open(os.environ["AS_HIST"], encoding="utf-8")
-except OSError:
-    sys.exit(0)
-with fh:
-    for line in fh:
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict) and rec.get("project") == want:
-            sys.stdout.write(line if line.endswith("\n") else line + "\n")
-PY
+  _claude_py history-view "$1" "$2" --project "$(_as_project_dir)" && return 0
+  _as_msg "transcripts: could not make this project's view of $1; refusing rather than seeding it"
+  return 1
 }

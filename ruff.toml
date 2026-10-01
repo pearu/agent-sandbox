@@ -1,0 +1,9 @@
+# Python lint for the repository's helpers (scripts/check.sh, also run in CI). The rule
+# set is pinned here, not left to ruff's defaults, so a local run and CI agree whatever
+# ruff version each has: pyflakes (F: undefined and unused names, imports) and syntax
+# errors (E9) -- what finds bugs, not style. The seccomp generator's compact one-line
+# branches and the probes' one-off scripts are styles of their own, not errors.
+line-length = 100
+
+[lint]
+select = ["E9", "F"]

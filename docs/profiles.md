@@ -58,6 +58,17 @@ of a section that names none. The pairs count **only from an approved dot-file**
 an unreviewed file grants nothing; the trust gate is the engine's, not the profile's.
 `profiles/claude/profile.sh` lists `hide` ([config.md](config.md#the-file)).
 
+**A profile may ship a helper beside its script** for what bash does badly, such as
+parsing the agent's own file formats. The claude profile's is `profile.py`, a
+subcommand each: the config file's seed view, the prompt history's, the `--bg`
+workspace trust, the `--settings` merge. The contract is still the bash hooks, and the
+policy stays in them: the helper does one thing and exits nonzero when it cannot, and
+the hook decides what a launch then does. `python3` is always there -- the engine
+refuses a launch without it, since every command is joined by it -- so a hook needs no
+second, bash version of what the helper does. The engine
+gives the hook its directory as `profile_home` (what `{profile}` expands to), and the
+installer copies the profile's directory whole.
+
 A profile must **not** touch the engine's bwrap argument list. The declarations
 above are the whole interface, so that the sandbox's isolation guarantees stay
 reviewable in one place, the engine.

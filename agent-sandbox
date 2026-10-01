@@ -1895,9 +1895,7 @@ _as_overlay_ok() {
 #
 # REFUSES WITHOUT python3 rather than binding an unsynced copy. An out-of-date
 # copy is not a smaller version of `copy`; it is a channel the user believes is
-# tracking their edits and is not. The config file takes the other route --
-# degrade and say so -- because there a stale copy still carries the account and
-# the project entry, and the alternative was no session at all.
+# tracking their edits and is not.
 _as_connect_sync() {
   local verb="$1" ch="$2" kind="$3" src="$4" copy="$5" manifest="$6" out rc=0
   command -v python3 >/dev/null 2>&1 || {
