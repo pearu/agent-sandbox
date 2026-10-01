@@ -66,23 +66,8 @@
 # shellcheck disable=SC2034
 profile_command=claude
 
-# Claude keeps its state in ~/.claude (sessions, OAuth/API tokens, settings)
-# and top-level config in ~/.claude.json. Both must be writable -- and the
-# config file must be writable THE WAY CLAUDE CODE WRITES IT: a lock directory
-# and a temp file created beside it, then a rename over it (measured, 2.1.274).
-# Bound at $HOME/.claude.json, "beside it" is the read-only $HOME tmpfs: the
-# lock and the temp file fail with EROFS, no fallback runs, and every write --
-# folder trust accepted inside, per-project allowed tools and MCP servers, app
-# state -- was silently lost while the session reported success. So the file is
-# bound INSIDE the state directory, at ~/.claude/.claude.json, and
-# CLAUDE_CONFIG_DIR (profile_env_set, below) points Claude Code there. The
-# rename onto a bind mount fails (EBUSY) and Claude Code then rewrites the file
-# in place, which reaches the bound file.
-#
-# And the bound file is not the host's: it is THIS PROJECT'S copy of it, made
-# and refreshed by profile_prepare (see _claude_config_prepare), which appends
-# the second entry -- the directory first, the file inside it second.
-profile_config_binds=("$HOME/.claude")
+# Claude keeps its state in ~/.claude (sessions, OAuth/API tokens, settings): the
+# profile's base, bound read-write first -- `[agent] base` in its dot-file (#175).
 
 # ----- the channel map (profile contract item 3) -----------------------------
 # A CHANNEL is named by what it carries; this says where THIS agent keeps it.
@@ -154,6 +139,16 @@ profile_channels=(
 # already gave each project its own copy -- read-write here would reopen #90 for
 # everyone on `shared`. The whole native file is `--preset native` or an explicit
 # `config = read-write`.
+# THE CONFIG FILE MOVES INSIDE THE STATE DIRECTORY. ~/.claude.json must be writable
+# THE WAY CLAUDE CODE WRITES IT: a lock directory and a temp file created beside it,
+# then a rename over it (measured, 2.1.274). Bound at $HOME/.claude.json, "beside it"
+# is the read-only $HOME tmpfs: the lock and the temp file fail with EROFS, no
+# fallback runs, and every write -- folder trust accepted inside, per-project allowed
+# tools and MCP servers, app state -- was silently lost while the session reported
+# success. So the file is bound INSIDE the state directory, at ~/.claude/.claude.json,
+# and CLAUDE_CONFIG_DIR (profile_env_set, below) points Claude Code there. The rename
+# onto a bind mount fails (EBUSY) and Claude Code then rewrites the file in place,
+# which reaches the bound file.
 # shellcheck disable=SC2034 # read by the engine
 profile_channel_sources=("$HOME/.claude/.claude.json	$HOME/.claude.json")
 # shellcheck disable=SC2034
@@ -332,7 +327,6 @@ profile_memory_scope() {
 }
 
 profile_prepare() {
-  mkdir -p "$HOME/.claude"
   # This project's conversations are the `transcripts` channel's directory path.
   local _i
   for _i in "${!profile_channels[@]}"; do

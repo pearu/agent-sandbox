@@ -245,6 +245,37 @@ STUB
   [[ "$output" == *"profiles available in $H/profiles2: other"* ]]
 }
 
+# shellcheck disable=SC2088 # a literal ~ is what a profile writes; the engine expands it
+@test "[agent] base: the profile's state directory, bound read-write first and created when absent; checked as a bind (#175)" {
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf '[agent]\nbase = ~/.other\n' >"$H/profiles2/other/agent-sandbox"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
+  [ "$status" -eq 0 ]
+  [ -d "$H/home/.other" ] # created
+  argv_has --bind "$H/home/.other" "$H/home/.other"
+  # a base that is protected, relative, or $HOME itself is refused, and nothing launches
+  local base
+  for base in '~/.ssh' 'rel/dir' '~'; do
+    printf '[agent]\nbase = %s\n' "$base" >"$H/profiles2/other/agent-sandbox"
+    run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"[agent] base"* ]]
+    [ ! -s "$H/argv" ]
+  done
+  # the claude profile's own is ~/.claude, bound before its channels layer on it
+  # (isolated: there every channel has a bind of its own)
+  TEST_PRESET=isolated run_engine -- asb claude --version
+  [ "$(argv_index "$H/home/.claude")" -lt "$(argv_index "$H/home/.claude/CLAUDE.md")" ]
+}
+
+@test "a project's [claude] base is not the project's to set: warned of at the review, and ignored" {
+  mkdir -p "$H/proj/elsewhere"
+  printf '[claude]\nbase = %s\n' "$H/proj/elsewhere" >"$H/proj/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[claude] key 'base' is not one this profile reads"* ]]
+}
+
 @test "sourced mode: agent_sandbox() takes the command as run, and never infers a profile from \$0" {
   pushd "$H/proj" >/dev/null
   run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm BWRAP_DUMP="$H/argv" \

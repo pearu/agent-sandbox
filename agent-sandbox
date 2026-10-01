@@ -3042,6 +3042,8 @@ _as_trust_show() {
 #   [agent] verbs, verbs-observe, daemon, status -- profile_verbs, profile_verbs_observe,
 #           profile_daemon_argv, profile_status_argv (space-separated words)
 #   [agent] command -- profile_command
+#   [agent] base    -- profile_base: the agent's state directory, bound read-write
+#                      before anything else and created when absent (#175)
 #   [agent] hide    -- profile_hide: paths under the agent's state directory blanked
 #                      every launch (the profile's profile_isolate reads it)
 #   [forward]       -- profile_env_pass
@@ -3064,6 +3066,25 @@ _as_profile_dotfile() {
     read -r -a words <<<"$v"
     case "$k" in
       command) profile_command="$v" ;;
+      base)
+        # Checked as a read-write bind is, since that is what it becomes: never /, $HOME
+        # or a parent of it, nothing protected. Absolute or under `~`.
+        case "$v" in
+          \~ | \~/*) v="$HOME${v#\~}" ;;
+          /*) ;;
+          *)
+            _as_msg "profile '$pname': $file: [agent] base '$v' is relative; it is absolute or under '~'"
+            return 1
+            ;;
+        esac
+        v="$(realpath -m -s -- "$v")"
+        local _prot_what _prot_path _prot_how
+        if [[ "$v" == / || "$v" == "$HOME" || "$HOME" == "$v"/* ]] || _as_path_protected "$v" read-write; then
+          _as_msg "profile '$pname': $file: refusing [agent] base '$v' (/, \$HOME, a parent of it, or a protected path)"
+          return 1
+        fi
+        profile_base="$v"
+        ;;
       verbs) profile_verbs+=(${words[@]+"${words[@]}"}) ;;
       verbs-observe) profile_verbs_observe+=(${words[@]+"${words[@]}"}) ;;
       daemon) profile_daemon_argv+=(${words[@]+"${words[@]}"}) ;;
@@ -4232,6 +4253,7 @@ agent_sandbox() (
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
   local -a profile_hide=() _profile_allow_hosts=()
+  local profile_base="" # [agent] base: the agent's state directory (#175)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
@@ -4983,7 +5005,24 @@ agent_sandbox() (
   # CLAUDE_CONFIG_DIR there natively. The rm fails with EBUSY while another
   # session still has it mounted; the last session out removes it.
   local _p _src _dst
-  for _p in "${profile_config_binds[@]}"; do
+  # The profile's base (#175): its state directory, bound read-write first so that
+  # every channel and declaration layers on it. Created when absent -- a launch is the
+  # only thing that needs it -- and resolved again here, fail-closed, as a declaration
+  # is at bind time.
+  if [[ -n "$profile_base" ]]; then
+    mkdir -p -- "$profile_base" || {
+      _as_msg "profile '$profile': cannot create its base '$profile_base'"
+      return 1
+    }
+    local _preal _prot_what _prot_path _prot_how
+    _preal="$(readlink -f -- "$profile_base")"
+    if [[ "$_preal" == / || "$_preal" == "$HOME" || "$HOME" == "$_preal"/* ]] || _as_path_protected "$_preal" read-write; then
+      _as_msg "profile '$profile': refusing to bind its base '$profile_base': it resolves to a protected path ('$_preal')"
+      return 1
+    fi
+    args+=(--bind "$_preal" "$profile_base")
+  fi
+  for _p in ${profile_config_binds[@]+"${profile_config_binds[@]}"}; do
     IFS=$'\t' read -r _src _dst <<<"$_p"
     _dst="${_dst:-$_src}"
     [[ -e "$_src" ]] \
