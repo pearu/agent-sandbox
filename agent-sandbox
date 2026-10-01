@@ -1166,7 +1166,9 @@ _as_connect_parse_path() {
   local key="$1" mode="$2" where="$3" outside="${4:-}" p dir=0 real proj other
   local _prot_what _prot_path _prot_how
   [[ "$key" == */ ]] && dir=1
-  p="$key"
+  local _slug_out
+  _as_slug_expand "$key" || return 1
+  p="$_slug_out"
   case "$p" in
     \~ | \~/*) p="$HOME${p#\~}" ;;
     \~*)
@@ -1218,6 +1220,8 @@ _as_connect_parse_path() {
       _as_msg "connect ($where): '$key = own outside:$outside' -- own is the sandbox's own storage and takes nothing from outside; drop the source, or pick a mode that reads it."
       return 1
     }
+    _as_slug_expand "$outside" || return 1
+    outside="$_slug_out"
     case "$outside" in
       \~ | \~/*) src="$HOME${outside#\~}" ;;
       /*) src="$outside" ;;
@@ -3110,6 +3114,32 @@ _as_profile_dotfile() {
   return 0
 }
 
+# _as_slug_expand STRING -- set $_slug_out to STRING with `{slug}` expanded (#176): this
+# project's directory in the agent's own per-project scheme, as the profile's
+# profile_slug DIR prints it (claude: projects/<slug>/). The scheme is the agent's, so it
+# stays code; what uses it is data -- a channel path, a declaration's key or its outside:
+# source. Any other `{name}` is refused rather than left to be taken as a path.
+_as_slug_expand() {
+  local s="$1" slug
+  _slug_out="$s"
+  if [[ "$s" == *"{slug}"* ]]; then
+    declare -F profile_slug >/dev/null || {
+      _as_msg "'$s': {slug} needs a profile that defines profile_slug; profile '$profile' does not"
+      return 1
+    }
+    slug="$(profile_slug "$(_as_project_dir)")" && [[ -n "$slug" && "$slug" != */* ]] || {
+      _as_msg "'$s': profile '$profile' gave no usable slug for $(_as_project_dir)"
+      return 1
+    }
+    s="${s//\{slug\}/$slug}"
+  fi
+  if [[ "$s" =~ \{[a-z][a-z0-9_:-]*\} ]]; then
+    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {slug} is known)"
+    return 1
+  fi
+  _slug_out="$s"
+}
+
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
 # profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...` and
 # `key<TAB>NAME<TAB>KEY` lines. Sourced in a subshell; a profile's top level only
@@ -4274,6 +4304,12 @@ agent_sandbox() (
   # The profile's own dot-file, beside its script (#181): what the profile states as
   # data rather than code.
   _as_profile_dotfile "$profile_dir/$profile/agent-sandbox" || return 1
+  # {slug} in the channel table (#176), before anything reads it: --reset included.
+  local _ci _slug_out
+  for _ci in "${!profile_channels[@]}"; do
+    _as_slug_expand "${profile_channels[_ci]}" || return 1
+    profile_channels[_ci]="$_slug_out"
+  done
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
   _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1

@@ -51,6 +51,19 @@ slugify() {
   [ ! -e "$own/x.md" ]
 }
 
+@test "--reset transcripts reaches this project's conversations directory too ({slug}, #176)" {
+  # It used to be added to the channel by profile_prepare, which --reset never ran.
+  local conv="$C/projects/${PROJ//[^A-Za-z0-9-]/-}" own
+  mkdir -p "$conv"
+  run_engine AGENT_SANDBOX_CONNECT='transcripts=own native' -- asb claude --version
+  own="$SBOX/transcripts/own/$(slugify "$conv")"
+  [ -d "$own" ]
+  printf 'MINE\n' >"$own/x.jsonl"
+  run_engine -- asb --reset transcripts claude
+  [ "$status" -eq 0 ]
+  [ ! -e "$own/x.jsonl" ]
+}
+
 @test "--reset PATH resets one declared path and leaves the others" {
   mkdir -p "$PROJ/scratch" "$PROJ/other"
   run_engine -- asb --connect './scratch/=own' --connect './other/=own' claude --version
