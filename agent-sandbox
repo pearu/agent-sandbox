@@ -1828,9 +1828,17 @@ _as_connect_bind_path() {
 # _as_overlay_ok -- can this bubblewrap mount an overlay? (>= 0.11). Asked once
 # and cached: it is a fork per call otherwise, and the answer cannot change
 # mid-launch.
+#
+# THE HELP IS READ WHOLE, never piped into `grep -q`. bwrap writes it in two writes
+# (4096 bytes, then the rest; measured on 0.12.0) and the match is in the first, so
+# `grep -q` could exit between them, bwrap die of SIGPIPE, and pipefail make that "no
+# overlay": measured, 1 launch in 32000 under load, and on CI a `copy-on-write` channel
+# whose next launch read a fresh copy instead of the sandbox's own layer.
 _as_overlay_ok() {
   if [[ -z "${_overlay_supported:-}" ]]; then
-    if bwrap --help 2>&1 | grep -q -- '--overlay '; then
+    local _help
+    _help="$(bwrap --help 2>&1 || true)"
+    if [[ "$_help" == *"--overlay "* ]]; then
       _overlay_supported=yes
     else
       _overlay_supported=no
