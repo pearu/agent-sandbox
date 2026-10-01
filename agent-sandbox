@@ -4538,6 +4538,11 @@ agent_sandbox() (
     _as_slug_expand "${profile_channels[_ci]}" || return 1
     profile_channels[_ci]="$_slug_out"
   done
+  # Inside a sandbox an --exec runs its command as it is (#197; see the passthrough
+  # below): before the agent is looked up, which it does not need.
+  if ((_do_exec && ! _do_trust)) && _as_inside_sandbox; then
+    exec "$@"
+  fi
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
   _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
@@ -4966,6 +4971,17 @@ agent_sandbox() (
   if [[ -n "$_reset_connection" ]]; then
     _as_connect_reset "$_reset_connection" || return 1
     return 0
+  fi
+
+  # ---- inside a sandbox, an `asb` runs what it names as it is (#197) ----
+  # No second sandbox: nesting would need `unshare`, which the default seccomp filter
+  # refuses, and nobody has asked for it (a feature request, #197). The engine's rule,
+  # not a profile's, and with _as_inside_sandbox's test -- the marker AND pid 1 being
+  # bubblewrap -- since AGENT_SANDBOX alone is a variable any host shell can set, and
+  # this path runs the agent unsandboxed. --exec runs its command; anything else, the
+  # agent with its arguments. `--trust` is not routed.
+  if ((! _do_trust)) && _as_inside_sandbox; then
+    exec "$profile_bin" "$@" # (an --exec was run before the agent was looked up)
   fi
 
   # ---- profile routing: sandbox this invocation, or hand it off ----
