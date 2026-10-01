@@ -140,7 +140,7 @@ trust() {
   local x y
   x="$(cd "$H/space/x" && pwd -P)" y="$(cd "$H/space/y" && pwd -P)"
   RUN_CWD="$x" TEST_PRESET=inherit run_engine -- asb claude --version # x: a role store
-  mkdir -p "$C/projects/${y//[^A-Za-z0-9-]/-}/memory"                  # y: native memory
+  mkdir -p "$C/projects/${y//[^A-Za-z0-9-]/-}/memory"                 # y: native memory
   printf '[share-memory]\n%s/*\n' "$H/space" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
