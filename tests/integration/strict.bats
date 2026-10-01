@@ -10,6 +10,11 @@
 # here (needs passt + its AppArmor profile, or the userns sysctl relaxed) and
 # 8899 and 8877 are free.
 
+# Not in parallel within this file: its tests bind fixed host ports (8877, 8899) and one
+# checks that 8877 is NOT published while another publishes it (measured under bats
+# --jobs 18).
+setup_file() { export BATS_NO_PARALLELIZE_WITHIN_FILE=true; }
+
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   load "$BATS_TEST_DIRNAME/../helpers/integration"

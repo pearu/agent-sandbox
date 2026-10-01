@@ -37,7 +37,9 @@ keepers() {
     a0=""
     { IFS= read -r -d '' a0 <"$c"; } 2>/dev/null || true # it may exit while we look
     [[ "$a0" == agent-sandbox-keeper ]] || continue
-    home="$(tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | sed -n 's/^HOME=//p' | head -1)"
+    # Braced: the redirection fails when the process exits while we look, and bash
+    # reports a failed redirection before the command's own 2> is in place.
+    home="$({ tr '\0' '\n' <"/proc/$p/environ"; } 2>/dev/null | sed -n 's/^HOME=//p' | head -1)" || true
     [[ -n "$home" && "$home" == "$real_home" ]] && continue
     [[ -z "${AS_KEEPER_SCOPE:-}" || "$home" == "$AS_KEEPER_SCOPE"/* ]] || continue
     printf '%s\t%s\n' "$p" "${home:-?}"

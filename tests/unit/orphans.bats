@@ -2,6 +2,10 @@
 # probes/orphans.sh (#127): a keeper payload whose parent is gone is found, and killed
 # only with --kill; one that still has its parent is never listed.
 
+# Not in parallel within this file: `orphans.sh --kill` ends every orphaned keeper
+# payload on the machine, a sibling test's included (measured under bats --jobs 18).
+setup_file() { export BATS_NO_PARALLELIZE_WITHIN_FILE=true; }
+
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   O="$REPO_ROOT/probes/orphans.sh"
