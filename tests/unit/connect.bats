@@ -791,6 +791,31 @@ seeded_run_scoped() { # MODE
   [[ "$output" == *"'~/.agent/config.json' is a file"* ]]
 }
 
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "{slug}: this project's name in the agent's own scheme, in a declaration's key and its outside: source (#176)" {
+  local slug="${PROJ//[^A-Za-z0-9-]/-}"
+  mkdir -p "$H/home/.claude/projects/$slug/notes" "$H/data/$slug"
+  run_engine -- asb --connect '~/.claude/projects/{slug}/notes/ = read-only' \
+    --connect "/srv/p/ = read-only outside:$H/data/{slug}" claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/home/.claude/projects/$slug/notes" "$H/home/.claude/projects/$slug/notes"
+  argv_has --ro-bind "$H/data/$slug" /srv/p
+  # and in the channel table: the transcripts channel's per-project directory
+  TEST_PRESET=isolated run_engine -- asb claude --version
+  grep -qx "$H/home/.claude/projects/$slug" "$H/argv"
+}
+
+@test "{slug}: any other placeholder is refused, and so is {slug} for a profile without profile_slug" {
+  run_engine -- asb --connect './{project}/ = own' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown placeholder {project}"* ]]
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --connect './{slug}/ = own' --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"needs a profile that defines profile_slug"* ]]
+}
+
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
   run_engine -- asb --connect './scratch/=own run-scoped' claude --version

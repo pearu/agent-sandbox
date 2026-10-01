@@ -95,7 +95,7 @@ profile_channels=(
   "workflows	dir:$HOME/.claude/workflows"
   "plugins	dir:$HOME/.claude/plugins"
   "config	file:$HOME/.claude/.claude.json"
-  "transcripts	dir:$HOME/.claude/file-history	dir:$HOME/.claude/plans	file:$HOME/.claude/history.jsonl"
+  "transcripts	dir:$HOME/.claude/file-history	dir:$HOME/.claude/plans	file:$HOME/.claude/history.jsonl	dir:$HOME/.claude/projects/{slug}"
   "logs	file:$HOME/.claude/responses.log	file:$HOME/.claude/alerts.log"
   "artefacts	dir:$HOME/.claude/downloads	dir:$HOME/.claude/uploads	dir:$HOME/.claude/tasks"
   "policy	file:$HOME/.claude/remote-settings.json	file:$HOME/.claude/policy-limits.json	file:$HOME/.claude/policy-limits.json.stamp.json"
@@ -121,8 +121,8 @@ profile_channels=(
 # TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
 # and prompt history are its own, and so are the logs your hooks write -- `own` under
 # every preset but `native`, where they are yours. Nothing is merged back at exit. The
-# conversations' directory, projects/<slug>/, is added per launch by profile_prepare,
-# since it depends on the project. A role starts with none of your native
+# conversations' directory is projects/{slug}/, which the engine expands per launch
+# through profile_slug, since it depends on the project (#176). A role starts with none of your native
 # conversations; `transcripts = seed-only` seeds them once, and seeds the prompt
 # history FILTERED to this project's records.
 # THE CONFIG FILE IS A CHANNEL (#119), one file following its mode like any other.
@@ -226,6 +226,10 @@ _claude_project_slug() {
   printf '%s-%s' "${conv:0:200}" "$(_claude_path_hash "$1")"
 }
 
+# profile_slug DIR -- engine hook (#176): what `{slug}` expands to in the channel table
+# and in a declaration, this project's name under ~/.claude/projects/.
+profile_slug() { _claude_project_slug "$1"; }
+
 # The hash Claude Code appends to a truncated project name: the 32-bit
 # h = h*31 + c string hash of the ORIGINAL path, printed base36 from its
 # ABSOLUTE value -- so the suffix is 1 to 6 characters, not a fixed width (the
@@ -327,12 +331,6 @@ profile_memory_scope() {
 }
 
 profile_prepare() {
-  # This project's conversations are the `transcripts` channel's directory path.
-  local _i
-  for _i in "${!profile_channels[@]}"; do
-    [[ "${profile_channels[_i]%%$'\t'*}" == transcripts ]] \
-      && profile_channels[_i]+=$'\t'"dir:$HOME/.claude/projects/$(_claude_project_slug "$(_as_project_dir)")"
-  done
   # Ensure ~/.claude.json exists: it seeds this project's copy of it.
   [[ -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
   _claude_config_prepare || return 1
