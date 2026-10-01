@@ -1581,10 +1581,12 @@ _as_connect_apply() {
 #
 # A PATH THAT DOES NOT EXIST IS SKIPPED, with a notice, in every mode but one. The
 # engine would otherwise have to create it on the host to have something to bind,
-# and every mode except `own` promises something about the path OUTSIDE. The
-# exception is a trailing slash under `own`, which reads as "a directory of the
-# sandbox's own here" and needs nothing outside. Anything the sandbox then creates
-# at a skipped path is picked up at the next launch.
+# and every mode except `own` promises something about the path OUTSIDE. `own` needs
+# nothing outside, so it creates the sandbox's own: a directory when the key ends in
+# `/`, else a file (#189) -- the spelling says the kind when nothing is there to look
+# at. Where the path exists its kind is the host's, and a `/` on a non-directory is
+# refused. Anything the sandbox then creates at a skipped path is picked up at the
+# next launch.
 #
 # THE SOURCE is the path itself, or its `outside:` path (#174): what the modes read,
 # seed from and bind is the source, and where they land is the key. A relocated path
@@ -1613,17 +1615,25 @@ _as_connect_apply_paths() {
       [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
       if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
         _as_join_scoped_bind dir "$p" "$_jseed" || return 1
-      elif [[ -e "$s" ]]; then
-        _as_join_scoped_bind file "$p" "$_jseed" || return 1
+      elif [[ -e "$s" || "$mode" == own ]]; then
+        _as_join_scoped_bind file "$p" "$_jseed" || return 1 # an absent own: an empty file
       else
         _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
       fi
       continue
     fi
     if [[ ! -e "$s" ]]; then
-      if [[ "$mode" == own ]] && ((${_connect_isdir[$p]})); then
+      if [[ "$mode" == own ]]; then
         slot="$base/own/$(_as_iso_slug "$p")"
-        mkdir -p -- "$slot" || return 1
+        if ((${_connect_isdir[$p]})); then
+          mkdir -p -- "$slot" || return 1
+        else
+          # bwrap makes the mount point; on the host when the key's directory is
+          # bound from it, so the cleanup removes it again while it is still empty
+          mkdir -p -- "$(dirname -- "$slot")" || return 1
+          [[ -e "$slot" ]] || : >"$slot" || return 1
+          _as_connect_placeholder "$p"
+        fi
         args+=(--bind "$slot" "$p")
       else
         _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
