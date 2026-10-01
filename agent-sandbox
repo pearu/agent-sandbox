@@ -1934,6 +1934,12 @@ _as_keeper_policy() {
       _kp "connect:$k" "${_connect_mode[$k]}${_connect_scope[$k]:+ ${_connect_scope[$k]}}" "$v"
     fi
   done
+  # The base (#190): what the keeper was built on. A join from a shell whose
+  # [agent] base-env variable moves it must find the same base, or a session would run
+  # on a state directory other than the one its shell names.
+  if [[ -n "$profile_base" ]] && { ((all)) || [[ -n "$profile_base_from" ]]; }; then
+    _kp base "$profile_base" "${profile_base_from:-[agent] base}"
+  fi
   if ((all)) || [[ -n "$_overlay_flag" || -n "${AGENT_SANDBOX_OVERLAY:-}" ]]; then
     _kp overlay "$_overlay_mode" "$([[ -n "$_overlay_flag" ]] && echo --overlay || echo AGENT_SANDBOX_OVERLAY)"
   fi
@@ -3101,7 +3107,7 @@ _as_profile_dotfile() {
       _as_msg "profile '$pname': $file: [agent] base-env '$base_env' is not a variable name"
       return 1
     }
-    [[ -n "${!base_env:-}" ]] && base="${!base_env}" from=" (from $base_env)"
+    [[ -n "${!base_env:-}" ]] && base="${!base_env}" from=" (from $base_env)" profile_base_from="$base_env"
   fi
   if [[ -n "$base" ]]; then
     case "$base" in
@@ -4433,7 +4439,8 @@ agent_sandbox() (
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
   local -a profile_hide=() _profile_allow_hosts=()
-  local profile_base="" # [agent] base: the agent's state directory (#175)
+  local profile_base=""      # [agent] base: the agent's state directory (#175)
+  local profile_base_from="" # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()

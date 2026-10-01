@@ -867,6 +867,19 @@ DF
   run ! grep -q '"home"' "$store"
 }
 
+@test "a running role keeps its base: a join whose CLAUDE_CONFIG_DIR moves it is refused; one that names none joins (#190)" {
+  mkdir -p "$H/home/alt"
+  engine_bg -- asb claude --version # the role, running on ~/.claude
+  run_engine CLAUDE_CONFIG_DIR="$H/home/alt" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"running with base = $H/home/.claude"*"CLAUDE_CONFIG_DIR asks for '$H/home/alt'"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine -- asb claude --version # names no base: joins the running one
+  [ "$status" -eq 0 ]
+  [ ! -s "$H/argv" ]
+  release_bg
+}
+
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
   run_engine -- asb --connect './scratch/=own run-scoped' claude --version
