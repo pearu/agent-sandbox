@@ -39,6 +39,10 @@ launch() {
   (cd "$E/proj" && HOME="$H" PATH="$H/.local/bin:$B:$PATH" "$H/.local/bin/asb" "$@")
 }
 
+# `run !` needs bats 1.5's flag handling; this suite does not load helpers/common.bash,
+# which declares it for the others, so it says so itself (else bats warns BW02).
+bats_require_minimum_version 1.5.0
+
 setup_file() {
   [[ "${AGENT_SANDBOX_E2E:-0}" == 1 ]] || skip "set AGENT_SANDBOX_E2E=1 to run the end-to-end installer test"
   { command -v bwrap && command -v curl; } >/dev/null || skip "bwrap and curl are required"
