@@ -3,7 +3,7 @@
 # The same grammar as a project's .agent-sandbox, read by the engine right after
 # profile.sh, for every launch of this profile. It ships with the engine, so it is
 # not reviewed the way a project's file is. It stands below a project's file:
-# lists add up (a project's [claude] hide adds to [agent] hide, its [forward] and
+# lists add up (a project's [claude] hide adds to [agent] hide, its [env] names and
 # [allow] to these), and a project's value overrides a single-valued one.
 #
 # [agent] is this profile's own section; in a project's file the same section is
@@ -54,10 +54,26 @@ hide = backups
 # launch, so a bundle a sandboxed session did not send is gone when it exits.
 hide = feedback-bundles
 
-# Environment variables forwarded into the sandbox when set in the launching shell.
-[forward]
+# The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
+# it, -NAME refuses it whatever a project's file says.
+[env]
 ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
 ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
+# Never let the sandboxed claude try to self-update. Downloads are blocked by the proxy
+# allowlist and the versions directory is not bound, so the attempt could only fail;
+# `claude update` typed at your own shell -- Claude Code itself, since nothing shadows
+# `claude` (#151) -- is the supported path. The legacy `autoUpdates: false` in
+# ~/.claude.json is ignored for native installs.
+DISABLE_AUTOUPDATER = 1
+# CLAUDE_CONFIG_DIR at its own default value: nothing else moves, but Claude Code then
+# keeps its config file at ~/.claude/.claude.json (measured: with the variable set,
+# ~/.claude.json is never opened), which is where the config channel puts it. HOME is
+# the same path inside and out, so the value is right on both sides.
+CLAUDE_CONFIG_DIR = ~/.claude
+# With CLAUDE_CONFIG_DIR set, Claude Code honours CLAUDE_CODE_PROJECT_DIR_NAME, which
+# stores every session's transcripts and memory under one name -- out from under the
+# per-project scoping, silently. Never forwarded.
+-CLAUDE_CODE_PROJECT_DIR_NAME
 
 # Hosts Claude Code must reach: this launch's session allowlist, on top of the
 # global one. One host per line; a leading dot matches the domain and its

@@ -39,11 +39,13 @@
 #~/work/*
 
 
-# --- Forwarded environment ----------------------------------------------
+# --- Environment: forwarded from your shell -------------------------------
 # NAMES of environment variables to carry from your shell into the sandbox
 # (the values come from your shell, not this file), on top of the built-in set
 # (locale, proxy, TLS, CUDA). Do not put secrets for unrelated services here.
-#[forward]
+# Setting (NAME = VALUE) and refusing (-NAME) a variable are a profile's, not a
+# project's: here they are warned of at the review and ignored.
+#[env]
 #CUDA_VISIBLE_DEVICES
 #MY_TOOL_CONFIG
 

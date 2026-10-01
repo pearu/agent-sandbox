@@ -44,9 +44,11 @@ Sections:
   path level, so `~/git/acme/*` does not match a sibling `~/git/acme-notes`
   or descend past one level.
 
-- **`[forward]`** — names of environment variables to carry from your shell
-  into the sandbox (the values come from your shell, not this file), one per
-  line, on top of the built-in set. Do not list secrets for unrelated services.
+- **`[env]`** — names of environment variables to carry from your shell
+  into the sandbox (the values come from your shell, not this file), one or more
+  per line, on top of the built-in set. A line `NAME = VALUE` sets a variable and
+  `-NAME` refuses one; both are a profile's (its own dot-file), so in a project's
+  file the review warns of them and they are ignored. Do not list secrets for unrelated services.
   Names the profile pins inside are refused with a message rather than
   forwarded, since a forwarded value would override the profile's: for `claude`
   that is `DISABLE_AUTOUPDATER`, `CLAUDE_CONFIG_DIR` and

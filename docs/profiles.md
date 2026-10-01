@@ -23,9 +23,9 @@ Variables a profile declares (all optional unless marked):
 |---|---|
 | `profile_command` | On-PATH name of the agent (default: the profile file's name): what the engine runs when no command is typed — a verb (`asb --profile NAME --status`) or `--exec`. |
 | `profile_config_binds=(...)` | Host paths bound **read-write** into the sandbox, after the dot-file's `[agent] base`: the agent's state and config. They must exist when the sandbox is built; create them in `profile_prepare()`. An entry is a path bound at itself, or `SRC<TAB>DEST` to bind `SRC` at `DEST` inside; a `DEST` under an earlier entry layers on it, so order the entries parent first. |
-| `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). The dot-file's `[forward]` adds to it. |
-| `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. |
-| `profile_env_refuse=(...)` | Names a user may not forward with `[forward]` or `AGENT_SANDBOX_FORWARD`: refused with a message. Names in `profile_env_set` are refused the same way, so a forward cannot override what the profile pins. |
+| `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). The dot-file's `[env]` names add to it. |
+| `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. The dot-file's `[env] NAME = VALUE` adds to it. |
+| `profile_env_refuse=(...)` | Names a user may not forward with `[env]` or `AGENT_SANDBOX_FORWARD`: refused with a message. Names in `profile_env_set` are refused the same way, so a forward cannot override what the profile pins. |
 | `profile_verbs=(...)` | (Or `[agent] verbs` in the dot-file.) Agent verbs that observe or manage a background service. The engine joins them into the role's running launch, where the service is, and never starts a launch for one: with none running, a verb in `profile_verbs_observe` answers that the role is not running (exit 0) and any other is refused. They get no briefing arguments. |
 | `profile_verbs_observe=(...)` | (Or `[agent] verbs-observe`.) The subset of `profile_verbs` that only ask questions. |
 | `profile_daemon_argv=(...)` | (Or `[agent] daemon`.) Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
@@ -82,7 +82,7 @@ single-valued one.
 | `[agent] command` | `profile_command` |
 | `[agent] base` | the agent's state directory (`~/.claude`), bound **read-write** before anything else, so every channel and declaration layers on it; created when absent; checked as any read-write bind is (never `/`, `$HOME` or a parent of it, nothing protected), and resolved again at bind time (#175) |
 | `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch; the claude profile's `profile_isolate` turns them into tmpfs mounts |
-| `[forward]` | `profile_env_pass` |
+| `[env]` | `NAME`: `profile_env_pass`; `NAME = VALUE`: `profile_env_set` (a leading `~` is `$HOME`); `-NAME`: `profile_env_refuse` |
 | `[allow]` | hosts opened for every launch of the profile, as its session allowlist beside `--allow`'s (proxy and strict) |
 
 `[agent]` is the profile's own section. In a project's file the same section is

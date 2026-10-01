@@ -206,7 +206,7 @@ Stated plainly. These are what the adversary above can still do.
   and so does anything you put there. On a machine where `~/.config/gh` is
   refused, a GitHub config under `~/.claude` is the obvious workaround — and it
   means the agent can read that token, which is a second way to grant GitHub
-  access besides `[forward] GH_TOKEN`, deliberate rather than a leak.
+  access besides `[env] GH_TOKEN`, deliberate rather than a leak.
   `[claude] hide` blanks named subpaths for the cases where you want one gone,
   at the cost of whatever feature used it.
 - **What a session writes in `~/.claude` can steer later sessions -- how far

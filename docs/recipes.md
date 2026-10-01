@@ -7,7 +7,7 @@ the same five explain tools that are not listed here.
 | Crossing | What it means | Knob |
 |---|---|---|
 | **Egress** | a host must be reachable through the proxy | `[allow]`, the global allowlist |
-| **Credentials** | a secret must cross — or deliberately must not | `[forward]`, `--ssh` |
+| **Credentials** | a secret must cross — or deliberately must not | `[env]`, `--ssh` |
 | **Loopback** | something outside must reach in, or inside must reach out | `--host-port`, `--agent-port` (strict only) |
 | **Paths** | a directory outside the project must be visible | path declarations under `[connect]` |
 | **Host config** | identity and settings from your home are not there | set it per project |
@@ -69,7 +69,7 @@ can commit. The engine prints these commands when it detects the situation.
 not help it, and `~/.config/gh` is not bound. Forward a token:
 
 ```ini
-[forward]
+[env]
 GH_TOKEN
 ```
 

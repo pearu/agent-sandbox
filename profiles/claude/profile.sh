@@ -35,9 +35,9 @@
 #   profile_env_pass=(...)      environment variable NAMES forwarded into the
 #                               sandbox IF set in the caller's environment, on
 #                               top of the engine's own list (locale, proxy,
-#                               TLS, CUDA). Also the dot-file's [forward].
+#                               TLS, CUDA). Also the dot-file's [env] NAME.
 #   profile_env_set=(...)       NAME=VALUE pairs always set in the sandbox.
-#   profile_env_refuse=(...)    NAMES a user may not forward ([forward],
+#   profile_env_refuse=(...)    NAMES a user may not forward ([env],
 #                               AGENT_SANDBOX_FORWARD): refused with a
 #                               message. Names in profile_env_set are refused
 #                               the same way, so a forward cannot override
@@ -165,23 +165,9 @@ profile_channel_presets=("config	inherit=seed-only shared=seed-only"
   "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"
   "artefacts	inherit=own" "policy	inherit=seed-only")
 
-# Never let the sandboxed claude try to self-update. Downloads are blocked by
-# the proxy allowlist and the versions directory is not bound, so the attempt
-# could only fail; `claude update` typed at your own shell -- Claude Code itself,
-# since nothing shadows `claude` (#151) -- is the supported path. Note: the legacy
-# `autoUpdates: false` in ~/.claude.json is ignored for native installs.
-profile_env_set=(DISABLE_AUTOUPDATER=1)
-# CLAUDE_CONFIG_DIR at its own default value: nothing else moves, but Claude
-# Code then keeps its config file at ~/.claude/.claude.json (measured: with the
-# variable set, ~/.claude.json is never opened), which is where the bind above
-# puts it. HOME is the same path inside and out, so the value is right on both
-# sides.
-profile_env_set+=("CLAUDE_CONFIG_DIR=$HOME/.claude")
-# With CLAUDE_CONFIG_DIR set, Claude Code honours CLAUDE_CODE_PROJECT_DIR_NAME,
-# which stores every session's transcripts and memory under one name -- out from
-# under the per-project scoping, silently. Never forwarded, whatever a [forward]
-# section says.
-profile_env_refuse=(CLAUDE_CODE_PROJECT_DIR_NAME)
+# The environment it pins and refuses is the dot-file's [env] (#177): DISABLE_AUTOUPDATER,
+# CLAUDE_CONFIG_DIR, and the refusal of CLAUDE_CODE_PROJECT_DIR_NAME, each with its
+# reason. Under `native`, _claude_config_prepare drops the second and the third.
 
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the review warns on any other [claude] key (a typo
