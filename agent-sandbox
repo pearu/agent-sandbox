@@ -332,6 +332,9 @@ Engine flags (before CMD):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
+  --check               the same review, asking nothing and recording
+                        nothing; exits non-zero when a launch would refuse
+                        the file (for an author, CI or a pre-commit hook)
   --verbose             also print the routine status lines (dot-file values
                         applied, session allowlist, seccomp filter in use).
                         Refusals, warnings and "not sandboxed" notices are
@@ -3195,7 +3198,7 @@ _as_briefing_write() {
   } >"$md" || return 1
 
   local short
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If you need something blocked, stop and ask the user to add it to .agent-sandbox and re-run \`claude --trust\` -- you cannot widen this yourself."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If you need something blocked, stop and ask the user to add it to .agent-sandbox and re-run \`asb --trust\` -- you cannot widen this yourself."
 
   local ev
   for ev in SessionStart SubagentStart; do
@@ -3839,20 +3842,7 @@ _as_trust_prompt() {
     return 1
   fi
   _as_dotfile_clean "$file" || return 1
-  {
-    if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
-      printf '\n%s has changed since you approved it (by you, by the agent, or by a pull). What changed, approved -> now (through cat -v):\n----\n' "$file"
-      diff -u --label approved --label now -- "$rec.approved" "$file" | cat -v
-      printf -- '----\n'
-    elif [[ -f "$rec" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
-      printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
-      _as_trust_show "$file"
-    else
-      printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
-      _as_trust_show "$file"
-    fi
-  } >&2
-  _as_trust_notes "$cwd" "$file"
+  _as_trust_show_review "$cwd"
   _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
   printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
   read -r ans || true
@@ -3863,6 +3853,29 @@ _as_trust_prompt() {
   _as_trust_record "$cwd" "$file" || return 1
   _as_msg "approved."
   return 0
+}
+
+# _as_trust_show_review CWD -- what the review shows of CWD's .agent-sandbox: the file
+# (as a diff from the approved content when it changed), then what follows from its text
+# (_as_trust_notes). Shared by --trust, which then asks, and --check, which does not.
+_as_trust_show_review() {
+  local cwd="$1" file rec
+  file="$cwd/.agent-sandbox"
+  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  {
+    if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+      printf '\n%s has changed since you approved it (by you, by the agent, or by a pull). What changed, approved -> now (through cat -v):\n----\n' "$file"
+      diff -u --label approved --label now -- "$rec.approved" "$file" | cat -v || true # differs: 1
+      printf -- '----\n'
+    elif [[ -f "$rec" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+      printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
+      _as_trust_show "$file"
+    else
+      printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
+      _as_trust_show "$file"
+    fi
+  } >&2
+  _as_trust_notes "$cwd" "$file"
 }
 
 # Split a `key = value` line into the caller's ck (whitespace removed) and cv
@@ -4117,6 +4130,37 @@ _as_dotfile_clean() { # $1 = file
 # The --trust command: the review a launch runs (_as_trust_prompt), without a launch
 # after it, and so the form that works without a terminal (`printf y | asb --trust`).
 # Also offers to keep the file out of git: it is machine-local.
+# _as_trust_check CWD -- `--check`: the review --trust shows, asking nothing and recording
+# nothing, for a project's author, a CI job or a pre-commit hook. Exits 0 when the file's
+# text is one a launch accepts once approved (whatever the approval state, which it says),
+# 1 when a launch would refuse it: a control character, or no file where one was approved.
+_as_trust_check() {
+  local cwd="$1" file rec
+  file="$cwd/.agent-sandbox"
+  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  if [[ ! -f "$file" ]]; then
+    if [[ -f "$rec" ]]; then
+      _as_msg "check: $cwd has no .agent-sandbox, but one was approved earlier: a launch refuses until it is restored or the approval forgotten ($invoked --trust)"
+      return 1
+    fi
+    _as_msg "check: no .agent-sandbox in $cwd; a launch uses the defaults"
+    return 0
+  fi
+  _as_dotfile_clean "$file" || {
+    _as_msg "check: a launch refuses this file"
+    return 1
+  }
+  _as_trust_show_review "$cwd"
+  if _as_dotfile_trusted "$cwd" "$file"; then
+    _as_msg "check: approved and unchanged since; a launch uses it"
+  elif [[ -f "$rec" ]]; then
+    _as_msg "check: CHANGED since it was approved; a launch asks again ($invoked --trust)"
+  else
+    _as_msg "check: not approved yet; a launch asks first ($invoked --trust)"
+  fi
+  return 0
+}
+
 _as_trust_review() {
   local cwd="$1" file ans
   file="$cwd/.agent-sandbox"
@@ -4508,7 +4552,7 @@ agent_sandbox() (
   # to the agent untouched.
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
-  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_engine_help=0
+  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -4644,6 +4688,10 @@ agent_sandbox() (
         ;;
       --trust)
         _do_trust=1
+        shift
+        ;;
+      --check)
+        _do_check=1
         shift
         ;;
       --connect)
@@ -4818,6 +4866,11 @@ agent_sandbox() (
   # Profile-independent; never launches the agent.
   if ((_do_trust)); then
     _as_trust_review "$(pwd -P)"
+    return $?
+  fi
+  # ---- --check: the same review, asking nothing and recording nothing ----
+  if ((_do_check)); then
+    _as_trust_check "$(pwd -P)"
     return $?
   fi
 
