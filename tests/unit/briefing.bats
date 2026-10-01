@@ -97,6 +97,10 @@ trust() {
   grep -q 'opened on purpose' "$h"          # ...and what is open should be used
   grep -q "$IN/briefing.md" "$h"            # pointer to the full text
   grep -q 'cannot widen this yourself' "$h" # escalation, not workarounds
+  # ...through the command that reviews a dot-file: `claude` is Claude Code itself (#151)
+  # shellcheck disable=SC2016 # the backticks are literal text in the summary
+  grep -q 're-run `asb --trust`' "$h"
+  run ! grep -q 'claude --trust' "$h"
   # one line of JSON: the payload must parse as the hook contract, not as prose
   [ "$(wc -l <"$h")" -eq 1 ]
 }

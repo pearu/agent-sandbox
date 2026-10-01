@@ -341,6 +341,14 @@ renamed inside. It reads every profile, so `asb --trust` checks `[claude]` witho
 profile named. What depends on the host or the moment -- a path that does not exist
 yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at launch.
 
+**`asb --check`** is the same review, asking nothing and recording nothing: the file
+(as a diff when it changed since you approved it), the notes, and whether it is
+approved. It exits non-zero only when a launch would refuse the file whatever you
+answer -- a control character, or an approved file that has gone -- so an author can
+run it while writing the file, and a CI job or a pre-commit hook can run it where
+nobody could answer a question. `asb --trust` is `--check`, then the question, then
+the record.
+
 Everything is shown through `cat -v`, so a control character or a byte outside
 ASCII shows escaped instead of acting on your terminal; a file containing a
 control character other than tab and newline is refused outright, at review and

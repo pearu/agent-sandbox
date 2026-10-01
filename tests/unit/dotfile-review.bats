@@ -197,3 +197,55 @@ approve() { # approve the project's dot-file the way --trust does, content kept
   run ! argv_has --ro-bind "$PROJ/.agent-sandbox" "$PROJ/.agent-sandbox"
   [ ! -e "$PROJ/.agent-sandbox" ]
 }
+
+# --check: the same review, asking nothing and recording nothing; for an author, CI or a
+# pre-commit hook. Stdin is closed in every one: a question would find no answer.
+check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"; }
+
+@test "--check with no dot-file says the defaults apply, and exits 0" {
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no .agent-sandbox in $PROJ; a launch uses the defaults"* ]]
+}
+
+@test "--check on a new file shows it and its review notes, asks nothing, records nothing" {
+  printf '[net]\nmode = open\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ] # the text is one a launch accepts once approved
+  [[ "$output" == *"mode = open"* ]]
+  [[ "$output" == *"network mode 'open'"* ]]
+  [[ "$output" == *"unknown section [bogus]"* ]]
+  [[ "$output" == *"not approved yet; a launch asks first"*"--trust"* ]]
+  [[ "$output" != *"approve this"* ]] # no question
+  [ ! -e "$REC" ]                     # and no record
+}
+
+@test "--check on an approved file says so; on a changed one it shows the difference and records nothing" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  approve
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approved and unchanged since; a launch uses it"* ]]
+  local before
+  before="$(cat "$REC")"
+  printf '[allow]\npypi.org\nexample.com\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+example.com"* ]]
+  [[ "$output" == *"CHANGED since it was approved; a launch asks again"* ]]
+  [ "$(cat "$REC")" = "$before" ]
+}
+
+@test "--check exits non-zero when a launch would refuse: a control character, or a missing approved file" {
+  printf '[allow]\npypi.org\033[2K\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a launch refuses this file"* ]]
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  approve
+  rm "$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"one was approved earlier: a launch refuses"* ]]
+  [ -f "$REC" ] # nothing forgotten either
+}
