@@ -37,9 +37,15 @@ set +x
 # every overlay path fall back to copy, so the argv those tests exist to pin was
 # never produced. AGENT_SANDBOX_TEST_NO_OVERLAY makes it report a bubblewrap too
 # old for overlays, which is the other half of that decision.
+# AGENT_SANDBOX_TEST_HELP_MORE makes it go on writing after that line, as the real
+# bwrap does (its help is two writes), so a reader that stops early breaks its pipe.
 if [[ "${1:-}" == --help ]]; then
   [[ -n "${AGENT_SANDBOX_TEST_NO_OVERLAY:-}" ]] \
     || printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'
+  if [[ -n "${AGENT_SANDBOX_TEST_HELP_MORE:-}" ]]; then
+    sleep 0.3
+    printf '%065536d\n' 0 # the stub's own write, as bwrap's is: a closed pipe kills it
+  fi
   exit 0
 fi
 : >"${BWRAP_DUMP:?}"
