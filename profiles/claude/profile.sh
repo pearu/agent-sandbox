@@ -66,100 +66,15 @@
 # shellcheck disable=SC2034
 profile_command=claude
 
-# Claude keeps its state in ~/.claude (sessions, OAuth/API tokens, settings): the
-# profile's base, bound read-write first -- `[agent] base` in its dot-file (#175).
-
-# ----- the channel map (profile contract item 3) -----------------------------
-# A CHANNEL is named by what it carries; this says where THIS agent keeps it.
-# The engine owns the modes and the mechanism, the profile owns the paths, and
-# nothing about the engine's connection machinery is agent-specific -- a second
-# profile fills in the same table for its own layout.
+# Claude keeps its state in ~/.claude (sessions, OAuth/API tokens, settings), or where
+# CLAUDE_CONFIG_DIR says: the profile's base, bound read-write first -- `[agent] base`
+# and `base-env` in its dot-file (#175, #190). The engine sets $profile_base to it.
 #
-#   channel<TAB>kind:path<TAB>kind:path...      kind is `file` or `dir`
-#
-# The kind is declared rather than inferred because the engine must be able to
-# put an EMPTY slot where a path would be, and an empty file is not an empty
-# directory. Inferring from the source only works when the source is there,
-# which for `none` is exactly when it may not be.
-#
-# ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory and
-# tools each already have machinery of their own (the credential bind, the working
-# tree, memory scoping). Declaring them now would give two mechanisms a claim
-# on one path and the later one would silently win; folding them onto
-# connections is a separate step, per channel, with the study to show it.
-profile_channels=(
-  "instructions	file:$HOME/.claude/CLAUDE.md	dir:$HOME/.claude/rules"
-  "settings	file:$HOME/.claude/settings.json	dir:$HOME/.claude/output-styles"
-  "skills	dir:$HOME/.claude/skills	dir:$HOME/.claude/commands"
-  "agents	dir:$HOME/.claude/agents"
-  "workflows	dir:$HOME/.claude/workflows"
-  "plugins	dir:$HOME/.claude/plugins"
-  "config	file:$HOME/.claude/.claude.json"
-  "transcripts	dir:$HOME/.claude/file-history	dir:$HOME/.claude/plans	file:$HOME/.claude/history.jsonl	dir:$HOME/.claude/projects/{slug}"
-  "logs	file:$HOME/.claude/responses.log	file:$HOME/.claude/alerts.log"
-  "artefacts	dir:$HOME/.claude/downloads	dir:$HOME/.claude/uploads	dir:$HOME/.claude/tasks"
-  "policy	file:$HOME/.claude/remote-settings.json	file:$HOME/.claude/policy-limits.json	file:$HOME/.claude/policy-limits.json.stamp.json"
-  "changelog	file:$HOME/.claude/cache/changelog.md"
-)
-# POLICY AND CHANGELOG ARE CHANNELS (#109): Claude Code's caches of server-managed
-# settings and policy flags, and of the vendor changelog. Each was writable from every
-# sandbox and read at every startup -- a cross-project write channel into what the user
-# and the agent take as Anthropic's (leak study; see the issue). The stamp moves with
-# its policy file: a private cache beside a shared stamp would split the pair.
-# `policy` is seed-only under `inherit`: Claude Code refetches it inside, through the
-# allowlist, and rewrites it, so `copy` would warn at every launch -- the reason `config`
-# is seed-only. `own` starts it from `{}` (measured: with no policy files at all a
-# session runs normally and fetches fresh ones). `changelog` stays at the preset's
-# `copy-on-write`, which on a single file is `copy`: its feed is not allowlisted, so
-# only your side writes it, and `copy` refreshes it without a conflict.
-# ARTEFACTS ARE A CHANNEL: what sessions leave for each other to pick up -- downloaded
-# documents, uploaded files, task lists (#52, #76, #78). The leak study measured
-# uploads/ and tasks/ readable from another project's sandbox (row 18, 2.1.272), and
-# a task list is there to be picked up by a resumed session, so it is a way in too. `own` under `inherit`, as under `isolated`: a
-# role's downloads and tasks are its own, and nobody else's reach it. `shared` and
-# `native` keep the directories yours, both ways, as before.
-# TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
-# and prompt history are its own, and so are the logs your hooks write -- `own` under
-# every preset but `native`, where they are yours. Nothing is merged back at exit. The
-# conversations' directory is projects/{slug}/, which the engine expands per launch
-# through profile_slug, since it depends on the project (#176). A role starts with none of your native
-# conversations; `transcripts = seed-only` seeds them once, and seeds the prompt
-# history FILTERED to this project's records.
-# THE CONFIG FILE IS A CHANNEL (#119), one file following its mode like any other.
-# Its source is the native ~/.claude.json; inside it sits in the state directory,
-# where CLAUDE_CONFIG_DIR (below) makes Claude Code look for it. The seeding modes read
-# a FILTERED view -- every top-level key and only this project's entry, the fix for
-# leak study row 10 -- and after that the file is Claude Code's: the engine never reads
-# or writes mcpServers or anything else inside it. `own` starts from `{}`, which is
-# what Claude Code was measured to run on beside the credentials file (2.1.283:
-# it rebuilds the account block itself). Under `inherit` it is seed-only, not
-# copy-on-write: copy-on-write on a file is `copy`, and `copy` would warn at every
-# launch, because Claude Code rewrites the file at every launch. Under `shared` it is
-# seed-only too, not read-write: `shared` is "the engine before 0.3", and 0.2.1
-# already gave each project its own copy -- read-write here would reopen #90 for
-# everyone on `shared`. The whole native file is `--preset native` or an explicit
-# `config = read-write`.
-# THE CONFIG FILE MOVES INSIDE THE STATE DIRECTORY. ~/.claude.json must be writable
-# THE WAY CLAUDE CODE WRITES IT: a lock directory and a temp file created beside it,
-# then a rename over it (measured, 2.1.274). Bound at $HOME/.claude.json, "beside it"
-# is the read-only $HOME tmpfs: the lock and the temp file fail with EROFS, no
-# fallback runs, and every write -- folder trust accepted inside, per-project allowed
-# tools and MCP servers, app state -- was silently lost while the session reported
-# success. So the file is bound INSIDE the state directory, at ~/.claude/.claude.json,
-# and CLAUDE_CONFIG_DIR (profile_env_set, below) points Claude Code there. The rename
-# onto a bind mount fails (EBUSY) and Claude Code then rewrites the file in place,
-# which reaches the bound file.
-# shellcheck disable=SC2034 # read by the engine
-profile_channel_sources=("$HOME/.claude/.claude.json	$HOME/.claude.json")
-# shellcheck disable=SC2034
-profile_channel_filters=("config	_claude_config_filter" "$HOME/.claude/history.jsonl	_claude_history_view")
+# THE CHANNEL TABLE is the dot-file's [channel:<name>] sections (#190), each path with
+# its source, filter and vendor prefixes, and the reasons beside them. What a channel
+# starts as under `own`, and its rung under each preset, are still here until #191:
 # shellcheck disable=SC2034
 profile_channel_empty=("config	{}" "policy	{}")
-# The server skills and plugins Claude Code syncs itself, inside a sandbox and natively
-# alike: their bookkeeping changes on both sides at every sync, which is not an edit of
-# yours for a conflict warning to report.
-# shellcheck disable=SC2034
-profile_channel_vendor=("skills	synced/" "plugins	synced/")
 # shellcheck disable=SC2034
 profile_channel_presets=("config	inherit=seed-only shared=seed-only"
   "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"
@@ -264,7 +179,8 @@ _claude_memory_on_top() {
   # shellcheck disable=SC2154 # engine locals, by dynamic scope
   [[ "${_connect_mode[transcripts]:-read-write}" == read-write ]] && return 1
   local mem
-  mem="$HOME/.claude/projects/$(_claude_project_slug "$(_as_project_dir)")/memory"
+  # shellcheck disable=SC2154 # profile_base: set by the engine from [agent] base
+  mem="$profile_base/projects/$(_claude_project_slug "$(_as_project_dir)")/memory"
   mkdir -p "$mem" 2>/dev/null || true
   profile_late_rw_binds+=("$mem")
   return 0
@@ -276,7 +192,7 @@ profile_memory_scope() {
     _claude_memory_on_top || true
     return 0
   fi
-  local projects="$HOME/.claude/projects" cur p slug
+  local projects="$profile_base/projects" cur p slug
   # cwd is a local of the engine's agent_sandbox(), visible here by dynamic scope.
   # shellcheck disable=SC2154
   cur="$projects/$(_claude_project_slug "$cwd")"
@@ -317,8 +233,10 @@ profile_memory_scope() {
 }
 
 profile_prepare() {
-  # Ensure ~/.claude.json exists: it seeds this project's copy of it.
-  [[ -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
+  # Ensure ~/.claude.json exists: it seeds this project's copy of it. With
+  # CLAUDE_CONFIG_DIR set, Claude Code keeps it in the base instead (see
+  # _claude_config_prepare), which the engine creates.
+  [[ -n "${CLAUDE_CONFIG_DIR:-}" || -e "$HOME/.claude.json" ]] || : >"$HOME/.claude.json"
   _claude_config_prepare || return 1
   return 0
 }
@@ -339,7 +257,7 @@ _claude_config_project() {
 }
 # The role's store for the config file at MODE, for a project.
 _claude_config_store() { # $1 = project dir, $2 = mode
-  local inside="$HOME/.claude/.claude.json"
+  local inside="$profile_base/.claude.json"
   inside="${inside//\//_}"
   printf '%s/claude/%s/%s/config/%s/%s' "$(_as_state_dir)" "$(_claude_project_slug "$1")" \
     "${_role:-default}" "$2" "${inside#_}"
@@ -404,6 +322,19 @@ _claude_config_prepare() {
     profile_env_set=("${_keep[@]}")
     profile_env_refuse=()
     return 0
+  fi
+  # THE CONFIG FILE'S SOURCE DEPENDS ON THE BASE. With the default base, native Claude
+  # Code keeps it at ~/.claude.json, which the dot-file's `outside:` relocates into the
+  # base. With CLAUDE_CONFIG_DIR set, it keeps it at $CLAUDE_CONFIG_DIR/.claude.json
+  # (measured: with the variable set, ~/.claude.json is never opened) -- the path itself,
+  # so the relocation goes. A condition on the launching environment, so code (#190).
+  if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    local -a _src=()
+    local _s
+    for _s in ${profile_channel_sources[@]+"${profile_channel_sources[@]}"}; do
+      [[ "${_s%%$'\t'*}" == "$profile_base/.claude.json" ]] || _src+=("$_s")
+    done
+    profile_channel_sources=(${_src[@]+"${_src[@]}"})
   fi
   return 0
 }
@@ -657,7 +588,7 @@ PY
 }
 
 profile_isolate() {
-  local c="$HOME/.claude" name
+  local c="$profile_base" name
   # The paths blanked every launch are the dot-file's [agent] hide (profile_hide, set by
   # the engine); why each is there is said beside it, in agent-sandbox. file-history/,
   # plans/, history.jsonl and the hook logs used to be staged here and merged back at
