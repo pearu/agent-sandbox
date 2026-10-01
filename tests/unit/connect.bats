@@ -502,10 +502,11 @@ EOF
   [[ "$output" == *"unknown mode 'readonly'"* ]]
 }
 
-@test "a source other than native is refused while only native is supported" {
-  run_engine -- asb --connect 'instructions=read-only sandbox:~/other' claude --version
+@test "a source the engine does not know is refused, naming the ones it does" {
+  run_engine -- asb --connect 'instructions=read-only elsewhere:~/other' claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *"is not supported yet"* ]]
+  [[ "$output" == *"source 'elsewhere:~/other' is not one this engine knows"*"sandbox:"* ]]
+  [ ! -s "$H/argv" ]
 }
 
 @test "a malformed spec is refused" {

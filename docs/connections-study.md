@@ -254,7 +254,7 @@ Two sandboxes, `<project>/implementer` and `<project>/reviewer`.
 
 ## Part 5 — sources other than native (level 1)
 
-- `sandbox:<project>/<role>` at `read-only` for `memory` — what `[share-memory]` means today —
+- `sandbox:<project>@<role>` at `read-only` for `memory` — what `[share-memory]` means today —
   and at `read-only` for `skills`, which `[share-memory]` cannot express;
 - `outside:<path>`, a curated directory, at `copy` and at `copy-on-write`;
 - and the asymmetry invariant: a sandbox at `copy` beside one at `read-write` receives the
