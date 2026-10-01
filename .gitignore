@@ -5,3 +5,4 @@ coverage-out/
 probes/results/
 probes/work
 .claude/settings.local.json
+.ruff_cache/

@@ -139,16 +139,18 @@ PY
   [ ! -s "$H/argv" ]
 }
 
-@test "a python3 that fails the filter degrades to the whole native file, said out loud" {
-  # It fails the filter (a script on stdin) only: the join into the keeper is python3 too.
-  # shellcheck disable=SC2016 # the stub's own $1 and $@
-  printf '#!/usr/bin/env bash\n[ "$1" = - ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
+@test "a config view that cannot be made refuses the launch: the whole native file is never the seed" {
+  # It fails the view (profile.py config-view) only: the join into the keeper is
+  # python3 too. Seeding the whole file instead would hand this project every other
+  # project's entry (leak study row 10).
+  # shellcheck disable=SC2016 # the stub's own $2 and $@
+  printf '#!/usr/bin/env bash\n[ "$2" = config-view ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
   run_engine -- asb --connect 'config=seed-only native' claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"python3 failed (exit 3): this project's config file is seeded from the whole"* ]]
-  cmp "$(store seed-only)" "$H/native-before.json"
-  argv_has --bind "$(store seed-only)" "$INSIDE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not make this project's view"*"refusing rather than seeding the whole file"* ]]
+  [ ! -e "$(store seed-only)" ]
+  [ ! -s "$H/argv" ]
 }
 
 @test "the empty mount-point file bwrap leaves for the config file is removed after the launch" {

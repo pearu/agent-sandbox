@@ -17,6 +17,7 @@ dependencies:
   - bats-core         # test runner for tests/ (tests/run.sh); CI installs this file too
   - parallel          # GNU parallel: tests/run.sh runs the unit and integration suites in parallel
   - coverage          # Python line coverage of the addon (scripts/coverage.sh)
+  - ruff              # Python lint (scripts/check.sh), also run in CI
   - pyyaml            # validates .github/workflows/*.yml locally before a push
   - pip               # for the pip-only dependencies below
   - pip:

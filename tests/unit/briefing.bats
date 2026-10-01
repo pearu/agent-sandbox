@@ -221,11 +221,11 @@ CHECK
 }
 
 @test "when the merge cannot be done the USER's settings are kept and the loss is said out loud" {
-  # A python3 that fails stands in for the interpreter being absent: both take
-  # the same branch, and losing a hint must never cost someone their settings. It
-  # fails the merge (`python3 -c`) only: the join into the keeper is python3 too.
-  # shellcheck disable=SC2016 # the stub's own $1 and $@
-  printf '#!/bin/sh\n[ "$1" = -c ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
+  # A merge that fails keeps the user's settings: losing a hint must never cost
+  # someone their settings. The stub fails the merge (profile.py merge-settings) only:
+  # the join into the keeper is python3 too.
+  # shellcheck disable=SC2016 # the stub's own $2 and $@
+  printf '#!/bin/sh\n[ "$2" = merge-settings ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
   run_engine BWRAP_COPY="$OUT" -- asb claude --settings '{"a":1}' --version
   [ "$status" -eq 0 ]           # the launch goes on

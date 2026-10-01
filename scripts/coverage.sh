@@ -47,8 +47,8 @@ run_addon() {
   rm -f "$cf"
   # The addon runs once per addon_driver subprocess; `coverage run -a` appends to
   # one data file so the report is the aggregate over the whole suite.
-  COVERAGE_FILE="$cf" AGENT_SANDBOX_TEST_PYTHON="coverage run -a --source=$PWD/components" \
-    bats tests/unit/addon.bats >/dev/null
+  COVERAGE_FILE="$cf" AGENT_SANDBOX_TEST_PYTHON="coverage run -a --source=$PWD/components,$PWD/profiles" \
+    bats tests/unit/addon.bats tests/unit/profile-py.bats >/dev/null
   echo "== addon (coverage.py) =="
   COVERAGE_FILE="$cf" coverage report -m
   COVERAGE_FILE="$cf" coverage html -d "$OUT/addon" >/dev/null 2>&1 \
