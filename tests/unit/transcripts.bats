@@ -3,7 +3,7 @@
 # (this project's `projects/<slug>/`), file history, plans and prompt history are its
 # own under every preset but `native`, and so are the logs your hooks write. Nothing
 # is merged back into the native ~/.claude when a launch ends. Memory, inside
-# `projects/<slug>/`, keeps its own machinery: bound on top of the role's store.
+# `projects/<slug>/`, is a channel of its own (#196), bound on top of the store by depth.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -13,7 +13,6 @@ setup() {
   SLUG="${PROJ//[^A-Za-z0-9-]/-}"
   CONV="$C/projects/$SLUG"
   SBOX="$H/home/.local/state/agent-sandbox/claude/$SLUG/default"
-  CFG="$H/home/.config/agent-sandbox"
   mkdir -p "$CONV/memory" "$C/file-history/s1" "$C/plans"
   printf 'NATIVE-CONV\n' >"$CONV/old-session.jsonl"
   printf 'MEM\n' >"$CONV/memory/MEMORY.md"
@@ -67,26 +66,38 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
   done
 }
 
-@test "memory is still the project's native memory, bound read-write ON TOP of the transcripts store" {
-  TEST_PRESET=inherit run_engine -- asb claude --version
-  [ "$status" -eq 0 ]
-  local t m
-  t="$(idx_of_bind "$(store transcripts own "$CONV")" "$CONV")"
-  m="$(idx_of_bind "$CONV/memory" "$CONV/memory")"
-  [ "$t" -ge 0 ]
-  [ "$m" -gt "$t" ]
+@test "memory is a channel, the role's own under inherit and isolated: bound by depth, inside the transcripts store, inside the projects store" {
+  local p pr t m
+  for p in inherit isolated; do
+    TEST_PRESET=$p run_engine -- asb claude --version
+    [ "$status" -eq 0 ]
+    pr="$(idx_of_bind "$(store projects own "$C/projects")" "$C/projects")"
+    t="$(idx_of_bind "$(store transcripts own "$CONV")" "$CONV")"
+    m="$(idx_of_bind "$(store memory own "$CONV/memory")" "$CONV/memory")"
+    [ "$pr" -ge 0 ]
+    [ "$t" -gt "$pr" ]
+    [ "$m" -gt "$t" ]
+    # the native memory is not in view: the default changed with #196
+    [ "$(idx_of_bind "$CONV/memory" "$CONV/memory")" -eq -1 ]
+  done
 }
 
-@test "with memory_default = shared, the project's memory is still bound on top of the store" {
-  mkdir -p "$CFG"
-  printf 'memory_default = shared\n' >"$CFG/config"
-  TEST_PRESET=inherit run_engine -- asb claude --version
+@test "under shared, memory is your native memory, bound back over the role's stores; a missing one is created" {
+  rm -rf "$CONV/memory"
+  TEST_PRESET=shared run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local t m
   t="$(idx_of_bind "$(store transcripts own "$CONV")" "$CONV")"
   m="$(idx_of_bind "$CONV/memory" "$CONV/memory")"
   [ "$t" -ge 0 ]
   [ "$m" -gt "$t" ]
+  [ -d "$CONV/memory" ]
+}
+
+@test "memory = copy-on-write reads your native memory through the role's store" {
+  TEST_PRESET=inherit run_engine -- asb --connect 'memory = copy-on-write' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$CONV/memory"
 }
 
 @test "nothing is staged for a merge-back: no transcripts or logs path is bound from the launch directory" {

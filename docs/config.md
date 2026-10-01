@@ -38,8 +38,7 @@ Sections:
   `open` and `none` network modes). Command-line `--allow` still applies on top.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
-  every project visible; the section present but empty scopes to this project
-  alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
+  every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
   projects directly under that directory that have memory. Matching is at the
   path level, so `~/git/acme/*` does not match a sibling `~/git/acme-notes`
   or descend past one level.
@@ -197,7 +196,8 @@ Sections:
   | workflows — `workflows/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | plugins — `plugins/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | config — `~/.claude.json`, the user-level MCP servers included | `own` | `seed-only` | `seed-only` | `read-write` | **the preset** ([below](#the-config-file-the-config-channel)) |
-  | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | `memory_default` (`scoped` by default) and `[share-memory]` |
+  | projects — `projects/`, every project's conversations and memory | `own` | `own` | `own` | `read-write` | **the preset**; `[share-memory] all` is `read-write` ([below](#memory-scoping)) |
+  | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | **the preset**, and `[share-memory]` for other projects' (#196) |
   | transcripts — this project's conversations, file history, plans, prompt history | `own` | `own` | `own` | `read-write` | **the preset** ([below](#transcripts-and-logs)) |
   | logs — `responses.log`, `alerts.log`, written by your own hooks | `own` | `own` | `own` | `read-write` | **the preset** |
   | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **the preset** (#52, #76, #78) |
@@ -206,9 +206,15 @@ Sections:
 
   Read the last column as the list of things left to fold in. When a row moves to
   the preset its mode columns do not change, because they were chosen to match
-  what its own switch already does by default — with two exceptions, both
-  deliberate and both worth knowing now:
+  what its own switch already does by default — with three exceptions, all
+  deliberate and all worth knowing now:
 
+  - **memory was your native memory under every preset, and is the role's own
+    under `isolated` and `inherit` now** (#196). What you write — instructions,
+    settings, skills — a sandbox inherits copy-on-write; what the agent writes —
+    transcripts, logs, memory — is the role's own. A role starts with none of your
+    native memory, and what it writes down stays its own; `memory = copy-on-write`
+    under `[connect]` reads yours live, `seed-only` carries it over once.
   - **artefacts were `read-write` whatever the preset, and are `own` under
     `inherit` now.** Downloads, uploads and task lists were visible across every
     project ([#52](https://github.com/pearu/agent-sandbox/issues/52),
@@ -389,27 +395,45 @@ host could set.
 
 ## Memory scoping
 
-Claude Code keeps per-project memory and session transcripts under
-`~/.claude/projects/<project>`. The sandbox binds `~/.claude` read-write, so
-without scoping every session could read every project's memory and
-transcripts. That is convenient (one project can learn from another) but it
-also means sessions are not independent and one project's notes can shape
-another's output. Scoping is therefore the default, and sharing is something
-you ask for.
+Claude Code keeps each project's conversations and memory under
+`~/.claude/projects/<slug>/`, and loads a project's memory into every session of
+that project. Without scoping every session could read every project's memory and
+transcripts. That is convenient (one project can learn from another) but it also
+means sessions are not independent and one project's notes can shape another's
+output. So two channels cover that directory (#196), beside `transcripts`:
 
-Two modes:
+- **`projects`** — every project's state, `~/.claude/projects/`. `own` under every
+  preset but `native`: the role has a store of its own there, and other projects'
+  memory and conversations are not in view.
+- **`memory`** — this project's memory, `projects/<slug>/memory/`. The role's own
+  under `isolated` and `inherit`; your native memory under `shared` and `native`.
 
-- **`shared`** — every project's memory stays visible, how agent-sandbox
-  behaved before 0.2. An explicit opt-out now.
-- **`scoped`** (the default) — `~/.claude/projects` is hidden and only the current
-  project's `memory/` is bound, read-write, plus the `memory/` directory of each
-  project you name in `share-memory`, read-only. Other projects are invisible.
+Channel paths nest, and the engine binds them by depth, outer first: `projects`,
+then this project's conversations inside it (`transcripts`), then its memory inside
+those, each at its own mode. To bring your native memory into a role:
 
-Scoping is about memory. The project's conversations beside it are the
-`transcripts` channel ([below](#transcripts-and-logs)): the role's own, with the
-project's native memory bound on top, under either mode. Only at
-`transcripts = read-write` is the project's whole native directory bound, as
-before 0.4.
+```ini
+[connect]
+memory = copy-on-write   # read yours live; the sandbox's writes stay its own
+# memory = seed-only     # carry yours over once
+# memory = read-write    # your native memory, both ways, as under `shared`
+```
+
+**`[share-memory]`** opens other projects' memory, and is sugar for connections;
+a project's own `[connect]` overrides it:
+
+- **a path** P shares P's memory read-only. It means the declaration
+  `{base}/projects/{slug:P}/memory/ = read-only`, where `{slug:P}` is P's slug in
+  Claude Code's scheme. What is shared is your native memory of P; another
+  sandbox's store as a source is [#200](https://github.com/pearu/agent-sandbox/issues/200).
+- **a wildcard** (`~/git/acme/*`) shares the projects directly under that directory
+  that have memory, expanded at each launch. It is matched at the path level, so it
+  does not match a sibling `~/git/acme-notes` or descend past one level.
+- **a single `all`** is `projects = read-write`: every project's state in view.
+- **present but empty** is this project only, which is the default anyway.
+
+A share naming this project is dropped: its memory is already there, at its own
+mode.
 
 ### What counts as "the project" inside the sandbox
 
@@ -435,28 +459,9 @@ Two consequences:
   in more fundamental ways, so treat this as one more of them.
 - **Known limitation.** If a path declaration exposes a parent directory
   that contains `.git`, the repository is visible again and Claude Code keys
-  that session's memory to the repository root — a directory the engine does
-  not bind, so the memory does not survive the session. Run from the repository
-  root if you want the repository's memory.
-
-Selecting the mode, from lowest to highest precedence:
-
-1. **Built-in default:** `scoped` — a session sees its own project's memory and
-   transcripts and no other's.
-2. **Global default:** `~/.config/agent-sandbox/config`, key `memory_default`:
-
-   ```ini
-   memory_default = shared
-   ```
-
-   Set this to `shared` to let every project see every other project's memory,
-   which is how agent-sandbox behaved before 0.2. Leaving it unset keeps the
-   isolated default. It lives outside the sandbox, so an agent cannot widen
-   its own view by writing it.
-3. **Per-project:** a trusted `.agent-sandbox` with a `[share-memory]` section.
-   Present but empty means this project only; the paths or `~/dir/*` wildcards
-   listed add those projects' memory read-only; a single `all` keeps everything
-   visible even when the global default is `scoped`.
+  that session's memory to the repository root — not this project's `memory`
+  channel, so the memory lands in the role's `projects` store instead of where
+  its mode says. Run from the repository root if you want the repository's memory.
 
 ## Transcripts and logs
 
@@ -473,9 +478,8 @@ under every preset but `native`, and nothing is merged back into your native
   `transcripts = seed-only` under `[connect]`: the conversations, file history
   and plans are copied, and the prompt history is filtered to this project's
   records, never another project's.
-- **The project's memory is still its native memory**, bound on top of the
-  role's conversations, and shared by the project's roles, until memory is a
-  channel of its own (see [Memory scoping](#memory-scoping)).
+- **The project's memory is the `memory` channel**, inside the conversations'
+  directory and bound on top of it (see [Memory scoping](#memory-scoping)).
 - **`transcripts = read-write`** is your native files themselves, including the
   whole prompt history with every project's prompts in it: valid, not advocated.
 - The role's stores are under
@@ -573,13 +577,12 @@ file of its own: `config = own` under `[connect]`.
 
 ## Where the machine-local state lives
 
-Both the trust store and the global config are under `~/.config/agent-sandbox`,
+The trust store is under `~/.config/agent-sandbox`,
 the same host-only directory the installer uses for the proxy allowlist. None
 of it is bound into the sandbox.
 
 | Path | What |
 |---|---|
 | `<project>/.agent-sandbox` | the per-project policy (git-ignored by default) |
-| `~/.config/agent-sandbox/config` | `memory_default` and future global settings |
 | `~/.config/agent-sandbox/trust/` | approved dot-file hashes, one file per project |
 | `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/` | the role's copy of Claude Code's config file (see above) |
