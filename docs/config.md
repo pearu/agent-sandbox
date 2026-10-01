@@ -423,11 +423,12 @@ memory = copy-on-write   # read yours live; the sandbox's writes stay its own
 a project's own `[connect]` overrides it:
 
 - **a path** P shares P's memory read-only. It means the declaration
-  `{base}/projects/{slug:P}/memory/ = read-only`, where `{slug:P}` is P's slug in
-  Claude Code's scheme. What is shared is your native memory of P; another
-  sandbox's store as a source is [#200](https://github.com/pearu/agent-sandbox/issues/200).
+  `{base}/projects/{slug:P}/memory/ = read-only sandbox:P`, where `{slug:P}` is P's slug
+  in Claude Code's scheme: what P's default role wrote, or P's native memory if P never
+  ran sandboxed ([connections.md](connections.md#another-sandboxs-store-sandbox)). To
+  read another role of P, write the declaration with `sandbox:P@ROLE` under `[connect]`.
 - **a wildcard** (`~/git/acme/*`) shares the projects directly under that directory
-  that have memory, expanded at each launch. It is matched at the path level, so it
+  whose memory resolves to something, a role's or a native one, expanded at each launch. It is matched at the path level, so it
   does not match a sibling `~/git/acme-notes` or descend past one level.
 - **a single `all`** is `projects = read-write`: every project's state in view.
 - **present but empty** is this project only, which is the default anyway.

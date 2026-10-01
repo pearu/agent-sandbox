@@ -898,7 +898,7 @@ _as_sandbox_dir() {
 # _as_role_resolve -- set $_role: --role > AGENT_SANDBOX_ROLE > [sandbox] role > default.
 #
 # A role is a named, persistent instance of the project: the sandbox key's second half,
-# so its name is a path segment and part of `sandbox:<project>/<role>`. Hence the rules:
+# so its name is a path segment and part of `sandbox:<project>@<role>`. Hence the rules:
 # a letter or digit first, then letters, digits, `.`, `_`, `-`; nothing that is a path
 # separator, the source grammar's `@`, or a glob character; at most 200 characters.
 #
@@ -1017,7 +1017,7 @@ _as_connect_parse() {
   # After the mode come up to two optional tokens, in either order: a SOURCE and a
   # SCOPE. They are told apart lexically -- every scope name ends in `-scoped`, no
   # source does -- so neither needs a fixed position and neither needs a prefix.
-  local t2 t3 extra scope=""
+  local t2 t3 extra scope="" _sbx_spec=""
   read -r mode t2 t3 extra <<<"$rest"
   [[ -z "$extra" ]] || {
     _as_msg "connect ($where): trailing '$extra' in '$spec'; a spec is 'channel = mode [source] [scope]' and nothing more"
@@ -1078,8 +1078,14 @@ _as_connect_parse() {
       return 1
       ;;
   esac
-  local outside=""
-  if [[ "$ch" == */* ]]; then
+  local outside="" sbx=""
+  if [[ "$src_given" == sandbox:* ]]; then
+    # ANOTHER SANDBOX'S STORE (#200): what the role ROLE of PROJECT has at the same path
+    # -- for a channel, at each of its paths; for a declaration, at its key. Resolved at
+    # bind time from that role's record of its last launch (_as_sandbox_store).
+    _as_sandbox_spec "${src_given#sandbox:}" "$where" "$ch" "$mode" "$scope" || return 1
+    sbx="$_sbx_spec"
+  elif [[ "$ch" == */* ]]; then
     # The source of a path is the same path outside, unless `outside:<path>` names
     # another (#174): what the sandbox sees at the key follows that path instead.
     # `native` names the agent's own install, which a path is not part of.
@@ -1087,13 +1093,13 @@ _as_connect_parse() {
       "") ;;
       outside:?*) outside="${src_given#outside:}" ;;
       *)
-        _as_msg "connect ($where): '$ch' is a path; its source is the same path outside, or another written 'outside:<path>'. '$src_given' is neither."
+        _as_msg "connect ($where): '$ch' is a path; its source is the same path outside, another written 'outside:<path>', or a sandbox's store, 'sandbox:[PROJECT]@ROLE'. '$src_given' is none of these."
         return 1
         ;;
     esac
   else
     [[ "$src" == native ]] || {
-      _as_msg "connect ($where): source '$src' is not supported yet; only 'native' is"
+      _as_msg "connect ($where): source '$src' is not one this engine knows: 'native', or a sandbox's store, 'sandbox:[PROJECT][@ROLE]'"
       return 1
     }
   fi
@@ -1149,14 +1155,70 @@ _as_connect_parse() {
   _connect_mode["$ch"]="$mode"
   _connect_where["$ch"]="$where"
   _connect_scope["$ch"]="$scope"
+  if [[ -n "$sbx" ]]; then _connect_sandbox["$ch"]="$sbx"; else unset '_connect_sandbox[$ch]'; fi
   return 0
+}
+
+# _as_sandbox_spec SPEC WHERE KEY MODE SCOPE -- check a `sandbox:` source (#200) and set
+# $_sbx_spec to "PROJECT<TAB>ROLE<TAB>sandbox:SPEC". SPEC is `[PROJECT][@ROLE]`: an empty
+# PROJECT is this one (`sandbox:@impl`, the #55 case), else it is absolute or under `~`
+# -- never relative: there is no project outside to be relative to, as for `outside:`.
+# ROLE defaults to `default`, and follows the role-name rule, which keeps `@` free for
+# this. The mode is one that READS the store: `read-only`, `seed-only`, `copy`.
+# `read-write` is refused for good -- two writers in one role's store is what the
+# keeper exists to prevent -- and `copy-on-write` for now: P's upper layer as our lower
+# while P's own overlay is mounted is the case overlayfs leaves undefined.
+_as_sandbox_spec() {
+  local spec="$1" where="$2" key="$3" mode="$4" scope="$5" proj role
+  proj="${spec%%@*}" role="default"
+  [[ "$spec" == *@* ]] && role="${spec#*@}"
+  if [[ ! "$role" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || ((${#role} > 200)); then
+    _as_msg "connect ($where): 'sandbox:$spec': '$role' is not a role name -- a letter or digit, then letters, digits, '.', '_' or '-'"
+    return 1
+  fi
+  case "$proj" in
+    "") proj="$(_as_project_dir)" ;;
+    \~ | \~/*) proj="$HOME${proj#\~}" ;;
+    /*) ;;
+    *)
+      _as_msg "connect ($where): 'sandbox:$spec': the project is absolute or under '~', or empty for this one ('sandbox:@$role'); never relative"
+      return 1
+      ;;
+  esac
+  proj="$(readlink -f -- "$proj" 2>/dev/null || realpath -m -s -- "$proj")"
+  case "$mode" in
+    read-only | seed-only | copy) ;;
+    read-write)
+      _as_msg "connect ($where): '$key = read-write sandbox:$spec' is refused: the store is that role's own, and two writers in one store is what a role's single launch exists to prevent. 'read-only' reads it; 'copy' or 'seed-only' gives this sandbox its own copy."
+      return 1
+      ;;
+    copy-on-write)
+      _as_msg "connect ($where): '$key = copy-on-write sandbox:$spec' is not implemented in this engine (#200): that role's store may be an overlay itself, mounted while it runs. 'copy' gives this sandbox its own copy."
+      return 1
+      ;;
+    own)
+      _as_msg "connect ($where): '$key = own sandbox:$spec' -- own is the sandbox's own storage and takes nothing from a source; drop the source, or pick a mode that reads it."
+      return 1
+      ;;
+  esac
+  [[ "$scope" == join-scoped ]] && {
+    _as_msg "connect ($where): 'sandbox:$spec' with join-scoped is not implemented; a sandbox source is for the role, or run-scoped"
+    return 1
+  }
+  if [[ "$proj" == "$(_as_project_dir)" && "$role" == "${_role:-default}" ]]; then
+    _as_msg "connect ($where): 'sandbox:$spec' names this very role; its store is already what it has"
+    return 1
+  fi
+  _sbx_spec="$proj"$'\t'"$role"$'\t'"sandbox:$spec"
 }
 
 # _as_share_memory_sugar -- a project's [share-memory] as the connections it means
 # (#196), parsed before its [connect], which overrides them. `all` is `projects =
 # read-write`. A path P is the `memory` channel's path as the profile writes it, with
-# {slug:P} for {slug}, declared read-only; a pattern (`~/git/acme/*`) is sugar only,
-# expanded here, at launch, to the matching directories that have memory. A share
+# {slug:P} for {slug}, declared read-only from P's default role, `sandbox:P` (#200): what
+# P's sandboxed sessions wrote, or P's native memory if it never ran sandboxed. A
+# pattern (`~/git/acme/*`) is sugar only, expanded here, at launch, to the matching
+# directories whose memory resolves to something. A share
 # naming this project is dropped: its memory is already there, at its own rung, and a
 # read-only bind over it would silently break the session's own writes.
 _as_share_memory_sugar() {
@@ -1193,7 +1255,10 @@ _as_share_memory_sugar() {
         [[ -d "$m" ]] || continue
         m="$(readlink -f -- "$m")"
         _as_slug_expand "${tpl//\{slug\}/\{slug:$m\}}" || return 1
-        [[ -d "$_slug_out" ]] || continue
+        # Its memory as the share would read it: the role's store, or the native one.
+        local _sbx_src=""
+        _as_sandbox_store "$m"$'\t'default$'\t'"sandbox:$m" "$_slug_out" 2>/dev/null || continue
+        [[ -n "$_sbx_src" && -d "$_sbx_src" ]] || continue
         n=1
         _q+=("$m")
       done < <(compgen -G "$p" || true)
@@ -1204,7 +1269,7 @@ _as_share_memory_sugar() {
     for m in ${_q[@]+"${_q[@]}"}; do
       slug="$(profile_slug "$(readlink -f -- "$m" 2>/dev/null || printf '%s' "$m")")"
       [[ "$slug" == "$own" ]] && continue
-      _as_connect_parse "${tpl//\{slug\}/\{slug:$m\}}/ = read-only" "$where" || return 1
+      _as_connect_parse "${tpl//\{slug\}/\{slug:$m\}}/ = read-only sandbox:$m" "$where" || return 1
     done
   done
   return 0
@@ -1479,7 +1544,8 @@ _as_connect_bind_all() {
   local iso="${1:-0}" line entry ch kind path i=0
   local -a _items=() fields=() _bound=()
   local -a _cow_fellback=()
-  local rolebase base mode _bind_covered
+  local rolebase base mode _bind_covered _rec_mode _rec_store
+  local -a _record=()
   rolebase="$(_as_sandbox_dir)"
   if ((${#profile_channels[@]})) && ((${#_connect_mode[@]})); then
     for line in "${profile_channels[@]}"; do
@@ -1535,6 +1601,7 @@ _as_connect_bind_all() {
         base="$rolebase"
         [[ "${_connect_scope[$ch]:-}" == run-scoped ]] && base="$rolebase/@run"
         _as_connect_bind_channel || return 1
+        _record+=("$ch"$'\t'"$_rec_mode"$'\t'"$path"$'\t'"$_rec_store")
         ;;
       p) _as_connect_bind_path "$path" || return 1 ;;
       t) args+=(--tmpfs "$path") ;;
@@ -1543,6 +1610,7 @@ _as_connect_bind_all() {
     # declaration skipped for absence.
     if ((${#args[@]} > _nargs)); then _bound+=("$path"); fi
   done
+  _as_sandbox_record_write "$rolebase" ${_record[@]+"${_record[@]}"} || return 1
   # ONE line, not one per channel: on a host without overlay support every `copy-on-write`
   # channel falls back, and six identical lines a launch is how a notice becomes
   # something people filter out. Said with _as_msg, never suppressed, because the
@@ -1573,6 +1641,73 @@ _as_channel_store() {
   printf '%s/%s/%s/%s' "$base" "$ch" "$mode" "$(_as_iso_slug "$path")"
 }
 
+# THE RECORD (#200): what this role's launch bound at each channel path --
+# `CHANNEL<TAB>MODE<TAB>PATH<TAB>STORE`, where STORE is the host path the sandbox saw
+# there (its slot; the native path at read-write and read-only; `-` where there is no
+# single one: an overlay, a store per join). Another role reads it to find this one's
+# stores (`sandbox:`). Rewritten at every launch, beside the role's stores, in its state
+# directory: a control path, never bound into any sandbox.
+_as_sandbox_record_write() {
+  local dir="$1" tmp
+  shift
+  mkdir -p -- "$dir" || return 1
+  tmp="$dir/record.tsv.$$"
+  if { printf '%s\n' "$@"; } >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$dir/record.tsv"; then
+    return 0
+  fi
+  rm -f -- "$tmp" 2>/dev/null
+  _as_msg "connect: could not write this role's record ($dir/record.tsv); another role's 'sandbox:' source will read its native paths instead"
+  return 0
+}
+
+# _as_sandbox_store "PROJECT<TAB>ROLE<TAB>WRITTEN" KEY [CHANNEL] -- set $_sbx_src to the
+# host path that role's store has at KEY, from its record: the slot of an own, seed-only
+# or copy store (a subpath inside it for a key inside the channel path), the native
+# path at read-write or read-only. WITH NO RECORD -- the project never launched
+# sandboxed in that role -- its state is the native one, and so is the source: what a
+# share read before #200. Empty when there is nothing to read, said once. Fails for a
+# store that cannot be read as one path: an overlay (copy-on-write) or a store per join.
+_as_sandbox_store() {
+  local proj role written key="$2" dir rec line c m p st best="" bestp="" bestst="" bestm=""
+  IFS=$'\t' read -r proj role written <<<"$1"
+  _sbx_src=""
+  dir="$(_as_state_dir)/$profile/$(_as_path_slug "$proj")/$role"
+  rec="$dir/record.tsv"
+  if [[ ! -f "$rec" ]]; then
+    # Never launched in that role: the native path, through the channel's relocation.
+    _sbx_src="$(_as_channel_source "$key")"
+    [[ -e "$_sbx_src" ]] || {
+      _as_info "connect: '$written' has nothing at '$key' yet; skipped this launch"
+      _sbx_src=""
+    }
+    return 0
+  fi
+  while IFS=$'\t' read -r c m p st; do
+    [[ -n "$p" ]] || continue
+    if [[ "$key" == "$p" || "$key" == "$p"/* ]] && ((${#p} > ${#bestp})); then
+      best="$c" bestp="$p" bestst="$st" bestm="$m"
+    fi
+  done <"$rec"
+  if [[ -z "$best" ]]; then
+    _as_msg "connect: '$written' has no store at '$key' (not among the paths its last launch bound); skipped this launch"
+    return 0
+  fi
+  if [[ -z "$bestst" ]]; then
+    _as_info "connect: '$written' had nothing at '$key' at its last launch; skipped this launch"
+    return 0
+  fi
+  if [[ "$bestst" == - ]]; then
+    _as_msg "connect: '$written' keeps '$best' at $bestm, which is not one store to read (an overlay, or a store per join). Refusing rather than reading something else; 'sandbox:' reads a role's own, seed-only, copy, read-only or read-write channel (#200)."
+    return 1
+  fi
+  _sbx_src="$bestst${key#"$bestp"}"
+  [[ -e "$_sbx_src" ]] || {
+    _as_info "connect: '$written' has nothing at '$key' yet; skipped this launch"
+    _sbx_src=""
+  }
+  return 0
+}
+
 # _as_path_depth PATH -- how many components PATH has: the order _as_connect_bind_all
 # binds in.
 _as_path_depth() {
@@ -1586,9 +1721,21 @@ _as_path_depth() {
 # _bind_covered, _cow_fellback.
 _as_connect_bind_channel() {
   local slot empty manifest upper work seen src _connect_from
+  # What the record says of this path (_as_sandbox_record_write): the store, nothing
+  # (empty), or `-` for one that is not a single path.
+  _rec_mode="$mode" _rec_store=""
   src="$(_as_channel_source "$path")"
+  # Another sandbox's store (#200): resolved now, from that role's last launch.
+  if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
+    _as_sandbox_store "${_connect_sandbox[$ch]}" "$path" "$ch" || return 1
+    [[ -n "$_sbx_src" ]] || return 0 # nothing there; said
+    src="$_sbx_src"
+  fi
   # A relocated path is not bound under `native`: see _as_channel_source.
-  [[ "$src" != "$path" ]] && _as_preset_is_native && return 0
+  if [[ "$src" != "$path" ]] && _as_preset_is_native; then
+    _rec_mode=read-write _rec_store="$src" # what the agent reads there, natively
+    return 0
+  fi
   if [[ "$mode" == read-write ]]; then
     # The source itself, both ways: already there when it IS the path, which the
     # state bind covers -- unless something outer is bound over it (memory under an own
@@ -1601,6 +1748,7 @@ _as_connect_bind_channel() {
       if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
       [[ -e "$src" ]] && args+=(--bind "$src" "$path")
     fi
+    _rec_store="$src"
     return 0
   fi
   if [[ "${_connect_scope[$ch]:-}" == join-scoped && "$mode" != read-only ]]; then
@@ -1610,6 +1758,7 @@ _as_connect_bind_channel() {
     else
       _as_join_scoped_bind "$kind" "$path" "$src" || return 1
     fi
+    _rec_store="-"
     return 0
   fi
   case "$mode" in
@@ -1624,6 +1773,7 @@ _as_connect_bind_channel() {
         _as_connect_placeholder "$path"
       fi
       args+=(--bind "$slot" "$path")
+      _rec_store="$slot"
       ;;
     copy-on-write)
       # Copy-on-write: the source reads THROUGH until the sandbox writes, and
@@ -1652,6 +1802,7 @@ _as_connect_bind_channel() {
         fi
         [[ "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--bind "$slot" "$path")
+        _rec_mode=copy _rec_store="$slot"
         return 0
       fi
       upper="$base/$ch/upper/$(_as_iso_slug "$path")"
@@ -1676,6 +1827,7 @@ _as_connect_bind_channel() {
       # that safe: two overlays over one upper directory, which overlayfs calls
       # undefined, need two launches, and a second invocation joins this one.
       args+=(--overlay-src "$path" --overlay "$upper" "$work" "$path")
+      _rec_store="-"
       ;;
     seed-only)
       slot="$(_as_channel_store "$ch" "$path" seed-only)"
@@ -1691,6 +1843,7 @@ _as_connect_bind_channel() {
       fi
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
       args+=(--bind "$slot" "$path")
+      _rec_store="$slot"
       ;;
     copy)
       # Seeded once and refreshed per file, never written back. The sync is
@@ -1707,11 +1860,13 @@ _as_connect_bind_channel() {
       fi
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
       args+=(--bind "$slot" "$path")
+      _rec_store="$slot"
       ;;
     read-only)
       if [[ -e "$src" ]]; then
         [[ "$src" != "$path" && "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--ro-bind "$src" "$path")
+        _rec_store="$src"
       else
         # Nothing to show, but the parent is bound read-write, so without a
         # mount point here the sandbox could CREATE the file and author at a
@@ -1751,7 +1906,7 @@ _as_connect_bind_channel() {
 # is not bound at all under `native`, whose claim is parity with no sandbox: there the
 # agent finds its file where it keeps it.
 _as_connect_bind_path() {
-  local p="$1" key mode base slot manifest real kind rolebase s what
+  local p="$1" key mode base slot manifest real kind rolebase s what sbx_store=""
   local _prot_what _prot_path _prot_how
   rolebase="$(_as_sandbox_dir)"
   key="${_connect_key[$p]}"
@@ -1764,6 +1919,14 @@ _as_connect_bind_path() {
   what="'$key'"
   [[ -n "$s" ]] && what="'$key' (outside:$s)"
   s="${s:-$p}"
+  # Another sandbox's store at this path (#200), resolved now from that role's record.
+  if [[ -n "${_connect_sandbox[$p]:-}" ]]; then
+    local _sbx_src
+    _as_sandbox_store "${_connect_sandbox[$p]}" "$p" || return 1
+    [[ -n "$_sbx_src" ]] || return 0 # nothing there; said
+    what="'$key' (${_connect_sandbox[$p]##*$'\t'})"
+    s="$_sbx_src" sbx_store="$(readlink -f -- "$_sbx_src" 2>/dev/null || printf '%s' "$_sbx_src")"
+  fi
   base="$rolebase/@paths"
   [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
   if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
@@ -1805,7 +1968,10 @@ _as_connect_bind_path() {
   # Resolved again at bind time and re-checked fail-closed:
   # a symlink repointed after the parse must not mount a target that was refused.
   real="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
-  if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real" "$mode"; then
+  # A role's store is under the engine's state directory, a control path: the one store
+  # the engine itself resolved for a `sandbox:` source passes, and nothing else does.
+  if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] \
+    || { [[ "$real" != "$sbx_store" || "$real" != "$(_as_state_dir)"/* ]] && _as_path_protected "$real" "$mode"; }; then
     _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
     return 1
   fi
@@ -2092,7 +2258,7 @@ _as_keeper_policy() {
   for k in "${!_connect_mode[@]}"; do
     v="${_connect_where[$k]}"
     if ((all)) || [[ "$v" == --connect || "$v" == AGENT_SANDBOX_CONNECT ]]; then
-      _kp "connect:$k" "${_connect_mode[$k]}${_connect_scope[$k]:+ ${_connect_scope[$k]}}" "$v"
+      _kp "connect:$k" "${_connect_mode[$k]}${_connect_scope[$k]:+ ${_connect_scope[$k]}}${_connect_sandbox[$k]:+ ${_connect_sandbox[$k]##*$'\t'}}" "$v"
     fi
   done
   # The base (#190): what the keeper was built on. A join from a shell whose
@@ -2848,10 +3014,12 @@ _as_connect_report() {
   # becomes something nobody reads.
   for ch in "${!_connect_mode[@]}"; do
     [[ "${_connect_where[$ch]}" == "preset "* || "${_connect_where[$ch]}" == "built in"* ]] && continue
+    local src="native"
+    [[ -n "${_connect_sandbox[$ch]:-}" ]] && src="${_connect_sandbox[$ch]##*$'\t'}"
     if [[ "$ch" == */* ]]; then
-      _as_info "connect: ${_connect_key[$ch]} = ${_connect_mode[$ch]} (${_connect_where[$ch]})"
+      _as_info "connect: ${_connect_key[$ch]} = ${_connect_mode[$ch]}${_connect_sandbox[$ch]:+ $src} (${_connect_where[$ch]})"
     else
-      _as_info "connect: $ch = ${_connect_mode[$ch]} native (${_connect_where[$ch]})"
+      _as_info "connect: $ch = ${_connect_mode[$ch]} $src (${_connect_where[$ch]})"
     fi
   done
   return 0
@@ -3470,6 +3638,14 @@ _as_profile_facts() {
   )
 }
 
+# _as_instruction_channel NAME -- is NAME one of the channels a session loads as the
+# user's own configuration, without a dialog (connections.md: instructions, settings,
+# skills, agents, workflows, plugins)?
+_as_instruction_channel() {
+  case "${1//\'/}" in instructions | settings | skills | agents | workflows | plugins) return 0 ;; esac
+  return 1
+}
+
 # _as_trust_notes CWD FILE -- what the review says about the file, before the question:
 # everything that follows from its text alone, said here, once, and not at every launch.
 #   - what the parse ignores: a malformed line, an unknown section or key, a role
@@ -3543,9 +3719,15 @@ _as_trust_notes() {
     key="${spec%%=*}"
     key="${key#"${key%%[![:space:]]*}"}"
     key="${key%"${key##*[![:space:]]}"}"
-    [[ "$key" == */* ]] || continue
-    local t2="" t3="" src=""
+    local t2="" t3="" src="" sbx=""
     read -r mode t2 t3 _ <<<"${spec#*=}"
+    for f in "$t2" "$t3"; do [[ "$f" == sandbox:* ]] && sbx="$f"; done
+    # ANOTHER SANDBOX AUTHORING THIS ONE'S INSTRUCTIONS (#200): from a `sandbox:` source,
+    # what that role's agent wrote is what this one loads as the user's own.
+    if [[ -n "$sbx" && "$key" != */* ]] && _as_instruction_channel "$key"; then
+      _as_msg "connect: '$key = $mode $sbx': what that role's agent wrote into its $key becomes what this sandbox reads as yours -- loaded into every session, trusted like your own configuration."
+    fi
+    [[ "$key" == */* ]] || continue
     for f in "$t2" "$t3"; do
       [[ "$f" == outside:?* ]] || continue
       src="${f#outside:}"
@@ -3581,6 +3763,9 @@ _as_trust_notes() {
       done
     done
     [[ -n "$in_ch" ]] && _as_msg "connect: '$key' overlaps the $in_ch ('$in_path'); the path declaration wins there, whatever the channel's mode."
+    if [[ -n "$sbx" && -n "$in_ch" ]] && _as_instruction_channel "${in_ch##*channel }"; then
+      _as_msg "connect: '$key = $mode $sbx': what that role's agent wrote there becomes what this sandbox reads as yours."
+    fi
     [[ -n "$contains" ]] && _as_msg "connect: '$key' contains the channels $contains; bound by depth, each keeps its own mode inside it. To move a channel, set its mode."
     if [[ -z "$over" && "$p" == "$HOME"/* && "$p" != "$cwd" && "$p" != "$cwd"/* ]]; then
       if [[ "$mode" == own ]]; then
@@ -4317,6 +4502,8 @@ agent_sandbox() (
   # wrote, and whether they wrote a trailing slash.
   local -a _connect_paths=()
   local -A _connect_key=() _connect_isdir=() _connect_src=()
+  # A `sandbox:` source (#200), per channel or path: "PROJECT<TAB>ROLE<TAB>as written".
+  local -A _connect_sandbox=()
   local _path_key
   local -a _connect_flag=()
   # The command line that runs the sandbox: bwrap, or pasta running bwrap. Set by the

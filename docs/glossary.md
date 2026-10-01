@@ -118,9 +118,11 @@ upper layer. `read-only` and `read-write` have none. Each store belongs to `(rol
 mode)`. *agreed*
 
 **Source.** Where a connection reads from, and where a sandbox is created from.
-*shipped*: `native` for a channel, and `outside:<path>` for a path declaration (the
-same path outside when none is written; #174). *agreed*: `sandbox:<project>[/<role>]`
-(another sandbox), and `clone:<source>` (a throwaway, discardable copy of a source, made per
+*shipped*: `native` for a channel, `outside:<path>` for a path declaration (the
+same path outside when none is written; #174), and `sandbox:[<project>][@<role>]` for
+both (#200): what that role's store has at the same path, found from its record of its
+last launch -- the native path if it never launched; an empty project is this one
+(`sandbox:@impl`), the role `default` when none is named. *agreed*: `clone:<source>` (a throwaway, discardable copy of a source, made per
 measurement or run and shared by every launch in it,
 [#106 comment](https://github.com/pearu/agent-sandbox/issues/106)).
 
@@ -232,7 +234,7 @@ trust on the project.
 | `join-scoped` | one join: a joined command and everything it starts; renamed from `process-scoped` |
 
 `sandbox-scoped`, `project-scoped` and `session-scoped` are withdrawn: the first is the
-unnamed default, the second is a `sandbox:<project>/<role>` source at `read-write`, the
+unnamed default, the second would be a `sandbox:<project>@<role>` source at `read-write` (refused), the
 third is a role per conversation. `read-write` with any scope stays refused. (PR #117
 parses the older set and is to be revised.)
 

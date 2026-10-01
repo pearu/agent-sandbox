@@ -254,7 +254,8 @@ skills, agents, workflows, plugins`, `config`, `projects`, `memory`, `transcript
 them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
 holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them;
 `projects` is `own` there for the same reason, since 0.2 scoped it. A share reads the other
-project's native memory; reading another sandbox's store needs the `sandbox:` source (#200).
+project's role store through the `sandbox:` source (#200), or its native memory if it never
+ran sandboxed.
 identity and project each still have machinery
 of their own and keep their own controls until they are folded in, one at a time, with the
 study to show it. `docs/config.md` documents the rows that are live, so a user reading it
@@ -514,6 +515,48 @@ the outer never binds its own state directory in. So everything an inner sandbox
 `own` slots, `copy` copies, `copy-on-write` upper layers, for paths and channels alike —
 lasts as long as the outer session and no longer.
 
+## Another sandbox's store: `sandbox:`
+
+A source can be another role's store (#200): `sandbox:[PROJECT][@ROLE]`, on a channel or
+on a path declaration. An empty PROJECT is this one -- `sandbox:@impl` is this project's
+`impl` role -- and otherwise it is absolute or under `~`; ROLE is `default` when none is
+named. What it reads is what that role has at the same path.
+
+**A source says whose files are at a path; a mode says how much of them reaches the
+sandbox.** So the two forms say two different things:
+
+```ini
+[connect]
+memory = read-only sandbox:@impl                                    # my memory IS impl's
+~/.claude/projects/{slug:~/git/acme}/memory/ = read-only sandbox:~/git/acme   # acme's, beside mine
+```
+
+The first gives this role no memory of its own there: a reviewer that consults the
+implementer's notes and keeps none (#55). The second is a share: another project's
+memory at that project's path, which Claude Code does not load into this session but
+the agent can read. `[share-memory] P` is that second line.
+
+**Where the store is found.** Every launch records, in its role's state directory, what
+it bound at each channel path: the slot of an `own`, `seed-only` or `copy` store, the
+native path at `read-write` and `read-only`. A `sandbox:` source looks the path up there:
+
+- a role that **never launched** has its state natively, so the source is the native
+  path -- what a share read before, and what it still reads for a project you only run
+  natively;
+- a store that is **not one path** -- an overlay (`copy-on-write`), or a store per join --
+  is refused at the launch rather than read as something else;
+- a path its last launch did not bind is skipped, with a notice.
+
+**Modes.** `read-only`, `seed-only` and `copy` read the store. `read-write` is refused:
+two writers in one role's store is what a role's single launch exists to prevent.
+`copy-on-write` is not built: the store may be an overlay itself, mounted while that role
+runs. `own` takes nothing from a source.
+
+**At the review.** A `sandbox:` source into a channel a session loads as your own
+configuration -- instructions, settings, skills, agents, workflows, plugins -- is said
+at the dot-file's review: what that role's agent wrote becomes what this one reads as
+yours.
+
 ## Roles, the keeper and storage
 
 **Built:** roles, the keeper, background sessions inside the role, the role verbs, `seed-only`,
@@ -675,7 +718,7 @@ Storage is keyed by the role, so the scope token of a connection (`channel = mod
 | `join-scoped` | one join: a joined command and everything it starts. *Built* for `own` (#147), and for `copy` and `seed-only`, each seeded from the source at the join (#153; `copy-on-write` per join is not built): the join gets a mount namespace of its own and binds its store over the path; the keeper shows an empty read-only mount point there. The stores reach the sandbox through a staging directory the keeper binds, and each moves out of it before its command starts, so no join can reach another's -- not even through the keeper payload's `/proc/<pid>/root`. Removed when the join ends, or at the supervisor's sweep for a join killed with `-9`. A seeded store per join is not built. Renamed from `process-scoped`, which is refused with the new name |
 
 `sandbox-scoped` is not nameable (the default needs no word); `project-scoped` is a
-`sandbox:<project>/<role>` source at `read-write`, not a scope; `session-scoped` is a role per
+`sandbox:<project>@<role>` source at `read-write` (refused: two writers in one store), not a scope; `session-scoped` is a role per
 conversation. `read-write` with any scope stays refused: there is no store to scope.
 
 ### Modes and channels decided alongside
@@ -782,12 +825,12 @@ skills = read-only         # later sections override earlier ones, per key
 [overlay]
 mode = auto                # auto | off -- what copy-on-write is implemented with
 
-[connect]                  # channel = mode [source] [scope]; source: native | sandbox:<project>[/<role>] | outside:<path>
+[connect]                  # channel = mode [source] [scope]; source: native | sandbox:[<project>][@<role>] | outside:<path>
                            # scope: nothing (the role) | run-scoped | join-scoped
                            # a key with a `/` is a path: see "Path declarations"
 instructions = copy-on-write native
 skills = copy native
-memory = read-only sandbox:~/git/acme/app   # what [share-memory] means today
+memory = read-only sandbox:@impl            # this role's memory IS the impl role's (#55)
 config = own                                # what user-mcp = none meant (removed, #132)
 artefacts = read-write native
 ./scratch/ = own                            # a path, not a channel
@@ -846,9 +889,9 @@ here rather than designed around; the project directory is where different agent
 
 - The per-project config file copy became the `config` channel's `seed-only` store of the
   `default` role (#119), moved there at the first launch that finds it.
-- `[share-memory]` is sugar for read-only declarations of other projects' native memory,
-  and `all` for `projects = read-write` (#196); `memory = ro sandbox:<project>` follows with
-  the `sandbox:` source (#200). The global `memory_default` is removed (#196): `[share-memory]
+- `[share-memory]` is sugar for read-only declarations of other projects' memory from their
+  default role, `{base}/projects/{slug:P}/memory/ = read-only sandbox:P` (#200), and `all`
+  for `projects = read-write` (#196). The global `memory_default` is removed (#196): `[share-memory]
   all` says the same per project, and is reviewed. `[claude] hide` becomes `own` for identity's tooling
   parts. `user-mcp` is removed and refused, naming `config = own` (#132).
 - The isolate spec keeps the per-session scratch and drops everything that "private by

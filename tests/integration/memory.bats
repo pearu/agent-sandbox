@@ -38,7 +38,6 @@ PROBE
 }
 
 # run_claude [ENV=val ...] : engine as claude, from IWORK, real bwrap, net=none
-# shellcheck disable=SC2120 # optional env overrides; the callers here pass none
 run_claude() {
   rm -f "$IWORK/report"
   # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
@@ -106,6 +105,22 @@ trust_here() {
   TEST_PRESET=inherit run_claude
   [ "${M[current_native]}" = yes ]
   [ "$(cat "$IHOME/.claude/projects/$CUR_SLUG/memory/MEMORY.md")" = current ]
+}
+
+@test "a reviewer reads its implementer's memory through sandbox:@impl, and cannot write it (#200, #55)" {
+  # impl writes a note into its own memory store (memory is the role's own under inherit)
+  local store
+  TEST_PRESET=inherit run_claude AGENT_SANDBOX_ROLE=impl
+  [ "$status" -eq 0 ]
+  store="$(find "$IHOME/.local/state/agent-sandbox/claude" -path '*/impl/memory/own/*' -type d -name '*_memory' | head -1)"
+  [ -d "$store" ]
+  printf 'impl note\n' >"$store/MEMORY.md"
+  # the reviewer's memory IS impl's, read-only: it sees the note and cannot write
+  TEST_PRESET=inherit run_claude AGENT_SANDBOX_ROLE=reviewer AGENT_SANDBOX_CONNECT='memory = read-only sandbox:@impl'
+  [ "$status" -eq 0 ]
+  [ "${M[current_native]}" = yes ]                                            # MEMORY.md is there: impl's
+  [ "${M[current_writable]}" = no ]                                           # and read-only
+  [ "$(cat "$IHOME/.claude/projects/$CUR_SLUG/memory/MEMORY.md")" = current ] # native untouched
 }
 
 @test "an unapproved dot-file grants nothing: the launch refuses, and its share is never made (#143)" {
