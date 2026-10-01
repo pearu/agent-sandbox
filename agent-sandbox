@@ -1260,7 +1260,8 @@ _as_connect_channels() {
 }
 
 # ----- what a profile may say about one channel path ----------------------------
-# Four small hooks, each an array of TAB-separated lines, all optional. The first
+# Small hooks, each an array of TAB-separated lines, all optional, filled from the
+# profile's dot-file ([channel:<name>] and [preset:<name>] sections, #190, #191). The first
 # channel that needed them is Claude Code's config file (#119): its source is
 # ~/.claude.json, its path inside is ~/.claude/.claude.json, its seed must carry this
 # project's entry only, its `own` must still parse as JSON, and under `inherit` it is
@@ -1271,7 +1272,8 @@ _as_connect_channels() {
 #   profile_channel_filters  "CHANNEL<TAB>FUNCTION" FUNCTION SOURCE VIEW writes what the
 #                            or "DEST<TAB>FUNCTION" seeding modes read instead of SOURCE;
 #                                                   a DEST entry is for that path alone
-#   profile_channel_empty    "CHANNEL<TAB>TEXT"     what a new `own` file store holds
+#   profile_channel_start    "DEST<TAB>FILE"        the template a file store at DEST starts
+#                                                   as with nothing to seed from (`start:`)
 #   profile_channel_vendor   "CHANNEL<TAB>PREFIX..." paths in the channel the agent itself
 #                                                 rewrites on both sides (a server sync):
 #                                                 no conflict warning names them
@@ -1331,6 +1333,16 @@ _as_channel_hook() { # ARRAY-NAME CHANNEL -> the channel's value in that hook, i
     }
   done
   return 1
+}
+# _as_channel_start PATH SLOT -- start a channel's file store at SLOT: a copy of the
+# template the path's `start:` names in its [channel:<name>] section (#191), else empty.
+_as_channel_start() {
+  local t
+  if t="$(_as_channel_hook profile_channel_start "$1")" && [[ -r "$t" ]]; then
+    cp -- "$t" "$2"
+    return
+  fi
+  : >"$2"
 }
 # _as_channel_preset_mode CHANNEL PRESET -- the channel's rung under PRESET.
 _as_channel_preset_mode() {
@@ -1446,7 +1458,7 @@ _as_connect_apply() {
             mkdir -p -- "$slot" || return 1
           else
             mkdir -p -- "$(dirname -- "$slot")" || return 1
-            [[ -e "$slot" ]] || _as_channel_hook profile_channel_empty "$ch" >"$slot" || : >"$slot" || return 1
+            [[ -e "$slot" ]] || _as_channel_start "$path" "$slot" || return 1
             _as_connect_placeholder "$path"
           fi
           args+=(--bind "$slot" "$path")
@@ -1509,10 +1521,10 @@ _as_connect_apply() {
             _as_connect_view "$ch" "$src" "$path" || return 1
             _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
             # Nothing to seed from: a file store starts as an `own` one would, from
-            # the channel's empty text when it has one (a JSON file wants `{}`, not
-            # zero bytes).
+            # the path's template when it has one (a JSON file wants `{}`, not zero
+            # bytes: measured, Claude Code calls a 0-byte config "corrupted").
             if [[ "$kind" == file && ! -e "$_connect_from" && ! -s "$slot" ]]; then
-              _as_channel_hook profile_channel_empty "$ch" >"$slot" || : >"$slot"
+              _as_channel_start "$path" "$slot"
             fi
           fi
           [[ "$kind" == file ]] && _as_connect_placeholder "$path"
@@ -3075,7 +3087,7 @@ _as_trust_show() {
 _as_profile_dotfile() {
   local file="$1" pname="$profile" kv k v h line base="" base_env="" from=""
   [[ -f "$file" ]] || return 0
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() words=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
@@ -3175,9 +3187,14 @@ _as_profile_dotfile() {
           profile_channel_sources+=("$key"$'\t'"$src")
           ;;
         filter:?*) profile_channel_filters+=("$key"$'\t'"${t#filter:}") ;;
+        start:?*)
+          src="${t#start:}"
+          _as_slug_expand "$src" || return 1
+          profile_channel_start+=("$key"$'\t'"$_slug_out")
+          ;;
         vendor:?*) _ch_vendor[$name]+=" ${t#vendor:}" ;;
         *)
-          _as_msg "profile '$pname': $file: [channel:$name] '$t' is not outside:, filter: or vendor:"
+          _as_msg "profile '$pname': $file: [channel:$name] '$t' is not outside:, filter:, vendor: or start:"
           return 1
           ;;
       esac
@@ -3186,6 +3203,36 @@ _as_profile_dotfile() {
   for name in ${_ch_order[@]+"${_ch_order[@]}"}; do
     profile_channels+=("$name${_ch_paths[$name]}")
     [[ -n "${_ch_vendor[$name]:-}" ]] && profile_channel_vendor+=("$name"$'\t'"${_ch_vendor[$name]# }")
+  done
+  # THE PRESETS' RUNGS (#191): a [preset:<name>] section lists, in the [connect] grammar,
+  # the channels whose rung under that preset is not the ladder's. Read into
+  # profile_channel_presets, which _as_channel_preset_mode consults.
+  local -A _pr=()
+  local -a _pr_order=()
+  local ck cv pl
+  for pl in ${_df_preset_lines[@]+"${_df_preset_lines[@]}"}; do
+    name="${pl%%$'\t'*}" line="${pl#*$'\t'}"
+    [[ "$line" == *=* ]] || {
+      _as_msg "profile '$pname': $file: [preset:$name] expects 'channel = mode': $line"
+      return 1
+    }
+    _as_dotfile_kv "$line"
+    case "$cv" in
+      own | seed-only | copy | copy-on-write | read-only | read-write) ;;
+      *)
+        _as_msg "profile '$pname': $file: [preset:$name] '$ck = $cv': not a mode"
+        return 1
+        ;;
+    esac
+    [[ " ${_ch_order[*]-} " == *" $ck "* ]] || {
+      _as_msg "profile '$pname': $file: [preset:$name] '$ck' is not one of its channels"
+      return 1
+    }
+    [[ -n "${_pr[$ck]+x}" ]] || _pr_order+=("$ck")
+    _pr[$ck]+=" $name=$cv"
+  done
+  for ck in ${_pr_order[@]+"${_pr_order[@]}"}; do
+    profile_channel_presets+=("$ck"$'\t'"${_pr[$ck]# }")
   done
   profile_env_refuse+=(${_df_env_refuse[@]+"${_df_env_refuse[@]}"})
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
@@ -3196,7 +3243,7 @@ _as_profile_dotfile() {
     fi
   done
   if ((${#_df_connect[@]} + _df_share_set)) || [[ -n "$_df_net_mode$_df_seccomp_mode$_df_briefing_mode$_df_overlay_mode$_df_preset$_df_role$_df_conda_name" ]]; then
-    _as_msg "profile '$pname': $file: only [agent], [env], [allow] and [channel:<name>] are read from a profile's dot-file so far; ignoring the rest"
+    _as_msg "profile '$pname': $file: only [agent], [env], [allow], [channel:<name>] and [preset:<name>] are read from a profile's dot-file so far; ignoring the rest"
   fi
   return 0
 }
@@ -3209,6 +3256,14 @@ _as_profile_dotfile() {
 _as_slug_expand() {
   local s="$1" slug
   _slug_out="$s"
+  # {profile} (#191): the profile's own directory, where its templates are.
+  if [[ "$s" == *"{profile}"* ]]; then
+    [[ -n "${profile_home:-}" ]] || {
+      _as_msg "'$s': {profile} needs a profile directory"
+      return 1
+    }
+    s="${s//\{profile\}/$profile_home}"
+  fi
   # {base} (#190): the profile's resolved base, its state directory.
   if [[ "$s" == *"{base}"* ]]; then
     [[ -n "${profile_base:-}" ]] || {
@@ -3229,7 +3284,7 @@ _as_slug_expand() {
     s="${s//\{slug\}/$slug}"
   fi
   if [[ "$s" =~ \{[a-z][a-z0-9_:-]*\} ]]; then
-    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {base} and {slug} are known)"
+    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {base}, {profile} and {slug} are known)"
     return 1
   fi
   _slug_out="$s"
@@ -3238,10 +3293,11 @@ _as_slug_expand() {
 # _as_profile_facts_dotfile NAME FILE -- for _as_profile_facts, in its subshell: read the
 # profile's dot-file as a launch does, since its channel table is there (#190).
 _as_profile_facts_dotfile() {
-  local profile="$1" profile_base=""
+  local profile="$1" profile_base="" profile_home="${2%/*}"
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
   local -a profile_hide=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
+  local -a profile_channel_start=() profile_channel_presets=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
 }
 
@@ -3279,7 +3335,7 @@ _as_profile_facts() {
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
 _as_trust_notes() {
   local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
@@ -3299,7 +3355,12 @@ _as_trust_notes() {
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
-  local -A _seen_ch=()
+  local -A _seen_ch=() _seen_pr=()
+  for h in ${_df_preset_lines[@]+"${_df_preset_lines[@]}"}; do
+    [[ -n "${_seen_pr[${h%%$'\t'*}]:-}" ]] && continue
+    _seen_pr[${h%%$'\t'*}]=1
+    _as_msg ".agent-sandbox: [preset:${h%%$'\t'*}] is a profile's, not a project's: ignoring (a project picks a preset with [sandbox] preset, and moves a channel with [connect])"
+  done
   for h in ${_df_channel_lines[@]+"${_df_channel_lines[@]}"}; do
     [[ -n "${_seen_ch[${h%%$'\t'*}]:-}" ]] && continue
     _seen_ch[${h%%$'\t'*}]=1
@@ -3480,6 +3541,14 @@ _as_dotfile_parse() {
         section="${section%%:*}"
         case "$section" in
           sandbox | connect) _df_role_globs+=("$sglob") ;;
+          preset)
+            # [preset:<name>] is a preset's rungs in a profile's dot-file (#191).
+            [[ "$sglob" =~ ^(isolated|inherit|shared)$ ]] || {
+              _as_msg ".agent-sandbox: [preset:$sglob] -- a preset section is one of isolated, inherit, shared; ignoring the section"
+              section="-skip-"
+              continue
+            }
+            ;;
           channel)
             # [channel:<name>] is not a role suffix but a channel's name (#190): a
             # profile's dot-file declares its channel table this way.
@@ -3499,9 +3568,9 @@ _as_dotfile_parse() {
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
         allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
-        channel)
+        channel | preset)
           [[ "$sglob" != "*" ]] || {
-            _as_msg ".agent-sandbox: [channel] needs a name, [channel:<name>]; ignoring the section"
+            _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
             section="-skip-"
           }
           ;;
@@ -3516,6 +3585,7 @@ _as_dotfile_parse() {
     case "$section" in
       -skip-) ;;
       channel) _df_channel_lines+=("$sglob"$'\t'"$line") ;;
+      preset) _df_preset_lines+=("$sglob"$'\t'"$line") ;;
       allow) _df_allow+=("$line") ;;
       share-memory) _df_share+=("${line/#\~/$HOME}") ;;
       env)
@@ -4417,6 +4487,7 @@ agent_sandbox() (
     return 2
   }
   local profile_file="$profile_dir/$profile/profile.sh"
+  local profile_home="$profile_dir/$profile" # {profile}: the profile's own directory (#191)
   [[ -r "$profile_file" ]] \
     || {
       _as_msg "no profile '$profile' ($profile_file not found). Available: $(_as_list_profiles "$profile_dir")"
@@ -4438,7 +4509,7 @@ agent_sandbox() (
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=()
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
-  local -a profile_hide=() _profile_allow_hosts=()
+  local -a profile_hide=() _profile_allow_hosts=() profile_channel_start=()
   local profile_base=""      # [agent] base: the agent's state directory (#175)
   local profile_base_from="" # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
@@ -4526,7 +4597,7 @@ agent_sandbox() (
   _proj="$(_as_project_dir)"
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=()
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"

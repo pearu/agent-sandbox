@@ -100,7 +100,8 @@ statsigapi.net
 # about that path: `outside:SRC` -- the path it follows outside; `filter:FN` -- the
 # profile function that writes the seeding modes' view of it; `vendor:PREFIX` -- paths
 # under it the agent itself rewrites on both sides, which a conflict warning does not
-# name.
+# name; `start:FILE` -- what its store starts as when there is nothing to seed from
+# (`own`, or `seed-only` with no source), a template beside this file ({profile}).
 #
 # ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory and tools
 # each have machinery of their own (the credential bind, the working tree, memory
@@ -141,8 +142,11 @@ statsigapi.net
 # profile drops this relocation (code: it depends on the launching environment). The
 # seeding modes read a FILTERED view -- every top-level key and only this project's
 # entry, the fix for leak study row 10 -- and after that the file is Claude Code's.
+# `own` starts it from {} (config.json beside this file): measured on 2.1.285, a 0-byte
+# .claude.json is "corrupted" and the session fails, while {} runs -- Claude Code
+# rebuilds the account block itself.
 [channel:config]
-{base}/.claude.json = outside:~/.claude.json filter:_claude_config_filter
+{base}/.claude.json = outside:~/.claude.json filter:_claude_config_filter start:{profile}/config.json
 
 # TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
 # and prompt history are its own, and so are the logs your hooks write. The
@@ -169,11 +173,36 @@ statsigapi.net
 # POLICY AND CHANGELOG ARE CHANNELS (#109): Claude Code's caches of server-managed
 # settings and policy flags, and of the vendor changelog -- each was a cross-project
 # write channel into what the user and the agent take as Anthropic's. The stamp moves
-# with its policy file: a private cache beside a shared stamp would split the pair.
+# with its policy file: a private cache beside a shared stamp would split the pair. Each
+# starts as {} under `own` (measured: with no policy files at all a session runs
+# normally and fetches fresh ones; a 0-byte JSON file is not that).
 [channel:policy]
-{base}/remote-settings.json
-{base}/policy-limits.json
-{base}/policy-limits.json.stamp.json
+{base}/remote-settings.json = start:{profile}/policy.json
+{base}/policy-limits.json = start:{profile}/policy.json
+{base}/policy-limits.json.stamp.json = start:{profile}/policy.json
 
 [channel:changelog]
 {base}/cache/changelog.md
+
+# ----- the presets' rungs --------------------------------------------------------------
+# Where a channel sits under a preset when that is not the ladder's rung (isolated: own,
+# inherit: copy-on-write, shared: read-write). A project's [connect] overrides any of them.
+#
+# `config` and `policy` are seed-only under `inherit`: Claude Code rewrites them at every
+# launch (it refetches policy through the allowlist), so `copy` would warn at every
+# launch. `config` is seed-only under `shared` too, not read-write: `shared` is "the
+# engine before 0.3", and 0.2.1 already gave each project its own copy -- read-write
+# would reopen #90. A role's transcripts and logs are its own under both; artefacts are
+# its own under `inherit` (#52, #76, #78). `changelog` keeps the ladder's copy-on-write,
+# which on a single file is copy: only your side fetches it, so it refreshes cleanly.
+[preset:inherit]
+config = seed-only
+transcripts = own
+logs = own
+artefacts = own
+policy = seed-only
+
+[preset:shared]
+config = seed-only
+transcripts = own
+logs = own
