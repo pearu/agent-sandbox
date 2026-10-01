@@ -60,7 +60,9 @@ run_sandboxed() {
   popd >/dev/null || return 1
   declare -gA REPORT=()
   local k v
-  while IFS='=' read -r k v; do [[ -n "$k" ]] && REPORT["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
+  # Braced: an --exec run writes no report, and bash reports a failed redirection
+  # before a 2> on the same command is in place.
+  { while IFS='=' read -r k v; do [[ -n "$k" ]] && REPORT["$k"]="$v"; done <"$IWORK/report"; } 2>/dev/null || true
 }
 
 # report KEY -> value (fails if missing)

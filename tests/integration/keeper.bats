@@ -291,6 +291,9 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ "$status" -eq 0 ]
   [ "$(cat "$IHOME/.probe/docs/a.md")" = YOURS ]
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_CONNECT='docs=copy-on-write native' -- --profile probe --exec sh -c 'cat "$HOME/.probe/docs/a.md" >seen'
+  # Failed once on CI (ubuntu-26.04, 4 jobs) and not in 8 local parallel runs: say what
+  # the second launch read, and what the engine said, if it happens again.
+  echo "status=$status seen=[$(cat "$IWORK/seen" 2>&1)] output=[$output]"
   [ "$(cat "$IWORK/seen")" = MINE ]
 }
 
