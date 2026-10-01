@@ -1708,6 +1708,23 @@ _as_sandbox_store() {
   return 0
 }
 
+# _as_conda_mount OPTION PATH -- bind PATH at itself for the conda block (#205). Under
+# `native` the host's $HOME is bound whole, so a path inside it is already there --
+# binding it again is a no-op that can still FAIL, since bwrap refuses to mount onto a
+# symlink (measured: `~/miniconda3 -> /mnt/...` refused every native launch with an
+# active env), and a tmpfs or a read-only bind would hide the host's own, which `none`
+# does not. So under `native` such a path is skipped -- unless it resolves OUTSIDE
+# $HOME, and then its target is bound, so the symlink inside resolves.
+_as_conda_mount() {
+  local opt="$1" p="$2" real
+  if _as_preset_is_native && [[ "$p" == "$HOME"/* ]]; then
+    real="$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"
+    [[ "$real" == "$HOME" || "$real" == "$HOME"/* ]] && return 0
+    p="$real"
+  fi
+  args+=("$opt" "$p" "$p")
+}
+
 # _as_path_depth PATH -- how many components PATH has: the order _as_connect_bind_all
 # binds in.
 _as_path_depth() {
@@ -5844,12 +5861,12 @@ agent_sandbox() (
     # mount point, so the env's own bind must come after the base's.
     if [[ -n "$_conda_base" && "$_conda_base" != "$CONDA_PREFIX" &&
       -d "$_conda_base" ]]; then
-      args+=(--ro-bind "$_conda_base" "$_conda_base")
+      _as_conda_mount --ro-bind "$_conda_base"
     fi
     if ((_conda_write)); then
-      args+=(--bind "$CONDA_PREFIX" "$CONDA_PREFIX")
+      _as_conda_mount --bind "$CONDA_PREFIX"
     else
-      args+=(--ro-bind "$CONDA_PREFIX" "$CONDA_PREFIX")
+      _as_conda_mount --ro-bind "$CONDA_PREFIX"
     fi
     args+=(--setenv CONDA_PREFIX "$CONDA_PREFIX")
     [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && args+=(--setenv CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV")
@@ -5861,9 +5878,9 @@ agent_sandbox() (
     # conda's per-user state: config read-only so channels match the host;
     # ~/.conda (env registry, fallback envs/pkgs dirs) an ephemeral tmpfs.
     for _rc in "$HOME/.condarc" "$HOME/.mambarc"; do
-      [[ -f "$_rc" ]] && args+=(--ro-bind "$_rc" "$_rc")
+      [[ -f "$_rc" ]] && _as_conda_mount --ro-bind "$_rc"
     done
-    args+=(--tmpfs "$HOME/.conda")
+    _as_preset_is_native || args+=(--tmpfs "$HOME/.conda") # under native, the host's own
 
     if ((_conda_write)); then
       local _pkgs="${_knob_conda_pkgs:-$HOME/.cache/agent-sandbox/conda-pkgs}" _pkgs_dirs
@@ -5872,7 +5889,7 @@ agent_sandbox() (
           _as_msg "cannot create the sandbox conda package cache '$_pkgs' (set AGENT_SANDBOX_CONDA_PKGS)"
           return 1
         }
-      args+=(--bind "$_pkgs" "$_pkgs")
+      _as_conda_mount --bind "$_pkgs"
       _pkgs_dirs="$_pkgs"
       [[ -n "$_conda_base" && -d "$_conda_base/pkgs" ]] && _pkgs_dirs+=",$_conda_base/pkgs"
       args+=(--setenv CONDA_PKGS_DIRS "${CONDA_PKGS_DIRS:-$_pkgs_dirs}")

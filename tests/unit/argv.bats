@@ -178,6 +178,33 @@ setup() {
   [ "$(argv_index --ro-bind)" -lt "$(argv_index "$env")" ]
 }
 
+@test "conda under native: what is inside HOME is already there and not bound again; a symlink out of HOME is bound at its target (#205)" {
+  # Measured: `~/miniconda3 -> /mnt/...` with an active env refused every native launch
+  # ("Can't mount on symlink destination"), since native binds HOME whole.
+  local real="$H/disk/conda" link="$H/home/miniconda3" inside="$H/home/conda2"
+  mkdir -p "$real/envs/e" "$inside/envs/f"
+  ln -s "$real" "$link"
+  : >"$H/home/.condarc"
+  TEST_PRESET="" run_engine CONDA_PREFIX="$link/envs/e" MAMBA_ROOT_PREFIX="$link" -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --ro-bind "$link" "$link"
+  run ! argv_has --ro-bind "$link/envs/e" "$link/envs/e"
+  argv_has --ro-bind "$real" "$real"
+  argv_has --ro-bind "$real/envs/e" "$real/envs/e"
+  run ! argv_has --tmpfs "$H/home/.conda"                        # the host's own
+  run ! argv_has --ro-bind "$H/home/.condarc" "$H/home/.condarc" # already there
+  [ "$(setenv_value CONDA_PREFIX)" = "$link/envs/e" ]
+  # an env plainly inside HOME: nothing to bind at all
+  TEST_PRESET="" run_engine CONDA_PREFIX="$inside/envs/f" MAMBA_ROOT_PREFIX="$inside" -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --ro-bind "$inside" "$inside"
+  run ! argv_has --ro-bind "$inside/envs/f" "$inside/envs/f"
+  # and outside native nothing changes
+  run_engine CONDA_PREFIX="$inside/envs/f" MAMBA_ROOT_PREFIX="$inside" -- asb claude --version
+  argv_has --ro-bind "$inside" "$inside"
+  argv_has --tmpfs "$H/home/.conda"
+}
+
 @test "CWD: \$HOME itself is not bound; /, a parent of \$HOME, and secret stores are refused" {
   RUN_CWD="$H/home" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
