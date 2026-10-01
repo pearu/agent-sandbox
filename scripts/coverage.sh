@@ -9,9 +9,9 @@
 #   scripts/coverage.sh engine-merge        merge what the two collected, and report
 #   scripts/coverage.sh addon               just the addon
 #
-# Each stage is its own command so that CI can time it as a step. The suites run one
-# file at a time with `bats --timing`: every stage writes the wall time of each file
-# to $OUT/timing-<stage>.tsv and each test's TAP line, with its duration, to
+# Each stage is its own command so that CI can time it as a step. The suites run as one
+# pool of tests (see timed_bats) with `bats --timing`: every stage writes each file's
+# test time to $OUT/timing-<stage>.tsv and each test's TAP line, with its duration, to
 # $OUT/<stage>.tap, and prints the slowest files and tests -- which is where a slow
 # coverage run shows what it spends its time on.
 #
@@ -52,50 +52,47 @@ run_addon() {
     && echo "   xml:  $OUT/addon-coverage.xml"
 }
 
-# _cov_one N FILE -- one worker of timed_bats: FILE's TAP to $COV_PARTS/N.tap, its wall
-# time to $COV_PARTS/N.time, and $COV_PARTS/N.failed if it failed.
-_cov_one() {
-  local n="$1" f="$2" t0
-  t0=$(date +%s.%N)
-  bats --timing "$f" >"$COV_PARTS/$n.tap" 2>&1 || : >"$COV_PARTS/$n.failed"
-  awk -v a="$(date +%s.%N)" -v b="$t0" -v f="$f" 'BEGIN { printf "%.1f\t%s\n", a - b, f }' >"$COV_PARTS/$n.time"
-}
-export -f _cov_one
-
-# timed_bats STAGE FILE... -- run each bats FILE on its own, timed, COVERAGE_JOBS at a time
-# (default: the number of CPUs, at most 4); append the TAP lines to $OUT/STAGE.tap and
-# `seconds<TAB>file` to $OUT/timing-STAGE.tsv, in file order; print the slowest.
+# timed_bats STAGE FILE... -- run the bats FILEs as ONE pool of COVERAGE_JOBS tests at a
+# time (default: one per physical core); write their TAP lines to $OUT/STAGE.tap and
+# `seconds<TAB>file` -- the sum of a file's test times, from bats's JUnit report -- to
+# $OUT/timing-STAGE.tsv; print the slowest.
 #
-# FILES RUN IN PARALLEL, not tests within a file. Every test builds its own HOME, and a
-# role's keeper is keyed inside that HOME, so two files share no state; each launch
+# TESTS RUN IN PARALLEL, across and within files, in one pool. Every test builds its own
+# HOME, and a role's keeper is keyed inside that HOME, so tests share no state (a file
+# whose tests must not run beside each other says so in its setup_file); each launch
 # writes its own kcov directory, and the merge takes them in any order. Tracing is CPU
-# work, so this is where the time goes. Returns non-zero if any file failed.
+# work, so one pool sized to the cores is the point: measured on 18 cores, the unit
+# stage went from 260 s (18 files at a time, connect.bats alone 260 s) to 58 s, with the
+# same coverage; 18 files each running 18 tests was slower than either. Returns non-zero
+# if any test failed.
 timed_bats() {
   local stage="$1" jobs
   shift
-  jobs="${COVERAGE_JOBS:-$(nproc 2>/dev/null || echo 1)}"
-  ((jobs > 4 && ${COVERAGE_JOBS:-0} == 0)) && jobs=4
-  local parts="$OUT/parts-$stage"
-  rm -rf "$parts"
-  mkdir -p "$parts"
-  local t_all=$SECONDS
-  # One file per worker: its TAP to parts/N.tap, its wall time to parts/N.time.
-  local i=0 f
-  # shellcheck disable=SC2016 # the worker's "$1" "$2" are expanded by its bash, not here
-  for f in "$@"; do
-    printf '%s\n%s\n' "$i" "$f"
-    i=$((i + 1))
-  done | COV_PARTS="$parts" xargs -P "$jobs" -n 2 bash -c '_cov_one "$1" "$2"' _
-  : >"$OUT/$stage.tap"
-  : >"$OUT/timing-$stage.tsv"
-  local rc=0
-  for ((i = 0; i < $#; i++)); do
-    cat "$parts/$i.tap" >>"$OUT/$stage.tap" 2>/dev/null
-    cat "$parts/$i.time" >>"$OUT/timing-$stage.tsv" 2>/dev/null
-    [[ -e "$parts/$i.failed" ]] && rc=1
-  done
-  rm -rf "$parts"
-  echo "== $stage: $((SECONDS - t_all)) s wall, $(awk -F'\t' '{s += $1} END {printf "%.0f", s}' "$OUT/timing-$stage.tsv") s of files, $# files, $jobs at a time =="
+  jobs="${COVERAGE_JOBS:-}"
+  if [[ -z "$jobs" ]]; then
+    jobs="$(lscpu -p=core,socket 2>/dev/null | grep -v '^#' | sort -u | wc -l)"
+    [[ "$jobs" -gt 0 ]] || jobs="$(nproc 2>/dev/null || echo 1)"
+  fi
+  local -a pool=()
+  if ((jobs > 1)); then
+    if command -v parallel >/dev/null; then
+      pool=(--jobs "$jobs")
+    else
+      echo "   (GNU parallel is not on PATH: one test at a time)" >&2
+      jobs=1
+    fi
+  fi
+  local rep="$OUT/junit-$stage"
+  rm -rf "$rep"
+  mkdir -p "$rep"
+  local t_all=$SECONDS rc=0
+  bats --timing ${pool[@]+"${pool[@]}"} --report-formatter junit --output "$rep" "$@" >"$OUT/$stage.tap" 2>&1 || rc=1
+  python3 - "$rep/report.xml" >"$OUT/timing-$stage.tsv" <<'PY' || : >"$OUT/timing-$stage.tsv"
+import sys, xml.etree.ElementTree as ET
+for s in ET.parse(sys.argv[1]).getroot().iter("testsuite"):
+    print(f"{float(s.get('time', 0)):.1f}\t{s.get('name')}")
+PY
+  echo "== $stage: $((SECONDS - t_all)) s wall, $(awk -F'\t' '{s += $1} END {printf "%.0f", s}' "$OUT/timing-$stage.tsv") s of tests, $# files, $jobs tests at a time =="
   echo "   slowest files:"
   sort -rn "$OUT/timing-$stage.tsv" | head -8 | awk -F'\t' '{printf "   %8.1f s  %s\n", $1, $2}'
   echo "   slowest tests:"

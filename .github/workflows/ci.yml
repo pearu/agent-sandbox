@@ -12,6 +12,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The unit and integration suites, and the coverage stages, run as one pool of tests per
+# job (tests/run.sh, scripts/coverage.sh). A GitHub runner has 4 vCPUs; said here rather
+# than read from lscpu, whose core count on a runner VM is not a measured thing.
+env:
+  AGENT_SANDBOX_TEST_JOBS: 4
+  COVERAGE_JOBS: 4
+
 jobs:
   # Lint, format, the Python components, install.sh in sync with its sources,
   # the installer's dry run, and the unit suites -- exactly scripts/check.sh,
