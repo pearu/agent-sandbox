@@ -3050,7 +3050,8 @@ _as_trust_show() {
 #                      before anything else and created when absent (#175)
 #   [agent] hide    -- profile_hide: paths under the agent's state directory blanked
 #                      every launch (the profile's profile_isolate reads it)
-#   [forward]       -- profile_env_pass
+#   [env]           -- NAME: profile_env_pass; NAME = VALUE: profile_env_set (a
+#                      leading `~` is $HOME); -NAME: profile_env_refuse (#177)
 #   [allow]         -- _profile_allow_hosts: this launch's session allowlist
 # Lists add to what the script declared; a project's file adds to them in turn. It
 # ships with the engine and is read every launch, not reviewed: what it gets wrong is
@@ -3058,7 +3059,7 @@ _as_trust_show() {
 _as_profile_dotfile() {
   local file="$1" pname="$profile" kv k v h line
   [[ -f "$file" ]] || return 0
-  local -a _df_allow=() _df_share=() _df_forward=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() words=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
@@ -3101,6 +3102,12 @@ _as_profile_dotfile() {
     read -r -a words <<<"$line"
     profile_env_pass+=(${words[@]+"${words[@]}"})
   done
+  for kv in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
+    v="${kv#*=}"
+    [[ "$v" == \~ || "$v" == \~/* ]] && v="$HOME${v#\~}"
+    profile_env_set+=("${kv%%=*}=$v")
+  done
+  profile_env_refuse+=(${_df_env_refuse[@]+"${_df_env_refuse[@]}"})
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
     if [[ "$h" =~ $_as_hostre ]]; then
       _profile_allow_hosts+=("$h")
@@ -3109,7 +3116,7 @@ _as_profile_dotfile() {
     fi
   done
   if ((${#_df_connect[@]} + _df_share_set)) || [[ -n "$_df_net_mode$_df_seccomp_mode$_df_briefing_mode$_df_overlay_mode$_df_preset$_df_role$_df_conda_name" ]]; then
-    _as_msg "profile '$pname': $file: only [agent], [forward] and [allow] are read from a profile's dot-file so far; ignoring the rest"
+    _as_msg "profile '$pname': $file: only [agent], [env] and [allow] are read from a profile's dot-file so far; ignoring the rest"
   fi
   return 0
 }
@@ -3173,7 +3180,7 @@ _as_profile_facts() {
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
 _as_trust_notes() {
   local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over
-  local -a _df_allow=() _df_share=() _df_forward=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
@@ -3186,6 +3193,12 @@ _as_trust_notes() {
   _as_dotfile_parse "$file" # what it ignores, it says
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
     [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg ".agent-sandbox allow: bad host '$h'; ignoring"
+  done
+  for h in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
+    _as_msg ".agent-sandbox: [env] ${h%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
+  done
+  for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
+    _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
   case "$_df_net_mode" in
     "" | proxy | strict | none) ;;
@@ -3371,7 +3384,7 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | forward | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
@@ -3384,7 +3397,29 @@ _as_dotfile_parse() {
       -skip-) ;;
       allow) _df_allow+=("$line") ;;
       share-memory) _df_share+=("${line/#\~/$HOME}") ;;
-      forward) _df_forward+=("$line") ;;
+      env)
+        # [env] (#177): `NAME` forwards it when set in the launching shell (several per
+        # line); `NAME = VALUE` sets it; `-NAME` refuses it, never forwarded. A
+        # project's file may only forward; setting and refusing are a profile's.
+        if [[ "$line" == -* ]]; then
+          ck="${line#-}"
+          ck="${ck//[[:space:]]/}"
+          if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            _df_env_refuse+=("$ck")
+          else
+            _as_msg ".agent-sandbox: [env] '$line' does not name a variable; ignoring"
+          fi
+        elif [[ "$line" == *=* ]]; then
+          _as_dotfile_kv "$line"
+          if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            _df_env_set+=("$ck=$cv")
+          else
+            _as_msg ".agent-sandbox: [env] '$ck' is not a variable name; ignoring: $line"
+          fi
+        else
+          _df_forward+=("$line")
+        fi
+        ;;
       conda)
         if [[ "$line" != *=* ]]; then
           _as_msg ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
@@ -3803,7 +3838,7 @@ _as_launch() {
 #
 # BWRAP RUNS WITH NO ENVIRONMENT OF ITS OWN. Its --clearenv clears the command's, not
 # bwrap's, and bwrap is pid 1 inside, where /proc/1/environ is readable: the launching
-# shell's whole environment would reach the agent whatever [forward] says. It needs
+# shell's whole environment would reach the agent whatever [env] says. It needs
 # nothing from it -- the command's environment is all --setenv -- so it gets none, and
 # its path is resolved here, since with no PATH nothing would find it. The strict
 # wrapper does the same at its own exec of bwrap; pasta keeps its environment, outside.
@@ -4369,7 +4404,7 @@ agent_sandbox() (
   _proj="$(_as_project_dir)"
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
-  local -a _df_allow=() _df_share=() _df_forward=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=()
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"

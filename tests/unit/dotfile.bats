@@ -122,9 +122,9 @@ trust() {
   run ! argv_has --ro-bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory"
 }
 
-@test "an approved dot-file adds declared paths and [forward] names to the sandbox" {
+@test "an approved dot-file adds declared paths and [env] names to the sandbox" {
   mkdir -p "$H/ro-a" "$H/ro-b" "$H/rw-a"
-  printf '[connect]\n%s/ro-a = read-only\n%s/ro-b = read-only\n%s/rw-a = read-write\n[forward]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"
+  printf '[connect]\n%s/ro-a = read-only\n%s/ro-b = read-only\n%s/rw-a = read-write\n[env]\nCUDA_VISIBLE_DEVICES\nMY_TOOL\n' "$H" "$H" "$H" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine MY_TOOL=on CUDA_VISIBLE_DEVICES=1 -- asb claude --version
   [ "$status" -eq 0 ]
@@ -133,6 +133,40 @@ trust() {
   argv_has --bind "$H/rw-a" "$H/rw-a"
   [ "$(setenv_value MY_TOOL)" = on ]
   [ "$(setenv_value CUDA_VISIBLE_DEVICES)" = 1 ]
+}
+
+@test "[env] in a project's file only forwards: a set or a refusal is the profile's, warned of at the review and ignored (#177)" {
+  printf '[env]\nMY_TOOL\nPINNED = yes\n-HOME\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MY_TOOL=on -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value MY_TOOL)" = on ]
+  run ! setenv_value PINNED
+  run_review
+  [[ "$output" == *"[env] PINNED = ...: a project's file only forwards"* ]]
+  [[ "$output" == *"[env] -HOME: a project's file only forwards"* ]]
+}
+
+@test "[env] in a profile's dot-file sets, refuses and forwards; ~ in a value is HOME (#177)" {
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf '[env]\nFWD_ME\nPINNED = ~/pinned\n-NOPE\n' >"$H/profiles2/other/agent-sandbox"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" FWD_ME=1 -- agent-sandbox --profile other --exec true
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value FWD_ME)" = 1 ]
+  [ "$(setenv_value PINNED)" = "$H/home/pinned" ]
+  # a refused name is not forwarded, whatever asks for it; the launch says so and goes on
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" AGENT_SANDBOX_FORWARD=NOPE NOPE=x -- agent-sandbox --profile other --exec true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not forwarding NOPE"* ]]
+  run ! setenv_value NOPE
+  # and the claude profile's own: the pins and the refusal it used to set in code
+  run_engine -- asb claude --version
+  [ "$(setenv_value DISABLE_AUTOUPDATER)" = 1 ]
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ]
+  run_engine AGENT_SANDBOX_FORWARD=CLAUDE_CODE_PROJECT_DIR_NAME CLAUDE_CODE_PROJECT_DIR_NAME=x -- asb claude --version
+  [[ "$output" == *"not forwarding CLAUDE_CODE_PROJECT_DIR_NAME"* ]]
+  run ! setenv_value CLAUDE_CODE_PROJECT_DIR_NAME
 }
 
 @test "a dot-file path declaration still goes through the secret-store refusal" {
