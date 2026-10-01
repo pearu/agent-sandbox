@@ -109,6 +109,7 @@ teardown_file() {
   local out
   out=$(cat "$E/install1.out")
   [[ "$out" == *"agent-sandbox-mitmproxy.service is active"* ]]
+  grep -i 'proxy\|allowlist' <<<"$out" # shown if an assertion below fails
   [[ "$out" == *"proxy reaches an allowlisted host (api.github.com)"* ]]
   # the installer's own negative smoke check asserts the other half of the contract
   [[ "$out" == *"proxy refuses a non-allowlisted host (example.com blocked at CONNECT)"* ]]
@@ -163,6 +164,8 @@ teardown_file() {
   [[ "$output" == *"HOME=$H"* ]]
   run launch claude fetch https://api.anthropic.com/v1/models
   [[ "$output" == *"code=401 rc=0"* || "$output" == *"code=200 rc=0"* ]]
+  local blocked_before
+  blocked_before="$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log" 2>/dev/null || true)"
   run launch claude fetch https://example.com/
   # A refused CONNECT yields no HTTP response (code=000) and the proxy's 403 in
   # the error; curl's exit code for it varies by version (56, or 97 since 7.83),
@@ -170,7 +173,9 @@ teardown_file() {
   [[ "$output" == *"code=000"* && "$output" == *"403"* ]]
   run launch claude fetch http://example.com/
   [[ "$output" == *"code=403 rc=0"* ]]
-  [ "$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log")" -ge 3 ]
+  # both of THIS test's refusals are logged (counted from before them, so another test's
+  # requests, or their absence, cannot decide it)
+  [ "$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log")" -ge "$((${blocked_before:-0} + 2))" ]
 }
 
 @test "re-running install.sh reuses the proxy environment and CA, keeps the allowlist, restarts the service" {

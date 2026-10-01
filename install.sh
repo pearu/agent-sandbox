@@ -2833,8 +2833,10 @@ fi
 # loopback -- checked just below when passt/nftables are present; `open` filters
 # nothing; `none` has no network. The user picks the mode per launch and owns
 # its residual risk.)
-# api.github.com, in the starter allowlist, answers 200, proving the request went
-# out through the proxy (a profile's own hosts are opened per launch, not here);
+# api.github.com, in the starter allowlist: ANY HTTP status proves the request went out
+# through the proxy -- 200, or 403/429 when GitHub rate-limits the runner's address
+# (seen on CI) -- since only a refused or failed CONNECT gives no status (000). A
+# profile's own hosts are opened per launch, not here;
 # example.com is not in the starter allowlist, so it must be refused at CONNECT
 # (curl gets no response, code 000). A non-000 code for example.com means the
 # allowlist is not enforcing.
@@ -2845,9 +2847,10 @@ proxy_get() { # $1 = url; echoes the HTTP code (000 = refused/failed)
 if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
 else
-  case "$(proxy_get https://api.github.com/)" in
-    200 | 403)
-      ok "proxy reaches an allowlisted host (api.github.com)"
+  reach_code="$(proxy_get https://api.github.com/)"
+  case "$reach_code" in
+    [1-5][0-9][0-9])
+      ok "proxy reaches an allowlisted host (api.github.com) -- HTTP $reach_code"
       # The other half of the contract: a non-allowlisted host is refused.
       block_code=$(proxy_get https://example.com/)
       if [[ "$block_code" == 000 ]]; then
@@ -2857,7 +2860,7 @@ else
       fi
       ;;
     000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.github.com is in $CONFIG_DIR/allowlist.txt" ;;
-    *) warn "unexpected response from api.github.com via the proxy" ;;
+    *) warn "unexpected response from api.github.com via the proxy: '$reach_code'" ;;
   esac
 fi
 
