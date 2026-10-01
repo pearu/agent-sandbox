@@ -18,6 +18,22 @@ PROBE
 
 teardown() { rm -f "${TMP_MARKER:-}"; }
 
+@test "inside a sandbox, asb runs what it names as it is: the agent, or an --exec command, no second sandbox (#197)" {
+  # The checkout is bound read-only so that the engine can run inside; its own profile
+  # dir (next to it) supplies the claude profile there. The probe agent is bound at its
+  # path, as an agent binary always is.
+  # shellcheck disable=SC2016 # deliberate: the inner sh expands these, not bats
+  run_sandboxed AGENT_SANDBOX_NET=none -- --connect "$REPO_ROOT/ = read-only" --profile probe --exec /bin/sh -c '
+    "$0" --profile claude --exec sh -c "echo inner-exec=\$\$" >"$PWD/inner-exec" 2>&1
+    "$0" --profile claude "$1" >"$PWD/inner-agent" 2>&1
+    echo "pid1=$(cat /proc/1/comm)" >"$PWD/pid1"' "$ENGINE" "$I/probe.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^inner-exec=[0-9]' "$IWORK/inner-exec" # ran, as itself
+  run ! grep -q 'bwrap\|did not start\|refus' "$IWORK/inner-exec" "$IWORK/inner-agent"
+  [ "$(cat "$IWORK/report")" = agent_ran=yes ] # the agent ran, in this same sandbox
+  [ "$(cat "$IWORK/pid1")" = pid1=bwrap ]      # and nothing nested replaced it
+}
+
 @test "--exec: the command runs inside the sandbox, and the agent does not run at all" {
   # the command writes the same report the agent would have, so "who ran" is
   # unambiguous, and reports what it can see of the host

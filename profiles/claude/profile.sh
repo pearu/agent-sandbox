@@ -339,22 +339,6 @@ _claude_config_prepare() {
   return 0
 }
 
-# profile_route [AGENT ARGS...] -- engine hook (see the engine's profile_route
-# call). Decides whether this invocation is sandboxed (return 0: the engine goes on
-# and joins the role's launch) or run here, natively (exec, never returns). Every
-# session is sandboxed, `--bg` included (#123): the scope that once chose between
-# foreground and background is gone, and running without a sandbox is the engine's
-# `--preset none`. Reads the engine's locals by dynamic scope, as the other hooks do.
-# shellcheck disable=SC2154
-profile_route() {
-  # Inside a sandbox, a `claude` typed there runs in it as it is, not in a second
-  # sandbox of its own: nesting happens only when asked for, with --preset.
-  if [[ -n "${AGENT_SANDBOX:-}" && -z "${_preset_flag:-}" ]]; then
-    exec "$profile_bin" "$@"
-  fi
-  return 0
-}
-
 # profile_before_join [AGENT ARGS...] -- engine hook, called just before an agent
 # command is joined into the role's launch. A `--bg` cannot answer Claude Code's
 # workspace-trust prompt, and its worker waits on it (measured, 2.1.283); the user

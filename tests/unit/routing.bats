@@ -86,11 +86,11 @@ trust() {
   [[ "$output" == *"stub-agent argv: -p hello"* ]]
 }
 
-@test "inside a sandbox, claude runs in it as it is; --preset asks for a nested one" {
+@test "AGENT_SANDBOX=1 on the host is not \"inside a sandbox\": the launch is sandboxed (#197)" {
+  # The passthrough runs the agent unsandboxed, so it needs the marker AND pid 1 being
+  # bubblewrap (_as_inside_sandbox); the marker alone is a variable any shell can set.
+  # The real inside case is in tests/integration/exec.bats.
   run_engine AGENT_SANDBOX=1 -- asb claude -p hello
-  native
-  [[ "$output" == *"stub-agent argv: -p hello"* ]]
-  run_engine AGENT_SANDBOX=1 -- asb --preset isolated claude -p hello
   sandboxed
 }
 
