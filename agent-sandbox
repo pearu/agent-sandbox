@@ -3331,6 +3331,8 @@ _as_conda_base() {
 _as_dotfile_trusted() {
   local cwd="$1" file="$2" want have
   [[ -f "$file" ]] && _as_inside_sandbox && return 0
+  # `--check` evaluates the file as a launch would once it is approved; it records nothing.
+  [[ -f "$file" ]] && ((${_check_plan:-0})) && return 0
   want="$(_as_sha256_file "$file")"
   [[ -n "$want" ]] || return 1
   have="$(cat -- "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" 2>/dev/null || true)"
@@ -3647,6 +3649,7 @@ _as_profile_facts() {
   (
     local name l
     name="$(basename -- "$(dirname -- "$1")")"
+    # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
     local -a profile_channels=() profile_dotfile_keys=()
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
@@ -4130,6 +4133,186 @@ _as_dotfile_clean() { # $1 = file
 # The --trust command: the review a launch runs (_as_trust_prompt), without a launch
 # after it, and so the form that works without a terminal (`printf y | asb --trust`).
 # Also offers to keep the file out of git: it is machine-local.
+# _as_tilde PATH -- PATH with $HOME written `~`, for a reader.
+_as_tilde() {
+  case "$1" in
+    "$HOME") printf '~' ;;
+    "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# _as_check_name PATH -- PATH as `--check` prints it: `./` inside the project, `{slug}` for
+# this project's slug (the dot-file's own words), `~` for $HOME.
+_as_check_name() {
+  local p="$1" slug=""
+  case "$p" in
+    "$cwd")
+      printf '.'
+      return
+      ;;
+    "$cwd"/*)
+      printf './%s' "${p#"$cwd"/}"
+      return
+      ;;
+  esac
+  declare -F profile_slug >/dev/null && slug="$(profile_slug "$cwd" 2>/dev/null || true)"
+  if [[ -n "$slug" ]]; then
+    p="${p//\/"$slug"\//\/\{slug\}\/}"
+    [[ "$p" == */"$slug" ]] && p="${p%/"$slug"}/{slug}"
+  fi
+  _as_tilde "$p"
+}
+# _as_check_row NAME MODE WHAT -- one row of the mount plan; a name too long for its
+# column goes on a line of its own.
+_as_check_row() {
+  if ((${#1} > 44)); then
+    printf '  %s\n  %-44s %-15s %s\n' "$1" "" "$2" "$3"
+  else
+    printf '  %-44s %-15s %s\n' "$1" "$2" "$3"
+  fi
+}
+
+# _as_check_plan -- the second half of `--check`: what the file means for this role, as
+# a launch would apply it, and where each path comes from. Two tables: the POLICY (every
+# channel and declaration: mode, source, and what set it), and the BINDS in the order a
+# launch makes them (_as_connect_bind_all's: by depth, outer first), each with what is
+# seen there. Nothing is created, bound or started; a `sandbox:` source is resolved from
+# that role's record, as at a launch. --verbose adds the store paths.
+_as_check_plan() {
+  local src="default" k mode where source line ch entry path g
+  if ((_role_flag_set)); then
+    src="--role"
+  elif [[ -n "${AGENT_SANDBOX_ROLE:-}" ]]; then
+    src="AGENT_SANDBOX_ROLE"
+  elif [[ -n "${_df_role:-}" ]]; then
+    src="[sandbox] role"
+  fi
+  {
+    printf '\nPolicy: profile %s, role %s (%s), preset %s\n' "$profile" "${_role:-default}" "$src" "$_preset"
+    if ((${#_df_role_globs[@]})); then
+      printf '  roles in this file: %s; see another with: %s --check --role NAME\n' \
+        "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
+    fi
+    printf '  %-28s %-15s %-24s %s\n' "channel or path" mode source "set by"
+    # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
+    for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+      ch="${line%%$'\t'*}"
+      mode="${_connect_mode[$ch]:-}"
+      [[ -n "$mode" ]] || continue
+      source="native"
+      [[ -n "${_connect_sandbox[$ch]:-}" ]] && source="${_connect_sandbox[$ch]##*$'\t'}"
+      [[ -n "${_connect_scope[$ch]:-}" ]] && mode="$mode ${_connect_scope[$ch]}"
+      printf '  %-28s %-15s %-24s %s\n' "$ch" "$mode" "$source" "${_connect_where[$ch]}"
+    done
+    for path in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+      mode="${_connect_mode[$path]}"
+      source="the same path"
+      [[ -n "${_connect_src[$path]:-}" ]] && source="outside:$(_as_tilde "${_connect_src[$path]}")"
+      [[ -n "${_connect_sandbox[$path]:-}" ]] && source="${_connect_sandbox[$path]##*$'\t'}"
+      [[ -n "${_connect_scope[$path]:-}" ]] && mode="$mode ${_connect_scope[$path]}"
+      printf '  %-28s %-15s %-24s %s\n' "${_connect_key[$path]}" "$mode" "$source" "${_connect_where[$path]}"
+    done
+  } >&2
+  _as_check_binds
+}
+
+# _as_check_binds -- the mount plan for `--check`: the base, the project, then every
+# channel path, declaration and per-launch scratch path in the order a launch binds them.
+_as_check_binds() {
+  local -a _items=() fields=() _sorted=()
+  local line entry path i=0 item what ch kind mode s seen store
+  if ! _as_preset_is_native; then _as_hide_spec; fi
+  # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    for entry in "${fields[@]:1}"; do
+      path="${entry#*:}"
+      [[ -n "$path" ]] || continue
+      _items+=("$(_as_path_depth "$path") 0 $((i++))"$'\t'"c"$'\t'"${fields[0]}"$'\t'"${entry%%:*}"$'\t'"$path")
+    done
+  done
+  for path in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    _items+=("$(_as_path_depth "$path") 1 $((i++))"$'\t'"p"$'\t'"$path")
+  done
+  if ! _as_preset_is_native; then
+    for line in ${profile_isolate_spec[@]+"${profile_isolate_spec[@]}"}; do
+      _items+=("$(_as_path_depth "${line#*$'\t'}") 2 $((i++))"$'\t'"t"$'\t'"${line#*$'\t'}")
+    done
+  fi
+  ((${#_items[@]})) && mapfile -t _sorted < <(printf '%s\n' "${_items[@]}" | sort -t' ' -k1,1n -k2,2n -k3,3n)
+  {
+    printf '\nBinds, outer first:\n'
+    [[ -n "$profile_base" ]] && _as_check_row "$(_as_tilde "$profile_base")" read-write "the agent's base"
+    _as_check_row "$(_as_tilde "$cwd")" read-write "the project"
+    for item in ${_sorted[@]+"${_sorted[@]}"}; do
+      IFS=$'\t' read -r -a fields <<<"$item"
+      what="${fields[1]}"
+      case "$what" in
+        c)
+          ch="${fields[2]}" kind="${fields[3]}" path="${fields[4]}"
+          mode="${_connect_mode[$ch]:-}"
+          [[ -n "$mode" ]] || continue
+          s="$(_as_channel_source "$path")"
+          seen=""
+          if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
+            local _sbx_src=""
+            _as_sandbox_store "${_connect_sandbox[$ch]}" "$path" "$ch" 2>&1 | sed 's/^agent-sandbox: /  note: /'
+            _as_sandbox_store "${_connect_sandbox[$ch]}" "$path" "$ch" 2>/dev/null || true
+            seen="${_connect_sandbox[$ch]##*$'\t'}: $([[ -n "$_sbx_src" ]] && _as_tilde "$_sbx_src" || echo 'nothing there; skipped')"
+          else
+            case "$mode" in
+              read-write)
+                seen="native"
+                [[ "$s" != "$path" ]] && seen="native, $(_as_tilde "$s")"
+                ;;
+              read-only) seen="native, read-only" ;;
+              copy-on-write)
+                if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
+                  seen="this role's copy of native (copy-on-write as copy)"
+                else
+                  seen="an overlay: native read through, writes in this role"
+                fi
+                ;;
+              own) seen="this role's own" ;;
+              seed-only) seen="this role's, seeded once from native" ;;
+              copy) seen="this role's copy of native" ;;
+            esac
+            if ((_do_verbose)) && [[ "$mode" == own || "$mode" == seed-only || "$mode" == copy ]]; then
+              seen="$seen: $(_as_tilde "$(_as_channel_store "$ch" "$path" "$mode")")"
+            fi
+          fi
+          _as_check_row "$(_as_check_name "$path")" "$mode" "$ch: $seen"
+          ;;
+        p)
+          path="${fields[2]}"
+          mode="${_connect_mode[$path]}"
+          seen="declared"
+          if [[ -n "${_connect_sandbox[$path]:-}" ]]; then
+            local _sbx_src=""
+            _as_sandbox_store "${_connect_sandbox[$path]}" "$path" 2>/dev/null || true
+            seen="declared, ${_connect_sandbox[$path]##*$'\t'}: $([[ -n "$_sbx_src" ]] && _as_tilde "$_sbx_src" || echo 'nothing there; skipped')"
+          else
+            s="${_connect_src[$path]:-$path}"
+            [[ -n "${_connect_src[$path]:-}" ]] && seen="declared, outside:$(_as_tilde "$s")"
+            if [[ ! -e "$s" && "$mode" != own ]]; then
+              seen="$seen; does not exist, so skipped until it does"
+            elif [[ "$mode" == own ]]; then
+              seen="$seen; this role's own"
+            fi
+          fi
+          _as_check_row "$(_as_check_name "$path")" "$mode" "$seen"
+          ;;
+        t)
+          _as_check_row "$(_as_check_name "${fields[2]}")" tmpfs "blanked every launch"
+          ;;
+      esac
+    done
+    printf '\ncheck: a launch would apply the above\n'
+  } >&2
+  return 0
+}
+
 # _as_trust_check CWD -- `--check`: the review --trust shows, asking nothing and recording
 # nothing, for a project's author, a CI job or a pre-commit hook. Exits 0 when the file's
 # text is one a launch accepts once approved (whatever the approval state, which it says),
@@ -4869,9 +5052,20 @@ agent_sandbox() (
     return $?
   fi
   # ---- --check: the same review, asking nothing and recording nothing ----
+  # Then, with a profile -- named, or the only one there is -- what the file means:
+  # the policy and the mount plan (_as_check_plan), from the launch path itself, which
+  # stops before anything is started.
+  local _check_plan=0
   if ((_do_check)); then
-    _as_trust_check "$(pwd -P)"
-    return $?
+    local _crc=0
+    _as_trust_check "$(pwd -P)" || _crc=$?
+    ((_crc)) && return "$_crc"
+    if [[ -z "$profile" && -z "$_cmd_word" ]]; then
+      local -a _cps=("$profile_dir"/*/profile.sh)
+      [[ ${#_cps[@]} -eq 1 && -r "${_cps[0]}" ]] || return 0
+      profile="$(basename -- "$(dirname -- "${_cps[0]}")")"
+    fi
+    _check_plan=1
   fi
 
   # ---- profile ----
@@ -4962,7 +5156,7 @@ agent_sandbox() (
   fi
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
-  _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
+  ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
 
   # ---- --preset none: no sandbox at all, before any project machinery ----
   # The flag is its only form (see the preset block), and with no sandbox there is no
@@ -5105,7 +5299,7 @@ agent_sandbox() (
     _kb="$(_role="${_pre_role:-default}" _as_sandbox_dir)"
     # A verb or --shutdown never builds, so any running keeper's copy will do; a
     # launch reads the copy only while something holds the keeper (see above).
-    if _as_keeper_live "$_kb" && { ((_do_manage)) || _as_keeper_busy "$_kb"; }; then
+    if ((! _check_plan)) && _as_keeper_live "$_kb" && { ((_do_manage)) || _as_keeper_busy "$_kb"; }; then
       _df_from_keeper=1
       _df_src=""
       [[ -f "$_kb/keeper/dotfile.copy" ]] && _df_src="$_kb/keeper/dotfile.copy"
@@ -5368,6 +5562,12 @@ agent_sandbox() (
     _as_connect_parse "./.agent-sandbox = read-only" "built in, #143" || return 1
   fi
   _as_connect_report
+
+  # ---- --check: what the file means, then exit, before anything is started ----
+  if ((_check_plan)); then
+    _as_check_plan
+    return $?
+  fi
 
   # ---- --shutdown: end the role's launch, then exit ----
   if ((_do_shutdown)); then
