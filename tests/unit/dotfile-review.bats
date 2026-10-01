@@ -249,3 +249,40 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
   [[ "$output" == *"one was approved earlier: a launch refuses"* ]]
   [ -f "$REC" ] # nothing forgotten either
 }
+
+# --check with a profile (named, or the only one): what the file means for a role, from
+# the launch path itself, which stops before anything is started.
+@test "--check shows the policy for the role the file names, and the mount plan, creating nothing" {
+  printf '[sandbox]\nrole = impl\n[connect]\nartefacts = read-write native\n~/notes/ = read-only\n[connect:reviewer]\nmemory = read-only sandbox:@impl\n[connect:impl]\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Policy: profile claude, role impl ([sandbox] role), preset inherit"* ]]
+  [[ "$output" == *"roles in this file: impl, reviewer"* ]]
+  [[ "$output" =~ artefacts\ +read-write\ +native\ +\.agent-sandbox\ \[connect\] ]]
+  [[ "$output" =~ instructions\ +copy-on-write\ +native\ +preset\ inherit ]]
+  [[ "$output" == *"Binds, outer first:"* ]]
+  [[ "$output" =~ \~/notes\ +read-only\ +declared\;\ does\ not\ exist ]]
+  [[ "$output" =~ \~/.claude/projects/\{slug\}/memory ]]
+  [[ "$output" =~ \~/.claude/sessions\ +tmpfs\ +blanked\ every\ launch ]]
+  [ ! -e "$REC" ]                                      # nothing approved
+  [ ! -d "$H/home/.local/state/agent-sandbox/claude" ] # no role, no record, no keeper
+  [ ! -s "$H/argv" ]                                   # bwrap never ran
+}
+
+@test "--check --role shows another role's policy, a sandbox: source resolved as a launch would" {
+  printf '[connect:reviewer]\nmemory = read-only sandbox:@impl\n./.git/ = own\n[connect:impl]\n' >"$PROJ/.agent-sandbox"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PRESET=inherit "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role reviewer (--role)"* ]]
+  [[ "$output" =~ memory\ +read-only\ +sandbox:@impl\ +\.agent-sandbox\ \[connect:reviewer\] ]]
+  [[ "$output" == *"memory: sandbox:@impl: nothing there; skipped"* ]] # impl never ran, nothing native
+  [[ "$output" =~ \./\.git\ +own\ +declared\;\ this\ role\'s\ own ]]
+}
+
+@test "--check exits non-zero when the policy is one a launch refuses" {
+  printf '[connect]\ninstructions = readonly\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown mode 'readonly'"* ]]
+  [[ "$output" != *"Binds, outer first"* ]]
+}

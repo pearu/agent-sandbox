@@ -343,11 +343,25 @@ yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at lau
 
 **`asb --check`** is the same review, asking nothing and recording nothing: the file
 (as a diff when it changed since you approved it), the notes, and whether it is
-approved. It exits non-zero only when a launch would refuse the file whatever you
-answer -- a control character, or an approved file that has gone -- so an author can
-run it while writing the file, and a CI job or a pre-commit hook can run it where
-nobody could answer a question. `asb --trust` is `--check`, then the question, then
-the record.
+approved. Then, with a profile -- `asb --check claude`, or the only one installed --
+what the file means, as a launch would apply it once approved, without starting
+anything:
+
+- **the policy** for the role the file names (`--role R` for another): every channel
+  and declaration, its mode, its source, and what set it -- the preset, a `[connect]`
+  line, a role's section, or a built-in;
+- **the binds**, in the order a launch makes them (by depth, outer first), each with
+  what is seen there: native, this role's own store, an overlay, a declared path (or
+  that it does not exist yet, so a launch skips it), another role's store for a
+  `sandbox:` source, or a per-launch blank. Paths read in the dot-file's own words:
+  `./` in the project, `{slug}` for this project's slug. `--verbose` adds the stores'
+  paths.
+
+It exits non-zero when a launch would refuse the file whatever you answer -- a control
+character, an approved file that has gone, or a policy the launch refuses (an unknown
+mode, a source it does not know) -- so an author can run it while writing the file, and
+a CI job or a pre-commit hook can run it where nobody could answer a question.
+`asb --trust` is the review, then the question, then the record.
 
 Everything is shown through `cat -v`, so a control character or a byte outside
 ASCII shows escaped instead of acting on your terminal; a file containing a
