@@ -189,6 +189,22 @@ trust() {
   [[ "$output" != *"recorded workspace trust"* ]]
 }
 
+@test "a --bg in a project whose path is past 200 characters finds the role's config store too" {
+  # The profile once rebuilt the store's path with Claude Code's project slug; the
+  # engine names the directory with its own, and past 200 characters the two differ,
+  # so the store was never found and the trust never recorded.
+  local long
+  long="$H/$(printf 'd%.0s' {1..220})"
+  mkdir -p "$long"
+  long="$(cd "$long" && pwd -P)"
+  RUN_CWD="$long" TEST_PRESET=isolated run_engine -- asb claude --bg 'a task'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"recorded workspace trust for $long in role 'default'"* ]]
+  local store
+  store="$(find "$H/home/.local/state/agent-sandbox/claude" -path '*/default/config/*' -name '*claude.json' | head -1)"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["projects"][sys.argv[2]]["hasTrustDialogAccepted"]' "$store" "$long"
+}
+
 @test "an unknown [claude] key is warned of at the review (typo guard), known ones are not; a launch ignores it quietly" {
   printf '[claude]\nhide = ide\nbogus = x\n' >"$PROJ/.agent-sandbox"
   trust

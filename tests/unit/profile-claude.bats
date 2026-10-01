@@ -34,11 +34,18 @@ slug_vector() {
   [ "${JOINV[0]}" = "$H/pkg/bin/claude" ]
 }
 
-@test "profile_prepare creates ~/.claude and ~/.claude.json for a launch" {
-  [ ! -e "$H/home/.claude" ]
-  run_engine -- asb claude --version
-  [ -d "$H/home/.claude" ]
-  [ -f "$H/home/.claude.json" ]
+@test "a launch creates ~/.claude, and never an empty ~/.claude.json: Claude Code calls a 0-byte one corrupted" {
+  # Measured on 2.1.286: with no ~/.claude.json Claude Code runs and writes its own; with
+  # a 0-byte one it backs it up as corrupted and fails. Under `native` and `config =
+  # read-write` that is the file it reads, so the engine must not plant one.
+  local p
+  for p in shared native; do
+    rm -rf "$H/home/.claude" "$H/home/.claude.json"
+    TEST_PRESET="" run_engine -- asb --preset "$p" claude --version
+    [ "$status" -eq 0 ]
+    [ -d "$H/home/.claude" ]
+    [ ! -e "$H/home/.claude.json" ]
+  done
 }
 
 @test "the empty mount-point file bwrap leaves on the host for the config file is removed after the session; a file that was already there is kept" {

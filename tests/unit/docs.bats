@@ -127,11 +127,9 @@ fail_missing() {
   )
 }
 
-# The keys of the profile-named section, from the profile that defines them.
-# The engine hands the pairs over uninterpreted, so the profile is the source of
-# truth: it declares them in a profile_dotfile_keys=(...) array (read across its
-# handlers -- profile_isolate, profile_route -- and used by the engine to warn on
-# an unknown key).
+# The keys of the profile-named section, from the profile that defines them: it
+# declares them in a profile_dotfile_keys=(...) array, which the engine reads to honour
+# them (hide) and to warn of an unknown key.
 profile_dotfile_keys() {
   sed -n 's/^profile_dotfile_keys=(\(.*\))/\1/p' "$REPO_ROOT/profiles/claude/profile.sh" \
     | tr ' ' '\n' | grep . | sort -u

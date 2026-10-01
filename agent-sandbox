@@ -777,6 +777,35 @@ _as_allow_setup() {
 # path that used them is a channel now, each the role's own (#120), and nothing
 # is merged back into the native state after the fact: a `copyout` or `append`
 # line is refused as unknown.
+# _as_hide_spec -- fill profile_isolate_spec with a tmpfs line per path blanked this
+# launch: the profile's [agent] hide, then a project's `[<profile>] hide` when the
+# profile lets a project set it (profile_dotfile_keys). Each is relative to the
+# profile's base. The project's comes only from an APPROVED dot-file: _df_profile_kv is
+# empty unless the trust gate honoured the file, so an unapproved section grants nothing.
+_as_hide_spec() {
+  profile_isolate_spec=()
+  [[ -n "${profile_base:-}" ]] || return 0
+  local name kv
+  for name in ${profile_hide[@]+"${profile_hide[@]}"}; do
+    profile_isolate_spec+=("tmpfs"$'\t'"$profile_base/$name")
+  done
+  [[ " ${profile_dotfile_keys[*]-} " == *" hide "* ]] || return 0
+  for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+    [[ "${kv%%=*}" == hide ]] || continue
+    # Word-splitting the value is the point: it is a space-separated list.
+    # shellcheck disable=SC2086
+    for name in ${kv#*=}; do
+      case "$name" in
+        /* | *..*)
+          _as_msg ".agent-sandbox: [$profile] hide: ignoring \"$name\" (must be a relative path under the state dir)"
+          continue
+          ;;
+      esac
+      profile_isolate_spec+=("tmpfs"$'\t'"$profile_base/$name")
+    done
+  done
+}
+
 _as_iso_slug() {
   local s="${1//\//_}"
   s="${s#_}"
@@ -1530,6 +1559,20 @@ _as_connect_bind_all() {
   return 0
 }
 
+# _as_channel_store CHANNEL PATH [MODE] -- where the role keeps CHANNEL's store for PATH
+# under MODE (own, seed-only or copy; default: the channel's mode this launch, with
+# copy-on-write on a file being copy). The one place the layout is named, so a profile
+# that must reach into a store (claude: the --bg workspace trust) asks here instead of
+# rebuilding the path -- with its own project slug, which is not the engine's past 200
+# characters.
+_as_channel_store() {
+  local ch="$1" path="$2" mode="${3:-${_connect_mode[$1]:-}}" base
+  [[ "$mode" == copy-on-write ]] && mode=copy
+  base="$(_as_sandbox_dir)"
+  [[ "${_connect_scope[$ch]:-}" == run-scoped ]] && base="$base/@run"
+  printf '%s/%s/%s/%s' "$base" "$ch" "$mode" "$(_as_iso_slug "$path")"
+}
+
 # _as_path_depth PATH -- how many components PATH has: the order _as_connect_bind_all
 # binds in.
 _as_path_depth() {
@@ -1572,7 +1615,7 @@ _as_connect_bind_channel() {
   case "$mode" in
     own)
       # A private slot that OUTLIVES the session, per sandbox and channel.
-      slot="$base/$ch/own/$(_as_iso_slug "$path")"
+      slot="$(_as_channel_store "$ch" "$path" own)"
       if [[ "$kind" == dir ]]; then
         mkdir -p -- "$slot" || return 1
       else
@@ -1599,7 +1642,7 @@ _as_connect_bind_channel() {
       # differ only WITHIN a session, where an overlay reads through live.
       if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
         [[ "$kind" == file ]] || _cow_fellback+=("$ch")
-        slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+        slot="$(_as_channel_store "$ch" "$path" copy)"
         manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
         mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
         _as_connect_view "$ch" "$src" "$path" || return 1
@@ -1635,7 +1678,7 @@ _as_connect_bind_channel() {
       args+=(--overlay-src "$path" --overlay "$upper" "$work" "$path")
       ;;
     seed-only)
-      slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
+      slot="$(_as_channel_store "$ch" "$path" seed-only)"
       if [[ ! -e "$slot" ]]; then
         _as_connect_view "$ch" "$src" "$path" || return 1
         _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
@@ -1653,7 +1696,7 @@ _as_connect_bind_channel() {
       # Seeded once and refreshed per file, never written back. The sync is
       # a component with its own tests (components/connect-sync.py): the
       # rules are a nine-case matrix and inline shell would hide it.
-      slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+      slot="$(_as_channel_store "$ch" "$path" copy)"
       manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
       mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
       _as_connect_view "$ch" "$src" "$path" || return 1
@@ -3161,7 +3204,7 @@ _as_trust_show() {
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
 #   [agent] hide    -- profile_hide: paths under the agent's state directory blanked
-#                      every launch (the profile's profile_isolate reads it)
+#                      every launch (_as_hide_spec)
 #   [env]           -- NAME: profile_env_pass; NAME = VALUE: profile_env_set (a
 #                      leading `~` is $HOME); -NAME: profile_env_refuse (#177)
 #   [allow]         -- _profile_allow_hosts: this launch's session allowlist
@@ -5439,11 +5482,8 @@ agent_sandbox() (
   # the way to keep that true while still offering parity is to make the bypass
   # all-or-nothing and impossible to reach by accident (see the preset's gate).
   local _iso_on=0
-  if declare -F profile_isolate >/dev/null && ! _as_preset_is_native; then
-    # Only from an APPROVED dot-file: _df_profile_kv is empty unless the trust
-    # gate honoured the file, so an unapproved [claude] section grants nothing.
-    local -a profile_dotfile=("${_df_profile_kv[@]}")
-    profile_isolate || return 1
+  if ! _as_preset_is_native; then
+    _as_hide_spec
     _iso_on=1
   fi
 
