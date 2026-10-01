@@ -461,10 +461,13 @@ is an override, later wins, as for a channel.
 **A path that does not exist is skipped**, with a notice, and takes effect at the first
 launch after it does — every mode but `own` promises something about the path outside,
 and the engine creating it there to have something to bind would break that. The one
-exception is a trailing `/` under `own`, which needs nothing outside and creates the
-sandbox's directory. bwrap still needs a mount point for it, so an empty directory
+exception is `own`, which needs nothing outside and creates the sandbox's own: a
+directory when the key ends in `/`, else a file (#189) -- the spelling says the kind
+when nothing is there to look at; where the path exists its kind is the host's, and a
+`/` on a file is refused. bwrap still needs a mount point, so an empty directory
 appears at that path outside too — in the project, for `./scratch/` — the same side
-effect a narrowed channel has.
+effect a narrowed channel has; an empty file is removed again at the end while it is
+still empty.
 
 **A file** is allowed, with two permanent limits said at the dot-file's review: it is a mount point, so
 it cannot be deleted or renamed from inside, and `copy-on-write` on a file is `copy`,

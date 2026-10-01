@@ -962,9 +962,26 @@ seeded_run_scoped() { # MODE
   argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/scratch")" "$PROJ/scratch"
 }
 
+@test "own without a trailing slash on a path that does not exist creates a file of its own, kept by the role (#189)" {
+  run_engine -- asb --connect './notes.md = own' claude --version
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$SBOX/@paths/own/$(slugify "$PROJ/notes.md")"
+  [ -f "$slot" ] && [ ! -s "$slot" ] # an empty file, not a directory
+  argv_has --bind "$slot" "$PROJ/notes.md"
+  [ ! -e "$PROJ/notes.md" ] # nothing outside: the stub made no mount point, and none is left
+  printf 'MINE\n' >"$slot"
+  run_engine -- asb --connect './notes.md = own' claude --version
+  [ "$(cat "$slot")" = MINE ] # the role's, across launches
+  # one join's own: an empty file per join
+  run_engine -- asb --connect './j.md = own join-scoped' claude --version
+  [ "$status" -eq 0 ]
+  grep -A2 -x -- --private-path "$H/join" | grep -qx "$PROJ/j.md"
+}
+
 @test "a path that does not exist is skipped with a notice, in every other case" {
   local spec
-  for spec in './gone/ = read-only' './gone = own' './gone = copy' './gone = read-write' './gone/ = copy-on-write'; do
+  for spec in './gone/ = read-only' './gone = copy' './gone = read-write' './gone/ = copy-on-write' './gone = seed-only'; do
     run_engine AGENT_SANDBOX_VERBOSE= -- asb --connect "$spec" claude --version
     [ "$status" -eq 0 ]
     [[ "$output" == *"'./gone"*"does not exist"*"skipped"* ]]

@@ -159,7 +159,9 @@ Sections:
   secret stores (`~/.ssh`, `~/.aws`, ...), the sandbox's own configuration, any
   directory containing one of them, `/`, `$HOME`, any parent of `$HOME`, and the
   project or a parent of it are refused. A path that does not exist is skipped until it does,
-  except a trailing `/` under `own`, which creates it. A key with no `/` is still a
+  except under `own`, which creates the sandbox's own: a directory when the key ends in
+  `/`, else a file (#189). Where the path exists, its kind is the host's, and a `/` on a
+  file is refused. A key with no `/` is still a
   channel name, so a typo still refuses the launch. See
   [connections.md](connections.md#path-declarations).
 
