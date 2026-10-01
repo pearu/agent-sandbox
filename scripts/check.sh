@@ -86,7 +86,10 @@ grep -qE 'symlinked .*/\.local/bin/asb ' "$tmp/dry.out" || {
 }
 
 step "bats: unit + integration (tests/run.sh)"
-if command -v bats >/dev/null; then
+# AGENT_SANDBOX_CHECK_TESTS=0 skips them: CI runs the suites as a matrix of shards.
+if [[ "${AGENT_SANDBOX_CHECK_TESTS:-1}" == 0 ]]; then
+  echo "skipped (AGENT_SANDBOX_CHECK_TESTS=0)"
+elif command -v bats >/dev/null; then
   tests/run.sh
 else
   echo "bats not on PATH; skipping the test suites (mamba env update -n agent-sandbox -f environment.yml)" >&2
