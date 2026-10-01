@@ -880,6 +880,25 @@ DF
   release_bg
 }
 
+@test "the config store is valid JSON even with no config file to seed from, in every preset and base (#190)" {
+  # Measured on Claude Code 2.1.285: a 0-byte .claude.json is "corrupted" and the session
+  # fails; {} and no file at all both run. The seeding modes' filter turns an absent
+  # source into JSON, and `own` starts from {}.
+  local alt="$H/home/alt" preset store
+  mkdir -p "$alt"
+  rm -f "$H/home/.claude.json"
+  for preset in inherit isolated shared; do
+    TEST_PRESET=$preset run_engine CLAUDE_CONFIG_DIR="$alt" -- asb claude --version
+    [ "$status" -eq 0 ]
+    store="$(grep -B1 -x "$alt/.claude.json" "$H/argv" | head -1)"
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$store"
+    TEST_PRESET=$preset run_engine -- asb claude --version
+    [ "$status" -eq 0 ]
+    store="$(grep -B1 -x "$H/home/.claude/.claude.json" "$H/argv" | head -1)"
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$store"
+  done
+}
+
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
   run_engine -- asb --connect './scratch/=own run-scoped' claude --version
