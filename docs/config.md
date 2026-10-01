@@ -355,7 +355,16 @@ anything:
   that it does not exist yet, so a launch skips it), another role's store for a
   `sandbox:` source, or a per-launch blank. Paths read in the dot-file's own words:
   `./` in the project, `{slug}` for this project's slug. `--verbose` adds the stores'
-  paths.
+  paths;
+- **what crosses the boundary**, in two tables: what another session left that
+  *reaches* this one, and what this one writes that another can read, each ordered by
+  how it arrives -- `context` (in every session's context: instructions, settings,
+  skill and agent descriptions, memory at this project's path), `searched` (found when
+  the agent looks: downloads, another project's shared memory), `pointed` (a path you
+  declared, reached when someone goes there) -- and `UNMEASURED` where the leak study
+  has no row yet, printed as loudly as the rest. What stays this role's own is one
+  sentence. The values are the profile's `reach` lines, from measurements
+  ([profiles.md](profiles.md)).
 
 It exits non-zero when a launch would refuse the file whatever you answer -- a control
 character, an approved file that has gone, or a policy the launch refuses (an unknown

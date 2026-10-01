@@ -286,3 +286,35 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
   [[ "$output" == *"unknown mode 'readonly'"* ]]
   [[ "$output" != *"Binds, outer first"* ]]
 }
+
+@test "--check orders what can reach a session by how it arrives, and says UNMEASURED where nothing is measured" {
+  local other="$H/other"
+  mkdir -p "$other"
+  other="$(cd "$other" && pwd -P)"
+  mkdir -p "$H/home/.claude/projects/$(printf '%s' "$other" | sed 's:[^A-Za-z0-9-]:-:g')/memory"
+  printf '[connect]\nartefacts = read-write native\n[share-memory]\n%s\n' "$other" >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  local reach
+  reach="$(sed -n '/^Reaches this session/,/^Leaves this session/p' <<<"$output" | sed '1d')" # past the header
+  [[ "$reach" =~ context\ +instructions ]]
+  [[ "$reach" =~ context\ +skills\ +.*their\ descriptions\ are\ in\ every\ session ]]
+  [[ "$reach" =~ searched\ +artefacts ]]
+  [[ "$reach" =~ searched\ +memory\ of\ .*/other\ +read-only,\ from\ sandbox: ]]
+  [[ "$reach" =~ --\ +workflows\ .*reach\ UNMEASURED ]]
+  # context first, then searched, then the unmeasured
+  [ "$(grep -n 'context ' <<<"$reach" | tail -1 | cut -d: -f1)" -lt "$(grep -n 'searched ' <<<"$reach" | head -1 | cut -d: -f1)" ]
+  [ "$(grep -n 'searched ' <<<"$reach" | tail -1 | cut -d: -f1)" -lt "$(grep -n 'UNMEASURED' <<<"$reach" | head -1 | cut -d: -f1)" ]
+  # what leaves: the read-write channel; the rest is this role's own, in one sentence
+  [[ "$(sed -n '/^Leaves this session/,/^$/p' <<<"$output")" =~ searched\ +artefacts\ +read-write ]]
+  [[ "$output" == *"This role's own, reaching no other session: "*"memory"* ]]
+}
+
+@test "every channel of the claude profile either has a measured reach or prints UNMEASURED" {
+  local f="$REPO_ROOT/profiles/claude/agent-sandbox" ch
+  # a reach value is one of the four words, with an optional note
+  [ "$(grep -E '^reach' "$f" | grep -cvE '^reach *= *(context|searched|pointed|never)( -- .*)?$')" -eq 0 ]
+  for ch in instructions settings skills agents memory artefacts projects; do
+    sed -n "/^\[channel:$ch\]/,/^\[/p" "$f" | grep -qE '^reach *= *(context|searched|pointed|never)'
+  done
+}
