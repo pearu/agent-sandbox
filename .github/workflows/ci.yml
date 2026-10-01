@@ -171,8 +171,10 @@ jobs:
           # are its profile's [allow], opened per launch, not globally (#181)
           code=$(curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
             -o /dev/null -w '%{http_code}' https://api.github.com/ || true)
+          # any HTTP status means the request went out through the proxy (GitHub may answer
+          # 403 or 429 when it rate-limits a runner); only 000 means it did not
           case "$code" in
-            200 | 403) echo "allowed host reached through the proxy (HTTP $code)" ;;
+            [1-5][0-9][0-9]) echo "allowed host reached through the proxy (HTTP $code)" ;;
             *) echo "unexpected HTTP $code from an allowed host" >&2; exit 1 ;;
           esac
           if curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \

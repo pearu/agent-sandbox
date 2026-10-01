@@ -899,6 +899,48 @@ DF
   done
 }
 
+@test "start: a file store with nothing to seed from starts as the path's template; [preset:<name>] sets rungs (#191)" {
+  mkdir -p "$H/profiles2/other/" "$H/home/.other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf 'TEMPLATE\n' >"$H/profiles2/other/start.txt"
+  cat >"$H/profiles2/other/agent-sandbox" <<'DF'
+[agent]
+base = ~/.other
+[channel:notes]
+{base}/notes.txt = start:{profile}/start.txt
+[preset:inherit]
+notes = own
+DF
+  TEST_PRESET=inherit run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
+  [ "$status" -eq 0 ]
+  local slot
+  slot="$(grep -B1 -x "$H/home/.other/notes.txt" "$H/argv" | head -1)"
+  [[ "$slot" == */notes/own/* ]] # the preset section's rung, not inherit's copy-on-write
+  [ "$(cat "$slot")" = TEMPLATE ]
+  # a preset section names a mode and a channel the profile has; anything else refuses
+  local bad
+  for bad in 'notes = sideways' 'nosuch = own'; do
+    printf '[agent]\nbase = ~/.other\n[channel:notes]\n{base}/notes.txt\n[preset:inherit]\n%s\n' "$bad" >"$H/profiles2/other/agent-sandbox"
+    run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"[preset:inherit]"* ]]
+  done
+  # a project's [preset:...] is not the project's
+  printf '[preset:inherit]\nconfig = own\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[preset:inherit] is a profile's, not a project's"* ]]
+}
+
+@test "a project's own config = own starts from {}, not zero bytes, under any preset (#191)" {
+  local preset store
+  for preset in inherit shared isolated; do
+    TEST_PRESET=$preset run_engine -- asb --connect 'config = own' claude --version
+    [ "$status" -eq 0 ]
+    store="$(grep -B1 -x "$H/home/.claude/.claude.json" "$H/argv" | head -1)"
+    [ "$(cat "$store")" = '{}' ]
+  done
+}
+
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
   run_engine -- asb --connect './scratch/=own run-scoped' claude --version

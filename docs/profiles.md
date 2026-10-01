@@ -85,7 +85,8 @@ single-valued one.
 | `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch; the claude profile's `profile_isolate` turns them into tmpfs mounts |
 | `[env]` | `NAME`: `profile_env_pass`; `NAME = VALUE`: `profile_env_set` (a leading `~` is `$HOME`, and `{base}` expands); `-NAME`: `profile_env_refuse` |
 | `[allow]` | hosts opened for every launch of the profile, as its session allowlist beside `--allow`'s (proxy and strict) |
-| `[channel:<name>]` | `profile_channels`, one section per channel and a path per line, a trailing `/` for a directory; a path's value sets `outside:SRC` (`profile_channel_sources`), `filter:FN` (`profile_channel_filters`) and `vendor:PREFIX` (`profile_channel_vendor`). `{base}` and `{slug}` expand (#190) |
+| `[channel:<name>]` | `profile_channels`, one section per channel and a path per line, a trailing `/` for a directory; a path's value sets `outside:SRC` (`profile_channel_sources`), `filter:FN` (`profile_channel_filters`) `vendor:PREFIX` (`profile_channel_vendor`) and `start:FILE` (`profile_channel_start`: the template a file store starts as with nothing to seed from). `{base}` and `{slug}` expand (#190) |
+| `[preset:<name>]` | `profile_channel_presets`: for `isolated`, `inherit` or `shared`, the channels whose rung is not the ladder's, in the `[connect]` grammar (`config = seed-only`) (#191) |
 
 `[agent]` is the profile's own section. In a project's file the same section is
 named after the profile (`[claude]`), and only the keys the profile lists in

@@ -71,14 +71,8 @@ profile_command=claude
 # and `base-env` in its dot-file (#175, #190). The engine sets $profile_base to it.
 #
 # THE CHANNEL TABLE is the dot-file's [channel:<name>] sections (#190), each path with
-# its source, filter and vendor prefixes, and the reasons beside them. What a channel
-# starts as under `own`, and its rung under each preset, are still here until #191:
-# shellcheck disable=SC2034
-profile_channel_empty=("config	{}" "policy	{}")
-# shellcheck disable=SC2034
-profile_channel_presets=("config	inherit=seed-only shared=seed-only"
-  "transcripts	inherit=own shared=own" "logs	inherit=own shared=own"
-  "artefacts	inherit=own" "policy	inherit=seed-only")
+# its source, filter, vendor prefixes and starting template (#191), and the presets'
+# rungs are its [preset:<name>] sections (#191), with the reasons beside them.
 
 # The environment it pins and refuses is the dot-file's [env] (#177): DISABLE_AUTOUPDATER,
 # CLAUDE_CONFIG_DIR, and the refusal of CLAUDE_CODE_PROJECT_DIR_NAME, each with its
