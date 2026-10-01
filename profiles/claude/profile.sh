@@ -27,11 +27,6 @@
 #                               itself, or SRC<TAB>DEST to bind SRC at DEST
 #                               inside; a DEST under an earlier entry layers
 #                               on it, so order the entries parent first.
-#   profile_tmpfs=(...)         paths to overlay with a fresh tmpfs AFTER the
-#   profile_rw_binds=(...)      state binds, then rebind read-write /
-#   profile_ro_binds=(...)      read-only. Populated by profile_memory_scope()
-#                               to hide ~/.claude/projects and rebind the
-#                               current project plus approved shares.
 #   profile_env_pass=(...)      environment variable NAMES forwarded into the
 #                               sandbox IF set in the caller's environment, on
 #                               top of the engine's own list (locale, proxy,
@@ -47,11 +42,6 @@
 #
 #   profile_prepare()           optional. Runs right before the sandbox is
 #                               assembled; create state files here.
-#   profile_memory_scope(MODE [PATH...])  optional. Called with the memory
-#                               mode (scoped|shared) and the approved share
-#                               paths; appends to profile_tmpfs/_rw_binds/
-#                               _ro_binds to scope per-project memory. See
-#                               docs/config.md.
 #
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),
@@ -89,9 +79,9 @@ profile_dotfile_keys=(hide)
 # Map a project directory to Claude Code's per-project state slug: the absolute
 # path with every character outside [A-Za-z0-9-] turned into "-", one for one
 # (/home/u/pro.j -> -home-u-pro-j). This must match Claude Code's own scheme, or
-# scoped memory binds a directory that does not exist: the profile would mkdir
-# and bind that, while the project's real memory and transcripts stayed hidden
-# behind the tmpfs -- silently, and --continue/--resume would find nothing.
+# the transcripts and memory channels ({slug}) bind a directory Claude Code never
+# uses, while the project's own state sits elsewhere in the `projects` store --
+# silently, and --continue/--resume would find nothing.
 #
 # Determined empirically with probes/slug-probe.sh, since the scheme is not
 # documented: a project at .../Ab.c_d+e@f~g:h=i,j-k9 became
@@ -110,7 +100,7 @@ profile_dotfile_keys=(hide)
 # (https://code.claude.com/docs/en/sessions). Which hash is not stated; see
 # _claude_path_hash. Without this the engine binds projects/<untruncated>, and
 # between 201 and 255 characters that is a directory Claude Code never uses, so
-# the session's transcripts and memory land on the tmpfs and are lost on exit;
+# the session's transcripts and memory land outside their channels' stores;
 # past 255 the name exceeds NAME_MAX, cannot be created, and the launch fails.
 _claude_project_slug() {
   local conv="${1//[^A-Za-z0-9-]/-}"
@@ -159,73 +149,6 @@ _claude_path_hash() {
   printf '%s' "$out"
 }
 
-# profile_memory_scope MODE [SHARE_PATH...] -- engine hook (see the engine's
-# profile_memory_scope call). In "scoped" mode, hide ~/.claude/projects and
-# rebind only the current project (read-write: its memory and transcripts) plus
-# each approved project's memory/ (read-only). In "shared" mode do nothing, so
-# every project's memory is visible -- the pre-0.2 default, now an opt-out. $cwd is the
-# engine's current working directory.
-# _claude_memory_on_top -- when `transcripts` has a store at projects/<slug>/, the
-# project's memory, inside it, is still the project's native memory: bound read-write
-# after the connections, on top of the store. Memory keeps its own machinery until it
-# is a managed channel; the store must not quietly take it over.
-_claude_memory_on_top() {
-  # shellcheck disable=SC2154 # engine locals, by dynamic scope
-  [[ "${_connect_mode[transcripts]:-read-write}" == read-write ]] && return 1
-  local mem
-  # shellcheck disable=SC2154 # profile_base: set by the engine from [agent] base
-  mem="$profile_base/projects/$(_claude_project_slug "$(_as_project_dir)")/memory"
-  mkdir -p "$mem" 2>/dev/null || true
-  profile_late_rw_binds+=("$mem")
-  return 0
-}
-profile_memory_scope() {
-  local mode="$1"
-  shift
-  if [[ "$mode" != scoped ]]; then
-    _claude_memory_on_top || true
-    return 0
-  fi
-  local projects="$profile_base/projects" cur p slug
-  # cwd is a local of the engine's agent_sandbox(), visible here by dynamic scope.
-  # shellcheck disable=SC2154
-  cur="$projects/$(_claude_project_slug "$cwd")"
-  mkdir -p "$cur" 2>/dev/null || true
-  profile_tmpfs+=("$projects")
-  # This project's directory is the native one only when `transcripts` is read-write;
-  # otherwise the role's store takes its place and memory goes on top of it.
-  _claude_memory_on_top || profile_rw_binds+=("$cur")
-  # A share naming this project would rebind the memory the session is about to
-  # write READ-ONLY over the read-write bind above, silently breaking its own
-  # memory. Drop it instead: it is already there, writable.
-  local m own_mem="$cur/memory"
-  for p in "$@"; do
-    [[ -z "$p" ]] && continue
-    if [[ "$p" == *[*?[]* ]]; then
-      # A pathname pattern (e.g. ~/git/acme/*): share the memory of matching
-      # project directories that actually have memory. Globbing at the path
-      # level, not the slug level, keeps "~/git/x/*" from also matching a
-      # sibling "~/git/x-notes" (whose slug shares the prefix) or descending
-      # past a single level.
-      local _n=0
-      while IFS= read -r m; do
-        [[ -d "$m" ]] || continue
-        slug="$(_claude_project_slug "$(readlink -f -- "$m")")"
-        [[ -d "$projects/$slug/memory" ]] || continue
-        _n=1
-        [[ "$projects/$slug/memory" == "$own_mem" ]] && continue
-        profile_ro_binds+=("$projects/$slug/memory")
-      done < <(compgen -G "$p" || true)
-      ((_n)) || _as_msg "share-memory: pattern '$p' matched no project with memory"
-    else
-      slug="$(_claude_project_slug "$(readlink -f -- "$p" 2>/dev/null || echo "$p")")"
-      [[ "$projects/$slug/memory" == "$own_mem" ]] \
-        || profile_ro_binds+=("$projects/$slug/memory")
-    fi
-  done
-  return 0
-}
-
 profile_prepare() {
   # Ensure ~/.claude.json exists: it seeds this project's copy of it. With
   # CLAUDE_CONFIG_DIR set, Claude Code keeps it in the base instead (see
@@ -251,6 +174,7 @@ _claude_config_project() {
 }
 # The role's store for the config file at MODE, for a project.
 _claude_config_store() { # $1 = project dir, $2 = mode
+  # shellcheck disable=SC2154 # profile_base: set by the engine from [agent] base
   local inside="$profile_base/.claude.json"
   inside="${inside//\//_}"
   printf '%s/claude/%s/%s/config/%s/%s' "$(_as_state_dir)" "$(_claude_project_slug "$1")" \
@@ -584,7 +508,7 @@ profile_isolate() {
   # Additive to the list above, and only from an approved dot-file.
   #
   # profile_dotfile is set by the engine from the [claude] section, reached here
-  # by dynamic scope like $cwd in profile_memory_scope.
+  # by dynamic scope, as the other engine locals are.
   # shellcheck disable=SC2154
   local -a _opts=(${profile_dotfile[@]+"${profile_dotfile[@]}"})
   local kv key val

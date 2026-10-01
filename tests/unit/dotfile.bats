@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # The per-project .agent-sandbox file: parsing, the trust gate, and how it
-# feeds --allow and memory scoping. Stub bwrap, so these assert on the argv and
+# feeds --allow and [share-memory]. Stub bwrap, so these assert on the argv and
 # the engine's messages, never a real sandbox.
 
 setup() {
@@ -12,7 +12,18 @@ setup() {
   # one for one (see _claude_project_slug and probes/slug-probe.sh).
   # shellcheck disable=SC2329 # called from the tests below
   slug() { printf '%s' "$1" | sed 's:[^A-Za-z0-9-]:-:g'; }
+  C="$H/home/.claude"
+  SBOX="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/default"
 }
+
+# A store's name: the path with "/" for "_", as the engine's _as_iso_slug.
+slugify() {
+  local s="${1//\//_}"
+  printf '%s' "${s#_}"
+}
+# The role's own store of every project's state (#196). The harness runs `shared`, where
+# memory is your native memory, bound back inside it.
+projects_own() { printf '%s/projects/own/%s' "${1:-$SBOX}" "$(slugify "$C/projects")"; }
 
 # Run `--trust` from inside the project, feeding $1 as the prompt answers.
 run_trust() {
@@ -53,11 +64,13 @@ trust() {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist:"*"pypi.org"*".github.com"* ]]
-  argv_has --tmpfs "$H/home/.claude/projects"
-  argv_has --bind "$H/home/.claude/projects/$(slug "$PROJ")/memory" "$H/home/.claude/projects/$(slug "$PROJ")/memory" # memory on top of the transcripts store
-  run ! argv_has --ro-bind "$H/home/.claude/projects/-other/memory" "$H/home/.claude/projects/-other/memory"
-  # tmpfs hides projects before the current one is rebound
-  [ "$(argv_index --tmpfs)" -lt "$(argv_index "$H/home/.claude/projects/$(slug "$PROJ")")" ]
+  argv_has --bind "$(projects_own)" "$C/projects"
+  local mem
+  mem="$C/projects/$(slug "$PROJ")/memory"
+  argv_has --bind "$mem" "$mem" # this project's memory, bound back
+  run ! argv_has --ro-bind "$C/projects/-other/memory" "$C/projects/-other/memory"
+  # every project's state is the role's own store before this project's is bound inside it
+  [ "$(argv_index "$(projects_own)")" -lt "$(argv_index "$mem")" ]
 }
 
 @test "share-memory lists other projects: their memory is bound read-only, the rest stay hidden" {
@@ -96,7 +109,7 @@ trust() {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"matched no project with memory"* ]]
-  argv_has --tmpfs "$H/home/.claude/projects" # still scoped to the current project
+  argv_has --bind "$(projects_own)" "$C/projects" # other projects still out of view
 }
 
 @test "a share naming this project is dropped, not rebound read-only over its own memory" {
@@ -308,7 +321,7 @@ trust() {
   trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  argv_has --tmpfs "$H/home/.claude/projects"
+  argv_has --bind "$(projects_own)" "$C/projects"
   argv_has --ro-bind "$om" "$om" # the approved share is granted
   rm "$PROJ/.agent-sandbox"      # the agent could do this; falling back to defaults must not be silent
   run_engine -- asb claude --version
@@ -325,9 +338,9 @@ trust() {
   [[ "$output" == *"approval forgotten"* ]]
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  # the defaults apply again, knowingly: still scoped, since that is the default
-  # now, but the share the dot-file used to grant is gone
-  argv_has --tmpfs "$H/home/.claude/projects"
+  # the defaults apply again, knowingly: other projects still out of view, since that
+  # is the default, but the share the dot-file used to grant is gone
+  argv_has --bind "$(projects_own)" "$C/projects"
   run ! argv_has --ro-bind "$om" "$om"
 }
 
@@ -413,24 +426,24 @@ trust() {
   [[ "$output" == *"unknown [seccomp] key 'profile'"* ]]
 }
 
-@test "an all entry keeps every project's memory visible even when the global default is scoped" {
-  printf 'memory_default = scoped\n' >"$CFG/config" 2>/dev/null || {
-    mkdir -p "$CFG"
-    printf 'memory_default = scoped\n' >"$CFG/config"
-  }
+@test "an all entry keeps every project's state in view: projects = read-write" {
   printf '[share-memory]\nall\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  run ! argv_has --tmpfs "$H/home/.claude/projects"
-}
-
-@test "the global default scopes memory with no dot-file present; unknown sections and ssh warn at the review" {
-  mkdir -p "$CFG"
-  printf 'memory_default = scoped\n' >"$CFG/config"
+  run ! grep -qF "$(projects_own)" "$H/argv"
+  # and a project's own [connect] overrides the sugar
+  printf '[share-memory]\nall\n[connect]\nprojects = own\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  argv_has --tmpfs "$H/home/.claude/projects"
+  argv_has --bind "$(projects_own)" "$C/projects"
+}
+
+@test "other projects are out of view with no dot-file present; unknown sections and ssh warn at the review" {
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$(projects_own)" "$C/projects"
   # parsing feedback
   printf '[allow]\nok.example\n[ssh]\nignored.host\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
@@ -502,7 +515,8 @@ trust() {
   [[ "$wrong" == *.* ]] # and that one still carries the dot
   RUN_CWD="$proj" run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  argv_has --tmpfs "$H/home/.claude/projects"
-  argv_has --bind "$H/home/.claude/projects/$s/memory" "$H/home/.claude/projects/$s/memory" # memory on top of the transcripts store
-  run ! argv_has --bind "$H/home/.claude/projects/$wrong/memory" "$H/home/.claude/projects/$wrong/memory"
+  local sbox="$H/home/.local/state/agent-sandbox/claude/${real//[^A-Za-z0-9-]/-}/default"
+  argv_has --bind "$(projects_own "$sbox")" "$C/projects"
+  argv_has --bind "$C/projects/$s/memory" "$C/projects/$s/memory" # the channel's path is this slug's
+  run ! grep -qF "$C/projects/$wrong" "$H/argv"
 }

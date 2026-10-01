@@ -28,12 +28,11 @@
 
 
 # --- Memory scoping ------------------------------------------------------
-# Which projects' Claude memory this session may read. With this section
-# present but empty, the session sees only its own project. List project paths
-# (not the ~/.claude slug), use a `~/dir/*` wildcard to share the projects
-# directly under a directory, or a single `all` to keep every project visible.
-# With NO [share-memory] section, the global default applies (see
-# ~/.config/agent-sandbox/config, key memory_default).
+# Which other projects' Claude memory this session may read, read-only. By
+# default it sees only its own project. List project paths (not the ~/.claude
+# slug), use a `~/dir/*` wildcard to share the projects directly under a
+# directory, or a single `all` to keep every project visible (`projects =
+# read-write`). Sugar for [connect]; a [connect] line overrides it.
 #[share-memory]
 #~/git/acme/app
 #~/work/*

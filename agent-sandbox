@@ -761,8 +761,7 @@ _as_allow_setup() {
 }
 
 # ----- state isolation: cross-session leaks in the agent's own state dir -----
-# Scoping ~/.claude/projects (profile_memory_scope) hides other projects'
-# transcripts, but an agent's state directory holds far more that is keyed by
+# The `projects` channel hides other projects' transcripts and memory (#196), but an agent's state directory holds far more that is keyed by
 # session rather than by project: verbatim file snapshots, prompt history,
 # pasted text, plans, per-session environments. None of it is asked for by the
 # user and all of it was readable, so isolation here is unconditional -- there
@@ -790,24 +789,6 @@ _as_iso_slug() {
     s="${s:0:200}-$(_as_sha256_str "$1" | cut -c1-16)"
   fi
   printf '%s' "$s"
-}
-
-# Add the declared paths' binds to args. Reads profile_isolate_spec; needs $args
-# from the caller.
-_as_iso_prepare() {
-  ((${#profile_isolate_spec[@]})) || return 0
-  local line mode path
-  for line in "${profile_isolate_spec[@]}"; do
-    IFS=$'\t' read -r mode path _ <<<"$line"
-    [[ -n "${path:-}" ]] || continue
-    case "$mode" in
-      tmpfs)
-        args+=(--tmpfs "$path")
-        ;;
-      *) _as_msg "isolate: unknown mode '$mode' for $path; ignoring" ;;
-    esac
-  done
-  return 0
 }
 
 # ----- connections: what of a source reaches this sandbox, per channel -------
@@ -1142,6 +1123,64 @@ _as_connect_parse() {
   return 0
 }
 
+# _as_share_memory_sugar -- a project's [share-memory] as the connections it means
+# (#196), parsed before its [connect], which overrides them. `all` is `projects =
+# read-write`. A path P is the `memory` channel's path as the profile writes it, with
+# {slug:P} for {slug}, declared read-only; a pattern (`~/git/acme/*`) is sugar only,
+# expanded here, at launch, to the matching directories that have memory. A share
+# naming this project is dropped: its memory is already there, at its own rung, and a
+# read-only bind over it would silently break the session's own writes.
+_as_share_memory_sugar() {
+  ((_df_share_set)) || return 0
+  local where=".agent-sandbox [share-memory]" line tpl="" p m own n slug
+  local -a _q=()
+  if ((${#_df_share[@]} == 1)) && [[ "${_df_share[0]}" == all ]]; then
+    if [[ " $(_as_connect_channels | tr -d ,) " == *" projects "* ]]; then
+      _as_connect_parse "projects = read-write" "$where" || return 1
+    else
+      _as_msg "share-memory: profile '$profile' has no 'projects' channel; 'all' is ignored"
+    fi
+    return 0
+  fi
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    [[ "$line" == memory$'\t'* ]] || continue
+    line="${line#*$'\t'}"
+    line="${line%%$'\t'*}"
+    tpl="$(_as_channel_hook profile_channel_templates "${line#*:}" || true)"
+  done
+  [[ "$tpl" == *"{slug}"* ]] || {
+    ((${#_df_share[@]})) && _as_msg "share-memory: profile '$profile' has no per-project 'memory' channel; the shares are ignored"
+    return 0
+  }
+  own="$(profile_slug "$(_as_project_dir)")"
+  for p in ${_df_share[@]+"${_df_share[@]}"}; do
+    [[ -z "$p" ]] && continue
+    _q=()
+    if [[ "$p" == *[*?[]* ]]; then
+      # Globbed at the path level, not the slug level, so `~/git/x/*` matches neither a
+      # sibling `~/git/x-notes` (whose slug shares the prefix) nor anything deeper.
+      n=0
+      while IFS= read -r m; do
+        [[ -d "$m" ]] || continue
+        m="$(readlink -f -- "$m")"
+        _as_slug_expand "${tpl//\{slug\}/\{slug:$m\}}" || return 1
+        [[ -d "$_slug_out" ]] || continue
+        n=1
+        _q+=("$m")
+      done < <(compgen -G "$p" || true)
+      ((n)) || _as_msg "share-memory: pattern '$p' matched no project with memory"
+    else
+      _q=("$p")
+    fi
+    for m in ${_q[@]+"${_q[@]}"}; do
+      slug="$(profile_slug "$(readlink -f -- "$m" 2>/dev/null || printf '%s' "$m")")"
+      [[ "$slug" == "$own" ]] && continue
+      _as_connect_parse "${tpl//\{slug\}/\{slug:$m\}}/ = read-only" "$where" || return 1
+    done
+  done
+  return 0
+}
+
 # _as_connect_parse_path KEY MODE WHERE -- validate a path declaration and record
 # it. Sets $_path_key to the path it resolves to, which is what the connection
 # maps are keyed by: a channel name never contains `/` and a resolved path always
@@ -1163,7 +1202,7 @@ _as_connect_parse() {
 # Both the key and what it resolves to are checked, since the key is where the
 # bind lands and the resolved path is what it shows.
 _as_connect_parse_path() {
-  local key="$1" mode="$2" where="$3" outside="${4:-}" p dir=0 real proj other
+  local key="$1" mode="$2" where="$3" outside="${4:-}" p dir=0 real proj
   local _prot_what _prot_path _prot_how
   [[ "$key" == */ ]] && dir=1
   local _slug_out
@@ -1200,16 +1239,9 @@ _as_connect_parse_path() {
       return 1
     fi
   done
-  # Two declarations nested inside each other would depend on bind order to mean
-  # anything, and which one wins is not something a reader of the dot-file should
-  # have to work out. The same path again is an override, as for a channel.
-  for other in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
-    [[ "$other" == "$p" ]] && continue
-    if [[ "$p" == "$other"/* || "$other" == "$p"/* ]]; then
-      _as_msg "connect ($where): '$key' and '${_connect_key[$other]}' are declared one inside the other; declare one of them."
-      return 1
-    fi
-  done
+  # Declarations may nest: they are bound by depth, outer first (#196), so the deeper
+  # one governs its subtree whichever was written first. The same path again is an
+  # override, as for a channel.
   # AN OUTSIDE SOURCE (#174) is checked as the key is, for what it shows: not /, $HOME
   # or a parent of it, nothing protected, lexically and resolved. It is absolute or
   # under `~`: outside the sandbox there is no project for it to be relative to. `own`
@@ -1402,173 +1434,85 @@ _as_connect_seed() {
   mv -T -- "$tmp" "$store"
 }
 
-# _as_connect_apply -- add this sandbox's connection binds to $args.
+# _as_connect_bind_all ISOLATE -- add every channel path, every path declaration and,
+# when ISOLATE is 1, the per-session scratch to $args, in ONE pass ordered by DEPTH
+# (#196): outer first, so the deeper line governs its subtree whichever kind it is and
+# whichever file it came from. A declaration inside a channel wins there; a channel
+# inside a declaration keeps its own rung (to move the channel, move its rung). At one
+# depth a declaration comes after a channel -- the same path again is an override -- and
+# the scratch after both: the per-session scratch wins at its own path over everything,
+# so a `read-write` channel still never hands over another session's paste cache.
 #
-# Called AFTER the profile's own visibility binds, so a connection layers on top
-# of memory scoping rather than under it, and BEFORE the isolate spec, because
-# the per-session scratch must win over everything: a `read-write` channel must
-# still not hand over another session's paste cache.
-_as_connect_apply() {
-  ((${#profile_channels[@]})) || return 0
-  ((${#_connect_mode[@]})) || return 0
-  local line ch mode entry kind path slot base empty manifest upper work seen src _connect_from
+# Called after the working tree and the conda binds, or the project would cover every
+# declaration inside it -- measured, under the real bwrap, the first time declarations
+# ran (connect-paths.bats).
+_as_connect_bind_all() {
+  local iso="${1:-0}" line entry ch kind path i=0
+  local -a _items=() fields=() _bound=()
   local -a _cow_fellback=()
-  local -a fields=()
-  local rolebase
+  local rolebase base mode _bind_covered
   rolebase="$(_as_sandbox_dir)"
-  for line in "${profile_channels[@]}"; do
-    IFS=$'\t' read -r -a fields <<<"$line"
-    ch="${fields[0]}"
-    mode="${_connect_mode[$ch]:-live}"
-    # A run-scoped channel's stores live apart, under @run, which lasts one run of the
-    # role's launch (_as_run_scoped_clear); every mode then does what it always does
-    # there -- `own` starts empty, `copy` seeds, `copy-on-write` gets a fresh upper.
-    base="$rolebase"
-    [[ "${_connect_scope[$ch]:-}" == run-scoped ]] && base="$rolebase/@run"
-    for entry in "${fields[@]:1}"; do
-      kind="${entry%%:*}"
-      path="${entry#*:}"
-      [[ -n "$path" ]] || continue
-      src="$(_as_channel_source "$path")"
-      # A relocated path is not bound under `native`: see _as_channel_source.
-      [[ "$src" != "$path" ]] && _as_preset_is_native && continue
-      if [[ "$mode" == read-write ]]; then
-        # The source itself, both ways: already there when it IS the path, which the
-        # state bind covers; a relocated one is bound across.
-        if [[ "$src" != "$path" && -e "$src" ]]; then
-          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
-          args+=(--bind "$src" "$path")
-        fi
-        continue
-      fi
-      if [[ "${_connect_scope[$ch]:-}" == join-scoped && "$mode" != read-only ]]; then
-        # own starts empty; copy and seed-only are seeded from the source at each join
-        if [[ "$mode" == own ]]; then
-          _as_join_scoped_bind "$kind" "$path" || return 1
-        else
-          _as_join_scoped_bind "$kind" "$path" "$src" || return 1
-        fi
-        continue
-      fi
-      case "$mode" in
-        own)
-          # A private slot that OUTLIVES the session, per sandbox and channel.
-          slot="$base/$ch/own/$(_as_iso_slug "$path")"
-          if [[ "$kind" == dir ]]; then
-            mkdir -p -- "$slot" || return 1
-          else
-            mkdir -p -- "$(dirname -- "$slot")" || return 1
-            [[ -e "$slot" ]] || _as_channel_start "$path" "$slot" || return 1
-            _as_connect_placeholder "$path"
-          fi
-          args+=(--bind "$slot" "$path")
-          ;;
-        copy-on-write)
-          # Copy-on-write: the source reads THROUGH until the sandbox writes, and
-          # the write lands in a private upper layer that shadows it from then on.
-          # No refresh step at all, which is what makes it the better default --
-          # nothing to run and nothing to go stale.
-          #
-          # THREE REASONS IT BECOMES `copy` INSTEAD, and only the first two are
-          # about this host:
-          #   - the knob says off
-          #   - bubblewrap is older than 0.11 and cannot mount an overlay
-          #   - THE PATH NAMES A FILE. overlayfs mounts a directory and cannot
-          #     stack on a single file, so this one is permanent and no newer
-          #     bubblewrap fixes it.
-          # Across launches `copy` and `copy-on-write` are indistinguishable; they
-          # differ only WITHIN a session, where an overlay reads through live.
-          if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
-            [[ "$kind" == file ]] || _cow_fellback+=("$ch")
-            slot="$base/$ch/copy/$(_as_iso_slug "$path")"
-            manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
-            mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-            _as_connect_view "$ch" "$src" "$path" || return 1
-            _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
-            if [[ ! -e "$slot" ]]; then
-              if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
-            fi
-            [[ "$kind" == file ]] && _as_connect_placeholder "$path"
-            args+=(--bind "$slot" "$path")
-            continue
-          fi
-          upper="$base/$ch/upper/$(_as_iso_slug "$path")"
-          work="$base/$ch/work/$(_as_iso_slug "$path")"
-          seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
-          mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
-          # THE LOWER IS ALWAYS THE SOURCE ITSELF, created if it is missing. The
-          # lower is fixed when the overlay is mounted and the keeper outlives any
-          # one app, so an empty stand-in would keep a directory the user creates
-          # afterwards invisible for as long as the role runs -- the study caught
-          # that once, with the holder, whose lifetime this is. An overlay can only
-          # track the source if the source IS the lower. What that costs is one
-          # empty directory in a tree the engine already binds read-write and lets
-          # bwrap create mount points in; it is not something the SANDBOX wrote,
-          # which is the promise `copy-on-write` makes.
-          mkdir -p -- "$path" || return 1
-          # What the sandbox is shadowing, and whether the source has moved under
-          # it. The one thing `copy-on-write` hides, reported before the mount so the user
-          # reads it whatever the session then does.
-          _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
-          # Mounted by the keeper at the real path. One launch per role is what makes
-          # that safe: two overlays over one upper directory, which overlayfs calls
-          # undefined, need two launches, and a second invocation joins this one.
-          args+=(--overlay-src "$path" --overlay "$upper" "$work" "$path")
-          ;;
-        seed-only)
-          slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
-          if [[ ! -e "$slot" ]]; then
-            _as_connect_view "$ch" "$src" "$path" || return 1
-            _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
-            # Nothing to seed from: a file store starts as an `own` one would, from
-            # the path's template when it has one (a JSON file wants `{}`, not zero
-            # bytes: measured, Claude Code calls a 0-byte config "corrupted").
-            if [[ "$kind" == file && ! -e "$_connect_from" && ! -s "$slot" ]]; then
-              _as_channel_start "$path" "$slot"
-            fi
-          fi
-          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
-          args+=(--bind "$slot" "$path")
-          ;;
-        copy)
-          # Seeded once and refreshed per file, never written back. The sync is
-          # a component with its own tests (components/connect-sync.py): the
-          # rules are a nine-case matrix and inline shell would hide it.
-          slot="$base/$ch/copy/$(_as_iso_slug "$path")"
-          manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
-          mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-          _as_connect_view "$ch" "$src" "$path" || return 1
-          _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
-          # A channel whose source has nothing yet still needs a mount point.
-          if [[ ! -e "$slot" ]]; then
-            if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
-          fi
-          [[ "$kind" == file ]] && _as_connect_placeholder "$path"
-          args+=(--bind "$slot" "$path")
-          ;;
-        read-only)
-          if [[ -e "$src" ]]; then
-            [[ "$src" != "$path" && "$kind" == file ]] && _as_connect_placeholder "$path"
-            args+=(--ro-bind "$src" "$path")
-          else
-            # Nothing to show, but the parent is bound read-write, so without a
-            # mount point here the sandbox could CREATE the file and author at a
-            # channel it was told it may only read. An empty, read-only one is
-            # the difference between "there is nothing" and "you may add one".
-            _as_session_begin || return 1
-            empty="$_session_dir/connect/$ch/$(_as_iso_slug "$path")"
-            if [[ "$kind" == dir ]]; then
-              mkdir -p -- "$empty" || return 1
-            else
-              mkdir -p -- "$(dirname -- "$empty")" || return 1
-              : >"$empty" || return 1
-              _as_connect_placeholder "$path"
-            fi
-            args+=(--ro-bind "$empty" "$path")
-          fi
-          ;;
-      esac
+  if ((${#profile_channels[@]})) && ((${#_connect_mode[@]})); then
+    for line in "${profile_channels[@]}"; do
+      IFS=$'\t' read -r -a fields <<<"$line"
+      for entry in "${fields[@]:1}"; do
+        path="${entry#*:}"
+        [[ -n "$path" ]] || continue
+        _items+=("$(_as_path_depth "$path") 0 $((i++))"$'\t'"c"$'\t'"${fields[0]}"$'\t'"${entry%%:*}"$'\t'"$path")
+      done
     done
+  fi
+  for path in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    _items+=("$(_as_path_depth "$path") 1 $((i++))"$'\t'"p"$'\t'"$path")
+  done
+  if ((iso)); then
+    for line in ${profile_isolate_spec[@]+"${profile_isolate_spec[@]}"}; do
+      IFS=$'\t' read -r mode path _ <<<"$line"
+      [[ -n "${path:-}" ]] || continue
+      if [[ "$mode" != tmpfs ]]; then
+        _as_msg "isolate: unknown mode '$mode' for $path; ignoring"
+        continue
+      fi
+      _items+=("$(_as_path_depth "$path") 2 $((i++))"$'\t'"t"$'\t'"$path")
+    done
+  fi
+  ((${#_items[@]})) || return 0
+  local -a _sorted=()
+  mapfile -t _sorted < <(printf '%s\n' "${_items[@]}" | sort -t' ' -k1,1n -k2,2n -k3,3n)
+  local item what b _nargs
+  for item in "${_sorted[@]}"; do
+    IFS=$'\t' read -r -a fields <<<"$item"
+    what="${fields[1]}"
+    case "$what" in
+      c) ch="${fields[2]}" kind="${fields[3]}" path="${fields[4]}" ;;
+      *) path="${fields[2]}" ;;
+    esac
+    # Is something already bound over a parent of this path? A read-write channel at
+    # its own source needs no bind of its own only when nothing is.
+    _nargs=${#args[@]}
+    _bind_covered=0
+    for b in ${_bound[@]+"${_bound[@]}"}; do
+      if [[ "$path" == "$b"/* ]]; then
+        _bind_covered=1
+        break
+      fi
+    done
+    case "$what" in
+      c)
+        mode="${_connect_mode[$ch]:-live}"
+        # A run-scoped channel's stores live apart, under @run, which lasts one run of
+        # the role's launch (_as_run_scoped_clear); every mode then does what it always
+        # does there -- `own` starts empty, `copy` seeds, `copy-on-write` gets a fresh upper.
+        base="$rolebase"
+        [[ "${_connect_scope[$ch]:-}" == run-scoped ]] && base="$rolebase/@run"
+        _as_connect_bind_channel || return 1
+        ;;
+      p) _as_connect_bind_path "$path" || return 1 ;;
+      t) args+=(--tmpfs "$path") ;;
+    esac
+    # What binds nothing covers nothing: a read-write channel at its own source, a
+    # declaration skipped for absence.
+    if ((${#args[@]} > _nargs)); then _bound+=("$path"); fi
   done
   # ONE line, not one per channel: on a host without overlay support every `copy-on-write`
   # channel falls back, and six identical lines a launch is how a notice becomes
@@ -1586,10 +1530,169 @@ _as_connect_apply() {
   return 0
 }
 
-# _as_connect_apply_paths -- add the path declarations' binds to $args.
-#
-# Called after the working tree and every channel, so a declaration lands on top of whatever it is inside and wins there.
-# Presets never reach this: a path has no position until someone declares one.
+# _as_path_depth PATH -- how many components PATH has: the order _as_connect_bind_all
+# binds in.
+_as_path_depth() {
+  local n="${1%/}"
+  n="${n//[!\/]/}"
+  printf '%s' "${#n}"
+}
+
+# _as_connect_bind_channel -- add one channel path's binds to $args, for
+# _as_connect_bind_all, whose locals it reads: ch, kind, path, mode, base, rolebase,
+# _bind_covered, _cow_fellback.
+_as_connect_bind_channel() {
+  local slot empty manifest upper work seen src _connect_from
+  src="$(_as_channel_source "$path")"
+  # A relocated path is not bound under `native`: see _as_channel_source.
+  [[ "$src" != "$path" ]] && _as_preset_is_native && return 0
+  if [[ "$mode" == read-write ]]; then
+    # The source itself, both ways: already there when it IS the path, which the
+    # state bind covers -- unless something outer is bound over it (memory under an own
+    # `projects`), and then it is bound back, a missing directory created first. A
+    # relocated one is bound across.
+    if [[ "$src" != "$path" && -e "$src" ]]; then
+      [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+      args+=(--bind "$src" "$path")
+    elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
+      if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
+      [[ -e "$src" ]] && args+=(--bind "$src" "$path")
+    fi
+    return 0
+  fi
+  if [[ "${_connect_scope[$ch]:-}" == join-scoped && "$mode" != read-only ]]; then
+    # own starts empty; copy and seed-only are seeded from the source at each join
+    if [[ "$mode" == own ]]; then
+      _as_join_scoped_bind "$kind" "$path" || return 1
+    else
+      _as_join_scoped_bind "$kind" "$path" "$src" || return 1
+    fi
+    return 0
+  fi
+  case "$mode" in
+    own)
+      # A private slot that OUTLIVES the session, per sandbox and channel.
+      slot="$base/$ch/own/$(_as_iso_slug "$path")"
+      if [[ "$kind" == dir ]]; then
+        mkdir -p -- "$slot" || return 1
+      else
+        mkdir -p -- "$(dirname -- "$slot")" || return 1
+        [[ -e "$slot" ]] || _as_channel_start "$path" "$slot" || return 1
+        _as_connect_placeholder "$path"
+      fi
+      args+=(--bind "$slot" "$path")
+      ;;
+    copy-on-write)
+      # Copy-on-write: the source reads THROUGH until the sandbox writes, and
+      # the write lands in a private upper layer that shadows it from then on.
+      # No refresh step at all, which is what makes it the better default --
+      # nothing to run and nothing to go stale.
+      #
+      # THREE REASONS IT BECOMES `copy` INSTEAD, and only the first two are
+      # about this host:
+      #   - the knob says off
+      #   - bubblewrap is older than 0.11 and cannot mount an overlay
+      #   - THE PATH NAMES A FILE. overlayfs mounts a directory and cannot
+      #     stack on a single file, so this one is permanent and no newer
+      #     bubblewrap fixes it.
+      # Across launches `copy` and `copy-on-write` are indistinguishable; they
+      # differ only WITHIN a session, where an overlay reads through live.
+      if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
+        [[ "$kind" == file ]] || _cow_fellback+=("$ch")
+        slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+        manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+        mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+        _as_connect_view "$ch" "$src" "$path" || return 1
+        _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
+        if [[ ! -e "$slot" ]]; then
+          if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+        fi
+        [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+        args+=(--bind "$slot" "$path")
+        return 0
+      fi
+      upper="$base/$ch/upper/$(_as_iso_slug "$path")"
+      work="$base/$ch/work/$(_as_iso_slug "$path")"
+      seen="$base/$ch/seen/$(_as_iso_slug "$path").json"
+      mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
+      # THE LOWER IS ALWAYS THE SOURCE ITSELF, created if it is missing. The
+      # lower is fixed when the overlay is mounted and the keeper outlives any
+      # one app, so an empty stand-in would keep a directory the user creates
+      # afterwards invisible for as long as the role runs -- the study caught
+      # that once, with the holder, whose lifetime this is. An overlay can only
+      # track the source if the source IS the lower. What that costs is one
+      # empty directory in a tree the engine already binds read-write and lets
+      # bwrap create mount points in; it is not something the SANDBOX wrote,
+      # which is the promise `copy-on-write` makes.
+      mkdir -p -- "$path" || return 1
+      # What the sandbox is shadowing, and whether the source has moved under
+      # it. The one thing `copy-on-write` hides, reported before the mount so the user
+      # reads it whatever the session then does.
+      _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
+      # Mounted by the keeper at the real path. One launch per role is what makes
+      # that safe: two overlays over one upper directory, which overlayfs calls
+      # undefined, need two launches, and a second invocation joins this one.
+      args+=(--overlay-src "$path" --overlay "$upper" "$work" "$path")
+      ;;
+    seed-only)
+      slot="$base/$ch/seed-only/$(_as_iso_slug "$path")"
+      if [[ ! -e "$slot" ]]; then
+        _as_connect_view "$ch" "$src" "$path" || return 1
+        _as_connect_seed "$_connect_from" "$slot" "$kind" || return 1
+        # Nothing to seed from: a file store starts as an `own` one would, from
+        # the path's template when it has one (a JSON file wants `{}`, not zero
+        # bytes: measured, Claude Code calls a 0-byte config "corrupted").
+        if [[ "$kind" == file && ! -e "$_connect_from" && ! -s "$slot" ]]; then
+          _as_channel_start "$path" "$slot"
+        fi
+      fi
+      [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+      args+=(--bind "$slot" "$path")
+      ;;
+    copy)
+      # Seeded once and refreshed per file, never written back. The sync is
+      # a component with its own tests (components/connect-sync.py): the
+      # rules are a nine-case matrix and inline shell would hide it.
+      slot="$base/$ch/copy/$(_as_iso_slug "$path")"
+      manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
+      mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+      _as_connect_view "$ch" "$src" "$path" || return 1
+      _as_connect_sync sync "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
+      # A channel whose source has nothing yet still needs a mount point.
+      if [[ ! -e "$slot" ]]; then
+        if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+      fi
+      [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+      args+=(--bind "$slot" "$path")
+      ;;
+    read-only)
+      if [[ -e "$src" ]]; then
+        [[ "$src" != "$path" && "$kind" == file ]] && _as_connect_placeholder "$path"
+        args+=(--ro-bind "$src" "$path")
+      else
+        # Nothing to show, but the parent is bound read-write, so without a
+        # mount point here the sandbox could CREATE the file and author at a
+        # channel it was told it may only read. An empty, read-only one is
+        # the difference between "there is nothing" and "you may add one".
+        _as_session_begin || return 1
+        empty="$_session_dir/connect/$ch/$(_as_iso_slug "$path")"
+        if [[ "$kind" == dir ]]; then
+          mkdir -p -- "$empty" || return 1
+        else
+          mkdir -p -- "$(dirname -- "$empty")" || return 1
+          : >"$empty" || return 1
+          _as_connect_placeholder "$path"
+        fi
+        args+=(--ro-bind "$empty" "$path")
+      fi
+      ;;
+  esac
+  return 0
+}
+
+# _as_connect_bind_path P -- add one path declaration's binds to $args, for
+# _as_connect_bind_all. Presets never reach this: a path has no position until
+# someone declares one.
 #
 # A PATH THAT DOES NOT EXIST IS SKIPPED, with a notice, in every mode but one. The
 # engine would otherwise have to create it on the host to have something to bind,
@@ -1604,124 +1707,121 @@ _as_connect_apply() {
 # seed from and bind is the source, and where they land is the key. A relocated path
 # is not bound at all under `native`, whose claim is parity with no sandbox: there the
 # agent finds its file where it keeps it.
-_as_connect_apply_paths() {
-  ((${#_connect_paths[@]})) || return 0
-  local p key mode base slot manifest real kind rolebase s what
+_as_connect_bind_path() {
+  local p="$1" key mode base slot manifest real kind rolebase s what
   local _prot_what _prot_path _prot_how
   rolebase="$(_as_sandbox_dir)"
-  for p in "${_connect_paths[@]}"; do
-    key="${_connect_key[$p]}"
-    mode="${_connect_mode[$p]}"
-    s="${_connect_src[$p]:-}"
-    if [[ -n "$s" ]] && _as_preset_is_native; then
-      _as_info "connect: '$key' follows 'outside:$s', and --preset native relocates nothing; not bound"
-      continue
+  key="${_connect_key[$p]}"
+  mode="${_connect_mode[$p]}"
+  s="${_connect_src[$p]:-}"
+  if [[ -n "$s" ]] && _as_preset_is_native; then
+    _as_info "connect: '$key' follows 'outside:$s', and --preset native relocates nothing; not bound"
+    return 0
+  fi
+  what="'$key'"
+  [[ -n "$s" ]] && what="'$key' (outside:$s)"
+  s="${s:-$p}"
+  base="$rolebase/@paths"
+  [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
+  if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
+    local _jseed=""
+    [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
+    if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
+      _as_join_scoped_bind dir "$p" "$_jseed" || return 1
+    elif [[ -e "$s" || "$mode" == own ]]; then
+      _as_join_scoped_bind file "$p" "$_jseed" || return 1 # an absent own: an empty file
+    else
+      _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
     fi
-    what="'$key'"
-    [[ -n "$s" ]] && what="'$key' (outside:$s)"
-    s="${s:-$p}"
-    base="$rolebase/@paths"
-    [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
-    if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
-      local _jseed=""
-      [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
-      if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
-        _as_join_scoped_bind dir "$p" "$_jseed" || return 1
-      elif [[ -e "$s" || "$mode" == own ]]; then
-        _as_join_scoped_bind file "$p" "$_jseed" || return 1 # an absent own: an empty file
+    return 0
+  fi
+  if [[ ! -e "$s" ]]; then
+    if [[ "$mode" == own ]]; then
+      slot="$base/own/$(_as_iso_slug "$p")"
+      if ((${_connect_isdir[$p]})); then
+        mkdir -p -- "$slot" || return 1
       else
-        _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
+        # bwrap makes the mount point; on the host when the key's directory is
+        # bound from it, so the cleanup removes it again while it is still empty
+        mkdir -p -- "$(dirname -- "$slot")" || return 1
+        [[ -e "$slot" ]] || : >"$slot" || return 1
+        _as_connect_placeholder "$p"
       fi
-      continue
+      args+=(--bind "$slot" "$p")
+    else
+      _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
     fi
-    if [[ ! -e "$s" ]]; then
-      if [[ "$mode" == own ]]; then
-        slot="$base/own/$(_as_iso_slug "$p")"
-        if ((${_connect_isdir[$p]})); then
-          mkdir -p -- "$slot" || return 1
-        else
-          # bwrap makes the mount point; on the host when the key's directory is
-          # bound from it, so the cleanup removes it again while it is still empty
-          mkdir -p -- "$(dirname -- "$slot")" || return 1
-          [[ -e "$slot" ]] || : >"$slot" || return 1
-          _as_connect_placeholder "$p"
-        fi
-        args+=(--bind "$slot" "$p")
+    return 0
+  fi
+  kind="file"
+  [[ -d "$s" ]] && kind="dir"
+  if ((${_connect_isdir[$p]})) && [[ "$kind" != dir ]]; then
+    _as_msg "connect: $what ends in '/' but '$s' is not a directory. Refusing rather than guessing which was meant."
+    return 1
+  fi
+  # Resolved again at bind time and re-checked fail-closed:
+  # a symlink repointed after the parse must not mount a target that was refused.
+  real="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
+  if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real" "$mode"; then
+    _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
+    return 1
+  fi
+  # A relocated FILE whose key is not there yet: bwrap creates the mount point, which
+  # lands on the host when the key's directory is bound from it; the cleanup removes
+  # it again if it is still empty (as for a channel's relocated file).
+  [[ "$s" != "$p" && "$kind" == file ]] && _as_connect_placeholder "$p"
+  # What a declaration means -- a file bound over, a path under $HOME, one over a
+  # channel -- is said at the dot-file's review (_as_trust_notes), not at every launch.
+  case "$mode" in
+    own)
+      slot="$base/own/$(_as_iso_slug "$p")"
+      if [[ "$kind" == dir ]]; then
+        mkdir -p -- "$slot" || return 1
       else
-        _as_msg "connect: $what does not exist, so its declaration is skipped this launch; it takes effect at the first launch after the path exists."
+        mkdir -p -- "$(dirname -- "$slot")" || return 1
+        [[ -e "$slot" ]] || : >"$slot" || return 1
       fi
-      continue
-    fi
-    kind="file"
-    [[ -d "$s" ]] && kind="dir"
-    if ((${_connect_isdir[$p]})) && [[ "$kind" != dir ]]; then
-      _as_msg "connect: $what ends in '/' but '$s' is not a directory. Refusing rather than guessing which was meant."
-      return 1
-    fi
-    # Resolved again at bind time and re-checked fail-closed:
-    # a symlink repointed after the parse must not mount a target that was refused.
-    real="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
-    if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] || _as_path_protected "$real" "$mode"; then
-      _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
-      return 1
-    fi
-    # A relocated FILE whose key is not there yet: bwrap creates the mount point, which
-    # lands on the host when the key's directory is bound from it; the cleanup removes
-    # it again if it is still empty (as for a channel's relocated file).
-    [[ "$s" != "$p" && "$kind" == file ]] && _as_connect_placeholder "$p"
-    # What a declaration means -- a file bound over, a path under $HOME, one over a
-    # channel -- is said at the dot-file's review (_as_trust_notes), not at every launch.
-    case "$mode" in
-      own)
-        slot="$base/own/$(_as_iso_slug "$p")"
-        if [[ "$kind" == dir ]]; then
-          mkdir -p -- "$slot" || return 1
-        else
-          mkdir -p -- "$(dirname -- "$slot")" || return 1
-          [[ -e "$slot" ]] || : >"$slot" || return 1
+      args+=(--bind "$slot" "$p")
+      ;;
+    seed-only)
+      slot="$base/seed-only/$(_as_iso_slug "$p")"
+      _as_connect_seed "$real" "$slot" "$kind" || return 1
+      args+=(--bind "$slot" "$p")
+      ;;
+    copy | copy-on-write)
+      if [[ "$mode" == copy-on-write && "$kind" == dir ]]; then
+        if [[ "$_overlay_mode" != off ]] && _as_overlay_ok; then
+          # An overlay at the declared path, mounted by the keeper as a channel's is:
+          # the source reads through, a write lands in the role's upper layer and
+          # shadows it from then on. The lower is the path itself, which exists
+          # (a declaration of a missing path is skipped above). One launch per role
+          # (#121) is what makes an overlay the launch chooses safe: there is never a
+          # second one over the same upper layer.
+          local upper work seen
+          upper="$base/upper/$(_as_iso_slug "$p")"
+          work="$base/work/$(_as_iso_slug "$p")"
+          seen="$base/seen/$(_as_iso_slug "$p").json"
+          mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
+          _as_connect_shadows "$key" "$real" "$upper" "$seen" || return 1
+          args+=(--overlay-src "$real" --overlay "$upper" "$work" "$p")
+          return 0
         fi
-        args+=(--bind "$slot" "$p")
-        ;;
-      seed-only)
-        slot="$base/seed-only/$(_as_iso_slug "$p")"
-        _as_connect_seed "$real" "$slot" "$kind" || return 1
-        args+=(--bind "$slot" "$p")
-        ;;
-      copy | copy-on-write)
-        if [[ "$mode" == copy-on-write && "$kind" == dir ]]; then
-          if [[ "$_overlay_mode" != off ]] && _as_overlay_ok; then
-            # An overlay at the declared path, mounted by the keeper as a channel's is:
-            # the source reads through, a write lands in the role's upper layer and
-            # shadows it from then on. The lower is the path itself, which exists
-            # (a declaration of a missing path is skipped above). One launch per role
-            # (#121) is what makes an overlay the launch chooses safe: there is never a
-            # second one over the same upper layer.
-            local upper work seen
-            upper="$base/upper/$(_as_iso_slug "$p")"
-            work="$base/work/$(_as_iso_slug "$p")"
-            seen="$base/seen/$(_as_iso_slug "$p").json"
-            mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
-            _as_connect_shadows "$key" "$real" "$upper" "$seen" || return 1
-            args+=(--overlay-src "$real" --overlay "$upper" "$work" "$p")
-            continue
-          fi
-          local why="this bubblewrap cannot mount an overlay (it needs 0.11)"
-          [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
-          _as_msg "connect: '$key': copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
-        fi
-        slot="$base/copy/$(_as_iso_slug "$p")"
-        manifest="$base/base/$(_as_iso_slug "$p").json"
-        mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-        _as_connect_sync sync "$key" "$kind" "$real" "$slot" "$manifest" || return 1
-        if [[ ! -e "$slot" ]]; then
-          if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
-        fi
-        args+=(--bind "$slot" "$p")
-        ;;
-      read-only) args+=(--ro-bind "$real" "$p") ;;
-      read-write) args+=(--bind "$real" "$p") ;;
-    esac
-  done
+        local why="this bubblewrap cannot mount an overlay (it needs 0.11)"
+        [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
+        _as_msg "connect: '$key': copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
+      fi
+      slot="$base/copy/$(_as_iso_slug "$p")"
+      manifest="$base/base/$(_as_iso_slug "$p").json"
+      mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+      _as_connect_sync sync "$key" "$kind" "$real" "$slot" "$manifest" || return 1
+      if [[ ! -e "$slot" ]]; then
+        if [[ "$kind" == dir ]]; then mkdir -p -- "$slot"; else : >"$slot"; fi || return 1
+      fi
+      args+=(--bind "$slot" "$p")
+      ;;
+    read-only) args+=(--ro-bind "$real" "$p") ;;
+    read-write) args+=(--bind "$real" "$p") ;;
+  esac
   return 0
 }
 
@@ -2789,7 +2889,7 @@ _as_briefing_write() {
       mem_line="only this project, plus read-only memory of: ${_df_share[*]}"
       mem_short="this project, plus ${#_df_share[@]} shared read-only"
     else
-      mem_line="only this project. Other projects are hidden behind a tmpfs"
+      mem_line="only this project. Other projects are not in view"
       mem_short="hidden; only this project is visible"
     fi ;;
   esac
@@ -2896,30 +2996,6 @@ _as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
 _as_seccomp_dir() { printf '%s' "${AGENT_SANDBOX_SECCOMP_DIR:-$HOME/.local/share/agent-sandbox/seccomp}"; }
 _as_sha256_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
 _as_sha256_str() { printf '%s' "$1" | sha256sum 2>/dev/null | cut -d' ' -f1; }
-
-# Global default for memory scoping when a project has no trusted directive:
-# `shared` (every project's memory visible -- the historical behaviour) or
-# `scoped` (only the current project). ~/.config/agent-sandbox/config, key
-# memory_default. Defaults to `scoped`: a session sees its own project's memory
-# and transcripts and no other's, so the isolation the README promises holds
-# without configuration. Set `memory_default = shared` to get the pre-0.2
-# behaviour back for projects that have no dot-file.
-_as_memory_default() {
-  local cfg val="" line
-  cfg="$(_as_config_dir)/config"
-  if [[ -r "$cfg" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      line="${line%%#*}"
-      [[ "$line" == *memory_default* ]] || continue
-      val="${line#*=}"
-      val="${val//[[:space:]]/}"
-    done <"$cfg"
-  fi
-  case "$val" in
-    scoped | shared) printf '%s' "$val" ;;
-    *) printf 'scoped' ;;
-  esac
-}
 
 # A strict-mode port opt-in token (--host-port / --agent-port, the knobs, the
 # dot-file): a TCP port 1024-65535, or `none`. Ports below 1024 are refused:
@@ -3167,6 +3243,7 @@ _as_profile_dotfile() {
     key="${key%"${key##*[![:space:]]}"}"
     kind="file"
     [[ "$key" == */ ]] && kind="dir" key="${key%/}"
+    local raw="$key"
     _as_slug_expand "$key" || return 1
     key="$_slug_out"
     [[ "$key" == \~/* ]] && key="$HOME${key#\~}"
@@ -3175,6 +3252,8 @@ _as_profile_dotfile() {
       return 1
     }
     key="$(realpath -m -s -- "$key")"
+    # As written, for what is sugar over it ([share-memory] puts {slug:P} for {slug}).
+    profile_channel_templates+=("$key"$'\t'"$raw")
     [[ -n "${_ch_paths[$name]+x}" ]] || _ch_order+=("$name")
     _ch_paths[$name]+=$'\t'"$kind:$key"
     for t in $toks; do
@@ -3283,8 +3362,29 @@ _as_slug_expand() {
     }
     s="${s//\{slug\}/$slug}"
   fi
+  # {slug:PATH} (#196): the same slug of another directory, resolved as the agent
+  # resolves its own (`~` expanded, symlinks followed): a share names a project by path.
+  local _sp _sr
+  while [[ "$s" =~ \{slug:([^}]+)\} ]]; do
+    declare -F profile_slug >/dev/null || {
+      _as_msg "'$1': {slug:...} needs a profile that defines profile_slug; profile '$profile' does not"
+      return 1
+    }
+    _sp="${BASH_REMATCH[1]}"
+    [[ "$_sp" == \~ || "$_sp" == \~/* ]] && _sp="$HOME${_sp#\~}"
+    [[ "$_sp" == /* ]] || {
+      _as_msg "'$1': {slug:$_sp} names a project by an absolute path or one under '~'"
+      return 1
+    }
+    _sr="$(readlink -f -- "$_sp" 2>/dev/null || realpath -m -s -- "$_sp")"
+    slug="$(profile_slug "$_sr")" && [[ -n "$slug" && "$slug" != */* ]] || {
+      _as_msg "'$1': profile '$profile' gave no usable slug for $_sr"
+      return 1
+    }
+    s="${s//"${BASH_REMATCH[0]}"/$slug}"
+  done
   if [[ "$s" =~ \{[a-z][a-z0-9_:-]*\} ]]; then
-    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {base}, {profile} and {slug} are known)"
+    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {base}, {profile}, {slug} and {slug:PATH} are known)"
     return 1
   fi
   _slug_out="$s"
@@ -3297,7 +3397,7 @@ _as_profile_facts_dotfile() {
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
   local -a profile_hide=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
-  local -a profile_channel_start=() profile_channel_presets=()
+  local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
 }
 
@@ -3326,7 +3426,8 @@ _as_profile_facts() {
 #     suffix a section does not take, a bad [allow] host, an unknown mode;
 #   - a widening: network mode `open` (no allowlist), seccomp `off` (no filter);
 #   - a [<profile>] key that profile does not read (profile_dotfile_keys);
-#   - per path declaration: one over a profile's channel (the declaration wins there);
+#   - per path declaration: one inside a profile's channel (the declaration wins there)
+#     or containing one (the channel keeps its mode inside it, #196);
 #     else one under $HOME, outside the project -- $HOME is empty inside, so `own` is
 #     sandbox-only storage and any other mode shows the real one; and a file -- bound
 #     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy).
@@ -3334,7 +3435,7 @@ _as_profile_facts() {
 # serves them all. What depends on the host or the moment -- a path that does not
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
 _as_trust_notes() {
-  local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over
+  local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over in_ch in_path contains
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
@@ -3407,7 +3508,10 @@ _as_trust_notes() {
       *) p="$cwd/$key" ;;
     esac
     p="$(realpath -m -s -- "$p")"
-    over=""
+    # Bound by depth (#196): inside a channel the declaration wins; a channel inside the
+    # declaration keeps its own mode there. One line for each, naming the innermost
+    # channel it is in and every one it contains.
+    over="" in_ch="" in_path="" contains=""
     for line in ${facts[@]+"${facts[@]}"}; do
       [[ "$line" == channel$'\t'* ]] || continue
       IFS=$'\t' read -r -a fields <<<"$line"
@@ -3415,13 +3519,19 @@ _as_trust_notes() {
       for entry in "${fields[@]:3}"; do
         cpath="${entry#*:}"
         [[ -n "$cpath" ]] || continue
-        if [[ "$p" == "$cpath" || "$p" == "$cpath"/* || "$cpath" == "$p"/* ]]; then
+        if [[ "$p" == "$cpath" || "$p" == "$cpath"/* ]]; then
           over=1
-          _as_msg "connect: '$key' overlaps the ${fields[1]} profile's channel '$ch' ('$cpath'); the path declaration wins there, whatever the channel's mode."
-          break 2
+          if [[ -z "$in_path" || "$cpath" == "$in_path"/* ]]; then
+            in_ch="${fields[1]} profile's channel '$ch'" in_path="$cpath"
+          fi
+        elif [[ "$cpath" == "$p"/* ]]; then
+          over=1
+          contains="${contains:+$contains, }'$ch' ($cpath)"
         fi
       done
     done
+    [[ -n "$in_ch" ]] && _as_msg "connect: '$key' overlaps the $in_ch ('$in_path'); the path declaration wins there, whatever the channel's mode."
+    [[ -n "$contains" ]] && _as_msg "connect: '$key' contains the channels $contains; bound by depth, each keeps its own mode inside it. To move a channel, set its mode."
     if [[ -z "$over" && "$p" == "$HOME"/* && "$p" != "$cwd" && "$p" != "$cwd"/* ]]; then
       if [[ "$mode" == own ]]; then
         _as_msg "connect: '$key' is under your home directory, which is empty inside the sandbox: this is sandbox-only storage at '$p', and your real one stays hidden."
@@ -4509,12 +4619,11 @@ agent_sandbox() (
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=()
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
-  local -a profile_hide=() _profile_allow_hosts=() profile_channel_start=()
+  local -a profile_hide=() _profile_allow_hosts=() profile_channel_start=() profile_channel_templates=()
   local profile_base=""      # [agent] base: the agent's state directory (#175)
   local profile_base_from="" # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
-  local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()
@@ -4908,6 +5017,7 @@ agent_sandbox() (
   local _cs
   local -a _env_connect=()
   local _cg
+  _as_share_memory_sugar || return 1
   for _cs in ${_df_connect[@]+"${_df_connect[@]}"}; do
     _cg="${_cs%%$'\t'*}"
     # shellcheck disable=SC2053 # the glob is the pattern
@@ -4995,18 +5105,11 @@ agent_sandbox() (
     profile_route "$@" || return $?
   fi
 
-  if ((_df_share_set)); then
-    if ((${#_df_share[@]} == 1)) && [[ "${_df_share[0]}" == all ]]; then
-      _memory_mode=shared
-      _df_share=()
-    else
-      _memory_mode=scoped
-    fi
-  else
-    _memory_mode="$(_as_memory_default)"
-  fi
-  # `native` is parity with no sandbox, and a native install scopes nothing.
-  _as_preset_is_native && _memory_mode=shared
+  # What the briefing says of other projects: hidden unless the profile's `projects`
+  # channel is read-write (`[share-memory] all`, `shared`... or a profile with none).
+  _memory_mode=scoped
+  [[ "${_connect_mode[projects]:-read-write}" == read-write ]] && _memory_mode=shared
+  [[ "$_memory_mode" == shared ]] && _df_share=()
 
   # ---- strict-mode ports: flags, knobs and the dot-file form a union ----
   local -a _knob_host_ports=() _knob_agent_ports=()
@@ -5133,11 +5236,6 @@ agent_sandbox() (
 
   if declare -F profile_prepare >/dev/null; then
     profile_prepare || return 1
-  fi
-  if declare -F profile_memory_scope >/dev/null; then
-    profile_memory_scope "$_memory_mode" "${_df_share[@]}" || return 1
-  elif [[ "$_memory_mode" == scoped ]]; then
-    _as_msg "profile '$profile' does not scope memory; the setting is ignored"
   fi
 
   # ----- git identity hint -----
@@ -5325,54 +5423,20 @@ agent_sandbox() (
     args+=(--ro-bind "$profile_bin" "$profile_bin")
   fi
 
-  # Profile-declared visibility adjustments, applied AFTER its state binds so
-  # they layer on top: a tmpfs to hide a subtree, then read-write and
-  # read-only rebinds of the parts to keep. The claude profile uses these to
-  # scope ~/.claude/projects to the current project (read-write) plus any
-  # approved shares (read-only). Empty for every profile by default.
-  local _pv
-  for _pv in "${profile_tmpfs[@]}"; do
-    args+=(--tmpfs "$_pv")
-  done
-  for _pv in "${profile_rw_binds[@]}"; do
-    [[ -e "$_pv" ]] || {
-      _as_msg "profile '$profile': rw path '$_pv' does not exist"
-      return 1
-    }
-    args+=(--bind "$_pv" "$_pv")
-  done
-  for _pv in "${profile_ro_binds[@]}"; do
-    if [[ -e "$_pv" ]]; then
-      args+=(--ro-bind "$_pv" "$_pv")
-    else
-      _as_msg "share-memory: nothing at '$_pv'; skipping"
-    fi
-  done
-
-  # Connections: a channel the user narrowed is bound over the profile's own
-  # visibility binds and under the per-session scratch. See the connections
-  # section above for why that order.
-  _as_connect_apply || return 1
-  # Binds a profile needs ON TOP of the connections: a path inside a channel that keeps
-  # machinery of its own (the claude profile's memory, inside `transcripts`).
-  for _pv in ${profile_late_rw_binds[@]+"${profile_late_rw_binds[@]}"}; do
-    args+=(--bind "$_pv" "$_pv")
-  done
-
   # State isolation: the profile declares which parts of its state directory
-  # leak across sessions, the engine stages and binds them. After the binds
-  # above for the same reason they come after the state binds -- these layer on
-  # top of a directory that is already in place.
-  # The per-session scratch, skipped entirely under `native`. ONE SWITCH, not a
+  # leak across sessions, the engine stages them, and they are bound with the channels
+  # (_as_connect_bind_all, below): each wins at its own path. The per-session scratch,
+  # skipped entirely under `native`. ONE SWITCH, not a
   # per-path knob: the isolation this applies is deliberately unconditional, and
   # the way to keep that true while still offering parity is to make the bypass
   # all-or-nothing and impossible to reach by accident (see the preset's gate).
+  local _iso_on=0
   if declare -F profile_isolate >/dev/null && ! _as_preset_is_native; then
     # Only from an APPROVED dot-file: _df_profile_kv is empty unless the trust
     # gate honoured the file, so an unapproved [claude] section grants nothing.
     local -a profile_dotfile=("${_df_profile_kv[@]}")
     profile_isolate || return 1
-    _as_iso_prepare || return 1
+    _iso_on=1
   fi
 
   # If /usr/local is a symlink off /usr (e.g. to a separate filesystem),
@@ -5568,9 +5632,9 @@ agent_sandbox() (
     fi
   fi
 
-  # The path declarations: here, after the working-tree bind, or the project would cover every declaration inside it --
-  # measured, under the real bwrap, the first time this ran (connect-paths.bats).
-  _as_connect_apply_paths || return 1
+  # The channels, the path declarations and the per-session scratch, by depth: here,
+  # after the working-tree bind, or the project would cover every declaration inside it.
+  _as_connect_bind_all "$_iso_on" || return 1
 
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and

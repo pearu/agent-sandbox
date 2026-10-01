@@ -414,15 +414,17 @@ EOF
 }
 
 @test "a preset moves ONLY the channels the engine manages as connections" {
-  # The design's table also lists memory, transcripts and the rest. Each still has
+  # The design's table also lists identity, the project and tools. Each still has
   # machinery of its own, and a preset that silently claimed to position them would
   # leave the user believing a channel was shut. The config file is one of the
-  # managed ones since #119, so it moves: to its own store under `isolated`.
+  # managed ones since #119, and memory since #196: both move to their own stores
+  # under `isolated`.
   run_engine AGENT_SANDBOX_PRESET=isolated -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$SBOX/config/own/$(slugify "$H/home/.claude/.claude.json")" "$H/home/.claude/.claude.json"
-  # memory is still scoped by its own machinery, whatever the preset
-  run ! grep -qF "$SBOX/memory" "$H/argv"
+  local mem="$C/projects/${PROJ//[^A-Za-z0-9-]/-}/memory"
+  argv_has --bind "$SBOX/memory/own/$(slugify "$mem")" "$mem"
+  run ! grep -qF "$SBOX/identity" "$H/argv"
 }
 
 @test "native is refused from the environment: only the flag can turn isolation off" {
@@ -1224,12 +1226,34 @@ DF
   argv_has --ro-bind "$d/realdir" "$d/link"
 }
 
-@test "two path declarations nested inside each other are refused" {
+@test "two path declarations nested inside each other are bound by depth, outer first, whichever is written first" {
   mkdir -p "$PROJ/a/b"
-  run_engine -- asb --connect './a/ = own' --connect './a/b/ = read-only' claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"inside"* ]]
-  [ ! -s "$H/argv" ]
+  local slot
+  slot="$SBOX/@paths/own/$(slugify "$PROJ/a")"
+  run_engine -- asb --connect './a/b/ = read-only' --connect './a/ = own' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$slot" "$PROJ/a"
+  argv_has --ro-bind "$PROJ/a/b" "$PROJ/a/b"
+  [ "$(argv_index "$PROJ/a/b")" -gt "$(argv_index "$slot")" ]
+}
+
+# shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
+@test "a channel inside a declaration keeps its own rung: the declaration does not cover it" {
+  run_engine -- asb --connect '~/.claude/ = read-only' --connect 'instructions = own' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$C" "$C"
+  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
+  # and the review says which way round it is
+  printf '[connect]\n~/.claude/ = read-only\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"'~/.claude/' contains the channels "*"'instructions' ($C/CLAUDE.md)"*"each keeps its own mode inside it"* ]]
+  [[ "$output" != *"'~/.claude/' overlaps"* ]]
+  local i ro=-1
+  for ((i = 0; i + 2 < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == --ro-bind && "${ARGV[i + 1]}" == "$C" ]] && ro=$i
+  done
+  [ "$ro" -ge 0 ]
+  [ "$(argv_index "$SBOX/instructions/own/$(slugify "$C/rules")")" -gt "$ro" ]
 }
 
 @test "the same path declared twice: the later one wins, as for a channel" {

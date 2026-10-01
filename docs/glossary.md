@@ -97,7 +97,7 @@ see [Presets](#presets-and-principles). *shipped*
 what it carries, never by a path. The profile maps each channel to the agent's paths.
 For the `claude` profile the channels the engine manages as connections are
 `instructions`, `settings`, `skills`, `agents`, `workflows`, `plugins`, `config`,
-`transcripts`, `logs`, `artefacts`, `policy` and `changelog` (*shipped*); `identity`, `project` and `memory` are
+`projects`, `memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` (*shipped*); `identity` and `project` are
 channels in the model with machinery of their own, not yet folded in. The table of what each carries is
 in [connections.md](connections.md#the-three-objects).
 
@@ -375,5 +375,5 @@ A test that passes either way is recorded as proving nothing.
 | scope | **invocation scope** (foreground/background, #104; withdrawn); **storage scope** (a shorter-than-role lifetime, #125) | *storage scope*, or name the lifetime |
 | native | the host's unsandboxed agent and its state; the `native` **source**; the `native` **preset** (sandboxed, isolating nothing) | the source / the preset |
 | none | the old name of `own` (refused since 0.3); a network mode; the fifth preset, no sandbox (once `--sandbox none`) | the full context |
-| shared | the `shared` preset; storage shared between launches; `memory_default = shared` | the preset by name |
+| shared | the `shared` preset; storage shared between launches | the preset by name |
 | copy | the `copy` mode; the per-project copy of Claude Code's config file (0.2.1), now the `config` channel's store | *the `config` channel* |

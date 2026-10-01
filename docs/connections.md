@@ -64,8 +64,9 @@ No connection for a channel means `own`.
 | plugins | installed plugins and marketplaces | `plugins/` |
 | config | the config file: app state, the account, the user-level MCP servers, this project's entry | `~/.claude.json`, bound inside at `~/.claude/.claude.json` (#119) |
 | tools | user-level MCP servers | part of `config`: the `mcpServers` block of that file (#132) |
-| memory | per-project auto memory | `projects/<slug>/memory/`; `agent-memory/` once its layout is known |
-| transcripts | conversations, plans, file history, prompt history | `projects/<slug>/` (memory bound on top), `plans/`, `file-history/`, `history.jsonl` |
+| projects | every project's conversations and memory | `projects/` (#196) |
+| memory | per-project auto memory | `projects/<slug>/memory/` (#196); `agent-memory/` once its layout is known |
+| transcripts | conversations, plans, file history, prompt history | `projects/<slug>/` (memory inside it), `plans/`, `file-history/`, `history.jsonl` |
 | logs | what the user's own hooks write | `responses.log`, `alerts.log` |
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
 | policy | the caches of server-managed settings and policy flags, with the stamp | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109) |
@@ -240,7 +241,8 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 | project | read-write | read-write | read-write |
 | instructions, settings, skills, agents, workflows, plugins | own | `copy-on-write` from native, `copy` where no overlay | read-write native |
 | config (tools part of it) | own | `seed-only` from native, this project's entry only | `seed-only` from native, this project's entry only |
-| memory | own only | own, plus `read-only` from named sandboxes (`[share-memory]`) | read-write (`memory_default = shared`) |
+| projects (every project's state) | own | own | own |
+| memory | own only | own, plus `read-only` per share (`[share-memory]`) | read-write native |
 | transcripts (conversations, file history, plans, prompt history) | own | own | own |
 | logs (the user's hook logs) | own | own | own |
 | artefacts | own | own | read-write |
@@ -248,10 +250,12 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 
 **This table is where the model is going, not what the engine does today.** The rows
 implemented are the channels the engine manages as connections — `instructions, settings,
-skills, agents, workflows, plugins`, `config`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` — and a preset moves
+skills, agents, workflows, plugins`, `config`, `projects`, `memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` — and a preset moves
 them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
-holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them.
-identity, project and memory each still have machinery
+holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them;
+`projects` is `own` there for the same reason, since 0.2 scoped it. A share reads the other
+project's native memory; reading another sandbox's store needs the `sandbox:` source (#200).
+identity and project each still have machinery
 of their own and keep their own controls until they are folded in, one at a time, with the
 study to show it. `docs/config.md` documents the rows that are live, so a user reading it
 is never told a channel is positioned when it is not.
@@ -455,8 +459,7 @@ your commands on the sandbox's PATH and whose harm is only a write; and **not th
 project or a parent of it**, because a declaration is bound after the project and would
 cover it. Both the key and what it resolves to are checked, and the resolved path is
 checked again at bind time, so a symlink repointed in between cannot mount a refused
-target. Two declarations one inside the other are refused; the same path declared twice
-is an override, later wins, as for a channel.
+target. The same path declared twice is an override, later wins, as for a channel.
 
 **A path that does not exist is skipped**, with a notice, and takes effect at the first
 launch after it does — every mode but `own` promises something about the path outside,
@@ -473,9 +476,16 @@ still empty.
 it cannot be deleted or renamed from inside, and `copy-on-write` on a file is `copy`,
 since overlayfs cannot stack on one file.
 
-**Inside a channel, or over one**, a declaration is allowed, says so, and wins there:
-`~/.claude/rules/team/ = own` under `instructions = read-only` gives the sandbox its own
-`team/` and leaves the rest of `rules/` read-only.
+**Paths nest, and are bound by depth, outer first** (#196): channel paths and
+declarations alike, whichever file they come from and in whatever order they are
+written, so the deeper line governs its subtree. At one depth a declaration comes after
+a channel, and the per-session scratch after both. So **inside a channel** a
+declaration wins there: `~/.claude/rules/team/ = own` under `instructions = read-only`
+gives the sandbox its own `team/` and leaves the rest of `rules/` read-only. **Over a
+channel**, the channel keeps its own mode inside it: `~/.claude/ = read-only` makes the
+rest of the state directory read-only and leaves every channel where its mode puts it —
+to move a channel, set its mode. Two declarations one inside the other nest the same
+way. The dot-file's review says which of these a declaration is.
 
 **Presets never move a declaration.** A preset positions the channels the profile
 declares; a path has no position until someone writes one.
@@ -675,7 +685,8 @@ conversation. `read-write` with any scope stays refused: there is no store to sc
   `file-history/`, `plans/`, `history.jsonl`) and `logs` (the hook logs) are channels, `own`
   under every preset but `native`. A role starts with none of the native history;
   `transcripts = seed-only` seeds it once, the prompt history filtered to this project's
-  records. The project's memory is bound on top of the role's store by its own machinery.
+  records. The project's memory, inside the conversations' directory, is the `memory`
+  channel (#196), bound on top of the role's store by depth.
   Undo and plans work wherever the conversation can be resumed, which is the role.
 - **The config file** (#119) is built: the `config` channel, see
   [config.md](config.md#the-config-file-the-config-channel). `seed-only` under `inherit` and
@@ -684,7 +695,7 @@ conversation. `read-write` with any scope stays refused: there is no store to sc
 ## Mechanisms
 
 What exists: read-write and read-only binds of a source path at an inside path
-(`profile_config_binds` with `SRC<TAB>DEST`, and the layered `profile_rw_binds`/`_ro_binds`);
+(`profile_config_binds` with `SRC<TAB>DEST`, and channels and declarations bound by depth);
 `tmpfs` over a path for per-launch scratch; the engine's state
 directory and its control-path protection; a seeded, filtered, refreshed copy of one file
 (the config file, 0.2.1); the mount-point cleanup a file bind inside a read-write directory
@@ -751,7 +762,7 @@ A profile declares four things and no dispositions:
 4. the **per-session scratch** the isolate spec replaces per launch (until #120 gives those
    paths modes of their own).
 
-Everything else in today's profile, memory scoping and `[claude] hide`, becomes a connection statement or falls out of "private by
+Everything else in today's profile, `[claude] hide`, becomes a connection statement or falls out of "private by
 construction". A second profile fills in the same four items; nothing about the engine's
 connection machinery is agent-specific.
 
@@ -835,8 +846,10 @@ here rather than designed around; the project directory is where different agent
 
 - The per-project config file copy became the `config` channel's `seed-only` store of the
   `default` role (#119), moved there at the first launch that finds it.
-- `[share-memory]` becomes `memory = ro sandbox:<project>`; `memory_default = shared` becomes
-  the `shared` preset's memory row; `[claude] hide` becomes `own` for identity's tooling
+- `[share-memory]` is sugar for read-only declarations of other projects' native memory,
+  and `all` for `projects = read-write` (#196); `memory = ro sandbox:<project>` follows with
+  the `sandbox:` source (#200). The global `memory_default` is removed (#196): `[share-memory]
+  all` says the same per project, and is reviewed. `[claude] hide` becomes `own` for identity's tooling
   parts. `user-mcp` is removed and refused, naming `config = own` (#132).
 - The isolate spec keeps the per-session scratch and drops everything that "private by
   construction" now covers.

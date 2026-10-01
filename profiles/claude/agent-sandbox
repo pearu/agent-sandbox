@@ -103,9 +103,13 @@ statsigapi.net
 # name; `start:FILE` -- what its store starts as when there is nothing to seed from
 # (`own`, or `seed-only` with no source), a template beside this file ({profile}).
 #
-# ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory and tools
-# each have machinery of their own (the credential bind, the working tree, memory
-# scoping); folding them onto connections is a separate step, per channel.
+# Paths nest: the engine binds them by depth, outer first (#196), so the deeper line
+# governs its subtree -- `projects/` is every project's state, `projects/{slug}/` this
+# project's conversations inside it, and `projects/{slug}/memory/` its memory inside that.
+#
+# Only identity, project and tools are not here: each has machinery of its own (the
+# credential bind, the working tree, the config file); folding them onto connections is
+# a separate step, per channel.
 
 [channel:instructions]
 {base}/CLAUDE.md
@@ -148,6 +152,14 @@ statsigapi.net
 [channel:config]
 {base}/.claude.json = outside:~/.claude.json filter:_claude_config_filter start:{profile}/config.json
 
+# EVERY PROJECT'S STATE IS A CHANNEL (#196): Claude Code keeps each project's
+# conversations and memory under projects/<slug>/, and another project's are none of this
+# one's business -- the role's own store holds whatever lands there beside this
+# project's. `[share-memory]` is the sugar a project uses to open it: `all` is
+# `projects = read-write`, a path is a read-only declaration of that project's memory.
+[channel:projects]
+{base}/projects/
+
 # TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
 # and prompt history are its own, and so are the logs your hooks write. The
 # conversations' directory depends on the project ({slug}, #176). `transcripts =
@@ -158,6 +170,15 @@ statsigapi.net
 {base}/plans/
 {base}/history.jsonl = filter:_claude_history_view
 {base}/projects/{slug}/
+
+# MEMORY IS A CHANNEL (#196): what Claude Code writes down for the next session of this
+# project, loaded into its context automatically. What you write -- instructions,
+# settings, skills -- a sandbox inherits copy-on-write; what the agent writes --
+# transcripts, logs, memory -- is the role's own, so two roles of one project share
+# nothing but the directory unless connected (#55). `memory = copy-on-write` reads yours
+# live and keeps its writes; `seed-only` carries yours over once.
+[channel:memory]
+{base}/projects/{slug}/memory/
 
 [channel:logs]
 {base}/responses.log
@@ -195,14 +216,19 @@ statsigapi.net
 # would reopen #90. A role's transcripts and logs are its own under both; artefacts are
 # its own under `inherit` (#52, #76, #78). `changelog` keeps the ladder's copy-on-write,
 # which on a single file is copy: only your side fetches it, so it refreshes cleanly.
+# Other projects' state is hidden under both (`projects`), as it was before 0.3; memory
+# is the role's own under `inherit` and your native memory under `shared` (#196).
 [preset:inherit]
 config = seed-only
+projects = own
 transcripts = own
+memory = own
 logs = own
 artefacts = own
 policy = seed-only
 
 [preset:shared]
 config = seed-only
+projects = own
 transcripts = own
 logs = own

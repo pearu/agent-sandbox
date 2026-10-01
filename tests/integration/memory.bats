@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
-# Memory scoping with the REAL bwrap and the claude profile: a stub Claude
-# binary reports, from inside the sandbox, which projects' memory it can see.
+# Memory and every project's state, as channels (#196), with the REAL bwrap and the claude
+# profile: a stub Claude binary reports, from inside the sandbox, which projects' memory
+# it can see. The harness runs `shared`, where memory is your native memory.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -17,6 +18,7 @@ w() { touch "$1" 2>/dev/null && { rm -f "$1"; echo yes; } || echo no; }
 cur="${PWD//\//-}"
 say projects "$(ls -A "$HOME/.claude/projects" 2>/dev/null | sort | tr '\n' ' ')"
 say current_writable "$(w "$HOME/.claude/projects/$cur/memory/probe")"
+say current_native "$([[ -f $HOME/.claude/projects/$cur/memory/MEMORY.md ]] && echo yes || echo no)"
 say shared_readable "$([[ -f $HOME/.claude/projects/$SHARED_SLUG/memory/note.md ]] && echo yes || echo no)"
 say shared_writable "$(w "$HOME/.claude/projects/$SHARED_SLUG/memory/probe")"
 say other_visible "$([[ -e $HOME/.claude/projects/$OTHER_SLUG ]] && echo yes || echo no)"
@@ -72,16 +74,6 @@ trust_here() {
   [[ " ${M[projects]} " != *" $OTHER_SLUG "* ]]
 }
 
-@test "scoped by the global default, no dot-file: only the current project is visible" {
-  mkdir -p "$IHOME/.config/agent-sandbox"
-  printf 'memory_default = scoped\n' >"$IHOME/.config/agent-sandbox/config"
-  run_claude
-  [ "$status" -eq 0 ]
-  [ "${M[current_writable]}" = yes ]
-  [ "${M[other_visible]}" = no ]
-  [ "${M[shared_readable]}" = no ] # not shared, so hidden too
-}
-
 @test "scoped is the default: with no dot-file and no config, other projects are invisible" {
   run_claude
   [ "$status" -eq 0 ]
@@ -90,13 +82,30 @@ trust_here() {
   [ "${M[shared_readable]}" = no ]
 }
 
-@test "memory_default = shared opts out: every project's memory stays visible" {
-  mkdir -p "$IHOME/.config/agent-sandbox"
-  printf 'memory_default = shared\n' >"$IHOME/.config/agent-sandbox/config"
+@test "[share-memory] all opts out: every project's memory stays visible" {
+  printf '[share-memory]\nall\n' >"$IWORK/.agent-sandbox"
+  trust_here
   run_claude
   [ "$status" -eq 0 ]
   [ "${M[other_visible]}" = yes ]
   [ "${M[shared_readable]}" = yes ]
+  [ "${M[current_native]}" = yes ]
+}
+
+@test "under inherit, memory is the role's own: your native memory is not in view, and a write stays in the role (#196)" {
+  TEST_PRESET=inherit run_claude
+  [ "$status" -eq 0 ]
+  [ "${M[current_native]}" = no ]    # the native MEMORY.md is not the role's
+  [ "${M[current_writable]}" = yes ] # but the role writes its own
+  [ "${M[other_visible]}" = no ]
+  # a note written inside reaches the role's next launch, never the native tree
+  local store
+  store="$(find "$IHOME/.local/state/agent-sandbox/claude" -path '*/memory/own/*' -type d -name '*_memory' | head -1)"
+  [ -d "$store" ]
+  printf 'role note\n' >"$store/MEMORY.md"
+  TEST_PRESET=inherit run_claude
+  [ "${M[current_native]}" = yes ]
+  [ "$(cat "$IHOME/.claude/projects/$CUR_SLUG/memory/MEMORY.md")" = current ]
 }
 
 @test "an unapproved dot-file grants nothing: the launch refuses, and its share is never made (#143)" {

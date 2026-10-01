@@ -108,7 +108,7 @@ What still identifies the setup, and would need engine or state changes:
   directory and transcripts, including this repo's. A probe can learn the
   tool's name and design from there, and one probe run can read the previous
   one's transcript. Memory scoping is per project via `.agent-sandbox`, which
-  the probe would see, or a global `memory_default` in the engine config.
+  the probe would see.
 - The injected CA is mitmproxy's (`CN=mitmproxy`), which names the proxy
   software, not the tool.
 

@@ -207,7 +207,7 @@ not exist. Values and defaults are in the last column.
 | — | `AGENT_SANDBOX_CONDA_WRITE` | `[conda] write` | `1` makes the active conda env writable; its base install and other envs stay read-only (read-only) |
 | — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | package cache used in write mode (`~/.cache/agent-sandbox/conda-pkgs`) |
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
-| — | — | `[share-memory]` | which projects' agent memory this session may read: paths, `all`, or present-but-empty for this project only (scoped to this project; widen with the global `memory_default = shared`) ([config.md](docs/config.md)) |
+| — | — | `[share-memory]` | which other projects' agent memory this session may read, read-only: paths, `~/dir/*` wildcards, or `all` for every project's state. Sugar for `[connect]`: by default a role sees only its own project, and its memory is its own under `isolated` and `inherit` (#196) ([config.md](docs/config.md#memory-scoping)) |
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | default-deny syscall filter, compiled per machine by `install.sh`; `off` disables it (on) ([seccomp](components/seccomp/README.md)) |
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | — | `[channel:<name>]` | a **profile's own dot-file** only (`profiles/<name>/agent-sandbox`): one section per channel, a path per line under `{base}` (the profile's base, which `[agent] base-env` -- claude: `CLAUDE_CONFIG_DIR` -- can move), a trailing `/` for a directory, and per path `outside:`, `filter:`, `vendor:` or `start:` (a template file the store starts as, under `{profile}`, the profile's directory). In a project's file it is warned of at the review and ignored ([profiles.md](docs/profiles.md#the-profiles-dot-file)) |
@@ -260,7 +260,7 @@ commented template in
 - [docs/network.md](docs/network.md): network modes, the allowlist,
   `--allow`, the CA, the proxy.
 - [docs/config.md](docs/config.md): the per-project `.agent-sandbox` file, its
-  trust gate, and per-project memory scoping.
+  trust gate, and `[share-memory]`.
 - [docs/ssh.md](docs/ssh.md): the SSH broker.
 - [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git, `gh`,
   package installs, ports, editors — and how to tell what is blocking you.
