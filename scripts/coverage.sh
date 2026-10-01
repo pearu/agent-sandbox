@@ -7,6 +7,12 @@
 #   scripts/coverage.sh engine-unit         the unit suites under kcov
 #   scripts/coverage.sh engine-integration  the integration suites under kcov
 #   scripts/coverage.sh engine-merge        merge what the two collected, and report
+#
+# COVERAGE_SHARD=K/N runs only shard K of N of a stage's files (tests/shard.sh), into
+# engine-runs/<stage>-K, for a CI matrix: each shard merges its own runs (engine-merge)
+# and passes on that merged directory, a few MB rather than a GB of per-launch runs, and
+# the final merge takes every directory under engine-parts/ as well. Merging merges
+# gives the same coverage as one merge (measured: 77.41% either way).
 #   scripts/coverage.sh addon               just the addon
 #
 # Each stage is its own command so that CI can time it as a step. The suites run as one
@@ -119,7 +125,17 @@ need_kcov() {
 run_engine_suite() {
   local stage="$1" dir="$2"
   need_kcov || return 2
-  local covdir="$OUT/engine-runs/$stage"
+  local covdir="$OUT/engine-runs/$stage" k
+  local -a files=("$dir"/*.bats)
+  if [[ -n "${COVERAGE_SHARD:-}" ]]; then
+    k="${COVERAGE_SHARD%/*}"
+    covdir="$covdir-$k"
+    mapfile -t files < <(tests/shard.sh "$COVERAGE_SHARD" "${files[@]}")
+    ((${#files[@]})) || {
+      echo "== $stage: shard $COVERAGE_SHARD has no files =="
+      return 0
+    }
+  fi
   rm -rf "$covdir"
   mkdir -p "$covdir"
   # env -i in the test harness severs kcov's collection when kcov is outside it, so
@@ -131,7 +147,7 @@ run_engine_suite() {
   kcov_bin="$(command -v kcov)"
   AGENT_SANDBOX_KCOV="$kcov_bin" AGENT_SANDBOX_KCOV_DIR="$covdir" \
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-${CONDA_PREFIX:+$CONDA_PREFIX/lib}}" \
-    timed_bats "$stage" "$dir"/*.bats || true
+    timed_bats "$stage" "${files[@]}" || true
   shopt -s nullglob
   local runs=("$covdir"/r.*)
   shopt -u nullglob
@@ -141,7 +157,7 @@ run_engine_suite() {
 run_engine_merge() {
   need_kcov || return 2
   shopt -s nullglob
-  local runs=("$OUT"/engine-runs/*/r.*)
+  local runs=("$OUT"/engine-runs/*/r.* "$OUT"/engine-parts/*/)
   shopt -u nullglob
   echo "== engine (kcov) =="
   if ((${#runs[@]} == 0)); then

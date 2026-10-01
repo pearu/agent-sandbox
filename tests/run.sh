@@ -13,6 +13,9 @@
 # whose tests must not run beside each other says so in its setup_file
 # (BATS_NO_PARALLELIZE_WITHIN_FILE=true), and still runs beside other files. e2e and
 # live stay serial: e2e shares one install and port 8888, live your credentials.
+#
+# AGENT_SANDBOX_TEST_SHARD=K/N runs only shard K of N of the unit or integration suite's
+# files (tests/shard.sh), for a CI matrix.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 command -v bats >/dev/null || {
@@ -23,7 +26,18 @@ suite="${1:-default}"
 [[ $# -gt 0 ]] && shift
 case "$suite" in
   default) set -- tests/unit tests/integration "$@" ;;
-  unit | integration) set -- "tests/$suite" "$@" ;;
+  unit | integration)
+    if [[ -n "${AGENT_SANDBOX_TEST_SHARD:-}" ]]; then
+      mapfile -t shard < <(tests/shard.sh "$AGENT_SANDBOX_TEST_SHARD" "tests/$suite"/*.bats)
+      ((${#shard[@]})) || {
+        echo "tests/run.sh: shard $AGENT_SANDBOX_TEST_SHARD of tests/$suite has no files"
+        exit 0
+      }
+      set -- "${shard[@]}" "$@"
+    else
+      set -- "tests/$suite" "$@"
+    fi
+    ;;
   live)
     [[ "${AGENT_SANDBOX_LIVE:-0}" == 1 ]] || {
       echo "tests/run.sh: live tests need AGENT_SANDBOX_LIVE=1 (they use the real network and your credentials)" >&2

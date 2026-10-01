@@ -20,10 +20,9 @@ env:
   COVERAGE_JOBS: 4
 
 jobs:
-  # Lint, format, the Python components, install.sh in sync with its sources,
-  # the installer's dry run, and the unit suites -- exactly scripts/check.sh,
-  # which is what a contributor runs locally. No bwrap here, so the integration
-  # suites it also invokes skip themselves; the integration job runs them for real.
+  # Lint, format, the Python components, install.sh in sync with its sources, the
+  # installer's dry run -- scripts/check.sh, which is what a contributor runs locally,
+  # without its test suites: CI runs those as the shards below.
   check:
     runs-on: ubuntu-24.04
     steps:
@@ -32,8 +31,30 @@ jobs:
         with:
           environment-file: environment.yml
           cache-environment: true
-      - name: scripts/check.sh (lint, shfmt, bundle-sync, dry-run, unit tests)
+      - name: scripts/check.sh (lint, shfmt, bundle-sync, dry-run)
+        env:
+          AGENT_SANDBOX_CHECK_TESTS: 0
         run: micromamba run -n agent-sandbox scripts/check.sh
+
+  # The unit suites, as shards of about a minute each (tests/shard.sh deals the files out
+  # by their number of tests; within a shard they run in parallel).
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    name: unit (${{ matrix.shard }}/4)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Unit suites, shard ${{ matrix.shard }}/4
+        env:
+          AGENT_SANDBOX_TEST_SHARD: ${{ matrix.shard }}/4
+        run: micromamba run -n agent-sandbox tests/run.sh unit
 
   # The real bwrap: what the agent sees, the CA bundle, conda passthrough, the
   # SSH broker, on Ubuntu 22.04, 24.04 and 26.04. GitHub's kernels restrict unprivileged user namespaces on 24.04+;
@@ -163,15 +184,31 @@ jobs:
         if: always()
         run: systemctl --user stop agent-sandbox-mitmproxy.service || true
 
-  # Line coverage: kcov (engine) + coverage.py (addon), uploaded to Codecov for
-  # the README badge. kcov is built from source with conda-forge deps (it is not
-  # packaged); the engine's integration suites need bwrap/pasta. Needs the
-  # CODECOV_TOKEN repo secret; forks (no secret) skip the upload, not the run.
+  # Line coverage: kcov (engine) + coverage.py (addon), uploaded to Codecov for the README
+  # badge. The engine's stages run as shards (COVERAGE_SHARD, tests/shard.sh); each merges
+  # its own kcov runs and passes on that merged directory -- a few MB, where the per-launch
+  # runs are over a GB -- and coverage-merge merges the merges, which gives the same
+  # coverage as one merge. kcov is built from source with conda-forge deps (it is not
+  # packaged), into an environment cached under its own key so that a later run finds it
+  # built. The integration stage needs bwrap/pasta. Needs the CODECOV_TOKEN repo secret;
+  # forks (no secret) skip the upload, not the run.
   coverage:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { stage: engine-unit, k: 1, n: 4 }
+          - { stage: engine-unit, k: 2, n: 4 }
+          - { stage: engine-unit, k: 3, n: 4 }
+          - { stage: engine-unit, k: 4, n: 4 }
+          - { stage: engine-integration, k: 1, n: 2 }
+          - { stage: engine-integration, k: 2, n: 2 }
+    name: coverage (${{ matrix.stage }} ${{ matrix.k }}/${{ matrix.n }})
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install bubblewrap, nftables, passt; enable user namespaces
+        if: matrix.stage == 'engine-integration'
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap nftables passt
@@ -182,19 +219,42 @@ jobs:
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-file: environment.yml
+          create-args: cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
           cache-environment: true
-      # One step per stage, so the Actions UI times each: the step summary gets each
-      # stage's slowest files and tests (scripts/coverage.sh times every bats file).
-      - name: Build kcov (conda-forge deps)
-        run: |
-          micromamba install -y -n agent-sandbox -c conda-forge \
-            cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
-          micromamba run -n agent-sandbox scripts/install-kcov.sh
-      - name: "Coverage: engine, unit suites"
-        run: micromamba run -n agent-sandbox scripts/coverage.sh engine-unit | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: "Coverage: engine, integration suites"
-        run: micromamba run -n agent-sandbox scripts/coverage.sh engine-integration | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: "Coverage: merge the engine's runs"
+          cache-environment-key: kcov-v1
+      - name: Build kcov (already there when the environment came from the cache)
+        run: micromamba run -n agent-sandbox scripts/install-kcov.sh
+      - name: "Coverage: ${{ matrix.stage }}, shard ${{ matrix.k }}/${{ matrix.n }}"
+        env:
+          COVERAGE_SHARD: ${{ matrix.k }}/${{ matrix.n }}
+        run: micromamba run -n agent-sandbox scripts/coverage.sh ${{ matrix.stage }} | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Merge this shard's runs
+        run: micromamba run -n agent-sandbox scripts/coverage.sh engine-merge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cov-${{ matrix.stage }}-${{ matrix.k }}
+          path: coverage-out/engine
+          retention-days: 1
+          if-no-files-found: ignore
+
+  coverage-merge:
+    needs: coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          create-args: cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
+          cache-environment: true
+          cache-environment-key: kcov-v1
+      - name: Build kcov (already there when the environment came from the cache)
+        run: micromamba run -n agent-sandbox scripts/install-kcov.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cov-*
+          path: coverage-out/engine-parts
+      - name: "Coverage: merge the shards"
         run: micromamba run -n agent-sandbox scripts/coverage.sh engine-merge | tee -a "$GITHUB_STEP_SUMMARY"
       - name: "Coverage: addon"
         run: micromamba run -n agent-sandbox scripts/coverage.sh addon | tee -a "$GITHUB_STEP_SUMMARY"
