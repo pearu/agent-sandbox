@@ -81,14 +81,17 @@ single-valued one.
 | `[agent] verbs`, `verbs-observe`, `daemon`, `status` | `profile_verbs`, `profile_verbs_observe`, `profile_daemon_argv`, `profile_status_argv` (space-separated words) |
 | `[agent] command` | `profile_command` |
 | `[agent] base` | the agent's state directory (`~/.claude`), bound **read-write** before anything else, so every channel and declaration layers on it; created when absent; checked as any read-write bind is (never `/`, `$HOME` or a parent of it, nothing protected), and resolved again at bind time (#175) |
+| `[agent] base-env` | the variable the agent itself reads to move its state (claude: `CLAUDE_CONFIG_DIR`); set and non-empty in the launching shell, it wins over `base` (#190). `{base}` in the dot-file is the base so resolved |
 | `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch; the claude profile's `profile_isolate` turns them into tmpfs mounts |
-| `[env]` | `NAME`: `profile_env_pass`; `NAME = VALUE`: `profile_env_set` (a leading `~` is `$HOME`); `-NAME`: `profile_env_refuse` |
+| `[env]` | `NAME`: `profile_env_pass`; `NAME = VALUE`: `profile_env_set` (a leading `~` is `$HOME`, and `{base}` expands); `-NAME`: `profile_env_refuse` |
 | `[allow]` | hosts opened for every launch of the profile, as its session allowlist beside `--allow`'s (proxy and strict) |
+| `[channel:<name>]` | `profile_channels`, one section per channel and a path per line, a trailing `/` for a directory; a path's value sets `outside:SRC` (`profile_channel_sources`), `filter:FN` (`profile_channel_filters`) and `vendor:PREFIX` (`profile_channel_vendor`). `{base}` and `{slug}` expand (#190) |
 
 `[agent]` is the profile's own section. In a project's file the same section is
 named after the profile (`[claude]`), and only the keys the profile lists in
-`profile_dotfile_keys` are read there; the review warns of the rest. Other sections
-in a profile's dot-file are not read yet: the launch says so.
+`profile_dotfile_keys` are read there; the review warns of the rest, and of a
+`[channel:<name>]`, which is a profile's. Other sections in a profile's dot-file are not
+read yet: the launch says so.
 
 ## Adding a profile
 

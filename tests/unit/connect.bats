@@ -816,6 +816,89 @@ seeded_run_scoped() { # MODE
   [[ "$output" == *"needs a profile that defines profile_slug"* ]]
 }
 
+@test "[channel:<name>]: a profile's channel table, with {base}, kinds by the slash, outside:/filter:/vendor: (#190)" {
+  mkdir -p "$H/profiles2/other" "$H/home/.other/stuff" "$H/home/src"
+  printf 'profile_command=true\nprofile_slug() { printf slug; }\n' >"$H/profiles2/other/profile.sh"
+  printf 'x\n' >"$H/home/src/conf.json"
+  cat >"$H/profiles2/other/agent-sandbox" <<'DF'
+[agent]
+base = ~/.other
+[channel:stuff]
+{base}/stuff/ = vendor:cache/
+{base}/conf.json = outside:~/src/conf.json
+{base}/by/{slug}/
+DF
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --connect 'stuff = read-only' --exec true
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$H/home/.other/stuff" "$H/home/.other/stuff"
+  argv_has --ro-bind "$H/home/src/conf.json" "$H/home/.other/conf.json" # its outside: source
+  # an unknown token, or a path not under {base}, ~ or /, refuses the launch
+  local bad
+  for bad in '{base}/a = sideways:x' 'relative/path'; do
+    printf '[agent]\nbase = ~/.other\n[channel:stuff]\n%s\n' "$bad" >"$H/profiles2/other/agent-sandbox"
+    run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"[channel:stuff]"* ]]
+  done
+  # a project's [channel:...] is not a project's to declare
+  printf '[channel:mine]\n~/x/\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[channel:mine] is a profile's channel table, not a project's"* ]]
+}
+
+@test "the base follows CLAUDE_CONFIG_DIR: bound there, pinned there, its channels there, the config file its own (#190)" {
+  local alt="$H/home/alt"
+  mkdir -p "$alt"
+  printf '{"alt":1}' >"$alt/.claude.json"
+  TEST_PRESET=isolated run_engine CLAUDE_CONFIG_DIR="$alt" -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$alt" "$alt"
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$alt" ]
+  grep -qx "$alt/CLAUDE.md" "$H/argv" # a channel path, under the moved base
+  run ! grep -qx "$H/home/.claude" "$H/argv"
+  # the config file: with CLAUDE_CONFIG_DIR set, Claude Code keeps it in the base, so its
+  # seed comes from there, not from ~/.claude.json
+  printf '{"home":1}' >"$H/home/.claude.json"
+  TEST_PRESET=inherit run_engine CLAUDE_CONFIG_DIR="$alt" -- asb claude --version
+  [ "$status" -eq 0 ]
+  local store
+  store="$(grep -B1 -x "$alt/.claude.json" "$H/argv" | head -1)"
+  grep -q '"alt"' "$store"
+  run ! grep -q '"home"' "$store"
+}
+
+@test "a running role keeps its base: a join whose CLAUDE_CONFIG_DIR moves it is refused; one that names none joins (#190)" {
+  mkdir -p "$H/home/alt"
+  engine_bg -- asb claude --version # the role, running on ~/.claude
+  run_engine CLAUDE_CONFIG_DIR="$H/home/alt" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"running with base = $H/home/.claude"*"CLAUDE_CONFIG_DIR asks for '$H/home/alt'"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine -- asb claude --version # names no base: joins the running one
+  [ "$status" -eq 0 ]
+  [ ! -s "$H/argv" ]
+  release_bg
+}
+
+@test "the config store is valid JSON even with no config file to seed from, in every preset and base (#190)" {
+  # Measured on Claude Code 2.1.285: a 0-byte .claude.json is "corrupted" and the session
+  # fails; {} and no file at all both run. The seeding modes' filter turns an absent
+  # source into JSON, and `own` starts from {}.
+  local alt="$H/home/alt" preset store
+  mkdir -p "$alt"
+  rm -f "$H/home/.claude.json"
+  for preset in inherit isolated shared; do
+    TEST_PRESET=$preset run_engine CLAUDE_CONFIG_DIR="$alt" -- asb claude --version
+    [ "$status" -eq 0 ]
+    store="$(grep -B1 -x "$alt/.claude.json" "$H/argv" | head -1)"
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$store"
+    TEST_PRESET=$preset run_engine -- asb claude --version
+    [ "$status" -eq 0 ]
+    store="$(grep -B1 -x "$H/home/.claude/.claude.json" "$H/argv" | head -1)"
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$store"
+  done
+}
+
 @test "a declared path can be run-scoped too" {
   mkdir -p "$PROJ/scratch"
   run_engine -- asb --connect './scratch/=own run-scoped' claude --version

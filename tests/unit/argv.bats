@@ -114,13 +114,14 @@ setup() {
   # names the profile pins are not forwardable: a later --setenv of the same
   # name would win over the profile's, and CLAUDE_CODE_PROJECT_DIR_NAME would
   # move memory and transcripts out from under the scoping. Said, not dropped.
+  # (CLAUDE_CONFIG_DIR set in the shell also moves the base, #190: the pin carries it)
   run_engine AGENT_SANDBOX_FORWARD="CLAUDE_CONFIG_DIR CLAUDE_CODE_PROJECT_DIR_NAME DISABLE_AUTOUPDATER OK_VAR" \
-    CLAUDE_CONFIG_DIR=/elsewhere CLAUDE_CODE_PROJECT_DIR_NAME=one DISABLE_AUTOUPDATER=0 OK_VAR=1 -- asb claude --version
+    CLAUDE_CONFIG_DIR="$H/home/elsewhere" CLAUDE_CODE_PROJECT_DIR_NAME=one DISABLE_AUTOUPDATER=0 OK_VAR=1 -- asb claude --version
   [ "$status" -eq 0 ]
+  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/elsewhere" ]
   [[ "$output" == *"not forwarding CLAUDE_CONFIG_DIR"* ]]
   [[ "$output" == *"not forwarding CLAUDE_CODE_PROJECT_DIR_NAME"* ]]
   [[ "$output" == *"not forwarding DISABLE_AUTOUPDATER"* ]]
-  [ "$(setenv_value CLAUDE_CONFIG_DIR)" = "$H/home/.claude" ]
   [ "$(setenv_value DISABLE_AUTOUPDATER)" = "1" ]
   [ "$(setenv_value OK_VAR)" = "1" ]
   [ "$(grep -c '^CLAUDE_CONFIG_DIR$' "$H/argv")" -eq 1 ]

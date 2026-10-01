@@ -11,9 +11,13 @@
 # profile.sh lists in profile_dotfile_keys (hide); the rest are the profile's.
 
 [agent]
-# Claude Code keeps its state in ~/.claude: sessions, OAuth/API tokens, settings. It is
-# bound read-write before anything else, and every channel below layers on it.
+# Claude Code keeps its state in ~/.claude: sessions, OAuth/API tokens, settings -- or
+# where CLAUDE_CONFIG_DIR says (vendor docs: "To keep the home-directory files somewhere
+# else, set CLAUDE_CONFIG_DIR"). Set in the launching shell, it wins, so the sandbox is
+# built on the state Claude Code really uses. That is {base} below; it is bound
+# read-write before anything else, and every channel layers on it.
 base = ~/.claude
+base-env = CLAUDE_CONFIG_DIR
 
 # The verbs that observe or manage the background service (#123). Its daemon runs
 # inside the role's launch, so these join that launch -- and never start one: the
@@ -69,7 +73,7 @@ DISABLE_AUTOUPDATER = 1
 # keeps its config file at ~/.claude/.claude.json (measured: with the variable set,
 # ~/.claude.json is never opened), which is where the config channel puts it. HOME is
 # the same path inside and out, so the value is right on both sides.
-CLAUDE_CONFIG_DIR = ~/.claude
+CLAUDE_CONFIG_DIR = {base}
 # With CLAUDE_CONFIG_DIR set, Claude Code honours CLAUDE_CODE_PROJECT_DIR_NAME, which
 # stores every session's transcripts and memory under one name -- out from under the
 # per-project scoping, silently. Never forwarded.
@@ -88,3 +92,88 @@ api.anthropic.com
 platform.claude.com
 statsigapi.net
 .statsig.com
+
+# ----- the channel table -------------------------------------------------------------
+# A CHANNEL is named by what it carries; a section says where THIS agent keeps it, a path
+# per line. The engine owns the modes and the mechanism, the profile owns the paths. A
+# trailing `/` is a directory, else a file (#189). A value says what the table says
+# about that path: `outside:SRC` -- the path it follows outside; `filter:FN` -- the
+# profile function that writes the seeding modes' view of it; `vendor:PREFIX` -- paths
+# under it the agent itself rewrites on both sides, which a conflict warning does not
+# name.
+#
+# ONLY THE CHANNELS THAT ARE PLAIN PATHS are here. identity, project, memory and tools
+# each have machinery of their own (the credential bind, the working tree, memory
+# scoping); folding them onto connections is a separate step, per channel.
+
+[channel:instructions]
+{base}/CLAUDE.md
+{base}/rules/
+
+[channel:settings]
+{base}/settings.json
+{base}/output-styles/
+
+# The server skills and plugins Claude Code syncs itself, inside a sandbox and natively
+# alike: their bookkeeping changes on both sides at every sync, which is not an edit of
+# yours for a conflict warning to report.
+[channel:skills]
+{base}/skills/ = vendor:synced/
+{base}/commands/
+
+[channel:agents]
+{base}/agents/
+
+[channel:workflows]
+{base}/workflows/
+
+[channel:plugins]
+{base}/plugins/ = vendor:synced/
+
+# THE CONFIG FILE IS A CHANNEL (#119), one file following its mode like any other. It
+# moves INSIDE the state directory: ~/.claude.json must be writable the way Claude Code
+# writes it -- a lock directory and a temp file beside it, then a rename over it
+# (measured, 2.1.274) -- and beside $HOME/.claude.json is the read-only $HOME tmpfs,
+# where every write was silently lost. Inside the base, with CLAUDE_CONFIG_DIR pointing
+# Claude Code there, the rename onto the bind fails (EBUSY) and Claude Code rewrites the
+# file in place, which reaches the bound file. Its source is the native ~/.claude.json;
+# with CLAUDE_CONFIG_DIR set, native Claude Code keeps it in the base already, and the
+# profile drops this relocation (code: it depends on the launching environment). The
+# seeding modes read a FILTERED view -- every top-level key and only this project's
+# entry, the fix for leak study row 10 -- and after that the file is Claude Code's.
+[channel:config]
+{base}/.claude.json = outside:~/.claude.json filter:_claude_config_filter
+
+# TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
+# and prompt history are its own, and so are the logs your hooks write. The
+# conversations' directory depends on the project ({slug}, #176). `transcripts =
+# seed-only` seeds them once, and seeds the prompt history FILTERED to this project's
+# records.
+[channel:transcripts]
+{base}/file-history/
+{base}/plans/
+{base}/history.jsonl = filter:_claude_history_view
+{base}/projects/{slug}/
+
+[channel:logs]
+{base}/responses.log
+{base}/alerts.log
+
+# ARTEFACTS ARE A CHANNEL: what sessions leave for each other to pick up -- downloaded
+# documents, uploaded files, task lists (#52, #76, #78; leak study row 18).
+[channel:artefacts]
+{base}/downloads/
+{base}/uploads/
+{base}/tasks/
+
+# POLICY AND CHANGELOG ARE CHANNELS (#109): Claude Code's caches of server-managed
+# settings and policy flags, and of the vendor changelog -- each was a cross-project
+# write channel into what the user and the agent take as Anthropic's. The stamp moves
+# with its policy file: a private cache beside a shared stamp would split the pair.
+[channel:policy]
+{base}/remote-settings.json
+{base}/policy-limits.json
+{base}/policy-limits.json.stamp.json
+
+[channel:changelog]
+{base}/cache/changelog.md

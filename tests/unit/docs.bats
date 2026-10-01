@@ -112,7 +112,8 @@ fail_missing() {
   col="$(readme_dotfile_col)"
   enough readme_dotfile_col 5 <<<"$col"
   fail_missing ".agent-sandbox sections" "documented in README's dot-file column" < <(
-    for s in $(code_sections); do grep -qF -- "[$s]" <<<"$col" || echo "[$s]"; done
+    # a section always written with a name, [channel:<name>], is documented that way
+    for s in $(code_sections); do grep -qF -e "[$s]" -e "[$s:" <<<"$col" || echo "[$s]"; done
   )
   # Every section that takes `key = value` lines, derived rather than listed, so
   # a new one is not silently exempt from the key check.

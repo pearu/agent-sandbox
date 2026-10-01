@@ -1934,6 +1934,12 @@ _as_keeper_policy() {
       _kp "connect:$k" "${_connect_mode[$k]}${_connect_scope[$k]:+ ${_connect_scope[$k]}}" "$v"
     fi
   done
+  # The base (#190): what the keeper was built on. A join from a shell whose
+  # [agent] base-env variable moves it must find the same base, or a session would run
+  # on a state directory other than the one its shell names.
+  if [[ -n "$profile_base" ]] && { ((all)) || [[ -n "$profile_base_from" ]]; }; then
+    _kp base "$profile_base" "${profile_base_from:-[agent] base}"
+  fi
   if ((all)) || [[ -n "$_overlay_flag" || -n "${AGENT_SANDBOX_OVERLAY:-}" ]]; then
     _kp overlay "$_overlay_mode" "$([[ -n "$_overlay_flag" ]] && echo --overlay || echo AGENT_SANDBOX_OVERLAY)"
   fi
@@ -3067,9 +3073,9 @@ _as_trust_show() {
 # ships with the engine and is read every launch, not reviewed: what it gets wrong is
 # said every time, and nothing else in it is read yet.
 _as_profile_dotfile() {
-  local file="$1" pname="$profile" kv k v h line
+  local file="$1" pname="$profile" kv k v h line base="" base_env="" from=""
   [[ -f "$file" ]] || return 0
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() words=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
@@ -3081,25 +3087,8 @@ _as_profile_dotfile() {
     read -r -a words <<<"$v"
     case "$k" in
       command) profile_command="$v" ;;
-      base)
-        # Checked as a read-write bind is, since that is what it becomes: never /, $HOME
-        # or a parent of it, nothing protected. Absolute or under `~`.
-        case "$v" in
-          \~ | \~/*) v="$HOME${v#\~}" ;;
-          /*) ;;
-          *)
-            _as_msg "profile '$pname': $file: [agent] base '$v' is relative; it is absolute or under '~'"
-            return 1
-            ;;
-        esac
-        v="$(realpath -m -s -- "$v")"
-        local _prot_what _prot_path _prot_how
-        if [[ "$v" == / || "$v" == "$HOME" || "$HOME" == "$v"/* ]] || _as_path_protected "$v" read-write; then
-          _as_msg "profile '$pname': $file: refusing [agent] base '$v' (/, \$HOME, a parent of it, or a protected path)"
-          return 1
-        fi
-        profile_base="$v"
-        ;;
+      base) base="$v" ;;
+      base-env) base_env="$v" ;;
       verbs) profile_verbs+=(${words[@]+"${words[@]}"}) ;;
       verbs-observe) profile_verbs_observe+=(${words[@]+"${words[@]}"}) ;;
       daemon) profile_daemon_argv+=(${words[@]+"${words[@]}"}) ;;
@@ -3108,14 +3097,95 @@ _as_profile_dotfile() {
       *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
     esac
   done
+  # THE BASE (#175, #190): the agent's state directory. `base-env` names the variable the
+  # agent itself reads to move it (claude: CLAUDE_CONFIG_DIR, per the vendor docs); set
+  # and non-empty in the launching shell, it wins over `base`, so a sandbox is built on
+  # the state the agent really uses. Checked as a read-write bind is, since that is what
+  # it becomes: never /, $HOME or a parent of it, nothing protected; absolute or under ~.
+  if [[ -n "$base_env" ]]; then
+    [[ "$base_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+      _as_msg "profile '$pname': $file: [agent] base-env '$base_env' is not a variable name"
+      return 1
+    }
+    [[ -n "${!base_env:-}" ]] && base="${!base_env}" from=" (from $base_env)" profile_base_from="$base_env"
+  fi
+  if [[ -n "$base" ]]; then
+    case "$base" in
+      \~ | \~/*) base="$HOME${base#\~}" ;;
+      /*) ;;
+      *)
+        _as_msg "profile '$pname': $file: [agent] base '$base'$from is relative; it is absolute or under '~'"
+        return 1
+        ;;
+    esac
+    base="$(realpath -m -s -- "$base")"
+    local _prot_what _prot_path _prot_how
+    if [[ "$base" == / || "$base" == "$HOME" || "$HOME" == "$base"/* ]] || _as_path_protected "$base" read-write; then
+      _as_msg "profile '$pname': $file: refusing [agent] base '$base'$from (/, \$HOME, a parent of it, or a protected path)"
+      return 1
+    fi
+    profile_base="$base"
+  fi
   for line in ${_df_forward[@]+"${_df_forward[@]}"}; do
     read -r -a words <<<"$line"
     profile_env_pass+=(${words[@]+"${words[@]}"})
   done
+  local _slug_out
   for kv in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
     v="${kv#*=}"
     [[ "$v" == \~ || "$v" == \~/* ]] && v="$HOME${v#\~}"
-    profile_env_set+=("${kv%%=*}=$v")
+    _as_slug_expand "$v" || return 1
+    profile_env_set+=("${kv%%=*}=$_slug_out")
+  done
+  # THE CHANNEL TABLE (#190): one [channel:<name>] section per channel, a path per line.
+  # The kind is the spelling (#189): a trailing `/` is a directory, else a file. A value
+  # says what the table says about that path: `outside:SRC` (the path it follows outside;
+  # profile_channel_sources), `filter:FN` (the profile function that writes the seeding
+  # modes' view of it; profile_channel_filters), `vendor:PREFIX` (paths under it the agent
+  # itself rewrites, which a conflict warning does not name; profile_channel_vendor).
+  # {base} and {slug} expand as everywhere.
+  local -A _ch_paths=() _ch_vendor=()
+  local -a _ch_order=()
+  local cl name key toks kind t src
+  for cl in ${_df_channel_lines[@]+"${_df_channel_lines[@]}"}; do
+    name="${cl%%$'\t'*}" line="${cl#*$'\t'}"
+    key="${line%%=*}" toks=""
+    [[ "$line" == *=* ]] && toks="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    kind="file"
+    [[ "$key" == */ ]] && kind="dir" key="${key%/}"
+    _as_slug_expand "$key" || return 1
+    key="$_slug_out"
+    [[ "$key" == \~/* ]] && key="$HOME${key#\~}"
+    [[ "$key" == /* ]] || {
+      _as_msg "profile '$pname': $file: [channel:$name] '$key' is not absolute (write it under {base}, ~ or /)"
+      return 1
+    }
+    key="$(realpath -m -s -- "$key")"
+    [[ -n "${_ch_paths[$name]+x}" ]] || _ch_order+=("$name")
+    _ch_paths[$name]+=$'\t'"$kind:$key"
+    for t in $toks; do
+      case "$t" in
+        outside:?*)
+          src="${t#outside:}"
+          _as_slug_expand "$src" || return 1
+          src="$_slug_out"
+          [[ "$src" == \~ || "$src" == \~/* ]] && src="$HOME${src#\~}"
+          profile_channel_sources+=("$key"$'\t'"$src")
+          ;;
+        filter:?*) profile_channel_filters+=("$key"$'\t'"${t#filter:}") ;;
+        vendor:?*) _ch_vendor[$name]+=" ${t#vendor:}" ;;
+        *)
+          _as_msg "profile '$pname': $file: [channel:$name] '$t' is not outside:, filter: or vendor:"
+          return 1
+          ;;
+      esac
+    done
+  done
+  for name in ${_ch_order[@]+"${_ch_order[@]}"}; do
+    profile_channels+=("$name${_ch_paths[$name]}")
+    [[ -n "${_ch_vendor[$name]:-}" ]] && profile_channel_vendor+=("$name"$'\t'"${_ch_vendor[$name]# }")
   done
   profile_env_refuse+=(${_df_env_refuse[@]+"${_df_env_refuse[@]}"})
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
@@ -3126,7 +3196,7 @@ _as_profile_dotfile() {
     fi
   done
   if ((${#_df_connect[@]} + _df_share_set)) || [[ -n "$_df_net_mode$_df_seccomp_mode$_df_briefing_mode$_df_overlay_mode$_df_preset$_df_role$_df_conda_name" ]]; then
-    _as_msg "profile '$pname': $file: only [agent], [env] and [allow] are read from a profile's dot-file so far; ignoring the rest"
+    _as_msg "profile '$pname': $file: only [agent], [env], [allow] and [channel:<name>] are read from a profile's dot-file so far; ignoring the rest"
   fi
   return 0
 }
@@ -3139,6 +3209,14 @@ _as_profile_dotfile() {
 _as_slug_expand() {
   local s="$1" slug
   _slug_out="$s"
+  # {base} (#190): the profile's resolved base, its state directory.
+  if [[ "$s" == *"{base}"* ]]; then
+    [[ -n "${profile_base:-}" ]] || {
+      _as_msg "'$s': {base} needs a profile with an [agent] base; profile '${profile:-}' has none"
+      return 1
+    }
+    s="${s//\{base\}/$profile_base}"
+  fi
   if [[ "$s" == *"{slug}"* ]]; then
     declare -F profile_slug >/dev/null || {
       _as_msg "'$s': {slug} needs a profile that defines profile_slug; profile '$profile' does not"
@@ -3151,10 +3229,20 @@ _as_slug_expand() {
     s="${s//\{slug\}/$slug}"
   fi
   if [[ "$s" =~ \{[a-z][a-z0-9_:-]*\} ]]; then
-    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {slug} is known)"
+    _as_msg "'$1': unknown placeholder ${BASH_REMATCH[0]} (only {base} and {slug} are known)"
     return 1
   fi
   _slug_out="$s"
+}
+
+# _as_profile_facts_dotfile NAME FILE -- for _as_profile_facts, in its subshell: read the
+# profile's dot-file as a launch does, since its channel table is there (#190).
+_as_profile_facts_dotfile() {
+  local profile="$1" profile_base=""
+  local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
+  local -a profile_hide=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
+  local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
 }
 
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
@@ -3170,6 +3258,7 @@ _as_profile_facts() {
     _as_msg() { :; }
     # shellcheck disable=SC1090
     source "$1" >/dev/null 2>&1 || exit 0
+    _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
     for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done
     for l in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do printf 'key\t%s\t%s\n' "$name" "$l"; done
   )
@@ -3190,7 +3279,7 @@ _as_profile_facts() {
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
 _as_trust_notes() {
   local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
@@ -3209,6 +3298,12 @@ _as_trust_notes() {
   done
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
+  done
+  local -A _seen_ch=()
+  for h in ${_df_channel_lines[@]+"${_df_channel_lines[@]}"}; do
+    [[ -n "${_seen_ch[${h%%$'\t'*}]:-}" ]] && continue
+    _seen_ch[${h%%$'\t'*}]=1
+    _as_msg ".agent-sandbox: [channel:${h%%$'\t'*}] is a profile's channel table, not a project's: ignoring (a project moves a channel with [connect])"
   done
   case "$_df_net_mode" in
     "" | proxy | strict | none) ;;
@@ -3385,6 +3480,15 @@ _as_dotfile_parse() {
         section="${section%%:*}"
         case "$section" in
           sandbox | connect) _df_role_globs+=("$sglob") ;;
+          channel)
+            # [channel:<name>] is not a role suffix but a channel's name (#190): a
+            # profile's dot-file declares its channel table this way.
+            [[ "$sglob" =~ ^[a-z][a-z0-9_-]*$ ]] || {
+              _as_msg ".agent-sandbox: [channel:$sglob] -- a channel name is a lowercase word; ignoring the section"
+              section="-skip-"
+              continue
+            }
+            ;;
           *)
             _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix yet (only [sandbox] and [connect] do); ignoring the section"
             section="-skip-"
@@ -3395,6 +3499,12 @@ _as_dotfile_parse() {
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
         allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        channel)
+          [[ "$sglob" != "*" ]] || {
+            _as_msg ".agent-sandbox: [channel] needs a name, [channel:<name>]; ignoring the section"
+            section="-skip-"
+          }
+          ;;
         ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
@@ -3405,6 +3515,7 @@ _as_dotfile_parse() {
     fi
     case "$section" in
       -skip-) ;;
+      channel) _df_channel_lines+=("$sglob"$'\t'"$line") ;;
       allow) _df_allow+=("$line") ;;
       share-memory) _df_share+=("${line/#\~/$HOME}") ;;
       env)
@@ -4328,7 +4439,8 @@ agent_sandbox() (
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
   local -a profile_hide=() _profile_allow_hosts=()
-  local profile_base="" # [agent] base: the agent's state directory (#175)
+  local profile_base=""      # [agent] base: the agent's state directory (#175)
+  local profile_base_from="" # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
   local -a profile_tmpfs=() profile_rw_binds=() profile_ro_binds=() profile_late_rw_binds=()
@@ -4414,7 +4526,7 @@ agent_sandbox() (
   _proj="$(_as_project_dir)"
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=()
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
