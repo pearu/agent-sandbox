@@ -3424,6 +3424,8 @@ _as_trust_show() {
 #                      before anything else and created when absent (#175)
 #   [agent] hide    -- profile_hide: paths under the agent's state directory blanked
 #                      every launch (_as_hide_spec)
+#   [agent] visible -- profile_visible: paths under it deliberately left native, so that
+#                      `--check` does not report them as unclassified (#82)
 #   [env]           -- NAME: profile_env_pass; NAME = VALUE: profile_env_set (a
 #                      leading `~` is $HOME); -NAME: profile_env_refuse (#177)
 #   [allow]         -- _profile_allow_hosts: this launch's session allowlist
@@ -3452,6 +3454,7 @@ _as_profile_dotfile() {
       daemon) profile_daemon_argv+=(${words[@]+"${words[@]}"}) ;;
       status) profile_status_argv+=(${words[@]+"${words[@]}"}) ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
+      visible) profile_visible+=(${words[@]+"${words[@]}"}) ;;
       *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
     esac
   done
@@ -3678,7 +3681,7 @@ _as_slug_expand() {
 _as_profile_facts_dotfile() {
   local profile="$1" profile_base="" profile_base_env="" profile_home="${2%/*}"
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
-  local -a profile_hide=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
+  local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
@@ -4259,7 +4262,58 @@ _as_check_plan() {
   } >&2
   _as_check_noeffect
   _as_check_reach
+  _as_check_unclassified
   _as_check_binds
+}
+
+# _as_check_unclassified -- what is in the agent's base and the profile has no word for
+# (#82): no channel path, `hide` line (the profile's or this project's) or `visible`
+# line covers it. Such a path is the native one, read-write, and every project's -- the
+# default for an unknown path is exposed, and what the agent adds is unknown until
+# someone looks. Listed as loudly as UNMEASURED, so it is decided rather than missed.
+# An entry a channel covers only part of is named with what it covers.
+_as_check_unclassified() {
+  [[ -n "${profile_base:-}" && -d "$profile_base" ]] || return 0
+  local e name line entry cpath h kv covered part
+  local -a rows=() known=()
+  # shellcheck disable=SC2031 # the launch's own profile_channels
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a _f <<<"$line"
+    for entry in "${_f[@]:1}"; do known+=("${entry#*:}"); done
+  done
+  for h in ${profile_hide[@]+"${profile_hide[@]}"} ${profile_visible[@]+"${profile_visible[@]}"}; do
+    known+=("$profile_base/${h%/}")
+  done
+  for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+    [[ "${kv%%=*}" == hide ]] || continue
+    # shellcheck disable=SC2086 # a space-separated list
+    for h in ${kv#*=}; do known+=("$profile_base/${h%/}"); done
+  done
+  for e in "$profile_base"/* "$profile_base"/.[!.]* "$profile_base"/..?*; do
+    [[ -e "$e" || -L "$e" ]] || continue
+    name="${e##*/}"
+    covered=0 part=""
+    for cpath in ${known[@]+"${known[@]}"}; do
+      if [[ "$cpath" == "$e" ]]; then
+        covered=1
+        break
+      fi
+      [[ "$cpath" == "$e"/* ]] && part="${part:+$part, }${cpath#"$e"/}"
+    done
+    ((covered)) && continue
+    if [[ -n "$part" ]]; then
+      rows+=("$name/ -- only $part is classified")
+    else
+      [[ -d "$e" && ! -L "$e" ]] && name="$name/"
+      rows+=("$name")
+    fi
+  done
+  ((${#rows[@]})) || return 0
+  {
+    printf '\nUnclassified in %s  (no channel, hide or visible line: the native path, read-write, and every project'"'"'s)\n' "$(_as_tilde "$profile_base")"
+    printf '  %s\n' "${rows[@]}"
+  } >&2
+  return 0
 }
 
 # _as_check_noeffect -- the file's lines that change nothing for this role, for `--check`:
@@ -5345,7 +5399,7 @@ agent_sandbox() (
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=()
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
-  local -a profile_hide=() _profile_allow_hosts=() profile_channel_start=() profile_channel_templates=()
+  local -a profile_hide=() profile_visible=() _profile_allow_hosts=() profile_channel_start=() profile_channel_templates=()
   local -a profile_channel_reach=() # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
   local profile_base=""             # [agent] base: the agent's state directory (#175)
   local profile_base_env=""         # [agent] base-env: the variable the agent reads it from

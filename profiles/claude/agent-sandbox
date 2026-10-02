@@ -68,6 +68,13 @@ hide = feedback-bundles
 # project's old images are in view (#77).
 hide = image-cache
 
+# Paths deliberately left NATIVE, so `asb --check` does not report them as unclassified
+# (#82): anything under the base that no channel, hide or visible line names is listed
+# there, since the default for an unknown path is exposed. .credentials.json is your
+# login, the identity a sandbox runs as; gh/ and ide/ exist to make Claude Code work
+# from inside a sandbox (above).
+visible = .credentials.json gh ide
+
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.
 [env]
