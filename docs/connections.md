@@ -66,7 +66,8 @@ No connection for a channel means `own`.
 | tools | user-level MCP servers | part of `config`: the `mcpServers` block of that file (#132) |
 | projects | every project's conversations and memory | `projects/` (#196) |
 | memory | per-project auto memory | `projects/<slug>/memory/` (#196); `agent-memory/` once its layout is known |
-| transcripts | conversations, plans, file history, prompt history | `projects/<slug>/` (memory inside it), `plans/`, `file-history/`, `history.jsonl` |
+| transcripts | conversations, plans, file history, prompt history, `/insights` data | `projects/<slug>/` (memory inside it), `plans/`, `file-history/`, `history.jsonl`, `usage-data/` (#79) |
+| agent-memory | subagents' persistent memory, per subagent | `agent-memory/` (#74) |
 | logs | what the user's own hooks write | `responses.log`, `alerts.log` |
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
 | policy | the caches of server-managed settings and policy flags, with the stamp | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109) |
@@ -250,7 +251,7 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 
 **This table is where the model is going, not what the engine does today.** The rows
 implemented are the channels the engine manages as connections — `instructions, settings,
-skills, agents, workflows, plugins`, `config`, `projects`, `memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` — and a preset moves
+skills, agents, workflows, plugins`, `config`, `projects`, `memory`, `agent-memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` — and a preset moves
 them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
 holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them;
 `projects` is `own` there for the same reason, since 0.2 scoped it. A share reads the other

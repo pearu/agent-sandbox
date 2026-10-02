@@ -145,3 +145,20 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
   TEST_PRESET=inherit run_engine -- asb --role b claude --version
   argv_has --bind "$H/home/.local/state/agent-sandbox/claude/$SLUG/b/transcripts/own/$(slugify "$CONV")" "$CONV"
 }
+
+@test "image-cache is blanked every launch; usage-data goes with the transcripts; agent-memory is the role's own under inherit (#77, #79, #74)" {
+  mkdir -p "$C/image-cache/s1" "$C/usage-data" "$C/agent-memory/helper"
+  TEST_PRESET=inherit run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --tmpfs "$C/image-cache"
+  argv_has --bind "$(store transcripts own "$C/usage-data")" "$C/usage-data"
+  argv_has --bind "$(store agent-memory own "$C/agent-memory")" "$C/agent-memory"
+}
+
+@test "under shared, agent-memory is yours, read-write, as memory is" {
+  mkdir -p "$C/agent-memory/helper"
+  TEST_PRESET=shared run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qF "$SBOX/agent-memory/own" "$H/argv"
+  argv_has --bind "$(store transcripts own "$C/usage-data")" "$C/usage-data" # transcripts: own under shared too
+}
