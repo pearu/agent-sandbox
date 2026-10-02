@@ -450,8 +450,27 @@ wait_gone() { # wait_gone PID -- up to 10 s
   wait "$BG_PID"
   [ "$(cat "$IWORK/a.saw")" = SRC ]
   [ "$(cat "$IWORK/a.f")" = from-a ] # A keeps its own write
-  [ "$(cat "$IWORK/a.g")" = G2 ]     # and reads through, live, what it has not written
+  # and reads through, live, what it has not written -- an overlay; where bubblewrap
+  # cannot mount one (< 0.11) it is a seeded copy per join, taken when A joined
+  local live=G1
+  [[ "$(bwrap --help 2>&1)" == *"--overlay "* ]] && live=G2
+  [ "$(cat "$IWORK/a.g")" = "$live" ]
   [ "$(cat "$IWORK/data/f")" = SRC ] # the source never written
+  [ ! -e "$SB/@join" ]
+}
+
+@test "copy-on-write join-scoped with overlays off: a seeded copy per join, the source as it was at the join (#153)" {
+  mkdir -p "$IWORK/data"
+  printf 'G1\n' >"$IWORK/data/g"
+  local js=(AGENT_SANDBOX_OVERLAY=off AGENT_SANDBOX_CONNECT='./data/=copy-on-write join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "echo from-a >data/g; $(hold a); cat data/g >a.g; ls data >a.ls"
+  printf 'G2\n' >"$IWORK/data/g"
+  printf 'NEW\n' >"$IWORK/data/h" # created after A joined
+  release a
+  wait "$BG_PID"
+  [ "$(cat "$IWORK/a.g")" = from-a ] # its own write
+  run ! grep -qx h "$IWORK/a.ls"     # a snapshot: nothing created later reaches it
+  [ "$(cat "$IWORK/data/g")" = G2 ]  # and the source is the host's alone
   [ ! -e "$SB/@join" ]
 }
 
