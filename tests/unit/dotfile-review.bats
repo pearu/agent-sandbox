@@ -340,3 +340,24 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
   [ "$status" -eq 0 ]
   [[ "$output" != *"Lines with no effect"* ]]
 }
+
+@test "--check lists what in the agent's base no channel, hide or visible line covers (#82)" {
+  local c="$H/home/.claude"
+  mkdir -p "$c/gh" "$c/debug" "$c/cache" "$c/newdir"
+  : >"$c/settings.json"
+  : >"$c/unknown.json"
+  : >"$c/cache/other"
+  : >"$c/.hidden-state"
+  printf '[claude]\nhide = newdir\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  local u
+  u="$(sed -n '/^Unclassified in/,/^$/p' <<<"$output")"
+  [[ "$u" == *"unknown.json"* ]]
+  [[ "$u" == *".hidden-state"* ]]
+  [[ "$u" == *"cache/ -- only changelog.md is classified"* ]]
+  [[ "$u" != *"gh/"* ]]           # visible
+  [[ "$u" != *"debug/"* ]]        # hidden by the profile
+  [[ "$u" != *"settings.json"* ]] # a channel
+  [[ "$u" != *"newdir"* ]]        # hidden by the project's [claude] hide
+}

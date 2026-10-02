@@ -62,7 +62,8 @@ names are gone; there are no aliases for removed names before 1.0.
 - **`asb --check`** (#210-#213): the dot-file's review without the question or the
   record -- usable in CI or a pre-commit hook -- then, for a role, the policy, what
   crosses the boundary ordered by how it reaches a session (`context`, `searched`,
-  `pointed`, or `UNMEASURED`), lines with no effect, and the mount plan.
+  `pointed`, or `UNMEASURED`), what in `~/.claude` no channel, `hide` or `visible` line
+  classifies (#82), lines with no effect, and the mount plan.
 - **The dot-file review is part of the launch** (#143): a new, changed or missing file is
   shown (a changed one as a diff) and asked about at a terminal, and refused without one.
   The file is read-only inside the sandbox.

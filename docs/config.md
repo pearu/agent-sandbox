@@ -366,6 +366,10 @@ anything:
   has no row yet, printed as loudly as the rest. What stays this role's own is one
   sentence. The values are the profile's `reach` lines, from measurements
   ([profiles.md](profiles.md));
+- **what is unclassified** in the agent's state directory: every entry no channel,
+  `hide` line (the profile's or this project's `[claude] hide`) or `visible` line names
+  -- the native path, read-write, and every project's, which is what an unknown path
+  is by default (#82). Listed as loudly as `UNMEASURED`, so it gets decided;
 - **lines with no effect** for the role: a `[connect]` line at the preset's own rung
   (when it is the only line for that channel the role gets -- a role's line restating
   the preset over an unsuffixed one is an override), the same key twice in one section
