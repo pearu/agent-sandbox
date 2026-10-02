@@ -3477,6 +3477,18 @@ _as_profile_dotfile() {
   local cl name key toks kind t src
   for cl in ${_df_channel_lines[@]+"${_df_channel_lines[@]}"}; do
     name="${cl%%$'\t'*}" line="${cl#*$'\t'}"
+    # `reach = HOW [-- note]`: how what another session left here arrives in a session
+    # (the leak study's scale), for `--check`; not a path.
+    if [[ "$line" =~ ^[[:space:]]*reach[[:space:]]*=[[:space:]]*([a-z]+)[[:space:]]*(--[[:space:]]*(.*))?$ ]]; then
+      case "${BASH_REMATCH[1]}" in
+        context | searched | pointed | never) profile_channel_reach+=("$name"$'\t'"${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[3]}") ;;
+        *)
+          _as_msg "profile '$pname': $file: [channel:$name] reach '${BASH_REMATCH[1]}' is not context, searched, pointed or never"
+          return 1
+          ;;
+      esac
+      continue
+    fi
     key="${line%%=*}" toks=""
     [[ "$line" == *=* ]] && toks="${line#*=}"
     key="${key#"${key%%[![:space:]]*}"}"
@@ -3637,7 +3649,7 @@ _as_profile_facts_dotfile() {
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
   local -a profile_hide=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
-  local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=()
+  local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
 }
 
@@ -4214,7 +4226,127 @@ _as_check_plan() {
       printf '  %-28s %-15s %-24s %s\n' "${_connect_key[$path]}" "$mode" "$source" "${_connect_where[$path]}"
     done
   } >&2
+  _as_check_reach
   _as_check_binds
+}
+
+# _as_check_source "PROJECT<TAB>ROLE<TAB>WRITTEN" -- a `sandbox:` source as `--check`
+# names it: "from sandbox:~/git/x@impl", the project written with `~`.
+_as_check_source() {
+  local proj role written
+  IFS=$'\t' read -r proj role written <<<"$1"
+  if [[ "$proj" == "$cwd" ]]; then
+    printf 'from sandbox:@%s' "$role"
+  else
+    printf 'from sandbox:%s%s' "$(_as_tilde "$proj")" "$([[ "$role" == default ]] || printf '@%s' "$role")"
+  fi
+}
+
+# _as_check_reach -- the reach tables of `--check`: what of another session reaches this
+# one, and what of this one leaves, through the channels and paths that cross the
+# boundary -- ordered by HOW it arrives (the profile's `reach`: context, searched,
+# pointed; UNMEASURED when the profile has no measurement), since memory in every
+# context and a download found only when someone looks are not the same exposure.
+# Everything at `own` is this role's alone, and is said in one sentence. A declared
+# path outside every channel is `pointed`: it is reached when you, or the agent, go
+# there. `never` rows only with --verbose.
+_as_check_reach() {
+  local -a _in=() _out=() _own=()
+  local line ch mode how note what src k
+  local -A _how=() _note=()
+  for line in ${profile_channel_reach[@]+"${profile_channel_reach[@]}"}; do
+    IFS=$'\t' read -r ch how note <<<"$line"
+    _how[$ch]="$how" _note[$ch]="$note"
+  done
+  _rank() { case "$1" in context) echo 1 ;; searched) echo 2 ;; pointed) echo 3 ;; never) echo 5 ;; *) echo 4 ;; esac }
+  # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    ch="${line%%$'\t'*}"
+    mode="${_connect_mode[$ch]:-}"
+    [[ -n "$mode" ]] || continue
+    how="${_how[$ch]:-UNMEASURED}"
+    if [[ "$mode" == own ]]; then
+      _own+=("$ch")
+      continue
+    fi
+    src="yours"
+    [[ -n "${_connect_sandbox[$ch]:-}" ]] && src="$(_as_check_source "${_connect_sandbox[$ch]}")"
+    case "$mode" in
+      read-write) what="$src, read live; this session's writes reach it" ;;
+      read-only) what="$src, read live" ;;
+      copy-on-write) what="$src, read live; a write stays in this role" ;;
+      copy) what="a copy of $src, refreshed at each launch" ;;
+      seed-only) what="seeded once from $src; this role's since" ;;
+    esac
+    [[ -n "${_note[$ch]:-}" ]] && what="$what -- ${_note[$ch]}"
+    _in+=("$(_rank "$how")"$'\t'"$how"$'\t'"$ch"$'\t'"$what")
+    [[ "$mode" == read-write && -z "${_connect_sandbox[$ch]:-}" ]] \
+      && _out+=("$(_rank "$how")"$'\t'"$how"$'\t'"$ch"$'\t'"read-write: what this session writes there lands in yours, for every other session")
+  done
+  for k in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    mode="${_connect_mode[$k]}"
+    [[ "$mode" == own || "${_connect_where[$k]}" == "built in"* ]] && continue
+    how="" note=""
+    # inside a channel: that channel's reach (a share of another project's memory is
+    # inside `projects`); outside every one: pointed
+    local best="" bestlen=0 entry cpath
+    # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
+    for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+      IFS=$'\t' read -r -a _f <<<"$line"
+      for entry in "${_f[@]:1}"; do
+        cpath="${entry#*:}"
+        if [[ "$k" == "$cpath" || "$k" == "$cpath"/* ]] && ((${#cpath} > bestlen)); then
+          best="${_f[0]}" bestlen=${#cpath}
+        fi
+      done
+    done
+    if [[ -n "$best" ]]; then how="${_how[$best]:-UNMEASURED}"; else how="pointed"; fi
+    src="the same path"
+    [[ -n "${_connect_src[$k]:-}" ]] && src="$(_as_tilde "${_connect_src[$k]}")"
+    local name
+    name="$(_as_check_name "$k")"
+    if [[ -n "${_connect_sandbox[$k]:-}" ]]; then
+      src="$(_as_check_source "${_connect_sandbox[$k]}")"
+      # A share: the path is a channel's own path for another project ({slug:P}), so
+      # name it as that channel of that project.
+      local _sp _tpl _tl
+      _sp="${_connect_sandbox[$k]%%$'\t'*}"
+      for _tl in ${profile_channel_templates[@]+"${profile_channel_templates[@]}"}; do
+        _tpl="${_tl#*$'\t'}"
+        [[ "$_tpl" == *"{slug}"* ]] || continue
+        _as_slug_expand "${_tpl//\{slug\}/\{slug:$_sp\}}" 2>/dev/null || continue
+        if [[ "$_slug_out" == "$k" ]]; then
+          # shellcheck disable=SC2031 # the launch's own profile_channels
+          for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+            [[ "$line" == *$'\t'*:"${_tl%%$'\t'*}"* ]] && name="${line%%$'\t'*} of $(_as_tilde "$_sp")"
+          done
+        fi
+      done
+    fi
+    _in+=("$(_rank "$how")"$'\t'"$how"$'\t'"$name"$'\t'"$mode, $src")
+    [[ "$mode" == read-write ]] && _out+=("$(_rank "$how")"$'\t'"$how"$'\t'"$(_as_check_name "$k")"$'\t'"read-write: this session's writes land there")
+  done
+  _show() { # TITLE SUBTITLE ROWS...
+    local title="$1" sub="$2" how name what
+    shift 2
+    printf '\n%s  (%s)\n' "$title" "$sub"
+    if (($# == 0)); then
+      printf '  nothing\n'
+      return 0
+    fi
+    while IFS=$'\t' read -r _ how name what; do
+      [[ "$how" == never ]] && ((! _do_verbose)) && continue
+      [[ "$how" == UNMEASURED ]] && what="$what -- reach UNMEASURED: no study row yet"
+      [[ "$how" == UNMEASURED ]] && how="--"
+      printf '  %-10s %-26s %s\n' "$how" "$name" "$what"
+    done < <(printf '%s\n' "$@" | sort -t$'\t' -k1,1n -k3,3)
+  }
+  {
+    _show "Reaches this session" "what another session left, and how it arrives: context = in every session; searched = found when the agent looks; pointed = when someone goes there" ${_in[@]+"${_in[@]}"}
+    _show "Leaves this session" "what this session writes that another can read" ${_out[@]+"${_out[@]}"}
+    ((${#_own[@]})) && printf '\nThis role'"'"'s own, reaching no other session: %s\n' "$(printf '%s\n' "${_own[@]}" | paste -sd' ' | sed 's/ /, /g')"
+  } >&2
+  return 0
 }
 
 # _as_check_binds -- the mount plan for `--check`: the base, the project, then every
@@ -5121,9 +5253,10 @@ agent_sandbox() (
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
   local -a profile_hide=() _profile_allow_hosts=() profile_channel_start=() profile_channel_templates=()
-  local profile_base=""      # [agent] base: the agent's state directory (#175)
-  local profile_base_env=""  # [agent] base-env: the variable the agent reads it from
-  local profile_base_from="" # the variable that moved it, when one did (#190)
+  local -a profile_channel_reach=() # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
+  local profile_base=""             # [agent] base: the agent's state directory (#175)
+  local profile_base_env=""         # [agent] base-env: the variable the agent reads it from
+  local profile_base_from=""        # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).

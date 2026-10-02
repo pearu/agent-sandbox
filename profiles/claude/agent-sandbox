@@ -103,6 +103,19 @@ statsigapi.net
 # name; `start:FILE` -- what its store starts as when there is nothing to seed from
 # (`own`, or `seed-only` with no source), a template beside this file ({profile}).
 #
+# `reach = HOW` says how what another session left at a channel ARRIVES in a session, on
+# the leak study's scale: `context` (loaded into every session, never searched for),
+# `searched` (found when the agent looks, or is told it is stored somewhere), `pointed`
+# (only when you point the agent there), `never`; text after ` -- ` is a note for the
+# reader. `asb --check` prints it beside every channel that crosses the boundary. A
+# channel without one prints UNMEASURED: a reach is a measurement, not a guess.
+# Measured: rows 5, 25, 26 of docs/claude-2.1-leak-results-0.2.0.md (2.1.273), and on
+# 2.1.286 with canaries in an isolated role's own stores (2026-10-02): a plain question
+# found what is in context; told the code words are stored somewhere, it found the rest.
+# `projects` is row 25's shared channel (another project's memory); its conversations
+# were not measured apart. Not yet measured: workflows, plugins, config, transcripts,
+# logs, policy, changelog.
+#
 # Paths nest: the engine binds them by depth, outer first (#196), so the deeper line
 # governs its subtree -- `projects/` is every project's state, `projects/{slug}/` this
 # project's conversations inside it, and `projects/{slug}/memory/` its memory inside that.
@@ -112,10 +125,12 @@ statsigapi.net
 # a separate step, per channel.
 
 [channel:instructions]
+reach = context
 {base}/CLAUDE.md
 {base}/rules/
 
 [channel:settings]
+reach = context -- a SessionStart hook runs, and what it prints is in context
 {base}/settings.json
 {base}/output-styles/
 
@@ -123,10 +138,12 @@ statsigapi.net
 # alike: their bookkeeping changes on both sides at every sync, which is not an edit of
 # yours for a conflict warning to report.
 [channel:skills]
+reach = context -- their descriptions are in every session, a body when invoked
 {base}/skills/ = vendor:synced/
 {base}/commands/
 
 [channel:agents]
+reach = context -- their descriptions are in every session, a body when invoked
 {base}/agents/
 
 [channel:workflows]
@@ -158,6 +175,7 @@ statsigapi.net
 # project's. `[share-memory]` is the sugar a project uses to open it: `all` is
 # `projects = read-write`, a path is a read-only declaration of that project's memory.
 [channel:projects]
+reach = searched -- another project's memory, found when the agent looks
 {base}/projects/
 
 # TRANSCRIPTS AND LOGS ARE CHANNELS (#120): a role's conversations, file history, plans
@@ -178,6 +196,7 @@ statsigapi.net
 # nothing but the directory unless connected (#55). `memory = copy-on-write` reads yours
 # live and keeps its writes; `seed-only` carries yours over once.
 [channel:memory]
+reach = context
 {base}/projects/{slug}/memory/
 
 [channel:logs]
@@ -187,6 +206,7 @@ statsigapi.net
 # ARTEFACTS ARE A CHANNEL: what sessions leave for each other to pick up -- downloaded
 # documents, uploaded files, task lists (#52, #76, #78; leak study row 18).
 [channel:artefacts]
+reach = searched
 {base}/downloads/
 {base}/uploads/
 {base}/tasks/
