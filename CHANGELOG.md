@@ -6,6 +6,83 @@ break compatibility.
 
 ## Unreleased
 
+Roles, the keeper, and the claude profile as data. Several defaults change and several
+names are gone; there are no aliases for removed names before 1.0.
+
+### Breaking
+
+- **The sandbox is invoked explicitly** (#151): `asb [OPTIONS] CMD [AGENT OPTIONS]`, with
+  `agent-sandbox` the canonical name. Nothing shadows `claude` any more: `claude` is
+  Claude Code itself, unsandboxed, everywhere. Engine options come before the command.
+- **Memory is the role's own under `inherit`** (#196). A sandboxed session no longer
+  writes your native `~/.claude/projects/<slug>/memory/`, and starts with none of it;
+  `memory = copy-on-write` (read yours live) or `seed-only` (carry it over once) under
+  `[connect]` brings it in. Other projects' state is out of view under every preset but
+  `native`. The global `memory_default` is gone: `[share-memory] all` says the same per
+  project, and is reviewed.
+- **`[forward]` is `[env]`** (#177): `NAME` forwards, `NAME = VALUE` sets (a profile's
+  only), `-NAME` refuses.
+- **`[ro]`, `[rw]`, `AGENT_SANDBOX_RO` and `AGENT_SANDBOX_RW` are gone** (#161): a path is
+  declared under `[connect]`, `./data = read-only`, with every mode a channel has.
+- **`--engine-version` is `--version`** before the command (#159); after it, `--version`
+  is the agent's. **`--quiet` is gone**: quiet is the default, `--verbose` shows the
+  routine status lines (#162).
+- **The host-side subcommands are gone** (#178), and so is the 0.3 config-copy migration
+  (#179, #167).
+- **The claude profile is a directory**, `profiles/claude/`, with `profile.sh` and its
+  dot-file `agent-sandbox` (#181); `profiles/claude.allowlist` is the dot-file's
+  `[allow]`, opened per launch.
+- **A config or history view that cannot be made refuses the launch** (#207), rather than
+  seeding the whole native file.
+- **No empty `~/.claude.json` is created** (#204): Claude Code calls a 0-byte one corrupted.
+
+### Added
+
+- **Roles** (#136): `asb --role NAME`, a persistent instance of a project under a policy
+  of its own, selected by `[sandbox:<glob>]` and `[connect:<glob>]` sections. Each role's
+  stores are its own; two roles share the project directory and nothing else unless
+  connected.
+- **One launch per role -- the keeper** (#121, #139): the first command starts the role's
+  sandbox, and every later one joins it, with the same mounts, network and filter.
+  Background sessions run inside the role (#123), and `--shutdown` ends it. The role
+  verbs: `--status`, `--delete`, `--reset CHANNEL|PATH` (#126).
+- **Path declarations** (#130, #106): a `[connect]` key with a `/` names a path, at any
+  mode, including `copy-on-write` on a directory (#150) and `own` on a file that does not
+  exist yet (#189). Declarations nest, bound by depth with channels (#196).
+- **`seed-only`** (#131): seeded once, the role's own after that.
+- **Storage scopes** (#105, #125, #147): `run-scoped` (one run of the role's launch) and
+  `join-scoped` (one joined command, in a mount namespace of its own), for `own`, `copy`,
+  `seed-only` (#153), `copy-on-write` as an overlay per join (#153) and `read-only`.
+- **More channels**: `config` (Claude Code's config file, filtered to this project's
+  entry, #119), `transcripts` and `logs` (#120; nothing is merged back at exit),
+  `artefacts` (downloads, uploads, tasks, #154), `policy` and `changelog` (#109),
+  `projects` and `memory` (#196).
+- **Sources other than native**: `outside:<path>` (#174) and `sandbox:[PROJECT][@ROLE]`,
+  another role's store (#200); `[share-memory] P` now reads P's role store.
+- **`asb --check`** (#210-#213): the dot-file's review without the question or the
+  record -- usable in CI or a pre-commit hook -- then, for a role, the policy, what
+  crosses the boundary ordered by how it reaches a session (`context`, `searched`,
+  `pointed`, or `UNMEASURED`), lines with no effect, and the mount plan.
+- **The dot-file review is part of the launch** (#143): a new, changed or missing file is
+  shown (a changed one as a diff) and asked about at a terminal, and refused without one.
+  The file is read-only inside the sandbox.
+- **The claude profile as data** (#173): `[agent]` (base, base-env, hide, verbs),
+  `[env]`, `[allow]`, `[channel:<name>]` sections and `[preset:<name>]` rungs in its
+  dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
+  formats in `profiles/claude/profile.py`.
+- `~/.local/bin` may be declared read-only (#168).
+
+### Fixed
+
+- Two cross-project leaks, each with a regression test written first (#111).
+- bwrap runs with no environment of its own, and its options reach it through a file,
+  not its command line, so neither is readable from inside (#170, #171).
+- The overlay check could misread a racing `bwrap --help` as "no overlay", and a
+  copy-on-write channel then read a fresh copy (#203).
+- `--preset native` with an active conda env under a symlinked `$HOME` path (#205).
+- A joined command keeps the terminal where the kernel blocks TIOCSTI (#166), and its exit
+  status is right on Python older than 3.9 (#164).
+
 ## 0.3.0 — 2026-09-21
 
 ### Added
