@@ -75,6 +75,9 @@ names are gone; there are no aliases for removed names before 1.0.
 ### Fixed
 
 - Two cross-project leaks, each with a regression test written first (#111).
+- Three paths every project's sandbox could read: `image-cache/` is blanked every
+  launch (#77), `usage-data/` goes with the role's transcripts (#79), and
+  `agent-memory/` is a channel at memory's rungs (#74).
 - bwrap runs with no environment of its own, and its options reach it through a file,
   not its command line, so neither is readable from inside (#170, #171).
 - The overlay check could misread a racing `bwrap --help` as "no overlay", and a

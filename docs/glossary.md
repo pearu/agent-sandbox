@@ -97,7 +97,7 @@ see [Presets](#presets-and-principles). *shipped*
 what it carries, never by a path. The profile maps each channel to the agent's paths.
 For the `claude` profile the channels the engine manages as connections are
 `instructions`, `settings`, `skills`, `agents`, `workflows`, `plugins`, `config`,
-`projects`, `memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` (*shipped*); `identity` and `project` are
+`projects`, `memory`, `agent-memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` (*shipped*); `identity` and `project` are
 channels in the model with machinery of their own, not yet folded in. The table of what each carries is
 in [connections.md](connections.md#the-three-objects).
 

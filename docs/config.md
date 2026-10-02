@@ -198,7 +198,8 @@ Sections:
   | config — `~/.claude.json`, the user-level MCP servers included | `own` | `seed-only` | `seed-only` | `read-write` | **the preset** ([below](#the-config-file-the-config-channel)) |
   | projects — `projects/`, every project's conversations and memory | `own` | `own` | `own` | `read-write` | **the preset**; `[share-memory] all` is `read-write` ([below](#memory-scoping)) |
   | memory — `projects/<slug>/memory/` | `own` | `own`, plus `read-only` per share | `read-write` | `read-write` | **the preset**, and `[share-memory]` for other projects' (#196) |
-  | transcripts — this project's conversations, file history, plans, prompt history | `own` | `own` | `own` | `read-write` | **the preset** ([below](#transcripts-and-logs)) |
+  | transcripts — this project's conversations, file history, plans, prompt history, `/insights` data (`usage-data/`) | `own` | `own` | `own` | `read-write` | **the preset** ([below](#transcripts-and-logs)) |
+  | agent-memory — `agent-memory/`, subagents' persistent memory | `own` | `own` | `read-write` | `read-write` | **the preset** (#74) |
   | logs — `responses.log`, `alerts.log`, written by your own hooks | `own` | `own` | `own` | `read-write` | **the preset** |
   | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **the preset** (#52, #76, #78) |
   | policy — `remote-settings.json`, `policy-limits.json` and its `.stamp.json` | `own` (from `{}`) | `seed-only` | `read-write` | `read-write` | **the preset** (#109): Claude Code refetches them inside and rewrites them, so `copy` would warn at every launch |

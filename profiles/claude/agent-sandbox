@@ -62,6 +62,11 @@ hide = backups
 # (Claude Code's docs), readable from another project's sandbox (#80; row 18). Per
 # launch, so a bundle a sandboxed session did not send is gone when it exits.
 hide = feedback-bundles
+# image-cache/ held attached images up to Claude Code 2.1.274; later versions keep them in
+# a per-session directory under the temp directory, which inside is the fresh /tmp. The
+# docs: "Legacy directories not written by current versions". Blanked, so no other
+# project's old images are in view (#77).
+hide = image-cache
 
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.
@@ -184,6 +189,9 @@ reach = searched -- another project's memory, found when the agent looks
 # seed-only` seeds them once, and seeds the prompt history FILTERED to this project's
 # records.
 [channel:transcripts]
+# usage-data/ is /insights' reports and "cached per-session analysis data" (the docs):
+# derived from the conversations, so it goes where they do (#79).
+{base}/usage-data/
 {base}/file-history/
 {base}/plans/
 {base}/history.jsonl = filter:_claude_history_view
@@ -198,6 +206,12 @@ reach = searched -- another project's memory, found when the agent looks
 [channel:memory]
 reach = context
 {base}/projects/{slug}/memory/
+
+# AGENT MEMORY IS A CHANNEL (#74): "persistent memory for subagents" (the docs), kept per
+# subagent, not per project -- so outside `projects/`, and until now every project's.
+# Memory's rungs: the role's own under isolated and inherit, yours under shared.
+[channel:agent-memory]
+{base}/agent-memory/
 
 [channel:logs]
 {base}/responses.log
@@ -243,6 +257,7 @@ config = seed-only
 projects = own
 transcripts = own
 memory = own
+agent-memory = own
 logs = own
 artefacts = own
 policy = seed-only
