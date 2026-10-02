@@ -435,6 +435,26 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ ! -e "$SB/@join" ]
 }
 
+@test "copy-on-write join-scoped: each join reads the source live and writes its own overlay; the source is untouched (#153)" {
+  mkdir -p "$IWORK/data"
+  printf 'SRC\n' >"$IWORK/data/f"
+  printf 'G1\n' >"$IWORK/data/g"
+  local js=(AGENT_SANDBOX_CONNECT='./data/=copy-on-write join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "cat data/f >a.saw; echo from-a >data/f; $(hold a); cat data/g >a.g; cat data/f >a.f"
+  run_sandboxed "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c 'cat data/f >b.saw; echo from-b >data/f; cat data/f >b.after'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/b.saw")" = SRC ] # B does not see A's write
+  [ "$(cat "$IWORK/b.after")" = from-b ]
+  printf 'G2\n' >"$IWORK/data/g" # the source changes while A runs
+  release a
+  wait "$BG_PID"
+  [ "$(cat "$IWORK/a.saw")" = SRC ]
+  [ "$(cat "$IWORK/a.f")" = from-a ] # A keeps its own write
+  [ "$(cat "$IWORK/a.g")" = G2 ]     # and reads through, live, what it has not written
+  [ "$(cat "$IWORK/data/f")" = SRC ] # the source never written
+  [ ! -e "$SB/@join" ]
+}
+
 @test "join-scoped: the store of a join killed with -9 goes at the supervisor's next sweep" {
   mkdir -p "$IWORK/scratch"
   local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')

@@ -571,13 +571,9 @@ EOF
   done
 }
 
-@test "join-scoped is built for own, copy, seed-only and read-only; an overlay per join is refused, naming #153" {
-  run_engine -- asb --connect "instructions=copy-on-write native join-scoped" claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'copy-on-write join-scoped' is not implemented"*"'own', 'copy', 'seed-only' and 'read-only'"*"#153"* ]]
-  [ ! -s "$H/argv" ]
+@test "join-scoped is built for every mode a store has: own, copy, seed-only, copy-on-write, read-only" {
   local m
-  for m in copy seed-only; do
+  for m in copy seed-only copy-on-write; do
     run_engine -- asb --connect "instructions=$m native join-scoped" claude --version
     [ "$status" -eq 0 ]
   done
@@ -643,6 +639,37 @@ join_store() { # PATH -> the held join's store for PATH
   st="$(join_store "$PROJ/data")"
   [ "$(cat "$st/a")" = SECOND ] # the next join starts from the source again
   release_bg
+}
+
+@test "copy-on-write join-scoped: the launch shows the source read-only for the joins, and each join mounts an overlay of its own (#153)" {
+  mkdir -p "$PROJ/data"
+  run_engine -- asb --connect './data/ = copy-on-write join-scoped' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ/data" /run/agent-sandbox-lower/0 # the lower, for the joins
+  local i ok=0
+  for ((i = 0; i + 3 < ${#JOIN[@]}; i++)); do
+    if [[ "${JOIN[i]}" == --private-overlay ]]; then
+      [ "${JOIN[i + 1]}" = ov0 ]
+      [ "${JOIN[i + 2]}" = /run/agent-sandbox-lower/0 ]
+      [ "${JOIN[i + 3]}" = "$PROJ/data" ]
+      ok=1
+    fi
+  done
+  [ "$ok" -eq 1 ]
+  run ! grep -qx -- --private-path "$H/join" # an overlay, not a seeded store
+}
+
+@test "copy-on-write join-scoped on a file, or with overlays off, is a seeded copy per join, as for the role" {
+  printf 'F\n' >"$PROJ/notes.txt"
+  mkdir -p "$PROJ/data"
+  run_engine -- asb --connect './notes.txt = copy-on-write join-scoped' claude --version
+  [ "$status" -eq 0 ]
+  grep -A2 -x -- --private-path "$H/join" | grep -qx "$PROJ/notes.txt"
+  run ! grep -qx -- --private-overlay "$H/join"
+  run_engine -- asb --overlay off --connect './data/ = copy-on-write join-scoped' claude --version
+  [ "$status" -eq 0 ]
+  grep -A2 -x -- --private-path "$H/join" | grep -qx "$PROJ/data"
+  run ! grep -qx -- --private-overlay "$H/join"
 }
 
 @test "seed-only join-scoped on a channel: seeded per join from your files" {
