@@ -4226,8 +4226,70 @@ _as_check_plan() {
       printf '  %-28s %-15s %-24s %s\n' "${_connect_key[$path]}" "$mode" "$source" "${_connect_where[$path]}"
     done
   } >&2
+  _as_check_noeffect
   _as_check_reach
   _as_check_binds
+}
+
+# _as_check_noeffect -- the file's lines that change nothing for this role, for `--check`:
+# a line that does nothing is a design error that a launch never reports.
+#   - a [connect] line at the preset's own rung, when it is the only line of the file
+#     for that channel that applies to this role (a role's line restating the preset
+#     over an unsuffixed one is an override, and is not this);
+#   - the same key twice in one section: the earlier one never applies;
+#   - a [share-memory] path with nothing to share: no memory, in a role or natively.
+# (A declaration inside an `own` one above it is NOT no-effect: paths bind by depth,
+# so the deeper one is seen there.)
+_as_check_noeffect() {
+  local cs glob spec key mode rest sect n
+  local -a notes=()
+  local -A _count=() _first=() _applies=() _amode=() _asrc=() _asect=()
+  for cs in ${_df_connect[@]+"${_df_connect[@]}"}; do
+    glob="${cs%%$'\t'*}" spec="${cs#*$'\t'}"
+    key="${spec%%=*}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    rest="${spec#*=}"
+    read -r mode _ <<<"$rest"
+    sect="[connect]"
+    [[ "$glob" == "*" ]] || sect="[connect:$glob]"
+    if [[ -n "${_count[$sect$'\t'$key]:-}" ]]; then
+      notes+=("$sect $key: set twice; the earlier '${_first[$sect$'\t'$key]}' never applies")
+    else
+      _first[$sect$'\t'$key]="$key = $(printf '%s' "$rest" | sed 's/^[[:space:]]*//')"
+    fi
+    _count[$sect$'\t'$key]=$((${_count[$sect$'\t'$key]:-0} + 1))
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "${_role:-default}" == $glob ]] || continue
+    _applies[$key]=$((${_applies[$key]:-0} + 1))
+    _amode[$key]="$mode" _asect[$key]="$sect" _asrc[$key]="$(
+      read -r _ t2 t3 _ <<<"$rest"
+      printf '%s%s' "$t2" "$t3"
+    )"
+  done
+  for key in "${!_applies[@]}"; do
+    [[ "$key" == */* ]] && continue # a path has no rung
+    ((${_applies[$key]} == 1)) || continue
+    [[ -z "${_asrc[$key]}" || "${_asrc[$key]}" == native ]] || continue
+    [[ -n "${_connect_mode[$key]:-}" ]] || continue
+    if [[ "${_amode[$key]}" == "$(_as_channel_preset_mode "$key" "$_preset")" ]]; then
+      notes+=("${_asect[$key]} $key = ${_amode[$key]}: already preset $_preset's rung for $key; the line does nothing")
+    fi
+  done
+  local k
+  for k in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    [[ "${_connect_where[$k]}" == *"[share-memory]" ]] || continue
+    local _sbx_src=""
+    _as_sandbox_store "${_connect_sandbox[$k]}" "$k" 2>/dev/null || true
+    [[ -n "$_sbx_src" ]] && continue
+    notes+=("[share-memory] $(_as_tilde "${_connect_sandbox[$k]%%$'\t'*}"): nothing to share yet -- no memory, in its role or natively")
+  done
+  ((${#notes[@]})) || return 0
+  {
+    printf '\nLines with no effect for role %s:\n' "${_role:-default}"
+    for n in "${notes[@]}"; do printf '  %s\n' "$n"; done
+  } >&2
+  return 0
 }
 
 # _as_check_source "PROJECT<TAB>ROLE<TAB>WRITTEN" -- a `sandbox:` source as `--check`

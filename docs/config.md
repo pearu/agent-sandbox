@@ -364,7 +364,12 @@ anything:
   declared, reached when someone goes there) -- and `UNMEASURED` where the leak study
   has no row yet, printed as loudly as the rest. What stays this role's own is one
   sentence. The values are the profile's `reach` lines, from measurements
-  ([profiles.md](profiles.md)).
+  ([profiles.md](profiles.md));
+- **lines with no effect** for the role: a `[connect]` line at the preset's own rung
+  (when it is the only line for that channel the role gets -- a role's line restating
+  the preset over an unsuffixed one is an override), the same key twice in one section
+  (the earlier never applies), and a `[share-memory]` path with nothing to share yet.
+  Advice: they do not change the exit status.
 
 It exits non-zero when a launch would refuse the file whatever you answer -- a control
 character, an approved file that has gone, or a policy the launch refuses (an unknown
