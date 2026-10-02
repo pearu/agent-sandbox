@@ -318,3 +318,25 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
     sed -n "/^\[channel:$ch\]/,/^\[/p" "$f" | grep -qE '^reach *= *(context|searched|pointed|never)'
   done
 }
+
+@test "--check names the lines that change nothing for the role, and not an override that does" {
+  local nomem="$H/nomem"
+  mkdir -p "$nomem"
+  printf '[sandbox]\npreset = inherit\n[connect]\ninstructions = copy-on-write\nartefacts = own\nartefacts = read-write native\nmemory = read-write\n[connect:reviewer]\nmemory = own\n[connect:*]\n[share-memory]\n%s\n' "$nomem" >"$PROJ/.agent-sandbox"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ] # advice, not a refusal
+  local ne
+  ne="$(sed -n '/^Lines with no effect/,/^$/p' <<<"$output")"
+  [[ "$ne" == *"[connect] artefacts: set twice; the earlier 'artefacts = own' never applies"* ]]
+  [[ "$ne" == *"[connect] instructions = copy-on-write: already preset inherit's rung"* ]]
+  [[ "$ne" == *"[share-memory] "*"nomem: nothing to share yet"* ]]
+  # reviewer's memory = own restates the rung but overrides [connect]'s read-write: it acts
+  [[ "$ne" != *"memory = own"* ]]
+}
+
+@test "--check says nothing about no-effect lines when there are none" {
+  printf '[connect]\nartefacts = read-write native\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Lines with no effect"* ]]
+}
