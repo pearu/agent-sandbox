@@ -701,7 +701,8 @@ CONNECT_SYNC_EOF
 """Join a running keeper: run a command inside a role's launch as its equal.
 
     join.py [--seccomp FILE] [--env NAME=VALUE]... [--unset NAME]...
-            [--private STAGE_HOST STAGE_INSIDE DEST_HOST ID [--private-path NAME PATH]...]
+            [--private STAGE_HOST STAGE_INSIDE DEST_HOST ID [--private-path NAME PATH]...
+             [--private-overlay NAME LOWER PATH]...]
             PID -- CMD [ARG]...
 
 PID is a host pid of a process inside the launch (the keeper's payload). The
@@ -747,6 +748,15 @@ join covers in its own view. A bind survives its source directory being moved (m
 probes/join-scoped-spike.py). The stores stay private for the life of the join: mounting
 is denied to it afterwards by the dropped capabilities and the seccomp filter.
 
+With --private-overlay NAME LOWER PATH (`copy-on-write join-scoped`, #153) the child
+mounts an overlay at PATH instead of a bind: LOWER is the source, which the launch binds
+read-only for the joins, and STAGE_INSIDE/ID/NAME/{upper,work} are this join's own. The
+directory holding the lowers is covered with an empty tmpfs too, so the command reaches
+the source only through its overlay. Measured on 6.8 with bubblewrap 0.12: the child
+may mount it, holding the capabilities of the inner user namespace; a write lands in
+the upper, the source is untouched, and the overlay survives the upper's directory being
+moved out of staging.
+
 Exit status: the command's, 128+N if it died of signal N, 127 if it could not be
 executed, 125 if the join itself failed.
 """
@@ -776,8 +786,9 @@ class Fprog(ctypes.Structure):
 
 
 def parse(argv):
-    seccomp, sets, unsets, private, ppaths = None, {}, [], None, []
-    arity = {"--seccomp": 1, "--env": 1, "--unset": 1, "--private": 4, "--private-path": 2}
+    seccomp, sets, unsets, private, ppaths, povs = None, {}, [], None, [], []
+    arity = {"--seccomp": 1, "--env": 1, "--unset": 1, "--private": 4, "--private-path": 2,
+             "--private-overlay": 3}
     i = 0
     while i < len(argv) and argv[i].startswith("--"):
         opt = argv[i]
@@ -796,14 +807,16 @@ def parse(argv):
             unsets.append(val[0])
         elif opt == "--private":
             private = val
+        elif opt == "--private-overlay":
+            povs.append(val)
         else:
             ppaths.append(val)
         i += 1 + n
-    if ppaths and not private:
-        die("--private-path needs --private")
+    if (ppaths or povs) and not private:
+        die("--private-path and --private-overlay need --private")
     if len(argv) < i + 3 or argv[i + 1] != "--":
         die("usage: join.py [--seccomp FILE] [--env K=V]... [--unset K]... [--private ...] PID -- CMD...")
-    return seccomp, sets, unsets, private, ppaths, argv[i], argv[i + 2 :]
+    return seccomp, sets, unsets, private, ppaths, povs, argv[i], argv[i + 2 :]
 
 
 def mount(src, dst, fstype, flags):
@@ -812,7 +825,7 @@ def mount(src, dst, fstype, flags):
 
 
 def main(argv):
-    seccomp, sets, unsets, private, ppaths, pid, cmd = parse(argv)
+    seccomp, sets, unsets, private, ppaths, povs, pid, cmd = parse(argv)
 
     def ident(fd):
         return os.readlink(f"/proc/self/fd/{fd}")
@@ -929,7 +942,19 @@ def main(argv):
                 stage_in, jid = private[1], private[3]
                 for name, path in ppaths:
                     mount(f"{stage_in}/{jid}/{name}", path, None, MS_BIND)
+                # copy-on-write for one join (#153): an overlay whose lower is the source,
+                # bound read-only by the launch, and whose upper is this join's own.
+                # Measured: the child may mount one, holding the capabilities of the
+                # keeper's user namespace; a write lands in the upper, the source untouched.
+                lowers = set()
+                for name, lower, path in povs:
+                    opts = f"lowerdir={lower},upperdir={stage_in}/{jid}/{name}/upper,workdir={stage_in}/{jid}/{name}/work"
+                    if libc.mount(b"overlay", path.encode(), b"overlay", 0, opts.encode()) != 0:
+                        raise OSError(ctypes.get_errno(), f"overlay on {path}")
+                    lowers.add(os.path.dirname(lower))
                 mount("tmpfs", stage_in, "tmpfs", 0)
+                for d in lowers:  # the sources stay reachable only through the overlays
+                    mount("tmpfs", d, "tmpfs", 0)
                 os.write(ready_w, b"1")  # bound: the host may move the stores away now
                 if os.read(ack_r, 1) != b"1":  # and the command starts only once it has
                     raise OSError(0, "the stores were not moved out of staging")

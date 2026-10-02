@@ -435,6 +435,45 @@ wait_gone() { # wait_gone PID -- up to 10 s
   [ ! -e "$SB/@join" ]
 }
 
+@test "copy-on-write join-scoped: each join reads the source live and writes its own overlay; the source is untouched (#153)" {
+  mkdir -p "$IWORK/data"
+  printf 'SRC\n' >"$IWORK/data/f"
+  printf 'G1\n' >"$IWORK/data/g"
+  local js=(AGENT_SANDBOX_CONNECT='./data/=copy-on-write join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "cat data/f >a.saw; echo from-a >data/f; $(hold a); cat data/g >a.g; cat data/f >a.f"
+  run_sandboxed "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c 'cat data/f >b.saw; echo from-b >data/f; cat data/f >b.after'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/b.saw")" = SRC ] # B does not see A's write
+  [ "$(cat "$IWORK/b.after")" = from-b ]
+  printf 'G2\n' >"$IWORK/data/g" # the source changes while A runs
+  release a
+  wait "$BG_PID"
+  [ "$(cat "$IWORK/a.saw")" = SRC ]
+  [ "$(cat "$IWORK/a.f")" = from-a ] # A keeps its own write
+  # and reads through, live, what it has not written -- an overlay; where bubblewrap
+  # cannot mount one (< 0.11) it is a seeded copy per join, taken when A joined
+  local live=G1
+  [[ "$(bwrap --help 2>&1)" == *"--overlay "* ]] && live=G2
+  [ "$(cat "$IWORK/a.g")" = "$live" ]
+  [ "$(cat "$IWORK/data/f")" = SRC ] # the source never written
+  [ ! -e "$SB/@join" ]
+}
+
+@test "copy-on-write join-scoped with overlays off: a seeded copy per join, the source as it was at the join (#153)" {
+  mkdir -p "$IWORK/data"
+  printf 'G1\n' >"$IWORK/data/g"
+  local js=(AGENT_SANDBOX_OVERLAY=off AGENT_SANDBOX_CONNECT='./data/=copy-on-write join-scoped')
+  bg_sandboxed a "${BASE[@]}" "${js[@]}" -- --profile probe --exec sh -c "echo from-a >data/g; $(hold a); cat data/g >a.g; ls data >a.ls"
+  printf 'G2\n' >"$IWORK/data/g"
+  printf 'NEW\n' >"$IWORK/data/h" # created after A joined
+  release a
+  wait "$BG_PID"
+  [ "$(cat "$IWORK/a.g")" = from-a ] # its own write
+  run ! grep -qx h "$IWORK/a.ls"     # a snapshot: nothing created later reaches it
+  [ "$(cat "$IWORK/data/g")" = G2 ]  # and the source is the host's alone
+  [ ! -e "$SB/@join" ]
+}
+
 @test "join-scoped: the store of a join killed with -9 goes at the supervisor's next sweep" {
   mkdir -p "$IWORK/scratch"
   local js=(AGENT_SANDBOX_CONNECT='./scratch/=own join-scoped')

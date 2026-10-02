@@ -1129,20 +1129,18 @@ _as_connect_parse() {
       # own. `own` is what it is for; `read-only` writes nothing, so it is the plain
       # bind. `copy` and `seed-only` are one thing per join (#153): a store that is new
       # at every join has nothing earlier to refresh or to conflict with, so both are
-      # seeded from the source when the join starts. Not for a channel whose seed is
-      # filtered or relocated (the config file, the prompt history): that view is made
-      # per launch, and a per-join copy of it is not something anyone has asked for.
+      # seeded from the source when the join starts. `copy-on-write` is an overlay per
+      # join (#153): the source read live, this join's writes in an upper layer of its
+      # own, gone with the join. Not for a channel whose seed is filtered or relocated
+      # (the config file, the prompt history): that view is made per launch, and a
+      # per-join copy of it is not something anyone has asked for.
       case "$mode" in
         own | read-only) ;;
-        copy | seed-only)
+        copy | seed-only | copy-on-write)
           if [[ "$ch" != */* ]] && ! _as_channel_seed_plain "$ch"; then
             _as_msg "connect ($where): '$mode join-scoped' is refused for '$ch': its seed is a filtered view of your file, made per launch, not a plain copy. Use '$mode' for the role, or 'own join-scoped'."
             return 1
           fi
-          ;;
-        *)
-          _as_msg "connect ($where): '$mode join-scoped' is not implemented in this engine (asked for '$ch'); a join-scoped store is built for 'own', 'copy', 'seed-only' and 'read-only', not yet for an overlay per join (#153). Refusing rather than serving a store that outlives the join."
-          return 1
           ;;
       esac
       ;;
@@ -1772,9 +1770,12 @@ _as_connect_bind_channel() {
     return 0
   fi
   if [[ "${_connect_scope[$ch]:-}" == join-scoped && "$mode" != read-only ]]; then
-    # own starts empty; copy and seed-only are seeded from the source at each join
+    # own starts empty; copy and seed-only are seeded from the source at each join;
+    # copy-on-write is an overlay per join on the source, or a seeded copy (a file)
     if [[ "$mode" == own ]]; then
       _as_join_scoped_bind "$kind" "$path" || return 1
+    elif [[ "$mode" == copy-on-write ]] && _as_join_scoped_overlay_ok "$kind"; then
+      _as_join_scoped_bind "$kind" "$path" "" "$src" || return 1
     else
       _as_join_scoped_bind "$kind" "$path" "$src" || return 1
     fi
@@ -1952,7 +1953,10 @@ _as_connect_bind_path() {
   if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
     local _jseed=""
     [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
-    if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
+    if [[ "$mode" == copy-on-write ]] && { ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; } \
+      && _as_join_scoped_overlay_ok dir; then
+      _as_join_scoped_bind dir "$p" "" "$_jseed" || return 1
+    elif ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
       _as_join_scoped_bind dir "$p" "$_jseed" || return 1
     elif [[ -e "$s" || "$mode" == own ]]; then
       _as_join_scoped_bind file "$p" "$_jseed" || return 1 # an absent own: an empty file
@@ -2626,12 +2630,26 @@ _as_keeper_shutdown() {
 # probes/join-scoped-spike.py). A join's stores then move out of staging to
 # <sandbox>/@join/<id> before its command starts, and go when the join ends.
 _as_join_stage_inside() { printf '/run/agent-sandbox-stage'; }
+# Where the launch shows a `copy-on-write join-scoped` path's source, read-only, as the
+# lower layer of each join's overlay (#153); hidden again in every join, and the keeper
+# runs nothing that reads it. Numbered, not named after the path: the number goes into
+# overlayfs's mount options, where a `,` or `:` in a name would split them.
+_as_join_lower_inside() { printf '/run/agent-sandbox-lower'; }
 
-# _as_join_scoped_bind KIND PATH [SEED] -- the launch's side of one join-scoped path.
-# SEED is what each join's store starts as a copy of (#153); none, and it starts empty.
+# _as_join_scoped_overlay_ok KIND -- is a `copy-on-write join-scoped` path an overlay per
+# join? A directory, with overlays not switched off and a bubblewrap that mounts them;
+# otherwise a seeded copy per join, as `copy-on-write` for the role becomes `copy`.
+_as_join_scoped_overlay_ok() {
+  [[ "$1" == dir && "${_overlay_mode:-auto}" != off ]] && _as_overlay_ok
+}
+
+# _as_join_scoped_bind KIND PATH [SEED [LOWER]] -- the launch's side of one join-scoped
+# path. SEED is what each join's store starts as a copy of (#153); none, and it starts
+# empty. LOWER, for `copy-on-write`, is the source each join's overlay reads through
+# (#153): bound read-only for the joins, and each join gets an upper layer of its own.
 # shellcheck disable=SC2154
 _as_join_scoped_bind() {
-  local kind="$1" path="$2" seed="${3:-}" empty sb
+  local kind="$1" path="$2" seed="${3:-}" lower="${4:-}" empty sb lid=""
   _as_session_begin || return 1
   empty="$_session_dir/connect/@join/$(_as_iso_slug "$path")"
   if [[ "$kind" == dir ]]; then
@@ -2648,7 +2666,15 @@ _as_join_scoped_bind() {
     args+=(--bind "$sb/@join-stage" "$(_as_join_stage_inside)")
     _join_stage_bound=1
   fi
-  _join_scoped+=("$kind"$'\t'"$(_as_iso_slug "$path")"$'\t'"$path"$'\t'"$seed")
+  if [[ -n "$lower" ]]; then
+    # the lower is always the source itself, created if missing, as for the role's own
+    # copy-on-write: an empty stand-in would hide a directory created later
+    mkdir -p -- "$lower" || return 1
+    lid="${#_join_scoped[@]}"
+    args+=(--ro-bind "$lower" "$(_as_join_lower_inside)/$lid")
+  fi
+  # `-` for no seed: a tab is IFS whitespace, so an empty field between two would collapse
+  _join_scoped+=("$kind"$'\t'"$(_as_iso_slug "$path")"$'\t'"$path"$'\t'"${seed:--}"$'\t'"$lid")
 }
 
 # _as_join_scoped_clear SANDBOXDIR [ID] -- remove one join's stores, or every join's.
@@ -2751,15 +2777,20 @@ _as_keeper_join() {
   [[ -n "$bpf" ]] && jargs+=(--seccomp "$bpf")
   jargs+=(--unset SHLVL --env "TERM=${TERM:-xterm-256color}")
   # This join's own stores, when the launch declares join-scoped paths.
-  local jid="" jkind jname jpath jseed jst
+  local jid="" jkind jname jpath jseed jlower jst
   if [[ -s "$kd/join-scoped" ]]; then
     jid="j$BASHPID"
     mkdir -p -- "$sb/@join-stage/$jid" "$sb/@join" || return 1
     jargs+=(--private "$sb/@join-stage" "$(_as_join_stage_inside)" "$sb/@join" "$jid")
-    while IFS=$'\t' read -r jkind jname jpath jseed; do
+    while IFS=$'\t' read -r jkind jname jpath jseed jlower; do
       [[ -n "$jname" ]] || continue
       jst="$sb/@join-stage/$jid/$jname"
-      if [[ -n "$jseed" && -e "$jseed" ]]; then
+      if [[ -n "$jlower" ]]; then
+        # an overlay per join (#153): this join's upper and work directories, numbered
+        mkdir -p -- "$sb/@join-stage/$jid/ov$jlower/upper" "$sb/@join-stage/$jid/ov$jlower/work" || return 1
+        jargs+=(--private-overlay "ov$jlower" "$(_as_join_lower_inside)/$jlower" "$jpath")
+        continue
+      elif [[ -n "$jseed" && "$jseed" != - && -e "$jseed" ]]; then
         # seeded (#153): a copy of the source as it is at this join
         cp -a -- "$jseed" "$jst" || return 1
       elif [[ "$jkind" == dir ]]; then
