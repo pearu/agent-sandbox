@@ -117,10 +117,14 @@ teardown_file() {
   [[ "$out" == *"proxy reaches an allowlisted host (api.github.com)"* ]]
   # the installer's own negative smoke check asserts the other half of the contract
   [[ "$out" == *"proxy refuses a non-allowlisted host (example.com blocked at CONNECT)"* ]]
+  [[ "$out" == *"proxy refuses a client with no session token (407)"* ]]
   [[ "$out" != *"SECURITY:"* ]]
+  # a client with no session token: refused at CONNECT with the challenge, and logged
   run curl -sS --cacert "$H/.mitmproxy/mitmproxy-ca-cert.pem" --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null https://example.com/
   [ "$status" -ne 0 ]
-  [[ "$output" == *"403"* ]]
+  [[ "$output" == *"407"* ]]
+  grep -q $'\texample.com\tCONNECT\t-\tno session$' "$H/.config/agent-sandbox/blocked.log"
+  # the installer's probe session asked as a session: example.com refused for its host
   grep -q $'\texample.com\tCONNECT\t-$' "$H/.config/agent-sandbox/blocked.log"
 }
 
