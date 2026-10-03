@@ -724,14 +724,16 @@ _as_ssh_setup() {
   return 0
 }
 
-# --allow HOST: write this session's extra hosts where the proxy addon reads
-# them, and mint a per-session token so the addon can tell THIS session's --allow
-# from another's. The token goes in the session dir (private, never bound into a
+# The session's identity at the proxy: mint a per-session token, and write this
+# session's extra hosts, [deny], retrieve-only and git files where the proxy addon
+# reads them. The token goes in the session dir (private, never bound into a
 # sandbox) and, as userinfo, into the sandbox's proxy URL (_proxy_auth, used by
 # the network arms); the sandbox sends it in Proxy-Authorization, and the addon
-# grants the global allowlist plus only the matching session's --allow. So one
-# session's --allow is not reachable from another. Nothing but the token value
-# (which grants only this session's own --allow) is exposed inside the sandbox.
+# grants the global allowlist plus only the matching session's --allow, minus its
+# subtractions. So one session's --allow is not reachable from another. A request
+# without a live session's token is refused (407), so dropping the token from the
+# proxy URL reaches nothing rather than escaping the subtractions. Nothing but the
+# token value is exposed inside the sandbox. Called for every proxied launch.
 _as_allow_setup() {
   _as_session_begin || return 1
   local _token
@@ -748,7 +750,8 @@ _as_allow_setup() {
     # Proxy-Authorization before going upstream), so the value 'x' never matters.
     _proxy_auth="$_token:x"
   else
-    _as_msg "warning — could not mint a session proxy token; --allow will not be isolated from other sessions"
+    _as_msg "could not mint a session proxy token; the proxy serves sessions by their token only, so this one could reach nothing. Refusing to launch."
+    return 1
   fi
   {
     printf '# agent-sandbox --allow for %s. Honoured by the proxy addon only while\n' "$(basename -- "$_session_dir")"
@@ -6858,24 +6861,24 @@ agent_sandbox() (
       return 1
     }
   fi
-  # The session allowlist: --allow and the dot-file's hosts, and the profile's own
-  # (#181). Only where a proxy filters; the note is for hosts someone asked for.
-  if ((${#_allow_hosts[@]} + ${#_profile_allow_hosts[@]} + ${#_deny_hosts[@]} + _retrieve_only > 0)); then
-    case "${_knob_net:-proxy}" in
-      open | none)
-        ((${#_allow_hosts[@]} > 0)) \
-          && _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
-        ((${#_deny_hosts[@]} > 0)) \
-          && _as_msg "[deny] is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
-        ((_retrieve_only)) \
-          && _as_msg "[net] retrieve-only is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
-        ;;
-      *) _as_allow_setup || {
-        _as_session_cleanup
-        return 1
-      } ;;
-    esac
-  fi
+  # The session's token and files: --allow and the dot-file's hosts, the profile's own
+  # (#181), [deny], retrieve-only. EVERY PROXIED LAUNCH GETS A TOKEN: the proxy serves
+  # live sessions only and refuses an anonymous client, so a session without one could
+  # reach nothing. Where no proxy filters, the note is for what someone asked for.
+  case "${_knob_net:-proxy}" in
+    open | none)
+      ((${#_allow_hosts[@]} > 0)) \
+        && _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+      ((${#_deny_hosts[@]} > 0)) \
+        && _as_msg "[deny] is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+      ((_retrieve_only)) \
+        && _as_msg "[net] retrieve-only is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+      ;;
+    *) _as_allow_setup || {
+      _as_session_cleanup
+      return 1
+    } ;;
+  esac
 
   # Lock $HOME itself down: the tmpfs is read-only, so the agent cannot create
   # files directly in $HOME. The sub-binds above (profile state, the conda

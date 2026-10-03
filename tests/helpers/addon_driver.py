@@ -55,6 +55,12 @@ class ConnData:
         self.server = Srv(address)
 
 
+def _session():
+    """The live session the plain scenarios speak for (DRIVE_TOKEN), since the proxy
+    serves sessions only; empty when the test wants an anonymous client."""
+    return _auth(os.environ.get("DRIVE_TOKEN", ""))
+
+
 def _auth(token):
     if not token or token == "none":
         return {}
@@ -118,15 +124,16 @@ elif scenario == "connect_badauth":
     m.http_connect(f)
     show(blocked=f.response is not None)
 elif scenario == "request":
-    f = Flow(args[0], args[1] if len(args) > 1 else "GET", args[2] if len(args) > 2 else "/")
+    f = Flow(args[0], args[1] if len(args) > 1 else "GET", args[2] if len(args) > 2 else "/", _session())
     m.request(f)
     show(blocked=f.response is not None,
          status=getattr(f.response, "status_code", None),
          body=(f.response.content.decode() if f.response else "").splitlines()[0] if f.response else "")
 elif scenario == "connect":
-    f = Flow(args[0], "CONNECT", "-")
+    f = Flow(args[0], "CONNECT", "-", _session())
     m.http_connect(f)
-    show(blocked=f.response is not None, status=getattr(f.response, "status_code", None))
+    show(blocked=f.response is not None, status=getattr(f.response, "status_code", None),
+         challenge=(f.response.headers.get("Proxy-Authenticate", "") if f.response else ""))
 elif scenario == "responseheaders":
     f = Flow("x")
     f.response = m.http.Response.make(200, b"", {"content-type": args[0] if args else "text/plain"})
@@ -134,7 +141,7 @@ elif scenario == "responseheaders":
     show(stream=f.response.stream)
 elif scenario == "request_spoof":
     # request-line host = args[0] (real dest), Host header = args[1] (spoof).
-    f = Flow(args[0], "GET", "/SECRET", pretty_host=args[1])
+    f = Flow(args[0], "GET", "/SECRET", _session(), pretty_host=args[1])
     m.request(f)
     show(blocked=f.response is not None,
          gated_host=args[0], header_host=args[1])

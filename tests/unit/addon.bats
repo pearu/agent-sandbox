@@ -13,6 +13,13 @@ setup() {
   : >"$BATS_TEST_TMPDIR/stub/mitmproxy/__init__.py"
   export PYTHONPATH="$BATS_TEST_TMPDIR/stub" AGENT_SANDBOX_SESSION_BASE="$BASE"
   printf '# comment\napi.github.com   # trailing\n\n.example.org\n' >"$CFG/allowlist.txt"
+  # The proxy serves live sessions only: the plain scenarios speak for this one, owned
+  # by the test itself; DRIVE_TOKEN= makes a client anonymous.
+  mkdir -p "$BASE/session.live"
+  printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$BASE/session.live/owner.id"
+  echo LIVE >"$BASE/session.live/proxy.token"
+  : >"$BASE/session.live/allow.txt"
+  export DRIVE_TOKEN=LIVE
 }
 
 # AGENT_SANDBOX_TEST_PYTHON may wrap the interpreter, e.g. "python3 -m trace --count ..." for coverage.
@@ -97,11 +104,11 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   # after the client disconnects, the tunnel's remembered token is dropped
   run drive disconnect_tok AAA a.example
   [[ "$output" == *"after_disconnect_blocked=True"* ]]
-  # a malformed Proxy-Authorization is ignored (no token), so only the global list applies
+  # a malformed Proxy-Authorization is no token: anonymous, refused even for a global host
   run drive connect_badauth a.example
   [[ "$output" == *"blocked=True"* ]]
   run drive connect_badauth api.github.com
-  [[ "$output" == *"blocked=False"* ]]
+  [[ "$output" == *"blocked=True"* ]]
   kill "$live"
   wait "$live" 2>/dev/null || true
 }
@@ -128,7 +135,7 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   [[ "$output" == *"blocked=True"* && "$output" == *"denied for this session"* ]]
   run drive connect_tok BBB api.github.com # another session: the global list still applies
   [[ "$output" == *"blocked=False"* ]]
-  run drive connect api.github.com # no token: likewise
+  run drive connect api.github.com # a session without the line: likewise
   [[ "$output" == *"blocked=False"* ]]
   kill "$live"
   wait "$live" 2>/dev/null || true
@@ -189,6 +196,22 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   [[ "$output" == *"blocked=True"* ]]
   kill "$live"
   wait "$live" 2>/dev/null || true
+}
+
+@test "a request that belongs to no live session gets 407 with a Basic challenge, on CONNECT and plain HTTP alike, even for a global host" {
+  # Measured on mitmproxy 12.2.2: before this, a client without the token (git, whose
+  # libcurl waits for a challenge, or an agent that dropped it from HTTPS_PROXY) got the
+  # global list and none of its session's [deny], retrieve-only or git refusal.
+  DRIVE_TOKEN='' run drive connect api.github.com
+  [[ "$output" == *"blocked=True"* && "$output" == *"status=407"* ]]
+  [[ "$output" == *'challenge=Basic realm="agent-sandbox"'* ]]
+  DRIVE_TOKEN='' run drive request api.github.com GET /zen
+  [[ "$output" == *"status=407"* && "$output" == *"no live session's token"* ]]
+  grep -q $'\tapi.github.com\tCONNECT\t-\tno session$' "$CFG/blocked.log"
+  DRIVE_TOKEN=nosuch run drive connect api.github.com # a token no live session has
+  [[ "$output" == *"status=407"* ]]
+  run drive connect api.github.com # the session's own token
+  [[ "$output" == *"blocked=False"* ]]
 }
 
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {

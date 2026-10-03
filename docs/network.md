@@ -121,8 +121,19 @@ PID is never mistaken for the owner. The flag is ignored, with a note, in the
 the engine mints a per-session token, points that sandbox's proxy URL at
 `http://<token>@127.0.0.1:8888`, and the proxy addon grants the global
 allowlist plus only the matching session's `--allow`. A concurrent session
-(with a different token, or none) sees the global allowlist only, so one
-session's `--allow` hosts are not reachable from another.
+with a different token sees the global allowlist only, so one session's
+`--allow` hosts are not reachable from another.
+
+**The proxy serves sessions only.** Every proxied launch gets a token, and a request
+that carries none -- or the token of a session that is no longer alive -- is answered
+`407 Proxy Authentication Required` with a Basic challenge, on CONNECT and on plain
+HTTP alike, and logged with `no session`. The token is what a session's `[deny]`,
+`retrieve-only` and git refusal hang on, and a client without it would otherwise get
+the global allowlist and escape all three: git's libcurl sends proxy credentials only
+when challenged, and anything inside can read the proxy URL and drop them. With the
+challenge, git sends the credentials it already holds (measured), and a client that
+drops them reaches nothing. A host tool pointed at the proxy by hand is refused the
+same way: the proxy is the sandboxes', not the host's.
 
 ## Per-session denial: `[deny]`
 

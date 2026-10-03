@@ -2345,10 +2345,21 @@ each session that uses --allow a random token, points that sandbox's proxy URL
 at http://<token>@127.0.0.1:8888, and stores the token in the session dir. A
 request carries the token in its Proxy-Authorization header (on CONNECT for
 HTTPS, on each request for plain HTTP); the addon maps it back to the one live
-session and applies the global allowlist plus ONLY that session's --allow. A
-request with another session's token, or none, gets the global allowlist only,
-so one session's --allow is never reachable from another. The global
+session and applies the global allowlist plus ONLY that session's --allow. So
+one session's --allow is never reachable from another. The global
 allowlist.txt still applies to everyone.
+
+A REQUEST BELONGS TO A LIVE SESSION, OR IT IS REFUSED. The token is also what a
+session's subtractions hang on -- its [deny], retrieve-only and git refusal -- and
+for a subtraction an anonymous client is the widest one: a request without a token
+used to get the global allowlist, so a client that did not send it (git, whose
+libcurl waits for a challenge) or an agent that dropped it from HTTPS_PROXY was out
+of reach of all three (measured on mitmproxy 12.2.2). A request with no token, or
+with the token of a session that is not alive, gets 407 Proxy Authentication
+Required with a Basic challenge, on CONNECT and on a plain request alike: a client
+holding the credentials in its proxy URL then sends them (measured: git retries the
+CONNECT with them), and one without has nothing to send. The engine mints a token
+for every proxied launch.
 
 No restart needed when editing the allowlist; the file is re-read on
 each request.
@@ -2562,6 +2573,33 @@ def _retrieve_refusal(flow: http.HTTPFlow, token: str | None) -> str | None:
     return f"{method} (this session is retrieve-only: GET and HEAD only)"
 
 
+def _session_live(token: str | None) -> bool:
+    """Is `token` the token of a live session? The one identity the proxy has."""
+    if not token or not SESSION_BASE.is_dir():
+        return False
+    for session in sorted(SESSION_BASE.glob("session.*")):
+        tok, owner = session / "proxy.token", session / "owner.id"
+        try:
+            if tok.is_file() and owner.is_file() and tok.read_text().strip() == token and _owner_alive(owner):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _refuse_anonymous(flow: http.HTTPFlow, host: str, method: str, path: str) -> None:
+    """407 with a Basic challenge, for a request that belongs to no live session."""
+    _log_blocked(host, method, path, "no session")
+    flow.response = http.Response.make(
+        407,
+        (
+            f"agent-sandbox: a request to {host!r} with no live session's token. The proxy serves\n"
+            "agent-sandbox sessions only, which carry theirs in the proxy URL.\n"
+        ).encode(),
+        {"Content-Type": "text/plain; charset=utf-8", "Proxy-Authenticate": 'Basic realm="agent-sandbox"'},
+    )
+
+
 def _session_lines(token: str | None, name: str) -> list[str]:
     if not token or not SESSION_BASE.is_dir():
         return []
@@ -2661,11 +2699,11 @@ def _forbidden_destination(host: str) -> str | None:
     return None
 
 
-def _log_blocked(host: str, method: str, path: str) -> None:
+def _log_blocked(host: str, method: str, path: str, why: str = "") -> None:
     BLOCKED_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().isoformat(timespec="seconds")
     with BLOCKED_LOG_PATH.open("a") as fh:
-        fh.write(f"{ts}\t{host}\t{method}\t{path}\n")
+        fh.write(f"{ts}\t{host}\t{method}\t{path}" + (f"\t{why}" if why else "") + "\n")
 
 
 def request(flow: http.HTTPFlow) -> None:
@@ -2680,6 +2718,9 @@ def request(flow: http.HTTPFlow) -> None:
         cid = getattr(getattr(flow, "client_conn", None), "id", None)
         token = _conn_token.get(cid) if cid is not None else None
     _strip_proxy_auth(flow)
+    if not _session_live(token):
+        _refuse_anonymous(flow, host, flow.request.method, flow.request.path)
+        return
     if _is_denied(host, token):
         _log_blocked(host, flow.request.method, flow.request.path)
         flow.response = http.Response.make(
@@ -2726,6 +2767,9 @@ def http_connect(flow: http.HTTPFlow) -> None:
     if cid is not None and token:
         _conn_token[cid] = token  # inner tunnel requests inherit this
     _strip_proxy_auth(flow)
+    if not _session_live(token):
+        _refuse_anonymous(flow, host, "CONNECT", "-")
+        return
     denied = _is_denied(host, token)
     exact, suffix = _load_allowlist(token)
     if not denied and _is_allowed(host, exact, suffix):
