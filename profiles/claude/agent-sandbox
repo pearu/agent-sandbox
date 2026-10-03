@@ -44,11 +44,9 @@ status = agents
 # is a cross-session control channel, which is the one thing isolation exists to
 # prevent.
 #
-# gh/ and ide/ are deliberately NOT here. Both exist to make Claude Code work from
-# inside a sandbox: gh/ is a GH_CONFIG_DIR that lives in a bound directory because
-# ~/.config/gh is not one, and ide/ carries the lockfiles an editor connects
-# through. Hiding either would break the feature it was created for. A project's
-# [claude] hide can add them.
+# ide/ is deliberately NOT here: it carries the lockfiles an editor connects through,
+# and hiding it would break the feature it was created for. gh/ is a channel of its
+# own (#88, below). A project's [claude] hide can add either.
 hide = daemon
 # Nothing below needs to outlive the session: a probe established that a session
 # starts, and a resume completes, with the whole set blanked.
@@ -71,9 +69,9 @@ hide = image-cache
 # Paths deliberately left NATIVE, so `asb --check` does not report them as unclassified
 # (#82): anything under the base that no channel, hide or visible line names is listed
 # there, since the default for an unknown path is exposed. .credentials.json is your
-# login, the identity a sandbox runs as; gh/ and ide/ exist to make Claude Code work
-# from inside a sandbox (above).
-visible = .credentials.json gh ide
+# login, the identity a sandbox runs as; ide/ exists to make Claude Code work from
+# inside a sandbox (above).
+visible = .credentials.json ide
 
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.
@@ -246,6 +244,18 @@ reach = searched
 [channel:changelog]
 {base}/cache/changelog.md
 
+# GH IS A CHANNEL (#88): a gh login you keep where a sandbox can bind it, since
+# ~/.config/gh is a secret store and never is. It holds a token that can do whatever its
+# scopes allow, so no sandbox gets it unless its dot-file asks: `own` under every preset
+# but native, `gh = read-only` in [connect] to use it -- gh reads with it, nothing inside
+# rewrites the login. GH_CONFIG_DIR points at it under every preset but native, so that
+# one line is all it takes; under `own` gh finds an empty store and is logged out.
+# `~/.claude/gh/ = read-only outside:PATH` gives a role another login (a read-only
+# token, docs/recipes.md).
+[channel:gh]
+env = GH_CONFIG_DIR
+{base}/gh/
+
 # ----- the presets' rungs --------------------------------------------------------------
 # Where a channel sits under a preset when that is not the ladder's rung (isolated: own,
 # inherit: copy-on-write, shared: read-write). A project's [connect] overrides any of them.
@@ -260,6 +270,7 @@ reach = searched
 # Other projects' state is hidden under both (`projects`), as it was before 0.3; memory
 # is the role's own under `inherit` and your native memory under `shared` (#196).
 [preset:inherit]
+gh = own
 config = seed-only
 projects = own
 transcripts = own
@@ -270,6 +281,7 @@ artefacts = own
 policy = seed-only
 
 [preset:shared]
+gh = own
 config = seed-only
 projects = own
 transcripts = own

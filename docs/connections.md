@@ -54,7 +54,7 @@ No connection for a channel means `own`.
 
 | channel | what it carries | Claude Code path (profile's mapping) |
 |---|---|---|
-| identity | the login | `.credentials.json`; `gh/`, `ide/` as tooling that exists for sandboxed use |
+| identity | the login | `.credentials.json`; `ide/` as tooling that exists for sandboxed use |
 | project | the working tree | `$CWD` |
 | instructions | user-level instructions | `CLAUDE.md`, `rules/` |
 | settings | user-level settings, hooks, style and model selection | `settings.json`, `output-styles/` |
@@ -72,6 +72,7 @@ No connection for a channel means `own`.
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
 | policy | the caches of server-managed settings and policy flags, with the stamp | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109) |
 | changelog | the cached vendor changelog | `cache/changelog.md` (#109) |
+| gh | a gh login you keep for sandboxed use, with the variable gh reads it from | `gh/`, `GH_CONFIG_DIR` (#88) |
 
 Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
 `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`, and since
@@ -145,7 +146,8 @@ Two connections are **mandatory** and fixed:
   token multiplies a race (the study's harness notes it), so the token stays one file. This
   is the floor of the scale: "completely independent" sandboxes of one user still share who
   they are. Full independence needs two accounts, which is outside this tool. `hide` keeps
-  the tooling parts (`gh/`, `ide/`) out of a sandbox that should not have them.
+  the tooling part (`ide/`) out of a sandbox that should not have it. A GitHub login is not
+  identity: it is the `gh` channel (#88), `own` unless a dot-file asks for it.
 - **project** is `read-write` to the working tree by default: it is where agents are meant to
   communicate, including agents of different kinds, through files and a document convention
   such as `AGENTS.md`. Roles on one project share it. `project = read-only` (#220) is the one
@@ -249,6 +251,7 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 | transcripts (conversations, file history, plans, prompt history) | own | own | own |
 | logs (the user's hook logs) | own | own | own |
 | artefacts | own | own | read-write |
+| gh (a GitHub login) | own | own | own |
 | network | `own` | `proxy` | `proxy` or `open` |
 
 **This table is where the model is going, not what the engine does today.** The rows
@@ -805,7 +808,7 @@ A profile declares four things and no dispositions:
 1. where the agent keeps its state, and how to point the agent at the sandbox's copy of it
    (Claude Code: `~/.claude`, `CLAUDE_CONFIG_DIR`);
 2. the **identity** paths, always connected `read-write` to native (Claude Code: `.credentials.json`;
-   `gh/`, `ide/` as hideable tooling);
+   `ide/` as hideable tooling);
 3. the **channel → path** table above, including what is server-owned state;
 4. the **per-session scratch** the isolate spec replaces per launch (until #120 gives those
    paths modes of their own).

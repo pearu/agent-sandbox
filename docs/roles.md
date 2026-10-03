@@ -327,7 +327,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | inputs read-only, outputs writable, inside one tree | path declarations, bound by depth (#130, #196) | built |
 | history its owner's: `main`'s hidden from every role but the Supervisor and, read-only, the Implementers; a clone's from every role but its Implementer and, read-only, the Supervisor | `./.git/ = own` and `.asb/impl-N/.git/ = own` in the common block, redeclared `read-only` or `read-write` where a role needs it | built |
 | the project read-only for every role but the Supervisor, with an Implementer's clone read-write inside it | `project = read-only` / `read-write` per role (#220), declarations inside it bound by depth | built |
-| the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `read-only` in the common block: the user's token as it is | **#88**: to build. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
+| the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `own` unless asked; `gh = read-only` in the common block, `GH_CONFIG_DIR` pointed there | built. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
 | no publishing: hosts a role may not reach | `[deny]` and `[deny:<role>]` subtract hosts, the profile's own untouched; role suffixes on `[allow]`, `[env]`, `[net]`, `[conda]` (#221) | built |
 | retrieve only: read the web and GitHub, publish nothing | -- | **to build**: the proxy refusing every method but GET and HEAD to the user's hosts, per role, the profile's own hosts untouched -- GitHub-aware: `gh` reads issues and pull requests through POSTs to `api.github.com/graphql`, so there a `query` passes and a `mutation` is refused, by the body. What it does not stop: a token carried out in a GET to an allowed host |
 | no git transport to a host that also serves pages | -- | **to build**: the proxy refusing git's HTTPS transport (`/info/refs`, `git-upload-pack`, `git-receive-pack`, the `git/` user agent) per role; `--ssh` refusable per role |
@@ -344,40 +344,32 @@ What the model needs, against what the engine has on main (2026-10-02):
 
 ## 7. The `gh` token: the default, and the recommended hardening
 
-**The default asks nothing of the user.** Every role holds the `gh` token the user
-already has, through the `gh` channel, and `gh` inside reads issues, pull requests and
-their comments with it. What keeps the reading roles from writing with it is the
+**The default asks nothing of the user beyond the model's dot-file.** The engine gives
+no sandbox the `gh` login unless its dot-file asks (#88); the model's common block asks,
+`gh = read-only`, so every role holds the gh login the user keeps in `~/.claude/gh`, and
+`gh` inside -- `GH_CONFIG_DIR` points there -- reads issues, pull requests and their
+comments with it. What keeps the reading roles from writing with it is the
 retrieve-only network (section 6), which is the sandbox's to enforce. Until that is
 built, the roles can write with `gh` as well; the user is told so by `asb --check`, and
 publishes from the host meanwhile, as this project does today.
 
 **The recommended hardening: a token that cannot write.** The network bounds what a
 role *does* with the token; it cannot stop the token from leaving in a GET to an
-allowed host. A **fine-grained personal access token** with read-only permissions
-(metadata, contents, issues, pull requests), limited to the repositories the roles work
-on, closes that wherever the token ends up, because GitHub enforces the scope. The two
-are complementary: the token bounds what the credential can do, the network what the
-role does with it. The cost is one setup and one renewal a year:
+allowed host. A fine-grained personal access token with read-only permissions, limited
+to the repositories the roles work on, closes that wherever the token ends up, because
+GitHub enforces the scope. The two are complementary: the token bounds what the
+credential can do, the network what the role does with it. It is a dot-file matter
+alone -- the reading roles get that login at the channel's path, the Supervisor the
+user's own:
 
-1. create the token on GitHub, with those permissions and an expiry;
-2. keep it in a `gh` directory of its own:
-   `GH_CONFIG_DIR=~/.claude/gh-read gh auth login --with-token < the-token`;
-3. in the dot-file, give the reading roles that directory at `gh`'s path, and the
-   Supervisor its own -- the same key declared again overrides:
+    [connect]
+    ~/.claude/gh/ = read-only outside:~/.gh-read
+    [connect:supervisor]
+    ~/.claude/gh/ = read-only
 
-       [connect]
-       ~/.claude/gh/ = read-only outside:~/.claude/gh-read
-       [connect:supervisor]
-       ~/.claude/gh/ = read-only
-
-   with `GH_CONFIG_DIR=$HOME/.claude/gh` exported in the launching shell and listed under
-   `[env]`, so `gh` inside reads that path;
-4. when the token expires, step 2 again.
-
-`asb --check --role NAME` shows which directory each role's `~/.claude/gh` is, so the
-review catches a role holding the wrong one. Until the role-suffixed sections exist, an
-interim with no relocation: export the read-only token as `GH_TOKEN` and forward it
-(the `gh` recipe); then every sandboxed role, the Supervisor included, can only read.
+The setup and the renewal are in [recipes.md](recipes.md) (the `gh` section). `asb
+--check --role NAME` shows which directory each role's `~/.claude/gh` is, so the review
+catches a role holding the wrong one.
 
 ## 8. The example dot-file
 
@@ -403,8 +395,8 @@ project = read-only               # the working tree, read-only (#220); the Supe
 ./.git/ = own                     # history is its owner's: main's is the Supervisor's...
 .asb/impl-1/.git/ = own           # ...and a clone's its Implementer's
 .asb/impl-2/.git/ = own
-gh = read-only                    # NEEDS (#88): your token, for reading issues and pull requests
-# hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.claude/gh-read
+gh = read-only                    # your gh login (#88), for reading issues and pull requests
+# hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.gh-read
 [net]                             # NEEDS (#223) this key: every role reads the web and GitHub, and publishes nothing...
 retrieve-only = on
 
