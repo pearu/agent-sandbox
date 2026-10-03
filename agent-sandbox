@@ -1051,6 +1051,28 @@ _as_connect_parse() {
   src="${src:-native}"
   # No scope written means the role's own storage, which needs no name (#125).
 
+  # THE WORKING TREE (#220): `project` is the directory the session opened, bound at
+  # itself. Read-write by default, since it is what the agent is there to change;
+  # read-only for a role that must not change it, with a read-write declaration inside
+  # for the part it may (bound later, by depth). No other mode: a store of the role's
+  # own for the whole project is not a working tree, and `--try-run` (#115) is the
+  # place for a disposable one. No source, no scope: it is always the tree itself.
+  if [[ "$ch" == project ]]; then
+    case "$mode" in
+      read-only | read-write) ;;
+      *)
+        _as_msg "connect ($where): 'project = $mode' is refused: the project is 'read-write' (the default) or 'read-only'. For a writable part of a read-only project, declare it: './sub/ = read-write'."
+        return 1
+        ;;
+    esac
+    [[ -z "$src_given" && -z "$scope" ]] || {
+      _as_msg "connect ($where): 'project' takes a mode and nothing else, got '$spec': it is always the directory the session opened."
+      return 1
+    }
+    _connect_project_mode="$mode" _connect_project_where="$where"
+    return 0
+  fi
+
   local known=0 line
   [[ "$ch" == */* ]] && known=1 # a path; checked by _as_connect_parse_path below
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
@@ -1324,7 +1346,7 @@ _as_connect_parse_path() {
       return 1
     fi
     if [[ "$c" == "$proj" || "$proj" == "$c"/* ]]; then
-      _as_msg "connect ($where): refusing '$key' ('$c' is the project or a parent of it, and a declaration over it would cover the project). Declare a directory inside it instead."
+      _as_msg "connect ($where): refusing '$key' ('$c' is the project or a parent of it, and a declaration over it would cover the project). Declare a directory inside it instead, or the project's own mode: 'project = read-only'."
       return 1
     fi
     if _as_path_protected "$c" "$mode"; then
@@ -1947,6 +1969,21 @@ _as_connect_bind_path() {
     [[ -n "$_sbx_src" ]] || return 0 # nothing there; said
     what="'$key' (${_connect_sandbox[$p]##*$'\t'})"
     s="$_sbx_src" sbx_store="$(readlink -f -- "$_sbx_src" 2>/dev/null || printf '%s' "$_sbx_src")"
+  fi
+  # A key the project does not have, inside a READ-ONLY project (#220), for a bind that
+  # will happen -- an `own` store, or a source somewhere else: bwrap cannot make the
+  # mount point in a read-only bind, so it is made here on the host, where bwrap would
+  # have made it in a read-write one -- a directory left as bwrap leaves it, a file
+  # removed again while it is empty.
+  if [[ ! -e "$p" && "${_connect_project_mode:-read-write}" == read-only &&
+    "$p" == "$(_as_project_dir)"/* ]] && [[ "$mode" == own || -e "$s" ]]; then
+    if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
+      mkdir -p -- "$p" || return 1
+    else
+      mkdir -p -- "$(dirname -- "$p")" || return 1
+      _as_connect_placeholder "$p"
+      : >"$p" || return 1
+    fi
   fi
   base="$rolebase/@paths"
   [[ "${_connect_scope[$p]:-}" == run-scoped ]] && base="$rolebase/@run/@paths"
@@ -3061,6 +3098,7 @@ _as_connect_report() {
   ((${#_connect_mode[@]})) || return 0
   local ch
   _as_info "connect: preset $_preset ($(_as_preset_mode "$_preset") for every channel this profile declares)"
+  [[ -n "${_connect_project_where:-}" ]] && _as_info "connect: project = $_connect_project_mode ($_connect_project_where)"
   # Then only what differs from it. Listing all six every launch is how a report
   # becomes something nobody reads.
   for ch in "${!_connect_mode[@]}"; do
@@ -3127,7 +3165,7 @@ _as_briefing_write() {
   # hard failure -- and an unknown net mode must still reach the network block's
   # own refusal rather than dying here.
   local egress="unknown" hosts_line="none" ssh_line="none"
-  local mem_line="unknown" rw_line="" ro_line="none"
+  local mem_line="unknown" rw_line="" ro_line=""
   case "$net" in
     # Both lines say HOW the filtering is enforced, not only that it is. A probe
     # run read `--share-net` out of the bwrap argv and concluded strict had no
@@ -3161,17 +3199,24 @@ _as_briefing_write() {
       mem_short="hidden; only this project is visible"
     fi ;;
   esac
-  rw_line="$cwd"
+  rw_line=""
+  if [[ "${_connect_project_mode:-read-write}" == read-only ]]; then
+    ro_line="$cwd (the project)"
+  else
+    rw_line="$cwd"
+  fi
   # The paths declared read-write or read-only. Not the built-in read-only dot-file,
   # which is no grant.
   local _bp
   for _bp in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
     [[ "${_connect_where[$_bp]:-}" == "built in"* ]] && continue
     case "${_connect_mode[$_bp]:-}" in
-      read-write) rw_line="$rw_line, $_bp" ;;
+      read-write) rw_line="${rw_line:+$rw_line, }$_bp" ;;
       read-only) ro_line="${ro_line:+$ro_line, }$_bp" ;;
     esac
   done
+  rw_line="${rw_line:-nothing in the project}"
+  ro_line="${ro_line:-none}"
 
   local sec="off"
   case "${_knob_seccomp:-}" in on | 1) sec="on: syscalls outside an allowlist fail with EPERM" ;; esac
@@ -4251,6 +4296,7 @@ _as_check_plan() {
       [[ -n "${_connect_scope[$ch]:-}" ]] && mode="$mode ${_connect_scope[$ch]}"
       printf '  %-28s %-15s %-24s %s\n' "$ch" "$mode" "$source" "${_connect_where[$ch]}"
     done
+    printf '  %-28s %-15s %-24s %s\n' project "$_connect_project_mode" "the working tree" "${_connect_project_where:-default}"
     for path in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
       mode="${_connect_mode[$path]}"
       source="the same path"
@@ -4523,7 +4569,7 @@ _as_check_binds() {
   {
     printf '\nBinds, outer first:\n'
     [[ -n "$profile_base" ]] && _as_check_row "$(_as_tilde "$profile_base")" read-write "the agent's base"
-    _as_check_row "$(_as_tilde "$cwd")" read-write "the project"
+    _as_check_row "$(_as_tilde "$cwd")" "$_connect_project_mode" "the project"
     for item in ${_sorted[@]+"${_sorted[@]}"}; do
       IFS=$'\t' read -r -a fields <<<"$item"
       what="${fields[1]}"
@@ -5027,6 +5073,9 @@ agent_sandbox() (
   local -A _connect_key=() _connect_isdir=() _connect_src=()
   # A `sandbox:` source (#200), per channel or path: "PROJECT<TAB>ROLE<TAB>as written".
   local -A _connect_sandbox=()
+  # The working tree (#220): `project = read-only|read-write`, read-write unless a line
+  # says otherwise, and where that line was.
+  local _connect_project_mode=read-write _connect_project_where=""
   local _path_key
   local -a _connect_flag=()
   # The command line that runs the sandbox: bwrap, or pasta running bwrap. Set by the
@@ -6358,7 +6407,11 @@ agent_sandbox() (
     fi
   done
   if ((bind_cwd)); then
-    args+=(--bind "$cwd" "$cwd")
+    if [[ "$_connect_project_mode" == read-only ]]; then
+      args+=(--ro-bind "$cwd" "$cwd")
+    else
+      args+=(--bind "$cwd" "$cwd")
+    fi
   fi
   args+=(--chdir "$cwd")
 

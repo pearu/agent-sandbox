@@ -83,3 +83,22 @@ PROBE
   [ "$status" -eq 0 ]
   [ ! -e "$SB/@paths/upper/${slug#_}" ] # and --reset takes the layer away
 }
+
+@test "project = read-only (#220): the tree cannot be written, a read-write path inside it can, and a missing own directory gets its mount point from the host" {
+  mkdir -p "$IWORK/data"
+  printf 'DATA\n' >"$IWORK/data/a"
+  # The probe's report is in the project, which is read-only now: it goes to a file
+  # outside, declared at the report's path -- a key the project does not have.
+  : >"$I/rep"
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=SANDBOX -- \
+    --connect 'project = read-only' --connect "./report = read-write outside:$I/rep" \
+    --connect './scratch/ = own' probe run
+  [ "$status" -eq 0 ]
+  grep -qx 'finished=yes' "$I/rep"
+  grep -qx 'data=DATA' "$I/rep"
+  run ! grep -q 'wrote_data' "$I/rep" # the read-only tree
+  [ ! -e "$IWORK/data/b" ]
+  grep -qx 'wrote_scratch=yes' "$I/rep" # own, inside the read-only tree
+  [ -d "$IWORK/scratch" ]
+  [ -z "$(ls -A "$IWORK/scratch")" ]
+}

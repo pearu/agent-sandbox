@@ -72,6 +72,9 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
+- **`project = read-only`** (#220): the working tree read-only for a role, with a
+  read-write declaration inside it for the part it may change; `--check` shows the
+  project's mode.
 - The sandbox-owned conda package cache is bound whenever a conda env is active, not only
   in write mode (#219): an env written by path, `conda install -p`, keeps its downloads
   across launches.

@@ -67,7 +67,7 @@ here, once, and then stop thinking about.
 
 - **Filesystem**: the system directories read-only; a fresh `/tmp`; an empty,
   read-only `$HOME` in which only the agent's own state (`~/.claude`), the
-  current project directory (read-write), the active conda env (read-only
+  current project directory (read-write unless `project = read-only`), the active conda env (read-only
   unless asked), a session-private `~/.cache`, and paths you list are visible.
   Secret stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.netrc`, ...) and the
   sandbox's own configuration are refused, as CWD too, along with any directory

@@ -133,8 +133,10 @@ Sections:
   for `copy` and `seed-only` (#153) -- one thing per join: the store is seeded from the
   source when the join starts, since a store new at every join has nothing earlier to
   refresh or conflict with; not for the `config` and `transcripts` channels, whose seed
-  is a filtered view -- and for `read-only`, which is then the plain bind. An overlay per
-  join, `copy-on-write join-scoped`, is refused as not built yet (#153).
+  is a filtered view -- for `copy-on-write`, an overlay per join: the source read live,
+  the join's writes in an upper layer that goes with the join (a file, or overlays off,
+  gets a seeded copy per join instead) (#153) -- and for `read-only`, which is then the
+  plain bind.
 
   Source and scope may appear in either order — every scope ends in `-scoped` and no
   source does. And `read-write` with any scope is refused permanently rather than
@@ -148,6 +150,24 @@ Sections:
   variable, which beats this file. A channel name the profile does not carry
   refuses the launch instead of being ignored, because a typo that quietly left
   a channel at `read-write` would read to you as a channel you had closed.
+
+  **`project = read-only`** (#220) binds the working tree itself read-only, for a role
+  that must not change it; `read-write`, the default, is the tree as it always was. Nothing
+  else is accepted -- no other mode, no source, no scope. A read-write part of a read-only
+  project is a declaration inside it, bound after it by depth:
+
+  ```ini
+  [connect]
+  project = read-only
+  [connect:implementer]
+  .asb/impl-1/ = read-write
+  [connect:supervisor]
+  project = read-write
+  ```
+
+  bwrap cannot make a mount point in a read-only tree, so a declared path the project
+  does not have yet (an `own` one, or one with a source elsewhere) gets its mount point
+  made on the host before the launch, as bwrap would have made it in a read-write tree.
 
   A key that contains **`/`** is a **path declaration** rather than a channel:
   `./scratch/ = own` gives the sandbox a directory of its own at `./scratch`,
@@ -191,7 +211,7 @@ Sections:
   | channel | `isolated` | `inherit` | `shared` | `native` | governed today by |
   |---|---|---|---|---|---|
   | identity — your login, and `gh/`/`ide/` | `read-write` | `read-write` | `read-write` | `read-write` | always live; a sandbox without your login is not your sandbox |
-  | project — the working tree | `read-write` | `read-write` | `read-write` | `read-write` | always live; it is what you opened |
+  | project — the working tree | `read-write` | `read-write` | `read-write` | `read-write` | always live; it is what you opened; `project = read-only` per role (#220) |
   | instructions — `CLAUDE.md`, `rules/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | settings — `settings.json`, `output-styles/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | skills — `skills/`, `commands/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
