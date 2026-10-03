@@ -56,7 +56,7 @@
 #         env's own tools are the ones found there.
 # write : 1 makes the active env writable (mamba/pip install into it); the base
 #         install, other envs and the host package cache stay read-only.
-# pkgs  : sandbox-owned package cache used in write mode.
+# pkgs  : sandbox-owned package cache, persistent, where conda downloads go.
 #[conda]
 #name = myproject-env
 #write = 1
