@@ -134,6 +134,63 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   wait "$live" 2>/dev/null || true
 }
 
+@test "a retrieve-only session: GET and HEAD pass, every other method is refused, but to the profile's own hosts (#223)" {
+  sleep 300 &
+  local live=$!
+  local st
+  st=$(awk '{print $22}' "/proc/$live/stat")
+  mkdir -p "$BASE/session.a" "$BASE/session.b"
+  printf '%s %s\n' "$live" "$st" | tee "$BASE/session.a/owner.id" >"$BASE/session.b/owner.id"
+  echo "AAA" >"$BASE/session.a/proxy.token"
+  echo "BBB" >"$BASE/session.b/proxy.token"
+  printf 'api.anthropic.com\n' >"$BASE/session.a/allow.txt"
+  printf 'api.anthropic.com\n' >"$BASE/session.a/retrieve-only.txt"
+  : >"$BASE/session.b/allow.txt"
+  run drive request_body AAA api.github.com GET /repos/x/y/issues
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_body AAA api.github.com HEAD /
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_body AAA api.github.com POST /repos/x/y/issues '{"title":"t"}'
+  [[ "$output" == *"blocked=True"* && "$output" == *"POST (this session is retrieve-only"* ]]
+  run drive request_body AAA api.github.com PATCH /repos/x/y/issues/1 '{}'
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_body AAA api.anthropic.com POST /v1/messages '{}' # the profile's own
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_body BBB api.github.com POST /repos/x/y/issues '{}' # another session
+  [[ "$output" == *"blocked=False"* ]]
+  grep -q $'\tapi.github.com\tPOST\t/repos/x/y/issues$' "$CFG/blocked.log"
+  kill "$live"
+  wait "$live" 2>/dev/null || true
+}
+
+@test "a retrieve-only session: a GraphQL query to api.github.com passes, a mutation is refused, by the body (#223)" {
+  sleep 300 &
+  local live=$!
+  local st
+  st=$(awk '{print $22}' "/proc/$live/stat")
+  mkdir -p "$BASE/session.a"
+  printf '%s %s\n' "$live" "$st" >"$BASE/session.a/owner.id"
+  echo "AAA" >"$BASE/session.a/proxy.token"
+  : >"$BASE/session.a/allow.txt"
+  : >"$BASE/session.a/retrieve-only.txt"
+  run drive request_body AAA api.github.com POST /graphql '{"query":"query { repository(owner:\"x\", name:\"y\") { issue(number: 1) { title } } }"}'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_body AAA api.github.com POST /graphql '{"query":"{ search(query: \"mutation\", type: ISSUE) { issueCount } }"}' # a string is not syntax
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_body AAA api.github.com POST /graphql '{"query":"mutation { addComment(input: {subjectId: \"x\", body: \"y\"}) { clientMutationId } }"}'
+  [[ "$output" == *"blocked=True"* && "$output" == *"a GraphQL mutation"* ]]
+  run drive request_body AAA api.github.com POST /graphql '{"query":"query A { a } mutation B { b }","operationName":"A"}' # any mutation in the document
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_body AAA api.github.com POST /graphql '[{"query":"{ a }"},{"query":"mutation { b }"}]' # a batch
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_body AAA api.github.com POST /graphql 'not json'
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_body AAA example.org POST /graphql '{"query":"{ a }"}' # only GitHub's endpoint is GraphQL-aware
+  [[ "$output" == *"blocked=True"* ]]
+  kill "$live"
+  wait "$live" 2>/dev/null || true
+}
+
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {
   run drive request blocked.invalid POST /v1/x
   [[ "$output" == *"blocked=True"* ]]

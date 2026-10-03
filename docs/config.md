@@ -68,7 +68,15 @@ Sections:
   downloads go whenever a conda env is active (the host's cache stays read-only and
   is searched after it), write mode or not -- an env written by path, `conda install
   -p`, downloads too.
-- **`[net]`** — key/value lines. `mode = proxy|strict|open|none` selects the
+- **`[net]`** — key/value lines. `retrieve-only = on|off` (#223, default off): every
+  request but GET and HEAD is refused, to every host but the profile's own (the
+  agent's API) -- a session that reads the web and GitHub and publishes nothing. `gh`
+  reads through POSTs to `api.github.com/graphql`, so there a query passes and a
+  mutation (or a subscription, anywhere in the document) is refused, by the body. It
+  does not stop a secret carried out in a GET; a token that cannot write is the
+  answer to that ([recipes.md](recipes.md), the `gh` section). Per role with
+  `[net:<role>]`; ignored in `open` and `none`, which have no proxy.
+  `mode = proxy|strict|open|none` selects the
   network mode for sessions in this project (an `AGENT_SANDBOX_NET` set in your
   shell wins); approving `mode = open` switches the egress allowlist off for
   the project, which is what the `--trust` review is for. For the `strict`

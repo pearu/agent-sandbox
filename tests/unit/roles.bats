@@ -190,6 +190,39 @@ STUB
   [ "$(sed -n '/^== deny.txt$/,$p' "$H/probe" | sed 1d | paste -sd' ')" = "pypi.org github.com" ]
 }
 
+@test "[net:<role>] retrieve-only = on: the session's file names only the profile's hosts; other roles have none (#223)" {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*.txt; do printf '== %s\n' "${f##*/}"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1
+. "${0%/*}/keeper-tail"
+STUB
+  dotfile $'[allow]\nfiles.example.org\n[net:reviewer]\nretrieve-only = on\n[connect:supervisor]\n'
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  local ro
+  ro="$(sed -n '/^== retrieve-only.txt$/,/^== /p' "$H/probe" | grep -v '^== ')"
+  [[ "$ro" == *api.anthropic.com* ]]
+  [[ "$ro" != *files.example.org* ]] # a host you allowed is not exempt
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -q '^== retrieve-only.txt$' "$H/probe"
+}
+
+@test "retrieve-only is said: in the briefing, in --check, at the review for a bad value, and ignored without a proxy (#223)" {
+  dotfile $'[net:reviewer]\nretrieve-only = on\n[net:other]\nretrieve-only = maybe\n[connect:supervisor]\n'
+  run_engine BWRAP_COPY="$H/copied/briefing" -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [[ "$output" == *"network: retrieve-only -- GET and HEAD only"* ]]
+  run_review
+  [[ "$output" == *"[net] retrieve-only 'maybe' unknown (on|off)"* ]]
+  run_engine AGENT_SANDBOX_NET=none -- asb --role reviewer claude --version
+  [[ "$output" == *"[net] retrieve-only is ignored with AGENT_SANDBOX_NET=none"* ]]
+}
+
 @test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env is ignored, said (#221)" {
   local base="$H/conda" clone="$PROJ/.asb/impl-1/.env"
   mkdir -p "$base/envs/x-dev/conda-meta" "$base/pkgs" "$clone/conda-meta" "$clone/bin"

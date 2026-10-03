@@ -133,6 +133,26 @@ them for that session's token at CONNECT and per request, with a 403 that says t
 host is denied rather than absent. Other sessions keep the global allowlist. A line
 that would take a host the agent's profile needs is left out, and said.
 
+## Read, publish nothing: `retrieve-only`
+
+```ini
+[net:reviewer]
+retrieve-only = on
+```
+
+(#223) refuses, for that session, every request but GET and HEAD to every host but
+the agent profile's own -- the agent's API keeps working. The engine writes the
+profile's hosts to the session's `retrieve-only.txt`; the addon applies it to that
+session's token, at each request inside a tunnel, so a refusal names the method and
+lands in `blocked.log`. GraphQL is the one exception it reads a body for: `gh` reads
+issues and pull requests through POSTs to `api.github.com/graphql`, so a request there
+passes when every operation in its document is a query, and is refused when one is a
+mutation or a subscription (strings and comments do not count). Git's smart-HTTP
+fetch is a POST too, so a retrieve-only session cannot fetch over HTTPS either.
+
+What it does not stop: a secret carried out in a GET -- in a URL, to any allowed host.
+A token that cannot write bounds what such a secret can do ([recipes.md](recipes.md)).
+
 ## The proxy CA
 
 mitmproxy writes its CA to `~/.mitmproxy/` on first start (`install.sh` does

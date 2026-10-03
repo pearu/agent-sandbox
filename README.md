@@ -202,6 +202,7 @@ not exist. Values and defaults are in the last column.
 | `--allow HOST` | — | `[allow]` | extra hosts the agent may reach, on top of the global allowlist; one host per line in the file, and the flag lasts one session (none) ([network.md](docs/network.md)) |
 | — | — | `[deny]` | hosts taken out of what the sessions may reach, the global allowlist included; never a host the profile needs (none) ([network.md](docs/network.md)) |
 | — | `AGENT_SANDBOX_NET` | `[net] mode` | network mode: `proxy` (default), `strict`, `open`, `none` ([network.md](docs/network.md)) |
+| — | — | `[net] retrieve-only` | `on`: GET and HEAD only (a GraphQL query, not a mutation), but to the profile's own hosts -- read, publish nothing (off) ([network.md](docs/network.md)) |
 | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS` | `[net] host-port` | `strict` only: host loopback ports the sandbox may reach, space-separated in the variable; `none` closes the direction (none) ([network.md](docs/network.md)) |
 | `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback; `none` closes the direction (none) ([network.md](docs/network.md)) |
 | — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |

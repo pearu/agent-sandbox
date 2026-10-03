@@ -24,7 +24,7 @@ class Conn:
 
 
 class Req:
-    def __init__(self, host, method="GET", path="/", headers=None, pretty_host=None):
+    def __init__(self, host, method="GET", path="/", headers=None, pretty_host=None, content=b""):
         # host is the request-line authority (where the connection goes);
         # pretty_host is what mitmproxy derives from the Host header. They differ
         # only when a client spoofs the Host header, which is the case the
@@ -34,11 +34,12 @@ class Req:
         self.method = method
         self.path = path
         self.headers = headers if headers is not None else {}
+        self.content = content
 
 
 class Flow:
-    def __init__(self, host, method="GET", path="/", headers=None, cid="c1", pretty_host=None):
-        self.request = Req(host, method, path, headers, pretty_host)
+    def __init__(self, host, method="GET", path="/", headers=None, cid="c1", pretty_host=None, content=b""):
+        self.request = Req(host, method, path, headers, pretty_host, content)
         self.response = None
         self.client_conn = Conn(cid)
 
@@ -86,6 +87,12 @@ elif scenario == "connect_tok":
     show(blocked=f.response is not None, status=getattr(f.response, "status_code", None))
 elif scenario == "request_tok":
     f = Flow(args[1], "GET", "/", _auth(args[0]))
+    m.request(f)
+    show(blocked=f.response is not None,
+         body=(f.response.content.decode() if f.response else "").splitlines()[0] if f.response else "")
+elif scenario == "request_body":
+    # token host method path body
+    f = Flow(args[1], args[2], args[3], _auth(args[0]), content=args[4].encode() if len(args) > 4 else b"")
     m.request(f)
     show(blocked=f.response is not None,
          body=(f.response.content.decode() if f.response else "").splitlines()[0] if f.response else "")

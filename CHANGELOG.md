@@ -76,6 +76,9 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
+- **`[net] retrieve-only = on`** (#223), per role with `[net:<role>]`: every request but
+  GET and HEAD is refused, but to the profile's own hosts -- a session that reads and
+  publishes nothing. A GraphQL query to `api.github.com` passes, a mutation does not.
 - **A role's purpose** (#222): `[briefing:<glob>]` briefs those roles from a purpose file
   (`.asb/roles/{role}.md`, or `file =`), injected after the engine's own lines at every
   session start, read-only inside, and part of the approval -- an edit to it re-opens the
