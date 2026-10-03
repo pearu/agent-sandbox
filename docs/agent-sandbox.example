@@ -86,8 +86,12 @@
 #              the proxy.
 # agent-port : a port the agent listens on, published at the host's
 #              127.0.0.1:PORT (a dev server you open in a browser).
+# retrieve-only : on refuses every request but GET and HEAD (a GraphQL query to
+#              api.github.com passes, a mutation does not), but to the agent's
+#              own hosts: the session reads and publishes nothing. Off by default.
 #[net]
 #mode = strict
+#retrieve-only = off
 #host-port = 5432
 #agent-port = 8000
 

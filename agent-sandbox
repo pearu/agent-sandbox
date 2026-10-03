@@ -778,6 +778,12 @@ _as_allow_setup() {
   done
   printf '%s\n' ${_deny[@]+"${_deny[@]}"} >"$_session_dir/deny.txt"
   ((${#_deny[@]})) && _as_info "denied this session: ${_deny[*]}"
+  # [net] retrieve-only (#223): the file's presence turns it on for this session's token;
+  # its lines are the hosts it does not apply to, the profile's own.
+  if ((${_retrieve_only:-0})); then
+    printf '%s\n' ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"} >"$_session_dir/retrieve-only.txt"
+    _as_info "retrieve-only: GET and HEAD only, but to the profile's own hosts"
+  fi
   ((${#_allow_hosts[@]})) \
     && _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
   ((${#_profile_allow_hosts[@]})) \
@@ -3203,6 +3209,9 @@ _as_briefing_write() {
     none) egress="none. The network namespace is unshared; nothing outside this machine is reachable." ;;
     *) egress="unknown ($net); this launch is about to be refused" ;;
   esac
+  if ((${_retrieve_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
+    egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
+  fi
   ((${#_allow_hosts[@]} > 0)) && hosts_line="${_allow_hosts[*]}"
   ((${#_ssh_hosts[@]} > 0)) && ssh_line="${_ssh_hosts[*]}"
   # two forms: the full one for briefing.md, a short one for the summary that is
@@ -3529,7 +3538,7 @@ _as_trust_digest() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=()
-  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
   local -a files=()
@@ -3608,7 +3617,7 @@ _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=()
-  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
   _as_briefing_files "$1"
@@ -3646,7 +3655,7 @@ _as_profile_dotfile() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() words=()
-  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=()
@@ -3951,7 +3960,7 @@ _as_trust_notes() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
-  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=()
@@ -3986,6 +3995,10 @@ _as_trust_notes() {
     "" | proxy | strict | none) ;;
     open) _as_msg ".agent-sandbox: network mode 'open': the egress allowlist is off for this project" ;;
     *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
+  esac
+  case "$_df_net_retrieve_only" in
+    "" | on | 1 | off | 0) ;;
+    *) _as_msg ".agent-sandbox: [net] retrieve-only '$_df_net_retrieve_only' unknown (on|off); ignoring" ;;
   esac
   case "$_df_seccomp_mode" in
     "" | on | 1) ;;
@@ -4324,6 +4337,9 @@ _as_dotfile_line() {
         _as_dotfile_kv "$line"
         case "$ck" in
           mode) _df_net_mode="$cv" ;;
+          # Retrieve only (#223): every method but GET and HEAD refused to every host but
+          # the profile's own; a GraphQL query passes, a mutation does not.
+          retrieve-only) _df_net_retrieve_only="$cv" ;;
           host-port) _df_net_host_port+=("$cv") ;;
           agent-port) _df_net_agent_port+=("$cv") ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
@@ -4530,6 +4546,7 @@ _as_check_plan() {
       printf '  roles in this file: %s; see another with: %s --check --role NAME\n' \
         "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
     fi
+    ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
     fi
@@ -5768,6 +5785,7 @@ agent_sandbox() (
 
   # ---- knobs (AGENT_SANDBOX_*) ----
   local _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
+  local _retrieve_only=0 # [net] retrieve-only (#223)
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_briefing="${AGENT_SANDBOX_BRIEFING:-}"
@@ -5793,7 +5811,7 @@ agent_sandbox() (
   # ---- per-project config (.agent-sandbox), trust-gated ----
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=()
   local -a _df_net_host_port=() _df_net_agent_port=()
-  local _df_net_mode=""
+  local _df_net_retrieve_only="" _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
@@ -5933,6 +5951,10 @@ agent_sandbox() (
           *) ;; # unknown: ignored, as the review said
         esac
       fi
+      case "$_df_net_retrieve_only" in
+        on | 1) _retrieve_only=1 ;;
+        off | 0) _retrieve_only=0 ;;
+      esac
       # seccomp: an explicit AGENT_SANDBOX_SECCOMP in your shell wins over the
       # file. A project can only ask for the filter or decline it; it cannot
       # pick a profile. The filter is on by default, so `mode = off` is a real
@@ -6838,13 +6860,15 @@ agent_sandbox() (
   fi
   # The session allowlist: --allow and the dot-file's hosts, and the profile's own
   # (#181). Only where a proxy filters; the note is for hosts someone asked for.
-  if ((${#_allow_hosts[@]} + ${#_profile_allow_hosts[@]} + ${#_deny_hosts[@]} > 0)); then
+  if ((${#_allow_hosts[@]} + ${#_profile_allow_hosts[@]} + ${#_deny_hosts[@]} + _retrieve_only > 0)); then
     case "${_knob_net:-proxy}" in
       open | none)
         ((${#_allow_hosts[@]} > 0)) \
           && _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
         ((${#_deny_hosts[@]} > 0)) \
           && _as_msg "[deny] is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+        ((_retrieve_only)) \
+          && _as_msg "[net] retrieve-only is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
         ;;
       *) _as_allow_setup || {
         _as_session_cleanup

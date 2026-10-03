@@ -2475,6 +2475,93 @@ def _session_deny(token: str | None) -> list[str]:
     return _session_lines(token, "deny.txt")
 
 
+def _session_retrieve_only(token: str | None) -> list[str] | None:
+    """The live session's retrieve-only exemptions (#223), or None when it is not
+    retrieve-only. The file's presence turns it on; its lines are the hosts it does
+    not apply to -- the agent profile's own (its API), which the agent cannot work
+    without."""
+    if not token or not SESSION_BASE.is_dir():
+        return None
+    for session in sorted(SESSION_BASE.glob("session.*")):
+        tok, ro, owner = session / "proxy.token", session / "retrieve-only.txt", session / "owner.id"
+        try:
+            if tok.is_file() and owner.is_file() and tok.read_text().strip() == token and _owner_alive(owner):
+                return ro.read_text().splitlines() if ro.is_file() else None
+        except OSError:
+            continue
+    return None
+
+
+# GraphQL, for `gh` (#223): it reads issues and pull requests by POSTing a query to
+# api.github.com/graphql, and writes them by POSTing a mutation to the same place.
+GRAPHQL_HOSTS = {"api.github.com"}
+GRAPHQL_PATHS = {"/graphql", "/api/graphql"}
+
+
+def _graphql_strip(doc: str) -> str:
+    """A GraphQL document with its strings and comments removed, so a keyword can
+    only be matched where it is syntax."""
+    out, i, n = [], 0, len(doc)
+    while i < n:
+        if doc.startswith('"""', i):
+            j = doc.find('"""', i + 3)
+            i = n if j < 0 else j + 3
+        elif doc[i] == '"':
+            j = i + 1
+            while j < n and doc[j] != '"':
+                j += 2 if doc[j] == "\\" else 1
+            i = j + 1
+        elif doc[i] == "#":
+            j = doc.find("\n", i)
+            i = n if j < 0 else j
+        else:
+            out.append(doc[i])
+            i += 1
+    return "".join(out)
+
+
+def _graphql_reads_only(body: bytes) -> bool:
+    """True when every operation in a GraphQL request body is a query. A mutation
+    or a subscription anywhere in a document refuses it, whichever operation the
+    request names: conservative, since a document is cheap to resend as a query.
+    A body that is not a GraphQL request refuses too."""
+    import json
+    import re
+
+    try:
+        payload = json.loads(body or b"null")
+    except ValueError:
+        return False
+    items = payload if isinstance(payload, list) else [payload]
+    if not items:
+        return False
+    for item in items:
+        doc = item.get("query") if isinstance(item, dict) else None
+        if not isinstance(doc, str):
+            return False
+        if re.search(r"\b(mutation|subscription)\b", _graphql_strip(doc)):
+            return False
+    return True
+
+
+def _retrieve_refusal(flow: http.HTTPFlow, token: str | None) -> str | None:
+    """Why a retrieve-only session's request is refused, or None to let it pass."""
+    exempt = _session_retrieve_only(token)
+    if exempt is None:
+        return None
+    host, method = flow.request.host, flow.request.method.upper()
+    ex_exact: set[str] = set()
+    ex_suffix: list[str] = []
+    _parse(exempt, ex_exact, ex_suffix)
+    if _is_allowed(host, ex_exact, ex_suffix) or method in ("GET", "HEAD"):
+        return None
+    if method == "POST" and host in GRAPHQL_HOSTS and flow.request.path.split("?", 1)[0] in GRAPHQL_PATHS:
+        if _graphql_reads_only(getattr(flow.request, "content", b"")):
+            return None
+        return "a GraphQL mutation (this session is retrieve-only: it reads, it does not publish)"
+    return f"{method} (this session is retrieve-only: GET and HEAD only)"
+
+
 def _session_lines(token: str | None, name: str) -> list[str]:
     if not token or not SESSION_BASE.is_dir():
         return []
@@ -2603,6 +2690,15 @@ def request(flow: http.HTTPFlow) -> None:
         return
     exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix):
+        why = _retrieve_refusal(flow, token)
+        if why is None:
+            return
+        _log_blocked(host, flow.request.method, flow.request.path)
+        flow.response = http.Response.make(
+            403,
+            f"agent-sandbox: {why} to {host!r} refused.\n".encode(),
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
         return
     _log_blocked(host, flow.request.method, flow.request.path)
     flow.response = http.Response.make(

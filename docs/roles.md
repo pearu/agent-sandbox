@@ -329,7 +329,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | the project read-only for every role but the Supervisor, with an Implementer's clone read-write inside it | `project = read-only` / `read-write` per role (#220), declarations inside it bound by depth | built |
 | the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `own` unless asked; `gh = read-only` in the common block, `GH_CONFIG_DIR` pointed there | built. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
 | no publishing: hosts a role may not reach | `[deny]` and `[deny:<role>]` subtract hosts, the profile's own untouched; role suffixes on `[allow]`, `[env]`, `[net]`, `[conda]` (#221) | built |
-| retrieve only: read the web and GitHub, publish nothing | -- | **to build**: the proxy refusing every method but GET and HEAD to the user's hosts, per role, the profile's own hosts untouched -- GitHub-aware: `gh` reads issues and pull requests through POSTs to `api.github.com/graphql`, so there a `query` passes and a `mutation` is refused, by the body. What it does not stop: a token carried out in a GET to an allowed host |
+| retrieve only: read the web and GitHub, publish nothing | `[net] retrieve-only = on`, per role (#223): every method but GET and HEAD refused, the profile's own hosts untouched; GitHub-aware: `gh` reads through POSTs to `api.github.com/graphql`, so there a query passes and a mutation is refused, by the body | built. What it does not stop: a token carried out in a GET to an allowed host |
 | no git transport to a host that also serves pages | -- | **to build**: the proxy refusing git's HTTPS transport (`/info/refs`, `git-upload-pack`, `git-receive-pack`, the `git/` user agent) per role; `--ssh` refusable per role |
 | the role's purpose told to the agent, at every start | `[briefing:<role>]` (#222): `.asb/roles/<role>.md`, or `file =`, injected by the SessionStart hook at every launch, resume and compaction after the engine's lines (which name what is writable and read-only), bound read-only inside, and part of the approval, so an edit re-opens the review. The round's specifics stay in the artefacts, which the purpose tells the role where to find, so a launch needs nothing typed | built |
 | a Reviewer trying an Implementer's build | the clone read-only: the tree and what the build left in it | built; the build and its environment must live in the clone |
@@ -349,9 +349,8 @@ no sandbox the `gh` login unless its dot-file asks (#88); the model's common blo
 `gh = read-only`, so every role holds the gh login the user keeps in `~/.claude/gh`, and
 `gh` inside -- `GH_CONFIG_DIR` points there -- reads issues, pull requests and their
 comments with it. What keeps the reading roles from writing with it is the
-retrieve-only network (section 6), which is the sandbox's to enforce. Until that is
-built, the roles can write with `gh` as well; the user is told so by `asb --check`, and
-publishes from the host meanwhile, as this project does today.
+retrieve-only network (section 6), which the proxy enforces: a GraphQL query passes,
+a mutation does not.
 
 **The recommended hardening: a token that cannot write.** The network bounds what a
 role *does* with the token; it cannot stop the token from leaving in a GET to an
@@ -397,7 +396,7 @@ project = read-only               # the working tree, read-only (#220); the Supe
 .asb/impl-2/.git/ = own
 gh = read-only                    # your gh login (#88), for reading issues and pull requests
 # hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.gh-read
-[net]                             # NEEDS (#223) this key: every role reads the web and GitHub, and publishes nothing...
+[net]                             # every role reads the web and GitHub, and publishes nothing...
 retrieve-only = on
 
 # ---- planners: an expert each, with its own material --------------------
@@ -449,17 +448,17 @@ project = read-write              # merges the branches in the main tree, pushes
 .asb/coord/COORDINATION.md = read-write   # the index
 [conda:supervisor]                # main's build lands in x-dev, which lives in the conda tree
 write = 1
-[net:supervisor]                  # NEEDS (#223, #224) these keys: ...except the Supervisor, which publishes
+[net:supervisor]                  # ...except the Supervisor, which publishes; NEEDS (#224): git
 retrieve-only = off
 git = allow
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 ```
 
-Until the `NEEDS` mechanics exist, the file runs with those lines left out. A reviewer
-under it has its own memory, no history, the tree read-only and one writable
-directory, and `asb --check --role reviewer-1` shows it. What the `NEEDS` lines add is
-the roles' purposes and the outside: without the last the reviewer's `gh` can write as
-well as read, which is #88 and the network sections in one.
+The one line still marked `NEEDS`, `git = allow`, waits on #224 and is left out until
+then; it changes nothing yet, since git's HTTPS transport is POSTs, which retrieve-only
+already refuses to every role but the Supervisor. A reviewer under this file has its
+own memory, no history, the tree read-only and one writable directory, reads the web
+and GitHub and publishes nothing, and `asb --check --role reviewer-1` shows it.
 
 ## 9. Using the model: one round, terminal by terminal
 
