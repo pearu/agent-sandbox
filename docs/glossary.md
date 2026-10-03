@@ -71,7 +71,8 @@ across runs, its policy is the variable part. Two roles on one project share the
 directory and nothing else unless connected (a reviewer that must not see the implementer's
 accumulated memory is the motivating case,
 [#55](https://github.com/pearu/agent-sandbox/issues/55)). Policy is selected by matching the
-name against role-suffixed sections, `[sandbox:<glob>]` and `[connect:<glob>]`, applied after
+name against role-suffixed sections, `[sandbox:<glob>]`, `[connect:<glob>]` and (#221) the
+same on `[allow]`, `[deny]`, `[env]`, `[conda]` and `[net]`, applied after
 the unsuffixed ones, later overriding earlier, per key; a name matching no suffixed section is
 refused when suffixed sections exist. A role is not a security boundary beyond what
 its channels close. *shipped*: `--role`, `AGENT_SANDBOX_ROLE` and `[sandbox] role` name it,

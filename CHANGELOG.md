@@ -72,6 +72,11 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
+- **More role-suffixed sections** (#221): `[allow:<role>]`, `[env:<role>]`, `[conda:<role>]`
+  and `[net:<role>]`, as `[connect:<role>]` -- a key overrides the unsuffixed one, a list
+  adds to it. **`[deny]`**, also per role, takes hosts out of the global allowlist and the
+  session's grant, never the profile's own. **`[conda] prefix = PATH`** activates an env by
+  its path, such as a clone in a role's tree.
 - **`project = read-only`** (#220): the working tree read-only for a role, with a
   read-write declaration inside it for the part it may change; `--check` shows the
   project's mode.

@@ -26,6 +26,11 @@
 #api.example.com
 #.internal.example.org
 
+# Hosts taken out of what this project's sessions may reach -- out of the global
+# allowlist and the session's own grant -- never one the agent's profile needs.
+#[deny]
+#pypi.org
+
 
 # --- Memory scoping ------------------------------------------------------
 # Which other projects' Claude memory this session may read, read-only. By
@@ -54,11 +59,15 @@
 #         conda base) instead of whatever env is active in your shell. Its
 #         bin/ takes the active env's place on PATH inside the sandbox, so the
 #         env's own tools are the ones found there.
+# prefix: the same for an env given by its path (relative to the project, ~,
+#         or absolute), e.g. a clone in a role's tree; name and prefix are one
+#         setting, the later wins.
 # write : 1 makes the active env writable (mamba/pip install into it); the base
 #         install, other envs and the host package cache stay read-only.
 # pkgs  : sandbox-owned package cache, persistent, where conda downloads go.
 #[conda]
 #name = myproject-env
+#prefix = .env
 #write = 1
 #pkgs = ~/.cache/agent-sandbox/conda-pkgs
 
@@ -138,7 +147,8 @@
 #
 #        role names the project's default role; --role and AGENT_SANDBOX_ROLE
 #        pick another. A role is a named, persistent instance of this project with
-#        its own state. Any [sandbox] or [connect] section may take a role suffix,
+#        its own state. A [sandbox], [connect], [allow], [deny], [env], [conda] or
+#        [net] section may take a role suffix,
 #        [sandbox:<glob>], for the roles the glob matches: it applies after the
 #        unsuffixed section, and later lines override earlier ones per key. Once
 #        any suffixed section exists, a role name matching none of them is refused

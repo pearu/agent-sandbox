@@ -106,6 +106,34 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   wait "$live" 2>/dev/null || true
 }
 
+@test "a session's [deny] takes hosts out of the global list and its own grant, for that session only (#221)" {
+  sleep 300 &
+  local live=$!
+  local st
+  st=$(awk '{print $22}' "/proc/$live/stat")
+  mkdir -p "$BASE/session.a" "$BASE/session.b"
+  printf '%s %s\n' "$live" "$st" | tee "$BASE/session.a/owner.id" >"$BASE/session.b/owner.id"
+  echo "AAA" >"$BASE/session.a/proxy.token"
+  echo "BBB" >"$BASE/session.b/proxy.token"
+  printf 'a.example\n' >"$BASE/session.a/allow.txt"
+  printf 'api.github.com\n.example.org\n' >"$BASE/session.a/deny.txt"
+  : >"$BASE/session.b/allow.txt"
+  run drive connect_tok AAA api.github.com # in the global list, denied here
+  [[ "$output" == *"blocked=True"* ]]
+  run drive connect_tok AAA www.example.org # a suffix line denies the subdomains too
+  [[ "$output" == *"blocked=True"* ]]
+  run drive connect_tok AAA a.example # its own grant, not denied
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_tok AAA api.github.com
+  [[ "$output" == *"blocked=True"* && "$output" == *"denied for this session"* ]]
+  run drive connect_tok BBB api.github.com # another session: the global list still applies
+  [[ "$output" == *"blocked=False"* ]]
+  run drive connect api.github.com # no token: likewise
+  [[ "$output" == *"blocked=False"* ]]
+  kill "$live"
+  wait "$live" 2>/dev/null || true
+}
+
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {
   run drive request blocked.invalid POST /v1/x
   [[ "$output" == *"blocked=True"* ]]

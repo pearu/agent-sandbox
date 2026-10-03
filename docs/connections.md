@@ -579,7 +579,8 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 - A **role** is a named, persistent instance of a project under a policy: `asb --role
   impl-1 claude`. The sandbox key stays `<project slug>/<role>`, and `default` is the unnamed role.
   What the engine calls a launch is the role's running instance; "launch" stays internal.
-- **Policy is selected by glob and section order.** *Built* for `[sandbox]` and `[connect]`:
+- **Policy is selected by glob and section order.** *Built* for `[sandbox]`, `[connect]`,
+  `[allow]`, `[deny]`, `[env]`, `[conda]` and `[net]` (#221):
   any section may take a role suffix, `[<section>:<glob>]`, which is that section for the
   role names the glob matches, applied after the unsuffixed one, later overriding earlier,
   per key. That is all the inheritance there is: general sections first, specific ones last.

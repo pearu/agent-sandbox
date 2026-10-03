@@ -124,6 +124,15 @@ allowlist plus only the matching session's `--allow`. A concurrent session
 (with a different token, or none) sees the global allowlist only, so one
 session's `--allow` hosts are not reachable from another.
 
+## Per-session denial: `[deny]`
+
+A dot-file's `[deny]`, or `[deny:<role>]` for some roles only (#221), takes hosts
+out of what a session may reach: out of the global allowlist and out of its own
+grant. The engine writes them beside the session's `--allow`, and the addon refuses
+them for that session's token at CONNECT and per request, with a 403 that says the
+host is denied rather than absent. Other sessions keep the global allowlist. A line
+that would take a host the agent's profile needs is left out, and said.
+
 ## The proxy CA
 
 mitmproxy writes its CA to `~/.mitmproxy/` on first start (`install.sh` does

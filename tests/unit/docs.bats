@@ -27,8 +27,8 @@ code_env() { # variables the engine and its profiles read from the environment
   grep -ohE '\$\{AGENT_SANDBOX_[A-Z_]+' "$ENGINE" "$REPO_ROOT"/profiles/*.sh | sed 's/.*{//' | sort -u
 }
 code_sections() { # supported .agent-sandbox sections
-  # The sections the parser ACTS on: arms of the section dispatch (6-space
-  # indent, inside _as_dotfile_parse) that have a body. `ssh) ;;` and `*) ;;`
+  # The sections the parser ACTS on: arms of the section dispatch (4-space
+  # indent, inside _as_dotfile_line) that have a body. `ssh) ;;` and `*) ;;`
   # have none -- [ssh] is recognised and refused at the header, and the header
   # case also names knob-only sections -- so a bare `;;` arm is not a setting.
   # Read this way the list survives renames and reordering.
@@ -37,8 +37,8 @@ code_sections() { # supported .agent-sandbox sections
   # `"$profile")`, whose name is a runtime value, so there is no static list to
   # read. Its keys are checked against the shipping profile instead, in the
   # `[claude]` test below.
-  awk '/^_as_dotfile_parse\(\) \{/,/^\}$/' "$ENGINE" \
-    | awk '/^      [a-z-]+\)/ {
+  awk '/^_as_dotfile_line\(\) \{/,/^\}$/' "$ENGINE" \
+    | awk '/^    [a-z-]+\)/ {
         arm = $0; sub(/^ +/, "", arm)
         name = arm; sub(/\).*/, "", name)
         rest = arm; sub(/^[a-z-]+\)/, "", rest); gsub(/[ \t]/, "", rest)
@@ -46,7 +46,7 @@ code_sections() { # supported .agent-sandbox sections
       }' | sort -u
 }
 code_keys() { # key = value names inside section $1 (minus the section's own arm)
-  awk "/^      $1\)\$/,/^        ;;\$/" "$ENGINE" \
+  awk "/^    $1\)\$/,/^      ;;\$/" "$ENGINE" \
     | grep -oE '^\s+[a-z-]+\)' | tr -d ' )' | grep -vxF "$1" | sort -u
 }
 
