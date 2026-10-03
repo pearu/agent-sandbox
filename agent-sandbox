@@ -347,7 +347,7 @@ Engine flags (before CMD):
                         started from inside runs natively there
   --role NAME           which role of this project to run: a named, persistent
                         instance with its own state, and the policy the
-                        dot-file's [sandbox:<glob>]/[connect:<glob>] sections
+                        dot-file's role-suffixed sections ([connect:<glob>]...)
                         give roles matching NAME. Default: [sandbox] role, else
                         `default`.
   --preset NAME         where every channel sits before any override:
@@ -756,6 +756,28 @@ _as_allow_setup() {
     printf '# dot matches the domain and its subdomains.\n'
     printf '%s\n' ${_allow_hosts[@]+"${_allow_hosts[@]}"} ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"}
   } >"$_session_dir/allow.txt"
+  # [deny] (#221): hosts taken out of the global allowlist and this session's grant.
+  # Never the profile's own: a line that would take one is left out, and said, since
+  # the agent cannot work without them.
+  local _d _p _dn _pn _hit
+  local -a _deny=()
+  for _d in ${_deny_hosts[@]+"${_deny_hosts[@]}"}; do
+    _hit=""
+    for _p in ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"}; do
+      _dn="${_d#.}" _pn="${_p#.}"
+      if [[ "$_pn" == "$_dn" || ("$_d" == .* && "$_pn" == *".$_dn") || ("$_p" == .* && "$_dn" == *".$_pn") ]]; then
+        _hit="$_p"
+        break
+      fi
+    done
+    if [[ -n "$_hit" ]]; then
+      _as_msg "[deny] $_d would take the profile's own host $_hit; not denied"
+    else
+      _deny+=("$_d")
+    fi
+  done
+  printf '%s\n' ${_deny[@]+"${_deny[@]}"} >"$_session_dir/deny.txt"
+  ((${#_deny[@]})) && _as_info "denied this session: ${_deny[*]}"
   ((${#_allow_hosts[@]})) \
     && _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
   ((${#_profile_allow_hosts[@]})) \
@@ -3483,7 +3505,8 @@ _as_profile_dotfile() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() words=()
-  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
@@ -3779,14 +3802,16 @@ _as_trust_notes() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
-  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
     while IFS= read -r line; do facts+=("$line"); done < <(_as_profile_facts "$f")
   done
-  _as_dotfile_parse "$file" # what it ignores, it says
+  _as_dotfile_parse "$file"    # what it ignores, it says
+  _as_dotfile_apply_role --all # every role's lines, whatever role launches it
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
     [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg ".agent-sandbox allow: bad host '$h'; ignoring"
   done
@@ -4001,15 +4026,18 @@ _as_dotfile_parse() {
       section="${section%]}"
       section="${section//[[:space:]]/}"
       # A ROLE SUFFIX, `[<section>:<glob>]`: that section for the roles the glob
-      # matches, applied after the unsuffixed one, in file order, per key. Only
-      # [sandbox] and [connect] take one so far; on any other section it is said
-      # and the section is skipped, never quietly applied to every role.
+      # matches. [sandbox] and [connect] lines are kept with their glob and matched
+      # where they are read; [allow], [deny], [env], [conda] and [net] lines (#221)
+      # are kept aside and applied after the whole file, in file order, for the
+      # launch's role (_as_dotfile_apply_role), so a key there overrides the
+      # unsuffixed one and a list adds to it. On any other section the suffix is
+      # said and the section skipped, never quietly applied to every role.
       sglob="*"
       if [[ "$section" == *:* ]] && ! _as_dotfile_is_profile "$section"; then
         sglob="${section#*:}"
         section="${section%%:*}"
         case "$section" in
-          sandbox | connect) _df_role_globs+=("$sglob") ;;
+          sandbox | connect | allow | deny | env | conda | net) _df_role_globs+=("$sglob") ;;
           preset)
             # [preset:<name>] is a preset's rungs in a profile's dot-file (#191).
             [[ "$sglob" =~ ^(isolated|inherit|shared)$ ]] || {
@@ -4028,7 +4056,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix yet (only [sandbox] and [connect] do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda and net do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -4036,7 +4064,7 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
@@ -4052,146 +4080,181 @@ _as_dotfile_parse() {
       continue
     fi
     case "$section" in
-      -skip-) ;;
-      channel) _df_channel_lines+=("$sglob"$'\t'"$line") ;;
-      preset) _df_preset_lines+=("$sglob"$'\t'"$line") ;;
-      allow) _df_allow+=("$line") ;;
-      share-memory) _df_share+=("${line/#\~/$HOME}") ;;
-      env)
-        # [env] (#177): `NAME` forwards it when set in the launching shell (several per
-        # line); `NAME = VALUE` sets it; `-NAME` refuses it, never forwarded. A
-        # project's file may only forward; setting and refusing are a profile's.
-        if [[ "$line" == -* ]]; then
-          ck="${line#-}"
-          ck="${ck//[[:space:]]/}"
-          if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-            _df_env_refuse+=("$ck")
-          else
-            _as_msg ".agent-sandbox: [env] '$line' does not name a variable; ignoring"
-          fi
-        elif [[ "$line" == *=* ]]; then
-          _as_dotfile_kv "$line"
-          if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-            _df_env_set+=("$ck=$cv")
-          else
-            _as_msg ".agent-sandbox: [env] '$ck' is not a variable name; ignoring: $line"
-          fi
-        else
-          _df_forward+=("$line")
-        fi
-        ;;
-      conda)
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          case "$ck" in
-            name) _df_conda_name="$cv" ;;
-            write) _df_conda_write="$cv" ;;
-            pkgs) _df_conda_pkgs="${cv/#\~/$HOME}" ;;
-            *) _as_msg ".agent-sandbox: ignoring unknown [conda] key '$ck'" ;;
-          esac
-        fi
-        ;;
-      net)
-        # The network mode, and strict-mode ports (validated with the flags and
-        # knobs at launch).
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [net] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          case "$ck" in
-            mode) _df_net_mode="$cv" ;;
-            host-port) _df_net_host_port+=("$cv") ;;
-            agent-port) _df_net_agent_port+=("$cv") ;;
-            *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
-          esac
-        fi
-        ;;
-      seccomp)
-        # The syscall filter's state (validated with the knob at launch).
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [seccomp] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          case "$ck" in
-            mode) _df_seccomp_mode="$cv" ;;
-            *) _as_msg ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
-          esac
-        fi
-        ;;
-      "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
-      sandbox)
-        # The sandbox's own key and position. `role` is parsed and reserved; only
-        # `default` exists until roles land.
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [sandbox] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          case "$ck" in
-            preset) _df_preset_by+=("$sglob"$'\t'"$cv") ;;
-            role)
-              if [[ "$sglob" == "*" ]]; then
-                _df_role="$cv"
-              else
-                _as_msg ".agent-sandbox: [sandbox:$sglob] role -- the default role is a key of the unsuffixed [sandbox] only; ignoring"
-              fi
-              ;;
-            *) _as_msg ".agent-sandbox: ignoring unknown [sandbox] key '$ck'" ;;
-          esac
-        fi
-        ;;
-      overlay)
-        # What `copy-on-write` is implemented with (validated at launch, with the knob).
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [overlay] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          case "$ck" in
-            mode) _df_overlay_mode="$cv" ;;
-            *) _as_msg ".agent-sandbox: ignoring unknown [overlay] key '$ck'" ;;
-          esac
-        fi
-        ;;
-      connect)
-        # channel = mode [source] [scope]. Collected here, validated at launch, with
-        # the flag and the environment, so one code path decides every form.
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [connect] expects 'channel = mode [source] [scope]', ignoring: $line"
-        else
-          _df_connect+=("$sglob"$'\t'"$line")
-        fi
-        ;;
-      briefing)
-        # Whether to tell the agent what its sandbox allows (validated at launch).
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [briefing] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          case "$ck" in
-            mode) _df_briefing_mode="$cv" ;;
-            *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
-          esac
-        fi
-        ;;
-      ssh) ;;
-      *)
-        # A section named after a profile (the active one at a launch; any, at the
-        # review). The engine does not interpret these: it collects the pairs and
-        # hands them to the profile, which is the only thing that knows what its
-        # agent keeps where (docs/profiles.md). At a launch, another profile's
-        # section is skipped; the review checks every profile's.
-        _as_dotfile_is_profile "$section" || continue
-        if [[ "$line" != *=* ]]; then
-          _as_msg ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
-        else
-          _as_dotfile_kv "$line"
-          [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
-          _df_profile_pairs+=("$section"$'\t'"$ck")
+      allow | deny | env | conda | net)
+        if [[ "$sglob" != "*" ]]; then
+          _df_role_lines+=("$sglob"$'\t'"$section"$'\t'"$line")
+          continue
         fi
         ;;
     esac
+    _as_dotfile_line "$section" "$sglob" "$line"
   done <"$file"
+  return 0
+}
+
+# _as_dotfile_line SECTION GLOB LINE -- one line of a dot-file's SECTION into the
+# caller's _df_* state. GLOB is the section's role suffix, `*` for none.
+_as_dotfile_line() {
+  local section="$1" sglob="$2" line="$3" ck cv
+  case "$section" in
+    -skip-) ;;
+    channel) _df_channel_lines+=("$sglob"$'\t'"$line") ;;
+    preset) _df_preset_lines+=("$sglob"$'\t'"$line") ;;
+    allow) _df_allow+=("$line") ;;
+    deny) _df_deny+=("$line") ;;
+    share-memory) _df_share+=("${line/#\~/$HOME}") ;;
+    env)
+      # [env] (#177): `NAME` forwards it when set in the launching shell (several per
+      # line); `NAME = VALUE` sets it; `-NAME` refuses it, never forwarded. A
+      # project's file may only forward; setting and refusing are a profile's.
+      if [[ "$line" == -* ]]; then
+        ck="${line#-}"
+        ck="${ck//[[:space:]]/}"
+        if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          _df_env_refuse+=("$ck")
+        else
+          _as_msg ".agent-sandbox: [env] '$line' does not name a variable; ignoring"
+        fi
+      elif [[ "$line" == *=* ]]; then
+        _as_dotfile_kv "$line"
+        if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          _df_env_set+=("$ck=$cv")
+        else
+          _as_msg ".agent-sandbox: [env] '$ck' is not a variable name; ignoring: $line"
+        fi
+      else
+        _df_forward+=("$line")
+      fi
+      ;;
+    conda)
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          # One env: `name` (under a conda base) or `prefix` (a path, #221), whichever
+          # comes later -- for a role, its own over the file's.
+          name) _df_conda_name="$cv" _df_conda_prefix="" ;;
+          prefix) _df_conda_prefix="$cv" _df_conda_name="" ;;
+          write) _df_conda_write="$cv" ;;
+          pkgs) _df_conda_pkgs="${cv/#\~/$HOME}" ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [conda] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    net)
+      # The network mode, and strict-mode ports (validated with the flags and
+      # knobs at launch).
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [net] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          mode) _df_net_mode="$cv" ;;
+          host-port) _df_net_host_port+=("$cv") ;;
+          agent-port) _df_net_agent_port+=("$cv") ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    seccomp)
+      # The syscall filter's state (validated with the knob at launch).
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [seccomp] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          mode) _df_seccomp_mode="$cv" ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
+    sandbox)
+      # The sandbox's own key and position. `role` is parsed and reserved; only
+      # `default` exists until roles land.
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [sandbox] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          preset) _df_preset_by+=("$sglob"$'\t'"$cv") ;;
+          role)
+            if [[ "$sglob" == "*" ]]; then
+              _df_role="$cv"
+            else
+              _as_msg ".agent-sandbox: [sandbox:$sglob] role -- the default role is a key of the unsuffixed [sandbox] only; ignoring"
+            fi
+            ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [sandbox] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    overlay)
+      # What `copy-on-write` is implemented with (validated at launch, with the knob).
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [overlay] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          mode) _df_overlay_mode="$cv" ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [overlay] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    connect)
+      # channel = mode [source] [scope]. Collected here, validated at launch, with
+      # the flag and the environment, so one code path decides every form.
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [connect] expects 'channel = mode [source] [scope]', ignoring: $line"
+      else
+        _df_connect+=("$sglob"$'\t'"$line")
+      fi
+      ;;
+    briefing)
+      # Whether to tell the agent what its sandbox allows (validated at launch).
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [briefing] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          mode) _df_briefing_mode="$cv" ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    ssh) ;;
+    *)
+      # A section named after a profile (the active one at a launch; any, at the
+      # review). The engine does not interpret these: it collects the pairs and
+      # hands them to the profile, which is the only thing that knows what its
+      # agent keeps where (docs/profiles.md). At a launch, another profile's
+      # section is skipped; the review checks every profile's.
+      _as_dotfile_is_profile "$section" || return 0
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
+        _df_profile_pairs+=("$section"$'\t'"$ck")
+      fi
+      ;;
+  esac
+  return 0
+}
+
+# _as_dotfile_apply_role ROLE -- the role-suffixed [allow], [deny], [env], [conda] and
+# [net] lines (#221) whose glob matches ROLE, in file order, after the unsuffixed ones:
+# a key overrides, a list adds. `--all` applies every one, for the review, which reads
+# the whole file whatever role launches it.
+_as_dotfile_apply_role() {
+  local role="$1" e g rest
+  for e in ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
+    g="${e%%$'\t'*}" rest="${e#*$'\t'}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$role" == --all || "$role" == $g ]] || continue
+    _as_dotfile_line "${rest%%$'\t'*}" "$g" "${rest#*$'\t'}"
+  done
   return 0
 }
 
@@ -5059,7 +5122,7 @@ agent_sandbox() (
   # first token that is not one of ours; everything from there on is passed
   # to the agent untouched.
   local profile=""
-  local -a _ssh_hosts=() _allow_hosts=() _host_ports=() _agent_ports=()
+  local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # Connections: the resolved channel -> mode map, and where each came from, so
@@ -5546,7 +5609,8 @@ agent_sandbox() (
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
-  local _df_conda_name="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
@@ -5642,10 +5706,27 @@ agent_sandbox() (
       # Quietly: what the file's own text gets wrong, and what it means, the review
       # said when it was approved (_as_trust_notes); a launch does not repeat it.
       _as_dotfile_parse "$_df_src" 2>/dev/null
+      # The role's own [allow], [deny], [env], [conda] and [net] lines (#221), over the
+      # file's: the role as _as_role_resolve will name it below, which refuses a name
+      # no section matches before anything here is used.
+      local _df_rn="default"
+      if ((_role_flag_set)); then
+        _df_rn="$_role_flag"
+      elif [[ -n "${AGENT_SANDBOX_ROLE:-}" ]]; then
+        _df_rn="$AGENT_SANDBOX_ROLE"
+      elif ((_df_from_keeper)) && [[ -n "$_pre_role" ]]; then
+        _df_rn="$_pre_role"
+      elif [[ -n "$_df_role" ]]; then
+        _df_rn="$_df_role"
+      fi
+      _as_dotfile_apply_role "$_df_rn" 2>/dev/null
       local _dh _dj
       for _dh in "${_df_allow[@]}"; do
         [[ -z "$_dh" ]] && continue
         [[ "$_dh" =~ $_hostre ]] && _allow_hosts+=("$_dh") # a bad one: the review said so
+      done
+      for _dh in ${_df_deny[@]+"${_df_deny[@]}"}; do
+        [[ "$_dh" =~ $_hostre ]] && _deny_hosts+=("$_dh")
       done
       ((${#_df_forward[@]})) && _knob_forward="${_knob_forward:+$_knob_forward }${_df_forward[*]}"
       # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
@@ -5725,6 +5806,30 @@ agent_sandbox() (
           _as_info "using conda env '$_df_conda_name' from .agent-sandbox"
         else
           _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cbase:-<no conda base>}/envs; ignoring"
+        fi
+      fi
+      # conda prefix (#221): an env by its path -- a clone in a role's tree -- relative
+      # to the project, under `~`, or absolute. Activated as `name` is; bound read-only
+      # unless `write = 1`, like any active env, and a read-write declaration of the
+      # tree around it is bound after it, by depth.
+      if [[ -n "$_df_conda_prefix" ]]; then
+        local _cpre="$_df_conda_prefix"
+        case "$_cpre" in
+          \~ | \~/*) _cpre="$HOME${_cpre#\~}" ;;
+          /*) ;;
+          *) _cpre="$_proj/$_cpre" ;;
+        esac
+        _cpre="$(realpath -m -s -- "$_cpre")"
+        if [[ -d "$_cpre/conda-meta" ]]; then
+          local _old_prefix="${CONDA_PREFIX:-}"
+          CONDA_PREFIX="$_cpre"
+          CONDA_DEFAULT_ENV="$_cpre"
+          if [[ "$_old_prefix" != "$CONDA_PREFIX" ]]; then
+            _inner_path="$(_as_path_swap_conda "${_old_prefix:-$(_as_conda_base)}" "$CONDA_PREFIX")"
+          fi
+          _as_info "using conda env '$_df_conda_prefix' from .agent-sandbox"
+        else
+          _as_msg ".agent-sandbox: conda prefix '$_df_conda_prefix' is not a conda env (no conda-meta/ in $_cpre); ignoring"
         fi
       fi
     elif [[ -f "$_trust_rec" ]]; then
@@ -6507,11 +6612,13 @@ agent_sandbox() (
   fi
   # The session allowlist: --allow and the dot-file's hosts, and the profile's own
   # (#181). Only where a proxy filters; the note is for hosts someone asked for.
-  if ((${#_allow_hosts[@]} + ${#_profile_allow_hosts[@]} > 0)); then
+  if ((${#_allow_hosts[@]} + ${#_profile_allow_hosts[@]} + ${#_deny_hosts[@]} > 0)); then
     case "${_knob_net:-proxy}" in
       open | none)
         ((${#_allow_hosts[@]} > 0)) \
           && _as_msg "--allow is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+        ((${#_deny_hosts[@]} > 0)) \
+          && _as_msg "[deny] is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
         ;;
       *) _as_allow_setup || {
         _as_session_cleanup

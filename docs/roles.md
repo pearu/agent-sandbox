@@ -255,8 +255,7 @@ Installing into the clone needs nothing of the sandbox: the clone is in the
 Implementer's tree, writable because the tree is, and conda and pip address it by path
 -- `conda install -p .asb/impl-1/.env ...`, `.asb/impl-1/.env/bin/pip install ...` --
 with no activation, which is also how the Reviewer runs it. Activating it, so that
-`python` is the clone's, is the line the dot-file cannot say yet: `[conda] name` is one
-setting for the whole file (section 6).
+`python` is the clone's, is the role's `[conda:<role>] prefix` line (section 8).
 
 **Environment changes travel as text.** An Implementer that needs a new package or a
 pinned version changes the environment's specification in its tree (`environment.yml`,
@@ -329,7 +328,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | history its owner's: `main`'s hidden from every role but the Supervisor and, read-only, the Implementers; a clone's from every role but its Implementer and, read-only, the Supervisor | `./.git/ = own` and `.asb/impl-N/.git/ = own` in the common block, redeclared `read-only` or `read-write` where a role needs it | built |
 | the project read-only for every role but the Supervisor, with an Implementer's clone read-write inside it | `project = read-only` / `read-write` per role (#220), declarations inside it bound by depth | built |
 | the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `read-only` in the common block: the user's token as it is | **#88**: to build. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
-| no publishing: hosts a role may not reach | `[allow]` adds hosts; nothing subtracts; no role suffix on `[allow]`, `[env]`, `[net]` | **to build**: `[deny]`, and role suffixes on the network and environment sections |
+| no publishing: hosts a role may not reach | `[deny]` and `[deny:<role>]` subtract hosts, the profile's own untouched; role suffixes on `[allow]`, `[env]`, `[net]`, `[conda]` (#221) | built |
 | retrieve only: read the web and GitHub, publish nothing | -- | **to build**: the proxy refusing every method but GET and HEAD to the user's hosts, per role, the profile's own hosts untouched -- GitHub-aware: `gh` reads issues and pull requests through POSTs to `api.github.com/graphql`, so there a `query` passes and a `mutation` is refused, by the body. What it does not stop: a token carried out in a GET to an allowed host |
 | no git transport to a host that also serves pages | -- | **to build**: the proxy refusing git's HTTPS transport (`/info/refs`, `git-upload-pack`, `git-receive-pack`, the `git/` user agent) per role; `--ssh` refusable per role |
 | the role's purpose told to the agent, at every start | the briefing says what is open and closed, as a SessionStart hook: what it prints is in context before the first prompt | **to build**: `[briefing:<role>]`, reading `.asb/roles/<role>.md` (or a `role =` line) -- its text injected by that hook at every launch, resume and compaction, the file bound read-only inside too, and hash-recorded with the approval, so an edit re-opens the review; the briefing names the role and derives its boundary from the policy ("your tree is `.asb/impl-1/`, read-write; your inputs: ...; your outputs: ..."). The round's specifics stay in the artefacts, which the purpose tells the role where to find, so a launch needs nothing typed |
@@ -338,8 +337,8 @@ What the model needs, against what the engine has on main (2026-10-02):
 | a role installing without touching the shared environment | a conda clone in its tree (measured: 11-15 s, 255 MB new disk per 1.6 GB env); or `<env>/ = copy-on-write` in the role's section (measured) | built |
 | an Implementer installing into its clone | the clone is in its tree, writable by the declaration; `conda install -p .asb/impl-1/.env`, `.asb/impl-1/.env/bin/pip`, no activation | built |
 | the downloads of such an install persisting | the sandbox-owned package cache (`~/.cache/agent-sandbox/conda-pkgs`, `CONDA_PKGS_DIRS` set to it, the host's read-only cache after it), bound whenever a conda env is active (#219) | built |
-| a role activating its own clone | `[conda] name` is one setting for the whole file; no `prefix` form | **to build**: `[conda:<role>]`, with `prefix = .asb/impl-1/.env` for an env that has a path -- activation only; the same role suffix the network and environment sections need |
-| the Supervisor installing into `x-dev`, in the conda tree | `[conda] write = 1` makes the active env writable, its downloads in a sandbox-owned package cache -- for every role at once | **to build**: `write = 1` under `[conda:supervisor]`, the same suffix |
+| a role activating its own clone | `[conda:<role>] prefix = .asb/impl-1/.env`, an env by its path (#221) | built |
+| the Supervisor installing into `x-dev`, in the conda tree | `[conda:supervisor] write = 1`: the active env writable for that role only (#221) | built |
 | what a role has, shown before it runs | `asb --check --role NAME`: the policy, what crosses the boundary and how, the mount plan (#210-#213) | built; **to add**: "can act as you at" per outside service (the #114 outward routes) |
 | the dot-file, `.asb/`, the purpose files and the clones written right, for a given set of roles | all by hand | **to build**: `asb --init roles implementer=2 --env x-dev` -- a model name, counts, the development environment. A model is a directory the engine ships (`models/roles/`: the dot-file template with the sections per role, a purpose file per role), or a path to the user's own. It writes `.agent-sandbox` with each instance's sections, the `.asb/` directories, one per instance where it writes, `.asb/roles/<instance>.md` with the names and handles substituted, the coord index, and the `.asb/` exclude line; makes each Implementer's clone (`--shared`, on its branch) and its environment clone from `--env`, on the host, where the clone hardlinks into the package cache; never overwriting; then prints what is the user's: `asb --trust`, `asb --check --role NAME`. It does not approve |
 
@@ -406,7 +405,7 @@ project = read-only               # the working tree, read-only (#220); the Supe
 .asb/impl-2/.git/ = own
 gh = read-only                    # NEEDS (#88): your token, for reading issues and pull requests
 # hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.claude/gh-read
-[net]                             # NEEDS: every role reads the web and GitHub, and publishes nothing...
+[net]                             # NEEDS (#223) this key: every role reads the web and GitHub, and publishes nothing...
 retrieve-only = on
 
 # ---- planners: an expert each, with its own material --------------------
@@ -428,7 +427,7 @@ retrieve-only = on
 .asb/impl-1/ = read-write         # its clone, whole: the tree, its .git, its .env
 .asb/impl-1/.git/ = read-write
 ./.git/ = read-only               # the clone reads main's objects through it
-[conda:implementer-1]             # NEEDS: activation only; the clone is writable as its tree is
+[conda:implementer-1]             # activation only; the clone is writable as its tree is
 prefix = .asb/impl-1/.env
 [connect:implementer-2]
 .asb/handoff/implementer-2/ = read-write
@@ -436,7 +435,7 @@ prefix = .asb/impl-1/.env
 .asb/impl-2/ = read-write
 .asb/impl-2/.git/ = read-write
 ./.git/ = read-only
-[conda:implementer-2]             # NEEDS
+[conda:implementer-2]
 prefix = .asb/impl-2/.env
 [briefing:implementer-*]          # NEEDS: reads .asb/roles/<role>.md
 
@@ -456,9 +455,9 @@ project = read-write              # merges the branches in the main tree, pushes
 .asb/impl-2/.git/ = read-only
 .asb/coord/supervisor.md = read-write
 .asb/coord/COORDINATION.md = read-write   # the index
-[conda:supervisor]                # NEEDS: main's build lands in x-dev, which lives in the conda tree
+[conda:supervisor]                # main's build lands in x-dev, which lives in the conda tree
 write = 1
-[net:supervisor]                  # NEEDS: ...except the Supervisor, which publishes
+[net:supervisor]                  # NEEDS (#223, #224) these keys: ...except the Supervisor, which publishes
 retrieve-only = off
 git = allow
 [briefing:supervisor]             # NEEDS: reads .asb/roles/supervisor.md

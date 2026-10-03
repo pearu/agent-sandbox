@@ -2,8 +2,9 @@
 # Roles (#129 step 7): a role is a named, persistent instance of a project under a policy.
 # The name is the sandbox key's second half; the policy comes from the dot-file's
 # role-suffixed sections, `[<section>:<glob>]`, applied after the unsuffixed ones, in file
-# order, later overriding earlier PER KEY. Only [sandbox:...] and [connect:...] take the
-# suffix in this step. There is no [role:...] section.
+# order, later overriding earlier PER KEY. [sandbox:...], [connect:...] and (#221)
+# [allow:...], [deny:...], [env:...], [conda:...] and [net:...] take the suffix. There is
+# no [role:...] section.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -132,12 +133,77 @@ own_bind() { argv_has --bind "$STATE/$1/$2/own/$(slugify "$3")" "$3"; }
   [[ "$output" == *"[sandbox:x] role"* ]]
 }
 
-@test "a suffix on a section that does not take one yet is said, not silently honoured" {
-  dotfile $'[net:impl-*]\nmode = none\n'
+@test "a suffix on a section that does not take one is said, not silently honoured" {
+  dotfile $'[seccomp:impl-*]\nmode = off\n[connect:*]\n'
   run_engine -- asb --role impl-1 claude --version
-  argv_has --share-net # the skipped section's `mode = none` did not apply to anyone
+  [[ "$output" != *"seccomp mode 'off'"* ]] # the skipped section applied to nobody
   run_review
-  [[ "$output" == *"[net:impl-*]"*"role suffix"* ]]
+  [[ "$output" == *"[seccomp:impl-*]"*"role suffix"* ]]
+}
+
+@test "[net:<role>] and [env:<role>] apply to the roles they match, over the unsuffixed section, per key (#221)" {
+  dotfile $'[net]\nmode = proxy\n[env]\nMY_TOOL\n[net:impl-*]\nmode = none\n[env:impl-*]\nIMPL_ONLY\n[connect:reviewer]\n'
+  run_engine MY_TOOL=a IMPL_ONLY=b -- asb --role impl-1 claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --share-net
+  [ "$(setenv_value MY_TOOL)" = a ]
+  [ "$(setenv_value IMPL_ONLY)" = b ]
+  run_engine MY_TOOL=a IMPL_ONLY=b -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  argv_has --share-net
+  [ "$(setenv_value MY_TOOL)" = a ]
+  run ! setenv_value IMPL_ONLY
+}
+
+@test "a role-suffixed [env], [net], [allow], [deny] or [conda] defines a role: a name none matches is refused (#221)" {
+  dotfile $'[env:impl-*]\nIMPL_ONLY\n'
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"matches no role section"* ]]
+}
+
+@test "the review reads every role's lines, whatever role launches (#221)" {
+  dotfile $'[env:impl-*]\nPINNED = yes\n[net:reviewer]\nmode = bogus\n'
+  run_review
+  [[ "$output" == *"[env] PINNED = ...: a project's file only forwards"* ]]
+  [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
+}
+
+@test "[allow:<role>] and [deny:<role>]: the session's grant and its denial, for that role only; never the profile's own hosts (#221)" {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*.txt; do printf '== %s\n' "${f##*/}"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1
+. "${0%/*}/keeper-tail"
+STUB
+  dotfile $'[deny]\npypi.org\n[allow:impl-*]\nfiles.example.org\n[deny:reviewer]\ngithub.com\n.anthropic.com\n'
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role impl-1 claude --version
+  [ "$status" -eq 0 ]
+  sed -n '/^== allow.txt$/,/^== /p' "$H/probe" | grep -qx 'files.example.org'
+  [ "$(sed -n '/^== deny.txt$/,$p' "$H/probe" | sed 1d)" = pypi.org ]
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[deny] .anthropic.com would take the profile's own host"* ]]
+  run ! grep -qx 'files.example.org' "$H/probe"
+  [ "$(sed -n '/^== deny.txt$/,$p' "$H/probe" | sed 1d | paste -sd' ')" = "pypi.org github.com" ]
+}
+
+@test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env is ignored, said (#221)" {
+  local base="$H/conda" clone="$PROJ/.asb/impl-1/.env"
+  mkdir -p "$base/envs/x-dev/conda-meta" "$base/pkgs" "$clone/conda-meta" "$clone/bin"
+  dotfile $'[conda]\nname = x-dev\n[conda:implementer-1]\nprefix = .asb/impl-1/.env\n[conda:reviewer]\nprefix = .asb/none\n[connect:supervisor]\n'
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb --role implementer-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$clone" ]
+  [ "$(setenv_value CONDA_DEFAULT_ENV)" = "$clone" ]
+  [[ "$(setenv_value PATH)" == "$clone/bin:"* ]]
+  argv_has --ro-bind "$clone" "$clone"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb --role supervisor claude --version
+  [ "$(setenv_value CONDA_PREFIX)" = "$base/envs/x-dev" ]
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb --role reviewer claude --version
+  [[ "$output" == *"conda prefix '.asb/none' is not a conda env"* ]]
 }
 
 @test "a non-default role with --bg runs in that role's launch (#123)" {

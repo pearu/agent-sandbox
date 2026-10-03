@@ -84,6 +84,11 @@ elif scenario == "connect_tok":
     f = Flow(args[1], "CONNECT", "-", _auth(args[0]))
     m.http_connect(f)
     show(blocked=f.response is not None, status=getattr(f.response, "status_code", None))
+elif scenario == "request_tok":
+    f = Flow(args[1], "GET", "/", _auth(args[0]))
+    m.request(f)
+    show(blocked=f.response is not None,
+         body=(f.response.content.decode() if f.response else "").splitlines()[0] if f.response else "")
 elif scenario == "tunnel_tok":
     # CONNECT carries the token; the inner request does not, and must inherit it.
     c = Flow(args[1], "CONNECT", "-", _auth(args[0]), cid="tc")

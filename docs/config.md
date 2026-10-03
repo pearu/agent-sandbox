@@ -36,6 +36,11 @@ Sections:
   project, the same grant as `--allow` on the command line and subject to the
   same rules (a leading dot matches a domain and its subdomains; ignored in
   `open` and `none` network modes). Command-line `--allow` still applies on top.
+- **`[deny]`** (#221) — hosts taken out of what sessions in this project may reach,
+  one per line, in the same form: out of the global allowlist and out of the
+  session's own grant, for those sessions only. Never a host the agent's profile
+  needs: a line that would take one (`.anthropic.com` for `claude`) is left out, and
+  said. Ignored in `open` and `none` network modes, which have no proxy to refuse.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
@@ -56,7 +61,9 @@ Sections:
 - **`[conda]`** — key/value lines: `name = <env>` runs in that conda env
   (resolved under the active or a discoverable conda base) instead of the one
   active in your shell, and its `bin/` takes that env's place on PATH inside, so
-  `CONDA_PREFIX` and PATH agree; `write = 1` makes the active env writable;
+  `CONDA_PREFIX` and PATH agree; `prefix = <path>` (#221) does the same for an env
+  given by its path -- relative to the project, under `~`, or absolute -- such as a
+  clone in a role's own tree (`name` and `prefix` are one setting: the later wins); `write = 1` makes the active env writable;
   `pkgs = <dir>` is the sandbox-owned package cache, persistent, where conda's
   downloads go whenever a conda env is active (the host's cache stays read-only and
   is searched after it), write mode or not -- an env written by path, `conda install
@@ -580,9 +587,24 @@ preset = isolated                 # the reviewer role
 `[<section>:<glob>]` is that section for the roles the glob matches (`*` and
 `?` as in the shell). It applies after the unsuffixed section, in file order,
 and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
-changes `skills` and leaves every other channel as `[connect]` put it. Only
-`[sandbox]` (its `preset`) and `[connect]` take a suffix so far; a suffix on any
-other section is said at the file's review and that section is skipped.
+changes `skills` and leaves every other channel as `[connect]` put it.
+`[sandbox]` (its `preset`), `[connect]`, and (#221) `[allow]`, `[deny]`, `[env]`,
+`[conda]` and `[net]` take a suffix: a key there overrides the unsuffixed one for
+the role, a list (`[allow]`, `[deny]`, `[env]` names) adds to it --
+
+```ini
+[conda]
+name = x-dev                      # every role
+[conda:implementer-1]
+prefix = .asb/impl-1/.env         # this one's own clone
+[net:reviewer]
+mode = none
+[deny:reviewer]
+pypi.org
+```
+
+A suffix on any other section is said at the file's review and that section is
+skipped. The review reads every role's lines, whichever role a launch runs.
 
 **Once any suffixed section exists, a role name matching none of them is
 refused**, since it is most likely a typo of one; add `[connect:*]` to accept

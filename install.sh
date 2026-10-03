@@ -2464,10 +2464,22 @@ def _session_allow(token: str | None) -> list[str]:
     """--allow lines of the single live session whose proxy.token matches `token`.
     No token, or no live match, means no per-session grants (global list only), so
     one session's --allow is never visible to another."""
+    return _session_lines(token, "allow.txt")
+
+
+def _session_deny(token: str | None) -> list[str]:
+    """[deny] lines of the live session whose proxy.token matches `token` (#221):
+    hosts taken out of what the global allowlist and the session's own grant, for
+    that session only. The engine has already left out any that would take a host
+    the agent's profile needs."""
+    return _session_lines(token, "deny.txt")
+
+
+def _session_lines(token: str | None, name: str) -> list[str]:
     if not token or not SESSION_BASE.is_dir():
         return []
     for session in sorted(SESSION_BASE.glob("session.*")):
-        tok, allow, owner = session / "proxy.token", session / "allow.txt", session / "owner.id"
+        tok, allow, owner = session / "proxy.token", session / name, session / "owner.id"
         try:
             if (
                 tok.is_file()
@@ -2497,6 +2509,13 @@ def _parse(lines: list[str], exact: set[str], suffix: list[str]) -> None:
             suffix.append(line)
         else:
             exact.add(line)
+
+
+def _is_denied(host: str, token: str | None) -> bool:
+    exact: set[str] = set()
+    suffix: list[str] = []
+    _parse(_session_deny(token), exact, suffix)
+    return _is_allowed(host, exact, suffix)
 
 
 def _load_allowlist(token: str | None = None) -> tuple[set[str], list[str]]:
@@ -2574,6 +2593,14 @@ def request(flow: http.HTTPFlow) -> None:
         cid = getattr(getattr(flow, "client_conn", None), "id", None)
         token = _conn_token.get(cid) if cid is not None else None
     _strip_proxy_auth(flow)
+    if _is_denied(host, token):
+        _log_blocked(host, flow.request.method, flow.request.path)
+        flow.response = http.Response.make(
+            403,
+            f"agent-sandbox: host {host!r} is denied for this session ([deny] in .agent-sandbox).\n".encode(),
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
+        return
     exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix):
         return
@@ -2603,13 +2630,15 @@ def http_connect(flow: http.HTTPFlow) -> None:
     if cid is not None and token:
         _conn_token[cid] = token  # inner tunnel requests inherit this
     _strip_proxy_auth(flow)
+    denied = _is_denied(host, token)
     exact, suffix = _load_allowlist(token)
-    if _is_allowed(host, exact, suffix):
+    if not denied and _is_allowed(host, exact, suffix):
         return
     _log_blocked(host, "CONNECT", "-")
+    why = "denied for this session ([deny] in .agent-sandbox)" if denied else "not in the allowlist"
     flow.response = http.Response.make(
         403,
-        f"agent-sandbox: host {host!r} is not in the allowlist.\n".encode(),
+        f"agent-sandbox: host {host!r} is {why}.\n".encode(),
         {"Content-Type": "text/plain; charset=utf-8"},
     )
 
