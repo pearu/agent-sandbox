@@ -292,11 +292,8 @@ before building; an Implementer whose branch moves to the new `main` updates at 
 next start. A fresh clone is the fallback when an in-place update refuses a conflicting
 pin. Of this, the sandbox's part is small. An Implementer's clone is writable because
 its tree is, and persists with it; what an install downloads goes to the sandbox-owned
-package cache, which persists across launches too and is searched after the host's
-read-only one (section 6: today the engine binds it only in write mode, and until it
-does so whenever conda is present, the downloads fall to `~/.conda/pkgs`, a tmpfs
-inside -- the clone keeps every file, and the next install fetches again what the host
-cache lacks). The Supervisor's `x-dev` lives in the conda tree, read-only inside unless
+package cache, which persists across launches too and is searched before the host's
+read-only one (#219). The Supervisor's `x-dev` lives in the conda tree, read-only inside unless
 `[conda] write = 1`, which makes the active environment writable, with the same cache.
 The rest is a line in the briefings and a step in the Supervisor's round.
 
@@ -359,7 +356,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | the Planner's measurements persisting | a `read-write` declaration of the planner's, read-only for the others | built |
 | a role installing without touching the shared environment | a conda clone in its tree (measured: 11-15 s, 255 MB new disk per 1.6 GB env); or `<env>/ = copy-on-write` in the role's section (measured) | built |
 | an Implementer installing into its clone | the clone is in its tree, writable by the declaration; `conda install -p .asb/impl-1/.env`, `.asb/impl-1/.env/bin/pip`, no activation | built |
-| the downloads of such an install persisting | the sandbox-owned package cache (`~/.cache/agent-sandbox/conda-pkgs`, `CONDA_PKGS_DIRS` set to it, the host's read-only cache after it) is bound in write mode only; otherwise conda falls to `~/.conda/pkgs`, a tmpfs inside | **to build**: bind the cache, and set `CONDA_PKGS_DIRS`, whenever conda is present; write mode then adds only the writable active env |
+| the downloads of such an install persisting | the sandbox-owned package cache (`~/.cache/agent-sandbox/conda-pkgs`, `CONDA_PKGS_DIRS` set to it, the host's read-only cache after it), bound whenever a conda env is active (#219) | built |
 | a role activating its own clone | `[conda] name` is one setting for the whole file; no `prefix` form | **to build**: `[conda:<role>]`, with `prefix = .asb/impl-1/.env` for an env that has a path -- activation only; the same role suffix the network and environment sections need |
 | the Supervisor installing into `x-dev`, in the conda tree | `[conda] write = 1` makes the active env writable, its downloads in a sandbox-owned package cache -- for every role at once | **to build**: `write = 1` under `[conda:supervisor]`, the same suffix |
 | what a role has, shown before it runs | `asb --check --role NAME`: the policy, what crosses the boundary and how, the mount plan (#210-#213) | built; **to add**: "can act as you at" per outside service (the #114 outward routes) |
