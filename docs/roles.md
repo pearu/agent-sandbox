@@ -331,7 +331,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | no publishing: hosts a role may not reach | `[deny]` and `[deny:<role>]` subtract hosts, the profile's own untouched; role suffixes on `[allow]`, `[env]`, `[net]`, `[conda]` (#221) | built |
 | retrieve only: read the web and GitHub, publish nothing | -- | **to build**: the proxy refusing every method but GET and HEAD to the user's hosts, per role, the profile's own hosts untouched -- GitHub-aware: `gh` reads issues and pull requests through POSTs to `api.github.com/graphql`, so there a `query` passes and a `mutation` is refused, by the body. What it does not stop: a token carried out in a GET to an allowed host |
 | no git transport to a host that also serves pages | -- | **to build**: the proxy refusing git's HTTPS transport (`/info/refs`, `git-upload-pack`, `git-receive-pack`, the `git/` user agent) per role; `--ssh` refusable per role |
-| the role's purpose told to the agent, at every start | the briefing says what is open and closed, as a SessionStart hook: what it prints is in context before the first prompt | **to build**: `[briefing:<role>]`, reading `.asb/roles/<role>.md` (or a `role =` line) -- its text injected by that hook at every launch, resume and compaction, the file bound read-only inside too, and hash-recorded with the approval, so an edit re-opens the review; the briefing names the role and derives its boundary from the policy ("your tree is `.asb/impl-1/`, read-write; your inputs: ...; your outputs: ..."). The round's specifics stay in the artefacts, which the purpose tells the role where to find, so a launch needs nothing typed |
+| the role's purpose told to the agent, at every start | `[briefing:<role>]` (#222): `.asb/roles/<role>.md`, or `file =`, injected by the SessionStart hook at every launch, resume and compaction after the engine's lines (which name what is writable and read-only), bound read-only inside, and part of the approval, so an edit re-opens the review. The round's specifics stay in the artefacts, which the purpose tells the role where to find, so a launch needs nothing typed | built |
 | a Reviewer trying an Implementer's build | the clone read-only: the tree and what the build left in it | built; the build and its environment must live in the clone |
 | the Planner's measurements persisting | a `read-write` declaration of the planner's, read-only for the others | built |
 | a role installing without touching the shared environment | a conda clone in its tree (measured: 11-15 s, 255 MB new disk per 1.6 GB env); or `<env>/ = copy-on-write` in the role's section (measured) | built |
@@ -418,7 +418,7 @@ retrieve-only = on
 .asb/coord/planner-2.md = read-write
 ~/refs/reporting/ = read-only
 ~/git/other-project/ = read-only  # the sources P2 knows
-[briefing:planner-*]              # NEEDS: reads .asb/roles/<role>.md, this instance's
+[briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 
 # ---- implementers: a clone each -------------------------------------------
 [connect:implementer-1]
@@ -437,13 +437,13 @@ prefix = .asb/impl-1/.env
 ./.git/ = read-only
 [conda:implementer-2]
 prefix = .asb/impl-2/.env
-[briefing:implementer-*]          # NEEDS: reads .asb/roles/<role>.md
+[briefing:implementer-*]          # reads .asb/roles/<role>.md
 
 # ---- reviewers: the common block already hides every history --------------
 [connect:reviewer-1]
 .asb/review/reviewer-1/ = read-write
 .asb/coord/reviewer-1.md = read-write
-[briefing:reviewer-*]             # NEEDS: reads .asb/roles/<role>.md
+[briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
 # ---- supervisor: the only role that reaches outside ----------------------
 [connect:supervisor]
@@ -460,7 +460,7 @@ write = 1
 [net:supervisor]                  # NEEDS (#223, #224) these keys: ...except the Supervisor, which publishes
 retrieve-only = off
 git = allow
-[briefing:supervisor]             # NEEDS: reads .asb/roles/supervisor.md
+[briefing:supervisor]             # reads .asb/roles/supervisor.md
 ```
 
 Until the `NEEDS` mechanics exist, the file runs with those lines left out. A reviewer
@@ -475,11 +475,10 @@ Every role is a launch of its own, from the repository, in a terminal of its own
 second terminal of the same role joins the running one. The user types into each
 terminal, reads the artefacts on the host as files, and moves a round forward by
 telling the next role where its input is: a role reads an artefact when told, and
-reports what it wrote (section 1). The sentences below assume `[briefing:<role>]`
-(section 6): a role's purpose, handle, standing facts and protocol are in its context
-at every start, so `asb --role NAME claude` starts a role that knows what it is and
-where everything is. Until it is built, the user's first sentence adds "read
-`.asb/roles/<role>.md` first", which is the same text, typed. `asb --check` and `asb
+reports what it wrote (section 1). With `[briefing:<role>]` (section 6) a role's
+purpose, handle, standing facts and protocol are in its context at every start, so
+`asb --role NAME claude` starts a role that knows what it is and where everything is.
+`asb --check` and `asb
 --trust` run on the host: inside a sandbox the trust store is not there, and `asb`
 runs what it names as it is (#197).
 

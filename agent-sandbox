@@ -3280,9 +3280,13 @@ _as_briefing_write() {
     printf '\n## Other projects\n\n%s.\n' "$mem_line"
     printf 'Other sessions leave state here too -- file snapshots, prompt history,\n'
     printf 'plans, pasted text -- and none of it is in this sandbox. What this\n'
-    printf 'session writes is kept and merged back when it ends, so your own undo\n'
-    printf 'history and prompt history survive a resume.\n'
+    printf 'session writes is kept in this role'"'"'s own state, so your own undo history\n'
+    printf 'and prompt history survive a resume in this role.\n'
     printf '\n## Syscall filter\n\nseccomp is %s.\n' "$sec"
+    if [[ -n "${_purpose_file:-}" ]]; then
+      printf '\n## Your role: %s\n\nFrom %s, read-only here:\n\n' "$_role" "$_purpose_as"
+      cat -- "$_purpose_file"
+    fi
     printf '\n## If you need something that is blocked\n\n'
     printf 'Stop and ask. You cannot widen this yourself: .agent-sandbox is\n'
     printf 'trust-gated so that an agent cannot grant itself access, and the trust\n'
@@ -3298,10 +3302,19 @@ _as_briefing_write() {
   local short
   short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If you need something blocked, stop and ask the user to add it to .agent-sandbox and re-run \`asb --trust\` -- you cannot widen this yourself."
 
+  # The role's purpose (#222), after the engine's own lines, at every session start --
+  # not to a subagent, which is the role's tool, not the role.
+  local purpose=""
+  if [[ -n "${_purpose_file:-}" ]]; then
+    purpose="$(cat -- "$_purpose_file")" || return 1
+    purpose=$'\n\n'"You are the role '$_role' of this project. Your purpose, from $_purpose_as (read-only here):"$'\n\n'"$purpose"
+  fi
   local ev
   for ev in SessionStart SubagentStart; do
+    local ctx="$short"
+    [[ "$ev" == SessionStart ]] && ctx+="$purpose"
     printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":%s}}\n' \
-      "$ev" "$(_as_json_str "$short")" >"$bdir/hook-$ev.json" || return 1
+      "$ev" "$(_as_json_str "$ctx")" >"$bdir/hook-$ev.json" || return 1
   done
 
   args+=(--ro-bind "$bdir" "$inside")
@@ -3426,12 +3439,121 @@ _as_conda_base() {
 # what changed (#143). Inside a sandbox there is no gate at all (_as_inside_sandbox):
 # the file there is what the outer launch approved, bound read-only, or a copy an
 # inner agent changed -- and a nested sandbox can only narrow the one it is inside.
+# ----- the role's purpose (#222) ---------------------------------------------
+# What a role is FOR -- report, do not fix; ask before installing -- is an
+# instruction, not a boundary, and a purpose file says it: `[briefing:<glob>]`
+# briefs the roles the glob matches from `file = PATH` (relative to the project,
+# under `~`, or absolute; `{role}` is the role's name), `.asb/roles/{role}.md` when
+# no line names one. Its text goes into the SessionStart hook after the engine's
+# own lines, the file is bound read-only inside, and it is part of the approval:
+# the trust record covers every purpose file the dot-file can name, so an edit to
+# one re-opens the review as an edit to the dot-file does.
+
+# _as_briefing_pattern GLOB -- the purpose file pattern for a [briefing:GLOB]
+# section, the latest `file` line that applies to it, else the default. Reads
+# the caller's _df_briefing_files.
+_as_briefing_pattern() {
+  local g="$1" e pat=".asb/roles/{role}.md"
+  for e in ${_df_briefing_files[@]+"${_df_briefing_files[@]}"}; do
+    [[ "${e%%$'\t'*}" == "*" || "${e%%$'\t'*}" == "$g" ]] && pat="${e#*$'\t'}"
+  done
+  printf '%s' "$pat"
+}
+
+# _as_briefing_abs PROJECT PATH -- PATH as the engine reads it.
+_as_briefing_abs() {
+  case "$2" in
+    \~ | \~/*) printf '%s' "$HOME${2#\~}" ;;
+    /*) printf '%s' "$2" ;;
+    *) printf '%s/%s' "$1" "$2" ;;
+  esac
+}
+
+# _as_briefing_resolve PROJECT ROLE -- set _purpose_file (absolute) and _purpose_as
+# (as written, `{role}` substituted) for ROLE, or leave both empty when the role is
+# not briefed. The latest matching `file` line wins, the unsuffixed one first.
+_as_briefing_resolve() {
+  local proj="$1" role="$2" g e pat="" briefed=0
+  _purpose_file="" _purpose_as=""
+  for g in ${_df_briefing_globs[@]+"${_df_briefing_globs[@]}"}; do
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$role" == $g ]] && briefed=1
+  done
+  for e in ${_df_briefing_files[@]+"${_df_briefing_files[@]}"}; do
+    g="${e%%$'\t'*}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    if [[ "$g" == "*" || "$role" == $g ]]; then
+      pat="${e#*$'\t'}" briefed=1
+    fi
+  done
+  ((briefed)) || return 0
+  pat="${pat:-.asb/roles/{role\}.md}"
+  _purpose_as="${pat//\{role\}/$role}"
+  _purpose_file="$(realpath -m -s -- "$(_as_briefing_abs "$proj" "$_purpose_as")")"
+}
+
+# _as_briefing_files PROJECT -- every purpose file the parsed dot-file can name, for
+# any role: each pattern with `{role}` read as the section's glob, expanded against
+# the files there now. Sorted, one per line.
+_as_briefing_files() {
+  local proj="$1" g e pat f
+  local -a globs=() out=()
+  globs=(${_df_briefing_globs[@]+"${_df_briefing_globs[@]}"})
+  for e in ${_df_briefing_files[@]+"${_df_briefing_files[@]}"}; do
+    [[ "${e%%$'\t'*}" == "*" ]] && globs+=("*")
+  done
+  ((${#globs[@]})) || return 0
+  for g in "${globs[@]}"; do
+    pat="$(_as_briefing_pattern "$g")"
+    pat="$(_as_briefing_abs "$proj" "${pat//\{role\}/$g}")"
+    while IFS= read -r f; do
+      [[ -f "$f" ]] && out+=("$(realpath -m -s -- "$f")")
+    done < <(compgen -G "$pat" || true)
+  done
+  ((${#out[@]})) && printf '%s\n' "${out[@]}" | sort -u
+  return 0
+}
+
+# _as_trust_digest PROJECT FILE -- what an approval of FILE records: its SHA-256, or,
+# when it briefs roles from purpose files (#222), the SHA-256 of that and of every
+# purpose file it can name, path and content, so that an edit to one is an edit to
+# the approved policy.
+_as_trust_digest() {
+  local proj="$1" file="$2" sum f
+  sum="$(_as_sha256_file "$file")"
+  [[ -n "$sum" ]] || return 1
+  grep -qE '^[[:space:]]*\[briefing' -- "$file" 2>/dev/null || {
+    printf '%s' "$sum"
+    return 0
+  }
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=()
+  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  _as_dotfile_parse "$file" 2>/dev/null
+  local -a files=()
+  mapfile -t files < <(_as_briefing_files "$proj")
+  # No purpose file there (none named, or none written yet): the file's own SHA-256,
+  # what an approval recorded before #222. Writing one later changes the digest.
+  if ((${#files[@]} == 0)); then
+    printf '%s' "$sum"
+    return 0
+  fi
+  {
+    printf '%s\n' "$sum"
+    for f in "${files[@]}"; do
+      printf '%s %s\n' "$(_as_sha256_file "$f")" "$f"
+    done
+  } | sha256sum | cut -d' ' -f1
+}
+
 _as_dotfile_trusted() {
   local cwd="$1" file="$2" want have
   [[ -f "$file" ]] && _as_inside_sandbox && return 0
   # `--check` evaluates the file as a launch would once it is approved; it records nothing.
   [[ -f "$file" ]] && ((${_check_plan:-0})) && return 0
-  want="$(_as_sha256_file "$file")"
+  want="$(_as_trust_digest "$cwd" "$file")"
   [[ -n "$want" ]] || return 1
   have="$(cat -- "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" 2>/dev/null || true)"
   [[ -n "$have" && "$have" == "$want" ]]
@@ -3462,7 +3584,14 @@ _as_trust_record() {
   }
   rec="$dir/$(_as_sha256_str "$cwd")"
   cp -- "$file" "$rec.approved.tmp" && mv -f -- "$rec.approved.tmp" "$rec.approved" || return 1
-  _as_sha256_file "$file" >"$rec" || return 1
+  # The approved purpose files too (#222), so the next review can show what changed.
+  rm -rf -- "$rec.purpose"
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    mkdir -p -- "$rec.purpose" && cp -- "$f" "$rec.purpose/$(_as_sha256_str "$f")" || return 1
+  done < <(_as_dotfile_briefing_files "$cwd" "$file")
+  _as_trust_digest "$cwd" "$file" >"$rec" || return 1
   return 0
 }
 
@@ -3471,6 +3600,18 @@ _as_trust_forget() {
   local rec
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$1")"
   rm -f -- "$rec" "$rec.approved"
+  rm -rf -- "$rec.purpose"
+}
+
+# _as_dotfile_briefing_files PROJECT FILE -- _as_briefing_files for FILE, parsed here.
+_as_dotfile_briefing_files() {
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=()
+  local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  _as_dotfile_parse "$2" 2>/dev/null
+  _as_briefing_files "$1"
 }
 
 # _as_trust_show FILE -- a file as the review shows it: through cat -v, so nothing in
@@ -3508,6 +3649,7 @@ _as_profile_dotfile() {
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local -a _df_briefing_globs=() _df_briefing_files=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -3805,6 +3947,7 @@ _as_trust_notes() {
   local _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local -a _df_briefing_globs=() _df_briefing_files=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
@@ -3982,17 +4125,34 @@ _as_trust_show_review() {
   file="$cwd/.agent-sandbox"
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   {
-    if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+    if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file" \
+      && ! cmp -s -- "$rec.approved" "$file"; then
       printf '\n%s has changed since you approved it (by you, by the agent, or by a pull). What changed, approved -> now (through cat -v):\n----\n' "$file"
       diff -u --label approved --label now -- "$rec.approved" "$file" | cat -v || true # differs: 1
       printf -- '----\n'
-    elif [[ -f "$rec" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+    elif [[ -f "$rec" && ! -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
       printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
       _as_trust_show "$file"
     else
       printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
       _as_trust_show "$file"
     fi
+    # The purpose files it briefs roles from (#222), part of what is approved.
+    local f copy
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      copy="$rec.purpose/$(_as_sha256_str "$f")"
+      if [[ -f "$copy" ]] && cmp -s -- "$copy" "$f"; then
+        printf '\npurpose file %s: approved, unchanged.\n' "$(_as_tilde "$f")"
+      elif [[ -f "$copy" ]]; then
+        printf '\npurpose file %s has changed since you approved it. What changed, approved -> now (through cat -v):\n----\n' "$(_as_tilde "$f")"
+        diff -u --label approved --label now -- "$copy" "$f" | cat -v || true # differs: 1
+        printf -- '----\n'
+      else
+        printf '\npurpose file %s, new to this approval (shown with cat -v):\n' "$(_as_tilde "$f")"
+        _as_trust_show "$f"
+      fi
+    done < <(_as_dotfile_briefing_files "$cwd" "$file")
   } >&2
   _as_trust_notes "$cwd" "$file"
 }
@@ -4038,6 +4198,12 @@ _as_dotfile_parse() {
         section="${section%%:*}"
         case "$section" in
           sandbox | connect | allow | deny | env | conda | net) _df_role_globs+=("$sglob") ;;
+          briefing)
+            # [briefing:<glob>] (#222): those roles are briefed from a purpose file,
+            # `file = PATH` or .asb/roles/{role}.md, present even with no line.
+            _df_role_globs+=("$sglob")
+            _df_briefing_globs+=("$sglob")
+            ;;
           preset)
             # [preset:<name>] is a preset's rungs in a profile's dot-file (#191).
             [[ "$sglob" =~ ^(isolated|inherit|shared)$ ]] || {
@@ -4056,7 +4222,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda and net do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net and briefing do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -4218,7 +4384,16 @@ _as_dotfile_line() {
       else
         _as_dotfile_kv "$line"
         case "$ck" in
-          mode) _df_briefing_mode="$cv" ;;
+          mode)
+            if [[ "$sglob" == "*" ]]; then
+              _df_briefing_mode="$cv"
+            else
+              _as_msg ".agent-sandbox: [briefing:$sglob] mode -- the briefing's mode is a key of the unsuffixed [briefing] only; ignoring"
+            fi
+            ;;
+          # The purpose file (#222): `{role}` is the role's name. In the unsuffixed
+          # section, every role is briefed from it.
+          file) _df_briefing_files+=("$sglob"$'\t'"$cv") ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
         esac
       fi
@@ -4347,6 +4522,9 @@ _as_check_plan() {
     if ((${#_df_role_globs[@]})); then
       printf '  roles in this file: %s; see another with: %s --check --role NAME\n' \
         "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
+    fi
+    if [[ -n "${_purpose_file:-}" ]]; then
+      printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
     fi
     printf '  %-28s %-15s %-24s %s\n' "channel or path" mode source "set by"
     # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
@@ -5612,6 +5790,7 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_seccomp_mode="" _df_briefing_mode=""
+  local -a _df_briefing_globs=() _df_briefing_files=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
@@ -5835,7 +6014,7 @@ agent_sandbox() (
     elif [[ -f "$_trust_rec" ]]; then
       # Approved once, changed since (by you, or by the agent): refuse rather
       # than ignore, or the defaults would apply in place of what you approved.
-      _as_msg ".agent-sandbox has changed since you approved it (by you, by the agent, or by a pull)." \
+      _as_msg ".agent-sandbox, or a purpose file it names, has changed since you approved it (by you, by the agent, or by a pull)." \
         "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: $invoked --trust"
       return 1
     else
@@ -5994,6 +6173,27 @@ agent_sandbox() (
     fi
   elif [[ -f "$_dotfile" ]] && ! _as_preset_is_native; then
     _as_connect_parse "./.agent-sandbox = read-only" "built in, #143" || return 1
+  fi
+  # THE ROLE'S PURPOSE (#222): the file it is briefed from must be there and plain
+  # text -- it was part of what was approved, and it goes into the agent's context --
+  # and is read-only inside, as the dot-file is, unless a declaration says otherwise
+  # (any mode but read-write).
+  local _purpose_file="" _purpose_as=""
+  _as_briefing_resolve "$_proj" "$_role"
+  if [[ -n "$_purpose_file" ]]; then
+    if [[ ! -f "$_purpose_file" ]]; then
+      _as_msg "role '$_role' is briefed from '$_purpose_as' ([briefing]), which does not exist. Refusing rather than running the role without its purpose: create it, or drop the role's [briefing] section, then $invoked --trust."
+      return 1
+    fi
+    _as_dotfile_clean "$_purpose_file" || return 1
+    if [[ -n "${_connect_key[$_purpose_file]:-}" ]]; then
+      if [[ "${_connect_mode[$_purpose_file]}" == read-write ]]; then
+        _as_msg "connect (${_connect_where[$_purpose_file]}): '${_connect_key[$_purpose_file]} = read-write' is refused: a role's purpose file is part of its approved policy (#222). Any other mode keeps its writes inside."
+        return 1
+      fi
+    elif ! _as_preset_is_native; then
+      _as_connect_parse "$_purpose_file = read-only" "built in, #222" || return 1
+    fi
   fi
   _as_connect_report
 

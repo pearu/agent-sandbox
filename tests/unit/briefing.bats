@@ -29,6 +29,12 @@ STUB
   OUT="$H/copied/briefing" # the session directory's briefing/, bound at $IN
 }
 
+# approve -- the project's dot-file, approved the way `--trust` records it (with the
+# purpose files it names, #222). Its output is in $output.
+approve() {
+  output="$(cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "$ENGINE" --trust 2>&1)"
+}
+
 trust() {
   mkdir -p "$CFG/trust"
   sha256sum -- "$PROJ/.agent-sandbox" | cut -d' ' -f1 \
@@ -249,4 +255,92 @@ CHECK
   [ "${#JOINB[@]}" -eq 0 ]
   # the readable briefing is still bound: only the injection was lost
   [ "$(grep -c "^$IN$" "$H/argv")" -eq 1 ]
+}
+
+@test "a role's purpose file goes into the SessionStart hook after the engine's lines, not to a subagent, and is bound read-only (#222)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Report, do not fix.\n' >"$PROJ/.asb/roles/reviewer-1.md"
+  printf '[briefing:reviewer-*]\n[connect:supervisor]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -q "You are the role 'reviewer-1' of this project. Your purpose, from .asb/roles/reviewer-1.md (read-only here):\\\\n\\\\nReport, do not fix." "$OUT/hook-SessionStart.json"
+  grep -q '"additionalContext":"agent-sandbox: this session is sandboxed' "$OUT/hook-SessionStart.json" # the engine's lines first
+  run ! grep -q 'Report, do not fix' "$OUT/hook-SubagentStart.json"
+  grep -q '^## Your role: reviewer-1$' "$OUT/briefing.md"
+  grep -q '^Report, do not fix.$' "$OUT/briefing.md"
+  argv_has --ro-bind "$PROJ/.asb/roles/reviewer-1.md" "$PROJ/.asb/roles/reviewer-1.md"
+  # a role the section does not match is not briefed
+  run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -q 'Your purpose' "$OUT/hook-SessionStart.json"
+}
+
+@test "file = names the purpose file, with {role}; the unsuffixed [briefing] briefs every role (#222)" {
+  mkdir -p "$PROJ/purposes"
+  printf 'Implement.\n' >"$PROJ/purposes/impl-1.txt"
+  printf 'Anyone.\n' >"$PROJ/purposes/all.txt"
+  printf '[briefing]\nfile = purposes/all.txt\n[briefing:impl-*]\nfile = purposes/{role}.txt\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role impl-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -q 'from purposes/impl-1.txt' "$OUT/hook-SessionStart.json"
+  grep -q 'Implement.' "$OUT/hook-SessionStart.json"
+  run_engine BWRAP_COPY="$OUT" -- asb --role other claude --version
+  [ "$status" -eq 0 ]
+  grep -q 'from purposes/all.txt' "$OUT/hook-SessionStart.json"
+}
+
+@test "a purpose file that does not exist refuses the role's launch, naming it (#222)" {
+  printf '[briefing:reviewer]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"briefed from '.asb/roles/reviewer.md'"*"does not exist"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "a purpose file is part of the approval: an edit refuses the launch, and the review shows the difference (#222)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Report.\n' >"$PROJ/.asb/roles/reviewer.md"
+  printf '[briefing:reviewer]\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"purpose file "*"/.asb/roles/reviewer.md, new to this approval"*"Report."* ]]
+  approve
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  printf 'Report, and fix too.\n' >"$PROJ/.asb/roles/reviewer.md"
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"or a purpose file it names, has changed since you approved it"* ]]
+  run_review
+  [[ "$output" == *"/.asb/roles/reviewer.md has changed since you approved it"*"+Report, and fix too."* ]]
+  [[ "$output" != *".agent-sandbox has changed"* ]] # the dot-file itself did not
+  # a new file the section's glob matches is new to the approval too
+  printf '[briefing:reviewer-*]\n' >"$PROJ/.agent-sandbox"
+  printf 'One.\n' >"$PROJ/.asb/roles/reviewer-1.md"
+  approve
+  printf 'Two.\n' >"$PROJ/.asb/roles/reviewer-2.md"
+  run_engine -- asb --role reviewer-1 claude --version
+  [ "$status" -ne 0 ]
+}
+
+@test "a purpose file may not be declared read-write; [briefing:<role>] mode is the unsuffixed section's (#222)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'x\n' >"$PROJ/.asb/roles/r.md"
+  printf '[briefing:r]\nmode = off\n[connect]\n.asb/roles/r.md = read-write\n' >"$PROJ/.agent-sandbox"
+  approve
+  [[ "$output" == *"[briefing:r] mode"*"unsuffixed [briefing] only"* ]]
+  run_engine -- asb --role r claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a role's purpose file is part of its approved policy"* ]]
+}
+
+@test "--check names the file a role is briefed from (#222)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'x\n' >"$PROJ/.asb/roles/reviewer.md"
+  printf '[briefing:reviewer]\n' >"$PROJ/.agent-sandbox"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"briefed from: .asb/roles/reviewer.md"* ]]
 }

@@ -107,6 +107,25 @@ Sections:
   `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
   be injected; `briefing.md` stays bound and readable either way.
+
+  **A role's purpose** (#222): `[briefing:<glob>]` briefs the roles the glob matches
+  from a purpose file -- what the role is for, which no mount can say -- `file =
+  PATH` (relative to the project, under `~`, or absolute; `{role}` is the role's
+  name), `.asb/roles/{role}.md` when the section has no `file` line. A `file` line in
+  the unsuffixed `[briefing]` briefs every role. The file's text follows the
+  engine's own lines in the `SessionStart` hook (not `SubagentStart`: a subagent is
+  the role's tool, not the role), and `briefing.md` has it under "Your role"; the
+  file is read-only inside (any declared mode but `read-write`). It is part of the
+  approval: the trust record covers every purpose file the dot-file can name --
+  `{role}` read as the section's glob -- so an edit to one, or a new one the glob
+  matches, re-opens the review, which shows it new or as a diff. A role whose file
+  does not exist is refused. `mode` stays a key of the unsuffixed section.
+
+  ```ini
+  [briefing:reviewer-*]                  # .asb/roles/reviewer-1.md, ...
+  [briefing:supervisor]
+  file = docs/agents/supervisor.md
+  ```
 - **`[connect]`** — key/value lines, one per channel: `channel = mode [source] [scope]`.
   A **channel** is named by what it carries (`instructions`, `settings`,
   `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a
