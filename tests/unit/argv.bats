@@ -153,7 +153,7 @@ setup() {
   run ! argv_has "$H/nope"
 }
 
-@test "conda: base bound read-only before the env; env read-only by default; write mode makes only the env rw, adds the sandbox package cache, CONDA_PKGS_DIRS, tmpfs ~/.conda and read-only rc files" {
+@test "conda: base bound read-only before the env; env read-only by default; the sandbox package cache and CONDA_PKGS_DIRS in both modes (#219); write mode makes only the env rw; tmpfs ~/.conda and read-only rc files" {
   local base="$H/conda" env="$H/conda/envs/myenv"
   mkdir -p "$env" "$base/pkgs" "$base/condabin" "$H/pkgs"
   : >"$H/home/.condarc"
@@ -168,7 +168,8 @@ setup() {
   argv_has --ro-bind "$H/home/.condarc" "$H/home/.condarc"
   [ "$(setenv_value CONDA_PREFIX)" = "$env" ]
   [ "$(setenv_value CONDA_DEFAULT_ENV)" = "myenv" ]
-  run ! setenv_value CONDA_PKGS_DIRS
+  argv_has --bind "$H/home/.cache/agent-sandbox/conda-pkgs" "$H/home/.cache/agent-sandbox/conda-pkgs"
+  [ "$(setenv_value CONDA_PKGS_DIRS)" = "$H/home/.cache/agent-sandbox/conda-pkgs,$base/pkgs" ]
   run_engine "${cenv[@]}" AGENT_SANDBOX_CONDA_WRITE=1 AGENT_SANDBOX_CONDA_PKGS="$H/pkgs" -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$base" "$base"
