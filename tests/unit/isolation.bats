@@ -191,7 +191,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
     >"$t/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
 }
 
-@test "daemon/ is hidden by default; gh/ and ide/ are not" {
+@test "daemon/ is hidden by default; ide/ is not, and gh/ is a channel rather than a hidden path (#88)" {
   mkdir -p "$C/daemon" "$C/gh" "$C/ide"
   printf 'control-key\n' >"$C/daemon/control.key"
   run_engine -- asb claude --version
@@ -199,8 +199,8 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   # the supervisor's control key and session roster: a cross-session control
   # channel with no in-sandbox use
   argv_has --tmpfs "$C/daemon"
-  # both of these exist to make Claude Code work from inside a sandbox, so
-  # hiding them by default would break the feature they were created for
+  # ide/ exists to make Claude Code work from inside a sandbox, so hiding it by
+  # default would break the feature it was created for
   run ! argv_has --tmpfs "$C/gh"
   run ! argv_has --tmpfs "$C/ide"
 }

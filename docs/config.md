@@ -236,7 +236,8 @@ Sections:
 
   | channel | `isolated` | `inherit` | `shared` | `native` | governed today by |
   |---|---|---|---|---|---|
-  | identity — your login, and `gh/`/`ide/` | `read-write` | `read-write` | `read-write` | `read-write` | always live; a sandbox without your login is not your sandbox |
+  | identity — your login, and `ide/` | `read-write` | `read-write` | `read-write` | `read-write` | always live; a sandbox without your login is not your sandbox |
+  | gh — `gh/`, a GitHub login you keep there | `own` | `own` | `own` | `read-write` | **the preset** (#88): no sandbox gets the token unless its file asks, `gh = read-only`; `GH_CONFIG_DIR` points at it under every preset but `native` |
   | project — the working tree | `read-write` | `read-write` | `read-write` | `read-write` | always live; it is what you opened; `project = read-only` per role (#220) |
   | instructions — `CLAUDE.md`, `rules/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
   | settings — `settings.json`, `output-styles/` | `own` | `copy-on-write` | `read-write` | `read-write` | **the preset** |
@@ -350,13 +351,13 @@ Sections:
   Each is relative to `~/.claude`; an absolute path or one containing `..` is
   refused. The directory is bound read-write because the agent needs its own
   state, so this is how you keep a particular thing in it out of reach:
-  `hide = gh` if you put a GitHub token there and do not want this project's
-  agent using it, `hide = todos statsig` for state you would rather not share.
+  `hide = todos statsig` for state you would rather not share.
   Hiding something the agent needs breaks that feature — which is the point of
   the default being short. `daemon` is hidden already (the background
   supervisor's control key and its roster of other sessions, a cross-session
-  channel rather than this session's state); `gh` and `ide` are deliberately
-  **not**, because both exist to let Claude Code work from inside a sandbox.
+  channel rather than this session's state); `ide` is deliberately **not**,
+  because it exists to let Claude Code work from inside a sandbox. A GitHub login
+  kept in `gh/` is the `gh` channel (#88), the role's own unless `gh = read-only`.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

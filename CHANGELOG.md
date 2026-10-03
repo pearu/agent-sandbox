@@ -11,6 +11,10 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Breaking
 
+- **A gh login in `~/.claude/gh` is no longer visible to every project** (#88): it is the
+  `gh` channel, the role's own (empty) under every preset but `native`. `gh = read-only`
+  in `[connect]` hands it to a sandbox, with `GH_CONFIG_DIR` pointed there, so `gh` is
+  logged in with nothing exported; forwarding `GH_CONFIG_DIR` is refused, naming the line.
 - **The sandbox is invoked explicitly** (#151): `asb [OPTIONS] CMD [AGENT OPTIONS]`, with
   `agent-sandbox` the canonical name. Nothing shadows `claude` any more: `claude` is
   Claude Code itself, unsandboxed, everywhere. Engine options come before the command.

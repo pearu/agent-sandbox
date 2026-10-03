@@ -3733,6 +3733,13 @@ _as_profile_dotfile() {
       esac
       continue
     fi
+    # `env = NAME` (#88): the variable a tool reads this channel's path from. Set to the
+    # channel's first path under every preset but native, as base-env is, and refused
+    # from a project's [env] there; not a path.
+    if [[ "$line" =~ ^[[:space:]]*env[[:space:]]*=[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*$ ]]; then
+      profile_channel_env+=("$name"$'\t'"${BASH_REMATCH[1]}")
+      continue
+    fi
     key="${line%%=*}" toks=""
     [[ "$line" == *=* ]] && toks="${line#*=}"
     key="${key#"${key%%[![:space:]]*}"}"
@@ -3893,7 +3900,7 @@ _as_profile_facts_dotfile() {
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
   local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
-  local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=()
+  local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
 }
 
@@ -5691,6 +5698,7 @@ agent_sandbox() (
   # [allow] opens for every launch (the session allowlist, beside --allow's).
   local -a profile_hide=() profile_visible=() _profile_allow_hosts=() profile_channel_start=() profile_channel_templates=()
   local -a profile_channel_reach=() # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
+  local -a profile_channel_env=()   # [channel:<name>] env: "CHANNEL<TAB>NAME" (#88)
   local profile_base=""             # [agent] base: the agent's state directory (#175)
   local profile_base_env=""         # [agent] base-env: the variable the agent reads it from
   local profile_base_from=""        # the variable that moved it, when one did (#190)
@@ -6620,10 +6628,25 @@ agent_sandbox() (
   # does not apply. And the variable the agent reads its base from (`base-env`) is set
   # to the base the engine built, so the agent uses that state -- by the engine, under
   # every preset but `native`, which builds none and leaves the user's value as it is.
+  # A channel's variable (#88) is the same kind of pin: it points a tool at the path the
+  # channel binds, whatever mode that is, so under `own` the tool finds the role's empty
+  # store rather than your native one.
+  local -A _chenv=()
   if _as_preset_is_native; then
     profile_env_refuse=()
-  elif [[ -n "$profile_base_env" && -n "$profile_base" ]]; then
-    profile_env_set+=("$profile_base_env=$profile_base")
+  else
+    if [[ -n "$profile_base_env" && -n "$profile_base" ]]; then
+      profile_env_set+=("$profile_base_env=$profile_base")
+    fi
+    local _ce _cl _cp
+    for _ce in ${profile_channel_env[@]+"${profile_channel_env[@]}"}; do
+      for _cl in ${profile_channels[@]+"${profile_channels[@]}"}; do
+        [[ "${_cl%%$'\t'*}" == "${_ce%%$'\t'*}" ]] || continue
+        _cp="${_cl#*$'\t'}" _cp="${_cp%%$'\t'*}" _cp="${_cp#*:}"
+        profile_env_set+=("${_ce#*$'\t'}=$_cp")
+        _chenv["${_ce#*$'\t'}"]="${_ce%%$'\t'*}"
+      done
+    done
   fi
   local _kv
   for _kv in "${profile_env_set[@]}"; do
@@ -6698,8 +6721,11 @@ agent_sandbox() (
       # Said for a name the user asked for by name; silent for one the `native`
       # sweep picked up, where a line per pinned variable is noise about a
       # request nobody made.
-      ((_ei < _explicit)) \
-        && _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
+      if ((_ei < _explicit)) && [[ -n "${_chenv[$_var]:-}" ]]; then
+        _as_msg "not forwarding $_var: profile '$profile' points it at its '${_chenv[$_var]}' channel; to use yours, connect it: '${_chenv[$_var]} = read-only' in [connect]"
+      elif ((_ei < _explicit)); then
+        _as_msg "not forwarding $_var: profile '$profile' sets or refuses it inside the sandbox"
+      fi
       continue
     fi
     _fwd+=("$_var")
