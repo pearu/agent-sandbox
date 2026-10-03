@@ -90,6 +90,16 @@ trust() {
   run ! grep -q 'SECRET-CANARY' "$OUT/briefing.md"
 }
 
+@test "a read-only project is said so: the briefing lists it read-only and only what is declared writable (#220)" {
+  mkdir -p "$PROJ/impl"
+  run_engine BWRAP_COPY="$OUT" -- asb --connect 'project = read-only' --connect './impl/ = read-write' claude --version
+  [ "$status" -eq 0 ]
+  grep -q -- "- writable: $PROJ/impl\$" "$OUT/briefing.md"
+  grep -q -- "- extra read-only paths: $PROJ (the project)\$" "$OUT/briefing.md"
+  run_engine BWRAP_COPY="$OUT" -- asb --connect 'project = read-only' claude --version
+  grep -q -- "- writable: nothing in the project\$" "$OUT/briefing.md"
+}
+
 @test "the compact summary carries the actionable half, not just the prohibitions" {
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
   local h="$OUT/hook-SessionStart.json"

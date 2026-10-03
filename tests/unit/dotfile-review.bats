@@ -279,6 +279,19 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
   [[ "$output" =~ \./\.git\ +own\ +declared\;\ this\ role\'s\ own ]]
 }
 
+@test "--check shows the project's mode, in the policy and in the mount plan (#220)" {
+  printf '[connect]\nproject = read-only\n./impl/ = read-write\n[connect:supervisor]\nproject = read-write\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ project\ +read-only\ +the\ working\ tree\ +\.agent-sandbox\ \[connect\] ]]
+  [[ "$output" =~ read-only\ +the\ project ]]
+  [ ! -e "$PROJ/impl" ] # nothing made
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PRESET=inherit "$4" --check --role supervisor 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ project\ +read-write\ +the\ working\ tree\ +\.agent-sandbox\ \[connect:supervisor\] ]]
+  [[ "$output" =~ read-write\ +the\ project ]]
+}
+
 @test "--check exits non-zero when the policy is one a launch refuses" {
   printf '[connect]\ninstructions = readonly\n' >"$PROJ/.agent-sandbox"
   check

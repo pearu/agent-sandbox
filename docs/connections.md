@@ -146,10 +146,12 @@ Two connections are **mandatory** and fixed:
   is the floor of the scale: "completely independent" sandboxes of one user still share who
   they are. Full independence needs two accounts, which is outside this tool. `hide` keeps
   the tooling parts (`gh/`, `ide/`) out of a sandbox that should not have them.
-- **project** is `read-write` to the working tree, by definition: it is where agents are meant to
+- **project** is `read-write` to the working tree by default: it is where agents are meant to
   communicate, including agents of different kinds, through files and a document convention
-  such as `AGENTS.md`. Roles on one project share it. Exclusions inside it (a reviewer that
-  must not read `.git`, issue #55) are a detail of this connection, not a mode.
+  such as `AGENTS.md`. Roles on one project share it. `project = read-only` (#220) is the one
+  other mode, for a role that must not change the tree, with a read-write declaration inside
+  it for the part it may; exclusions inside it (a reviewer that must not read `.git`, issue
+  #55) are declarations too.
 
 ## Invariants
 
@@ -459,7 +461,7 @@ not `/`, `$HOME` or a parent of it; nothing that is, is inside or contains a sec
 store or the sandbox's control plane, except `~/.local/bin` read-only, which puts
 your commands on the sandbox's PATH and whose harm is only a write; and **not the
 project or a parent of it**, because a declaration is bound after the project and would
-cover it. Both the key and what it resolves to are checked, and the resolved path is
+cover it -- the project's own mode is `project = read-only` (#220). Both the key and what it resolves to are checked, and the resolved path is
 checked again at bind time, so a symlink repointed in between cannot mount a refused
 target. The same path declared twice is an override, later wins, as for a channel.
 
@@ -472,7 +474,8 @@ when nothing is there to look at; where the path exists its kind is the host's, 
 `/` on a file is refused. bwrap still needs a mount point, so an empty directory
 appears at that path outside too — in the project, for `./scratch/` — the same side
 effect a narrowed channel has; an empty file is removed again at the end while it is
-still empty.
+still empty. Under `project = read-only` bwrap cannot make a mount point in the tree, so
+the engine makes it on the host before the launch, the same directory or file.
 
 **A file** is allowed, with two permanent limits said at the dot-file's review: it is a mount point, so
 it cannot be deleted or renamed from inside, and `copy-on-write` on a file is `copy`,

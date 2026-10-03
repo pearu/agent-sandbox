@@ -131,8 +131,8 @@ for one sandbox: `instructions = copy-on-write native`. A channel with no connec
 `own`. *shipped*
 
 **Mandatory connections.** Two, fixed: `identity` is `read-write` to native (two agents
-of one user are one login), and `project` is `read-write` to the working tree (it is
-where agents are meant to communicate). *shipped*
+of one user are one login), and `project` is the working tree (it is where agents are
+meant to communicate), `read-write` unless `project = read-only` (#220). *shipped*
 
 **Path declaration.** A `[connect]` key containing `/`, naming a path instead of a
 channel: `./scratch/ = own`. The key is the path inside the sandbox; relative keys are

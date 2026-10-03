@@ -1211,6 +1211,52 @@ DF
   done
 }
 
+@test "project = read-only binds the working tree read-only, and a read-write path inside it after it (#220)" {
+  mkdir -p "$PROJ/impl"
+  run_engine -- asb --connect 'project = read-only' --connect './impl/ = read-write' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ" "$PROJ"
+  run ! argv_has --bind "$PROJ" "$PROJ"
+  argv_has --bind "$PROJ/impl" "$PROJ/impl"
+  [ "$(argv_index "$PROJ/impl")" -gt "$(argv_index "$PROJ")" ]
+  # the default, and a later line overriding an earlier one
+  run_engine -- asb claude --version
+  argv_has --bind "$PROJ" "$PROJ"
+  run_engine -- asb --connect 'project = read-only' --connect 'project = read-write' claude --version
+  argv_has --bind "$PROJ" "$PROJ"
+}
+
+@test "project = read-only per role: [connect] for every role, [connect:<role>] reopening it for one (#220)" {
+  printf '[connect]\nproject = read-only\n[connect:supervisor]\nproject = read-write\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  approve_dotfile
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$PROJ" "$PROJ"
+  run_engine -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$PROJ" "$PROJ"
+}
+
+@test "project takes read-only or read-write and nothing else: no other mode, no source, no scope (#220)" {
+  local spec
+  for spec in 'project = own' 'project = copy-on-write' 'project = read-only native' \
+    'project = read-only join-scoped' 'project = read-only outside:/tmp'; do
+    run_engine -- asb --connect "$spec" claude --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"project"* ]]
+    [ ! -s "$H/argv" ]
+  done
+}
+
+@test "under a read-only project, a missing own path gets its mount point made on the host; a file's is removed again (#220)" {
+  run_engine -- asb --connect 'project = read-only' --connect './new/ = own' --connect './new.txt = own' claude --version
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/new" ]
+  argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/new")" "$PROJ/new"
+  argv_has --bind "$SBOX/@paths/own/$(slugify "$PROJ/new.txt")" "$PROJ/new.txt"
+  [ ! -e "$PROJ/new.txt" ]
+}
+
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "secret stores are refused whatever the mode, own included" {
   mkdir -p "$H/home/.ssh"

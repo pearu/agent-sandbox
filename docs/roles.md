@@ -179,11 +179,9 @@ development environment from its specification, builds there, and publishes. The
 Planner then measures the new state in `main` for the next Statement -- or finds the
 problem resolved, and the round was the last.
 
-**Where the code lives: two layouts, one target.** Roles share one project directory
-and nothing else unless connected, so the question is what that directory is.
-
-*B -- the project directory is the repository* (the target). Every role launches from
-the checkout itself. `.asb/` inside it, excluded from git, holds the artefacts, the
+**Where the code lives.** Roles share one project directory and nothing else unless
+connected, and the project directory is the repository. Every role launches from the
+checkout itself. `.asb/` inside it, excluded from git, holds the artefacts, the
 messages, the roles' purposes and the Implementers' trees:
 
     ~/git/x/                    the repository: every role launches here
@@ -198,23 +196,7 @@ messages, the roles' purposes and the Implementers' trees:
 The Supervisor has the project read-write, but for the clones, read-only to it in turn.
 Every other role has it read-only, and an Implementer has `.asb/impl-1/` read-write
 inside that: a read-only mount, then a read-write mount on a subdirectory of it, which
-bubblewrap allows and the engine's depth order makes expressible. What it needs is the
-one mechanic the project is missing: the working tree as a channel with modes, instead
-of always read-write (section 6).
-
-*A -- a workspace* (works today). A directory above the checkouts is the project, and
-the checkouts are subdirectories:
-
-    ~/work/x/                   the workspace: every role launches here
-      .agent-sandbox  .asb/
-      main/                     the Supervisor's checkout
-      impl-1/  impl-2/          the Implementers' clones
-
-The workspace is read-write for every role, as the project always is, and each role
-declares every checkout but its own `read-only`. It needs nothing that is not built,
-at the cost of a directory layer and of launching from the workspace rather than the
-repository. It is the way to try the model before B's mechanic exists; the sections
-and the artefacts are the same, only the paths differ.
+bubblewrap allows and the engine's depth order makes expressible: `project = read-only` (#220).
 
 **Clones with shared objects, not worktrees.** Separation is enforced only if an
 Implementer's commits never touch the main `.git/`. A `git worktree` shares it: the
@@ -345,8 +327,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | each role's memory and transcripts its own | `own` under `inherit` (#196, #120) | built |
 | inputs read-only, outputs writable, inside one tree | path declarations, bound by depth (#130, #196) | built |
 | history its owner's: `main`'s hidden from every role but the Supervisor and, read-only, the Implementers; a clone's from every role but its Implementer and, read-only, the Supervisor | `./.git/ = own` and `.asb/impl-N/.git/ = own` in the common block, redeclared `read-only` or `read-write` where a role needs it | built |
-| the project read-only for every role but the Supervisor, with an Implementer's clone read-write inside it (layout B) | the project is always read-write; a declaration over it is refused | **to build**: the working tree as a channel (`project = read-only` / `read-write` per role); the mounts themselves are already ordered by depth |
-| a role's checkout read-only; an Implementer's clone read-write (layout A today, B once built) | declarations over subdirectories, bound by depth | built |
+| the project read-only for every role but the Supervisor, with an Implementer's clone read-write inside it | `project = read-only` / `read-write` per role (#220), declarations inside it bound by depth | built |
 | the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `read-only` in the common block: the user's token as it is | **#88**: to build. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
 | no publishing: hosts a role may not reach | `[allow]` adds hosts; nothing subtracts; no role suffix on `[allow]`, `[env]`, `[net]` | **to build**: `[deny]`, and role suffixes on the network and environment sections |
 | retrieve only: read the web and GitHub, publish nothing | -- | **to build**: the proxy refusing every method but GET and HEAD to the user's hosts, per role, the profile's own hosts untouched -- GitHub-aware: `gh` reads issues and pull requests through POSTs to `api.github.com/graphql`, so there a `query` passes and a `mutation` is refused, by the body. What it does not stop: a token carried out in a GET to an allowed host |
@@ -401,7 +382,7 @@ interim with no relocation: export the read-only token as `GH_TOKEN` and forward
 
 ## 8. The example dot-file
 
-The repository's `.agent-sandbox` that holds this model in layout B, as far as today's
+The repository's `.agent-sandbox` that holds this model, as far as today's
 grammar reaches; a line marked `NEEDS` waits on section 6. The material lines
 (`~/refs/...`) are an example, not the model's: the user adds such lines, and any other
 a round turns out to need, when the need arises, and `asb --trust` re-opens the
@@ -417,7 +398,7 @@ preset = inherit
 [conda]
 name = x-dev                      # the development environment: main's build; the user's to activate on the host
 [connect]
-project = read-only               # NEEDS: the working tree as a channel; the Supervisor opens it
+project = read-only               # the working tree, read-only (#220); the Supervisor opens it
 .asb/coord/ = read-only           # the message files and the index: every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
 ./.git/ = own                     # history is its owner's: main's is the Supervisor's...
@@ -467,7 +448,7 @@ prefix = .asb/impl-2/.env
 
 # ---- supervisor: the only role that reaches outside ----------------------
 [connect:supervisor]
-project = read-write              # NEEDS: merges the branches in the main tree, pushes
+project = read-write              # merges the branches in the main tree, pushes
 ./.git/ = read-write
 .asb/impl-1/ = read-only          # the clones are the Implementers'; it fetches their branches
 .asb/impl-1/.git/ = read-only
@@ -483,14 +464,11 @@ git = allow
 [briefing:supervisor]             # NEEDS: reads .asb/roles/supervisor.md
 ```
 
-Until the `NEEDS` mechanics exist, layout A runs the same sections today: the
-workspace read-write, `./main/`, `./impl-1/` and `./impl-2/` declared `read-only` per
-role in place of `project = read-only`, and the `NEEDS` lines left out. A reviewer
-under it has its own memory, no history, every checkout read-only and one writable
+Until the `NEEDS` mechanics exist, the file runs with those lines left out. A reviewer
+under it has its own memory, no history, the tree read-only and one writable
 directory, and `asb --check --role reviewer-1` shows it. What the `NEEDS` lines add is
-the repository as the project, the roles' purposes, and the outside: without the last
-the reviewer's `gh` can write as well as read, which is #88 and the network sections
-in one.
+the roles' purposes and the outside: without the last the reviewer's `gh` can write as
+well as read, which is #88 and the network sections in one.
 
 ## 9. Using the model: one round, terminal by terminal
 
