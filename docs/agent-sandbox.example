@@ -113,6 +113,14 @@
 #        sandbox describing itself; it changes no limit.
 #[briefing]
 #mode = on
+#
+# file : a role's purpose file, injected after the engine's lines at every
+#        session start; {role} is the role's name. In [briefing:<glob>] for the
+#        roles the glob matches, where it defaults to .asb/roles/{role}.md. The
+#        file is read-only inside and part of the approval: an edit re-opens
+#        the review.
+#[briefing:reviewer-*]
+#file = .asb/roles/{role}.md
 
 
 # ---- claude: options for the claude profile -------------------------------
