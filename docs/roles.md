@@ -353,7 +353,7 @@ honour the proxy variables, as the allowlist itself does; section 8 sets `strict
 | the downloads of such an install persisting | the sandbox-owned package cache (`~/.cache/agent-sandbox/conda-pkgs`, `CONDA_PKGS_DIRS` set to it, the host's read-only cache after it), bound whenever a conda env is active (#219) | built |
 | a role activating its own clone | `[conda:<role>] prefix = .asb/impl/1/.env`, an env by its path (#221) | built |
 | the Supervisor installing into `x-dev`, in the conda tree | `[conda:supervisor] write = 1`: the active env writable for that role only (#221) | built |
-| what a role has, shown before it runs | `asb --check --role NAME`: the policy, what crosses the boundary and how, the mount plan (#210-#213) | built; **to add**: "can act as you at" per outside service (the #114 outward routes) |
+| what a role has, shown before it runs | `asb --check --role NAME`: the policy, what crosses the boundary and how, where the role can act as you per outside service (#226), the mount plan (#210-#213) | built |
 | the dot-file, `.asb/`, the purpose files and the clones written right, for a given set of roles | `asb --init roles planner=2 implementer=2 reviewer=1 --env x-dev` (#225): from the model in `models/roles/` (section 10), the dot-file with each instance's sections, `.asb/` and every path it declares, a purpose file per instance, the coord index, the exclude line, each Implementer's clone and, with `--env`, its environment; run again with more instances, it adds what is missing. It approves nothing | built |
 
 ## 7. The `gh` token: the default, and the recommended hardening

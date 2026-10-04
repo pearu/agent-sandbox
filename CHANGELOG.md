@@ -86,6 +86,9 @@ names are gone; there are no aliases for removed names before 1.0.
   clone per Implementer (its tree under `.asb/impl/N/`, its history under `.asb/git/N/`)
   written from a development model; run again with more instances, it adds what is
   missing. It approves nothing.
+- **`--check` says where a role can act as you** (#226): per outside service -- your
+  agent's API, GitHub, SSH, forwarded credentials -- whether the role holds a credential
+  there, and what its `[net]` lines leave it able to do with it.
 - **`[net] git = refuse`** (#224), per role: git's smart-HTTP transport refused to every
   host (pages still load), and `--ssh` refused for the role.
 - **`[net] retrieve-only = on`** (#223), per role with `[net:<role>]`: every request but

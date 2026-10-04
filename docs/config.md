@@ -434,6 +434,13 @@ anything:
   `hide` line (the profile's or this project's `[claude] hide`) or `visible` line names
   -- the native path, read-write, and every project's, which is what an unknown path
   is by default (#82). Listed as loudly as `UNMEASURED`, so it gets decided;
+- **where the role can act as you** (#226), per outside service: your agent's API (your
+  login, always); GitHub -- no, when there is no credential (the `gh` channel is the
+  role's own and no `GH_TOKEN` is forwarded) or no GitHub host is reachable; read only,
+  under `retrieve-only`; yes, writes included, otherwise -- with whether git's transport
+  is refused, and under `proxy` a note that those lines bind only the tools that use
+  the proxy; SSH -- refused with `git = refuse`, else only the hosts a launch names with
+  `--ssh`; and every forwarded variable named like a credential;
 - **lines with no effect** for the role: a `[connect]` line at the preset's own rung
   (when it is the only line for that channel the role gets -- a role's line restating
   the preset over an unsuffixed one is an override), the same key twice in one section
