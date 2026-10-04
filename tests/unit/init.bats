@@ -48,7 +48,9 @@ init() {
   grep -qx '# \[conda:implementer-1\].*' "$df" # no --env: the conda sections commented out
   grep -qx '\.asb/impl/2/ = read-write.*' "$df"
   # purpose files, one per instance, named and handled
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
   head -1 "$PROJ/.asb/roles/implementer-2.md" | grep -q '`implementer-2`, called I2'
+  # shellcheck disable=SC2016 # likewise
   grep -q '`.asb/impl/2/`' "$PROJ/.asb/roles/implementer-2.md"
   head -1 "$PROJ/.asb/roles/supervisor.md" | grep -q 'called S'
   # a clone per Implementer: its tree, its history apart, its branch, main's objects shared
