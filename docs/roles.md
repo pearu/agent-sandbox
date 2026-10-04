@@ -318,7 +318,11 @@ The user reads every message file. The Supervisor keeps the index.
 
 ## 6. What the sandbox enforces today, and what it needs
 
-What the model needs, against what the engine has on main (2026-10-02):
+What the model needs, against what the engine has on main (2026-10-04). **Enforced, for
+a network line** -- `retrieve-only`, `[deny]`, `git = refuse` -- **means under `mode =
+strict`**: there the role's own network namespace has no route but the proxy. Under
+`proxy` nothing forces a tool through the proxy, so those lines bind only clients that
+honour the proxy variables, as the allowlist itself does; section 8 sets `strict`.
 
 | need | today | status |
 |---|---|---|
@@ -330,7 +334,7 @@ What the model needs, against what the engine has on main (2026-10-02):
 | the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `own` unless asked; `gh = read-only` in the common block, `GH_CONFIG_DIR` pointed there | built. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
 | no publishing: hosts a role may not reach | `[deny]` and `[deny:<role>]` subtract hosts, the profile's own untouched; role suffixes on `[allow]`, `[env]`, `[net]`, `[conda]` (#221) | built |
 | retrieve only: read the web and GitHub, publish nothing | `[net] retrieve-only = on`, per role (#223): every method but GET and HEAD refused, the profile's own hosts untouched; GitHub-aware: `gh` reads through POSTs to `api.github.com/graphql`, so there a query passes and a mutation is refused, by the body | built. What it does not stop: a token carried out in a GET to an allowed host |
-| no git transport to a host that also serves pages | -- | **to build**: the proxy refusing git's HTTPS transport (`/info/refs`, `git-upload-pack`, `git-receive-pack`, the `git/` user agent) per role; `--ssh` refusable per role |
+| no git transport to a host that also serves pages | `[net] git = refuse`, per role (#224): git's HTTPS transport (`/info/refs`, `git-upload-pack`, `git-receive-pack`, the `git/` user agent) refused to every host, and `--ssh` refused | built |
 | the role's purpose told to the agent, at every start | `[briefing:<role>]` (#222): `.asb/roles/<role>.md`, or `file =`, injected by the SessionStart hook at every launch, resume and compaction after the engine's lines (which name what is writable and read-only), bound read-only inside, and part of the approval, so an edit re-opens the review. The round's specifics stay in the artefacts, which the purpose tells the role where to find, so a launch needs nothing typed | built |
 | a Reviewer trying an Implementer's build | the clone read-only: the tree and what the build left in it | built; the build and its environment must live in the clone |
 | the Planner's measurements persisting | a `read-write` declaration of the planner's, read-only for the others | built |
@@ -372,8 +376,8 @@ catches a role holding the wrong one.
 
 ## 8. The example dot-file
 
-The repository's `.agent-sandbox` that holds this model, as far as today's
-grammar reaches; a line marked `NEEDS` waits on section 6. The material lines
+The repository's `.agent-sandbox` that holds this model; every line of it works on main
+(2026-10-04). The material lines
 (`~/refs/...`) are an example, not the model's: the user adds such lines, and any other
 a round turns out to need, when the need arises, and `asb --trust` re-opens the
 review. The acceptance test of the mechanics is that `asb --check --role reviewer-1`
@@ -397,7 +401,9 @@ project = read-only               # the working tree, read-only (#220); the Supe
 gh = read-only                    # your gh login (#88), for reading issues and pull requests
 # hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.gh-read
 [net]                             # every role reads the web and GitHub, and publishes nothing...
+mode = strict                     # ...through the proxy only: under `proxy` a tool can ignore it
 retrieve-only = on
+git = refuse
 
 # ---- planners: an expert each, with its own material --------------------
 [connect:planner-1]
@@ -448,17 +454,15 @@ project = read-write              # merges the branches in the main tree, pushes
 .asb/coord/COORDINATION.md = read-write   # the index
 [conda:supervisor]                # main's build lands in x-dev, which lives in the conda tree
 write = 1
-[net:supervisor]                  # ...except the Supervisor, which publishes; NEEDS (#224): git
+[net:supervisor]                  # ...except the Supervisor, which publishes
 retrieve-only = off
 git = allow
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 ```
 
-The one line still marked `NEEDS`, `git = allow`, waits on #224 and is left out until
-then; it changes nothing yet, since git's HTTPS transport is POSTs, which retrieve-only
-already refuses to every role but the Supervisor. A reviewer under this file has its
-own memory, no history, the tree read-only and one writable directory, reads the web
-and GitHub and publishes nothing, and `asb --check --role reviewer-1` shows it.
+A reviewer under this file has its own memory, no history, the tree read-only and one
+writable directory, reads the web and GitHub and publishes nothing, and `asb --check
+--role reviewer-1` shows it.
 
 ## 9. Using the model: one round, terminal by terminal
 

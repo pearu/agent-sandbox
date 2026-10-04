@@ -164,6 +164,18 @@ fetch is a POST too, so a retrieve-only session cannot fetch over HTTPS either.
 What it does not stop: a secret carried out in a GET -- in a URL, to any allowed host.
 A token that cannot write bounds what such a secret can do ([recipes.md](recipes.md)).
 
+## No git transport: `git = refuse`
+
+A host that serves pages serves git over HTTPS too, so an allowlist that lets a role
+read `github.com` lets it push there. `[net] git = refuse` (#224), per role with
+`[net:<role>]`, refuses git's smart-HTTP transport for that session to every host:
+`/info/refs` with `service=git-upload-pack` or `git-receive-pack`, the
+`git-upload-pack` and `git-receive-pack` endpoints, and any request with git's own
+`git/...` user agent. Fetches are refused as well as pushes, on purpose: a role that
+may not publish has the repository on disk as its only remote. The same host's pages
+still load. `--ssh` is refused for such a role, since the SSH broker is how git
+reaches a remote over SSH.
+
 ## The proxy CA
 
 mitmproxy writes its CA to `~/.mitmproxy/` on first start (`install.sh` does

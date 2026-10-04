@@ -86,12 +86,15 @@
 #              the proxy.
 # agent-port : a port the agent listens on, published at the host's
 #              127.0.0.1:PORT (a dev server you open in a browser).
+# git        : refuse stops git over HTTPS to every host (pages still load) and
+#              refuses --ssh. Default allow.
 # retrieve-only : on refuses every request but GET and HEAD (a GraphQL query to
 #              api.github.com passes, a mutation does not), but to the agent's
 #              own hosts: the session reads and publishes nothing. Off by default.
 #[net]
 #mode = strict
 #retrieve-only = off
+#git = allow
 #host-port = 5432
 #agent-port = 8000
 
