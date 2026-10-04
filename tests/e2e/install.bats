@@ -117,11 +117,29 @@ teardown_file() {
   [[ "$out" == *"proxy reaches an allowlisted host (api.github.com)"* ]]
   # the installer's own negative smoke check asserts the other half of the contract
   [[ "$out" == *"proxy refuses a non-allowlisted host (example.com blocked at CONNECT)"* ]]
+  [[ "$out" == *"proxy refuses a client with no session token (407)"* ]]
   [[ "$out" != *"SECURITY:"* ]]
+  # a client with no session token: refused at CONNECT with the challenge, and logged
   run curl -sS --cacert "$H/.mitmproxy/mitmproxy-ca-cert.pem" --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null https://example.com/
   [ "$status" -ne 0 ]
-  [[ "$output" == *"403"* ]]
+  [[ "$output" == *"407"* ]]
+  grep -q $'\texample.com\tCONNECT\t-\tno session$' "$H/.config/agent-sandbox/blocked.log"
+  # the installer's probe session asked as a session: example.com refused for its host
   grep -q $'\texample.com\tCONNECT\t-$' "$H/.config/agent-sandbox/blocked.log"
+}
+
+# probe_session -- a live session of the test's own, in the session base the proxy reads
+# (the engine's rule), since the proxy serves sessions only (#233); sets PX to a proxy URL
+# carrying its token and SESS to the directory.
+probe_session() {
+  local rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  [[ -d "$rt" && -w "$rt" ]] || rt=/tmp
+  mkdir -p "$rt/agent-sandbox.$(id -u)"
+  SESS="$(mktemp -d "$rt/agent-sandbox.$(id -u)/session.XXXXXX")"
+  printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$SESS/owner.id"
+  echo e2eprobe >"$SESS/proxy.token"
+  : >"$SESS/allow.txt"
+  PX=http://e2eprobe:x@127.0.0.1:8888
 }
 
 @test "F1: the proxy gates the real destination, not a spoofed Host header, and refuses non-public addresses" {
@@ -143,12 +161,15 @@ teardown_file() {
     sleep 0.2
   done
 
+  # asked as a live session, so these reach the gates under test rather than the 407
+  probe_session
   # (a) Host-header spoof: allowlisted Host, real destination 127.0.0.1 -> refused
-  run curl -sS --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null -w '%{http_code}' -H 'Host: spoof.example' http://127.0.0.1:8099/SECRET
-  [[ "$output" != 200 ]]
+  run curl -sS --proxy "$PX" --max-time 20 -o /dev/null -w '%{http_code}' -H 'Host: spoof.example' http://127.0.0.1:8099/SECRET
+  [[ "$output" != 200 && "$output" != 407 ]]
   # (b) destination gate: 127.0.0.1 is allowlisted by name yet must be refused as non-public
-  run curl -sS --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/DIRECT
-  [[ "$output" != 200 ]]
+  run curl -sS --proxy "$PX" --max-time 20 -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/DIRECT
+  [[ "$output" != 200 && "$output" != 407 ]]
+  rm -rf "$SESS"
 
   kill "$listener" 2>/dev/null || true
   # the loopback listener must have received NOTHING through the proxy

@@ -167,9 +167,24 @@ jobs:
         run: |
           set -euo pipefail
           ca="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+          # The proxy serves sandbox sessions only (#233): ask as one -- a probe session
+          # in the base the engine and the addon share, owned by this shell.
+          rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          [[ -d "$rt" && -w "$rt" ]] || rt=/tmp
+          mkdir -p "$rt/agent-sandbox.$(id -u)"
+          sess="$(mktemp -d "$rt/agent-sandbox.$(id -u)/session.XXXXXX")"
+          printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$sess/owner.id"
+          echo ciprobe >"$sess/proxy.token"
+          : >"$sess/allow.txt"
+          px=http://ciprobe:x@127.0.0.1:8888
+          # a client with no session token is refused with a challenge
+          anon=$(curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
+            -o /dev/null -w '%{http_connect}' https://api.github.com/ 2>/dev/null || true)
+          [[ "$anon" == 407 ]] || { echo "a client with no session token got '$anon', not 407" >&2; exit 1; }
+          echo "a client with no session token is refused (407)"
           # api.github.com is in the starter allowlist; an agent's own hosts (api.anthropic.com)
           # are its profile's [allow], opened per launch, not globally (#181)
-          code=$(curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
+          code=$(curl -sS --cacert "$ca" --proxy "$px" --max-time 20 \
             -o /dev/null -w '%{http_code}' https://api.github.com/ || true)
           # any HTTP status means the request went out through the proxy (GitHub may answer
           # 403 or 429 when it rate-limits a runner); only 000 means it did not
@@ -177,11 +192,12 @@ jobs:
             [1-5][0-9][0-9]) echo "allowed host reached through the proxy (HTTP $code)" ;;
             *) echo "unexpected HTTP $code from an allowed host" >&2; exit 1 ;;
           esac
-          if curl -sS --cacert "$ca" --proxy http://127.0.0.1:8888 --max-time 20 \
+          if curl -sS --cacert "$ca" --proxy "$px" --max-time 20 \
             -o /dev/null https://example.com/ 2>/tmp/blocked.err; then
             echo "a non-allowed host was NOT refused" >&2; exit 1
           fi
           grep -q 403 /tmp/blocked.err && echo "non-allowed host refused at CONNECT (403)"
+          rm -rf "$sess"
       - name: Stop the service
         if: always()
         run: systemctl --user stop agent-sandbox-mitmproxy.service || true

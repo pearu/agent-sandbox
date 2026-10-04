@@ -839,12 +839,36 @@ fi
 # example.com is not in the starter allowlist, so it must be refused at CONNECT
 # (curl gets no response, code 000). A non-000 code for example.com means the
 # allowlist is not enforcing.
+# The proxy serves sandbox sessions only: a request without a live session's token
+# gets 407. So the checks speak as a session -- a probe session owned by this
+# installer, in the session base the engine and the addon both use, removed after --
+# and a last one, without a token, checks that an anonymous client is refused.
+probe_token=""
 proxy_get() { # $1 = url; echoes the HTTP code (000 = refused/failed)
-  curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 \
+  curl -sS --cacert "$PROXY_CA" --proxy "http://${probe_token:+$probe_token:x@}127.0.0.1:8888" --max-time 15 \
     -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || true
+}
+probe_session=""
+probe_session_begin() {
+  local base rt
+  if [[ -n "${AGENT_SANDBOX_SESSION_BASE:-}" ]]; then
+    base="$AGENT_SANDBOX_SESSION_BASE"
+  else
+    rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    [[ -d "$rt" && -w "$rt" ]] || rt=/tmp
+    base="$rt/agent-sandbox.$(id -u)"
+  fi
+  mkdir -p "$base" && chmod 700 "$base" || return 1
+  probe_session="$(mktemp -d "$base/session.XXXXXX")" || return 1
+  probe_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$probe_session/owner.id"
+  printf '%s\n' "$probe_token" >"$probe_session/proxy.token"
+  : >"$probe_session/allow.txt"
 }
 if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
+elif ! probe_session_begin; then
+  warn "could not make a probe session to check the proxy with; skipping the proxy check"
 else
   reach_code="$(proxy_get https://api.github.com/)"
   case "$reach_code" in
@@ -861,6 +885,15 @@ else
     000) warn "no answer through the proxy; check 'systemctl --user status agent-sandbox-mitmproxy' and that api.github.com is in $CONFIG_DIR/allowlist.txt" ;;
     *) warn "unexpected response from api.github.com via the proxy: '$reach_code'" ;;
   esac
+  rm -rf -- "$probe_session"
+  probe_token=""
+  anon_code="$(curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 \
+    -o /dev/null -w '%{http_connect}' https://api.github.com/ 2>/dev/null || true)"
+  if [[ "$anon_code" == 407 ]]; then
+    ok "proxy refuses a client with no session token (407)"
+  else
+    warn "SECURITY: a client with no session token got '$anon_code' through the proxy, not 407 -- a session's [deny] and retrieve-only can be bypassed; check $CONFIG_DIR/allowlist_addon.py is loaded"
+  fi
 fi
 
 # Strict mode's contract (AGENT_SANDBOX_NET=strict): pasta gives the sandbox its

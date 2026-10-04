@@ -67,7 +67,7 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
   host_n=$(grep -c 'BEGIN CERT' /etc/ssl/certs/ca-certificates.crt)
   run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/ca.pem" AGENT_SANDBOX_FORWARD=CA_LINE2 CA_LINE2="$(sed -n 2p "$I/ca.pem")" -- probe run
   [ "$status" -eq 0 ]
-  [ "$(report proxy)" = "http://127.0.0.1:8888" ]
+  [[ "$(report proxy)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8888$ ]] # every proxied launch carries its token
   [ "$(report ssl_cert_file)" = "/etc/ssl/certs/ca-certificates.crt" ]
   [ "$(report bundle_certs)" -eq $((host_n + 1)) ]
   [ "$(report has_marker_ca)" = 1 ]
