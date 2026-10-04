@@ -269,9 +269,9 @@ commented template in
   `--allow`, the CA, the proxy.
 - [docs/config.md](docs/config.md): the per-project `.agent-sandbox` file, its
   trust gate, and `[share-memory]`.
-- [docs/roles.md](docs/roles.md): the role model under discussion -- Planner,
-  Implementer, Reviewer, Supervisor and the User: what each may do, the artefacts
-  they exchange, the round, and what the sandbox enforces of it.
+- [docs/roles.md](docs/roles.md): working on one project with several agents --
+  Planners, Implementers, Reviewers and a Supervisor, with you deciding: what each may
+  do, how the work moves, and `asb --init roles` to set it up.
 - [docs/ssh.md](docs/ssh.md): the SSH broker.
 - [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git, `gh`,
   package installs, ports, editors — and how to tell what is blocking you.
