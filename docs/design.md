@@ -7,6 +7,11 @@ never enter the sandbox. This document is the trust surface: what is
 guaranteed, by which mechanism, how it is checked, and, just as plainly, what
 is not guaranteed.
 
+**This document is for developers** -- of the engine, of a profile, of a model -- and for
+anyone auditing what the sandbox promises. To *use* agent-sandbox, start with the
+[README](../README.md); [recipes.md](recipes.md), [config.md](config.md) and
+[roles.md](roles.md) are the user's documents.
+
 ## Architecture
 
 ```
@@ -295,6 +300,87 @@ Stated plainly. These are what the adversary above can still do.
   proxy or that key is compromise of every sandbox's TLS.
 - **The engine trusts the host's `/etc` and `/usr`.** A compromised host is out
   of scope.
+
+## The roles model
+
+What [roles.md](roles.md) describes for a user, and why it is built that way.
+
+**Enforced or told.** A role is defined by its inputs and outputs, and its boundary is
+derived from them: inputs read-only, outputs writable, every other route closed. What a
+role *cannot* do is a mount, a refused request or a missing credential, held outside the
+agent; what it is *for* is its purpose file, injected by `[briefing:<role>]` at every
+session start (#222). A model is a model only when every "may not" is one or the other,
+and its README says which. The user-between-roles rule is told, not enforced: every
+artefact directory is readable to every role, because routing artefacts through per-role
+inboxes the user fills would cost the user a copy per hand-off, and the user reads every
+artefact anyway.
+
+**The mechanisms, need by need.**
+
+| need | mechanism |
+|---|---|
+| a role per purpose, with its own policy | `--role`; role-suffixed `[sandbox]`, `[connect]` (#136), `[allow]`, `[deny]`, `[env]`, `[conda]`, `[net]` (#221), `[briefing]` (#222) |
+| each role's memory and transcripts its own | `own` under `inherit` (#196, #120) |
+| the project read-only for every role but the Supervisor, a clone read-write inside it | `project = read-only` (#220): a read-only mount, then a read-write mount on a subdirectory, which bubblewrap allows and the depth-ordered bind pass expresses |
+| history its owner's | `./.git/ = own` and `.asb/git/ = own` in the common block, redeclared per role |
+| the `gh` login for every role | the `gh` channel, `own` unless asked, `GH_CONFIG_DIR` pinned to it (#88) |
+| no publishing | `[net] retrieve-only` (#223): GET and HEAD only, but to the profile's hosts, a GraphQL query passing and a mutation refused by the body; `[net] git = refuse` (#224); both hang on the session's proxy token, which every proxied request must carry (#233) |
+| a Reviewer running an Implementer's build | the clone read-only to it, its environment in the clone, run by path |
+| installs without touching the shared environment | a conda clone in the Implementer's tree; the sandbox-owned package cache bound whenever conda is active (#219); `[conda:<role>] prefix` to activate it, `write = 1` per role (#221) |
+| what a role has, before it runs | `asb --check --role NAME`, with "can act as you at" (#226) |
+| a project set up for the model | `asb --init` and `models/` (#225) |
+
+**Network lines are enforced under `strict` only.** `retrieve-only`, `[deny]` and
+`git = refuse` are applied by the proxy. Under `strict` the role's network namespace has
+no route but the proxy; under `proxy` nothing forces a tool through it, so those lines
+bind only clients that honour the proxy variables -- the allowlist's own standing. The
+model's dot-file therefore sets `mode = strict`.
+
+**Clones with shared objects, not worktrees.** Separation holds only if an Implementer's
+commits never touch the main `.git/`. A `git worktree` shares it -- the worktree's refs
+and objects go to the main store -- so a committing Implementer would need `.git/`
+writable and could move `main`. `git clone --shared --separate-git-dir=.asb/git/N .
+.asb/impl/N` reads the main objects through an alternates file (`./.git/objects`,
+read-only to the Implementer, the same path inside) and writes its own objects and refs
+in `.asb/git/N/`. The tree's `.git` is a one-line file pointing there, the worktree
+mechanism: git follows it with no flag and no variable, in the tree and its
+subdirectories (measured), and with the git directory empty -- what `own` shows a
+non-owner -- git says `not a git repository`. Trees and histories have one parent each,
+so hiding every history is one line, and no line of the model's template names another
+role's instance; that is what lets `--init` render it with per-role placeholders alone.
+Costs: the pointer and the alternates are absolute paths, so a project moved on disk
+needs them rewritten; a tool that tests for a `.git` directory sees a file; a tree and
+its history are one unit. `clone -b` cannot make the branch (it must exist), so
+`--init` switches after cloning.
+
+**No locks.** Concurrent sessions sharing one tree need a single-git-writer guard and
+per-file locks; a clone per writer needs neither. Whether two Tasks collide is the
+Planner's judgement and the Supervisor's merge, as for any parallel work.
+
+**Why not copy-on-write for a role that must not change the code.** A tree bound
+`copy-on-write` keeps a role's writes in its own layer, but for a large code base with a
+long build the layer goes stale and a rebuild per round is the cost. Clones on branches
+carry their builds; a role that must not change code gets the tree read-only.
+
+**Environments.** A conda clone per Implementer works for whatever conda manages, is
+independent of the base and of every other clone, and travels with the tree, so a
+read-only reader runs a build with the environment it was built in. Measured
+2026-10-02 on a 1.6 GB env: 11-15 s and 255 MB of new disk -- the files conda rewrites
+its prefix in; the other 1.35 GB are hardlinks into the package cache, free while the
+clone is on the cache's filesystem; `conda` and `mamba` behave the same. Alternatives,
+when a clone is the wrong size: a venv per clone (`--system-site-packages`) when only
+Python packages are installed; `<env>/ = copy-on-write` in a role's section (measured:
+an overlay over the env, writes in the role's layer), when installs must reach nobody
+and the base changes only between rounds. Environment changes travel as text -- the
+specification's diff -- and each clone is re-derived in place (`conda env update
+--prune`), which costs the delta and is idempotent; no environment is copied between
+roles.
+
+**Messages.** Per-role message files are the method concurrent Claude Code sessions use
+(`COORDINATION.md`): each writes only its own, an index names them, no shared file means
+no contention. That method needs a cooperative hook to refuse edits to another session's
+file; here the role's own file is a `read-write` declaration inside a read-only
+directory, so the guard is a mount.
 
 ## Open design questions
 
