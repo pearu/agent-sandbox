@@ -370,8 +370,10 @@ else
   mkdir -p "$APP_DIR"
   cp -f "$ENGINE" "$APP_DIR/agent-sandbox"
   chmod 755 "$APP_DIR/agent-sandbox"
-  rm -rf "$APP_DIR/profiles"
+  rm -rf "$APP_DIR/profiles" "$APP_DIR/models"
   cp -a "$SCRIPT_DIR/profiles" "$APP_DIR/profiles"
+  # The development models `asb --init` writes a project's files from (#225).
+  [[ -d "$SCRIPT_DIR/models" ]] && cp -a "$SCRIPT_DIR/models" "$APP_DIR/models"
   # Components the ENGINE runs on the host, beside it in both layouts: the
   # checkout has components/ at its root, the install gets this copy. Embedded
   # rather than copied from $SCRIPT_DIR, because a piped install has no checkout.

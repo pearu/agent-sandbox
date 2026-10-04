@@ -26,6 +26,7 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   [ "$(grep -c '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt")" -eq 0 ]
   [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/profile.sh" ]
   [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/agent-sandbox" ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/models/roles/agent-sandbox" ]
   local unit="$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ -f "$unit" ]
   grep -qE "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$unit"
