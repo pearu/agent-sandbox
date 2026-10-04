@@ -292,6 +292,41 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
   [[ "$output" =~ read-write\ +the\ project ]]
 }
 
+# check_role ROLE [VAR=value ...] -- `--check --role ROLE` from the project, in a clean environment.
+check_role() {
+  local role="$1"
+  shift
+  run bash -c 'r="$1" proj="$2" home="$3" path="$4" eng="$5"; shift 5; cd "$proj" && env -i HOME="$home" PATH="$path" "$@" "$eng" --check --role "$r" 2>&1 </dev/null' \
+    _ "$role" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "$@"
+}
+
+@test "--check says where the role can act as you: none, a gh login, read only, git refused, ssh (#226)" {
+  mkdir -p "$H/home/.claude/gh" "$H/home/.config/agent-sandbox"
+  : >"$H/home/.claude/gh/hosts.yml"
+  printf 'github.com\napi.github.com\n' >"$H/home/.config/agent-sandbox/allowlist.txt"
+  printf '[env]\nMY_API_KEY\n[connect:writer]\ngh = read-only\n[connect:reader]\ngh = read-only\n[net:reader]\nretrieve-only = on\ngit = refuse\n[connect:plain]\n' >"$PROJ/.agent-sandbox"
+  check_role plain
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Can act as you at"* ]]
+  [[ "$output" =~ GitHub\ +no\ --\ no\ GitHub\ credential\ here ]]
+  [[ "$output" =~ SSH\ +only\ the\ hosts\ a\ launch\ names\ with\ --ssh ]]
+  [[ "$output" =~ MY_API_KEY\ +forwarded\ from\ your\ shell ]]
+  check_role writer
+  [[ "$output" =~ GitHub\ +YES\ --\ a\ gh\ login\ \(~/.claude/gh,\ read-only\),\ writes\ included\;\ git\ transport\ allowed ]]
+  check_role reader
+  [[ "$output" =~ GitHub\ +read\ only\ --\ a\ gh\ login.*retrieve-only\ refuses\ every\ write.*git\ transport\ refused ]]
+  [[ "$output" =~ SSH\ +no\ --\ --ssh\ is\ refused\ for\ this\ role ]]
+  # a forwarded GH_TOKEN is a credential when your shell has it, not when it does not
+  check_role plain AGENT_SANDBOX_FORWARD=GH_TOKEN GH_TOKEN=x
+  [[ "$output" =~ GitHub\ +YES\ --\ GH_TOKEN,\ forwarded ]]
+  check_role plain AGENT_SANDBOX_FORWARD=GH_TOKEN
+  [[ "$output" =~ GitHub\ +no\ -- ]]
+  # a credential with no GitHub host reachable
+  printf '[deny]\ngithub.com\napi.github.com\n' >>"$PROJ/.agent-sandbox"
+  check_role writer
+  [[ "$output" =~ GitHub\ +no\ --\ a\ credential.*but\ no\ GitHub\ host\ is\ reachable ]]
+}
+
 @test "--check exits non-zero when the policy is one a launch refuses" {
   printf '[connect]\ninstructions = readonly\n' >"$PROJ/.agent-sandbox"
   check

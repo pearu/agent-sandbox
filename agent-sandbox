@@ -4591,8 +4591,98 @@ _as_check_plan() {
   } >&2
   _as_check_noeffect
   _as_check_reach
+  _as_check_actas
   _as_check_unclassified
   _as_check_binds
+}
+
+# _as_check_actas -- `--check`'s "Can act as you at" (#226): per outside service this
+# role can reach, whether it holds a credential there and what the role's network lines
+# leave it able to do with it. Derived, like the rest of --check, from the policy: the
+# gh channel (or a declaration at its path), forwarded credentials, [net] retrieve-only
+# and git, [deny], the allowlists and the network mode. The agent's own login is
+# always there: it is the identity a sandbox runs as.
+_as_check_actas() {
+  local net="${_knob_net:-proxy}" line ghp="" ghmode="" ghsrc="" cred="" verdict n v
+  local -a creds=() other=()
+  # Is HOST reachable through this launch's proxy? The global allowlist, this file's
+  # [allow] and the profile's, minus [deny]; every host under `open`, none under `none`.
+  _reach() {
+    local h="$1" l e
+    case "$net" in none) return 1 ;; open) return 0 ;; esac
+    for l in ${_deny_hosts[@]+"${_deny_hosts[@]}"}; do
+      [[ "$h" == "${l#.}" || ("$l" == .* && "$h" == *"$l") ]] && return 1
+    done
+    # Read whole, then matched: a pipeline that stops at the first match would end its
+    # writer early, and pipefail would read that SIGPIPE as "not reachable" (it did, on CI).
+    local -a hosts=()
+    mapfile -t hosts < <(grep -vE '^[[:space:]]*(#|$)' "$(_as_config_dir)/allowlist.txt" 2>/dev/null | sed 's/#.*//; s/[[:space:]]//g')
+    hosts+=(${_allow_hosts[@]+"${_allow_hosts[@]}"} ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"})
+    for e in ${hosts[@]+"${hosts[@]}"}; do
+      [[ -n "$e" ]] || continue
+      [[ "$h" == "${e#.}" || ("$e" == .* && "$h" == *"$e") ]] && return 0
+    done
+    return 1
+  }
+  # The GitHub credential: the gh channel's directory, or what a declaration puts there.
+  # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    [[ "${line%%$'\t'*}" == gh ]] || continue
+    ghp="${line#*$'\t'}" ghp="${ghp%%$'\t'*}" ghp="${ghp#*:}"
+    ghmode="${_connect_mode[gh]:-}" ghsrc="$ghp"
+  done
+  if [[ -n "$ghp" && -n "${_connect_key[$ghp]:-}" ]]; then
+    ghmode="${_connect_mode[$ghp]}" ghsrc="${_connect_src[$ghp]:-$ghp}"
+  fi
+  if _as_preset_is_native; then
+    [[ -f "$HOME/.config/gh/hosts.yml" ]] && creds+=("your gh login (~/.config/gh), native")
+  elif [[ -n "$ghmode" && "$ghmode" != own && -f "$ghsrc/hosts.yml" ]]; then
+    creds+=("a gh login ($(_as_tilde "$ghsrc"), $ghmode)")
+  fi
+  # What this project forwards; the profile's own (the agent's API key) is the first row.
+  for n in ${_knob_forward:-}; do
+    case "$n" in
+      GH_TOKEN | GITHUB_TOKEN | GH_ENTERPRISE_TOKEN) [[ -n "${!n:-}" ]] && creds+=("$n, forwarded") ;;
+      *TOKEN* | *KEY* | *SECRET* | *PASSWORD* | *CREDENTIAL*) [[ " ${other[*]-} " == *" $n "* ]] || other+=("$n") ;;
+    esac
+  done
+  if ((${#creds[@]} == 0)); then
+    verdict="no -- no GitHub credential here (gh is this role's own; no GH_TOKEN forwarded)"
+  elif ! _reach github.com && ! _reach api.github.com; then
+    verdict="no -- a credential ($(IFS=';' && printf '%s' "${creds[*]}")), but no GitHub host is reachable"
+  else
+    cred="$(printf '%s; ' "${creds[@]}")" cred="${cred%; }"
+    if ((${_retrieve_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
+      verdict="read only -- $cred; retrieve-only refuses every write and GraphQL mutation"
+    else
+      verdict="YES -- $cred, writes included"
+    fi
+    if ((${_git_refuse:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
+      verdict+="; git transport refused"
+    else
+      verdict+="; git transport allowed"
+    fi
+    if [[ "$net" == proxy ]] && ((${_retrieve_only:-0} || ${_git_refuse:-0})); then
+      verdict+=" (proxy mode: binds the tools that use the proxy; strict binds every tool)"
+    fi
+  fi
+  {
+    printf '\nCan act as you at  (an outside service this role can reach, and a credential for it)\n'
+    printf '  %-20s %s\n' "your agent's API" "yes -- your login, the identity every sandbox runs as"
+    printf '  %-20s %s\n' GitHub "$verdict"
+    if ((${_git_refuse:-0})); then
+      v="no -- --ssh is refused for this role ([net] git = refuse)"
+    elif [[ "$net" == none ]]; then
+      v="no -- no network"
+    else
+      v="only the hosts a launch names with --ssh, through the broker"
+    fi
+    printf '  %-20s %s\n' SSH "$v"
+    for n in ${other[@]+"${other[@]}"}; do
+      printf '  %-20s %s\n' "$n" "forwarded from your shell when set: acts wherever its service is reachable"
+    done
+  } >&2
+  return 0
 }
 
 # _as_check_unclassified -- what is in the agent's base and the profile has no word for
