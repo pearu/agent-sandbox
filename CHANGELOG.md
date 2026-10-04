@@ -81,6 +81,11 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
+- **`asb --init MODEL [ROLE=N ...] [--env NAME]`** (#225) and `models/roles/`: a project's
+  `.agent-sandbox`, `.asb/`, a purpose file per role instance, the coord index, and a
+  clone per Implementer (its tree under `.asb/impl/N/`, its history under `.asb/git/N/`)
+  written from a development model; run again with more instances, it adds what is
+  missing. It approves nothing.
 - **`[net] git = refuse`** (#224), per role: git's smart-HTTP transport refused to every
   host (pages still load), and `--ssh` refused for the role.
 - **`[net] retrieve-only = on`** (#223), per role with `[net:<role>]`: every request but

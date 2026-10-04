@@ -230,6 +230,7 @@ not exist. Values and defaults are in the last column.
 | `--ssh-key PATH` | — | — | which private key to load (the first readable one under `~/.ssh`) ([ssh.md](docs/ssh.md)) |
 | `--ssh-timeout LIFE` | — | — | how long that key stays loaded, e.g. `30m` (no expiry) ([ssh.md](docs/ssh.md)) |
 | `--trust` | — | — | review and approve this project's `.agent-sandbox` without launching; a launch at a terminal runs the same review itself, and without one a new, changed or missing file refuses the launch ([config.md](docs/config.md#trust)) |
+| `--init MODEL [ROLE=N ...] [--env NAME]` | — | — | write this project's `.agent-sandbox`, `.asb/`, the roles' purpose files and clones from a development model in `models/` (`roles`: Planners, Implementers, Reviewers, a Supervisor); run again, it adds what is missing; approves nothing ([roles.md](docs/roles.md)) |
 | `--check` | — | — | the same review, asking nothing and recording nothing; non-zero exit when a launch would refuse the file, so CI or a pre-commit hook can run it ([config.md](docs/config.md#trust)) |
 | `--shutdown` | — | — | end this role's running sandbox: everything joined into it, and a background daemon with its workers; then exit. A later launch starts afresh under the policy then in force ([connections.md](docs/connections.md)) |
 | `--verbose` | `AGENT_SANDBOX_VERBOSE` | — | also print the routine status lines a launch prints — which dot-file values were applied, the session allowlist, the seccomp filter in use. Refusals, warnings and notices that something is **not** sandboxed are always printed, verbose or not. What follows from the dot-file's text alone -- a widening (the network `open`, seccomp `off`), a line it ignores, what a path declaration gives -- is said once, at its review ([config.md](docs/config.md#trust)) (off) |
@@ -243,12 +244,13 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Six more variables name locations rather than behaviour and are rarely set by
+Seven more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
+`AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),
 `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,
 `AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper) and
 `AGENT_SANDBOX_JOIN` (the helper that joins an app into its role's running
-launch), the last two normally found beside the engine. One more is timing:
+launch), the last three normally found beside the engine. One more is timing:
 `AGENT_SANDBOX_KEEPER_GRACE`, how many seconds a role's launch waits once nothing
 is joined into it before it ends (2), so that commands run one after another
 share it. `--engine-help` prints each with its default.

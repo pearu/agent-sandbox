@@ -129,7 +129,7 @@ than doing it.
 |---|---|
 | inputs | the Statement; `main` at its last commit, and the change as the Handoff gives it -- the diff against that commit, and the branch; the project's documents; outside documents |
 | outputs | the Review; its Messages |
-| may | read the code and run it -- an Implementer's build with the environment it was built in, `.asb/impl-1/.env/bin/...`, which a read-only environment runs without activation; write the test scripts that takes, in its scratch; read documents on the web |
+| may | read the code and run it -- an Implementer's build with the environment it was built in, `.asb/impl/1/.env/bin/...`, which a read-only environment runs without activation; write the test scripts that takes, in its scratch; read documents on the web |
 | may not | change the code (**enforced**: section 4); read the implementer's reasoning -- its memory, its conversations, its commit-by-commit path -- rather than the change (**enforced**: each role's memory and transcripts are its own; `.git` hidden, the diff against `main` is in the Handoff); publish (**enforced**: as the Planner); install or build (**enforced**: a build writes to a tree and an install to an environment, and it has neither writable -- when it needs a built tree it runs the Implementer's) |
 
 ### Supervisor
@@ -189,12 +189,12 @@ messages, the roles' purposes and the Implementers' trees:
       .git/                     the main store; the Supervisor commits, merges, pushes
       src/ ...                  the integration state
       .asb/
-        plan/ handoff/ review/ coord/ roles/
-        impl-1/                 I1's clone, on branch impl-1
-        impl-2/                 I2's clone, on branch impl-2
+        plan/ handoff/ review/ coord/ roles/ scratch/
+        impl/1/ impl/2/         I1's and I2's trees, on branches impl-1 and impl-2
+        git/1/  git/2/          their histories, apart from the trees
 
 The Supervisor has the project read-write, but for the clones, read-only to it in turn.
-Every other role has it read-only, and an Implementer has `.asb/impl-1/` read-write
+Every other role has it read-only, and an Implementer has `.asb/impl/1/` read-write
 inside that: a read-only mount, then a read-write mount on a subdirectory of it, which
 bubblewrap allows and the engine's depth order makes expressible: `project = read-only` (#220).
 
@@ -202,17 +202,27 @@ bubblewrap allows and the engine's depth order makes expressible: `project = rea
 Implementer's commits never touch the main `.git/`. A `git worktree` shares it: the
 worktree's `.git` is a file pointing at the main store, where its refs and objects go,
 so a committing Implementer would need the main `.git/` writable and could move `main`.
-A clone with shared objects keeps the split: `git clone --shared . .asb/impl-1 && git
--C .asb/impl-1 switch -c impl-1` reads the main objects through an alternates file --
-the path of `./.git/objects`, read-only to the Implementer and the same path inside --
-and writes its own objects and refs under `.asb/impl-1/.git/`. The Supervisor collects
-a branch with `git fetch .asb/impl-1 impl-1:impl-1` and merges it in the main tree;
-the Handoff names the branch, and `git diff main...impl-1` in the main tree is the
-diff the Reviewer gets: the current state of the change against `main`'s last commit,
+A clone with shared objects keeps the split:
+
+    git clone --shared --separate-git-dir=.asb/git/1 . .asb/impl/1
+    git -C .asb/impl/1 switch -c impl-1
+
+reads the main objects through an alternates file -- the path of `./.git/objects`,
+read-only to the Implementer and the same path inside -- and writes its own objects
+and refs in `.asb/git/1/`, apart from its tree `.asb/impl/1/`, whose `.git` is a
+one-line file pointing there. Git follows it with no flag and no variable: every
+command run in the tree works as in any clone (measured). The Supervisor collects a
+branch with `git fetch .asb/impl/1 impl-1:impl-1` and merges it in the main tree; the
+Handoff names the branch, and `git diff main...impl-1` in the main tree is the diff
+the Reviewer gets: the current state of the change against `main`'s last commit,
 whatever the commits in between were. History is its owner's: `main`'s `.git/` is
-hidden from every role but the Supervisor and, read-only, the Implementers; a clone's
-from every role but its Implementer and, read-only, the Supervisor. A Planner that
-wants history reads it on GitHub.
+hidden from every role but the Supervisor and, read-only, the Implementers; the
+clones' histories, `.asb/git/`, from every role but each its Implementer and,
+read-only, the Supervisor -- one line each, since the histories have one parent. In a
+tree whose history is hidden, git says `not a git repository`. A Planner that wants
+history reads it on GitHub. Two things follow from the layout: the pointer and the
+alternates are absolute paths, so a project moved on disk needs them rewritten; and a
+tool that tests for a `.git` directory, rather than asking git, sees a file.
 
 **Concurrent Implementers, a clone each.** Independent tasks run in parallel, one
 Implementer per clone, each clone read-write for its Implementer and nobody else. There
@@ -234,7 +244,7 @@ the Supervisor installs the accepted build into it, and the user activates it on
 host to try that build without an agent. Every other role starts from it: the Planner
 runs `main` in it, read-only; an Implementer gets **a conda clone in its tree**:
 
-    conda create --clone x-dev -p .asb/impl-1/.env
+    conda create --clone x-dev -p .asb/impl/1/.env
 
 It works for what conda manages, Python or not; the clone is independent of `x-dev`
 and of every other clone; and it travels with the tree, so a read-only reader of the
@@ -253,7 +263,7 @@ the tree, and the base must change only between rounds.
 
 Installing into the clone needs nothing of the sandbox: the clone is in the
 Implementer's tree, writable because the tree is, and conda and pip address it by path
--- `conda install -p .asb/impl-1/.env ...`, `.asb/impl-1/.env/bin/pip install ...` --
+-- `conda install -p .asb/impl/1/.env ...`, `.asb/impl/1/.env/bin/pip install ...` --
 with no activation, which is also how the Reviewer runs it. Activating it, so that
 `python` is the clone's, is the role's `[conda:<role>] prefix` line (section 8).
 
@@ -263,7 +273,7 @@ or a lock file), updates its own clone from it, and the specification's change i
 the diff like any other. No environment is ever copied from one role to another:
 each clone is re-derived from its own tree, in place --
 
-    conda env update -p .asb/impl-2/.env -f environment.yml --prune
+    conda env update -p .asb/impl/2/.env -f environment.yml --prune
 
 -- which costs the delta, nothing when the specification is unchanged, and is
 idempotent, so it is the first thing an Implementer does at a start ("sync your
@@ -279,11 +289,11 @@ read-only one (#219). The Supervisor's `x-dev` lives in the conda tree, read-onl
 The rest is a line in the briefings and a step in the Supervisor's round.
 
 **Reading another role's tree.** A Reviewer tries an Implementer's build by reading its
-clone: `.asb/impl-1/` is read-only to it, as the whole project is, and the tree holds
+clone: `.asb/impl/1/` is read-only to it, as the whole project is, and the tree holds
 *what the build left in it*, since the build ran on the host filesystem. One condition:
 the build and its environment live in the clone (a venv, an in-tree conda env), not in
 the Implementer's own stores, or the Reviewer sees the sources and not the build. A
-Planner reads the main tree, the integration state, and any `.asb/impl-*`, its history
+Planner reads the main tree, the integration state, and any `.asb/impl/N/`, its history
 excepted. The Reviewer sees `main` as the change starts from it and the change as one
 diff against it, not the commits that led there: `.git/` is hidden from it, in the main
 tree and in the clones, and what it needs of git's output is in the Handoff.
@@ -329,7 +339,7 @@ honour the proxy variables, as the allowlist itself does; section 8 sets `strict
 | a role per purpose, with its own policy | `--role`, `[sandbox:<glob>]`, `[connect:<glob>]` | built |
 | each role's memory and transcripts its own | `own` under `inherit` (#196, #120) | built |
 | inputs read-only, outputs writable, inside one tree | path declarations, bound by depth (#130, #196) | built |
-| history its owner's: `main`'s hidden from every role but the Supervisor and, read-only, the Implementers; a clone's from every role but its Implementer and, read-only, the Supervisor | `./.git/ = own` and `.asb/impl-N/.git/ = own` in the common block, redeclared `read-only` or `read-write` where a role needs it | built |
+| history its owner's: `main`'s hidden from every role but the Supervisor and, read-only, the Implementers; a clone's from every role but its Implementer and, read-only, the Supervisor | `./.git/ = own` and `.asb/git/ = own` in the common block, redeclared `read-only` or `read-write` where a role needs it | built |
 | the project read-only for every role but the Supervisor, with an Implementer's clone read-write inside it | `project = read-only` / `read-write` per role (#220), declarations inside it bound by depth | built |
 | the `gh` token for every role, with nothing to set up | `gh/` as a channel (#88), `own` unless asked; `gh = read-only` in the common block, `GH_CONFIG_DIR` pointed there | built. The token's mode cannot make `gh` read-only (a token that reads can write): the retrieve-only network does that, and a read-only token is the documented hardening (section 7), not the default |
 | no publishing: hosts a role may not reach | `[deny]` and `[deny:<role>]` subtract hosts, the profile's own untouched; role suffixes on `[allow]`, `[env]`, `[net]`, `[conda]` (#221) | built |
@@ -339,12 +349,12 @@ honour the proxy variables, as the allowlist itself does; section 8 sets `strict
 | a Reviewer trying an Implementer's build | the clone read-only: the tree and what the build left in it | built; the build and its environment must live in the clone |
 | the Planner's measurements persisting | a `read-write` declaration of the planner's, read-only for the others | built |
 | a role installing without touching the shared environment | a conda clone in its tree (measured: 11-15 s, 255 MB new disk per 1.6 GB env); or `<env>/ = copy-on-write` in the role's section (measured) | built |
-| an Implementer installing into its clone | the clone is in its tree, writable by the declaration; `conda install -p .asb/impl-1/.env`, `.asb/impl-1/.env/bin/pip`, no activation | built |
+| an Implementer installing into its clone | the clone is in its tree, writable by the declaration; `conda install -p .asb/impl/1/.env`, `.asb/impl/1/.env/bin/pip`, no activation | built |
 | the downloads of such an install persisting | the sandbox-owned package cache (`~/.cache/agent-sandbox/conda-pkgs`, `CONDA_PKGS_DIRS` set to it, the host's read-only cache after it), bound whenever a conda env is active (#219) | built |
-| a role activating its own clone | `[conda:<role>] prefix = .asb/impl-1/.env`, an env by its path (#221) | built |
+| a role activating its own clone | `[conda:<role>] prefix = .asb/impl/1/.env`, an env by its path (#221) | built |
 | the Supervisor installing into `x-dev`, in the conda tree | `[conda:supervisor] write = 1`: the active env writable for that role only (#221) | built |
 | what a role has, shown before it runs | `asb --check --role NAME`: the policy, what crosses the boundary and how, the mount plan (#210-#213) | built; **to add**: "can act as you at" per outside service (the #114 outward routes) |
-| the dot-file, `.asb/`, the purpose files and the clones written right, for a given set of roles | all by hand | **to build**: `asb --init roles implementer=2 --env x-dev` -- a model name, counts, the development environment. A model is a directory the engine ships (`models/roles/`: the dot-file template with the sections per role, a purpose file per role), or a path to the user's own. It writes `.agent-sandbox` with each instance's sections, the `.asb/` directories, one per instance where it writes, `.asb/roles/<instance>.md` with the names and handles substituted, the coord index, and the `.asb/` exclude line; makes each Implementer's clone (`--shared`, on its branch) and its environment clone from `--env`, on the host, where the clone hardlinks into the package cache; never overwriting; then prints what is the user's: `asb --trust`, `asb --check --role NAME`. It does not approve |
+| the dot-file, `.asb/`, the purpose files and the clones written right, for a given set of roles | `asb --init roles planner=2 implementer=2 reviewer=1 --env x-dev` (#225): from the model in `models/roles/` (section 10), the dot-file with each instance's sections, `.asb/` and every path it declares, a purpose file per instance, the coord index, the exclude line, each Implementer's clone and, with `--env`, its environment; run again with more instances, it adds what is missing. It approves nothing | built |
 
 ## 7. The `gh` token: the default, and the recommended hardening
 
@@ -376,8 +386,9 @@ catches a role holding the wrong one.
 
 ## 8. The example dot-file
 
-The repository's `.agent-sandbox` that holds this model; every line of it works on main
-(2026-10-04). The material lines
+The repository's `.agent-sandbox` that holds this model, as `asb --init roles planner=2
+implementer=2 reviewer=1 --env x-dev` writes it (the template is
+`models/roles/agent-sandbox`), with two Planners' material added by hand. The material lines
 (`~/refs/...`) are an example, not the model's: the user adds such lines, and any other
 a round turns out to need, when the need arises, and `asb --trust` re-opens the
 review. The acceptance test of the mechanics is that `asb --check --role reviewer-1`
@@ -388,68 +399,65 @@ on this file shows nothing the reviewer may write but `.asb/review/reviewer-1/`,
 [sandbox]
 preset = inherit
 
-# ---- what every role gets ------------------------------------------------
+# ---- what every role gets ------------------------------------------------------
 [conda]
-name = x-dev                      # the development environment: main's build; the user's to activate on the host
+name = x-dev                      # the development environment: main's build, the user's to activate on the host
 [connect]
-project = read-only               # the working tree, read-only (#220); the Supervisor opens it
+project = read-only               # the working tree, read-only; the Supervisor opens it
 .asb/coord/ = read-only           # the message files and the index: every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
 ./.git/ = own                     # history is its owner's: main's is the Supervisor's...
-.asb/impl-1/.git/ = own           # ...and a clone's its Implementer's
-.asb/impl-2/.git/ = own
-gh = read-only                    # your gh login (#88), for reading issues and pull requests
+.asb/git/ = own                   # ...and a clone's its Implementer's
+gh = read-only                    # your gh login, for reading issues and pull requests
 # hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.gh-read
 [net]                             # every role reads the web and GitHub, and publishes nothing...
 mode = strict                     # ...through the proxy only: under `proxy` a tool can ignore it
 retrieve-only = on
 git = refuse
 
-# ---- planners: an expert each, with its own material --------------------
+# ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-1]
-.asb/plan/planner-1/ = read-write # its Statements, Tasks and Measurements
+.asb/plan/planner-1/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-1.md = read-write
-~/refs/parsing/ = read-only       # P1's field: its material, nobody else's context (an example)
+~/refs/parsing/ = read-only       # P1's field: its material, nobody else's context (added by hand)
 [connect:planner-2]
-.asb/plan/planner-2/ = read-write
+.asb/plan/planner-2/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-2.md = read-write
 ~/refs/reporting/ = read-only
-~/git/other-project/ = read-only  # the sources P2 knows
+~/git/other-project/ = read-only  # the sources P2 knows (added by hand)
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 
-# ---- implementers: a clone each -------------------------------------------
+# ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-1]
 .asb/handoff/implementer-1/ = read-write
 .asb/coord/implementer-1.md = read-write
-.asb/impl-1/ = read-write         # its clone, whole: the tree, its .git, its .env
-.asb/impl-1/.git/ = read-write
+.asb/impl/1/ = read-write       # its clone's tree, with its .env
+.asb/git/1/ = read-write        # its clone's history
 ./.git/ = read-only               # the clone reads main's objects through it
-[conda:implementer-1]             # activation only; the clone is writable as its tree is
-prefix = .asb/impl-1/.env
+[conda:implementer-1]           # activation only; the clone is writable as its tree is
+prefix = .asb/impl/1/.env
 [connect:implementer-2]
 .asb/handoff/implementer-2/ = read-write
 .asb/coord/implementer-2.md = read-write
-.asb/impl-2/ = read-write
-.asb/impl-2/.git/ = read-write
-./.git/ = read-only
-[conda:implementer-2]
-prefix = .asb/impl-2/.env
+.asb/impl/2/ = read-write       # its clone's tree, with its .env
+.asb/git/2/ = read-write        # its clone's history
+./.git/ = read-only               # the clone reads main's objects through it
+[conda:implementer-2]           # activation only; the clone is writable as its tree is
+prefix = .asb/impl/2/.env
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 
-# ---- reviewers: the common block already hides every history --------------
+# ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
 .asb/review/reviewer-1/ = read-write
 .asb/coord/reviewer-1.md = read-write
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
-# ---- supervisor: the only role that reaches outside ----------------------
+# ---- supervisor: the only role that reaches outside ------------------------------
 [connect:supervisor]
 project = read-write              # merges the branches in the main tree, pushes
 ./.git/ = read-write
-.asb/impl-1/ = read-only          # the clones are the Implementers'; it fetches their branches
-.asb/impl-1/.git/ = read-only
-.asb/impl-2/ = read-only
-.asb/impl-2/.git/ = read-only
+.asb/impl/ = read-only            # the clones are the Implementers'; it fetches their branches
+.asb/git/ = read-only
 .asb/coord/supervisor.md = read-write
 .asb/coord/COORDINATION.md = read-write   # the index
 [conda:supervisor]                # main's build lands in x-dev, which lives in the conda tree
@@ -489,22 +497,10 @@ runs what it names as it is (#197).
     asb --check --role reviewer-1         # what the reviewer will have: nothing it may write
                                           # but its review directory, its coord file and its scratch
 
-and until then, by hand, what `--init` writes and makes:
-
-    $EDITOR .agent-sandbox                # section 8
-    mkdir -p .asb/{coord,roles,scratch} .asb/plan/planner-{1,2} \
-             .asb/handoff/implementer-{1,2} .asb/review/reviewer-1
-    $EDITOR .asb/roles/{planner-1,planner-2,implementer-1,implementer-2,reviewer-1,supervisor}.md
-                                          # section 3, as instructions, with the handles
-    $EDITOR .asb/coord/COORDINATION.md    # the index: handle, coord file, directory, per instance
-    printf '/.asb/\n' >> .git/info/exclude
-    for i in 1 2; do
-        git clone --shared . .asb/impl-$i && git -C .asb/impl-$i switch -c impl-$i
-        conda create --clone x-dev -p .asb/impl-$i/.env
-    done
-
-The clones are made on the host, where the conda clone hardlinks into the package
-cache (section 4).
+`--init` makes the clones and the environments on the host, where a conda clone
+hardlinks into the package cache (section 4). Run again with more instances --
+`implementer=3` -- it adds what is missing, and the changed dot-file needs `asb --trust`
+again.
 
 The user's sentences are short because everything else is in the role's context
 already: its purpose, its handle, its standing facts (tree, branch, environment, where
@@ -560,28 +556,30 @@ directory, one model per subdirectory, and `asb --init NAME [ROLE=N ...]` writes
 project's files from one; `NAME` is a shipped model's directory or a path to any other,
 so a user writes a model of their own the same way and may contribute it.
 
-A model directory holds:
+A model directory holds (the format in full: [models/README.md](../models/README.md)):
 
     models/roles/
-      README.md             the model: this document's sections 1-5 and 9, or a pointer to them
-      agent-sandbox         the dot-file template: the common block, then a block per role,
-                            with {role} for an instance's name
+      README.md             the model, and a pointer here
+      agent-sandbox         the dot-file template: its role-suffixed sections declare the
+                            roles -- [connect:planner-{n}] numbered instances,
+                            [connect:supervisor] a single one, [briefing:planner-*]
+                            written once for the role; {role}, {n}, {handle} inside a
+                            role's sections, {project} and {env} anywhere; a line
+                            `#@ clone = TREE GITDIR BRANCH` makes a clone per instance
       roles/
-        planner.md          one purpose file per role, as instructions, a page each:
-        implementer.md      what the role is for; its handle; its standing facts (its
-        reviewer.md         tree, branch, environment, where its inputs are and where its
-        supervisor.md       outputs go); the protocol (sync the environment at start, get
-                            the task from the agreed place, ask by writing your coord file
-                            addressed to a handle, when blocked write it and stop); what
-                            it never does; its start procedure. Injected at every session
+        planner.md          one purpose file per role, written per instance to
+        implementer.md      .asb/roles/<instance>.md with the same placeholders: what the
+        reviewer.md         role is for, its handle, where its inputs and outputs are,
+        supervisor.md       the protocol, what it never does. Injected at every session
                             start by [briefing:<role>], so the user never types any of it
       coord/
-        COORDINATION.md     the index template: the instances, their handles, coord files
-                            and artefact directories, the rule
+        COORDINATION.md     the index template; {instances} becomes a row per instance
 
-A role that may have several instances (`planner=2 implementer=2 reviewer=1`) gets its
-block and its purpose file once per instance, the name and the handle substituted; the
-template says which roles may, and here every role may but the Supervisor.
+The handles are the roles' initials and the instance numbers (`P1`, `I1`, `R1`), `S`
+for the single Supervisor, so a model's roles need distinct initials. No line of the
+template names another role's instance: that is what the layout of section 4 -- trees
+under `.asb/impl/`, histories under `.asb/git/` -- is for, since a single line about a
+parent covers every instance's clone.
 
 What makes a model a model is that every "may not" in it is either a line in the
 dot-file template or a sentence in a purpose file, and the README says which. A model

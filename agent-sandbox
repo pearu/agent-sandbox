@@ -332,6 +332,13 @@ Engine flags (before CMD):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
+  --init MODEL [ROLE=N ...] [--env NAME]
+                        write this project's .agent-sandbox, .asb/ and the
+                        roles' purpose files from a development model
+                        (models/, e.g. `roles`), with N instances of a role
+                        and, with --env, an environment cloned from NAME per
+                        clone; run again, it adds what is missing. Approves
+                        nothing: run --trust after
   --check               the same review, asking nothing and recording
                         nothing; exits non-zero when a launch would refuse
                         the file (for an author, CI or a pre-commit hook)
@@ -4952,6 +4959,323 @@ _as_trust_check() {
   return 0
 }
 
+# ----- --init: a project's files from a development model (#225) ---------------
+# A model is data (models/README.md): a dot-file template whose role-suffixed sections
+# declare the roles -- `[x:name-{n}]` numbered instances, `[x:name]` a single one,
+# `[x:name-*]` written once when the role has any instance -- a purpose file per role,
+# and a coord index. --init renders them for this project with the counts given (one of
+# each by default), makes a clone per instance whose section says `#@ clone = TREE
+# GITDIR BRANCH` (and an environment cloned from --env at its `prefix`), creates every
+# path the written file declares under .asb/, and keeps .asb/ out of git. Run again, it
+# adds what is missing and touches nothing that exists. It approves nothing.
+_as_models_dir() { printf '%s' "${AGENT_SANDBOX_MODELS_DIR:-$(dirname -- "$engine")/models}"; }
+# _as_models_list -- the shipped models' names, space-separated.
+_as_models_list() {
+  local d
+  for d in "$(_as_models_dir)"/*/agent-sandbox; do
+    [[ -f "$d" ]] && basename -- "$(dirname -- "$d")"
+  done | paste -sd' '
+}
+
+_as_init() {
+  local model="$1" env="$2"
+  shift 2
+  local proj mdir tpl project top
+  proj="$(pwd -P)" project="$(basename -- "$proj")"
+  if _as_inside_sandbox; then
+    _as_msg "--init runs on the host: it writes the policy a sandbox runs under."
+    return 1
+  fi
+  top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ "$top" != "$proj" ]]; then
+    _as_msg "--init runs at the top of a git repository (the roles' clones are of it): $proj is not one${top:+ (its top is $top)}."
+    return 1
+  fi
+  case "$model" in
+    */*) mdir="$model" ;;
+    *) mdir="$(_as_models_dir)/$model" ;;
+  esac
+  tpl="$mdir/agent-sandbox"
+  if [[ ! -f "$tpl" ]]; then
+    _as_msg "--init: no model '$model' ($tpl not found). Shipped: $(_as_models_list)"
+    return 1
+  fi
+
+  # ---- the template's sections, and the roles they declare ----
+  local -a pre=() heads=() bodies=() roles=()
+  local line cur=-1 i
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[[^]]+\] ]]; then
+      cur=${#heads[@]}
+      heads+=("$line")
+      bodies+=("")
+    elif ((cur < 0)); then
+      pre+=("$line")
+    else
+      bodies[cur]+="$line"$'\n'
+    fi
+  done <"$tpl"
+  # The comments and blank lines that end a section introduce the next one: they move
+  # with it, so an appended section does not carry the next one's heading.
+  local -a leads=()
+  local body tail
+  for i in "${!heads[@]}"; do
+    leads[i]=""
+  done
+  for i in "${!heads[@]}"; do
+    ((i + 1 < ${#heads[@]})) || break
+    body="${bodies[i]}" tail=""
+    while [[ "$body" =~ (^|$'\n')((#[^@$'\n'][^$'\n']*|#|[[:space:]]*)$'\n')$ ]]; do
+      tail="${BASH_REMATCH[2]}$tail"
+      body="${body%"${BASH_REMATCH[2]}"}"
+    done
+    bodies[i]="$body" leads[i + 1]="$tail"
+  done
+  _init_role_of() { # HEADER -> "NAME KIND" (multi|group|single), or nothing for a common section
+    local h="${1%%]*}" suf
+    h="${h#[}"
+    [[ "$h" == *:* ]] || return 0
+    suf="${h#*:}"
+    case "$suf" in
+      *-\{n\}) printf '%s multi' "${suf%-\{n\}}" ;;
+      *-\*) printf '%s group' "${suf%-\*}" ;;
+      *) printf '%s single' "$suf" ;;
+    esac
+  }
+  local rn rk k
+  local -A kind=() count=() initial=()
+  for i in "${!heads[@]}"; do
+    read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+    [[ -n "${rn:-}" ]] || continue
+    [[ "$rk" == group ]] && rk=multi
+    if [[ -n "${kind[$rn]:-}" && "${kind[$rn]}" != "$rk" ]]; then
+      _as_msg "--init: model '$model' uses '$rn' both as a numbered role ({n}) and a single one"
+      return 1
+    fi
+    [[ -n "${kind[$rn]:-}" ]] || roles+=("$rn")
+    kind[$rn]="$rk" count[$rn]=1
+  done
+  ((${#roles[@]})) || {
+    _as_msg "--init: model '$model' declares no roles (no role-suffixed section in $tpl)"
+    return 1
+  }
+  for rn in "${roles[@]}"; do
+    k="${rn:0:1}"
+    k="${k^^}"
+    if [[ -n "${initial[$k]:-}" ]]; then
+      _as_msg "--init: roles '${initial[$k]}' and '$rn' of model '$model' share the initial $k, so their handles would collide; give the roles distinct initials"
+      return 1
+    fi
+    initial[$k]="$rn"
+  done
+  local a v
+  for a in "$@"; do
+    rn="${a%%=*}" v="${a#*=}"
+    if [[ -z "${kind[$rn]:-}" ]]; then
+      _as_msg "--init: model '$model' has no role '$rn' (it has: ${roles[*]})"
+      return 1
+    fi
+    if [[ ! "$v" =~ ^[0-9]+$ ]] || { [[ "${kind[$rn]}" == single ]] && ((v > 1)); }; then
+      _as_msg "--init: '$a' -- a count is a number$([[ "${kind[$rn]}" == single ]] && printf ', 0 or 1 for %s, which is a single role' "$rn")"
+      return 1
+    fi
+    count[$rn]="$v"
+  done
+
+  # ---- rendering ----
+  # _init_render HEADER BODY INSTANCE N HANDLE -- the section for one instance.
+  _init_render() {
+    local txt="$1"$'\n'"$2" h="${1%%]*}" lead="${6:-}"
+    txt="${txt//\{role\}/$3}"
+    txt="${txt//\{n\}/$4}"
+    txt="${txt//\{handle\}/$5}"
+    txt="${txt//\{project\}/$project}"
+    txt="${txt//\{env\}/${env:-ENV}}"
+    txt="$(printf '%s' "$txt" | grep -v '^#@')"$'\n'
+    if [[ -z "$env" && ("$h" == "[conda" || "$h" == "[conda:"*) ]]; then
+      txt="$(printf '%s' "$txt" | sed 's/^\(.\)/# \1/')"$'\n'
+    fi
+    printf '%s%s' "$lead" "$txt"
+  }
+  local df="$proj/.agent-sandbox" existing="" new="" j n inst h hd lead
+  local -a clones=() insts=() prefixes=()
+  # A section the file has -- or has commented out, which is the user's to uncomment --
+  # is never written again; compared by its header alone.
+  [[ -f "$df" ]] && existing="$(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' "$df")"
+  _init_has() {
+    local hd="${1%%]*}]"
+    hd="${hd#\# }"
+    [[ -n "$existing" ]] && grep -qxF -- "$hd" <<<"$existing"
+  }
+  # Walk the sections; a run of consecutive sections of one numbered role is written
+  # per instance, so each instance's sections stay together.
+  i=0
+  while ((i < ${#heads[@]})); do
+    read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+    if [[ "${rk:-}" == multi ]]; then
+      j=$i
+      while ((j + 1 < ${#heads[@]})); do
+        read -r a k <<<"$(_init_role_of "${heads[j + 1]}")"
+        [[ "${a:-}" == "$rn" && "${k:-}" == multi ]] || break
+        ((j += 1))
+      done
+      for ((n = 1; n <= ${count[$rn]}; n++)); do
+        inst="$rn-$n" h="${rn:0:1}"
+        h="${h^^}$n"
+        insts+=("$inst"$'\t'"$h"$'\t'"$rn"$'\t'"$n")
+        for ((k = i; k <= j; k++)); do
+          lead=""
+          ((n == 1)) && lead="${leads[k]}"
+          a="$(_init_render "${heads[k]}" "${bodies[k]}" "$inst" "$n" "$h" "$lead")"
+          _init_has "$(_init_render "${heads[k]}" "" "$inst" "$n" "$h" | head -1)" || new+="$a"$'\n'
+          [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*clone[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
+            && clones+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
+          # The environment's place: the role's [conda:...] prefix, from the template.
+          [[ "${heads[k]}" == "[conda:"* && "${bodies[k]}" =~ (^|$'\n')prefix[[:space:]]*=[[:space:]]*([^[:space:]#$'\n']+) ]] \
+            && prefixes+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
+        done
+      done
+      i=$((j + 1))
+      continue
+    fi
+    if [[ -n "${rn:-}" ]]; then
+      ((${count[$rn]} > 0)) || {
+        ((i += 1))
+        continue
+      }
+      h="${rn:0:1}"
+      h="${h^^}"
+      [[ "$rk" == single ]] && insts+=("$rn"$'\t'"$h"$'\t'"$rn"$'\t'"")
+      a="$(_init_render "${heads[i]}" "${bodies[i]}" "$rn" "" "$h" "${leads[i]}")"
+      hd="$(_init_render "${heads[i]}" "" "$rn" "" "$h" | head -1)"
+    else
+      a="$(_init_render "${heads[i]}" "${bodies[i]}" "" "" "" "${leads[i]}")"
+      hd="$(_init_render "${heads[i]}" "" "" "" "" | head -1)"
+      [[ -n "$existing" ]] && a="" # the common sections are written once, with the file
+    fi
+    [[ -n "$a" ]] && ! _init_has "$hd" && new+="$a"$'\n'
+    ((i += 1))
+  done
+  # Single roles are listed once even when their sections are several.
+  local -a uniq=()
+  local seen=" "
+  for a in "${insts[@]}"; do
+    [[ "$seen" == *" ${a%%$'\t'*} "* ]] && continue
+    seen+="${a%%$'\t'*} "
+    uniq+=("$a")
+  done
+  insts=("${uniq[@]}")
+
+  local wrote=0
+  if [[ -z "$existing" && ! -f "$df" ]]; then
+    {
+      printf '%s\n' "${pre[@]}"
+      printf '%s' "$new"
+    } >"$df" || return 1
+    wrote=1
+    _as_msg "wrote .agent-sandbox from model '$model' ($(for a in "${insts[@]}"; do printf '%s ' "$(cut -f2 <<<"$a")"; done | sed 's/ $//'))"
+  elif [[ -n "$new" ]]; then
+    {
+      printf '\n# ---- added by asb --init %s ----\n' "$model"
+      printf '%s' "$new"
+    } >>"$df" || return 1
+    wrote=1
+    _as_msg "added to .agent-sandbox: $(printf '%s' "$new" | sed -n 's/^\(\[[^]]*\]\).*/\1/p' | paste -sd' ')"
+  else
+    _as_msg ".agent-sandbox already has every section for these roles; nothing added to it"
+  fi
+
+  # ---- purpose files, clones, environments, the declared paths, the index ----
+  local f tpath gdir br prefix v
+  mkdir -p "$proj/.asb/roles" || return 1
+  for a in "${insts[@]}"; do
+    IFS=$'\t' read -r inst h rn n <<<"$a"
+    f="$mdir/roles/$rn.md"
+    [[ -f "$f" && ! -e "$proj/.asb/roles/$inst.md" ]] || continue
+    _init_render "" "$(cat -- "$f")" "$inst" "$n" "$h" | sed 1d >"$proj/.asb/roles/$inst.md" || return 1
+    _as_msg "wrote .asb/roles/$inst.md"
+  done
+  for a in ${clones[@]+"${clones[@]}"}; do
+    inst="${a%%$'\t'*}"
+    read -r tpath gdir br <<<"${a#*$'\t'}"
+    if [[ -e "$proj/${tpath%/}/.git" ]]; then
+      :
+    else
+      mkdir -p "$proj/$(dirname -- "${gdir%/}")" || return 1
+      if ! git -C "$proj" clone -q --shared --separate-git-dir="$proj/${gdir%/}" . "$proj/${tpath%/}" \
+        || ! git -C "$proj/${tpath%/}" switch -q -c "$br"; then
+        _as_msg "--init: the clone for $inst (${tpath%/}) failed"
+        return 1
+      fi
+      # Your git identity, into the clone's own config: inside, ~/.gitconfig is not
+      # there, and an Implementer commits.
+      for k in user.name user.email; do
+        v="$(git -C "$proj" config "$k" 2>/dev/null || true)"
+        [[ -n "$v" ]] && git -C "$proj/${tpath%/}" config "$k" "$v"
+      done
+      _as_msg "cloned for $inst: ${tpath%/} on branch $br, its history in ${gdir%/}"
+    fi
+    prefix=""
+    for k in ${prefixes[@]+"${prefixes[@]}"}; do
+      [[ "${k%%$'\t'*}" == "$inst" ]] && prefix="${k#*$'\t'}"
+    done
+    if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" ]]; then
+      _as_msg "cloning conda env '$env' into $prefix (for $inst)"
+      "${CONDA_EXE:-conda}" create -q -y --clone "$env" -p "$proj/$prefix" >/dev/null || {
+        _as_msg "--init: 'conda create --clone $env -p $prefix' failed"
+        return 1
+      }
+    fi
+  done
+  # Every path the written file declares under .asb/ must exist: a missing read-only
+  # or read-write path is skipped at launch.
+  local key
+  while IFS= read -r key; do
+    case "$key" in
+      */) mkdir -p "$proj/$key" ;;
+      *) [[ -e "$proj/$key" ]] || { mkdir -p "$proj/$(dirname -- "$key")" && : >"$proj/$key"; } ;;
+    esac || return 1
+  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' "$df" | sort -u)
+  # The coord index: a row per instance, added for the ones it does not list yet.
+  local idx="$proj/.asb/coord/COORDINATION.md" idxrows="" dirs coordf
+  for a in "${insts[@]}"; do
+    IFS=$'\t' read -r inst h rn n <<<"$a"
+    [[ -s "$idx" ]] && grep -q "^| $h |" "$idx" && continue
+    coordf="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/coord\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | head -1)"
+    dirs="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | grep -vxF -- "$coordf" | paste -sd' ' | sed 's/ /, /g')"
+    idxrows+="| $h | $inst | ${coordf:--} | ${dirs:--} |"$'\n'
+  done
+  if [[ ! -s "$idx" && -f "$mdir/coord/COORDINATION.md" ]]; then
+    a="$(_init_render "" "$(cat -- "$mdir/coord/COORDINATION.md")" "" "" "" | sed 1d)"
+    printf '%s\n' "${a//\{instances\}/${idxrows%$'\n'}}" >"$idx" || return 1
+    _as_msg "wrote .asb/coord/COORDINATION.md"
+  elif [[ -n "$idxrows" ]]; then
+    printf '%s' "$idxrows" >>"$idx" || return 1
+  fi
+  # .asb/ is the roles' working state, never the project's history.
+  local ex="$proj/.git/info/exclude"
+  if ! grep -qxF '/.asb/' "$ex" 2>/dev/null; then
+    mkdir -p "$(dirname -- "$ex")" && printf '/.asb/\n' >>"$ex" || return 1
+    _as_msg "added /.asb/ to .git/info/exclude"
+  fi
+
+  {
+    printf '\nNext, yours:\n'
+    printf '  - read .agent-sandbox and the purpose files in .asb/roles/; add what this project needs\n'
+    printf '    (hosts to [allow]; a Planner'"'"'s material as a read-only line in its [connect:planner-N])\n'
+    if [[ -z "$env" ]]; then
+      printf '  - no --env: the [conda] sections are commented out; for an environment per clone,\n'
+      printf '    run --init again with --env NAME, or: conda create --clone NAME -p <the prefix>\n'
+    elif grep -q '^# \[conda' "$df"; then
+      printf '  - the [conda] sections written without --env are still commented out: uncomment them,\n'
+      printf '    with your environment'"'"'s name for ENV\n'
+    fi
+    ((wrote)) && printf '  - %s --trust            the review, then the approval\n' "$invoked"
+    printf '  - %s --check --role NAME  what a role has (%s)\n' "$invoked" "$(for a in "${insts[@]}"; do printf '%s ' "${a%%$'\t'*}"; done | sed 's/ $//')"
+  } >&2
+  return 0
+}
+
 _as_trust_review() {
   local cwd="$1" file ans
   file="$cwd/.agent-sandbox"
@@ -5344,6 +5668,8 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
+  local _do_init=0 _init_model="" _init_env=""
+  local -a _init_counts=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -5487,6 +5813,38 @@ agent_sandbox() (
       --check)
         _do_check=1
         shift
+        ;;
+      --init)
+        # --init MODEL [ROLE=N ...] [--env NAME] (#225): the words after it are its own.
+        _do_init=1
+        shift
+        [[ $# -gt 0 && "$1" != -* ]] || {
+          _as_msg "--init needs a model: --init MODEL [ROLE=N ...] [--env NAME] (shipped: $(_as_models_list))"
+          return 2
+        }
+        _init_model="$1"
+        shift
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --env)
+              [[ $# -ge 2 ]] || {
+                _as_msg "--init: --env needs a conda environment's name"
+                return 2
+              }
+              _init_env="$2"
+              shift 2
+              ;;
+            --env=*)
+              _init_env="${1#--env=}"
+              shift
+              ;;
+            [a-z]*=*)
+              _init_counts+=("$1")
+              shift
+              ;;
+            *) break ;;
+          esac
+        done
         ;;
       --connect)
         # One `channel = mode [source] [scope]`, repeatable. The highest-precedence
@@ -5656,6 +6014,12 @@ agent_sandbox() (
   local _help_footer=""
   [[ "${1:-}" == -h || "${1:-}" == --help ]] && _help_footer=1
 
+  # ---- --init: write a project's files from a development model (#225) ----
+  # Profile-independent; never launches the agent, approves nothing.
+  if ((_do_init)); then
+    _as_init "$_init_model" "$_init_env" ${_init_counts[@]+"${_init_counts[@]}"}
+    return $?
+  fi
   # ---- --trust: review and approve the current project's .agent-sandbox ----
   # Profile-independent; never launches the agent.
   if ((_do_trust)); then
