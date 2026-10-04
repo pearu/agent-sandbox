@@ -214,6 +214,37 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   [[ "$output" == *"blocked=False"* ]]
 }
 
+@test "a session with git = refuse: git's smart-HTTP transport is refused to any host, everything else passes (#224)" {
+  sleep 300 &
+  local live=$!
+  local st
+  st=$(awk '{print $22}' "/proc/$live/stat")
+  mkdir -p "$BASE/session.a" "$BASE/session.b"
+  printf '%s %s\n' "$live" "$st" | tee "$BASE/session.a/owner.id" >"$BASE/session.b/owner.id"
+  echo "AAA" >"$BASE/session.a/proxy.token"
+  echo "BBB" >"$BASE/session.b/proxy.token"
+  : >"$BASE/session.a/allow.txt"
+  : >"$BASE/session.b/allow.txt"
+  : >"$BASE/session.a/git-refuse.txt"
+  printf 'github.com\n' >>"$CFG/allowlist.txt"
+  run drive request_ua AAA github.com GET '/x/y.git/info/refs?service=git-upload-pack' ''
+  [[ "$output" == *"blocked=True"* && "$output" == *"git's transport"* ]]
+  run drive request_ua AAA github.com GET '/x/y.git/info/refs?service=git-receive-pack' ''
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_ua AAA github.com POST /x/y.git/git-receive-pack ''
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_ua AAA api.github.com GET /zen 'git/2.43.0' # git's own user agent, any path
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_ua AAA github.com GET /x/y 'Mozilla/5.0' # a page
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua AAA github.com GET /x/y/info/refs '' # not git's service query
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua BBB github.com GET '/x/y.git/info/refs?service=git-upload-pack' 'git/2.43.0' # another session
+  [[ "$output" == *"blocked=False"* ]]
+  kill "$live"
+  wait "$live" 2>/dev/null || true
+}
+
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {
   run drive request blocked.invalid POST /v1/x
   [[ "$output" == *"blocked=True"* ]]

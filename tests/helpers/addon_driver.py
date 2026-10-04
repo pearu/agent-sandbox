@@ -102,6 +102,15 @@ elif scenario == "request_body":
     m.request(f)
     show(blocked=f.response is not None,
          body=(f.response.content.decode() if f.response else "").splitlines()[0] if f.response else "")
+elif scenario == "request_ua":
+    # token host method path user-agent
+    h = _auth(args[0])
+    if len(args) > 4 and args[4]:
+        h["User-Agent"] = args[4]
+    f = Flow(args[1], args[2], args[3], h)
+    m.request(f)
+    show(blocked=f.response is not None,
+         body=(f.response.content.decode() if f.response else "").splitlines()[0] if f.response else "")
 elif scenario == "tunnel_tok":
     # CONNECT carries the token; the inner request does not, and must inherit it.
     c = Flow(args[1], "CONNECT", "-", _auth(args[0]), cid="tc")

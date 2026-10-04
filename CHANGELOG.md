@@ -81,6 +81,8 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
+- **`[net] git = refuse`** (#224), per role: git's smart-HTTP transport refused to every
+  host (pages still load), and `--ssh` refused for the role.
 - **`[net] retrieve-only = on`** (#223), per role with `[net:<role>]`: every request but
   GET and HEAD is refused, but to the profile's own hosts -- a session that reads and
   publishes nothing. A GraphQL query to `api.github.com` passes, a mutation does not.

@@ -266,6 +266,20 @@ def _session_live(token: str | None) -> bool:
     return False
 
 
+def _session_has(token: str | None, name: str) -> bool:
+    """Does the live session whose proxy.token matches `token` have the file `name`?"""
+    if not token or not SESSION_BASE.is_dir():
+        return False
+    for session in sorted(SESSION_BASE.glob("session.*")):
+        tok, f, owner = session / "proxy.token", session / name, session / "owner.id"
+        try:
+            if tok.is_file() and owner.is_file() and tok.read_text().strip() == token and _owner_alive(owner):
+                return f.is_file()
+        except OSError:
+            continue
+    return False
+
+
 def _refuse_anonymous(flow: http.HTTPFlow, host: str, method: str, path: str) -> None:
     """407 with a Basic challenge, for a request that belongs to no live session."""
     _log_blocked(host, method, path, "no session")
@@ -277,6 +291,27 @@ def _refuse_anonymous(flow: http.HTTPFlow, host: str, method: str, path: str) ->
         ).encode(),
         {"Content-Type": "text/plain; charset=utf-8", "Proxy-Authenticate": 'Basic realm="agent-sandbox"'},
     )
+
+
+GIT_SERVICES = ("git-upload-pack", "git-receive-pack")
+
+
+def _is_git_transport(flow: http.HTTPFlow) -> bool:
+    """Git's smart-HTTP transport (#224): the ref advertisement
+    (`/info/refs?service=git-upload-pack|git-receive-pack`), the pack endpoints
+    (`.../git-upload-pack`, `.../git-receive-pack`), or anything git itself sends
+    (`User-Agent: git/...`), whichever host it goes to."""
+    path, _, query = flow.request.path.partition("?")
+    if path.endswith("/info/refs") and any(f"service={svc}" in query for svc in GIT_SERVICES):
+        return True
+    if path.endswith(tuple("/" + svc for svc in GIT_SERVICES)):
+        return True
+    ua = ""
+    try:
+        ua = flow.request.headers.get("User-Agent", "") or ""
+    except Exception:
+        pass
+    return ua.lower().startswith("git/")
 
 
 def _session_lines(token: str | None, name: str) -> list[str]:
@@ -411,6 +446,8 @@ def request(flow: http.HTTPFlow) -> None:
     exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix):
         why = _retrieve_refusal(flow, token)
+        if why is None and _is_git_transport(flow) and _session_has(token, "git-refuse.txt"):
+            why = "git's transport (this session's [net] git = refuse)"
         if why is None:
             return
         _log_blocked(host, flow.request.method, flow.request.path)

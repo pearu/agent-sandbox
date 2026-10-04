@@ -76,6 +76,12 @@ Sections:
   does not stop a secret carried out in a GET; a token that cannot write is the
   answer to that ([recipes.md](recipes.md), the `gh` section). Per role with
   `[net:<role>]`; ignored in `open` and `none`, which have no proxy.
+  `git = allow|refuse` (#224, default allow): `refuse` stops git's smart-HTTP
+  transport to every host -- the ref advertisement (`/info/refs?service=git-upload-pack`
+  or `git-receive-pack`), the pack endpoints, and anything sent with git's own
+  `git/...` user agent -- so the session neither fetches nor pushes over HTTPS, while
+  the same host's pages still load; and it refuses `--ssh` for that role, naming the
+  line. Per role with `[net:<role>]`.
   `mode = proxy|strict|open|none` selects the
   network mode for sessions in this project (an `AGENT_SANDBOX_NET` set in your
   shell wins); approving `mode = open` switches the egress allowlist off for

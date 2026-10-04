@@ -223,6 +223,32 @@ STUB
   [[ "$output" == *"[net] retrieve-only is ignored with AGENT_SANDBOX_NET=none"* ]]
 }
 
+@test "[net:<role>] git = refuse: the session's file, --check's line, and --ssh refused for that role only (#224)" {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*.txt; do printf '== %s\n' "${f##*/}"; done >"${BWRAP_PROBE:?}" 2>&1
+. "${0%/*}/keeper-tail"
+STUB
+  dotfile $'[net:impl-*]\ngit = refuse\n[net:other]\ngit = maybe\n[connect:supervisor]\n'
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role impl-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -qx '== git-refuse.txt' "$H/probe"
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qx '== git-refuse.txt' "$H/probe"
+  run_engine -- asb --role impl-1 --ssh github.com claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--ssh is refused for role 'impl-1': its .agent-sandbox [net] says git = refuse"* ]]
+  [ ! -s "$H/argv" ]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role impl-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [[ "$output" == *"git transport: refused"* ]]
+  run_review
+  [[ "$output" == *"[net] git 'maybe' unknown (allow|refuse)"* ]]
+}
+
 @test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env is ignored, said (#221)" {
   local base="$H/conda" clone="$PROJ/.asb/impl-1/.env"
   mkdir -p "$base/envs/x-dev/conda-meta" "$base/pkgs" "$clone/conda-meta" "$clone/bin"
