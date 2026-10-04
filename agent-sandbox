@@ -4613,16 +4613,16 @@ _as_check_actas() {
     for l in ${_deny_hosts[@]+"${_deny_hosts[@]}"}; do
       [[ "$h" == "${l#.}" || ("$l" == .* && "$h" == *"$l") ]] && return 1
     done
-    {
-      grep -vE '^[[:space:]]*(#|$)' "$(_as_config_dir)/allowlist.txt" 2>/dev/null | sed 's/#.*//; s/[[:space:]]//g'
-      printf '%s\n' ${_allow_hosts[@]+"${_allow_hosts[@]}"} ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"}
-    } | while IFS= read -r e; do
+    # Read whole, then matched: a pipeline that stops at the first match would end its
+    # writer early, and pipefail would read that SIGPIPE as "not reachable" (it did, on CI).
+    local -a hosts=()
+    mapfile -t hosts < <(grep -vE '^[[:space:]]*(#|$)' "$(_as_config_dir)/allowlist.txt" 2>/dev/null | sed 's/#.*//; s/[[:space:]]//g')
+    hosts+=(${_allow_hosts[@]+"${_allow_hosts[@]}"} ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"})
+    for e in ${hosts[@]+"${hosts[@]}"}; do
       [[ -n "$e" ]] || continue
-      [[ "$h" == "${e#.}" || ("$e" == .* && "$h" == *"$e") ]] && {
-        echo y
-        break
-      }
-    done | grep -q y
+      [[ "$h" == "${e#.}" || ("$e" == .* && "$h" == *"$e") ]] && return 0
+    done
+    return 1
   }
   # The GitHub credential: the gh channel's directory, or what a declaration puts there.
   # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
