@@ -164,7 +164,7 @@ fetch is a POST too, so a retrieve-only session cannot fetch over HTTPS either.
 What it does not stop: a secret carried out in a GET -- in a URL, to any allowed host.
 A token that cannot write bounds what such a secret can do ([recipes.md](recipes.md)).
 
-## No git transport: `git = refuse`
+## No git transport: `git = refuse`, or no push: `git = fetch`
 
 A host that serves pages serves git over HTTPS too, so an allowlist that lets a role
 read `github.com` lets it push there. `[net] git = refuse` (#224), per role with
@@ -175,6 +175,12 @@ read `github.com` lets it push there. `[net] git = refuse` (#224), per role with
 may not publish has the repository on disk as its only remote. The same host's pages
 still load. `--ssh` is refused for such a role, since the SSH broker is how git
 reaches a remote over SSH.
+
+`git = fetch` is the narrower line: git fetches over HTTPS as usual, and a push --
+`/info/refs?service=git-receive-pack` and the `git-receive-pack` endpoint -- is refused,
+for a role that reads repositories and must never publish to one. `--ssh` is refused
+too: an SSH connection is a whole transport, and the proxy cannot tell its fetch from
+its push.
 
 ## The proxy CA
 

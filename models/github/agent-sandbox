@@ -1,0 +1,37 @@
+# ---- github: review, triage and fix, one instance per PR or issue number ------
+#   asb --role gh-review-<N> claude    review pull request N
+#   asb --role gh-triage-<N> claude    triage issue N
+#   asb --role gh-fix-<N> claude       implement issue or pull request N
+#   (a fixer that publishes over SSH: asb --ssh github.com --role gh-fix-<N> claude)
+# Each works on the project as you built it, through a layer of its own: its checkout,
+# build, commits and installs never reach the project, your environment or another
+# instance. Delete one when its work is done -- a fixer's after it is published:
+#   asb --delete --role gh-fix-<N>
+[connect:gh-*]
+project = copy-on-write           # the built tree; the work and its rebuild stay in this instance's layer
+{envpath}/ = copy-on-write        # the environment likewise: a rebuilt or installed package lands in the layer
+.asb/scratch/ = own               # its notes and drafts, private to it
+gh = read-only                    # your gh login: it reads, and posts when you say so
+[conda:gh-*]
+prefix = {envpath}                # the environment the project is built in, activated
+[net:gh-*]
+mode = proxy                      # the allowlist applies; research hosts below, add your own
+git = fetch                       # it fetches; a push is refused, and so is --ssh
+[allow:gh-*]
+.readthedocs.io
+.readthedocs.org
+.github.io
+docs.python.org
+.python.org
+# ---- the fixer publishes: on your word ---------------------------------------------
+[net:gh-fix-*]
+git = allow                       # it pushes, over SSH through the broker (--ssh github.com)
+[connect:gh-fix-*]
+~/.ghstackrc = read-only          # ghstack's login, for a project that uses it (skipped if you have none)
+[briefing:gh-review-*]
+file = .asb/roles/gh-review.md
+[briefing:gh-triage-*]
+file = .asb/roles/gh-triage.md
+[briefing:gh-fix-*]
+file = .asb/roles/gh-fix.md
+[connect:default]                 # your own sessions here keep the project's policy

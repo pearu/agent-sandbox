@@ -363,6 +363,7 @@ handles come from them. The format is in [models/README.md](../models/README.md)
 What makes a model a model is that every "may not" in it is either a line of the
 dot-file (enforced) or a sentence of a purpose file (told), and its README says which.
 
-The other model shipped is [pr-review](../models/pr-review/README.md): one reviewer per
-pull request, `asb --role pr-reviewer-<N> claude`, working on your built checkout
-through a layer of its own, and posting only when you say so.
+The other model shipped is [github](../models/github/README.md): review, triage and fix,
+one instance per pull request or issue (`asb --role gh-review-1234 claude`), each
+working on your built checkout through a layer of its own, and posting only when you
+say so.

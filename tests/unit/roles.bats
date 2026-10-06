@@ -246,7 +246,28 @@ STUB
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role impl-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
   [[ "$output" == *"git transport: refused"* ]]
   run_review
-  [[ "$output" == *"[net] git 'maybe' unknown (allow|refuse)"* ]]
+  [[ "$output" == *"[net] git 'maybe' unknown (allow|fetch|refuse)"* ]]
+}
+
+@test "[net:<role>] git = fetch: the session's file, --check's line, and --ssh refused (#github)" {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*.txt; do printf '== %s\n' "${f##*/}"; done >"${BWRAP_PROBE:?}" 2>&1
+. "${0%/*}/keeper-tail"
+STUB
+  dotfile $'[net:rev-*]\ngit = fetch\n[connect:*]\n'
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role rev-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -qx '== git-push-refuse.txt' "$H/probe"
+  run ! grep -qx '== git-refuse.txt' "$H/probe"
+  run_engine -- asb --role rev-1 --ssh github.com claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--ssh is refused for role 'rev-1': its .agent-sandbox [net] says git = fetch"* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role rev-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [[ "$output" == *"git transport: fetch only"* ]]
 }
 
 @test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env is ignored, said (#221)" {

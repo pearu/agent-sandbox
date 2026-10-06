@@ -794,10 +794,14 @@ _as_allow_setup() {
     printf '%s\n' ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"} >"$_session_dir/retrieve-only.txt"
     _as_info "retrieve-only: GET and HEAD only, but to the profile's own hosts"
   fi
-  # [net] git = refuse (#224): the file's presence refuses git's HTTPS transport.
+  # [net] git = refuse (#224): the file's presence refuses git's HTTPS transport;
+  # git = fetch: its push only.
   if ((${_git_refuse:-0})); then
     : >"$_session_dir/git-refuse.txt"
     _as_info "git transport: refused"
+  elif ((${_git_fetch_only:-0})); then
+    : >"$_session_dir/git-push-refuse.txt"
+    _as_info "git transport: fetch only"
   fi
   ((${#_allow_hosts[@]})) \
     && _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
@@ -3228,6 +3232,8 @@ _as_briefing_write() {
   esac
   if ((${_git_refuse:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
     egress="$egress GIT TRANSPORT REFUSED: git cannot fetch or push over HTTPS from here, to any host, and there is no SSH; the repository on disk is your only remote."
+  elif ((${_git_fetch_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
+    egress="$egress GIT FETCHES ONLY: git can fetch over HTTPS (use an https:// URL); a push is refused, and there is no SSH."
   fi
   if ((${_retrieve_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
     egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
@@ -4021,8 +4027,8 @@ _as_trust_notes() {
     *) _as_msg ".agent-sandbox: [net] retrieve-only '$_df_net_retrieve_only' unknown (on|off); ignoring" ;;
   esac
   case "$_df_net_git" in
-    "" | allow | refuse) ;;
-    *) _as_msg ".agent-sandbox: [net] git '$_df_net_git' unknown (allow|refuse); ignoring" ;;
+    "" | allow | fetch | refuse) ;;
+    *) _as_msg ".agent-sandbox: [net] git '$_df_net_git' unknown (allow|fetch|refuse); ignoring" ;;
   esac
   case "$_df_seccomp_mode" in
     "" | on | 1) ;;
@@ -4364,7 +4370,8 @@ _as_dotfile_line() {
           # Retrieve only (#223): every method but GET and HEAD refused to every host but
           # the profile's own; a GraphQL query passes, a mutation does not.
           retrieve-only) _df_net_retrieve_only="$cv" ;;
-          # Git's transport (#224): `refuse` stops git over HTTPS to any host, and --ssh.
+          # Git's transport (#224): `refuse` stops git over HTTPS to any host, and --ssh;
+          # `fetch` refuses only a push (and --ssh).
           git) _df_net_git="$cv" ;;
           host-port) _df_net_host_port+=("$cv") ;;
           agent-port) _df_net_agent_port+=("$cv") ;;
@@ -4573,6 +4580,7 @@ _as_check_plan() {
         "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
     fi
     ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host, and --ssh\n'
+    ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused, and --ssh\n'
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
@@ -4668,10 +4676,12 @@ _as_check_actas() {
     fi
     if ((${_git_refuse:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
       verdict+="; git transport refused"
+    elif ((${_git_fetch_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
+      verdict+="; git fetches but cannot push"
     else
       verdict+="; git transport allowed"
     fi
-    if [[ "$net" == proxy ]] && ((${_retrieve_only:-0} || ${_git_refuse:-0})); then
+    if [[ "$net" == proxy ]] && ((${_retrieve_only:-0} || ${_git_refuse:-0} || ${_git_fetch_only:-0})); then
       verdict+=" (proxy mode: binds the tools that use the proxy; strict binds every tool)"
     fi
   fi
@@ -4679,8 +4689,8 @@ _as_check_actas() {
     printf '\nCan act as you at  (an outside service this role can reach, and a credential for it)\n'
     printf '  %-20s %s\n' "your agent's API" "yes -- your login, the identity every sandbox runs as"
     printf '  %-20s %s\n' GitHub "$verdict"
-    if ((${_git_refuse:-0})); then
-      v="no -- --ssh is refused for this role ([net] git = refuse)"
+    if ((${_git_refuse:-0} || ${_git_fetch_only:-0})); then
+      v="no -- --ssh is refused for this role ([net] git = $([[ ${_git_refuse:-0} == 1 ]] && echo refuse || echo fetch))"
     elif [[ "$net" == none ]]; then
       v="no -- no network"
     else
@@ -5135,10 +5145,13 @@ _as_init() {
     esac
   }
   local rn rk k
-  local -A kind=() count=() initial=()
+  local -A kind=() count=() initial=() handled=()
   for i in "${!heads[@]}"; do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
     [[ -n "${rn:-}" ]] || continue
+    # A role with numbered instances, or a single one, gets handles; one named only by
+    # globs (`[x:gh-*]`, `[x:gh-fix-*]`) has its instances named at launch, and none.
+    [[ "$rk" == group ]] || handled[$rn]=1
     # `[x:default]` keeps the unnamed role's policy once role sections exist: written like
     # any section, but no role of the model (no handle, purpose file or index row).
     [[ "$rn" == default ]] && continue
@@ -5155,6 +5168,7 @@ _as_init() {
     return 1
   }
   for rn in "${roles[@]}"; do
+    [[ -n "${handled[$rn]:-}" ]] || continue
     k="${rn:0:1}"
     k="${k^^}"
     if [[ -n "${initial[$k]:-}" ]]; then
@@ -6304,8 +6318,9 @@ agent_sandbox() (
 
   # ---- knobs (AGENT_SANDBOX_*) ----
   local _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
-  local _retrieve_only=0 # [net] retrieve-only (#223)
-  local _git_refuse=0    # [net] git = refuse (#224)
+  local _retrieve_only=0  # [net] retrieve-only (#223)
+  local _git_refuse=0     # [net] git = refuse (#224)
+  local _git_fetch_only=0 # [net] git = fetch: a push refused
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_briefing="${AGENT_SANDBOX_BRIEFING:-}"
@@ -6476,8 +6491,9 @@ agent_sandbox() (
         off | 0) _retrieve_only=0 ;;
       esac
       case "$_df_net_git" in
-        refuse) _git_refuse=1 ;;
-        allow) _git_refuse=0 ;;
+        refuse) _git_refuse=1 _git_fetch_only=0 ;;
+        fetch) _git_refuse=0 _git_fetch_only=1 ;;
+        allow) _git_refuse=0 _git_fetch_only=0 ;;
       esac
       # seccomp: an explicit AGENT_SANDBOX_SECCOMP in your shell wins over the
       # file. A project can only ask for the filter or decline it; it cannot
@@ -6628,8 +6644,10 @@ agent_sandbox() (
   _as_role_resolve || return 1
   # GIT TRANSPORT REFUSED (#224) means SSH too: the broker is how git reaches a remote
   # over SSH, so a role whose policy refuses git does not get it.
-  if ((_git_refuse && _ssh_want)); then
-    _as_msg "--ssh is refused for role '$_role': its .agent-sandbox [net] says git = refuse, which closes SSH as well as git over HTTPS."
+  # So does FETCH ONLY: SSH is a whole transport, which the proxy's fetch/push line
+  # cannot see into.
+  if (((_git_refuse || _git_fetch_only) && _ssh_want)); then
+    _as_msg "--ssh is refused for role '$_role': its .agent-sandbox [net] says git = $( ((_git_refuse)) && echo refuse || echo fetch), which closes SSH as well as $( ((_git_refuse)) && echo 'git over HTTPS' || echo 'a push over HTTPS')."
     return 1
   fi
   local _pb
@@ -7417,8 +7435,8 @@ agent_sandbox() (
         && _as_msg "[deny] is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
       ((_retrieve_only)) \
         && _as_msg "[net] retrieve-only is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
-      ((_git_refuse)) && [[ "${_knob_net}" == open ]] \
-        && _as_msg "[net] git = refuse is ignored with AGENT_SANDBOX_NET=open (no egress proxy in that mode)"
+      ((_git_refuse || _git_fetch_only)) && [[ "${_knob_net}" == open ]] \
+        && _as_msg "[net] git = $( ((_git_refuse)) && echo refuse || echo fetch) is ignored with AGENT_SANDBOX_NET=open (no egress proxy in that mode)"
       ;;
     *) _as_allow_setup || {
       _as_session_cleanup
