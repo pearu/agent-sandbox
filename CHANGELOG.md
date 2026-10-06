@@ -16,10 +16,10 @@ names are gone; there are no aliases for removed names before 1.0.
   the global allowlist. A session's `[deny]` and `retrieve-only` hang on that token, and
   a client that did not send it -- git, until challenged -- or an agent that dropped it
   from the proxy URL escaped both. A host tool pointed at the proxy by hand is refused.
-- **A gh login in `~/.claude/gh` is no longer visible to every project** (#88): it is the
-  `gh` channel, the role's own (empty) under every preset but `native`. `gh = read-only`
-  in `[connect]` hands it to a sandbox, with `GH_CONFIG_DIR` pointed there, so `gh` is
-  logged in with nothing exported; forwarding `GH_CONFIG_DIR` is refused, naming the line.
+- **A gh login in `~/.claude/gh` is no longer visible to every project** (#88): it is
+  blanked. gh is the `gh` channel, at `~/.config/gh` where `gh auth login` keeps it: the
+  role's own (empty) under every preset but `native`, and `gh = read-only` in `[connect]`
+  hands your login to a sandbox, live. `gh = read-only outside:PATH` gives another one.
 - **The sandbox is invoked explicitly** (#151): `asb [OPTIONS] CMD [AGENT OPTIONS]`, with
   `agent-sandbox` the canonical name. Nothing shadows `claude` any more: `claude` is
   Claude Code itself, unsandboxed, everywhere. Engine options come before the command.

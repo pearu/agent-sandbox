@@ -1171,9 +1171,43 @@ _as_connect_parse() {
         return 1
         ;;
     esac
+  elif [[ "$src_given" == outside:?* ]]; then
+    # ANOTHER SOURCE FOR A CHANNEL: `gh = read-only outside:~/.gh-read` -- the channel's
+    # one path shows that path instead of yours. Checked as a declaration's outside is;
+    # for a channel of one path only, since one source cannot stand for several.
+    local _cp _cn=0 _osrc
+    for _cp in ${profile_channels[@]+"${profile_channels[@]}"}; do
+      [[ "${_cp%%$'\t'*}" == "$ch" ]] && _cn=$(($(awk -F'\t' '{print NF-1}' <<<"$_cp")))
+    done
+    if ((_cn != 1)); then
+      _as_msg "connect ($where): '$ch' has $_cn paths; an outside source names one, so it is for a channel of one path."
+      return 1
+    fi
+    [[ "$mode" != own ]] || {
+      _as_msg "connect ($where): '$ch = own $src_given' -- own takes nothing from outside; drop the source, or pick a mode that reads it."
+      return 1
+    }
+    _osrc="${src_given#outside:}"
+    case "$_osrc" in
+      \~ | \~/*) _osrc="$HOME${_osrc#\~}" ;;
+      /*) ;;
+      *)
+        _as_msg "connect ($where): '$src_given' is relative; an outside source is absolute or under '~'."
+        return 1
+        ;;
+    esac
+    _osrc="$(realpath -m -s -- "$_osrc")"
+    local _oc _prot_what _prot_path _prot_how
+    for _oc in "$_osrc" "$(readlink -f -- "$_osrc" 2>/dev/null || printf '%s' "$_osrc")"; do
+      if [[ "$_oc" == / || "$_oc" == "$HOME" || "$HOME" == "$_oc"/* ]] || _as_path_protected "$_oc" "$mode"; then
+        _as_msg "connect ($where): refusing '$src_given' for '$ch' ('$_oc' is /, \$HOME, a parent of it, or a protected path)."
+        return 1
+      fi
+    done
+    outside="$_osrc"
   else
     [[ "$src" == native ]] || {
-      _as_msg "connect ($where): source '$src' is not one this engine knows: 'native', or a sandbox's store, 'sandbox:[PROJECT][@ROLE]'"
+      _as_msg "connect ($where): source '$src' is not one this engine knows: 'native', 'outside:<path>' (a channel of one path), or a sandbox's store, 'sandbox:[PROJECT][@ROLE]'"
       return 1
     }
   fi
@@ -1228,6 +1262,7 @@ _as_connect_parse() {
   _connect_where["$ch"]="$where"
   _connect_scope["$ch"]="$scope"
   if [[ -n "$sbx" ]]; then _connect_sandbox["$ch"]="$sbx"; else unset '_connect_sandbox[$ch]'; fi
+  if [[ -n "$outside" && "$ch" != */* ]]; then _connect_src["$ch"]="$outside"; elif [[ "$ch" != */* ]]; then unset '_connect_src[$ch]'; fi
   return 0
 }
 
@@ -1490,6 +1525,28 @@ _as_channel_source() { # DEST -> the path outside it follows
     }
   done
   printf '%s' "$1"
+}
+# _as_channel_login_notes -- for each connected channel whose profile names a `login`
+# file that its source lacks, the profile's sentence saying what to do; one per line.
+# Not under native, and not for a channel at `own` (it carries nothing of yours).
+_as_channel_login_notes() {
+  local e ch file note path src mode
+  _as_preset_is_native && return 0
+  for e in ${profile_channel_login[@]+"${profile_channel_login[@]}"}; do
+    IFS=$'\t' read -r ch file note <<<"$e"
+    mode="${_connect_mode[$ch]:-own}"
+    [[ "$mode" == own ]] && continue
+    path=""
+    local line
+    for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+      [[ "${line%%$'\t'*}" == "$ch" ]] || continue
+      path="${line#*$'\t'}" path="${path%%$'\t'*}" path="${path#*:}"
+    done
+    [[ -n "$path" ]] || continue
+    src="${_connect_src[$ch]:-$(_as_channel_source "$path")}"
+    [[ -e "$src/$file" ]] || printf '%s: %s\n' "$ch" "$note"
+  done
+  return 0
 }
 # _as_channel_vendor_file CHANNEL FILE -- is FILE (relative to the channel's source)
 # under a path the profile says the agent itself writes, on both sides, as a matter of
@@ -1814,6 +1871,8 @@ _as_connect_bind_channel() {
   # (empty), or `-` for one that is not a single path.
   _rec_mode="$mode" _rec_store=""
   src="$(_as_channel_source "$path")"
+  # `outside:PATH` on the [connect] line: another source for this channel's one path.
+  [[ -n "${_connect_src[$ch]:-}" ]] && src="${_connect_src[$ch]}"
   # Another sandbox's store (#200): resolved now, from that role's last launch.
   if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
     _as_sandbox_store "${_connect_sandbox[$ch]}" "$path" "$ch" || return 1
@@ -1955,6 +2014,9 @@ _as_connect_bind_channel() {
       _rec_store="$slot"
       ;;
     read-only)
+      if [[ ! -e "$src" && "$kind" == dir && " ${profile_channel_create[*]-} " == *" $ch "* ]]; then
+        mkdir -p -- "$(dirname -- "$src")" && mkdir -m 700 -- "$src" || return 1
+      fi
       if [[ -e "$src" ]]; then
         [[ "$src" != "$path" && "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--ro-bind "$src" "$path")
@@ -3318,6 +3380,9 @@ _as_briefing_write() {
     printf 'session writes is kept in this role'"'"'s own state, so your own undo history\n'
     printf 'and prompt history survive a resume in this role.\n'
     printf '\n## Syscall filter\n\nseccomp is %s.\n' "$sec"
+    local _lnotes
+    _lnotes="$(_as_channel_login_notes)"
+    [[ -n "$_lnotes" ]] && printf '\n## Not set up yet\n\n%s\n' "$_lnotes"
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '\n## Your role: %s\n\nFrom %s, read-only here:\n\n' "$_role" "$_purpose_as"
       cat -- "$_purpose_file"
@@ -3334,8 +3399,10 @@ _as_briefing_write() {
     printf 'One clear request costs less than twenty workarounds.\n'
   } >"$md" || return 1
 
-  local short
+  local short _lnshort
+  _lnshort="$(_as_channel_login_notes | paste -sd' ')"
   short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If you need something blocked, stop and ask the user to add it to .agent-sandbox and re-run \`asb --trust\` -- you cannot widen this yourself."
+  [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --
   # not to a subagent, which is the role's tool, not the role.
@@ -3775,6 +3842,20 @@ _as_profile_dotfile() {
       profile_channel_env+=("$name"$'\t'"${BASH_REMATCH[1]}")
       continue
     fi
+    # `create = yes`: a missing source directory is made on the host (mode 700) when the
+    # channel is connected, rather than shown as an empty mount -- so what the user
+    # writes there later (a `gh auth login`) lands where the role reads, live.
+    if [[ "$line" =~ ^[[:space:]]*create[[:space:]]*=[[:space:]]*yes[[:space:]]*$ ]]; then
+      profile_channel_create+=("$name")
+      continue
+    fi
+    # `login = FILE -- NOTE`: the file whose absence means the channel carries nothing
+    # yet, and the one sentence that says what to do; said at launch, by --check and in
+    # the briefing when the channel is connected and the file is missing.
+    if [[ "$line" =~ ^[[:space:]]*login[[:space:]]*=[[:space:]]*([^[:space:]]+)[[:space:]]+--[[:space:]]*(.*)$ ]]; then
+      profile_channel_login+=("$name"$'\t'"${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}")
+      continue
+    fi
     key="${line%%=*}" toks=""
     [[ "$line" == *=* ]] && toks="${line#*=}"
     key="${key#"${key%%[![:space:]]*}"}"
@@ -3936,6 +4017,7 @@ _as_profile_facts_dotfile() {
   local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
+  local -a profile_channel_create=() profile_channel_login=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
 }
 
@@ -4592,6 +4674,7 @@ _as_check_plan() {
       mode="${_connect_mode[$ch]:-}"
       [[ -n "$mode" ]] || continue
       source="native"
+      [[ -n "${_connect_src[$ch]:-}" ]] && source="outside:$(_as_tilde "${_connect_src[$ch]}")"
       [[ -n "${_connect_sandbox[$ch]:-}" ]] && source="${_connect_sandbox[$ch]##*$'\t'}"
       [[ -n "${_connect_scope[$ch]:-}" ]] && mode="$mode ${_connect_scope[$ch]}"
       printf '  %-28s %-15s %-24s %s\n' "$ch" "$mode" "$source" "${_connect_where[$ch]}"
@@ -4646,7 +4729,7 @@ _as_check_actas() {
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     [[ "${line%%$'\t'*}" == gh ]] || continue
     ghp="${line#*$'\t'}" ghp="${ghp%%$'\t'*}" ghp="${ghp#*:}"
-    ghmode="${_connect_mode[gh]:-}" ghsrc="$ghp"
+    ghmode="${_connect_mode[gh]:-}" ghsrc="${_connect_src[gh]:-$ghp}"
   done
   if [[ -n "$ghp" && -n "${_connect_key[$ghp]:-}" ]]; then
     ghmode="${_connect_mode[$ghp]}" ghsrc="${_connect_src[$ghp]:-$ghp}"
@@ -4663,7 +4746,9 @@ _as_check_actas() {
       *TOKEN* | *KEY* | *SECRET* | *PASSWORD* | *CREDENTIAL*) [[ " ${other[*]-} " == *" $n "* ]] || other+=("$n") ;;
     esac
   done
-  if ((${#creds[@]} == 0)); then
+  if ((${#creds[@]} == 0)) && [[ -n "$ghmode" && "$ghmode" != own ]] && ! _as_preset_is_native; then
+    verdict="no -- gh is connected but not logged in: run \`gh auth login\` on the host; a running role sees it at once"
+  elif ((${#creds[@]} == 0)); then
     verdict="no -- no GitHub credential here (gh is this role's own; no GH_TOKEN forwarded)"
   elif ! _reach github.com && ! _reach api.github.com; then
     verdict="no -- a credential ($(IFS=';' && printf '%s' "${creds[*]}")), but no GitHub host is reachable"
@@ -4971,6 +5056,7 @@ _as_check_binds() {
           mode="${_connect_mode[$ch]:-}"
           [[ -n "$mode" ]] || continue
           s="$(_as_channel_source "$path")"
+          [[ -n "${_connect_src[$ch]:-}" ]] && s="${_connect_src[$ch]}"
           seen=""
           if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
             local _sbx_src=""
@@ -5417,6 +5503,9 @@ _as_init() {
     elif grep -q '^# \[conda' "$df"; then
       printf '  - the [conda] sections written without --env are still commented out: uncomment them,\n'
       printf '    with your environment'"'"'s name for ENV\n'
+    fi
+    if grep -qE '^[[:space:]]*gh[[:space:]]*=[[:space:]]*read-(only|write)' "$df" && [[ ! -f "$HOME/.config/gh/hosts.yml" ]]; then
+      printf '  - gh auth login            the roles read GitHub with your gh login, and you have none yet\n'
     fi
     ((wrote)) && printf '  - %s --trust            the review, then the approval\n' "$invoked"
     ((${#insts[@]})) && printf '  - %s --check --role NAME  what a role has (%s)\n' "$invoked" "$(for a in "${insts[@]}"; do printf '%s ' "${a%%$'\t'*}"; done | sed 's/ $//')"
@@ -6247,11 +6336,13 @@ agent_sandbox() (
   # From the profile's dot-file (#181): what its [agent] hide blanks, and the hosts its
   # [allow] opens for every launch (the session allowlist, beside --allow's).
   local -a profile_hide=() profile_visible=() _profile_allow_hosts=() profile_channel_start=() profile_channel_templates=()
-  local -a profile_channel_reach=() # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
-  local -a profile_channel_env=()   # [channel:<name>] env: "CHANNEL<TAB>NAME" (#88)
-  local profile_base=""             # [agent] base: the agent's state directory (#175)
-  local profile_base_env=""         # [agent] base-env: the variable the agent reads it from
-  local profile_base_from=""        # the variable that moved it, when one did (#190)
+  local -a profile_channel_reach=()  # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
+  local -a profile_channel_env=()    # [channel:<name>] env: "CHANNEL<TAB>NAME" (#88)
+  local -a profile_channel_create=() # [channel:<name>] create = yes: its missing source is made
+  local -a profile_channel_login=()  # [channel:<name>] login: "CHANNEL<TAB>FILE<TAB>NOTE"
+  local profile_base=""              # [agent] base: the agent's state directory (#175)
+  local profile_base_env=""          # [agent] base-env: the variable the agent reads it from
+  local profile_base_from=""         # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
@@ -6774,6 +6865,10 @@ agent_sandbox() (
     fi
   fi
   _as_connect_report
+  local _ln
+  while IFS= read -r _ln; do
+    [[ -n "$_ln" ]] && _as_msg "$_ln"
+  done < <(_as_channel_login_notes)
 
   # ---- --check: what the file means, then exit, before anything is started ----
   if ((_check_plan)); then

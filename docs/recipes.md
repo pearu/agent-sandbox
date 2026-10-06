@@ -81,39 +81,39 @@ environment variable. That is a real cost and the reason this is not the
 default. If you would rather not, run `gh` yourself on the host; only the
 outward calls need you.
 
-**Or a gh login kept for sandboxes** (#88): log gh in once into `~/.claude/gh`
-(`GH_CONFIG_DIR=~/.claude/gh gh auth login`), and ask for it per project:
+**Or your gh login, asked for per project:** log in on the host as usual
+(`gh auth login`), and give it to the project's sessions:
 
 ```ini
 [connect]
 gh = read-only
 ```
 
-The sandbox binds it read-only and points `GH_CONFIG_DIR` there, so `gh` inside is
-logged in with nothing exported; without the line a sandbox gets an empty store and
-`gh` is logged out. The same cost applies: the token is readable inside.
+`gh` inside is then logged in as you, read-only: your `~/.config/gh`, live, so a login
+made on the host while a session runs is seen at once. Without the line a sandbox gets
+an empty `~/.config/gh` of its own and `gh` is logged out. The same cost applies: the
+token is readable inside.
 
 **A token that cannot write.** A gh token that reads issues can write them too, and
 nothing but the network decides which it does. A **fine-grained personal access
 token** with read-only permissions (metadata, contents, issues, pull requests),
 limited to the repositories you work on, bounds that wherever the token ends up,
-because GitHub enforces it. Keep it in a gh directory of its own, outside
-`~/.claude` (where every project's sandbox would see it):
+because GitHub enforces it. Keep it in a gh directory of its own:
 
     GH_CONFIG_DIR=~/.gh-read gh auth login --with-token < the-token
 
-and give it to the roles that only read, at the channel's path, keeping your full
-login for the one that publishes:
+and give it to the roles that only read, keeping your own login for the one that
+publishes:
 
 ```ini
 [connect]
-~/.claude/gh/ = read-only outside:~/.gh-read
+gh = read-only outside:~/.gh-read
 [connect:supervisor]
-~/.claude/gh/ = read-only
+gh = read-only
 ```
 
-`asb --check --role NAME` shows which directory each role's `~/.claude/gh` is. When
-the token expires, log in again.
+`asb --check --role NAME` shows which login each role's `gh` is. When the token
+expires, log in again.
 
 ## pip, npm, conda, and other package installs
 

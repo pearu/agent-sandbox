@@ -191,7 +191,7 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
     >"$t/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
 }
 
-@test "daemon/ is hidden by default; ide/ is not, and gh/ is a channel rather than a hidden path (#88)" {
+@test "daemon/ is hidden by default, and so is a gh/ left by the first gh channel; ide/ is not" {
   mkdir -p "$C/daemon" "$C/gh" "$C/ide"
   printf 'control-key\n' >"$C/daemon/control.key"
   run_engine -- asb claude --version
@@ -200,8 +200,9 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
   # channel with no in-sandbox use
   argv_has --tmpfs "$C/daemon"
   # ide/ exists to make Claude Code work from inside a sandbox, so hiding it by
-  # default would break the feature it was created for
-  run ! argv_has --tmpfs "$C/gh"
+  # default would break the feature it was created for; gh/ is a login the gh channel
+  # no longer uses (it is ~/.config/gh now)
+  argv_has --tmpfs "$C/gh"
   run ! argv_has --tmpfs "$C/ide"
 }
 
@@ -238,12 +239,12 @@ trust_proj() { # record approval of $PROJ/.agent-sandbox the way --trust would
 }
 
 @test "a section named for another profile is ignored, not applied" {
-  mkdir -p "$C/gh"
-  printf '[codex]\nhide = gh\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$C/ide"
+  printf '[codex]\nhide = ide\n' >"$PROJ/.agent-sandbox"
   trust_proj
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  run ! argv_has --tmpfs "$C/gh"
+  run ! argv_has --tmpfs "$C/ide"
   [[ "$output" != *"[codex]"* ]]
   run_review # which reads every profile there is, and there is no codex
   [[ "$output" == *"ignoring unknown section [codex]"* ]]

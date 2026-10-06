@@ -205,9 +205,8 @@ API, GitHub, SSH), and every path it may write.
 
 ## 7. GitHub: reading for everyone, publishing for the Supervisor
 
-The roles read issues and pull requests with `gh`, using the gh login you keep in
-`~/.claude/gh` (`GH_CONFIG_DIR=~/.claude/gh gh auth login`); the model's dot-file gives
-it to every role with `gh = read-only`. What keeps every role but the Supervisor from
+The roles read issues and pull requests with `gh`, using your gh login (`gh auth login`
+on the host); the model's dot-file gives it to every role with `gh = read-only`. What keeps every role but the Supervisor from
 writing with it is the network: `retrieve-only` lets `gh` read and refuses what writes
 -- a GraphQL query passes, a mutation does not -- and `git = refuse` stops git's
 transport.
@@ -219,9 +218,9 @@ that wherever it ends up. Give it to the reading roles and keep your full login 
 the Supervisor:
 
     [connect]
-    ~/.claude/gh/ = read-only outside:~/.gh-read
+    gh = read-only outside:~/.gh-read
     [connect:supervisor]
-    ~/.claude/gh/ = read-only
+    gh = read-only
 
 The setup is in [recipes.md](recipes.md) (the `gh` section).
 
@@ -247,7 +246,7 @@ project = read-only               # the working tree, read-only; the Supervisor 
 ./.git/ = own                     # history is its owner's: main's is the Supervisor's...
 .asb/git/ = own                   # ...and a clone's its Implementer's
 gh = read-only                    # your gh login, for reading issues and pull requests
-# hardening, optional (section 7): ~/.claude/gh/ = read-only outside:~/.gh-read
+# hardening, optional (section 7): gh = read-only outside:~/.gh-read
 [net]                             # every role reads the web and GitHub, and publishes nothing...
 mode = strict                     # ...through the proxy only: under `proxy` a tool can ignore it
 retrieve-only = on

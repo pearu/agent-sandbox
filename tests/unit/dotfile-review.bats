@@ -301,8 +301,8 @@ check_role() {
 }
 
 @test "--check says where the role can act as you: none, a gh login, read only, git refused, ssh (#226)" {
-  mkdir -p "$H/home/.claude/gh" "$H/home/.config/agent-sandbox"
-  : >"$H/home/.claude/gh/hosts.yml"
+  mkdir -p "$H/home/.config/gh" "$H/home/.config/agent-sandbox"
+  : >"$H/home/.config/gh/hosts.yml"
   printf 'github.com\napi.github.com\n' >"$H/home/.config/agent-sandbox/allowlist.txt"
   printf '[env]\nMY_API_KEY\n[connect:writer]\ngh = read-only\n[connect:reader]\ngh = read-only\n[net:reader]\nretrieve-only = on\ngit = refuse\n[connect:plain]\n' >"$PROJ/.agent-sandbox"
   check_role plain
@@ -312,7 +312,7 @@ check_role() {
   [[ "$output" =~ SSH\ +only\ the\ hosts\ a\ launch\ names\ with\ --ssh ]]
   [[ "$output" =~ MY_API_KEY\ +forwarded\ from\ your\ shell ]]
   check_role writer
-  [[ "$output" =~ GitHub\ +YES\ --\ a\ gh\ login\ \(~/.claude/gh,\ read-only\),\ writes\ included\;\ git\ transport\ allowed ]]
+  [[ "$output" =~ GitHub\ +YES\ --\ a\ gh\ login\ \(~/.config/gh,\ read-only\),\ writes\ included\;\ git\ transport\ allowed ]]
   check_role reader
   [[ "$output" =~ GitHub\ +read\ only\ --\ a\ gh\ login.*retrieve-only\ refuses\ every\ write.*git\ transport\ refused ]]
   [[ "$output" =~ SSH\ +no\ --\ --ssh\ is\ refused\ for\ this\ role ]]
@@ -404,7 +404,7 @@ check_role() {
   [[ "$u" == *"unknown.json"* ]]
   [[ "$u" == *".hidden-state"* ]]
   [[ "$u" == *"cache/ -- only changelog.md is classified"* ]]
-  [[ "$u" != *"gh/"* ]]           # visible
+  [[ "$u" != *"gh/"* ]]           # hidden: a login left there by the first gh channel
   [[ "$u" != *"debug/"* ]]        # hidden by the profile
   [[ "$u" != *"settings.json"* ]] # a channel
   [[ "$u" != *"newdir"* ]]        # hidden by the project's [claude] hide
