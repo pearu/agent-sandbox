@@ -167,6 +167,20 @@ escalation -- the user already has full access to their own host, and types the
 command themselves -- but the trust review's scope is properly read as "this
 policy, for what I run in this project", not "this policy, for the agent".
 
+### The host's GPUs
+
+The sandbox's `/dev` is bubblewrap's minimal one (`--dev`), so a GPU is passed in on
+purpose: its device nodes are bound with `--dev-bind` (`/dev/nvidia*`, `/dev/kfd`,
+`/dev/dri`; `AGENT_SANDBOX_GPU_DEVICES` names others), and `/sys` read-only, because the
+NVIDIA management library reads the devices' PCI records there -- without it, measured,
+"GPU access blocked by the operating system". On by default, since an agent that builds
+and tests GPU code needs it; `[gpu] mode = off`, per role, keeps all of it out. Measured
+2026-10-06 on a host with two NVIDIA GPUs: `nvidia-smi` lists both, the CUDA driver API
+initialises, makes a context and allocates, and a PyTorch CUDA matmul runs, with the
+default syscall filter on; without the nodes, "no CUDA GPUs are available". What it
+grants: the GPUs themselves (their memory, compute, and whatever the driver exposes
+through its ioctls), and a read-only view of the host's hardware description in `/sys`.
+
 ## Residual risks
 
 Stated plainly. These are what the adversary above can still do.

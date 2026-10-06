@@ -2453,6 +2453,10 @@ _as_keeper_policy() {
   [[ "$v" == 1 ]] && v=on
   [[ "$v" == 0 ]] && v=off
   if ((all)) || [[ -n "${AGENT_SANDBOX_BRIEFING:-}" ]]; then _kp briefing "$v" AGENT_SANDBOX_BRIEFING; fi
+  v="${_knob_gpu:-on}"
+  [[ "$v" == 1 ]] && v=on
+  [[ "$v" == 0 ]] && v=off
+  if ((all)) || [[ -n "${AGENT_SANDBOX_GPU:-}" ]]; then _kp gpu "$v" AGENT_SANDBOX_GPU; fi
   if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_WRITE:-}" ]]; then _kp conda-write "${_knob_conda_write:-}" AGENT_SANDBOX_CONDA_WRITE; fi
   if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_PKGS:-}" ]]; then _kp conda-pkgs "${_knob_conda_pkgs:-}" AGENT_SANDBOX_CONDA_PKGS; fi
   local -a l=()
@@ -3372,6 +3376,11 @@ _as_briefing_write() {
     printf '\n## Filesystem\n\n'
     printf -- '- writable: %s\n' "$rw_line"
     printf -- '- extra read-only paths: %s\n' "$ro_line"
+    if ((${#_gpu_nodes[@]})); then
+      printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
+    else
+      printf -- '- no GPU devices (none on the host, or [gpu] mode = off)\n'
+    fi
     printf -- '- everything else, /usr and /etc included, is read-only\n'
     printf -- '- $HOME is a fresh tmpfs; the host'"'"'s home directory is not here\n'
     printf '\n## Other projects\n\n%s.\n' "$mem_line"
@@ -3632,7 +3641,7 @@ _as_trust_digest() {
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
-  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
   local -a files=()
   mapfile -t files < <(_as_briefing_files "$proj")
@@ -3711,7 +3720,7 @@ _as_dotfile_briefing_files() {
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
-  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
   _as_briefing_files "$1"
 }
@@ -3750,7 +3759,7 @@ _as_profile_dotfile() {
   local -a _df_profile_names=() words=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
-  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
@@ -4070,7 +4079,7 @@ _as_trust_notes() {
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
-  local _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
@@ -4120,6 +4129,10 @@ _as_trust_notes() {
   case "$_df_briefing_mode" in
     "" | on | 1 | off | 0) ;;
     *) _as_msg ".agent-sandbox: [briefing] mode '$_df_briefing_mode' unknown (on|off); ignoring" ;;
+  esac
+  case "$_df_gpu_mode" in
+    "" | on | 1 | off | 0) ;;
+    *) _as_msg ".agent-sandbox: [gpu] mode '$_df_gpu_mode' unknown (on|off); ignoring" ;;
   esac
   for pair in ${_df_profile_pairs[@]+"${_df_profile_pairs[@]}"}; do
     n="${pair%%$'\t'*}" k="${pair#*$'\t'}" over=""
@@ -4329,7 +4342,7 @@ _as_dotfile_parse() {
         sglob="${section#*:}"
         section="${section%%:*}"
         case "$section" in
-          sandbox | connect | allow | deny | env | conda | net) _df_role_globs+=("$sglob") ;;
+          sandbox | connect | allow | deny | env | conda | net | gpu) _df_role_globs+=("$sglob") ;;
           briefing)
             # [briefing:<glob>] (#222): those roles are briefed from a purpose file,
             # `file = PATH` or .asb/roles/{role}.md, present even with no line.
@@ -4354,7 +4367,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net and briefing do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu and briefing do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -4362,7 +4375,7 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
@@ -4378,7 +4391,7 @@ _as_dotfile_parse() {
       continue
     fi
     case "$section" in
-      allow | deny | env | conda | net)
+      allow | deny | env | conda | net | gpu)
         if [[ "$sglob" != "*" ]]; then
           _df_role_lines+=("$sglob"$'\t'"$section"$'\t'"$line")
           continue
@@ -4458,6 +4471,18 @@ _as_dotfile_line() {
           host-port) _df_net_host_port+=("$cv") ;;
           agent-port) _df_net_agent_port+=("$cv") ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
+        esac
+      fi
+      ;;
+    gpu)
+      # The host's GPUs, passed in by default; `mode = off` keeps them out.
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [gpu] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          mode) _df_gpu_mode="$cv" ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [gpu] key '$ck'" ;;
         esac
       fi
       ;;
@@ -4661,6 +4686,14 @@ _as_check_plan() {
       printf '  roles in this file: %s; see another with: %s --check --role NAME\n' \
         "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
     fi
+    case "${_knob_gpu:-on}" in
+      off | 0) printf '  gpu: off -- no GPU device in the sandbox\n' ;;
+      *)
+        local _gn _gl=""
+        for _gn in ${AGENT_SANDBOX_GPU_DEVICES:-/dev/nvidia* /dev/kfd /dev/dri}; do [[ -e "$_gn" ]] && _gl+="${_gl:+ }$_gn"; done
+        printf '  gpu: on -- %s\n' "${_gl:-none on this host}"
+        ;;
+    esac
     ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host, and --ssh\n'
     ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused, and --ssh\n'
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
@@ -5375,6 +5408,30 @@ _as_init() {
     [[ -n "$a" ]] && ! _init_has "$hd" && new+="$a"$'\n'
     ((i += 1))
   done
+  # --enable-gpu / --disable-gpu (_init_gpu, the caller's): a `[gpu:PATTERN] mode` line
+  # for each of the model's roles, the broadest patterns only (gh-* covers gh-fix-*).
+  if [[ -n "${_init_gpu:-}" ]]; then
+    local -a pats=() keep=()
+    local pt q covered
+    for i in "${!heads[@]}"; do
+      read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+      [[ -n "${rn:-}" && "$rn" != default ]] || continue
+      case "$rk" in single) pt="$rn" ;; *) pt="$rn-*" ;; esac
+      [[ " ${pats[*]-} " == *" $pt "* ]] || pats+=("$pt")
+    done
+    for pt in ${pats[@]+"${pats[@]}"}; do
+      covered=0
+      for q in ${pats[@]+"${pats[@]}"}; do
+        # shellcheck disable=SC2053 # q is the glob
+        [[ "$q" != "$pt" && "$pt" == $q ]] && covered=1
+      done
+      ((covered)) || keep+=("$pt")
+    done
+    for pt in ${keep[@]+"${keep[@]}"}; do
+      a="[gpu:$pt]"$'\n'"mode = $([[ "$_init_gpu" == enable ]] && echo on || echo off)"$'\n'
+      _init_has "[gpu:$pt]" || new+="$a"
+    done
+  fi
   # Single roles are listed once even when their sections are several.
   local -a uniq=()
   local seen=" "
@@ -5908,7 +5965,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
-  local _do_init=0 _init_model="" _init_env=""
+  local _do_init=0 _init_model="" _init_env="" _init_gpu=""
   local -a _init_counts=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # Connections: the resolved channel -> mode map, and where each came from, so
@@ -6076,6 +6133,10 @@ agent_sandbox() (
               ;;
             --env=*)
               _init_env="${1#--env=}"
+              shift
+              ;;
+            --enable-gpu | --disable-gpu)
+              _init_gpu="${1#--}" _init_gpu="${_init_gpu%-gpu}"
               shift
               ;;
             [a-z]*=*)
@@ -6414,6 +6475,7 @@ agent_sandbox() (
   local _git_fetch_only=0 # [net] git = fetch: a push refused
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
+  local _knob_gpu="${AGENT_SANDBOX_GPU:-}" # on (the default) | off
   local _knob_briefing="${AGENT_SANDBOX_BRIEFING:-}"
   local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
   # PATH for INSIDE the sandbox. Empty means "pass the launching shell's PATH";
@@ -6441,7 +6503,7 @@ agent_sandbox() (
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
-  local _df_seccomp_mode="" _df_briefing_mode=""
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_briefing_globs=() _df_briefing_files=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
@@ -6605,6 +6667,13 @@ agent_sandbox() (
               _as_msg "AGENT_SANDBOX_SECCOMP=$_knob_seccomp overrides the .agent-sandbox seccomp mode '$_df_seccomp_mode'"
             fi
             ;;
+          *) ;; # unknown: the default (on) stays, as the review said
+        esac
+      fi
+      # gpu: an explicit AGENT_SANDBOX_GPU in your shell wins over the file.
+      if [[ -n "$_df_gpu_mode" && -z "$_knob_gpu" ]]; then
+        case "$_df_gpu_mode" in
+          on | 1 | off | 0) _knob_gpu="$_df_gpu_mode" ;;
           *) ;; # unknown: the default (on) stays, as the review said
         esac
       fi
@@ -7185,6 +7254,35 @@ agent_sandbox() (
     # Drop the parent environment; we re-export an explicit allowlist below.
     --clearenv
   )
+  # THE HOST'S GPUs (#gpu), passed in unless `[gpu] mode = off` or AGENT_SANDBOX_GPU=off:
+  # `--dev /dev` above is a minimal device directory, and CUDA needs the driver's
+  # nodes -- /dev/nvidia* (and nvidia-caps/ for MIG), /dev/dri for the others. The
+  # driver's libraries are in /usr, already read-only inside. Measured on this
+  # project's development host: two GPUs visible and a CUDA matmul under bubblewrap,
+  # with the default syscall filter on; without the nodes, "no CUDA GPUs".
+  local _gpu_nodes=()
+  case "${_knob_gpu:-on}" in
+    off | 0) ;;
+    on | 1)
+      local _gn
+      # AGENT_SANDBOX_GPU_DEVICES: which device nodes are the GPUs', as globs; NVIDIA's,
+      # AMD's ROCm (/dev/kfd) and the render nodes by default.
+      for _gn in ${AGENT_SANDBOX_GPU_DEVICES:-/dev/nvidia* /dev/kfd /dev/dri}; do
+        [[ -e "$_gn" ]] || continue
+        args+=(--dev-bind "$_gn" "$_gn")
+        _gpu_nodes+=("$_gn")
+      done
+      # The driver's management library (NVML: nvidia-smi, torch's device queries)
+      # reads the devices' PCI records under /sys, which is otherwise not in the
+      # sandbox: without it, measured, "GPU access blocked by the operating system".
+      # Read-only; it shows the host's hardware, not its files.
+      ((${#_gpu_nodes[@]})) && args+=(--ro-bind /sys /sys)
+      ;;
+    *)
+      _as_msg "AGENT_SANDBOX_GPU=$_knob_gpu: expected on or off"
+      return 2
+      ;;
+  esac
 
   # Always-on bindings: the profile's state paths (read-write) and its binary.
   # An entry is a host path bound at itself, or SRC<TAB>DEST to bind it at a

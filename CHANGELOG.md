@@ -81,6 +81,10 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
+- **The host's GPUs are in the sandbox** by default: their device nodes and `/sys`
+  read-only, for CUDA, ROCm and the driver's tools; `[gpu] mode = off` (per role with
+  `[gpu:<role>]`, or `AGENT_SANDBOX_GPU=off`) keeps them out, and `asb --init MODEL
+  --disable-gpu` writes that for a model's roles.
 - **The `github` model**: `asb --init github --env NAME` appends, once, sections for
   `gh-review-<N>`, `gh-triage-<N>` and `gh-fix-<N>` -- a reviewer, a triager and a fixer
   per pull request or issue, each seeing your built checkout and environment through a

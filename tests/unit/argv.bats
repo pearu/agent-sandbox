@@ -269,3 +269,40 @@ STUB
   [[ "$output" == *"session allowlist: pypi.org .example.org"* ]]
   run ! argv_has allow.txt
 }
+
+@test "the host's GPUs are passed in by default: their device nodes, and /sys read-only for the driver's library" {
+  mkdir -p "$H/dev/dri"
+  : >"$H/dev/nvidia0"
+  : >"$H/dev/nvidiactl"
+  run_engine AGENT_SANDBOX_GPU_DEVICES="$H/dev/nvidia* $H/dev/kfd $H/dev/dri" -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --dev-bind "$H/dev/nvidia0" "$H/dev/nvidia0"
+  argv_has --dev-bind "$H/dev/nvidiactl" "$H/dev/nvidiactl"
+  argv_has --dev-bind "$H/dev/dri" "$H/dev/dri"
+  run ! argv_has --dev-bind "$H/dev/kfd" "$H/dev/kfd" # not on this host
+  argv_has --ro-bind /sys /sys
+  [ "$(argv_index --dev-bind)" -gt "$(argv_index --dev)" ] # over the minimal /dev
+}
+
+@test "[gpu] mode = off (or AGENT_SANDBOX_GPU=off) keeps them out; a bad value is refused; no GPUs, no /sys" {
+  : >"$H/dev-nvidia0"
+  run_engine AGENT_SANDBOX_GPU=off AGENT_SANDBOX_GPU_DEVICES="$H/dev-nvidia0" -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --dev-bind "$H/dev-nvidia0" "$H/dev-nvidia0"
+  run ! argv_has --ro-bind /sys /sys
+  local PROJ
+  PROJ="$(cd "$H/proj" && pwd -P)"
+  printf '[gpu]\nmode = off\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$H/home/.config/agent-sandbox/trust"
+  sha256sum -- "$PROJ/.agent-sandbox" | cut -d' ' -f1 >"$H/home/.config/agent-sandbox/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  run_engine AGENT_SANDBOX_GPU_DEVICES="$H/dev-nvidia0" -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --dev-bind "$H/dev-nvidia0" "$H/dev-nvidia0"
+  rm "$PROJ/.agent-sandbox"
+  rm -rf "$H/home/.config/agent-sandbox/trust"
+  run_engine AGENT_SANDBOX_GPU=maybe -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"AGENT_SANDBOX_GPU=maybe: expected on or off"* ]]
+  run_engine AGENT_SANDBOX_GPU_DEVICES="$H/none*" -- asb claude --version
+  run ! argv_has --ro-bind /sys /sys
+}
