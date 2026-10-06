@@ -1,0 +1,24 @@
+# ---- pr-review: one reviewer per pull request ---------------------------------
+# `asb --role pr-reviewer-<N> claude` reviews PR N of this project. Each reviewer works on
+# the project as you built it, through a layer of its own: its checkout, build and
+# installs never reach the project, your environment or another reviewer. Delete one when
+# its review is done: `asb --delete --role pr-reviewer-<N>`.
+[connect:pr-reviewer-*]
+project = copy-on-write           # the built tree; the PR's changes and rebuild stay in this reviewer's layer
+{envpath}/ = copy-on-write        # the environment likewise: a rebuilt package lands in the layer
+.asb/scratch/ = own               # its notes and the review draft, private to it
+gh = read-only                    # your gh login: it reads the PR, and posts when you say so
+[conda:pr-reviewer-*]
+prefix = {envpath}                # the environment the project is built in, activated
+[net:pr-reviewer-*]
+mode = proxy                      # the allowlist applies; research hosts below, add your own
+git = allow                       # it fetches the PR
+[allow:pr-reviewer-*]
+.readthedocs.io
+.readthedocs.org
+.github.io
+docs.python.org
+.python.org
+[briefing:pr-reviewer-*]
+file = .asb/roles/pr-reviewer.md  # one purpose file for every reviewer
+[connect:default]                 # your own sessions here keep the project's policy

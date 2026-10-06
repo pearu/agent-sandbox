@@ -1097,14 +1097,16 @@ _as_connect_parse() {
   # THE WORKING TREE (#220): `project` is the directory the session opened, bound at
   # itself. Read-write by default, since it is what the agent is there to change;
   # read-only for a role that must not change it, with a read-write declaration inside
-  # for the part it may (bound later, by depth). No other mode: a store of the role's
-  # own for the whole project is not a working tree, and `--try-run` (#115) is the
-  # place for a disposable one. No source, no scope: it is always the tree itself.
+  # for the part it may (bound later, by depth); copy-on-write for a role that works on
+  # the tree as it is -- built -- without changing it for anyone else: an overlay at the
+  # project's own path, the role's writes in its layer (a PR reviewer's checkout and
+  # incremental build). No other mode: `own` or `copy` of a whole project is not a
+  # working tree. No source, no scope: it is always the tree itself.
   if [[ "$ch" == project ]]; then
     case "$mode" in
-      read-only | read-write) ;;
+      read-only | read-write | copy-on-write) ;;
       *)
-        _as_msg "connect ($where): 'project = $mode' is refused: the project is 'read-write' (the default) or 'read-only'. For a writable part of a read-only project, declare it: './sub/ = read-write'."
+        _as_msg "connect ($where): 'project = $mode' is refused: the project is 'read-write' (the default), 'read-only' or 'copy-on-write'. For a writable part of a read-only project, declare it: './sub/ = read-write'."
         return 1
         ;;
     esac
@@ -3249,11 +3251,11 @@ _as_briefing_write() {
     fi ;;
   esac
   rw_line=""
-  if [[ "${_connect_project_mode:-read-write}" == read-only ]]; then
-    ro_line="$cwd (the project)"
-  else
-    rw_line="$cwd"
-  fi
+  case "${_connect_project_mode:-read-write}" in
+    read-only) ro_line="$cwd (the project)" ;;
+    copy-on-write) rw_line="$cwd (copy-on-write: your writes stay in this role and never reach the project)" ;;
+    *) rw_line="$cwd" ;;
+  esac
   # The paths declared read-write or read-only. Not the built-in read-only dot-file,
   # which is no grant.
   local _bp
@@ -5137,6 +5139,9 @@ _as_init() {
   for i in "${!heads[@]}"; do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
     [[ -n "${rn:-}" ]] || continue
+    # `[x:default]` keeps the unnamed role's policy once role sections exist: written like
+    # any section, but no role of the model (no handle, purpose file or index row).
+    [[ "$rn" == default ]] && continue
     [[ "$rk" == group ]] && rk=multi
     if [[ -n "${kind[$rn]:-}" && "${kind[$rn]}" != "$rk" ]]; then
       _as_msg "--init: model '$model' uses '$rn' both as a numbered role ({n}) and a single one"
@@ -5172,6 +5177,19 @@ _as_init() {
     count[$rn]="$v"
   done
 
+  # The environment's prefix, for {envpath}: a path as given, a name under the conda base.
+  local envpath=""
+  if [[ -n "$env" ]] && grep -qF '{envpath}' "$tpl"; then
+    case "$env" in
+      */*) envpath="$(realpath -m -s -- "$env")" ;;
+      *) envpath="$(_as_conda_base)/envs/$env" ;;
+    esac
+    if [[ ! -d "$envpath/conda-meta" ]]; then
+      _as_msg "--init: --env $env: no conda environment at $envpath"
+      return 1
+    fi
+  fi
+
   # ---- rendering ----
   # _init_render HEADER BODY INSTANCE N HANDLE -- the section for one instance.
   _init_render() {
@@ -5184,6 +5202,14 @@ _as_init() {
     txt="$(printf '%s' "$txt" | grep -v '^#@')"$'\n'
     if [[ -z "$env" && ("$h" == "[conda" || "$h" == "[conda:"*) ]]; then
       txt="$(printf '%s' "$txt" | sed 's/^\(.\)/# \1/')"$'\n'
+    fi
+    # {envpath}: the environment's prefix, for a line that layers it; without --env such
+    # a line is written commented out, as the [conda] sections are.
+    if [[ -z "$envpath" ]]; then
+      txt="$(printf '%s' "$txt" | sed '/{envpath}/{/^#/!s/^/# /}')"$'\n'
+      txt="${txt//\{envpath\}/ENVPATH}"
+    else
+      txt="${txt//\{envpath\}/$envpath}"
     fi
     printf '%s%s' "$lead" "$txt"
   }
@@ -5228,7 +5254,10 @@ _as_init() {
       i=$((j + 1))
       continue
     fi
-    if [[ -n "${rn:-}" ]]; then
+    if [[ "${rn:-}" == default ]]; then
+      a="$(_init_render "${heads[i]}" "${bodies[i]}" "" "" "" "${leads[i]}")"
+      hd="$(_init_render "${heads[i]}" "" "" "" "" | head -1)"
+    elif [[ -n "${rn:-}" ]]; then
       ((${count[$rn]} > 0)) || {
         ((i += 1))
         continue
@@ -5277,6 +5306,7 @@ _as_init() {
 
   # ---- purpose files, clones, environments, the declared paths, the index ----
   local f tpath gdir br prefix v
+  local -a globs=()
   mkdir -p "$proj/.asb/roles" || return 1
   for a in "${insts[@]}"; do
     IFS=$'\t' read -r inst h rn n <<<"$a"
@@ -5284,6 +5314,20 @@ _as_init() {
     [[ -f "$f" && ! -e "$proj/.asb/roles/$inst.md" ]] || continue
     _init_render "" "$(cat -- "$f")" "$inst" "$n" "$h" | sed 1d >"$proj/.asb/roles/$inst.md" || return 1
     _as_msg "wrote .asb/roles/$inst.md"
+  done
+  # A role with no numbered instances in the template (`[briefing:name-*]` with its own
+  # `file = PATH`, no {role} in it) is briefed from one file for every instance: written
+  # once, from the model's roles/<name>.md.
+  local gl
+  for i in "${!heads[@]}"; do
+    [[ "${heads[i]}" =~ ^\[briefing:([a-z][a-z0-9-]*)-\*\] ]] || continue
+    rn="${BASH_REMATCH[1]}"
+    gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*file[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
+    [[ -n "$gl" && "$gl" != *'{role}'* && -f "$mdir/roles/$rn.md" && ! -e "$proj/$gl" ]] || continue
+    mkdir -p "$proj/$(dirname -- "$gl")" || return 1
+    _init_render "" "$(cat -- "$mdir/roles/$rn.md")" "$rn" "" "" | sed 1d >"$proj/$gl" || return 1
+    _as_msg "wrote $gl"
+    globs+=("$rn")
   done
   for a in ${clones[@]+"${clones[@]}"}; do
     inst="${a%%$'\t'*}"
@@ -5352,7 +5396,7 @@ _as_init() {
   {
     printf '\nNext, yours:\n'
     printf '  - read .agent-sandbox and the purpose files in .asb/roles/; add what this project needs\n'
-    printf '    (hosts to [allow]; a Planner'"'"'s material as a read-only line in its [connect:planner-N])\n'
+    printf '    (hosts to [allow], paths a role reads as read-only lines in its own [connect:...] section)\n'
     if [[ -z "$env" ]]; then
       printf '  - no --env: the [conda] sections are commented out; for an environment per clone,\n'
       printf '    run --init again with --env NAME, or: conda create --clone NAME -p <the prefix>\n'
@@ -5361,7 +5405,10 @@ _as_init() {
       printf '    with your environment'"'"'s name for ENV\n'
     fi
     ((wrote)) && printf '  - %s --trust            the review, then the approval\n' "$invoked"
-    printf '  - %s --check --role NAME  what a role has (%s)\n' "$invoked" "$(for a in "${insts[@]}"; do printf '%s ' "${a%%$'\t'*}"; done | sed 's/ $//')"
+    ((${#insts[@]})) && printf '  - %s --check --role NAME  what a role has (%s)\n' "$invoked" "$(for a in "${insts[@]}"; do printf '%s ' "${a%%$'\t'*}"; done | sed 's/ $//')"
+    for a in ${globs[@]+"${globs[@]}"}; do
+      printf '  - %s --role %s-<N> claude  an instance for each <N> you choose; --check --role %s-<N> shows what it has\n' "$invoked" "$a" "$a"
+    done
   } >&2
   return 0
 }
@@ -7243,11 +7290,28 @@ agent_sandbox() (
     fi
   done
   if ((bind_cwd)); then
-    if [[ "$_connect_project_mode" == read-only ]]; then
-      args+=(--ro-bind "$cwd" "$cwd")
-    else
-      args+=(--bind "$cwd" "$cwd")
-    fi
+    case "$_connect_project_mode" in
+      read-only) args+=(--ro-bind "$cwd" "$cwd") ;;
+      copy-on-write)
+        # An overlay at the project's own path, so absolute paths into it -- a build
+        # tree's, an editable install's -- stay valid inside. The layer is the role's,
+        # kept across launches like any copy-on-write store; there is no copy fallback:
+        # a copy of a whole project is what the mode exists to avoid.
+        if _as_preset_is_native; then
+          _as_msg "connect (${_connect_project_where}): 'project = copy-on-write' is refused under --preset native, which layers nothing."
+          return 1
+        fi
+        if [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
+          _as_msg "connect (${_connect_project_where}): 'project = copy-on-write' needs an overlay, and $([[ "$_overlay_mode" == off ]] && printf 'the overlay is turned off' || printf 'this bubblewrap cannot mount one (it needs 0.11)'); refusing rather than copying the whole project."
+          return 1
+        fi
+        local _pup _pwk
+        _pup="$(_as_sandbox_dir)/@project/upper" _pwk="$(_as_sandbox_dir)/@project/work"
+        mkdir -p -- "$_pup" "$_pwk" || return 1
+        args+=(--overlay-src "$cwd" --overlay "$_pup" "$_pwk" "$cwd")
+        ;;
+      *) args+=(--bind "$cwd" "$cwd") ;;
+    esac
   fi
   args+=(--chdir "$cwd")
 

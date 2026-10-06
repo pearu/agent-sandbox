@@ -102,3 +102,27 @@ PROBE
   [ -d "$IWORK/scratch" ]
   [ -z "$(ls -A "$IWORK/scratch")" ]
 }
+
+@test "project = copy-on-write: a role's writes stay in its layer, kept across its launches; the project and another role see none" {
+  [[ "$(bwrap --help 2>&1)" == *"--overlay "* ]] || skip "this bubblewrap cannot mount an overlay"
+  mkdir -p "$IWORK/data"
+  printf 'DATA\n' >"$IWORK/data/a"
+  : >"$I/rep"
+  run_sandboxed "${ENV[@]}" PROBE_WRITE=ROLE1 -- --role r1 \
+    --connect 'project = copy-on-write' --connect "./report = read-write outside:$I/rep" probe run
+  [ "$status" -eq 0 ]
+  grep -qx 'data=DATA' "$I/rep"
+  grep -qx 'wrote_data=yes' "$I/rep" # writable inside...
+  [ ! -e "$IWORK/data/b" ]           # ...and the project untouched
+  # the same role again: its layer is still there
+  run_sandboxed "${ENV[@]}" -- --role r1 \
+    --connect 'project = copy-on-write' --connect "./report = read-write outside:$I/rep" \
+    --profile probe --exec bash -c 'cat data/b >/dev/null && echo seen >>report'
+  grep -qx 'seen' "$I/rep"
+  # another role: none of it
+  : >"$I/rep"
+  run_sandboxed "${ENV[@]}" -- --role r2 \
+    --connect 'project = copy-on-write' --connect "./report = read-write outside:$I/rep" \
+    --profile probe --exec bash -c 'test -e data/b && echo LEAK >>report; echo finished >>report'
+  [ "$(cat "$I/rep")" = finished ]
+}

@@ -382,6 +382,34 @@ no contention. That method needs a cooperative hook to refuse edits to another s
 file; here the role's own file is a `read-write` declaration inside a read-only
 directory, so the guard is a mount.
 
+## The pr-review model
+
+A PR reviewer produces no code, so it owns no clone: `pr-reviewer-<N>` sees the project
+as the user built it, through `project = copy-on-write` -- an overlay at the project's own
+path, so absolute paths into it (CMake's, an editable install's) stay valid -- and the
+environment the same way (`<env>/ = copy-on-write`). The PR's checkout, the incremental
+rebuild and any reinstall land in the instance's layers; `asb --delete` drops them.
+Instances need no names written anywhere: the template is glob sections only
+(`[x:pr-reviewer-*]`), appended once, and a role name is an instance.
+
+Measured 2026-10-06 on a pytorch checkout built two days earlier and its environment
+(torch an editable scikit-build-core install: Python from the tree, 524 MB compiled in
+site-packages), with bubblewrap's overlay: a Python-only PR's diff applied on the built
+`main` was ready in ~2 s with no rebuild (a 4 MB layer); a one-file C++ PR rebuilt in
+11 ninja steps, 22 s, and `pip install -e .` then took 63 s -- ~1 GB of layers, the
+relinked libraries and the reinstalled package copied up whole. The build needs the
+user's build environment: the env activated and CUDA on `PATH`, else CMake reconfigures
+with other flags and queues ~700 steps. A PR's base is usually newer than the built
+`main`; applying the PR's own diff keeps the rebuild small (hunks against newer code
+may not apply), and the reviewer rebases only when the PR needs newer changes. A
+rebuild of `main` on the host changes the lower under live layers: delete or reset the
+instances after it.
+
+Posting is told, not enforced: the reviewer drafts, shows, and posts only on the user's
+word, after reading the project's policy on AI-written contributions. A read-only
+reviewer whose draft the user posts from a file was the enforced alternative, declined
+for convenience.
+
 ## Open design questions
 
 Recorded so they are not re-derived from scratch; each has measurements or

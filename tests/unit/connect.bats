@@ -1237,9 +1237,24 @@ DF
   argv_has --bind "$PROJ" "$PROJ"
 }
 
-@test "project takes read-only or read-write and nothing else: no other mode, no source, no scope (#220)" {
+@test "project = copy-on-write: an overlay at the project's own path, its layer the role's; refused under native and without overlays" {
+  run_engine -- asb --role rev-1 --connect 'project = copy-on-write' claude --version
+  [ "$status" -eq 0 ]
+  local sb="${SBOX%/default}/rev-1"
+  argv_has --overlay-src "$PROJ" --overlay "$sb/@project/upper" "$sb/@project/work" "$PROJ"
+  run ! argv_has --bind "$PROJ" "$PROJ"
+  [ -d "$sb/@project/upper" ]
+  run_engine AGENT_SANDBOX_OVERLAY=off -- asb --connect 'project = copy-on-write' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'project = copy-on-write' needs an overlay"*"refusing rather than copying the whole project"* ]]
+  run_engine -- asb --preset native --connect 'project = copy-on-write' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refused under --preset native"* ]]
+}
+
+@test "project takes read-only, read-write or copy-on-write and nothing else: no other mode, no source, no scope (#220)" {
   local spec
-  for spec in 'project = own' 'project = copy-on-write' 'project = read-only native' \
+  for spec in 'project = own' 'project = copy' 'project = read-only native' \
     'project = read-only join-scoped' 'project = read-only outside:/tmp'; do
     run_engine -- asb --connect "$spec" claude --version
     [ "$status" -ne 0 ]
