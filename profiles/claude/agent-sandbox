@@ -65,6 +65,9 @@ hide = feedback-bundles
 # docs: "Legacy directories not written by current versions". Blanked, so no other
 # project's old images are in view (#77).
 hide = image-cache
+# gh/ held a gh login kept for sandboxes in the first design of the gh channel (#88); the
+# channel is your own ~/.config/gh now, so a login left here is blanked, not exposed.
+hide = gh
 
 # Paths deliberately left NATIVE, so `asb --check` does not report them as unclassified
 # (#82): anything under the base that no channel, hide or visible line names is listed
@@ -244,17 +247,17 @@ reach = searched
 [channel:changelog]
 {base}/cache/changelog.md
 
-# GH IS A CHANNEL (#88): a gh login you keep where a sandbox can bind it, since
-# ~/.config/gh is a secret store and never is. It holds a token that can do whatever its
-# scopes allow, so no sandbox gets it unless its dot-file asks: `own` under every preset
-# but native, `gh = read-only` in [connect] to use it -- gh reads with it, nothing inside
-# rewrites the login. GH_CONFIG_DIR points at it under every preset but native, so that
-# one line is all it takes; under `own` gh finds an empty store and is logged out.
-# `~/.claude/gh/ = read-only outside:PATH` gives a role another login (a read-only
-# token, docs/recipes.md).
+# GH IS A CHANNEL (#88): your gh login, where `gh auth login` keeps it. It holds a token
+# that can do whatever its scopes allow, so no sandbox gets it unless its dot-file asks:
+# `own` under every preset but native (an empty store there: gh is logged out), and
+# `gh = read-only` in [connect] to use it -- your login, live: a `gh auth login` on the
+# host while a role runs is seen at once, and nothing inside rewrites it. The directory
+# is created when missing, so a later login lands where the role reads. `gh = read-only
+# outside:PATH` gives a role another login instead (a read-only token, docs/recipes.md).
 [channel:gh]
-env = GH_CONFIG_DIR
-{base}/gh/
+create = yes
+login = hosts.yml -- gh is not logged in: run `gh auth login` on the host; a running role sees it at once
+~/.config/gh/
 
 # ----- the presets' rungs --------------------------------------------------------------
 # Where a channel sits under a preset when that is not the ladder's rung (isolated: own,

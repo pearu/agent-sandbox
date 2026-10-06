@@ -72,7 +72,7 @@ No connection for a channel means `own`.
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
 | policy | the caches of server-managed settings and policy flags, with the stamp | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109) |
 | changelog | the cached vendor changelog | `cache/changelog.md` (#109) |
-| gh | a gh login you keep for sandboxed use, with the variable gh reads it from | `gh/`, `GH_CONFIG_DIR` (#88) |
+| gh | your gh login, where `gh auth login` keeps it | `~/.config/gh/` (#88) |
 
 Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
 `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`, and since

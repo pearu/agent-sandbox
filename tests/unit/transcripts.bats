@@ -155,41 +155,51 @@ idx_of_bind() { # idx_of_bind SRC DEST -> the argv index of "--bind SRC DEST", o
   argv_has --bind "$(store agent-memory own "$C/agent-memory")" "$C/agent-memory"
 }
 
-@test "gh is a channel, the role's own under every preset but native; GH_CONFIG_DIR points at it there (#88)" {
-  mkdir -p "$C/gh"
-  printf 'TOKEN\n' >"$C/gh/hosts.yml"
+@test "gh is a channel at ~/.config/gh, where gh auth login keeps it: the role's own under every preset but native" {
+  local G="$H/home/.config/gh"
+  mkdir -p "$G"
+  printf 'TOKEN\n' >"$G/hosts.yml"
   local ps
   for ps in isolated inherit shared; do
     TEST_PRESET=$ps run_engine -- asb claude --version
     [ "$status" -eq 0 ]
-    argv_has --bind "$(store gh own "$C/gh")" "$C/gh"
-    run ! grep -qxF -- "$C/gh/hosts.yml" "$H/argv"
-    [ "$(setenv_value GH_CONFIG_DIR)" = "$C/gh" ]
+    argv_has --bind "$(store gh own "$G")" "$G"
+    run ! setenv_value GH_CONFIG_DIR # gh's own default, inside as outside
   done
-  # under native neither the store nor the variable: yours, as on the host
   TEST_PRESET=native run_engine -- asb --preset native claude --version
   [ "$status" -eq 0 ]
   run ! grep -qF "$SBOX/gh/own" "$H/argv"
-  run ! setenv_value GH_CONFIG_DIR
 }
 
-@test "gh = read-only binds your gh login read-only, and a forwarded GH_CONFIG_DIR is refused, naming the line (#88)" {
-  mkdir -p "$C/gh"
-  TEST_PRESET=inherit run_engine GH_CONFIG_DIR=/elsewhere AGENT_SANDBOX_FORWARD=GH_CONFIG_DIR -- asb --connect 'gh = read-only' claude --version
+@test "gh = read-only binds your login, live; a missing directory is made (700), not an empty mount, and the launch says what to do" {
+  local G="$H/home/.config/gh"
+  TEST_PRESET=inherit run_engine -- asb --connect 'gh = read-only' claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$C/gh" "$C/gh"
-  [ "$(setenv_value GH_CONFIG_DIR)" = "$C/gh" ]
-  [[ "$output" == *"not forwarding GH_CONFIG_DIR: profile 'claude' points it at its 'gh' channel; to use yours, connect it: 'gh = read-only' in [connect]"* ]]
+  [ -d "$G" ] && [ "$(stat -c %a "$G")" = 700 ]
+  argv_has --ro-bind "$G" "$G"
+  [[ "$output" == *"gh: gh is not logged in: run \`gh auth login\` on the host; a running role sees it at once"* ]]
+  printf 'TOKEN\n' >"$G/hosts.yml"
+  TEST_PRESET=inherit run_engine -- asb --connect 'gh = read-only' claude --version
+  [[ "$output" != *"not logged in"* ]]
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
-@test "the hardening: a role's gh is another login, declared at the channel's path with outside: (#88)" {
-  mkdir -p "$C/gh" "$H/home/.gh-read"
-  TEST_PRESET=inherit run_engine -- asb --connect '~/.claude/gh/ = read-only outside:~/.gh-read' claude --version
+@test "the hardening: gh = read-only outside:PATH gives a role another login at gh's path; a declaration there stays refused" {
+  local G="$H/home/.config/gh"
+  mkdir -p "$G" "$H/home/.gh-read"
+  printf 'TOKEN\n' >"$H/home/.gh-read/hosts.yml"
+  TEST_PRESET=inherit run_engine -- asb --connect 'gh = read-only outside:~/.gh-read' claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$H/home/.gh-read" "$C/gh"
-  [ "$(argv_index "$H/home/.gh-read")" -gt "$(argv_index "$(store gh own "$C/gh")")" ] # over the channel's store
-  [ "$(setenv_value GH_CONFIG_DIR)" = "$C/gh" ]
+  argv_has --ro-bind "$H/home/.gh-read" "$G"
+  run ! argv_has --ro-bind "$G" "$G"
+  TEST_PRESET=inherit run_engine -- asb --connect 'gh = own outside:~/.gh-read' claude --version
+  [ "$status" -ne 0 ]
+  TEST_PRESET=inherit run_engine -- asb --connect '~/.config/gh/ = read-only' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"secret store"* ]]
+  TEST_PRESET=inherit run_engine -- asb --connect 'skills = read-only outside:~/.gh-read' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"paths; an outside source names one"* ]]
 }
 
 @test "under shared, agent-memory is yours, read-write, as memory is" {

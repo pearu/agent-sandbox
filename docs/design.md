@@ -208,11 +208,13 @@ Stated plainly. These are what the adversary above can still do.
   host, api.anthropic.com first among them, is an exfiltration channel for
   anything the agent can read. The sandbox cannot prevent this. Beyond the
   tokens the directory is a catch-all: Claude Code keeps its own state there,
-  and so does anything you put there. `~/.config/gh` is refused, so a GitHub
-  login kept under `~/.claude/gh` is the `gh` channel (#88): the role's own
-  unless the dot-file says `gh = read-only`, which hands the agent that token
-  -- a second way to grant GitHub access besides `[env] GH_TOKEN`, deliberate
-  and reviewed.
+  and so does anything you put there. Your gh login is the `gh` channel, at
+  `~/.config/gh` (#88): the role's own (empty) unless the dot-file says
+  `gh = read-only`, which hands the agent that token -- a second way to grant
+  GitHub access besides `[env] GH_TOKEN`, deliberate and reviewed. A channel is a
+  declared grant, so the secret-store rule, which keeps credentials out unasked,
+  does not apply to it; a path declaration at `~/.config/gh` stays refused. A
+  login left in `~/.claude/gh` by the channel's first design is blanked.
   `[claude] hide` blanks named subpaths for the cases where you want one gone,
   at the cost of whatever feature used it.
 - **What a session writes in `~/.claude` can steer later sessions -- how far
@@ -323,7 +325,7 @@ artefact anyway.
 | each role's memory and transcripts its own | `own` under `inherit` (#196, #120) |
 | the project read-only for every role but the Supervisor, a clone read-write inside it | `project = read-only` (#220): a read-only mount, then a read-write mount on a subdirectory, which bubblewrap allows and the depth-ordered bind pass expresses |
 | history its owner's | `./.git/ = own` and `.asb/git/ = own` in the common block, redeclared per role |
-| the `gh` login for every role | the `gh` channel, `own` unless asked, `GH_CONFIG_DIR` pinned to it (#88) |
+| the `gh` login for every role | the `gh` channel at `~/.config/gh`, `own` unless asked, your login live with `gh = read-only` (#88) |
 | no publishing | `[net] retrieve-only` (#223): GET and HEAD only, but to the profile's hosts, a GraphQL query passing and a mutation refused by the body; `[net] git = refuse` (#224); both hang on the session's proxy token, which every proxied request must carry (#233) |
 | a Reviewer running an Implementer's build | the clone read-only to it, its environment in the clone, run by path |
 | installs without touching the shared environment | a conda clone in the Implementer's tree; the sandbox-owned package cache bound whenever conda is active (#219); `[conda:<role>] prefix` to activate it, `write = 1` per role (#221) |
