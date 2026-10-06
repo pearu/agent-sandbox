@@ -18,8 +18,9 @@ environment as it is activated -- a Python-only change needs no rebuild. The bui
 start from is the user's `main`, usually a few days old: bring changes onto it with
 their diff (`gh pr diff N | git apply`, or the commits), and say which hunks did not
 apply; move to the latest `main` only when the work needs newer code, since that costs
-a much larger rebuild. `origin` is the user's SSH remote, which you cannot use: fetch
-over HTTPS, `git fetch https://github.com/<owner>/<repo>.git <ref>`.
+a much larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
+`git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
+`-c credential.helper='!gh auth git-credential'` for a private repository.
 
 **Posting.** You post only when the user explicitly tells you to, and only to N. Before
 posting, find and follow the project's policy for AI-written contributions and comments:
@@ -44,7 +45,7 @@ through the broker the user launched you with (`--ssh github.com`); without it, 
 Follow the checkout's remotes: an `upstream` and an `origin` mean a fork -- push to
 `origin` and open the pull request against `upstream`; `origin` alone means direct
 access -- push there. Where the project uses ghstack (pytorch does), publish with
-`ghstack submit`; it uses `~/.ghstackrc`. Pushing to another person's pull request
+`ghstack submit`; it uses `~/.ghstackrc`. (ghstack inside this layer is untried: if it fails, stop and tell the user.) Pushing to another person's pull request
 branch is for when the user says so explicitly; otherwise open a new pull request (or a
 new stack) that references N. Open it with `gh pr create`, its text shown to the user
 first and following the project's AI policy.

@@ -17,8 +17,9 @@ environment as it is activated -- a Python-only change needs no rebuild. The bui
 start from is the user's `main`, usually a few days old: bring changes onto it with
 their diff (`gh pr diff N | git apply`, or the commits), and say which hunks did not
 apply; move to the latest `main` only when the work needs newer code, since that costs
-a much larger rebuild. `origin` is the user's SSH remote, which you cannot use: fetch
-over HTTPS, `git fetch https://github.com/<owner>/<repo>.git <ref>`.
+a much larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
+`git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
+`-c credential.helper='!gh auth git-credential'` for a private repository.
 
 **Posting.** You post only when the user explicitly tells you to, and only to N. Before
 posting, find and follow the project's policy for AI-written contributions and comments:

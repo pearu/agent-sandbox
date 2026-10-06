@@ -409,6 +409,12 @@ through the broker, as the user does, to the checkout's remotes as they are: an
 `upstream` plus `origin` is a fork workflow, `origin` alone direct access; `ghstack
 submit` where the project uses it, with `~/.ghstackrc` bound read-only.
 
+Measured 2026-10-06 on a scratch private repository: a `gh-fix` instance launched with
+`--ssh github.com` committed on a new branch in its layer and pushed it over SSH through
+the broker; the host checkout stayed on `main`, untouched. A `gh-review` instance was
+refused `--ssh`, and fetched that branch over HTTPS with gh's token as git's credential
+helper. ghstack is unmeasured: it pushes to `pytorch/pytorch`, which a test cannot.
+
 Measured 2026-10-06 on a pytorch checkout built two days earlier and its environment
 (torch an editable scikit-build-core install: Python from the tree, 524 MB compiled in
 site-packages), with bubblewrap's overlay: a Python-only PR's diff applied on the built
