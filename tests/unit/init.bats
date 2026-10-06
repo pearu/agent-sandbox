@@ -94,7 +94,7 @@ init() {
   [[ "$output" == *"roles 'planner' and 'prober'"*"share the initial P"* ]]
   init -- nosuch
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no model 'nosuch'"*"Shipped: roles"* ]]
+  [[ "$output" == *"no model 'nosuch'"*"Shipped: pr-review roles"* ]]
   mkdir -p "$PROJ/sub"
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --init roles 2>&1' _ "$PROJ/sub" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
   [ "$status" -ne 0 ]
@@ -149,4 +149,47 @@ init() {
   [ "$writable" = "./.asb/coord/reviewer-1.md ./.asb/review/reviewer-1" ]
   [[ "$output" =~ \./\.asb/scratch\ +own ]]
   [[ "$output" =~ \./\.asb/git\ +own ]]
+}
+
+@test "the pr-review model: appended once to a plain file, every section a glob, one purpose file, the env layered by path" {
+  printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$H/envs/dev/conda-meta"
+  init -- pr-review --env "$H/envs/dev"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--role pr-reviewer-<N> claude"* ]]
+  local df="$PROJ/.agent-sandbox"
+  [ "$(head -2 "$df")" = $'[allow]\nexample.org' ] # what was there stays
+  has_section '[connect:pr-reviewer-*]' "$df"
+  has_section '[briefing:pr-reviewer-*]' "$df"
+  has_section '[connect:default]' "$df" # the unnamed role keeps the project's policy
+  grep -qx 'project = copy-on-write.*' "$df"
+  grep -qx "$H/envs/dev/ = copy-on-write.*" "$df"
+  grep -qx "prefix = $H/envs/dev.*" "$df"
+  run ! grep -qE '\[[a-z]+:pr-reviewer-[0-9]' "$df" # no per-PR section
+  [ -f "$PROJ/.asb/roles/pr-reviewer.md" ]
+  run ! grep -qF '{' "$PROJ/.asb/roles/pr-reviewer.md"
+  [ ! -e "$PROJ/.asb/coord/COORDINATION.md" ] # this model has no index
+  # again: nothing to add
+  init -- pr-review --env "$H/envs/dev"
+  [[ "$output" == *"nothing added to it"* ]]
+  # the default role and a reviewer are both admitted
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role pr-reviewer-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ project\ +copy-on-write ]]
+  [[ "$output" == *"briefed from: .asb/roles/pr-reviewer.md"* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"matches no role section"* ]]
+}
+
+@test "the pr-review model without --env: the environment's lines written commented out" {
+  init -- pr-review
+  [ "$status" -eq 0 ]
+  grep -qx '# ENVPATH/ = copy-on-write.*' "$PROJ/.agent-sandbox"
+  grep -qx '# \[conda:pr-reviewer-\*\].*' "$PROJ/.agent-sandbox"
+  init -- pr-review --env nosuch-env
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
 }

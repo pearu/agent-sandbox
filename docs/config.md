@@ -192,8 +192,12 @@ Sections:
   a channel at `read-write` would read to you as a channel you had closed.
 
   **`project = read-only`** (#220) binds the working tree itself read-only, for a role
-  that must not change it; `read-write`, the default, is the tree as it always was. Nothing
-  else is accepted -- no other mode, no source, no scope. A read-write part of a read-only
+  that must not change it; `read-write`, the default, is the tree as it always was;
+  **`project = copy-on-write`** mounts an overlay at the project's own path: the role
+  reads the tree as it is -- built -- and its writes stay in a layer of its own, kept
+  across its launches until `asb --delete` (a PR reviewer's checkout and rebuild). It
+  needs an overlay (bubblewrap 0.11) and is refused under `native`; there is no copy
+  fallback. Nothing else is accepted -- no other mode, no source, no scope. A read-write part of a read-only
   project is a declaration inside it, bound after it by depth:
 
   ```ini
