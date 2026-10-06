@@ -2637,6 +2637,15 @@ def _is_git_transport(flow: http.HTTPFlow) -> bool:
     return ua.lower().startswith("git/")
 
 
+def _is_git_push(flow: http.HTTPFlow) -> bool:
+    """Git's smart-HTTP PUSH: the receive-pack advertisement or endpoint. A fetch
+    (upload-pack) is not one."""
+    path, _, query = flow.request.path.partition("?")
+    if path.endswith("/info/refs") and "service=git-receive-pack" in query:
+        return True
+    return path.endswith("/git-receive-pack")
+
+
 def _session_lines(token: str | None, name: str) -> list[str]:
     if not token or not SESSION_BASE.is_dir():
         return []
@@ -2771,6 +2780,8 @@ def request(flow: http.HTTPFlow) -> None:
         why = _retrieve_refusal(flow, token)
         if why is None and _is_git_transport(flow) and _session_has(token, "git-refuse.txt"):
             why = "git's transport (this session's [net] git = refuse)"
+        if why is None and _is_git_push(flow) and _session_has(token, "git-push-refuse.txt"):
+            why = "a git push (this session's [net] git = fetch: it fetches, it does not push)"
         if why is None:
             return
         _log_blocked(host, flow.request.method, flow.request.path)

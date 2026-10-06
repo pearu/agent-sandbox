@@ -382,15 +382,38 @@ no contention. That method needs a cooperative hook to refuse edits to another s
 file; here the role's own file is a `read-write` declaration inside a read-only
 directory, so the guard is a mount.
 
-## The pr-review model
+## The github model
 
-A PR reviewer produces no code, so it owns no clone: `pr-reviewer-<N>` sees the project
+Three kinds over one boundary: `gh-review-<N>`, `gh-triage-<N>`, `gh-fix-<N>`, the
+template's sections written once under `[x:gh-*]` (a research host is added once for
+all three), with `[net:gh-fix-*] git = allow` the one difference in policy. GitHub
+numbers issues and pull requests in one sequence, so N needs no qualifier. A reviewer
+produces no code, so it owns no clone: `gh-review-<N>` sees the project
 as the user built it, through `project = copy-on-write` -- an overlay at the project's own
 path, so absolute paths into it (CMake's, an editable install's) stay valid -- and the
 environment the same way (`<env>/ = copy-on-write`). The PR's checkout, the incremental
 rebuild and any reinstall land in the instance's layers; `asb --delete` drops them.
 Instances need no names written anywhere: the template is glob sections only
-(`[x:pr-reviewer-*]`), appended once, and a role name is an instance.
+(`[x:gh-*]`), appended once, and a role name is an instance.
+
+**Never push, enforced.** Review and triage get `[net] git = fetch`: the proxy passes
+git's upload-pack and refuses receive-pack, and `--ssh` is refused, since SSH is a whole
+transport the proxy cannot split. Their API writes (`gh pr review`, labels) stay told,
+on the user's word.
+
+**The fixer keeps the overlay.** A clone would cost the full rebuild the overlay avoids;
+its commits live in its layer's `.git`, so its work is published before the instance is
+deleted, and live instances are reset after `main` is rebuilt (a layered `.git` over a
+moved lower is the layered-build hazard, in git's metadata). It publishes over SSH
+through the broker, as the user does, to the checkout's remotes as they are: an
+`upstream` plus `origin` is a fork workflow, `origin` alone direct access; `ghstack
+submit` where the project uses it, with `~/.ghstackrc` bound read-only.
+
+Measured 2026-10-06 on a scratch private repository: a `gh-fix` instance launched with
+`--ssh github.com` committed on a new branch in its layer and pushed it over SSH through
+the broker; the host checkout stayed on `main`, untouched. A `gh-review` instance was
+refused `--ssh`, and fetched that branch over HTTPS with gh's token as git's credential
+helper. ghstack is unmeasured: it pushes to `pytorch/pytorch`, which a test cannot.
 
 Measured 2026-10-06 on a pytorch checkout built two days earlier and its environment
 (torch an editable scikit-build-core install: Python from the tree, 524 MB compiled in

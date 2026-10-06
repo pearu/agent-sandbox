@@ -81,10 +81,12 @@ names are gone; there are no aliases for removed names before 1.0.
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
   formats in `profiles/claude/profile.py`.
 - `~/.local/bin` may be declared read-only (#168).
-- **The `pr-review` model**: `asb --init pr-review --env NAME` appends, once, sections for
-  `pr-reviewer-<N>` -- a reviewer per pull request that sees your built checkout and
-  environment through a layer of its own, builds and tests the PR there, and posts a
-  review only when you say so, after checking the project's AI policy.
+- **The `github` model**: `asb --init github --env NAME` appends, once, sections for
+  `gh-review-<N>`, `gh-triage-<N>` and `gh-fix-<N>` -- a reviewer, a triager and a fixer
+  per pull request or issue, each seeing your built checkout and environment through a
+  layer of its own. Review and triage never push; the fixer publishes over SSH, or with
+  ghstack; every post is on your word, after the project's AI policy.
+- **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
 - **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
   its own layer, kept until `asb --delete`.
 - **`asb --init MODEL [ROLE=N ...] [--env NAME]`** (#225) and `models/roles/`: a project's

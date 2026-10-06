@@ -245,6 +245,23 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   wait "$live" 2>/dev/null || true
 }
 
+@test "a session with git = fetch: git's fetch passes, its push is refused (#github)" {
+  mkdir -p "$BASE/session.f"
+  printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$BASE/session.f/owner.id"
+  echo FFF >"$BASE/session.f/proxy.token"
+  : >"$BASE/session.f/allow.txt"
+  : >"$BASE/session.f/git-push-refuse.txt"
+  printf 'github.com\n' >>"$CFG/allowlist.txt"
+  run drive request_ua FFF github.com GET '/x/y.git/info/refs?service=git-upload-pack' 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua FFF github.com POST /x/y.git/git-upload-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua FFF github.com GET '/x/y.git/info/refs?service=git-receive-pack' 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"git = fetch"* ]]
+  run drive request_ua FFF github.com POST /x/y.git/git-receive-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* ]]
+}
+
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {
   run drive request blocked.invalid POST /v1/x
   [[ "$output" == *"blocked=True"* ]]
