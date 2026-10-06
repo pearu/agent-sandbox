@@ -29,5 +29,7 @@ A model directory holds:
   instance.
 - `README.md` -- what the model is, and which of its "may not"s are enforced.
 
-Run again with more instances, `--init` adds what is missing and touches nothing that
-exists; the changed `.agent-sandbox` then needs `asb --trust` again.
+Run again with more instances, `--init` adds what is missing and touches nothing else
+that exists, except a purpose file it wrote and nobody changed since: that one takes the
+model's current text (`.asb/init.sums` records what it wrote). The changed
+`.agent-sandbox` or purpose file then needs `asb --trust` again.
