@@ -212,6 +212,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
 | — | — | `[conda] prefix` | the same for an env given by its path, such as a clone in a role's tree; `name` and `prefix` are one setting, the later wins (none) ([config.md](docs/config.md)) |
 | — | — | `[share-memory]` | which other projects' agent memory this session may read, read-only: paths, `~/dir/*` wildcards, or `all` for every project's state. Sugar for `[connect]`: by default a role sees only its own project, and its memory is its own under `isolated` and `inherit` (#196) ([config.md](docs/config.md#memory-scoping)) |
+| — | `AGENT_SANDBOX_GPU` | `[gpu] mode` | the host's GPUs in the sandbox: their device nodes (`/dev/nvidia*`, `/dev/kfd`, `/dev/dri`) and `/sys` read-only for the driver's library; `off` keeps them out; per role with `[gpu:<role>]` (on) ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | default-deny syscall filter, compiled per machine by `install.sh`; `off` disables it (on) ([seccomp](components/seccomp/README.md)) |
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | — | `[channel:<name>]` | a **profile's own dot-file** only (`profiles/<name>/agent-sandbox`): one section per channel, a path per line under `{base}` (the profile's base, which `[agent] base-env` -- claude: `CLAUDE_CONFIG_DIR` -- can move), a trailing `/` for a directory, and per path `outside:`, `filter:`, `vendor:` or `start:` (a template file the store starts as, under `{profile}`, the profile's directory). In a project's file it is warned of at the review and ignored ([profiles.md](docs/profiles.md#the-profiles-dot-file)) |
@@ -244,8 +245,9 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Seven more variables name locations rather than behaviour and are rarely set by
+Eight more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
+`AGENT_SANDBOX_GPU_DEVICES` (which device nodes are the GPUs', as globs),
 `AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),
 `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,
 `AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper) and

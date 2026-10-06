@@ -196,3 +196,18 @@ init() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
 }
+
+@test "--disable-gpu / --enable-gpu write a [gpu:...] line for the model's roles, the broadest patterns only" {
+  init -- github --disable-gpu
+  [ "$status" -eq 0 ]
+  has_section '[gpu:gh-*]' "$PROJ/.agent-sandbox"
+  run ! grep -qF '[gpu:gh-fix-*]' "$PROJ/.agent-sandbox" # covered by gh-*
+  grep -A1 -F '[gpu:gh-*]' "$PROJ/.agent-sandbox" | grep -qx 'mode = off'
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  init -- roles planner=1 implementer=1 reviewer=1 --enable-gpu
+  [ "$status" -eq 0 ]
+  for p in 'planner-*' 'implementer-*' 'reviewer-*' 'supervisor'; do
+    has_section "[gpu:$p]" "$PROJ/.agent-sandbox"
+  done
+  grep -A1 -F '[gpu:supervisor]' "$PROJ/.agent-sandbox" | grep -qx 'mode = on'
+}

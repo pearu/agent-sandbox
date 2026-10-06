@@ -108,7 +108,10 @@ wait_gone() { # wait_gone PID -- up to 10 s
   # With the real filter, where it can be compiled here: a join has to apply it itself
   # (a seccomp filter does not carry across setns), and equal status lines prove it did.
   local sc="$I/seccomp" have_filter=0
-  local -a base=("${BASE[@]}")
+  # GPUs off: with them, /sys is bound, and its cgroup mount's root reads relative to
+  # the reading process's cgroup, which a join does not share -- the same mount,
+  # printed differently.
+  local -a base=("${BASE[@]}" AGENT_SANDBOX_GPU=off)
   mkdir -p "$sc"
   if python3 -c 'import pyseccomp' 2>/dev/null \
     && python3 "$REPO_ROOT/components/seccomp/gen-seccomp.py" "$REPO_ROOT/components/seccomp/moby-default.json" \

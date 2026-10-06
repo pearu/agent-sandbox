@@ -100,6 +100,15 @@
 #agent-port = 8000
 
 
+# ---- gpu: the host's GPUs -------------------------------------------------
+# mode : on|off. Default on: the GPUs' device nodes (/dev/nvidia*, /dev/kfd,
+#        /dev/dri) are passed in, and /sys read-only for the driver's library.
+#        `off` keeps them out. Per role with [gpu:<role>]. An AGENT_SANDBOX_GPU
+#        set in your shell wins over this line.
+#[gpu]
+#mode = on
+
+
 # ---- seccomp: the syscall filter ------------------------------------------
 # mode : on|off. `on` loads the default-deny filter compiled per machine by
 #        install.sh; every syscall not allowlisted fails with EPERM, and the

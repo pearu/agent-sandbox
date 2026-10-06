@@ -96,6 +96,13 @@ Sections:
   and the `AGENT_SANDBOX_HOST_PORTS` / `AGENT_SANDBOX_AGENT_PORTS` knobs as a
   union, and are noted and ignored in the other modes. See
   [network.md](network.md#strict-mode-opening-ports).
+- **`[gpu]`** — key/value lines. `mode = on|off` (default on): the host's GPUs in the
+  sandbox -- their device nodes (`/dev/nvidia*` and `nvidia-caps/`, AMD's `/dev/kfd`,
+  the render nodes `/dev/dri`) bound in, and `/sys` read-only, which the driver's
+  management library (NVML: `nvidia-smi`, a framework's device queries) reads. `off`
+  keeps all of it out. Per role with `[gpu:<role>]`; `AGENT_SANDBOX_GPU` in your shell
+  wins over the file; `asb --init MODEL --disable-gpu` (or `--enable-gpu`) writes the
+  line for a model's roles. The driver's libraries are in `/usr`, already in view.
 - **`[seccomp]`** — key/value lines. `mode = on|off` asks for the default-deny
   syscall filter for sessions in this project, the same grant as
   `AGENT_SANDBOX_SECCOMP` (which wins if set in your shell). The value is the
