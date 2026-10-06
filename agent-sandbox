@@ -5465,25 +5465,58 @@ _as_init() {
   local f tpath gdir br prefix v
   local -a globs=()
   mkdir -p "$proj/.asb/roles" || return 1
+  # A purpose file is the model's until the user changes it: .asb/init.sums records the
+  # hash of what --init last wrote at each path, and a file that still has it is replaced
+  # by the model's current text; one changed since (or older than the record) is kept.
+  _init_purpose() { # SRC REL ROLE N HANDLE
+    local tmp sum cur rec sums="$proj/.asb/init.sums"
+    tmp="$(mktemp)" || return 1
+    _init_render "" "$(cat -- "$1")" "$3" "$4" "$5" | sed 1d >"$tmp" || {
+      rm -f -- "$tmp"
+      return 1
+    }
+    sum="$(_as_sha256_file "$tmp")"
+    if [[ -e "$proj/$2" ]]; then
+      cur="$(_as_sha256_file "$proj/$2")"
+      rec="$(awk -v p="$2" '$2 == p { s = $1 } END { print s }' "$sums" 2>/dev/null)"
+      if [[ "$cur" == "$sum" ]]; then
+        :
+      elif [[ -n "$rec" && "$cur" == "$rec" ]]; then
+        cat -- "$tmp" >"$proj/$2" || return 1
+        wrote=1
+        _as_msg "updated $2 from model '$model'"
+      else
+        rm -f -- "$tmp"
+        _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (remove the file and run --init again for the model's)"
+        return 0
+      fi
+    else
+      mkdir -p "$proj/$(dirname -- "$2")" && cat -- "$tmp" >"$proj/$2" || return 1
+      _as_msg "wrote $2"
+    fi
+    rm -f -- "$tmp"
+    {
+      awk -v p="$2" '$2 != p' "$sums" 2>/dev/null
+      printf '%s  %s\n' "$sum" "$2"
+    } >"$sums.new" \
+      && mv -f -- "$sums.new" "$sums"
+  }
   for a in "${insts[@]}"; do
     IFS=$'\t' read -r inst h rn n <<<"$a"
     f="$mdir/roles/$rn.md"
-    [[ -f "$f" && ! -e "$proj/.asb/roles/$inst.md" ]] || continue
-    _init_render "" "$(cat -- "$f")" "$inst" "$n" "$h" | sed 1d >"$proj/.asb/roles/$inst.md" || return 1
-    _as_msg "wrote .asb/roles/$inst.md"
+    [[ -f "$f" ]] || continue
+    _init_purpose "$f" ".asb/roles/$inst.md" "$inst" "$n" "$h" || return 1
   done
   # A role with no numbered instances in the template (`[briefing:name-*]` with its own
-  # `file = PATH`, no {role} in it) is briefed from one file for every instance: written
-  # once, from the model's roles/<name>.md.
+  # `file = PATH`, no {role} in it) is briefed from one file for every instance, from the
+  # model's roles/<name>.md and kept as above.
   local gl
   for i in "${!heads[@]}"; do
     [[ "${heads[i]}" =~ ^\[briefing:([a-z][a-z0-9-]*)-\*\] ]] || continue
     rn="${BASH_REMATCH[1]}"
     gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*file[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
-    [[ -n "$gl" && "$gl" != *'{role}'* && -f "$mdir/roles/$rn.md" && ! -e "$proj/$gl" ]] || continue
-    mkdir -p "$proj/$(dirname -- "$gl")" || return 1
-    _init_render "" "$(cat -- "$mdir/roles/$rn.md")" "$rn" "" "" | sed 1d >"$proj/$gl" || return 1
-    _as_msg "wrote $gl"
+    [[ -n "$gl" && "$gl" != *'{role}'* && -f "$mdir/roles/$rn.md" ]] || continue
+    _init_purpose "$mdir/roles/$rn.md" "$gl" "$rn" "" "" || return 1
     globs+=("$rn")
   done
   for a in ${clones[@]+"${clones[@]}"}; do

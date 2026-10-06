@@ -97,7 +97,8 @@ names are gone; there are no aliases for removed names before 1.0.
   `.agent-sandbox`, `.asb/`, a purpose file per role instance, the coord index, and a
   clone per Implementer (its tree under `.asb/impl/N/`, its history under `.asb/git/N/`)
   written from a development model; run again with more instances, it adds what is
-  missing. It approves nothing.
+  missing, and a purpose file it wrote that you have not changed since takes the
+  model's current text (one you changed is kept). It approves nothing.
 - **`--check` says where a role can act as you** (#226): per outside service -- your
   agent's API, GitHub, SSH, forwarded credentials -- whether the role holds a credential
   there, and what its `[net]` lines leave it able to do with it.

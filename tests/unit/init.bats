@@ -124,6 +124,30 @@ init() {
   [[ "$output" == *"nothing added to it"* ]]
 }
 
+@test "run again: a purpose file --init wrote and nobody changed takes the model's text; a changed one is kept" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
+  [ "$status" -eq 0 ]
+  [ -f "$PROJ/.asb/init.sums" ]
+  printf 'MINE\n' >>"$PROJ/.asb/roles/gh-triage.md" # the user's change
+  printf 'NEW LINE\n' >>"$H/models/github/roles/gh-review.md"
+  printf 'NEW LINE\n' >>"$H/models/github/roles/gh-triage.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/gh-review.md from model 'github'"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/gh-review.md")" = "NEW LINE" ]
+  [[ "$output" == *"kept .asb/roles/gh-triage.md: changed since --init wrote it"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/gh-triage.md")" = MINE ]
+  [[ "$output" != *"gh-fix.md"* ]] # the same text: nothing said, nothing written
+  [[ "$output" == *"--trust"* ]]   # a changed purpose file needs the approval again
+  # a file from before the record is kept, even when it is the model's old text
+  printf 'NEWER\n' >>"$H/models/github/roles/gh-review.md"
+  rm "$PROJ/.asb/init.sums"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
+  [[ "$output" == *"kept .asb/roles/gh-review.md"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/gh-review.md")" = "NEW LINE" ]
+}
+
 @test "--env: the [conda] sections written, and an environment cloned from it at each Implementer's prefix" {
   init CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=2 reviewer=1 --env x-dev
   [ "$status" -eq 0 ]
