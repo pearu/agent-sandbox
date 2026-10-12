@@ -154,7 +154,9 @@ _claude_path_hash() {
 # up and fails -- which is what creating one here did under `native` and `config =
 # read-write`, where it is the file Claude Code reads. The seeding modes need nothing
 # there: the filter seeds {"projects": {}} from a missing file, and `own` starts from
-# config.json.
+# config.json: {"hasCompletedOnboarding": true}, since on an empty file Claude Code 2.1.285
+# runs its first-run onboarding, whose login step asks for a login beside valid
+# credentials (measured 2026-10-12; 2.1.296 does not).
 profile_prepare() {
   _claude_config_prepare || return 1
   return 0
