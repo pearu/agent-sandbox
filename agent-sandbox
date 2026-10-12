@@ -5211,9 +5211,9 @@ _as_trust_check() {
 # and a coord index. --init renders them for this project with the counts given (one of
 # each by default), makes a clone per instance whose section says `#@ clone = TREE
 # GITDIR BRANCH` (and an environment cloned from --env at its `prefix`), creates every
-# path the written file declares under .asb/, and keeps .asb/ out of git. Run again, it
-# adds what is missing and updates a purpose file it wrote that nobody changed since;
-# nothing else that exists is touched. It approves nothing.
+# path the written file declares under .asb/, and keeps .asb/ out of git (a .gitignore of
+# its own). Run again, it adds what is missing and updates a purpose file it wrote that
+# nobody changed since; nothing else that exists is touched. It approves nothing.
 _as_models_dir() { printf '%s' "${AGENT_SANDBOX_MODELS_DIR:-$(dirname -- "$engine")/models}"; }
 # _as_models_list -- the shipped models' names, space-separated.
 _as_models_list() {
@@ -5242,11 +5242,14 @@ _as_init() {
     return 1
   fi
   # A model that clones the project needs it to be a git repository, at its top; one
-  # that does not runs in any directory -- but not below a repository's top, where
-  # .asb/ would sit inside another project's tree.
+  # that does not runs in any directory, a repository's subdirectory included.
   top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [[ "$top" != "$proj" ]] && { [[ -n "$top" ]] || grep -q '^#@ clone' "$tpl"; }; then
-    _as_msg "--init runs at the top of a git repository (the roles' clones are of it): $proj is not one${top:+ (its top is $top)}."
+  if [[ "$top" != "$proj" ]] && grep -q '^#@ clone' "$tpl"; then
+    if [[ -n "$top" ]]; then
+      _as_msg "--init: model '$model' clones the project, so it runs at the top of a git repository; $proj is inside the one at $top -- run it there."
+    else
+      _as_msg "--init: model '$model' clones the project, so it runs at the top of a git repository; $proj is not in one."
+    fi
     return 1
   fi
 
@@ -5604,11 +5607,11 @@ _as_init() {
   elif [[ -n "$idxrows" ]]; then
     printf '%s' "$idxrows" >>"$idx" || return 1
   fi
-  # .asb/ is the roles' working state, never the project's history.
-  local ex="$proj/.git/info/exclude"
-  if [[ -n "$top" ]] && ! grep -qxF '/.asb/' "$ex" 2>/dev/null; then
-    mkdir -p "$(dirname -- "$ex")" && printf '/.asb/\n' >>"$ex" || return 1
-    _as_msg "added /.asb/ to .git/info/exclude"
+  # .asb/ is the roles' working state, never the project's history: a .gitignore of its
+  # own keeps it out of whatever repository the directory is in, or becomes part of.
+  if [[ ! -e "$proj/.asb/.gitignore" ]]; then
+    printf '*\n' >"$proj/.asb/.gitignore" || return 1
+    _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
   fi
 
   {

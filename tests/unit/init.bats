@@ -35,7 +35,7 @@ init() {
     _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "${#envs[@]}" ${envs[@]+"${envs[@]}"} "$@"
 }
 
-@test "the roles model: every instance's sections, purpose files, clones, directories, the index and the exclude" {
+@test "the roles model: every instance's sections, purpose files, clones, directories, the index and .asb/.gitignore" {
   init -- roles planner=2 implementer=2 reviewer=1
   [ "$status" -eq 0 ]
   [[ "$output" == *"--trust"* && "$output" == *"--check --role NAME"* ]]
@@ -64,7 +64,10 @@ init() {
   [ -f "$PROJ/.asb/coord/planner-1.md" ]
   grep -q '^| I1 | implementer-1 | .asb/coord/implementer-1.md | .asb/handoff/implementer-1/, .asb/impl/1/, .asb/git/1/ |$' "$PROJ/.asb/coord/COORDINATION.md"
   grep -q '^| S | supervisor |' "$PROJ/.asb/coord/COORDINATION.md"
-  [ "$(grep -cxF '/.asb/' "$PROJ/.git/info/exclude")" -eq 1 ]
+  # .asb/ kept out of git by its own .gitignore, and not by the repository's exclude
+  [ "$(cat "$PROJ/.asb/.gitignore")" = '*' ]
+  [ -z "$(git -C "$PROJ" status --porcelain --untracked-files=all -- .asb)" ]
+  run ! grep -qF '.asb' "$PROJ/.git/info/exclude"
   [ ! -e "$H/home/.config/agent-sandbox/trust" ] # it approves nothing
 }
 
@@ -86,7 +89,7 @@ init() {
   [ ! -e "$PROJ/.agent-sandbox" ]
 }
 
-@test "a model whose roles share an initial is refused; so is an unknown model, and a directory that is not a repository's top" {
+@test "a model whose roles share an initial is refused; so is an unknown model, and a cloning model below a repository's top" {
   mkdir -p "$H/m/pairs"
   printf '[connect:planner-{n}]\n.asb/a/ = read-write\n[connect:prober-{n}]\n.asb/b/ = read-write\n' >"$H/m/pairs/agent-sandbox"
   init -- "$H/m/pairs"
@@ -98,7 +101,7 @@ init() {
   mkdir -p "$PROJ/sub"
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --init roles 2>&1' _ "$PROJ/sub" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"top of a git repository"* ]]
+  [[ "$output" == *"model 'roles' clones the project"*"inside the one at $PROJ -- run it there"* ]]
 }
 
 @test "run again with more instances, it adds what is missing and touches nothing that exists" {
@@ -117,7 +120,7 @@ init() {
   [ -f "$PROJ/.asb/roles/implementer-2.md" ]
   [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
   [ "$(grep -c '^| I2 |' "$PROJ/.asb/coord/COORDINATION.md")" -eq 1 ]
-  [ "$(grep -cxF '/.asb/' "$PROJ/.git/info/exclude")" -eq 1 ]
+  [ "$(cat "$PROJ/.asb/.gitignore")" = '*' ]
   # the same counts again: nothing to add
   init -- roles planner=1 implementer=2 reviewer=1
   [ "$status" -eq 0 ]
@@ -221,12 +224,24 @@ init() {
   [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
 }
 
+@test "the market model in a repository's subdirectory: written there, .asb/ ignored, the repository's own files untouched" {
+  mkdir -p "$PROJ/market"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --init market 2>&1 </dev/null' _ "$PROJ/market" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [ -f "$PROJ/market/.agent-sandbox" ]
+  [ -f "$PROJ/market/.asb/roles/market.md" ]
+  [ ! -e "$PROJ/.asb" ]
+  # git sees the dot-file (yours to commit or not) and nothing of .asb/
+  [ "$(git -C "$PROJ" status --porcelain --untracked-files=all)" = '?? market/.agent-sandbox' ]
+  run ! grep -qF '.asb' "$PROJ/.git/info/exclude"
+}
+
 @test "the market model: in a directory that is no git repository; every public host, nothing of yours, no git, no GPU" {
   rm -rf "$PROJ/.git"
   mkdir -p "$H/envs/an/conda-meta"
   init -- roles # a model that clones needs a repository
   [ "$status" -ne 0 ]
-  [[ "$output" == *"top of a git repository"* ]]
+  [[ "$output" == *"model 'roles' clones the project"*"is not in one"* ]]
   init -- market --env "$H/envs/an"
   [ "$status" -eq 0 ]
   [[ "$output" == *"--role market-<N> claude"* ]]
@@ -236,7 +251,8 @@ init() {
   grep -qx "$H/envs/an/ = copy-on-write.*" "$df"
   [ -f "$PROJ/.asb/roles/market.md" ]
   run ! grep -qF '{' "$PROJ/.asb/roles/market.md"
-  [ ! -e "$PROJ/.git" ] # no repository made, no exclude written
+  [ ! -e "$PROJ/.git" ] # no repository made
+  [ "$(cat "$PROJ/.asb/.gitignore")" = '*' ]
   run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[net] hosts = public: every public host is reachable"* ]]
