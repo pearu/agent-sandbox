@@ -196,8 +196,9 @@ approves nothing -- `asb --trust` does, after you have read the file and the pur
 files.
 
 Run it again with more instances (`implementer=3`) and it adds what is missing --
-sections, purpose file, clone -- and changes nothing that exists; the changed file
-needs `asb --trust` again.
+sections, purpose file, clone -- and changes nothing else that exists, except a purpose
+file it wrote that you have not changed since: that one takes the model's current text.
+One you changed is kept, and said so. The changed files need `asb --trust` again.
 
 `asb --check --role NAME` is the way to see what a role has before it runs: its
 policy, what can reach it from other sessions, where it can act as you (your agent's
