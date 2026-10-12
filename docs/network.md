@@ -164,6 +164,23 @@ fetch is a POST too, so a retrieve-only session cannot fetch over HTTPS either.
 What it does not stop: a secret carried out in a GET -- in a URL, to any allowed host.
 A token that cannot write bounds what such a secret can do ([recipes.md](recipes.md)).
 
+## Every public host: `hosts = public`
+
+```ini
+[net:market-*]
+hosts = public
+```
+
+lets that role's sessions reach every public host: for each, the addon passes a host
+the allowlist would refuse, at CONNECT and per request, while the session lives. What
+is subtracted still is: `[deny]`, `retrieve-only`, the `git` refusals, and -- in
+`server_connect`, on the address actually dialed -- every non-public destination, so
+the reach is the public internet and nothing on this machine or its LAN. With
+`mode = strict` there is no route around the proxy either. It is for work whose sites
+cannot be listed in advance (the `market` model); what bounds such a role is what is
+in reach of it, so give it nothing of yours (`preset = isolated`, no `gh`, no SSH).
+Ignored in `open` and `none`, which have no proxy.
+
 ## No git transport: `git = refuse`, or no push: `git = fetch`
 
 A host that serves pages serves git over HTTPS too, so an allowlist that lets a role

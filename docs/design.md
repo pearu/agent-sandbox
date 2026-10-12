@@ -449,6 +449,19 @@ word, after reading the project's policy on AI-written contributions. A read-onl
 reviewer whose draft the user posts from a file was the enforced alternative, declined
 for convenience.
 
+## The market model
+
+One kind, `market-<topic>`, glob sections only, in any directory: a model that makes no
+clone needs no git repository. Its sites -- shops, makers, review and test sites -- are
+neither known in advance nor few, so a role allowlist would stall the work at every
+refusal; `[net] hosts = public` takes the allowlist away for the role and keeps
+everything the proxy subtracts, the non-public refusal included. POST is allowed: many
+sites hand their data only to a search form or an API's POST. With every public host
+and every method open, egress itself bounds nothing, so the bound is what is in reach:
+`preset = isolated`, no `gh`, `git = refuse` (and so no `--ssh`), GPUs off. What a page
+can make it do -- post a form, sign up -- is told against in its purpose file, not
+enforced. `mode = strict` closes the raw-socket route around the proxy.
+
 ## Open design questions
 
 Recorded so they are not re-derived from scratch; each has measurements or

@@ -223,6 +223,33 @@ STUB
   [[ "$output" == *"[net] retrieve-only is ignored with AGENT_SANDBOX_NET=none"* ]]
 }
 
+@test "[net:<role>] hosts = public: the session's file for that role only, said in the briefing, --check and the review; ignored without a proxy" {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+for f in "$AGENT_SANDBOX_SESSION_BASE"/session.*/*.txt "$AGENT_SANDBOX_SESSION_BASE"/session.*/briefing/briefing.md; do printf '== %s\n' "${f##*/}"; cat "$f"; done >"${BWRAP_PROBE:?}" 2>&1
+. "${0%/*}/keeper-tail"
+STUB
+  dotfile $'[net:market-*]\nhosts = public\n[net:other]\nhosts = everywhere\n[connect:supervisor]\n'
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role market-laptops claude --version
+  [ "$status" -eq 0 ]
+  grep -q '^== hosts-public.txt$' "$H/probe"
+  grep -q 'EVERY PUBLIC HOST' "$H/probe"
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -q '^== hosts-public.txt$' "$H/probe"
+  run ! grep -q 'EVERY PUBLIC HOST' "$H/probe"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [[ "$output" == *"network: every public host -- the allowlist does not apply"* ]]
+  run_review
+  [[ "$output" == *"[net] hosts = public: every public host is reachable"* ]]
+  [[ "$output" == *"[net] hosts 'everywhere' unknown (allowlist|public)"* ]]
+  run_engine AGENT_SANDBOX_NET=none -- asb --role market-laptops claude --version
+  [[ "$output" == *"[net] hosts = public is ignored with AGENT_SANDBOX_NET=none"* ]]
+}
+
 @test "[net:<role>] git = refuse: the session's file, --check's line, and --ssh refused for that role only (#224)" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash

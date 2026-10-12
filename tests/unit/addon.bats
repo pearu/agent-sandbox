@@ -262,6 +262,28 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   [[ "$output" == *"blocked=True"* ]]
 }
 
+@test "a session with hosts = public: any host passes CONNECT and requests, POST too; [deny] and other sessions keep the allowlist" {
+  mkdir -p "$BASE/session.p"
+  printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$BASE/session.p/owner.id"
+  echo PPP >"$BASE/session.p/proxy.token"
+  : >"$BASE/session.p/allow.txt"
+  : >"$BASE/session.p/hosts-public.txt"
+  printf 'shop.example\n' >"$BASE/session.p/deny.txt"
+  run drive connect_tok PPP store.example.net # on no list
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_body PPP store.example.net POST /search 'q=laptop'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive connect_tok PPP shop.example # denied for this session, public or not
+  [[ "$output" == *"blocked=True"* ]]
+  run drive request_tok PPP shop.example
+  [[ "$output" == *"blocked=True"* && "$output" == *"denied for this session"* ]]
+  run drive connect_tok LIVE store.example.net # another session: the allowlist applies
+  [[ "$output" == *"blocked=True"* ]]
+  rm "$BASE/session.p/owner.id" # a session no longer live: refused like any anonymous client
+  run drive connect_tok PPP store.example.net
+  [[ "$output" == *"blocked=True"* && "$output" == *"status=407"* ]]
+}
+
 @test "a non-allowed request gets a 403 with the allowlist message and is logged; an allowed one passes" {
   run drive request blocked.invalid POST /v1/x
   [[ "$output" == *"blocked=True"* ]]

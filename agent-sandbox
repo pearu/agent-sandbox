@@ -794,6 +794,12 @@ _as_allow_setup() {
     printf '%s\n' ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"} >"$_session_dir/retrieve-only.txt"
     _as_info "retrieve-only: GET and HEAD only, but to the profile's own hosts"
   fi
+  # [net] hosts = public: the file's presence lets this session's token reach every
+  # host the allowlist would refuse; [deny] and the non-public refusal still apply.
+  if ((${_hosts_public:-0})); then
+    : >"$_session_dir/hosts-public.txt"
+    _as_info "hosts: every public host (the allowlist does not apply to this session)"
+  fi
   # [net] git = refuse (#224): the file's presence refuses git's HTTPS transport;
   # git = fetch: its push only.
   if ((${_git_refuse:-0})); then
@@ -3301,6 +3307,9 @@ _as_briefing_write() {
   elif ((${_git_fetch_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
     egress="$egress GIT FETCHES ONLY: git can fetch over HTTPS (use an https:// URL); a push is refused, and there is no SSH."
   fi
+  if ((${_hosts_public:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
+    egress="$egress EVERY PUBLIC HOST: for this session the allowlist does not apply -- any public site is reachable through the proxy, while localhost, the LAN and denied hosts are refused."
+  fi
   if ((${_retrieve_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
     egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
   fi
@@ -3640,7 +3649,7 @@ _as_trust_digest() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=()
-  local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
   local -a files=()
@@ -3719,7 +3728,7 @@ _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=()
-  local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
   _as_briefing_files "$1"
@@ -3757,7 +3766,7 @@ _as_profile_dotfile() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() words=()
-  local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=()
@@ -4073,11 +4082,11 @@ _as_instruction_channel() {
 # serves them all. What depends on the host or the moment -- a path that does not
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
 _as_trust_notes() {
-  local cwd="$1" file="$2" f cs spec key mode p h pair n k line ch entry cpath over in_ch in_path contains
+  local cwd="$1" file="$2" v f cs spec key mode p h pair n k line ch entry cpath over in_ch in_path contains
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
   local -a _df_profile_names=() facts=() fields=()
-  local _df_net_git="" _df_net_retrieve_only="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=()
@@ -4113,6 +4122,16 @@ _as_trust_notes() {
     open) _as_msg ".agent-sandbox: network mode 'open': the egress allowlist is off for this project" ;;
     *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
   esac
+  local -a hv=()
+  read -ra hv <<<"$_df_hosts_seen"
+  while IFS= read -r v; do
+    case "$v" in
+      "") ;;
+      allowlist) ;;
+      public) _as_msg ".agent-sandbox: [net] hosts = public: every public host is reachable, the allowlist does not apply (localhost, the LAN and [deny] stay refused)" ;;
+      *) _as_msg ".agent-sandbox: [net] hosts '$v' unknown (allowlist|public); ignoring" ;;
+    esac
+  done < <(printf '%s\n' ${hv[@]+"${hv[@]}"} | sort -u)
   case "$_df_net_retrieve_only" in
     "" | on | 1 | off | 0) ;;
     *) _as_msg ".agent-sandbox: [net] retrieve-only '$_df_net_retrieve_only' unknown (on|off); ignoring" ;;
@@ -4465,6 +4484,10 @@ _as_dotfile_line() {
           # Retrieve only (#223): every method but GET and HEAD refused to every host but
           # the profile's own; a GraphQL query passes, a mutation does not.
           retrieve-only) _df_net_retrieve_only="$cv" ;;
+          # Every public host (the market model): the allowlist does not gate this
+          # session; [deny], the non-public refusal and the session's other lines do.
+          # Every value is kept for the review: a later role's line must not hide a widening.
+          hosts) _df_net_hosts="$cv" _df_hosts_seen+=" $cv" ;;
           # Git's transport (#224): `refuse` stops git over HTTPS to any host, and --ssh;
           # `fetch` refuses only a push (and --ssh).
           git) _df_net_git="$cv" ;;
@@ -4696,6 +4719,7 @@ _as_check_plan() {
     esac
     ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host, and --ssh\n'
     ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused, and --ssh\n'
+    ((${_hosts_public:-0})) && printf '  network: every public host -- the allowlist does not apply; localhost, the LAN and [deny] stay refused\n'
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
@@ -5188,7 +5212,8 @@ _as_trust_check() {
 # each by default), makes a clone per instance whose section says `#@ clone = TREE
 # GITDIR BRANCH` (and an environment cloned from --env at its `prefix`), creates every
 # path the written file declares under .asb/, and keeps .asb/ out of git. Run again, it
-# adds what is missing and touches nothing that exists. It approves nothing.
+# adds what is missing and updates a purpose file it wrote that nobody changed since;
+# nothing else that exists is touched. It approves nothing.
 _as_models_dir() { printf '%s' "${AGENT_SANDBOX_MODELS_DIR:-$(dirname -- "$engine")/models}"; }
 # _as_models_list -- the shipped models' names, space-separated.
 _as_models_list() {
@@ -5207,11 +5232,6 @@ _as_init() {
     _as_msg "--init runs on the host: it writes the policy a sandbox runs under."
     return 1
   fi
-  top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [[ "$top" != "$proj" ]]; then
-    _as_msg "--init runs at the top of a git repository (the roles' clones are of it): $proj is not one${top:+ (its top is $top)}."
-    return 1
-  fi
   case "$model" in
     */*) mdir="$model" ;;
     *) mdir="$(_as_models_dir)/$model" ;;
@@ -5219,6 +5239,14 @@ _as_init() {
   tpl="$mdir/agent-sandbox"
   if [[ ! -f "$tpl" ]]; then
     _as_msg "--init: no model '$model' ($tpl not found). Shipped: $(_as_models_list)"
+    return 1
+  fi
+  # A model that clones the project needs it to be a git repository, at its top; one
+  # that does not runs in any directory -- but not below a repository's top, where
+  # .asb/ would sit inside another project's tree.
+  top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ "$top" != "$proj" ]] && { [[ -n "$top" ]] || grep -q '^#@ clone' "$tpl"; }; then
+    _as_msg "--init runs at the top of a git repository (the roles' clones are of it): $proj is not one${top:+ (its top is $top)}."
     return 1
   fi
 
@@ -5578,7 +5606,7 @@ _as_init() {
   fi
   # .asb/ is the roles' working state, never the project's history.
   local ex="$proj/.git/info/exclude"
-  if ! grep -qxF '/.asb/' "$ex" 2>/dev/null; then
+  if [[ -n "$top" ]] && ! grep -qxF '/.asb/' "$ex" 2>/dev/null; then
     mkdir -p "$(dirname -- "$ex")" && printf '/.asb/\n' >>"$ex" || return 1
     _as_msg "added /.asb/ to .git/info/exclude"
   fi
@@ -6504,6 +6532,7 @@ agent_sandbox() (
   # ---- knobs (AGENT_SANDBOX_*) ----
   local _knob_forward="${AGENT_SANDBOX_FORWARD:-}"
   local _retrieve_only=0  # [net] retrieve-only (#223)
+  local _hosts_public=0   # [net] hosts = public: every public host, no allowlist
   local _git_refuse=0     # [net] git = refuse (#224)
   local _git_fetch_only=0 # [net] git = fetch: a push refused
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
@@ -6532,7 +6561,7 @@ agent_sandbox() (
   # ---- per-project config (.agent-sandbox), trust-gated ----
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=()
   local -a _df_net_host_port=() _df_net_agent_port=()
-  local _df_net_git="" _df_net_retrieve_only="" _df_net_mode=""
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
@@ -6675,6 +6704,10 @@ agent_sandbox() (
       case "$_df_net_retrieve_only" in
         on | 1) _retrieve_only=1 ;;
         off | 0) _retrieve_only=0 ;;
+      esac
+      case "$_df_net_hosts" in
+        public) _hosts_public=1 ;;
+        allowlist) _hosts_public=0 ;;
       esac
       case "$_df_net_git" in
         refuse) _git_refuse=1 _git_fetch_only=0 ;;
@@ -7661,6 +7694,8 @@ agent_sandbox() (
         && _as_msg "[deny] is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
       ((_retrieve_only)) \
         && _as_msg "[net] retrieve-only is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
+      ((_hosts_public)) \
+        && _as_msg "[net] hosts = public is ignored with AGENT_SANDBOX_NET=${_knob_net} (no egress proxy in that mode)"
       ((_git_refuse || _git_fetch_only)) && [[ "${_knob_net}" == open ]] \
         && _as_msg "[net] git = $( ((_git_refuse)) && echo refuse || echo fetch) is ignored with AGENT_SANDBOX_NET=open (no egress proxy in that mode)"
       ;;
