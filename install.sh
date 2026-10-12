@@ -2363,6 +2363,11 @@ holding the credentials in its proxy URL then sends them (measured: git retries 
 CONNECT with them), and one without has nothing to send. The engine mints a token
 for every proxied launch.
 
+A session whose dir holds hosts-public.txt ([net] hosts = public) is not gated by
+the allowlist: every host passes it. Its [deny], retrieve-only and git refusals
+still apply, and so does the non-public refusal in `server_connect`, so it reaches
+every PUBLIC host and nothing on this machine or its LAN.
+
 No restart needed when editing the allowlist; the file is re-read on
 each request.
 
@@ -2776,7 +2781,7 @@ def request(flow: http.HTTPFlow) -> None:
         )
         return
     exact, suffix = _load_allowlist(token)
-    if _is_allowed(host, exact, suffix):
+    if _is_allowed(host, exact, suffix) or _session_has(token, "hosts-public.txt"):
         why = _retrieve_refusal(flow, token)
         if why is None and _is_git_transport(flow) and _session_has(token, "git-refuse.txt"):
             why = "git's transport (this session's [net] git = refuse)"
@@ -2822,7 +2827,7 @@ def http_connect(flow: http.HTTPFlow) -> None:
         return
     denied = _is_denied(host, token)
     exact, suffix = _load_allowlist(token)
-    if not denied and _is_allowed(host, exact, suffix):
+    if not denied and (_is_allowed(host, exact, suffix) or _session_has(token, "hosts-public.txt")):
         return
     _log_blocked(host, "CONNECT", "-")
     why = "denied for this session ([deny] in .agent-sandbox)" if denied else "not in the allowlist"

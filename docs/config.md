@@ -68,7 +68,13 @@ Sections:
   downloads go whenever a conda env is active (the host's cache stays read-only and
   is searched after it), write mode or not -- an env written by path, `conda install
   -p`, downloads too.
-- **`[net]`** — key/value lines. `retrieve-only = on|off` (#223, default off): every
+- **`[net]`** — key/value lines. `hosts = allowlist|public` (default allowlist):
+  `public` lets the role reach every public host, the allowlist not applying -- for
+  work whose sites are not known in advance (the `market` model). The proxy stays in
+  the path: `[deny]`, `retrieve-only`, `git` and the refusal of non-public addresses
+  (localhost, the LAN, cloud metadata) still apply. Said at the review, in the
+  briefing and in `--check`; ignored in `open` and `none`.
+  `retrieve-only = on|off` (#223, default off): every
   request but GET and HEAD is refused, to every host but the profile's own (the
   agent's API) -- a session that reads the web and GitHub and publishes nothing. `gh`
   reads through POSTs to `api.github.com/graphql`, so there a query passes and a

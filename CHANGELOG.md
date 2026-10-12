@@ -47,6 +47,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The `market` model** and **`[net] hosts = public`**: `asb --init market --env NAME`
+  in any directory, then `asb --role market-<topic> claude` -- research for a purchase
+  or a tender (makers, shops, review and test sites, prices), reaching every public
+  website by any method, POST included, through the proxy; localhost, the LAN and
+  `[deny]` stay refused. Nothing of yours is in reach: `preset = isolated`, no `gh`,
+  `git = refuse`, GPUs off. `hosts = public` is any role's to set. `--init` needs a git
+  repository only for a model that clones the project.
 - **Roles** (#136): `asb --role NAME`, a persistent instance of a project under a policy
   of its own, selected by `[sandbox:<glob>]` and `[connect:<glob>]` sections. Each role's
   stores are its own; two roles share the project directory and nothing else unless

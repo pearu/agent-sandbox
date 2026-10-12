@@ -366,4 +366,6 @@ dot-file (enforced) or a sentence of a purpose file (told), and its README says 
 The other model shipped is [github](../models/github/README.md): review, triage and fix,
 one instance per pull request or issue (`asb --role gh-review-1234 claude`), each
 working on your built checkout through a layer of its own, and posting only when you
-say so.
+say so. And [market](../models/market/README.md): research for a purchase or a tender,
+one instance per topic (`asb --role market-laptops claude`), reaching every public
+website with nothing of yours in reach.

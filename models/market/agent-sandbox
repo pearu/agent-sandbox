@@ -1,0 +1,23 @@
+# ---- market: research for a purchase or a tender, one instance per topic -----------
+#   asb --role market-<topic> claude    makers, products, shops, reviews and tests, prices
+# Each works in this directory, in ./<topic>/, and reaches every public website -- any
+# method, since many sites give their data out only to a search form or an API's POST.
+# Nothing of yours is in reach: no gh login, no SSH, no git remote, none of your Claude
+# settings. Delete one when its topic is done:
+#   asb --delete --role market-<topic>
+[sandbox:market-*]
+preset = isolated                 # nothing of your native install: settings, skills, memory are its own
+[connect:market-*]
+project = read-write              # this directory: the topics' sources, data and reports
+{envpath}/ = copy-on-write        # the analysis environment; what it installs lands in its layer
+[conda:market-*]
+prefix = {envpath}                # activated
+[net:market-*]
+mode = strict                     # no route but the proxy; localhost and the LAN are closed
+hosts = public                    # every public host: the sites are not known in advance
+git = refuse                      # no git transport, and no --ssh
+[gpu:market-*]
+mode = off
+[briefing:market-*]
+file = .asb/roles/market.md
+[connect:default]                 # your own sessions here keep the directory's policy

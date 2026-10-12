@@ -94,7 +94,7 @@ init() {
   [[ "$output" == *"roles 'planner' and 'prober'"*"share the initial P"* ]]
   init -- nosuch
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no model 'nosuch'"*"Shipped: github roles"* ]]
+  [[ "$output" == *"no model 'nosuch'"*"Shipped: github market roles"* ]]
   mkdir -p "$PROJ/sub"
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --init roles 2>&1' _ "$PROJ/sub" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
   [ "$status" -ne 0 ]
@@ -219,6 +219,33 @@ init() {
   init -- github --env nosuch-env
   [ "$status" -ne 0 ]
   [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
+}
+
+@test "the market model: in a directory that is no git repository; every public host, nothing of yours, no git, no GPU" {
+  rm -rf "$PROJ/.git"
+  mkdir -p "$H/envs/an/conda-meta"
+  init -- roles # a model that clones needs a repository
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"top of a git repository"* ]]
+  init -- market --env "$H/envs/an"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--role market-<N> claude"* ]]
+  local df="$PROJ/.agent-sandbox"
+  has_section '[net:market-*]' "$df"
+  grep -qx 'hosts = public.*' "$df"
+  grep -qx "$H/envs/an/ = copy-on-write.*" "$df"
+  [ -f "$PROJ/.asb/roles/market.md" ]
+  run ! grep -qF '{' "$PROJ/.asb/roles/market.md"
+  [ ! -e "$PROJ/.git" ] # no repository made, no exclude written
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[net] hosts = public: every public host is reachable"* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"network: every public host"* ]]
+  [[ "$output" == *"git transport: refused"* ]]
+  [[ "$output" == *"gpu: off"* ]]
+  [[ "$output" == *"briefed from: .asb/roles/market.md"* ]]
 }
 
 @test "--disable-gpu / --enable-gpu write a [gpu:...] line for the model's roles, the broadest patterns only" {

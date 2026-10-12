@@ -16,12 +16,12 @@ A model directory holds:
   naming `{envpath}` are written commented out. A role with no `{n}` sections at all --
   only `[x:name-*]` -- has its instances named at launch (`asb --role name-<anything>`)
   and no handles (so its initial may repeat another's),
-  and a `[briefing:name-*]` with its own `file = PATH` gets `roles/name.md` written there
-  once. `[x:default]` keeps the unnamed role admitted once role sections exist. A line
+  and a `[briefing:name-*]` with its own `file = PATH` gets `roles/name.md` written there. `[x:default]` keeps the unnamed role admitted once role sections exist. A line
   `#@ clone = TREE GITDIR BRANCH` in a role's section makes a clone of the project per
   instance (`git clone --shared --separate-git-dir=GITDIR . TREE`, on BRANCH), with an
-  environment cloned from `--env` at that role's `[conda:...] prefix`. Every path the
-  written file declares under `.asb/` is created.
+  environment cloned from `--env` at that role's `[conda:...] prefix`, and needs the
+  project to be a git repository, at its top; a model without one runs in any directory.
+  Every path the written file declares under `.asb/` is created.
 - `roles/<role>.md` -- one purpose file per role, written per instance to
   `.asb/roles/<instance>.md` with the same placeholders; `[briefing:<role>]` injects it
   at every start.
