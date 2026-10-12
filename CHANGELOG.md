@@ -53,7 +53,9 @@ names are gone; there are no aliases for removed names before 1.0.
   website by any method, POST included, through the proxy; localhost, the LAN and
   `[deny]` stay refused. Nothing of yours is in reach: `preset = isolated`, no `gh`,
   `git = refuse`, GPUs off. `hosts = public` is any role's to set. `--init` needs a git
-  repository only for a model that clones the project.
+  repository only for a model that clones the project; any other runs in any
+  directory, a repository's subdirectory included, and `.asb/` keeps itself out of git
+  with a `.gitignore` of its own (no longer a line in `.git/info/exclude`).
 - **Roles** (#136): `asb --role NAME`, a persistent instance of a project under a policy
   of its own, selected by `[sandbox:<glob>]` and `[connect:<glob>]` sections. Each role's
   stores are its own; two roles share the project directory and nothing else unless

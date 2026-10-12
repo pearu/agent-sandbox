@@ -188,8 +188,8 @@ On the host, at the top of the repository:
     asb --check --role reviewer-1     # what the reviewer has: nothing writable but its own
 
 `asb --init` writes `.agent-sandbox`, `.asb/` with every directory the file names, a
-purpose file per instance in `.asb/roles/`, the coord index, and `/.asb/` in
-`.git/info/exclude`; it makes each Implementer's clone (with your git identity) and,
+purpose file per instance in `.asb/roles/`, the coord index, and `.asb/.gitignore`
+(`.asb/` is never committed); it makes each Implementer's clone (with your git identity) and,
 with `--env`, its environment. Without counts you get one of each role; `reviewer=0`
 leaves one out. Without `--env` the `[conda]` sections are written commented out. It
 approves nothing -- `asb --trust` does, after you have read the file and the purpose

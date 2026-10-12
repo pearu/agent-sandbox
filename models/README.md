@@ -20,7 +20,8 @@ A model directory holds:
   `#@ clone = TREE GITDIR BRANCH` in a role's section makes a clone of the project per
   instance (`git clone --shared --separate-git-dir=GITDIR . TREE`, on BRANCH), with an
   environment cloned from `--env` at that role's `[conda:...] prefix`, and needs the
-  project to be a git repository, at its top; a model without one runs in any directory.
+  project to be a git repository, at its top; a model without one runs in any directory,
+  a repository's subdirectory included. `.asb/.gitignore` keeps `.asb/` out of git.
   Every path the written file declares under `.asb/` is created.
 - `roles/<role>.md` -- one purpose file per role, written per instance to
   `.asb/roles/<instance>.md` with the same placeholders; `[briefing:<role>]` injects it
