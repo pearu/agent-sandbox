@@ -5674,7 +5674,10 @@ _as_trust_review() {
     return 0
   fi
   [[ -f "$file" ]] || return 0
-  if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1 && ! git -C "$cwd" check-ignore -q .agent-sandbox 2>/dev/null; then
+  # A tracked file gets no offer: an exclude line does nothing for it, and a
+  # repository that ships its policy is approved on each machine.
+  if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1 && ! git -C "$cwd" ls-files --error-unmatch .agent-sandbox >/dev/null 2>&1 \
+    && ! git -C "$cwd" check-ignore -q .agent-sandbox 2>/dev/null; then
     local _ex
     _ex="$(git -C "$cwd" rev-parse --absolute-git-dir)/info/exclude"
     printf 'agent-sandbox: add .agent-sandbox to %s so it is not committed? [y/N] ' "$_ex" >&2

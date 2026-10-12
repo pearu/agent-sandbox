@@ -155,6 +155,10 @@ names are gone; there are no aliases for removed names before 1.0.
 - `--preset native` with an active conda env under a symlinked `$HOME` path (#205).
 - A joined command keeps the terminal where the kernel blocks TIOCSTI (#166), and its exit
   status is right on Python older than 3.9 (#164).
+- **`--trust` offered to git-ignore a tracked `.agent-sandbox`**: it asked whether the
+  file was ignored, not whether it was tracked, and an exclude line does nothing for a
+  tracked file. A repository that ships its policy now gets no offer; the file is still
+  approved on every machine.
 
 ## 0.3.0 — 2026-09-21
 

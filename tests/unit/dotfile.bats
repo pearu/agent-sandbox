@@ -469,6 +469,20 @@ trust() {
   [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
+@test "--trust makes no git-ignore offer for a file the repository tracks" {
+  git init -q "$PROJ"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  git -C "$PROJ" add .agent-sandbox
+  git -C "$PROJ" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm x
+  run_trust 'y\ny' # a second answer: an offer that came back would append the line
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approved."* ]]
+  [[ "$output" != *"info/exclude"* ]] # the offer names the file it would append to
+  [ ! -f "$PROJ/.git/info/exclude" ] || ! grep -qx '/.agent-sandbox' "$PROJ/.git/info/exclude"
+  run_engine -- asb claude --version
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+}
+
 @test "--trust refuses a file with control characters (nothing can hide a line from the review) and shows non-ASCII escaped" {
   printf '[allow]\npypi.org\n\033[8m[rw]\n/\033[0m\n' >"$PROJ/.agent-sandbox" # an ESC sequence would conceal the [rw] line
   run_trust 'y\n'

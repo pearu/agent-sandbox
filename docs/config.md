@@ -492,7 +492,9 @@ asb --trust              # asks on stdin: printf y | asb --trust approves withou
 
 which also offers to add `.agent-sandbox` to the repository's
 `.git/info/exclude`, since its contents (your other project paths, your hosts)
-are machine-local and usually should not be committed.
+are machine-local and usually should not be committed. A file the repository
+tracks gets no such offer: a repository can ship its policy, and it is still
+approved on every machine.
 
 A launch that **joins** a running role is asked the same way, and joins under the
 policy the role's keeper started with whatever the answer: a running role's
