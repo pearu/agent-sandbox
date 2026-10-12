@@ -134,6 +134,12 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The role verbs need no command** when one profile is installed:
+  `asb --role R --reset config` (and `--status`, `--shutdown`, `--delete`) used to stop
+  at "no command. Name the agent to run"; with several profiles the refusal names the
+  verb. `--reset` says what comes back per store -- an `own` store "starts from the
+  profile's template", a copy "taken from yours again" -- where it said "from your own
+  copy" for all of them.
 - **An `isolated` role asked for a login** on Claude Code 2.1.285: its own config
   started from `{}`, and that version's first-run onboarding asks for a login method
   although the credentials are valid. An `own` config now starts from
