@@ -134,6 +134,10 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **An `isolated` role asked for a login** on Claude Code 2.1.285: its own config
+  started from `{}`, and that version's first-run onboarding asks for a login method
+  although the credentials are valid. An `own` config now starts from
+  `{"hasCompletedOnboarding": true}`.
 - Two cross-project leaks, each with a regression test written first (#111).
 - Three paths every project's sandbox could read: `image-cache/` is blanked every
   launch (#77), `usage-data/` goes with the role's transcripts (#79), and

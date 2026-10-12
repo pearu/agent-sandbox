@@ -970,13 +970,13 @@ DF
   [[ "$output" == *"[preset:inherit] is a profile's, not a project's"* ]]
 }
 
-@test "a project's own config = own starts from {}, not zero bytes, under any preset (#191)" {
+@test "a project's own config = own starts from the profile's template, not zero bytes, under any preset (#191)" {
   local preset store
   for preset in inherit shared isolated; do
     TEST_PRESET=$preset run_engine -- asb --connect 'config = own' claude --version
     [ "$status" -eq 0 ]
     store="$(grep -B1 -x "$H/home/.claude/.claude.json" "$H/argv" | head -1)"
-    [ "$(cat "$store")" = '{}' ]
+    [ "$(cat "$store")" = '{"hasCompletedOnboarding": true}' ]
   done
 }
 

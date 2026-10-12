@@ -697,10 +697,12 @@ channel. Inside the sandbox it is at `~/.claude/.claude.json`, and
 - **`copy`** is seeded the same way and takes your native file's changes only
   while the role's copy is unchanged, which in practice is never: Claude Code
   rewrites the file at every launch, so `copy` would warn at every launch.
-- **`own`** (the default under `isolated`) starts from `{}`. Claude Code runs on
-  it beside your credentials and rebuilds the account block itself (measured,
-  2.1.283); what the role gives up is your app state and the project's trust and
-  allowed tools, which it establishes again once.
+- **`own`** (the default under `isolated`) starts from
+  `{"hasCompletedOnboarding": true}`. Claude Code runs on it beside your credentials
+  and rebuilds the account block itself; on a bare `{}`, 2.1.285 runs its first-run
+  onboarding, whose login step asks you to log in although the credentials are valid
+  (measured 2026-10-12; 2.1.296 does not). What the role gives up is your app state
+  and the project's trust and allowed tools, which it establishes again once.
 - **`read-only`** and **`read-write`** are the native file itself, whole: every
   project's entry is readable inside. Under `read-only` Claude Code's own writes
   to it fail silently, so it is valid but not advocated; to change your user-level

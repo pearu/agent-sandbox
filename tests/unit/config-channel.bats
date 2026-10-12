@@ -80,13 +80,13 @@ PY
   run ! grep -q SECRET2 "$s"
 }
 
-@test "own config is the role's own, starting from {} with nothing of yours" {
+@test "own config is the role's own, starting past the onboarding with nothing of yours" {
   run_engine -- asb --connect 'config=own native' claude --version
   [ "$status" -eq 0 ]
   local s
   s="$(store own)"
   argv_has --bind "$s" "$INSIDE"
-  [ "$(cat "$s")" = '{}' ]
+  [ "$(cat "$s")" = '{"hasCompletedOnboarding": true}' ] # else 2.1.285 asks for a login
   TEST_PRESET=isolated run_engine -- asb claude --version
   argv_has --bind "$s" "$INSIDE"
 }
