@@ -374,7 +374,9 @@ Engine flags (before CMD):
                         everywhere (off). Only moves `copy-on-write` to `copy`
   --reset CHANNEL|PATH  discard what this role holds at CHANNEL (or a declared
                         PATH) and take the source's again, then exit. What the
-                        conflict warning points at
+                        conflict warning points at. Like --status, --shutdown
+                        and --delete, it needs no CMD when one profile is
+                        installed
   --status              show this role's sandbox: the keeper, what runs in it,
                         the background daemon's sessions
   --delete              remove every store of this role; refused while anything
@@ -3099,10 +3101,22 @@ _as_connect_reset() {
       seeded="$base/$ch/seed-only/$(_as_iso_slug "$path")"
       own="$base/$ch/own/$(_as_iso_slug "$path")"
       [[ -e "$slot" || -e "$manifest" || -e "$upper" || -e "$seeded" || -e "$own" ]] || continue
+      # What comes back, said per store: a role can hold more than one at a path.
+      local -a back=()
       # seed-only and own: discarding the store is the reset; the next launch seeds
-      # again, or starts empty.
-      [[ -e "$seeded" ]] && { rm -rf -- "$seeded" 2>/dev/null || true; }
-      [[ -e "$own" ]] && { rm -rf -- "$own" 2>/dev/null || true; }
+      # again, or starts as the profile's template (`start:`), else empty.
+      if [[ -e "$seeded" ]]; then
+        rm -rf -- "$seeded" 2>/dev/null || true
+        back+=("its seeded copy discarded, the next launch seeds it from yours again")
+      fi
+      if [[ -e "$own" ]]; then
+        rm -rf -- "$own" 2>/dev/null || true
+        if _as_channel_hook profile_channel_start "$path" >/dev/null; then
+          back+=("its own store discarded, the next launch starts it from the profile's template")
+        else
+          back+=("its own store discarded, the next launch starts it empty")
+        fi
+      fi
       # copy-on-write first: the upper layer holds the shadows AND the whiteouts, so
       # removing it is what brings a file the sandbox deleted back into view.
       # CHMOD BEFORE REMOVING -- measured: once anything has been written through
@@ -3111,12 +3125,15 @@ _as_connect_reset() {
       if [[ -e "$upper" || -e "$work" ]]; then
         chmod -R u+rwX -- "$upper" "$work" 2>/dev/null || true
         rm -rf -- "$upper" "$work" "$seen" 2>/dev/null || true
+        back+=("its layer discarded, yours shows through again")
       fi
       if [[ -e "$slot" || -e "$manifest" ]]; then
         _as_connect_view "$ch" "$(_as_channel_source "$path")" "$path" || return 1
         _as_connect_sync reset "$ch" "$kind" "$_connect_from" "$slot" "$manifest" || return 1
+        back+=("its copy taken from yours again")
       fi
-      _as_msg "connect: reset '$ch' at $path from your own copy"
+      local b
+      for b in "${back[@]}"; do _as_msg "connect: reset '$ch' at $path: $b"; done
     done
   done
   ((found)) || {
@@ -6407,6 +6424,17 @@ agent_sandbox() (
     fi
     _check_plan=1
   fi
+  # The role verbs act on a profile's stores and start no agent: with no command, the
+  # only profile there is, as for --check.
+  local _verb=""
+  ((_do_status)) && _verb=--status
+  ((_do_shutdown)) && _verb=--shutdown
+  ((_do_delete)) && _verb=--delete
+  [[ -n "$_reset_connection" ]] && _verb="--reset $_reset_connection"
+  if [[ -n "$_verb" && -z "$profile" && -z "$_cmd_word" ]]; then
+    local -a _vps=("$profile_dir"/*/profile.sh)
+    [[ ${#_vps[@]} -eq 1 && -r "${_vps[0]}" ]] && profile="$(basename -- "$(dirname -- "${_vps[0]}")")"
+  fi
 
   # ---- profile ----
   # --profile wins; otherwise CMD's basename names it (`claude`, `/usr/bin/claude`).
@@ -6427,6 +6455,8 @@ agent_sandbox() (
     esac
     if ((_do_exec)); then
       _as_msg "--exec needs the profile whose sandbox it runs in: $invoked --profile NAME --exec $1"
+    elif [[ -n "$_verb" ]]; then
+      _as_msg "$_verb acts on one profile's stores, and there are several: name it, $invoked $_verb CMD (e.g. $invoked $_verb claude) or --profile NAME"
     else
       _as_msg "no command. Name the agent to run: $invoked [ENGINE FLAGS] CMD [AGENT ARGS], e.g. $invoked claude"
     fi

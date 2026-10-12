@@ -35,7 +35,7 @@ slugify() {
   printf 'MINE\n' >"$sk/s.md"
   run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
-  [[ "$output" == *"reset 'instructions'"* ]]
+  [[ "$output" == *"reset 'instructions' at $C/rules: its copy taken from yours again"* ]]
   [ ! -s "$H/argv" ] # nothing launched
   [ "$(cat "$ins/topic.md")" = NATIVE ]
   [ "$(cat "$sk/s.md")" = MINE ]
@@ -48,7 +48,25 @@ slugify() {
   printf 'MINE\n' >"$own/x.md"
   run_engine -- asb --reset skills claude
   [ "$status" -eq 0 ]
+  [[ "$output" == *"its own store discarded, the next launch starts it empty"* ]]
   [ ! -e "$own/x.md" ]
+}
+
+@test "a role verb needs no command when one profile is installed; with several it names the verb" {
+  TEST_PRESET=isolated run_engine -- asb claude --version
+  run_engine -- asb --reset config # no CMD: the only profile
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reset 'config' at "*": its own store discarded, the next launch starts it from the profile's template"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine -- asb --status
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no command"* ]]
+  mkdir -p "$H/profiles"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --reset config
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--reset config acts on one profile's stores, and there are several"*"asb --reset config claude"* ]]
 }
 
 @test "--reset transcripts reaches this project's conversations directory too ({slug}, #176)" {
