@@ -11,7 +11,8 @@
 # approved, any edit or removal is shown to you again, as a diff, at the next
 # launch. Inside the sandbox the file is read-only, so the agent cannot edit it.
 # Keep it out of git; `--trust` offers to add it to .git/info/exclude, since its
-# contents are machine-local.
+# contents are machine-local. A file the repository tracks gets no such offer: a
+# repository can ship its policy, and it is still approved on every machine.
 #
 # Format: INI-like. `[section]` headers, one item per line, `#` starts a
 # comment (a whole line or the end of one). One item per line, so paths and
