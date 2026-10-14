@@ -309,7 +309,10 @@ bubblewrap` instead when apt's candidate is. Otherwise it fetches Ubuntu's
 checks it against SHA-256 sums pinned in the installer, holds the installed
 bubblewrap, builds the package as you with the local version
 `0.12.0-1~<codename>1`, installs it, releases the hold, and checks the installed
-`bwrap`. The `.deb` stays in that directory, so it can be reinstalled. If a step
+`bwrap`. Two build messages are expected: dpkg-source cannot verify the `.dsc`
+signature without a Debian keyring (the pinned sums are the check), and
+dpkg-genchanges calls `0.12.0-1~<codename>1` earlier than `0.12.0-1` (the tilde
+version, by design). The `.deb` stays in that directory, so it can be reinstalled. If a step
 fails, the hold stays in place and the message says so; `sudo apt-mark unhold
 bubblewrap` releases it. `install.sh` itself names this option when it finds an
 older bubblewrap on Ubuntu, and `sudo apt install bubblewrap` when apt already
@@ -367,10 +370,11 @@ has 0.12.0 or newer.
    ```
 
 4. **Install and release the hold.** The local version is higher than the
-   archive's, so apt will not replace it.
+   archive's, so apt will not replace it. The install needs
+   `--allow-change-held-packages`, since the package is on hold from step 1.
 
    ```
-   sudo apt install ../bubblewrap_0.12.0-1~"$c"1_"$(dpkg --print-architecture)".deb
+   sudo apt install --allow-change-held-packages ../bubblewrap_0.12.0-1~"$c"1_"$(dpkg --print-architecture)".deb
    sudo apt-mark unhold bubblewrap
    bwrap --version
    ```

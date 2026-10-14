@@ -397,7 +397,7 @@ rebuild_bwrap() {
   done <<<"$BWRAP_SRC_SUMS"
   run_sys sha256sum -c <<<"$BWRAP_SRC_SUMS" || err "the source package in $work does not match the pinned SHA-256 sums; nothing was installed"
 
-  info "2. hold the installed bubblewrap, so an apt upgrade cannot replace it meanwhile"
+  info "2. hold the installed bubblewrap, so an apt upgrade cannot replace it meanwhile (step 6 installs through the hold)"
   run_sys sudo apt-mark hold bubblewrap || err "apt-mark hold bubblewrap failed"
   info "3. install the build tools and the package's Build-Depends (from the .dsc)"
   run_sys sudo apt-get update || err "apt-get update failed$held"
@@ -428,7 +428,7 @@ rebuild_bwrap() {
     || err "dpkg-buildpackage failed$held"
 
   info "6. install it and release the hold"
-  run_sys sudo apt-get install -y "./$deb" || err "installing $work/$deb failed$held"
+  run_sys sudo apt-get install -y --allow-change-held-packages "./$deb" || err "installing $work/$deb failed$held"
   run_sys sudo apt-mark unhold bubblewrap || err "apt-mark unhold bubblewrap failed$held"
 
   info "7. check the installed bwrap: its version, and a user-namespace sandbox"
