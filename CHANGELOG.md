@@ -110,7 +110,10 @@ names are gone; there are no aliases for removed names before 1.0.
   into the `--env` environment from the project's CI and documentation, records how in
   `.asb/setup.md`, and the other `gh-*` roles layer over that build. A model's
   `#@ setup = ROLE` marker lets `asb --init MODEL --env NAME` take an environment not
-  built yet: its prefix is made empty, and ROLE builds it.
+  built yet: its prefix is made empty, and ROLE builds it. gh-setup asks you for a
+  dependency it cannot retrieve (built from git, or from a refused host): a clone under
+  `~/git/<org>/<repo>`, `copy-on-write` to the `gh-*` roles, installed into the
+  environment.
 - **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
 - **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
   its own layer, kept until `asb --delete`.
