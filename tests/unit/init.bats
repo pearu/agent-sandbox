@@ -221,9 +221,15 @@ init() {
   grep -qx '# \[conda:gh-\*\].*' "$PROJ/.agent-sandbox"
   # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
   grep -q '^1\. Check the build: `ENVPATH`' "$PROJ/.asb/roles/gh-review.md" # prose, not commented out
+  # A model with a setup role accepts a missing NAME when a conda base exists; without one
+  # it is refused -- and a CI runner has conda on PATH, so these stubs find no base.
+  printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
+  chmod +x "$H/bin/conda" "$H/bin/mamba"
   init -- github --env nosuch-env
   [ "$status" -ne 0 ]
   [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env nosuch-env # with a base: accepted, made empty
+  [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
 }
 
 @test "the github model takes an --env not built yet: its prefix made empty, gh-setup to build it, the others to check it" {
