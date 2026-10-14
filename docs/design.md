@@ -410,7 +410,10 @@ path, so absolute paths into it (CMake's, an editable install's) stay valid -- a
 environment the same way (`<env>/ = copy-on-write`). The PR's checkout, the incremental
 rebuild and any reinstall land in the instance's layers; `asb --delete` drops them.
 Instances need no names written anywhere: the template is glob sections only
-(`[x:gh-*]`), appended once, and a role name is an instance.
+(`[x:gh-*]`), appended once, and a role name is an instance. The build they layer over
+is `gh-setup`'s, a single role: the checkout and `--env`'s prefix read-write,
+`retrieve-only`, no git transport, no gh login (`#@ setup`: `--init` takes that env
+unbuilt and makes its prefix empty).
 
 **Never push, enforced.** Review and triage get `[net] git = fetch`: the proxy passes
 git's upload-pack and refuses receive-pack, and `--ssh` is refused, since SSH is a whole

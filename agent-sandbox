@@ -5359,13 +5359,17 @@ _as_init() {
   done
 
   # The environment's prefix, for {envpath}: a path as given, a name under the conda base.
-  local envpath=""
+  # A model with a setup role (`#@ setup = ROLE`) takes one not built yet: its directory
+  # is made empty, for conda to create into and for the role's declaration to bind (a
+  # declared path that does not exist is skipped at launch).
+  local envpath="" setup="" base="/"
+  setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$tpl" | head -1)"
   if [[ -n "$env" ]] && grep -qF '{envpath}' "$tpl"; then
     case "$env" in
       */*) envpath="$(realpath -m -s -- "$env")" ;;
-      *) envpath="$(_as_conda_base)/envs/$env" ;;
+      *) base="$(_as_conda_base)" envpath="$base/envs/$env" ;;
     esac
-    if [[ ! -d "$envpath/conda-meta" ]]; then
+    if [[ ! -d "$envpath/conda-meta" && (-z "$setup" || -z "$base") ]]; then
       _as_msg "--init: --env $env: no conda environment at $envpath"
       return 1
     fi
@@ -5385,9 +5389,10 @@ _as_init() {
       txt="$(printf '%s' "$txt" | sed 's/^\(.\)/# \1/')"$'\n'
     fi
     # {envpath}: the environment's prefix, for a line that layers it; without --env such
-    # a line is written commented out, as the [conda] sections are.
+    # a line is written commented out, as the [conda] sections are (in a section: a
+    # purpose file's prose names it as ENVPATH).
     if [[ -z "$envpath" ]]; then
-      txt="$(printf '%s' "$txt" | sed '/{envpath}/{/^#/!s/^/# /}')"$'\n'
+      [[ -n "$1" ]] && txt="$(printf '%s' "$txt" | sed '/{envpath}/{/^#/!s/^/# /}')"$'\n'
       txt="${txt//\{envpath\}/ENVPATH}"
     else
       txt="${txt//\{envpath\}/$envpath}"
@@ -5608,9 +5613,11 @@ _as_init() {
       *) [[ -e "$proj/$key" ]] || { mkdir -p "$proj/$(dirname -- "$key")" && : >"$proj/$key"; } ;;
     esac || return 1
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' "$df" | sort -u)
-  # The coord index: a row per instance, added for the ones it does not list yet.
+  # The coord index: a row per instance, added for the ones it does not list yet; a model
+  # without one (github: its setup role is single) has none.
   local idx="$proj/.asb/coord/COORDINATION.md" idxrows="" dirs coordf
   for a in "${insts[@]}"; do
+    [[ -f "$mdir/coord/COORDINATION.md" || -s "$idx" ]] || break
     IFS=$'\t' read -r inst h rn n <<<"$a"
     [[ -s "$idx" ]] && grep -q "^| $h |" "$idx" && continue
     coordf="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/coord\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | head -1)"
@@ -5629,6 +5636,12 @@ _as_init() {
   if [[ ! -e "$proj/.asb/.gitignore" ]]; then
     printf '*\n' >"$proj/.asb/.gitignore" || return 1
     _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
+  fi
+
+  if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
+    a="empty"
+    [[ -d "$envpath" ]] || { mkdir -p -- "$envpath" && a="created empty"; } || return 1
+    _as_msg "--init: environment $env is not built yet ($a at $envpath): $invoked --role $setup claude builds it"
   fi
 
   {

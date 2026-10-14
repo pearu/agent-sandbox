@@ -1,15 +1,22 @@
 # The github model
 
 Three kinds of work on a project's GitHub issues and pull requests, one instance per
-number, each in a layer of its own over the project as you built it:
+number, each in a layer of its own over the project as the setup role built it:
 
-    asb --init github --env torch-dev        # once, in your built checkout
+    asb --init github --env torch-dev        # once, in your checkout; torch-dev may not exist yet
     asb --trust
+    asb --role gh-setup claude               # builds main into torch-dev; again after main moves
     asb --role gh-review-1234 claude         # review pull request 1234
     asb --role gh-triage-5678 claude         # triage issue 5678
     asb --ssh github.com --role gh-fix-1234 claude   # implement 1234, able to push
     asb --delete --role gh-review-1234       # when its work is done
 
+- **gh-setup**, one per project, builds `main` as checked out into the `--env`
+  environment, from the project's CI and documentation, and records how in
+  `.asb/setup.md`. It writes the checkout and the environment, reads the web with GET
+  only, and has no git transport and no gh login. Submodules are yours: it cannot fetch,
+  so `git submodule update --init --recursive` on the host first. `--init` takes an
+  `--env` NAME not built yet (a conda env name, made empty under the conda base).
 - **gh-review** builds and tests a pull request, reviews it with `/pr-review`, and posts
   the review when you say so.
 - **gh-triage** reproduces an issue on your build, measures its claims, finds
