@@ -389,7 +389,9 @@ rebuild_bwrap() {
   if ((! DRY_RUN)); then
     mkdir -p "$work"
     [[ -d "$work" && ! -L "$work" && -O "$work" ]] || err "$work is not a directory of yours"
-    chmod 700 "$work"
+    # 755, not 700: apt reads a local .deb as its _apt user (else it notes that it
+    # fetched it unsandboxed, as root; a TMPDIR under a 700 home still gets that note).
+    chmod 755 "$work"
     cd "$work"
   fi
   while read -r sum f; do
@@ -428,6 +430,9 @@ rebuild_bwrap() {
     || err "dpkg-buildpackage failed$held"
 
   info "6. install it and release the hold"
+  # Readable by _apt whatever the umask (see the chmod of $work). Installing through
+  # the hold usually clears it; the unhold makes sure.
+  ((DRY_RUN)) || chmod a+r "$deb" || err "$work/$deb was not built$held"
   run_sys sudo apt-get install -y --allow-change-held-packages "./$deb" || err "installing $work/$deb failed$held"
   run_sys sudo apt-mark unhold bubblewrap || err "apt-mark unhold bubblewrap failed$held"
 

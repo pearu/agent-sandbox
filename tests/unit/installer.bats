@@ -259,6 +259,47 @@ stub_recorders() {
   [ ! -e "$T/called" ]
 }
 
+@test "--rebuild-bwrap, stubbed for real: apt can read the work dir and the .deb; sudo steps in order" {
+  mkdir -p "$T/bin"
+  stub_apt_cache 0.11.1-1ubuntu0.3
+  fake_os_release ubuntu debian resolute
+  stub_recorders
+  local deb
+  deb="bubblewrap_0.12.0-1~resolute1_$(dpkg --print-architecture).deb"
+  # bwrap is 0.11.1 until sudo installs the .deb, 0.12.0 after; the build tools make
+  # what the next step reads, the .deb owner-only as a 077 umask would leave it
+  cat >"$T/bin/bwrap" <<STUB
+#!/usr/bin/env bash
+[[ "\$1" == --version ]] && { [[ -e "$T/installed" ]] && echo "bubblewrap 0.12.0" || echo "bubblewrap 0.11.1"; }
+exit 0
+STUB
+  printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s/called"\n[[ "$*" == *.deb ]] && touch "%s/installed"\nexit 0\n' "$T" "$T" >"$T/bin/sudo"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
+  cat >"$T/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+touch "$3"
+STUB
+  cat >"$T/bin/dpkg-source" <<'STUB'
+#!/usr/bin/env bash
+mkdir -p "$3/debian" && echo old >"$3/debian/changelog"
+STUB
+  printf '#!/usr/bin/env bash\ntouch "../%s" && chmod 600 "../%s"\n' "$deb" "$deb" >"$T/bin/dpkg-buildpackage"
+  chmod +x "$T/bin/"*
+  rebuild
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bubblewrap 0.12.0 is installed and runs a sandbox"* ]]
+  local work="$T/tmp/agent-sandbox-bwrap-0.12.0-1"
+  [ "$(stat -c %a "$work")" = 755 ]
+  [ "$(stat -c %a "$work/$deb")" = 644 ]
+  grep -q '^bubblewrap (0.12.0-1~resolute1) resolute; urgency=medium$' "$work/src/debian/changelog"
+  [ "$(grep '^sudo ' "$T/called")" = "sudo apt-mark hold bubblewrap
+sudo apt-get update
+sudo apt-get install -y build-essential fakeroot dpkg-dev
+sudo apt-get build-dep -y ./bubblewrap_0.12.0-1.dsc
+sudo apt-get install -y --allow-change-held-packages ./$deb
+sudo apt-mark unhold bubblewrap" ]
+}
+
 @test "--rebuild-bwrap has nothing to do at 0.12.0, and sends to apt when apt has 0.12.0" {
   mkdir -p "$T/bin"
   stub_recorders
