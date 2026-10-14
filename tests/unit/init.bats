@@ -219,9 +219,56 @@ init() {
   [ "$status" -eq 0 ]
   grep -qx '# ENVPATH/ = copy-on-write.*' "$PROJ/.agent-sandbox"
   grep -qx '# \[conda:gh-\*\].*' "$PROJ/.agent-sandbox"
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
+  grep -q '^1\. Check the build: `ENVPATH`' "$PROJ/.asb/roles/gh-review.md" # prose, not commented out
+  # A model with a setup role accepts a missing NAME when a conda base exists; without one
+  # it is refused -- and a CI runner has conda on PATH, so these stubs find no base.
+  printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
+  chmod +x "$H/bin/conda" "$H/bin/mamba"
   init -- github --env nosuch-env
   [ "$status" -ne 0 ]
   [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env nosuch-env # with a base: accepted, made empty
+  [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
+}
+
+@test "the github model takes an --env not built yet: its prefix made empty, gh-setup to build it, the others to check it" {
+  mkdir -p "$H/base/envs"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env missing
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" ep="$H/base/envs/missing"
+  [[ "$output" == *"environment missing is not built yet (created empty at $ep)"*"--role gh-setup claude builds it"* ]]
+  [ -d "$ep" ] && [ -z "$(ls -A "$ep")" ]
+  grep -A3 -xF '[connect:gh-setup]' "$df" | grep -qx 'project = read-write.*'
+  grep -A3 -xF '[connect:gh-setup]' "$df" | grep -qx "$ep/ = read-write.*"
+  grep -A2 -xF '[net:gh-setup]' "$df" | grep -qx 'retrieve-only = on.*'
+  run ! grep -qF '#@' "$df"
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
+  grep -qF "The environment's prefix, \`$ep\`, read-write" "$PROJ/.asb/roles/gh-setup.md"
+  run ! grep -qF '{' "$PROJ/.asb/roles/gh-setup.md"
+  for k in gh-review gh-triage gh-fix; do
+    grep -qF "1. Check the build: \`$ep\` has \`conda-meta/\`" "$PROJ/.asb/roles/$k.md"
+  done
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env missing # again: the empty prefix is still accepted
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"environment missing is not built yet (empty at $ep)"* ]]
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role gh-setup 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  [ "$status" -eq 0 ]
+  grep -qE '^  project +read-write +the working tree +\.agent-sandbox \[connect:gh-setup\]' <<<"$output"
+  grep -E '^  \S+ +read-write +the same path +\.agent-sandbox \[connect:gh-setup\]' <<<"$output" | grep -qF "  $ep/ "
+  grep -qE '^  gh +own +native +\.agent-sandbox \[connect:gh-setup\]' <<<"$output"
+  [[ "$output" == *"network: retrieve-only"* && "$output" == *"git transport: refused"* ]]
+  [[ "$output" == *"briefed from: .asb/roles/gh-setup.md"* ]]
+}
+
+@test "a model without a setup role still refuses an --env not built yet" {
+  mkdir -p "$H/base/envs"
+  init MAMBA_ROOT_PREFIX="$H/base" -- market --env missing
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--env missing: no conda environment at $H/base/envs/missing"* ]]
+  [ ! -e "$H/base/envs/missing" ]
 }
 
 @test "the market model in a repository's subdirectory: written there, .asb/ ignored, the repository's own files untouched" {

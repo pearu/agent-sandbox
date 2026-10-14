@@ -106,6 +106,11 @@ names are gone; there are no aliases for removed names before 1.0.
   per pull request or issue, each seeing your built checkout and environment through a
   layer of its own. Review and triage never push; the fixer publishes over SSH, or with
   ghstack; every post is on your word, after the project's AI policy.
+- **`gh-setup` in the `github` model**: one per project, it builds `main` as checked out
+  into the `--env` environment from the project's CI and documentation, records how in
+  `.asb/setup.md`, and the other `gh-*` roles layer over that build. A model's
+  `#@ setup = ROLE` marker lets `asb --init MODEL --env NAME` take an environment not
+  built yet: its prefix is made empty, and ROLE builds it.
 - **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
 - **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
   its own layer, kept until `asb --delete`.

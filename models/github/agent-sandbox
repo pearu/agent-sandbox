@@ -34,4 +34,16 @@ file = .asb/roles/gh-review.md
 file = .asb/roles/gh-triage.md
 [briefing:gh-fix-*]
 file = .asb/roles/gh-fix.md
+# ---- the setup role builds the environment: once per project, again after main moves --
+#   asb --role gh-setup claude
+[connect:gh-setup]
+#@ setup = gh-setup
+project = read-write              # the build lands in your tree, as when you build it yourself
+{envpath}/ = read-write           # the environment it creates and installs into
+gh = own                          # no login: it publishes nothing
+[net:gh-setup]
+retrieve-only = on                # GET and HEAD only: it reads the web, it sends nothing; git's fetch is a POST, so submodules come from your checkout
+git = refuse
+[briefing:gh-setup]
+file = .asb/roles/gh-setup.md
 [connect:default]                 # your own sessions here keep the project's policy

@@ -21,7 +21,11 @@ A model directory holds:
   instance (`git clone --shared --separate-git-dir=GITDIR . TREE`, on BRANCH), with an
   environment cloned from `--env` at that role's `[conda:...] prefix`, and needs the
   project to be a git repository, at its top; a model without one runs in any directory,
-  a repository's subdirectory included. `.asb/.gitignore` keeps `.asb/` out of git.
+  a repository's subdirectory included. A line `#@ setup = ROLE` names the role that
+  builds the `--env` environment: `--init` then takes a NAME not built yet, makes its
+  prefix as an empty directory (for conda to create into, and for a declaration of it
+  to bind), and says to launch ROLE; without one, a missing environment is refused.
+  `.asb/.gitignore` keeps `.asb/` out of git.
   Every path the written file declares under `.asb/` is created.
 - `roles/<role>.md` -- one purpose file per role, written per instance to
   `.asb/roles/<instance>.md` with the same placeholders; `[briefing:<role>]` injects it
