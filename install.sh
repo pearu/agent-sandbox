@@ -337,8 +337,10 @@ BWRAP_SRC_SUMS="e81987f8d90b30b581299870592affaa8d9a17caf05112d303916312b7afd60a
 9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  bubblewrap_0.12.0.orig.tar.xz
 60691fa8488db2de4dd19d59fb0b084e692695c38616dcf8e20b08a4d372ab93  bubblewrap_0.12.0-1.debian.tar.xz"
 
-bwrap_fixed() { [[ "$(printf '%s\n' 0.12.0 "$1" | sort -V | head -n1)" == 0.12.0 ]]; } # VER >= 0.12.0
-os_release_value() { sed -n "s/^$1=//p" "$OS_RELEASE" 2>/dev/null | tr -d "\"'" | head -n1; }
+# Every reader below takes its input to the end: one that exits early (head, awk's
+# exit) can kill the writer with SIGPIPE, and under pipefail that kills the installer.
+bwrap_fixed() { printf '%s\n' 0.12.0 "$1" | sort -V -C; } # VER >= 0.12.0
+os_release_value() { sed -n "/^$1=/{s///p;q}" "$OS_RELEASE" 2>/dev/null | tr -d "\"'"; }
 is_ubuntu() {
   [[ " $(os_release_value ID) $(os_release_value ID_LIKE) " == *" ubuntu "* ]] \
     && command -v apt-get >/dev/null && command -v dpkg >/dev/null
@@ -346,7 +348,7 @@ is_ubuntu() {
 # apt's candidate version of bubblewrap, empty when apt has none
 apt_bwrap_candidate() {
   command -v apt-cache >/dev/null || return 0
-  apt-cache policy bubblewrap 2>/dev/null | awk '/Candidate:/ && $2 != "(none)" {print $2; exit}'
+  apt-cache policy bubblewrap 2>/dev/null | awk '/^ *Candidate:/ && $2 != "(none)" && !c {c = $2} END {if (c) print c}'
 }
 
 rebuild_bwrap() {

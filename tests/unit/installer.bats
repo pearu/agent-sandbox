@@ -144,9 +144,17 @@ STUB
   chmod +x "$T/bin/bwrap"
 }
 
-# apt-cache policy with this Candidate (none: apt has no bubblewrap)
+# apt-cache policy with this Candidate (none: apt has no bubblewrap), then a version
+# table far above a pipe buffer: a reader that stops at the Candidate line kills
+# apt-cache with SIGPIPE, which pipefail turned into the installer's death (#251)
 stub_apt_cache() {
-  printf '#!/usr/bin/env bash\nprintf "bubblewrap:\\n  Installed: (none)\\n  Candidate: %s\\n"\n' "$1" >"$T/bin/apt-cache"
+  cat >"$T/bin/apt-cache" <<STUB
+#!/usr/bin/env bash
+printf 'bubblewrap:\n  Installed: (none)\n  Candidate: %s\n  Version table:\n' '$1'
+for i in \$(seq 1 4000); do
+  printf '        500 http://example/%s/ubuntu resolute/main amd64 Packages\n' "\$i"
+done
+STUB
   chmod +x "$T/bin/apt-cache"
 }
 
