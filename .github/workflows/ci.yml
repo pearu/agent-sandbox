@@ -119,6 +119,12 @@ jobs:
           cache-environment: true
       - name: End-to-end installer test (shim for systemd)
         run: micromamba run -n agent-sandbox tests/run.sh e2e
+      - name: --rebuild-bwrap --dry-run prints the plan (dry run only; no build in CI)
+        run: |
+          set -euo pipefail
+          out=$(./install.sh --rebuild-bwrap --dry-run)
+          printf '%s\n' "$out"
+          grep -q 'would run: sudo apt-get build-dep -y ./bubblewrap_0.12.0-1.dsc' <<<"$out"
 
   # Experiment, allowed to fail: can a GitHub runner provide a real user systemd
   # instance, so install.sh's actual `systemctl --user` path works end to end?
