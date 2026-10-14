@@ -115,6 +115,10 @@ names are gone; there are no aliases for removed names before 1.0.
   gh-setup asks you for a dependency it cannot retrieve (built from git, or from a
   refused host): a clone under `~/git/<org>/<repo>`, `copy-on-write` to the `gh-*`
   roles, installed into the environment.
+- **gh-review's briefing** says it once: what is on record for the PR is linked, not
+  restated; a reply answers its question; what the draft leaves out is listed for the
+  user to opt in; a one-line reply the user takes as their own carries no footer where
+  the project's policy allows.
 - **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
 - **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
   its own layer, kept until `asb --delete`.

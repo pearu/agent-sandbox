@@ -251,6 +251,7 @@ init() {
   grep -qF '`~/git/<org>/<repo>/ = copy-on-write` under `[connect:gh-*]`' "$PROJ/.asb/roles/gh-setup.md"
   grep -qF 'build_env.sh' "$PROJ/.asb/roles/gh-setup.md"
   grep -qF '.asb/build_env.sh rebuild' "$PROJ/.asb/roles/gh-review.md"
+  grep -qF 'is never restated' "$PROJ/.asb/roles/gh-review.md"
   for k in gh-review gh-triage gh-fix; do
     grep -qF "1. Check the build: \`$ep\` has \`conda-meta/\`" "$PROJ/.asb/roles/$k.md"
   done
