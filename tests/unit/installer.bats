@@ -144,12 +144,34 @@ STUB
   chmod +x "$T/bin/bwrap"
 }
 
+# apt-cache policy with this Candidate (none: apt has no bubblewrap), then a version
+# table far above a pipe buffer: a reader that stops at the Candidate line kills
+# apt-cache with SIGPIPE, which pipefail turned into the installer's death (#251)
+stub_apt_cache() {
+  cat >"$T/bin/apt-cache" <<STUB
+#!/usr/bin/env bash
+printf 'bubblewrap:\n  Installed: (none)\n  Candidate: %s\n  Version table:\n' '$1'
+for i in \$(seq 1 4000); do
+  printf '        500 http://example/%s/ubuntu resolute/main amd64 Packages\n' "\$i"
+done
+STUB
+  chmod +x "$T/bin/apt-cache"
+}
+
+# an /etc/os-release for AGENT_SANDBOX_OS_RELEASE: ID, ID_LIKE, VERSION_CODENAME
+fake_os_release() {
+  printf 'ID=%s\nID_LIKE="%s"\nVERSION_CODENAME=%s\n' "$1" "$2" "$3" >"$T/os-release"
+}
+
 @test "--dry-run warns when bubblewrap is older than 0.12.0 (CVE-2026-87766), and not at 0.12.0 or newer" {
   mkdir -p "$T/bin"
+  stub_apt_cache '(none)'
+  fake_os_release fedora '' ''
   local v
   for v in 0.9.0 0.11.1; do
     stub_bwrap "$v"
-    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+      AGENT_SANDBOX_OS_RELEASE="$T/os-release" "$REPO_ROOT/install.sh" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" == *"bwrap installed:    bubblewrap $v"* ]]
     [[ "$output" == *"bubblewrap $v is older than 0.12.0"*"CVE-2026-87766"* ]]
@@ -162,6 +184,138 @@ STUB
     [[ "$output" == *"bwrap installed:    bubblewrap $v"* ]]
     [[ "$output" != *"older than 0.12.0"* ]]
   done
+}
+
+@test "the old-bubblewrap warning names the route that applies: apt, --rebuild-bwrap on Ubuntu, the docs elsewhere" {
+  mkdir -p "$T/bin"
+  stub_bwrap 0.11.1
+  warned() { # warned CANDIDATE ID ID_LIKE
+    stub_apt_cache "$1"
+    fake_os_release "$2" "$3" resolute
+    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+      AGENT_SANDBOX_OS_RELEASE="$T/os-release" "$REPO_ROOT/install.sh" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"bubblewrap 0.11.1 is older than 0.12.0"*"CVE-2026-87766"* ]]
+  }
+  # apt already has a fixed one: install it, no rebuild
+  warned 0.12.0-1 ubuntu debian
+  [[ "$output" == *"apt offers bubblewrap 0.12.0-1: sudo apt install bubblewrap"* ]]
+  [[ "$output" != *"--rebuild-bwrap"* ]]
+  # Ubuntu (by ID or ID_LIKE) whose apt has none: the option
+  warned 0.11.1-1ubuntu0.3 ubuntu debian
+  [[ "$output" == *"run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source"* ]]
+  [[ "$output" != *"sudo apt install bubblewrap"* ]]
+  warned 0.11.1-1ubuntu0.3 pop "ubuntu debian"
+  [[ "$output" == *"run: ./install.sh --rebuild-bwrap"* ]]
+  # not Ubuntu: the docs, never the option
+  warned '(none)' fedora ''
+  [[ "$output" == *"see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"* ]]
+  [[ "$output" != *"--rebuild-bwrap"* ]]
+}
+
+# ---- --rebuild-bwrap ---------------------------------------------------------
+# Ubuntu's own 0.12.0-1 source, rebuilt locally; its dry run touches nothing.
+
+rebuild() { # rebuild [extra args...] -- with $T/bin first on PATH and the fake os-release
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_OS_RELEASE="$T/os-release" TMPDIR="$T/tmp" "$REPO_ROOT/install.sh" --rebuild-bwrap "$@"
+}
+
+# commands a dry run must never call; each records that it was
+stub_recorders() {
+  local c
+  for c in sudo curl dpkg-source dpkg-buildpackage; do
+    printf '#!/usr/bin/env bash\necho "%s $*" >>"%s/called"\n' "$c" "$T" >"$T/bin/$c"
+    chmod +x "$T/bin/$c"
+  done
+}
+
+@test "--rebuild-bwrap --dry-run prints the plan, with the local version and the pinned sums, and runs nothing" {
+  mkdir -p "$T/bin"
+  stub_bwrap 0.11.1
+  stub_apt_cache 0.11.1-1ubuntu0.3
+  fake_os_release ubuntu debian resolute
+  stub_recorders
+  rebuild --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"builds bubblewrap 0.12.0-1~resolute1 from https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/bubblewrap/0.12.0-1 in $T/tmp/agent-sandbox-bwrap-0.12.0-1"* ]]
+  [[ "$output" == *"e81987f8d90b30b581299870592affaa8d9a17caf05112d303916312b7afd60a  bubblewrap_0.12.0-1.dsc"* ]]
+  [[ "$output" == *"9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  bubblewrap_0.12.0.orig.tar.xz"* ]]
+  [[ "$output" == *"60691fa8488db2de4dd19d59fb0b084e692695c38616dcf8e20b08a4d372ab93  bubblewrap_0.12.0-1.debian.tar.xz"* ]]
+  [[ "$output" == *"(dry-run) would run: sudo apt-mark hold bubblewrap"*"(dry-run) would run: sudo apt-get build-dep -y ./bubblewrap_0.12.0-1.dsc"*"dpkg-buildpackage -us -uc -b"*"(dry-run) would run: sudo apt-get install -y --allow-change-held-packages ./bubblewrap_0.12.0-1~resolute1_"*".deb"*"(dry-run) would run: sudo apt-mark unhold bubblewrap"* ]]
+  [ ! -e "$T/called" ] # no sudo, no download, no build
+  [ ! -e "$T/tmp/agent-sandbox-bwrap-0.12.0-1" ]
+  [ ! -e "$T/home/.local/share/agent-sandbox" ] # and none of the plain install on the way
+}
+
+@test "--rebuild-bwrap refuses off Ubuntu, and says where to look" {
+  mkdir -p "$T/bin"
+  stub_bwrap 0.11.1
+  stub_recorders
+  fake_os_release fedora '' ''
+  rebuild --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"needs Ubuntu with apt-get and dpkg"*"docs/troubleshooting.md"* ]]
+  [ ! -e "$T/called" ]
+}
+
+@test "--rebuild-bwrap, stubbed for real: apt can read the work dir and the .deb; sudo steps in order" {
+  mkdir -p "$T/bin"
+  stub_apt_cache 0.11.1-1ubuntu0.3
+  fake_os_release ubuntu debian resolute
+  stub_recorders
+  local deb
+  deb="bubblewrap_0.12.0-1~resolute1_$(dpkg --print-architecture).deb"
+  # bwrap is 0.11.1 until sudo installs the .deb, 0.12.0 after; the build tools make
+  # what the next step reads, the .deb owner-only as a 077 umask would leave it
+  cat >"$T/bin/bwrap" <<STUB
+#!/usr/bin/env bash
+[[ "\$1" == --version ]] && { [[ -e "$T/installed" ]] && echo "bubblewrap 0.12.0" || echo "bubblewrap 0.11.1"; }
+exit 0
+STUB
+  printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s/called"\n[[ "$*" == *.deb ]] && touch "%s/installed"\nexit 0\n' "$T" "$T" >"$T/bin/sudo"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
+  cat >"$T/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+touch "$3"
+STUB
+  cat >"$T/bin/dpkg-source" <<'STUB'
+#!/usr/bin/env bash
+mkdir -p "$3/debian" && echo old >"$3/debian/changelog"
+STUB
+  printf '#!/usr/bin/env bash\ntouch "../%s" && chmod 600 "../%s"\n' "$deb" "$deb" >"$T/bin/dpkg-buildpackage"
+  chmod +x "$T/bin/"*
+  rebuild
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bubblewrap 0.12.0 is installed and runs a sandbox"* ]]
+  local work="$T/tmp/agent-sandbox-bwrap-0.12.0-1"
+  [ "$(stat -c %a "$work")" = 755 ]
+  [ "$(stat -c %a "$work/$deb")" = 644 ]
+  grep -q '^bubblewrap (0.12.0-1~resolute1) resolute; urgency=medium$' "$work/src/debian/changelog"
+  [ "$(grep '^sudo ' "$T/called")" = "sudo apt-mark hold bubblewrap
+sudo apt-get update
+sudo apt-get install -y build-essential fakeroot dpkg-dev
+sudo apt-get build-dep -y ./bubblewrap_0.12.0-1.dsc
+sudo apt-get install -y --allow-change-held-packages ./$deb
+sudo apt-mark unhold bubblewrap" ]
+}
+
+@test "--rebuild-bwrap has nothing to do at 0.12.0, and sends to apt when apt has 0.12.0" {
+  mkdir -p "$T/bin"
+  stub_recorders
+  fake_os_release ubuntu debian noble
+  stub_apt_cache 0.9.0-1ubuntu0.3
+  stub_bwrap 0.12.0
+  rebuild
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bubblewrap 0.12.0 is installed, 0.12.0 or newer: nothing to rebuild"* ]]
+  [[ "$output" != *"would run"* ]]
+  stub_bwrap 0.9.0
+  stub_apt_cache 0.12.0-1
+  rebuild
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"apt offers bubblewrap 0.12.0-1, 0.12.0 or newer: run  sudo apt install bubblewrap  instead"* ]]
+  [ ! -e "$T/called" ]
 }
 
 # ---- --uninstall (issue #22) ----------------------------------------------

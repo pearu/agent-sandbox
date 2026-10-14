@@ -912,7 +912,7 @@ here rather than designed around; the project directory is where different agent
 
 - **Overlay availability per host.** Real `copy-on-write` needs bubblewrap 0.11 or later. Ubuntu
   26.04 ships 0.11.1; 24.04 ships 0.9.0 and gets 0.12.0 through the rebuild recipe in
-  [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404), which
+  [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604), which
   `install.sh` points at when it finds an older bubblewrap (0.12.0 also carries the fix for
   CVE-2026-87766, a setup-time symlink escape through directories the sandboxed process
   controls, which noble-security's 0.9.0-1ubuntu0.3 dropped again). Measured in CI:

@@ -35,6 +35,13 @@
 #                             agent-sandbox. Edits to the checked-out engine or
 #                             profiles then run at the next launch, so this is
 #                             not for ordinary use -- see docs/design.md.
+#   ./install.sh --rebuild-bwrap
+#                             Ubuntu only, and only this: build Ubuntu's own
+#                             bubblewrap 0.12.0-1 source package locally (pinned
+#                             SHA-256 sums) and install it, when the installed
+#                             bwrap and apt's candidate are older than 0.12.0
+#                             (CVE-2026-87766). Asks for sudo for apt; with
+#                             --dry-run it only prints the plan.
 #
 # Installs mitmproxy >= 12 into a private environment (venv, else conda), and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
@@ -49,6 +56,7 @@ DEV=0
 UNINSTALL=0
 PURGE_CONFIG=0
 ASSUME_YES=0
+REBUILD_BWRAP=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
@@ -56,6 +64,7 @@ for arg in "$@"; do
     --uninstall) UNINSTALL=1 ;;
     --purge-config) PURGE_CONFIG=1 ;;
     --yes | -y) ASSUME_YES=1 ;;
+    --rebuild-bwrap) REBUILD_BWRAP=1 ;;
     -h | --help)
       sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'
       exit 0
@@ -117,6 +126,7 @@ REPO_URL="${AGENT_SANDBOX_REPO:-https://github.com/pearu/agent-sandbox.git}"
 CONFIG_DIR="$HOME/.config/agent-sandbox"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 STATE_DIR="${AGENT_SANDBOX_HOME:-$HOME/.local/share/agent-sandbox}" # proxy runtime lives here
+OS_RELEASE="${AGENT_SANDBOX_OS_RELEASE:-/etc/os-release}"           # the tests point it at a fake
 
 # ----- pretty output -----
 if [[ -t 1 ]] && command -v tput >/dev/null; then
@@ -314,6 +324,140 @@ uninstall_plan_and_run() {
   ((purge_config)) || [[ ! -d "$CONFIG_DIR" ]] \
     || info "$CONFIG_DIR kept. A later install reuses your allowlist and trust approvals."
 }
+
+# ----- bubblewrap 0.12.0 (CVE-2026-87766) -----
+# Ubuntu 24.04 and 26.04 both ship a bubblewrap below 0.12.0 whose security
+# update dropped the fix again (a Flatpak regression); Launchpad has 0.12.0-1
+# only in the development series. --rebuild-bwrap builds that source package
+# unchanged, from pinned sums, with a local version (0.12.0-1~<codename>1) that
+# sorts above anything the series ships and below a real 0.12.0-1.
+BWRAP_SRC_VERSION=0.12.0-1
+BWRAP_SRC_URL="https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/bubblewrap/$BWRAP_SRC_VERSION"
+BWRAP_SRC_SUMS="e81987f8d90b30b581299870592affaa8d9a17caf05112d303916312b7afd60a  bubblewrap_0.12.0-1.dsc
+9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  bubblewrap_0.12.0.orig.tar.xz
+60691fa8488db2de4dd19d59fb0b084e692695c38616dcf8e20b08a4d372ab93  bubblewrap_0.12.0-1.debian.tar.xz"
+
+# Every reader below takes its input to the end: one that exits early (head, awk's
+# exit) can kill the writer with SIGPIPE, and under pipefail that kills the installer.
+bwrap_fixed() { printf '%s\n' 0.12.0 "$1" | sort -V -C; } # VER >= 0.12.0
+os_release_value() { sed -n "/^$1=/{s///p;q}" "$OS_RELEASE" 2>/dev/null | tr -d "\"'"; }
+is_ubuntu() {
+  [[ " $(os_release_value ID) $(os_release_value ID_LIKE) " == *" ubuntu "* ]] \
+    && command -v apt-get >/dev/null && command -v dpkg >/dev/null
+}
+# apt's candidate version of bubblewrap, empty when apt has none
+apt_bwrap_candidate() {
+  command -v apt-cache >/dev/null || return 0
+  apt-cache policy bubblewrap 2>/dev/null | awk '/^ *Candidate:/ && $2 != "(none)" && !c {c = $2} END {if (c) print c}'
+}
+
+rebuild_bwrap() {
+  section "Rebuild bubblewrap $BWRAP_SRC_VERSION from Ubuntu's source"
+  is_ubuntu || err "--rebuild-bwrap rebuilds Ubuntu's own package, so it needs Ubuntu with apt-get and dpkg; elsewhere see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"
+  local have="" cand
+  command -v bwrap >/dev/null && have="$(bwrap --version 2>/dev/null | awk '{print $2}')"
+  if [[ -n "$have" ]] && bwrap_fixed "$have"; then
+    ok "bubblewrap $have is installed, 0.12.0 or newer: nothing to rebuild"
+    return 0
+  fi
+  cand="$(apt_bwrap_candidate)"
+  if [[ -n "$cand" ]] && bwrap_fixed "$cand"; then
+    ok "apt offers bubblewrap $cand, 0.12.0 or newer: run  sudo apt install bubblewrap  instead"
+    return 0
+  fi
+  local codename
+  codename="$(os_release_value VERSION_CODENAME)"
+  [[ -n "$codename" ]] || err "no VERSION_CODENAME in $OS_RELEASE, which names the local version"
+  local version="$BWRAP_SRC_VERSION~${codename}1"
+  local deb
+  deb="bubblewrap_${version}_$(dpkg --print-architecture).deb"
+  local work="${TMPDIR:-/tmp}/agent-sandbox-bwrap-$BWRAP_SRC_VERSION"
+  local name email
+  name="$(git config user.name 2>/dev/null || true)"
+  email="$(git config user.email 2>/dev/null || true)"
+  [[ -n "$name" ]] || name="agent-sandbox installer"
+  [[ -n "$email" ]] || email="noreply@localhost"
+  local held=" (bubblewrap stays on hold; sudo apt-mark unhold bubblewrap releases it)"
+
+  info "installed: bubblewrap ${have:-none}; apt candidate: ${cand:-none}"
+  info "builds bubblewrap $version from $BWRAP_SRC_URL in $work"
+  ((DRY_RUN)) && info "(dry-run) fetches nothing, runs nothing; the plan:"
+
+  info "1. fetch the source package and check it against the pinned SHA-256 sums:"
+  local f sum
+  while read -r sum f; do info "     $sum  $f"; done <<<"$BWRAP_SRC_SUMS"
+  if ((! DRY_RUN)); then
+    mkdir -p "$work"
+    [[ -d "$work" && ! -L "$work" && -O "$work" ]] || err "$work is not a directory of yours"
+    # 755, not 700: apt reads a local .deb as its _apt user (else it notes that it
+    # fetched it unsandboxed, as root; a TMPDIR under a 700 home still gets that note).
+    chmod 755 "$work"
+    cd "$work"
+  fi
+  while read -r sum f; do
+    run_sys curl -fsSL -o "$f" "$BWRAP_SRC_URL/$f" || err "fetching $BWRAP_SRC_URL/$f failed"
+  done <<<"$BWRAP_SRC_SUMS"
+  run_sys sha256sum -c <<<"$BWRAP_SRC_SUMS" || err "the source package in $work does not match the pinned SHA-256 sums; nothing was installed"
+
+  info "2. hold the installed bubblewrap, so an apt upgrade cannot replace it meanwhile (step 6 installs through the hold)"
+  run_sys sudo apt-mark hold bubblewrap || err "apt-mark hold bubblewrap failed"
+  info "3. install the build tools and the package's Build-Depends (from the .dsc)"
+  run_sys sudo apt-get update || err "apt-get update failed$held"
+  run_sys sudo apt-get install -y build-essential fakeroot dpkg-dev || err "installing the build tools failed$held"
+  run_sys sudo apt-get build-dep -y "./bubblewrap_$BWRAP_SRC_VERSION.dsc" || err "apt-get build-dep failed$held"
+
+  info "4. unpack it and give it the local version $version"
+  ((DRY_RUN)) || rm -rf src
+  run_sys dpkg-source -x "bubblewrap_$BWRAP_SRC_VERSION.dsc" src || err "dpkg-source -x failed$held"
+  if ((DRY_RUN)); then
+    info "(dry-run) would prepend to src/debian/changelog: bubblewrap ($version) $codename, by $name <$email>"
+  else
+    if ! {
+      printf 'bubblewrap (%s) %s; urgency=medium\n\n  * No-change rebuild of %s for %s.\n\n -- %s <%s>  %s\n\n' \
+        "$version" "$codename" "$BWRAP_SRC_VERSION" "$codename" "$name" "$email" "$(date -R)"
+      cat src/debian/changelog
+    } >src/debian/changelog.new; then
+      err "writing src/debian/changelog failed$held"
+    fi
+    mv src/debian/changelog.new src/debian/changelog
+  fi
+
+  # The package's tests run the bwrap in the build tree, which the AppArmor
+  # restriction on unprivileged user namespaces refuses; step 7 tests the
+  # installed one instead.
+  info "5. build it as you, without the package's tests"
+  run_sys env -C src DEB_BUILD_PROFILES=nocheck DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b \
+    || err "dpkg-buildpackage failed$held"
+
+  info "6. install it and release the hold"
+  # Readable by _apt whatever the umask (see the chmod of $work). Installing through
+  # the hold usually clears it; the unhold makes sure.
+  ((DRY_RUN)) || chmod a+r "$deb" || err "$work/$deb was not built$held"
+  run_sys sudo apt-get install -y --allow-change-held-packages "./$deb" || err "installing $work/$deb failed$held"
+  run_sys sudo apt-mark unhold bubblewrap || err "apt-mark unhold bubblewrap failed$held"
+
+  info "7. check the installed bwrap: its version, and a user-namespace sandbox"
+  if ((DRY_RUN)); then
+    info "(dry-run) would run: bwrap --version (expecting 0.12.0)"
+    info "(dry-run) would run: bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true"
+    ok "(dry-run) nothing was fetched, built or installed"
+    return 0
+  fi
+  have="$(bwrap --version 2>/dev/null | awk '{print $2}')"
+  if [[ -z "$have" ]] || ! bwrap_fixed "$have"; then
+    err "bwrap --version reports '${have:-nothing}' after the install, not 0.12.0"
+  fi
+  bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true \
+    || err "bubblewrap $have is installed, but cannot create a user namespace: is the AppArmor profile for /usr/bin/bwrap loaded? (./install.sh installs it)"
+  ok "bubblewrap $have is installed and runs a sandbox"
+  info "the package stays in $work: sudo apt-get install $work/$deb reinstalls it"
+}
+
+# --rebuild-bwrap is the whole run: it needs neither the engine nor a checkout.
+if ((REBUILD_BWRAP)); then
+  rebuild_bwrap
+  exit 0
+fi
 
 # ----- 1. sanity: find (or fetch) the engine and the profiles -----
 section "Sanity check"
@@ -1062,15 +1206,23 @@ if command -v bwrap >/dev/null; then
   # 0.12.0 fixes CVE-2026-87766: during sandbox setup, a symlink in a directory the
   # sandboxed process controls could redirect the files and directories bwrap creates
   # as mount points onto the host. agent-sandbox creates mount points inside the
-  # agent's writable state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0, and
-  # its noble-security 0.9.0-1ubuntu0.3 dropped Canonical's backport of the fix again
-  # (a Flatpak regression), so the version alone is what can be checked here.
-  if [[ -n "$bwrap_ver" && "$(printf '%s\n' 0.12.0 "$bwrap_ver" | sort -V | head -n1)" != 0.12.0 ]]; then
+  # agent's writable state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0 and
+  # 26.04 0.11.1, and both security updates (0.9.0-1ubuntu0.3, 0.11.1-1ubuntu0.3)
+  # dropped Canonical's backport of the fix again (a Flatpak regression), so the
+  # version alone is what can be checked here.
+  if [[ -n "$bwrap_ver" ]] && ! bwrap_fixed "$bwrap_ver"; then
     warn "bubblewrap $bwrap_ver is older than 0.12.0, which fixes CVE-2026-87766 (a sandbox escape during"
     warn "  setup through symlinks in a directory the sandboxed process controls; this sandbox creates mount"
-    warn "  points inside the agent's writable state directory, so it is exposed). Ubuntu 24.04's security"
-    warn "  update 0.9.0-1ubuntu0.3 dropped the fix. Rebuild Ubuntu's own 0.12.0 source: see"
-    warn "  docs/troubleshooting.md, 'bubblewrap older than 0.12.0'."
+    warn "  points inside the agent's writable state directory, so it is exposed). The security updates of"
+    warn "  Ubuntu 24.04 (0.9.0-1ubuntu0.3) and 26.04 (0.11.1-1ubuntu0.3) dropped the fix."
+    bwrap_cand="$(apt_bwrap_candidate)"
+    if [[ -n "$bwrap_cand" ]] && bwrap_fixed "$bwrap_cand"; then
+      warn "  apt offers bubblewrap $bwrap_cand: sudo apt install bubblewrap"
+    elif is_ubuntu; then
+      warn "  run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source, rebuilt locally; see docs/troubleshooting.md)"
+    else
+      warn "  see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'."
+    fi
   fi
 fi
 if command -v pasta >/dev/null; then

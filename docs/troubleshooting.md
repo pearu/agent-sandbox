@@ -275,7 +275,7 @@ working until its next restart, so a broken environment is a latent outage; the
 rebuild (and the restart the installer performs) is what removes it.
 
 
-## bubblewrap older than 0.12.0 (Ubuntu 24.04)
+## bubblewrap older than 0.12.0 (Ubuntu 24.04 and 26.04)
 
 `install.sh` warns when `bwrap --version` is below 0.12.0. That release fixes
 **CVE-2026-87766** (GHSA-pxhw-h44j-8pfx): during sandbox setup, a symlink in a
@@ -289,10 +289,36 @@ added the overlay options (`--overlay-src`, `--overlay`, `--tmp-overlay`,
 Ubuntu 24.04 ships 0.9.0. Canonical backported the fix in `0.9.0-1ubuntu0.2`,
 then **dropped it again** in `0.9.0-1ubuntu0.3` (noble-security, 2026-09-17,
 "Incompatibility with Flatpak"), so a routine `apt upgrade` on 24.04 removes the
-fix. Ubuntu 26.04 ships 0.11.1 with its own security updates; check its
-changelog (`zcat /usr/share/doc/bubblewrap/changelog.Debian.gz | head`) for the
-CVE. There is no supported PPA: take bubblewrap from Ubuntu's own source, rebuilt
-locally. The whole recipe is a few minutes and needs root only for `apt`.
+fix. Ubuntu 26.04 ships 0.11.1 and is exposed the same way: `0.11.1-1ubuntu0.2`
+added the fix (2026-09-14) and `0.11.1-1ubuntu0.3` (resolute-security) dropped it
+for the same Flatpak regression. Launchpad publishes 0.12.0-1 only in the
+development series. There is no supported PPA: take bubblewrap from Ubuntu's own
+source, rebuilt locally. It takes a few minutes and needs root only for `apt`.
+
+**The installer does it:**
+
+```
+./install.sh --rebuild-bwrap --dry-run   # the plan: the version it builds, the pinned sums, every command
+./install.sh --rebuild-bwrap
+```
+
+It runs on Ubuntu only (elsewhere it refuses and points here). It does nothing
+when the installed `bwrap` is 0.12.0 or newer, and says `sudo apt install
+bubblewrap` instead when apt's candidate is. Otherwise it fetches Ubuntu's
+0.12.0-1 source package into `${TMPDIR:-/tmp}/agent-sandbox-bwrap-0.12.0-1`,
+checks it against SHA-256 sums pinned in the installer, holds the installed
+bubblewrap, builds the package as you with the local version
+`0.12.0-1~<codename>1`, installs it, releases the hold, and checks the installed
+`bwrap`. Two build messages are expected: dpkg-source cannot verify the `.dsc`
+signature without a Debian keyring (the pinned sums are the check), and
+dpkg-genchanges calls `0.12.0-1~<codename>1` earlier than `0.12.0-1` (the tilde
+version, by design). The `.deb` stays in that directory, so it can be reinstalled. If a step
+fails, the hold stays in place and the message says so; `sudo apt-mark unhold
+bubblewrap` releases it. `install.sh` itself names this option when it finds an
+older bubblewrap on Ubuntu, and `sudo apt install bubblewrap` when apt already
+has 0.12.0 or newer.
+
+**By hand**, the same steps:
 
 1. **Protect the installed version first**, so an `apt upgrade` in the meantime
    cannot regress it, then install the build tools:
@@ -300,10 +326,12 @@ locally. The whole recipe is a few minutes and needs root only for `apt`.
    ```
    sudo apt-mark hold bubblewrap
    sudo apt update
-   sudo apt install debhelper docbook-xml docbook-xsl libcap-dev libselinux1-dev meson ninja-build pkgconf xsltproc fakeroot
+   sudo apt install build-essential fakeroot dpkg-dev
    ```
 
-2. **Fetch Ubuntu's 0.12.0-1 source from Launchpad and verify it.** The `.dsc`
+2. **Fetch Ubuntu's 0.12.0-1 source from Launchpad, verify it, and install its
+   Build-Depends**, which `apt-get build-dep` reads from the `.dsc` (no package
+   list to keep per release). The `.dsc`
    lists SHA-256 sums for the two tarballs; the orig tarball is byte-identical to
    upstream's release asset (verified 2026-09-18). The `.dsc` is signed by the
    Debian maintainer's key `7A073AD1AE694FA25BFF62E5235C099D3EB33076`; with
@@ -317,31 +345,36 @@ locally. The whole recipe is a few minutes and needs root only for `apt`.
      curl -sSL -o "$f" "$B/$f"
    done
    sha256sum -c <<'SUMS'
+   e81987f8d90b30b581299870592affaa8d9a17caf05112d303916312b7afd60a  bubblewrap_0.12.0-1.dsc
    9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  bubblewrap_0.12.0.orig.tar.xz
    60691fa8488db2de4dd19d59fb0b084e692695c38616dcf8e20b08a4d372ab93  bubblewrap_0.12.0-1.debian.tar.xz
    SUMS
+   sudo apt-get build-dep ./bubblewrap_0.12.0-1.dsc
    dpkg-source -x bubblewrap_0.12.0-1.dsc src
    ```
 
-3. **Give it a local version that outranks anything 24.04 will ship**, and build
-   without the package's test suite. The tests run the freshly built `bwrap`
+3. **Give it a local version that outranks anything the release will ship**
+   (and stays below a real 0.12.0-1), and build without the package's test
+   suite. The tests run the freshly built `bwrap`
    from the build directory, which the AppArmor restriction on unprivileged user
    namespaces refuses (only `/usr/bin/bwrap` has the installer's profile); the
    installed binary is tested afterwards instead.
 
    ```
    cd src
-   { printf 'bubblewrap (0.12.0-1~noble1) noble; urgency=medium\n\n  * No-change rebuild of 0.12.0-1 for noble.\n\n -- %s <%s>  %s\n\n' \
-       "$(git config user.name)" "$(git config user.email)" "$(date -R)"; cat debian/changelog; } >debian/changelog.new
+   c=$(. /etc/os-release && echo "$VERSION_CODENAME")
+   { printf 'bubblewrap (0.12.0-1~%s1) %s; urgency=medium\n\n  * No-change rebuild of 0.12.0-1 for %s.\n\n -- %s <%s>  %s\n\n' \
+       "$c" "$c" "$c" "$(git config user.name)" "$(git config user.email)" "$(date -R)"; cat debian/changelog; } >debian/changelog.new
    mv debian/changelog.new debian/changelog
    DEB_BUILD_PROFILES=nocheck DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
    ```
 
 4. **Install and release the hold.** The local version is higher than the
-   archive's, so apt will not replace it.
+   archive's, so apt will not replace it. The install needs
+   `--allow-change-held-packages`, since the package is on hold from step 1.
 
    ```
-   sudo apt install ../bubblewrap_0.12.0-1~noble1_amd64.deb
+   sudo apt install --allow-change-held-packages ../bubblewrap_0.12.0-1~"$c"1_"$(dpkg --print-architecture)".deb
    sudo apt-mark unhold bubblewrap
    bwrap --version
    ```

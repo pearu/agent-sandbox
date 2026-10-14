@@ -47,6 +47,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`./install.sh --rebuild-bwrap`** builds Ubuntu's own bubblewrap 0.12.0-1 source
+  package locally, checked against pinned SHA-256 sums, with the local version
+  `0.12.0-1~<codename>1`, and installs it; `--dry-run` prints the plan and runs nothing.
+  Ubuntu 26.04 is exposed to CVE-2026-87766 like 24.04: its resolute-security
+  0.11.1-1ubuntu0.3 dropped the fix too. The installer's warning below 0.12.0 now names
+  the route that applies: `sudo apt install bubblewrap` when apt has 0.12.0 or newer,
+  this option on Ubuntu otherwise, `docs/troubleshooting.md` elsewhere.
 - **The `market` model** and **`[net] hosts = public`**: `asb --init market --env NAME`
   in any directory, then `asb --role market-<topic> claude` -- research for a purchase
   or a tender (makers, shops, review and test sites, prices), reaching every public

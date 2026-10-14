@@ -141,8 +141,8 @@ system-wide mode; the installer refuses to run through `sudo`. See
 
 Requirements: Linux with unprivileged user namespaces, `bubblewrap` (0.12.0 or
 newer recommended: the installer warns below it, and
-[troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404)
-has the recipe for Ubuntu 24.04), `curl`, `git`, `python3` on `PATH` when you
+[troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604)
+has the recipe for Ubuntu 24.04 and 26.04), `curl`, `git`, `python3` on `PATH` when you
 launch (every session is joined into its role's running sandbox by a small
 standard-library helper), and either `python3 >= 3.12` with `venv` or conda/mamba
 (for the proxy runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
@@ -154,6 +154,10 @@ git clone https://github.com/pearu/agent-sandbox.git
 cd agent-sandbox
 ./install.sh            # or ./install.sh --dry-run to see what it would do
 ```
+
+On Ubuntu with a bubblewrap older than 0.12.0, `./install.sh --rebuild-bwrap`
+builds Ubuntu's own 0.12.0-1 source locally and installs it (`--dry-run` first
+prints the plan).
 
 agent-sandbox is a **single-user tool**. Everything it installs belongs to one
 account: the proxy is a systemd *user* unit, the allowlist and trust store live
