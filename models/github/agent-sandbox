@@ -36,6 +36,7 @@ file = .asb/roles/gh-triage.md
 file = .asb/roles/gh-fix.md
 # ---- the setup role builds the environment: once per project, again after main moves --
 #   asb --role gh-setup claude
+#   a dependency's clone goes under [connect:gh-*] as ~/git/<org>/<repo>/ = copy-on-write
 [connect:gh-setup]
 #@ setup = gh-setup
 project = read-write              # the build lands in your tree, as when you build it yourself

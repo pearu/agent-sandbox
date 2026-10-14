@@ -246,6 +246,9 @@ init() {
   # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
   grep -qF "The environment's prefix, \`$ep\`, read-write" "$PROJ/.asb/roles/gh-setup.md"
   run ! grep -qF '{' "$PROJ/.asb/roles/gh-setup.md"
+  grep -qF 'What you cannot retrieve' "$PROJ/.asb/roles/gh-setup.md"
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
+  grep -qF '`~/git/<org>/<repo>/ = copy-on-write` under `[connect:gh-*]`' "$PROJ/.asb/roles/gh-setup.md"
   for k in gh-review gh-triage gh-fix; do
     grep -qF "1. Check the build: \`$ep\` has \`conda-meta/\`" "$PROJ/.asb/roles/$k.md"
   done

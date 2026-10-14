@@ -15,8 +15,12 @@ number, each in a layer of its own over the project as the setup role built it:
   environment, from the project's CI and documentation, and records how in
   `.asb/setup.md`. It writes the checkout and the environment, reads the web with GET
   only, and has no git transport and no gh login. Submodules are yours: it cannot fetch,
-  so `git submodule update --init --recursive` on the host first. `--init` takes an
-  `--env` NAME not built yet (a conda env name, made empty under the conda base).
+  so `git submodule update --init --recursive` on the host first. Dependencies CI builds
+  from git or fetches from a refused host are yours to provide, as a clone under
+  `~/git/<org>/<repo>` declared `copy-on-write` under `[connect:gh-*]` (or a host under
+  `[allow:gh-setup]`), approved with `--trust`; gh-setup asks for exactly that and
+  installs what it builds from them into the environment. `--init` takes an `--env` NAME
+  not built yet (a conda env name, made empty under the conda base).
 - **gh-review** builds and tests a pull request, reviews it with `/pr-review`, and posts
   the review when you say so.
 - **gh-triage** reproduces an issue on your build, measures its claims, finds
