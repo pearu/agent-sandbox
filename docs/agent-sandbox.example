@@ -146,8 +146,9 @@
 #        read-only at /run/agent-sandbox/briefing.md) and has the agent inject
 #        a compact summary at session start, resume and after compaction: what
 #        egress is filtered, which paths are writable, which other projects are
-#        readable, and how to ask you for something that is blocked -- and
-#        tells it, during a command, which host was refused. Names and paths
+#        readable, how to ask you for something that is blocked, and that
+#        what it hands you to run is one line or a file at a host path it
+#        names -- and tells it, during a command, which host was refused. Names and paths
 #        only, never the contents of anything shared. Off stops the sandbox
 #        describing itself; it changes no limit.
 #[briefing]
