@@ -503,6 +503,15 @@ step() {
     AGENT_SANDBOX_INSTALL_STEP=micromamba AGENT_SANDBOX_TTY="$T/answers" "${envs[@]}" "$REPO_ROOT/install.sh" "$@"
 }
 
+# no host conda: a CI runner has conda on PATH, so `conda`/`mamba` stubs that find no base
+# come first ($T/bin), and env -i leaves none of MAMBA_ROOT_PREFIX, CONDA_ROOT_PREFIX,
+# CONDA_PYTHON_EXE, CONDA_PREFIX, CONDA_EXE, MAMBA_EXE in the installer's environment
+stub_no_host_conda() {
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$T/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$T/bin/mamba"
+  chmod +x "$T/bin/conda" "$T/bin/mamba"
+}
+
 # a host conda the engine's discovery finds: `conda info --base` names $T/hostconda
 stub_host_conda() {
   mkdir -p "$T/bin" "$T/hostconda"
@@ -527,7 +536,8 @@ STUB
 
 @test "--dry-run: the micromamba step prints the fetch, the pinned sum and the paths; the conda question's answer is not written" {
   [[ "$(uname -m)" == x86_64 ]] || skip "the pinned sum asserted here is linux-64's"
-  dry
+  stub_no_host_conda
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
   [ "$status" -eq 0 ]
   local st="$T/home/.local/share/agent-sandbox"
   [[ "$output" == *"(dry-run) would fetch https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64"* ]]
@@ -535,7 +545,7 @@ STUB
   [[ "$output" == *"(dry-run) and install it as $st/micromamba/bin/micromamba (mode 755)"* ]]
   [[ "$output" == *"(dry-run) would create the conda root $st/conda (empty; environments go under envs/)"* ]]
   [ ! -e "$st/micromamba" ] && [ ! -e "$st/conda" ]
-  # no conda on this host (PATH is /usr/bin:/bin here): sandbox, said, not written
+  # no conda on this host: sandbox, said, not written
   [[ "$output" == *"(dry-run) would write 'sandbox' to $T/home/.config/agent-sandbox/conda (no conda on this host)"* ]]
   [ ! -e "$T/home/.config/agent-sandbox/conda" ]
   # a host conda: the question, printed
@@ -587,6 +597,7 @@ STUB
   printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
   chmod +x "$T/bin/sha256sum"
   # no conda on the host: sandbox, nothing asked
+  stub_no_host_conda
   : >"$T/answers"
   step
   [ "$status" -eq 0 ]
