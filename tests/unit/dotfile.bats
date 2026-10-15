@@ -313,6 +313,9 @@ trust() {
 @test "[conda] prefix not built yet and no conda base on the host: said, and nothing conda is bound" {
   local pre="$PROJ/envs/x"
   mkdir -p "$pre"
+  # No base to find -- and a CI runner has conda on PATH, so these stubs find none.
+  printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
+  chmod +x "$H/bin/conda" "$H/bin/mamba"
   printf '[conda]\nprefix = envs/x\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
