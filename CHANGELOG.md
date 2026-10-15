@@ -47,6 +47,11 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A refused host, path or project is the user's call**: the briefing tells the session
+  to stop and ask also when it could go on without it -- what it needs, what for, what it
+  would do without it, and the lines to add (`[allow:ROLE]` under a role) -- and to
+  continue without it only when the user says so. A session used to report the refusal
+  and carry on with less.
 - **`./install.sh --rebuild-bwrap`** builds Ubuntu's own bubblewrap 0.12.0-1 source
   package locally, checked against pinned SHA-256 sums, with the local version
   `0.12.0-1~<codename>1`, and installs it; `--dry-run` prints the plan and runs nothing.
