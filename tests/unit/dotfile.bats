@@ -267,6 +267,67 @@ trust() {
   [[ "$(setenv_value PATH)" != *"$base/bin:"* ]]
 }
 
+@test "[conda] prefix not built yet, no env active: the conda base is bound read-only, so it can be created there" {
+  # The ey case: a shell with MAMBA_ROOT_PREFIX and no active env (CONDA_PREFIX
+  # empty) launched a role whose prefix was an empty directory -- and found no conda.
+  local base="$H/conda" pre="$PROJ/envs/x" pkgs="$H/home/.cache/agent-sandbox/conda-pkgs"
+  mkdir -p "$base/condabin" "$base/pkgs" "$pre"
+  printf '#!/bin/sh\n' >"$base/condabin/conda"
+  chmod +x "$base/condabin/conda"
+  printf '[conda]\nprefix = envs/x\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"conda prefix 'envs/x' is not a conda env yet (no conda-meta/ in $pre): the conda base $base is bound read-only, so it can be created there"* ]]
+  argv_has --ro-bind "$base" "$base"
+  argv_has --bind "$pkgs" "$pkgs"
+  argv_has --tmpfs "$H/home/.conda"
+  [ "$(setenv_value CONDA_PKGS_DIRS)" = "$pkgs,$base/pkgs" ]
+  [ "$(setenv_value MAMBA_ROOT_PREFIX)" = "$base" ]
+  [ "$(setenv_value PATH)" = "$base/condabin:$H/bin:/usr/bin:/bin" ]
+  run ! setenv_value CONDA_PREFIX # no env is active, none is bound
+  run ! argv_has --ro-bind "$pre" "$pre"
+  # condabin already on PATH (a shell that ran conda's hook): not added twice
+  run_engine MAMBA_ROOT_PREFIX="$base" PATH="$H/bin:$base/condabin:/usr/bin:/bin" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value PATH)" = "$H/bin:$base/condabin:/usr/bin:/bin" ]
+  # no root-prefix variable at all: the base from `conda info --base`, conda on PATH
+  # shellcheck disable=SC2016 # $1 $2 are the stub's own arguments
+  printf '#!/bin/sh\n[ "$1 $2" = "info --base" ] && echo %s\n' "$base" >"$H/bin/conda"
+  chmod +x "$H/bin/conda"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the conda base $base is bound read-only, so it can be created there"* ]]
+  argv_has --ro-bind "$base" "$base"
+  [ "$(setenv_value CONDA_PKGS_DIRS)" = "$pkgs,$base/pkgs" ]
+  run ! setenv_value MAMBA_ROOT_PREFIX
+  # a name that is not under the base: the base too, so conda runs
+  printf '[conda]\nname = nope\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"conda env 'nope' not found under $base/envs: the conda base $base is bound read-only, so conda runs"* ]]
+  argv_has --ro-bind "$base" "$base"
+}
+
+@test "[conda] prefix not built yet and no conda base on the host: said, and nothing conda is bound" {
+  local pre="$PROJ/envs/x"
+  mkdir -p "$pre"
+  printf '[conda]\nprefix = envs/x\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"conda prefix 'envs/x' is not a conda env yet, and no conda base was found on this host (MAMBA_ROOT_PREFIX, CONDA_ROOT_PREFIX, conda on PATH): nothing conda is in the sandbox"* ]]
+  run ! setenv_value CONDA_PKGS_DIRS
+  run ! argv_has --tmpfs "$H/home/.conda"
+  [ "$(setenv_value PATH)" = "$H/bin:/usr/bin:/bin" ]
+  printf '[conda]\nname = nope\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb claude --version
+  [[ "$output" == *"conda env 'nope' not found, and no conda base was found on this host"* ]]
+  run ! setenv_value CONDA_PKGS_DIRS
+}
+
 @test "[net] mode from an approved dot-file selects the network mode; AGENT_SANDBOX_NET wins; unknown values are ignored and unapproved files refused" {
   printf '[net]\nmode = none\n' >"$PROJ/.agent-sandbox"
   run_engine -- asb claude --version # not yet approved: refused, nothing applied

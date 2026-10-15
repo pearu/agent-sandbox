@@ -44,4 +44,7 @@ shared boundary and no purpose.
 Before deleting a fixer, publish its work: its commits live in its layer. After you
 rebuild or move `main`, delete or reset live instances: their layers lie over the old
 tree. Launch from the shell you build in: an instance's `PATH` is that shell's, and a
-build that cannot find its compilers reconfigures from scratch.
+build that cannot find its compilers reconfigures from scratch. conda's base reaches
+`gh-setup` whether or not an env is active in that shell, as long as the host has conda
+(`MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or `conda` on PATH), so it can create the
+environment the dot-file names.

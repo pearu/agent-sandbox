@@ -68,6 +68,13 @@ Sections:
   downloads go whenever a conda env is active (the host's cache stays read-only and
   is searched after it), write mode or not -- an env written by path, `conda install
   -p`, downloads too.
+  The conda base is bound read-only whenever the file names an env or prefix, an env
+  active in your shell or not: a `prefix` that is not an env yet (no `conda-meta/`,
+  such as the empty directory a role's tree declares for it) or a `name` not under the
+  base gets the base, its config and the package cache, with `<base>/condabin` on PATH,
+  so conda runs inside and the prefix can be created there. The base is found from
+  `MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or `conda`/`mamba` on PATH (`info --base`);
+  a host with none of them gets nothing conda, and the launch says so.
 - **`[net]`** — key/value lines. `hosts = allowlist|public` (default allowlist):
   `public` lets the role reach every public host, the allowlist not applying -- for
   work whose sites are not known in advance (the `market` model). The proxy stays in

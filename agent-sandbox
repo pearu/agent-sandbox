@@ -85,6 +85,10 @@
 #                                           the base stays read-only and
 #                                           downloads go to a sandbox-owned
 #                                           package cache (knob below).
+#                                           With no env active, a dot-file
+#                                           [conda] env that is not there yet
+#                                           gets the base alone, so it can be
+#                                           created inside.
 #     $HOME/.cache                          writable, empty, session-private
 #                                           tmpfs for tool caches; gone at exit
 #     $HOME/.conda  (if conda is active)    likewise: conda's registry and
@@ -3441,16 +3445,17 @@ _as_briefing_write() {
     # [allow:ROLE] only where the dot-file already has role sections (_df_role_globs,
     # by dynamic scope, as _as_role_resolve reads it): a first suffixed section would
     # refuse every other role name, the default included.
-    local sect="[allow]"
+    local sect="[allow]" csect="[connect]"
     printf -- '- the command to run on the host, in %s, which shows them the change\n' "$cwd"
     if [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})); then
-      sect="[allow:$_role]"
+      sect="[allow:$_role]" csect="[connect:$_role]"
       printf '  and asks for their approval -- %s applies to this role, [allow] to\n' "$sect"
       printf '  every role -- e.g.\n\n'
     else
       printf '  and asks for their approval, e.g.\n\n'
     fi
     printf "      asb --apply '%s' example.com\n\n" "$sect"
+    printf "  any section the same way, e.g. asb --apply '%s' '~/data/ = read-only'\n" "$csect"
     printf '  or, for a host and for this launch only: asb --allow example.com ...\n\n'
     printf 'then ask them to relaunch.\n'
     printf 'Continue without it only when the user says so. One clear request\n'
@@ -3591,6 +3596,21 @@ _as_conda_base() {
     [[ -n "$b" && -d "$b" ]] && printf '%s' "$b"
   fi
   return 0 # a query: finding no base is not a failure (would trip set -e at the caller)
+}
+
+# _as_conda_base_only BASE -- the dot-file names an env that is not there (yet): with no
+# env active in the launching shell, the launch binds the conda base BASE alone (the
+# conda block), so conda runs inside and the env can be created. <BASE>/condabin goes on
+# the inner PATH when it is not on it, so `conda` resolves from a shell that never ran
+# conda's hook. Sets the launch's _conda_base_only and _inner_path.
+_as_conda_base_only() {
+  [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX" ]] && return 0 # the active env's block binds it
+  _conda_base_only="$1"
+  local p="${_inner_path:-$PATH}"
+  if [[ -d "$1/condabin" && ":$p:" != *":$1/condabin:"* ]]; then
+    _inner_path="$1/condabin${p:+:$p}"
+  fi
+  return 0
 }
 
 # Is the .agent-sandbox at $2 (for project dir $1) approved? Trust file is
@@ -6756,6 +6776,9 @@ agent_sandbox() (
   # PATH for INSIDE the sandbox. Empty means "pass the launching shell's PATH";
   # a selected conda env rewrites it (see the [conda] name block).
   local _inner_path=""
+  # The conda base alone, for a dot-file env that is not there (yet) when no env is
+  # active: conda itself in the sandbox, so the env can be created (see the conda block).
+  local _conda_base_only=""
 
   local cwd
   cwd="$(pwd -P)"
@@ -6992,8 +7015,11 @@ agent_sandbox() (
             _inner_path="$(_as_path_swap_conda "${_old_prefix:-$_cbase}" "$CONDA_PREFIX")"
           fi
           _as_info "using conda env '$_df_conda_name' from .agent-sandbox"
+        elif [[ -n "$_cbase" ]]; then
+          _as_conda_base_only "$_cbase"
+          _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under $_cbase/envs: the conda base $_cbase is bound read-only, so conda runs ($_cbase/envs is not writable here)"
         else
-          _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cbase:-<no conda base>}/envs; ignoring"
+          _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found, and no conda base was found on this host (MAMBA_ROOT_PREFIX, CONDA_ROOT_PREFIX, conda on PATH): nothing conda is in the sandbox"
         fi
       fi
       # conda prefix (#221): an env by its path -- a clone in a role's tree -- relative
@@ -7017,7 +7043,14 @@ agent_sandbox() (
           fi
           _as_info "using conda env '$_df_conda_prefix' from .agent-sandbox"
         else
-          _as_msg ".agent-sandbox: conda prefix '$_df_conda_prefix' is not a conda env (no conda-meta/ in $_cpre); ignoring"
+          local _cbase
+          _cbase="$(_as_conda_base)"
+          if [[ -n "$_cbase" ]]; then
+            _as_conda_base_only "$_cbase"
+            _as_msg ".agent-sandbox: conda prefix '$_df_conda_prefix' is not a conda env yet (no conda-meta/ in $_cpre): the conda base $_cbase is bound read-only, so it can be created there"
+          else
+            _as_msg ".agent-sandbox: conda prefix '$_df_conda_prefix' is not a conda env yet, and no conda base was found on this host (MAMBA_ROOT_PREFIX, CONDA_ROOT_PREFIX, conda on PATH): nothing conda is in the sandbox"
+          fi
         fi
       fi
     elif [[ -f "$_trust_rec" ]]; then
@@ -7817,8 +7850,14 @@ agent_sandbox() (
   # mode, not only in write mode: an env the agent may write by path (a clone in
   # the project, `conda install -p`) downloads too, and the cache outlives the
   # launch, where ~/.conda/pkgs, conda's fallback, is the tmpfs below (#219).
+  #
+  # With NO env active, a dot-file that names an env which is not there (yet) gets the
+  # base half of this alone (_conda_base_only, set where [conda] is applied): the base
+  # read-only, conda's config, the package cache -- so conda runs, and an empty prefix
+  # the role may write can be created.
+  local _conda_env="" _conda_base="" _conda_write=0 _rc
   if [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX" ]]; then
-    local _conda_base="" _conda_write=0 _rc
+    _conda_env="$CONDA_PREFIX"
     [[ "${_knob_conda_write:-0}" == "1" ]] && _conda_write=1
 
     # Find the base conda install (where condabin/, bin/conda, bin/mamba,
@@ -7832,24 +7871,29 @@ agent_sandbox() (
     elif [[ "$CONDA_PREFIX" == */envs/* ]]; then
       _conda_base="${CONDA_PREFIX%/envs/*}"
     fi
-
+  else
+    _conda_base="$_conda_base_only"
+  fi
+  if [[ -n "$_conda_env$_conda_base" ]]; then
     # Bind the base prefix first, read-only, if it's distinct from $CONDA_PREFIX
     # (binding the same path twice would make bwrap error). It goes FIRST
     # because the env usually lives inside it (<base>/envs/<name>): bwrap
     # applies mounts in order and a later mount hides everything below its
     # mount point, so the env's own bind must come after the base's.
-    if [[ -n "$_conda_base" && "$_conda_base" != "$CONDA_PREFIX" &&
+    if [[ -n "$_conda_base" && "$_conda_base" != "$_conda_env" &&
       -d "$_conda_base" ]]; then
       _as_conda_mount --ro-bind "$_conda_base"
     fi
-    if ((_conda_write)); then
-      _as_conda_mount --bind "$CONDA_PREFIX"
-    else
-      _as_conda_mount --ro-bind "$CONDA_PREFIX"
+    if [[ -n "$_conda_env" ]]; then
+      if ((_conda_write)); then
+        _as_conda_mount --bind "$CONDA_PREFIX"
+      else
+        _as_conda_mount --ro-bind "$CONDA_PREFIX"
+      fi
+      args+=(--setenv CONDA_PREFIX "$CONDA_PREFIX")
+      [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && args+=(--setenv CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV")
+      [[ -n "${CONDA_SHLVL:-}" ]] && args+=(--setenv CONDA_SHLVL "$CONDA_SHLVL")
     fi
-    args+=(--setenv CONDA_PREFIX "$CONDA_PREFIX")
-    [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && args+=(--setenv CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV")
-    [[ -n "${CONDA_SHLVL:-}" ]] && args+=(--setenv CONDA_SHLVL "$CONDA_SHLVL")
     [[ -n "${MAMBA_ROOT_PREFIX:-}" ]] && args+=(--setenv MAMBA_ROOT_PREFIX "$MAMBA_ROOT_PREFIX")
     [[ -n "${CONDA_ROOT_PREFIX:-}" ]] && args+=(--setenv CONDA_ROOT_PREFIX "$CONDA_ROOT_PREFIX")
     [[ -n "${CONDA_PYTHON_EXE:-}" ]] && args+=(--setenv CONDA_PYTHON_EXE "$CONDA_PYTHON_EXE")
