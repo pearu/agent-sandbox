@@ -35,6 +35,21 @@ run_trust() {
   ' _ "$H" "$PROJ" "$answers" "$ENGINE"
 }
 
+# Run `--apply ARGS...` from inside the project, feeding $1 as the prompt answers; `-`
+# for none at all (stdin closed).
+run_apply() {
+  local answers="$1"
+  shift
+  run bash -c '
+    cd "$2" || exit 99
+    h="$1" a="$3" e="$4"
+    shift 4
+    if [ "$a" = - ]; then exec <&-; else exec < <(printf "%b" "$a"); fi
+    env -i HOME="$h/home" PATH="$h/bin:/usr/bin:/bin" USER=tester \
+      AGENT_SANDBOX_SESSION_BASE="$h/base" "$e" --profile claude --apply "$@"
+  ' _ "$H" "$PROJ" "$answers" "$ENGINE" "$@"
+}
+
 # Record approval of $1/.agent-sandbox the way the engine's --trust would.
 trust() {
   local d="$1" t="$CFG/trust"
@@ -509,6 +524,103 @@ trust() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"not approved"* ]]
   [ ! -d "$CFG/trust" ] || [ -z "$(ls -A "$CFG/trust")" ]
+}
+
+@test "--apply creates a missing file with the section and the line, then runs --trust's review" {
+  run_apply 'y\n' '[allow]' pypi.org
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to [allow]: pypi.org"* && "$output" == *"created $PROJ/.agent-sandbox"* ]]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
+  [[ "$output" == *"approve this .agent-sandbox"*"approved."* ]]
+  [[ "$output" == *"the change applies at the next launch of every role"* ]]
+  [ ! -s "$H/argv" ] # bwrap never ran
+  [ -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+}
+
+@test "--apply appends only the missing lines at the end of their section, the rest byte-identical, and the review shows the diff" {
+  printf '# policy\n[allow]\npypi.org   # pip\n\n# what is denied\n[deny]\nevil.example\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  run_apply 'y\n' '[allow]' pypi.org github.com
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already in [allow]: pypi.org"* && "$output" == *"added to [allow]: github.com"* ]]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'# policy\n[allow]\npypi.org   # pip\ngithub.com\n\n# what is denied\n[deny]\nevil.example' ]
+  [[ "$output" == *"has changed since you approved it"*$'\n+github.com\n'*"approved."* ]]
+  run_engine -- asb claude --version
+  [[ "$output" == *"session allowlist: pypi.org github.com"* ]]
+}
+
+@test "--apply adds an absent section at the end of the file, after a blank line" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_apply 'y\n' '[deny]' evil.example
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org\n\n[deny]\nevil.example' ]
+  [[ "$output" == *"approved."* ]]
+}
+
+@test "--apply a second time adds nothing and, approved as it stands, asks nothing" {
+  run_apply 'y\n' '[allow]' pypi.org
+  [ "$status" -eq 0 ]
+  local before
+  before="$(cat "$PROJ/.agent-sandbox")"
+  run_apply - '[allow]' '  pypi.org  # again'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already in [allow]: pypi.org"* && "$output" == *"nothing to add"* ]]
+  [[ "$output" == *"already approved"* && "$output" != *"approve this"* ]]
+  [ "$(cat "$PROJ/.agent-sandbox")" = "$before" ]
+}
+
+@test "--apply declined keeps the edit in the file, unapproved, and says so" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  run_apply 'n\n' '[allow]' github.com
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not approved"* && "$output" == *"stays in .agent-sandbox, unapproved"* ]]
+  grep -qx github.com "$PROJ/.agent-sandbox"
+  run_engine -- asb claude --version
+  [ "$status" -eq 1 ] && [ ! -s "$H/argv" ]
+}
+
+@test "--apply warns at a file's first role section, and goes on to the review" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_apply 'y\n' '[allow:gh-setup]' x.org
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning — [allow:gh-setup] is this file's first role section"*"[connect:*]"* ]]
+  [[ "$output" == *"approved."* && "$output" == *"the roles matching 'gh-setup'"* ]]
+  run_apply 'y\n' '[allow:gh-*]' y.org # a second role section is not the first
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"first role section"* ]]
+}
+
+@test "--apply refuses an unknown section, a suffix the section does not take, and fewer than two words" {
+  run_apply - '[bogus]' x
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"[bogus] is not a section of .agent-sandbox"*"[allow]"*"[connect]"*"[claude]"* ]]
+  run_apply - '[seccomp:r]' 'mode = off'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"does not take a role suffix"* ]]
+  run_apply - allow x
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not a section header"* ]]
+  run_apply - '[allow]'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--apply needs a section and a line"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+}
+
+@test "--apply runs on the host: inside a sandbox it is refused, and the file is untouched" {
+  # Inside is pid 1 being bubblewrap (_as_inside_sandbox), which a unit test cannot
+  # arrange; the engine is sourced and that one test answered yes.
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" bash -c '
+    cd "$1" && source "$2" && _as_inside_sandbox() { return 0; } && agent_sandbox --apply "[allow]" x.org
+  ' _ "$PROJ" "$ENGINE" </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--apply runs on the host"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
 }
 
 @test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {

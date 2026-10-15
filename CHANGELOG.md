@@ -47,6 +47,11 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`asb --apply '[SECTION]' LINE...`**: adds the lines to that section of the project's
+  `.agent-sandbox` -- creating the file or the section, leaving a line already there
+  alone -- then runs `--trust`'s review of the result. Host only; it warns at a file's
+  first role section. The briefing prints it, e.g. `asb --apply '[allow]' example.com`,
+  where it asked the user to type lines into the file and re-run `asb --trust`.
 - **A refused host, path or project is the user's call**: the briefing tells the session
   to stop and ask also when it could go on without it -- what it needs, what for, what it
   would do without it, and the lines to add (`[allow:ROLE]` under a role) -- and to
