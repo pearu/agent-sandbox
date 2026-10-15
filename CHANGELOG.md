@@ -185,6 +185,14 @@ names are gone; there are no aliases for removed names before 1.0.
 - `--preset native` with an active conda env under a symlinked `$HOME` path (#205).
 - A joined command keeps the terminal where the kernel blocks TIOCSTI (#166), and its exit
   status is right on Python older than 3.9 (#164).
+- **No conda inside when no env was active in the launching shell**: a dot-file `[conda]`
+  env that is not there yet -- a role's empty `prefix`, for `gh-setup` to create -- got
+  no conda at all from a shell with `MAMBA_ROOT_PREFIX` set and nothing activated, and
+  the prefix was "ignoring"-ed. The conda base is now bound read-only whenever the file
+  names an env or prefix, active env or not, with its config, the package cache and
+  `<base>/condabin` on PATH, so the env can be created; a host with no conda base is
+  said. The briefing also shows that `asb --apply` takes any section, e.g.
+  `asb --apply '[connect]' '~/data/ = read-only'`, where it showed `[allow]` only.
 - **`--trust` offered to git-ignore a tracked `.agent-sandbox`**: it asked whether the
   file was ignored, not whether it was tracked, and an exclude line does nothing for a
   tracked file. A repository that ships its policy now gets no offer; the file is still

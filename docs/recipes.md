@@ -234,7 +234,8 @@ You cannot widen the sandbox from inside — `.agent-sandbox` is trust-gated
 precisely so an agent cannot grant itself access, and the trust store is never
 bound in. The agent's part is to stop and tell you what it needs, what for, what
 it would do without it, and the command that grants it, such as
-`asb --apply '[allow]' pypi.org`; yours is to decide, run it in the project on the
+`asb --apply '[allow]' pypi.org` -- `--apply` takes any section, e.g.
+`asb --apply '[connect]' '~/data/ = read-only'`; yours is to decide, run it in the project on the
 host -- it adds the lines to `.agent-sandbox`, shows you the change and asks for your
 approval, as `asb --trust` does -- and relaunch. For a host and one launch only,
 `asb --allow HOST …` does without the file. It stops even when it could go on

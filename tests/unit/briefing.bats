@@ -91,6 +91,8 @@ trust() {
   grep -q 'trust-gated' "$md"   # ...and how to ask for more
   # the command the user runs on the host: it edits the file and asks, as --trust does
   grep -qxF "      asb --apply '[allow]' example.com" "$md" # no role: the unsuffixed section
+  # not only hosts: any section the same way
+  grep -qxF "  any section the same way, e.g. asb --apply '[connect]' '~/data/ = read-only'" "$md"
   grep -qF 'for a host and for this launch only: asb --allow example.com ...' "$md"
   # going on with less is the user's call, not the session's
   grep -q 'only when the user says so' "$md"
@@ -276,6 +278,7 @@ CHECK
   grep -q '^## Your role: reviewer-1$' "$OUT/briefing.md"
   grep -q '^Report, do not fix.$' "$OUT/briefing.md"
   grep -qxF "      asb --apply '[allow:reviewer-1]' example.com" "$OUT/briefing.md" # a role asks for its own lines
+  grep -qF "asb --apply '[connect:reviewer-1]' '~/data/ = read-only'" "$OUT/briefing.md"
   argv_has --ro-bind "$PROJ/.asb/roles/reviewer-1.md" "$PROJ/.asb/roles/reviewer-1.md"
   # a role the section does not match is not briefed
   run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version

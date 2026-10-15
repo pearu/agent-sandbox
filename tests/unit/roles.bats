@@ -297,7 +297,7 @@ STUB
   [[ "$output" == *"git transport: fetch only"* ]]
 }
 
-@test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env is ignored, said (#221)" {
+@test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env yet gets the base, said (#221)" {
   local base="$H/conda" clone="$PROJ/.asb/impl-1/.env"
   mkdir -p "$base/envs/x-dev/conda-meta" "$base/pkgs" "$clone/conda-meta" "$clone/bin"
   dotfile $'[conda]\nname = x-dev\n[conda:implementer-1]\nprefix = .asb/impl-1/.env\n[conda:reviewer]\nprefix = .asb/none\n[connect:supervisor]\n'
@@ -310,7 +310,9 @@ STUB
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb --role supervisor claude --version
   [ "$(setenv_value CONDA_PREFIX)" = "$base/envs/x-dev" ]
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb --role reviewer claude --version
-  [[ "$output" == *"conda prefix '.asb/none' is not a conda env"* ]]
+  [[ "$output" == *"conda prefix '.asb/none' is not a conda env yet (no conda-meta/ in $PROJ/.asb/none): the conda base $base is bound read-only, so it can be created there"* ]]
+  argv_has --ro-bind "$base" "$base"
+  run ! setenv_value CONDA_PREFIX
 }
 
 @test "a non-default role with --bg runs in that role's launch (#123)" {
