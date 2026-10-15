@@ -1,0 +1,41 @@
+# Codecov: the report is per component, so each number covers one thing that is
+# measured one way -- the engine under kcov, the Python files under coverage.py.
+# Every status is informational: coverage movement never blocks a PR, and the
+# README badge is the only overall number. Paths are anchored regexes
+# (https://docs.codecov.com/docs/path-regexp).
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, components, condensed_files, condensed_footer"
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+  individual_components:
+    - component_id: engine
+      name: engine
+      paths:
+        - '^agent-sandbox$'
+    - component_id: proxy_addon
+      name: proxy addon
+      paths:
+        - '^components/allowlist_addon\.py$'
+    - component_id: python_components
+      name: python components
+      paths:
+        - '^components/join\.py$'
+        - '^components/connect-sync\.py$'
+    - component_id: claude_profile
+      name: claude profile
+      paths:
+        - '^profiles/claude/profile\.py$'
