@@ -28,11 +28,12 @@ projects_own() { printf '%s/projects/own/%s' "${1:-$SBOX}" "$(slugify "$C/projec
 # Run `--trust` from inside the project, feeding $1 as the prompt answers.
 run_trust() {
   local answers="$1"
+  engine_cmd
   run bash -c '
     cd "$2" || exit 99
     printf "%b" "$3" | env -i HOME="$1/home" PATH="$1/bin:/usr/bin:/bin" USER=tester \
-      AGENT_SANDBOX_SESSION_BASE="$1/base" "$4" --profile claude --trust
-  ' _ "$H" "$PROJ" "$answers" "$ENGINE"
+      AGENT_SANDBOX_SESSION_BASE="$1/base" "${@:4}" --profile claude --trust
+  ' _ "$H" "$PROJ" "$answers" "${ENGINE_CMD[@]}"
 }
 
 # Run `--apply ARGS...` from inside the project, feeding $1 as the prompt answers; `-`
@@ -40,14 +41,17 @@ run_trust() {
 run_apply() {
   local answers="$1"
   shift
+  engine_cmd
   run bash -c '
     cd "$2" || exit 99
-    h="$1" a="$3" e="$4"
+    h="$1" a="$3" n="$4"
     shift 4
+    e=("${@:1:n}")
+    shift "$n"
     if [ "$a" = - ]; then exec <&-; else exec < <(printf "%b" "$a"); fi
     env -i HOME="$h/home" PATH="$h/bin:/usr/bin:/bin" USER=tester \
-      AGENT_SANDBOX_SESSION_BASE="$h/base" "$e" --profile claude --apply "$@"
-  ' _ "$H" "$PROJ" "$answers" "$ENGINE" "$@"
+      AGENT_SANDBOX_SESSION_BASE="$h/base" "${e[@]}" --profile claude --apply "$@"
+  ' _ "$H" "$PROJ" "$answers" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "$@"
 }
 
 # Record approval of $1/.agent-sandbox the way the engine's --trust would.

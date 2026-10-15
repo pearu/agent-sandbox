@@ -26,6 +26,9 @@ PROBE
   SB="$IHOME/.local/state/agent-sandbox/probe/$(printf '%s' "$(cd "$IWORK" && pwd -P)" | sed 's:[^A-Za-z0-9-]:-:g')/default"
   printf 'YOURS\n' >"$IHOME/.probe/docs/a.md"
   BASE=(AGENT_SANDBOX_NET=none XDG_STATE_HOME="$IHOME/.local/state")
+  # The keeper's grace in the grace tests: kcov's start-up (coverage) outlasts 2 s.
+  G=2
+  [[ -z "${AGENT_SANDBOX_KCOV:-}" ]] || G=5
   BGS=()
 }
 
@@ -57,10 +60,11 @@ bg_sandboxed() {
     shift
   done
   [[ "${1:-}" == "--" ]] && shift
+  engine_cmd
   (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "$ENGINE" "$@") \
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${ENGINE_CMD[@]}" "$@") \
     </dev/null >"$I/$name.out" 2>&1 3>&- &
   BG_PID=$!
   BGS+=("$BG_PID")
@@ -182,26 +186,26 @@ wait_gone() { # wait_gone PID -- up to 10 s
 }
 
 @test "with a grace, commands run one after another share one keeper, which then ends on its own" {
-  KEEPER_GRACE=2 bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
+  KEEPER_GRACE="$G" bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
   release a
   wait "$BG_PID"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_KEEPER_GRACE=2 -- --profile probe --exec true
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_KEEPER_GRACE="$G" -- --profile probe --exec true
   [ "$status" -eq 0 ]
   [ "$(keeper_payload)" = "$t" ] # joined the idle keeper within its grace
   wait_gone "$t"
 }
 
 @test "a join that arrives during the grace keeps the keeper: it is counted again before the end" {
-  KEEPER_GRACE=1 bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
+  KEEPER_GRACE="$G" bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
   release a
   wait "$BG_PID" # the keeper is idle now, inside its grace
-  KEEPER_GRACE=1 bg_sandboxed b "${BASE[@]}" -- --profile probe --exec sh -c "$(hold b)"
+  KEEPER_GRACE="$G" bg_sandboxed b "${BASE[@]}" -- --profile probe --exec sh -c "$(hold b)"
   [ "$(keeper_payload)" = "$t" ]
-  sleep 2 # past the grace that began before b joined
+  sleep $((G + 1)) # past the grace that began before b joined
   [ -d "/proc/$t" ]
   [ -e "$IWORK/b.in" ]
   release b
@@ -249,10 +253,11 @@ wait_gone() { # wait_gone PID -- up to 10 s
   bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "$(hold a)"
   local t
   t="$(keeper_payload)"
+  engine_cmd
   (cd "$IWORK" && exec setsid env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE=0 AGENT_SANDBOX_PRESET=shared \
-    "${BASE[@]}" "$ENGINE" --profile probe --exec sh -c 'touch b.in; exec sleep 60') \
+    "${BASE[@]}" "${ENGINE_CMD[@]}" --profile probe --exec sh -c 'touch b.in; exec sleep 60') \
     </dev/null >"$I/b.out" 2>&1 3>&- &
   local b=$! i rc=0
   BGS+=("$b")

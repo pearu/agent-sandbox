@@ -10,6 +10,29 @@ REPO_ROOT="$(cd -- "$BATS_TEST_DIRNAME/../.." && pwd)"
 ENGINE="${AGENT_SANDBOX_TEST_ENGINE:-$REPO_ROOT/agent-sandbox}"
 export REPO_ROOT ENGINE
 
+# engine_cmd [CMD] -- set ENGINE_CMD to the words that start the engine (CMD, default
+# $ENGINE) inside a test's own `env -i`, the one definition of how a launch is traced:
+#
+#   engine_cmd
+#   env -i HOME="$H/home" PATH="..." "${ENGINE_CMD[@]}" --init roles
+#
+# Normally that is just CMD. Under coverage (AGENT_SANDBOX_KCOV, set by
+# scripts/coverage.sh) it is kcov wrapping CMD, preceded by LD_LIBRARY_PATH=... so that
+# a conda-built kcov finds its libraries: kcov must be the engine's DIRECT parent, INSIDE
+# env -i -- env -i severs kcov's collection when kcov is outside it, but it works when
+# kcov is the innermost wrapper. So the words go where the engine's path went, after
+# env's NAME=value list (they start with one); a launch that execs them from a shell
+# execs `env "${ENGINE_CMD[@]}"`. Each call names a fresh kcov dir under
+# $AGENT_SANDBOX_KCOV_DIR, one per launch; coverage.sh merges them. Call it once per
+# launch. A launch that does not go through it is not measured.
+engine_cmd() {
+  local cmd="${1:-$ENGINE}"
+  ENGINE_CMD=("$cmd")
+  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || return 0
+  ENGINE_CMD=(${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"}
+    "$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" --bash-dont-parse-binary-dir "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM" "$cmd")
+}
+
 # Source the engine. When sourced it only defines its functions (the run guard
 # compares BASH_SOURCE to $0), so helpers can be called directly.
 source_engine() {
@@ -139,22 +162,16 @@ run_engine() {
   : >"$H/argv"
   : >"$H/join"
   pushd "${RUN_CWD:-$H/proj}" >/dev/null || return 1
-  # Coverage: when AGENT_SANDBOX_KCOV is set (scripts/coverage.sh), wrap the engine
-  # with kcov as its DIRECT parent, INSIDE env -i -- env -i severs kcov's collection
-  # if kcov is outside it, but works when kcov is the innermost wrapper. Each launch
-  # writes its own kcov dir; coverage.sh merges them. LD_LIBRARY_PATH is forwarded so
-  # kcov finds its libs. Empty on a normal run.
-  local -a kc=()
-  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
+  engine_cmd "$cmd" # traced under coverage
   # seccomp is ON by default in the engine. The harness points its filter
   # directory at an empty one rather than forcing AGENT_SANDBOX_SECCOMP=off:
   # setting the knob would override the .agent-sandbox value that the dot-file
   # tests exist to check. With no filter present the engine warns and runs on,
   # so every other suite sees the argv it saw before, plus that warning.
-  run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
     BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${kc[@]}" "$cmd" "$@"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
   # What was joined into the keeper: JOIN is the join's whole argv, JOINV the command
@@ -184,8 +201,9 @@ run_engine() {
 # nothing. What follows from the file's text alone is said here, not at a launch.
 run_review() {
   local dir="${1:-${PROJ:-$H/proj}}"
-  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ \
-    "$dir" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ \
+    "$dir" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
 }
 
 # run_engine_tty ANSWERS [VAR=value ...] -- CMD ARGS... -- run_engine, but at a terminal:
@@ -205,10 +223,11 @@ run_engine_tty() {
   [[ "$cmd" == */* ]] || cmd="$H/bin/$cmd"
   : >"$H/argv"
   : >"$H/join"
+  engine_cmd "$cmd"
   local -a line=(env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8
     BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0
     AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp"
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "$cmd" "$@")
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@")
   printf 'cd %q && exec' "${RUN_CWD:-$H/proj}" >"$H/tty.sh"
   printf ' %q' "${line[@]}" >>"$H/tty.sh"
   run bash -c 'printf "%b" "$1" | script -qec "bash $2" /dev/null' _ "$answers" "$H/tty.sh"
@@ -231,12 +250,13 @@ engine_bg() {
   [[ "$cmd" == */* ]] || cmd="$H/bin/$cmd"
   : >"$H/hold"
   rm -f "$H/join.bg"
+  engine_cmd "$cmd"
   (
     cd "${RUN_CWD:-$H/proj}" || exit 1
     exec env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
       BWRAP_DUMP="$H/argv.bg" JOIN_DUMP="$H/join.bg" JOIN_HOLD="$H/hold" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" \
       AGENT_SANDBOX_KEEPER_GRACE=0 AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "$cmd" "$@"
+      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
   ) </dev/null >"$H/bg.out" 2>&1 3>&- &
   BG_PID=$!
   for ((i = 0; i < 500; i++)); do
