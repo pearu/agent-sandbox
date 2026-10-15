@@ -254,6 +254,12 @@ profile_before_join() {
 # shape profile.py does not recognise), the USER's --settings is kept and the
 # briefing's hooks are dropped with a loud note. Losing a hint beats changing how
 # someone's tools behave.
+#
+# A third pair, PostToolUse and PostToolUseFailure on Bash, runs refusal-hook.sh
+# (beside this file, copied next to the settings file so it is in view inside):
+# it reports a host the proxy refused during the command, as it happens. Both
+# events, since a command a refusal broke usually exits nonzero, which Claude Code
+# reports as PostToolUseFailure (code.claude.com/docs/en/hooks).
 profile_briefing_args() {
   local inside="$1"
   shift
@@ -264,13 +270,20 @@ profile_briefing_args() {
   # shellcheck disable=SC2154
   local host_file="$_brief_out_host/settings.json" inside_file="$_brief_out_inside/settings.json"
   local ours user_val="" i
-  ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]}}"
+  local refusal="bash $_brief_out_inside/refusal-hook.sh"
+  cp -- "$profile_home/refusal-hook.sh" "$_brief_out_host/refusal-hook.sh" || {
+    _as_msg "briefing: cannot copy refusal-hook.sh to $_brief_out_host; continuing without the session hooks"
+    return 0
+  }
+  ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]"
+  ours+=",\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUse\"}]}]"
+  ours+=",\"PostToolUseFailure\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUseFailure\"}]}]}}"
 
   # The LAST --settings, deliberately: Claude Code honours only the last one, so
   # that is the value the user's command line resolves to, and merging any
   # earlier one would resurrect settings they had overridden. A wrapper that
   # appends --settings to override an earlier one keeps working unchanged; the
-  # only difference this feature makes is the two hook entries added on top,
+  # only difference this feature makes is the hook entries added on top,
   # which is what [briefing] mode = off is for. Only before a `--`: what follows it
   # is another command's (`claude mcp add NAME -- CMD ARGS`), never Claude Code's.
   local -a rest=("$@") kept=()

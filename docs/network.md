@@ -106,6 +106,32 @@ allowlist the file grows without bound; if that matters, point `logrotate` at it
 or truncate it between sessions (`: > ~/.config/agent-sandbox/blocked.log`). It
 holds only refused destinations, no payloads.
 
+## Refusals reach the session
+
+A 403 in the middle of a command reads to an agent like an outage to route around:
+another mirror, another channel, another tool. So the session is told, as it
+happens. With the briefing on, the engine creates an empty `refused.log` in the
+session directory and binds that one file read-only at
+`/run/agent-sandbox/refused.log`; the addon appends each refusal attributed to the
+session (by its proxy token) to it, as `timestamp  host  method  why`, where `why`
+is `allowlist`, `[deny]`, `retrieve-only`, `git refuse`, `git push` or `non-public`
+(the last for HTTPS only, through the tunnel's token). The claude profile's hook on
+every Bash call, `PostToolUse` and `PostToolUseFailure` (a broken command usually
+exits nonzero), reports the lines that are new since the previous call, once each,
+next to the command's result, as statements rather than instructions: the host was
+refused, going on with a mirror, another channel or another tool for the same thing
+is going on without it and is the user's decision, the user adds the host with
+`asb --apply '[allow]' HOST` (`[allow:ROLE]` where the dot-file has role sections),
+and the session continues without it only once the user has said so. A policy
+refusal (`[deny]`, `retrieve-only`, git, `non-public`) says instead that `--apply`
+does not lift it. Only the host, checked as a hostname, and a known reason reach
+that text.
+
+`blocked.log` itself is never bound into a sandbox: it records every session of
+every project, and a session must not learn what the others tried. Nor is the
+session directory, which holds its proxy token. A refusal with no session (`407`)
+is in `blocked.log` only.
+
 ## Per-session hosts: `--allow`
 
 ```

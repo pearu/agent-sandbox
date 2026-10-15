@@ -3276,6 +3276,16 @@ _as_connect_report() {
 #                        every launch, resume and compaction -- so nothing here
 #                        can go stale, and nothing is recorded in a system
 #                        prompt that would outlive a policy change.
+#   apply-section        the section a refused host is asked for in ([allow] or
+#                        [allow:ROLE], as the text below decides), for the
+#                        profile's refusal hook, which has no policy of its own
+# and one file of the session dir itself, bound read-only over its placeholder:
+#   refused.log          the proxy appends this session's refusals to it as they
+#                        happen (components/allowlist_addon.py), so a hook can tell
+#                        the agent during the command, not only at the start. The
+#                        host-wide blocked.log is never bound: it records every
+#                        session of every project. Nor is the session dir, which
+#                        holds proxy.token and owner.id.
 # Names and paths only, never contents: summarising shared material would mean
 # reading it, which is another agent's job and out of scope.
 _as_briefing_inside() { printf '/run/agent-sandbox'; }
@@ -3458,13 +3468,22 @@ _as_briefing_write() {
     printf "  any section the same way, e.g. asb --apply '%s' '~/data/ = read-only'\n" "$csect"
     printf '  or, for a host and for this launch only: asb --allow example.com ...\n\n'
     printf 'then ask them to relaunch.\n'
-    printf 'Continue without it only when the user says so. One clear request\n'
-    printf 'costs less than twenty workarounds.\n'
+    printf 'Continue without it only when the user says so: a mirror, another channel\n'
+    printf 'or another tool for the same thing is going on without it. One clear\n'
+    printf 'request costs less than twenty workarounds. A host refused during a\n'
+    printf 'command is reported to this session right after it, naming the host and\n'
+    printf 'the command to ask for.\n'
   } >"$md" || return 1
+  printf '%s\n' "$sect" >"$bdir/apply-section" || return 1
+  # The proxy's per-session refusals: created here, empty, so the addon (which runs
+  # as this user) only ever appends to a file the engine made; bound read-only over
+  # a placeholder in the briefing directory, which is itself bound read-only.
+  : >"$_session_dir/refused.log" || return 1
+  : >"$bdir/refused.log" || return 1
 
   local short _lnshort
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If something is blocked, stop before going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --
@@ -3482,7 +3501,7 @@ _as_briefing_write() {
       "$ev" "$(_as_json_str "$ctx")" >"$bdir/hook-$ev.json" || return 1
   done
 
-  args+=(--ro-bind "$bdir" "$inside")
+  args+=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log")
   return 0
 }
 

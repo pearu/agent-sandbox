@@ -51,8 +51,10 @@ class Srv:
 
 
 class ConnData:
-    def __init__(self, address):
+    def __init__(self, address, cid=None):
         self.server = Srv(address)
+        if cid is not None:
+            self.client = Conn(cid)
 
 
 def _session():
@@ -173,5 +175,13 @@ elif scenario == "server_connect_resolve":
     d = ConnData((name, 443))
     m.server_connect(d)
     show(aborted=d.server.error is not None)
+elif scenario == "tunnel_dest":
+    # token host: a CONNECT that passes, then the upstream dial of that tunnel to a
+    # non-public address -- the refusal is attributed through the CONNECT's token.
+    c = Flow(args[1], "CONNECT", "-", _auth(args[0]), cid="td")
+    m.http_connect(c)
+    d = ConnData((args[1], 443), cid="td")
+    m.server_connect(d)
+    show(connect_blocked=c.response is not None, aborted=d.server.error is not None)
 else:
     sys.exit(f"unknown scenario {scenario}")
