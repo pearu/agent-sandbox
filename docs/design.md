@@ -426,7 +426,8 @@ deleted, and live instances are reset after `main` is rebuilt (a layered `.git` 
 moved lower is the layered-build hazard, in git's metadata). It publishes over SSH
 through the broker, as the user does, to the checkout's remotes as they are: an
 `upstream` plus `origin` is a fork workflow, `origin` alone direct access; `ghstack
-submit` where the project uses it, with `~/.ghstackrc` bound read-only.
+submit` where the project uses it, its login opt-in per project (it holds a token):
+`asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
 
 Measured 2026-10-06 on a scratch private repository: a `gh-fix` instance launched with
 `--ssh github.com` committed on a new branch in its layer and pushed it over SSH through

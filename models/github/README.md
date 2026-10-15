@@ -30,7 +30,8 @@ number, each in a layer of its own over the project as the setup role built it:
   and posts the triage and labels when you say so.
 - **gh-fix** implements an issue or a pull request on a branch, and publishes it when you
   say so: over SSH, to your fork or directly as the checkout's remotes say, or with
-  `ghstack submit` where the project uses it.
+  `ghstack submit` where the project uses it -- ghstack's login is opt-in per project,
+  `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
 
 Each sees the project and its environment through overlays of its own
 (`project = copy-on-write`): its checkout, incremental rebuild, commits and installs stay

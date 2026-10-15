@@ -49,8 +49,11 @@ this instance is deleted: publish what the user accepts before then. You push ov
 through the broker the user launched you with (`--ssh github.com`); without it, say so.
 Follow the checkout's remotes: an `upstream` and an `origin` mean a fork -- push to
 `origin` and open the pull request against `upstream`; `origin` alone means direct
-access -- push there. Where the project uses ghstack (pytorch does), publish with
-`ghstack submit`; it uses `~/.ghstackrc`. (ghstack inside this layer is untried: if it fails, stop and tell the user.) Pushing to another person's pull request
-branch is for when the user says so explicitly; otherwise open a new pull request (or a
-new stack) that references N. Open it with `gh pr create`, its text shown to the user
-first and following the project's AI policy.
+access -- push there. Where the project uses ghstack (pytorch does) and `~/.ghstackrc`
+is in reach, publish with `ghstack submit`; the user turns that on with
+`asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`, and without it you push
+as the remotes say. (ghstack inside this layer is untried: if it fails, stop and tell
+the user.) Pushing to another person's pull request branch is for when the user says so
+explicitly; otherwise open a new pull request (or a new stack) that references N. Open
+it with `gh pr create`, its text shown to the user first and following the project's AI
+policy.
