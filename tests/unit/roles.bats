@@ -215,7 +215,8 @@ STUB
   dotfile $'[net:reviewer]\nretrieve-only = on\n[net:other]\nretrieve-only = maybe\n[connect:supervisor]\n'
   run_engine BWRAP_COPY="$H/copied/briefing" -- asb --role reviewer claude --version
   [ "$status" -eq 0 ]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" == *"network: retrieve-only -- GET and HEAD only"* ]]
   run_review
   [[ "$output" == *"[net] retrieve-only 'maybe' unknown (on|off)"* ]]
@@ -241,7 +242,8 @@ STUB
   [ "$status" -eq 0 ]
   run ! grep -q '^== hosts-public.txt$' "$H/probe"
   run ! grep -q 'EVERY PUBLIC HOST' "$H/probe"
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" == *"network: every public host -- the allowlist does not apply"* ]]
   run_review
   [[ "$output" == *"[net] hosts = public: every public host is reachable"* ]]
@@ -270,7 +272,8 @@ STUB
   [ "$status" -ne 0 ]
   [[ "$output" == *"--ssh is refused for role 'impl-1': its .agent-sandbox [net] says git = refuse"* ]]
   [ ! -s "$H/argv" ]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role impl-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role impl-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" == *"git transport: refused"* ]]
   run_review
   [[ "$output" == *"[net] git 'maybe' unknown (allow|fetch|refuse)"* ]]
@@ -293,7 +296,8 @@ STUB
   run_engine -- asb --role rev-1 --ssh github.com claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"--ssh is refused for role 'rev-1': its .agent-sandbox [net] says git = fetch"* ]]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role rev-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role rev-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" == *"git transport: fetch only"* ]]
 }
 

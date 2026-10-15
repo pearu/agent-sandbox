@@ -49,14 +49,11 @@ run_sandboxed() {
   [[ "${1:-}" == "--" ]] && shift
   rm -f "$IWORK/report"
   pushd "$IWORK" >/dev/null || return 1
-  # Coverage: wrap the engine with kcov as its direct parent, inside env -i (see
-  # run_engine in common.bash). Empty on a normal run.
-  local -a kc=()
-  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] && kc=("$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM")
-  run env -i ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"} HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+  engine_cmd # traced under coverage (common.bash)
+  run env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${kc[@]}" "$ENGINE" "$@"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
   popd >/dev/null || return 1
   declare -gA REPORT=()
   local k v

@@ -20,7 +20,8 @@ teardown() {
 }
 
 approve() { # approve the project's dot-file the way --trust does, content kept
-  (cd "$PROJ" && printf 'y\nn\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "$ENGINE" --trust >/dev/null 2>&1)
+  engine_cmd
+  (cd "$PROJ" && printf 'y\nn\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
   [ -f "$REC" ] && [ -f "$REC.approved" ]
 }
 
@@ -75,7 +76,8 @@ approve() { # approve the project's dot-file the way --trust does, content kept
 @test "the review says what a path under HOME gives, before the question; the launch does not repeat it" {
   mkdir -p "$H/home/.local/bin" "$PROJ/data"
   printf '[connect]\n~/.local/bin = read-only\n~/notes/ = own\n./data/ = own\n' >"$PROJ/.agent-sandbox"
-  run bash -c "cd '$PROJ' && printf 'y\nn\n' | env -i HOME='$H/home' PATH='$H/bin:/usr/bin:/bin' '$ENGINE' --trust 2>&1"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"'~/.local/bin' is under your home directory"*"puts your real '$H/home/.local/bin' there, at read-only."*"approve this .agent-sandbox"* ]]
   [[ "$output" == *"'~/notes/' is under your home directory"*"sandbox-only storage at '$H/home/notes'"* ]]
@@ -90,7 +92,8 @@ approve() { # approve the project's dot-file the way --trust does, content kept
   printf 'y\n' >"$PROJ/NOTES.md"
   mkdir -p "$PROJ/data"
   printf '[connect]\n./AGENT.md = read-only\n./NOTES.md = copy-on-write\n./data/ = own\n' >"$PROJ/.agent-sandbox"
-  run bash -c "cd '$PROJ' && printf 'y\nn\n' | env -i HOME='$H/home' PATH='$H/bin:/usr/bin:/bin' '$ENGINE' --trust 2>&1"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"'./AGENT.md' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox."*"approve this .agent-sandbox"* ]]
   [[ "$output" == *"'./NOTES.md' is a file."*"copy-on-write on a file is copy"* ]]
@@ -200,7 +203,10 @@ approve() { # approve the project's dot-file the way --trust does, content kept
 
 # --check: the same review, asking nothing and recording nothing; for an author, CI or a
 # pre-commit hook. Stdin is closed in every one: a question would find no answer.
-check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"; }
+check() {
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+}
 
 @test "--check with no dot-file says the defaults apply, and exits 0" {
   check
@@ -271,7 +277,8 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
 
 @test "--check --role shows another role's policy, a sandbox: source resolved as a launch would" {
   printf '[connect:reviewer]\nmemory = read-only sandbox:@impl\n./.git/ = own\n[connect:impl]\n' >"$PROJ/.agent-sandbox"
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PRESET=inherit "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PRESET=inherit "${@:4}" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"role reviewer (--role)"* ]]
   [[ "$output" =~ memory\ +read-only\ +sandbox:@impl\ +\.agent-sandbox\ \[connect:reviewer\] ]]
@@ -286,7 +293,8 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
   [[ "$output" =~ project\ +read-only\ +the\ working\ tree\ +\.agent-sandbox\ \[connect\] ]]
   [[ "$output" =~ read-only\ +the\ project ]]
   [ ! -e "$PROJ/impl" ] # nothing made
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PRESET=inherit "$4" --check --role supervisor 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PRESET=inherit "${@:4}" --check --role supervisor 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" =~ project\ +read-write\ +the\ working\ tree\ +\.agent-sandbox\ \[connect:supervisor\] ]]
   [[ "$output" =~ read-write\ +the\ project ]]
@@ -296,8 +304,9 @@ check() { run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check 2>&1 <
 check_role() {
   local role="$1"
   shift
-  run bash -c 'r="$1" proj="$2" home="$3" path="$4" eng="$5"; shift 5; cd "$proj" && env -i HOME="$home" PATH="$path" "$@" "$eng" --check --role "$r" 2>&1 </dev/null' \
-    _ "$role" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "$@"
+  engine_cmd
+  run bash -c 'r="$1" proj="$2" home="$3" path="$4" n="$5"; shift 5; eng=("${@:1:n}"); shift "$n"; cd "$proj" && env -i HOME="$home" PATH="$path" "$@" "${eng[@]}" --check --role "$r" 2>&1 </dev/null' \
+    _ "$role" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "$@"
 }
 
 @test "--check says where the role can act as you: none, a gh login, read only, git refused, ssh (#226)" {
@@ -371,7 +380,8 @@ check_role() {
   local nomem="$H/nomem"
   mkdir -p "$nomem"
   printf '[sandbox]\npreset = inherit\n[connect]\ninstructions = copy-on-write\nartefacts = own\nartefacts = read-write native\nmemory = read-write\n[connect:reviewer]\nmemory = own\n[connect:*]\n[share-memory]\n%s\n' "$nomem" >"$PROJ/.agent-sandbox"
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ] # advice, not a refusal
   local ne
   ne="$(sed -n '/^Lines with no effect/,/^$/p' <<<"$output")"

@@ -32,7 +32,8 @@ STUB
 # approve -- the project's dot-file, approved the way `--trust` records it (with the
 # purpose files it names, #222). Its output is in $output.
 approve() {
-  output="$(cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "$ENGINE" --trust 2>&1)"
+  engine_cmd
+  output="$(cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust 2>&1)"
 }
 
 trust() {
@@ -359,7 +360,8 @@ CHECK
   mkdir -p "$PROJ/.asb/roles"
   printf 'x\n' >"$PROJ/.asb/roles/reviewer.md"
   printf '[briefing:reviewer]\n' >"$PROJ/.agent-sandbox"
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"briefed from: .asb/roles/reviewer.md"* ]]
 }

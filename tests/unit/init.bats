@@ -30,9 +30,10 @@ init() {
     shift
   done
   shift
-  run bash -c 'proj="$1" home="$2" path="$3" eng="$4"; shift 4; n="$1"; shift; envs=("${@:1:n}"); shift "$n"
-    cd "$proj" && env -i HOME="$home" PATH="$path" "${envs[@]}" "$eng" --init "$@" 2>&1 </dev/null' \
-    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "${#envs[@]}" ${envs[@]+"${envs[@]}"} "$@"
+  engine_cmd
+  run bash -c 'proj="$1" home="$2" path="$3" n="$4"; shift 4; eng=("${@:1:n}"); shift "$n"; n="$1"; shift; envs=("${@:1:n}"); shift "$n"
+    cd "$proj" && env -i HOME="$home" PATH="$path" "${envs[@]}" "${eng[@]}" --init "$@" 2>&1 </dev/null' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "${#envs[@]}" ${envs[@]+"${envs[@]}"} "$@"
 }
 
 @test "the roles model: every instance's sections, purpose files, clones, directories, the index and .asb/.gitignore" {
@@ -99,7 +100,8 @@ init() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"no model 'nosuch'"*"Shipped: github market roles"* ]]
   mkdir -p "$PROJ/sub"
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --init roles 2>&1' _ "$PROJ/sub" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --init roles 2>&1' _ "$PROJ/sub" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -ne 0 ]
   [[ "$output" == *"model 'roles' clones the project"*"inside the one at $PROJ -- run it there"* ]]
 }
@@ -141,8 +143,11 @@ init() {
   [ "$(tail -1 "$PROJ/.asb/roles/gh-review.md")" = "NEW LINE" ]
   [[ "$output" == *"kept .asb/roles/gh-triage.md: changed since --init wrote it"* ]]
   [ "$(tail -1 "$PROJ/.asb/roles/gh-triage.md")" = MINE ]
-  [[ "$output" != *"gh-fix.md"* ]] # the same text: nothing said, nothing written
-  [[ "$output" == *"--trust"* ]]   # a changed purpose file needs the approval again
+  # the same text: nothing said, nothing written
+  [[ "$output" != *"wrote .asb/roles/gh-fix.md"* ]]
+  [[ "$output" != *"updated .asb/roles/gh-fix.md from model"* ]]
+  [[ "$output" != *"kept .asb/roles/gh-fix.md"* ]]
+  [[ "$output" == *"--trust"* ]] # a changed purpose file needs the approval again
   # a file from before the record is kept, even when it is the model's old text
   printf 'NEWER\n' >>"$H/models/github/roles/gh-review.md"
   rm "$PROJ/.asb/init.sums"
@@ -165,11 +170,13 @@ init() {
 @test "the written file passes the review, and --check shows a reviewer nothing writable but its own" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
-  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"approved."* ]]
   [[ "$output" != *"ignoring"* && "$output" != *"unknown"* ]]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role reviewer-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role reviewer-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   local writable
   writable="$(sed -n '/^Binds, outer first:/,$p' <<<"$output" | grep -E '^  \./\S+ +read-write' | awk '{print $1}' | sort | paste -sd' ')"
@@ -199,17 +206,21 @@ init() {
   done
   init -- github --env "$H/envs/dev"
   [[ "$output" == *"nothing added to it"* ]]
-  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   # a reviewer fetches only and has no SSH; a fixer may push; the default role is admitted
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role gh-review-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-review-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"git transport: fetch only"* ]]
   [[ "$output" == *"briefed from: .asb/roles/gh-review.md"* ]]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role gh-fix-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" != *"git transport: fetch only"* ]]
   [[ "$output" == *"briefed from: .asb/roles/gh-fix.md"* ]]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" != *"matches no role section"* ]]
 }
@@ -258,9 +269,11 @@ init() {
   init MAMBA_ROOT_PREFIX="$H/base" -- github --env missing # again: the empty prefix is still accepted
   [ "$status" -eq 0 ]
   [[ "$output" == *"environment missing is not built yet (empty at $ep)"* ]]
-  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role gh-setup 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-setup 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   grep -qE '^  project +read-write +the working tree +\.agent-sandbox \[connect:gh-setup\]' <<<"$output"
   grep -E '^  \S+ +read-write +the same path +\.agent-sandbox \[connect:gh-setup\]' <<<"$output" | grep -qF "  $ep/ "
@@ -279,7 +292,8 @@ init() {
 
 @test "the market model in a repository's subdirectory: written there, .asb/ ignored, the repository's own files untouched" {
   mkdir -p "$PROJ/market"
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --init market 2>&1 </dev/null' _ "$PROJ/market" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --init market 2>&1 </dev/null' _ "$PROJ/market" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [ -f "$PROJ/market/.agent-sandbox" ]
   [ -f "$PROJ/market/.asb/roles/market.md" ]
@@ -306,10 +320,12 @@ init() {
   run ! grep -qF '{' "$PROJ/.asb/roles/market.md"
   [ ! -e "$PROJ/.git" ] # no repository made
   [ "$(cat "$PROJ/.asb/.gitignore")" = '*' ]
-  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "$4" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[net] hosts = public: every public host is reachable"* ]]
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "$4" --profile claude --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"network: every public host"* ]]
   [[ "$output" == *"git transport: refused"* ]]

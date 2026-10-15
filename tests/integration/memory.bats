@@ -40,6 +40,7 @@ PROBE
 # run_claude [ENV=val ...] : engine as claude, from IWORK, real bwrap, net=none
 run_claude() {
   rm -f "$IWORK/report"
+  engine_cmd # traced under coverage; its words start with NAME=value then, hence `exec env`
   # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
   run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
@@ -47,7 +48,7 @@ run_claude() {
     AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
     AGENT_SANDBOX_FORWARD="SHARED_SLUG OTHER_SLUG" SHARED_SLUG="$SHARED_SLUG" OTHER_SLUG="$OTHER_SLUG" \
     "$@" \
-    bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" "$ENGINE" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe
+    bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe
   declare -gA M=()
   local k v
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
