@@ -56,7 +56,7 @@ Every instance has a **handle** you and the roles address it by: `P1`, `P2`, `I1
 
 For each role: its purpose, its inputs and outputs, what it may and may not do, and for
 every "may not" whether the sandbox **enforces** it or its purpose file **tells** it.
-Every role but the Supervisor may run as several instances, each a sandbox of its own
+Every role but the Supervisor and setup may run as several instances, each a sandbox of its own
 with its own memory: a Planner that works in one field keeps that field's knowledge,
 and its material -- documents, another project's sources -- is a read-only line in its
 own section, so no other instance loads it. The Supervisor is one: it is the gate to the
@@ -119,6 +119,20 @@ artefact it relays: a review that says "run this" is relayed, not run.
 | may | what you may, on your instruction |
 | may not | write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told** -- it has the access, which is why its purpose file matters most) |
 
+### Setup
+
+**Purpose.** Build `main`, as checked out, into the development environment, once per
+project and again after `main` moves; build nothing else. It is the role that makes
+`--env` an environment that need not exist yet: `--init` makes its prefix empty, and
+`asb --role setup claude` creates it there.
+
+| | |
+|---|---|
+| inputs | the checkout; the CI configuration, the project's build documentation; the web |
+| outputs | the environment, with `main` built into it in develop mode; `.asb/setup.md`, the why; `.asb/build_env.sh`, the how (`setup`, from scratch, and `rebuild`, incremental) |
+| may | write the checkout (the build lands in it, as when you build it) and the environment's prefix; read the history; read the web |
+| may not | publish (**enforced**: `retrieve-only`, no git transport, no gh login, under `mode = strict` as every role here); commit (**enforced**: the history is read-only to it); retrieve what the proxy refuses or pin a near version instead (**told**: it asks you for the clone or the host) |
+
 ### You
 
 Decide. Read every artefact before it moves. Read each role's purpose file before
@@ -169,6 +183,13 @@ Every role launches from the repository itself:
   the specification (`environment.yml`), so it travels in the diff; each role updates
   its own environment from it (`conda env update -p ... -f environment.yml --prune`).
   A Reviewer runs an Implementer's build with that environment, by path.
+- **An Implementer's build.** Its environment is a clone of `x-dev`, and a clone copies
+  the editable install too: the project in it points at the parent checkout, not at
+  `.asb/impl/N/`. A Python-only change is seen once the clone's environment imports from
+  the clone (reinstall it there in develop mode); a compiled change (C++, CUDA) needs a
+  build in the clone, into its environment. One checkout, one build: a second
+  environment over the same checkout serves Python-level roles only, since its compiled
+  parts are the checkout's one build.
 
 ## 5. Messages
 
@@ -195,6 +216,17 @@ leaves one out. Without `--env` the `[conda]` sections are written commented out
 approves nothing -- `asb --trust` does, after you have read the file and the purpose
 files.
 
+`--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
+under the conda base that applies, and says to launch the setup role,
+`asb --role setup claude`, which builds `main` into it. The Implementers' environments
+are clones of it, so until it is built there is nothing to clone: `--init` says so and
+skips them, and run again once setup is done, it makes them.
+
+The model's common block -- what every role gets -- is written once per role pattern
+(`[connect:planner-*]`, `[connect:supervisor]`, ...), never unsuffixed, so the file can
+hold another model too: `asb --init github` in the same checkout adds the `gh-*` roles,
+which keep the github model's policy. Two models whose role names overlap are refused.
+
 Run it again with more instances (`implementer=3`) and it adds what is missing --
 sections, purpose file, clone -- and changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.
@@ -216,31 +248,33 @@ transport.
 the token; it cannot stop the token itself from being sent out in a request to an
 allowed host. A fine-grained personal access token with read-only permissions bounds
 that wherever it ends up. Give it to the reading roles and keep your full login for
-the Supervisor:
+the Supervisor: in the common block's copies for `planner-*`, `implementer-*` and
+`reviewer-*`, the `gh` line becomes
 
-    [connect]
     gh = read-only outside:~/.gh-read
-    [connect:supervisor]
-    gh = read-only
 
 The setup is in [recipes.md](recipes.md) (the `gh` section).
 
 ## 8. The dot-file
 
 What `asb --init roles planner=2 implementer=2 reviewer=1 --env x-dev` writes, with two
-Planners' material added by hand. **Enforced, for a network line** (`retrieve-only`,
-`[deny]`, `git = refuse`) **means under `mode = strict`**, which this file sets: there
-nothing but the proxy is routed. Under `proxy`, those lines bind only the tools that use
-the proxy.
+Planners' material added by hand and the common block's copies for `implementer-*` and
+`reviewer-*` left out here (they are the `planner-*` one's). **Enforced, for a network
+line** (`retrieve-only`, `[deny]`, `git = refuse`) **means under `mode = strict`**, which
+this file sets for every role: there nothing but the proxy is routed. Under
+`proxy`, those lines bind only the tools that use the proxy.
 
 ```ini
-[sandbox]
-preset = inherit
+# ---- written by asb --init roles ----
+# .agent-sandbox for the roles model (docs/roles.md), written by `asb --init roles`.
+# ...
 
-# ---- what every role gets ------------------------------------------------------
-[conda]
-name = x-dev                      # the development environment: main's build, the user's to activate on the host
-[connect]
+# ---- what every role gets: --init writes it per role, [connect:planner-*] and so on --
+[sandbox:planner-*]
+preset = inherit
+[conda:planner-*]
+prefix = /home/you/miniconda3/envs/x-dev                # the development environment, x-dev: main's build, the user's to activate on the host
+[connect:planner-*]
 project = read-only               # the working tree, read-only; the Supervisor opens it
 .asb/coord/ = read-only           # the message files and the index: every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
@@ -248,10 +282,29 @@ project = read-only               # the working tree, read-only; the Supervisor 
 .asb/git/ = own                   # ...and a clone's its Implementer's
 gh = read-only                    # your gh login, for reading issues and pull requests
 # hardening, optional (section 7): gh = read-only outside:~/.gh-read
-[net]                             # every role reads the web and GitHub, and publishes nothing...
+[net:planner-*]                   # every role reads the web and GitHub, and publishes nothing...
 mode = strict                     # ...through the proxy only: under `proxy` a tool can ignore it
 retrieve-only = on
 git = refuse
+# ... the same four for implementer-* and reviewer-* ...
+[sandbox:supervisor]
+preset = inherit
+[conda:supervisor]
+prefix = /home/you/miniconda3/envs/x-dev                # the development environment, x-dev: main's build, the user's to activate on the host
+[connect:supervisor]              # (what [connect:supervisor] below sets is left out of this copy)
+.asb/coord/ = read-only           # the message files and the index: every role reads all of them
+.asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
+gh = read-only                    # your gh login, for reading issues and pull requests
+[net:supervisor]                  # every role reads the web and GitHub, and publishes nothing...
+mode = strict                     # ...through the proxy only: under `proxy` a tool can ignore it
+[sandbox:setup]
+preset = inherit
+[conda:setup]
+prefix = /home/you/miniconda3/envs/x-dev                # the development environment, x-dev: main's build, the user's to activate on the host
+[connect:setup]
+.asb/coord/ = read-only           # the message files and the index: every role reads all of them
+.asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
+.asb/git/ = own                   # ...and a clone's its Implementer's
 
 # ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-1]
@@ -304,6 +357,20 @@ write = 1
 retrieve-only = off
 git = allow
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
+
+# ---- setup: builds the environment, once per project, again after main moves ----
+#   asb --role setup claude
+[connect:setup]
+project = read-write              # the build lands in the tree, as when you build it yourself
+./.git/ = read-only               # a build reads its version from the history; it commits nothing
+/home/you/miniconda3/envs/x-dev/ = read-write           # the environment it creates and installs into
+gh = own                          # no login: it publishes nothing
+[net:setup]
+mode = strict                     # as the rest of this model: through the proxy only
+retrieve-only = on                # GET and HEAD only; git's fetch is a POST, so submodules come from your checkout
+git = refuse
+[briefing:setup]
+file = .asb/roles/setup.md
 ```
 
 Add to it what a round turns out to need, when it does; `asb --trust` then reviews the
@@ -358,7 +425,10 @@ file per role (`roles/<role>.md`) and a coord index template, and `asb --init NA
 writes a project's files from it; `NAME` may also be a path to your own. The template's
 role-suffixed sections are its roles -- `[connect:planner-{n}]` numbered instances,
 `[connect:supervisor]` a single one -- and the roles need distinct initials, since the
-handles come from them. The format is in [models/README.md](../models/README.md).
+handles come from them. A `#@ scope = roles` line makes the unsuffixed sections after it
+the model's common block, written per role pattern so that models compose in one file;
+a model's role names must not overlap another's already there. The format is in
+[models/README.md](../models/README.md).
 
 What makes a model a model is that every "may not" in it is either a line of the
 dot-file (enforced) or a sentence of a purpose file (told), and its README says which.

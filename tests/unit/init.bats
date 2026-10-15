@@ -81,7 +81,7 @@ init() {
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
   init -- roles tester=1
   [ "$status" -ne 0 ]
-  [[ "$output" == *"has no role 'tester' (it has: planner implementer reviewer supervisor)"* ]]
+  [[ "$output" == *"has no role 'tester' (it has: planner implementer reviewer supervisor setup)"* ]]
   init -- roles supervisor=2
   [ "$status" -ne 0 ]
   [[ "$output" == *"0 or 1 for supervisor"* ]]
@@ -156,11 +156,12 @@ init() {
   [ "$(tail -1 "$PROJ/.asb/roles/gh-review.md")" = "NEW LINE" ]
 }
 
-@test "--env: the [conda] sections written, and an environment cloned from it at each Implementer's prefix" {
-  init CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=2 reviewer=1 --env x-dev
+@test "--env: the [conda:...] sections written, and an environment cloned from it at each Implementer's prefix" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=2 reviewer=1 --env x-dev
   [ "$status" -eq 0 ]
-  grep -qxF '[conda]' "$PROJ/.agent-sandbox"
-  grep -qx 'name = x-dev.*' "$PROJ/.agent-sandbox"
+  has_section '[conda:planner-*]' "$PROJ/.agent-sandbox"
+  grep -qx "prefix = $H/conda/envs/x-dev .*" "$PROJ/.agent-sandbox"
   has_section '[conda:implementer-2]' "$PROJ/.agent-sandbox"
   grep -qx "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
   grep -qx "create -q -y --clone x-dev -p $PROJ/.asb/impl/2/.env" "$H/conda.log"
@@ -287,6 +288,7 @@ init() {
   mkdir -p "$mm"
   cp "$H/bin/conda-stub" "$mm/micromamba"
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  mkdir -p "$root/envs/x-dev/conda-meta"
   init CONDA_LOG="$H/mm.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
   [ "$status" -eq 0 ]
   grep -qx "create -q -y -r $root --clone x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
@@ -395,4 +397,190 @@ init() {
     has_section "[gpu:$p]" "$PROJ/.agent-sandbox"
   done
   grep -A1 -F '[gpu:supervisor]' "$PROJ/.agent-sandbox" | grep -qx 'mode = on'
+}
+
+# section HEADER FILE -- the lines of every section FILE has under HEADER.
+section() { awk -v h="$1" '$1 == h { on = 1; next } /^(# )?\[/ { on = 0 } on' "$2"; }
+# check ROLE -- `asb --check --role ROLE` from the project.
+check() {
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" MAMBA_ROOT_PREFIX="$4" "${@:5}" --profile claude --check --role "$0" 2>&1 </dev/null' \
+    "$1" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/conda" "${ENGINE_CMD[@]}"
+}
+approve() {
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+}
+
+@test "the roles model's common block is scoped to its roles: a copy per role pattern, the instances' sections after them, a role's own key winning (#267)" {
+  mkdir -p "$H/conda/envs/E/conda-meta"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env E
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(P1 I1 R1 S setup)"* ]] # the setup role has no handle
+  local df="$PROJ/.agent-sandbox" p last first
+  run ! grep -qE '^(# )?\[(sandbox|conda|connect|net)\]' "$df" # nothing reaches another model's roles
+  head -1 "$df" | grep -qxF '# ---- written by asb --init roles ----'
+  for p in 'planner-*' 'implementer-*' 'reviewer-*'; do
+    section "[sandbox:$p]" "$df" | grep -qx 'preset = inherit'
+    section "[conda:$p]" "$df" | grep -qx "prefix = $H/conda/envs/E .*"
+    section "[connect:$p]" "$df" | grep -qx 'project = read-only .*'
+    section "[connect:$p]" "$df" | grep -qx '\./\.git/ = own .*'
+    section "[connect:$p]" "$df" | grep -qx 'gh = read-only .*'
+    section "[net:$p]" "$df" | grep -qx 'retrieve-only = on'
+    section "[net:$p]" "$df" | grep -qx 'git = refuse'
+  done
+  # a single role's copy leaves out what its own section of that header sets
+  section '[connect:supervisor]' "$df" | grep -qx '\.asb/coord/ = read-only .*'
+  [ "$(section '[connect:supervisor]' "$df" | grep -c '^project = ')" -eq 1 ]
+  section '[connect:supervisor]' "$df" | grep -qx 'project = read-write .*'
+  run ! grep -qF '[net:setup]                       # every role' "$df" # nothing of it left for setup
+  # every copy before the first instance's section
+  last="$(grep -n '^\[connect:setup\]' "$df" | head -1 | cut -d: -f1)" # the last pattern's copy
+  first="$(grep -n '^\[connect:planner-1\]' "$df" | cut -d: -f1)"
+  ((last < first))
+  # the setup role: no index row, its purpose file
+  run ! grep -q '| setup |' "$PROJ/.asb/coord/COORDINATION.md"
+  grep -qF "the environment at \`$H/conda/envs/E\`" "$PROJ/.asb/roles/setup.md"
+  run ! grep -qF '{' "$PROJ/.asb/roles/setup.md"
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"set twice"* ]]
+  check implementer-1
+  [ "$status" -eq 0 ]
+  grep -qE '^  project +read-only +the working tree +\.agent-sandbox \[connect:implementer-\*\]' <<<"$output"
+  grep -qE '^  \./\.git/ +read-only +the same path +\.agent-sandbox \[connect:implementer-1\]' <<<"$output"
+  [[ "$output" == *"network: retrieve-only"* && "$output" == *"git transport: refused"* ]]
+  [[ "$output" != *"set twice"* ]]
+  # the instance's prefix over the scoped one: its clone is the env a launch activates
+  run_engine MAMBA_ROOT_PREFIX="$H/conda" AGENT_SANDBOX_NET=open -- asb --role implementer-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$PROJ/.asb/impl/1/.env" ]
+  run_engine MAMBA_ROOT_PREFIX="$H/conda" AGENT_SANDBOX_NET=open -- asb --role planner-1 claude --version
+  [ "$(setenv_value CONDA_PREFIX)" = "$H/conda/envs/E" ]
+  check planner-1
+  [ "$status" -eq 0 ]
+  grep -qE '^  project +read-only +the working tree +\.agent-sandbox \[connect:planner-\*\]' <<<"$output"
+  grep -qE '^  \./\.git/ +own +the same path +\.agent-sandbox \[connect:planner-\*\]' <<<"$output"
+  [[ "$output" == *"network: retrieve-only"* && "$output" == *"git transport: refused"* ]]
+  check setup
+  [ "$status" -eq 0 ]
+  grep -qE '^  project +read-write +the working tree +\.agent-sandbox \[connect:setup\]' <<<"$output"
+  grep -qE '^  \./\.git/ +read-only +the same path +\.agent-sandbox \[connect:setup\]' <<<"$output"
+  grep -E '^  \S+ +read-write +the same path +\.agent-sandbox \[connect:setup\]' <<<"$output" | grep -qF "  $H/conda/envs/E/ "
+  grep -qE '^  gh +own +native +\.agent-sandbox \[connect:setup\]' <<<"$output"
+  [[ "$output" == *"network: retrieve-only"* && "$output" == *"git transport: refused"* ]]
+  [[ "$output" == *"briefed from: .asb/roles/setup.md"* ]]
+}
+
+@test "two models compose in one file, either order: github's roles keep github's policy, the roles model's its own (#267)" {
+  mkdir -p "$H/conda/envs/E/conda-meta"
+  local order
+  for order in "github roles" "roles github"; do
+    rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+    for m in $order; do
+      if [[ "$m" == roles ]]; then
+        init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env E
+      else
+        init MAMBA_ROOT_PREFIX="$H/conda" -- github --env E
+      fi
+      [ "$status" -eq 0 ]
+    done
+    grep -qxF '# ---- added by asb --init '"${order#* }"' ----' "$PROJ/.agent-sandbox"
+    approve
+    [ "$status" -eq 0 ]
+    check gh-review-1
+    [ "$status" -eq 0 ]
+    grep -qE '^  project +copy-on-write +the working tree +\.agent-sandbox \[connect:gh-\*\]' <<<"$output"
+    [[ "$output" == *"git transport: fetch only"* ]]
+    [[ "$output" != *"network: retrieve-only"* ]]
+    run ! grep -qE '^  \./\.git/ ' <<<"$output" # no history of its own: the project's, in its layer
+    run ! grep -qE '^  \.asb/coord/ ' <<<"$output"
+    check planner-1
+    [ "$status" -eq 0 ]
+    grep -qE '^  project +read-only +the working tree +\.agent-sandbox \[connect:planner-\*\]' <<<"$output"
+    [[ "$output" == *"network: retrieve-only"* && "$output" == *"git transport: refused"* ]]
+    check gh-setup
+    [ "$status" -eq 0 ]
+    grep -qE '^  project +read-write +the working tree +\.agent-sandbox \[connect:gh-setup\]' <<<"$output"
+    check setup
+    [ "$status" -eq 0 ]
+    grep -qE '^  project +read-write +the working tree +\.agent-sandbox \[connect:setup\]' <<<"$output"
+  done
+}
+
+@test "role patterns of two models must not collide, naming both; the same model run again adds its instances (#267)" {
+  init -- github
+  [ "$status" -eq 0 ]
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  mkdir -p "$H/m/ghx" "$H/m/bot" "$H/m/sup"
+  printf '[connect:gh-{n}]\n.asb/x-{n}/ = read-write\n' >"$H/m/ghx/agent-sandbox"
+  printf '[connect:gh-review-bot]\n.asb/bot/ = read-write\n' >"$H/m/bot/agent-sandbox"
+  printf '[connect:supervisor]\n.asb/sup/ = read-write\n' >"$H/m/sup/agent-sandbox"
+  init AGENT_SANDBOX_MODELS_DIR="$H/m" -- ghx
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: model 'ghx' uses role pattern gh-*, and this .agent-sandbox already has sections for gh-* (another model, or an earlier --init): two models need distinct role names"* ]]
+  init AGENT_SANDBOX_MODELS_DIR="$H/m" -- bot
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"model 'bot' uses role pattern gh-review-bot, and this .agent-sandbox already has sections for gh-*"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox" # refused before anything is written
+  # the shipped models are disjoint; the same model again only adds
+  init -- roles planner=1
+  [ "$status" -eq 0 ]
+  init -- github
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing added to it"* ]]
+  init -- roles planner=3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [connect:planner-2] [connect:planner-3]"* ]]
+  init AGENT_SANDBOX_MODELS_DIR="$H/m" -- sup
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"model 'sup' uses role pattern supervisor, and this .agent-sandbox already has sections for supervisor"* ]]
+}
+
+@test "a file with no --init line is a model's own when it has one of the model's role sections: github from before gh-setup (#267)" {
+  printf '[connect:gh-*]\nproject = copy-on-write\n[briefing:gh-review-*]\nfile = .asb/roles/gh-review.md\n' >"$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  has_section '[connect:gh-setup]' "$PROJ/.agent-sandbox" # what it lacked is added
+  [ "$(grep -c '^\[connect:gh-\*\]' "$PROJ/.agent-sandbox")" -eq 1 ]
+  # a marker-less file of another model's roles is still a collision
+  printf '[connect:gh-review-bot]\n' >"$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"uses role pattern gh-*, and this .agent-sandbox already has sections for gh-review-bot"* ]]
+}
+
+@test "a file the old --init wrote, its common block unsuffixed, is refused by any model's --init, naming the blocks to remove (#267)" {
+  printf '[connect]\nproject = read-only\n[net]\nretrieve-only = on\n[connect:planner-*]\n.asb/plan/ = read-write\n' >"$PROJ/.agent-sandbox"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: this .agent-sandbox has model 'roles''s common sections unsuffixed, written by an earlier --init"*"remove its unsuffixed [connect]/[net] blocks (or start from a fresh file) and run --init again"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ ! -e "$PROJ/.asb" ]
+  # any model's --init: github's on an old roles file, whose [net] would reach gh-*
+  init -- github
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"has model 'roles''s common sections unsuffixed"*"remove its unsuffixed [connect]/[net] blocks"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  # an unsuffixed section of your own, with nothing of the model's, is yours: kept
+  printf '[net]\nmode = strict\n' >"$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+}
+
+@test "the roles model takes an --env not built yet: the prefix made empty, setup to build it, no clone until it has (#267)" {
+  mkdir -p "$H/conda/envs"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env missing
+  [ "$status" -eq 0 ]
+  local ep="$H/conda/envs/missing"
+  [ -d "$ep" ] && [ -z "$(ls -A "$ep")" ]
+  [[ "$output" == *"environment missing is not built yet (created empty at $ep)"*"--role setup claude builds it"* ]]
+  [[ "$output" == *"--init: no environment for implementer-1 yet: missing is not built, so there is nothing to clone into .asb/impl/1/.env; once agent-sandbox --role setup claude has built it, run --init again and it clones it"* ]]
+  [ ! -e "$H/conda.log" ] && [ ! -e "$PROJ/.asb/impl/1/.env" ]
+  [ -f "$PROJ/.asb/impl/1/.git" ] # the clone of the project is made all the same
+  mkdir "$ep/conda-meta"          # what the setup role does
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env missing
+  [ "$status" -eq 0 ]
+  grep -qx "create -q -y --clone missing -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
 }

@@ -3,12 +3,12 @@
 # Review it, add what this project needs -- hosts to allow, a Planner's material --
 # and approve it with `asb --trust`; `asb --check --role NAME` shows what a role has.
 
+# ---- what every role gets: --init writes it per role, [connect:planner-*] and so on --
+#@ scope = roles
 [sandbox]
 preset = inherit
-
-# ---- what every role gets ------------------------------------------------------
 [conda]
-name = {env}                      # the development environment: main's build, the user's to activate on the host
+prefix = {envpath}                # the development environment, {env}: main's build, the user's to activate on the host
 [connect]
 project = read-only               # the working tree, read-only; the Supervisor opens it
 .asb/coord/ = read-only           # the message files and the index: every role reads all of them
@@ -59,3 +59,18 @@ write = 1
 retrieve-only = off
 git = allow
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
+
+# ---- setup: builds the environment, once per project, again after main moves ----
+#   asb --role setup claude
+[connect:setup]
+#@ setup = setup
+project = read-write              # the build lands in the tree, as when you build it yourself
+./.git/ = read-only               # a build reads its version from the history; it commits nothing
+{envpath}/ = read-write           # the environment it creates and installs into
+gh = own                          # no login: it publishes nothing
+[net:setup]
+mode = strict                     # as the rest of this model: through the proxy only
+retrieve-only = on                # GET and HEAD only; git's fetch is a POST, so submodules come from your checkout
+git = refuse
+[briefing:setup]
+file = .asb/roles/setup.md

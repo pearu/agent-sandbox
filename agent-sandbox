@@ -377,8 +377,9 @@ Engine flags (before CMD):
                         roles' purpose files from a development model
                         (models/, e.g. `roles`), with N instances of a role
                         and, with --env, an environment cloned from NAME per
-                        clone; run again, it adds what is missing. Approves
-                        nothing: run --trust after
+                        clone; run again, it adds what is missing. Models
+                        compose in one file, their role names apart.
+                        Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
                         nothing; exits non-zero when a launch would refuse
                         the file (for an author, CI or a pre-commit hook)
@@ -5513,6 +5514,9 @@ _as_trust_check() {
 # path the written file declares under .asb/, and keeps .asb/ out of git (a .gitignore of
 # its own). Run again, it adds what is missing and updates a purpose file it wrote that
 # nobody changed since; nothing else that exists is touched. It approves nothing.
+# Models compose in one file (#267): a model's common block (`#@ scope = roles`) is
+# written per role pattern of the model, never unsuffixed, and a model whose role
+# patterns meet another's already in the file is refused.
 _as_models_dir() { printf '%s' "${AGENT_SANDBOX_MODELS_DIR:-$(dirname -- "$engine")/models}"; }
 # _as_models_list -- the shipped models' names, space-separated.
 _as_models_list() {
@@ -5553,15 +5557,24 @@ _as_init() {
   fi
 
   # ---- the template's sections, and the roles they declare ----
+  # `#@ scope = roles` (#267): the unsuffixed sections after the line are the model's
+  # common block, written once per role pattern of the model instead of unsuffixed.
   local -a pre=() heads=() bodies=() roles=()
-  local line cur=-1 i
+  local line cur=-1 i scope_at=-1
   while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^#@[[:space:]]*scope[[:space:]]*=[[:space:]]*([^[:space:]]*) ]]; then
+      if [[ "${BASH_REMATCH[1]}" != roles ]]; then
+        _as_msg "--init: model '$model': '#@ scope = ${BASH_REMATCH[1]}' -- the one scope is 'roles'"
+        return 1
+      fi
+      scope_at=${#heads[@]}
+    fi
     if [[ "$line" =~ ^\[[^]]+\] ]]; then
       cur=${#heads[@]}
       heads+=("$line")
       bodies+=("")
     elif ((cur < 0)); then
-      pre+=("$line")
+      [[ "$line" == '#@'* ]] || pre+=("$line")
     else
       bodies[cur]+="$line"$'\n'
     fi
@@ -5593,14 +5606,16 @@ _as_init() {
       *) printf '%s single' "$suf" ;;
     esac
   }
-  local rn rk k
+  local rn rk k setup
   local -A kind=() count=() initial=() handled=()
+  setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$tpl" | head -1)"
   for i in "${!heads[@]}"; do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
     [[ -n "${rn:-}" ]] || continue
     # A role with numbered instances, or a single one, gets handles; one named only by
-    # globs (`[x:gh-*]`, `[x:gh-fix-*]`) has its instances named at launch, and none.
-    [[ "$rk" == group ]] || handled[$rn]=1
+    # globs (`[x:gh-*]`, `[x:gh-fix-*]`) has its instances named at launch, and none; nor
+    # has the setup role, which builds the environment and coordinates with nobody.
+    [[ "$rk" == group || "$rn" == "$setup" ]] || handled[$rn]=1
     # `[x:default]` keeps the unnamed role's policy once role sections exist: written like
     # any section, but no role of the model (no handle, purpose file or index row).
     [[ "$rn" == default ]] && continue
@@ -5645,8 +5660,7 @@ _as_init() {
   # A model with a setup role (`#@ setup = ROLE`) takes one not built yet: its directory
   # is made empty, for conda to create into and for the role's declaration to bind (a
   # declared path that does not exist is skipped at launch).
-  local envpath="" setup="" base="/" _conda_mode="" _conda_mode_src="" _conda_hbase=""
-  setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$tpl" | head -1)"
+  local envpath="" base="/" _conda_mode="" _conda_mode_src="" _conda_hbase=""
   [[ -n "$env" ]] && _as_conda_mode
   if [[ -n "$env" ]] && grep -qF '{envpath}' "$tpl"; then
     case "$env" in
@@ -5697,11 +5711,157 @@ _as_init() {
     hd="${hd#\# }"
     [[ -n "$existing" ]] && grep -qxF -- "$hd" <<<"$existing"
   }
+  # Models compose in one file (#267). The model's role patterns: `name-*` for a role with
+  # numbered instances (or named at launch), `name` for a single one. Under `#@ scope =
+  # roles` the common block goes to the broadest of those that have an instance.
+  local -a mpats=() scoped=()
+  local pt q covered sufs="" inmodel=0 marks="" mine=0
+  for rn in "${roles[@]}"; do
+    case "${kind[$rn]}" in single) mpats+=("$rn") ;; *) mpats+=("$rn-*") ;; esac
+  done
+  if ((scope_at >= 0)); then
+    for pt in "${mpats[@]}"; do
+      ((${count[${pt%-\*}]} > 0)) || continue
+      covered=0
+      for q in "${mpats[@]}"; do
+        # shellcheck disable=SC2053 # q is the glob
+        [[ "$q" != "$pt" && "$pt" == $q ]] && ((${count[${q%-\*}]} > 0)) && covered=1
+      done
+      ((covered)) || scoped+=("$pt")
+    done
+  fi
+  _init_own() { # SUFFIX -- one of the model's patterns, or a role name one of them matches
+    local q
+    for q in "${mpats[@]}"; do
+      # shellcheck disable=SC2053 # q is the glob
+      [[ "$1" == "$q" ]] || [[ "$1" != *[*?]* && "$1" == $q ]] && return 0
+    done
+    return 1
+  }
+  # The role suffixes the file has, but `default` (the unnamed role, any model's) and `*`
+  # (every name admitted: the user's).
+  [[ -n "$existing" ]] && sufs="$(sed -n 's/^\[[^]:]*:\([^]]*\)\]$/\1/p' <<<"$existing" | { grep -vxF -e default -e '*' || true; } | sort -u)"
+  # A file the old --init wrote has a scoped model's common block unsuffixed, where it
+  # reaches every role of every model: any model's --init refuses it, not rewrites it. A
+  # scoped model is this one or a shipped one with `#@ scope`; its block is in the file
+  # when one of the block's unsuffixed headers is (commented out or not) beside a section
+  # suffixed for one of its role patterns.
+  _init_scoped() { # TEMPLATE -> "PATTERNS<tab>BLOCK HEADERS", for a template with #@ scope
+    awk '/^#@[[:space:]]*scope[[:space:]]*=/ { on = 1; next }
+      /^\[[^]]+\]/ {
+        h = $0; sub(/\].*/, "]", h)
+        if (h ~ /:/) {
+          x = h; sub(/^[^:]*:/, "", x); sub(/\]$/, "", x); sub(/-\{n\}$/, "-*", x)
+          if (x != "default" && !(x in p)) { p[x] = 1; ps = ps " " x }
+        } else if (on && !(h in b)) { b[h] = 1; bs = bs " " h }
+      }
+      END { if (on) print substr(ps, 2) "\t" substr(bs, 2) }' "$1"
+  }
+  if [[ -n "$sufs" ]]; then
+    local mt mn
+    local -a old=() mp=() mb=()
+    for mt in "$tpl" "$(_as_models_dir)"/*/agent-sandbox; do
+      [[ -f "$mt" ]] || continue
+      IFS=$'\t' read -r a v <<<"$(_init_scoped "$mt")"
+      read -r -a mp <<<"${a:-}"
+      read -r -a mb <<<"${v:-}"
+      ((${#mb[@]})) || continue
+      old=()
+      for hd in "${mb[@]}"; do
+        _init_has "$hd" && old+=("$hd")
+      done
+      ((${#old[@]})) || continue
+      mine=0
+      while IFS= read -r q; do
+        for pt in "${mp[@]}"; do
+          # shellcheck disable=SC2053 # pt is the glob
+          [[ "$q" == "$pt" ]] || [[ "$q" != *[*?]* && "$q" == $pt ]] && mine=1
+        done
+      done <<<"$sufs"
+      ((mine)) || continue
+      mn="$(basename -- "$(dirname -- "$mt")")"
+      _as_msg "--init: this .agent-sandbox has model '$mn''s common sections unsuffixed, written by an earlier --init, so they reach every role of every model: remove its unsuffixed $(printf '%s\n' "${old[@]}" | paste -sd/) blocks (or start from a fresh file) and run --init again, which writes them per role pattern of the model"
+      return 1
+    done
+  fi
+  # Two models' role patterns must not overlap: the same pattern, or one glob matching the
+  # other (gh-* and gh-review-*). The model's own sections, from an earlier --init of it,
+  # are no collision: the file names it in a `# ---- ... by asb --init MODEL ----` line,
+  # or -- a file from before those lines -- has none and a section of one of its single
+  # or launch-named roles (a github file from before gh-setup has [connect:gh-*] alone).
+  [[ -f "$df" ]] && marks="$(sed -n 's/^# ---- \(written\|added\) by asb --init \(.*\) ----$/\2/p' "$df")"
+  while IFS= read -r q; do
+    [[ -n "$q" && "$(basename -- "$q")" == "$(basename -- "$model")" ]] && inmodel=1
+  done <<<"$marks"
+  if ((! inmodel)) && [[ -z "$marks" && -n "$sufs" ]]; then
+    for i in "${!heads[@]}"; do
+      read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+      [[ -n "${rn:-}" && "$rn" != default && "$rk" != multi ]] || continue
+      _init_has "$(_init_render "${heads[i]}" "" "$rn" "" "" | head -1)" && inmodel=1
+    done
+  fi
+  while IFS= read -r q; do
+    [[ -n "$q" ]] || continue
+    ((inmodel)) && _init_own "$q" && continue
+    for pt in "${mpats[@]}"; do
+      # shellcheck disable=SC2053 # either may be the glob
+      if [[ "$q" == "$pt" || "$q" == $pt || "$pt" == $q ]]; then
+        _as_msg "--init: model '$model' uses role pattern $pt, and this .agent-sandbox already has sections for $q (another model, or an earlier --init): two models need distinct role names"
+        return 1
+      fi
+    done
+  done <<<"$sufs"
+  _init_key() { # LINE -> its key, or nothing for a comment, a blank or a list line
+    [[ "$1" =~ ^[[:space:]]*([^#[:space:]=][^=]*[^=[:space:]]|[^#[:space:]=])[[:space:]]*= ]] && printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  }
   # Walk the sections; a run of consecutive sections of one numbered role is written
   # per instance, so each instance's sections stay together.
   i=0
   while ((i < ${#heads[@]})); do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+    # The scoped common block: its run of unsuffixed sections, per role pattern, each
+    # line as the template has it; the comments before them with the first pattern's. A
+    # key the role's own section of the same header sets ([connect:supervisor] project)
+    # is left out of the copy, where it would be a line with no effect.
+    if [[ -z "${rn:-}" ]] && ((scope_at >= 0 && i >= scope_at)); then
+      j=$i
+      while ((j + 1 < ${#heads[@]})); do
+        read -r a k <<<"$(_init_role_of "${heads[j + 1]}")"
+        [[ -z "${a:-}" ]] || break
+        ((j += 1))
+      done
+      n=1
+      for pt in ${scoped[@]+"${scoped[@]}"}; do
+        for ((k = i; k <= j; k++)); do
+          # the suffix takes its width out of the padding before a comment, if it can
+          a="${heads[k]#*]}" lead=""
+          [[ "$a" =~ ^([[:space:]]+)(#.*)$ && ${#BASH_REMATCH[1]} -gt $((${#pt} + 2)) ]] \
+            && a="${BASH_REMATCH[1]:$((${#pt} + 1))}${BASH_REMATCH[2]}"
+          hd="${heads[k]%%]*}:$pt]$a"
+          ((n)) && lead="${leads[k]}"
+          body=""
+          while IFS= read -r line; do
+            a="$(_init_key "$line")"
+            if [[ -n "$a" ]]; then
+              for q in "${!heads[@]}"; do
+                [[ "${heads[q]%%]*}" == "${hd%%]*}" ]] || continue
+                while IFS= read -r v; do
+                  [[ "$(_init_key "$v")" == "$a" ]] && continue 3
+                done <<<"${bodies[q]}"
+              done
+            fi
+            body+="$line"$'\n'
+          done <<<"${bodies[k]%$'\n'}"
+          grep -qE '^[[:space:]]*[^#[:space:]]' <<<"$body" || continue # nothing left
+          a="$(_init_render "$hd" "$body" "" "" "" "$lead")"
+          _init_has "$hd" || new+="$a"$'\n'
+        done
+        n=0
+      done
+      i=$((j + 1))
+      continue
+    fi
     if [[ "${rk:-}" == multi ]]; then
       j=$i
       while ((j + 1 < ${#heads[@]})); do
@@ -5738,6 +5898,7 @@ _as_init() {
       }
       h="${rn:0:1}"
       h="${h^^}"
+      [[ "$rn" == "$setup" ]] && h="$rn" # no handle: it is called by its name
       [[ "$rk" == single ]] && insts+=("$rn"$'\t'"$h"$'\t'"$rn"$'\t'"")
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "$rn" "" "$h" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "$rn" "" "$h" | head -1)"
@@ -5786,7 +5947,8 @@ _as_init() {
   local wrote=0
   if [[ -z "$existing" && ! -f "$df" ]]; then
     {
-      printf '%s\n' "${pre[@]}"
+      printf '# ---- written by asb --init %s ----\n' "$model"
+      printf '%s\n' ${pre[@]+"${pre[@]}"}
       printf '%s' "$new"
     } >"$df" || return 1
     wrote=1
@@ -5884,7 +6046,9 @@ _as_init() {
     for k in ${prefixes[@]+"${prefixes[@]}"}; do
       [[ "${k%%$'\t'*}" == "$inst" ]] && prefix="${k#*$'\t'}"
     done
-    if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" ]]; then
+    if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
+      _as_msg "--init: no environment for $inst yet: $env is not built, so there is nothing to clone into $prefix; once $invoked --role $setup claude has built it, run --init again and it clones it"
+    elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" ]]; then
       _as_msg "cloning conda env '$env' into $prefix (for $inst)"
       if [[ "$_conda_mode" == sandbox ]]; then
         "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$env" -p "$proj/$prefix" >/dev/null || {
@@ -5914,6 +6078,7 @@ _as_init() {
   for a in "${insts[@]}"; do
     [[ -f "$mdir/coord/COORDINATION.md" || -s "$idx" ]] || break
     IFS=$'\t' read -r inst h rn n <<<"$a"
+    [[ "$rn" == "$setup" ]] && continue
     [[ -s "$idx" ]] && grep -q "^| $h |" "$idx" && continue
     coordf="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/coord\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | head -1)"
     dirs="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | grep -vxF -- "$coordf" | paste -sd' ' | sed 's/ /, /g')"
