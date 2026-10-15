@@ -227,6 +227,19 @@ The model's common block -- what every role gets -- is written once per role pat
 hold another model too: `asb --init github` in the same checkout adds the `gh-*` roles,
 which keep the github model's policy. Two models whose role names overlap are refused.
 
+**Another project's environment.** A project with no build of its own -- a benchmark
+or a test harness -- often runs against an environment another checkout builds, a
+PyTorch development environment for example. `--shared-env NAME` in place of `--env NAME`
+says so: every role activates NAME read-only, nothing clones or builds it (no setup
+role, no Implementer environments, no `write = 1` for the Supervisor), and the
+Implementers and the Supervisor get `NAME/ = copy-on-write`, so what they install for
+this project lands in a layer of their own and reaches neither the other project nor
+each other. The source trees NAME's editable installs import from (its `direct_url.json`,
+`.egg-link` and `.pth` entries) are declared read-only for every role, so its imports work
+inside. NAME must be built; `--init` refuses one that is not. `asb --check` names an
+active environment's editable source a role cannot read, with the `asb --apply` line that
+declares it, whichever way the file was written.
+
 Run it again with more instances (`implementer=3`) and it adds what is missing --
 sections, purpose file, clone -- and changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.

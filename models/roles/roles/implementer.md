@@ -9,10 +9,15 @@ address what holds, and object, with reasons, to what does not.
 **Where things are.**
 - Your tree, a clone of the project on branch `impl-{n}`: `.asb/impl/{n}/`. Work and
   commit there, nowhere else; its history is `.asb/git/{n}/`, yours alone.
-- Your environment: `.asb/impl/{n}/.env` (if one was made). At every start, sync it:
-  `conda env update -p .asb/impl/{n}/.env -f environment.yml --prune` (or the
-  project's lock file). A package you need is a change to the specification, in the
-  diff like any other.
+#@own - Your environment: `.asb/impl/{n}/.env` (if one was made). At every start,
+#@own   sync it: `conda env update -p .asb/impl/{n}/.env -f environment.yml --prune`
+#@own   (or the project's lock file). A package you need is a change to the
+#@own   specification, in the diff like any other.
+#@shared - Your environment: `{env}`, another project's, read-only to
+#@shared   it; what you install lands in a layer of your own over it and
+#@shared   reaches nobody else. Its editable installs import from their source
+#@shared   trees, read-only here. A package you need is a change to this
+#@shared   project's specification, in the diff like any other.
 - Your Handoffs: `.asb/handoff/{role}/` -- what was done, the method, what was not and
   why, and the change itself: the branch and `git diff main...impl-{n}`.
 - Your messages: `.asb/coord/{role}.md`; the index: `.asb/coord/COORDINATION.md`.

@@ -11,6 +11,7 @@
 [connect:gh-*]
 project = copy-on-write           # the built tree; the work and its rebuild stay in this instance's layer
 {envpath}/ = copy-on-write        # the environment likewise: a rebuilt or installed package lands in the layer
+#@shared {editable}/ = read-only    # with --shared-env: the env imports from it (an editable install)
 .asb/scratch/ = own               # its notes and drafts, private to it
 gh = read-only                    # your gh login: it reads, and posts when you say so
 [conda:gh-*]
@@ -39,17 +40,17 @@ file = .asb/roles/gh-review.md
 file = .asb/roles/gh-triage.md
 [briefing:gh-fix-*]
 file = .asb/roles/gh-fix.md
-# ---- the setup role builds the environment: once per project, again after main moves --
-#   asb --role gh-setup claude
-#   a dependency's clone goes under [connect:gh-*] as ~/git/<org>/<repo>/ = copy-on-write
-[connect:gh-setup]
-#@ setup = gh-setup
-project = read-write              # the build lands in your tree, as when you build it yourself
-{envpath}/ = read-write           # the environment it creates and installs into
-gh = own                          # no login: it publishes nothing
-[net:gh-setup]
-retrieve-only = on                # GET and HEAD only: it reads the web, it sends nothing; git's fetch is a POST, so submodules come from your checkout
-git = refuse
-[briefing:gh-setup]
-file = .asb/roles/gh-setup.md
+#@own # ---- the setup role builds the environment: once per project, again after main moves --
+#@own #   asb --role gh-setup claude
+#@own #   a dependency's clone goes under [connect:gh-*] as ~/git/<org>/<repo>/ = copy-on-write
+#@own [connect:gh-setup]
+#@own #@ setup = gh-setup
+#@own project = read-write              # the build lands in your tree, as when you build it yourself
+#@own {envpath}/ = read-write           # the environment it creates and installs into
+#@own gh = own                          # no login: it publishes nothing
+#@own [net:gh-setup]
+#@own retrieve-only = on                # GET and HEAD only: it reads the web, it sends nothing; git's fetch is a POST, so submodules come from your checkout
+#@own git = refuse
+#@own [briefing:gh-setup]
+#@own file = .asb/roles/gh-setup.md
 [connect:default]                 # your own sessions here keep the project's policy

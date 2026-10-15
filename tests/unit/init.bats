@@ -584,3 +584,80 @@ approve() {
   [ "$status" -eq 0 ]
   grep -qx "create -q -y --clone missing -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
 }
+
+# shared_env NAME -- a built env under $H/conda/envs/NAME whose editable installs import from
+# $H/src/torch (direct_url.json, pip install -e) and $H/src/vision (an .egg-link, setup.py
+# develop); a .pth line inside the env itself is not a source.
+shared_env() {
+  local ep="$H/conda/envs/$1" sp
+  sp="$ep/lib/python3.12/site-packages"
+  mkdir -p "$ep/conda-meta" "$sp/torch-2.15.dist-info" "$sp/extra" "$H/src/torch" "$H/src/vision"
+  printf '{"url": "file://%s/src/torch", "dir_info": {"editable": true}}\n' "$H" >"$sp/torch-2.15.dist-info/direct_url.json"
+  printf '%s/src/vision\n.\n' "$H" >"$sp/torchvision.egg-link"
+  printf '%s\n' "$sp/extra" >"$sp/extra.pth"
+}
+
+@test "--shared-env: another project's env, read-only for every role, never cloned or built here; a layer over it for the roles that install; its editable sources declared (#268)" {
+  shared_env torch-dev
+  local ep="$H/conda/envs/torch-dev" df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --shared-env torch-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(P1 I1 R1 S)"* ]] # no setup role: the env is built by the project that owns it
+  [[ "$output" == *"--init: torch-dev is another project's environment ($ep): activated read-only, never cloned or built here"* ]]
+  [[ "$output" == *"it imports from $H/src/torch, $H/src/vision (editable installs)"* ]]
+  [ ! -e "$H/conda.log" ] && [ ! -e "$PROJ/.asb/impl/1/.env" ] # nothing cloned
+  run ! grep -qE '^\[(connect|net|briefing):setup\]' "$df"
+  [ ! -e "$PROJ/.asb/roles/setup.md" ]
+  run ! grep -qE '^write = 1' "$df"             # the Supervisor does not write into it
+  run ! grep -qF 'prefix = .asb/impl/' "$df"    # no Implementer env of its own
+  [ "$(grep -c "^prefix = $ep " "$df")" -eq 4 ] # every role activates it
+  [ "$(grep -c "^$H/src/torch/ = read-only" "$df")" -eq 4 ]
+  [ "$(grep -c "^$H/src/vision/ = read-only" "$df")" -eq 4 ]
+  run ! grep -qF "$ep/lib" "$df" # a path inside the env is not a source
+  grep -A8 -xF '[connect:implementer-1]' "$df" | grep -q "^$ep/ = copy-on-write"
+  sed -n '/^\[connect:supervisor\]$/,/^\[/p' "$df" | grep -q "^$ep/ = copy-on-write"
+  grep -qF "\`torch-dev\`, another project's, read-only to" "$PROJ/.asb/roles/implementer-1.md"
+  run ! grep -qF 'conda env update -p' "$PROJ/.asb/roles/implementer-1.md"
+  grep -qF "\`torch-dev\` is another project's: you do not" "$PROJ/.asb/roles/supervisor.md"
+  run ! grep -qF '#@' "$PROJ/.asb/roles/supervisor.md"
+}
+
+@test "--shared-env refuses an env that is not built, and one --env or --shared-env only; the github model drops gh-setup under it (#268)" {
+  mkdir -p "$H/conda/envs"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 --shared-env missing
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--shared-env missing: no conda environment at $H/conda/envs/missing -- an environment another project owns is built there, by that project, not here"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  shared_env torch-dev
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 --env torch-dev --shared-env torch-dev
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"one environment: --env NAME (this project's own) or --shared-env NAME (another project's), once"* ]]
+  init MAMBA_ROOT_PREFIX="$H/conda" -- github --shared-env torch-dev
+  [ "$status" -eq 0 ]
+  run ! grep -qF 'gh-setup' "$PROJ/.agent-sandbox"
+  [ ! -e "$PROJ/.asb/roles/gh-setup.md" ]
+  sed -n '/^\[connect:gh-\*\]/,/^\[/p' "$PROJ/.agent-sandbox" | grep -q "^$H/src/torch/ = read-only"
+}
+
+@test "--check names an active env's editable sources a role cannot read, with the --apply line; a declared one is not named (#268)" {
+  shared_env torch-dev
+  local ep="$H/conda/envs/torch-dev"
+  printf '[conda]\nprefix = %s\n' "$ep" >"$PROJ/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" MAMBA_ROOT_PREFIX="$4" "${@:5}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/conda" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" MAMBA_ROOT_PREFIX="$4" "${@:5}" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/conda" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"The conda env $ep imports from source trees this role cannot read (editable installs):"* ]]
+  [[ "$output" == *"  $H/src/torch -- its imports fail inside; to declare it: "*"--apply '[connect]' '$H/src/torch/ = read-only'"* ]]
+  [[ "$output" == *"  $H/src/vision -- its imports fail inside"* ]]
+  printf '[connect]\n%s/src/torch/ = read-only\n' "$H" >>"$PROJ/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" MAMBA_ROOT_PREFIX="$4" "${@:5}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/conda" "${ENGINE_CMD[@]}"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" MAMBA_ROOT_PREFIX="$4" "${@:5}" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/conda" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"$H/src/torch -- its imports fail"* ]]
+  [[ "$output" == *"$H/src/vision -- its imports fail"* ]]
+}
