@@ -366,3 +366,33 @@ make_fake_ca() {
   openssl req -x509 -newkey ed25519 -nodes -subj '/CN=agent-sandbox test CA' \
     -keyout "$1.key" -out "$1" -days 1 >/dev/null 2>&1
 }
+
+# make_ssh_stubs -- an ssh toolchain that lets _as_ssh_setup run without a real agent or
+# a trusted key: `ssh -G` resolves any spec (user@host pins the user; else it is yours,
+# which the engine does not pin), every host key is "found", ~/.ssh/id_ed25519 is the
+# key picked, the agent only creates its socket path, and ssh-add appends its arguments,
+# one per line, to $H/ssh-add.log: the broker's destination constraints are its `-h`s.
+make_ssh_stubs() {
+  cat >"$H/bin/ssh" <<'X'
+#!/usr/bin/env bash
+set +x
+[[ "$1" == -G ]] || exit 0
+s="${2:-h}" u="$(id -un)"
+[[ "$s" == *@* ]] && u="${s%@*}" s="${s#*@}"
+printf 'hostname %s\nuser %s\nport 22\nidentityfile ~/.ssh/id_ed25519\n' "$s" "$u"
+X
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/ssh-keygen"
+  printf '#!/usr/bin/env bash\nset +x\nprintf "%%s\\n" "$@" >>"%s/ssh-add.log"\n' "$H" >"$H/bin/ssh-add"
+  cat >"$H/bin/ssh-agent" <<'X'
+#!/usr/bin/env bash
+set +x
+sock=""; while [[ $# -gt 0 ]]; do [[ "$1" == -a ]] && sock="$2"; shift; done
+: >"$sock" 2>/dev/null
+echo "SSH_AGENT_PID=99999; export SSH_AGENT_PID;"
+X
+  chmod +x "$H/bin/ssh" "$H/bin/ssh-keygen" "$H/bin/ssh-add" "$H/bin/ssh-agent"
+  mkdir -p "$H/home/.ssh"
+  : >"$H/home/.ssh/known_hosts"
+  : >"$H/home/.ssh/id_ed25519"
+  : >"$H/ssh-add.log"
+}

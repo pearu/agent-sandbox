@@ -523,18 +523,66 @@ trust() {
   argv_has --bind "$(projects_own)" "$C/projects"
 }
 
-@test "other projects are out of view with no dot-file present; unknown sections and ssh warn at the review" {
+@test "other projects are out of view with no dot-file present; unknown sections warn at the review" {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$(projects_own)" "$C/projects"
   # parsing feedback
-  printf '[allow]\nok.example\n[ssh]\nignored.host\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
+  printf '[allow]\nok.example\n[bogus]\nx\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine -- asb claude --version
   [[ "$output" != *"[bogus]"* ]]
   run_review
-  [[ "$output" == *"[ssh] is not supported yet"* ]]
   [[ "$output" == *"unknown section [bogus]"* ]]
+}
+
+# The constraints the broker loaded the key with: the `-h` arguments ssh-add was given.
+ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | sort | paste -sd' '; }
+
+@test "[ssh]: an approved file's hosts reach the broker with --ssh's, one list; a bad host is said at the review and ignored" {
+  make_ssh_stubs
+  printf '[ssh]\ngithub.com\ngit@gitlab.example\nmy-alias\n-oProxyCommand=x\ntwo words\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[ssh] github.com: SSH to it as you, signed with your key through the broker, for every role"*"approve this"* ]]
+  [[ "$output" == *"[ssh] git@gitlab.example: SSH to it as you"* ]]
+  [[ "$output" == *"[ssh] bad host '-oProxyCommand=x'"*"; ignoring"* ]]
+  [[ "$output" == *"[ssh] bad host 'two words'"* ]]
+  run_engine -- asb claude --version # not approved: refused, and no agent started
+  [ "$status" -ne 0 ]
+  [ ! -s "$H/ssh-add.log" ]
+  trust "$PROJ"
+  run_engine -- asb --ssh flag.example claude --version
+  [ "$status" -eq 0 ]
+  [ "$(ssh_constraints)" = "flag.example git@gitlab.example github.com my-alias" ]
+  sock="$(setenv_value SSH_AUTH_SOCK)"
+  [[ "$sock" == */agent.sock ]] && argv_has --bind "$sock" "$sock"
+  run ! grep -q ProxyCommand "$H/ssh-add.log"
+  # a host both name is constrained once
+  : >"$H/ssh-add.log"
+  run_engine -- asb --ssh github.com claude --version
+  [ "$(ssh_constraints)" = "git@gitlab.example github.com my-alias" ]
+  # --ssh-key and --ssh-timeout apply to the file's hosts: they are the launch's
+  : >"$H/ssh-add.log"
+  : >"$H/other-key"
+  run_engine -- asb --ssh-key "$H/other-key" --ssh-timeout 5m claude --version
+  [ "$status" -eq 0 ]
+  grep -qx -- "$H/other-key" "$H/ssh-add.log"
+  grep -qx -- 5m "$H/ssh-add.log"
+}
+
+@test "[ssh]: no file, no flag, no broker; --ssh-unrestricted wins over the file's hosts, and says so" {
+  make_ssh_stubs
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ ! -s "$H/ssh-add.log" ]
+  run ! argv_has --setenv SSH_AUTH_SOCK
+  printf '[ssh]\ngithub.com\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --ssh-unrestricted claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--ssh-unrestricted: the key is loaded without a constraint, so the .agent-sandbox [ssh] hosts (github.com) are reachable with the rest"* ]]
+  [ -s "$H/ssh-add.log" ]
+  [ -z "$(ssh_constraints)" ]
 }
 
 @test "--trust reviews and approves the file, offers to git-ignore it, and never launches the agent" {

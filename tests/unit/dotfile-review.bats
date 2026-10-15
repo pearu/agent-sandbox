@@ -336,6 +336,19 @@ check_role() {
   [[ "$output" =~ GitHub\ +no\ --\ a\ credential.*but\ no\ GitHub\ host\ is\ reachable ]]
 }
 
+@test "[ssh]: the review names the widening per section, and --check's SSH row the hosts with their source" {
+  printf '[ssh:gh-fix-*]\ngithub.com\n[connect:gh-review-*]\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[ssh:gh-fix-*] github.com: SSH to it as you, signed with your key through the broker, for the roles gh-fix-*"*"approve this"* ]]
+  check_role gh-fix-215
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ SSH\ +github\.com\ \(\.agent-sandbox\ \[ssh:gh-fix-\*\]\)\ --\ through\ the\ broker\;\ plus\ any\ host\ a\ launch\ names\ with\ --ssh ]]
+  [[ "$output" == *"roles in this file: "*"gh-fix-*"* ]]
+  check_role gh-review-1
+  [[ "$output" =~ SSH\ +only\ the\ hosts\ a\ launch\ names\ with\ --ssh ]]
+  [[ "$output" != *"github.com (.agent-sandbox"* ]]
+}
+
 @test "--check exits non-zero when the policy is one a launch refuses" {
   printf '[connect]\ninstructions = readonly\n' >"$PROJ/.agent-sandbox"
   check

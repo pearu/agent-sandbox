@@ -11,10 +11,34 @@ agent sees the command line.
 
 | Flag | Meaning |
 |---|---|
-| `--ssh HOST` | Allow SSH to HOST. Repeatable. HOST is anything ssh accepts: a hostname, `user@host`, or an alias from `~/.ssh/config` (HostName, User, Port and IdentityFile are honoured; resolution is done on the host with `ssh -G`). |
+| `--ssh HOST` | Allow SSH to HOST. Repeatable; adds to the project file's `[ssh]` hosts (below). HOST is anything ssh accepts: a hostname, `user@host`, or an alias from `~/.ssh/config` (HostName, User, Port and IdentityFile are honoured; resolution is done on the host with `ssh -G`). |
 | `--ssh-unrestricted` | Allow SSH anywhere the key is accepted. Mutually exclusive with `--ssh HOST`. The escape hatch. |
 | `--ssh-key PATH` | Private key to use. Default: the first readable IdentityFile ssh itself would try for that host (config-aware; FIDO `*_sk` keys are skipped). |
 | `--ssh-timeout LIFE` | Expire the loaded key after LIFE (seconds, or e.g. `30m`, `2h`). Off unless given. |
+
+## In the project's file: `[ssh]`
+
+A host a project's sessions always need goes in its `.agent-sandbox`, one per line,
+in the forms `--ssh HOST` takes, and per role with a suffix
+([config.md](config.md)):
+
+```ini
+[ssh:gh-fix-*]
+github.com                # the fixers push; no other role gets SSH
+```
+
+`asb --apply '[ssh:gh-fix-*]' github.com` adds the line and runs the review. Like
+every section it counts only once approved, and the review says it is a widening: the
+role signs in as you at that host. At a launch the section's hosts for the role and
+the launch's `--ssh` hosts are one list, through everything below: the destination
+constraint, the `known_hosts` check, strict mode's pinholes. `--ssh-unrestricted`,
+`--ssh-key` and `--ssh-timeout` stay on the command line -- a project's file never
+picks your key or lifts the constraint; given at a launch, they apply to the file's
+hosts too, and with `--ssh-unrestricted` the file's hosts are within the unconstrained
+key (the launch says so). A role whose `[net] git` is `fetch` or `refuse` gets none of
+the file's hosts, and an `--ssh` flag for it is refused. `asb --check --role R`
+lists a role's hosts with the section each came from, and the session's briefing
+names them.
 
 ## How it works
 

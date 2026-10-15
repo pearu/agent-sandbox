@@ -9,6 +9,7 @@ number, each in a layer of its own over the project as the setup role built it:
     asb --role gh-review-1234 claude         # review pull request 1234
     asb --role gh-triage-5678 claude         # triage issue 5678
     asb --ssh github.com --role gh-fix-1234 claude   # implement 1234, able to push
+    asb --apply '[ssh:gh-fix-*]' github.com  # ...or let every fixer here push, for good
     asb --delete --role gh-review-1234       # when its work is done
 
 - **gh-setup**, one per project, builds `main` as checked out into the `--env`
@@ -30,7 +31,9 @@ number, each in a layer of its own over the project as the setup role built it:
   and posts the triage and labels when you say so.
 - **gh-fix** implements an issue or a pull request on a branch, and publishes it when you
   say so: over SSH, to your fork or directly as the checkout's remotes say, or with
-  `ghstack submit` where the project uses it -- ghstack's login is opt-in per project,
+  `ghstack submit` where the project uses it. SSH is opt-in: `--ssh github.com` for one
+  launch, or `asb --apply '[ssh:gh-fix-*]' github.com` for every fixer of the project,
+  reviewed and approved like any other line; ghstack's login is opt-in per project too,
   `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
 
 Each sees the project and its environment through overlays of its own

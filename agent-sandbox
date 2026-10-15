@@ -213,7 +213,9 @@
 #                         other modes (proxy/open already share the host's
 #                         network, none has none). See docs/network.md.
 #   --ssh HOST, --ssh-unrestricted, --ssh-key PATH, --ssh-timeout LIFE
-#                         see docs/ssh.md
+#                         see docs/ssh.md; a trusted .agent-sandbox [ssh] or
+#                         [ssh:<role-glob>] section names hosts too (a union
+#                         with --ssh); the other three are launch-only
 #   --trust               review and approve this project's .agent-sandbox
 #                         file (per-project policy: allow hosts, memory
 #                         scoping, paths, environment, conda, network), then
@@ -332,7 +334,7 @@ Engine flags (before CMD):
                         127.0.0.1:PORT; repeatable; 1024-65535, or none
   --ssh HOST            allow SSH to HOST via a per-session, destination-
                         constrained agent (the key stays on the host);
-                        repeatable
+                        repeatable; adds to a trusted .agent-sandbox [ssh]
   --ssh-unrestricted    SSH anywhere the key is accepted (mutually exclusive
                         with --ssh HOST)
   --ssh-key PATH        private key to load (default: what `ssh -G` picks)
@@ -629,6 +631,34 @@ _as_ssh_pick_key() {
     }
   done < <(awk '$1=="identityfile"{print $2}' <<<"$1")
   return 1
+}
+
+# _as_ssh_spec_ok SPEC -- is SPEC a host an .agent-sandbox [ssh] line may name: a
+# hostname, user@host, or a ~/.ssh/config alias, in the characters those take. The
+# file is text someone else may have written, so nothing that ssh or ssh-add could read
+# as an option, a token or a second word passes; `ssh -G` and known_hosts then check it
+# at the launch, as they check --ssh.
+_as_ssh_spec_ok() {
+  [[ "$1" =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$ ]]
+}
+
+# _as_ssh_sources -- this launch's SSH hosts, each with where it came from: the
+# .agent-sandbox section (_ssh_df, `glob<TAB>host`), --ssh, or both. Comma-separated.
+_as_ssh_sources() {
+  local h e out="" src
+  for h in ${_ssh_hosts[@]+"${_ssh_hosts[@]}"}; do
+    src=""
+    for e in ${_ssh_df[@]+"${_ssh_df[@]}"}; do
+      [[ "${e#*$'\t'}" == "$h" ]] || continue
+      [[ "${e%%$'\t'*}" == "*" ]] && src=".agent-sandbox [ssh]" || src=".agent-sandbox [ssh:${e%%$'\t'*}]"
+      break
+    done
+    for e in ${_ssh_flag_hosts[@]+"${_ssh_flag_hosts[@]}"}; do
+      [[ "$e" == "$h" ]] && src="${src:+$src, }--ssh" && break
+    done
+    out+="${out:+, }$h (${src:---ssh})"
+  done
+  printf '%s' "$out"
 }
 
 _as_ssh_setup() {
@@ -3352,7 +3382,7 @@ _as_briefing_write() {
     egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
   fi
   ((${#_allow_hosts[@]} > 0)) && hosts_line="${_allow_hosts[*]}"
-  ((${#_ssh_hosts[@]} > 0)) && ssh_line="${_ssh_hosts[*]}"
+  ((${#_ssh_hosts[@]} > 0)) && ssh_line="$(_as_ssh_sources)"
   # two forms: the full one for briefing.md, a short one for the summary that is
   # injected on every launch (where a spare sentence is paid for every time)
   local mem_short
@@ -3727,7 +3757,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
@@ -3806,7 +3836,7 @@ _as_trust_forget() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
@@ -3848,7 +3878,7 @@ _as_profile_dotfile() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -4168,7 +4198,7 @@ _as_trust_notes() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
@@ -4178,6 +4208,16 @@ _as_trust_notes() {
   _as_dotfile_apply_role --all # every role's lines, whatever role launches it
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
     [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg ".agent-sandbox allow: bad host '$h'; ignoring"
+  done
+  # [ssh]: a widening -- a role signs in as you over SSH -- said per host and section.
+  for h in ${_df_ssh[@]+"${_df_ssh[@]}"}; do
+    v="${h%%$'\t'*}" k="${h#*$'\t'}"
+    if [[ "$v" == "*" ]]; then v="[ssh]" n="every role"; else n="the roles $v" v="[ssh:$v]"; fi
+    if _as_ssh_spec_ok "$k"; then
+      _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n"
+    else
+      _as_msg ".agent-sandbox: $v bad host '$k' (a hostname, user@host, or ~/.ssh/config alias); ignoring"
+    fi
   done
   for h in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
     _as_msg ".agent-sandbox: [env] ${h%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
@@ -4440,7 +4480,7 @@ _as_dotfile_parse() {
         sglob="${section#*:}"
         section="${section%%:*}"
         case "$section" in
-          sandbox | connect | allow | deny | env | conda | net | gpu) _df_role_globs+=("$sglob") ;;
+          sandbox | connect | allow | deny | env | conda | net | gpu | ssh) _df_role_globs+=("$sglob") ;;
           briefing)
             # [briefing:<glob>] (#222): those roles are briefed from a purpose file,
             # `file = PATH` or .asb/roles/{role}.md, present even with no line.
@@ -4465,7 +4505,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu and briefing do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh and briefing do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -4473,14 +4513,13 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
             section="-skip-"
           }
           ;;
-        ssh) _as_msg ".agent-sandbox: [ssh] is not supported yet; ignoring (use --ssh on the command line)" ;;
         proxy-ca | profile-dir | session-base)
           _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
           ;;
@@ -4489,7 +4528,7 @@ _as_dotfile_parse() {
       continue
     fi
     case "$section" in
-      allow | deny | env | conda | net | gpu)
+      allow | deny | env | conda | net | gpu | ssh)
         if [[ "$sglob" != "*" ]]; then
           _df_role_lines+=("$sglob"$'\t'"$section"$'\t'"$line")
           continue
@@ -4511,6 +4550,9 @@ _as_dotfile_line() {
     preset) _df_preset_lines+=("$sglob"$'\t'"$line") ;;
     allow) _df_allow+=("$line") ;;
     deny) _df_deny+=("$line") ;;
+    # [ssh]: one host per line, as `--ssh HOST` takes it; kept with its section's
+    # glob, so --check and the briefing can say where a host came from.
+    ssh) _df_ssh+=("$sglob"$'\t'"$line") ;;
     share-memory) _df_share+=("${line/#\~/$HOME}") ;;
     env)
       # [env] (#177): `NAME` forwards it when set in the launching shell (several per
@@ -4663,7 +4705,6 @@ _as_dotfile_line() {
         esac
       fi
       ;;
-    ssh) ;;
     *)
       # A section named after a profile (the active one at a launch; any, at the
       # review). The engine does not interpret these: it collects the pairs and
@@ -4683,10 +4724,10 @@ _as_dotfile_line() {
   return 0
 }
 
-# _as_dotfile_apply_role ROLE -- the role-suffixed [allow], [deny], [env], [conda] and
-# [net] lines (#221) whose glob matches ROLE, in file order, after the unsuffixed ones:
-# a key overrides, a list adds. `--all` applies every one, for the review, which reads
-# the whole file whatever role launches it.
+# _as_dotfile_apply_role ROLE -- the role-suffixed [allow], [deny], [env], [conda],
+# [net], [gpu] and [ssh] lines (#221) whose glob matches ROLE, in file order, after the
+# unsuffixed ones: a key overrides, a list adds. `--all` applies every one, for the
+# review, which reads the whole file whatever role launches it.
 _as_dotfile_apply_role() {
   local role="$1" e g rest
   for e in ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
@@ -4914,6 +4955,8 @@ _as_check_actas() {
       v="no -- --ssh is refused for this role ([net] git = $([[ ${_git_refuse:-0} == 1 ]] && echo refuse || echo fetch))"
     elif [[ "$net" == none ]]; then
       v="no -- no network"
+    elif ((${#_ssh_hosts[@]})); then
+      v="$(_as_ssh_sources) -- through the broker; plus any host a launch names with --ssh"
     else
       v="only the hosts a launch names with --ssh, through the broker"
     fi
@@ -5779,7 +5822,7 @@ _as_apply() {
     _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
     return 1
   fi
-  local -a names=(allow deny share-memory env conda net gpu seccomp overlay sandbox connect briefing) lines=() have=() add=()
+  local -a names=(allow deny share-memory env conda net gpu ssh seccomp overlay sandbox connect briefing) lines=() have=() add=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
@@ -5800,9 +5843,9 @@ _as_apply() {
   fi
   if [[ -n "$glob" ]]; then
     case "$name" in
-      sandbox | connect | allow | deny | env | conda | net | gpu | briefing) ;;
+      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | briefing) ;;
       *)
-        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu and briefing do)"
+        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh and briefing do)"
         return 2
         ;;
     esac
@@ -5819,7 +5862,7 @@ _as_apply() {
     first_role=1
     for l in ${lines[@]+"${lines[@]}"}; do
       _ap_norm "$l"
-      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|briefing):.+\]$ ]] && first_role=0
+      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|briefing):.+\]$ ]] && first_role=0
     done
   fi
   # The section's last occurrence, and its last line that is not blank or a comment:
@@ -6579,10 +6622,6 @@ agent_sandbox() (
     _as_msg "--ssh-unrestricted and --ssh HOST are mutually exclusive"
     return 2
   fi
-  if ((! _ssh_want)) && [[ -n "$_ssh_key$_ssh_timeout" ]]; then
-    _as_msg "--ssh-key / --ssh-timeout need --ssh HOST or --ssh-unrestricted"
-    return 2
-  fi
   if [[ -n "$_ssh_timeout" && ! "$_ssh_timeout" =~ ^[0-9]+[smhdwSMHDW]?$ ]]; then
     _as_msg "--ssh-timeout: bad lifetime '$_ssh_timeout' (seconds, or e.g. 30m, 2h)"
     return 2
@@ -6821,11 +6860,12 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
+  local -a _ssh_df=() _ssh_flag_hosts=(${_ssh_hosts[@]+"${_ssh_hosts[@]}"})
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")"
   # THE REVIEW IS PART OF THE LAUNCH (#143). A dot-file that is new, changed since it
@@ -6937,6 +6977,9 @@ agent_sandbox() (
       done
       for _dh in ${_df_deny[@]+"${_df_deny[@]}"}; do
         [[ "$_dh" =~ $_hostre ]] && _deny_hosts+=("$_dh")
+      done
+      for _dh in ${_df_ssh[@]+"${_df_ssh[@]}"}; do
+        _as_ssh_spec_ok "${_dh#*$'\t'}" && _ssh_df+=("$_dh") # a bad one: the review said so
       done
       ((${#_df_forward[@]})) && _knob_forward="${_knob_forward:+$_knob_forward }${_df_forward[*]}"
       # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
@@ -7094,6 +7137,30 @@ agent_sandbox() (
     _as_msg "this project's approved .agent-sandbox is missing; its policy (memory scoping, paths, ports, ...) would" \
       "silently fall back to the defaults. Refusing to launch: restore the file, launch from a terminal to be asked, or forget the approval with: $invoked --trust"
     return 1
+  fi
+
+  # THE DOT-FILE'S SSH HOSTS: its [ssh] and [ssh:<glob>] lines for this role, added to
+  # the launch's --ssh, and from here on one list with one path: the broker, the
+  # destination constraint, strict mode's pinholes. Not where the role's [net] git
+  # closes SSH: there the file's own narrowing wins, and only an --ssh flag is refused
+  # (below). Under --ssh-unrestricted the hosts are within what the key may reach.
+  if ((${#_ssh_df[@]})); then
+    if ((_git_refuse || _git_fetch_only)); then
+      _as_info ".agent-sandbox [ssh] hosts not granted: this role's [net] git = $( ((_git_refuse)) && echo refuse || echo fetch) closes SSH"
+      _ssh_df=()
+    elif ((_ssh_unrestricted)); then
+      _as_msg "--ssh-unrestricted: the key is loaded without a constraint, so the .agent-sandbox [ssh] hosts ($(printf '%s\n' "${_ssh_df[@]#*$'\t'}" | paste -sd' ')) are reachable with the rest"
+    else
+      for _dh in "${_ssh_df[@]}"; do
+        _dj="${_dh#*$'\t'}"
+        [[ " ${_ssh_hosts[*]-} " == *" $_dj "* ]] || _ssh_hosts+=("$_dj")
+      done
+      _ssh_want=1
+    fi
+  fi
+  if ((! _ssh_want)) && [[ -n "$_ssh_key$_ssh_timeout" ]]; then
+    _as_msg "--ssh-key / --ssh-timeout need --ssh HOST, --ssh-unrestricted, or an .agent-sandbox [ssh] host for this role"
+    return 2
   fi
 
   # A [<profile>] key the profile does not read (profile_dotfile_keys) is warned of at

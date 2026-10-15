@@ -197,6 +197,27 @@ X
   [[ "$output" == *"git.example reachable at 10.20.30.40 10.20.30.41 on port 22"* ]]
 }
 
+@test "strict: an .agent-sandbox [ssh] host gets the pinhole and the /etc/hosts line an --ssh host gets" {
+  make_ssh_stubs
+  cat >"$H/bin/getent" <<'X'
+#!/usr/bin/env bash
+set +x
+[[ "$1" == ahostsv4 ]] && { printf '10.20.30.40 STREAM %s\n' "$2"; exit 0; }
+[[ "$1 $2" == "passwd 0" ]] && { echo "root:x:0:0:root:/root:/bin/bash"; exit 0; }
+exit 2
+X
+  chmod +x "$H/bin/getent"
+  printf '[ssh]\ngit.example\n' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    AGENT_SANDBOX_SESSION_BASE="$H/base" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -q 'ip daddr 10.20.30.40 tcp dport 22 accept' "$H/pasta_argv"
+  mapfile -t P <"$H/argv"
+  [[ " ${P[*]} " == *" --ro-bind "*"/etc-hosts /etc/hosts "* ]]
+  [[ "$output" == *"git.example reachable at 10.20.30.40 on port 22"* ]]
+}
+
 @test "strict: the proxy env survives --clearenv (set after it), so the agent gets HTTPS_PROXY" {
   # The stubs above only record pasta's argv; here pasta actually runs the wrapper
   # body so we see the argv bwrap really receives. A stub 'ip' feeds the gateway

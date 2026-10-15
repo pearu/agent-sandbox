@@ -103,6 +103,18 @@ trust() {
   run ! grep -q 'SECRET-CANARY' "$OUT/briefing.md"
 }
 
+@test "the briefing's SSH line names each host and where it came from: the dot-file's section, --ssh" {
+  make_ssh_stubs
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  grep -qxF -- '- SSH reachable through a constrained agent: none' "$OUT/briefing.md"
+  printf '[ssh]\ngithub.com\n[ssh:impl-*]\ngit@gitlab.example\n' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine BWRAP_COPY="$OUT" -- asb --role impl-1 --ssh flag.example --ssh github.com claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- '- SSH reachable through a constrained agent: flag.example (--ssh), github.com (.agent-sandbox [ssh], --ssh), git@gitlab.example (.agent-sandbox [ssh:impl-*])' "$OUT/briefing.md"
+  grep -qF 'SSH: flag.example (--ssh), github.com (.agent-sandbox [ssh], --ssh), git@gitlab.example (.agent-sandbox [ssh:impl-*]).' "$OUT/hook-SessionStart.json"
+}
+
 @test "a read-only project is said so: the briefing lists it read-only and only what is declared writable (#220)" {
   mkdir -p "$PROJ/impl"
   run_engine BWRAP_COPY="$OUT" -- asb --connect 'project = read-only' --connect './impl/ = read-write' claude --version

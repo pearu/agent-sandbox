@@ -307,6 +307,11 @@ Stated plainly. These are what the adversary above can still do.
   host the tunnel is opaque: a force-push cannot be blocked. `--ssh-unrestricted`
   lets the session authenticate as you to any host that trusts the key, for as
   long as it lives (`--ssh-timeout` bounds that).
+- **An approved `.agent-sandbox` can grant SSH.** Its `[ssh]` hosts are loaded with
+  the same destination constraint as `--ssh`, but every launch of the roles it names
+  gets them without a flag: approving such a file is approving a role that can sign
+  in as you there, for as long as the file stays approved. The review says so per
+  host; the private key, the timeout and `--ssh-unrestricted` stay on the command line.
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
@@ -424,9 +429,10 @@ on the user's word.
 its commits live in its layer's `.git`, so its work is published before the instance is
 deleted, and live instances are reset after `main` is rebuilt (a layered `.git` over a
 moved lower is the layered-build hazard, in git's metadata). It publishes over SSH
-through the broker, as the user does, to the checkout's remotes as they are: an
-`upstream` plus `origin` is a fork workflow, `origin` alone direct access; `ghstack
-submit` where the project uses it, its login opt-in per project (it holds a token):
+through the broker, as the user does -- opt-in per project, `asb --apply
+'[ssh:gh-fix-*]' github.com`, or `--ssh github.com` for one launch -- to the checkout's
+remotes as they are: an `upstream` plus `origin` is a fork workflow, `origin` alone
+direct access; `ghstack submit` where the project uses it, its login opt-in per project (it holds a token):
 `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
 
 Measured 2026-10-06 on a scratch private repository: a `gh-fix` instance launched with
