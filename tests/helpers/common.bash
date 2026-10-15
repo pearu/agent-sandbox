@@ -25,12 +25,31 @@ export REPO_ROOT ENGINE
 # execs `env "${ENGINE_CMD[@]}"`. Each call names a fresh kcov dir under
 # $AGENT_SANDBOX_KCOV_DIR, one per launch; coverage.sh merges them. Call it once per
 # launch. A launch that does not go through it is not measured.
+#
+# The engine's Python components (join.py, connect-sync.py) are measured the same way:
+# when AGENT_SANDBOX_TEST_PYTHON is set (coverage_run.py, by scripts/coverage.sh), it
+# leads the words, so the engine inside env -i runs each component through it
+# (_as_python in the engine).
 engine_cmd() {
   local cmd="${1:-$ENGINE}"
-  ENGINE_CMD=("$cmd")
+  local -a pyenv=()
+  [[ -n "${AGENT_SANDBOX_TEST_PYTHON:-}" ]] && pyenv=(AGENT_SANDBOX_TEST_PYTHON="$AGENT_SANDBOX_TEST_PYTHON")
+  ENGINE_CMD=(${pyenv[@]+"${pyenv[@]}"} "$cmd")
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || return 0
-  ENGINE_CMD=(${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"}
+  ENGINE_CMD=(${pyenv[@]+"${pyenv[@]}"} ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"}
     "$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" --bash-dont-parse-binary-dir "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM" "$cmd")
+}
+
+# python_cmd -- set PYTHON_CMD to the words that run one of the engine's Python
+# components in a test that runs it directly: python3, or AGENT_SANDBOX_TEST_PYTHON's
+# words when set -- the engine's own rule (_as_python), so the component is measured
+# under coverage here too:
+#
+#   python_cmd
+#   run "${PYTHON_CMD[@]}" "$REPO_ROOT/components/connect-sync.py" sync ...
+python_cmd() {
+  # shellcheck disable=SC2206,SC2034 # words, split as the engine splits them; read by the suites
+  PYTHON_CMD=(${AGENT_SANDBOX_TEST_PYTHON:-python3})
 }
 
 # Source the engine. When sourced it only defines its functions (the run guard

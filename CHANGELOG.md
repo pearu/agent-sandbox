@@ -194,6 +194,10 @@ names are gone; there are no aliases for removed names before 1.0.
 - The sandbox-owned conda package cache is bound whenever a conda env is active, not only
   in write mode (#219): an env written by path, `conda install -p`, keeps its downloads
   across launches.
+- Coverage now measures the Python components: `components/join.py` and
+  `components/connect-sync.py`, reported at 0%, are measured by coverage.py where they
+  run -- in the engine's joins and copy syncs, and in their unit tests -- through
+  `AGENT_SANDBOX_TEST_PYTHON`, and uploaded to Codecov with the engine's and the addon's.
 
 ### Fixed
 

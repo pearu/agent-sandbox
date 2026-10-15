@@ -13,6 +13,7 @@
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   SYNC="$REPO_ROOT/components/connect-sync.py"
+  python_cmd # measured under coverage (common.bash)
   S="$BATS_TEST_TMPDIR/source"
   C="$BATS_TEST_TMPDIR/copy"
   B="$BATS_TEST_TMPDIR/base.json"
@@ -20,10 +21,10 @@ setup() {
 }
 
 # sync / reset over the directory-shaped channel
-sync() { run python3 "$SYNC" sync --kind dir --source "$S" --copy "$C" --base "$B"; }
-reset() { run python3 "$SYNC" reset --kind dir --source "$S" --copy "$C" --base "$B"; }
+sync() { run "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S" --copy "$C" --base "$B"; }
+reset() { run "${PYTHON_CMD[@]}" "$SYNC" reset --kind dir --source "$S" --copy "$C" --base "$B"; }
 # and over a file-shaped one
-fsync() { run python3 "$SYNC" sync --kind file --source "$1" --copy "$2" --base "$B"; }
+fsync() { run "${PYTHON_CMD[@]}" "$SYNC" sync --kind file --source "$1" --copy "$2" --base "$B"; }
 
 plant() { # plant REL CONTENT -- in the source
   mkdir -p "$(dirname "$S/$1")"
@@ -225,7 +226,7 @@ assert len(d["a.md"]) == 64, d          # a sha256, not a blob
 
 # ----- `cow`: which shadows has the source changed underneath? ---------------
 
-shadows() { run python3 "$SYNC" shadows --source "$S" --upper "$U" --seen "$B"; }
+shadows() { run "${PYTHON_CMD[@]}" "$SYNC" shadows --source "$S" --upper "$U" --seen "$B"; }
 shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the overlay
   mkdir -p "$(dirname "$U/$1")"
   printf '%s\n' "$2" >"$U/$1"
@@ -297,10 +298,10 @@ shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the 
 }
 
 @test "bad arguments are refused rather than half-applied" {
-  run python3 "$SYNC" sync --kind dir --source "$S" --copy "$C"
+  run "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S" --copy "$C"
   [ "$status" -eq 2 ]
-  run python3 "$SYNC" sync --kind sideways --source "$S" --copy "$C" --base "$B"
+  run "${PYTHON_CMD[@]}" "$SYNC" sync --kind sideways --source "$S" --copy "$C" --base "$B"
   [ "$status" -eq 2 ]
-  run python3 "$SYNC" frobnicate --kind dir --source "$S" --copy "$C" --base "$B"
+  run "${PYTHON_CMD[@]}" "$SYNC" frobnicate --kind dir --source "$S" --copy "$C" --base "$B"
   [ "$status" -eq 2 ]
 }

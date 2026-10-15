@@ -21,6 +21,13 @@
 # $OUT/<stage>.tap, and prints the slowest files and tests -- which is where a slow
 # coverage run shows what it spends its time on.
 #
+# The engine's Python components (components/join.py, connect-sync.py) are measured by
+# coverage.py in the engine stages, where they run: the engine runs them with
+# AGENT_SANDBOX_TEST_PYTHON's words (its _as_python; the harness's python_cmd for tests
+# that run one directly), which the stages set to tests/helpers/coverage_run.py. Each run
+# leaves a data file in engine-runs/<stage>/py/; engine-merge combines them, and every
+# shard's under engine-parts/*/py/, into coverage-out/components-coverage.xml.
+#
 # Output (HTML + a printed summary) goes under coverage-out/ (git-ignored).
 # The engine run drives the unit and integration suites; the integration ones
 # need bwrap (and pasta for strict) or they skip, so run it where those work.
@@ -121,6 +128,17 @@ need_kcov() {
   }
 }
 
+# py_setup -- the coverage.py rcfile for the engine's Python components, written to
+# $OUT/coveragerc. Shared by the stages (which run the components through it) and the
+# merge (which reports what it includes: components/ only).
+py_setup() {
+  cat >"$OUT/coveragerc" <<EOF
+[run]
+include = $PWD/components/*
+disable_warnings = no-data-collected, module-not-measured, module-not-imported
+EOF
+}
+
 # run_engine_suite STAGE DIR -- one suite directory under kcov, into its own run dir.
 run_engine_suite() {
   local stage="$1" dir="$2"
@@ -145,13 +163,22 @@ run_engine_suite() {
   # under env -i.
   local kcov_bin
   kcov_bin="$(command -v kcov)"
+  # The Python components run through coverage.py wherever they run (the engine's
+  # _as_python, the harness's python_cmd): AGENT_SANDBOX_TEST_PYTHON is
+  # tests/helpers/coverage_run.py under this python3 -- by absolute path, since the
+  # harness's PATH under env -i has no coverage.py -- and each run's data lands in
+  # $covdir/py as .coverage.<pid>.<random>.dump (why not `coverage run`: see that file).
+  py_setup
+  mkdir -p "$covdir/py"
   AGENT_SANDBOX_KCOV="$kcov_bin" AGENT_SANDBOX_KCOV_DIR="$covdir" \
+    AGENT_SANDBOX_TEST_PYTHON="$(command -v python3) $PWD/tests/helpers/coverage_run.py $covdir/py $OUT/coveragerc" \
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-${CONDA_PREFIX:+$CONDA_PREFIX/lib}}" \
     timed_bats "$stage" "${files[@]}" || true
   shopt -s nullglob
-  local runs=("$covdir"/r.*)
+  local runs=("$covdir"/r.*) pys=("$covdir"/py/.coverage.*.dump)
   shopt -u nullglob
   echo "   kcov runs collected: ${#runs[@]}"
+  echo "   coverage.py data files collected: ${#pys[@]}"
 }
 
 run_engine_merge() {
@@ -182,6 +209,53 @@ PYJSON
   fi
   [[ -n "$x" ]] && cp -f "$x" "$OUT/engine-cobertura.xml" && echo "   xml:  $OUT/engine-cobertura.xml"
   echo "   html: $OUT/engine/index.html"
+  run_py_merge
+}
+
+# run_py_merge -- combine the components' coverage.py data: every run of this machine's
+# stages (engine-runs/*/py/.coverage.*.dump) and every shard's merge
+# (engine-parts/*/py/components.coverage) into $OUT/engine/py/components.coverage --
+# which a shard passes on with its kcov merge, in coverage-out/engine; not a dot-file,
+# which upload-artifact leaves out -- and report it.
+run_py_merge() {
+  command -v coverage >/dev/null || {
+    echo "coverage.py not found; run: mamba env update -n agent-sandbox -f environment.yml" >&2
+    return 2
+  }
+  shopt -s nullglob
+  local pys=("$OUT"/engine-runs/*/py/.coverage.*.dump "$OUT"/engine-parts/*/py/components.coverage)
+  # (counted here; the files are globbed in Python, as there may be thousands)
+  shopt -u nullglob
+  echo "== components (coverage.py) =="
+  if ((${#pys[@]} == 0)); then
+    echo "   (no component coverage collected)"
+    return 0
+  fi
+  py_setup
+  mkdir -p "$OUT/engine/py"
+  local cf="$OUT/engine/py/components.coverage"
+  rm -f "$cf"
+  python3 - "$cf" "$OUT" <<'PY'
+import glob, sys
+from coverage import CoverageData
+out = CoverageData(basename=sys.argv[1])
+o = sys.argv[2]
+for p in glob.glob(f"{o}/engine-runs/*/py/.coverage.*.dump") + glob.glob(f"{o}/engine-parts/*/py/components.coverage"):
+    if p.endswith(".dump"):
+        d = CoverageData(no_disk=True)
+        with open(p, "rb") as fh:
+            d.loads(fh.read())
+    else:
+        d = CoverageData(basename=p)
+        d.read()
+    out.update(d)
+out.write()
+PY
+  echo "   combined ${#pys[@]} data files"
+  COVERAGE_FILE="$cf" coverage report --rcfile="$OUT/coveragerc" \
+    --include="*/components/join.py,*/components/connect-sync.py" | sed 's/^/   /'
+  COVERAGE_FILE="$cf" coverage xml --rcfile="$OUT/coveragerc" -o "$OUT/components-coverage.xml" >/dev/null 2>&1 \
+    && echo "   xml:  $OUT/components-coverage.xml"
 }
 
 run_engine() {

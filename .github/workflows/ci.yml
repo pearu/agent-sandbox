@@ -208,11 +208,12 @@ jobs:
         if: always()
         run: systemctl --user stop agent-sandbox-mitmproxy.service || true
 
-  # Line coverage: kcov (engine) + coverage.py (addon), uploaded to Codecov for the README
-  # badge. The engine's stages run as shards (COVERAGE_SHARD, tests/shard.sh); each merges
-  # its own kcov runs and passes on that merged directory -- a few MB, where the per-launch
-  # runs are over a GB -- and coverage-merge merges the merges, which gives the same
-  # coverage as one merge. kcov is built from source with conda-forge deps (it is not
+  # Line coverage: kcov (engine) + coverage.py (addon, and the components join.py and
+  # connect-sync.py), uploaded to Codecov for the README badge. The engine's stages run as
+  # shards (COVERAGE_SHARD, tests/shard.sh); each merges its own kcov runs and passes on
+  # that merged directory -- a few MB, where the per-launch runs are over a GB -- with its
+  # components' coverage.py data in py/, and coverage-merge merges the merges, which gives
+  # the same coverage as one merge. kcov is built from source with conda-forge deps (it is not
   # packaged), into an environment cached under its own key so that a later run finds it
   # built. The integration stage needs bwrap/pasta. Needs the CODECOV_TOKEN repo secret;
   # forks (no secret) skip the upload, not the run.
@@ -286,5 +287,5 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage-out/addon-coverage.xml,coverage-out/engine-cobertura.xml
+          files: coverage-out/addon-coverage.xml,coverage-out/engine-cobertura.xml,coverage-out/components-coverage.xml
           fail_ci_if_error: false

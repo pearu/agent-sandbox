@@ -146,6 +146,10 @@ PY
   # shellcheck disable=SC2016 # the stub's own $2 and $@
   printf '#!/usr/bin/env bash\n[ "$2" = config-view ] && exit 3\nexec /usr/bin/python3 "$@"\n' >"$H/bin/python3"
   chmod +x "$H/bin/python3"
+  # The stub is the interpreter under coverage too, where AGENT_SANDBOX_TEST_PYTHON
+  # would otherwise run profile.py past it (unmeasured here, then).
+  # shellcheck disable=SC2034 # read by engine_cmd (common.bash)
+  AGENT_SANDBOX_TEST_PYTHON="$H/bin/python3"
   run_engine -- asb --connect 'config=seed-only native' claude --version
   [ "$status" -ne 0 ]
   [[ "$output" == *"could not make this project's view"*"refusing rather than seeding the whole file"* ]]
