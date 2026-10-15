@@ -47,6 +47,11 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **What a session hands you to run is one line or a file**: the CLI prefixes every line
+  of a reply, so a heredoc, a patch or a commit message pasted from it breaks. The
+  briefing says so, and names where the session's writable stores are on the host --
+  `.asb/scratch/` under the role's state directory, a `copy-on-write` project's layer --
+  so the message can give `git apply PATH` or `git commit -F PATH` with a path that works.
 - **`[ssh]` and `[ssh:<role-glob>]` in `.agent-sandbox`**: SSH hosts for a project's
   sessions, per role, one per line in the forms `--ssh HOST` takes. Honoured only once
   approved; the review names each as a widening, and `--check` and the briefing name

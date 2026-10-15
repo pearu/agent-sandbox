@@ -60,4 +60,7 @@ as the remotes say. (ghstack inside this layer is untried: if it fails, stop and
 the user.) Pushing to another person's pull request branch is for when the user says so
 explicitly; otherwise open a new pull request (or a new stack) that references N. Open
 it with `gh pr create`, its text shown to the user first and following the project's AI
-policy.
+policy. A patch or a commit message for the user goes into `.asb/scratch/`, and your
+message gives `git apply PATH` or `git commit -F PATH` with its host path from the
+briefing, the whole command on one line to copy: a multi-line block pasted from chat
+breaks.

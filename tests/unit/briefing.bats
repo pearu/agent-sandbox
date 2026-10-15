@@ -17,6 +17,11 @@ setup() {
 #!/usr/bin/env bash
 . "${0%/*}/stub-env"
 set +x
+# a bubblewrap that can mount an overlay, as the harness's own stub says it can
+if [ "${1:-}" = --help ]; then
+  printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'
+  exit 0
+fi
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 if [ -n "${BWRAP_COPY:-}" ]; then
@@ -475,4 +480,35 @@ CHECK
   [ "$status" -eq 0 ] && [ -z "$output" ]
   run bash "$hook" PostToolUse "$BATS_TEST_TMPDIR/nowhere" "$BATS_TEST_TMPDIR/seen3"
   [ "$status" -eq 0 ] && [ -z "$output" ]
+}
+
+@test "what the session hands the user is one line or a file, and the briefing names where its files are on the host" {
+  local sbox="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
+  local md="$OUT/briefing.md"
+  # a read-write project, and an own store declared in it
+  run_engine BWRAP_COPY="$OUT" -- asb --connect '.asb/scratch/ = own' claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF '## Handing the user something to run or read' "$md"
+  grep -qF 'heredoc, a patch or a' "$md"
+  # shellcheck disable=SC2016 # the backticks are literal text in the briefing
+  grep -qF '`git apply PATH`, `git commit -F PATH`, `bash PATH`. The whole command, path' "$md"
+  grep -qF "never typed -- a single copied line's prefix is harmless to a shell." "$md"
+  grep -qxF -- "- the project (read-write) is the project directory itself, $PROJ" "$md"
+  # the store the launch bound there, as the bwrap argv has it
+  local slot
+  slot="$sbox/default/@paths/own/$(printf '%s' "${PROJ#/}/.asb/scratch" | tr / _)"
+  argv_has --bind "$slot" "$PROJ/.asb/scratch"
+  grep -qxF -- "- .asb/scratch/ (own) is, on the host, $slot" "$md"
+  # the short form: one clause, pointing at the paths
+  grep -qF 'What you hand the user to run is one line or a file (where your files are on the host: briefing.md).' "$OUT/hook-SessionStart.json"
+  # a copy-on-write project: a file written into it is in the role's layer
+  run_engine BWRAP_COPY="$OUT" -- asb --role rev-1 --connect 'project = copy-on-write' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --overlay-src "$PROJ" --overlay "$sbox/rev-1/@project/upper" "$sbox/rev-1/@project/work" "$PROJ"
+  grep -qxF -- "  layer, not in the user's tree -- $PROJ/X is, on the host, $sbox/rev-1/@project/upper/X" "$md"
+  run ! grep -qF 'is the project directory itself' "$md"
+  # a read-only project, nothing declared: nothing to reach
+  run_engine BWRAP_COPY="$OUT" -- asb --connect 'project = read-only' claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- '- none: nothing this session can write is a file the user can reach' "$md"
 }

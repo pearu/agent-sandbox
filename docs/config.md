@@ -146,7 +146,10 @@ Sections:
   `SessionStart`/`SubagentStart` hooks that inject a compact summary — so a
   resumed session is never told a policy that has since changed — and a hook
   after every Bash call that reports a host the proxy refused during it
-  ([network](network.md#refusals-reach-the-session)). It lists
+  ([network](network.md#refusals-reach-the-session)). `briefing.md` also says
+  that what a session hands you to run is one line or a file -- the CLI prefixes
+  every line of a reply, so a pasted heredoc or patch breaks -- and where its
+  writable stores are on the host, a `copy-on-write` project's layer included. It lists
   names and paths only, never the contents of anything shared. Turning it off
   grants and hides nothing; it only stops the sandbox describing itself.
   If you pass your own `--settings`, the two are merged (Claude Code honours
