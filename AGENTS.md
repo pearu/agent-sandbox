@@ -76,7 +76,10 @@ the integration suites, so run it where those work. The engine's Python componen
 through `AGENT_SANDBOX_TEST_PYTHON` (`_as_python`; tests that run one directly use
 `python_cmd`), which the stages set to `tests/helpers/coverage_run.py`; the data goes
 to `engine-runs/<stage>/py/`, and `engine-merge` combines it into
-`coverage-out/components-coverage.xml`.
+`coverage-out/components-coverage.xml`. CI uploads the reports to Codecov, where
+`codecov.yml` splits them per component (engine, proxy addon, Python components, claude
+profile); every status is informational, and the README badge is the only overall
+number.
 
 ### How the tests work
 

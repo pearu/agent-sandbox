@@ -47,6 +47,9 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **Codecov reports per component** (`codecov.yml`): engine, proxy addon, Python
+  components, claude profile, each its own number in the PR comment; every status is
+  informational, so coverage movement never blocks a PR.
 - **agent-sandbox's own micromamba**: conda inside a sandbox is the sandbox's concern, so
   a host needs no conda and a broken host install does not break a role. `install.sh`
   installs a pinned micromamba (2.9.0-0, checked against SHA-256 sums pinned per
