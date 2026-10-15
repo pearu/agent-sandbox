@@ -27,7 +27,8 @@ docs.python.org
 [net:gh-fix-*]
 git = allow                       # it pushes, over SSH through the broker (--ssh github.com)
 [connect:gh-fix-*]
-~/.ghstackrc = read-only          # ghstack's login, for a project that uses it (skipped if you have none)
+# ~/.ghstackrc = read-only        # ghstack's login (token): off; for a ghstack project:
+#   asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'
 [briefing:gh-review-*]
 file = .asb/roles/gh-review.md
 [briefing:gh-triage-*]

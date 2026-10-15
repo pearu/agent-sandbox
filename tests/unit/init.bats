@@ -200,6 +200,8 @@ init() {
   grep -qx 'project = copy-on-write.*' "$df"
   grep -qx "$H/envs/dev/ = copy-on-write.*" "$df"
   run ! grep -qE '\[[a-z]+:gh-[a-z]+-[0-9]' "$df" # no per-number section
+  grep -qx '# ~/\.ghstackrc = read-only .*' "$df" # ghstack's login (a token) is opt-in
+  run ! grep -qE '^[[:space:]]*~/\.ghstackrc' "$df"
   for k in gh-review gh-triage gh-fix; do
     [ -f "$PROJ/.asb/roles/$k.md" ]
     run ! grep -qF '{' "$PROJ/.asb/roles/$k.md"
@@ -216,8 +218,12 @@ init() {
   [[ "$output" == *"git transport: fetch only"* ]]
   [[ "$output" == *"briefed from: .asb/roles/gh-review.md"* ]]
   engine_cmd
+  printf 'token\n' >"$H/home/.ghstackrc" # there, and still not bound
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" != *"git transport: fetch only"* ]]
+  local policy
+  policy="$(sed -n '/^Policy:/,$p' <<<"$output")" # the table and binds, not the file shown
+  [[ "$policy" == *"briefed from:"* && "$policy" != *ghstackrc* ]]
   [[ "$output" == *"briefed from: .asb/roles/gh-fix.md"* ]]
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"

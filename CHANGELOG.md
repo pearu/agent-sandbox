@@ -164,6 +164,10 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The github model's fixer no longer gets `~/.ghstackrc` in every project**: the file
+  carries a GitHub token, and only a project that uses ghstack needs it. The line is
+  written commented out; `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`
+  turns it on for one project.
 - **The role verbs need no command** when one profile is installed:
   `asb --role R --reset config` (and `--status`, `--shutdown`, `--delete`) used to stop
   at "no command. Name the agent to run"; with several profiles the refusal names the
