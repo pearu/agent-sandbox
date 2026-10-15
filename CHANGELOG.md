@@ -47,6 +47,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`[ssh]` and `[ssh:<role-glob>]` in `.agent-sandbox`**: SSH hosts for a project's
+  sessions, per role, one per line in the forms `--ssh HOST` takes. Honoured only once
+  approved; the review names each as a widening, and `--check` and the briefing name
+  each host with its section. At a launch they join the `--ssh` hosts in one list
+  through the broker (destination constraint, `known_hosts`, strict mode's pinholes);
+  `--ssh-unrestricted`, `--ssh-key` and `--ssh-timeout` stay launch-only, and a role
+  whose `[net] git` is `fetch` or `refuse` gets none of them. The github model writes
+  `[ssh:gh-fix-*]` with `github.com` commented out and the line that turns it on,
+  `asb --apply '[ssh:gh-fix-*]' github.com`; a fixer without SSH asks for exactly that.
 - **A refused host reaches the session as it happens**: the proxy also appends each
   refusal of a session to that session's own `refused.log`, bound read-only at
   `/run/agent-sandbox/refused.log`, and the claude profile's hook after every Bash call

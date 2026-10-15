@@ -36,6 +36,19 @@
 #pypi.org
 
 
+# --- SSH hosts -------------------------------------------------------------
+# Hosts this project's sessions may reach over SSH, through the per-session broker:
+# your key stays on the host and is constrained to these hosts (docs/ssh.md). The
+# forms `--ssh HOST` takes -- a hostname, user@host, a ~/.ssh/config alias -- one
+# per line; a launch's `--ssh` adds to them. A widening: the role signs in as you.
+# --ssh-unrestricted, --ssh-key and --ssh-timeout are launch flags only. A role
+# whose [net] git is fetch or refuse gets none of these.
+#[ssh]
+#git@gitlab.example.com
+#[ssh:implementer-*]
+#github.com
+
+
 # --- Memory scoping ------------------------------------------------------
 # Which other projects' Claude memory this session may read, read-only. By
 # default it sees only its own project. List project paths (not the ~/.claude

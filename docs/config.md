@@ -41,6 +41,20 @@ Sections:
   session's own grant, for those sessions only. Never a host the agent's profile
   needs: a line that would take one (`.anthropic.com` for `claude`) is left out, and
   said. Ignored in `open` and `none` network modes, which have no proxy to refuse.
+- **`[ssh]`** — hosts sessions in this project may reach over SSH through the
+  broker, one per line, in the forms `--ssh HOST` takes: a hostname, `user@host`, or
+  an alias from your `~/.ssh/config` (a line with any other character, a leading `-`
+  or a space is said at the review and ignored). The same grant as `--ssh`, and the
+  same path: a launch's hosts are this section's and its `--ssh` flags together, each
+  checked against your `known_hosts`, the key loaded into the session's agent with a
+  destination constraint per host, and in `strict` mode a firewall pinhole per host
+  ([ssh.md](ssh.md)). Per role with `[ssh:<role>]`. A widening -- the role signs in as
+  you there -- so the review names each host and the roles it is for, and `--check`
+  and the briefing name each with its section. `--ssh-unrestricted`, `--ssh-key` and
+  `--ssh-timeout` are launch-only: a project's file never picks your key or the
+  escape hatch (with `--ssh-unrestricted` the key has no constraint, so the section's
+  hosts are within it, and the launch says so). A role whose `[net] git` is `fetch`
+  or `refuse` gets none of the section's hosts: that line closes SSH for it.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
@@ -90,8 +104,9 @@ Sections:
   answer to that ([recipes.md](recipes.md), the `gh` section). Per role with
   `[net:<role>]`; ignored in `open` and `none`, which have no proxy.
   `git = allow|fetch|refuse` (#224, default allow): `fetch` lets git fetch over HTTPS
-  and refuses a push (the `git-receive-pack` advertisement and endpoint) and `--ssh`,
-  so a role reads repositories and never pushes; `refuse` stops git's smart-HTTP
+  and refuses a push (the `git-receive-pack` advertisement and endpoint) and `--ssh`
+  (the file's `[ssh]` hosts are not granted to it), so a role reads repositories and
+  never pushes; `refuse` stops git's smart-HTTP
   transport to every host -- the ref advertisement (`/info/refs?service=git-upload-pack`
   or `git-receive-pack`), the pack endpoints, and anything sent with git's own
   `git/...` user agent -- so the session neither fetches nor pushes over HTTPS, while
@@ -404,8 +419,7 @@ Sections:
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
 engine at code to source. They stay command-line/environment knobs; see
-`asb --engine-help`. An `[ssh]`
-section is not accepted yet either; use `--ssh` on the command line. An unknown
+`asb --engine-help`. An unknown
 section, or a line before any section, is ignored with a warning.
 
 A ready-to-copy [agent-sandbox.example](agent-sandbox.example) lists every
@@ -467,8 +481,9 @@ anything:
   role's own and no `GH_TOKEN` is forwarded) or no GitHub host is reachable; read only,
   under `retrieve-only`; yes, writes included, otherwise -- with whether git's transport
   is refused, and under `proxy` a note that those lines bind only the tools that use
-  the proxy; SSH -- refused with `git = refuse`, else only the hosts a launch names with
-  `--ssh`; and every forwarded variable named like a credential;
+  the proxy; SSH -- refused with `git = fetch` or `refuse`, else the file's `[ssh]`
+  hosts for the role, each with its section, plus any a launch names with `--ssh`; and
+  every forwarded variable named like a credential;
 - **lines with no effect** for the role: a `[connect]` line at the preset's own rung
   (when it is the only line for that channel the role gets -- a role's line restating
   the preset over an unsuffixed one is an override), the same key twice in one section
@@ -679,8 +694,9 @@ preset = isolated                 # the reviewer role
 and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
 changes `skills` and leaves every other channel as `[connect]` put it.
 `[sandbox]` (its `preset`), `[connect]`, and (#221) `[allow]`, `[deny]`, `[env]`,
-`[conda]` and `[net]` take a suffix: a key there overrides the unsuffixed one for
-the role, a list (`[allow]`, `[deny]`, `[env]` names) adds to it --
+`[conda]`, `[net]`, `[gpu]`, `[ssh]` and `[briefing]` take a suffix: a key there
+overrides the unsuffixed one for the role, a list (`[allow]`, `[deny]`, `[ssh]`,
+`[env]` names) adds to it --
 
 ```ini
 [conda]
@@ -691,6 +707,8 @@ prefix = .asb/impl-1/.env         # this one's own clone
 mode = none
 [deny:reviewer]
 pypi.org
+[ssh:impl-*]
+github.com                        # the implementers push over SSH
 ```
 
 A suffix on any other section is said at the file's review and that section is

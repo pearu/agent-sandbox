@@ -162,6 +162,50 @@ own_bind() { argv_has --bind "$STATE/$1/$2/own/$(slugify "$3")" "$3"; }
   [[ "$output" == *"matches no role section"* ]]
 }
 
+# The constraints the broker loaded the key with: the `-h` arguments ssh-add was given.
+ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | sort | paste -sd' '; }
+
+@test "[ssh:<glob>]: the hosts reach the roles the glob matches and no other; the section defines a role" {
+  make_ssh_stubs
+  dotfile $'[ssh]\nall.example\n[ssh:gh-fix-*]\ngithub.com\n[connect:gh-review-*]\n'
+  run_engine -- asb --role gh-fix-215 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(ssh_constraints)" = "all.example github.com" ]
+  : >"$H/ssh-add.log"
+  run_engine -- asb --role gh-review-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(ssh_constraints)" = "all.example" ]
+  : >"$H/ssh-add.log"
+  run_engine -- asb --role gh-review-1 --ssh flag.example claude --version
+  [ "$(ssh_constraints)" = "all.example flag.example" ]
+  # the role-sections rule: [ssh:gh-fix-*] and [connect:gh-review-*] are the roles here
+  : >"$H/ssh-add.log"
+  run_engine -- asb --role other claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"matches no role section"*"gh-fix-*"* ]]
+  [ ! -s "$H/ssh-add.log" ]
+  dotfile $'[ssh:gh-fix-*]\ngithub.com\n'
+  run_engine -- asb --role gh-review-1 claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"matches no role section"* ]]
+}
+
+@test "[ssh] and a role whose [net] git closes SSH: the file's narrowing wins for that role, and --ssh is still refused" {
+  make_ssh_stubs
+  dotfile $'[ssh]\ngithub.com\n[net:rev-*]\ngit = fetch\n[connect:*]\n'
+  run_engine -- asb --role rev-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ssh] hosts not granted: this role's [net] git = fetch closes SSH"* ]]
+  [ ! -s "$H/ssh-add.log" ]
+  run ! argv_has --setenv SSH_AUTH_SOCK
+  run_engine -- asb --role fix-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(ssh_constraints)" = "github.com" ]
+  run_engine -- asb --role rev-1 --ssh github.com claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--ssh is refused for role 'rev-1'"* ]]
+}
+
 @test "the review reads every role's lines, whatever role launches (#221)" {
   dotfile $'[env:impl-*]\nPINNED = yes\n[net:reviewer]\nmode = bogus\n'
   run_review
