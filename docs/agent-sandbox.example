@@ -6,6 +6,9 @@
 #
 #     asb --trust
 #
+# To add a line without an editor: asb --apply '[allow]' api.example.com
+# adds it to its section, then runs the same review.
+#
 # It is honored ONLY after approval, and a launch refuses a file you have not
 # approved -- one shipped by a cloned repo included -- until you review it. Once
 # approved, any edit or removal is shown to you again, as a diff, at the next

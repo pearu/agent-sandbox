@@ -217,6 +217,9 @@
 #                         (#143), for when there is none. Without a terminal
 #                         a launch refuses a new, changed or missing file
 #                         until it is reviewed. See docs/config.md.
+#   --apply '[SECTION]' LINE...
+#                         add the lines to that section of the file, then the
+#                         --trust review; host only. See docs/config.md.
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -332,6 +335,10 @@ Engine flags (before CMD):
   --ssh-timeout LIFE    expire the loaded key after LIFE (e.g. 30m, 2h)
   --trust               review and approve this project's .agent-sandbox
                         file, then exit (see docs/config.md)
+  --apply '[SECTION]' LINE...
+                        add the lines to that section of this project's
+                        .agent-sandbox (creating either), then the --trust
+                        review; host only. What a blocked session prints
   --init MODEL [ROLE=N ...] [--env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
@@ -3434,22 +3441,25 @@ _as_briefing_write() {
     # [allow:ROLE] only where the dot-file already has role sections (_df_role_globs,
     # by dynamic scope, as _as_role_resolve reads it): a first suffixed section would
     # refuse every other role name, the default included.
+    local sect="[allow]"
+    printf -- '- the command to run on the host, in %s, which shows them the change\n' "$cwd"
     if [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})); then
-      printf -- '- the exact lines to add to %s/.agent-sandbox -- [allow:%s]\n' "$cwd" "$_role"
-      printf '  applies to this role, [allow] to every role -- e.g.\n\n'
-      printf '      [allow:%s]\n      example.com\n\n' "$_role"
+      sect="[allow:$_role]"
+      printf '  and asks for their approval -- %s applies to this role, [allow] to\n' "$sect"
+      printf '  every role -- e.g.\n\n'
     else
-      printf -- '- the exact lines to add to %s/.agent-sandbox, e.g.\n\n' "$cwd"
-      printf '      [allow]\n      example.com\n\n'
+      printf '  and asks for their approval, e.g.\n\n'
     fi
-    printf 'then ask them to run `asb --trust` in that directory and relaunch.\n'
+    printf "      asb --apply '%s' example.com\n\n" "$sect"
+    printf '  or, for a host and for this launch only: asb --allow example.com ...\n\n'
+    printf 'then ask them to relaunch.\n'
     printf 'Continue without it only when the user says so. One clear request\n'
     printf 'costs less than twenty workarounds.\n'
   } >"$md" || return 1
 
   local short _lnshort
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If something is blocked, stop before going on without it: tell the user what you need, why, and the .agent-sandbox lines to add before they re-run \`asb --trust\`, and continue without it only when they say so -- you cannot widen this yourself."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If something is blocked, stop before going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --
@@ -5715,6 +5725,132 @@ _as_trust_review() {
   return 0
 }
 
+# _as_apply CWD HEADER LINE... -- --apply: add LINEs to the section HEADER of CWD's
+# .agent-sandbox, then run the review --trust runs on the result. THE REVIEW IS THE
+# GATE, NOT THE TYPING: the briefing prints this command for a blocked session to hand
+# the user, so a line is never retyped by hand into the wrong section. The lines are
+# not checked here beyond being there; the review shows the file and the parser's own
+# warnings. Uses the engine's profile_dir and invoked by dynamic scope.
+# shellcheck disable=SC2154
+_as_apply() {
+  local cwd="$1" head="$2" file name glob l n i at=-1 ins=-1 cur="" f d r p
+  shift 2
+  file="$cwd/.agent-sandbox"
+  if _as_inside_sandbox; then
+    _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
+    return 1
+  fi
+  local -a names=(allow deny share-memory env conda net gpu seccomp overlay sandbox connect briefing) lines=() have=() add=()
+  for f in "${profile_dir:-}"/*/profile.sh; do
+    [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
+  done
+  if [[ ! "$head" =~ ^\[([a-z][a-z0-9_-]*)(:([^][[:space:]]+))?\]$ ]]; then
+    _as_msg "--apply: '$head' is not a section header -- [NAME] or [NAME:ROLE-GLOB], brackets included, quoted: --apply '[allow]' example.com"
+    return 2
+  fi
+  name="${BASH_REMATCH[1]}" glob="${BASH_REMATCH[3]}"
+  _ap_in() { # WORD LIST... -- is WORD one of LIST?
+    local w="$1" x
+    shift
+    for x in "$@"; do [[ "$x" == "$w" ]] && return 0; done
+    return 1
+  }
+  if ! _ap_in "$name" "${names[@]}"; then
+    _as_msg "--apply: [$name] is not a section of .agent-sandbox (sections: $(printf '[%s] ' "${names[@]}" | sed 's/ $//'))"
+    return 2
+  fi
+  if [[ -n "$glob" ]]; then
+    case "$name" in
+      sandbox | connect | allow | deny | env | conda | net | gpu | briefing) ;;
+      *)
+        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu and briefing do)"
+        return 2
+        ;;
+    esac
+  fi
+  # A line as the parser reads it: no comment, no surrounding blanks.
+  _ap_norm() {
+    n="${1%%#*}"
+    n="${n#"${n%%[![:space:]]*}"}"
+    n="${n%"${n##*[![:space:]]}"}"
+  }
+  [[ -f "$file" ]] && mapfile -t lines <"$file"
+  local first_role=0
+  if [[ -n "$glob" ]]; then
+    first_role=1
+    for l in ${lines[@]+"${lines[@]}"}; do
+      _ap_norm "$l"
+      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|briefing):.+\]$ ]] && first_role=0
+    done
+  fi
+  # The section's last occurrence, and its last line that is not blank or a comment:
+  # a comment just above the next header is that header's.
+  for i in "${!lines[@]}"; do
+    _ap_norm "${lines[i]}"
+    if [[ "$n" == '['*']' ]]; then
+      cur="${n//[[:space:]]/}"
+      [[ "$cur" == "$head" ]] && at="$i" ins="$i"
+      continue
+    fi
+    [[ "$cur" == "$head" && -n "$n" ]] || continue
+    have+=("$n")
+    ins="$i"
+  done
+  for l in "$@"; do
+    _ap_norm "$l"
+    [[ -n "$n" ]] || {
+      _as_msg "--apply: an empty line; give each line as it would appear in the file"
+      return 2
+    }
+    if _ap_in "$n" ${have[@]+"${have[@]}"}; then
+      _as_msg "already in $head: $n"
+    else
+      add+=("$l")
+      have+=("$n")
+      _as_msg "added to $head: $n"
+    fi
+  done
+  if ((${#add[@]} == 0)); then
+    _as_msg "nothing to add: $head has every line already."
+    if _as_dotfile_trusted "$cwd" "$file"; then
+      _as_msg "this exact content is already approved."
+      return 0
+    fi
+  else
+    ((first_role)) && _as_msg "warning — $head is this file's first role section: once there is one, a role name that matches no role section is refused, the default role's included (docs/config.md, Roles); [connect:*] keeps every name admitted."
+    if [[ ! -f "$file" ]]; then
+      printf '%s\n' "$head" "${add[@]}" >"$file" || return 1
+      _as_msg "created $file"
+    elif ((at < 0)); then
+      {
+        if ((${#lines[@]})) && [[ -n "${lines[-1]//[[:space:]]/}" ]]; then printf '\n'; fi
+        printf '%s\n' "$head" "${add[@]}"
+      } >>"$file" || return 1
+    else
+      {
+        printf '%s\n' "${lines[@]:0:ins+1}" "${add[@]}"
+        if ((ins + 1 < ${#lines[@]})); then printf '%s\n' "${lines[@]:ins+1}"; fi
+      } >"$file.apply.tmp" && cat -- "$file.apply.tmp" >"$file" && rm -f -- "$file.apply.tmp" || return 1
+    fi
+  fi
+  _as_trust_review "$cwd" || return $?
+  if ! _as_dotfile_trusted "$cwd" "$file"; then
+    _as_msg "the change stays in .agent-sandbox, unapproved, for you to look at: $invoked --trust reviews it again."
+    return 0
+  fi
+  # When it applies: at a launch. A running role's policy does not change.
+  _as_msg "the change applies at the next launch of $([[ -n "$glob" ]] && printf "the roles matching '%s'" "$glob" || printf 'every role')."
+  for d in "$(_as_state_dir)"/*/"$(_as_path_slug "$cwd")"/*/keeper/id; do
+    [[ -e "$d" ]] || continue
+    d="${d%/keeper/id}" r="${d##*/}" p="${d%/*}" p="${p%/*}" p="${p##*/}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ -z "$glob" || "$r" == $glob ]] || continue
+    _as_keeper_live "$d" || continue
+    _as_msg "role '$r' is running: the change applies at the next keeper, once nothing is joined; end it first with: $invoked --role $r --shutdown $p"
+  done
+  return 0
+}
+
 # The system CA bundle (Debian/Ubuntu/Arch, Fedora/RHEL, openSUSE), or fail.
 _as_system_ca_bundle() {
   local cand
@@ -6076,7 +6212,7 @@ agent_sandbox() (
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
   local _do_init=0 _init_model="" _init_env="" _init_gpu=""
-  local -a _init_counts=()
+  local -a _init_counts=() _apply_words=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -6220,6 +6356,16 @@ agent_sandbox() (
       --check)
         _do_check=1
         shift
+        ;;
+      --apply)
+        # --apply '[SECTION]' LINE...: the words after it are its own.
+        shift
+        (($# >= 2)) || {
+          _as_msg "--apply needs a section and a line: --apply '[SECTION]' LINE... (e.g. --apply '[allow]' example.com)"
+          return 2
+        }
+        _apply_words=("$@")
+        shift $#
         ;;
       --init)
         # --init MODEL [ROLE=N ...] [--env NAME] (#225): the words after it are its own.
@@ -6429,6 +6575,11 @@ agent_sandbox() (
   # Profile-independent; never launches the agent, approves nothing.
   if ((_do_init)); then
     _as_init "$_init_model" "$_init_env" ${_init_counts[@]+"${_init_counts[@]}"}
+    return $?
+  fi
+  # ---- --apply: add lines to the current project's .agent-sandbox, then --trust's review ----
+  if ((${#_apply_words[@]})); then
+    _as_apply "$(pwd -P)" "${_apply_words[@]}"
     return $?
   fi
   # ---- --trust: review and approve the current project's .agent-sandbox ----

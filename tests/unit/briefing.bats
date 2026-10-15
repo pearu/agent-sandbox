@@ -89,10 +89,11 @@ trust() {
   grep -q -- "$H/other" "$md"   # the project whose memory is shared
   grep -q 'seccomp is on' "$md" # the syscall filter
   grep -q 'trust-gated' "$md"   # ...and how to ask for more
-  grep -q 'asb --trust' "$md"
+  # the command the user runs on the host: it edits the file and asks, as --trust does
+  grep -qxF "      asb --apply '[allow]' example.com" "$md" # no role: the unsuffixed section
+  grep -qF 'for a host and for this launch only: asb --allow example.com ...' "$md"
   # going on with less is the user's call, not the session's
   grep -q 'only when the user says so' "$md"
-  grep -q '^      \[allow\]$' "$md" # no role: the unsuffixed section
   # names and paths only: nothing is read out of the shared project
   printf 'SECRET-CANARY\n' >"$H/home/.claude/projects/$(printf '%s' "$H/other" | sed 's:[^A-Za-z0-9-]:-:g')/memory/MEMORY.md"
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
@@ -117,10 +118,11 @@ trust() {
   grep -q "$IN/briefing.md" "$h"            # pointer to the full text
   grep -q 'cannot widen this yourself' "$h" # escalation, not workarounds
   grep -q 'continue without it only when they say so' "$h"
-  # ...through the command that reviews a dot-file: `claude` is Claude Code itself (#151)
+  # ...through the engine's command that changes the dot-file and reviews it: `claude` is
+  # Claude Code itself (#151)
   # shellcheck disable=SC2016 # the backticks are literal text in the summary
-  grep -q 're-run `asb --trust`' "$h"
-  run ! grep -q 'claude --trust' "$h"
+  grep -q 'the `asb --apply` command to run on the host' "$h"
+  run ! grep -q 'claude --' "$h"
   # one line of JSON: the payload must parse as the hook contract, not as prose
   [ "$(wc -l <"$h")" -eq 1 ]
 }
@@ -273,7 +275,7 @@ CHECK
   run ! grep -q 'Report, do not fix' "$OUT/hook-SubagentStart.json"
   grep -q '^## Your role: reviewer-1$' "$OUT/briefing.md"
   grep -q '^Report, do not fix.$' "$OUT/briefing.md"
-  grep -q '^      \[allow:reviewer-1\]$' "$OUT/briefing.md" # a role asks for its own lines
+  grep -qxF "      asb --apply '[allow:reviewer-1]' example.com" "$OUT/briefing.md" # a role asks for its own lines
   argv_has --ro-bind "$PROJ/.asb/roles/reviewer-1.md" "$PROJ/.asb/roles/reviewer-1.md"
   # a role the section does not match is not briefed
   run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
@@ -286,7 +288,7 @@ CHECK
   approve
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
-  grep -q '^      \[allow\]$' "$OUT/briefing.md"
+  grep -qxF "      asb --apply '[allow]' example.com" "$OUT/briefing.md"
   run ! grep -q '\[allow:' "$OUT/briefing.md"
 }
 

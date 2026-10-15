@@ -496,6 +496,25 @@ are machine-local and usually should not be committed. A file the repository
 tracks gets no such offer: a repository can ship its policy, and it is still
 approved on every machine.
 
+**`asb --apply '[SECTION]' LINE...`** adds lines and then runs that review: the
+section header as the file writes it, brackets included (`'[allow]'`,
+`'[allow:gh-setup]'`, `'[connect:gh-*]'`), then each line as it would appear in the
+file -- `asb --apply '[allow]' pypi.org`, `asb --apply '[connect:impl-*]' 'skills =
+read-only native'`. A missing file is created; a missing section is added at the end;
+in a section that is there, a line it already has (compared without a trailing comment)
+is left alone and the others go at the end of the section. Each line is said `added` or
+`already there`, so running it twice adds nothing; when nothing is added and the file is
+approved as it stands, nothing is asked either. What follows is `--trust`'s review on
+the edited file -- the diff from what you approved, the question, the record -- and a
+**no** leaves the edit in the file, unapproved, for you to look at. A section the
+format does not have is refused; the lines are not checked beyond that, since the review
+shows them with the parser's own warnings. The file's first role-suffixed section is
+warned of ([Roles](#roles)), not refused. It runs on the host only: inside a sandbox it is
+refused, as `--init` is. It is the command a blocked session prints for you to run
+([recipes.md](recipes.md#when-you-need-something-that-is-blocked)); the change applies
+at the next launch of the roles it names, and a running role keeps its policy until it
+ends (`--shutdown`).
+
 A launch that **joins** a running role is asked the same way, and joins under the
 policy the role's keeper started with whatever the answer: a running role's
 policy does not change. The answer applies at the next keeper. The management
@@ -670,7 +689,8 @@ skipped. The review reads every role's lines, whichever role a launch runs.
 
 **Once any suffixed section exists, a role name matching none of them is
 refused**, since it is most likely a typo of one; add `[connect:*]` to accept
-every name. A file without suffixed sections has one policy, and any role name
+every name; `asb --apply` warns when the section it adds is the file's first. A
+file without suffixed sections has one policy, and any role name
 runs under it as a separate instance. `--preset` and `--connect` apply to
 whichever role is launched. A role with `--bg` is refused for now: background
 sessions do not carry a role yet (#123).
