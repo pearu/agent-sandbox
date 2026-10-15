@@ -166,11 +166,24 @@ There is no system-wide mode, and the installer refuses to run through `sudo` �
 it asks for sudo itself for the one step that needs it, the AppArmor profile.
 
 The installer is idempotent: it sets up the proxy (mitmproxy 12+ in a private
-environment under `~/.local/share/agent-sandbox`), generates the CA, writes
+environment under `~/.local/share/agent-sandbox`), installs agent-sandbox's own
+**micromamba** (a pinned release, checked against its SHA-256, at
+`~/.local/share/agent-sandbox/micromamba/bin/micromamba`, with an empty conda root for
+its environments at `~/.local/share/agent-sandbox/conda`), generates the CA, writes
 the allowlist (keeping your edits on re-runs), installs the systemd user unit, and **copies the engine and profiles under
 `~/.local/share/agent-sandbox`**. Because the command runs from the copy, you
 can move or delete this clone afterward; re-run `./install.sh` after pulling to
 update.
+
+Conda inside a sandbox is the sandbox's own concern: a host needs no conda, and a broken
+host install does not break a role. Where the host has conda, the installer asks once:
+*Sandboxes use the host's conda at BASE, or agent-sandbox's own micromamba?
+[host/sandbox]*, and keeps the answer in `~/.config/agent-sandbox/conda` (a host
+without conda gets `sandbox` without a question; `--yes` answers `host`; a re-run keeps
+the file). A project picks per role with `[conda] base`. Under `sandbox` the command
+inside is `micromamba` (`micromamba create -p PREFIX ...`), not `conda`.
+`--uninstall` removes the micromamba and asks before removing the conda root, where the
+environments live (`--yes` keeps it).
 
 It then puts two commands in `~/.local/bin`, both the engine: `agent-sandbox`
 and its short name `asb`. It puts nothing at `claude`, and does not need to know
@@ -214,6 +227,7 @@ not exist. Values and defaults are in the last column.
 | — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |
 | — | `AGENT_SANDBOX_CONDA_WRITE` | `[conda] write` | `1` makes the active conda env writable; its base install and other envs stay read-only (read-only) |
 | — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | the sandbox-owned package cache conda downloads into, persistent (`~/.cache/agent-sandbox/conda-pkgs`) |
+| — | `AGENT_SANDBOX_CONDA_BASE` | `[conda] base` | whose conda the sandbox gets: `host` (yours, passed through) or `sandbox` (agent-sandbox's own `micromamba` and its conda root; none of the host's conda is bound) (`~/.config/agent-sandbox/conda`, which `install.sh` asks; else `host` where the host has conda) ([config.md](docs/config.md)) |
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
 | — | — | `[conda] prefix` | the same for an env given by its path, such as a clone in a role's tree; `name` and `prefix` are one setting, the later wins (none) ([config.md](docs/config.md)) |
 | — | — | `[share-memory]` | which other projects' agent memory this session may read, read-only: paths, `~/dir/*` wildcards, or `all` for every project's state. Sugar for `[connect]`: by default a role sees only its own project, and its memory is its own under `isolated` and `inherit` (#196) ([config.md](docs/config.md#memory-scoping)) |
@@ -251,8 +265,9 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Eight more variables name locations rather than behaviour and are rarely set by
+Nine more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
+`AGENT_SANDBOX_HOME` (where `install.sh` put micromamba and its conda root),
 `AGENT_SANDBOX_GPU_DEVICES` (which device nodes are the GPUs', as globs),
 `AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),
 `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,

@@ -47,6 +47,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **agent-sandbox's own micromamba**: conda inside a sandbox is the sandbox's concern, so
+  a host needs no conda and a broken host install does not break a role. `install.sh`
+  installs a pinned micromamba (2.9.0-0, checked against SHA-256 sums pinned per
+  architecture and the release's own `.sha256`) at
+  `~/.local/share/agent-sandbox/micromamba/bin/micromamba`, and an empty conda root at
+  `~/.local/share/agent-sandbox/conda`; where the host has conda it asks once which one
+  sandboxes use (`~/.config/agent-sandbox/conda`). **`[conda] base = host | sandbox`**
+  (role-suffixable; `AGENT_SANDBOX_CONDA_BASE` wins) picks per project: under `sandbox`
+  micromamba and the root are bound read-only, `MAMBA_ROOT_PREFIX` is the root, an env
+  `name` resolves under its `envs/`, and nothing of the host's conda is bound. `--check`
+  and the briefing name the command (`micromamba` or the host's `conda`); `--init --env
+  NAME` makes the prefix under the base that applies. `--uninstall` asks before removing
+  the conda root (`--yes` keeps it).
 - **What a session hands you to run is one line or a file**: the CLI prefixes every line
   of a reply, so a heredoc, a patch or a commit message pasted from it breaks. The
   briefing says so, and names where the session's writable stores are on the host --

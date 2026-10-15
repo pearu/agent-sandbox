@@ -23,7 +23,7 @@ number, each in a layer of its own over the project as the setup role built it:
   `copy-on-write` under `[connect:gh-*]` (or a host under `[allow:gh-setup]`), approved
   with `--trust`; gh-setup asks for exactly that and installs what it builds from them
   into the environment. `--init` takes an `--env` NAME not built yet (a conda env name,
-  made empty under the conda base).
+  made empty under the conda base that applies: the host's, or agent-sandbox's conda root).
 - **gh-review** builds and tests a pull request, reviews it with `/pr-review`, and posts
   the review when you say so.
 - **gh-triage** reproduces an issue on your build, measures its claims, finds
@@ -49,6 +49,7 @@ Before deleting a fixer, publish its work: its commits live in its layer. After 
 rebuild or move `main`, delete or reset live instances: their layers lie over the old
 tree. Launch from the shell you build in: an instance's `PATH` is that shell's, and a
 build that cannot find its compilers reconfigures from scratch. conda's base reaches
-`gh-setup` whether or not an env is active in that shell, as long as the host has conda
-(`MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or `conda` on PATH), so it can create the
-environment the dot-file names.
+`gh-setup` whether or not an env is active in that shell, so it can create the
+environment the dot-file names: the host's (`MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or
+`conda` on PATH), or under `[conda] base = sandbox` agent-sandbox's own, whose command is
+`micromamba` and whose environments are under `~/.local/share/agent-sandbox/conda/envs`.

@@ -87,8 +87,24 @@ Sections:
   such as the empty directory a role's tree declares for it) or a `name` not under the
   base gets the base, its config and the package cache, with `<base>/condabin` on PATH,
   so conda runs inside and the prefix can be created there. The base is found from
-  `MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or `conda`/`mamba` on PATH (`info --base`);
-  a host with none of them gets nothing conda, and the launch says so.
+  `MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or `conda`/`mamba` on PATH (`info --base`).
+
+  `base = host | sandbox` is whose conda that is. `host` is the host's, as above.
+  `sandbox` is agent-sandbox's own micromamba, which `install.sh` installs (the mamba
+  code base as one static executable, needing no base environment): its directory
+  (`~/.local/share/agent-sandbox/micromamba/bin`) bound read-only and first on PATH,
+  its conda root (`~/.local/share/agent-sandbox/conda`) bound read-only and named by
+  `MAMBA_ROOT_PREFIX`, a `name` resolved under the root's `envs/`, a `prefix` as given,
+  `write` and the package cache as above -- and nothing of the host's conda: not its
+  base, not an env active in your shell, not its root-prefix variables. The command
+  inside is then `micromamba` (`micromamba create -p PREFIX ...`, `micromamba install
+  -p PREFIX ...`), not `conda`; the briefing names it. The default is
+  `AGENT_SANDBOX_CONDA_BASE` from your shell, then this key (a role's `[conda:<role>]`
+  over the file's), then `~/.config/agent-sandbox/conda` (the installer's question),
+  then `host` where the host has conda and `sandbox` where it has none. `host` on a
+  host without conda says so and uses the sandbox's; `sandbox` with micromamba not
+  installed refuses the launch, naming `install.sh`. `--check` prints which one a
+  role gets, and `--init --env NAME` makes the env's prefix under that one's base.
 - **`[net]`** — key/value lines. `hosts = allowlist|public` (default allowlist):
   `public` lets the role reach every public host, the allowlist not applying -- for
   work whose sites are not known in advance (the `market` model). The proxy stays in

@@ -512,3 +512,28 @@ CHECK
   [ "$status" -eq 0 ]
   grep -qxF -- '- none: nothing this session can write is a file the user can reach' "$md"
 }
+
+@test "the briefing names the conda command and where its environments are: the host's conda, or agent-sandbox's micromamba" {
+  local base="$H/conda" md="$OUT/briefing.md" h="$OUT/hook-SessionStart.json"
+  local mm="$H/home/.local/share/agent-sandbox/micromamba/bin" root="$H/home/.local/share/agent-sandbox/conda"
+  mkdir -p "$base/envs/e" "$mm"
+  printf '#!/bin/sh\n' >"$mm/micromamba"
+  chmod +x "$mm/micromamba"
+  # shellcheck disable=SC2016 # the backticks are literal text in the briefing
+  {
+    run_engine BWRAP_COPY="$OUT" MAMBA_ROOT_PREFIX="$base" CONDA_PREFIX="$base/envs/e" -- asb claude --version
+    [ "$status" -eq 0 ]
+    grep -qxF -- "- conda: the host's \`conda\` at $base" "$md"
+    grep -qF " Conda: the host's \`conda\`. " "$h"
+    run ! grep -qF micromamba "$md"
+    run_engine BWRAP_COPY="$OUT" MAMBA_ROOT_PREFIX="$base" CONDA_PREFIX="$base/envs/e" AGENT_SANDBOX_CONDA_BASE=sandbox -- asb claude --version
+    [ "$status" -eq 0 ]
+    grep -qxF -- "- conda: \`micromamba\`, root $root (the sandbox's own)" "$md"
+    grep -qF " Conda: \`micromamba\`, root $root. " "$h"
+    # no conda in play: no line
+    run_engine BWRAP_COPY="$OUT" -- asb claude --version
+    [ "$status" -eq 0 ]
+    run ! grep -qF -- '- conda:' "$md"
+    run ! grep -qF 'Conda:' "$h"
+  }
+}

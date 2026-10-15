@@ -18,7 +18,9 @@
 #   ./install.sh --dry-run    no sudo, no systemctl, no environment creation;
 #                             everything else runs against $HOME (CI uses this
 #                             with a throwaway HOME).
-#   ./install.sh --yes, -y    do not ask for confirmation (--uninstall)
+#   ./install.sh --yes, -y    do not ask: --uninstall's confirmation (it keeps the
+#                             sandboxes' conda environments), and which conda
+#                             sandboxes use (the host's, when it has one)
 #   ./install.sh --purge-config
 #                             with --uninstall, also remove
 #                             ~/.config/agent-sandbox (allowlist, trust store)
@@ -43,7 +45,9 @@
 #                             (CVE-2026-87766). Asks for sudo for apt; with
 #                             --dry-run it only prints the plan.
 #
-# Installs mitmproxy >= 12 into a private environment (venv, else conda), and
+# Installs mitmproxy >= 12 into a private environment (venv, else conda), a pinned
+# micromamba for conda inside sandboxes (asking, where the host has conda, which one
+# sandboxes use), and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
 # user unit so nothing else needs to be carried across hosts. The
 # allowlist is only written if it doesn't already exist (so re-runs
@@ -260,11 +264,18 @@ uninstall_plan_and_run() {
     done <"$manifest"
   fi
 
+  # The sandboxes' conda environments (agent-sandbox's micromamba's root) are the user's
+  # work, not the installer's: asked about, and kept unless the answer is yes -- --yes
+  # included, which answers the plan, not this.
+  local root="$STATE_DIR/conda" keep_root=0 answers="${AGENT_SANDBOX_TTY:-/dev/tty}"
+  [[ -d "$root" ]] && keep_root=1
+
   # ---- say what will happen, before anything happens ----
   ((unit_present)) && info "stop, disable and remove $unit"
   local p
   for p in "${remove_cmds[@]}"; do info "remove $p"; done
-  for p in "${to_remove[@]}"; do info "remove $p"; done
+  [[ -e "$STATE_DIR/micromamba" ]] && info "remove agent-sandbox's micromamba, $STATE_DIR/micromamba/bin/micromamba"
+  for p in "${to_remove[@]}"; do info "remove $p$( ((keep_root)) && [[ "$p" == "$STATE_DIR" ]] && printf ', all but %s (asked below)' "$root")"; done
   for p in "${leave_alone[@]}"; do warn "leave alone: $p"; done
   ((purge_config)) || [[ -d "$CONFIG_DIR" ]] \
     && info "keep $CONFIG_DIR (your allowlist and trust approvals; --purge-config removes it)"
@@ -280,13 +291,24 @@ uninstall_plan_and_run() {
   }
 
   if ((DRY_RUN)); then
+    ((keep_root)) && info "(dry-run) would ask: $root -- the sandboxes' conda environments live there: remove? [y/N] (--yes keeps it)"
     ok "(dry-run) nothing was changed"
     return 0
   fi
+  local answer=""
+  if ((keep_root)); then
+    if ((assume_yes)); then
+      info "keep $root (the sandboxes' conda environments; --yes keeps them)"
+    else
+      printf "\n    %s -- the sandboxes' conda environments live there: remove? [y/N] " "$root"
+      read -r answer <"$answers" || true
+      [[ "$answer" == [yY]* ]] && keep_root=0
+    fi
+  fi
   if ((! assume_yes)); then
     printf '\n    Proceed? [y/N] '
-    local answer=""
-    read -r answer </dev/tty || true
+    answer=""
+    read -r answer <"$answers" || true
     [[ "$answer" == [yY]* ]] || {
       warn "cancelled; nothing was changed"
       return 0
@@ -312,6 +334,11 @@ uninstall_plan_and_run() {
       warn "keeping $STATE_DIR for now, because some paths were left alone; re-run --uninstall when they are sorted out"
       continue
     fi
+    if ((keep_root)) && [[ "$p" == "$STATE_DIR" ]]; then
+      find "$STATE_DIR" -mindepth 1 -maxdepth 1 ! -path "$root" -exec rm -rf -- {} +
+      ok "removed $p, all but $root"
+      continue
+    fi
     rm -rf -- "$p"
     ok "removed $p"
   done
@@ -323,6 +350,8 @@ uninstall_plan_and_run() {
   fi
   ((purge_config)) || [[ ! -d "$CONFIG_DIR" ]] \
     || info "$CONFIG_DIR kept. A later install reuses your allowlist and trust approvals."
+  ((keep_root)) && [[ -d "$root" ]] && info "$root kept: the sandboxes' conda environments (rm -rf it to remove them)"
+  return 0
 }
 
 # ----- bubblewrap 0.12.0 (CVE-2026-87766) -----
@@ -453,6 +482,145 @@ rebuild_bwrap() {
   info "the package stays in $work: sudo apt-get install $work/$deb reinstalls it"
 }
 
+# ----- micromamba: conda inside sandboxes is the sandbox's own -----
+# A host need not have conda at all, and a broken host install should not break the
+# roles, so agent-sandbox installs its own: micromamba, the mamba code base built as one
+# statically linked executable that needs no base environment, pinned to a release, and
+# an empty conda root whose envs/ holds the environments made with it. The SHA-256 sums
+# pinned here are the trust anchor; the release's own .sha256 asset is a cross-check.
+# Where the host has conda too, the user picks which one sandboxes use, once
+# (~/.config/agent-sandbox/conda); a project's dot-file can pick per role ([conda] base).
+MICROMAMBA_VERSION=2.9.0-0
+MICROMAMBA_URL="https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION"
+MICROMAMBA_SUMS="366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3  micromamba-linux-64
+9f93b974adcb4d166996af969b6cd371287d1a3e52733704727884d9b74cb7a7  micromamba-linux-aarch64"
+MICROMAMBA="$STATE_DIR/micromamba/bin/micromamba"
+CONDA_ROOT="$STATE_DIR/conda"
+CONDA_CHOICE="$CONFIG_DIR/conda"
+# Where questions are answered: the terminal (stdin may be this script, under curl | bash).
+# The tests point it at a file of answers.
+ANSWERS="${AGENT_SANDBOX_TTY:-/dev/tty}"
+
+micromamba_asset() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo micromamba-linux-64 ;;
+    aarch64 | arm64) echo micromamba-linux-aarch64 ;;
+    *) return 1 ;;
+  esac
+}
+micromamba_sum() { awk -v f="$1" '$2 == f {print $1}' <<<"$MICROMAMBA_SUMS"; }
+# micromamba_ok FILE ASSET -- FILE is that asset, by the pinned sum
+micromamba_ok() { [[ -f "$1" ]] && sha256sum -c --status - <<<"$(micromamba_sum "$2")  $1" 2>/dev/null; }
+
+install_micromamba() {
+  section "micromamba (conda inside sandboxes)"
+  local asset sum part check
+  asset="$(micromamba_asset)" || err "no micromamba build for $(uname -m) (agent-sandbox installs micromamba-linux-64 or micromamba-linux-aarch64)"
+  sum="$(micromamba_sum "$asset")"
+  if [[ -x "$MICROMAMBA" ]] && micromamba_ok "$MICROMAMBA" "$asset"; then
+    ok "micromamba $MICROMAMBA_VERSION present: $MICROMAMBA"
+  elif ((DRY_RUN)); then
+    info "(dry-run) would fetch $MICROMAMBA_URL/$asset"
+    info "(dry-run) check it against the pinned SHA-256 $sum (and the release's $asset.sha256)"
+    info "(dry-run) and install it as $MICROMAMBA (mode 755)"
+  else
+    mkdir -p "${MICROMAMBA%/*}"
+    part="$MICROMAMBA.part"
+    info "fetching micromamba $MICROMAMBA_VERSION: $MICROMAMBA_URL/$asset"
+    curl -fsSL -o "$part" "$MICROMAMBA_URL/$asset" || {
+      rm -f "$part"
+      err "fetching $MICROMAMBA_URL/$asset failed"
+    }
+    micromamba_ok "$part" "$asset" || {
+      rm -f "$part"
+      err "$asset does not match the pinned SHA-256 $sum; nothing was installed"
+    }
+    check="$(curl -fsSL "$MICROMAMBA_URL/$asset.sha256" 2>/dev/null | awk 'NR == 1 {print $1}')" || true
+    if [[ -z "$check" ]]; then
+      warn "could not fetch $asset.sha256 to cross-check; the pinned SHA-256 matched"
+    elif [[ "$check" != "$sum" ]]; then
+      rm -f "$part"
+      err "the release's $asset.sha256 says $check, the pinned sum is $sum; nothing was installed"
+    fi
+    chmod 755 "$part"
+    mv -f "$part" "$MICROMAMBA"
+    ok "micromamba $MICROMAMBA_VERSION installed: $MICROMAMBA (SHA-256 $sum)"
+  fi
+  if [[ -d "$CONDA_ROOT" ]]; then
+    ok "conda root: $CONDA_ROOT (environments under envs/)"
+  elif ((DRY_RUN)); then
+    info "(dry-run) would create the conda root $CONDA_ROOT (empty; environments go under envs/)"
+  else
+    mkdir -p "$CONDA_ROOT"
+    ok "created the conda root $CONDA_ROOT (empty; environments go under envs/)"
+  fi
+}
+
+# host_conda_base -- the host's conda base, found as the engine finds it (_as_conda_base:
+# MAMBA_ROOT_PREFIX, CONDA_ROOT_PREFIX, CONDA_PYTHON_EXE, CONDA_PREFIX, conda/mamba on
+# PATH); nothing if there is none.
+host_conda_base() {
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE" >/dev/null 2>&1 || exit 0
+    _as_conda_base
+  ) 2>/dev/null || true
+}
+
+# ask_conda BASE -- the question, until it is answered (on fd 3); prints host or sandbox,
+# fails at the end of the answers.
+ask_conda() {
+  local a
+  while :; do
+    printf "\n    Sandboxes use the host's conda at %s, or agent-sandbox's own micromamba? [host/sandbox] " "$1" >&2
+    read -r a <&3 || return 1
+    case "${a,,}" in
+      host | h) echo host ;;
+      sandbox | s) echo sandbox ;;
+      *) continue ;;
+    esac
+    return 0
+  done
+}
+
+# choose_conda -- which conda sandboxes use, asked once: the answer is kept in
+# $CONDA_CHOICE, and a file that is there is never asked over.
+choose_conda() {
+  local base word="" answer="" why
+  if [[ -f "$CONDA_CHOICE" ]]; then
+    word="$(tr -d '[:space:]' <"$CONDA_CHOICE")"
+    case "$word" in
+      host) why="the host's conda" ;;
+      sandbox) why="agent-sandbox's micromamba" ;;
+      *) why="nothing it names (host or sandbox; the engine ignores it)" ;;
+    esac
+    ok "$CONDA_CHOICE kept ($word): sandboxes use $why"
+    return 0
+  fi
+  base="$(host_conda_base)"
+  if [[ -z "$base" ]]; then
+    word=sandbox why="no conda on this host"
+  elif ((ASSUME_YES)); then
+    word=host why="--yes, and this host has conda at $base"
+  elif ((DRY_RUN)); then
+    info "(dry-run) would ask: Sandboxes use the host's conda at $base, or agent-sandbox's own micromamba? [host/sandbox]"
+    info "(dry-run) and write the answer to $CONDA_CHOICE"
+    return 0
+  elif { : <"$ANSWERS"; } 2>/dev/null && answer="$(ask_conda "$base" 3<"$ANSWERS")"; then
+    word="$answer" why="your answer"
+  else
+    word=host why="no terminal to ask on, and this host has conda at $base"
+  fi
+  if ((DRY_RUN)); then
+    info "(dry-run) would write '$word' to $CONDA_CHOICE ($why)"
+    return 0
+  fi
+  mkdir -p "$CONFIG_DIR"
+  printf '%s\n' "$word" >"$CONDA_CHOICE"
+  ok "sandboxes use $([[ "$word" == host ]] && echo "the host's conda at $base" || echo "agent-sandbox's micromamba") ($why): wrote '$word' to $CONDA_CHOICE"
+  info "change it there (host or sandbox); a project picks its own with [conda] base in .agent-sandbox"
+}
+
 # --rebuild-bwrap is the whole run: it needs neither the engine nor a checkout.
 if ((REBUILD_BWRAP)); then
   rebuild_bwrap
@@ -483,6 +651,13 @@ shopt -u nullglob
 ((${#profiles[@]} > 0)) || err "no profiles found under $SCRIPT_DIR/profiles/"
 ok "engine: $ENGINE"
 ok "profiles: $(for f in "${profiles[@]}"; do basename -- "$(dirname -- "$f")"; done | tr '\n' ' ')"
+# The tests run the micromamba step alone, for real, against a fake HOME and a stubbed
+# curl: AGENT_SANDBOX_INSTALL_STEP=micromamba.
+if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == micromamba ]]; then
+  install_micromamba
+  choose_conda
+  exit 0
+fi
 
 # ----- 1b. engine: a true install (copy) unless --dev -----
 # The launcher runs the engine on the HOST, and the engine sources its profiles
@@ -1426,6 +1601,10 @@ fi
 if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" ]]; then
   info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
 fi
+
+# ----- 5b. micromamba, and which conda sandboxes use (defined above) -----
+install_micromamba
+choose_conda
 
 # ----- 6. mitmproxy CA: generated on the host, trusted only inside sandboxes -----
 # The engine binds (system bundle + this CA) over the system bundle's path in

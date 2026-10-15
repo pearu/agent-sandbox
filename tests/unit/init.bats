@@ -247,22 +247,49 @@ init() {
   [[ "$output" != *"matches no role section"* ]]
 }
 
-@test "the github model without --env: the environment's lines written commented out; a bad --env refused" {
+@test "the github model without --env: the environment's lines written commented out; a missing --env made empty under the base" {
   init -- github
   [ "$status" -eq 0 ]
   grep -qx '# ENVPATH/ = copy-on-write.*' "$PROJ/.agent-sandbox"
   grep -qx '# \[conda:gh-\*\].*' "$PROJ/.agent-sandbox"
   # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
   grep -q '^1\. Check the build: `ENVPATH`' "$PROJ/.asb/roles/gh-review.md" # prose, not commented out
-  # A model with a setup role accepts a missing NAME when a conda base exists; without one
-  # it is refused -- and a CI runner has conda on PATH, so these stubs find no base.
+  # A model with a setup role accepts a missing NAME, made empty under the conda base
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env nosuch-env
+  [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
+}
+
+@test "--init --env NAME under agent-sandbox's micromamba: the prefix is under its conda root, and the message says so" {
+  local root="$H/home/.local/share/agent-sandbox/conda"
+  # no conda on the host -- and a CI runner has conda on PATH, so these stubs find none:
+  # the default is the sandbox's own
   printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
   chmod +x "$H/bin/conda" "$H/bin/mamba"
-  init -- github --env nosuch-env
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--env nosuch-env: no conda environment"* ]]
-  init MAMBA_ROOT_PREFIX="$H/base" -- github --env nosuch-env # with a base: accepted, made empty
-  [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
+  init -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"environment dev is not built yet (created empty at $root/envs/dev, under agent-sandbox's conda root)"*"--role gh-setup claude builds it"* ]]
+  [ -d "$root/envs/dev" ] && [ -z "$(ls -A "$root/envs/dev")" ]
+  grep -A3 -xF '[connect:gh-setup]' "$PROJ/.agent-sandbox" | grep -qx "$root/envs/dev/ = read-write.*"
+  # a host base, but install.sh's answer was sandbox: the root, not the host's base
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  mkdir -p "$H/base/envs" "$H/home/.config/agent-sandbox"
+  echo sandbox >"$H/home/.config/agent-sandbox/conda"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev2
+  [ "$status" -eq 0 ]
+  [ -d "$root/envs/dev2" ] && [ ! -e "$H/base/envs/dev2" ]
+  # and the shell's variable wins over the file
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  init MAMBA_ROOT_PREFIX="$H/base" AGENT_SANDBOX_CONDA_BASE=host -- github --env dev3
+  [ "$status" -eq 0 ]
+  [ -d "$H/base/envs/dev3" ] && [ ! -e "$root/envs/dev3" ]
+  # an Implementer's clone is micromamba's, under the root
+  local mm="$H/home/.local/share/agent-sandbox/micromamba/bin"
+  mkdir -p "$mm"
+  cp "$H/bin/conda-stub" "$mm/micromamba"
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  init CONDA_LOG="$H/mm.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx "create -q -y -r $root --clone x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
 }
 
 @test "the github model takes an --env not built yet: its prefix made empty, gh-setup to build it, the others to check it" {
