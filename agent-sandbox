@@ -3423,20 +3423,33 @@ _as_briefing_write() {
       cat -- "$_purpose_file"
     fi
     printf '\n## If you need something that is blocked\n\n'
-    printf 'Stop and ask. You cannot widen this yourself: .agent-sandbox is\n'
-    printf 'trust-gated so that an agent cannot grant itself access, and the trust\n'
-    printf 'store is not bound into the sandbox. Tell the user, in one message:\n\n'
+    printf 'Stop and ask -- also when you could go on without it. Whether to work\n'
+    printf 'with less is the user'"'"'s decision, not yours. You cannot widen this\n'
+    printf 'yourself: .agent-sandbox is trust-gated so that an agent cannot grant\n'
+    printf 'itself access, and the trust store is not bound into the sandbox. Tell\n'
+    printf 'the user, in one message:\n\n'
     printf -- '- what you need (host, path or project),\n'
     printf -- '- what it is for,\n'
-    printf -- '- the exact lines to add to %s/.agent-sandbox, e.g.\n\n' "$cwd"
-    printf '      [allow]\n      example.com\n\n'
+    printf -- '- what you would do without it,\n'
+    # [allow:ROLE] only where the dot-file already has role sections (_df_role_globs,
+    # by dynamic scope, as _as_role_resolve reads it): a first suffixed section would
+    # refuse every other role name, the default included.
+    if [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})); then
+      printf -- '- the exact lines to add to %s/.agent-sandbox -- [allow:%s]\n' "$cwd" "$_role"
+      printf '  applies to this role, [allow] to every role -- e.g.\n\n'
+      printf '      [allow:%s]\n      example.com\n\n' "$_role"
+    else
+      printf -- '- the exact lines to add to %s/.agent-sandbox, e.g.\n\n' "$cwd"
+      printf '      [allow]\n      example.com\n\n'
+    fi
     printf 'then ask them to run `asb --trust` in that directory and relaunch.\n'
-    printf 'One clear request costs less than twenty workarounds.\n'
+    printf 'Continue without it only when the user says so. One clear request\n'
+    printf 'costs less than twenty workarounds.\n'
   } >"$md" || return 1
 
   local short _lnshort
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If you need something blocked, stop and ask the user to add it to .agent-sandbox and re-run \`asb --trust\` -- you cannot widen this yourself."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}. A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. If something is blocked, stop before going on without it: tell the user what you need, why, and the .agent-sandbox lines to add before they re-run \`asb --trust\`, and continue without it only when they say so -- you cannot widen this yourself."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --

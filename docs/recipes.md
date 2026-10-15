@@ -232,7 +232,13 @@ than honoured by it.
 
 You cannot widen the sandbox from inside — `.agent-sandbox` is trust-gated
 precisely so an agent cannot grant itself access, and the trust store is never
-bound in. The agent's part is to stop and tell you what it needs, what for, and
-the exact lines; yours is to decide, add them, and re-run `asb --trust`.
+bound in. The agent's part is to stop and tell you what it needs, what for, what
+it would do without it, and the exact lines; yours is to decide, add them, and
+re-run `asb --trust`. It stops even when it could go on without the thing:
+working with less is your call, so it continues without only when you say so.
+Under a role it offers `[allow:ROLE]`, which widens that role alone; `[allow]`
+widens every role. It offers the role form only where the project already has
+role sections: a first suffixed section would refuse every other role name
+([config.md](config.md#roles)).
 
 One clear request costs less than twenty attempts to work around you.

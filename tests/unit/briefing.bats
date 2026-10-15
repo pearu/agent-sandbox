@@ -90,6 +90,9 @@ trust() {
   grep -q 'seccomp is on' "$md" # the syscall filter
   grep -q 'trust-gated' "$md"   # ...and how to ask for more
   grep -q 'asb --trust' "$md"
+  # going on with less is the user's call, not the session's
+  grep -q 'only when the user says so' "$md"
+  grep -q '^      \[allow\]$' "$md" # no role: the unsuffixed section
   # names and paths only: nothing is read out of the shared project
   printf 'SECRET-CANARY\n' >"$H/home/.claude/projects/$(printf '%s' "$H/other" | sed 's:[^A-Za-z0-9-]:-:g')/memory/MEMORY.md"
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
@@ -113,6 +116,7 @@ trust() {
   grep -q 'opened on purpose' "$h"          # ...and what is open should be used
   grep -q "$IN/briefing.md" "$h"            # pointer to the full text
   grep -q 'cannot widen this yourself' "$h" # escalation, not workarounds
+  grep -q 'continue without it only when they say so' "$h"
   # ...through the command that reviews a dot-file: `claude` is Claude Code itself (#151)
   # shellcheck disable=SC2016 # the backticks are literal text in the summary
   grep -q 're-run `asb --trust`' "$h"
@@ -269,11 +273,21 @@ CHECK
   run ! grep -q 'Report, do not fix' "$OUT/hook-SubagentStart.json"
   grep -q '^## Your role: reviewer-1$' "$OUT/briefing.md"
   grep -q '^Report, do not fix.$' "$OUT/briefing.md"
+  grep -q '^      \[allow:reviewer-1\]$' "$OUT/briefing.md" # a role asks for its own lines
   argv_has --ro-bind "$PROJ/.asb/roles/reviewer-1.md" "$PROJ/.asb/roles/reviewer-1.md"
   # a role the section does not match is not briefed
   run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
   [ "$status" -eq 0 ]
   run ! grep -q 'Your purpose' "$OUT/hook-SessionStart.json"
+}
+
+@test "a role with no role section to join asks for [allow]: a first [allow:ROLE] would refuse every other role name" {
+  printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -q '^      \[allow\]$' "$OUT/briefing.md"
+  run ! grep -q '\[allow:' "$OUT/briefing.md"
 }
 
 @test "file = names the purpose file, with {role}; the unsuffixed [briefing] briefs every role (#222)" {
