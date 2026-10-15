@@ -47,6 +47,12 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A refused host reaches the session as it happens**: the proxy also appends each
+  refusal of a session to that session's own `refused.log`, bound read-only at
+  `/run/agent-sandbox/refused.log`, and the claude profile's hook after every Bash call
+  reports a new one next to the command's result -- the host, that a mirror or another
+  tool for the same thing is going on without it, and the `asb --apply` line to ask
+  for. `blocked.log`, which records every session, is never bound in.
 - **`asb --apply '[SECTION]' LINE...`**: adds the lines to that section of the project's
   `.agent-sandbox` -- creating the file or the section, leaving a line already there
   alone -- then runs `--trust`'s review of the result. Host only; it warns at a file's

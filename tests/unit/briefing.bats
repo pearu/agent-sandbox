@@ -365,3 +365,102 @@ CHECK
   [ "$status" -eq 0 ]
   [[ "$output" == *"briefed from: .asb/roles/reviewer.md"* ]]
 }
+
+@test "the proxy's refusals reach the session: an empty refused.log bound read-only, the section to ask for, a Bash hook on both outcomes" {
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  # the session dir's own file (the addon appends to it), empty at launch, bound over
+  # its placeholder after the briefing directory -- never the session dir itself
+  [ -f "$H/copied/refused.log" ] && [ ! -s "$H/copied/refused.log" ]
+  local i
+  i="$(argv_index "$IN/refused.log")"
+  [ "${ARGV[i - 2]}" = --ro-bind ]
+  [[ "${ARGV[i - 1]}" == "$H/base/session."*/refused.log ]]
+  ((i > $(argv_index "$IN")))
+  run ! grep -q 'blocked.log' "$H/argv"
+  [ "$(cat "$OUT/apply-section")" = '[allow]' ]
+  [ -f "$OUT/refusal-hook.sh" ]
+  python3 -I - "$OUT/settings.json" "$IN" <<'CHECK'
+import json, sys
+hooks = json.load(open(sys.argv[1]))["hooks"]
+for ev in ("PostToolUse", "PostToolUseFailure"):
+    (entry,) = hooks[ev]
+    assert entry["matcher"] == "Bash", entry
+    assert entry["hooks"] == [{"type": "command", "command": f"bash {sys.argv[2]}/refusal-hook.sh {ev}"}], entry
+CHECK
+  # the briefing says what going on without it means, and that refusals are reported
+  grep -q 'a mirror, another channel' "$OUT/briefing.md"
+  grep -q 'or another tool for the same thing is going on without it' "$OUT/briefing.md"
+  grep -q 'command is reported to this session right after it' "$OUT/briefing.md"
+  grep -q 'a mirror or another tool for the same thing counts as going on without it' "$OUT/hook-SessionStart.json"
+}
+
+@test "the section the refusal hook asks for is the engine's: [allow:ROLE] only where the dot-file has role sections" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Report, do not fix.\n' >"$PROJ/.asb/roles/reviewer-1.md"
+  printf '[briefing:reviewer-*]\n[connect:supervisor]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$OUT/apply-section")" = '[allow:reviewer-1]' ]
+  printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$OUT/apply-section")" = '[allow]' ]
+}
+
+@test "refusal-hook.sh reports each new refused host once: --apply for an allowlist gap, the policy for a [deny], nothing for a bad line" {
+  local hook="${ENGINE%/*}/profiles/claude/refusal-hook.sh" D="$BATS_TEST_TMPDIR/run" S="$BATS_TEST_TMPDIR/seen"
+  mkdir -p "$D"
+  printf '[allow:reviewer-1]\n' >"$D/apply-section"
+  printf '%s\n' $'2026-10-15T10:00:00\tprefix.dev\tCONNECT\tallowlist' \
+    $'2026-10-15T10:00:01\tevil"host\\n\tCONNECT\tallowlist' \
+    $'2026-10-15T10:00:02\tshop.example\tGET\t[deny]' \
+    $'2026-10-15T10:00:03\tprefix.dev\tGET\tallowlist' >"$D/refused.log"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" >"$BATS_TEST_TMPDIR/out.json"
+  python3 -I - "$BATS_TEST_TMPDIR/out.json" <<'CHECK'
+import json, sys
+o = json.load(open(sys.argv[1]))["hookSpecificOutput"]
+assert o["hookEventName"] == "PostToolUseFailure", o
+lines = o["additionalContext"].split("\n")
+assert len(lines) == 2, lines  # one per distinct host; the invalid line skipped
+assert lines[0] == ("agent-sandbox: prefix.dev was refused by the sandbox (allowlist) during this command. "
+    "Going on with a mirror, another channel or another tool for the same thing is going on without it, "
+    "and whether to do that is the user's decision. The user adds the host, on the host, with: "
+    "asb --apply '[allow:reviewer-1]' prefix.dev. This session continues without it only once the user has said so."), lines[0]
+assert lines[1] == ("agent-sandbox: shop.example was refused by the project's policy ([deny]) during this command; "
+    "--apply does not lift it. Going on with a mirror, another channel or another tool for the same thing is going "
+    "on without it, and whether to do that is the user's decision. This session continues without it only once the "
+    "user has said so."), lines[1]
+assert "asb --apply" not in lines[1], lines[1]
+assert "evil" not in o["additionalContext"]
+CHECK
+  # nothing new: no output at all
+  run bash "$hook" PostToolUse "$D" "$S"
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  # one new line: only that host, under the event it was called for
+  printf '%s\n' $'2026-10-15T10:01:00\tconda.anaconda.org\tCONNECT\tallowlist' >>"$D/refused.log"
+  run bash "$hook" PostToolUse "$D" "$S"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" >"$BATS_TEST_TMPDIR/out.json"
+  python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' "$BATS_TEST_TMPDIR/out.json"
+  [[ "$output" == *'"hookEventName":"PostToolUse"'* && "$output" == *"asb --apply '[allow:reviewer-1]' conda.anaconda.org."* ]]
+  [[ "$output" != *prefix.dev* && "$output" != *shop.example* ]]
+  # a line still being written (no newline yet) waits for the next call
+  printf '2026-10-15T10:02:00\tlate.example\tCONNECT\tallow' >>"$D/refused.log"
+  run bash "$hook" PostToolUse "$D" "$S"
+  [ -z "$output" ]
+  # no section from the engine, or a malformed one: the unsuffixed [allow]
+  printf "x'; rm -rf ~\n" >"$D/apply-section"
+  printf 'list\n' >>"$D/refused.log"
+  run bash "$hook" PostToolUse "$D" "$S"
+  [[ "$output" == *"asb --apply '[allow]' late.example."* ]]
+  # an event it was not written for, or no log: silent
+  run bash "$hook" PreToolUse "$D" "$BATS_TEST_TMPDIR/seen2"
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  run bash "$hook" PostToolUse "$BATS_TEST_TMPDIR/nowhere" "$BATS_TEST_TMPDIR/seen3"
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+}

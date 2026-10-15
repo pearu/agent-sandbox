@@ -129,14 +129,16 @@ Sections:
   the engine writes a briefing per launch and binds it read-only at
   `/run/agent-sandbox/briefing.md`, and the claude profile installs
   `SessionStart`/`SubagentStart` hooks that inject a compact summary — so a
-  resumed session is never told a policy that has since changed. It lists
+  resumed session is never told a policy that has since changed — and a hook
+  after every Bash call that reports a host the proxy refused during it
+  ([network](network.md#refusals-reach-the-session)). It lists
   names and paths only, never the contents of anything shared. Turning it off
   grants and hides nothing; it only stops the sandbox describing itself.
   If you pass your own `--settings`, the two are merged (Claude Code honours
   only the last one, so adding a second would drop yours) — specifically the
   *last* `--settings` on your command line, the one that would have won anyway,
   so a wrapper that overrides an earlier one keeps working. Nothing of yours is
-  overridden: the briefing's whole contribution is a list of two hook entries,
+  overridden: the briefing's whole contribution is a list of hook entries,
   so the merge writes only `hooks` and only by appending — no other setting is
   read or rewritten, and a `hooks` shape it does not recognise is refused
   rather than coerced.

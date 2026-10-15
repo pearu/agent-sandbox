@@ -354,3 +354,75 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   run drive server_connect_resolve mixed.example 93.184.216.34 127.0.0.1
   [[ "$output" == *"aborted=True"* ]]
 }
+
+@test "a session's refusal is also appended to its own refused.log, with the reason; nothing reaches another session's" {
+  mkdir -p "$BASE/session.o"
+  printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$BASE/session.o/owner.id"
+  echo OTHER >"$BASE/session.o/proxy.token"
+  : >"$BASE/session.o/allow.txt"
+  : >"$BASE/session.o/refused.log"
+  local R="$BASE/session.live/refused.log"
+  : >"$R"
+  printf 'denied.example\n' >"$BASE/session.live/deny.txt"
+  printf 'denied.example\n' >>"$CFG/allowlist.txt"
+  run drive connect prefix.dev # not on the allowlist
+  [[ "$output" == *"status=403"* ]]
+  run drive request blocked.invalid POST /v1/x
+  [[ "$output" == *"status=403"* ]]
+  run drive connect denied.example
+  [[ "$output" == *"status=403"* ]]
+  run drive connect api.github.com # allowed: no line
+  [[ "$output" == *"blocked=False"* ]]
+  [ "$(wc -l <"$R")" -eq 3 ]
+  local ts='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}'
+  grep -qE "^$ts"$'\tprefix\\.dev\tCONNECT\tallowlist$' "$R"
+  grep -qE "^$ts"$'\tblocked\\.invalid\tPOST\tallowlist$' "$R"
+  grep -qE "^$ts"$'\tdenied\\.example\tCONNECT\t\\[deny\\]$' "$R"
+  [ ! -s "$BASE/session.o/refused.log" ]   # another live session learns nothing of it
+  [ "$(wc -l <"$CFG/blocked.log")" -eq 3 ] # the host-wide log still has every one
+}
+
+@test "a policy refusal names its reason in refused.log: retrieve-only, git refuse, git push, a non-public dial" {
+  local R="$BASE/session.live/refused.log"
+  : >"$R"
+  printf 'github.com\n' >>"$CFG/allowlist.txt"
+  : >"$BASE/session.live/retrieve-only.txt"
+  run drive request_body LIVE api.github.com POST /repos/x/issues '{}'
+  [[ "$output" == *"blocked=True"* ]]
+  rm "$BASE/session.live/retrieve-only.txt"
+  : >"$BASE/session.live/git-push-refuse.txt"
+  run drive request_ua LIVE github.com POST /x/y.git/git-receive-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* ]]
+  : >"$BASE/session.live/git-refuse.txt"
+  run drive request_ua LIVE github.com GET '/x/y.git/info/refs?service=git-upload-pack' 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* ]]
+  printf '127.0.0.1\n' >>"$CFG/allowlist.txt"
+  run drive tunnel_dest LIVE 127.0.0.1 # allowlisted by name, refused at the dial
+  [[ "$output" == *"connect_blocked=False"* && "$output" == *"aborted=True"* ]]
+  run cut -f2- "$R"
+  [ "$output" = $'api.github.com\tPOST\tretrieve-only\ngithub.com\tPOST\tgit push\ngithub.com\tGET\tgit refuse\n127.0.0.1\tDEST\tnon-public' ]
+}
+
+@test "a refusal with no session goes to blocked.log only; an unwritable refused.log still gets the 403" {
+  local R="$BASE/session.live/refused.log"
+  : >"$R"
+  DRIVE_TOKEN='' run drive connect prefix.dev
+  [[ "$output" == *"status=407"* ]]
+  grep -q $'\tprefix.dev\tCONNECT\t-\tno session$' "$CFG/blocked.log"
+  [ ! -s "$R" ]
+  # no refused.log (the session's briefing is off): none is created
+  rm "$R"
+  run drive connect prefix.dev
+  [[ "$output" == *"status=403"* ]]
+  [ ! -e "$R" ]
+  # a write that fails changes nothing about the response
+  : >"$R"
+  chmod 0444 "$R"
+  chmod 0555 "$BASE/session.live"
+  run drive connect prefix.dev
+  chmod 0755 "$BASE/session.live"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"blocked=True"* && "$output" == *"status=403"* ]]
+  [ ! -s "$R" ]
+  [ "$(grep -c $'\tprefix.dev\tCONNECT\t-$' "$CFG/blocked.log")" -eq 2 ]
+}

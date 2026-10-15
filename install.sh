@@ -2493,6 +2493,12 @@ are reachable from every concurrent session.
 Blocked requests return HTTP 403 and are logged to
 ~/.config/agent-sandbox/blocked.log (one line per attempt) so you can
 review what the agent tried to reach and decide whether to add it.
+A refusal that belongs to a live session is ALSO appended to that session's own
+<session dir>/refused.log, when the engine created one ("<ts>\t<host>\t<method>\t<why>",
+why one of allowlist, [deny], retrieve-only, git refuse, git push, non-public): the
+engine binds that one file read-only into the sandbox, so the session learns at
+once what it was refused (the claude profile's PostToolUse hook reports it).
+blocked.log itself records every session of every project and is never bound in.
 
 Per-session --allow is scoped to its own session, not shared: the engine gives
 each session that uses --allow a random token, points that sandbox's proxy URL
@@ -2746,6 +2752,20 @@ def _session_live(token: str | None) -> bool:
     return False
 
 
+def _session_dir(token: str | None) -> Path | None:
+    """The directory of the live session whose proxy.token matches `token`, or None."""
+    if not token or not SESSION_BASE.is_dir():
+        return None
+    for session in sorted(SESSION_BASE.glob("session.*")):
+        tok, owner = session / "proxy.token", session / "owner.id"
+        try:
+            if tok.is_file() and owner.is_file() and tok.read_text().strip() == token and _owner_alive(owner):
+                return session
+        except OSError:
+            continue
+    return None
+
+
 def _session_has(token: str | None, name: str) -> bool:
     """Does the live session whose proxy.token matches `token` have the file `name`?"""
     if not token or not SESSION_BASE.is_dir():
@@ -2909,6 +2929,25 @@ def _log_blocked(host: str, method: str, path: str, why: str = "") -> None:
         fh.write(f"{ts}\t{host}\t{method}\t{path}" + (f"\t{why}" if why else "") + "\n")
 
 
+def _log_refused(token: str | None, host: str, method: str, why: str) -> None:
+    """Append a refusal to its session's own refused.log, which the engine binds
+    read-only into that sandbox. Only when the engine created the file (the
+    session's briefing is on), and best-effort: a failure to write never changes
+    the response."""
+    try:
+        session = _session_dir(token)
+        if session is None:
+            return
+        log = session / "refused.log"
+        if not log.is_file():
+            return
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        with log.open("a") as fh:
+            fh.write(f"{ts}\t{host}\t{method}\t{why}\n")
+    except OSError:
+        pass
+
+
 def request(flow: http.HTTPFlow) -> None:
     # flow.request.host is the request-line authority -- where mitmproxy actually
     # opens the connection. pretty_host would return the Host HEADER instead, and
@@ -2926,6 +2965,7 @@ def request(flow: http.HTTPFlow) -> None:
         return
     if _is_denied(host, token):
         _log_blocked(host, flow.request.method, flow.request.path)
+        _log_refused(token, host, flow.request.method, "[deny]")
         flow.response = http.Response.make(
             403,
             f"agent-sandbox: host {host!r} is denied for this session ([deny] in .agent-sandbox).\n".encode(),
@@ -2934,14 +2974,15 @@ def request(flow: http.HTTPFlow) -> None:
         return
     exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix) or _session_has(token, "hosts-public.txt"):
-        why = _retrieve_refusal(flow, token)
+        why, reason = _retrieve_refusal(flow, token), "retrieve-only"
         if why is None and _is_git_transport(flow) and _session_has(token, "git-refuse.txt"):
-            why = "git's transport (this session's [net] git = refuse)"
+            why, reason = "git's transport (this session's [net] git = refuse)", "git refuse"
         if why is None and _is_git_push(flow) and _session_has(token, "git-push-refuse.txt"):
-            why = "a git push (this session's [net] git = fetch: it fetches, it does not push)"
+            why, reason = "a git push (this session's [net] git = fetch: it fetches, it does not push)", "git push"
         if why is None:
             return
         _log_blocked(host, flow.request.method, flow.request.path)
+        _log_refused(token, host, flow.request.method, reason)
         flow.response = http.Response.make(
             403,
             f"agent-sandbox: {why} to {host!r} refused.\n".encode(),
@@ -2949,6 +2990,7 @@ def request(flow: http.HTTPFlow) -> None:
         )
         return
     _log_blocked(host, flow.request.method, flow.request.path)
+    _log_refused(token, host, flow.request.method, "allowlist")
     flow.response = http.Response.make(
         403,
         (
@@ -2982,6 +3024,7 @@ def http_connect(flow: http.HTTPFlow) -> None:
     if not denied and (_is_allowed(host, exact, suffix) or _session_has(token, "hosts-public.txt")):
         return
     _log_blocked(host, "CONNECT", "-")
+    _log_refused(token, host, "CONNECT", "[deny]" if denied else "allowlist")
     why = "denied for this session ([deny] in .agent-sandbox)" if denied else "not in the allowlist"
     flow.response = http.Response.make(
         403,
@@ -3004,6 +3047,11 @@ def server_connect(data) -> None:
     reason = _forbidden_destination(host)
     if reason:
         _log_blocked(host, "DEST", reason)
+        # Attributed through the tunnel's CONNECT token, when there was one (HTTPS);
+        # a plain-HTTP request's token is not kept per connection, so its non-public
+        # refusal is in blocked.log only.
+        cid = getattr(getattr(data, "client", None), "id", None)
+        _log_refused(_conn_token.get(cid) if cid is not None else None, host, "DEST", "non-public")
         server.error = (
             f"agent-sandbox: refused connection to a non-public address ({reason}). "
             f"The proxy only reaches public hosts on the allowlist."
