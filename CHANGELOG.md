@@ -47,6 +47,25 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **Models compose in one `.agent-sandbox`** (#267): a template's `#@ scope = roles` line
+  makes its common block -- for `roles`, the `[sandbox]`, `[conda]`, `[connect]` and
+  `[net]` every role gets -- written once per role pattern of the model
+  (`[connect:planner-*]`, ..., `[connect:supervisor]`) instead of unsuffixed, where it
+  reached every role of the file, a second model's included: `asb --init roles` in a
+  checkout set up with `github` gave gh-review `retrieve-only` and hid its `.git`. Now
+  `--init github` and `--init roles` share one file, in either order. `--init` refuses a
+  model whose role patterns meet another's already in the file (the same, or one glob
+  matching the other), naming both. **Breaking, pre-1.0**: a file the earlier
+  `--init roles` wrote has that block unsuffixed, and `--init` refuses it until those
+  blocks are removed (or the file started afresh); nothing is rewritten for you.
+- **A setup role for `roles`** (#267): `asb --role setup claude` builds `main` into the
+  `--env` environment, as `github`'s gh-setup does, so `--init roles --env NAME` takes a
+  NAME not built yet; the Implementers' clones of it are made by `--init` run again
+  after. The roles' `[conda]` line names the environment by its prefix now.
+  docs/roles.md says what an Implementer's environment is: a clone of `{env}` whose
+  editable install points at the parent checkout, so a compiled change needs a build in
+  the clone.
+
 - **Codecov reports per component** (`codecov.yml`): engine, proxy addon, Python
   components, claude profile, each its own number in the PR comment; every status is
   informational, so coverage movement never blocks a PR.

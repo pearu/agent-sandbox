@@ -24,7 +24,28 @@ A model directory holds:
   a repository's subdirectory included. A line `#@ setup = ROLE` names the role that
   builds the `--env` environment: `--init` then takes a NAME not built yet, makes its
   prefix as an empty directory (for conda to create into, and for a declaration of it
-  to bind), and says to launch ROLE; without one, a missing environment is refused.
+  to bind), and says to launch ROLE; without one, a missing environment is refused. The
+  setup role has no handle and no row in the index, and while the environment is not
+  built a `#@ clone` role gets no environment: `--init` says so, and run again once
+  ROLE has built it, clones it.
+  A line `#@ scope = roles` makes the unsuffixed sections after it the model's common
+  block, written once per role pattern of the model instead of unsuffixed --
+  `[connect:planner-*]`, `[connect:supervisor]`, the broadest pattern of each role with
+  an instance -- each line as the template has it, the block's comments with the first
+  copy, before the roles' own sections, so a role's own key wins; a key a role's own
+  section of the same header sets is left out of that copy. Put the line before the
+  block, and the block before the roles. Nothing the model writes is then unsuffixed, and
+  it composes with other models in one `.agent-sandbox`; without the line an unsuffixed
+  section is written as it is, once, with a new file, and reaches every role.
+  `--init` refuses a model whose role patterns (`name-*`, `name`) meet a role section
+  the file already has -- the same pattern, or one glob matching the other (`gh-*` and
+  `gh-review-bot`) -- naming both, unless the section is the model's own: the file names
+  the model in a `# ---- written by` or `# ---- added by asb --init MODEL ----` line (a
+  file without one: it has a section of one of the model's single or launch-named roles).
+  `[x:default]` and `[x:*]` are nobody's. Any model's `--init` refuses a file that has a
+  scoped model's block unsuffixed -- this model's or a shipped one's -- next to sections
+  of that model's roles, as the --init before this wrote it: remove those blocks (or
+  start from a fresh file) and run it again.
   `.asb/.gitignore` keeps `.asb/` out of git.
   Every path the written file declares under `.asb/` is created.
 - `roles/<role>.md` -- one purpose file per role, written per instance to
