@@ -295,6 +295,16 @@
 
 _as_msg() { echo "agent-sandbox: $*" >&2; }
 
+# _as_python COMPONENT ARGS... -- run one of the engine's Python components (join.py,
+# connect-sync.py) with python3, or with the words of AGENT_SANDBOX_TEST_PYTHON when set:
+# scripts/coverage.sh sets it to coverage.py's `run`, so a component is measured where it
+# runs. Every component goes through here (tests/unit/harness.bats checks that none
+# bypasses it); the claude profile's profile.py honours the same variable.
+_as_python() {
+  # shellcheck disable=SC2086 # the override is words: an interpreter and its options
+  ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$@"
+}
+
 # Routine status: what the resolved policy IS on a normal launch (the dot-file
 # values applied, the session allowlist, the seccomp filter in use). Shown only with
 # --verbose / AGENT_SANDBOX_VERBOSE: the same lines at every launch are how a report
@@ -2321,7 +2331,7 @@ _as_connect_sync() {
     _as_msg "connect: cannot find the sync helper at $connect_sync (re-run install.sh, or set AGENT_SANDBOX_CONNECT_SYNC)"
     return 1
   }
-  out="$(python3 "$connect_sync" "$verb" --kind "$kind" --source "$src" \
+  out="$(_as_python "$connect_sync" "$verb" --kind "$kind" --source "$src" \
     --copy "$copy" --base "$manifest" 2>&1)" || rc=$?
   ((rc == 0)) || {
     _as_msg "connect: syncing '$ch' failed (exit $rc): $out"
@@ -2351,7 +2361,7 @@ _as_connect_shadows() {
   local ch="$1" src="$2" upper="$3" seen="$4" out rc=0
   command -v python3 >/dev/null 2>&1 || return 0 # nothing to warn WITH; the mount still works
   [[ -r "$connect_sync" ]] || return 0
-  out="$(python3 "$connect_sync" shadows --source "$src" --upper "$upper" \
+  out="$(_as_python "$connect_sync" shadows --source "$src" --upper "$upper" \
     --seen "$seen" 2>&1)" || rc=$?
   ((rc == 0)) || {
     _as_msg "connect: could not check '$ch' for shadowed files (exit $rc): $out"
@@ -3038,7 +3048,7 @@ _as_keeper_join() {
   # (which passes it on) and this process, which must still take its record off.
   trap ':' INT QUIT
   trap - HUP TERM
-  python3 "$join" "${jargs[@]}" "$target" -- "$@" || rc=$?
+  _as_python "$join" "${jargs[@]}" "$target" -- "$@" || rc=$?
   trap - INT QUIT
   [[ -n "${_join_brief:-}" ]] && rm -rf -- "$_join_brief"
   [[ -n "$jid" ]] && _as_join_scoped_clear "$sb" "$jid"

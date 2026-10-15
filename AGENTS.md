@@ -71,7 +71,12 @@ runs them directly, and `AGENT_SANDBOX_LIVE=1` enables the live tests.
 Ubuntu 24.04's repos — build it from source
 (<https://github.com/SimonKagstrom/kcov>, see its `INSTALL.md`); `coverage.sh`
 prints the build deps if it is missing. The engine run needs bwrap/pasta for
-the integration suites, so run it where those work.
+the integration suites, so run it where those work. The engine's Python components
+(`join.py`, `connect-sync.py`) are measured in the same stages: the engine runs them
+through `AGENT_SANDBOX_TEST_PYTHON` (`_as_python`; tests that run one directly use
+`python_cmd`), which the stages set to `tests/helpers/coverage_run.py`; the data goes
+to `engine-runs/<stage>/py/`, and `engine-merge` combines it into
+`coverage-out/components-coverage.xml`.
 
 ### How the tests work
 

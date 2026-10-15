@@ -276,7 +276,9 @@ hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
 launch), the last three normally found beside the engine. One more is timing:
 `AGENT_SANDBOX_KEEPER_GRACE`, how many seconds a role's launch waits once nothing
 is joined into it before it ends (2), so that commands run one after another
-share it. `--engine-help` prints each with its default.
+share it. `--engine-help` prints each with its default. And one is the test
+suite's: `AGENT_SANDBOX_TEST_PYTHON`, the command the engine runs those two
+helpers with instead of `python3`, which the coverage stages point at coverage.py.
 
 Engine flags go before the agent's own arguments. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and
