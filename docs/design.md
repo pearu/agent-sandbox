@@ -262,6 +262,13 @@ Stated plainly. These are what the adversary above can still do.
   put anything into that env, and you run it on the host the next time you
   activate it; the sandbox-owned package cache can be poisoned for future
   sandbox sessions.
+- **Under `[conda] base = sandbox` the conda root is shared read-only.** Every
+  sandbox that uses agent-sandbox's micromamba sees the root and every environment
+  under its `envs/` (read-only), so an environment one project built is readable
+  from another's sandbox; a role that may write an environment there (a read-write
+  declaration of its prefix) can reshape what other projects' sandboxes then run.
+  The micromamba binary itself is a pinned release (a SHA-256 per architecture in
+  `install.sh`), bound read-only.
 - **The path refusals are a blocklist.** Secret stores and the sandbox's
   control plane are refused by name (the guarantees table has the list), and
   so is a directory containing one. A credential inside a directory you

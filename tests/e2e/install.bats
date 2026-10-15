@@ -79,6 +79,11 @@ teardown_file() {
   out=$(cat "$E/install1.out")
   [[ "$out" == *"claude: \`claude\` is $H/.local/share/claude/versions/9.9.9/claude"* ]]
   [[ "$out" == *"mitmdump 12."* ]]
+  # agent-sandbox's own micromamba, fetched and checked against the pinned sum, and its root
+  [[ "$out" == *"micromamba 2.9.0-0 installed: $H/.local/share/agent-sandbox/micromamba/bin/micromamba"* ]]
+  "$H/.local/share/agent-sandbox/micromamba/bin/micromamba" --version
+  [ -d "$H/.local/share/agent-sandbox/conda" ]
+  grep -qxE 'host|sandbox' "$H/.config/agent-sandbox/conda" # no terminal: host if it has conda, else sandbox
   [[ "$out" == *"CA generated: $H/.mitmproxy/mitmproxy-ca-cert.pem"* ]]
   [ -f "$H/.mitmproxy/mitmproxy-ca-cert.pem" ]
   grep -q '^api.github.com$' "$H/.config/agent-sandbox/allowlist.txt"
@@ -291,7 +296,8 @@ X
   [ "$(readlink "$H/.local/bin/claude")" = "$native" ]
   [ ! -e "$H/.local/bin/asb" ]
   [ ! -e "$H/.local/bin/agent-sandbox" ]
-  [ ! -d "$H/.local/share/agent-sandbox" ]
+  # our state gone but the sandboxes' conda environments, which --yes keeps
+  [ "$(ls -A "$H/.local/share/agent-sandbox")" = conda ]
   [ ! -f "$H/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
   # the allowlist and trust store are kept, as a reinstall should find them
   [ -f "$H/.config/agent-sandbox/allowlist.txt" ]

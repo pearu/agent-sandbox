@@ -485,3 +485,182 @@ native_launcher() { # a machine with Claude Code installed the normal way
     "$REPO_ROOT/tests/helpers/as-root.sh" "$REPO_ROOT/install.sh" --dry-run
   [[ "$output" != *"do not run this with sudo"* ]]
 }
+
+# ---- agent-sandbox's own micromamba, and which conda sandboxes use --------------------
+MM_SUM_X86=366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3
+
+# step [ENV=VAL ...] [-- ARGS] -- install.sh's micromamba step alone, for real (not a dry
+# run), with $T/bin first on PATH; answers to its question from $T/answers.
+step() {
+  local -a envs=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    envs+=("$1")
+    shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  mkdir -p "$T/bin"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_INSTALL_STEP=micromamba AGENT_SANDBOX_TTY="$T/answers" "${envs[@]}" "$REPO_ROOT/install.sh" "$@"
+}
+
+# no host conda: a CI runner has conda on PATH, so `conda`/`mamba` stubs that find no base
+# come first ($T/bin), and env -i leaves none of MAMBA_ROOT_PREFIX, CONDA_ROOT_PREFIX,
+# CONDA_PYTHON_EXE, CONDA_PREFIX, CONDA_EXE, MAMBA_EXE in the installer's environment
+stub_no_host_conda() {
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$T/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$T/bin/mamba"
+  chmod +x "$T/bin/conda" "$T/bin/mamba"
+}
+
+# a host conda the engine's discovery finds: `conda info --base` names $T/hostconda
+stub_host_conda() {
+  mkdir -p "$T/bin" "$T/hostconda"
+  # shellcheck disable=SC2016 # $1 $2 are the stub's own arguments
+  printf '#!/bin/sh\n[ "$1 $2" = "info --base" ] && echo %s\n' "$T/hostconda" >"$T/bin/conda"
+  chmod +x "$T/bin/conda"
+}
+
+# a curl that serves a fake micromamba, and as its .sha256 the given sum
+stub_curl_micromamba() {
+  mkdir -p "$T/bin"
+  cat >"$T/bin/curl" <<STUB
+#!/usr/bin/env bash
+out=""
+for ((i = 1; i <= \$#; i++)); do [[ "\${!i}" == -o ]] && { j=\$((i + 1)); out="\${!j}"; }; done
+url="\${!#}"
+echo "curl \$url" >>"$T/called"
+if [[ "\$url" == *.sha256 ]]; then echo "$1"; else printf 'fake micromamba\n' >"\$out"; fi
+STUB
+  chmod +x "$T/bin/curl"
+}
+
+@test "--dry-run: the micromamba step prints the fetch, the pinned sum and the paths; the conda question's answer is not written" {
+  [[ "$(uname -m)" == x86_64 ]] || skip "the pinned sum asserted here is linux-64's"
+  stub_no_host_conda
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+  [ "$status" -eq 0 ]
+  local st="$T/home/.local/share/agent-sandbox"
+  [[ "$output" == *"(dry-run) would fetch https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64"* ]]
+  [[ "$output" == *"(dry-run) check it against the pinned SHA-256 $MM_SUM_X86 (and the release's micromamba-linux-64.sha256)"* ]]
+  [[ "$output" == *"(dry-run) and install it as $st/micromamba/bin/micromamba (mode 755)"* ]]
+  [[ "$output" == *"(dry-run) would create the conda root $st/conda (empty; environments go under envs/)"* ]]
+  [ ! -e "$st/micromamba" ] && [ ! -e "$st/conda" ]
+  # no conda on this host: sandbox, said, not written
+  [[ "$output" == *"(dry-run) would write 'sandbox' to $T/home/.config/agent-sandbox/conda (no conda on this host)"* ]]
+  [ ! -e "$T/home/.config/agent-sandbox/conda" ]
+  # a host conda: the question, printed
+  stub_host_conda
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(dry-run) would ask: Sandboxes use the host's conda at $T/hostconda, or agent-sandbox's own micromamba? [host/sandbox]"* ]]
+  [ ! -e "$T/home/.config/agent-sandbox/conda" ]
+}
+
+@test "the micromamba step for real: fetched, checked against the pinned sum and the release's .sha256, installed 755; then present" {
+  [[ "$(uname -m)" == x86_64 ]] || skip "the pinned sum asserted here is linux-64's"
+  local mm="$T/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  # the fake binary is not the release: the pinned sum refuses it, nothing installed
+  stub_curl_micromamba "$MM_SUM_X86"
+  step
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"micromamba-linux-64 does not match the pinned SHA-256 $MM_SUM_X86; nothing was installed"* ]]
+  [ ! -e "$mm" ] && [ ! -e "$mm.part" ]
+  # a sha256sum that agrees (the fake is "the release"): installed, the cross-check fetched
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
+  chmod +x "$T/bin/sha256sum"
+  step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"micromamba 2.9.0-0 installed: $mm (SHA-256 $MM_SUM_X86)"* ]]
+  [[ "$output" == *"created the conda root $T/home/.local/share/agent-sandbox/conda"* ]]
+  [ "$(stat -c %a "$mm")" = 755 ]
+  [ -d "$T/home/.local/share/agent-sandbox/conda" ]
+  grep -qx "curl https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64.sha256" "$T/called"
+  # again: present and verified, nothing fetched
+  : >"$T/called"
+  step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"micromamba 2.9.0-0 present: $mm"* ]]
+  [ ! -s "$T/called" ]
+  # the release's .sha256 disagreeing with the pin: refused
+  rm -f "$mm"
+  stub_curl_micromamba 0000000000000000000000000000000000000000000000000000000000000000
+  step
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the release's micromamba-linux-64.sha256 says 0000"*", the pinned sum is $MM_SUM_X86; nothing was installed"* ]]
+  [ ! -e "$mm" ]
+}
+
+@test "which conda sandboxes use: asked where the host has conda, sandbox without asking where it has none, --yes says host, a file there is kept" {
+  [[ "$(uname -m)" == x86_64 ]] || skip "the stubbed .sha256 is linux-64's"
+  local f="$T/home/.config/agent-sandbox/conda"
+  stub_curl_micromamba "$MM_SUM_X86"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
+  chmod +x "$T/bin/sha256sum"
+  # no conda on the host: sandbox, nothing asked
+  stub_no_host_conda
+  : >"$T/answers"
+  step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$f")" = sandbox ]
+  [[ "$output" == *"(no conda on this host): wrote 'sandbox' to $f"* ]]
+  [[ "$output" != *"[host/sandbox]"* ]]
+  # a file there is kept, and not asked over
+  stub_host_conda
+  step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$f kept (sandbox): sandboxes use agent-sandbox's micromamba"* ]]
+  [[ "$output" != *"[host/sandbox]"* ]]
+  # a host conda, answered host (after an answer that is neither)
+  rm "$f"
+  printf 'maybe\nhost\n' >"$T/answers"
+  step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Sandboxes use the host's conda at $T/hostconda, or agent-sandbox's own micromamba? [host/sandbox]"* ]]
+  [ "$(cat "$f")" = host ]
+  # answered sandbox
+  rm "$f"
+  printf 'sandbox\n' >"$T/answers"
+  step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$f")" = sandbox ]
+  # --yes: host, not asked
+  rm "$f"
+  printf 'sandbox\n' >"$T/answers"
+  step -- --yes
+  [ "$status" -eq 0 ]
+  [ "$(cat "$f")" = host ]
+  [[ "$output" != *"[host/sandbox]"* ]]
+  # nothing to ask on: host, said
+  rm "$f"
+  step AGENT_SANDBOX_TTY="$T/no/such/tty"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$f")" = host ]
+  [[ "$output" == *"no terminal to ask on"* ]]
+}
+
+@test "--uninstall: the micromamba goes; the sandboxes' conda environments are asked about, and --yes keeps them" {
+  fake_install
+  local st="$T/home/.local/share/agent-sandbox"
+  mkdir -p "$st/micromamba/bin" "$st/conda/envs/dev"
+  : >"$st/micromamba/bin/micromamba"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
+    "$REPO_ROOT/install.sh" --uninstall --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"remove agent-sandbox's micromamba, $st/micromamba/bin/micromamba"* ]]
+  [[ "$output" == *"remove $st, all but $st/conda (asked below)"* ]]
+  [[ "$output" == *"(dry-run) would ask: $st/conda -- the sandboxes' conda environments live there: remove? [y/N] (--yes keeps it)"* ]]
+  [ -e "$st/micromamba/bin/micromamba" ]
+  # --yes: everything but the environments
+  uninst
+  [ "$status" -eq 0 ]
+  [ "$(ls -A "$st")" = conda ] && [ -d "$st/conda/envs/dev" ]
+  [[ "$output" == *"$st/conda kept: the sandboxes' conda environments"* ]]
+  # asked, and answered yes (then the plan's own question): all of it
+  fake_install
+  printf 'y\ny\n' >"$T/answers"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_TTY="$T/answers" "$REPO_ROOT/install.sh" --uninstall
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the sandboxes' conda environments live there: remove? [y/N]"* ]]
+  [ ! -d "$st" ]
+}

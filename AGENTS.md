@@ -108,6 +108,10 @@ the integration suites, so run it where those work.
   there the negation is the test operator's own. ShellCheck reports the bad
   form as SC2314, and `scripts/check.sh` runs ShellCheck on the `.bats` files
   -- that is the actual guard; the rule here is so you know why it fires.
+- **GitHub's runners have conda on PATH.** A test that assumes no host conda must
+  stub `conda` and `mamba` (exit 1, first on PATH) and clear `CONDA_*`/`MAMBA_*`
+  from the environment it runs the engine or installer with. Under `env -i` on a
+  dev box nothing is found, so such a test passes locally by accident.
 - **A test must fail when the bug it guards is re-introduced.** Check that with
   a mutation: copy `agent-sandbox` into a directory that has a `profiles`
   symlink to the repo's, re-introduce the bug there, and run the guarding test

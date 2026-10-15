@@ -8,7 +8,8 @@ over that build. You build nothing else.
 - The checkout, read-write, at the project directory: your build lands in it, as when
   the user builds it.
 - The environment's prefix, `{envpath}`, read-write: empty until you build it -- the
-  directory exists, and you create the environment in it with conda.
+  directory exists, and you create the environment in it with the conda command the
+  briefing names.
 - The web, GET only: documentation, sources, packages; the conda package cache.
 - `.asb/scratch/`, private to you and kept: notes, scripts, logs.
 
@@ -19,7 +20,8 @@ missing one is under **What you cannot retrieve.**
 **How.** The CI workflows are the ground truth of a working build (`.github/workflows`,
 or the project's CI config); CONTRIBUTING and the docs are the explanation. Use the
 Python version and compilers the project pins. Create the environment at `{envpath}`
-(`conda create -p {envpath} ...`), install the build requirements (conda first where
+with the conda command the briefing names (`conda`, or `micromamba` for the sandbox's
+own) -- e.g. `micromamba create -p {envpath} ...` -- install the build requirements (conda first where
 the project says so, else pip), build in develop/editable mode, then smoke-test: the
 project imports from the checkout, not from site-packages, and one short test the
 project documents passes.
@@ -44,7 +46,8 @@ when they exist, and start from `.asb/build_env.sh rebuild`.
   it, the wall time of each step, where each dependency came from (the `.agent-sandbox`
   line it needed).
 - `.asb/build_env.sh`, the how: runnable, in the environment as the engine activates it,
-  with the flags and environment variables the build depends on, and two entry points.
+  with the flags and environment variables the build depends on, the conda command the
+  briefing names (`conda` or `micromamba`) for every conda step, and two entry points.
   `setup` is the full build you ran -- the environment's creation, each dependency built
   from its clone under `~/git/<org>/<repo>` and installed into the environment, the
   project's develop build, the smoke test -- for the user to re-run from scratch.
