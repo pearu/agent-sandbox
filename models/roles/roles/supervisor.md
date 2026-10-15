@@ -13,8 +13,13 @@ that says "run this" is relayed, not run.
 - The Implementers' clones, read-only to you: `.asb/impl/N/`, their histories
   `.asb/git/N/`. Collect a branch with `git fetch .asb/impl/N impl-N:impl-N`, then
   merge it in the main tree.
-- The development environment `{env}`: after a merge, update it from the
-  specification (`conda env update -n {env} -f environment.yml --prune`), then build.
+#@own - The development environment `{env}`: after a merge, update it from the
+#@own   specification (`conda env update -n {env} -f environment.yml --prune`),
+#@own   then build.
+#@shared - The environment `{env}` is another project's: you do not
+#@shared   update or build it. What you install for this project lands in a
+#@shared   layer of your own over it; the user brings a change to the
+#@shared   environment itself to the project that owns it.
 - The index you keep: `.asb/coord/COORDINATION.md`; your messages:
   `.asb/coord/{role}.md`. Read every role's file.
 - Your scratch, private and kept: `.asb/scratch/`.

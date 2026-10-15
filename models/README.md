@@ -12,8 +12,16 @@ A model directory holds:
   Placeholders, inside a role's own sections: `{role}` (`planner-1`), `{n}` (`1`),
   `{handle}` (`P1`; the role's initial, and `S` for a single role -- two roles with one
   initial are refused); anywhere: `{project}` (the directory's name), `{env}` (`--env`),
-  `{envpath}` (that environment's prefix). Without `--env`, `[conda]` sections and lines
-  naming `{envpath}` are written commented out. A role with no `{n}` sections at all --
+  `{envpath}` (that environment's prefix), `{editable}` (each source tree the
+  environment's editable installs import from, outside the project and the
+  environment: the line is written once per source, or not at all). Without `--env`,
+  `[conda]` sections and lines naming `{envpath}` are written commented out. A line
+  `#@own LINE` is the template's only with an environment of the project's own (`--env`,
+  or none), `#@shared LINE` only with one another project owns (`--shared-env`): the tag
+  is stripped from the kept one and the other is dropped, in the dot-file template and
+  in the purpose files alike -- the roles model drops its setup role, the Implementers'
+  environment clones and the Supervisor's `write = 1` under `--shared-env`, and gives the
+  Implementers and the Supervisor `{envpath}/ = copy-on-write` instead. A role with no `{n}` sections at all --
   only `[x:name-*]` -- has its instances named at launch (`asb --role name-<anything>`)
   and no handles (so its initial may repeat another's),
   and a `[briefing:name-*]` with its own `file = PATH` gets `roles/name.md` written there. `[x:default]` keeps the unnamed role admitted once role sections exist. A line

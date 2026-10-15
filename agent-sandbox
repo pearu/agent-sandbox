@@ -372,13 +372,16 @@ Engine flags (before CMD):
                         add the lines to that section of this project's
                         .agent-sandbox (creating either), then the --trust
                         review; host only. What a blocked session prints
-  --init MODEL [ROLE=N ...] [--env NAME]
+  --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
                         (models/, e.g. `roles`), with N instances of a role
                         and, with --env, an environment cloned from NAME per
-                        clone; run again, it adds what is missing. Models
-                        compose in one file, their role names apart.
+                        clone; with --shared-env, NAME is another project's:
+                        read-only, never cloned, a layer over it for the
+                        roles that install. Run again, it adds what is
+                        missing. Models compose in one file, their role
+                        names apart.
                         Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
                         nothing; exits non-zero when a launch would refuse
@@ -3734,6 +3737,37 @@ _as_path_swap_conda() {
 }
 
 # Used to resolve a [conda] name = <env> from .agent-sandbox to <base>/envs/<env>.
+# _as_env_editable_sources PREFIX -- the source trees the conda env at PREFIX imports
+# from through an editable install (#268), one absolute path per line, sorted: a wheel's
+# direct_url.json marked editable (pip install -e), an .egg-link (setup.py develop), and a
+# .pth line naming a directory. Those outside the env and the project must be readable in
+# a role that activates the env, or its imports fail there. Read on the host.
+_as_env_editable_sources() {
+  local sp f l u
+  for sp in "$1"/lib/python*/site-packages; do
+    [[ -d "$sp" ]] || continue
+    for f in "$sp"/*.dist-info/direct_url.json; do
+      [[ -f "$f" ]] || continue
+      grep -q '"editable"[[:space:]]*:[[:space:]]*true' "$f" || continue
+      u="$(sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"file:\/\/\([^"]*\)".*/\1/p' "$f" | head -1)"
+      [[ -n "$u" ]] && printf '%b\n' "${u//%/\\x}"
+    done
+    for f in "$sp"/*.egg-link; do
+      [[ -f "$f" ]] && head -n 1 -- "$f"
+    done
+    for f in "$sp"/*.pth; do
+      [[ -f "$f" ]] || continue
+      while IFS= read -r l || [[ -n "$l" ]]; do
+        [[ "$l" == /* ]] && printf '%s\n' "$l"
+      done <"$f"
+    done
+  done | while IFS= read -r l; do
+    l="${l%/}"
+    [[ -n "$l" && -d "$l" && "$l" != "$1" && "$l" != "$1"/* ]] && realpath -s -- "$l"
+  done | sort -u
+  return 0
+}
+
 _as_conda_base() {
   if [[ -n "${MAMBA_ROOT_PREFIX:-}" && -d "${MAMBA_ROOT_PREFIX}" ]]; then
     printf '%s' "$MAMBA_ROOT_PREFIX"
@@ -3778,7 +3812,7 @@ _as_conda_mode() {
     case "$src" in
       AGENT_SANDBOX_CONDA_BASE) v="${AGENT_SANDBOX_CONDA_BASE:-}" ;;
       "[conda] base") v="${1:-}" ;;
-      *) v="$(tr -d '[:space:]' <"$f" 2>/dev/null || true)" ;;
+      *) v="" && [[ -r "$f" ]] && v="$(tr -d '[:space:]' <"$f")" ;;
     esac
     [[ -n "$v" ]] || continue
     case "$v" in
@@ -5044,11 +5078,40 @@ _as_check_plan() {
       printf '  %-28s %-15s %-24s %s\n' "${_connect_key[$path]}" "$mode" "$source" "${_connect_where[$path]}"
     done
   } >&2
+  _as_check_editable
   _as_check_noeffect
   _as_check_reach
   _as_check_actas
   _as_check_unclassified
   _as_check_binds
+}
+
+# _as_check_editable -- `--check`'s warning for the active conda env (#268): each source
+# of its editable installs (_as_env_editable_sources) that this role cannot read -- not
+# the project, not the env, not under a declared path that shows the user's files -- is
+# named with the --apply line that declares it read-only. Without it, the env's imports
+# of that package fail inside the sandbox.
+_as_check_editable() {
+  [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX/conda-meta" ]] || return 0
+  local s path ok sect="[connect]" n=0
+  [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})) && sect="[connect:$_role]"
+  while IFS= read -r s; do
+    [[ -n "$s" ]] || continue
+    ok=0
+    [[ "$s" == "$_proj" || "$s" == "$_proj"/* ]] && ok=1
+    for path in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+      ((ok)) && break
+      [[ "${_connect_mode[$path]}" == own ]] && continue
+      [[ -n "${_connect_src[$path]:-}" ]] && continue # shows another path's files here
+      path="${path%/}"
+      [[ "$s" == "$path" || "$s" == "$path"/* ]] && ok=1
+    done
+    ((ok)) && continue
+    ((n++)) || printf '\nThe conda env %s imports from source trees this role cannot read (editable installs):\n' "$(_as_tilde "$CONDA_PREFIX")" >&2
+    printf "  %s -- its imports fail inside; to declare it: %s --apply '%s' '%s/ = read-only'\n" \
+      "$(_as_tilde "$s")" "$invoked" "$sect" "$(_as_tilde "$s")" >&2
+  done < <(_as_env_editable_sources "$CONDA_PREFIX")
+  return 0
 }
 
 # _as_check_actas -- `--check`'s "Can act as you at" (#226): per outside service this
@@ -5544,10 +5607,16 @@ _as_init() {
     _as_msg "--init: no model '$model' ($tpl not found). Shipped: $(_as_models_list)"
     return 1
   fi
+  # The template's text for this --init (#268): a line `#@own LINE` belongs to an
+  # environment of the project's own (--env, or none), `#@shared LINE` to one another
+  # project owns (--shared-env); the tag is stripped from the one kept, the other dropped.
+  local tpltext envkeep=own envdrop=shared
+  ((${_init_shared:-0})) && envkeep=shared envdrop=own
+  tpltext="$(sed -e "/^#@$envdrop /d" -e "s/^#@$envkeep //" -- "$tpl")"
   # A model that clones the project needs it to be a git repository, at its top; one
   # that does not runs in any directory, a repository's subdirectory included.
   top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [[ "$top" != "$proj" ]] && grep -q '^#@ clone' "$tpl"; then
+  if [[ "$top" != "$proj" ]] && grep -q '^#@ clone' <<<"$tpltext"; then
     if [[ -n "$top" ]]; then
       _as_msg "--init: model '$model' clones the project, so it runs at the top of a git repository; $proj is inside the one at $top -- run it there."
     else
@@ -5578,7 +5647,7 @@ _as_init() {
     else
       bodies[cur]+="$line"$'\n'
     fi
-  done <"$tpl"
+  done <<<"$tpltext"
   # The comments and blank lines that end a section introduce the next one: they move
   # with it, so an appended section does not carry the next one's heading.
   local -a leads=()
@@ -5608,7 +5677,7 @@ _as_init() {
   }
   local rn rk k setup
   local -A kind=() count=() initial=() handled=()
-  setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$tpl" | head -1)"
+  setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' <<<"$tpltext" | head -1)"
   for i in "${!heads[@]}"; do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
     [[ -n "${rn:-}" ]] || continue
@@ -5662,7 +5731,7 @@ _as_init() {
   # declared path that does not exist is skipped at launch).
   local envpath="" base="/" _conda_mode="" _conda_mode_src="" _conda_hbase=""
   [[ -n "$env" ]] && _as_conda_mode
-  if [[ -n "$env" ]] && grep -qF '{envpath}' "$tpl"; then
+  if [[ -n "$env" ]] && grep -qF '{envpath}' <<<"$tpltext"; then
     case "$env" in
       */*) envpath="$(realpath -m -s -- "$env")" ;;
       *)
@@ -5671,10 +5740,23 @@ _as_init() {
         envpath="$base/envs/$env"
         ;;
     esac
+    if ((${_init_shared:-0})) && [[ ! -d "$envpath/conda-meta" ]]; then
+      _as_msg "--init: --shared-env $env: no conda environment at $envpath -- an environment another project owns is built there, by that project, not here"
+      return 1
+    fi
     if [[ ! -d "$envpath/conda-meta" && (-z "$setup" || -z "$base") ]]; then
       _as_msg "--init: --env $env: no conda environment at $envpath"
       return 1
     fi
+  fi
+  # {editable} (#268): the sources of the environment's editable installs outside this
+  # project -- a line naming it is written once per source, or not at all.
+  local -a editable=()
+  if [[ -d "$envpath/conda-meta" ]]; then
+    local es
+    while IFS= read -r es; do
+      [[ -n "$es" && "$es" != "$proj" && "$es" != "$proj"/* && "$es" != "$envpath"/* ]] && editable+=("$es")
+    done < <(_as_env_editable_sources "$envpath")
   fi
 
   # ---- rendering ----
@@ -5698,6 +5780,17 @@ _as_init() {
       txt="${txt//\{envpath\}/ENVPATH}"
     else
       txt="${txt//\{envpath\}/$envpath}"
+    fi
+    if [[ "$txt" == *'{editable}'* ]]; then
+      local rtxt="" rl re
+      while IFS= read -r rl; do
+        if [[ "$rl" == *'{editable}'* ]]; then
+          for re in ${editable[@]+"${editable[@]}"}; do rtxt+="${rl//\{editable\}/$(_as_tilde "$re")}"$'\n'; done
+        else
+          rtxt+="$rl"$'\n'
+        fi
+      done <<<"${txt%$'\n'}"
+      txt="$rtxt"
     fi
     printf '%s%s' "$lead" "$txt"
   }
@@ -5747,7 +5840,8 @@ _as_init() {
   # when one of the block's unsuffixed headers is (commented out or not) beside a section
   # suffixed for one of its role patterns.
   _init_scoped() { # TEMPLATE -> "PATTERNS<tab>BLOCK HEADERS", for a template with #@ scope
-    awk '/^#@[[:space:]]*scope[[:space:]]*=/ { on = 1; next }
+    awk '{ sub(/^#@(own|shared) /, "") }
+      /^#@[[:space:]]*scope[[:space:]]*=/ { on = 1; next }
       /^\[[^]]+\]/ {
         h = $0; sub(/\].*/, "]", h)
         if (h ~ /:/) {
@@ -5974,7 +6068,7 @@ _as_init() {
   _init_purpose() { # SRC REL ROLE N HANDLE
     local tmp sum cur rec sums="$proj/.asb/init.sums"
     tmp="$(mktemp)" || return 1
-    _init_render "" "$(cat -- "$1")" "$3" "$4" "$5" | sed 1d >"$tmp" || {
+    _init_render "" "$(sed -e "/^#@$envdrop /d" -e "s/^#@$envkeep //" -- "$1")" "$3" "$4" "$5" | sed 1d >"$tmp" || {
       rm -f -- "$tmp"
       return 1
     }
@@ -6098,6 +6192,12 @@ _as_init() {
     _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
   fi
 
+  if ((${_init_shared:-0})) && [[ -n "$envpath" ]]; then
+    _as_msg "--init: $env is another project's environment ($envpath): activated read-only, never cloned or built here; the roles that install get a layer of their own over it"
+    if ((${#editable[@]})); then
+      _as_msg "--init: it imports from $(for es in "${editable[@]}"; do printf '%s, ' "$(_as_tilde "$es")"; done | sed 's/, $//') (editable installs), declared read-only where the model asks for {editable}"
+    fi
+  fi
   if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
     a="empty"
     [[ -d "$envpath" ]] || { mkdir -p -- "$envpath" && a="created empty"; } || return 1
@@ -6649,7 +6749,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
-  local _do_init=0 _init_model="" _init_env="" _init_gpu=""
+  local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # Connections: the resolved channel -> mode map, and where each came from, so
@@ -6810,11 +6910,11 @@ agent_sandbox() (
         shift $#
         ;;
       --init)
-        # --init MODEL [ROLE=N ...] [--env NAME] (#225): the words after it are its own.
+        # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
         _do_init=1
         shift
         [[ $# -gt 0 && "$1" != -* ]] || {
-          _as_msg "--init needs a model: --init MODEL [ROLE=N ...] [--env NAME] (shipped: $(_as_models_list))"
+          _as_msg "--init needs a model: --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (shipped: $(_as_models_list))"
           return 2
         }
         _init_model="$1"
@@ -6826,12 +6926,28 @@ agent_sandbox() (
                 _as_msg "--init: --env needs a conda environment's name"
                 return 2
               }
-              _init_env="$2"
+              _init_env="$2" _init_nenv=$((_init_nenv + 1))
               shift 2
               ;;
             --env=*)
-              _init_env="${1#--env=}"
+              _init_env="${1#--env=}" _init_nenv=$((_init_nenv + 1))
               shift
+              ;;
+            --shared-env | --shared-env=*)
+              # an environment another project owns (#268): activated read-only, never
+              # cloned or built here, the roles that install get a layer over it
+              if [[ "$1" == --shared-env ]]; then
+                [[ $# -ge 2 ]] || {
+                  _as_msg "--init: --shared-env needs a conda environment's name or path"
+                  return 2
+                }
+                _init_env="$2"
+                shift 2
+              else
+                _init_env="${1#--shared-env=}"
+                shift
+              fi
+              _init_shared=1 _init_nenv=$((_init_nenv + 1))
               ;;
             --enable-gpu | --disable-gpu)
               _init_gpu="${1#--}" _init_gpu="${_init_gpu%-gpu}"
@@ -7012,6 +7128,10 @@ agent_sandbox() (
   # ---- --init: write a project's files from a development model (#225) ----
   # Profile-independent; never launches the agent, approves nothing.
   if ((_do_init)); then
+    if ((_init_nenv > 1)); then
+      _as_msg "--init: one environment: --env NAME (this project's own) or --shared-env NAME (another project's), once"
+      return 2
+    fi
     _as_init "$_init_model" "$_init_env" ${_init_counts[@]+"${_init_counts[@]}"}
     return $?
   fi

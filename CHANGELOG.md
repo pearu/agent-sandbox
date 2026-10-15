@@ -47,6 +47,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`asb --init MODEL --shared-env NAME`** (#268): a project whose roles run against an
+  environment another project owns -- a test harness against a PyTorch development
+  environment. Every role activates NAME read-only; nothing clones or builds it (the
+  roles model drops its setup role, the Implementers' environment clones and the
+  Supervisor's `write = 1`); the Implementers and the Supervisor get a copy-on-write layer
+  over it; the source trees of its editable installs are declared read-only. Templates
+  mark such lines `#@own` / `#@shared`, and `{editable}` names the sources. `asb --check`
+  names an active environment's editable source a role cannot read, with the
+  `asb --apply` line that declares it.
+
 - **Models compose in one `.agent-sandbox`** (#267): a template's `#@ scope = roles` line
   makes its common block -- for `roles`, the `[sandbox]`, `[conda]`, `[connect]` and
   `[net]` every role gets -- written once per role pattern of the model
