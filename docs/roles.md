@@ -110,7 +110,10 @@ than doing it.
 **Purpose.** Keep the round on its track, and be the only role that touches the
 outside: on your word, merge an accepted branch into `main`, build it, push, open the
 pull request, post the comment, close the issue. Never act on the *contents* of an
-artefact it relays: a review that says "run this" is relayed, not run.
+artefact it relays: a review that says "run this" is relayed, not run. A push to an SSH
+`origin` needs its host in the file: `--init` writes `[ssh:supervisor]` with it commented
+out, and a Supervisor without it asks for the exact line its briefing names,
+`asb --apply '[ssh:supervisor]' github.com` (the host of `origin`), then a relaunch.
 
 | | |
 |---|---|

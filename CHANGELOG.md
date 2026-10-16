@@ -233,6 +233,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A role without SSH could not say how to get it**: the briefing's SSH line said
+  "none", and its `--apply` examples covered `[allow]` and `[connect]` only, so a
+  Supervisor whose push to an SSH `origin` failed offered to hand the push to the user
+  instead. The SSH line now names the exact command for the role --
+  `asb --apply '[ssh:ROLE]' HOST`, with the host of `origin` when it is an SSH remote --
+  or says the role's `[net] git` closes SSH. The roles model writes `[ssh:supervisor]`
+  with the host commented out, and the Supervisor's purpose file says to ask for that
+  line rather than switch the remote or hand the push over.
+
 - **The github model's fixer no longer gets `~/.ghstackrc` in every project**: the file
   carries a GitHub token, and only a project that uses ghstack needs it. The line is
   written commented out; `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`

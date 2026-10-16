@@ -3483,6 +3483,18 @@ _as_briefing_write() {
   fi
   ((${#_allow_hosts[@]} > 0)) && hosts_line="${_allow_hosts[*]}"
   ((${#_ssh_hosts[@]} > 0)) && ssh_line="$(_as_ssh_sources)"
+  # With no SSH host, the line names how to ask for one (a role may have to push): the
+  # [ssh] section for this role, with the host of origin's URL when it is an SSH remote.
+  # A role whose [net] git closes SSH gets none, and the line says so.
+  local ssh_sect="[ssh]" ssh_host="" ssh_ask=""
+  [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})) && ssh_sect="[ssh:$_role]"
+  if ((${_git_refuse:-0} || ${_git_fetch_only:-0})); then
+    ssh_ask="this role's [net] git closes SSH"
+  else
+    ssh_host="$(_as_git_ssh_host "$cwd")"
+    ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a relaunch"
+  fi
+  ((${#_ssh_hosts[@]} > 0)) || ssh_line="none -- $ssh_ask"
   # two forms: the full one for briefing.md, a short one for the summary that is
   # injected on every launch (where a spare sentence is paid for every time)
   local mem_short
@@ -3598,6 +3610,7 @@ _as_briefing_write() {
     fi
     printf "      asb --apply '%s' example.com\n\n" "$sect"
     printf "  any section the same way, e.g. asb --apply '%s' '~/data/ = read-only'\n" "$csect"
+    [[ -n "$ssh_host" ]] && printf "  -- or SSH for a push to origin: asb --apply '%s' %s\n" "$ssh_sect" "$ssh_host"
     printf '  or, for a host and for this launch only: asb --allow example.com ...\n\n'
     printf 'then ask them to relaunch.\n'
     printf 'Continue without it only when the user says so: a mirror, another channel\n'
@@ -3765,6 +3778,21 @@ _as_env_editable_sources() {
     l="${l%/}"
     [[ -n "$l" && -d "$l" && "$l" != "$1" && "$l" != "$1"/* ]] && realpath -s -- "$l"
   done | sort -u
+  return 0
+}
+
+# _as_git_ssh_host DIR -- the host of DIR's `origin` when it is an SSH remote
+# (`ssh://[user@]host[:port]/...` or `[user@]host:path`), or nothing.
+_as_git_ssh_host() {
+  local u h
+  u="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 0
+  case "$u" in
+    ssh://*) h="${u#ssh://}" h="${h%%/*}" h="${h##*@}" h="${h%%:*}" ;;
+    *://* | /* | ./* | ../*) return 0 ;;
+    *:*) h="${u%%:*}" h="${h##*@}" ;;
+    *) return 0 ;;
+  esac
+  [[ "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] && printf '%s' "$h"
   return 0
 }
 

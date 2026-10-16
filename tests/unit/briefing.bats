@@ -111,7 +111,7 @@ trust() {
 @test "the briefing's SSH line names each host and where it came from: the dot-file's section, --ssh" {
   make_ssh_stubs
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
-  grep -qxF -- '- SSH reachable through a constrained agent: none' "$OUT/briefing.md"
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh]' HOST, then a relaunch" "$OUT/briefing.md"
   printf '[ssh]\ngithub.com\n[ssh:impl-*]\ngit@gitlab.example\n' >"$PROJ/.agent-sandbox"
   trust
   run_engine BWRAP_COPY="$OUT" -- asb --role impl-1 --ssh flag.example --ssh github.com claude --version
@@ -540,4 +540,24 @@ CHECK
     run ! grep -qF -- '- conda:' "$md"
     run ! grep -qF 'Conda:' "$h"
   }
+}
+
+@test "the briefing's SSH line names the --apply command for this role, with origin's host when it is an SSH remote; a role whose git is closed says so" {
+  git -C "$PROJ" init -q
+  git -C "$PROJ" remote add origin git@github.com:pearu/torch-op-bench.git
+  printf '[connect:supervisor]\n[net:reviewer-*]\ngit = refuse\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh:supervisor]' github.com (the host of origin), then a relaunch" "$OUT/briefing.md"
+  grep -qxF "  -- or SSH for a push to origin: asb --apply '[ssh:supervisor]' github.com" "$OUT/briefing.md"
+  grep -qF "SSH: none -- to ask the user for a host, the command is asb --apply '[ssh:supervisor]' github.com" "$OUT/hook-SessionStart.json"
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- this role's [net] git closes SSH" "$OUT/briefing.md"
+  run ! grep -qF 'or SSH for a push' "$OUT/briefing.md"
+  git -C "$PROJ" remote set-url origin https://github.com/pearu/torch-op-bench.git
+  run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  grep -qF "the command is asb --apply '[ssh:supervisor]' HOST, then a relaunch" "$OUT/briefing.md" # no SSH remote: no host to name
 }
