@@ -75,6 +75,8 @@ pasta_argv() {
   grepd 'setenv HTTPS_PROXY "\$pxy"' # proxy env points at that URL
   run ! grepd '10\.9\.9\.1'          # no gateway is baked in on the host side
   run ! grepd '10.0.2.2'             # not the old slirp gateway
+  # the CA variables point at the bound bundle as in proxy mode, libmamba's too
+  [ "$(setenv_value MAMBA_SSL_VERIFY)" = /etc/ssl/certs/ca-certificates.crt ]
 }
 
 @test "strict: bwrap runs with no environment of its own, though pasta and the wrapper keep theirs" {

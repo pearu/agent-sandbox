@@ -248,8 +248,9 @@ base and bind-mounts it over `/etc/ssl/certs/ca-certificates.crt` inside the
 sandbox, so everything in there trusts the proxy and nothing on the host does.
 It also points the CA variables of tools that ship their own store at that
 path: `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
-`CONDA_SSL_VERIFY`, `PIP_CERT`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`,
-`NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, unless you set them yourself. A tool
+`CONDA_SSL_VERIFY`, `MAMBA_SSL_VERIFY` (mamba 2.x and micromamba read only this one),
+`PIP_CERT`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, `NPM_CONFIG_CAFILE`,
+`CARGO_HTTP_CAINFO`, unless you set them yourself. A tool
 with yet another knob needs it forwarded via `AGENT_SANDBOX_FORWARD`.
 `AGENT_SANDBOX_PROXY_CA` overrides the CA's location; a missing CA is a warning
 at launch. Do not change the host's CA state while a session runs; relaunch.

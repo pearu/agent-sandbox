@@ -6585,15 +6585,19 @@ _as_ca_bind() {
 # cargo, anything honouring SSL_CERT_FILE) never read the system bundle, so in
 # the modes that go through the proxy point every well-known override at it --
 # inside the sandbox that path holds the bundle _as_ca_bind prepared. Names the
-# caller set were forwarded already and are left alone.
+# caller set were forwarded already and are left alone. mamba 2.x and micromamba
+# (libmamba, the engine's own conda base too) read neither SSL_CERT_FILE nor
+# CONDA_SSL_VERIFY, only MAMBA_SSL_VERIFY -- measured on Ubuntu 26.04, where mamba
+# failed TLS through the proxy until it was set. It takes a bundle path, like
+# CONDA_SSL_VERIFY.
 _as_ca_env() {
   local bundle="${SSL_CERT_FILE:-}" var
   [[ -n "$bundle" ]] || bundle="$(_as_system_ca_bundle)" || {
     _as_msg "warning — no system CA bundle found; tools with a private CA store will not trust the proxy"
     return 0
   }
-  for var in SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE CONDA_SSL_VERIFY PIP_CERT \
-    GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE CARGO_HTTP_CAINFO; do
+  for var in SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE CONDA_SSL_VERIFY MAMBA_SSL_VERIFY \
+    PIP_CERT GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE CARGO_HTTP_CAINFO; do
     [[ -n "${!var+x}" ]] && continue
     args+=(--setenv "$var" "$bundle")
   done
@@ -8495,7 +8499,8 @@ agent_sandbox() (
     HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY
     http_proxy https_proxy no_proxy all_proxy
     SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
-    CONDA_SSL_VERIFY PIP_CERT GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE CARGO_HTTP_CAINFO
+    CONDA_SSL_VERIFY MAMBA_SSL_VERIFY PIP_CERT GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS NPM_CONFIG_CAFILE
+    CARGO_HTTP_CAINFO
     CUDA_HOME CUDAToolkit_ROOT LD_LIBRARY_PATH
   )
   # Extra names the user explicitly opts in via AGENT_SANDBOX_FORWARD

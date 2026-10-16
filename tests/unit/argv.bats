@@ -48,6 +48,8 @@ setup() {
   [ "$(setenv_value AGENT_SANDBOX)" = "1" ] # marks the inside of a sandbox (nested-launcher detection)
   [ "$(setenv_value SSL_CERT_FILE)" = "/etc/ssl/certs/ca-certificates.crt" ]
   [ "$(setenv_value CONDA_SSL_VERIFY)" = "/etc/ssl/certs/ca-certificates.crt" ]
+  # libmamba (mamba 2.x, micromamba) reads only its own name, not the two above
+  [ "$(setenv_value MAMBA_SSL_VERIFY)" = "/etc/ssl/certs/ca-certificates.crt" ]
   run ! setenv_value LEAKED
   # HOME's binds come before the final remount-ro; the HOME tmpfs before them
   [ "$(argv_index --remount-ro)" -gt "$(argv_index "$H/home/.claude")" ]
@@ -79,12 +81,14 @@ setup() {
   run ! argv_has --share-net
   run ! setenv_value HTTPS_PROXY
   run ! setenv_value SSL_CERT_FILE
+  run ! setenv_value MAMBA_SSL_VERIFY
   run ! argv_has --ro-bind "$H/base/ca-bundle.crt"
   run_engine AGENT_SANDBOX_NET=open -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --share-net
   run ! setenv_value HTTPS_PROXY
   run ! setenv_value SSL_CERT_FILE
+  run ! setenv_value MAMBA_SSL_VERIFY
 }
 
 @test "bwrap itself runs with no environment and its options off its command line: inside it is pid 1, readable there" {
@@ -139,6 +143,7 @@ setup() {
   [ "$(setenv_value PIP_CERT)" = "/my/ca" ]
   [ "$(setenv_value SSL_CERT_FILE)" = "/my/bundle" ]
   [ "$(setenv_value CONDA_SSL_VERIFY)" = "/my/bundle" ]
+  [ "$(setenv_value MAMBA_SSL_VERIFY)" = "/my/bundle" ]
   [ "$(grep -c '^PIP_CERT$' "$H/argv")" -eq 1 ]
 }
 

@@ -275,6 +275,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **mamba did not trust the proxy's CA**: mamba 2.x and micromamba (libmamba) read
+  neither `SSL_CERT_FILE` nor `CONDA_SSL_VERIFY`, the variables the engine points at the
+  bundle with the proxy CA, so under `proxy` and `strict` they failed TLS on every
+  download -- measured by an Implementer role on Ubuntu 26.04, where setting
+  `MAMBA_SSL_VERIFY` to the sandbox's bundle made mamba work. That includes the
+  engine's own micromamba (`[conda] base = sandbox`). `MAMBA_SSL_VERIFY` is now set
+  beside `CONDA_SSL_VERIFY`, and forwarded when you set it yourself.
+
 - **A relative `[conda] pkgs` path landed in the wrong place**: `pkgs =
   .asb/scratch/conda-pkgs` was taken as written, so the engine created and bound it
   relative to its own working directory and `CONDA_PKGS_DIRS` carried the relative
