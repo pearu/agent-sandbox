@@ -202,6 +202,7 @@ Every role launches from the repository itself:
         plan/ handoff/ review/  each instance's own directory inside
         coord/ roles/ scratch/  messages, inboxes and the index; purpose files; scratch
         bin/                    the inbox watcher, inbox-wait
+        serve/                  the prompt of a role run with no terminal (--serve)
         impl/1/ impl/2/         I1's and I2's clones, on branches impl-1 and impl-2
         git/1/  git/2/          their histories, kept apart from the trees
 
@@ -294,7 +295,9 @@ On the host, at the top of the repository:
 
 `asb --init` writes `.agent-sandbox`, `.asb/` with every directory the file names, a
 purpose file per instance in `.asb/roles/`, the coord index, an empty inbox per role in
-`.asb/coord/to/`, the watcher `.asb/bin/inbox-wait`, and `.asb/.gitignore`
+`.asb/coord/to/`, the watcher `.asb/bin/inbox-wait`, the per-turn prompt of each
+Planner, Implementer and Reviewer in `.asb/serve/` (for `--serve`, below), and
+`.asb/.gitignore`
 (`.asb/` is never committed); it makes each Implementer's clone (with your git identity) and,
 with `--env`, its environment. Without counts you get one of each role; `reviewer=0`
 leaves one out. Without `--env` the `[conda]` sections are written commented out. It
@@ -333,6 +336,46 @@ One you changed is kept, and said so. The changed files need `asb --trust` again
 `asb --check --role NAME` is the way to see what a role has before it runs: its
 policy, what can reach it from other sessions, where it can act as you (your agent's
 API, GitHub, SSH), and every path it may write.
+
+**A role with no terminal (#277).** A Planner, Implementer or Reviewer can run without
+a terminal of its own:
+
+    asb --role implementer-1 --serve claude
+
+in a spare pane or tmux window you need not watch. It runs on the host, in the
+foreground: it starts the role's launch and holds it open, then waits on the role's
+inbox and, at each change, runs one turn of the role's session in its sandbox --
+`claude -p` told one fixed line, "A message arrived in your inbox. Follow your purpose
+file's inbox rule ...", under `--permission-mode bypassPermissions`. Nobody is there to
+answer a prompt, so Claude Code's prompts are off: **a served role is bounded by its
+policy alone** -- its mounts, its network, the syscall filter -- which the sandbox
+enforces outside the agent whatever the agent decides. The `[permissions]` lines are
+for the roles at a terminal, where a prompt has you to answer it. That is why the Gate,
+whose policy can publish, is never served. The purpose file's inbox rule does the work -- `ack N`, act, report,
+`done N` -- and the turn ends. What it waits on and what it says is the role's
+`[serve:implementer-1]` section, which `--init` writes (`watch =
+.asb/coord/to/implementer-1.md`, `prompt = .asb/serve/implementer-1.md`, the prompt
+file from the model's `serve/`); the loop touches `.asb/coord/<role>/alive` each second,
+as the watcher in a terminal does, so the Supervisor sees the role running.
+
+- **The session id.** The first turn makes the session with a fresh id and writes it to
+  `.asb/coord/<role>/session`; every later turn, and the next `--serve`, resumes it, so
+  the role remembers its earlier messages. To talk to it yourself, open that session in
+  a terminal: `asb --role implementer-1 claude --resume $(cat .asb/coord/implementer-1/session)`.
+- **The pause.** While anything else is joined into the role's launch -- that terminal,
+  most likely -- a turn waits until it has gone: two resumes of one session at once
+  fork it (measured with Claude Code 2.1.281).
+- **A turn that fails.** A turn that exits non-zero, or is killed, is one line in the
+  role's messages -- `turn failed (exit N) for a change to WATCH at TIME; the loop waits
+  for the next message` -- which the Supervisor's watcher sees; the loop then waits for
+  the next message.
+- **Ending it.** `asb --role implementer-1 --shutdown claude`, Ctrl-C in its pane or a
+  TERM ends the loop and the launch with it; `asb --role implementer-1 --status claude`
+  shows it serving, with its session id. A message written while no loop ran is a turn
+  as soon as the next one starts.
+
+The Supervisor and the Gate are never served this way: they are where you work, and
+the Gate publishes.
 
 ## 7. GitHub: reading for everyone, publishing for the Gate
 
@@ -468,9 +511,15 @@ Bash(tail:*)
 [connect:planner-1]
 .asb/plan/planner-1/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
+[serve:planner-1]               # no terminal: asb --role planner-1 --serve claude
+watch = .asb/coord/to/planner-1.md
+prompt = .asb/serve/planner-1.md
 [connect:planner-2]
 .asb/plan/planner-2/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-2/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
+[serve:planner-2]               # no terminal: asb --role planner-2 --serve claude
+watch = .asb/coord/to/planner-2.md
+prompt = .asb/serve/planner-2.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 
 # ---- implementers: a clone each --------------------------------------------------
@@ -482,6 +531,9 @@ Bash(tail:*)
 ./.git/ = read-only               # the clone reads main's objects through it
 # [conda:implementer-1]           # activation only; the clone is writable as its tree is
 # prefix = .asb/impl/1/.env
+[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve claude
+watch = .asb/coord/to/implementer-1.md
+prompt = .asb/serve/implementer-1.md
 [connect:implementer-2]
 .asb/handoff/implementer-2/ = read-write
 .asb/coord/implementer-2/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
@@ -490,12 +542,18 @@ Bash(tail:*)
 ./.git/ = read-only               # the clone reads main's objects through it
 # [conda:implementer-2]           # activation only; the clone is writable as its tree is
 # prefix = .asb/impl/2/.env
+[serve:implementer-2]           # no terminal: asb --role implementer-2 --serve claude
+watch = .asb/coord/to/implementer-2.md
+prompt = .asb/serve/implementer-2.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
 .asb/review/reviewer-1/ = read-write
 .asb/coord/reviewer-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
+[serve:reviewer-1]              # no terminal: asb --role reviewer-1 --serve claude
+watch = .asb/coord/to/reviewer-1.md
+prompt = .asb/serve/reviewer-1.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
@@ -567,7 +625,9 @@ read the artefacts on the host as files.
 
 **Terminal 1 -- the Supervisor.** `asb --role supervisor claude`. It prints the launch
 line of every other role; open a terminal for each of P1, I1, I2 and R1 and run its
-line there (a role arms its inbox watcher at start, and waits). Then, in terminal 1:
+line there (a role arms its inbox watcher at start, and waits) -- or run
+`asb --role NAME --serve claude` in panes you need not watch, a turn per message
+(section 6). Then, in terminal 1:
 
 > The problem is issue #NNN. Tell P1 to work out the options with me.
 
@@ -612,8 +672,8 @@ with its eyes. `asb --check` and `asb --trust` run on the host.
 ## 10. Writing your own model
 
 A model is data: `models/<name>/` holds a dot-file template (`agent-sandbox`), a purpose
-file per role (`roles/<role>.md`), a coord index template and scripts the roles run
-(`bin/`), and `asb --init NAME`
+file per role (`roles/<role>.md`), a coord index template, scripts the roles run
+(`bin/`) and the prompts of roles run with no terminal (`serve/`), and `asb --init NAME`
 writes a project's files from it; `NAME` may also be a path to your own. The template's
 role-suffixed sections are its roles -- `[connect:planner-{n}]` numbered instances,
 `[connect:supervisor]` a single one -- and the roles need distinct initials, since the

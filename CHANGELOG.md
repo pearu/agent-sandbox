@@ -62,6 +62,10 @@ names are gone; there are no aliases for removed names before 1.0.
   `--status` shows the loop, and `--shutdown`, Ctrl-C or a TERM ends it with the launch.
   Refused without `--role`, under `--preset native`, and for a role with no section.
   The profile contract gains `[agent] serve-new` and `serve-resume`.
+  In the roles model, `--init` writes `[serve:...]` for every Planner, Implementer and
+  Reviewer (not the Supervisor, the Gate or setup), with the one-line prompt from the
+  model's `serve/` as `.asb/serve/<instance>.md`; the Supervisor's launch lines name
+  both forms, and how to open a terminal on a served role by its session id.
 - **The roles model's Supervisor coordinates, and a Gate publishes** (#274). You stay in
   the Supervisor's terminal: it sends each role its next step in the role's inbox,
   `.asb/coord/to/<role>.md` (a directory only it may write), each message shown to you

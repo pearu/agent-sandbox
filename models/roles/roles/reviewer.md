@@ -29,6 +29,9 @@ while .asb/bin/inbox-wait .asb/coord/to/{role}.md 0 .asb/coord/{role}/alive
 do tail -n 20 .asb/coord/to/{role}.md; done
 ```
 
+Under `--serve` (no terminal) each message is a turn of your own, started for you when
+it arrives: arm no Monitor, read and act as below, and end the turn when done.
+
 At start and at every wake, read the inbox whole from your cursor -- the last N you
 handled, in `.asb/scratch/inbox-cursor` (none: from the top). For each message after
 it: append `ack N` to your messages before you read its body, act on it, append

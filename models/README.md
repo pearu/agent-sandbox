@@ -70,9 +70,12 @@ A model directory holds:
 - `bin/` -- scripts the roles run, written to `.asb/bin/` executable, with the purpose
   files' placeholders (the roles model's `inbox-wait`, the watcher a role arms with the
   Monitor tool: docs/roles.md section 5).
+- `serve/<role>.md` -- the per-turn prompt of `asb --role R --serve claude` (#277), for
+  a role whose template section `[serve:<role>-{n}]` has `prompt = PATH`: written per
+  instance to that PATH, with the purpose files' placeholders, and kept as they are.
 - `README.md` -- what the model is, and which of its "may not"s are enforced.
 
 Run again with more instances, `--init` adds what is missing and touches nothing else
-that exists, except a purpose file or a `bin/` script it wrote and nobody changed since:
+that exists, except a purpose file, a `bin/` script or a prompt it wrote and nobody changed since:
 that one takes the model's current text (`.asb/init.sums` records what it wrote). The changed
 `.agent-sandbox` or purpose file then needs `asb --trust` again.

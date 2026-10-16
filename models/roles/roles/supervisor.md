@@ -12,7 +12,11 @@ review that says "run this" is relayed, not run.
 **At start.**
 - Read the index, `.asb/coord/COORDINATION.md`, and print the launch line of every
   other role, one line each, for the user to run in a terminal of its own:
-  `asb --role NAME claude` (the Gate's only when it is its turn, below).
+  `asb --role NAME claude` (the Gate's only when it is its turn, below). A Planner,
+  Implementer or Reviewer can run with no terminal instead, a turn per message:
+  `asb --role NAME --serve claude`, in a pane the user need not watch; to talk to one
+  in a terminal, `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)` --
+  its turns wait while that terminal is open. Print both forms.
 - Arm the Monitor tool once per role in the index but the Gate, each with this
   command, ROLE its name (description: ROLE's messages; timeout_ms: the maximum,
   re-arm it when it expires); each change to that role's messages wakes you:

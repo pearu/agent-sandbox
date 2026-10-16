@@ -6359,7 +6359,7 @@ _as_init() {
     printf '%s%s' "$lead" "$txt"
   }
   local df="$proj/.agent-sandbox" existing="" new="" j n inst h hd lead
-  local -a clones=() insts=() prefixes=() inboxes=()
+  local -a clones=() insts=() prefixes=() inboxes=() prompts=()
   # A section the file has -- or has commented out, which is the user's to uncomment --
   # is never written again; compared by its header alone.
   [[ -f "$df" ]] && existing="$(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' "$df")"
@@ -6543,6 +6543,10 @@ _as_init() {
           # The environment's place: the role's [conda:...] prefix, from the template.
           [[ "${heads[k]}" == "[conda:"* && "${bodies[k]}" =~ (^|$'\n')prefix[[:space:]]*=[[:space:]]*([^[:space:]#$'\n']+) ]] \
             && prefixes+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
+          # The per-turn prompt of --serve (#277): the role's [serve:...] prompt, written
+          # from the model's serve/<role>.md.
+          [[ "${heads[k]}" == "[serve:"* && "${bodies[k]}" =~ (^|$'\n')prompt[[:space:]]*=[[:space:]]*([^[:space:]#$'\n']+) ]] \
+            && prompts+=("$inst"$'\t'"$h"$'\t'"$rn"$'\t'"$n"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
         done
       done
       i=$((j + 1))
@@ -6562,6 +6566,8 @@ _as_init() {
       [[ "$rk" == single ]] && insts+=("$rn"$'\t'"$h"$'\t'"$rn"$'\t'"")
       [[ "${bodies[i]}" =~ (^|$'\n')#@[[:space:]]*inbox[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
         && inboxes+=("$(_init_render "x" "${BASH_REMATCH[2]}" "$rn" "" "$h" | sed -n 2p)")
+      [[ "${heads[i]}" == "[serve:"* && "${bodies[i]}" =~ (^|$'\n')prompt[[:space:]]*=[[:space:]]*([^[:space:]#$'\n']+) ]] \
+        && prompts+=("$rn"$'\t'"$h"$'\t'"$rn"$'\t'""$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$rn" "" "$h" | sed -n 2p)")
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "$rn" "" "$h" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "$rn" "" "$h" | head -1)"
     else
@@ -6671,6 +6677,15 @@ _as_init() {
     f="$mdir/roles/$rn.md"
     [[ -f "$f" ]] || continue
     _init_purpose "$f" ".asb/roles/$inst.md" "$inst" "$n" "$h" || return 1
+  done
+  # The per-turn prompts of --serve (#277), from the model's serve/<role>.md, kept as the
+  # purpose files are.
+  local ppath
+  for a in ${prompts[@]+"${prompts[@]}"}; do
+    IFS=$'\t' read -r inst h rn n ppath <<<"$a"
+    f="$mdir/serve/$rn.md"
+    [[ -f "$f" && -n "$ppath" ]] || continue
+    _init_purpose "$f" "$ppath" "$inst" "$n" "$h" || return 1
   done
   # A role with no numbered instances in the template (`[briefing:name-*]` with its own
   # `file = PATH`, no {role} in it) is briefed from one file for every instance, from the
