@@ -29,6 +29,7 @@ Variables a profile declares (all optional unless marked):
 | `profile_verbs=(...)` | (Or `[agent] verbs` in the dot-file.) Agent verbs that observe or manage a background service. The engine joins them into the role's running launch, where the service is, and never starts a launch for one: with none running, a verb in `profile_verbs_observe` answers that the role is not running (exit 0) and any other is refused. They get no briefing arguments. |
 | `profile_verbs_observe=(...)` | (Or `[agent] verbs-observe`.) The subset of `profile_verbs` that only ask questions. |
 | `profile_daemon_argv=(...)` | (Or `[agent] daemon`.) Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
+| `profile_serve_new=(...)`, `profile_serve_resume=(...)` | (Or `[agent] serve-new`, `serve-resume`.) The agent's arguments for one turn of `asb --role R --serve CMD` (#277): the session's first turn, and every later one; `{id}` is the session's id, and the prompt follows them. Without both, `--serve` refuses. claude: `-p --session-id {id} --permission-mode bypassPermissions` and `-p --resume {id} --permission-mode bypassPermissions`. |
 
 Functions a profile defines:
 
@@ -89,7 +90,7 @@ single-valued one.
 
 | Section, key | Sets |
 |---|---|
-| `[agent] verbs`, `verbs-observe`, `daemon`, `status` | `profile_verbs`, `profile_verbs_observe`, `profile_daemon_argv`, `profile_status_argv` (space-separated words) |
+| `[agent] verbs`, `verbs-observe`, `daemon`, `status`, `serve-new`, `serve-resume` | `profile_verbs`, `profile_verbs_observe`, `profile_daemon_argv`, `profile_status_argv`, `profile_serve_new`, `profile_serve_resume` (space-separated words) |
 | `[agent] command` | `profile_command` |
 | `[agent] base` | the agent's state directory (`~/.claude`), bound **read-write** before anything else, so every channel and declaration layers on it; created when absent; checked as any read-write bind is (never `/`, `$HOME` or a parent of it, nothing protected), and resolved again at bind time (#175) |
 | `[agent] base-env` | the variable the agent itself reads to move its state (claude: `CLAUDE_CONFIG_DIR`); set and non-empty in the launching shell, it wins over `base` (#190). `{base}` in the dot-file is the base so resolved |

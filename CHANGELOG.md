@@ -47,6 +47,25 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A role with no terminal: `asb --role R --serve claude`** (#277). A host-side loop, in
+  the foreground, that holds the role's launch open and runs one turn of the role's
+  session per change to a file: the agent with the profile's turn arguments (claude:
+  `-p`, the session named by id -- `--session-id` the first time, `--resume` after --
+  and `--permission-mode bypassPermissions`: with nobody to answer a prompt, Claude
+  Code's prompts are off and the role is bounded by its sandbox's policy alone) and a
+  fixed prompt, joined into the launch like any other session. A new
+  `[serve]` / `[serve:ROLE]` section says what to wait on and what to say, `watch =
+  PATH` and `prompt = PATH`, both in the project; reviewed (as information), listed by
+  `--check`, accepted by `--apply`. The session id goes to `.asb/coord/R/session`, which
+  a later `--serve` resumes; a turn waits while a terminal is joined into the role; a
+  turn that fails is one line in the role's `.asb/coord/R/messages.md`;
+  `--status` shows the loop, and `--shutdown`, Ctrl-C or a TERM ends it with the launch.
+  Refused without `--role`, under `--preset native`, and for a role with no section.
+  The profile contract gains `[agent] serve-new` and `serve-resume`.
+  In the roles model, `--init` writes `[serve:...]` for every Planner, Implementer and
+  Reviewer (not the Supervisor, the Gate or setup), with the one-line prompt from the
+  model's `serve/` as `.asb/serve/<instance>.md`; the Supervisor's launch lines name
+  both forms, and how to open a terminal on a served role by its session id.
 - **The roles model's Supervisor coordinates, and a Gate publishes** (#274). You stay in
   the Supervisor's terminal: it sends each role its next step in the role's inbox,
   `.asb/coord/to/<role>.md` (a directory only it may write), each message shown to you

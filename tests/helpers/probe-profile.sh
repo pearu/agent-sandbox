@@ -21,3 +21,10 @@ profile_daemon_argv=(daemon run)
 profile_verbs=(agents stop)
 # shellcheck disable=SC2034
 profile_verbs_observe=(agents)
+
+# One turn of --serve (#277), as the claude profile's [agent] serve-new and serve-resume
+# say it: tests/integration/serve.bats checks the probe receives these.
+# shellcheck disable=SC2034 # engine contract
+profile_serve_new=(-p --session-id '{id}' --permission-mode bypassPermissions)
+# shellcheck disable=SC2034
+profile_serve_resume=(-p --resume '{id}' --permission-mode bypassPermissions)

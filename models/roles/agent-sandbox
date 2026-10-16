@@ -31,6 +31,9 @@ Bash(tail:*)
 #@ inbox = .asb/coord/to/{role}.md
 .asb/plan/planner-{n}/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
+[serve:planner-{n}]               # no terminal: asb --role {role} --serve claude
+watch = .asb/coord/to/{role}.md
+prompt = .asb/serve/{role}.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 
 # ---- implementers: a clone each --------------------------------------------------
@@ -45,6 +48,9 @@ Bash(tail:*)
 #@shared {envpath}/ = copy-on-write  # another project's env: what it installs lands in its layer
 #@own [conda:implementer-{n}]           # activation only; the clone is writable as its tree is
 #@own prefix = .asb/impl/{n}/.env
+[serve:implementer-{n}]           # no terminal: asb --role {role} --serve claude
+watch = .asb/coord/to/{role}.md
+prompt = .asb/serve/{role}.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 
 # ---- reviewers: the common block already hides every history -----------------------
@@ -52,6 +58,9 @@ Bash(tail:*)
 #@ inbox = .asb/coord/to/{role}.md
 .asb/review/reviewer-{n}/ = read-write
 .asb/coord/reviewer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
+[serve:reviewer-{n}]              # no terminal: asb --role {role} --serve claude
+watch = .asb/coord/to/{role}.md
+prompt = .asb/serve/{role}.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --

@@ -532,7 +532,7 @@ approve() {
   [[ "$output" == *"nothing added to it"* ]]
   init -- roles planner=3
   [ "$status" -eq 0 ]
-  [[ "$output" == *"added to .agent-sandbox: [connect:planner-2] [connect:planner-3]"* ]]
+  [[ "$output" == *"added to .agent-sandbox: [connect:planner-2] [serve:planner-2] [connect:planner-3] [serve:planner-3]"* ]]
   init AGENT_SANDBOX_MODELS_DIR="$H/m" -- sup
   [ "$status" -ne 0 ]
   [[ "$output" == *"model 'sup' uses role pattern supervisor, and this .agent-sandbox already has sections for supervisor"* ]]
@@ -736,4 +736,37 @@ shared_env() {
   [[ "$output" == *"[permissions:gate] Bash(git push:*): a permission rule the agent gets without asking you, for the roles gate"* ]]
   [[ "$output" == *"[permissions:planner-*] Bash(.asb/bin/inbox-wait:*): a permission rule"* ]]
   [[ "$output" != *"bad rule"* && "$output" != *"set twice"* ]]
+}
+
+# shellcheck disable=SC2016 # backquotes and $(...) are the purpose files' text, not ours
+@test "the roles model: a [serve:ROLE] per Planner, Implementer and Reviewer, its prompt file written and kept; none for the Supervisor, the Gate or setup (#277)" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" r m
+  m="$(dirname "$ENGINE")/models/roles"
+  for r in planner-1 planner-2 implementer-1 reviewer-1; do
+    [ "$(section "[serve:$r]" "$df")" = "$(printf 'watch = .asb/coord/to/%s.md\nprompt = .asb/serve/%s.md' "$r" "$r")" ]
+    cmp -s "$PROJ/.asb/serve/$r.md" "$m/serve/${r%-*}.md"
+    grep -qF 'Under `--serve` (no terminal) each message is a turn of your own' "$PROJ/.asb/roles/$r.md"
+  done
+  grep -qxF '[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve claude' "$df"
+  for r in supervisor gate setup; do
+    run ! grep -qF "[serve:$r]" "$df"
+    [ ! -e "$PROJ/.asb/serve/$r.md" ]
+  done
+  # the Supervisor names both forms, and the terminal on a served session
+  grep -qF '`asb --role NAME --serve claude`' "$PROJ/.asb/roles/supervisor.md"
+  grep -qF '`asb --role NAME claude --resume $(cat .asb/coord/NAME/session)`' "$PROJ/.asb/roles/supervisor.md"
+  # the review says what each loop waits on and reads; --check names the role's
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[serve:implementer-1], for the roles implementer-1: \`asb --role ROLE --serve CMD\` holds the role's launch on the host and, at each change to .asb/coord/to/implementer-1.md, runs one turn of the role's session in its sandbox, told the text of .asb/serve/implementer-1.md"* ]]
+  check implementer-1
+  [[ "$output" == *"--serve: a turn of its session per change to .asb/coord/to/implementer-1.md, told the text of .asb/serve/implementer-1.md"$'\n'* ]]
+  # run again: a prompt you changed is kept
+  printf 'mine\n' >"$PROJ/.asb/serve/planner-1.md"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/serve/planner-1.md: changed since --init wrote it"* ]]
+  [ "$(cat "$PROJ/.asb/serve/planner-1.md")" = mine ]
 }

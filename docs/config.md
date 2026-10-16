@@ -71,6 +71,27 @@ Sections:
   nothing the sandbox enforces: a rule lets the agent run a command without asking,
   and the command then meets the same mounts, network and syscall filter. Applied
   under every preset, `native` included, as `[allow]` is.
+- **`[serve]`** — what `asb --role ROLE --serve CMD` (#277) waits on and says, for a
+  role with no terminal: `watch = PATH`, the file whose every change is a turn (an
+  inbox), and `prompt = PATH`, the file whose text each turn is told; both required,
+  both relative to the project, with no `..`. Per role with `[serve:<role>]`; the
+  latest line of each key that matches the role wins. `--serve` runs on the host, in
+  the foreground: it holds the role's launch open, polls the watched file every
+  second, and at each change runs one turn of the role's own session as a join --
+  the agent with the profile's turn arguments (claude: `-p --session-id ID` the first
+  time, `-p --resume ID` after, and `--permission-mode bypassPermissions`: nobody is
+  there to answer a prompt, so Claude Code's prompts are off and the role is bounded
+  by its policy alone) and the prompt's text. A turn that fails is one line in
+  `.asb/coord/ROLE/messages.md`, written by a rename. The
+  session's id goes to `.asb/coord/ROLE/session`, which a later `--serve` resumes, and
+  the loop touches `.asb/coord/ROLE/alive` as a terminal role's watcher does. A turn
+  waits while something else is joined into the role's launch -- a terminal on the
+  session, most likely: two resumes of one session at once fork it. `--status` shows
+  the loop; `--shutdown`, Ctrl-C or a TERM ends it with the launch. Nothing of the
+  project runs on the host: the prompt is read through one open file whose real path
+  must be in the project, plain text, at most 64 KiB. The review says what the loop
+  will wait on and read; it widens nothing (the turns run in the role's sandbox, under
+  its policy), and `--check` names the role's.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
@@ -732,7 +753,7 @@ preset = isolated                 # the reviewer role
 and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
 changes `skills` and leaves every other channel as `[connect]` put it.
 `[sandbox]` (its `preset`), `[connect]`, and (#221) `[allow]`, `[deny]`, `[env]`,
-`[conda]`, `[net]`, `[gpu]`, `[ssh]`, `[permissions]` and `[briefing]` take a suffix: a
+`[conda]`, `[net]`, `[gpu]`, `[ssh]`, `[permissions]`, `[briefing]` and `[serve]` take a suffix: a
 key there overrides the unsuffixed one for the role, a list (`[allow]`, `[deny]`,
 `[ssh]`, `[permissions]`, `[env]` names) adds to it --
 
