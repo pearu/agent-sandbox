@@ -34,6 +34,17 @@ verbs-observe = agents logs
 daemon = daemon run
 # What --status joins to list the daemon's sessions.
 status = agents
+# One turn of `asb --role R --serve claude` (#277), the prompt after it: print mode, the
+# session named by its id -- made at the first turn, resumed at every later one: two
+# --continue in a row answered "No conversation found" on such a history (measured,
+# 2.1.300) -- and Claude Code's permission prompts off: nobody is there to answer one,
+# so a served role is bounded by its sandbox's policy alone, which the threat model
+# already enforces outside the agent (docs/design.md). dontAsk instead refused the
+# Write tool to a role whose [permissions] allow only its watcher (measured, 2.1.300).
+# Claude Code refuses it as uid 0, in a user namespace too (measured, 2.1.300: the
+# sandbox runs as your uid), and under --restricted (its --help).
+serve-new = -p --session-id {id} --permission-mode bypassPermissions
+serve-resume = -p --resume {id} --permission-mode bypassPermissions
 
 # Paths under ~/.claude blanked for every launch: empty inside, gone at exit.
 #

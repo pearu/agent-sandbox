@@ -96,6 +96,33 @@ nothing of it is left once the role's launch ends.
   (`--sandbox`, `AGENT_SANDBOX_CLAUDE_SANDBOX`, `[claude] sandbox`, each refused by
   name). A session runs without a sandbox only by `--preset none`, typed per launch.
 
+### A role with no terminal: `--serve` (#277)
+
+`asb --role R --serve claude` is a loop on the host, in the foreground, that holds R's
+launch and runs one turn of R's session per change to the file `[serve:R] watch` names:
+the agent with the profile's turn arguments (claude: `-p --session-id ID` the first
+time, `-p --resume ID` after, `--permission-mode bypassPermissions`) and the text of
+`[serve:R] prompt`. **A served role is bounded by its policy alone**: with nobody to
+answer a prompt, Claude Code's permission prompts are off, which the threat model
+allows -- it treats the agent as compromised and enforces every limit outside it --
+and is why the Gate, whose policy can publish, is never served. A turn that exits
+non-zero is one line in the role's `messages.md`, written by a rename. It is the daemon-holds-the-launch pattern above with the engine as the daemon:
+the loop starts a *holder*, the engine again with the same words, which joins the launch
+with a command that only waits (`--status` lists it as `agent-sandbox-serve`); every
+turn is the engine again too, a join like any other, so it gets the keeper's policy and
+the briefing's `--settings` with the role's `[permissions]`. The holder knows itself by
+descending from the loop its record (`<sandbox>/serve`) names. The session's id goes to
+`.asb/coord/R/session`; a turn waits while any join that is not the loop's own is live
+(the keeper's `joined/` records, by process descent), since two resumes of one session
+fork it. A signal to the loop, or the loop losing its parent, ends the launch
+(`--shutdown`'s path); `--shutdown` from elsewhere ends the holder, and the loop with it.
+**Nothing of the project runs on the host**: the loop polls the watched file itself
+(modification time, inode, size -- the model's `inbox-wait`, which a sandbox with the
+project read-write could rewrite, is not run), touches `.asb/coord/R/alive` itself, reads
+the prompt through one open file whose real path must be in the project, and writes the
+session id by a rename in the role's directory, so a link planted there is replaced,
+never written through.
+
 ## Threat model
 
 **Adversary**: the agent process and anything it runs inside the sandbox,
@@ -331,6 +358,11 @@ Stated plainly. These are what the adversary above can still do.
   carries (#280). A git server treats it as a fetch; a host that serves something else
   at such a path could take it as a write. A secret could already leave in a GET; what
   this adds is a request body. `git = refuse` closes it.
+- **What a `--serve` turn is told is a project file.** The loop reads `[serve:R]
+  prompt` at every turn, and the watched file is what starts one, so whoever can write
+  them -- a role with the project read-write, the Supervisor in the roles model, which
+  writes the inboxes anyway -- chooses when the served role runs and what it is told,
+  within its own sandbox and policy. The prompt file is not part of the approval.
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent

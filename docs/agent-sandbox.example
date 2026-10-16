@@ -60,6 +60,16 @@
 #Bash(git push:*)
 
 
+# --- A role with no terminal (--serve) --------------------------------------
+# `asb --role ROLE --serve claude` holds the role's launch and runs one turn of its
+# session per change to `watch`, told the text of `prompt`; both are files in the
+# project, both required. The session id goes to .asb/coord/ROLE/session. Per role
+# with [serve:ROLE]; unsuffixed, for every role.
+#[serve]
+#watch = inbox.md
+#prompt = turn-prompt.md
+
+
 # --- Memory scoping ------------------------------------------------------
 # Which other projects' Claude memory this session may read, read-only. By
 # default it sees only its own project. List project paths (not the ~/.claude

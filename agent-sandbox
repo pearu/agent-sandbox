@@ -244,6 +244,11 @@
 #   --apply '[SECTION]' LINE...
 #                         add the lines to that section of the file, then the
 #                         --trust review; host only. See docs/config.md.
+#   --serve               with --role R: a role with no terminal (#277). Runs on the
+#                         host, in the foreground: holds R's launch and runs one
+#                         turn of R's session (the profile's serve-new/serve-resume
+#                         arguments and the prompt) per change to the file the
+#                         dot-file's [serve:R] watch names; --shutdown ends it.
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -414,6 +419,10 @@ Engine flags (before CMD):
                         bug in agent-sandbox
   --shutdown            end this role's running sandbox -- everything joined
                         into it, and a background daemon -- then exit
+  --serve               a role with no terminal: hold its launch, and run one
+                        turn of its session per change to the file its
+                        [serve:ROLE] watch names, told the text of prompt;
+                        needs --role; --shutdown or Ctrl-C ends it
   --overlay auto|off    what `copy-on-write` uses: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only moves `copy-on-write` to `copy`
@@ -3325,6 +3334,14 @@ _as_role_status() {
     printf '  dot-file: the approved one of then (%s)' "${dot:0:12}"
   fi
   [[ "$dot" == "$now" ]] && printf '\n' || printf ', changed since\n'
+  # --serve (#277): the loop holding it, what it waits on, and the session it runs.
+  if _as_serve_record "$sb"; then
+    local sw="" sf="" sid=""
+    { read -r _ && read -r sw && read -r sf; } <"$sb/serve" 2>/dev/null
+    [[ -n "$sf" && -f "$_proj/$sf" && ! -L "$_proj/$sf" ]] && read -r sid <"$_proj/$sf" 2>/dev/null
+    [[ "$sid" =~ ^[0-9a-f-]{36}$ ]] || sid=""
+    printf '  serving: pid %s, a turn of session %s per change to %s\n' "$_sv_pid" "${sid:-(none yet: the first turn makes it)}" "$sw"
+  fi
   printf '  processes:\n'
   python3 - "$_keeper_target" <<'PY'
 import os, sys
@@ -3351,6 +3368,390 @@ PY
   else
     printf '  no background daemon\n'
   fi
+  return 0
+}
+
+# ----- --serve: a role with no terminal (#277) ---------------------------------------
+# `asb --role R --serve CMD` runs on the host, in the foreground, and holds R's launch
+# open for as long as it runs: it starts a HOLDER, itself again with the same words --
+# found to be the holder by descending from the loop its record names -- which joins the
+# launch with a command that does nothing. Then it loops: wait for the file the role's
+# [serve:R] section names to change, run one turn of R's session as a join (CMD with the
+# profile's serve-new or serve-resume arguments and the prompt file's text), wait again.
+# The turns are the engine run again, as `asb ... CMD ARGS` would be, so each is a join
+# like any other: the keeper's policy, the briefing's --settings with the role's
+# [permissions]. The session is named: the first turn makes it with a fresh id, written
+# to .asb/coord/R/session, and every later turn, and a later --serve, resumes it.
+#
+# NOTHING OF THE PROJECT RUNS ON THE HOST. The loop polls the watched file itself -- its
+# modification time, inode and size, inbox-wait's test -- and touches the role's alive
+# file itself: a script in the project could have been rewritten by any sandbox that has
+# the project read-write. What it reads there is the prompt's text, through one open
+# file whose real path must be inside the project, and the session id, which must look
+# like one; what it writes there it writes by a rename in the role's directory, so a
+# link planted there is replaced, never followed.
+
+# _as_serve_resolve ROLE -- set _serve_watch and _serve_prompt, as written, from the
+# parsed [serve] sections that match ROLE: the latest line of each key wins.
+_as_serve_resolve() {
+  local e g k v
+  _serve_watch="" _serve_prompt=""
+  for e in ${_df_serve[@]+"${_df_serve[@]}"}; do
+    g="${e%%$'\t'*}" e="${e#*$'\t'}"
+    k="${e%%$'\t'*}" v="${e#*$'\t'}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$g" == "*" || "$1" == $g ]] || continue
+    case "$k" in
+      watch) _serve_watch="$v" ;;
+      prompt) _serve_prompt="$v" ;;
+    esac
+  done
+  return 0
+}
+
+# _as_serve_path_ok PATH -- is PATH what a [serve] key takes: relative to the project,
+# with no `..` in it?
+_as_serve_path_ok() {
+  [[ -n "$1" && "$1" != /* && "$1" != \~* && "/$1/" != */../* ]]
+}
+
+# _as_serve_notes -- the review's lines for the [serve] sections (_as_trust_notes):
+# what the loop will wait on and say, for which roles. Information: a loop widens
+# nothing, it runs the role as the role runs. A section that lacks a key, or names a
+# path outside the project, is said, and --serve refuses for its roles.
+_as_serve_notes() {
+  local e g k v w p n sec
+  local -a globs=()
+  for e in ${_df_serve[@]+"${_df_serve[@]}"}; do
+    g="${e%%$'\t'*}"
+    [[ " ${globs[*]-} " == *" $g "* ]] || globs+=("$g")
+  done
+  for g in ${globs[@]+"${globs[@]}"}; do
+    w="" p=""
+    for e in "${_df_serve[@]}"; do
+      [[ "${e%%$'\t'*}" == "$g" ]] || continue
+      e="${e#*$'\t'}"
+      k="${e%%$'\t'*}" v="${e#*$'\t'}"
+      [[ "$k" == watch ]] && w="$v"
+      [[ "$k" == prompt ]] && p="$v"
+    done
+    if [[ "$g" == "*" ]]; then sec="[serve]" n="every role"; else sec="[serve:$g]" n="the roles $g"; fi
+    for k in watch prompt; do
+      v="$w"
+      [[ "$k" == prompt ]] && v="$p"
+      if [[ -z "$v" ]]; then
+        _as_msg ".agent-sandbox: $sec has no '$k = PATH'; --serve refuses for $n until it has both watch and prompt"
+      elif ! _as_serve_path_ok "$v"; then
+        _as_msg ".agent-sandbox: $sec $k '$v' is not a path in the project (relative to it, no '..'); --serve refuses for $n"
+      fi
+    done
+    if [[ -n "$w" && -n "$p" ]] && _as_serve_path_ok "$w" && _as_serve_path_ok "$p"; then
+      _as_msg ".agent-sandbox: $sec, for $n: \`asb --role ROLE --serve CMD\` holds the role's launch on the host and, at each change to $w, runs one turn of the role's session in its sandbox, told the text of $p; the role's session id goes to .asb/coord/ROLE/session. It widens nothing"
+    fi
+  done
+  return 0
+}
+
+# _as_proc_ppid PID -- print PID's parent.
+_as_proc_ppid() {
+  local k v
+  { while read -r k v; do [[ "$k" == PPid: ]] && printf '%s' "$v" && return 0; done <"/proc/$1/status"; } 2>/dev/null
+  return 1
+}
+
+# _as_proc_descends PID ANCESTOR -- is ANCESTOR among PID's parents?
+_as_proc_descends() {
+  local p="$1" n=0
+  while [[ -n "$p" && "$p" -gt 1 ]] && ((n++ < 200)); do
+    p="$(_as_proc_ppid "$p")" || return 1
+    [[ "$p" == "$2" ]] && return 0
+  done
+  return 1
+}
+
+# _as_serve_record SANDBOXDIR -- set _sv_pid to the live loop serving this role, from its
+# record (`PID START`, then the watched file and the session file as written), or fail.
+_as_serve_record() {
+  local start
+  _sv_pid=""
+  read -r _sv_pid start 2>/dev/null <"$1/serve" || return 1
+  _as_proc_is "$_sv_pid" "$start" || {
+    _sv_pid=""
+    return 1
+  }
+}
+
+# _as_serve_foreign SANDBOXDIR LOOPPID -- print the first live join of the role's launch
+# that is not the loop's own (its holder, a turn): a terminal, most often. A turn waits
+# while there is one -- two resumes of one session at once fork it (measured, Claude Code
+# 2.1.281) -- and the keeper's record of what is joined is what says so.
+_as_serve_foreign() {
+  local f pid start
+  for f in "$1"/keeper/joined/*; do
+    [[ -f "$f" ]] || continue
+    pid="" start=""
+    { read -r pid start <"$f"; } 2>/dev/null
+    _as_proc_is "$pid" "$start" || continue
+    _as_proc_descends "$pid" "$2" && continue
+    printf '%s' "$pid"
+    return 0
+  done
+  return 1
+}
+
+# _as_serve_put DIR NAME TEXT -- write TEXT to DIR/NAME by a rename from a new file in
+# DIR: whatever is at DIR/NAME, a link included, is replaced, never written through.
+_as_serve_put() {
+  local tmp
+  tmp="$(mktemp -- "$1/.$2.XXXXXX")" || return 1
+  if ! { printf '%s' "$3" >"$tmp" && mv -f -- "$tmp" "$1/$2"; }; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+# _as_serve_failed DIR LINE -- append LINE to the role's DIR/messages.md, where the
+# Supervisor's watcher sees it: the file read as it is (never through a link, which is
+# replaced instead) and written back with LINE by a rename (_as_serve_put).
+_as_serve_failed() {
+  local f="$1/messages.md" text=""
+  if [[ -f "$f" && ! -L "$f" ]]; then
+    text="$(cat -- "$f" 2>/dev/null)" || text=""
+    [[ -n "$text" ]] && text+=$'\n'
+  fi
+  _as_serve_put "$1" messages.md "$text$2"$'\n' || _as_msg "--serve: could not write $f"
+  return 0
+}
+
+# _as_serve_text PROJECT FILE -- print the prompt's text: FILE opened once, its real path
+# (of the open file, so nothing can be swapped in between) inside PROJECT, a regular file,
+# plain text, not empty, at most 64 KiB.
+_as_serve_text() {
+  local proj fd real text
+  proj="$(realpath -e -- "$1")" || return 1
+  [[ -f "$2" ]] || {
+    _as_msg "--serve: the prompt file $2 is not there"
+    return 1
+  }
+  exec {fd}<"$2" || return 1
+  real="$(readlink -- "/proc/$BASHPID/fd/$fd")"
+  if [[ "$real" != "$proj"/* || ! -f "/proc/$BASHPID/fd/$fd" ]]; then
+    exec {fd}<&-
+    _as_msg "--serve: the prompt file $2 is $real, not a file in the project; not reading it"
+    return 1
+  fi
+  text="$(head -c 65537 <&"$fd")"
+  exec {fd}<&-
+  if ((${#text} > 65536)); then
+    _as_msg "--serve: the prompt file $2 is over 64 KiB; not sending it"
+    return 1
+  fi
+  if [[ -n "$(LC_ALL=C tr -d '\011\012\040-\176\200-\377' <<<"$text" | head -c1)" ]]; then
+    _as_msg "--serve: the prompt file $2 has control characters; not sending it"
+    return 1
+  fi
+  [[ -n "${text//[[:space:]]/}" ]] || {
+    _as_msg "--serve: the prompt file $2 is empty"
+    return 1
+  }
+  printf '%s' "$text"
+}
+
+# _as_serve_check -- may this --serve run, and is it the loop or the loop's holder? Sets
+# _serve_holder. Uses the engine's resolved locals by dynamic scope.
+# shellcheck disable=SC2154
+_as_serve_check() {
+  local sb
+  _serve_holder=0
+  if _as_inside_sandbox; then
+    _as_msg "--serve runs on the host: it holds a role's launch and starts its turns"
+    return 1
+  fi
+  if _as_preset_is_native; then
+    _as_msg "--serve is refused under --preset native: a role with no terminal runs in its own sandbox, and native turns that off"
+    return 1
+  fi
+  if ((_do_verb)); then
+    _as_msg "--serve runs the agent's session; '$1' is a verb, not a session"
+    return 2
+  fi
+  if ((! ${#profile_serve_new[@]} || ! ${#profile_serve_resume[@]})); then
+    _as_msg "--serve: profile '$profile' says nothing of how to run one turn of a session ([agent] serve-new and serve-resume)"
+    return 1
+  fi
+  _as_serve_resolve "$_role"
+  if [[ -z "$_serve_watch" || -z "$_serve_prompt" ]]; then
+    _as_msg "--serve: role '$_role' has no [serve] section with both 'watch = PATH' (what it waits on) and 'prompt = PATH' (what each turn is told). Add one: $invoked --apply '[serve:$_role]' 'watch = PATH' 'prompt = PATH'"
+    return 1
+  fi
+  if ! _as_serve_path_ok "$_serve_watch" || ! _as_serve_path_ok "$_serve_prompt"; then
+    _as_msg "--serve: role '$_role': [serve] watch and prompt are paths in the project, relative to it, with no '..' (watch = $_serve_watch, prompt = $_serve_prompt)"
+    return 1
+  fi
+  sb="$(_as_sandbox_dir)"
+  if _as_serve_record "$sb"; then
+    if _as_proc_descends "$BASHPID" "$_sv_pid"; then
+      _serve_holder=1
+      return 0
+    fi
+    _as_msg "role '$_role' is already served (pid $_sv_pid); end it with: $(_as_self_cmd --role "$_role" --shutdown)"
+    return 1
+  fi
+  return 0
+}
+
+# _as_serve [AGENT ARGS...] -- the loop. Returns once the launch has ended: --shutdown,
+# a signal (INT, TERM, HUP: it ends the launch itself), or the launch ending otherwise.
+# shellcheck disable=SC2154
+_as_serve() {
+  local sb proj="$_proj" role="$_role" rdir sessf alivef seenf watch prompt
+  local id="" sig last seen="" text hpid tpid rc i new pending=0 said="" fpid me mestart
+  local _serve_stop=0 why="" parent
+  local -a cmdw=("$_cmd_word" "$@") targ=() turnw=()
+  sb="$(_as_sandbox_dir)"
+  watch="$proj/$_serve_watch" prompt="$proj/$_serve_prompt"
+  rdir="$proj/.asb/coord/$role" sessf="$rdir/session" alivef="$rdir/alive" seenf="$sb/serve.seen"
+  mkdir -p -- "$sb" "$rdir" || return 1
+  if [[ -L "$rdir" || "$(realpath -e -- "$rdir")" != "$(realpath -e -- "$proj")/.asb/coord/$role" ]]; then
+    _as_msg "--serve: $rdir is not a directory of the project; not writing there"
+    return 1
+  fi
+  _as_serve_text "$proj" "$prompt" >/dev/null || return 1
+  local re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  if [[ -f "$sessf" && ! -L "$sessf" ]]; then
+    read -r id <"$sessf" 2>/dev/null || id=""
+    [[ "$id" =~ $re ]] || {
+      [[ -n "$id" ]] && _as_msg "--serve: $sessf does not hold a session id; the first turn starts a new session"
+      id=""
+    }
+  fi
+  me="$BASHPID"
+  parent="$(_as_proc_ppid "$me")"
+  _as_proc_start "$me"
+  mestart="$_ps_start"
+  printf '%s %s\n%s\n%s\n' "$me" "$mestart" "$_serve_watch" ".asb/coord/$role/session" >"$sb/serve" || return 1
+  trap '_serve_stop=1' INT TERM HUP
+  # The holder: the engine again, with the same words, joined with nothing to do.
+  ("$engine" "${_serve_flags[@]}" --serve "${cmdw[@]}") </dev/null &
+  hpid=$!
+  # _sv_live -- go on? Not after a signal, once the holder has gone (the launch ended:
+  # --shutdown), or once the process this loop runs under has (a TERM to it).
+  _sv_live() {
+    ((_serve_stop)) && why=signal && return 1
+    kill -0 "$hpid" 2>/dev/null || {
+      why=ended
+      return 1
+    }
+    [[ "$(_as_proc_ppid "$me")" == "$parent" ]] || {
+      why=signal
+      return 1
+    }
+    return 0
+  }
+  _sv_alive() { # the role's liveness, as its watcher in a terminal gives it
+    if [[ -e "$alivef" || -L "$alivef" ]]; then
+      touch -h -- "$alivef" 2>/dev/null
+    else
+      _as_serve_put "$rdir" alive "" 2>/dev/null
+    fi
+    return 0
+  }
+  for ((i = 0; i < 1200; i++)); do
+    _as_keeper_live "$sb" && break
+    _sv_live || break
+    sleep 0.25
+  done
+  if [[ -z "$why" ]] && ! _as_keeper_live "$sb"; then
+    why=start
+  fi
+  if [[ -z "$why" ]]; then
+    _as_msg "role '$role': serving -- each change to $_serve_watch is a turn of session ${id:-(new, at the first turn)}; $(_as_self_cmd --role "$role" --shutdown) ends it"
+    # What changed while no loop ran: the file as the last turn found it, against now.
+    sig="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
+    seen="$(cat -- "$seenf" 2>/dev/null || true)"
+    if [[ -n "$seen" ]]; then
+      [[ "$sig" != "$seen" ]] && pending=1
+    elif [[ -s "$watch" ]]; then
+      pending=1
+    fi
+    last="$sig"
+  fi
+  while [[ -z "$why" ]]; do
+    # Wait for a change.
+    while ((! pending)) && _sv_live; do
+      _sv_alive
+      sig="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
+      [[ "$sig" != "$last" ]] && pending=1 && break
+      sleep 1
+    done
+    [[ -z "$why" ]] || break
+    # A terminal on the role: the turn waits until it has gone.
+    said=""
+    while fpid="$(_as_serve_foreign "$sb" "$me")" && _sv_live; do
+      [[ -n "$said" ]] || _as_msg "role '$role': something else is joined (pid $fpid), a terminal most likely; the turn waits until it has gone"
+      said=1
+      _sv_alive
+      sleep 1
+    done
+    [[ -z "$why" ]] || break
+    pending=0
+    last="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
+    printf '%s\n' "$last" >"$seenf"
+    if ! text="$(_as_serve_text "$proj" "$prompt")"; then
+      _as_msg "role '$role': no turn; waiting for the next change"
+      continue
+    fi
+    new=0 targ=()
+    if [[ -z "$id" ]]; then
+      id="$(cat /proc/sys/kernel/random/uuid)"
+      new=1 turnw=("${profile_serve_new[@]}")
+    else
+      turnw=("${profile_serve_resume[@]}")
+    fi
+    for i in "${turnw[@]}"; do targ+=("${i//\{id\}/$id}"); done
+    ("$engine" "${_serve_flags[@]}" "${cmdw[@]}" "${targ[@]}" "$text") </dev/null &
+    tpid=$!
+    while kill -0 "$tpid" 2>/dev/null && _sv_live; do
+      _sv_alive
+      sleep 0.5
+    done
+    [[ -z "$why" ]] || break
+    rc=0
+    wait "$tpid" || rc=$?
+    # A turn killed because the launch is ending is not a failed turn: --shutdown marks
+    # the keeper before it kills anything, and a launch that ended otherwise is not live.
+    if ((rc != 0)) && { [[ -e "$sb/keeper/force" || -e "$sb/keeper/stop" ]] || ! _as_keeper_live "$sb"; }; then
+      why=ended
+      break
+    fi
+    if ((new && rc == 0)); then
+      _as_serve_put "$rdir" session "$id"$'\n' || _as_msg "--serve: could not write $sessf"
+    elif ((new)); then
+      id="" # no session to resume: the next turn starts one
+    fi
+    if ((rc != 0)); then
+      _as_msg "role '$role': the turn ended with status $rc; waiting for the next change"
+      _as_serve_failed "$rdir" "turn failed (exit $rc) for a change to $_serve_watch at $(date -Iseconds); the loop waits for the next message"
+    fi
+    # Written to during the turn: that is the next turn.
+    sig="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
+    [[ "$sig" != "$last" ]] && pending=1
+  done
+  trap - INT TERM HUP
+  case "$why" in
+    signal) _as_keeper_shutdown "$sb" ;;
+    start)
+      kill "$hpid" 2>/dev/null
+      _as_msg "role '$role': its launch did not start; --serve ends"
+      ;;
+    ended) _as_msg "role '$role': its launch has ended; --serve ends with it" ;;
+  esac
+  # (Under set -e: each wait returns what it waited for, a killed process's status.)
+  [[ -z "${tpid:-}" ]] || wait "$tpid" 2>/dev/null || true
+  wait "$hpid" 2>/dev/null || true
+  rm -f -- "$sb/serve"
+  unset -f _sv_live _sv_alive
+  [[ "$why" == start ]] && return 1
   return 0
 }
 
@@ -4052,7 +4453,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
@@ -4131,7 +4532,7 @@ _as_trust_forget() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
@@ -4151,6 +4552,9 @@ _as_trust_show() {
 # the profile's section is [agent]. What it sets:
 #   [agent] verbs, verbs-observe, daemon, status -- profile_verbs, profile_verbs_observe,
 #           profile_daemon_argv, profile_status_argv (space-separated words)
+#   [agent] serve-new, serve-resume -- profile_serve_new, profile_serve_resume: the
+#           agent's arguments for one turn of `--serve` (#277), the session's first and
+#           every later one, `{id}` its id; the prompt follows them
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -4173,7 +4577,7 @@ _as_profile_dotfile() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -4187,6 +4591,8 @@ _as_profile_dotfile() {
       verbs-observe) profile_verbs_observe+=(${words[@]+"${words[@]}"}) ;;
       daemon) profile_daemon_argv+=(${words[@]+"${words[@]}"}) ;;
       status) profile_status_argv+=(${words[@]+"${words[@]}"}) ;;
+      serve-new) profile_serve_new+=(${words[@]+"${words[@]}"}) ;;
+      serve-resume) profile_serve_resume+=(${words[@]+"${words[@]}"}) ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
       visible) profile_visible+=(${words[@]+"${words[@]}"}) ;;
       *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
@@ -4436,6 +4842,7 @@ _as_slug_expand() {
 _as_profile_facts_dotfile() {
   local profile="$1" profile_base="" profile_base_env="" profile_home="${2%/*}"
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
+  local -a profile_serve_new=() profile_serve_resume=()
   local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
@@ -4493,7 +4900,7 @@ _as_trust_notes() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
@@ -4529,6 +4936,7 @@ _as_trust_notes() {
   for h in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
     _as_msg ".agent-sandbox: [env] ${h%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
   done
+  _as_serve_notes
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
@@ -4794,6 +5202,8 @@ _as_dotfile_parse() {
             _df_role_globs+=("$sglob")
             _df_briefing_globs+=("$sglob")
             ;;
+          # [serve:<glob>] (#277): what `--serve` waits on and says, for those roles.
+          serve) _df_role_globs+=("$sglob") ;;
           preset)
             # [preset:<name>] is a preset's rungs in a profile's dot-file (#191).
             [[ "$sglob" =~ ^(isolated|inherit|shared)$ ]] || {
@@ -4812,7 +5222,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions and briefing do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing and serve do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -4820,7 +5230,7 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions | serve) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
@@ -5017,6 +5427,25 @@ _as_dotfile_line() {
         esac
       fi
       ;;
+    serve)
+      # [serve] and [serve:<glob>] (#277): what `asb --role R --serve CMD` waits on, and
+      # what it says at each turn -- two paths in the project, kept with the section's
+      # glob; the latest line matching the role wins, key by key (_as_serve_resolve).
+      if [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [serve] expects 'key = value', ignoring: $line"
+      else
+        _as_dotfile_kv "$line"
+        case "$ck" in
+          watch)
+            _df_serve+=("$sglob"$'\t'watch$'\t'"$cv")
+            ;;
+          prompt)
+            _df_serve+=("$sglob"$'\t'prompt$'\t'"$cv")
+            ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [serve] key '$ck'" ;;
+        esac
+      fi
+      ;;
     *)
       # A section named after a profile (the active one at a launch; any, at the
       # review). The engine does not interpret these: it collects the pairs and
@@ -5179,6 +5608,17 @@ _as_check_plan() {
         off | 0) printf '  permission rules: NOT passed -- they travel with the briefing, which is off: %s\n' "$_pl" ;;
         *) printf '  permission rules the agent gets without asking: %s\n' "$_pl" ;;
       esac
+    fi
+    # [serve] (#277): what `--serve` would wait on and say for this role.
+    local _serve_watch="" _serve_prompt=""
+    _as_serve_resolve "${_role:-default}"
+    if [[ -n "$_serve_watch$_serve_prompt" ]]; then
+      if [[ -n "$_serve_watch" && -n "$_serve_prompt" ]] && _as_serve_path_ok "$_serve_watch" && _as_serve_path_ok "$_serve_prompt"; then
+        printf '  --serve: a turn of its session per change to %s, told the text of %s%s\n' "$_serve_watch" "$_serve_prompt" \
+          "$([[ -f "$_proj/$_serve_prompt" ]] || printf ' -- MISSING: --serve refuses')"
+      else
+        printf '  --serve: refused -- [serve] needs watch and prompt, paths in the project (watch = %s, prompt = %s)\n' "${_serve_watch:-none}" "${_serve_prompt:-none}"
+      fi
     fi
     printf '  %-28s %-15s %-24s %s\n' "channel or path" mode source "set by"
     # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
@@ -6422,7 +6862,7 @@ _as_apply() {
     _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
     return 1
   fi
-  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing) lines=() have=() add=()
+  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve) lines=() have=() add=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
@@ -6443,9 +6883,9 @@ _as_apply() {
   fi
   if [[ -n "$glob" ]]; then
     case "$name" in
-      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions | briefing) ;;
+      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions | briefing | serve) ;;
       *)
-        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions and briefing do)"
+        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing and serve do)"
         return 2
         ;;
     esac
@@ -6462,7 +6902,7 @@ _as_apply() {
     first_role=1
     for l in ${lines[@]+"${lines[@]}"}; do
       _ap_norm "$l"
-      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|permissions|briefing):.+\]$ ]] && first_role=0
+      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|permissions|briefing|serve):.+\]$ ]] && first_role=0
     done
   fi
   # The section's last occurrence, and its last line that is not blank or a comment:
@@ -6900,6 +7340,9 @@ agent_sandbox() (
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
+  # --serve (#277): the words this invocation was given, for the processes it starts.
+  local _do_serve=0
+  local -a _argv_given=("$@")
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
   # `_role` is the sandbox key's second half; only `default` exists until roles
@@ -7199,9 +7642,34 @@ agent_sandbox() (
         _do_shutdown=1
         shift
         ;;
+      --serve)
+        # A role with no terminal (#277): hold the role's launch and run one turn of
+        # its session per change to the file its [serve:ROLE] section names.
+        _do_serve=1
+        shift
+        ;;
       *) break ;;
     esac
   done
+  # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
+  # The engine's own words, but --serve, are what the loop starts its holder, and every
+  # turn, with: the same flags, so each joins the launch the first one started.
+  local -a _serve_flags=()
+  if ((_do_serve)); then
+    local _sw
+    for _sw in "${_argv_given[@]:0:$((${#_argv_given[@]} - $#))}"; do
+      [[ "$_sw" == --serve ]] || _serve_flags+=("$_sw")
+    done
+    if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_engine_help)) \
+      || [[ -n "$_reset_connection" ]] || ((${#_apply_words[@]})); then
+      _as_msg "--serve runs a role's session with no terminal; it is not combined with --exec, a verb or a review: run them on their own"
+      return 2
+    fi
+    if ((! _role_flag_set)) && [[ -z "${AGENT_SANDBOX_ROLE:-}" ]]; then
+      _as_msg "--serve needs the role it serves: $invoked --role NAME --serve CMD (its [serve:NAME] section says what to wait on and what to say)"
+      return 2
+    fi
+  fi
   # ---- the command (#151): asb [ENGINE FLAGS] CMD [AGENT ARGS] ----
   # The loop above stopped at the first word that is not the engine's. That word is
   # CMD, the agent -- a name looked up on PATH or a path -- and everything after it is
@@ -7386,6 +7854,9 @@ agent_sandbox() (
   local profile_base_from=""         # the variable that moved it, when one did (#190)
   # What --status joins to list the daemon's sessions (claude: `agents`).
   local -a profile_status_argv=()
+  # One turn of --serve (#277): the agent's arguments for a session's first turn and for
+  # every later one, `{id}` the session's id; the prompt goes last. None: no --serve.
+  local -a profile_serve_new=() profile_serve_resume=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()
@@ -7488,7 +7959,7 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
@@ -8031,6 +8502,22 @@ agent_sandbox() (
   if [[ -n "$_reset_connection" ]]; then
     _as_connect_reset "$_reset_connection" || return 1
     return 0
+  fi
+
+  # ---- --serve: the loop, or the holder it starts (#277) ----
+  local _serve_holder=0 _serve_watch="" _serve_prompt="" _sv_pid=""
+  if ((_do_serve)); then
+    _as_serve_check "${1:-}" || return $?
+    if ((! _serve_holder)); then
+      _as_serve "$@"
+      return $?
+    fi
+    # The loop's holder: it keeps the launch up, joined with a command that does nothing
+    # but wait, while the loop runs the turns. The agent was resolved from CMD already,
+    # so the launch it starts records that agent, which every turn names again.
+    _do_exec=1
+    # shellcheck disable=SC2016 # $0 is the inner shell's: the name it runs sleep under
+    set -- bash -c 'exec -a "$0" sleep infinity' agent-sandbox-serve
   fi
 
   # ---- inside a sandbox, an `asb` runs what it names as it is (#197) ----
