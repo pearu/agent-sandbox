@@ -233,6 +233,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The briefing said `$HOME` is "a fresh tmpfs"**, which reads as writable; it is
+  remounted read-only, so a tool that writes under `~` (Triton's `~/.triton`) failed and
+  a role took it for a policy question. The briefing now says `$HOME` is read-only, that
+  `~/.cache` (session-private) and `/tmp` are writable, and to point such a tool there,
+  or at the role's scratch, with its variable in the role's own shell; the session-start
+  summary says it in one clause.
+
 - **SSH failed inside every sandbox on Ubuntu 26.04**: OpenSSH 10.2 refuses an
   included config file owned by neither root nor you, and in the sandbox's user
   namespace root's `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` belongs to
