@@ -233,6 +233,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The agent's own telemetry was reported as a blocked action** (#276): Claude Code
+  flushes telemetry on its own schedule, and a flush inside a Bash call was refused (as
+  it should be) and reported by the refusal hook next to the result, with an `--apply`
+  line inviting the user to allow it; in a headless loop every reply ended with a
+  sentence about the refused Datadog intake. The profile now names its agent's telemetry
+  hosts (`profile_telemetry_hosts`: `.datadoghq.com` and `browser-intake-us5-datadoghq.com`,
+  from Claude Code's network requirements), the engine writes them beside the briefing,
+  and the hook leaves a refusal of one out of its note. It is still refused and still in
+  `refused.log`; `--check` says so in one line, and the briefing in one sentence.
+
 - **A role's Write and Edit tools could not write its message file** in the `roles`
   model: the file was bound read-write inside the read-only `.asb/coord/`, and Claude
   Code's Write and Edit write a temp file beside the target (`NAME.tmp.PID.HEX`) and

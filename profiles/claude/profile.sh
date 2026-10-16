@@ -234,6 +234,24 @@ profile_before_join() {
   return 0
 }
 
+# profile_telemetry_hosts -- engine hook (#276): the hosts Claude Code reaches on its
+# own, not for the user's command -- telemetry, metrics, error reports, feature flags --
+# one per line, in the allowlist's syntax (an exact hostname, or .domain for the domain
+# and its subdomains). The proxy still refuses them; the engine writes them to the
+# briefing directory's telemetry-hosts, and refusal-hook.sh leaves a refusal of one out
+# of its note: a flush that falls inside a Bash call is not the command's, and reported
+# beside its result the model took it for a blocked action, every turn of a headless loop.
+# Feature flags go to api.anthropic.com, which a session needs, so no host here.
+#   .datadoghq.com                    observed in a session's refused.log
+#                                     (http-intake.logs.us5.datadoghq.com), and listed for
+#                                     telemetry events at
+#                                     https://code.claude.com/docs/en/network-config
+#   browser-intake-us5-datadoghq.com  error reports, same page; a domain of its own (the
+#                                     hyphen), not under .datadoghq.com
+profile_telemetry_hosts() {
+  printf '%s\n' .datadoghq.com browser-intake-us5-datadoghq.com
+}
+
 # profile_briefing_args INSIDE_DIR [AGENT ARGS...] -- engine hook. Hands the
 # briefing to Claude Code as SessionStart and SubagentStart hooks, which fire on
 # every launch, on --continue/--resume, and again after compaction, so what the

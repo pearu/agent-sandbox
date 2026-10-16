@@ -125,7 +125,12 @@ is going on without it and is the user's decision, the user adds the host with
 and the session continues without it only once the user has said so. A policy
 refusal (`[deny]`, `retrieve-only`, git, `non-public`) says instead that `--apply`
 does not lift it. Only the host, checked as a hostname, and a known reason reach
-that text.
+that text. A refusal of a host the agent reaches on its own, not for the command
+(telemetry, error reports: the profile's `profile_telemetry_hosts`, which the engine
+writes to `/run/agent-sandbox/telemetry-hosts`), is left out of the note: it is still
+refused and still in `refused.log`, but it is no blocked action of the session's, and
+reported beside a command's result the model took it for one (#276). `--check` says so in
+one line under its network lines.
 
 `blocked.log` itself is never bound into a sandbox: it records every session of
 every project, and a session must not learn what the others tried. Nor is the

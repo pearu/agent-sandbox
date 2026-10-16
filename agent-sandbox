@@ -3379,6 +3379,8 @@ _as_connect_report() {
 #   apply-section        the section a refused host is asked for in ([allow] or
 #                        [allow:ROLE], as the text below decides), for the
 #                        profile's refusal hook, which has no policy of its own
+#   telemetry-hosts      the hosts the agent reaches on its own (profile_telemetry_hosts,
+#                        #276), whose refusal the hook leaves out of its note
 # and one file of the session dir itself, bound read-only over its placeholder:
 #   refused.log          the proxy appends this session's refusals to it as they
 #                        happen (components/allowlist_addon.py), so a hook can tell
@@ -3589,6 +3591,8 @@ _as_briefing_write() {
     printf -- '- SSH reachable through a constrained agent: %s\n' "$ssh_line"
     [[ -n "$ports" ]] && printf -- '- %s\n' "$ports"
     printf '\nThe allowlist itself lives on the host and is not readable from in here.\n'
+    [[ "$net" == proxy || "$net" == strict ]] \
+      && printf 'A refused host of the agent'"'"'s own telemetry is not reported and is not a blocked action.\n'
     printf '\n## Filesystem\n\n'
     printf -- '- writable: %s\n' "$rw_line"
     printf -- '- extra read-only paths: %s\n' "$ro_line"
@@ -3660,6 +3664,10 @@ _as_briefing_write() {
     printf 'the command to ask for.\n'
   } >"$md" || return 1
   printf '%s\n' "$sect" >"$bdir/apply-section" || return 1
+  : >"$bdir/telemetry-hosts" || return 1
+  if declare -F profile_telemetry_hosts >/dev/null; then
+    profile_telemetry_hosts >"$bdir/telemetry-hosts" || return 1
+  fi
   # The proxy's per-session refusals: created here, empty, so the addon (which runs
   # as this user) only ever appends to a file the engine made; bound read-only over
   # a placeholder in the briefing directory, which is itself bound read-only.
@@ -5120,6 +5128,13 @@ _as_check_plan() {
     ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host, and --ssh\n'
     ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused, and --ssh\n'
     ((${_hosts_public:-0})) && printf '  network: every public host -- the allowlist does not apply; localhost, the LAN and [deny] stay refused\n'
+    # The agent's own telemetry (#276): refused like any unlisted host, and kept out of the
+    # refusal hook's note. Under hosts = public it is not refused, so nothing to say.
+    local _tn=0
+    declare -F profile_telemetry_hosts >/dev/null && _tn="$(profile_telemetry_hosts | grep -c .)" || true
+    if ((_tn)) && ! ((${_hosts_public:-0})) && [[ "${_knob_net:-proxy}" == proxy || "${_knob_net:-proxy}" == strict ]]; then
+      printf "  network: the agent's own telemetry is refused and not reported to it (%d hosts)\n" "$_tn"
+    fi
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
