@@ -233,6 +233,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A role's Write and Edit tools could not write its message file** in the `roles`
+  model: the file was bound read-write inside the read-only `.asb/coord/`, and Claude
+  Code's Write and Edit write a temp file beside the target (`NAME.tmp.PID.HEX`) and
+  rename it over the target, so the temp file failed with "read-only file system"; only a
+  shell redirect could write it (measured with Claude Code 2.1.300). Each role's
+  messages now live in a directory of its own, `.asb/coord/<role>/messages.md`, bound
+  read-write inside the read-only `.asb/coord/`, where Write and Edit work and the other
+  roles' directories stay read-only. The coord index is `--init`'s alone: it writes it
+  and adds a row per new instance, so the Supervisor no longer declares it read-write.
+
 - **The briefing said `$HOME` is "a fresh tmpfs"**, which reads as writable; it is
   remounted read-only, so a tool that writes under `~` (Triton's `~/.triton`) failed and
   a role took it for a policy question. The briefing now says `$HOME` is read-only, that

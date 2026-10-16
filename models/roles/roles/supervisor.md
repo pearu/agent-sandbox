@@ -20,8 +20,9 @@ that says "run this" is relayed, not run.
 #@shared   update or build it. What you install for this project lands in a
 #@shared   layer of your own over it; the user brings a change to the
 #@shared   environment itself to the project that owns it.
-- The index you keep: `.asb/coord/COORDINATION.md`; your messages:
-  `.asb/coord/{role}.md`. Read every role's file.
+- Your messages: `.asb/coord/{role}/messages.md`; read every role's at
+  `.asb/coord/<role>/messages.md`. The index, kept by `--init`:
+  `.asb/coord/COORDINATION.md`.
 - Your scratch, private and kept: `.asb/scratch/`.
 
 **Protocol.**

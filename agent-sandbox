@@ -6243,7 +6243,10 @@ _as_init() {
     [[ "$rn" == "$setup" ]] && continue
     [[ -s "$idx" ]] && grep -q "^| $h |" "$idx" && continue
     coordf="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/coord\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | head -1)"
-    dirs="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | grep -vxF -- "$coordf" | paste -sd' ' | sed 's/ /, /g')"
+    dirs="$(sed -n "/^\\[connect:$inst\\]/,/^\\[/s/^\\(\\.asb\\/[^ =]*\\)[[:space:]]*=[[:space:]]*read-write.*/\\1/p" "$df" | { grep -vxF -- "$coordf" || true; } | paste -sd' ' | sed 's/ /, /g')"
+    # A role's message store is a directory (Write and Edit rename a temp file into
+    # it); the index names the file in it.
+    [[ "$coordf" == */ ]] && coordf+="messages.md"
     idxrows+="| $h | $inst | ${coordf:--} | ${dirs:--} |"$'\n'
   done
   if [[ ! -s "$idx" && -f "$mdir/coord/COORDINATION.md" ]]; then
