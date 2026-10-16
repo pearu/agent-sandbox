@@ -183,14 +183,21 @@ retrieve-only = on
 ```
 
 (#223) refuses, for that session, every request but GET and HEAD to every host but
-the agent profile's own -- the agent's API keeps working. The engine writes the
+the agent profile's own -- the agent's API keeps working -- with two exceptions that
+read: a GraphQL query, and git's fetch where `[net] git` allows it. The engine writes the
 profile's hosts to the session's `retrieve-only.txt`; the addon applies it to that
 session's token, at each request inside a tunnel, so a refusal names the method and
 lands in `blocked.log`. GraphQL is the one exception it reads a body for: `gh` reads
 issues and pull requests through POSTs to `api.github.com/graphql`, so a request there
 passes when every operation in its document is a query, and is refused when one is a
 mutation or a subscription (strings and comments do not count). Git's smart-HTTP
-fetch is a POST too, so a retrieve-only session cannot fetch over HTTPS either.
+fetch is a POST too, to `git-upload-pack`, and it reads as a query does (#280): under
+`git = fetch` or `git = allow` the upload-pack advertisement and endpoint pass, so the
+session can `git clone`, `git fetch` and `pip install git+https://...`; under
+`git = refuse` they are refused as git's transport. The `git-receive-pack` side is
+refused whatever `[net] git` says -- a retrieve-only session never pushes. A role
+that needs a repository gets `git = fetch` beside `retrieve-only = on`, not
+`retrieve-only = off`.
 
 What it does not stop: a secret carried out in a GET -- in a URL, to any allowed host.
 A token that cannot write bounds what such a secret can do ([recipes.md](recipes.md)).
@@ -226,7 +233,9 @@ reaches a remote over SSH.
 
 `git = fetch` is the narrower line: git fetches over HTTPS as usual, and a push --
 `/info/refs?service=git-receive-pack` and the `git-receive-pack` endpoint -- is refused,
-for a role that reads repositories and must never publish to one. `--ssh` is refused
+for a role that reads repositories and must never publish to one. Under
+`retrieve-only` the fetch passes too, recognised by its path, not by git's user agent;
+a push is refused there under `git = allow` as well. `--ssh` is refused
 too: an SSH connection is a whole transport, and the proxy cannot tell its fetch from
 its push.
 

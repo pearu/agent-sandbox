@@ -132,7 +132,9 @@ Sections:
   request but GET and HEAD is refused, to every host but the profile's own (the
   agent's API) -- a session that reads the web and GitHub and publishes nothing. `gh`
   reads through POSTs to `api.github.com/graphql`, so there a query passes and a
-  mutation (or a subscription, anywhere in the document) is refused, by the body. It
+  mutation (or a subscription, anywhere in the document) is refused, by the body.
+  Git's fetch (a POST to `git-upload-pack`) passes where `git` is `fetch` or `allow`
+  (#280); a push is refused whatever `git` says. It
   does not stop a secret carried out in a GET; a token that cannot write is the
   answer to that ([recipes.md](recipes.md), the `gh` section). Per role with
   `[net:<role>]`; ignored in `open` and `none`, which have no proxy.

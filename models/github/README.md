@@ -18,7 +18,8 @@ number, each in a layer of its own over the project as the setup role built it:
   the incremental one the other roles run after their change). It writes the checkout
   and the environment, reads the web with GET only, and has no git transport and no gh
   login. Submodules are yours: it cannot fetch, so `git submodule update --init
-  --recursive` on the host first. Dependencies CI builds from git or fetches from a
+  --recursive` on the host first -- or `asb --apply '[net:gh-setup]' 'git = fetch'`,
+  and it fetches them over HTTPS itself, a read; a push stays refused. Dependencies CI builds from git or fetches from a
   refused host are yours to provide, as a clone under `~/git/<org>/<repo>` declared
   `copy-on-write` under `[connect:gh-*]` (or a host under `[allow:gh-setup]`), approved
   with `--trust`; gh-setup asks for exactly that and installs what it builds from them

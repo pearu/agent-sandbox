@@ -262,6 +262,53 @@ drive() { ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$BATS_TEST_DIRNAME/../helpers/a
   [[ "$output" == *"blocked=True"* ]]
 }
 
+@test "a retrieve-only session fetches with git where [net] git permits it, and never pushes (#280)" {
+  # git's fetch is a POST to git-upload-pack: it reads, as a GraphQL query does.
+  local R="$BASE/session.live/refused.log" adv='/x/y.git/info/refs?service=git-upload-pack'
+  local radv='/x/y.git/info/refs?service=git-receive-pack'
+  : >"$R"
+  printf 'github.com\n' >>"$CFG/allowlist.txt"
+  : >"$BASE/session.live/retrieve-only.txt"
+  # git = fetch: upload-pack passes, receive-pack is refused as a push
+  : >"$BASE/session.live/git-push-refuse.txt"
+  run drive request_ua LIVE github.com GET "$adv" 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua LIVE github.com POST /x/y.git/git-upload-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua LIVE github.com GET "$radv" 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"git = fetch"* ]]
+  run drive request_ua LIVE github.com POST /x/y.git/git-receive-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"git = fetch"* ]]
+  run drive request_ua LIVE github.com POST /x/y/issues 'git/2.43.0' # git's user agent is not a fetch
+  [[ "$output" == *"blocked=True"* && "$output" == *"retrieve-only"* ]]
+  rm "$BASE/session.live/git-push-refuse.txt"
+  # git = allow: upload-pack passes, receive-pack is refused all the same
+  run drive request_ua LIVE github.com POST /x/y.git/git-upload-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua LIVE github.com GET "$radv" 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"retrieve-only"* ]]
+  run drive request_ua LIVE github.com POST /x/y.git/git-receive-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"retrieve-only"* ]]
+  # git = refuse: upload-pack is refused as git's transport
+  : >"$BASE/session.live/git-refuse.txt"
+  run drive request_ua LIVE github.com GET "$adv" 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"git's transport"* ]]
+  run drive request_ua LIVE github.com POST /x/y.git/git-upload-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=True"* && "$output" == *"git's transport"* ]]
+  run cut -f2- "$R"
+  [ "$output" = $'github.com\tGET\tgit push\ngithub.com\tPOST\tgit push\ngithub.com\tPOST\tretrieve-only\ngithub.com\tGET\tretrieve-only\ngithub.com\tPOST\tretrieve-only\ngithub.com\tGET\tgit refuse\ngithub.com\tPOST\tgit refuse' ]
+}
+
+@test "without retrieve-only, git = allow: git's fetch and push both pass (#280 leaves it)" {
+  printf 'github.com\n' >>"$CFG/allowlist.txt"
+  run drive request_ua LIVE github.com POST /x/y.git/git-upload-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua LIVE github.com GET '/x/y.git/info/refs?service=git-receive-pack' 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+  run drive request_ua LIVE github.com POST /x/y.git/git-receive-pack 'git/2.43.0'
+  [[ "$output" == *"blocked=False"* ]]
+}
+
 @test "a session with hosts = public: any host passes CONNECT and requests, POST too; [deny] and other sessions keep the allowlist" {
   mkdir -p "$BASE/session.p"
   printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$BASE/session.p/owner.id"

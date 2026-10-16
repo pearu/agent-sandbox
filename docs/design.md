@@ -325,6 +325,12 @@ Stated plainly. These are what the adversary above can still do.
   what a rule lets run still meets the mounts, the network and the syscall filter, so a
   rule widens nothing the sandbox enforces -- but a role whose network lets it publish
   then publishes without the question it would have asked. The review names each rule.
+- **Retrieve-only reads a POST's path, not the server's intent.** Under
+  `retrieve-only` with `git = fetch` or `git = allow`, a POST whose path ends in
+  `/git-upload-pack` passes to any host the session reaches, with whatever body it
+  carries (#280). A git server treats it as a fetch; a host that serves something else
+  at such a path could take it as a write. A secret could already leave in a GET; what
+  this adds is a request body. `git = refuse` closes it.
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
@@ -363,7 +369,7 @@ hand-off, and the message names the artefact anyway.
 | instructions from one writer | `.asb/coord/to/ = read-write` for the Supervisor alone; every other role reads `.asb/coord/` read-only (#274) |
 | a role woken by its inbox | `.asb/bin/inbox-wait`, a one-second poll by path armed with Claude Code's Monitor tool; `[permissions]` so it runs without a prompt (#274) |
 | publishing by one role, on its turn | the Gate: `retrieve-only = off`, `git = allow`, `[ssh:gate]`, with `main` and its history read-only; every other role under the common block's network (#274) |
-| no publishing | `[net] retrieve-only` (#223): GET and HEAD only, but to the profile's hosts, a GraphQL query passing and a mutation refused by the body; `[net] git = refuse` (#224); both hang on the session's proxy token, which every proxied request must carry (#233) |
+| no publishing | `[net] retrieve-only` (#223): GET and HEAD only, but to the profile's hosts, a GraphQL query passing and a mutation refused by the body, git's fetch passing where `[net] git` allows it and a push refused whatever it says (#280); `[net] git = refuse` (#224); both hang on the session's proxy token, which every proxied request must carry (#233) |
 | a Reviewer running an Implementer's build | the clone read-only to it, its environment in the clone, run by path |
 | installs without touching the shared environment | a conda clone in the Implementer's tree; the sandbox-owned package cache bound whenever conda is active (#219); `[conda:<role>] prefix` to activate it, `write = 1` per role (#221) |
 | what a role has, before it runs | `asb --check --role NAME`, with "can act as you at" (#226) |

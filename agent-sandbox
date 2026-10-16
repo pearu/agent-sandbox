@@ -910,7 +910,7 @@ _as_allow_setup() {
   # its lines are the hosts it does not apply to, the profile's own.
   if ((${_retrieve_only:-0})); then
     printf '%s\n' ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"} >"$_session_dir/retrieve-only.txt"
-    _as_info "retrieve-only: GET and HEAD only, but to the profile's own hosts"
+    _as_info "retrieve-only: GET and HEAD only, a GraphQL query, and git's fetch where [net] git allows it, but to the profile's own hosts"
   fi
   # [net] hosts = public: the file's presence lets this session's token reach every
   # host the allowlist would refuse; [deny] and the non-public refusal still apply.
@@ -3523,7 +3523,7 @@ _as_briefing_write() {
     egress="$egress EVERY PUBLIC HOST: for this session the allowlist does not apply -- any public site is reachable through the proxy, while localhost, the LAN and denied hosts are refused."
   fi
   if ((${_retrieve_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
-    egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
+    egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not; git's fetch passes where [net] git allows it, a push never does), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
   fi
   ((${#_allow_hosts[@]} > 0)) && hosts_line="${_allow_hosts[*]}"
   ((${#_ssh_hosts[@]} > 0)) && ssh_line="$(_as_ssh_sources)"
@@ -5166,7 +5166,7 @@ _as_check_plan() {
     if ((_tn)) && ! ((${_hosts_public:-0})) && [[ "${_knob_net:-proxy}" == proxy || "${_knob_net:-proxy}" == strict ]]; then
       printf "  network: the agent's own telemetry is refused and not reported to it (%d hosts)\n" "$_tn"
     fi
-    ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
+    ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation; git'"'"'s fetch where [net] git allows it, not a push), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
     fi

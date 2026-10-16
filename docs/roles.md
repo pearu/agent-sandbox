@@ -548,7 +548,7 @@ project = read-write              # the build lands in the tree, as when you bui
 gh = own                          # no login: it publishes nothing
 [net:setup]
 mode = strict                     # as the rest of this model: through the proxy only
-retrieve-only = on                # GET and HEAD only; git's fetch is a POST, so submodules come from your checkout
+retrieve-only = on                # GET and HEAD only; asb --apply '[net:setup]' 'git = fetch' lets it fetch submodules or a git dependency over HTTPS, a read; a push stays refused
 git = refuse
 [briefing:setup]
 file = .asb/roles/setup.md

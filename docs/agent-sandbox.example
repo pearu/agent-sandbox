@@ -123,8 +123,10 @@
 #              over HTTPS to every host (pages still load) and
 #              refuses --ssh. Default allow.
 # retrieve-only : on refuses every request but GET and HEAD (a GraphQL query to
-#              api.github.com passes, a mutation does not), but to the agent's
-#              own hosts: the session reads and publishes nothing. Off by default.
+#              api.github.com passes, a mutation does not; git's fetch passes
+#              where git is fetch or allow, a push never does), but to the
+#              agent's own hosts: the session reads and publishes nothing.
+#              Off by default.
 # hosts : public lets the session reach every public host, the allowlist not
 #              applying; [deny] and the refusal of localhost and the LAN stay.
 #              Default allowlist.
