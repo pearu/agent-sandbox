@@ -231,7 +231,11 @@ Sections:
   approval: the trust record covers every purpose file the dot-file can name --
   `{role}` read as the section's glob -- so an edit to one, or a new one the glob
   matches, re-opens the review, which shows it new or as a diff. A role whose file
-  does not exist is refused. `mode` stays a key of the unsuffixed section.
+  does not exist is refused. `mode` stays a key of the unsuffixed section. When the
+  file differs from the one the role's previous launch was briefed from (its sha256
+  is kept in the role's state directory, `purpose.sha256`), the hook and "Your role"
+  add one sentence: the text is the current one and replaces whatever earlier turns
+  of a resumed conversation followed; `--delete` drops that record with the rest.
 
   ```ini
   [briefing:reviewer-*]                  # .asb/roles/reviewer-1.md, ...

@@ -47,6 +47,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A session is told when its role's purpose file changed** since the role's previous
+  launch. A relaunched role that resumed its conversation kept to the rules its earlier
+  turns followed, though the `SessionStart` hook carried the new text, until told by hand
+  to re-read it. The engine now keeps the purpose file's sha256 in the role's state
+  directory (`purpose.sha256`, beside `record.tsv`; never in the project) and, when it
+  differs, adds one sentence after the purpose text in the hook and in `briefing.md`'s
+  "Your role": the text is the current one and replaces what earlier turns followed.
+  Nothing on a first launch or when unchanged; `--verbose` names it on the host too.
 - **A role with no terminal: `asb --role R --serve claude`** (#277). A host-side loop, in
   the foreground, that holds the role's launch open and runs one turn of the role's
   session per change to a file: the agent with the profile's turn arguments (claude:
