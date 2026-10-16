@@ -661,3 +661,11 @@ shared_env() {
   [[ "$output" != *"$H/src/torch -- its imports fail"* ]]
   [[ "$output" == *"$H/src/vision -- its imports fail"* ]]
 }
+
+@test "the roles model writes [ssh:supervisor] with its host commented out and the --apply line that turns it on, and the Supervisor is told to ask for it" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  grep -A2 -xF '[ssh:supervisor]' "$PROJ/.agent-sandbox" | grep -qF "#   asb --apply '[ssh:supervisor]' github.com"
+  run ! grep -qE '^github\.com' "$PROJ/.agent-sandbox"
+  grep -qF 'ask the user for exactly the' "$PROJ/.asb/roles/supervisor.md"
+}

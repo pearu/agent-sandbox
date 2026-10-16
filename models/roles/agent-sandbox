@@ -61,6 +61,9 @@ project = read-write              # merges the branches in the main tree, pushes
 [net:supervisor]                  # ...except the Supervisor, which publishes
 retrieve-only = off
 git = allow
+[ssh:supervisor]
+# github.com                      # SSH as you, for a push to an SSH origin: off; for it:
+#   asb --apply '[ssh:supervisor]' github.com
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 
 #@own # ---- setup: builds the environment, once per project, again after main moves ----
