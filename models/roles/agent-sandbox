@@ -1,5 +1,6 @@
 # .agent-sandbox for the roles model (docs/roles.md), written by `asb --init roles`.
-# Planners, Implementers and Reviewers are numbered instances; the Supervisor is one.
+# Planners, Implementers and Reviewers are numbered instances; the Supervisor and the
+# Gate are one each: the Supervisor coordinates, the Gate publishes.
 # Review it, add what this project needs -- hosts to allow, a Planner's material --
 # and approve it with `asb --trust`; `asb --check --role NAME` shows what a role has.
 
@@ -21,9 +22,13 @@ gh = read-only                    # your gh login, for reading issues and pull r
 mode = strict                     # ...through the proxy only: under `proxy` a tool can ignore it
 retrieve-only = on
 git = refuse
+[permissions]                     # what a role runs without asking you: its inbox watcher
+Bash(.asb/bin/inbox-wait:*)
+Bash(tail:*)
 
 # ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-{n}]
+#@ inbox = .asb/coord/to/{role}.md
 .asb/plan/planner-{n}/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
@@ -31,6 +36,7 @@ git = refuse
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-{n}]
 #@ clone = .asb/impl/{n}/ .asb/git/{n}/ impl-{n}
+#@ inbox = .asb/coord/to/{role}.md
 .asb/handoff/implementer-{n}/ = read-write
 .asb/coord/implementer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 .asb/impl/{n}/ = read-write       # its clone's tree, with its .env
@@ -43,27 +49,53 @@ git = refuse
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-{n}]
+#@ inbox = .asb/coord/to/{role}.md
 .asb/review/reviewer-{n}/ = read-write
 .asb/coord/reviewer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
-# ---- supervisor: the only role that reaches outside ------------------------------
+# ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
-project = read-write              # merges the branches in the main tree, pushes
+project = read-write              # merges the branches in the main tree
 ./.git/ = read-write
 .asb/impl/ = read-only            # the clones are the Implementers'; it fetches their branches
 .asb/git/ = read-only
 .asb/coord/supervisor/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
+.asb/coord/to/ = read-write       # the inboxes, one per role: only the Supervisor writes them
 #@shared {envpath}/ = copy-on-write  # another project's env: what it installs lands in its layer
 #@own [conda:supervisor]                # main's build lands in {env}, which lives in the conda tree
 #@own write = 1
-[net:supervisor]                  # ...except the Supervisor, which publishes
+[permissions:supervisor]          # the commands its purpose file names for a merge and a build
+Bash(git fetch:*)
+Bash(git merge:*)
+#@own Bash(conda env update:*)
+[briefing:supervisor]             # reads .asb/roles/supervisor.md
+
+# ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
+#   its terminal is opened when the Supervisor says it is the Gate's turn
+[connect:gate]
+#@ inbox = .asb/coord/to/{role}.md
+project = read-only               # reads the file a message names; changes nothing
+./.git/ = read-only               # main and its history: a push from it needs nothing more
+gh = read-only                    # your gh login: the pull request, the comment, the issue
+.asb/coord/gate/ = read-write     # its messages.md: what it did, or why it did not
+.asb/scratch/ = own
+[net:gate]                        # ...except the Gate, which publishes
+mode = strict
 retrieve-only = off
 git = allow
-[ssh:supervisor]
+[ssh:gate]
 # github.com                      # SSH as you, for a push to an SSH origin: off; for it:
-#   asb --apply '[ssh:supervisor]' github.com
-[briefing:supervisor]             # reads .asb/roles/supervisor.md
+#   asb --apply '[ssh:gate]' github.com
+[permissions:gate]                # the verbs it executes, each from an approved message
+Bash(git push:*)
+Bash(gh pr create:*)
+Bash(gh pr comment:*)
+Bash(gh issue comment:*)
+Bash(gh issue create:*)
+Bash(gh issue close:*)
+[briefing:gate]
+file = .asb/roles/gate.md
 
 #@own # ---- setup: builds the environment, once per project, again after main moves ----
 #@own #   asb --role setup claude

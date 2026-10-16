@@ -47,6 +47,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The roles model's Supervisor coordinates, and a Gate publishes** (#274). You stay in
+  the Supervisor's terminal: it sends each role its next step in the role's inbox,
+  `.asb/coord/to/<role>.md` (a directory only it may write), each message shown to you
+  and written only on your approval, numbered `## N` per role; a role acknowledges
+  `ack N` and reports `done N` in its messages, which the Supervisor watches. `--init`
+  ships the watcher, `.asb/bin/inbox-wait FILE [SECS [ALIVE]]` (a one-second poll by
+  path; ALIVE touched each poll, so a stale file says the role is not running), which
+  a role arms with Claude Code's Monitor tool, the `[permissions]` that let it run
+  without a prompt, and an empty inbox per role. The new Gate role (`G`) publishes --
+  push, pull request, comment, issue -- exactly as an approved message names it, and
+  nothing else: `main` and its history read-only, your gh login, `retrieve-only = off`,
+  `git = allow`, `[ssh:gate]` with origin's host commented out. A template's
+  `#@ inbox = PATH` line and a model's `bin/` directory are how a model says so.
+
 - **`[permissions]` and `[permissions:<role-glob>]` in `.agent-sandbox`** (#274): agent
   permission rules a role gets without asking, one per line in the agent's own syntax --
   for claude, its settings' `permissions.allow` (`Bash(git push:*)`, `Read`) -- a union
@@ -238,6 +252,18 @@ names are gone; there are no aliases for removed names before 1.0.
   `components/connect-sync.py`, reported at 0%, are measured by coverage.py where they
   run -- in the engine's joins and copy syncs, and in their unit tests -- through
   `AGENT_SANDBOX_TEST_PYTHON`, and uploaded to Codecov with the engine's and the addon's.
+
+### Changed
+
+- **The roles model's Supervisor publishes nothing** (#274): its `[net:supervisor]` and
+  `[ssh:supervisor]` sections are gone, so it runs under the common block's
+  `retrieve-only = on` and `git = refuse` like every other role; it still merges into
+  `main` and builds there. Publishing is the Gate's, and `[ssh:supervisor]`'s opt-in is
+  `[ssh:gate]`'s. A file an earlier `--init` wrote keeps its sections: remove its
+  `[net:supervisor]` sections and `[ssh:supervisor]`, and run `--init` again, which
+  writes the common block's `[net:supervisor]`, the inboxes and the Gate's sections;
+  the Supervisor's inbox directory is then
+  `asb --apply '[connect:supervisor]' '.asb/coord/to/ = read-write'`.
 
 ### Fixed
 

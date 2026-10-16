@@ -5918,7 +5918,7 @@ _as_init() {
     printf '%s%s' "$lead" "$txt"
   }
   local df="$proj/.agent-sandbox" existing="" new="" j n inst h hd lead
-  local -a clones=() insts=() prefixes=()
+  local -a clones=() insts=() prefixes=() inboxes=()
   # A section the file has -- or has commented out, which is the user's to uncomment --
   # is never written again; compared by its header alone.
   [[ -f "$df" ]] && existing="$(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' "$df")"
@@ -6097,6 +6097,8 @@ _as_init() {
           _init_has "$(_init_render "${heads[k]}" "" "$inst" "$n" "$h" | head -1)" || new+="$a"$'\n'
           [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*clone[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
             && clones+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
+          [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*inbox[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
+            && inboxes+=("$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
           # The environment's place: the role's [conda:...] prefix, from the template.
           [[ "${heads[k]}" == "[conda:"* && "${bodies[k]}" =~ (^|$'\n')prefix[[:space:]]*=[[:space:]]*([^[:space:]#$'\n']+) ]] \
             && prefixes+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
@@ -6117,6 +6119,8 @@ _as_init() {
       h="${h^^}"
       [[ "$rn" == "$setup" ]] && h="$rn" # no handle: it is called by its name
       [[ "$rk" == single ]] && insts+=("$rn"$'\t'"$h"$'\t'"$rn"$'\t'"")
+      [[ "${bodies[i]}" =~ (^|$'\n')#@[[:space:]]*inbox[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
+        && inboxes+=("$(_init_render "x" "${BASH_REMATCH[2]}" "$rn" "" "$h" | sed -n 2p)")
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "$rn" "" "$h" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "$rn" "" "$h" | head -1)"
     else
@@ -6289,6 +6293,19 @@ _as_init() {
       *) [[ -e "$proj/$key" ]] || { mkdir -p "$proj/$(dirname -- "$key")" && : >"$proj/$key"; } ;;
     esac || return 1
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' "$df" | sort -u)
+  # A role's inbox (`#@ inbox = PATH`, #274): an empty file for its watcher to wait on,
+  # where the instructions to it are appended. Never a declaration: a file bound into a
+  # sandbox keeps the inode, and the Write tool renames a new one over it.
+  for f in ${inboxes[@]+"${inboxes[@]}"}; do
+    [[ -e "$proj/$f" ]] || { mkdir -p "$proj/$(dirname -- "$f")" && : >"$proj/$f"; } || return 1
+  done
+  # The model's scripts (`bin/`, #274), into .asb/bin/, executable: written and kept as
+  # the purpose files are (.asb/init.sums), so one you changed stays yours.
+  for f in "$mdir"/bin/*; do
+    [[ -f "$f" ]] || continue
+    _init_purpose "$f" ".asb/bin/$(basename -- "$f")" "" "" "" || return 1
+    [[ -x "$proj/.asb/bin/$(basename -- "$f")" ]] || chmod 755 -- "$proj/.asb/bin/$(basename -- "$f")" || return 1
+  done
   # The coord index: a row per instance, added for the ones it does not list yet; a model
   # without one (github: its setup role is single) has none.
   local idx="$proj/.asb/coord/COORDINATION.md" idxrows="" dirs coordf

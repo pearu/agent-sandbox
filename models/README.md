@@ -29,7 +29,13 @@ A model directory holds:
   instance (`git clone --shared --separate-git-dir=GITDIR . TREE`, on BRANCH), with an
   environment cloned from `--env` at that role's `[conda:...] prefix`, and needs the
   project to be a git repository, at its top; a model without one runs in any directory,
-  a repository's subdirectory included. A line `#@ setup = ROLE` names the role that
+  a repository's subdirectory included. A line `#@ inbox = PATH` in a role's section
+  makes an empty file at PATH per instance (`{role}` and the like substituted), when
+  there is none: the role's inbox, which another role appends to and its watcher waits
+  on (the roles model's `.asb/coord/to/{role}.md`). It is not declared: a file bound
+  into a sandbox keeps its inode, and Claude Code's Write tool renames a new one over
+  it, so an inbox lives in a directory a declaration binds. A line `#@ setup = ROLE`
+  names the role that
   builds the `--env` environment: `--init` then takes a NAME not built yet, makes its
   prefix as an empty directory (for conda to create into, and for a declaration of it
   to bind), and says to launch ROLE; without one, a missing environment is refused. The
@@ -61,9 +67,12 @@ A model directory holds:
   at every start.
 - `coord/COORDINATION.md` -- the coord index; `{instances}` becomes a table row per
   instance.
+- `bin/` -- scripts the roles run, written to `.asb/bin/` executable, with the purpose
+  files' placeholders (the roles model's `inbox-wait`, the watcher a role arms with the
+  Monitor tool: docs/roles.md section 5).
 - `README.md` -- what the model is, and which of its "may not"s are enforced.
 
 Run again with more instances, `--init` adds what is missing and touches nothing else
-that exists, except a purpose file it wrote and nobody changed since: that one takes the
-model's current text (`.asb/init.sums` records what it wrote). The changed
+that exists, except a purpose file or a `bin/` script it wrote and nobody changed since:
+that one takes the model's current text (`.asb/init.sums` records what it wrote). The changed
 `.agent-sandbox` or purpose file then needs `asb --trust` again.

@@ -13,6 +13,13 @@ indent_size = 2
 binary_next_line = true
 switch_case_indent = true
 
+# a model's scripts (models/<name>/bin/), which have no extension
+[models/*/bin/*]
+indent_style = space
+indent_size = 2
+binary_next_line = true
+switch_case_indent = true
+
 [*.py]
 indent_style = space
 indent_size = 4

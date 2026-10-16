@@ -82,7 +82,7 @@ init() {
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
   init -- roles tester=1
   [ "$status" -ne 0 ]
-  [[ "$output" == *"has no role 'tester' (it has: planner implementer reviewer supervisor setup)"* ]]
+  [[ "$output" == *"has no role 'tester' (it has: planner implementer reviewer supervisor gate setup)"* ]]
   init -- roles supervisor=2
   [ "$status" -ne 0 ]
   [[ "$output" == *"0 or 1 for supervisor"* ]]
@@ -417,7 +417,7 @@ approve() {
   mkdir -p "$H/conda/envs/E/conda-meta"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env E
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(P1 I1 R1 S setup)"* ]] # the setup role has no handle
+  [[ "$output" == *"(P1 I1 R1 S G setup)"* ]] # the setup role has no handle
   local df="$PROJ/.agent-sandbox" p last first
   run ! grep -qE '^(# )?\[(sandbox|conda|connect|net)\]' "$df" # nothing reaches another model's roles
   head -1 "$df" | grep -qxF '# ---- written by asb --init roles ----'
@@ -603,7 +603,7 @@ shared_env() {
   local ep="$H/conda/envs/torch-dev" df="$PROJ/.agent-sandbox"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --shared-env torch-dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(P1 I1 R1 S)"* ]] # no setup role: the env is built by the project that owns it
+  [[ "$output" == *"(P1 I1 R1 S G)"* ]] # no setup role: the env is built by the project that owns it
   [[ "$output" == *"--init: torch-dev is another project's environment ($ep): activated read-only, never cloned or built here"* ]]
   [[ "$output" == *"it imports from $H/src/torch, $H/src/vision (editable installs)"* ]]
   [ ! -e "$H/conda.log" ] && [ ! -e "$PROJ/.asb/impl/1/.env" ] # nothing cloned
@@ -611,9 +611,9 @@ shared_env() {
   [ ! -e "$PROJ/.asb/roles/setup.md" ]
   run ! grep -qE '^write = 1' "$df"             # the Supervisor does not write into it
   run ! grep -qF 'prefix = .asb/impl/' "$df"    # no Implementer env of its own
-  [ "$(grep -c "^prefix = $ep " "$df")" -eq 4 ] # every role activates it
-  [ "$(grep -c "^$H/src/torch/ = read-only" "$df")" -eq 4 ]
-  [ "$(grep -c "^$H/src/vision/ = read-only" "$df")" -eq 4 ]
+  [ "$(grep -c "^prefix = $ep " "$df")" -eq 5 ] # every role activates it
+  [ "$(grep -c "^$H/src/torch/ = read-only" "$df")" -eq 5 ]
+  [ "$(grep -c "^$H/src/vision/ = read-only" "$df")" -eq 5 ]
   run ! grep -qF "$ep/lib" "$df" # a path inside the env is not a source
   grep -A8 -xF '[connect:implementer-1]' "$df" | grep -q "^$ep/ = copy-on-write"
   sed -n '/^\[connect:supervisor\]$/,/^\[/p' "$df" | grep -q "^$ep/ = copy-on-write"
@@ -663,10 +663,77 @@ shared_env() {
   [[ "$output" == *"$H/src/vision -- its imports fail"* ]]
 }
 
-@test "the roles model writes [ssh:supervisor] with its host commented out and the --apply line that turns it on, and the Supervisor is told to ask for it" {
+@test "the roles model: the Gate publishes and the Supervisor does not -- [ssh:gate] commented out with its --apply line, the Gate's network, no [ssh:supervisor] (#274)" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
-  grep -A2 -xF '[ssh:supervisor]' "$PROJ/.agent-sandbox" | grep -qF "#   asb --apply '[ssh:supervisor]' github.com"
-  run ! grep -qE '^github\.com' "$PROJ/.agent-sandbox"
-  grep -qF 'ask the user for exactly the' "$PROJ/.asb/roles/supervisor.md"
+  local df="$PROJ/.agent-sandbox"
+  grep -A2 -xF '[ssh:gate]' "$df" | grep -qF "#   asb --apply '[ssh:gate]' github.com"
+  run ! grep -qE '^github\.com' "$df"
+  run ! grep -qF '[ssh:supervisor]' "$df"
+  # the Supervisor's network is the common block's: it reads, and publishes nothing
+  section '[net:supervisor]' "$df" | grep -qx 'retrieve-only = on'
+  section '[net:supervisor]' "$df" | grep -qx 'git = refuse'
+  run ! grep -qx 'retrieve-only = off' <<<"$(section '[net:supervisor]' "$df")"
+  [ "$(grep -c '^\[net:supervisor\]' "$df")" -eq 1 ]
+  # the Gate's: strict, writes allowed, git allowed; main and its history read-only
+  section '[net:gate]' "$df" | grep -qx 'mode = strict'
+  section '[net:gate]' "$df" | grep -qx 'retrieve-only = off'
+  section '[net:gate]' "$df" | grep -qx 'git = allow'
+  section '[connect:gate]' "$df" | grep -qx 'project = read-only .*'
+  section '[connect:gate]' "$df" | grep -qx '\./\.git/ = read-only .*'
+  section '[connect:gate]' "$df" | grep -qx 'gh = read-only .*'
+  section '[connect:gate]' "$df" | grep -qx '\.asb/coord/gate/ = read-write .*'
+  section '[briefing:gate]' "$df" | grep -qx 'file = .asb/roles/gate.md'
+  head -1 "$PROJ/.asb/roles/gate.md" | grep -q 'called G: the Gate of'
+  grep -qF "git push \"\$(git remote get-url origin)\" BRANCH" "$PROJ/.asb/roles/gate.md"
+  grep -qF "asb --apply '[ssh:gate]' HOST" "$PROJ/.asb/roles/gate.md"
+  run ! grep -qF 'publish -- push the branch' "$PROJ/.asb/roles/supervisor.md"
+  grep -q '^| G | gate | .asb/coord/gate/messages.md | - |$' "$PROJ/.asb/coord/COORDINATION.md"
+}
+
+@test "the roles model: an inbox per role under .asb/coord/to/, only the Supervisor's to write; the watcher shipped executable, kept when changed (#274)" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" r
+  for r in planner-1 planner-2 implementer-1 reviewer-1 gate; do
+    [ -f "$PROJ/.asb/coord/to/$r.md" ] && [ ! -s "$PROJ/.asb/coord/to/$r.md" ]
+  done
+  [ ! -e "$PROJ/.asb/coord/to/supervisor.md" ] && [ ! -e "$PROJ/.asb/coord/to/setup.md" ]
+  [ ! -e "$PROJ/.asb/coord/planner-1/alive" ] # the watcher makes it
+  # the Supervisor alone writes the inboxes; every other role reads them with .asb/coord/
+  [ "$(grep -c '^\.asb/coord/to/ = read-write' "$df")" -eq 1 ]
+  section '[connect:supervisor]' "$df" | grep -q '^\.asb/coord/to/ = read-write'
+  run ! grep -qF '#@' "$df"
+  grep -q '^| S | supervisor | .asb/coord/supervisor/messages.md | .asb/coord/to/ |$' "$PROJ/.asb/coord/COORDINATION.md"
+  # the watcher, and the rules that run it without a prompt, for every role
+  [ -x "$PROJ/.asb/bin/inbox-wait" ]
+  cmp -s "$PROJ/.asb/bin/inbox-wait" "$(dirname "$ENGINE")/models/roles/bin/inbox-wait"
+  for r in 'planner-*' 'implementer-*' 'reviewer-*' supervisor gate; do
+    section "[permissions:$r]" "$df" | grep -qxF 'Bash(.asb/bin/inbox-wait:*)'
+  done
+  grep -A6 -xF '[permissions:gate]                # the verbs it executes, each from an approved message' "$df" | grep -qxF 'Bash(git push:*)'
+  # the purpose files arm it, with the role's own inbox and alive file
+  grep -qxF 'while .asb/bin/inbox-wait .asb/coord/to/planner-2.md 0 .asb/coord/planner-2/alive' "$PROJ/.asb/roles/planner-2.md"
+  grep -qF 'done; in my file; S has it' "$PROJ/.asb/roles/reviewer-1.md"
+  grep -qxF 'while .asb/bin/inbox-wait .asb/coord/ROLE/messages.md 0' "$PROJ/.asb/roles/supervisor.md"
+  # run again: an inbox with messages, and a changed watcher, are kept
+  printf '## 1\nread P1\n' >"$PROJ/.asb/coord/to/planner-1.md"
+  printf '#!/bin/sh\nexit 0\n' >"$PROJ/.asb/bin/inbox-wait"
+  rm "$PROJ/.asb/coord/to/reviewer-1.md"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/bin/inbox-wait: changed since --init wrote it"* ]]
+  [ "$(cat "$PROJ/.asb/coord/to/planner-1.md")" = $'## 1\nread P1' ]
+  [ -f "$PROJ/.asb/coord/to/reviewer-1.md" ] # a missing one is made again
+  [ "$(cat "$PROJ/.asb/bin/inbox-wait")" = $'#!/bin/sh\nexit 0' ]
+}
+
+@test "the written roles file passes the review: each [permissions] rule named, the Gate's too (#274)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[permissions:gate] Bash(git push:*): a permission rule the agent gets without asking you, for the roles gate"* ]]
+  [[ "$output" == *"[permissions:planner-*] Bash(.asb/bin/inbox-wait:*): a permission rule"* ]]
+  [[ "$output" != *"bad rule"* && "$output" != *"set twice"* ]]
 }
