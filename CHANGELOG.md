@@ -47,6 +47,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`[permissions]` and `[permissions:<role-glob>]` in `.agent-sandbox`** (#274): agent
+  permission rules a role gets without asking, one per line in the agent's own syntax --
+  for claude, its settings' `permissions.allow` (`Bash(git push:*)`, `Read`) -- a union
+  across the sections that match the role. The claude profile adds them to the
+  `--settings` file the briefing passes, after a `--settings` of yours; with the
+  briefing off they are not passed, and the launch says so. A widening: the review names
+  each rule with its section, and `asb --check` lists the role's.
+
 - **`asb --init MODEL --shared-env NAME`** (#268): a project whose roles run against an
   environment another project owns -- a test harness against a PyTorch development
   environment. Every role activates NAME read-only; nothing clones or builds it (the

@@ -49,6 +49,17 @@
 #github.com
 
 
+# --- Permission rules ------------------------------------------------------
+# What the agent does without asking you, one rule per line in the agent's own
+# syntax (claude: its settings' permissions.allow). Handed over with the briefing's
+# --settings, so not with [briefing] mode = off. A widening the review names; the
+# sandbox's limits still apply to whatever the rule lets run.
+#[permissions]
+#Bash(tail:*)
+#[permissions:gate]
+#Bash(git push:*)
+
+
 # --- Memory scoping ------------------------------------------------------
 # Which other projects' Claude memory this session may read, read-only. By
 # default it sees only its own project. List project paths (not the ~/.claude

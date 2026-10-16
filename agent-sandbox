@@ -694,6 +694,20 @@ _as_ssh_sources() {
   printf '%s' "$out"
 }
 
+# _as_perm_rule_ok RULE -- is RULE a permission rule an .agent-sandbox [permissions]
+# line may give: a tool name, alone (`Read`) or with a specifier in parentheses
+# (`Bash(git push:*)`, `Write(.asb/coord/gate/**)`), as the agent's own settings take
+# it. The engine checks the shape only; the agent reads the rule.
+_as_perm_rule_ok() {
+  local re='^[A-Za-z][A-Za-z0-9_-]*(\(.+\))?$'
+  [[ "$1" =~ $re ]]
+}
+
+# _as_perm_section GLOB -- the section a [permissions] entry came from, as written.
+_as_perm_section() {
+  [[ "$1" == "*" ]] && printf '[permissions]' || printf '[permissions:%s]' "$1"
+}
+
 _as_ssh_setup() {
   # See docs/ssh.md. Runs on the HOST, before the sandbox
   # exists: resolves each --ssh spec through ~/.ssh/config, checks the host
@@ -4037,7 +4051,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
@@ -4116,7 +4130,7 @@ _as_trust_forget() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
@@ -4158,7 +4172,7 @@ _as_profile_dotfile() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -4478,7 +4492,7 @@ _as_trust_notes() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
@@ -4497,6 +4511,18 @@ _as_trust_notes() {
       _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n"
     else
       _as_msg ".agent-sandbox: $v bad host '$k' (a hostname, user@host, or ~/.ssh/config alias); ignoring"
+    fi
+  done
+  # [permissions]: a widening -- the agent does it without asking you -- said per rule
+  # and section.
+  for h in ${_df_perm[@]+"${_df_perm[@]}"}; do
+    v="${h%%$'\t'*}" k="${h#*$'\t'}"
+    if [[ "$v" == "*" ]]; then n="every role"; else n="the roles $v"; fi
+    v="$(_as_perm_section "$v")"
+    if _as_perm_rule_ok "$k"; then
+      _as_msg ".agent-sandbox: $v $k: a permission rule the agent gets without asking you, for $n"
+    else
+      _as_msg ".agent-sandbox: $v bad rule '$k' (a tool name, or Tool(specifier), as the agent's settings take it); ignoring"
     fi
   done
   for h in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
@@ -4760,7 +4786,7 @@ _as_dotfile_parse() {
         sglob="${section#*:}"
         section="${section%%:*}"
         case "$section" in
-          sandbox | connect | allow | deny | env | conda | net | gpu | ssh) _df_role_globs+=("$sglob") ;;
+          sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions) _df_role_globs+=("$sglob") ;;
           briefing)
             # [briefing:<glob>] (#222): those roles are briefed from a purpose file,
             # `file = PATH` or .asb/roles/{role}.md, present even with no line.
@@ -4785,7 +4811,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh and briefing do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions and briefing do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -4793,7 +4819,7 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
@@ -4808,7 +4834,7 @@ _as_dotfile_parse() {
       continue
     fi
     case "$section" in
-      allow | deny | env | conda | net | gpu | ssh)
+      allow | deny | env | conda | net | gpu | ssh | permissions)
         if [[ "$sglob" != "*" ]]; then
           _df_role_lines+=("$sglob"$'\t'"$section"$'\t'"$line")
           continue
@@ -4833,6 +4859,10 @@ _as_dotfile_line() {
     # [ssh]: one host per line, as `--ssh HOST` takes it; kept with its section's
     # glob, so --check and the briefing can say where a host came from.
     ssh) _df_ssh+=("$sglob"$'\t'"$line") ;;
+    # [permissions]: one agent permission rule per line, in the agent's own syntax
+    # (Claude Code's permissions.allow: `Bash(git push:*)`, `Read`), kept with its
+    # section's glob for the review and --check; the profile hands them to the agent.
+    permissions) _df_perm+=("$sglob"$'\t'"$line") ;;
     share-memory) _df_share+=("${line/#\~/$HOME}") ;;
     env)
       # [env] (#177): `NAME` forwards it when set in the launching shell (several per
@@ -5006,9 +5036,9 @@ _as_dotfile_line() {
 }
 
 # _as_dotfile_apply_role ROLE -- the role-suffixed [allow], [deny], [env], [conda],
-# [net], [gpu] and [ssh] lines (#221) whose glob matches ROLE, in file order, after the
-# unsuffixed ones: a key overrides, a list adds. `--all` applies every one, for the
-# review, which reads the whole file whatever role launches it.
+# [net], [gpu], [ssh] and [permissions] lines (#221) whose glob matches ROLE, in file
+# order, after the unsuffixed ones: a key overrides, a list adds. `--all` applies every
+# one, for the review, which reads the whole file whatever role launches it.
 _as_dotfile_apply_role() {
   local role="$1" e g rest
   for e in ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
@@ -5138,6 +5168,16 @@ _as_check_plan() {
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
+    fi
+    if ((${#_perm_df[@]})); then
+      local _pe _pl=""
+      for _pe in "${_perm_df[@]}"; do
+        _pl+="${_pl:+, }${_pe#*$'\t'} ($(_as_perm_section "${_pe%%$'\t'*}"))"
+      done
+      case "${_knob_briefing:-on}" in
+        off | 0) printf '  permission rules: NOT passed -- they travel with the briefing, which is off: %s\n' "$_pl" ;;
+        *) printf '  permission rules the agent gets without asking: %s\n' "$_pl" ;;
+      esac
     fi
     printf '  %-28s %-15s %-24s %s\n' "channel or path" mode source "set by"
     # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
@@ -6364,7 +6404,7 @@ _as_apply() {
     _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
     return 1
   fi
-  local -a names=(allow deny share-memory env conda net gpu ssh seccomp overlay sandbox connect briefing) lines=() have=() add=()
+  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing) lines=() have=() add=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
@@ -6385,9 +6425,9 @@ _as_apply() {
   fi
   if [[ -n "$glob" ]]; then
     case "$name" in
-      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | briefing) ;;
+      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions | briefing) ;;
       *)
-        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh and briefing do)"
+        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions and briefing do)"
         return 2
         ;;
     esac
@@ -6404,7 +6444,7 @@ _as_apply() {
     first_role=1
     for l in ${lines[@]+"${lines[@]}"}; do
       _ap_norm "$l"
-      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|briefing):.+\]$ ]] && first_role=0
+      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|permissions|briefing):.+\]$ ]] && first_role=0
     done
   fi
   # The section's last occurrence, and its last line that is not blank or a comment:
@@ -7426,12 +7466,16 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
   local -a _df_profile_kv=() # [<profile>] section pairs, handed to the profile
   local -a _ssh_df=() _ssh_flag_hosts=(${_ssh_hosts[@]+"${_ssh_hosts[@]}"})
+  # [permissions] for this role: _perm_df as `glob<TAB>rule`, for --check; the rules
+  # alone, once each, in _permission_rules, which the profile reads (profile.sh's
+  # contract) and hands to the agent.
+  local -a _perm_df=() _permission_rules=()
   local _trust_rec
   _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")"
   # THE REVIEW IS PART OF THE LAUNCH (#143). A dot-file that is new, changed since it
@@ -7536,7 +7580,7 @@ agent_sandbox() (
         _df_rn="$_df_role"
       fi
       _as_dotfile_apply_role "$_df_rn" 2>/dev/null
-      local _dh _dj
+      local _dh _dj _pk _pdup
       for _dh in "${_df_allow[@]}"; do
         [[ -z "$_dh" ]] && continue
         [[ "$_dh" =~ $_hostre ]] && _allow_hosts+=("$_dh") # a bad one: the review said so
@@ -7546,6 +7590,16 @@ agent_sandbox() (
       done
       for _dh in ${_df_ssh[@]+"${_df_ssh[@]}"}; do
         _as_ssh_spec_ok "${_dh#*$'\t'}" && _ssh_df+=("$_dh") # a bad one: the review said so
+      done
+      for _dh in ${_df_perm[@]+"${_df_perm[@]}"}; do
+        _dj="${_dh#*$'\t'}"
+        _as_perm_rule_ok "$_dj" || continue # a bad one: the review said so
+        _perm_df+=("$_dh")
+        _pdup=0
+        for _pk in ${_permission_rules[@]+"${_permission_rules[@]}"}; do
+          [[ "$_pk" == "$_dj" ]] && _pdup=1
+        done
+        ((_pdup)) || _permission_rules+=("$_dj")
       done
       ((${#_df_forward[@]})) && _knob_forward="${_knob_forward:+$_knob_forward }${_df_forward[*]}"
       # network mode: an explicit AGENT_SANDBOX_NET in your shell wins over the
@@ -8737,7 +8791,12 @@ agent_sandbox() (
   local _brief_args=1
   ((_do_exec || _do_verb)) && _brief_args=0
   case "$_brief" in
-    off | 0) ;;
+    off | 0)
+      # The rules travel in the briefing's settings (profile_briefing_args): with it
+      # off, the agent asks as it would without them. A narrowing, said.
+      ((${#_permission_rules[@]})) \
+        && _as_msg ".agent-sandbox [permissions]: not passed to the agent -- they travel with the briefing, which is off"
+      ;;
     on | 1)
       if _as_briefing_write; then
         if ((_brief_args)) && declare -F profile_briefing_args >/dev/null; then

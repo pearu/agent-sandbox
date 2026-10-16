@@ -109,10 +109,12 @@ def merge_settings(ours, user, out):
     """The user's --settings (a path or inline JSON) with OUR hook entries appended,
     written to OUT.
 
-    There is nothing to resolve: our whole contribution is hook entries, appended per
-    event after theirs -- hook entries merge across settings levels, so a per-event
-    union is what Claude Code itself does with two sources. Nothing else of theirs is
-    read, rewritten or merged. A shape we do not recognise is refused rather than
+    There is nothing to resolve: our contribution is hook entries, appended per event
+    after theirs -- hook entries merge across settings levels, so a per-event union is
+    what Claude Code itself does with two sources -- and, when the dot-file has
+    [permissions] rules, permissions.allow entries, appended after theirs the same way
+    (their deny and ask rules stand: Claude Code ranks them over allow). Nothing else
+    of theirs is read, rewritten or merged. A shape we do not recognise is refused rather than
     coerced (list() of a dict would replace their data with its keys). Prints
     `hooks-disabled` when their settings switch every hook off, so the hook can say
     the briefing will not arrive."""
@@ -144,6 +146,19 @@ def merge_settings(ours, user, out):
         hooks[event] = existing + entries
     merged = dict(theirs)
     merged["hooks"] = hooks
+    rules = mine.get("permissions", {}).get("allow", [])
+    if rules:
+        perms = theirs.get("permissions", {})
+        if not isinstance(perms, dict):
+            print("refusing to merge --settings, leaving yours untouched: permissions is not an object", file=sys.stderr)
+            return 1
+        allow = perms.get("allow", [])
+        if not isinstance(allow, list):
+            print("refusing to merge --settings, leaving yours untouched: permissions.allow is not an array", file=sys.stderr)
+            return 1
+        perms = dict(perms)
+        perms["allow"] = allow + [r for r in rules if r not in allow]
+        merged["permissions"] = perms
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(merged, fh, indent=2)
     if merged.get("disableAllHooks"):

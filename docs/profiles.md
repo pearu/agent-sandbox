@@ -43,7 +43,11 @@ Functions a profile defines:
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
-`AGENT_SANDBOX_PROFILE_DIR`, and `_as_msg` for prefixed stderr messages.
+`AGENT_SANDBOX_PROFILE_DIR`, `_as_msg` for prefixed stderr messages, and, in
+`profile_briefing_args()`, the array `_permission_rules`: the trusted dot-file's
+`[permissions]` rules for this launch's role, each once, in the agent's own syntax, for
+the profile to hand to the agent (claude: `permissions.allow` in its `--settings`). A
+profile that reads none leaves them unapplied.
 
 ### A dot-file section named after the profile
 

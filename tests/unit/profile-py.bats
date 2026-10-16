@@ -136,6 +136,23 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   [[ "$output" == *"cannot read --settings"* ]]
 }
 
+@test "merge-settings: our permission rules after theirs, each once; theirs unchanged otherwise; a bad shape refused" {
+  local ours='{"hooks":{},"permissions":{"allow":["Read","Bash(git push:*)"]}}'
+  run py merge-settings --ours "$ours" --user '{"permissions":{"allow":["Read"],"deny":["Bash(rm:*)"]}}' --out "$T/out.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/out.json" 'd["permissions"]')" = "{'allow': ['Read', 'Bash(git push:*)'], 'deny': ['Bash(rm:*)']}" ]
+  run py merge-settings --ours "$ours" --user '{"model":"m"}' --out "$T/out2.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/out2.json" 'd["permissions"], d["model"]')" = "({'allow': ['Read', 'Bash(git push:*)']}, 'm')" ]
+  local u
+  for u in '{"permissions":[]}' '{"permissions":{"allow":"Read"}}'; do
+    run py merge-settings --ours "$ours" --user "$u" --out "$T/out3.json"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refusing to merge --settings, leaving yours untouched: permissions"* ]]
+    [ ! -e "$T/out3.json" ]
+  done
+}
+
 @test "a call it does not understand is a usage error, exit 2" {
   run py
   [ "$status" -eq 2 ]

@@ -319,6 +319,12 @@ Stated plainly. These are what the adversary above can still do.
   gets them without a flag: approving such a file is approving a role that can sign
   in as you there, for as long as the file stays approved. The review says so per
   host; the private key, the timeout and `--ssh-unrestricted` stay on the command line.
+- **An approved `.agent-sandbox` can stop the agent asking.** Its `[permissions]` rules
+  go to the agent as rules it applies without a prompt (`Bash(git push:*)`), for every
+  launch of the roles they name. The prompt is the agent's control, not the sandbox's:
+  what a rule lets run still meets the mounts, the network and the syscall filter, so a
+  rule widens nothing the sandbox enforces -- but a role whose network lets it publish
+  then publishes without the question it would have asked. The review names each rule.
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
