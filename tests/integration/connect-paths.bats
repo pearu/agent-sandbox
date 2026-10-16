@@ -126,3 +126,29 @@ PROBE
     --profile probe --exec bash -c 'test -e data/b && echo LEAK >>report; echo finished >>report'
   [ "$(cat "$I/rep")" = finished ]
 }
+
+@test "a read-write directory inside a read-only one takes a temp file renamed over its target, as Claude Code's Write and Edit do; a read-write file there and a sibling directory do not" {
+  mkdir -p "$IWORK/.asb/coord/me" "$IWORK/.asb/coord/other"
+  : >"$IWORK/.asb/coord/file.md"
+  : >"$IWORK/report"
+  # shellcheck disable=SC2016 # expands inside the sandbox
+  run_sandboxed "${ENV[@]}" -- \
+    --connect '.asb/coord/ = read-only' --connect '.asb/coord/me/ = read-write' \
+    --connect '.asb/coord/file.md = read-write' \
+    --profile probe --exec bash -c '
+      tmpmv() { printf "x\n" >"$1.tmp" 2>/dev/null && mv "$1.tmp" "$1" 2>/dev/null && echo "$2=yes" >>report; }
+      tmpmv .asb/coord/me/messages.md me
+      tmpmv .asb/coord/other/messages.md other
+      tmpmv .asb/coord/file.md file
+      printf "y\n" >.asb/coord/file.md && echo file_redirect=yes >>report
+      echo finished=yes >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report finished)" = yes ]
+  [ "$(report me)" = yes ] # the role's own directory: temp + rename works
+  [ "$(cat "$IWORK/.asb/coord/me/messages.md")" = x ]
+  [ -z "$(report other)" ] # a sibling stays read-only
+  [ -z "$(ls -A "$IWORK/.asb/coord/other")" ]
+  [ -z "$(report file)" ]                  # the shape this replaces: a lone writable file
+  [ "$(report file_redirect)" = yes ]      # takes a redirect...
+  [ ! -e "$IWORK/.asb/coord/file.md.tmp" ] # ...but no temp file beside it
+}

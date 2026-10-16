@@ -13,7 +13,9 @@ install -- rather than doing it.
 - An Implementer's tree, with what its build left there: `.asb/impl/N/`, read-only.
   Run its build with its environment by path, `.asb/impl/N/.env/bin/...`.
 - Your Reviews: `.asb/review/{role}/`.
-- Your messages: `.asb/coord/{role}.md`; the index: `.asb/coord/COORDINATION.md`.
+- Your messages: `.asb/coord/{role}/messages.md`; read the others' at
+  `.asb/coord/<role>/messages.md`. The index, kept by `--init`:
+  `.asb/coord/COORDINATION.md`.
 - Your scratch, private and kept, for the test scripts a review takes: `.asb/scratch/`.
 
 **Protocol.**

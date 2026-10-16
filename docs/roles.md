@@ -118,7 +118,7 @@ out, and a Supervisor without it asks for the exact line its briefing names,
 | | |
 |---|---|
 | inputs | every artefact; every role's Messages; your instructions |
-| outputs | `main`, with the accepted change merged and built; what goes outside; the coord index |
+| outputs | `main`, with the accepted change merged and built; what goes outside; its Messages |
 | may | what you may, on your instruction |
 | may not | write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told** -- it has the access, which is why its purpose file matters most) |
 
@@ -196,11 +196,15 @@ Every role launches from the repository itself:
 
 ## 5. Messages
 
-Each role writes only its own message file, `.asb/coord/<role>.md`, and reads the
-others' -- enforced: its own file is the one it may write. It notes there what it is
-doing, what it needs from another role (addressed by handle), and what it wrote where.
-`.asb/coord/COORDINATION.md` lists every instance -- handle, role, message file, its
-directories; `--init` writes it, the Supervisor keeps it. You read them all.
+Each role writes only in its own message directory, `.asb/coord/<role>/`, its file
+`.asb/coord/<role>/messages.md`, and reads the others' -- enforced: its own directory is
+the one it may write. (A directory, not a file: Claude Code's Write and Edit tools write
+a temp file beside the target and rename it over the target, which a lone writable file
+in a read-only directory refuses.) It notes there what it is doing, what it needs from
+another role (addressed by handle), and what it wrote where.
+`.asb/coord/COORDINATION.md` lists every instance -- handle, role, messages, its
+directories; `--init` writes it and adds a row per new instance when run again. You
+read them all.
 
 ## 6. Setting up
 
@@ -292,7 +296,7 @@ preset = inherit
 prefix = /home/you/miniconda3/envs/x-dev                # the development environment, x-dev: main's build, the user's to activate on the host
 [connect:planner-*]
 project = read-only               # the working tree, read-only; the Supervisor opens it
-.asb/coord/ = read-only           # the message files and the index: every role reads all of them
+.asb/coord/ = read-only           # the message directories and the index (--init keeps it): every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
 ./.git/ = own                     # history is its owner's: main's is the Supervisor's...
 .asb/git/ = own                   # ...and a clone's its Implementer's
@@ -308,7 +312,7 @@ preset = inherit
 [conda:supervisor]
 prefix = /home/you/miniconda3/envs/x-dev                # the development environment, x-dev: main's build, the user's to activate on the host
 [connect:supervisor]              # (what [connect:supervisor] below sets is left out of this copy)
-.asb/coord/ = read-only           # the message files and the index: every role reads all of them
+.asb/coord/ = read-only           # the message directories and the index (--init keeps it): every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
 gh = read-only                    # your gh login, for reading issues and pull requests
 [net:supervisor]                  # every role reads the web and GitHub, and publishes nothing...
@@ -318,18 +322,18 @@ preset = inherit
 [conda:setup]
 prefix = /home/you/miniconda3/envs/x-dev                # the development environment, x-dev: main's build, the user's to activate on the host
 [connect:setup]
-.asb/coord/ = read-only           # the message files and the index: every role reads all of them
+.asb/coord/ = read-only           # the message directories and the index (--init keeps it): every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
 .asb/git/ = own                   # ...and a clone's its Implementer's
 
 # ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-1]
 .asb/plan/planner-1/ = read-write   # its Statements, Tasks and Measurements
-.asb/coord/planner-1.md = read-write
+.asb/coord/planner-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 ~/refs/parsing/ = read-only       # P1's field: its material, nobody else's context (added by hand)
 [connect:planner-2]
 .asb/plan/planner-2/ = read-write   # its Statements, Tasks and Measurements
-.asb/coord/planner-2.md = read-write
+.asb/coord/planner-2/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 ~/refs/reporting/ = read-only
 ~/git/other-project/ = read-only  # the sources P2 knows (added by hand)
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
@@ -337,7 +341,7 @@ prefix = /home/you/miniconda3/envs/x-dev                # the development enviro
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-1]
 .asb/handoff/implementer-1/ = read-write
-.asb/coord/implementer-1.md = read-write
+.asb/coord/implementer-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 .asb/impl/1/ = read-write       # its clone's tree, with its .env
 .asb/git/1/ = read-write        # its clone's history
 ./.git/ = read-only               # the clone reads main's objects through it
@@ -345,7 +349,7 @@ prefix = /home/you/miniconda3/envs/x-dev                # the development enviro
 prefix = .asb/impl/1/.env
 [connect:implementer-2]
 .asb/handoff/implementer-2/ = read-write
-.asb/coord/implementer-2.md = read-write
+.asb/coord/implementer-2/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 .asb/impl/2/ = read-write       # its clone's tree, with its .env
 .asb/git/2/ = read-write        # its clone's history
 ./.git/ = read-only               # the clone reads main's objects through it
@@ -356,7 +360,7 @@ prefix = .asb/impl/2/.env
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
 .asb/review/reviewer-1/ = read-write
-.asb/coord/reviewer-1.md = read-write
+.asb/coord/reviewer-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
 # ---- supervisor: the only role that reaches outside ------------------------------
@@ -365,8 +369,7 @@ project = read-write              # merges the branches in the main tree, pushes
 ./.git/ = read-write
 .asb/impl/ = read-only            # the clones are the Implementers'; it fetches their branches
 .asb/git/ = read-only
-.asb/coord/supervisor.md = read-write
-.asb/coord/COORDINATION.md = read-write   # the index
+.asb/coord/supervisor/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 [conda:supervisor]                # main's build lands in x-dev, which lives in the conda tree
 write = 1
 [net:supervisor]                  # ...except the Supervisor, which publishes

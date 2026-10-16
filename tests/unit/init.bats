@@ -62,9 +62,10 @@ init() {
   [ "$(git config -f "$PROJ/.asb/git/1/config" user.name)" = tester ] # your identity, for commits inside
   # every declared .asb/ path exists
   [ -d "$PROJ/.asb/review/reviewer-1" ] && [ -d "$PROJ/.asb/plan/planner-2" ] && [ -d "$PROJ/.asb/scratch" ]
-  [ -f "$PROJ/.asb/coord/planner-1.md" ]
-  grep -q '^| I1 | implementer-1 | .asb/coord/implementer-1.md | .asb/handoff/implementer-1/, .asb/impl/1/, .asb/git/1/ |$' "$PROJ/.asb/coord/COORDINATION.md"
-  grep -q '^| S | supervisor |' "$PROJ/.asb/coord/COORDINATION.md"
+  [ -d "$PROJ/.asb/coord/planner-1" ] # a role's messages: a directory, for Write's temp+rename
+  grep -q '^| I1 | implementer-1 | .asb/coord/implementer-1/messages.md | .asb/handoff/implementer-1/, .asb/impl/1/, .asb/git/1/ |$' "$PROJ/.asb/coord/COORDINATION.md"
+  grep -q '^| S | supervisor | .asb/coord/supervisor/messages.md |' "$PROJ/.asb/coord/COORDINATION.md"
+  run ! grep -qF '.asb/coord/COORDINATION.md' "$PROJ/.agent-sandbox" # --init keeps the index
   # .asb/ kept out of git by its own .gitignore, and not by the repository's exclude
   [ "$(cat "$PROJ/.asb/.gitignore")" = '*' ]
   [ -z "$(git -C "$PROJ" status --porcelain --untracked-files=all -- .asb)" ]
@@ -181,7 +182,7 @@ init() {
   [ "$status" -eq 0 ]
   local writable
   writable="$(sed -n '/^Binds, outer first:/,$p' <<<"$output" | grep -E '^  \./\S+ +read-write' | awk '{print $1}' | sort | paste -sd' ')"
-  [ "$writable" = "./.asb/coord/reviewer-1.md ./.asb/review/reviewer-1" ]
+  [ "$writable" = "./.asb/coord/reviewer-1 ./.asb/review/reviewer-1" ]
   [[ "$output" =~ \./\.asb/scratch\ +own ]]
   [[ "$output" =~ \./\.asb/git\ +own ]]
 }

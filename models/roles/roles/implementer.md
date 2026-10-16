@@ -20,7 +20,9 @@ address what holds, and object, with reasons, to what does not.
 #@shared   project's specification, in the diff like any other.
 - Your Handoffs: `.asb/handoff/{role}/` -- what was done, the method, what was not and
   why, and the change itself: the branch and `git diff main...impl-{n}`.
-- Your messages: `.asb/coord/{role}.md`; the index: `.asb/coord/COORDINATION.md`.
+- Your messages: `.asb/coord/{role}/messages.md`; read the others' at
+  `.asb/coord/<role>/messages.md`. The index, kept by `--init`:
+  `.asb/coord/COORDINATION.md`.
 - Your scratch, private and kept: `.asb/scratch/`.
 
 **Protocol.**

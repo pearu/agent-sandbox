@@ -11,7 +11,7 @@ preset = inherit
 prefix = {envpath}                # the development environment, {env}: main's build, the user's to activate on the host
 [connect]
 project = read-only               # the working tree, read-only; the Supervisor opens it
-.asb/coord/ = read-only           # the message files and the index: every role reads all of them
+.asb/coord/ = read-only           # the message directories and the index (--init keeps it): every role reads all of them
 .asb/scratch/ = own               # every role's private scratch, at the same path, kept across launches
 ./.git/ = own                     # history is its owner's: main's is the Supervisor's...
 .asb/git/ = own                   # ...and a clone's its Implementer's
@@ -25,14 +25,14 @@ git = refuse
 # ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-{n}]
 .asb/plan/planner-{n}/ = read-write   # its Statements, Tasks and Measurements
-.asb/coord/planner-{n}.md = read-write
+.asb/coord/planner-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-{n}]
 #@ clone = .asb/impl/{n}/ .asb/git/{n}/ impl-{n}
 .asb/handoff/implementer-{n}/ = read-write
-.asb/coord/implementer-{n}.md = read-write
+.asb/coord/implementer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 .asb/impl/{n}/ = read-write       # its clone's tree, with its .env
 .asb/git/{n}/ = read-write        # its clone's history
 ./.git/ = read-only               # the clone reads main's objects through it
@@ -44,7 +44,7 @@ git = refuse
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-{n}]
 .asb/review/reviewer-{n}/ = read-write
-.asb/coord/reviewer-{n}.md = read-write
+.asb/coord/reviewer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 
 # ---- supervisor: the only role that reaches outside ------------------------------
@@ -53,8 +53,7 @@ project = read-write              # merges the branches in the main tree, pushes
 ./.git/ = read-write
 .asb/impl/ = read-only            # the clones are the Implementers'; it fetches their branches
 .asb/git/ = read-only
-.asb/coord/supervisor.md = read-write
-.asb/coord/COORDINATION.md = read-write   # the index
+.asb/coord/supervisor/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
 #@shared {envpath}/ = copy-on-write  # another project's env: what it installs lands in its layer
 #@own [conda:supervisor]                # main's build lands in {env}, which lives in the conda tree
 #@own write = 1
