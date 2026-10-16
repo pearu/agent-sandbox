@@ -486,6 +486,59 @@ CHECK
   [ "$status" -eq 0 ] && [ -z "$output" ]
 }
 
+@test "the agent's own telemetry (#276): the profile's hosts beside the briefing, one sentence in it, one line in --check -- none under hosts = public" {
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF .datadoghq.com "$OUT/telemetry-hosts"
+  [ "$(grep -cF 'own telemetry is not reported and is not a blocked action' "$OUT/briefing.md")" -eq 1 ]
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  local n
+  n="$(bash -c '. "$1"; profile_telemetry_hosts | grep -c .' _ "${ENGINE%/*}/profiles/claude/profile.sh")"
+  [[ "$output" == *"  network: the agent's own telemetry is refused and not reported to it ($n hosts)"* ]]
+  printf '[net]\nhosts = public\n' >"$PROJ/.agent-sandbox"
+  approve
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"network: every public host"* ]]
+  [[ "$output" != *"own telemetry"* ]]
+}
+
+@test "refusal-hook.sh leaves the agent's own telemetry out of its note (#276): an exact host, a subdomain, and only the other host of a mix" {
+  local hook="${ENGINE%/*}/profiles/claude/refusal-hook.sh" D="$BATS_TEST_TMPDIR/run" S="$BATS_TEST_TMPDIR/seen"
+  mkdir -p "$D"
+  printf '[allow]\n' >"$D/apply-section"
+  printf '%s\n' .datadoghq.com browser-intake-us5-datadoghq.com 'bad host' >"$D/telemetry-hosts"
+  # a subdomain of a .domain entry, the domain itself, an exact entry: no note at all
+  printf '%s\n' $'2026-10-16T10:00:00\thttp-intake.logs.us5.datadoghq.com\tCONNECT\tallowlist' \
+    $'2026-10-16T10:00:01\tdatadoghq.com\tCONNECT\tallowlist' \
+    $'2026-10-16T10:00:02\tbrowser-intake-us5-datadoghq.com\tCONNECT\tallowlist' >"$D/refused.log"
+  run bash "$hook" PostToolUse "$D" "$S"
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  # a mix: only the unlisted host, and not one that merely ends in the same letters
+  printf '%s\n' $'2026-10-16T10:01:00\thttp-intake.logs.us5.datadoghq.com\tCONNECT\tallowlist' \
+    $'2026-10-16T10:01:01\tprefix.dev\tCONNECT\tallowlist' \
+    $'2026-10-16T10:01:02\tnotdatadoghq.com\tCONNECT\tallowlist' >>"$D/refused.log"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" >"$BATS_TEST_TMPDIR/out.json"
+  python3 -I - "$BATS_TEST_TMPDIR/out.json" <<'CHECK'
+import json, sys
+c = json.load(open(sys.argv[1]))["hookSpecificOutput"]["additionalContext"]
+lines = c.split("\n")
+assert len(lines) == 2, lines
+assert lines[0].startswith("agent-sandbox: prefix.dev was refused by the sandbox (allowlist)"), lines
+assert lines[1].startswith("agent-sandbox: notdatadoghq.com was refused"), lines
+assert "datadoghq.com was" not in c.replace("notdatadoghq.com", ""), c
+CHECK
+  # no list from the engine: every host is reported, as before
+  rm "$D/telemetry-hosts"
+  printf '%s\n' $'2026-10-16T10:02:00\thttp-intake.logs.us5.datadoghq.com\tCONNECT\tallowlist' >>"$D/refused.log"
+  run bash "$hook" PostToolUse "$D" "$S"
+  [[ "$output" == *"http-intake.logs.us5.datadoghq.com was refused by the sandbox (allowlist)"* ]]
+}
+
 @test "what the session hands the user is one line or a file, and the briefing names where its files are on the host" {
   local sbox="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
   local md="$OUT/briefing.md"

@@ -85,6 +85,17 @@ STUB
   [[ "$output" != *"on the host"* ]]
 }
 
+@test "profile_telemetry_hosts names Claude Code's own telemetry in the allowlist's syntax, and nothing a session needs (#276)" {
+  run profile_telemetry_hosts
+  [ "$status" -eq 0 ]
+  grep -qxF .datadoghq.com <<<"$output"
+  local h
+  while IFS= read -r h; do
+    [[ "$h" =~ ^\.?[a-z0-9-]+(\.[a-z0-9-]+)+$ ]]
+    [[ "$h" != *anthropic.com && "$h" != *claude.ai && "$h" != *claude.com ]]
+  done <<<"$output"
+}
+
 @test "project slug: a converted name of 200 characters or fewer is used unchanged" {
   [ "$(_claude_project_slug /home/u/proj.x)" = "-home-u-proj-x" ]
   local p200 s

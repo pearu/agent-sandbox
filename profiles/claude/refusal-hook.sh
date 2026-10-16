@@ -14,6 +14,9 @@
 # No policy here: the section to ask for is the engine's (DIR/apply-section). Only
 # two fields of a line reach the text, and only when they pass a strict check: the
 # host as a hostname, the reason as one the addon writes. Anything else is skipped.
+# Nor the hosts the agent reaches on its own (DIR/telemetry-hosts, the profile's
+# profile_telemetry_hosts, #276): a refusal of one is left out of the note, since it is
+# not the command's -- refused all the same, and still in refused.log.
 # STATE (the count of lines already reported) lives in /tmp, a fresh tmpfs per
 # sandbox. Exits 0 with no output whenever there is nothing to say.
 set -u
@@ -30,6 +33,23 @@ log="$dir/refused.log"
 section="$(head -n 1 -- "$dir/apply-section" 2>/dev/null)"
 [[ "$section" =~ ^\[allow(:[A-Za-z0-9._-]+)?\]$ ]] || section="[allow]"
 
+# One entry per line, an exact hostname or a .domain; anything else is ignored.
+own=()
+while IFS= read -r t; do
+  [[ "$t" =~ ^\.?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$ ]] && own+=("$t")
+done < <(head -n 64 -- "$dir/telemetry-hosts" 2>/dev/null)
+is_own() {
+  local t
+  for t in ${own[@]+"${own[@]}"}; do
+    if [[ "$t" == .* ]]; then
+      [[ "$1" == "${t#.}" || "$1" == *"$t" ]] && return 0
+    else
+      [[ "$1" == "$t" ]] && return 0
+    fi
+  done
+  return 1
+}
+
 # Whole lines only: one being appended right now is left for the next call.
 n="$(wc -l <"$log" 2>/dev/null)" || exit 0
 seen=0
@@ -43,6 +63,7 @@ text="" done_hosts=" "
 while IFS=$'\t' read -r _ host _ why _; do
   [[ "$host" =~ ^[A-Za-z0-9.-]{1,253}$ ]] || continue
   [[ "$done_hosts" == *" $host "* ]] && continue
+  is_own "$host" && continue
   case "$why" in
     allowlist) note="$host was refused by the sandbox ($why) during this command." ask=" The user adds the host, on the host, with: asb --apply '$section' $host." ;;
     "[deny]" | retrieve-only | "git refuse" | "git push" | non-public)
