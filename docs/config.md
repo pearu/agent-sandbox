@@ -94,7 +94,8 @@ Sections:
   `CONDA_PREFIX` and PATH agree; `prefix = <path>` (#221) does the same for an env
   given by its path -- relative to the project, under `~`, or absolute -- such as a
   clone in a role's own tree (`name` and `prefix` are one setting: the later wins); `write = 1` makes the active env writable;
-  `pkgs = <dir>` is the sandbox-owned package cache, persistent, where conda's
+  `pkgs = <dir>` is the sandbox-owned package cache (relative to the project, like
+  `prefix`, under `~`, or absolute), persistent, where conda's
   downloads go whenever a conda env is active (the host's cache stays read-only and
   is searched after it), write mode or not -- an env written by path, `conda install
   -p`, downloads too.

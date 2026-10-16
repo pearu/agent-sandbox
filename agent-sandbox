@@ -143,7 +143,8 @@
 #                                       is active, never the host's: its location
 #                                       (default ~/.cache/agent-sandbox/conda-pkgs;
 #                                       persistent, so large packages are not
-#                                       re-downloaded every session)
+#                                       re-downloaded every session; a relative
+#                                       path is the project's)
 #   AGENT_SANDBOX_CONDA_BASE=host|sandbox  whose conda a sandbox gets: the host's
 #                                       (passed through as above), or agent-sandbox's
 #                                       own micromamba, which install.sh installs under
@@ -8679,7 +8680,12 @@ agent_sandbox() (
     done
     _as_preset_is_native || args+=(--tmpfs "$HOME/.conda") # under native, the host's own
 
+    # A relative cache path is the project's, as a [conda] prefix is: as written it
+    # would reach CONDA_PKGS_DIRS relative, and conda resolves that against its own
+    # cwd (a role's clone), not the engine's.
     local _pkgs="${_knob_conda_pkgs:-$HOME/.cache/agent-sandbox/conda-pkgs}" _pkgs_dirs
+    [[ "$_pkgs" == /* ]] || _pkgs="$_proj/$_pkgs"
+    _pkgs="$(realpath -m -s -- "$_pkgs")"
     mkdir -p "$_pkgs" 2>/dev/null \
       || {
         _as_msg "cannot create the sandbox conda package cache '$_pkgs' (set AGENT_SANDBOX_CONDA_PKGS)"

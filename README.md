@@ -226,7 +226,7 @@ not exist. Values and defaults are in the last column.
 | `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback; `none` closes the direction (none) ([network.md](docs/network.md)) |
 | — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |
 | — | `AGENT_SANDBOX_CONDA_WRITE` | `[conda] write` | `1` makes the active conda env writable; its base install and other envs stay read-only (read-only) |
-| — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | the sandbox-owned package cache conda downloads into, persistent (`~/.cache/agent-sandbox/conda-pkgs`) |
+| — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | the sandbox-owned package cache conda downloads into, persistent; a relative path is the project's, like `[conda] prefix` (`~/.cache/agent-sandbox/conda-pkgs`) |
 | — | `AGENT_SANDBOX_CONDA_BASE` | `[conda] base` | whose conda the sandbox gets: `host` (yours, passed through) or `sandbox` (agent-sandbox's own `micromamba` and its conda root; none of the host's conda is bound) (`~/.config/agent-sandbox/conda`, which `install.sh` asks; else `host` where the host has conda) ([config.md](docs/config.md)) |
 | — | — | `[conda] name` | run in this conda env instead of the shell's active one (the active one) ([config.md](docs/config.md)) |
 | — | — | `[conda] prefix` | the same for an env given by its path, such as a clone in a role's tree; `name` and `prefix` are one setting, the later wins (none) ([config.md](docs/config.md)) |

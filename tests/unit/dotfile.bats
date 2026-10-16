@@ -238,6 +238,22 @@ trust() {
   [ "$(setenv_value PATH)" = "$env/bin:$H/bin:/usr/bin:/bin" ]
 }
 
+@test "[conda] a relative pkgs is the project's, like prefix: bound and in CONDA_PKGS_DIRS absolute" {
+  # Reported from a roles project: `pkgs = .asb/scratch/conda-pkgs` reached
+  # CONDA_PKGS_DIRS as written, and conda resolved it against its own cwd (the
+  # Implementer's clone), giving .asb/scratch/.asb/scratch/conda-pkgs.
+  local base="$H/conda"
+  local env="$base/envs/proj-env" pkgs="$PROJ/.asb/scratch/conda-pkgs"
+  mkdir -p "$env" "$base/pkgs"
+  printf '[conda]\nname = proj-env\npkgs = .asb/scratch/conda-pkgs\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -d "$pkgs" ]
+  argv_has --bind "$pkgs" "$pkgs"
+  [ "$(setenv_value CONDA_PKGS_DIRS)" = "$pkgs,$base/pkgs" ]
+}
+
 @test "[conda] name replaces the shell's active env on PATH, rather than shadowing it" {
   local base="$H/conda"
   local env="$base/envs/proj-env" active="$base/envs/shell-env"
