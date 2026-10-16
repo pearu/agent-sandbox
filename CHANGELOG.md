@@ -267,6 +267,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A relative `[conda] pkgs` path landed in the wrong place**: `pkgs =
+  .asb/scratch/conda-pkgs` was taken as written, so the engine created and bound it
+  relative to its own working directory and `CONDA_PKGS_DIRS` carried the relative
+  path, which conda resolved against *its* working directory -- from an Implementer's
+  clone, `.asb/scratch/.asb/scratch/conda-pkgs`. A relative `pkgs` is now the
+  project's, as a `prefix` already was, and the bind and `CONDA_PKGS_DIRS` carry the
+  absolute path; so is a relative `AGENT_SANDBOX_CONDA_PKGS`.
+
 - **The agent's own telemetry was reported as a blocked action** (#276): Claude Code
   flushes telemetry on its own schedule, and a flush inside a Bash call was refused (as
   it should be) and reported by the refusal hook next to the result, with an `--apply`
