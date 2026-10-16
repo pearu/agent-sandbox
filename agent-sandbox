@@ -3599,7 +3599,20 @@ _as_briefing_write() {
     fi
     [[ -n "${_conda_brief:-}" ]] && printf -- '- conda: %s\n' "$_conda_brief"
     printf -- '- everything else, /usr and /etc included, is read-only\n'
-    printf -- '- $HOME is a fresh tmpfs; the host'"'"'s home directory is not here\n'
+    if _as_preset_is_native; then
+      printf -- '- $HOME is the host'"'"'s own, writable\n'
+    else
+      # $HOME is a tmpfs remounted read-only (the launch's --remount-ro); ~/.cache is its
+      # own writable tmpfs, and /tmp is writable. A tool that writes under ~ by default
+      # fails here with "Read-only file system" -- say where it can write instead.
+      printf -- '- $HOME is read-only: an empty tmpfs, the host'"'"'s home directory is not here,\n'
+      printf '  and only what is bound in above is writable under it -- plus ~/.cache, writable\n'
+      printf '  and private to this session (gone at exit). /tmp is writable too. A tool that\n'
+      printf '  writes under ~ by default (a cache, its config) fails with "Read-only file\n'
+      printf '  system": point it at ~/.cache, or at your scratch to keep it across launches,\n'
+      printf '  with its variable (TRITON_HOME, XDG_CACHE_HOME, ...) in your own shell, not\n'
+      printf '  in the code\n'
+    fi
     _as_briefing_handing
     printf '\n## Other projects\n\n%s.\n' "$mem_line"
     printf 'Other sessions leave state here too -- file snapshots, prompt history,\n'
@@ -3663,7 +3676,7 @@ _as_briefing_write() {
     fi
   fi
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --

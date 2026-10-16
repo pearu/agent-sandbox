@@ -561,3 +561,14 @@ CHECK
   [ "$status" -eq 0 ]
   grep -qF "the command is asb --apply '[ssh:supervisor]' HOST, then a relaunch" "$OUT/briefing.md" # no SSH remote: no host to name
 }
+
+@test "the briefing says \$HOME is read-only and where a tool can write instead: ~/.cache and /tmp, by its variable" {
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- \$HOME is read-only: an empty tmpfs, the host's home directory is not here," "$OUT/briefing.md"
+  grep -qF "plus ~/.cache, writable" "$OUT/briefing.md"
+  grep -qF "(TRITON_HOME, XDG_CACHE_HOME, ...) in your own shell" "$OUT/briefing.md"
+  grep -qF "under ~ only ~/.cache (and /tmp)" "$OUT/hook-SessionStart.json"
+  argv_has --tmpfs "$H/home/.cache" # what the line promises
+  argv_has --remount-ro "$H/home"
+}
