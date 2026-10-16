@@ -349,6 +349,22 @@ check_role() {
   [[ "$output" != *"github.com (.agent-sandbox"* ]]
 }
 
+@test "[permissions]: the review names each rule as a widening, per section; --check lists the role's with their section" {
+  printf '%s\n' '[permissions]' 'Bash(tail:*)' '[permissions:gate]' 'Bash(git push:*)' 'Bash(rm -rf' \
+    '[connect:planner-*]' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[permissions] Bash(tail:*): a permission rule the agent gets without asking you, for every role"*"approve this"* ]]
+  [[ "$output" == *"[permissions:gate] Bash(git push:*): a permission rule the agent gets without asking you, for the roles gate"* ]]
+  [[ "$output" == *"[permissions:gate] bad rule 'Bash(rm -rf' (a tool name, or Tool(specifier), as the agent's settings take it); ignoring"* ]]
+  check_role gate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"permission rules the agent gets without asking: Bash(tail:*) ([permissions]), Bash(git push:*) ([permissions:gate])"* ]]
+  [[ "$output" == *"roles in this file: "*"gate"* ]]
+  check_role planner-1
+  [[ "$output" == *"permission rules the agent gets without asking: Bash(tail:*) ([permissions])"$'\n'* ]]
+  [[ "$output" != *"Bash(git push:*) ([permissions:gate])"* ]]
+}
+
 @test "--check exits non-zero when the policy is one a launch refuses" {
   printf '[connect]\ninstructions = readonly\n' >"$PROJ/.agent-sandbox"
   check

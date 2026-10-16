@@ -46,7 +46,10 @@
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),
 # AGENT_SANDBOX_PROFILE (this profile's name),
-# AGENT_SANDBOX_PROFILE_DIR, and _as_msg (prefixed stderr messages). A
+# AGENT_SANDBOX_PROFILE_DIR, _as_msg (prefixed stderr messages), and, by
+# dynamic scope in profile_briefing_args, _permission_rules: a trusted
+# .agent-sandbox's [permissions] rules for this launch's role, in the agent's
+# own syntax, each once (a profile that reads none leaves them unapplied). A
 # profile must not touch the engine's bwrap argument list directly -- the
 # declarations above are the whole interface, so that the sandbox's isolation
 # guarantees stay reviewable in one place (the engine).
@@ -273,6 +276,11 @@ profile_telemetry_hosts() {
 # briefing's hooks are dropped with a loud note. Losing a hint beats changing how
 # someone's tools behave.
 #
+# The dot-file's [permissions] rules for this role (_permission_rules, the engine's)
+# go into the same file as permissions.allow: the agent does those without asking. A
+# user's --settings keeps its own rules; ours are added after theirs, and their deny
+# and ask rules still win, as Claude Code ranks deny and ask over allow.
+#
 # A third pair, PostToolUse and PostToolUseFailure on Bash, runs refusal-hook.sh
 # (beside this file, copied next to the settings file so it is in view inside):
 # it reports a host the proxy refused during the command, as it happens. Both
@@ -295,7 +303,17 @@ profile_briefing_args() {
   }
   ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]"
   ours+=",\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUse\"}]}]"
-  ours+=",\"PostToolUseFailure\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUseFailure\"}]}]}}"
+  ours+=",\"PostToolUseFailure\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUseFailure\"}]}]}"
+  # shellcheck disable=SC2154 # _permission_rules: the engine's, by dynamic scope
+  if [[ -n "${_permission_rules[*]+x}" ]] && ((${#_permission_rules[@]})); then
+    local r rules=""
+    for r in "${_permission_rules[@]}"; do
+      r="${r//\\/\\\\}" r="${r//\"/\\\"}" r="${r//$'\t'/\\t}" # a JSON string
+      rules+="${rules:+,}\"$r\""
+    done
+    ours+=",\"permissions\":{\"allow\":[$rules]}"
+  fi
+  ours+="}"
 
   # The LAST --settings, deliberately: Claude Code honours only the last one, so
   # that is the value the user's command line resolves to, and merging any

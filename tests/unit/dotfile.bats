@@ -849,6 +849,15 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" != *"first role section"* ]]
 }
 
+@test "--apply adds a [permissions:ROLE] rule, and the review names it" {
+  printf '[connect:gate]\n' >"$PROJ/.agent-sandbox"
+  run_apply 'y\n' '[permissions:gate]' 'Bash(git push:*)'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[permissions:gate] Bash(git push:*): a permission rule the agent gets without asking you, for the roles gate"* ]]
+  [[ "$output" == *"approved."* ]]
+  grep -A1 -xF '[permissions:gate]' "$PROJ/.agent-sandbox" | grep -qxF 'Bash(git push:*)'
+}
+
 @test "--apply refuses an unknown section, a suffix the section does not take, and fewer than two words" {
   run_apply - '[bogus]' x
   [ "$status" -eq 2 ]

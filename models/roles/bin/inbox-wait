@@ -1,0 +1,18 @@
+#!/bin/sh
+# inbox-wait FILE [SECS [ALIVE]] -- written by `asb --init roles` (docs/roles.md, section 5).
+# Exit 0 when FILE changes -- its modification time, inode or size: a rename over it, as
+# the Write tool does, counts -- and 1 after SECS seconds without a change (0 or none:
+# wait for ever). ALIVE, a path, is touched at every poll, so its age says whether the
+# role that waits is running. A one-second poll by path: there is no inotifywait here.
+f="$1"
+lim="${2:-0}"
+alive="${3:-}"
+n=0
+m=$(stat -c '%y %i %s' "$f" 2>/dev/null)
+while :; do
+  [ -n "$alive" ] && touch "$alive" 2>/dev/null
+  [ "$(stat -c '%y %i %s' "$f" 2>/dev/null)" = "$m" ] || exit 0
+  sleep 1
+  n=$((n + 1))
+  if [ "$lim" -gt 0 ] && [ "$n" -ge "$lim" ]; then exit 1; fi
+done

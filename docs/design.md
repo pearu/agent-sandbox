@@ -319,6 +319,12 @@ Stated plainly. These are what the adversary above can still do.
   gets them without a flag: approving such a file is approving a role that can sign
   in as you there, for as long as the file stays approved. The review says so per
   host; the private key, the timeout and `--ssh-unrestricted` stay on the command line.
+- **An approved `.agent-sandbox` can stop the agent asking.** Its `[permissions]` rules
+  go to the agent as rules it applies without a prompt (`Bash(git push:*)`), for every
+  launch of the roles they name. The prompt is the agent's control, not the sandbox's:
+  what a rule lets run still meets the mounts, the network and the syscall filter, so a
+  rule widens nothing the sandbox enforces -- but a role whose network lets it publish
+  then publishes without the question it would have asked. The review names each rule.
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
@@ -338,10 +344,12 @@ derived from them: inputs read-only, outputs writable, every other route closed.
 role *cannot* do is a mount, a refused request or a missing credential, held outside the
 agent; what it is *for* is its purpose file, injected by `[briefing:<role>]` at every
 session start (#222). A model is a model only when every "may not" is one or the other,
-and its README says which. The user-between-roles rule is told, not enforced: every
-artefact directory is readable to every role, because routing artefacts through per-role
-inboxes the user fills would cost the user a copy per hand-off, and the user reads every
-artefact anyway.
+and its README says which. The user-between-roles rule is half enforced (#274): a role
+acts on its inbox, which only the Supervisor may write, and the Supervisor writes a
+message only after the user approved it in its terminal -- the one step the sandbox
+cannot see, so told. The artefacts themselves are not routed: every artefact directory
+is readable to every role, since copying artefacts into inboxes would cost a copy per
+hand-off, and the message names the artefact anyway.
 
 **The mechanisms, need by need.**
 
@@ -352,6 +360,9 @@ artefact anyway.
 | the project read-only for every role but the Supervisor, a clone read-write inside it | `project = read-only` (#220): a read-only mount, then a read-write mount on a subdirectory, which bubblewrap allows and the depth-ordered bind pass expresses |
 | history its owner's | `./.git/ = own` and `.asb/git/ = own` in the common block, redeclared per role |
 | the `gh` login for every role | the `gh` channel at `~/.config/gh`, `own` unless asked, your login live with `gh = read-only` (#88) |
+| instructions from one writer | `.asb/coord/to/ = read-write` for the Supervisor alone; every other role reads `.asb/coord/` read-only (#274) |
+| a role woken by its inbox | `.asb/bin/inbox-wait`, a one-second poll by path armed with Claude Code's Monitor tool; `[permissions]` so it runs without a prompt (#274) |
+| publishing by one role, on its turn | the Gate: `retrieve-only = off`, `git = allow`, `[ssh:gate]`, with `main` and its history read-only; every other role under the common block's network (#274) |
 | no publishing | `[net] retrieve-only` (#223): GET and HEAD only, but to the profile's hosts, a GraphQL query passing and a mutation refused by the body; `[net] git = refuse` (#224); both hang on the session's proxy token, which every proxied request must carry (#233) |
 | a Reviewer running an Implementer's build | the clone read-only to it, its environment in the clone, run by path |
 | installs without touching the shared environment | a conda clone in the Implementer's tree; the sandbox-owned package cache bound whenever conda is active (#219); `[conda:<role>] prefix` to activate it, `write = 1` per role (#221) |

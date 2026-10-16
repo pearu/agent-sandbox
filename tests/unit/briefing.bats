@@ -625,3 +625,58 @@ CHECK
   argv_has --tmpfs "$H/home/.cache" # what the line promises
   argv_has --remount-ro "$H/home"
 }
+
+# perm_allow FILE -- the settings file's permissions.allow, one rule per line (none: empty).
+perm_allow() {
+  python3 -c 'import json,sys; [print(r) for r in json.load(open(sys.argv[1])).get("permissions", {}).get("allow", [])]' "$1"
+}
+
+@test "[permissions]: the role's rules, the file's and its own section's, reach the agent in the briefing's --settings; none without an approved file" {
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -q '"permissions"' "$OUT/settings.json"
+  printf '[permissions]\nBash(git push:*)\n' >"$PROJ/.agent-sandbox"
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -ne 0 ] # not approved: refused, nothing granted
+  [ ! -e "$OUT/settings.json" ]
+  printf '%s\n' '[permissions]' 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' \
+    '[permissions:gate]' 'Bash(git push:*)' 'Bash(tail:*)' 'Bash(echo "a\b"	x)' 'not a rule' \
+    '[permissions:planner-*]' 'Read' >"$PROJ/.agent-sandbox"
+  trust
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role gate claude --version
+  [ "$status" -eq 0 ]
+  # the union, in file order, each rule once; a line that is no rule is left out
+  [ "$(perm_allow "$OUT/settings.json")" = "$(printf '%s\n' 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' 'Bash(git push:*)' 'Bash(echo "a\b"	x)')" ]
+  grep -q '"SessionStart"' "$OUT/settings.json" # the hooks are still there
+  [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(perm_allow "$OUT/settings.json")" = "$(printf '%s\n' 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' 'Read')" ]
+}
+
+@test "[permissions] with a user --settings: their rules first, ours added once, their deny kept" {
+  printf '[permissions]\nBash(git push:*)\nRead\n' >"$PROJ/.agent-sandbox"
+  trust
+  local mine='{"permissions":{"allow":["Read"],"deny":["Bash(rm:*)"],"defaultMode":"plan"}}'
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"merged your --settings"* ]]
+  python3 - "$OUT/settings.json" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["permissions"] == {"allow": ["Read", "Bash(git push:*)"], "deny": ["Bash(rm:*)"], "defaultMode": "plan"}, m
+assert "SessionStart" in m["hooks"], m
+CHECK
+}
+
+@test "[permissions] with the briefing off: not passed, and said" {
+  printf '[permissions]\nBash(git push:*)\n[briefing]\nmode = off\n' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[permissions]: not passed to the agent -- they travel with the briefing, which is off"* ]]
+  run ! join_has --settings
+}

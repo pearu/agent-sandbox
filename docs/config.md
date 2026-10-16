@@ -55,6 +55,22 @@ Sections:
   escape hatch (with `--ssh-unrestricted` the key has no constraint, so the section's
   hosts are within it, and the launch says so). A role whose `[net] git` is `fetch`
   or `refuse` gets none of the section's hosts: that line closes SSH for it.
+- **`[permissions]`** — permission rules the agent gets without asking you, one per
+  line, in the agent's own syntax: for `claude`, what its settings take under
+  `permissions.allow` -- a tool name (`Read`), or a tool with a specifier
+  (`Bash(git push:*)`, `Write(.asb/coord/gate/**)`). `#` starts a comment here as
+  everywhere in the file, so a rule cannot contain one. The engine checks the shape
+  only (a line that is not `Tool` or `Tool(...)` is said at the review and ignored);
+  the profile hands the rules to the agent -- `claude` adds them to the `--settings`
+  file the briefing already passes, after the rules of a `--settings` of yours, whose
+  `deny` and `ask` rules still win. So they travel with the briefing: with
+  `[briefing] mode = off` they are not passed, and the launch says so. Per role with
+  `[permissions:<role>]`, a union with the unsuffixed section's. A widening -- what
+  the agent would have asked you before, it now does -- so the review names each rule
+  with its section and the roles it is for, and `--check` lists the role's. It changes
+  nothing the sandbox enforces: a rule lets the agent run a command without asking,
+  and the command then meets the same mounts, network and syscall filter. Applied
+  under every preset, `native` included, as `[allow]` is.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
@@ -713,9 +729,9 @@ preset = isolated                 # the reviewer role
 and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
 changes `skills` and leaves every other channel as `[connect]` put it.
 `[sandbox]` (its `preset`), `[connect]`, and (#221) `[allow]`, `[deny]`, `[env]`,
-`[conda]`, `[net]`, `[gpu]`, `[ssh]` and `[briefing]` take a suffix: a key there
-overrides the unsuffixed one for the role, a list (`[allow]`, `[deny]`, `[ssh]`,
-`[env]` names) adds to it --
+`[conda]`, `[net]`, `[gpu]`, `[ssh]`, `[permissions]` and `[briefing]` take a suffix: a
+key there overrides the unsuffixed one for the role, a list (`[allow]`, `[deny]`,
+`[ssh]`, `[permissions]`, `[env]` names) adds to it --
 
 ```ini
 [conda]
