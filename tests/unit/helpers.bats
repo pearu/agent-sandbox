@@ -184,3 +184,24 @@ setup() {
   done
   true
 }
+
+@test "_as_ssh_sysconfig_copies: each system ssh include is copied, owned by you, and bound over the original -- at a symlink's target" {
+  local d="$BATS_TEST_TMPDIR/ssh_config.d" lib="$BATS_TEST_TMPDIR/lib"
+  mkdir -p "$d" "$lib"
+  printf 'Host .host\n  CheckHostIP no\n' >"$lib/20-systemd-ssh-proxy.conf"
+  ln -s "$lib/20-systemd-ssh-proxy.conf" "$d/20-systemd-ssh-proxy.conf"
+  printf 'Host *\n  ServerAliveInterval 30\n' >"$d/50-local.conf"
+  mkdir "$d/not-a-file"
+  _session_dir="$BATS_TEST_TMPDIR/session"
+  mkdir -p "$_session_dir"
+  local -a args=()
+  _as_ssh_sysconfig_copies "$d"
+  [ "${#args[@]}" -eq 6 ]
+  [ "${args[*]}" = "--ro-bind $_session_dir/ssh_config.d/20-systemd-ssh-proxy.conf $lib/20-systemd-ssh-proxy.conf --ro-bind $_session_dir/ssh_config.d/50-local.conf $d/50-local.conf" ]
+  cmp "$_session_dir/ssh_config.d/20-systemd-ssh-proxy.conf" "$lib/20-systemd-ssh-proxy.conf" # the host's content
+  [ ! -L "$_session_dir/ssh_config.d/20-systemd-ssh-proxy.conf" ]
+  [ "$(stat -c %u "$_session_dir/ssh_config.d/50-local.conf")" = "$(id -u)" ]
+  args=()
+  _as_ssh_sysconfig_copies "$BATS_TEST_TMPDIR/missing" # no such directory: nothing
+  [ "${#args[@]}" -eq 0 ]
+}
