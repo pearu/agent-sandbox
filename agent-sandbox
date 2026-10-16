@@ -793,6 +793,7 @@ _as_ssh_setup() {
     --ro-bind "$kh" "$kh"
   )
   [[ -r "$cfg" ]] && args+=(--ro-bind "$cfg" "$cfg")
+  _as_ssh_sysconfig_copies || return 1
   # Strict mode once ran the agent as uid 0 (pasta maps the one uid to root), and ssh
   # then resolved ~ through getpwuid(0) to root's home rather than $HOME, missing the
   # binds above. Since #63 the sandbox runs as your uid in every network mode (measured
@@ -804,6 +805,32 @@ _as_ssh_setup() {
     args+=(--ro-bind "$kh" "$_root_home/.ssh/known_hosts")
     [[ -r "$cfg" ]] && args+=(--ro-bind "$cfg" "$_root_home/.ssh/config")
   fi
+  return 0
+}
+
+# _as_ssh_sysconfig_copies [DIR] -- the system ssh config's includes, DIR (default
+# /etc/ssh/ssh_config.d), as copies owned by you, bound over the originals. They are
+# owned by root, which the sandbox's user namespace does not map, so inside they belong
+# to "nobody", and OpenSSH refuses an included file whose owner is neither root nor you:
+# every ssh then exits 255 ("Bad owner or permissions", measured with OpenSSH 10.2 on
+# Ubuntu 26.04, whose systemd puts 20-systemd-ssh-proxy.conf there). The copy is the
+# host's content, made at each launch into the session dir, so an edit on the host
+# arrives at the next launch. A file there that is a symlink is bound at its target:
+# bubblewrap 0.12 refuses a mount on a symlink, and ssh follows the link to the copy.
+_as_ssh_sysconfig_copies() {
+  local d="${1:-/etc/ssh/ssh_config.d}" f out dst
+  [[ -d "$d" ]] || return 0
+  for f in "$d"/*; do
+    [[ -f "$f" && -r "$f" ]] || continue # -f follows a symlink to its file
+    mkdir -p "$_session_dir/ssh_config.d" || return 1
+    out="$_session_dir/ssh_config.d/${f##*/}"
+    dst="$(readlink -f -- "$f")"
+    if ! cp -L -- "$f" "$out" || ! chmod 644 "$out"; then
+      _as_msg "cannot copy $f for the sandbox's ssh"
+      return 1
+    fi
+    args+=(--ro-bind "$out" "$dst")
+  done
   return 0
 }
 

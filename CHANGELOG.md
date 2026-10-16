@@ -233,6 +233,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **SSH failed inside every sandbox on Ubuntu 26.04**: OpenSSH 10.2 refuses an
+  included config file owned by neither root nor you, and in the sandbox's user
+  namespace root's `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` belongs to
+  "nobody", so every `ssh` exited 255 before connecting, `[ssh]` or `--ssh` granted.
+  A launch with SSH now binds each `/etc/ssh/ssh_config.d/*` as a copy owned by you,
+  made fresh in the session directory (at a symlink's target: bubblewrap 0.12 refuses a
+  mount on a symlink). Verified on Ubuntu 26.04: `ssh -T git@github.com` authenticates.
 - **A role without SSH could not say how to get it**: the briefing's SSH line said
   "none", and its `--apply` examples covered `[allow]` and `[connect]` only, so a
   Supervisor whose push to an SSH `origin` failed offered to hand the push to the user
@@ -241,7 +248,6 @@ names are gone; there are no aliases for removed names before 1.0.
   or says the role's `[net] git` closes SSH. The roles model writes `[ssh:supervisor]`
   with the host commented out, and the Supervisor's purpose file says to ask for that
   line rather than switch the remote or hand the push over.
-
 - **The github model's fixer no longer gets `~/.ghstackrc` in every project**: the file
   carries a GitHub token, and only a project that uses ghstack needs it. The line is
   written commented out; `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`

@@ -83,6 +83,12 @@ stores them).
 - `~/.ssh/known_hosts` and `~/.ssh/config` are bound read-only into the sandbox
   (public data). Nothing else under `~/.ssh` is. `Include` files referenced
   from `config` are not bound; keep aliases in the main file.
+- The system config's includes, `/etc/ssh/ssh_config.d/*`, are bound as copies owned
+  by you, made at each launch: the originals are root's, which the sandbox's user
+  namespace does not map, and OpenSSH refuses an included file owned by neither root
+  nor you (10.2 on Ubuntu 26.04, whose systemd puts `20-systemd-ssh-proxy.conf` there:
+  every ssh exited 255 with "Bad owner or permissions"). An edit on the host reaches
+  the next launch.
 - An encrypted key prompts for its passphrase once, on the host tty, at launch.
   A non-tty launch cannot prompt.
 - Constraints are host-level, not operation-level: within a permitted host the
