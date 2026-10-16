@@ -107,7 +107,7 @@ file = .asb/roles/gate.md
 #@own gh = own                          # no login: it publishes nothing
 #@own [net:setup]
 #@own mode = strict                     # as the rest of this model: through the proxy only
-#@own retrieve-only = on                # GET and HEAD only; git's fetch is a POST, so submodules come from your checkout
+#@own retrieve-only = on                # GET and HEAD only; asb --apply '[net:setup]' 'git = fetch' lets it fetch submodules or a git dependency over HTTPS, a read; a push stays refused
 #@own git = refuse
 #@own [briefing:setup]
 #@own file = .asb/roles/setup.md

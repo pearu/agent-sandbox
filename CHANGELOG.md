@@ -255,6 +255,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **`retrieve-only` admits git's fetch where `[net] git` permits one** (#280): the
+  `git-upload-pack` advertisement and endpoint pass under `git = fetch` or `git = allow`,
+  so a retrieve-only role can `git clone`, `git fetch` and `pip install git+https://...`;
+  `git-receive-pack` stays refused whatever `git` says, and `git = refuse` refuses both
+  as before. This widens what `retrieve-only` lets through, on purpose: a fetch reads, as
+  a GraphQL query does. The roles model keeps `git = refuse` in its common block; a role
+  that needs a repository gets `asb --apply '[net:ROLE]' 'git = fetch'` instead of
+  `retrieve-only = off`.
 - **The roles model's Supervisor publishes nothing** (#274): its `[net:supervisor]` and
   `[ssh:supervisor]` sections are gone, so it runs under the common block's
   `retrieve-only = on` and `git = refuse` like every other role; it still merges into

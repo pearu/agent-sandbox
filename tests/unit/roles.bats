@@ -256,12 +256,21 @@ STUB
 }
 
 @test "retrieve-only is said: in the briefing, in --check, at the review for a bad value, and ignored without a proxy (#223)" {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"; for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+cat "$AGENT_SANDBOX_SESSION_BASE"/session.*/briefing/briefing.md >"${BWRAP_PROBE:?}" 2>&1
+. "${0%/*}/keeper-tail"
+STUB
   dotfile $'[net:reviewer]\nretrieve-only = on\n[net:other]\nretrieve-only = maybe\n[connect:supervisor]\n'
-  run_engine BWRAP_COPY="$H/copied/briefing" -- asb --role reviewer claude --version
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role reviewer claude --version
   [ "$status" -eq 0 ]
+  grep -qF "RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not; git's fetch passes where [net] git allows it, a push never does)" "$H/probe"
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
-  [[ "$output" == *"network: retrieve-only -- GET and HEAD only"* ]]
+  [[ "$output" == *"network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation; git's fetch where [net] git allows it, not a push)"* ]]
   run_review
   [[ "$output" == *"[net] retrieve-only 'maybe' unknown (on|off)"* ]]
   run_engine AGENT_SANDBOX_NET=none -- asb --role reviewer claude --version

@@ -254,7 +254,13 @@ def _retrieve_refusal(flow: http.HTTPFlow, token: str | None) -> str | None:
     ex_exact: set[str] = set()
     ex_suffix: list[str] = []
     _parse(exempt, ex_exact, ex_suffix)
-    if _is_allowed(host, ex_exact, ex_suffix) or method in ("GET", "HEAD"):
+    if _is_allowed(host, ex_exact, ex_suffix):
+        return None
+    if _is_git_push(flow):  # whatever [net] git says: a retrieve-only session never pushes
+        return "a git push (this session is retrieve-only: it reads, it does not publish)"
+    # A fetch reads, as a query does (#280); the request handler refused it already
+    # where [net] git = refuse.
+    if method in ("GET", "HEAD") or _is_git_fetch(flow):
         return None
     if method == "POST" and host in GRAPHQL_HOSTS and flow.request.path.split("?", 1)[0] in GRAPHQL_PATHS:
         if _graphql_reads_only(getattr(flow.request, "content", b"")):
@@ -346,6 +352,17 @@ def _is_git_push(flow: http.HTTPFlow) -> bool:
     if path.endswith("/info/refs") and "service=git-receive-pack" in query:
         return True
     return path.endswith("/git-receive-pack")
+
+
+def _is_git_fetch(flow: http.HTTPFlow) -> bool:
+    """Git's smart-HTTP FETCH (#280): the upload-pack advertisement or endpoint, by its
+    path, not by git's user agent -- a user agent says nothing about what a POST does."""
+    if _is_git_push(flow):
+        return False
+    path, _, query = flow.request.path.partition("?")
+    if path.endswith("/info/refs") and "service=git-upload-pack" in query:
+        return True
+    return path.endswith("/git-upload-pack")
 
 
 def _session_lines(token: str | None, name: str) -> list[str]:
@@ -499,11 +516,14 @@ def request(flow: http.HTTPFlow) -> None:
         return
     exact, suffix = _load_allowlist(token)
     if _is_allowed(host, exact, suffix) or _session_has(token, "hosts-public.txt"):
-        why, reason = _retrieve_refusal(flow, token), "retrieve-only"
-        if why is None and _is_git_transport(flow) and _session_has(token, "git-refuse.txt"):
+        # The git lines first: retrieve-only passes git's fetch (#280), so [net] git = refuse
+        # must have refused it already, and a push under git = fetch is named as one.
+        if _is_git_transport(flow) and _session_has(token, "git-refuse.txt"):
             why, reason = "git's transport (this session's [net] git = refuse)", "git refuse"
-        if why is None and _is_git_push(flow) and _session_has(token, "git-push-refuse.txt"):
+        elif _is_git_push(flow) and _session_has(token, "git-push-refuse.txt"):
             why, reason = "a git push (this session's [net] git = fetch: it fetches, it does not push)", "git push"
+        else:
+            why, reason = _retrieve_refusal(flow, token), "retrieve-only"
         if why is None:
             return
         _log_blocked(host, flow.request.method, flow.request.path)

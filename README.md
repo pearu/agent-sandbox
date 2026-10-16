@@ -221,7 +221,7 @@ not exist. Values and defaults are in the last column.
 | — | `AGENT_SANDBOX_NET` | `[net] mode` | network mode: `proxy` (default), `strict`, `open`, `none` ([network.md](docs/network.md)) |
 | — | — | `[net] git` | `fetch`: a push and `--ssh` refused, fetches pass; `refuse`: git's HTTPS transport refused to every host, and `--ssh`, for the role (allow) ([network.md](docs/network.md)) |
 | — | — | `[net] hosts` | `public`: every public host, the allowlist not applying to the role -- localhost, the LAN and `[deny]` stay refused (allowlist) ([network.md](docs/network.md)) |
-| — | — | `[net] retrieve-only` | `on`: GET and HEAD only (a GraphQL query, not a mutation), but to the profile's own hosts -- read, publish nothing (off) ([network.md](docs/network.md)) |
+| — | — | `[net] retrieve-only` | `on`: GET and HEAD only (a GraphQL query, not a mutation; git's fetch where `[net] git` allows it, not a push), but to the profile's own hosts -- read, publish nothing (off) ([network.md](docs/network.md)) |
 | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS` | `[net] host-port` | `strict` only: host loopback ports the sandbox may reach, space-separated in the variable; `none` closes the direction (none) ([network.md](docs/network.md)) |
 | `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback; `none` closes the direction (none) ([network.md](docs/network.md)) |
 | — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |

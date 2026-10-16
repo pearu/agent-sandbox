@@ -49,7 +49,7 @@ file = .asb/roles/gh-fix.md
 #@own {envpath}/ = read-write           # the environment it creates and installs into
 #@own gh = own                          # no login: it publishes nothing
 #@own [net:gh-setup]
-#@own retrieve-only = on                # GET and HEAD only: it reads the web, it sends nothing; git's fetch is a POST, so submodules come from your checkout
+#@own retrieve-only = on                # GET and HEAD only: it reads the web, it sends nothing; asb --apply '[net:gh-setup]' 'git = fetch' lets it fetch submodules or a git dependency over HTTPS, a read; a push stays refused
 #@own git = refuse
 #@own [briefing:gh-setup]
 #@own file = .asb/roles/gh-setup.md
