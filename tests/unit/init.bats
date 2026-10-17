@@ -714,7 +714,12 @@ shared_env() {
   grep -A6 -xF '[permissions:gate]                # the verbs it executes, each from an approved message' "$df" | grep -qxF 'Bash(git push:*)'
   # the purpose files arm it, with the role's own inbox and alive file
   grep -qxF '.asb/bin/inbox-wait -a .asb/coord/planner-2/alive .asb/coord/to/planner-2.md' "$PROJ/.asb/roles/planner-2.md"
-  grep -qF 'done; in my file; S has it' "$PROJ/.asb/roles/reviewer-1.md"
+  # the closing line comes with the done N write, never before
+  local r
+  for r in planner-1 implementer-1 reviewer-1 gate; do
+    # shellcheck disable=SC2016 # backquotes in the text, not an expansion
+    tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | grep -qF '**Closing line.** "done; in my file; S has it" is said once, in the reply in which you append `done N` to your messages, and never before: a reply with work still pending (a suite running, a section unwritten) ends by naming what is pending and what follows.'
+  done
   grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$PROJ/.asb/roles/supervisor.md"
   # run again: an inbox with messages, and a changed watcher, are kept
   printf '## 1\nread P1\n' >"$PROJ/.asb/coord/to/planner-1.md"

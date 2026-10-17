@@ -329,6 +329,12 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The roles model's closing line comes with the `done N` write, never before**. An
+  Implementer ended a reply with "done; in my file; S has it" while its suite still ran
+  and its Handoff was unwritten, so nothing had reached the Supervisor. The Planner's,
+  Implementer's, Reviewer's and Gate's purpose files now say the line once, in the reply
+  that appends `done N`, and a reply with work pending ends by naming what is pending
+  and what follows.
 - **`[ssh]` stands alone from `[net] git`** (#293). `git = fetch` and `git = refuse`
   no longer refuse `--ssh` or drop the file's `[ssh]` hosts: they govern git over
   HTTPS, what the proxy can see, and `[ssh]` governs hosts, which the broker enforces.
