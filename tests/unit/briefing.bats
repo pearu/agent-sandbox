@@ -308,6 +308,58 @@ CHECK
   run ! grep -q 'Your purpose' "$OUT/hook-SessionStart.json"
 }
 
+@test "a session is told when its purpose file changed since the role's previous launch; the hash is kept in the role's store" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Report, do not fix.\n' >"$PROJ/.asb/roles/reviewer-1.md"
+  printf '[briefing:reviewer-*]\n' >"$PROJ/.agent-sandbox"
+  approve
+  local said="this purpose file has changed since this role's previous launch; the text above is the current one, and it replaces whatever earlier turns of this conversation followed."
+  local rec
+  # first launch: nothing to compare with, so nothing said; the hash is recorded
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  rec=("$H"/home/.local/state/agent-sandbox/claude/*/reviewer-1/purpose.sha256)
+  [ -f "${rec[0]}" ]
+  [ "$(cat "${rec[0]}")" = "$(sha256sum "$PROJ/.asb/roles/reviewer-1.md" | cut -d' ' -f1)" ]
+  [[ "${rec[0]}" != "$PROJ"/* ]]
+  run ! grep -qF "$said" "$OUT/hook-SessionStart.json"
+  run ! grep -qF "$said" "$OUT/briefing.md"
+  # unchanged: nothing said
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"its purpose file changed"* ]]
+  run ! grep -qF "$said" "$OUT/hook-SessionStart.json"
+  run ! grep -qF "$said" "$OUT/briefing.md"
+  # changed (and approved again): said right after the purpose text, in both, and once on the host
+  printf 'Report, and fix too.\n' >"$PROJ/.asb/roles/reviewer-1.md"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'reviewer-1': its purpose file changed since its previous launch; the session is told"* ]]
+  grep -qF 'Report, and fix too.\n\nagent-sandbox: '"$said" "$OUT/hook-SessionStart.json"
+  run ! grep -qF "$said" "$OUT/hook-SubagentStart.json"
+  grep -qxF "agent-sandbox: $said" "$OUT/briefing.md"
+  [ "$(sed -n '/^## Your role: /,/^## /p' "$OUT/briefing.md" | grep -cxF "agent-sandbox: $said")" -eq 1 ]
+  [ "$(cat "${rec[0]}")" = "$(sha256sum "$PROJ/.asb/roles/reviewer-1.md" | cut -d' ' -f1)" ]
+  # and the launch after that is unchanged again
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qF "$said" "$OUT/hook-SessionStart.json"
+}
+
+@test "a role without a purpose file keeps no purpose hash and is told nothing about one" {
+  printf '[briefing:reviewer-*]\n[connect:supervisor]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  compgen -G "$H/home/.local/state/agent-sandbox/claude/*/supervisor/record.tsv" # its store is there
+  run ! compgen -G "$H/home/.local/state/agent-sandbox/claude/*/supervisor/purpose.sha256"
+  run ! grep -q 'purpose file has changed' "$OUT/hook-SessionStart.json"
+  run ! grep -q 'purpose file has changed' "$OUT/briefing.md"
+}
+
 @test "a role with no role section to join asks for [allow]: a first [allow:ROLE] would refuse every other role name" {
   printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
   approve

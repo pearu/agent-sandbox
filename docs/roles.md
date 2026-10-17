@@ -332,6 +332,10 @@ Run it again with more instances (`implementer=3`) and it adds what is missing -
 sections, purpose file, clone -- and changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.
 One you changed is kept, and said so. The changed files need `asb --trust` again.
+A role relaunched after its purpose file changed is told so at session start: a resumed
+conversation would otherwise keep to the rules its earlier turns followed, so the
+briefing says the current text replaces them (the hash is kept in the role's state, not
+the project).
 
 `asb --check --role NAME` is the way to see what a role has before it runs: its
 policy, what can reach it from other sessions, where it can act as you (your agent's

@@ -3876,10 +3876,41 @@ _as_briefing_handing() {
   return 0
 }
 
+# _as_purpose_record FILE -- 0 when the role's purpose FILE differs from the one its
+# previous launch was briefed from, 1 otherwise (first launch, unchanged, unreadable);
+# then record FILE's hash for the next launch. A resumed conversation keeps following
+# the purpose its earlier turns were given unless the session is told the text it has
+# now replaces it. The record is the role's own (purpose.sha256 in its state
+# directory, beside record.tsv): a control path, never bound into any sandbox, and
+# gone with the role's store at --delete.
+_as_purpose_record() {
+  local dir rec cur prev="" tmp
+  dir="$(_as_sandbox_dir)" rec="$(_as_sandbox_dir)/purpose.sha256"
+  cur="$(_as_sha256_file "$1")"
+  [[ -n "$cur" ]] || return 1
+  [[ -f "$rec" ]] && prev="$(head -n1 -- "$rec" 2>/dev/null)"
+  tmp="$rec.$$"
+  if mkdir -p -- "$dir" 2>/dev/null && printf '%s\n' "$cur" >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$rec"; then
+    :
+  else
+    rm -f -- "$tmp" 2>/dev/null
+    _as_msg "briefing: could not record the purpose file's hash ($rec); a change to it will not be noticed at the next launch"
+  fi
+  [[ -n "$prev" && "$prev" != "$cur" ]]
+}
+
 # Compose briefing.md and the two hook payloads into the session dir, and bind
 # them read-only. Reads the resolved policy from agent_sandbox()'s locals.
 _as_briefing_write() {
   _as_session_begin || return 1
+  # Whether the role's purpose changed since its previous launch (said below, and once
+  # on the host). Here, where the session is handed the text: a join reuses the
+  # keeper's briefing, so it is told what the keeper's launch was told.
+  local purpose_note=""
+  if [[ -n "${_purpose_file:-}" ]] && _as_purpose_record "$_purpose_file"; then
+    purpose_note="agent-sandbox: this purpose file has changed since this role's previous launch; the text above is the current one, and it replaces whatever earlier turns of this conversation followed."
+    _as_msg "role '$_role': its purpose file changed since its previous launch; the session is told"
+  fi
   local inside net gal n_gal=0
   inside="$(_as_briefing_inside)"
   net="${_knob_net:-proxy}"
@@ -4046,6 +4077,7 @@ _as_briefing_write() {
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '\n## Your role: %s\n\nFrom %s, read-only here:\n\n' "$_role" "$_purpose_as"
       cat -- "$_purpose_file"
+      [[ -n "$purpose_note" ]] && printf '\n%s\n' "$purpose_note"
     fi
     printf '\n## If you need something that is blocked\n\n'
     printf 'Stop and ask -- also when you could go on without it. Whether to work\n'
@@ -4109,6 +4141,9 @@ _as_briefing_write() {
   if [[ -n "${_purpose_file:-}" ]]; then
     purpose="$(cat -- "$_purpose_file")" || return 1
     purpose=$'\n\n'"You are the role '$_role' of this project. Your purpose, from $_purpose_as (read-only here):"$'\n\n'"$purpose"
+    if [[ -n "$purpose_note" ]]; then
+      purpose+=$'\n\n'"$purpose_note"
+    fi
   fi
   local ev
   for ev in SessionStart SubagentStart; do
