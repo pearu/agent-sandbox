@@ -399,7 +399,7 @@ hand-off, and the message names the artefact anyway.
 | history its owner's | `./.git/ = own` and `.asb/git/ = own` in the common block, redeclared per role |
 | the `gh` login for every role | the `gh` channel at `~/.config/gh`, `own` unless asked, your login live with `gh = read-only` (#88) |
 | instructions from one writer | `.asb/coord/to/ = read-write` for the Supervisor alone; every other role reads `.asb/coord/` read-only (#274) |
-| a role woken by its inbox | `.asb/bin/inbox-wait`, a one-second poll by path armed with Claude Code's Monitor tool; `[permissions]` so it runs without a prompt (#274) |
+| a role woken by its inbox | `.asb/bin/inbox-wait`, a one-second poll by path, run in the background with the Bash tool (#288); `[permissions]` so it runs without a prompt (#274) |
 | publishing by one role, on its turn | the Gate: `retrieve-only = off`, `git = allow`, `[ssh:gate]`, with `main` and its history read-only; every other role under the common block's network (#274) |
 | no publishing | `[net] retrieve-only` (#223): GET and HEAD only, but to the profile's hosts, a GraphQL query passing and a mutation refused by the body, git's fetch passing where `[net] git` allows it and a push refused whatever it says (#280); `[net] git = refuse` (#224); both hang on the session's proxy token, which every proxied request must carry (#233) |
 | a Reviewer running an Implementer's build | the clone read-only to it, its environment in the clone, run by path |

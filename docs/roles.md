@@ -263,16 +263,20 @@ its terminal.
   writes only what you approved the sandbox cannot see: it is the one rule in the
   Supervisor's purpose file that carries everything, as "publish only what the user
   accepted" was.
-- **The watcher.** `--init` writes `.asb/bin/inbox-wait FILE [SECS [ALIVE]]`: a
-  one-second poll on FILE's modification time, inode and size (there is no
+- **The watcher.** `--init` writes `.asb/bin/inbox-wait [-t SECS] [-a ALIVE] FILE...`:
+  a one-second poll on each FILE's modification time, inode and size (there is no
   `inotifywait` on the hosts, and a poll by path sees the rename the Write tool does),
-  exiting 0 on a change and 1 after SECS without one (0: wait for ever). A role arms it
-  with Claude Code's Monitor tool at start --
-  `while .asb/bin/inbox-wait .asb/coord/to/<role>.md 0 .asb/coord/<role>/alive; do tail -n 20 .asb/coord/to/<role>.md; done`
-  -- and each change is an event that wakes the idle session (measured with Claude Code
-  2.1.300: within about 3 s, every event). The Supervisor arms one the same way per
-  role, on its `messages.md`. The roles' `[permissions]` lines let the watcher run
-  without a prompt under any permission mode.
+  exiting 0 at the first change, with that FILE's path on its output, and 1 after SECS
+  without one (none, or 0: wait for ever). A role runs it at start with the Bash tool
+  in the background (`run_in_background: true`) --
+  `.asb/bin/inbox-wait -a .asb/coord/<role>/alive .asb/coord/to/<role>.md` -- and
+  again after each wake, which is a turn anyway. Claude Code wakes the idle session
+  when the command exits and tells it which file changed; a background command has no
+  time limit in a terminal session, so nothing expires (measured with Claude Code
+  2.1.300: 13.6 minutes idle with no notice, and the reply 5 s after the write). The
+  Supervisor runs one over every role's `messages.md` but the Gate's and its own. The
+  roles' `[permissions]` lines let the watcher run without a prompt under any permission
+  mode.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
   `.asb/scratch/inbox-cursor` (the last N it handled), at every wake and at every
   start, so a lost notification costs nothing.
@@ -443,7 +447,6 @@ retrieve-only = on
 git = refuse
 [permissions:planner-*]           # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 [sandbox:implementer-*]
 preset = inherit
 # [conda:implementer-*]
@@ -461,7 +464,6 @@ retrieve-only = on
 git = refuse
 [permissions:implementer-*]       # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 [sandbox:reviewer-*]
 preset = inherit
 # [conda:reviewer-*]
@@ -479,7 +481,6 @@ retrieve-only = on
 git = refuse
 [permissions:reviewer-*]          # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 [sandbox:supervisor]
 preset = inherit
 # [conda:supervisor]
@@ -494,7 +495,6 @@ retrieve-only = on
 git = refuse
 [permissions:supervisor]          # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 [sandbox:gate]
 preset = inherit
 # [conda:gate]
@@ -504,7 +504,6 @@ preset = inherit
 .asb/git/ = own                   # ...and a clone's its Implementer's
 [permissions:gate]                # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 [sandbox:setup]
 preset = inherit
 # [conda:setup]
@@ -515,7 +514,6 @@ preset = inherit
 .asb/git/ = own                   # ...and a clone's its Implementer's
 [permissions:setup]               # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 
 # ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-1]

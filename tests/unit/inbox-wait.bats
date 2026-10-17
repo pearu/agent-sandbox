@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
-# models/roles/bin/inbox-wait (#274): the watcher a role arms with Claude Code's Monitor
-# tool, written to .asb/bin/ by `asb --init roles`. A one-second poll on the file by path:
-# exit 0 when it changes -- a write, or a rename over it as the Write tool does -- and 1
-# after SECS without a change; ALIVE touched at every poll.
+# models/roles/bin/inbox-wait (#274, #288): the watcher a role arms with the Bash tool in
+# the background, written to .asb/bin/ by `asb --init roles`. A one-second poll on each
+# FILE by path: exit 0 at the first change of any -- a write, or a rename over it as the
+# Write tool does -- printing its path, and 1 after -t SECS without a change; -a ALIVE
+# touched at every poll.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -19,13 +20,13 @@ waited() {
 }
 
 @test "inbox-wait: a write wakes it (exit 0), and so does a rename over the file" {
-  "$IW" "$T/inbox.md" 10 &
+  "$IW" -t 10 "$T/inbox.md" &
   local pid=$!
   sleep 1.5
   printf '## 1\nhello\n' >>"$T/inbox.md"
   waited "$pid"
   [ "$st" -eq 0 ]
-  "$IW" "$T/inbox.md" 10 &
+  "$IW" -t 10 "$T/inbox.md" &
   pid=$!
   sleep 1.5
   printf '## 1\nhello\n' >"$T/new" # the same size and, within the second, the same mtime
@@ -34,21 +35,56 @@ waited() {
   [ "$st" -eq 0 ]
 }
 
-@test "inbox-wait: no change for SECS exits 1; a file that appears is a change" {
+@test "inbox-wait: of several files, the first that changes wakes it and its path is printed" {
+  : >"$T/a.md"
+  : >"$T/b.md"
+  "$IW" -t 10 "$T/a.md" "$T/inbox.md" "$T/b.md" >"$T/out" &
+  local pid=$!
+  sleep 1.5
+  printf 'ack 1\n' >>"$T/b.md"
+  waited "$pid"
+  [ "$st" -eq 0 ]
+  [ "$(cat "$T/out")" = "$T/b.md" ]
+  "$IW" -t 10 "$T/a.md" "$T/inbox.md" "$T/b.md" >"$T/out" &
+  pid=$!
+  sleep 1.5
+  printf 'ack 1\n' >>"$T/a.md"
+  waited "$pid"
+  [ "$st" -eq 0 ]
+  [ "$(cat "$T/out")" = "$T/a.md" ]
+}
+
+@test "inbox-wait: no change for -t SECS exits 1, printing nothing; a file that appears is a change" {
   local t0=$SECONDS
-  run "$IW" "$T/inbox.md" 2
+  run "$IW" -t 2 "$T/inbox.md" "$T/other.md"
   [ "$status" -eq 1 ]
+  [ -z "$output" ]
   ((SECONDS - t0 >= 2))
-  "$IW" "$T/later.md" 10 &
+  "$IW" -t 10 "$T/inbox.md" "$T/later.md" >"$T/out" &
   local pid=$!
   sleep 1.5
   : >"$T/later.md"
   waited "$pid"
   [ "$st" -eq 0 ]
+  [ "$(cat "$T/out")" = "$T/later.md" ]
 }
 
-@test "inbox-wait: ALIVE is touched at every poll while it waits, and not after it ends" {
-  "$IW" "$T/inbox.md" 4 "$T/alive" &
+@test "inbox-wait: with no -t (or -t 0) it waits for ever" {
+  "$IW" "$T/inbox.md" &
+  local pid=$!
+  "$IW" -t 0 "$T/inbox.md" &
+  local pid0=$!
+  sleep 2.5
+  kill -0 "$pid" && kill -0 "$pid0"
+  printf 'x\n' >>"$T/inbox.md"
+  waited "$pid"
+  [ "$st" -eq 0 ]
+  waited "$pid0"
+  [ "$st" -eq 0 ]
+}
+
+@test "inbox-wait: -a ALIVE is touched at every poll while it waits, and not after it ends" {
+  "$IW" -t 4 -a "$T/alive" "$T/inbox.md" &
   local pid=$! a b
   sleep 0.5
   [ -f "$T/alive" ]
@@ -61,4 +97,23 @@ waited() {
   a="$(stat -c %Y "$T/alive")"
   sleep 1.2
   [ "$(stat -c %Y "$T/alive")" = "$a" ]
+}
+
+@test "inbox-wait: the old positional form, no FILE, or a bad option is refused with a usage line (exit 2)" {
+  local t0=$SECONDS
+  run "$IW" "$T/inbox.md" 0 "$T/alive"
+  [ "$status" -eq 2 ]
+  [[ "$output" == "usage: inbox-wait [-t SECS] [-a ALIVE] FILE..." ]]
+  [ ! -e "$T/alive" ]
+  run "$IW" "$T/inbox.md" 2
+  [ "$status" -eq 2 ]
+  ((SECONDS - t0 < 2))
+  run "$IW"
+  [ "$status" -eq 2 ]
+  [[ "$output" == "usage: "* ]]
+  run "$IW" -t soon "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  run "$IW" -x "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"usage: inbox-wait"* ]]
 }

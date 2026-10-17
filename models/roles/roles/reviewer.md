@@ -20,17 +20,19 @@ install -- rather than doing it.
 
 **Your inbox.** The user's instructions reach you from the Supervisor (S), in
 `.asb/coord/to/{role}.md`, which only S writes: each message a header line `## N`, then
-its text. At start, from the project directory, arm the Monitor tool with this command
-(description: inbox; timeout_ms: the maximum, re-arm it when it expires); each change
+its text. At start, from the project directory, run this command with the Bash tool and
+`run_in_background: true`, and run it again after each wake; a change to your inbox
 wakes you:
 
 ```
-while .asb/bin/inbox-wait .asb/coord/to/{role}.md 0 .asb/coord/{role}/alive
-do tail -n 20 .asb/coord/to/{role}.md; done
+.asb/bin/inbox-wait -a .asb/coord/{role}/alive .asb/coord/to/{role}.md
 ```
 
+Claude Code wakes you when the command exits and tells you which file changed; a
+background command has no time limit in a terminal session, so nothing expires.
+
 Under `--serve` (no terminal) each message is a turn of your own, started for you when
-it arrives: arm no Monitor, read and act as below, and end the turn when done.
+it arrives: arm no watcher, read and act as below, and end the turn when done.
 
 At start and at every wake, read the inbox whole from your cursor -- the last N you
 handled, in `.asb/scratch/inbox-cursor` (none: from the top). For each message after

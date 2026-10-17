@@ -282,6 +282,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The roles model's watchers are background waits, not Monitors** (#288): every role
+  runs `.asb/bin/inbox-wait` with the Bash tool in the background and runs it again after
+  each wake, so nothing expires -- a Supervisor with a Monitor per role got three expiry
+  notices and three re-arms every 30 minutes; an interactive session puts no time limit
+  on a background command (measured with Claude Code 2.1.300: 13.6 minutes idle with no
+  notice, the reply 5 s after the write). `inbox-wait [-t SECS] [-a ALIVE] FILE...` takes
+  several files and prints the one that changed, so the Supervisor runs one over every
+  role's `messages.md`; the old `FILE [SECS [ALIVE]]` form is refused. `Bash(tail:*)`
+  leaves the roles' `[permissions]`: no purpose file runs `tail` any more.
 - **The roles model's Planner and Supervisor are told when a Task is done and when a
   merge may be proposed**: the Reviewer accepted the Handoff, the Implementer resolved
   every finding, the Planner confirmed the step, the user accepted; not at the Planner's

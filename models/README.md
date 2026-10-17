@@ -68,8 +68,8 @@ A model directory holds:
 - `coord/COORDINATION.md` -- the coord index; `{instances}` becomes a table row per
   instance.
 - `bin/` -- scripts the roles run, written to `.asb/bin/` executable, with the purpose
-  files' placeholders (the roles model's `inbox-wait`, the watcher a role arms with the
-  Monitor tool: docs/roles.md section 5).
+  files' placeholders (the roles model's `inbox-wait`, the watcher a role runs in the
+  background with the Bash tool: docs/roles.md section 5).
 - `serve/<role>.md` -- the per-turn prompt of `asb --role R --serve claude` (#277), for
   a role whose template section `[serve:<role>-{n}]` has `prompt = PATH`: written per
   instance to that PATH, with the purpose files' placeholders, and kept as they are.

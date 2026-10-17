@@ -17,14 +17,17 @@ review that says "run this" is relayed, not run.
   `asb --role NAME --serve claude`, in a pane the user need not watch; to talk to one
   in a terminal, `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)` --
   its turns wait while that terminal is open. Print both forms.
-- Arm the Monitor tool once per role in the index but the Gate, each with this
-  command, ROLE its name (description: ROLE's messages; timeout_ms: the maximum,
-  re-arm it when it expires); each change to that role's messages wakes you:
+- Run one command over every role's messages, with the Bash tool and
+  `run_in_background: true`, and run it again after each wake: one path per role in
+  the index but the Gate and yourself; a change to any of them wakes you:
 
 ```
-while .asb/bin/inbox-wait .asb/coord/ROLE/messages.md 0
-do tail -n 20 .asb/coord/ROLE/messages.md; done
+.asb/bin/inbox-wait -a .asb/coord/{role}/alive .asb/coord/planner-1/messages.md \
+  .asb/coord/implementer-1/messages.md ...
 ```
+
+  Claude Code wakes you when the command exits and tells you which file changed; a
+  background command has no time limit in a terminal session, so nothing expires.
 
 **Where things are.**
 - `main` is the project directory, read-write to you, with its history.

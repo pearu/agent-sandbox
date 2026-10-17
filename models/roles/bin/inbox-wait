@@ -1,17 +1,46 @@
 #!/bin/sh
-# inbox-wait FILE [SECS [ALIVE]] -- written by `asb --init roles` (docs/roles.md, section 5).
-# Exit 0 when FILE changes -- its modification time, inode or size: a rename over it, as
-# the Write tool does, counts -- and 1 after SECS seconds without a change (0 or none:
-# wait for ever). ALIVE, a path, is touched at every poll, so its age says whether the
-# role that waits is running. A one-second poll by path: there is no inotifywait here.
-f="$1"
-lim="${2:-0}"
-alive="${3:-}"
+# inbox-wait [-t SECS] [-a ALIVE] FILE... -- written by `asb --init roles` (docs/roles.md,
+# section 5). Exit 0 at the first change of any FILE -- its modification time, inode or
+# size: a rename over it, as the Write tool does, counts -- printing that FILE's path, and
+# 1 after SECS seconds without a change (0 or none: wait for ever). ALIVE, a path, is
+# touched at every poll, so its age says whether the role that waits is running. A
+# one-second poll by path: there is no inotifywait here.
+usage() {
+  echo "usage: inbox-wait [-t SECS] [-a ALIVE] FILE..." >&2
+  exit 2
+}
+lim=0
+alive=""
+while getopts t:a: o; do
+  case "$o" in
+    t) lim="$OPTARG" ;;
+    a) alive="$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -gt 0 ] || usage
+case "$lim" in '' | *[!0-9]*) usage ;; esac
+# A FILE of digits alone is the old form's SECS (`FILE SECS [ALIVE]`), which would wait
+# for ever on a file named 0: refused.
+for f; do case "$f" in '' | *[!0-9]*) ;; *) usage ;; esac done
+st() { stat -c '%y %i %s' "$1" 2>/dev/null; }
+m="" # each FILE's state, a line each, in order
+for f; do m="$m$(st "$f")
+"; done
 n=0
-m=$(stat -c '%y %i %s' "$f" 2>/dev/null)
 while :; do
   [ -n "$alive" ] && touch "$alive" 2>/dev/null
-  [ "$(stat -c '%y %i %s' "$f" 2>/dev/null)" = "$m" ] || exit 0
+  rest="$m"
+  for f; do
+    [ "$(st "$f")" = "${rest%%
+*}" ] || {
+      printf '%s\n' "$f"
+      exit 0
+    }
+    rest="${rest#*
+}"
+  done
   sleep 1
   n=$((n + 1))
   if [ "$lim" -gt 0 ] && [ "$n" -ge "$lim" ]; then exit 1; fi
