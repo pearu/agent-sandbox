@@ -187,8 +187,10 @@ say.
         |            revision (findings that hold)     |
         +---------  or Objection, decided by you       +
 
-Each arrow passes through the Supervisor's terminal, with your approval. When you
-accept, the Supervisor merges the branch into `main`, updates the development
+Each arrow passes through the Supervisor's terminal, with your approval. A Task is done
+when the Reviewer has accepted the Handoff, the Implementer has resolved every finding,
+and you have accepted the change; a Planner's ruling on a deviation is not that. When
+you accept, the Supervisor merges the branch into `main`, updates the development
 environment and builds there; the Gate publishes, on the message you approve; the
 Planner then measures the new `main` for the next Statement.
 

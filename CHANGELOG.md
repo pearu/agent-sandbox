@@ -282,6 +282,10 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The roles model's Planner is told when a Task is done**: after the Reviewer accepted
+  the Handoff, the Implementer resolved every finding and the user accepted the change;
+  not at its own ruling on a deviation (seen on a live project: a Planner declared a
+  step ready for merge while the review was in progress).
 - **`retrieve-only` admits git's fetch where `[net] git` permits one** (#280): the
   `git-upload-pack` advertisement and endpoint pass under `git = fetch` or `git = allow`,
   so a retrieve-only role can `git clone`, `git fetch` and `pip install git+https://...`;
