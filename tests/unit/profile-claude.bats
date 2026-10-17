@@ -273,3 +273,29 @@ CHECK
     }
   done
 }
+
+@test "/start: a role with a [briefing] start gets the text as a command in its briefing directory, added with --add-dir; none without one, nor for a print run" {
+  mkdir -p "$H/proj/.asb/start" "$H/proj/.asb/roles"
+  printf 'Plan.\n' >"$H/proj/.asb/roles/planner-1.md"
+  printf 'Arm your watcher; read your inbox.\n' >"$H/proj/.asb/start/planner-1.md"
+  printf '[briefing:planner-*]\nstart = .asb/start/{role}.md\n[connect:*]\n' >"$H/proj/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  settings_of asb --role planner-1 claude --continue
+  [ "$status" -eq 0 ]
+  [ "${JOINB[*]}" = "--settings /run/agent-sandbox/settings.json --add-dir /run/agent-sandbox" ]
+  [ "${JOINV[*]:1}" = "--continue -- Arm your watcher; read your inbox." ]
+  [ "$(cat "$OUT/.claude/commands/start.md")" = "$(printf -- '---\ndescription: The start text of role planner-1, as a turn (after /clear)\ndisable-model-invocation: true\n---\n\nArm your watcher; read your inbox.')" ]
+  # a role with no start text: no command, no --add-dir
+  settings_of asb --role other claude --continue
+  [ "$status" -eq 0 ]
+  [ "${JOINB[*]}" = "--settings /run/agent-sandbox/settings.json" ]
+  [ ! -e "$OUT/.claude" ]
+  # a print run of the role: neither (a fresh launch, the last one's keeper gone)
+  settings_of asb --role planner-1 claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  [ "${JOINB[*]}" = "--settings /run/agent-sandbox/settings.json" ]
+  [ "${JOINV[*]:1}" = "-p Reply ok." ]
+  [ ! -e "$OUT/.claude" ]
+}

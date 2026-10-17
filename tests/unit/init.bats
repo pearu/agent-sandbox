@@ -852,3 +852,28 @@ shared_env() {
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 10 ]
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }
+
+@test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, resets by the marker or asks for /clear and /start; every other role writes to its memory before done" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" r f
+  # in **Sending a message.**
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -c '^- Before a message that opens a new Task for a role, ask the user whether the role$')" -eq 1 ]
+  local flat
+  flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
+  # shellcheck disable=SC2016 # backticks: the text, not a command
+  [[ "$flat" == *'Fresh, for a served role: write an empty `.asb/coord/to/<role>.reset` before you append the message'* ]]
+  # shellcheck disable=SC2016 # backticks: the text, not a command
+  [[ "$flat" == *'tell the user to type `/clear` and then `/start` in that role'"'"'s terminal before you send'* ]]
+  [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | wc -l)" -eq 7 ]
+  [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
+  for r in planner-1 implementer-1 reviewer-1; do
+    f="$PROJ/.asb/roles/$r.md"
+    grep -qxF -- "- Before you report a Task done, write what the next session needs to your memory: how" "$f"
+    grep -qxF -- "  the build behaves, what the tests need, what the Reviewer tends to raise." "$f"
+    # in **Protocol.**, and nothing of /clear or /start in a role's own file
+    [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -c '^- Before you report a Task done')" -eq 1 ]
+    run ! grep -qE '/clear|/start|\.reset' "$f"
+  done
+  run ! grep -qE '/clear|/start|\.reset|Before you report a Task done' "$PROJ/.asb/roles/gate.md"
+}

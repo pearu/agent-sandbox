@@ -50,6 +50,8 @@ When you have finished, end with: "done; in my file; S has it".
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.
+- Before you report a Task done, write what the next session needs to your memory: how
+  the build behaves, what the tests need, what the Reviewer tends to raise.
 
 **What you never do.** Change the code, build or install (nothing is writable to you
 but your directory and your scratch); publish (the network refuses it); read another

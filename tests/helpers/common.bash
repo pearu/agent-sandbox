@@ -212,6 +212,11 @@ run_engine() {
     # shellcheck disable=SC2034 # read by the suites
     JOINB=("${JOINV[@]:1:2}")
     JOINV=("${JOINV[0]}" "${JOINV[@]:3}")
+    # the /start command's directory, for a role with a [briefing] start (claude)
+    if [[ "${JOINV[1]:-}" == --add-dir && "${JOINV[2]:-}" == /run/agent-sandbox* ]]; then
+      JOINB+=("${JOINV[@]:1:2}")
+      JOINV=("${JOINV[0]}" "${JOINV[@]:3}")
+    fi
   fi
 }
 

@@ -53,6 +53,8 @@ When you have finished, end with: "done; in my file; S has it".
   then, do not declare the Task or its step done, and do not hand it on for a merge;
   rule on deviations and open questions as they come, and when the Reviewer accepts,
   say so.
+- Before you report a Task done, write what the next session needs to your memory: how
+  the build behaves, what the tests need, what the Reviewer tends to raise.
 
 **What you never do.** Change the code; publish anything -- an issue, a comment, a push
 (the network refuses it); install into the development environment (a measurement

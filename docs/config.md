@@ -94,7 +94,13 @@ Sections:
   project runs on the host: the prompt is read through one open file whose real path
   must be in the project, plain text, at most 64 KiB. The review says what the loop
   will wait on and read; it widens nothing (the turns run in the role's sandbox, under
-  its policy), and `--check` names the role's.
+  its policy), and `--check` names the role's. **A reset**: a file
+  `.asb/coord/to/ROLE.reset`, beside the role's inbox, makes the next turn a new session
+  -- a fresh id, told the prompt as every turn is, recorded in `.asb/coord/ROLE/session`
+  -- and the loop removes it (from inside the directory, a link removed and never
+  followed; its content is not read). Only a turn looks for it, so it is written before
+  the message it applies to. The old session's transcript stays on disk, resumable by
+  its id. The roles model's Supervisor writes it to start a role's new Task fresh.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
@@ -270,7 +276,11 @@ Sections:
   own prompt), `--exec`, a verb, or with `mode = off`. The file is read on the host at
   launch, plain text up to 64 KiB, and a launch whose file is missing is refused. It is
   not part of the approval, as a `[serve]` prompt is not: the review says which file a
-  role starts with, and `--check` names it.
+  role starts with, and `--check` names it. The same text is a command, `/start`, in
+  that session (claude: `.claude/commands/start.md` in the launch's briefing directory,
+  added with `--add-dir`), so after `/clear` at the role's terminal `/start` runs it as
+  a turn again without a relaunch; only where the first turn is given, and only for a
+  role with a `start`.
 
   ```ini
   [briefing:planner-*]
