@@ -202,7 +202,13 @@ Sections:
   `SessionStart`/`SubagentStart` hooks that inject a compact summary — so a
   resumed session is never told a policy that has since changed — and a hook
   after every Bash call that reports a host the proxy refused during it
-  ([network](network.md#refusals-reach-the-session)). `briefing.md` also says
+  ([network](network.md#refusals-reach-the-session)). It also sets a status line
+  (#287): the role -- the project's name for the default role -- in bold, then
+  `working`, `waiting` or `needs you`, which hooks on `SessionStart`,
+  `UserPromptSubmit`, `Stop`, `PermissionRequest`, `Notification` (a permission
+  prompt, an elicitation, a question for you; not the idle reminder) and after any
+  tool (`PostToolUse`, `PostToolUseFailure`) record in the
+  sandbox's `/tmp`, redrawn every second. `briefing.md` also says
   that what a session hands you to run is one line or a file -- the CLI prefixes
   every line of a reply, so a pasted heredoc or patch breaks -- and where its
   writable stores are on the host, a `copy-on-write` project's layer included. It lists
@@ -212,9 +218,10 @@ Sections:
   only the last one, so adding a second would drop yours) — specifically the
   *last* `--settings` on your command line, the one that would have won anyway,
   so a wrapper that overrides an earlier one keeps working. Nothing of yours is
-  overridden: the briefing's whole contribution is a list of hook entries,
-  so the merge writes only `hooks` and only by appending — no other setting is
-  read or rewritten, and a `hooks` shape it does not recognise is refused
+  overridden: the briefing's contribution is a list of hook entries and the
+  status line, so the merge writes `hooks` only by appending, and `statusLine`
+  only when yours has none -- a status line of your own wins. No other setting
+  is read or rewritten, and a `hooks` shape it does not recognise is refused
   rather than coerced.
   `disableAllHooks`
   in your settings is respected, and the engine then says the briefing will not
@@ -478,6 +485,16 @@ Sections:
   channel rather than this session's state); `ide` is deliberately **not**,
   because it exists to let Claude Code work from inside a sandbox. A gh login left in `gh/` by the gh channel's first design is blanked: the channel is
   your `~/.config/gh` (#88).
+  `state-background = on` (default off) tints the terminal's background with the
+  session's state, which the status line shows in any case (see `[briefing]`):
+  `#203040` while it works, `#402020` while it needs you, and the terminal's own
+  background (OSC 111) while it waits and at exit. Claude Code's hooks are
+  detached from the terminal, so the claude profile's state hook writes the OSC 11
+  sequence to Claude Code's own stdout, `/proc/$CLAUDE_PID/fd/1`, only when that is
+  a character device and never waiting on it. Measured under tmux 3.4, where the
+  pane's background follows with no passthrough setting; how a GUI terminal
+  repaints is unmeasured. Like the status line it comes with the briefing, so not
+  with `[briefing] mode = off`.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

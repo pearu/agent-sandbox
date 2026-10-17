@@ -113,8 +113,9 @@ def merge_settings(ours, user, out):
     after theirs -- hook entries merge across settings levels, so a per-event union is
     what Claude Code itself does with two sources -- and, when the dot-file has
     [permissions] rules, permissions.allow entries, appended after theirs the same way
-    (their deny and ask rules stand: Claude Code ranks them over allow). Nothing else
-    of theirs is read, rewritten or merged. A shape we do not recognise is refused rather than
+    (their deny and ask rules stand: Claude Code ranks them over allow) -- and our
+    statusLine only when theirs has none: a status line of their own wins (#287).
+    Nothing else of theirs is read, rewritten or merged. A shape we do not recognise is refused rather than
     coerced (list() of a dict would replace their data with its keys). Prints
     `hooks-disabled` when their settings switch every hook off, so the hook can say
     the briefing will not arrive."""
@@ -146,6 +147,8 @@ def merge_settings(ours, user, out):
         hooks[event] = existing + entries
     merged = dict(theirs)
     merged["hooks"] = hooks
+    if "statusLine" in mine and "statusLine" not in theirs:
+        merged["statusLine"] = mine["statusLine"]
     rules = mine.get("permissions", {}).get("allow", [])
     if rules:
         perms = theirs.get("permissions", {})
