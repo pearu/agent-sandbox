@@ -101,6 +101,10 @@ Sections:
   followed; its content is not read). Only a turn looks for it, so it is written before
   the message it applies to. The old session's transcript stays on disk, resumable by
   its id. The roles model's Supervisor writes it to start a role's new Task fresh.
+  **At a terminal**, `watch` also names the file a session of the role keeps a watcher
+  on: the claude profile's `Stop` hook refuses, once, a turn that ends with no
+  `inbox-wait` running (see [profiles](profiles.md)), and `--check` says so for the
+  role. Not on a turn of `--serve` nor in a print run.
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the

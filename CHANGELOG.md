@@ -47,6 +47,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A turn does not end without the role's watcher**. An Implementer ended a reply with
+  its inbox watcher spent, re-armed by nothing, so the Supervisor's next message would
+  have gone unnoticed. For a role whose `[serve:ROLE] watch` names its inbox, the engine
+  hands the profile that path, and the claude profile's `Stop` hook refuses a turn that
+  ends with no `inbox-wait` running under Claude Code -- once: not when the input's
+  `stop_hook_active` is true -- telling the model the watcher on PATH is not running
+  and to arm it in the background. Not in a print run, nor on a turn of `--serve`.
+  `--check` says it for the role (a new optional profile hook, `profile_check_notes`).
 - **A Task may start fresh: a served role's reset marker, and `/start` at a terminal**.
   Every wake re-reads a session's whole context, so a role carrying finished Tasks paid
   for them at each one. A file `.asb/coord/to/ROLE.reset` beside a served role's inbox
