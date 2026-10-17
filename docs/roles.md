@@ -301,6 +301,30 @@ its terminal.
   its messages afterwards, so the record stays whole), or tell the Supervisor to send
   an objection, which you approve like any other message.
 
+**A fresh start per Task.** Every wake re-reads a session's whole context, and roles
+wake often, so a session that carries finished Tasks pays for them at each wake. Within
+a Task the context earns its keep; between Tasks the record is on disk -- the
+Statement, the Task, the Handoff and the Review under `.asb/` -- and what a role has
+learnt about the work belongs in its memory. So a role is reset between Tasks, never
+relaunched for it:
+
+- **The Supervisor asks.** Before a message that opens a new Task for a role, it asks
+  you whether the role starts it fresh or keeps its context. The role itself is not
+  told: it reads its inbox from its cursor either way.
+- **A served role** gets an empty `.asb/coord/to/<role>.reset`, written before the
+  message is appended, and the loop's next turn is a new session (below).
+- **A role at a terminal**: the Supervisor asks you to type `/clear` and then `/start`
+  in that role's terminal, and sends once you say it is done. `/start` is the role's
+  `[briefing] start` text as a command, which the claude profile provides for a role
+  that has one: it re-reads the inbox from the cursor and re-arms the watcher. `/clear`
+  does not end the watcher already running (measured, Claude Code 2.1.300: still
+  `1 shell` after it), so the start text arms none when one runs -- "unless one is
+  already running (a background shell of yours)"; without that, `/start` armed a second,
+  and at the next message both woke the session, which handled the message once.
+- **What carries over** is what each Planner, Implementer and Reviewer writes to its
+  memory before it reports a Task done: how the build behaves, what the tests need,
+  what the Reviewer tends to raise.
+
 ## 6. Setting up
 
 On the host, at the top of the repository:
@@ -386,6 +410,14 @@ as the watcher in a terminal does, so the Supervisor sees the role running.
   `.asb/coord/<role>/session`; every later turn, and the next `--serve`, resumes it, so
   the role remembers its earlier messages. To talk to it yourself, open that session in
   a terminal: `asb --role implementer-1 claude --resume $(cat .asb/coord/implementer-1/session)`.
+- **A reset.** An empty `.asb/coord/to/<role>.reset` -- in the inboxes' directory,
+  which only the Supervisor writes -- makes the next turn a new session: a fresh id,
+  told the prompt as every turn is, written to `.asb/coord/<role>/session`, and the
+  marker removed (from inside the directory; a link is removed, never followed). The
+  marker alone is no turn: the loop looks for it when a message arrives, so it goes
+  before the message. Not the `[briefing] start` text: that one says to arm the
+  watcher, and a `-p` turn that runs one in the background does not end (measured).
+  The old session's transcript stays on disk, resumable by its id with `--resume`.
 - **The pause.** While anything else is joined into the role's launch -- that terminal,
   most likely -- a turn waits until it has gone: two resumes of one session at once
   fork it (measured with Claude Code 2.1.281).

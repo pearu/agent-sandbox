@@ -47,6 +47,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A Task may start fresh: a served role's reset marker, and `/start` at a terminal**.
+  Every wake re-reads a session's whole context, so a role carrying finished Tasks paid
+  for them at each one. A file `.asb/coord/to/ROLE.reset` beside a served role's inbox
+  makes the loop's next turn a new session -- a fresh id in `.asb/coord/ROLE/session`,
+  the marker removed (a link removed, never followed), the old transcript left on disk,
+  resumable by its id. The claude profile gives a role with a `[briefing] start` the
+  text as a command, `/start` (`.claude/commands/start.md` in the briefing directory,
+  added with `--add-dir`), so after `/clear` at its terminal `/start` re-arms it. The
+  roles model's Supervisor asks you before each new Task whether the role starts it
+  fresh, and resets a served role by the marker or asks you for `/clear` and `/start`;
+  the Planner, Implementer and Reviewer write what the next session needs to their
+  memory before they report a Task done.
 - **A relaunched role runs a first turn without a keypress: `[briefing] start = PATH`**.
   After every role was launched, the Supervisor read them all as not running: a session
   relaunched with `claude --continue` sits at its prompt until something gives it a turn,
