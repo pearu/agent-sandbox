@@ -282,6 +282,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The roles model's Planner and Supervisor are told when a Task is done and when a
+  merge may be proposed**: the Reviewer accepted the Handoff, the Implementer resolved
+  every finding, the Planner confirmed the step, the user accepted; not at the Planner's
+  own ruling, and not bundled with a message still waiting for its answer; and the
+  Supervisor re-runs the suite after a merge only when `main` moved since the branch's
+  base, watches CI after the Gate's push without holding the round, and the Gate
+  reports the run's URL and stops (seen on a live project: a Planner declared a step
+  ready for merge while the review was in progress, and a Supervisor proposed the merge
+  before the Planner's confirmation and the user's acceptance).
 - **`retrieve-only` admits git's fetch where `[net] git` permits one** (#280): the
   `git-upload-pack` advertisement and endpoint pass under `git = fetch` or `git = allow`,
   so a retrieve-only role can `git clone`, `git fetch` and `pip install git+https://...`;

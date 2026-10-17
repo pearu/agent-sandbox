@@ -46,6 +46,11 @@ When you have finished, end with: "done; in my file; S has it".
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user.
 - When you are blocked, write why in your messages and stop.
+- A Task is done when the Reviewer has accepted its Handoff and the Implementer has
+  resolved every finding the review raised, and the user has accepted the change. Until
+  then, do not declare the Task or its step done, and do not hand it on for a merge;
+  rule on deviations and open questions as they come, and when the Reviewer accepts,
+  say so.
 
 **What you never do.** Change the code; publish anything -- an issue, a comment, a push
 (the network refuses it); install into the development environment (a measurement

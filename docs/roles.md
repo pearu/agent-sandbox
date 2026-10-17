@@ -127,7 +127,7 @@ relayed, not run.
 | inputs | every artefact; every role's Messages; your instructions |
 | outputs | the Instructions, in every role's inbox; the texts the Gate posts, in its own directory; `main`, with the accepted change merged and built; its Messages |
 | may | write the inboxes; merge and build in `main`; on your instruction |
-| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse`; no SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**) |
+| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse`; no SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**); merge before every approval is in, the Reviewer's, the Implementer's, the Planner's and yours (**told**) |
 
 ### Gate
 
@@ -187,8 +187,10 @@ say.
         |            revision (findings that hold)     |
         +---------  or Objection, decided by you       +
 
-Each arrow passes through the Supervisor's terminal, with your approval. When you
-accept, the Supervisor merges the branch into `main`, updates the development
+Each arrow passes through the Supervisor's terminal, with your approval. A Task is done
+when the Reviewer has accepted the Handoff, the Implementer has resolved every finding,
+and you have accepted the change; a Planner's ruling on a deviation is not that. When
+you accept, the Supervisor merges the branch into `main`, updates the development
 environment and builds there; the Gate publishes, on the message you approve; the
 Planner then measures the new `main` for the next Statement.
 
@@ -216,7 +218,11 @@ Every role launches from the repository itself:
   history reads it on GitHub.
 - **Builds.** An Implementer builds in its clone; the Supervisor builds `main` after a
   merge, so `main` always holds the integration state and its build, which you can try
-  on the host.
+  on the host. The Supervisor re-runs the suite only when `main` moved since the
+  branch's base; otherwise the merged tree is the branch's own, already tested by the
+  Reviewer, and it says so. After the Gate's push it watches the CI run and goes on; the
+  step is done when the run is green, and a red run is a finding on `main` for the
+  Implementer.
 - **Environments.** The development environment is a conda environment you name
   (`x-dev` here): `main`'s, the Supervisor installs into it, you activate it on the host.
   Each Implementer gets a clone of it in its tree, `.asb/impl/N/.env`, and installs

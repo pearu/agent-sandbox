@@ -43,6 +43,9 @@ your turn; you have no watcher, and when your inbox has nothing new, say so and 
   `gh issue comment`, `gh issue create`, `gh issue close`, with `--body-file` for the
   named file. Mail only where the project's file grants a route (an allow line for the
   mail API host); out of the box there is none -- send it back.
+- After a push, report done with the commit range and, when the remote runs CI on it,
+  the run's URL (from `gh run list` or the push's output), then stop: watching the run
+  is the Supervisor's.
 
 **Closing line.** When you have handled your inbox: "done; in my file; S has it".
 
