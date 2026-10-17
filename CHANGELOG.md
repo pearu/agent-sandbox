@@ -309,6 +309,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **`[ssh]` stands alone from `[net] git`** (#293). `git = fetch` and `git = refuse`
+  no longer refuse `--ssh` or drop the file's `[ssh]` hosts: they govern git over
+  HTTPS, what the proxy can see, and `[ssh]` governs hosts, which the broker enforces.
+  This widens: a role under `git = fetch` (or `retrieve-only`) with an `[ssh]` host now
+  reaches it, and can push over SSH to a remote there where the account allows. The
+  `--trust` review, `--check` and the briefing say so per host; `--check`'s `git
+  transport` lines drop ", and --ssh", and the briefing's "this role's [net] git closes
+  SSH" is gone. What the key may do on a host is the remote's rule: `authorized_keys`
+  (a forced command, `restrict`) or an account without push rights
+  ([ssh.md](docs/ssh.md#what-the-key-may-do-on-a-host)).
 - **The status line is a bar across the terminal, and tells "asks you" from "waiting"**
   (#287). A Supervisor that had asked "Send it?" and a Reviewer idle with its watcher
   armed both showed `waiting`, and the one-word tag was easy to miss across six

@@ -648,7 +648,7 @@ CHECK
   }
 }
 
-@test "the briefing's SSH line names the --apply command for this role, with origin's host when it is an SSH remote; a role whose git is closed says so" {
+@test "the briefing's SSH line names the --apply command for this role, with origin's host when it is an SSH remote; under [net] git = refuse as well (#293)" {
   git -C "$PROJ" init -q
   git -C "$PROJ" remote add origin git@github.com:pearu/torch-op-bench.git
   printf '[connect:supervisor]\n[net:reviewer-*]\ngit = refuse\n[connect:*]\n' >"$PROJ/.agent-sandbox"
@@ -660,8 +660,9 @@ CHECK
   grep -qF "SSH: none -- to ask the user for a host, the command is asb --apply '[ssh:supervisor]' github.com" "$OUT/hook-SessionStart.json"
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- "- SSH reachable through a constrained agent: none -- this role's [net] git closes SSH" "$OUT/briefing.md"
-  run ! grep -qF 'or SSH for a push' "$OUT/briefing.md"
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh:reviewer-1]' github.com (the host of origin), then a relaunch" "$OUT/briefing.md"
+  run ! grep -qF 'closes SSH' "$OUT/briefing.md"
+  grep -qF "GIT TRANSPORT REFUSED: git cannot fetch or push over HTTPS from here, to any host, and there is no SSH host; the repository on disk is your only remote." "$OUT/briefing.md"
   git -C "$PROJ" remote set-url origin https://github.com/pearu/torch-op-bench.git
   run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
   [ "$status" -eq 0 ]
@@ -825,4 +826,32 @@ start_project() {
   [ "$(sed -n '/^\[briefing:reviewer-\*\]$/{n;p}' "$PROJ/.agent-sandbox")" = "start = .asb/start/reviewer.md" ]
   [[ "$output" == *"[briefing:reviewer-*] start, for the roles reviewer-*: its first turn at every start is the text of .asb/start/reviewer.md"* ]]
   [[ "$output" != *"unknown [briefing] key"* ]]
+}
+
+@test "an [ssh] host under [net] git = refuse, fetch or retrieve-only: the briefing says a push over SSH to it is not refused, and git governs HTTPS only (#293)" {
+  make_ssh_stubs
+  local g md
+  md="$OUT/briefing.md"
+  for g in refuse fetch allow; do
+    printf '[ssh:impl-*]\ntob-ex\n[net:impl-*]\ngit = %s\nretrieve-only = on\n[connect:supervisor]\n' "$g" >"$PROJ/.agent-sandbox"
+    approve
+    run_engine BWRAP_COPY="$OUT" -- asb --role impl-1 claude --version
+    [ "$status" -eq 0 ]
+    grep -qxF -- "- SSH reachable through a constrained agent: tob-ex (.agent-sandbox [ssh:impl-*]); a push over SSH to a listed host is not refused by retrieve-only or [net] git" "$md"
+    grep -qF "SSH: tob-ex (.agent-sandbox [ssh:impl-*]); a push over SSH to a listed host is not refused by retrieve-only or [net] git." "$OUT/hook-SessionStart.json"
+    grep -qF "publishes nothing over HTTP -- no POST, no push, no comment. SSH to tob-ex is open in full. Leave publishing to the user." "$md"
+    run ! grep -qF 'closes SSH' "$md"
+    run ! grep -qF 'there is no SSH' "$md"
+    case "$g" in
+      refuse) grep -qF "GIT TRANSPORT REFUSED: git cannot fetch or push over HTTPS from here, to any host; [net] git does not govern SSH (the SSH line)." "$md" ;;
+      fetch) grep -qF "GIT FETCHES ONLY: git can fetch over HTTPS (use an https:// URL); a push over HTTPS is refused; [net] git does not govern SSH (the SSH line)." "$md" ;;
+      allow) run ! grep -qF "GIT " "$md" ;;
+    esac
+  done
+  # without retrieve-only and git = allow, the SSH line is the plain list
+  printf '[ssh:impl-*]\ntob-ex\n[connect:supervisor]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role impl-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- SSH reachable through a constrained agent: tob-ex (.agent-sandbox [ssh:impl-*])" "$md"
 }

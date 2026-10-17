@@ -41,8 +41,9 @@
 # your key stays on the host and is constrained to these hosts (docs/ssh.md). The
 # forms `--ssh HOST` takes -- a hostname, user@host, a ~/.ssh/config alias -- one
 # per line; a launch's `--ssh` adds to them. A widening: the role signs in as you.
-# --ssh-unrestricted, --ssh-key and --ssh-timeout are launch flags only. A role
-# whose [net] git is fetch or refuse gets none of these.
+# --ssh-unrestricted, --ssh-key and --ssh-timeout are launch flags only. [net] git
+# and retrieve-only do not reach into SSH: a push over SSH to a host here is the
+# remote's to limit (authorized_keys, the account's rights).
 #[ssh]
 #git@gitlab.example.com
 #[ssh:implementer-*]
@@ -129,13 +130,14 @@
 #              the proxy.
 # agent-port : a port the agent listens on, published at the host's
 #              127.0.0.1:PORT (a dev server you open in a browser).
-# git        : fetch lets git fetch and refuses a push and --ssh; refuse stops git
-#              over HTTPS to every host (pages still load) and
-#              refuses --ssh. Default allow.
+# git        : fetch lets git fetch over HTTPS and refuses a push; refuse stops
+#              git over HTTPS to every host (pages still load). SSH is [ssh]'s,
+#              whatever this says. Default allow.
 # retrieve-only : on refuses every request but GET and HEAD (a GraphQL query to
 #              api.github.com passes, a mutation does not; git's fetch passes
 #              where git is fetch or allow, a push never does), but to the
-#              agent's own hosts: the session reads and publishes nothing.
+#              agent's own hosts: the session reads and publishes nothing
+#              over HTTP.
 #              Off by default.
 # hosts : public lets the session reach every public host, the allowlist not
 #              applying; [deny] and the refusal of localhost and the LAN stay.

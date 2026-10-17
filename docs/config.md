@@ -53,8 +53,11 @@ Sections:
   and the briefing name each with its section. `--ssh-unrestricted`, `--ssh-key` and
   `--ssh-timeout` are launch-only: a project's file never picks your key or the
   escape hatch (with `--ssh-unrestricted` the key has no constraint, so the section's
-  hosts are within it, and the launch says so). A role whose `[net] git` is `fetch`
-  or `refuse` gets none of the section's hosts: that line closes SSH for it.
+  hosts are within it, and the launch says so). The hosts stand alone (#293): a role
+  whose `[net] git` is `fetch` or `refuse`, or under `retrieve-only`, gets them all the
+  same, and a push over SSH to a remote on one is possible where the account allows;
+  the review, `--check` and the briefing say so per host. What the key may do there is
+  the remote's rule ([ssh.md](ssh.md#what-the-key-may-do-on-a-host)).
 - **`[permissions]`** — permission rules the agent gets without asking you, one per
   line, in the agent's own syntax: for `claude`, what its settings take under
   `permissions.allow` -- a tool name (`Read`), or a tool with a specifier
@@ -151,7 +154,8 @@ Sections:
   briefing and in `--check`; ignored in `open` and `none`.
   `retrieve-only = on|off` (#223, default off): every
   request but GET and HEAD is refused, to every host but the profile's own (the
-  agent's API) -- a session that reads the web and GitHub and publishes nothing. `gh`
+  agent's API) -- a session that reads the web and GitHub and publishes nothing over
+  HTTP (SSH is `[ssh]`'s). `gh`
   reads through POSTs to `api.github.com/graphql`, so there a query passes and a
   mutation (or a subscription, anywhere in the document) is refused, by the body.
   Git's fetch (a POST to `git-upload-pack`) passes where `git` is `fetch` or `allow`
@@ -160,14 +164,14 @@ Sections:
   answer to that ([recipes.md](recipes.md), the `gh` section). Per role with
   `[net:<role>]`; ignored in `open` and `none`, which have no proxy.
   `git = allow|fetch|refuse` (#224, default allow): `fetch` lets git fetch over HTTPS
-  and refuses a push (the `git-receive-pack` advertisement and endpoint) and `--ssh`
-  (the file's `[ssh]` hosts are not granted to it), so a role reads repositories and
-  never pushes; `refuse` stops git's smart-HTTP
+  and refuses a push (the `git-receive-pack` advertisement and endpoint), so a role
+  reads repositories and never pushes over HTTPS; `refuse` stops git's smart-HTTP
   transport to every host -- the ref advertisement (`/info/refs?service=git-upload-pack`
   or `git-receive-pack`), the pack endpoints, and anything sent with git's own
   `git/...` user agent -- so the session neither fetches nor pushes over HTTPS, while
-  the same host's pages still load; and it refuses `--ssh` for that role, naming the
-  line. Per role with `[net:<role>]`.
+  the same host's pages still load. Neither reaches into SSH (#293): `--ssh` and the
+  role's `[ssh]` hosts are honoured whatever `git` says, and git over SSH reaches
+  them. Per role with `[net:<role>]`.
   `mode = proxy|strict|open|none` selects the
   network mode for sessions in this project (an `AGENT_SANDBOX_NET` set in your
   shell wins); approving `mode = open` switches the egress allowlist off for
@@ -585,8 +589,9 @@ anything:
   role's own and no `GH_TOKEN` is forwarded) or no GitHub host is reachable; read only,
   under `retrieve-only`; yes, writes included, otherwise -- with whether git's transport
   is refused, and under `proxy` a note that those lines bind only the tools that use
-  the proxy; SSH -- refused with `git = fetch` or `refuse`, else the file's `[ssh]`
-  hosts for the role, each with its section, plus any a launch names with `--ssh`; and
+  the proxy; SSH -- the file's `[ssh]` hosts for the role, each with its section, plus
+  any a launch names with `--ssh`, and that `[net] git` and `retrieve-only` do not
+  reach into them; and
   every forwarded variable named like a credential;
 - **lines with no effect** for the role: a `[connect]` line at the preset's own rung
   (when it is the only line for that channel the role gets -- a role's line restating

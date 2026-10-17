@@ -40,8 +40,10 @@ number, each in a layer of its own over the project as the setup role built it:
 Each sees the project and its environment through overlays of its own
 (`project = copy-on-write`): its checkout, incremental rebuild, commits and installs stay
 in its layer, and no instance sees another's. Review and triage cannot push -- their
-`[net] git = fetch` refuses a push and `--ssh` -- and every post is on your word, after
-the project's policy on AI-written contributions. The sections are appended once to an
+`[net] git = fetch` refuses a push over HTTPS, and they get no SSH host (an `--ssh` you
+give one is honoured, push included: `[net] git` does not reach into SSH) -- and every
+post is on your word, after the project's policy on AI-written contributions. The
+sections are appended once to an
 existing `.agent-sandbox` (`[...:gh-*]`); add a `[...:gh-fix-1234]` section only for a
 number that needs something specific. Any `gh-<other>-N` name is admitted with the
 shared boundary and no purpose.

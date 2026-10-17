@@ -127,7 +127,7 @@ relayed, not run.
 | inputs | every artefact; every role's Messages; your instructions |
 | outputs | the Instructions, in every role's inbox; the texts the Gate posts, in its own directory; `main`, with the accepted change merged and built; its Messages |
 | may | write the inboxes; merge and build in `main`; on your instruction |
-| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse`; no SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**); merge before every approval is in, the Reviewer's, the Implementer's, the Planner's and yours (**told**) |
+| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse` over HTTPS, and no `[ssh]` host for it -- those lines do not reach into SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**); merge before every approval is in, the Reviewer's, the Implementer's, the Planner's and yours (**told**) |
 
 ### Gate
 

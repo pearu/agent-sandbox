@@ -242,7 +242,7 @@ init() {
   [[ "$output" =~ SSH\ +github\.com\ \(\.agent-sandbox\ \[ssh:gh-fix-\*\]\)\ --\ through\ the\ broker ]]
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-review-1234 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
-  [[ "$output" =~ SSH\ +no\ --\ --ssh\ is\ refused\ for\ this\ role ]] # the reviewer still has none
+  [[ "$output" =~ SSH\ +only\ the\ hosts\ a\ launch\ names\ with\ --ssh,\ through\ the\ broker ]] # the reviewer still has none: [ssh:gh-fix-*] is not its section
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]

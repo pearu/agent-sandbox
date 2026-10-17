@@ -338,9 +338,12 @@ Stated plainly. These are what the adversary above can still do.
   from the sandbox. There are no CPU, memory or disk limits in any
   configuration.
 - **SSH constraints are host-level, not operation-level.** Within a permitted
-  host the tunnel is opaque: a force-push cannot be blocked. `--ssh-unrestricted`
-  lets the session authenticate as you to any host that trusts the key, for as
-  long as it lives (`--ssh-timeout` bounds that).
+  host the tunnel is opaque: a force-push cannot be blocked, and `[net] git` and
+  `retrieve-only`, which the proxy applies to HTTPS, do not reach into it -- a role
+  under `git = fetch` with an SSH host can push to a remote on that host (#293). What
+  the key may do there is the remote's rule (`authorized_keys`, the account's rights).
+  `--ssh-unrestricted` lets the session authenticate as you to any host that trusts
+  the key, for as long as it lives (`--ssh-timeout` bounds that).
 - **An approved `.agent-sandbox` can grant SSH.** Its `[ssh]` hosts are loaded with
   the same destination constraint as `--ssh`, but every launch of the roles it names
   gets them without a flag: approving such a file is approving a role that can sign
@@ -477,9 +480,10 @@ is `gh-setup`'s, a single role: the checkout and `--env`'s prefix read-write,
 unbuilt and makes its prefix empty).
 
 **Never push, enforced.** Review and triage get `[net] git = fetch`: the proxy passes
-git's upload-pack and refuses receive-pack, and `--ssh` is refused, since SSH is a whole
-transport the proxy cannot split. Their API writes (`gh pr review`, labels) stay told,
-on the user's word.
+git's upload-pack and refuses receive-pack, and the model gives them no SSH host. An
+SSH host given to one (`--ssh`, an `[ssh]` line) would open a push there: `[net] git`
+governs HTTPS only, since SSH is a whole transport the proxy cannot split (#293). Their
+API writes (`gh pr review`, labels) stay told, on the user's word.
 
 **The fixer keeps the overlay.** A clone would cost the full rebuild the overlay avoids;
 its commits live in its layer's `.git`, so its work is published before the instance is
@@ -494,8 +498,9 @@ direct access; `ghstack submit` where the project uses it, its login opt-in per 
 Measured 2026-10-06 on a scratch private repository: a `gh-fix` instance launched with
 `--ssh github.com` committed on a new branch in its layer and pushed it over SSH through
 the broker; the host checkout stayed on `main`, untouched. A `gh-review` instance was
-refused `--ssh`, and fetched that branch over HTTPS with gh's token as git's credential
-helper. ghstack is unmeasured: it pushes to `pytorch/pytorch`, which a test cannot.
+refused `--ssh` (as it was then; since #293 `--ssh` is honoured under `git = fetch`),
+and fetched that branch over HTTPS with gh's token as git's credential helper. ghstack
+is unmeasured: it pushes to `pytorch/pytorch`, which a test cannot.
 
 Measured 2026-10-06 on a pytorch checkout built two days earlier and its environment
 (torch an editable scikit-build-core install: Python from the tree, 524 MB compiled in
@@ -524,7 +529,7 @@ refusal; `[net] hosts = public` takes the allowlist away for the role and keeps
 everything the proxy subtracts, the non-public refusal included. POST is allowed: many
 sites hand their data only to a search form or an API's POST. With every public host
 and every method open, egress itself bounds nothing, so the bound is what is in reach:
-`preset = isolated`, no `gh`, `git = refuse` (and so no `--ssh`), GPUs off. What a page
+`preset = isolated`, no `gh`, `git = refuse`, no `[ssh]` host, GPUs off. What a page
 can make it do -- post a form, sign up -- is told against in its purpose file, not
 enforced. `mode = strict` closes the raw-socket route around the proxy.
 

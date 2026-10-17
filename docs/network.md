@@ -227,17 +227,25 @@ read `github.com` lets it push there. `[net] git = refuse` (#224), per role with
 `/info/refs` with `service=git-upload-pack` or `git-receive-pack`, the
 `git-upload-pack` and `git-receive-pack` endpoints, and any request with git's own
 `git/...` user agent. Fetches are refused as well as pushes, on purpose: a role that
-may not publish has the repository on disk as its only remote. The same host's pages
-still load. `--ssh` is refused for such a role, since the SSH broker is how git
-reaches a remote over SSH.
+may not publish has the repository on disk as its only remote over HTTPS. The same
+host's pages still load. `--ssh` and the file's `[ssh]` hosts are honoured all the same
+(#293): see below.
 
 `git = fetch` is the narrower line: git fetches over HTTPS as usual, and a push --
 `/info/refs?service=git-receive-pack` and the `git-receive-pack` endpoint -- is refused,
 for a role that reads repositories and must never publish to one. Under
 `retrieve-only` the fetch passes too, recognised by its path, not by git's user agent;
-a push is refused there under `git = allow` as well. `--ssh` is refused
-too: an SSH connection is a whole transport, and the proxy cannot tell its fetch from
-its push.
+a push is refused there under `git = allow` as well. `--ssh` and the file's `[ssh]`
+hosts are honoured here too (#293).
+
+The two layers are independent. `[net] git` (and `retrieve-only`) govern git over
+HTTPS only, which is what the proxy can see. `[ssh]` and `--ssh` govern hosts only:
+which hosts the role's key may sign in to, enforced by the broker. ssh knows nothing
+about git, so git over SSH inherits the host list -- a role with an SSH host can push
+over SSH to a remote on that host, whatever `[net] git` and `retrieve-only` say, where
+the account allows it. The `--trust` review, `--check` and the briefing say so per host.
+What SSH may do on a host is the remote's rule, not the sandbox's
+([ssh.md](ssh.md#what-the-key-may-do-on-a-host)).
 
 ## The proxy CA
 

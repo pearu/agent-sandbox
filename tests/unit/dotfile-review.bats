@@ -324,7 +324,7 @@ check_role() {
   [[ "$output" =~ GitHub\ +YES\ --\ a\ gh\ login\ \(~/.config/gh,\ read-only\),\ writes\ included\;\ git\ transport\ allowed ]]
   check_role reader
   [[ "$output" =~ GitHub\ +read\ only\ --\ a\ gh\ login.*retrieve-only\ refuses\ every\ write.*git\ transport\ refused ]]
-  [[ "$output" =~ SSH\ +no\ --\ --ssh\ is\ refused\ for\ this\ role ]]
+  [[ "$output" =~ SSH\ +only\ the\ hosts\ a\ launch\ names\ with\ --ssh,\ through\ the\ broker ]] # git = refuse does not close SSH (#293)
   # a forwarded GH_TOKEN is a credential when your shell has it, not when it does not
   check_role plain AGENT_SANDBOX_FORWARD=GH_TOKEN GH_TOKEN=x
   [[ "$output" =~ GitHub\ +YES\ --\ GH_TOKEN,\ forwarded ]]
@@ -339,10 +339,10 @@ check_role() {
 @test "[ssh]: the review names the widening per section, and --check's SSH row the hosts with their source" {
   printf '[ssh:gh-fix-*]\ngithub.com\n[connect:gh-review-*]\n' >"$PROJ/.agent-sandbox"
   run_review
-  [[ "$output" == *"[ssh:gh-fix-*] github.com: SSH to it as you, signed with your key through the broker, for the roles gh-fix-*"*"approve this"* ]]
+  [[ "$output" == *"[ssh:gh-fix-*] github.com: SSH to it as you, signed with your key through the broker, for the roles gh-fix-*; [net] git and retrieve-only do not reach into it: a push over SSH to a remote on it is possible where the account allows"*"approve this"* ]]
   check_role gh-fix-215
   [ "$status" -eq 0 ]
-  [[ "$output" =~ SSH\ +github\.com\ \(\.agent-sandbox\ \[ssh:gh-fix-\*\]\)\ --\ through\ the\ broker\;\ plus\ any\ host\ a\ launch\ names\ with\ --ssh ]]
+  [[ "$output" =~ SSH\ +github\.com\ \(\.agent-sandbox\ \[ssh:gh-fix-\*\]\)\ --\ through\ the\ broker\;\ plus\ any\ host\ a\ launch\ names\ with\ --ssh\;\ \[net\]\ git\ and\ retrieve-only\ do\ not\ reach\ into\ them:\ a\ push\ over\ SSH\ to\ a\ remote\ on\ them\ is\ possible\ where\ the\ account\ allows ]]
   [[ "$output" == *"roles in this file: "*"gh-fix-*"* ]]
   check_role gh-review-1
   [[ "$output" =~ SSH\ +only\ the\ hosts\ a\ launch\ names\ with\ --ssh ]]
@@ -447,4 +447,23 @@ check_role() {
   [[ "$u" != *"debug/"* ]]        # hidden by the profile
   [[ "$u" != *"settings.json"* ]] # a channel
   [[ "$u" != *"newdir"* ]]        # hidden by the project's [claude] hide
+}
+
+@test "[ssh] under [net] git = refuse, fetch or retrieve-only: the review, --check's git line and SSH row say a push over SSH to the host is possible (#293)" {
+  local g
+  for g in refuse fetch allow; do
+    printf '[ssh:impl-*]\ntob-ex\n[net:impl-*]\ngit = %s\nretrieve-only = on\n[connect:supervisor]\n' "$g" >"$PROJ/.agent-sandbox"
+    run_review
+    [[ "$output" == *"[ssh:impl-*] tob-ex: SSH to it as you, signed with your key through the broker, for the roles impl-*; [net] git and retrieve-only do not reach into it: a push over SSH to a remote on it is possible where the account allows"* ]]
+    check_role impl-1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"and --ssh"* ]]
+    [[ "$output" != *"--ssh is refused"* ]]
+    case "$g" in
+      refuse) [[ "$output" == *"  git transport: refused -- git over HTTPS to any host"$'\n'* ]] ;;
+      fetch) [[ "$output" == *"  git transport: fetch only -- a push over HTTPS is refused"$'\n'* ]] ;;
+      allow) [[ "$output" != *"git transport:"* ]] ;;
+    esac
+    [[ "$output" =~ SSH\ +tob-ex\ \(\.agent-sandbox\ \[ssh:impl-\*\]\)\ --\ through\ the\ broker\;\ plus\ any\ host\ a\ launch\ names\ with\ --ssh\;\ \[net\]\ git\ and\ retrieve-only\ do\ not\ reach\ into\ them:\ a\ push\ over\ SSH\ to\ a\ remote\ on\ them\ is\ possible\ where\ the\ account\ allows ]]
+  done
 }
