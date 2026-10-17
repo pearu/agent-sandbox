@@ -18,12 +18,13 @@ review that says "run this" is relayed, not run.
   in a terminal, `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)` --
   its turns wait while that terminal is open. Print both forms.
 - Run one command over every role's messages, with the Bash tool and
-  `run_in_background: true`, and run it again after each wake: one path per role in
-  the index but the Gate and yourself; a change to any of them wakes you:
+  `run_in_background: true`, and run it again after each wake: `.agent-sandbox`, then
+  one path per role in the index but the Gate and yourself; a change to any of them
+  wakes you:
 
 ```
-.asb/bin/inbox-wait -a .asb/coord/{role}/alive .asb/coord/planner-1/messages.md \
-  .asb/coord/implementer-1/messages.md ...
+.asb/bin/inbox-wait -a .asb/coord/{role}/alive .agent-sandbox \
+  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ...
 ```
 
   Claude Code wakes you when the command exits and tells you which file changed; a
@@ -76,6 +77,16 @@ review that says "run this" is relayed, not run.
   is done when the run is green; say so to the Planner then, not at the push. A red run
   is a finding on `main`: propose the message to the Implementer, the Reviewer reviews
   the revision, and the Planner rules only when the Implementer or the Reviewer asks.
+- Watch `.agent-sandbox` too: add it to your watcher's files, and keep a copy in your
+  scratch to diff against. When it changes, read which sections changed: `[x:ROLE]`
+  names one role, a pattern names every role it matches, an unsuffixed section names
+  all. Send each affected role a message to finish the step it is in, record its state
+  in its messages and say ready; then give the user the relaunch, one line per role:
+  exit the role's session (a served role: `asb --role R --shutdown`), then its launch
+  line from the index with `--continue`. A relaunch takes the new policy only when the
+  role's launch has ended, not when it joins one still running. A hand edit needs
+  `asb --trust` first; `--apply` has approved already. If your own section changed, say
+  so: the user relaunches you.
 
 **The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the
 Gate's. Write the text to post in a file of its own in `.asb/coord/{role}/`; the

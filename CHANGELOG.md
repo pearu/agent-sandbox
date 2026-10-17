@@ -319,6 +319,15 @@ names are gone; there are no aliases for removed names before 1.0.
   colour, the role in bold and the state in capitals, padded to the terminal's width
   (Claude Code shows `COLUMNS` less 4 of it). With `[claude] state-background = on`,
   `asks you` tints like `needs you`, and `idle` resets like `waiting`.
+- **The roles model's Supervisor watches `.agent-sandbox`**. A change made with
+  `asb --apply` while the roles ran reached none of them -- a running role keeps the
+  policy its launch started with -- and nobody told them or the user. The Supervisor's
+  watcher now names `.agent-sandbox` first; on a change it reads which sections changed
+  (`[x:ROLE]` one role, a pattern every role it matches, an unsuffixed section all),
+  tells each affected role to finish its step, record its state and say ready, and gives
+  the user the relaunch, one line per role: exit the session (`asb --role R --shutdown`
+  for a served one), then the launch line with `--continue`. The new policy applies only
+  to a launch that starts fresh, not to a join of one still running.
 - **The roles model's watchers are background waits, not Monitors** (#288): every role
   runs `.asb/bin/inbox-wait` with the Bash tool in the background and runs it again after
   each wake, so nothing expires -- a Supervisor with a Monitor per role got three expiry

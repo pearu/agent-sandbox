@@ -278,7 +278,10 @@ its terminal.
   one, so the launch does: `[briefing:...] start = .asb/start/<role>.md` is the text it
   runs as its first turn at every start -- arm the watcher, read the inbox, report --
   and the role is running, and seen running, without a keypress. The
-  Supervisor runs one over every role's `messages.md` but the Gate's and its own. The
+  Supervisor runs one over every role's `messages.md` but the Gate's and its own, and
+  over `.agent-sandbox`: a running role keeps the policy its launch started with, so on
+  a change the Supervisor tells each role it affects to finish its step and say ready,
+  and gives you the relaunch line (`--continue`, once the role's launch has ended). The
   roles' `[permissions]` lines let the watcher run without a prompt under any permission
   mode.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
