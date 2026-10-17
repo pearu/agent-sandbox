@@ -190,20 +190,28 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" == *"matches no role section"* ]]
 }
 
-@test "[ssh] and a role whose [net] git closes SSH: the file's narrowing wins for that role, and --ssh is still refused" {
+@test "[ssh] stands alone: a role under [net] git = fetch or refuse gets the file's hosts and --ssh's, the agent socket bound (#293)" {
   make_ssh_stubs
-  dotfile $'[ssh]\ngithub.com\n[net:rev-*]\ngit = fetch\n[connect:*]\n'
-  run_engine -- asb --role rev-1 claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"[ssh] hosts not granted: this role's [net] git = fetch closes SSH"* ]]
-  [ ! -s "$H/ssh-add.log" ]
-  run ! argv_has --setenv SSH_AUTH_SOCK
-  run_engine -- asb --role fix-1 claude --version
-  [ "$status" -eq 0 ]
-  [ "$(ssh_constraints)" = "github.com" ]
-  run_engine -- asb --role rev-1 --ssh github.com claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--ssh is refused for role 'rev-1'"* ]]
+  local g
+  for g in fetch refuse; do
+    dotfile $'[ssh]\ngithub.com\n[ssh:rev-*]\ntob-ex\n[net:rev-*]\ngit = '"$g"$'\n[connect:*]\n'
+    : >"$H/ssh-add.log"
+    run_engine -- asb --role rev-1 claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"not granted"* ]]
+    [ "$(ssh_constraints)" = "github.com tob-ex" ]
+    argv_has --setenv SSH_AUTH_SOCK
+    : >"$H/ssh-add.log"
+    run_engine -- asb --role rev-1 --ssh flag.example claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"--ssh is refused"* ]]
+    [ "$(ssh_constraints)" = "flag.example github.com tob-ex" ]
+    argv_has --setenv SSH_AUTH_SOCK
+    : >"$H/ssh-add.log"
+    run_engine -- asb --role fix-1 claude --version
+    [ "$status" -eq 0 ]
+    [ "$(ssh_constraints)" = "github.com" ]
+  done
 }
 
 @test "the review reads every role's lines, whatever role launches (#221)" {
@@ -305,7 +313,7 @@ STUB
   [[ "$output" == *"[net] hosts = public is ignored with AGENT_SANDBOX_NET=none"* ]]
 }
 
-@test "[net:<role>] git = refuse: the session's file, --check's line, and --ssh refused for that role only (#224)" {
+@test "[net:<role>] git = refuse: the session's file and --check's line for that role only; --ssh is not refused (#224, #293)" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
 . "${0%/*}/stub-env"
@@ -321,18 +329,18 @@ STUB
   run_engine BWRAP_PROBE="$H/probe" -- asb --role supervisor claude --version
   [ "$status" -eq 0 ]
   run ! grep -qx '== git-refuse.txt' "$H/probe"
-  run_engine -- asb --role impl-1 --ssh github.com claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--ssh is refused for role 'impl-1': its .agent-sandbox [net] says git = refuse"* ]]
-  [ ! -s "$H/argv" ]
+  make_ssh_stubs
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role impl-1 --ssh github.com claude --version
+  [ "$status" -eq 0 ]
+  argv_has --setenv SSH_AUTH_SOCK
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role impl-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
-  [[ "$output" == *"git transport: refused"* ]]
+  [[ "$output" == *"  git transport: refused -- git over HTTPS to any host"$'\n'* ]]
   run_review
   [[ "$output" == *"[net] git 'maybe' unknown (allow|fetch|refuse)"* ]]
 }
 
-@test "[net:<role>] git = fetch: the session's file, --check's line, and --ssh refused (#github)" {
+@test "[net:<role>] git = fetch: the session's file and --check's line; --ssh is not refused (#github, #293)" {
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
 . "${0%/*}/stub-env"
@@ -346,12 +354,13 @@ STUB
   [ "$status" -eq 0 ]
   grep -qx '== git-push-refuse.txt' "$H/probe"
   run ! grep -qx '== git-refuse.txt' "$H/probe"
-  run_engine -- asb --role rev-1 --ssh github.com claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--ssh is refused for role 'rev-1': its .agent-sandbox [net] says git = fetch"* ]]
+  make_ssh_stubs
+  run_engine BWRAP_PROBE="$H/probe" -- asb --role rev-1 --ssh github.com claude --version
+  [ "$status" -eq 0 ]
+  argv_has --setenv SSH_AUTH_SOCK
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role rev-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
-  [[ "$output" == *"git transport: fetch only"* ]]
+  [[ "$output" == *"  git transport: fetch only -- a push over HTTPS is refused"$'\n'* ]]
 }
 
 @test "[conda:<role>] prefix activates an env by its path, for that role; a path that is no env yet gets the base, said (#221)" {

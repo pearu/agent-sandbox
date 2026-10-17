@@ -3948,31 +3948,41 @@ _as_briefing_write() {
     none) egress="none. The network namespace is unshared; nothing outside this machine is reachable." ;;
     *) egress="unknown ($net); this launch is about to be refused" ;;
   esac
+  # [net] git governs git over HTTPS only (#293): an SSH host is the SSH line's, whatever
+  # it says.
+  local git_ssh="; [net] git does not govern SSH (the SSH line)" git_only=""
+  ((${#_ssh_hosts[@]} > 0)) || git_ssh=", and there is no SSH host" git_only="; the repository on disk is your only remote"
   if ((${_git_refuse:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
-    egress="$egress GIT TRANSPORT REFUSED: git cannot fetch or push over HTTPS from here, to any host, and there is no SSH; the repository on disk is your only remote."
+    egress="$egress GIT TRANSPORT REFUSED: git cannot fetch or push over HTTPS from here, to any host$git_ssh$git_only."
   elif ((${_git_fetch_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
-    egress="$egress GIT FETCHES ONLY: git can fetch over HTTPS (use an https:// URL); a push is refused, and there is no SSH."
+    egress="$egress GIT FETCHES ONLY: git can fetch over HTTPS (use an https:// URL); a push over HTTPS is refused$git_ssh."
   fi
   if ((${_hosts_public:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
     egress="$egress EVERY PUBLIC HOST: for this session the allowlist does not apply -- any public site is reachable through the proxy, while localhost, the LAN and denied hosts are refused."
   fi
   if ((${_retrieve_only:-0})) && [[ "$net" == proxy || "$net" == strict ]]; then
-    egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not; git's fetch passes where [net] git allows it, a push never does), so this session reads the web and GitHub and publishes nothing -- no POST, no push, no comment. Leave publishing to the user."
+    local ro_ssh=""
+    if ((${#_ssh_hosts[@]} > 0)); then
+      printf -v ro_ssh '%s, ' "${_ssh_hosts[@]}"
+      ro_ssh=" SSH to ${ro_ssh%, } is open in full."
+    fi
+    egress="$egress RETRIEVE-ONLY: every request but GET and HEAD is refused (a GraphQL query passes, a mutation does not; git's fetch passes where [net] git allows it, a push never does), so this session reads the web and GitHub and publishes nothing over HTTP -- no POST, no push, no comment.$ro_ssh Leave publishing to the user."
   fi
   ((${#_allow_hosts[@]} > 0)) && hosts_line="${_allow_hosts[*]}"
   ((${#_ssh_hosts[@]} > 0)) && ssh_line="$(_as_ssh_sources)"
   # With no SSH host, the line names how to ask for one (a role may have to push): the
   # [ssh] section for this role, with the host of origin's URL when it is an SSH remote.
-  # A role whose [net] git closes SSH gets none, and the line says so.
+  # With hosts, under [net] git refuse or fetch or retrieve-only, it says what they leave
+  # open: neither reaches into SSH (#293).
   local ssh_sect="[ssh]" ssh_host="" ssh_ask=""
   [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})) && ssh_sect="[ssh:$_role]"
-  if ((${_git_refuse:-0} || ${_git_fetch_only:-0})); then
-    ssh_ask="this role's [net] git closes SSH"
-  else
-    ssh_host="$(_as_git_ssh_host "$cwd")"
-    ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a relaunch"
+  ssh_host="$(_as_git_ssh_host "$cwd")"
+  ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a relaunch"
+  if ((${#_ssh_hosts[@]} == 0)); then
+    ssh_line="none -- $ssh_ask"
+  elif ((${_git_refuse:-0} || ${_git_fetch_only:-0} || ${_retrieve_only:-0})); then
+    ssh_line="$ssh_line; a push over SSH to a listed host is not refused by retrieve-only or [net] git"
   fi
-  ((${#_ssh_hosts[@]} > 0)) || ssh_line="none -- $ssh_ask"
   # two forms: the full one for briefing.md, a short one for the summary that is
   # injected on every launch (where a spare sentence is paid for every time)
   local mem_short
@@ -4997,7 +5007,7 @@ _as_trust_notes() {
     v="${h%%$'\t'*}" k="${h#*$'\t'}"
     if [[ "$v" == "*" ]]; then v="[ssh]" n="every role"; else n="the roles $v" v="[ssh:$v]"; fi
     if _as_ssh_spec_ok "$k"; then
-      _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n"
+      _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n; [net] git and retrieve-only do not reach into it: a push over SSH to a remote on it is possible where the account allows"
     else
       _as_msg ".agent-sandbox: $v bad host '$k' (a hostname, user@host, or ~/.ssh/config alias); ignoring"
     fi
@@ -5413,8 +5423,8 @@ _as_dotfile_line() {
           # session; [deny], the non-public refusal and the session's other lines do.
           # Every value is kept for the review: a later role's line must not hide a widening.
           hosts) _df_net_hosts="$cv" _df_hosts_seen+=" $cv" ;;
-          # Git's transport (#224): `refuse` stops git over HTTPS to any host, and --ssh;
-          # `fetch` refuses only a push (and --ssh).
+          # Git's transport over HTTPS (#224): `refuse` stops it to any host; `fetch`
+          # refuses only a push. SSH is [ssh]'s, whatever this says (#293).
           git) _df_net_git="$cv" ;;
           host-port) _df_net_host_port+=("$cv") ;;
           agent-port) _df_net_agent_port+=("$cv") ;;
@@ -5670,8 +5680,8 @@ _as_check_plan() {
         ;;
       host) printf "  conda: the host's at %s (conda) -- %s\n" "$(_as_tilde "${_conda_hbase:-${CONDA_PREFIX:-}}")" "$_conda_mode_src" ;;
     esac
-    ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host, and --ssh\n'
-    ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused, and --ssh\n'
+    ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host\n'
+    ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused\n'
     ((${_hosts_public:-0})) && printf '  network: every public host -- the allowlist does not apply; localhost, the LAN and [deny] stay refused\n'
     # The agent's own telemetry (#276): refused like any unlisted host, and kept out of the
     # refusal hook's note. Under hosts = public it is not refused, so nothing to say.
@@ -5849,12 +5859,11 @@ _as_check_actas() {
     printf '\nCan act as you at  (an outside service this role can reach, and a credential for it)\n'
     printf '  %-20s %s\n' "your agent's API" "yes -- your login, the identity every sandbox runs as"
     printf '  %-20s %s\n' GitHub "$verdict"
-    if ((${_git_refuse:-0} || ${_git_fetch_only:-0})); then
-      v="no -- --ssh is refused for this role ([net] git = $([[ ${_git_refuse:-0} == 1 ]] && echo refuse || echo fetch))"
-    elif [[ "$net" == none ]]; then
+    # [net] git and retrieve-only are HTTPS lines; an SSH host is open in full (#293).
+    if [[ "$net" == none ]]; then
       v="no -- no network"
     elif ((${#_ssh_hosts[@]})); then
-      v="$(_as_ssh_sources) -- through the broker; plus any host a launch names with --ssh"
+      v="$(_as_ssh_sources) -- through the broker; plus any host a launch names with --ssh; [net] git and retrieve-only do not reach into them: a push over SSH to a remote on them is possible where the account allows"
     else
       v="only the hosts a launch names with --ssh, through the broker"
     fi
@@ -8399,14 +8408,11 @@ agent_sandbox() (
 
   # THE DOT-FILE'S SSH HOSTS: its [ssh] and [ssh:<glob>] lines for this role, added to
   # the launch's --ssh, and from here on one list with one path: the broker, the
-  # destination constraint, strict mode's pinholes. Not where the role's [net] git
-  # closes SSH: there the file's own narrowing wins, and only an --ssh flag is refused
-  # (below). Under --ssh-unrestricted the hosts are within what the key may reach.
+  # destination constraint, strict mode's pinholes -- whatever the role's [net] git and
+  # retrieve-only say, which govern HTTPS only (#293). Under --ssh-unrestricted the
+  # hosts are within what the key may reach.
   if ((${#_ssh_df[@]})); then
-    if ((_git_refuse || _git_fetch_only)); then
-      _as_info ".agent-sandbox [ssh] hosts not granted: this role's [net] git = $( ((_git_refuse)) && echo refuse || echo fetch) closes SSH"
-      _ssh_df=()
-    elif ((_ssh_unrestricted)); then
+    if ((_ssh_unrestricted)); then
       _as_msg "--ssh-unrestricted: the key is loaded without a constraint, so the .agent-sandbox [ssh] hosts ($(printf '%s\n' "${_ssh_df[@]#*$'\t'}" | paste -sd' ')) are reachable with the rest"
     else
       for _dh in "${_ssh_df[@]}"; do
@@ -8458,14 +8464,6 @@ agent_sandbox() (
   # started; the keeper being joined is the one the live file named.
   ((_df_from_keeper)) && _df_role="$_pre_role"
   _as_role_resolve || return 1
-  # GIT TRANSPORT REFUSED (#224) means SSH too: the broker is how git reaches a remote
-  # over SSH, so a role whose policy refuses git does not get it.
-  # So does FETCH ONLY: SSH is a whole transport, which the proxy's fetch/push line
-  # cannot see into.
-  if (((_git_refuse || _git_fetch_only) && _ssh_want)); then
-    _as_msg "--ssh is refused for role '$_role': its .agent-sandbox [net] says git = $( ((_git_refuse)) && echo refuse || echo fetch), which closes SSH as well as $( ((_git_refuse)) && echo 'git over HTTPS' || echo 'a push over HTTPS')."
-    return 1
-  fi
   local _pb
   for _pb in ${_df_preset_by[@]+"${_df_preset_by[@]}"}; do
     # shellcheck disable=SC2053 # the glob is the pattern

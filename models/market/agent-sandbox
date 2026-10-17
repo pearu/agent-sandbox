@@ -15,7 +15,7 @@ prefix = {envpath}                # activated
 [net:market-*]
 mode = strict                     # no route but the proxy; localhost and the LAN are closed
 hosts = public                    # every public host: the sites are not known in advance
-git = refuse                      # no git transport, and no --ssh
+git = refuse                      # no git over HTTPS; and no [ssh] host, so no SSH
 [gpu:market-*]
 mode = off
 [briefing:market-*]

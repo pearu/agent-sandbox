@@ -35,10 +35,12 @@ constraint, the `known_hosts` check, strict mode's pinholes. `--ssh-unrestricted
 `--ssh-key` and `--ssh-timeout` stay on the command line -- a project's file never
 picks your key or lifts the constraint; given at a launch, they apply to the file's
 hosts too, and with `--ssh-unrestricted` the file's hosts are within the unconstrained
-key (the launch says so). A role whose `[net] git` is `fetch` or `refuse` gets none of
-the file's hosts, and an `--ssh` flag for it is refused. `asb --check --role R`
-lists a role's hosts with the section each came from, and the session's briefing
-names them.
+key (the launch says so). The hosts stand alone (#293): `[net] git` and `retrieve-only`
+govern git over HTTPS, not SSH, so a role under `git = fetch` or `refuse` gets the
+file's hosts and its `--ssh` hosts like any other, and a push over SSH to a remote on
+one of them is possible where the account allows it. `asb --check --role R` lists a
+role's hosts with the section each came from and says that; the review and the
+session's briefing name them and say it too.
 
 ## How it works
 
@@ -73,6 +75,23 @@ you wrote `user@host`, or `~/.ssh/config` sets `User` for that alias. So
 `--ssh github.com` permits any user (`git@` included); `--ssh git@github.com`
 permits only `git@`. Non-22 ports are handled (`[host]:port`, as `known_hosts`
 stores them).
+
+## What the key may do on a host
+
+The sandbox decides where ssh can go, not what it does there. One connection carries
+a shell, a `git push`, a port forward or a file copy alike, and the sandbox cannot
+split a shell from a push on it: the session is encrypted end to end, and ssh knows
+nothing about git. So `[net] git` and `retrieve-only`, which the proxy applies to
+HTTPS, do not reach into SSH, and git over SSH reaches exactly the hosts the role may
+sign in to.
+
+What the key may do on a host is the remote's rule. On a server you run, the
+`authorized_keys` line for the key says it: a forced command (`command="..."`, e.g.
+one that serves only `git-upload-pack`), `restrict` (no pty, no forwarding), `from=`.
+On a hosting service it is the account's: a deploy key or a machine account without
+push rights where the role must not push. An ssh config inside the sandbox is advisory
+-- the agent can pass `-F /dev/null` or its own options -- and the limit is the
+broker's host constraint and the server's host key check, both on the host.
 
 ## Requirements and limits
 

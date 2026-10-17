@@ -18,7 +18,7 @@ gh = read-only                    # your gh login: it reads, and posts when you 
 prefix = {envpath}                # the environment the project is built in, activated
 [net:gh-*]
 mode = proxy                      # the allowlist applies; research hosts below, add your own
-git = fetch                       # it fetches; a push is refused, and so is --ssh
+git = fetch                       # it fetches; a push over HTTPS is refused (SSH is [ssh]'s: none for it)
 [allow:gh-*]
 .readthedocs.io
 .readthedocs.org
@@ -27,7 +27,7 @@ docs.python.org
 .python.org
 # ---- the fixer publishes: on your word ---------------------------------------------
 [net:gh-fix-*]
-git = allow                       # it pushes, over SSH through the broker ([ssh:gh-fix-*] below)
+git = allow                       # it pushes over HTTPS too; over SSH, to the [ssh:gh-fix-*] host below
 [connect:gh-fix-*]
 # ~/.ghstackrc = read-only        # ghstack's login (token): off; for a ghstack project:
 #   asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'
