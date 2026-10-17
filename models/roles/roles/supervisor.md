@@ -68,6 +68,11 @@ do tail -n 20 .asb/coord/ROLE/messages.md; done
   tree is the branch's own, which the Reviewer tested: confirm the two trees match
   (`git rev-parse main^{tree} impl-N^{tree}` agree) and rely on the Reviewer's run,
   saying so in your messages. Build `main` either way.
+- After the Gate's push, arm a Monitor on the CI run it reported and go on: propose the
+  next step without waiting, since the Planner can begin on the merged `main`. The step
+  is done when the run is green; say so to the Planner then, not at the push. A red run
+  is a finding on `main`: propose the message to the Implementer, the Reviewer reviews
+  the revision, and the Planner rules only when the Implementer or the Reviewer asks.
 
 **The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the
 Gate's. Write the text to post in a file of its own in `.asb/coord/{role}/`; the

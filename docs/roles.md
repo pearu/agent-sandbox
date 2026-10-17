@@ -218,9 +218,11 @@ Every role launches from the repository itself:
   history reads it on GitHub.
 - **Builds.** An Implementer builds in its clone; the Supervisor builds `main` after a
   merge, so `main` always holds the integration state and its build, which you can try
-  on the host. It re-runs the suite only when `main` moved since the branch's base;
-  otherwise the merged tree is the branch's own, already tested by the Reviewer, and it
-  says so.
+  on the host. The Supervisor re-runs the suite only when `main` moved since the
+  branch's base; otherwise the merged tree is the branch's own, already tested by the
+  Reviewer, and it says so. After the Gate's push it watches the CI run and goes on; the
+  step is done when the run is green, and a red run is a finding on `main` for the
+  Implementer.
 - **Environments.** The development environment is a conda environment you name
   (`x-dev` here): `main`'s, the Supervisor installs into it, you activate it on the host.
   Each Implementer gets a clone of it in its tree, `.asb/impl/N/.env`, and installs
