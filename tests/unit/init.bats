@@ -799,3 +799,40 @@ shared_env() {
   [[ "$output" == *"kept .asb/serve/planner-1.md: changed since --init wrote it"* ]]
   [ "$(cat "$PROJ/.asb/serve/planner-1.md")" = mine ]
 }
+
+@test "the roles model: a [briefing] start for the Planners, Implementers, Reviewers and the Supervisor, its file written from the model's start/ and kept; none for the Gate or setup" {
+  init -- roles planner=2 implementer=1 reviewer=0
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" r m sec
+  m="$(dirname "$ENGINE")/models/roles"
+  for r in planner implementer supervisor; do
+    sec="[briefing:$r-*]"
+    [[ "$r" == supervisor ]] && sec="[briefing:$r]"
+    [ "$(section "$sec" "$df" | sed 's/[[:space:]]*#.*//')" = "start = .asb/start/$r.md" ]
+    cmp -s "$PROJ/.asb/start/$r.md" "$m/start/$r.md"
+    [ "$(awk 'length > 88' "$m/start/$r.md" | wc -l)" -eq 0 ]
+  done
+  [ "$(awk '/^start = / && length > 88' "$df" | wc -l)" -eq 0 ]
+  grep -qF 'Arm your watcher as your purpose file says' "$PROJ/.asb/start/planner.md"
+  grep -qF "read every role's messages" "$PROJ/.asb/start/supervisor.md"
+  # no Reviewer instance: no file for it; the Gate and setup start as typed
+  [ ! -e "$PROJ/.asb/start/reviewer.md" ]
+  for r in gate setup; do
+    run ! grep -qE '^start = ' <(section "[briefing:$r]" "$df")
+    [ ! -e "$PROJ/.asb/start/$r.md" ]
+  done
+  # the review names each; --check names a Planner's
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[briefing:planner-*] start, for the roles planner-*: its first turn at every start is the text of .asb/start/planner.md"* ]]
+  [[ "$output" == *"[briefing:supervisor] start, for the roles supervisor: its first turn at every start is the text of .asb/start/supervisor.md"* ]]
+  check planner-2
+  [[ "$output" == *"  first turn at every start: the text of .asb/start/planner.md"$'\n'* ]]
+  # run again: a start text you changed is kept, one nobody changed takes the model's
+  printf 'mine\n' >"$PROJ/.asb/start/planner.md"
+  init -- roles planner=2 implementer=1 reviewer=0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/start/planner.md: changed since --init wrote it"* ]]
+  [ "$(cat "$PROJ/.asb/start/planner.md")" = mine ]
+  cmp -s "$PROJ/.asb/start/implementer.md" "$m/start/implementer.md"
+}

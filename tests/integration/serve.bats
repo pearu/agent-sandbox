@@ -216,3 +216,21 @@ status_of() { # --status of the role, in $output
   [ "$STOPPED" -eq 0 ]
   run ! grep -q 'turn failed' "$W/.asb/coord/worker/messages.md"
 }
+
+@test "--serve: a turn is not given the role's [briefing] start; a launch of the role at a terminal is" {
+  printf '[briefing]\nstart = start.md\n[serve:worker]\nwatch = inbox.md\nprompt = prompt.md\n' >"$W/.agent-sandbox"
+  printf 'Arm the watcher.\n' >"$W/start.md"
+  engine_cmd
+  (cd "$W" && printf 'y\nn\n' | env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  serve
+  printf '## 1\nwrite a.txt\n' >>"$W/inbox.md"
+  turns 1
+  recorded
+  [[ "$(sed -n 1p "$W/turns")" == "-p --session-id "*" --permission-mode bypassPermissions Read your inbox and act on it." ]]
+  status_of --shutdown
+  stopped "$SERVE_PID"
+  engine plain --role worker probe
+  stopped "$BG_PID"
+  [ "$STOPPED" -eq 0 ]
+  [ "$(sed -n 2p "$W/turns")" = "--start Arm the watcher." ]
+}

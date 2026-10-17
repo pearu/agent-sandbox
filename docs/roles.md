@@ -273,7 +273,11 @@ its terminal.
   again after each wake, which is a turn anyway. Claude Code wakes the idle session
   when the command exits and tells it which file changed; a background command has no
   time limit in a terminal session, so nothing expires (measured with Claude Code
-  2.1.300: 13.6 minutes idle with no notice, and the reply 5 s after the write). The
+  2.1.300: 13.6 minutes idle with no notice, and the reply 5 s after the write). A
+  session relaunched with `--continue` has no turn to do it in until something gives it
+  one, so the launch does: `[briefing:...] start = .asb/start/<role>.md` is the text it
+  runs as its first turn at every start -- arm the watcher, read the inbox, report --
+  and the role is running, and seen running, without a keypress. The
   Supervisor runs one over every role's `messages.md` but the Gate's and its own. The
   roles' `[permissions]` lines let the watcher run without a prompt under any permission
   mode.
@@ -306,7 +310,10 @@ On the host, at the top of the repository:
 `asb --init` writes `.agent-sandbox`, `.asb/` with every directory the file names, a
 purpose file per instance in `.asb/roles/`, the coord index, an empty inbox per role in
 `.asb/coord/to/`, the watcher `.asb/bin/inbox-wait`, the per-turn prompt of each
-Planner, Implementer and Reviewer in `.asb/serve/` (for `--serve`, below), and
+Planner, Implementer and Reviewer in `.asb/serve/` (for `--serve`, below), the first
+turn of every start of each Planner, Implementer, Reviewer and the Supervisor in
+`.asb/start/` (`[briefing] start`: a relaunched role arms its watcher and reads its
+inbox without a keypress), and
 `.asb/.gitignore`
 (`.asb/` is never committed); it makes each Implementer's clone (with your git identity) and,
 with `--env`, its environment. Without counts you get one of each role; `reviewer=0`
@@ -529,6 +536,7 @@ prompt = .asb/serve/planner-1.md
 watch = .asb/coord/to/planner-2.md
 prompt = .asb/serve/planner-2.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
+start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-1]
@@ -554,6 +562,7 @@ prompt = .asb/serve/implementer-1.md
 watch = .asb/coord/to/implementer-2.md
 prompt = .asb/serve/implementer-2.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
+start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
@@ -563,6 +572,7 @@ prompt = .asb/serve/implementer-2.md
 watch = .asb/coord/to/reviewer-1.md
 prompt = .asb/serve/reviewer-1.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
+start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -579,6 +589,7 @@ Bash(git fetch:*)
 Bash(git merge:*)
 Bash(conda env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
+start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal is opened when the Supervisor says it is the Gate's turn

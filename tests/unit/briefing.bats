@@ -733,3 +733,96 @@ CHECK
   [[ "$output" == *"[permissions]: not passed to the agent -- they travel with the briefing, which is off"* ]]
   run ! join_has --settings
 }
+
+# start_project -- a planner briefed from its purpose file, whose first turn is
+# .asb/start/{role}.md; every other role from the unsuffixed [briefing]'s start file.
+start_project() {
+  mkdir -p "$PROJ/.asb/roles" "$PROJ/.asb/start"
+  printf 'Plan.\n' >"$PROJ/.asb/roles/planner-1.md"
+  printf 'Arm your watcher; read your inbox.\n' >"$PROJ/.asb/start/planner-1.md"
+  printf 'Anyone.\n' >"$PROJ/.asb/start/all.md"
+  printf '[briefing]\nstart = .asb/start/all.md\n[briefing:planner-*]\nstart = .asb/start/{role}.md\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  approve
+}
+
+@test "[briefing] start: the file's text is the session's first turn, after the agent's own arguments; {role}, the latest matching line wins" {
+  start_project
+  run_engine -- asb --role planner-1 claude --continue
+  [ "$status" -eq 0 ]
+  [ "${#JOINV[@]}" -eq 4 ]
+  [ "${JOINV[*]:1}" = "--continue -- Arm your watcher; read your inbox." ]
+  [ "${JOINB[0]}" = --settings ] # the briefing's own arguments still come first
+  run_engine -- asb --role planner-1 claude --resume 01234567-89ab-cdef-0123-456789abcdef
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--resume 01234567-89ab-cdef-0123-456789abcdef -- Arm your watcher; read your inbox." ]
+  run_engine -- asb --role other claude
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-- Anyone." ]
+  # the profile declines a run that is not an interactive start
+  run_engine -- asb --role planner-1 claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-p Reply ok." ]
+  # a second terminal joining the role's running launch starts a session too
+  engine_bg -- asb --role planner-1 claude
+  run_engine -- asb --role planner-1 claude --continue
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'planner-1'"* ]]
+  [ "${JOINV[*]:1}" = "--continue -- Arm your watcher; read your inbox." ]
+  release_bg
+}
+
+@test "[briefing] start: a missing file, or a path out of the project, refuses the launch, naming it" {
+  start_project
+  rm "$PROJ/.asb/start/planner-1.md"
+  run_engine -- asb --role planner-1 claude --continue
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"role 'planner-1' starts with the text of '.asb/start/planner-1.md' ([briefing] start), which does not exist. Refusing"* ]]
+  [ ! -s "$H/argv" ]
+  printf '[briefing:planner-*]\nstart = ../start.md\n' >"$PROJ/.agent-sandbox"
+  printf 'x\n' >"$H/start.md"
+  approve
+  [[ "$output" == *"[briefing:planner-*] start '../start.md' is not a path in the project (relative to it, no '..'); a launch of the roles planner-* refuses"* ]]
+  run_engine -- asb --role planner-1 claude --continue
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[briefing] start '../start.md' is not a path in the project"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "[briefing] start: not read for --exec, a verb, a turn of --serve, or with the briefing off -- a missing file refuses none of them" {
+  start_project
+  rm "$PROJ/.asb/start/planner-1.md"
+  run_engine -- asb --role planner-1 --profile claude --exec true
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]}" = "true" ]
+  run_engine -- asb --role planner-1 claude agents
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is not running"* ]]
+  run_engine AGENT_SANDBOX_SERVE_TURN=1 -- asb --role planner-1 claude -p --resume 01234567-89ab-cdef-0123-456789abcdef 'Read your inbox.'
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-p --resume 01234567-89ab-cdef-0123-456789abcdef Read your inbox." ]
+  run_engine AGENT_SANDBOX_BRIEFING=off -- asb --role planner-1 claude --continue
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--continue" ]
+}
+
+@test "[briefing] start: the review and --check name the file; --apply adds the key and the review takes it" {
+  start_project
+  [[ "$output" == *"[briefing:planner-*] start, for the roles planner-*: its first turn at every start is the text of .asb/start/{role}.md"* ]]
+  [[ "$output" == *"[briefing] start, for every role: its first turn at every start is the text of .asb/start/all.md"* ]]
+  [[ "$output" != *"unknown [briefing] key"* ]]
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role planner-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  first turn at every start: the text of .asb/start/planner-1.md"$'\n'* ]]
+  rm "$PROJ/.asb/start/planner-1.md"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role planner-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [[ "$output" == *"  first turn at every start: the text of .asb/start/planner-1.md -- MISSING: a launch refuses"* ]]
+  # --apply: the line lands in its section, and the review that follows reads it as a key
+  printf '[briefing:reviewer-*]\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$PROJ/.asb/roles"
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --apply "[briefing:reviewer-*]" "start = .asb/start/reviewer.md" 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [ "$(sed -n '/^\[briefing:reviewer-\*\]$/{n;p}' "$PROJ/.agent-sandbox")" = "start = .asb/start/reviewer.md" ]
+  [[ "$output" == *"[briefing:reviewer-*] start, for the roles reviewer-*: its first turn at every start is the text of .asb/start/reviewer.md"* ]]
+  [[ "$output" != *"unknown [briefing] key"* ]]
+}

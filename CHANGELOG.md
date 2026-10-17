@@ -47,6 +47,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A relaunched role runs a first turn without a keypress: `[briefing] start = PATH`**.
+  After every role was launched, the Supervisor read them all as not running: a session
+  relaunched with `claude --continue` sits at its prompt until something gives it a turn,
+  so the purpose file's "at start, arm the watcher" never ran, no `alive` file was
+  touched, and the user typed "hi" in each terminal. `start = PATH`, in `[briefing]` or
+  `[briefing:<glob>]`, names a file in the project (`{role}` its name) whose text the
+  session runs as its first turn at every interactive start; the profile hands it over
+  (`profile_start_args`; claude: the prompt after its own arguments, behind a `--`, which
+  `--continue` and `--resume ID` take as the first turn -- measured with Claude Code
+  2.1.300 -- and a prompt you type wins). Not under `--serve`, `--exec`, a verb, `-p`,
+  `--bg` or `[briefing] mode = off`. Read on the host at launch; a missing file refuses
+  the launch; the review and `--check` name it. The roles model's `--init` writes one for
+  the Planners, Implementers, Reviewers and the Supervisor, `.asb/start/<role>.md`, from
+  the model's `start/`, kept as the purpose files are.
 - **A role's status line shows which role it is and what it is doing** (#287). Six role
   terminals looked alike, the one that needed you included. The claude profile now sets
   Claude Code's `statusLine` in the `--settings` it builds: the role (the project's name
