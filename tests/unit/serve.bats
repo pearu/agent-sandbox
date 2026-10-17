@@ -52,17 +52,17 @@ run_apply() {
 
 @test "[serve]: the review says what the loop waits on and reads, per section; a missing key or a path out of the project is said" {
   printf '%s\n' '[serve:impl-*]' 'watch = .asb/coord/to/{role}.md' 'prompt = .asb/serve/p.md' \
-    '[serve:half]' 'watch = inbox.md' '[serve:out]' 'watch = ../x' 'prompt = /etc/passwd' 'colour = red' >"$PROJ/.agent-sandbox"
+    '[serve:half]' 'prompt = p.md' '[serve:out]' 'watch = ../x' 'prompt = /etc/passwd' 'colour = red' >"$PROJ/.agent-sandbox"
   run_review
   [[ "$output" == *"[serve:impl-*], for the roles impl-*: \`asb --role ROLE --serve CMD\` holds the role's launch on the host and, at each change to .asb/coord/to/{role}.md, runs one turn of the role's session in its sandbox, told the text of .asb/serve/p.md; the role's session id goes to .asb/coord/ROLE/session. It widens nothing"*"approve this"* ]]
-  [[ "$output" == *"[serve:half] has no 'prompt = PATH'; --serve refuses for the roles half until it has both watch and prompt"* ]]
+  [[ "$output" == *"[serve:half] has no 'watch = PATH'; --serve refuses for the roles half until it has both watch and prompt"* ]]
   [[ "$output" == *"[serve:out] watch '../x' is not a path in the project (relative to it, no '..'); --serve refuses for the roles out"* ]]
   [[ "$output" == *"[serve:out] prompt '/etc/passwd' is not a path in the project"* ]]
   [[ "$output" == *"ignoring unknown [serve] key 'colour'"* ]]
 }
 
 @test "[serve]: --check names the role's loop, the prompt file's absence, and a section --serve refuses; the suffix makes a role" {
-  printf '%s\n' '[serve:impl-*]' 'watch = inbox.md' 'prompt = p.md' '[serve:half]' 'watch = inbox.md' >"$PROJ/.agent-sandbox"
+  printf '%s\n' '[serve:impl-*]' 'watch = inbox.md' 'prompt = p.md' '[serve:half]' 'prompt = p.md' >"$PROJ/.agent-sandbox"
   check_role impl-1
   [ "$status" -eq 0 ]
   [[ "$output" == *"--serve: a turn of its session per change to inbox.md, told the text of p.md -- MISSING: --serve refuses"* ]]
@@ -71,7 +71,39 @@ run_apply() {
   check_role impl-1
   [[ "$output" == *"--serve: a turn of its session per change to inbox.md, told the text of p.md"$'\n'* ]]
   check_role half
-  [[ "$output" == *"--serve: refused -- [serve] needs watch and prompt, paths in the project (watch = inbox.md, prompt = none)"* ]]
+  [[ "$output" == *"--serve: refused -- [serve] needs watch and prompt, paths in the project (watch = none, prompt = p.md)"* ]]
+}
+
+# settings_of [VAR=value ...] CMD ARGS... -- run_engine, then the launch's briefing
+# directory copied out by the stub bwrap to $OUT (the engine removes it with the session).
+settings_of() {
+  OUT="$H/copied/briefing"
+  grep -q BWRAP_COPY "$H/bin/bwrap" || sed -i 's|^\. "\${0%/\*}/keeper-tail"$|if [ -n "${BWRAP_COPY:-}" ]; then mkdir -p "$BWRAP_COPY"; cp -r "$AGENT_SANDBOX_SESSION_BASE"/session.*/. "$BWRAP_COPY"/.. 2>/dev/null \|\| true; fi\n&|' "$H/bin/bwrap"
+  grep -q BWRAP_COPY "$H/bin/bwrap"
+  rm -rf "$H/copied"
+  run_engine BWRAP_COPY="$OUT" -- "$@"
+}
+
+@test "[serve:ROLE] with watch alone: the review and --check say watch only, the Stop hook guards the inbox, and --serve refuses the role" {
+  printf '%s\n' '[serve:gate]' 'watch = .asb/coord/to/gate.md' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[serve:gate], for the roles gate: watch only -- the watcher on .asb/coord/to/gate.md is enforced, the role is not served (no prompt: --serve refuses). It widens nothing"*"approve this"* ]]
+  [[ "$output" != *"[serve:gate] has no"* ]]
+  check_role gate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  --serve: watch only -- the watcher on .asb/coord/to/gate.md is enforced, the role is not served"$'\n'* ]]
+  [[ "$output" == *$'\n'"  watcher: a turn does not end while .asb/coord/to/gate.md has no watcher running (the Stop hook refuses once)"$'\n'* ]]
+  [[ "$output" != *"--serve: refused"* ]]
+  trust
+  settings_of asb --role gate claude --continue
+  [ "$status" -eq 0 ]
+  python3 -I -c 'import json, sys; [print(h["command"]) for g in json.load(open(sys.argv[1]))["hooks"]["Stop"] for h in g["hooks"]]' "$OUT/settings.json" >"$H/stop"
+  [ "$(cat "$H/stop")" = "AGENT_SANDBOX_WATCH=.asb/coord/to/gate.md bash /run/agent-sandbox/state-hook.sh Stop off" ]
+  run_engine -- asb --role gate --serve claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--serve: role 'gate': its [serve] names no prompt -- watch only: this role is not served"* ]]
+  [[ "$output" != *"--apply"* ]]
+  [ ! -s "$H/argv" ]
 }
 
 @test "[serve]: --apply adds a [serve:ROLE] section, and the review names it" {
@@ -95,7 +127,7 @@ run_apply() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"--serve: role 'planner-1' has no [serve] section with both 'watch = PATH'"*"asb --apply '[serve:planner-1]' 'watch = PATH' 'prompt = PATH'"* ]]
   [ ! -s "$H/argv" ]
-  printf '[serve:planner-*]\nwatch = inbox.md\n' >"$PROJ/.agent-sandbox"
+  printf '[serve:planner-*]\nprompt = p.md\n' >"$PROJ/.agent-sandbox"
   trust
   run_engine -- asb --role planner-1 --serve claude
   [ "$status" -eq 1 ]

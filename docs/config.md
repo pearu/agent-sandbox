@@ -76,16 +76,16 @@ Sections:
   under every preset, `native` included, as `[allow]` is.
 - **`[serve]`** — what `asb --role ROLE --serve CMD` (#277) waits on and says, for a
   role with no terminal: `watch = PATH`, the file whose every change is a turn (an
-  inbox), and `prompt = PATH`, the file whose text each turn is told; both required,
-  both relative to the project, with no `..`. Per role with `[serve:<role>]`; the
-  latest line of each key that matches the role wins. `--serve` runs on the host, in
-  the foreground: it holds the role's launch open, polls the watched file every
-  second, and at each change runs one turn of the role's own session as a join --
-  the agent with the profile's turn arguments (claude: `-p --session-id ID` the first
-  time, `-p --resume ID` after, and `--permission-mode bypassPermissions`: nobody is
-  there to answer a prompt, so Claude Code's prompts are off and the role is bounded
-  by its policy alone) and the prompt's text. A turn that fails is one line in
-  `.asb/coord/ROLE/messages.md`, written by a rename. The
+  inbox), and `prompt = PATH`, the file whose text each turn is told; both relative to
+  the project, with no `..`, and `prompt` required for `--serve` only. Per role with
+  `[serve:<role>]`; the latest line of each key that matches the role wins. `--serve`
+  runs on the host, in the foreground: it holds the role's launch open, polls the
+  watched file every second, and at each change runs one turn of the role's own
+  session as a join -- the agent with the profile's turn arguments (claude: `-p
+  --session-id ID` the first time, `-p --resume ID` after, and `--permission-mode
+  bypassPermissions`: nobody is there to answer a prompt, so Claude Code's prompts are
+  off and the role is bounded by its policy alone) and the prompt's text. A turn that
+  fails is one line in `.asb/coord/ROLE/messages.md`, written by a rename. The
   session's id goes to `.asb/coord/ROLE/session`, which a later `--serve` resumes, and
   the loop touches `.asb/coord/ROLE/alive` as a terminal role's watcher does. A turn
   waits while something else is joined into the role's launch -- a terminal on the
@@ -104,7 +104,9 @@ Sections:
   **At a terminal**, `watch` also names the file a session of the role keeps a watcher
   on: the claude profile's `Stop` hook refuses, once, a turn that ends with no
   `inbox-wait` running (see [profiles](profiles.md)), and `--check` says so for the
-  role. Not on a turn of `--serve` nor in a print run.
+  role. Not on a turn of `--serve` nor in a print run. A section with `watch` alone is
+  a watch only: the watcher is enforced, the role is not served -- `--serve` refuses it
+  ("names no prompt"), and the review and `--check` say "watch only".
 - **`[share-memory]`** — see [Memory scoping](#memory-scoping). Project paths
   whose memory this project may read, one per line. A single line `all` keeps
   every project visible; the section present but empty is this project alone. An entry may be a shell wildcard (`~/git/acme/*`), which shares the
