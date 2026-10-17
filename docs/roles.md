@@ -127,7 +127,7 @@ relayed, not run.
 | inputs | every artefact; every role's Messages; your instructions |
 | outputs | the Instructions, in every role's inbox; the texts the Gate posts, in its own directory; `main`, with the accepted change merged and built; its Messages |
 | may | write the inboxes; merge and build in `main`; on your instruction |
-| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse`; no SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**) |
+| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse`; no SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**); merge before every approval is in, the Reviewer's, the Implementer's, the Planner's and yours (**told**) |
 
 ### Gate
 
@@ -218,7 +218,9 @@ Every role launches from the repository itself:
   history reads it on GitHub.
 - **Builds.** An Implementer builds in its clone; the Supervisor builds `main` after a
   merge, so `main` always holds the integration state and its build, which you can try
-  on the host.
+  on the host. It re-runs the suite only when `main` moved since the branch's base;
+  otherwise the merged tree is the branch's own, already tested by the Reviewer, and it
+  says so.
 - **Environments.** The development environment is a conda environment you name
   (`x-dev` here): `main`'s, the Supervisor installs into it, you activate it on the host.
   Each Implementer gets a clone of it in its tree, `.asb/impl/N/.env`, and installs

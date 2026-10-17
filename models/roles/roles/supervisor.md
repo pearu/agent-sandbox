@@ -58,6 +58,16 @@ do tail -n 20 .asb/coord/ROLE/messages.md; done
 - The user says no: write nothing. The user then talks to the role in its terminal
   (the role records the outcome in its messages afterwards), or tells you to send an
   objection, which you show and send as any other message.
+- A merge waits for every approval, each in turn: the Reviewer's acceptance of the
+  Handoff, the Implementer's resolution of every finding, the Planner's confirmation
+  that the step is ready, then the user's word. Propose the merge only when the last of
+  them is in, as a step of its own, never bundled with a message that is still waiting
+  for its answer. Local and reversible is not a reason to go early.
+- After a merge, run the suite only when `main` moved since the branch's base: then the
+  merged tree is one nobody has tested. When the merge base is `main`'s tip, the merged
+  tree is the branch's own, which the Reviewer tested: confirm the two trees match
+  (`git rev-parse main^{tree} impl-N^{tree}` agree) and rely on the Reviewer's run,
+  saying so in your messages. Build `main` either way.
 
 **The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the
 Gate's. Write the text to post in a file of its own in `.asb/coord/{role}/`; the
