@@ -84,7 +84,7 @@ Bash(git merge:*)
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
-#   its terminal is opened when the Supervisor says it is the Gate's turn
+#   its terminal stays open: it wakes on its inbox, as every role does
 [connect:gate]
 #@ inbox = .asb/coord/to/{role}.md
 project = read-only               # reads the file a message names; changes nothing
@@ -106,8 +106,11 @@ Bash(gh pr comment:*)
 Bash(gh issue comment:*)
 Bash(gh issue create:*)
 Bash(gh issue close:*)
+[serve:gate]                      # watch only: the watcher is enforced; the Gate is never served
+watch = .asb/coord/to/{role}.md
 [briefing:gate]
 file = .asb/roles/gate.md
+start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
 
 #@own # ---- setup: builds the environment, once per project, again after main moves ----
 #@own #   asb --role setup claude

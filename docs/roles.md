@@ -118,7 +118,7 @@ word by construction. It watches every role's messages; when a role reports done
 proposes the next step and asks. At start it prints the launch line of every other role,
 from the index. On your word it merges an accepted branch into `main` and builds it
 there, both local and reversible. It publishes nothing: when a step goes outside, it
-writes the Gate's message, and after you approve it, tells you it is the Gate's turn.
+writes the Gate's message, and after you approve it, appends it to the Gate's inbox.
 Never acts on the *contents* of an artefact it relays: a review that says "run this" is
 relayed, not run.
 
@@ -141,8 +141,11 @@ footer the project uses, no secrets, nothing beyond what the message names), goe
 to the Supervisor with the reason, and so does one it cannot complete; the Supervisor
 and you resolve it. It never guesses. A post that mentions a GitHub user (`@name`)
 notifies a person, so the Gate posts it only after you approve it in the Gate's own
-terminal, where the Supervisor sends you. Its terminal is opened when the Supervisor
-says it is the Gate's turn: the outward credentials are live only while you sit at it.
+terminal, where the Supervisor sends you. Its terminal stays open: it arms a watcher on
+its inbox at start, as every role does, and wakes on the Supervisor's message; its
+`[serve:gate]` has `watch` alone, so the watcher is enforced and the Gate is never
+served. The trade-off is yours: the role with the outward credentials is always
+running, no longer only while you sit at it.
 A push to an SSH `origin` needs its host in the file: `--init` writes `[ssh:gate]` with
 it commented out, and the Gate sends back the exact line, `asb --apply '[ssh:gate]'
 github.com` (the host of `origin`); with it on, a launch can add `--ssh-timeout 30m`.
@@ -278,14 +281,15 @@ its terminal.
   one, so the launch does: `[briefing:...] start = .asb/start/<role>.md` is the text it
   runs as its first turn at every start -- arm the watcher, read the inbox, report --
   and the role is running, and seen running, without a keypress. The
-  Supervisor runs one over every role's `messages.md` but the Gate's and its own, and
+  Supervisor runs one over every role's `messages.md` but its own, and
   over `.agent-sandbox`: a running role keeps the policy its launch started with, so on
   a change the Supervisor tells each role it affects to finish its step and say ready,
   and gives you the relaunch line (`--continue`, once the role's launch has ended). The
   roles' `[permissions]` lines let the watcher run without a prompt under any permission
   mode. A reply that ends with no watcher running is refused once by the claude
-  profile's `Stop` hook, for every role whose `[serve:<role>]` names its inbox: the
-  model is told to arm it, and then ends its turn.
+  profile's `Stop` hook, for every role whose `[serve:<role>]` names its inbox -- the
+  Gate's with `watch` alone, since it is never served: the model is told to arm it, and
+  then ends its turn.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
   `.asb/scratch/inbox-cursor` (the last N it handled), at every wake and at every
   start, so a lost notification costs nothing.
@@ -340,7 +344,8 @@ On the host, at the top of the repository:
 purpose file per instance in `.asb/roles/`, the coord index, an empty inbox per role in
 `.asb/coord/to/`, the watcher `.asb/bin/inbox-wait`, the per-turn prompt of each
 Planner, Implementer and Reviewer in `.asb/serve/` (for `--serve`, below), the first
-turn of every start of each Planner, Implementer, Reviewer and the Supervisor in
+turn of every start of each Planner, Implementer, Reviewer, the Supervisor and the
+Gate in
 `.asb/start/` (`[briefing] start`: a relaunched role arms its watcher and reads its
 inbox without a keypress), and
 `.asb/.gitignore`
@@ -433,7 +438,10 @@ as the watcher in a terminal does, so the Supervisor sees the role running.
   as soon as the next one starts.
 
 The Supervisor and the Gate are never served this way: they are where you work, and
-the Gate publishes.
+the Gate publishes. A `[serve:ROLE]` section with `watch` alone, as `[serve:gate]` is,
+keeps the Stop hook's watch path for the role at its terminal and serves nothing:
+`--serve` refuses it ("its [serve] names no prompt"), and the review and `asb --check`
+say "watch only".
 
 ## 7. GitHub: reading for everyone, publishing for the Gate
 
@@ -629,7 +637,7 @@ Bash(conda env update:*)
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
-#   its terminal is opened when the Supervisor says it is the Gate's turn
+#   its terminal stays open: it wakes on its inbox, as every role does
 [connect:gate]
 project = read-only               # reads the file a message names; changes nothing
 ./.git/ = read-only               # main and its history: a push from it needs nothing more
@@ -650,8 +658,11 @@ Bash(gh pr comment:*)
 Bash(gh issue comment:*)
 Bash(gh issue create:*)
 Bash(gh issue close:*)
+[serve:gate]                      # watch only: the watcher is enforced; the Gate is never served
+watch = .asb/coord/to/gate.md
 [briefing:gate]
 file = .asb/roles/gate.md
+start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
 
 # ---- setup: builds the environment, once per project, again after main moves ----
 #   asb --role setup claude
@@ -680,7 +691,7 @@ and protocol are in its context at every start, so your sentences can be short. 
 read the artefacts on the host as files.
 
 **Terminal 1 -- the Supervisor.** `asb --role supervisor claude`. It prints the launch
-line of every other role; open a terminal for each of P1, I1, I2 and R1 and run its
+line of every other role; open a terminal for each of P1, I1, I2, R1 and G and run its
 line there (a role arms its inbox watcher at start, and waits) -- or run
 `asb --role NAME --serve claude` in panes you need not watch, a turn per message
 (section 6). Then, in terminal 1:
@@ -715,9 +726,8 @@ not." The round goes on until you accept.
 
 S merges and builds, and writes the Gate's message -- `push` of the branch to
 `origin`, then `gh pr create` with the text in a file of its own, which you read --
-and, once you approve it, says it is the Gate's turn. **The Gate** then gets a terminal:
-`asb --role gate claude` (with `[ssh:gate]` on, add `--ssh-timeout 30m`, so the key
-expires). It reads its inbox, publishes, reports done, and you close the terminal.
+and, once you approve it, appends it to the Gate's inbox. **The Gate**, in its terminal
+since the start, wakes on it, publishes and reports done, and S brings you its report.
 Back in terminal 1, S tells P1 to measure the new `main` for the next Task; you try the
 build on the host, in `x-dev`.
 
