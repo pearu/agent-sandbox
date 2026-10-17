@@ -74,10 +74,11 @@ profile_command=claude
 # Keys this profile reads from a `[claude]` section of a project's .agent-sandbox.
 # The single source of truth: the review warns on any other [claude] key (a typo
 # must not silently do nothing), and the docs drift-check verifies each is
-# documented. The engine reads `hide` (_as_hide_spec). The profile's own [agent] keys
+# documented. The engine reads `hide` (_as_hide_spec); profile_briefing_args reads
+# `state-background` (on|off, #287). The profile's own [agent] keys
 # (the verbs, in agent-sandbox beside this file) are not among them: a project's
 # file may not set those.
-profile_dotfile_keys=(hide)
+profile_dotfile_keys=(hide state-background)
 
 # Map a project directory to Claude Code's per-project state slug: the absolute
 # path with every character outside [A-Za-z0-9-] turned into "-", one for one
@@ -286,6 +287,17 @@ profile_telemetry_hosts() {
 # it reports a host the proxy refused during the command, as it happens. Both
 # events, since a command a refusal broke usually exits nonzero, which Claude Code
 # reports as PostToolUseFailure (code.claude.com/docs/en/hooks).
+#
+# The status line (#287): statusline.sh, copied beside it the same way, prints the role
+# (the project's name for the default role) and what the session is doing, which
+# state-hook.sh records from SessionStart, UserPromptSubmit, Stop, PermissionRequest,
+# Notification, PostToolUse and PostToolUseFailure. The role is in the command: neither
+# the line's stdin JSON nor the sandbox's environment carries it (measured, 2.1.300).
+# refreshInterval 1, since without it the line is redrawn only on assistant messages
+# and a Notification never redraws it.
+# A statusLine in the user's --settings wins (profile.py merge-settings). With the
+# project's `[claude] state-background = on`, the same hook also sets the terminal's
+# background per state, and a SessionEnd hook resets it.
 profile_briefing_args() {
   local inside="$1"
   shift
@@ -296,14 +308,36 @@ profile_briefing_args() {
   # shellcheck disable=SC2154
   local host_file="$_brief_out_host/settings.json" inside_file="$_brief_out_inside/settings.json"
   local ours user_val="" i
-  local refusal="bash $_brief_out_inside/refusal-hook.sh"
-  cp -- "$profile_home/refusal-hook.sh" "$_brief_out_host/refusal-hook.sh" || {
-    _as_msg "briefing: cannot copy refusal-hook.sh to $_brief_out_host; continuing without the session hooks"
-    return 0
-  }
-  ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"}]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]"
-  ours+=",\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUse\"}]}]"
-  ours+=",\"PostToolUseFailure\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal PostToolUseFailure\"}]}]}"
+  local refusal="bash $_brief_out_inside/refusal-hook.sh" f kv bg=off ev
+  for f in refusal-hook.sh state-hook.sh statusline.sh; do
+    cp -- "$profile_home/$f" "$_brief_out_host/$f" || {
+      _as_msg "briefing: cannot copy $f to $_brief_out_host; continuing without the session hooks"
+      return 0
+    }
+  done
+  local state="bash $_brief_out_inside/state-hook.sh"
+  # shellcheck disable=SC2154 # _df_profile_kv: the engine's, by dynamic scope
+  for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+    [[ "${kv%%=*}" == state-background ]] || continue
+    case "${kv#*=}" in
+      on | off) bg="${kv#*=}" ;;
+      *) _as_msg ".agent-sandbox: [claude] state-background '${kv#*=}' unknown (on|off); keeping off" ;;
+    esac
+  done
+  local state_entry="{\"type\":\"command\",\"command\":\"$state SessionStart $bg\"}"
+  ours="{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SessionStart.json\"},$state_entry]}],\"SubagentStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cat $inside/hook-SubagentStart.json\"}]}]"
+  # After any tool, the state hook too (no matcher, an entry of its own): a tool ran, so
+  # the turn is working again, after a permission the user answered.
+  for ev in PostToolUse PostToolUseFailure; do
+    ours+=",\"$ev\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal $ev\"}]},{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
+  done
+  local -a state_events=(UserPromptSubmit Stop PermissionRequest Notification)
+  [[ "$bg" == on ]] && state_events+=(SessionEnd)
+  for ev in "${state_events[@]}"; do
+    ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
+  done
+  # shellcheck disable=SC2154 # _role: the engine's, by dynamic scope
+  ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"bash $_brief_out_inside/statusline.sh ${_role:-default}\",\"refreshInterval\":1}"
   # shellcheck disable=SC2154 # _permission_rules: the engine's, by dynamic scope
   if [[ -n "${_permission_rules[*]+x}" ]] && ((${#_permission_rules[@]})); then
     local r rules=""

@@ -153,6 +153,19 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   done
 }
 
+@test "merge-settings: our statusLine only when theirs has none; theirs, even an odd one, is kept as it is (#287)" {
+  local ours='{"hooks":{},"statusLine":{"type":"command","command":"bash s.sh r","refreshInterval":1}}'
+  run py merge-settings --ours "$ours" --user '{"model":"m"}' --out "$T/out.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/out.json" 'd["statusLine"], d["model"]')" = "({'type': 'command', 'command': 'bash s.sh r', 'refreshInterval': 1}, 'm')" ]
+  run py merge-settings --ours "$ours" --user '{"statusLine":{"type":"command","command":"mine"}}' --out "$T/out2.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/out2.json" 'd["statusLine"]')" = "{'type': 'command', 'command': 'mine'}" ]
+  run py merge-settings --ours "$ours" --user '{"statusLine":null}' --out "$T/out3.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/out3.json" 'd["statusLine"]')" = "None" ]
+}
+
 @test "a call it does not understand is a usage error, exit 2" {
   run py
   [ "$status" -eq 2 ]

@@ -148,3 +148,106 @@ STUB
   argv_has --bind "$H/home/.claude/projects/$slug/memory" "$H/home/.claude/projects/$slug/memory" # memory on top of the transcripts store
   [ "${#slug}" -le 207 ]                                                                          # 200 + "-" + at most six characters, so under NAME_MAX
 }
+
+# ----- the status line and the state hooks (#287) ------------------------------
+
+# settings_of [VAR=value ...] CMD ARGS... -- run the engine with a stub bwrap that copies the
+# session's briefing directory out before the engine removes it; the settings file the
+# agent is given is then $OUT/settings.json. The caller checks $status.
+settings_of() {
+  OUT="$H/copied/briefing"
+  grep -q BWRAP_COPY "$H/bin/bwrap" || sed -i 's|^\. "\${0%/\*}/keeper-tail"$|if [ -n "${BWRAP_COPY:-}" ]; then mkdir -p "$BWRAP_COPY"; cp -r "$AGENT_SANDBOX_SESSION_BASE"/session.*/. "$BWRAP_COPY"/.. 2>/dev/null \|\| true; fi\n&|' "$H/bin/bwrap"
+  grep -q BWRAP_COPY "$H/bin/bwrap"
+  rm -rf "$H/copied"
+  local -a envs=()
+  while [[ "$1" == *=* ]]; do
+    envs+=("$1")
+    shift
+  done
+  run_engine BWRAP_COPY="$OUT" ${envs[@]+"${envs[@]}"} -- "$@"
+}
+
+# check_state_settings FILE ROLE BACKGROUND -- the statusLine names ROLE and redraws
+# every second; SessionStart, UserPromptSubmit, Stop, PermissionRequest, Notification,
+# PostToolUse and PostToolUseFailure each run state-hook.sh with BACKGROUND (the last two
+# for any tool, beside the refusal hook's Bash entry), and SessionEnd only when it is on.
+check_state_settings() {
+  python3 -I - "$@" <<'CHECK'
+import json, sys
+path, role, bg = sys.argv[1:4]
+IN = "/run/agent-sandbox"
+m = json.load(open(path))
+assert m["statusLine"] == {"type": "command", "command": f"bash {IN}/statusline.sh {role}", "refreshInterval": 1}, m["statusLine"]
+hooks = m["hooks"]
+def cmds(ev):
+    return [h["command"] for g in hooks.get(ev, []) for h in g["hooks"]]
+for ev in ("SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest", "Notification"):
+    assert f"bash {IN}/state-hook.sh {ev} {bg}" in cmds(ev), (ev, cmds(ev))
+assert f"cat {IN}/hook-SessionStart.json" in cmds("SessionStart"), cmds("SessionStart")
+for ev in ("PostToolUse", "PostToolUseFailure"):
+    refusal, state = hooks[ev]
+    assert refusal == {"matcher": "Bash", "hooks": [{"type": "command", "command": f"bash {IN}/refusal-hook.sh {ev}"}]}, refusal
+    assert state == {"hooks": [{"type": "command", "command": f"bash {IN}/state-hook.sh {ev} {bg}"}]}, state
+end = cmds("SessionEnd")
+assert end == ([f"bash {IN}/state-hook.sh SessionEnd on"] if bg == "on" else []), end
+CHECK
+}
+
+@test "the status line names the role and redraws every second; the state hooks beside the briefing's, the scripts beside it (#287)" {
+  settings_of asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" planner-1 off
+  [ -f "$OUT/statusline.sh" ]
+  [ -f "$OUT/state-hook.sh" ]
+  cmp "$REPO_ROOT/profiles/claude/statusline.sh" "$OUT/statusline.sh"
+  cmp "$REPO_ROOT/profiles/claude/state-hook.sh" "$OUT/state-hook.sh"
+  # no role: "default", which the script shows as the project's name
+  settings_of asb claude --version
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" default off
+  # the briefing off (a role of its own, so a fresh launch): no settings file at all,
+  # so no status line and no hooks
+  settings_of AGENT_SANDBOX_BRIEFING=off asb --role quiet claude --version
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = --version ]
+  [ ! -e "$OUT/statusline.sh" ]
+  [ ! -e "$OUT/settings.json" ]
+  [ "${#JOINB[@]}" -eq 0 ]
+}
+
+@test "a statusLine in the user's --settings wins; their own hooks on the state events run beside ours (#287)" {
+  local mine='{"statusLine":{"type":"command","command":"echo MINE"},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo their-stop"}]}],"Notification":[{"hooks":[{"type":"command","command":"echo their-note"}]}]}}'
+  settings_of asb --role planner-1 claude --settings "$mine" --version
+  [ "$status" -eq 0 ]
+  python3 -I - "$OUT/settings.json" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["statusLine"] == {"type": "command", "command": "echo MINE"}, m["statusLine"]
+for ev, theirs in (("Stop", "echo their-stop"), ("Notification", "echo their-note")):
+    got = [h["command"] for g in m["hooks"][ev] for h in g["hooks"]]
+    assert got == [theirs, f"bash /run/agent-sandbox/state-hook.sh {ev} off"], got
+CHECK
+  # without one of theirs, ours is added to their settings
+  settings_of asb --role planner-1 claude --settings '{"model":"opus"}' --version
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" planner-1 off
+  grep -q '"model": "opus"' "$OUT/settings.json"
+}
+
+@test "[claude] state-background = on: the state hooks set the terminal background, and SessionEnd resets it; off by default (#287)" {
+  printf '[claude]\nstate-background = on\n' >"$H/proj/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"state-background"*"not"* ]] # a key the profile reads: no warning
+  settings_of asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" planner-1 on
+  # an unknown value is said, and is off
+  printf '[claude]\nstate-background = blue\n' >"$H/proj/.agent-sandbox"
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  settings_of asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"state-background 'blue' unknown (on|off); keeping off"* ]]
+  check_state_settings "$OUT/settings.json" planner-1 off
+}

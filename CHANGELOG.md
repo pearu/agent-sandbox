@@ -47,6 +47,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A role's status line shows which role it is and what it is doing** (#287). Six role
+  terminals looked alike, the one that needed you included. The claude profile now sets
+  Claude Code's `statusLine` in the `--settings` it builds: the role (the project's name
+  for the default role) in bold, then `working` (yellow), `waiting` (green) or `needs
+  you` (red, bold), in reverse video, redrawn every second. Hooks on `SessionStart`,
+  `UserPromptSubmit`, `Stop`, `PermissionRequest`, `Notification` (a permission
+  prompt, an elicitation, a question; not the idle reminder) and after any tool
+  (`PostToolUse`, `PostToolUseFailure`) write the state to the
+  sandbox's `/tmp`; your own hooks on those events run beside them, and a `statusLine`
+  in your `--settings` wins. `[claude] state-background = on` also tints the terminal's
+  background per state over Claude Code's own stdout, reset while it waits and at exit.
+  Both come with the briefing, so not with `[briefing] mode = off`; and no hook fires
+  on an Esc interrupt, so an interrupted turn shows `working` until the next event.
 - **A session is told when its role's purpose file changed** since the role's previous
   launch. A relaunched role that resumed its conversation kept to the rules its earlier
   turns followed, though the `SessionStart` hook carried the new text, until told by hand

@@ -222,11 +222,11 @@ trust() {
   [ "$(grep -c "^$IN$" "$H/argv")" -eq 1 ]
 }
 
-@test "the merge only appends two hook entries: no setting of the user's changes" {
-  # The briefing contributes a list of hook entries and nothing else, so every
+@test "the merge only appends hook entries (and a status line where theirs has none): no setting of the user's changes" {
+  # The briefing contributes hook entries and, absent theirs, a status line, so every
   # key it does not write must come through byte-identical.
   local mine
-  mine='{"permissions":{"defaultMode":"plan","allow":["Bash(git *)"]},"env":{"FOO":"bar"},"model":"opus","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo theirs"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo stop"}]}]}}'
+  mine='{"permissions":{"defaultMode":"plan","allow":["Bash(git *)"]},"env":{"FOO":"bar"},"model":"opus","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo theirs"}]}],"PreCompact":[{"hooks":[{"type":"command","command":"echo compact"}]}]}}'
   run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
   [ "$status" -eq 0 ]
   python3 - "$OUT/settings.json" <<'CHECK'
@@ -235,7 +235,7 @@ m = json.load(open(sys.argv[1]))
 assert m["permissions"] == {"defaultMode": "plan", "allow": ["Bash(git *)"]}, m
 assert m["env"] == {"FOO": "bar"}, m
 assert m["model"] == "opus", m
-assert len(m["hooks"]["Stop"]) == 1, m          # an event we do not use: untouched
+assert len(m["hooks"]["PreCompact"]) == 1, m    # an event we do not use: untouched
 ss = m["hooks"]["SessionStart"]                 # one we do: theirs first, ours appended
 assert len(ss) == 2, ss
 assert ss[0]["hooks"][0]["command"] == "echo theirs", ss
@@ -457,7 +457,8 @@ CHECK
 import json, sys
 hooks = json.load(open(sys.argv[1]))["hooks"]
 for ev in ("PostToolUse", "PostToolUseFailure"):
-    (entry,) = hooks[ev]
+    entry, state = hooks[ev] # and the state hook's own entry, for any tool (#287)
+    assert "matcher" not in state, state
     assert entry["matcher"] == "Bash", entry
     assert entry["hooks"] == [{"type": "command", "command": f"bash {sys.argv[2]}/refusal-hook.sh {ev}"}], entry
 CHECK

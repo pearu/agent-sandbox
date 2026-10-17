@@ -54,20 +54,31 @@ profile that reads none leaves them unapplied.
 
 A project's `.agent-sandbox` may carry a section named after the **active**
 profile — `[claude]` in a claude run. The engine checks its lines are `key = value`
-and reads the one key a project may set there today, `hide`: paths under the
+and reads `hide` there: paths under the
 profile's base blanked every launch, on top of the profile's own `[agent] hide`
-(relative paths only; `/` and `..` are ignored with a note). A profile allows it by
+(relative paths only; `/` and `..` are ignored with a note). The claude profile reads
+`state-background` itself, in `profile_briefing_args`, from `_df_profile_kv`. A profile allows it by
 listing it in `profile_dotfile_keys`, which is also how the review knows to warn of
 any other key — a typo must not silently do nothing. A section naming a different
 profile is skipped at a launch; the dot-file's review reads every profile, and warns
 of a section that names none. The pairs count **only from an approved dot-file**, so
 an unreviewed file grants nothing; the trust gate is the engine's, not the profile's.
-`profiles/claude/profile.sh` lists `hide` ([config.md](config.md#the-file)).
+`profiles/claude/profile.sh` lists `hide` and `state-background` ([config.md](config.md#the-file)).
 
 **A profile may ship a helper beside its script** for what bash does badly, such as
 parsing the agent's own file formats. The claude profile's is `profile.py`, a
 subcommand each: the config file's seed view, the prompt history's, the `--bg`
-workspace trust, the `--settings` merge. The contract is still the bash hooks, and the
+workspace trust, the `--settings` merge. Scripts the agent runs inside the sandbox
+are copied beside the briefing and named in the `--settings` from there:
+`refusal-hook.sh` (a refused host, after a Bash call), `state-hook.sh` (what the
+session is doing, from `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
+`Notification`, and `PostToolUse`/`PostToolUseFailure` for any tool, into the sandbox's
+`/tmp`; with `[claude] state-background = on` also the terminal's background, reset by
+a `SessionEnd` hook; no hook fires on an Esc interrupt, so the state stays `working`
+until the next event) and `statusline.sh`
+(the `statusLine`: the role and that state, `refreshInterval` 1, the role written
+into its command since neither its stdin nor the sandbox's environment carries it;
+a `statusLine` in the user's `--settings` wins) (#287). The contract is still the bash hooks, and the
 policy stays in them: the helper does one thing and exits nonzero when it cannot, and
 the hook decides what a launch then does. `python3` is always there -- the engine
 refuses a launch without it, since every command is joined by it -- so a hook needs no
