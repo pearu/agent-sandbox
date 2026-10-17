@@ -281,3 +281,32 @@ CHECK
   [ ! -L "$d/messages.md" ]
   [ "$(cat "$d/messages.md")" = "turn failed (exit 2)" ]
 }
+
+@test "a reset marker beside the role's inbox is found and removed; a link is removed, never followed; a linked inboxes directory is not entered" {
+  source_engine
+  local to="$PROJ/.asb/coord/to"
+  mkdir -p "$to"
+  run ! _as_serve_reset "$PROJ" r # none: no reset
+  : >"$to/r.reset"
+  _as_serve_reset "$PROJ" r
+  [ ! -e "$to/r.reset" ]
+  run ! _as_serve_reset "$PROJ" r # once
+  # a link: removed itself, its target untouched
+  printf 'keep\n' >"$H/victim"
+  ln -s "$H/victim" "$to/r.reset"
+  _as_serve_reset "$PROJ" r
+  [ ! -L "$to/r.reset" ]
+  [ "$(cat "$H/victim")" = keep ]
+  ln -s "$H/nowhere" "$to/r.reset" # a dangling one too
+  _as_serve_reset "$PROJ" r
+  [ ! -L "$to/r.reset" ]
+  # the inboxes directory a link out of the project: nothing there is removed
+  rm -rf "$to"
+  mkdir -p "$H/elsewhere"
+  : >"$H/elsewhere/r.reset"
+  ln -s "$H/elsewhere" "$to"
+  run _as_serve_reset "$PROJ" r
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not a directory of the project; not reading a reset marker there"* ]]
+  [ -e "$H/elsewhere/r.reset" ]
+}

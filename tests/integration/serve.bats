@@ -234,3 +234,38 @@ status_of() { # --status of the role, in $output
   [ "$STOPPED" -eq 0 ]
   [ "$(sed -n 2p "$W/turns")" = "--start Arm the watcher." ]
 }
+
+@test "--serve: a reset marker makes the next turn a new session, told the prompt; the marker goes, the new id is recorded, and later turns resume it" {
+  # The role has a [briefing] start; a reset turn is not told it (it would arm a watcher).
+  printf '[briefing]\nstart = start.md\n[serve:worker]\nwatch = inbox.md\nprompt = prompt.md\n' >"$W/.agent-sandbox"
+  printf 'Arm the watcher.\n' >"$W/start.md"
+  engine_cmd
+  (cd "$W" && printf 'y\nn\n' | env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  serve
+  printf '## 1\nfirst\n' >>"$W/inbox.md"
+  turns 1
+  recorded
+  local old new
+  old="$(cat "$W/.asb/coord/worker/session")"
+  mkdir -p "$W/.asb/coord/to"
+  : >"$W/.asb/coord/to/worker.reset"
+  sleep 1.5 # a marker alone is no turn
+  [ "$(wc -l <"$W/turns")" -eq 1 ]
+  printf '## 2\nsecond\n' >>"$W/inbox.md"
+  turns 2
+  new="$(sed -n 's/^-p --session-id \([0-9a-f-]*\) .*/\1/p' "$W/turns" | sed -n 2p)"
+  [[ "$new" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ && "$new" != "$old" ]]
+  [ "$(sed -n 2p "$W/turns")" = "-p --session-id $new --permission-mode bypassPermissions Read your inbox and act on it." ]
+  [ ! -e "$W/.asb/coord/to/worker.reset" ]
+  local i
+  for ((i = 0; i < 200; i++)); do
+    [[ "$(cat "$W/.asb/coord/worker/session")" == "$new" ]] && break
+    sleep 0.05
+  done
+  [ "$(cat "$W/.asb/coord/worker/session")" = "$new" ]
+  [[ "$(cat "$I/serve.out")" == *"a reset marker -- this turn starts a new session; the last one, $old, stays on disk, resumable by its id"* ]]
+  # no marker: the next turn resumes the new session
+  printf '## 3\nthird\n' >>"$W/inbox.md"
+  turns 3
+  [ "$(sed -n 3p "$W/turns")" = "-p --resume $new --permission-mode bypassPermissions Read your inbox and act on it." ]
+}

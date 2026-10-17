@@ -249,6 +249,8 @@
 #                         turn of R's session (the profile's serve-new/serve-resume
 #                         arguments and the prompt) per change to the file the
 #                         dot-file's [serve:R] watch names; --shutdown ends it.
+#                         A file .asb/coord/to/R.reset makes the next turn a new
+#                         session.
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -3392,7 +3394,10 @@ PY
 # The turns are the engine run again, as `asb ... CMD ARGS` would be, so each is a join
 # like any other: the keeper's policy, the briefing's --settings with the role's
 # [permissions]. The session is named: the first turn makes it with a fresh id, written
-# to .asb/coord/R/session, and every later turn, and a later --serve, resumes it.
+# to .asb/coord/R/session, and every later turn, and a later --serve, resumes it -- until
+# a reset: an R.reset beside R's inbox, in .asb/coord/to/, which only the Supervisor
+# writes, makes the next turn a new session, and the marker goes. The old session stays
+# on disk, resumable by its id.
 #
 # NOTHING OF THE PROJECT RUNS ON THE HOST. The loop polls the watched file itself -- its
 # modification time, inode and size, inbox-wait's test -- and touches the role's alive
@@ -3519,6 +3524,29 @@ _as_serve_put() {
     rm -f -- "$tmp"
     return 1
   fi
+}
+
+# _as_serve_reset PROJECT ROLE -- is there a reset marker for ROLE, PROJECT/.asb/coord/to/
+# ROLE.reset? Then remove it and succeed. Checked and removed from inside the directory,
+# entered once (cd -P) and found to be the project's own, so a link in its path cannot
+# send the removal elsewhere; the marker itself, a link included, is removed, never
+# followed. Its content is not read.
+_as_serve_reset() {
+  local proj
+  proj="$(realpath -e -- "$1")" || return 1
+  [[ -e "$proj/.asb/coord/to/$2.reset" || -L "$proj/.asb/coord/to/$2.reset" ]] || return 1
+  (
+    cd -P -- "$proj/.asb/coord/to" 2>/dev/null || exit 1
+    if [[ "$PWD" != "$proj/.asb/coord/to" ]]; then
+      _as_msg "--serve: $1/.asb/coord/to is not a directory of the project; not reading a reset marker there"
+      exit 1
+    fi
+    [[ -e "$2.reset" || -L "$2.reset" ]] || exit 1
+    rm -f -- "$2.reset" || {
+      _as_msg "--serve: could not remove $1/.asb/coord/to/$2.reset; no reset"
+      exit 1
+    }
+  )
 }
 
 # _as_serve_failed DIR LINE -- append LINE to the role's DIR/messages.md, where the
@@ -3709,6 +3737,14 @@ _as_serve() {
     pending=0
     last="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
     printf '%s\n' "$last" >"$seenf"
+    # A reset (the Supervisor's marker): this turn is a new session, told the prompt as
+    # every turn is. Not the role's [briefing] start text: that one says to arm the
+    # watcher, and a -p turn that runs one in the background does not end (measured,
+    # Claude Code 2.1.300: still running after 90 s, the watcher its child).
+    if _as_serve_reset "$proj" "$role"; then
+      _as_msg "role '$role': a reset marker -- this turn starts a new session${id:+; the last one, $id, stays on disk, resumable by its id}"
+      id=""
+    fi
     if ! text="$(_as_serve_text "$proj" "$prompt")"; then
       _as_msg "role '$role': no turn; waiting for the next change"
       continue

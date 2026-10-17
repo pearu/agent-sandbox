@@ -304,6 +304,17 @@ profile_telemetry_hosts() {
 # A statusLine in the user's --settings wins (profile.py merge-settings). With the
 # project's `[claude] state-background = on`, the same hook also sets the terminal's
 # background per state, and a SessionEnd hook resets it.
+#
+# `/start`: for a role with a `[briefing] start` text (_start_text, the engine's), a
+# command whose body is that text, so that after `/clear` at the role's terminal
+# `/start` runs it as a turn -- the watcher re-armed, the inbox read -- without a
+# relaunch. Claude Code reads commands from `.claude/commands/` of a directory passed
+# with --add-dir (code.claude.com/docs/en/slash-commands), so the file goes in this
+# invocation's briefing directory, read-only inside, and that directory is added: not
+# the project, and not the role's `~/.claude/commands/`, which is the skills channel,
+# the user's own under inherit and native. Only where the first turn would be given
+# (_claude_start_ok): --add-dir takes several values, so it is never followed by a
+# word that is not an option, and a print run or a subcommand has no use for it.
 profile_briefing_args() {
   local inside="$1"
   shift
@@ -401,6 +412,31 @@ profile_briefing_args() {
   fi
 
   profile_briefing_argv=(--settings "$inside_file")
+  # shellcheck disable=SC2154 # _start_text: the engine's, by dynamic scope
+  if [[ -n "${_start_text:-}" ]] && _claude_start_ok "$@"; then
+    if mkdir -p -- "$_brief_out_host/.claude/commands" \
+      && printf -- '---\ndescription: The start text of role %s, as a turn (after /clear)\ndisable-model-invocation: true\n---\n\n%s\n' \
+        "${_role:-default}" "$_start_text" >"$_brief_out_host/.claude/commands/start.md"; then
+      profile_briefing_argv+=(--add-dir "$_brief_out_inside")
+    else
+      _as_msg "briefing: cannot write the /start command to $_brief_out_host; continuing without it"
+    fi
+  fi
+  return 0
+}
+
+# _claude_start_ok [AGENT ARGS...] -- is this an interactive session start, which a first
+# turn may be given? Not a print run (-p: its input is the user's), --bg, --help,
+# --version, a command line that already has a `--`, nor one whose first word is not an
+# option (a subcommand, or the user's prompt).
+_claude_start_ok() {
+  local a
+  case "${1:-}" in "" | -*) ;; *) return 1 ;; esac
+  for a in "$@"; do
+    case "$a" in
+      -- | -p | --print | --bg | -h | --help | -v | --version) return 1 ;;
+    esac
+  done
   return 0
 }
 
@@ -412,18 +448,11 @@ profile_briefing_args() {
 # (measured, 2.1.300). After a `--`, so an option that takes several values (`--add-dir
 # DIR...`) cannot take it for one of them (measured: `-p --add-dir /tmp TEXT` had no
 # prompt). A prompt the user typed comes first and wins: of two, Claude Code runs the
-# first. Declined for a print run (-p: its input is the user's), --bg, --help, --version,
-# a command line that already has a `--`, and one whose first word is not an option (a
-# subcommand, or the user's prompt).
+# first. Declined where the session is not an interactive start (_claude_start_ok).
 profile_start_args() {
-  local text="$1" a
+  local text="$1"
   shift
-  case "${1:-}" in "" | -*) ;; *) return 0 ;; esac
-  for a in "$@"; do
-    case "$a" in
-      -- | -p | --print | --bg | -h | --help | -v | --version) return 0 ;;
-    esac
-  done
+  _claude_start_ok "$@" || return 0
   profile_start_argv=(-- "$text")
 }
 
