@@ -42,10 +42,10 @@ name:
 asb --ssh github.com claude
 ```
 
-Inside, `~/.ssh` contains only `config` and `known_hosts` — no key material —
-and `SSH_AUTH_SOCK` points at a session socket. The agent can *use* the key for
-the hosts you allowed and cannot read it or use it anywhere else. See
-[ssh.md](ssh.md).
+Inside, `~/.ssh` contains only `config`, `known_hosts` and the loaded key's `.pub` —
+no private key material — and `SSH_AUTH_SOCK` points at a session socket. The agent
+can *use* the key for the hosts you allowed and cannot read it or use it anywhere
+else. See [ssh.md](ssh.md).
 
 In `strict` mode `--ssh HOST` also opens the firewall to that host's addresses
 and makes its name resolve, since there is otherwise no DNS and no route.

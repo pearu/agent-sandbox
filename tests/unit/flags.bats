@@ -306,6 +306,31 @@ STUB
   [ ! -s "$H/argv" ]
 }
 
+@test "--ssh: the public half of each loaded key is bound read-only at its path, never the private file; a key without one is said" {
+  make_ssh_stubs
+  local s="$H/home/.ssh"
+  # the key ssh -G picks: with IdentitiesOnly yes, ssh inside finds the agent's key by its .pub
+  : >"$s/id_ed25519.pub"
+  run_engine -- asb --ssh example.test claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$s/id_ed25519.pub" "$s/id_ed25519.pub"
+  run ! argv_has "$s/id_ed25519"
+  # --ssh-key k with k.pub
+  : >"$s/k"
+  : >"$s/k.pub"
+  run_engine -- asb --ssh example.test --ssh-key "$s/k" claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$s/k.pub" "$s/k.pub"
+  run ! argv_has "$s/k"
+  # no k.pub: no bind, and the launch says so
+  rm "$s/k.pub"
+  run_engine -- asb --ssh example.test --ssh-key "$s/k" claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session agent: no readable $s/k.pub; inside the sandbox ssh offers this key only where the config does not say IdentitiesOnly yes"* ]]
+  run ! argv_has "$s/k.pub"
+  run ! argv_has "$s/k"
+}
+
 @test "--allow: hostnames and .domains accepted, junk refused, ignored without a proxy" {
   run_engine -- asb --allow 'bad host' claude --version
   [ "$status" -eq 2 ] && [[ "$output" == *"--allow: bad host"* ]]

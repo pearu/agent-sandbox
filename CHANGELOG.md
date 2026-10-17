@@ -376,6 +376,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **An SSH host whose config says `IdentitiesOnly yes` refused the broker's key**: a
+  `~/.ssh/config` stanza with `IdentityFile ~/.ssh/tob_ex` and `IdentitiesOnly yes`, the
+  host named under `[ssh:implementer-1]`; the engine loaded `~/.ssh/tob_ex` into the
+  session agent, and inside the sandbox `ssh tob-ex true` failed with "no such
+  identity: ... No such file or directory" and "Permission denied (publickey)" (OpenSSH
+  10.2, Ubuntu 26.04). Only `config` and `known_hosts` were bound, so ssh could read
+  neither the key nor its `.pub`, offered only the identities the config names, and
+  never matched the agent's. The public half, `KEY.pub`, of each key the broker loads is
+  now bound read-only at its path (never the private file); a key without one is said
+  with `--verbose`. Measured against a local sshd inside the sandbox: "Will attempt key:
+  .../k explicit" then "no such identity" before, "explicit agent" and "Authenticated"
+  after.
+
 - **mamba did not trust the proxy's CA**: mamba 2.x and micromamba (libmamba) read
   neither `SSL_CERT_FILE` nor `CONDA_SSL_VERIFY`, the variables the engine points at the
   bundle with the proxy CA, so under `proxy` and `strict` they failed TLS on every
