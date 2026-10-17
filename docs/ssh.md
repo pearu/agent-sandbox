@@ -100,8 +100,11 @@ broker's host constraint and the server's host key check, both on the host.
   hint; connect once from a host shell (`ssh HOST`). This is deliberate: no
   trust-on-first-use is done for you.
 - `~/.ssh/known_hosts` and `~/.ssh/config` are bound read-only into the sandbox
-  (public data). Nothing else under `~/.ssh` is. `Include` files referenced
-  from `config` are not bound; keep aliases in the main file.
+  (public data). Nothing else under `~/.ssh` is, except the public half, `KEY.pub`, of
+  each key the broker loads, so a config with `IdentitiesOnly yes` still selects the
+  agent's key. Without a `KEY.pub` beside the key, drop `IdentitiesOnly` for that host
+  (the engine says so with `--verbose`). `Include` files referenced from `config` are
+  not bound; keep aliases in the main file.
 - The system config's includes, `/etc/ssh/ssh_config.d/*`, are bound as copies owned
   by you, made at each launch: the originals are root's, which the sandbox's user
   namespace does not map, and OpenSSH refuses an included file owned by neither root

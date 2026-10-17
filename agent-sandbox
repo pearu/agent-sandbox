@@ -723,7 +723,7 @@ _as_ssh_setup() {
   # exists: resolves each --ssh spec through ~/.ssh/config, checks the host
   # key is already trusted, starts a fresh agent, loads the key(s) with
   # destination constraints, and binds only the agent socket (plus the
-  # public known_hosts/config files) into the sandbox.
+  # public known_hosts/config files and each loaded key's KEY.pub) into the sandbox.
   local kh="$HOME/.ssh/known_hosts" cfg="$HOME/.ssh/config"
   { command -v ssh-agent && command -v ssh-add && command -v ssh-keygen; } >/dev/null \
     || {
@@ -792,7 +792,7 @@ _as_ssh_setup() {
   _ssh_agent_pid="$SSH_AGENT_PID"
   printf '%s\n' "$_ssh_agent_pid" >"$_session_dir/agent.pid"
 
-  local c
+  local c pub
   local -a add
   for key in "${!_by_key[@]}"; do
     add=()
@@ -809,6 +809,17 @@ _as_ssh_setup() {
         _as_msg "ssh-add failed for $key"
         return 1
       }
+    # The key's public half, at its own path: with `IdentitiesOnly yes` ssh offers only
+    # the identities the config names, and for an IdentityFile whose private file it
+    # cannot read it finds the agent's key by KEY.pub. Public data, like known_hosts;
+    # the private file is never bound.
+    pub="$key.pub"
+    [[ "$pub" == /* ]] || pub="$PWD/$pub"
+    if [[ -f "$pub" && -r "$pub" ]]; then
+      args+=(--ro-bind "$pub" "$pub")
+    else
+      _as_info "session agent: no readable $key.pub; inside the sandbox ssh offers this key only where the config does not say IdentitiesOnly yes"
+    fi
   done
 
   args+=(
