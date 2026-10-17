@@ -57,6 +57,8 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - Read your Task when your inbox says where; when you write a Handoff or an Objection,
   say where, in your messages, and hand it to nobody -- S passes it on, with the
   user's approval.
+- A probe the Reviewer names in its Review is in `.asb/review/<reviewer>/`: run it from
+  there, and do not rewrite it from its description.
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.

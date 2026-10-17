@@ -762,6 +762,13 @@ shared_env() {
   run ! grep -qF 'Bash(tail:*)' "$PROJ/.agent-sandbox"
 }
 
+@test "the roles model: what another role must run is in the Review directory, never in scratch; the Implementer runs it from there" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  grep -qF -- '- Anything another role must run -- a probe, a reproduction, a measurement script --' "$PROJ/.asb/roles/reviewer-1.md"
+  grep -qF -- "- A probe the Reviewer names in its Review is in \`.asb/review/<reviewer>/\`: run it from" "$PROJ/.asb/roles/implementer-1.md"
+}
+
 @test "the written roles file passes the review: each [permissions] rule named, the Gate's too (#274)" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
