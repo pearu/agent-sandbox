@@ -3523,35 +3523,36 @@ _as_serve_failed() {
   return 0
 }
 
-# _as_serve_text PROJECT FILE -- print the prompt's text: FILE opened once, its real path
+# _as_serve_text PROJECT FILE [WHAT] -- print the prompt's text: FILE opened once, its real path
 # (of the open file, so nothing can be swapped in between) inside PROJECT, a regular file,
-# plain text, not empty, at most 64 KiB.
+# plain text, not empty, at most 64 KiB. WHAT names it in a message (default: --serve's
+# prompt file; [briefing] start's too).
 _as_serve_text() {
-  local proj fd real text
+  local proj fd real text what="${3:---serve: the prompt file}"
   proj="$(realpath -e -- "$1")" || return 1
   [[ -f "$2" ]] || {
-    _as_msg "--serve: the prompt file $2 is not there"
+    _as_msg "$what $2 is not there"
     return 1
   }
   exec {fd}<"$2" || return 1
   real="$(readlink -- "/proc/$BASHPID/fd/$fd")"
   if [[ "$real" != "$proj"/* || ! -f "/proc/$BASHPID/fd/$fd" ]]; then
     exec {fd}<&-
-    _as_msg "--serve: the prompt file $2 is $real, not a file in the project; not reading it"
+    _as_msg "$what $2 is $real, not a file in the project; not reading it"
     return 1
   fi
   text="$(head -c 65537 <&"$fd")"
   exec {fd}<&-
   if ((${#text} > 65536)); then
-    _as_msg "--serve: the prompt file $2 is over 64 KiB; not sending it"
+    _as_msg "$what $2 is over 64 KiB; not sending it"
     return 1
   fi
   if [[ -n "$(LC_ALL=C tr -d '\011\012\040-\176\200-\377' <<<"$text" | head -c1)" ]]; then
-    _as_msg "--serve: the prompt file $2 has control characters; not sending it"
+    _as_msg "$what $2 has control characters; not sending it"
     return 1
   fi
   [[ -n "${text//[[:space:]]/}" ]] || {
-    _as_msg "--serve: the prompt file $2 is empty"
+    _as_msg "$what $2 is empty"
     return 1
   }
   printf '%s' "$text"
@@ -3709,7 +3710,8 @@ _as_serve() {
       turnw=("${profile_serve_resume[@]}")
     fi
     for i in "${turnw[@]}"; do targ+=("${i//\{id\}/$id}"); done
-    ("$engine" "${_serve_flags[@]}" "${cmdw[@]}" "${targ[@]}" "$text") </dev/null &
+    # A turn has its own prompt, so no [briefing] start (AGENT_SANDBOX_SERVE_TURN).
+    (AGENT_SANDBOX_SERVE_TURN=1 "$engine" "${_serve_flags[@]}" "${cmdw[@]}" "${targ[@]}" "$text") </dev/null &
     tpid=$!
     while kill -0 "$tpid" 2>/dev/null && _sv_live; do
       _sv_alive
@@ -4452,6 +4454,50 @@ _as_briefing_resolve() {
   _purpose_file="$(realpath -m -s -- "$(_as_briefing_abs "$proj" "$_purpose_as")")"
 }
 
+# ----- the first turn (`[briefing] start = PATH`) -------------------------------
+# A session relaunched with `--continue` sits at its prompt until something gives it a
+# turn, so a role whose purpose file says "at start, arm your watcher" arms nothing: no
+# turn runs. `start = PATH` in `[briefing]` or `[briefing:<glob>]` names a file in the
+# project (relative to it, no `..`; `{role}` is the role's name) whose text the launch
+# hands the agent as its first turn, at every interactive start -- the profile knows how
+# (profile_start_args; claude: the positional prompt after its own arguments, which a
+# prompt of the user's own, typed first, wins over). Not for --serve (its turns have
+# their own prompt), --exec, a verb, a review, or with the briefing off. Read on the
+# host at launch, as --serve reads its prompt (_as_serve_text); a missing file refuses
+# the launch. Like a serve prompt it is not part of the approval: the review says it is
+# there, and which file.
+
+# _as_briefing_start_resolve ROLE -- set _start_as to the start file for ROLE, as written
+# with `{role}` substituted, or empty: the latest `start` line whose section matches.
+_as_briefing_start_resolve() {
+  local e g
+  _start_as=""
+  for e in ${_df_briefing_start[@]+"${_df_briefing_start[@]}"}; do
+    g="${e%%$'\t'*}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$g" == "*" || "$1" == $g ]] && _start_as="${e#*$'\t'}"
+  done
+  _start_as="${_start_as//\{role\}/$1}"
+  return 0
+}
+
+# _as_briefing_start_notes -- the review's lines for the `start` keys (_as_trust_notes):
+# information, since a first turn widens nothing; a path outside the project is said,
+# and a launch refuses it.
+_as_briefing_start_notes() {
+  local e g v sec n
+  for e in ${_df_briefing_start[@]+"${_df_briefing_start[@]}"}; do
+    g="${e%%$'\t'*}" v="${e#*$'\t'}"
+    if [[ "$g" == "*" ]]; then sec="[briefing]" n="every role"; else sec="[briefing:$g]" n="the roles $g"; fi
+    if _as_serve_path_ok "$v"; then
+      _as_msg ".agent-sandbox: $sec start, for $n: its first turn at every start is the text of $v (not under --serve, --exec or a verb). It widens nothing"
+    else
+      _as_msg ".agent-sandbox: $sec start '$v' is not a path in the project (relative to it, no '..'); a launch of $n refuses"
+    fi
+  done
+  return 0
+}
+
 # _as_briefing_files PROJECT -- every purpose file the parsed dot-file can name, for
 # any role: each pattern with `{role}` read as the section's glob, expanded against
 # the files there now. Sorted, one per line.
@@ -4488,7 +4534,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
@@ -4567,7 +4613,7 @@ _as_trust_forget() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
@@ -4612,7 +4658,7 @@ _as_profile_dotfile() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -4935,7 +4981,7 @@ _as_trust_notes() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
@@ -4972,6 +5018,7 @@ _as_trust_notes() {
     _as_msg ".agent-sandbox: [env] ${h%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
   done
   _as_serve_notes
+  _as_briefing_start_notes
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
@@ -5458,6 +5505,9 @@ _as_dotfile_line() {
           # The purpose file (#222): `{role}` is the role's name. In the unsuffixed
           # section, every role is briefed from it.
           file) _df_briefing_files+=("$sglob"$'\t'"$cv") ;;
+          # The first turn at an interactive start: a file in the project, `{role}` the
+          # role's name; the latest line matching the role wins (_as_briefing_start_resolve).
+          start) _df_briefing_start+=("$sglob"$'\t'"$cv") ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
         esac
       fi
@@ -5633,6 +5683,14 @@ _as_check_plan() {
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation; git'"'"'s fetch where [net] git allows it, not a push), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
+    fi
+    if [[ -n "${_start_as:-}" ]]; then
+      if ! _as_serve_path_ok "$_start_as"; then
+        printf '  first turn: refused -- [briefing] start %s is not a path in the project\n' "$_start_as"
+      else
+        printf '  first turn at every start: the text of %s%s\n' "$_start_as" \
+          "$([[ -f "$_proj/$_start_as" ]] || printf ' -- MISSING: a launch refuses')"
+      fi
     fi
     if ((${#_perm_df[@]})); then
       local _pe _pl=""
@@ -6722,10 +6780,21 @@ _as_init() {
     [[ -f "$f" && -n "$ppath" ]] || continue
     _init_purpose "$f" "$ppath" "$inst" "$n" "$h" || return 1
   done
+  local gl
+  # The first turn of each role's start (`[briefing:...] start = PATH`), from the model's
+  # start/<role>.md, for a role with an instance, kept as the purpose files are.
+  for i in "${!heads[@]}"; do
+    [[ "${heads[i]}" == "[briefing:"* ]] || continue
+    read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+    [[ -n "${rn:-}" && "${count[$rn]:-0}" -gt 0 ]] || continue
+    gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*start[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
+    [[ -n "$gl" && -f "$mdir/start/$rn.md" ]] || continue
+    gl="$(_init_render "x" "$gl" "$rn" "" "" | sed -n 2p)"
+    _init_purpose "$mdir/start/$rn.md" "$gl" "$rn" "" "" || return 1
+  done
   # A role with no numbered instances in the template (`[briefing:name-*]` with its own
   # `file = PATH`, no {role} in it) is briefed from one file for every instance, from the
   # model's roles/<name>.md and kept as above.
-  local gl
   for i in "${!heads[@]}"; do
     [[ "${heads[i]}" =~ ^\[briefing:([a-z][a-z0-9-]*)-\*\] ]] || continue
     rn="${BASH_REMATCH[1]}"
@@ -8009,7 +8078,7 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
@@ -8520,6 +8589,9 @@ agent_sandbox() (
       _as_connect_parse "$_purpose_file = read-only" "built in, #222" || return 1
     fi
   fi
+  # The first turn (`[briefing] start`): which file, for --check; read at the launch.
+  local _start_as="" _start_text=""
+  _as_briefing_start_resolve "${_role:-default}"
   _as_connect_report
   local _ln
   while IFS= read -r _ln; do
@@ -8590,6 +8662,24 @@ agent_sandbox() (
   # do. `--trust` never routes.
   if ((! _do_trust)) && declare -F profile_route >/dev/null; then
     profile_route "$@" || return $?
+  fi
+
+  # ---- the first turn: `[briefing] start` (see _as_briefing_start_resolve) ----
+  # Read here, on the host, for a session the agent starts: not under --exec (the
+  # holder of --serve is one), a verb, a turn of --serve (AGENT_SANDBOX_SERVE_TURN, set
+  # by the loop for each), or with the briefing off. What the agent runs with it is the
+  # profile's to say (profile_start_args), and it may decline: a print run, a subcommand.
+  if [[ -n "$_start_as" ]] && ((! _do_exec && ! _do_verb && ! _do_trust)) && [[ -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]] \
+    && [[ "${_knob_briefing:-on}" == on || "${_knob_briefing:-on}" == 1 ]]; then
+    if ! _as_serve_path_ok "$_start_as"; then
+      _as_msg "role '${_role:-default}': [briefing] start '$_start_as' is not a path in the project (relative to it, no '..'). Refusing: fix the line, then $invoked --trust."
+      return 1
+    fi
+    if [[ ! -f "$_proj/$_start_as" ]]; then
+      _as_msg "role '${_role:-default}' starts with the text of '$_start_as' ([briefing] start), which does not exist. Refusing rather than starting the role without its first turn: create it, or drop the line, then $invoked --trust."
+      return 1
+    fi
+    _start_text="$(_as_serve_text "$_proj" "$_proj/$_start_as" "[briefing] start: the file")" || return 1
   fi
 
   # What the briefing says of other projects: hidden unless the profile's `projects`
@@ -8679,7 +8769,11 @@ agent_sandbox() (
           _brief_out_inside="$(_as_briefing_inside)/join.$BASHPID"
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
         fi
-        _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"})
+        local -a profile_start_argv=()
+        if [[ -n "$_start_text" ]] && declare -F profile_start_args >/dev/null; then
+          profile_start_args "$_start_text" "$@" || return 1
+        fi
+        _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
       fi
       _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
       local _jrc=0
@@ -9384,11 +9478,16 @@ agent_sandbox() (
   # command line verbatim. Everything else about the sandbox is identical, which
   # is the point -- including the read-only bind of the agent binary, so an agent
   # started from inside runs natively there.
-  local -a _run_argv=()
+  local -a _run_argv=() profile_start_argv=()
   if ((_do_exec)); then
     _run_argv=("$@")
   else
-    _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"})
+    # The first turn's arguments go LAST, after the agent's own: claude's prompt is its
+    # positional argument (profile_start_args).
+    if [[ -n "$_start_text" ]] && declare -F profile_start_args >/dev/null; then
+      profile_start_args "$_start_text" "$@" || return 1
+    fi
+    _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
   fi
 
   # ----- Network mode -----

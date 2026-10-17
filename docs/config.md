@@ -253,6 +253,25 @@ Sections:
   [briefing:supervisor]
   file = docs/agents/supervisor.md
   ```
+
+  **The first turn**: `start = PATH`, in `[briefing]` or `[briefing:<glob>]`, names a
+  file in the project (relative to it, no `..`; `{role}` is the role's name, and the
+  latest line matching the role wins) whose text the session runs as its first turn at
+  every interactive start -- a new session, or one resumed with `--continue` or
+  `--resume ID`, which otherwise sits at its prompt until you type. A role whose purpose
+  file says "at start, arm your watcher" needs a turn to do it in. The profile decides
+  how the text is handed over (`profile_start_args`; claude: the prompt after its own
+  arguments, so a prompt you type yourself still wins) and declines where it is not a
+  session start: `-p`, `--bg`, a subcommand. Not under `--serve` (its turns have their
+  own prompt), `--exec`, a verb, or with `mode = off`. The file is read on the host at
+  launch, plain text up to 64 KiB, and a launch whose file is missing is refused. It is
+  not part of the approval, as a `[serve]` prompt is not: the review says which file a
+  role starts with, and `--check` names it.
+
+  ```ini
+  [briefing:planner-*]
+  start = .asb/start/{role}.md           # .asb/start/planner-1.md, ...
+  ```
 - **`[connect]`** — key/value lines, one per channel: `channel = mode [source] [scope]`.
   A **channel** is named by what it carries (`instructions`, `settings`,
   `skills`, `agents`, `workflows`, `plugins` for the `claude` profile); a

@@ -241,6 +241,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[serve] watch`, `[serve] prompt` | what `--serve` waits on (a file in the project, an inbox) and what each turn is told (a file in the project, its text); per role with `[serve:ROLE]`, both required; the review says what the loop will wait on and read (none) ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_BRIEFING` | `[briefing] mode` | tell the session what its sandbox allows, what is blocked and how to ask for more (on) ([config.md](docs/config.md)) |
 | — | — | `[briefing] file` | the purpose file a role is briefed from, `{role}` its name; in `[briefing:<glob>]` for those roles, whose default is `.asb/roles/{role}.md` (none) ([config.md](docs/config.md)) |
+| — | — | `[briefing] start` | a file in the project whose text the session runs as its first turn at every interactive start, `{role}` its name, so a resumed role acts without a keypress; in `[briefing:<glob>]` for those roles; not under `--serve`, `--exec` or a verb; a missing file refuses the launch (none) ([config.md](docs/config.md)) |
 | `--role NAME` | `AGENT_SANDBOX_ROLE` | `[sandbox] role` | which role of this project to run: a named, persistent instance with its own state, under the policy the dot-file's role-suffixed sections (`[connect:<glob>]` and the like) give the names they match (`default`) ([config.md](docs/config.md#roles)) |
 | `--preset NAME` | `AGENT_SANDBOX_PRESET` | `[sandbox] preset` | where every channel sits before any `[connect]` override: `isolated`, `inherit` (read your files live, keep the sandbox's writes to itself) or `shared` (one directory, both ways -- the engine before 0.3) (inherit). Two more are the flag only: `native` -- parity with `none`, so that a difference is a bug -- and `none`, no sandbox at all ([connections.md](docs/connections.md)) |
 | `--overlay MODE` | `AGENT_SANDBOX_OVERLAY` | `[overlay] mode` | `auto` or `off`: what `copy-on-write` is implemented with, an overlay where bubblewrap supports one or the copy fallback everywhere; it can only move `copy-on-write` to `copy` (auto) ([connections.md](docs/connections.md)) |
@@ -283,6 +284,8 @@ is joined into it before it ends (2), so that commands run one after another
 share it. `--engine-help` prints each with its default. And one is the test
 suite's: `AGENT_SANDBOX_TEST_PYTHON`, the command the engine runs those two
 helpers with instead of `python3`, which the coverage stages point at coverage.py.
+`AGENT_SANDBOX_SERVE_TURN` is the `--serve` loop's own, set on each turn it runs, so
+the turn, which has its prompt, is not also given the role's `[briefing] start`.
 
 Engine flags go before the agent's own arguments. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and

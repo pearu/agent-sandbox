@@ -189,6 +189,12 @@
 #        the review.
 #[briefing:reviewer-*]
 #file = .asb/roles/{role}.md
+#
+# start : a file in the project whose text the session runs as its first turn
+#        at every interactive start, a resumed one included; {role} is the
+#        role's name. Not under --serve, --exec or a verb. A missing file
+#        refuses the launch; it is not part of the approval.
+#start = .asb/start/{role}.md
 
 
 # ---- claude: options for the claude profile -------------------------------

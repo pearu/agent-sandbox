@@ -42,6 +42,12 @@
 #
 #   profile_prepare()           optional. Runs right before the sandbox is
 #                               assembled; create state files here.
+#   profile_start_args TEXT ARGS...
+#                               optional. Sets profile_start_argv to the
+#                               agent's arguments that run TEXT as the
+#                               session's first turn ([briefing] start); the
+#                               engine puts them after the agent's own ARGS.
+#                               Left empty, the first turn is declined.
 #
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),
@@ -396,6 +402,29 @@ profile_briefing_args() {
 
   profile_briefing_argv=(--settings "$inside_file")
   return 0
+}
+
+# profile_start_args TEXT [AGENT ARGS...] -- engine hook: the arguments that make Claude
+# Code run TEXT as its first turn (`[briefing] start`), into profile_start_argv, which the
+# engine puts after the agent's own; left empty, the first turn is declined. The prompt is
+# Claude Code's positional argument, and it starts an interactive session as it resumes
+# one: `claude --continue TEXT` and `claude --resume ID TEXT` run TEXT as the first turn
+# (measured, 2.1.300). After a `--`, so an option that takes several values (`--add-dir
+# DIR...`) cannot take it for one of them (measured: `-p --add-dir /tmp TEXT` had no
+# prompt). A prompt the user typed comes first and wins: of two, Claude Code runs the
+# first. Declined for a print run (-p: its input is the user's), --bg, --help, --version,
+# a command line that already has a `--`, and one whose first word is not an option (a
+# subcommand, or the user's prompt).
+profile_start_args() {
+  local text="$1" a
+  shift
+  case "${1:-}" in "" | -*) ;; *) return 0 ;; esac
+  for a in "$@"; do
+    case "$a" in
+      -- | -p | --print | --bg | -h | --help | -v | --version) return 0 ;;
+    esac
+  done
+  profile_start_argv=(-- "$text")
 }
 
 # _claude_history_view SOURCE VIEW -- the prompt history a seeding mode reads: this

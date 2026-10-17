@@ -34,6 +34,7 @@ Bash(.asb/bin/inbox-wait:*)
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
+start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-{n}]
@@ -51,6 +52,7 @@ prompt = .asb/serve/{role}.md
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
+start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-{n}]
@@ -61,6 +63,7 @@ prompt = .asb/serve/{role}.md
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
+start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -78,6 +81,7 @@ Bash(git fetch:*)
 Bash(git merge:*)
 #@own Bash(conda env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
+start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal is opened when the Supervisor says it is the Gate's turn

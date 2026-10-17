@@ -715,7 +715,7 @@ shared_env() {
   # the purpose files arm it, with the role's own inbox and alive file
   grep -qxF '.asb/bin/inbox-wait -a .asb/coord/planner-2/alive .asb/coord/to/planner-2.md' "$PROJ/.asb/roles/planner-2.md"
   grep -qF 'done; in my file; S has it' "$PROJ/.asb/roles/reviewer-1.md"
-  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .asb/coord/planner-1/messages.md \\" "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$PROJ/.asb/roles/supervisor.md"
   # run again: an inbox with messages, and a changed watcher, are kept
   printf '## 1\nread P1\n' >"$PROJ/.asb/coord/to/planner-1.md"
   printf '#!/bin/sh\nexit 0\n' >"$PROJ/.asb/bin/inbox-wait"
@@ -741,10 +741,10 @@ shared_env() {
     grep -qF 'arm no watcher, read and act' "$f"
   done
   # the Supervisor: one command, its paths from the index, every role's but the Gate's and its own
-  grep -qxF "  \`run_in_background: true\`, and run it again after each wake: one path per role in" "$sup"
-  grep -qxF '  the index but the Gate and yourself; a change to any of them wakes you:' "$sup"
-  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .asb/coord/planner-1/messages.md \\" "$sup"
-  grep -qxF '  .asb/coord/implementer-1/messages.md ...' "$sup"
+  grep -qxF "  \`run_in_background: true\`, and run it again after each wake: \`.agent-sandbox\`, then" "$sup"
+  grep -qxF '  one path per role in the index but the Gate and yourself; a change to any of them' "$sup"
+  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
+  grep -qxF '  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ...' "$sup"
   grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$sup"
   for r in planner-1 planner-2 implementer-1 reviewer-1; do
     grep -q "^| [A-Z][0-9]* | $r | .asb/coord/$r/messages.md |" "$idx"
@@ -798,4 +798,57 @@ shared_env() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"kept .asb/serve/planner-1.md: changed since --init wrote it"* ]]
   [ "$(cat "$PROJ/.asb/serve/planner-1.md")" = mine ]
+}
+
+@test "the roles model: a [briefing] start for the Planners, Implementers, Reviewers and the Supervisor, its file written from the model's start/ and kept; none for the Gate or setup" {
+  init -- roles planner=2 implementer=1 reviewer=0
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" r m sec
+  m="$(dirname "$ENGINE")/models/roles"
+  for r in planner implementer supervisor; do
+    sec="[briefing:$r-*]"
+    [[ "$r" == supervisor ]] && sec="[briefing:$r]"
+    [ "$(section "$sec" "$df" | sed 's/[[:space:]]*#.*//')" = "start = .asb/start/$r.md" ]
+    cmp -s "$PROJ/.asb/start/$r.md" "$m/start/$r.md"
+    [ "$(awk 'length > 88' "$m/start/$r.md" | wc -l)" -eq 0 ]
+  done
+  [ "$(awk '/^start = / && length > 88' "$df" | wc -l)" -eq 0 ]
+  grep -qF 'Arm your watcher as your purpose file says' "$PROJ/.asb/start/planner.md"
+  grep -qF "read every role's messages" "$PROJ/.asb/start/supervisor.md"
+  # no Reviewer instance: no file for it; the Gate and setup start as typed
+  [ ! -e "$PROJ/.asb/start/reviewer.md" ]
+  for r in gate setup; do
+    run ! grep -qE '^start = ' <(section "[briefing:$r]" "$df")
+    [ ! -e "$PROJ/.asb/start/$r.md" ]
+  done
+  # the review names each; --check names a Planner's
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[briefing:planner-*] start, for the roles planner-*: its first turn at every start is the text of .asb/start/planner.md"* ]]
+  [[ "$output" == *"[briefing:supervisor] start, for the roles supervisor: its first turn at every start is the text of .asb/start/supervisor.md"* ]]
+  check planner-2
+  [[ "$output" == *"  first turn at every start: the text of .asb/start/planner.md"$'\n'* ]]
+  # run again: a start text you changed is kept, one nobody changed takes the model's
+  printf 'mine\n' >"$PROJ/.asb/start/planner.md"
+  init -- roles planner=2 implementer=1 reviewer=0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/start/planner.md: changed since --init wrote it"* ]]
+  [ "$(cat "$PROJ/.asb/start/planner.md")" = mine ]
+  cmp -s "$PROJ/.asb/start/implementer.md" "$m/start/implementer.md"
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: the Supervisor watches .agent-sandbox -- its watcher's first file; an affected role is told to finish and say ready, the user gets the relaunch line" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md"
+  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
+  grep -qxF -- "- Watch \`.agent-sandbox\` too: add it to your watcher's files, and keep a copy in your" "$sup"
+  # the bullet closes **Sending a message.**, before the Gate's turn
+  [ "$(grep -B2 -xF "**The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the" "$sup" | head -1)" = "  so: the user relaunches you." ]
+  grep -qF 'line from the index with `--continue`' "$sup"
+  grep -qF "not when it joins one still running" "$sup"
+  grep -qF '(a served role: `asb --role R --shutdown`)' "$sup"
+  [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 10 ]
+  [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }

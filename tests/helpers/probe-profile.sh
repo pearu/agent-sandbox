@@ -28,3 +28,10 @@ profile_verbs_observe=(agents)
 profile_serve_new=(-p --session-id '{id}' --permission-mode bypassPermissions)
 # shellcheck disable=SC2034
 profile_serve_resume=(-p --resume '{id}' --permission-mode bypassPermissions)
+
+# The first turn ([briefing] start): taken at every launch the engine offers it, after the
+# probe's own arguments, so tests/integration/serve.bats can see which launches got it.
+profile_start_args() {
+  # shellcheck disable=SC2034 # engine contract
+  profile_start_argv=(--start "$1")
+}

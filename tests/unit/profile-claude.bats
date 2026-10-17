@@ -251,3 +251,25 @@ CHECK
   [[ "$output" == *"state-background 'blue' unknown (on|off); keeping off"* ]]
   check_state_settings "$OUT/settings.json" planner-1 off
 }
+
+@test "profile_start_args: the first turn is the prompt after the agent's own arguments, behind a --; declined where the session is not an interactive start" {
+  local -a profile_start_argv=()
+  profile_start_args 'Arm your watcher.'
+  [ "${profile_start_argv[*]}" = "-- Arm your watcher." ]
+  profile_start_argv=()
+  profile_start_args 'Arm it.' --continue
+  [ "${#profile_start_argv[@]}" -eq 2 ] && [ "${profile_start_argv[0]}" = -- ] && [ "${profile_start_argv[1]}" = 'Arm it.' ]
+  profile_start_argv=()
+  profile_start_args 'Arm it.' --resume 01234567-89ab-cdef-0123-456789abcdef --add-dir /x
+  [ "${profile_start_argv[*]}" = "-- Arm it." ]
+  local a
+  for a in "-p hi" "--continue --print" "--bg" "--help" "-v" "--version" "--continue -- mine" "mcp list" "my own prompt"; do
+    profile_start_argv=()
+    # shellcheck disable=SC2086 # the words of the case
+    profile_start_args 'Arm it.' $a
+    [ "${#profile_start_argv[@]}" -eq 0 ] || {
+      echo "not declined for: $a"
+      false
+    }
+  done
+}

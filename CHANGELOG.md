@@ -47,6 +47,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A relaunched role runs a first turn without a keypress: `[briefing] start = PATH`**.
+  After every role was launched, the Supervisor read them all as not running: a session
+  relaunched with `claude --continue` sits at its prompt until something gives it a turn,
+  so the purpose file's "at start, arm the watcher" never ran, no `alive` file was
+  touched, and the user typed "hi" in each terminal. `start = PATH`, in `[briefing]` or
+  `[briefing:<glob>]`, names a file in the project (`{role}` its name) whose text the
+  session runs as its first turn at every interactive start; the profile hands it over
+  (`profile_start_args`; claude: the prompt after its own arguments, behind a `--`, which
+  `--continue` and `--resume ID` take as the first turn -- measured with Claude Code
+  2.1.300 -- and a prompt you type wins). Not under `--serve`, `--exec`, a verb, `-p`,
+  `--bg` or `[briefing] mode = off`. Read on the host at launch; a missing file refuses
+  the launch; the review and `--check` name it. The roles model's `--init` writes one for
+  the Planners, Implementers, Reviewers and the Supervisor, `.asb/start/<role>.md`, from
+  the model's `start/`, kept as the purpose files are.
 - **A role's status line shows which role it is and what it is doing** (#287). Six role
   terminals looked alike, the one that needed you included. The claude profile now sets
   Claude Code's `statusLine` in the `--settings` it builds: the role (the project's name
@@ -305,6 +319,15 @@ names are gone; there are no aliases for removed names before 1.0.
   colour, the role in bold and the state in capitals, padded to the terminal's width
   (Claude Code shows `COLUMNS` less 4 of it). With `[claude] state-background = on`,
   `asks you` tints like `needs you`, and `idle` resets like `waiting`.
+- **The roles model's Supervisor watches `.agent-sandbox`**. A change made with
+  `asb --apply` while the roles ran reached none of them -- a running role keeps the
+  policy its launch started with -- and nobody told them or the user. The Supervisor's
+  watcher now names `.agent-sandbox` first; on a change it reads which sections changed
+  (`[x:ROLE]` one role, a pattern every role it matches, an unsuffixed section all),
+  tells each affected role to finish its step, record its state and say ready, and gives
+  the user the relaunch, one line per role: exit the session (`asb --role R --shutdown`
+  for a served one), then the launch line with `--continue`. The new policy applies only
+  to a launch that starts fresh, not to a join of one still running.
 - **The roles model's watchers are background waits, not Monitors** (#288): every role
   runs `.asb/bin/inbox-wait` with the Bash tool in the background and runs it again after
   each wake, so nothing expires -- a Supervisor with a Monitor per role got three expiry
