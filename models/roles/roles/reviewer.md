@@ -50,6 +50,10 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - Review a Handoff when your inbox says which; write the Review in your directory, say
   where in your messages, and hand it to nobody -- S passes it on, with the user's
   approval.
+- Anything another role must run -- a probe, a reproduction, a measurement script --
+  goes in your Review directory, named in the Review, never in your scratch, which no
+  other role can read. It runs on the project's environment; if it needs more, the
+  Review says what.
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.

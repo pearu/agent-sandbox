@@ -335,6 +335,13 @@ names are gone; there are no aliases for removed names before 1.0.
   Implementer's, Reviewer's and Gate's purpose files now say the line once, in the reply
   that appends `done N`, and a reply with work pending ends by naming what is pending
   and what follows.
+- **The roles model's Reviewer puts what another role must run in its Review
+  directory** -- a probe, a reproduction, a measurement script -- named in the Review,
+  never in its scratch, which no other role can read; the Implementer runs it from
+  `.asb/review/<reviewer>/` instead of rewriting it from its description. (A Reviewer
+  asked the Implementer to run a probe from its private `.asb/scratch/`; the Implementer
+  could not read it and rewrote it from the Review, and the Reviewer then asked for its
+  own to be run as well.)
 - **`[ssh]` stands alone from `[net] git`** (#293). `git = fetch` and `git = refuse`
   no longer refuse `--ssh` or drop the file's `[ssh]` hosts: they govern git over
   HTTPS, what the proxy can see, and `[ssh]` governs hosts, which the broker enforces.

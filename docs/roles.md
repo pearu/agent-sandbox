@@ -105,7 +105,7 @@ than doing it.
 | | |
 |---|---|
 | inputs | the Statement; `main` at its last commit, and the change as the Handoff gives it -- the diff and the branch; the project's documents; documents on the web |
-| outputs | the Review; its Messages |
+| outputs | the Review; its Messages. What another role must run -- a probe, a reproduction -- lives in the Review directory, readable by every role; scratch is private |
 | may | read the code and run it -- an Implementer's build with the environment it was built in, `.asb/impl/1/.env/bin/...`; write test scripts in its scratch |
 | may not | change the code (**enforced**); see how the change was reached -- the Implementer's memory, conversations or commit-by-commit history (**enforced**: memory is per role; every history is hidden from it); publish (**enforced**); build or install (**enforced**: nothing writable but its directory and its scratch) |
 
