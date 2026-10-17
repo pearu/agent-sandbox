@@ -300,7 +300,8 @@
 #        sandbox, type --preset none.
 #[claude]
 #hide = gh todos
-#        The status line shows the role and working / waiting / needs you;
+#        The status line shows the role and working / needs you / asks you /
+#        waiting / idle;
 #        state-background = on also tints the terminal per state (#287).
 #state-background = on
 

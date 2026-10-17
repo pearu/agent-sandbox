@@ -4,11 +4,15 @@
 # statusLine, which wins), copied beside the briefing and run from there, inside the
 # sandbox, every second.
 #
-# Prints one line: the role in bold -- or, for the role "default", the project's
-# name, from the stdin JSON's workspace.project_dir -- then what the session is
-# doing, as state-hook.sh last wrote it to STATE (default /tmp/agent-sandbox-state),
-# in reverse video: working yellow, waiting green, needs you red and bold. No state
-# file, or one that says anything else: the name alone. Under 60 columns.
+# Prints one row as wide as Claude Code lets it be -- COLUMNS (set for the command;
+# 80 without it) less 4: Claude Code indents the line by 2 and cuts it with an
+# ellipsis past COLUMNS - 4 (measured, 2.1.300) -- in reverse video of the state's
+# colour: the role in bold -- or, for the role "default", the project's name, from
+# the stdin JSON's workspace.project_dir -- then what the session is doing, as
+# state-hook.sh last wrote it to STATE (default /tmp/agent-sandbox-state), in
+# capitals, then padding to the edge. Colours: working yellow, waiting green, asks
+# you red, needs you red and bold, idle grey. No state file, or one that says
+# anything else: the name alone, no bar. The name is cut at 40 characters.
 set -u
 role="${1:-default}"
 statef="${2:-/tmp/agent-sandbox-state}"
@@ -27,10 +31,21 @@ name="${name//[^[:print:]]/}"
 
 state=""
 [[ -r "$statef" ]] && { read -r state <"$statef"; } 2>/dev/null
+rest=22 # the state after the bold name: plain, or bold for needs you
 case "$state" in
-  working) tag=$'\e[7;33m working \e[0m' ;;
-  waiting) tag=$'\e[7;32m waiting \e[0m' ;;
-  "needs you") tag=$'\e[1;7;31m needs you \e[0m' ;;
-  *) tag="" ;;
+  working) sgr='7;33' ;;
+  waiting) sgr='7;32' ;;
+  "asks you") sgr='7;31' ;;
+  "needs you") sgr='7;31' rest=1 ;;
+  idle) sgr='7;90' ;;
+  *)
+    printf '\e[1m%s\e[0m\n' "$name"
+    exit 0
+    ;;
 esac
-printf '\e[1m%s\e[0m%s\n' "$name" "${tag:+ $tag}"
+cols="${COLUMNS:-}"
+[[ "$cols" =~ ^[1-9][0-9]{0,3}$ ]] || cols=80
+text=" $name  ${state^^} "
+pad=$((cols - 4 - ${#text}))
+((pad > 0)) || pad=0
+printf '\e[%s;1m %s\e[%sm%s%*s\e[0m\n' "$sgr" "$name" "$rest" "  ${state^^} " "$pad" ""

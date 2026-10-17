@@ -73,10 +73,16 @@ are copied beside the briefing and named in the `--settings` from there:
 `refusal-hook.sh` (a refused host, after a Bash call), `state-hook.sh` (what the
 session is doing, from `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
 `Notification`, and `PostToolUse`/`PostToolUseFailure` for any tool, into the sandbox's
-`/tmp`; with `[claude] state-background = on` also the terminal's background, reset by
+`/tmp`: `working`, `needs you`, and after a reply one of three -- `asks you` when the
+`Stop` input's `last_assistant_message` (the transcript's tail without it) ends its last
+line with `?`, `waiting` when a process named `inbox-wait` runs under Claude Code
+(`CLAUDE_PID`), `idle` otherwise, and the same watcher test at `SessionStart`; with
+`[claude] state-background = on` also the terminal's background, reset by
 a `SessionEnd` hook; no hook fires on an Esc interrupt, so the state stays `working`
 until the next event) and `statusline.sh`
-(the `statusLine`: the role and that state, `refreshInterval` 1, the role written
+(the `statusLine`: a bar of the state's colour with the role and that state, padded to
+`COLUMNS` less 4, the most Claude Code shows of the line without cutting it,
+`refreshInterval` 1, the role written
 into its command since neither its stdin nor the sandbox's environment carries it;
 a `statusLine` in the user's `--settings` wins) (#287). The contract is still the bash hooks, and the
 policy stays in them: the helper does one thing and exits nonzero when it cannot, and

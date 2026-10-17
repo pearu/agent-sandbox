@@ -203,11 +203,15 @@ Sections:
   resumed session is never told a policy that has since changed — and a hook
   after every Bash call that reports a host the proxy refused during it
   ([network](network.md#refusals-reach-the-session)). It also sets a status line
-  (#287): the role -- the project's name for the default role -- in bold, then
-  `working`, `waiting` or `needs you`, which hooks on `SessionStart`,
-  `UserPromptSubmit`, `Stop`, `PermissionRequest`, `Notification` (a permission
-  prompt, an elicitation, a question for you; not the idle reminder) and after any
-  tool (`PostToolUse`, `PostToolUseFailure`) record in the
+  (#287): a bar across the terminal in the state's colour, the role -- the
+  project's name for the default role -- in bold, then what the session is doing:
+  `WORKING` (yellow) while a turn runs; `NEEDS YOU` (red, bold) at a permission
+  prompt, an elicitation or a question for you (not the idle reminder); and after a
+  reply, `ASKS YOU` (red) when its last line ends with a question, else `WAITING`
+  (green) when a watcher runs -- a process named `inbox-wait`, the roles model's,
+  so a message will wake it -- else `IDLE` (grey). Hooks on `SessionStart`,
+  `UserPromptSubmit`, `Stop`, `PermissionRequest`, `Notification` and after any
+  tool (`PostToolUse`, `PostToolUseFailure`) record it in the
   sandbox's `/tmp`, redrawn every second. `briefing.md` also says
   that what a session hands you to run is one line or a file -- the CLI prefixes
   every line of a reply, so a pasted heredoc or patch breaks -- and where its
@@ -487,11 +491,12 @@ Sections:
   your `~/.config/gh` (#88).
   `state-background = on` (default off) tints the terminal's background with the
   session's state, which the status line shows in any case (see `[briefing]`):
-  `#203040` while it works, `#402020` while it needs you, and the terminal's own
-  background (OSC 111) while it waits and at exit. Claude Code's hooks are
-  detached from the terminal, so the claude profile's state hook writes the OSC 11
-  sequence to Claude Code's own stdout, `/proc/$CLAUDE_PID/fd/1`, only when that is
-  a character device and never waiting on it. Measured under tmux 3.4, where the
+  `#203040` while it works, `#402020` while it needs you or asks you, and the
+  terminal's own background (OSC 111) while it waits, when idle and at exit.
+  Claude Code's hooks are detached from the terminal, so the claude profile's
+  state hook writes the OSC 11 sequence to Claude Code's own stdout,
+  `/proc/$CLAUDE_PID/fd/1`, only when that is a character device and never
+  waiting on it. Measured under tmux 3.4, where the
   pane's background follows with no passthrough setting; how a GUI terminal
   repaints is unmeasured. Like the status line it comes with the briefing, so not
   with `[briefing] mode = off`.
