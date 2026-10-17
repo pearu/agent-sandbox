@@ -3,21 +3,34 @@
 # installed by profile_briefing_args, copied beside the briefing and run from there,
 # inside the sandbox. It records what the session is doing, for statusline.sh:
 #
-#   SessionStart, Stop        waiting     the prompt is the user's
 #   UserPromptSubmit          working     a turn is running
 #   PostToolUse(Failure)      working     a tool ran: working again after a permission
 #   PermissionRequest         needs you   a permission dialog is up (fires at once)
 #   Notification              needs you   for a permission_prompt, an elicitation or
 #                                         agent_needs_input (from the hook's stdin
 #                                         JSON); nothing for idle_prompt and the rest
+#   Stop                      asks you    the reply's last line ends with a question
+#                             waiting     else, a watcher runs: a message will wake it
+#                             idle        else: the prompt is the user's
+#   SessionStart              waiting     a watcher runs (a resumed session's)
+#                             idle        else
 #   SessionEnd                (nothing)   only the background reset below
+#
+# The reply is the stdin JSON's last_assistant_message, which Stop carries; without
+# it, the last assistant text in the tail of transcript_path (the hooks reference says
+# the transcript may lag the turn at Stop, so it is the second choice). Its last line,
+# trailing whitespace and markdown emphasis stripped, ends with `?`: a question the
+# turn ended on. A watcher is a process named inbox-wait (the roles model's
+# .asb/bin/inbox-wait, a script, so the kernel names it after the file) among
+# Claude Code's descendants, CLAUDE_PID's, or anywhere in view without one. Anything
+# that fails to read falls through to the next test.
 #
 # STATE (default /tmp/agent-sandbox-state; /tmp is the sandbox's own tmpfs) is
 # written by rename, so the status line never reads half a file.
 #
 # BACKGROUND `on` ([claude] state-background = on) also sets the terminal's
-# background per state with OSC 11, and resets it with OSC 111 on waiting and at
-# SessionEnd. A hook is detached from the terminal (/dev/tty fails, measured), but
+# background per state with OSC 11, and resets it with OSC 111 on waiting, idle and
+# at SessionEnd. A hook is detached from the terminal (/dev/tty fails, measured), but
 # Claude Code's own stdout is the terminal: /proc/$CLAUDE_PID/fd/1, written only when
 # it is a character device, and never waited on for more than a second.
 #
@@ -27,9 +40,73 @@ event="${1:-}"
 background="${2:-off}"
 statef="${3:-/tmp/agent-sandbox-state}"
 
+# jlast KEY -- the last line of the last JSON string value of KEY on stdin, unescaped
+# (\n, \t, \", \\) and with trailing whitespace stripped; status 1 when there is none.
+# awk, since bash's own regex and pattern removal are quadratic on a long reply.
+jlast() {
+  awk -v k="\"$1\"" 'BEGIN { RS = "\001" }
+    { t = t $0 }
+    END {
+      p = 0; i = 0
+      while ((j = index(substr(t, p + 1), k)) > 0) { p += j; i = p }
+      if (!i) exit 1
+      r = substr(t, i + length(k))
+      if (!match(r, /^[ \t\r\n]*:[ \t\r\n]*"/)) exit 1
+      r = substr(r, RLENGTH + 1)
+      if (!match(r, /^([^"\\]|\\.)*"/)) exit 1
+      v = substr(r, 1, RLENGTH - 1)
+      gsub(/\\\\/, "\002", v); gsub(/\\n/, "\n", v); gsub(/\\[rt]/, " ", v)
+      gsub(/\\"/, "\"", v); gsub(/\002/, "\\", v)
+      sub(/[ \t\r\n]+$/, "", v)
+      n = split(v, l, "\n")
+      printf "%s", l[n]
+    }' 2>/dev/null
+}
+
+# asks -- whether the turn's reply (the stdin JSON, in $input) ends with a question.
+asks() {
+  local line tp
+  line="$(jlast last_assistant_message <<<"$input")" || {
+    tp="$(jlast transcript_path <<<"$input")" || return 1
+    [[ -f "$tp" && -r "$tp" ]] || return 1
+    line="$(tail -c 65536 -- "$tp" 2>/dev/null | grep -F '"role":"assistant"' \
+      | tail -n 1 | jlast text)" || return 1
+  }
+  line="${line%"${line##*[!*_\`~[:space:]]}"}"
+  [[ "$line" == *"?" ]]
+}
+
+# watching -- whether a watcher (a process named inbox-wait) runs in this session.
+watching() {
+  local d c p s n pid="${CLAUDE_PID:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || pid=""
+  for d in /proc/[0-9]*; do
+    { read -r c <"$d/comm"; } 2>/dev/null || continue
+    [[ "$c" == inbox-wait ]] || continue
+    [[ -n "$pid" ]] || return 0
+    p="${d#/proc/}" n=0
+    while [[ "$p" =~ ^[0-9]+$ ]] && ((p > 1 && n++ < 64)); do
+      [[ "$p" == "$pid" ]] && return 0
+      { read -r s <"/proc/$p/stat"; } 2>/dev/null || break
+      s="${s##*) }" s="${s#* }" p="${s%% *}"
+    done
+  done
+  return 1
+}
+
 state=""
 case "$event" in
-  SessionStart | Stop) state=waiting ;;
+  SessionStart) if watching; then state=waiting; else state=idle; fi ;;
+  Stop)
+    input="$(head -c 1048576 2>/dev/null)" || input=""
+    if asks; then
+      state="asks you"
+    elif watching; then
+      state=waiting
+    else
+      state=idle
+    fi
+    ;;
   UserPromptSubmit | PostToolUse | PostToolUseFailure) state=working ;;
   PermissionRequest) state="needs you" ;;
   Notification)
@@ -53,8 +130,8 @@ fi
 [[ "$background" == on ]] || exit 0
 case "$event:$state" in
   *:working) seq=$'\e]11;#203040\a' ;;
-  *:"needs you") seq=$'\e]11;#402020\a' ;;
-  *:waiting | SessionEnd:) seq=$'\e]111\a' ;;
+  *:"needs you" | *:"asks you") seq=$'\e]11;#402020\a' ;;
+  *:waiting | *:idle | SessionEnd:) seq=$'\e]111\a' ;;
   *) exit 0 ;;
 esac
 pid="${CLAUDE_PID:-}"

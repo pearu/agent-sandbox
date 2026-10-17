@@ -295,6 +295,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The status line is a bar across the terminal, and tells "asks you" from "waiting"**
+  (#287). A Supervisor that had asked "Send it?" and a Reviewer idle with its watcher
+  armed both showed `waiting`, and the one-word tag was easy to miss across six
+  terminals. After a reply the state is now `ASKS YOU` (red) when the reply's last line
+  ends with a question, `WAITING` (green) when a watcher runs in the session -- a
+  process named `inbox-wait` -- and `IDLE` (grey) otherwise; a session that starts
+  with no watcher is `IDLE`. The line is one row in reverse video of the state's
+  colour, the role in bold and the state in capitals, padded to the terminal's width
+  (Claude Code shows `COLUMNS` less 4 of it). With `[claude] state-background = on`,
+  `asks you` tints like `needs you`, and `idle` resets like `waiting`.
 - **The roles model's watchers are background waits, not Monitors** (#288): every role
   runs `.asb/bin/inbox-wait` with the Bash tool in the background and runs it again after
   each wake, so nothing expires -- a Supervisor with a Monitor per role got three expiry
