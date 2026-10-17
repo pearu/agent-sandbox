@@ -24,7 +24,6 @@ retrieve-only = on
 git = refuse
 [permissions]                     # what a role runs without asking you: its inbox watcher
 Bash(.asb/bin/inbox-wait:*)
-Bash(tail:*)
 
 # ---- planners: an expert each; a Planner's own material is a read-only line here --
 [connect:planner-{n}]

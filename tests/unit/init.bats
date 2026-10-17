@@ -713,9 +713,9 @@ shared_env() {
   done
   grep -A6 -xF '[permissions:gate]                # the verbs it executes, each from an approved message' "$df" | grep -qxF 'Bash(git push:*)'
   # the purpose files arm it, with the role's own inbox and alive file
-  grep -qxF 'while .asb/bin/inbox-wait .asb/coord/to/planner-2.md 0 .asb/coord/planner-2/alive' "$PROJ/.asb/roles/planner-2.md"
+  grep -qxF '.asb/bin/inbox-wait -a .asb/coord/planner-2/alive .asb/coord/to/planner-2.md' "$PROJ/.asb/roles/planner-2.md"
   grep -qF 'done; in my file; S has it' "$PROJ/.asb/roles/reviewer-1.md"
-  grep -qxF 'while .asb/bin/inbox-wait .asb/coord/ROLE/messages.md 0' "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .asb/coord/planner-1/messages.md \\" "$PROJ/.asb/roles/supervisor.md"
   # run again: an inbox with messages, and a changed watcher, are kept
   printf '## 1\nread P1\n' >"$PROJ/.asb/coord/to/planner-1.md"
   printf '#!/bin/sh\nexit 0\n' >"$PROJ/.asb/bin/inbox-wait"
@@ -726,6 +726,35 @@ shared_env() {
   [ "$(cat "$PROJ/.asb/coord/to/planner-1.md")" = $'## 1\nread P1' ]
   [ -f "$PROJ/.asb/coord/to/reviewer-1.md" ] # a missing one is made again
   [ "$(cat "$PROJ/.asb/bin/inbox-wait")" = $'#!/bin/sh\nexit 0' ]
+}
+
+@test "the roles model: every watcher is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one over every non-Gate role's messages in the index (#288)" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local r f sup="$PROJ/.asb/roles/supervisor.md" idx="$PROJ/.asb/coord/COORDINATION.md"
+  for r in planner-1 planner-2 implementer-1 reviewer-1; do
+    f="$PROJ/.asb/roles/$r.md"
+    grep -qxF ".asb/bin/inbox-wait -a .asb/coord/$r/alive .asb/coord/to/$r.md" "$f"
+    grep -qF 'with the Bash tool and' "$f"
+    grep -qxF "\`run_in_background: true\`, and run it again after each wake; a change to your inbox" "$f"
+    grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$f"
+    grep -qF 'arm no watcher, read and act' "$f"
+  done
+  # the Supervisor: one command, its paths from the index, every role's but the Gate's and its own
+  grep -qxF "  \`run_in_background: true\`, and run it again after each wake: one path per role in" "$sup"
+  grep -qxF '  the index but the Gate and yourself; a change to any of them wakes you:' "$sup"
+  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .asb/coord/planner-1/messages.md \\" "$sup"
+  grep -qxF '  .asb/coord/implementer-1/messages.md ...' "$sup"
+  grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$sup"
+  for r in planner-1 planner-2 implementer-1 reviewer-1; do
+    grep -q "^| [A-Z][0-9]* | $r | .asb/coord/$r/messages.md |" "$idx"
+  done
+  grep -q '^| G | gate | .asb/coord/gate/messages.md |' "$idx"
+  # no Monitor watcher and no tail anywhere the model wrote, nor a rule for it
+  for f in "$PROJ"/.asb/roles/*.md "$PROJ"/.asb/serve/*.md; do
+    run ! grep -qE 'Monitor tool|timeout_ms|arm no Monitor|tail -n' "$f"
+  done
+  run ! grep -qF 'Bash(tail:*)' "$PROJ/.agent-sandbox"
 }
 
 @test "the written roles file passes the review: each [permissions] rule named, the Gate's too (#274)" {
