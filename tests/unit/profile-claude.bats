@@ -299,3 +299,56 @@ CHECK
   [ "${JOINV[*]:1}" = "-p Reply ok." ]
   [ ! -e "$OUT/.claude" ]
 }
+
+# stop_cmds FILE -- the Stop hook's commands in the settings file FILE, one per line
+stop_cmds() {
+  python3 -I -c 'import json, sys; [print(h["command"]) for g in json.load(open(sys.argv[1]))["hooks"]["Stop"] for h in g["hooks"]]' "$1"
+}
+
+@test "the watcher rule: a role whose [serve] watch names its inbox gets AGENT_SANDBOX_WATCH in its Stop hook's command; not another role, a print run, or a turn of --serve" {
+  printf '[serve:planner-1]\nwatch = .asb/coord/to/planner-1.md\nprompt = .asb/serve/planner-1.md\n[connect:*]\n' >"$H/proj/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  settings_of asb --role planner-1 claude --continue
+  [ "$status" -eq 0 ]
+  [ "$(stop_cmds "$OUT/settings.json")" = "AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md bash /run/agent-sandbox/state-hook.sh Stop off" ]
+  # only the Stop hook carries it
+  [ "$(grep -o AGENT_SANDBOX_WATCH "$OUT/settings.json" | wc -l)" -eq 1 ]
+  # a role with no [serve] section: the hook as before
+  settings_of asb --role other claude --continue
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" other off
+  run ! grep -q AGENT_SANDBOX_WATCH "$OUT/settings.json"
+  # a print run of the role: its turn is the run
+  settings_of asb --role planner-1 claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" planner-1 off
+  run ! grep -q AGENT_SANDBOX_WATCH "$OUT/settings.json"
+  # a turn of --serve: the loop is what watches
+  settings_of AGENT_SANDBOX_SERVE_TURN=1 asb --role planner-1 claude --resume 01234567-89ab-cdef-0123-456789abcdef 'Read your inbox.'
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" planner-1 off
+  run ! grep -q AGENT_SANDBOX_WATCH "$OUT/settings.json"
+  # a path with a space and a quote reaches the hook as one shell word, in a JSON string
+  printf '[serve:planner-1]\nwatch = .asb/in "box.md\n[connect:*]\n' >"$H/proj/.agent-sandbox"
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  settings_of asb --role planner-1 claude --continue
+  [ "$status" -eq 0 ]
+  local c
+  c="$(stop_cmds "$OUT/settings.json")"
+  [ "$(bash -c "${c%% bash *} bash -c 'printf %s \"\$AGENT_SANDBOX_WATCH\"'")" = '.asb/in "box.md' ]
+}
+
+@test "the watcher rule: --check says it for a role with a [serve] watch, and not for one without" {
+  printf '[serve:planner-1]\nwatch = .asb/coord/to/planner-1.md\nprompt = .asb/serve/planner-1.md\n[connect:*]\n' >"$H/proj/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role planner-1 2>&1 </dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  watcher: a turn does not end while .asb/coord/to/planner-1.md has no watcher running (the Stop hook refuses once)"$'\n'* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role other 2>&1 </dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"watcher:"* ]]
+}

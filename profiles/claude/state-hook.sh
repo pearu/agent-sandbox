@@ -25,6 +25,15 @@
 # Claude Code's descendants, CLAUDE_PID's, or anywhere in view without one. Anything
 # that fails to read falls through to the next test.
 #
+# THE WATCHER RULE. With AGENT_SANDBOX_WATCH set -- the profile sets it in the Stop hook's
+# command for a role whose [serve:ROLE] watch names its inbox, at a terminal launch, not
+# on a --serve turn nor a print run -- a Stop with no watcher running is refused once:
+# the hook prints {"decision":"block","reason":...} (the hooks reference's Stop decision
+# control), and Claude Code goes on with the reason as what to do. Not when the input's
+# stop_hook_active is true: Claude Code is already continuing because of a Stop hook,
+# and a second refusal would loop on a condition the model did not fix. The state file
+# is written as without the rule.
+#
 # STATE (default /tmp/agent-sandbox-state; /tmp is the sandbox's own tmpfs) is
 # written by rename, so the status line never reads half a file.
 #
@@ -34,7 +43,8 @@
 # Claude Code's own stdout is the terminal: /proc/$CLAUDE_PID/fd/1, written only when
 # it is a character device, and never waited on for more than a second.
 #
-# Exits 0 always and prints nothing: a hook's stdout can become the session's context.
+# Exits 0 always and prints nothing but the refusal above: a hook's stdout can become
+# the session's context.
 set -u
 event="${1:-}"
 background="${2:-off}"
@@ -94,18 +104,30 @@ watching() {
   return 1
 }
 
-state=""
+# refuse -- print the Stop refusal for the watch path in AGENT_SANDBOX_WATCH, a JSON
+# string (backslash, quote and control characters escaped).
+refuse() {
+  local w="$AGENT_SANDBOX_WATCH"
+  w="${w//\\/\\\\}" w="${w//\"/\\\"}" w="${w//[[:cntrl:]]/ }"
+  printf '{"decision":"block","reason":"agent-sandbox: your watcher on %s is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn."}\n' "$w"
+}
+
+state="" block=0
 case "$event" in
   SessionStart) if watching; then state=waiting; else state=idle; fi ;;
   Stop)
     input="$(head -c 1048576 2>/dev/null)" || input=""
+    w=0
+    watching && w=1
     if asks; then
       state="asks you"
-    elif watching; then
+    elif ((w)); then
       state=waiting
     else
       state=idle
     fi
+    re='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
+    [[ -n "${AGENT_SANDBOX_WATCH:-}" ]] && ((! w)) && [[ ! "$input" =~ $re ]] && block=1
     ;;
   UserPromptSubmit | PostToolUse | PostToolUseFailure) state=working ;;
   PermissionRequest) state="needs you" ;;
@@ -126,6 +148,8 @@ if [[ -n "$state" ]]; then
   tmp="$statef.$$"
   { printf '%s\n' "$state" >"$tmp" && mv -f -- "$tmp" "$statef"; } 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
 fi
+
+((block)) && refuse
 
 [[ "$background" == on ]] || exit 0
 case "$event:$state" in

@@ -48,6 +48,8 @@
 #                               session's first turn ([briefing] start); the
 #                               engine puts them after the agent's own ARGS.
 #                               Left empty, the first turn is declined.
+#   profile_check_notes()       optional. Prints lines --check shows for the
+#                               role, after the engine's own (one per line).
 #
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),
@@ -55,7 +57,9 @@
 # AGENT_SANDBOX_PROFILE_DIR, _as_msg (prefixed stderr messages), and, by
 # dynamic scope in profile_briefing_args, _permission_rules: a trusted
 # .agent-sandbox's [permissions] rules for this launch's role, in the agent's
-# own syntax, each once (a profile that reads none leaves them unapplied). A
+# own syntax, each once (a profile that reads none leaves them unapplied), and
+# _watch_path: the role's `[serve:ROLE] watch` (the inbox it keeps a watcher on),
+# relative to the project, empty without one and on a turn of --serve. A
 # profile must not touch the engine's bwrap argument list directly -- the
 # declarations above are the whole interface, so that the sandbox's isolation
 # guarantees stay reviewable in one place (the engine).
@@ -305,6 +309,11 @@ profile_telemetry_hosts() {
 # project's `[claude] state-background = on`, the same hook also sets the terminal's
 # background per state, and a SessionEnd hook resets it.
 #
+# The watcher rule: for a role whose `[serve:ROLE] watch` names its inbox (_watch_path,
+# the engine's; empty on a --serve turn, whose loop is the watcher), the Stop hook's
+# command carries AGENT_SANDBOX_WATCH=PATH, and state-hook.sh refuses once a turn that
+# ends with no inbox-wait running. Not in a print run (_claude_watch_ok).
+#
 # `/start`: for a role with a `[briefing] start` text (_start_text, the engine's), a
 # command whose body is that text, so that after `/clear` at the role's terminal
 # `/start` runs it as a turn -- the watcher re-armed, the inbox read -- without a
@@ -350,8 +359,19 @@ profile_briefing_args() {
   done
   local -a state_events=(UserPromptSubmit Stop PermissionRequest Notification)
   [[ "$bg" == on ]] && state_events+=(SessionEnd)
+  # The watcher rule (state-hook.sh): the role's watch path, for its Stop hook only.
+  local watch_env="" q
+  if [[ -n "${_watch_path:-}" ]] && _claude_watch_ok "$@"; then
+    printf -v q '%q' "$_watch_path"
+    q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
+    watch_env="AGENT_SANDBOX_WATCH=$q "
+  fi
   for ev in "${state_events[@]}"; do
-    ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
+    if [[ "$ev" == Stop ]]; then
+      ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$watch_env$state $ev $bg\"}]}]"
+    else
+      ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
+    fi
   done
   # shellcheck disable=SC2154 # _role: the engine's, by dynamic scope
   ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"bash $_brief_out_inside/statusline.sh ${_role:-default}\",\"refreshInterval\":1}"
@@ -435,6 +455,27 @@ _claude_start_ok() {
   for a in "$@"; do
     case "$a" in
       -- | -p | --print | --bg | -h | --help | -v | --version) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# profile_check_notes -- engine hook: the line --check prints for a role with a watch
+# path, what the Stop hook does about it (profile_briefing_args).
+profile_check_notes() {
+  [[ -n "${_watch_path:-}" ]] || return 0
+  printf 'watcher: a turn does not end while %s has no watcher running (the Stop hook refuses once)\n' "$_watch_path"
+}
+
+# _claude_watch_ok [AGENT ARGS...] -- may the Stop hook refuse a turn that ends without
+# the role's watcher? Not in a print run (-p): its turn is the run, which ends with it,
+# and a watcher armed there would die with it. Words after a `--` are not Claude Code's.
+_claude_watch_ok() {
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --) return 0 ;;
+      -p | --print) return 1 ;;
     esac
   done
   return 0

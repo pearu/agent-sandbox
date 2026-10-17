@@ -3425,6 +3425,18 @@ _as_serve_resolve() {
   return 0
 }
 
+# _as_watch_resolve ROLE -- set _watch_path to ROLE's [serve] watch, when it is a path
+# in the project (_as_serve_path_ok): the inbox a launch of ROLE at a terminal keeps a
+# watcher on, which the profile may enforce (the claude profile's Stop hook). Empty
+# without one.
+_as_watch_resolve() {
+  local _serve_watch _serve_prompt
+  _watch_path=""
+  _as_serve_resolve "$1"
+  if _as_serve_path_ok "$_serve_watch"; then _watch_path="$_serve_watch"; fi
+  return 0
+}
+
 # _as_serve_path_ok PATH -- is PATH what a [serve] key takes: relative to the project,
 # with no `..` in it?
 _as_serve_path_ok() {
@@ -5769,6 +5781,13 @@ _as_check_plan() {
       else
         printf '  --serve: refused -- [serve] needs watch and prompt, paths in the project (watch = %s, prompt = %s)\n' "${_serve_watch:-none}" "${_serve_prompt:-none}"
       fi
+    fi
+    # The profile's own lines for this role (profile_check_notes), indented as these are.
+    if declare -F profile_check_notes >/dev/null; then
+      local _pn
+      while IFS= read -r _pn; do
+        [[ -n "$_pn" ]] && printf '  %s\n' "$_pn"
+      done < <(profile_check_notes)
     fi
     printf '  %-28s %-15s %-24s %s\n' "channel or path" mode source "set by"
     # shellcheck disable=SC2031 # the launch's own profile_channels, not _as_profile_facts' copy
@@ -8637,6 +8656,11 @@ agent_sandbox() (
   # The first turn (`[briefing] start`): which file, for --check; read at the launch.
   local _start_as="" _start_text=""
   _as_briefing_start_resolve "${_role:-default}"
+  # The role's inbox ([serve] watch), handed to the profile by dynamic scope as
+  # _watch_path (profile_briefing_args, profile_check_notes). Not on a turn of --serve:
+  # there the loop is what watches.
+  local _watch_path=""
+  [[ -n "${AGENT_SANDBOX_SERVE_TURN:-}" ]] || _as_watch_resolve "${_role:-default}"
   _as_connect_report
   local _ln
   while IFS= read -r _ln; do

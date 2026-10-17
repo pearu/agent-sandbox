@@ -225,6 +225,44 @@ hex() { printf '%b' "$1" | od -An -tx1 | tr -d ' \n'; }
   [ "$(cat "$S")" = idle ]
 }
 
+@test "state-hook.sh: the watcher rule -- with AGENT_SANDBOX_WATCH and no watcher, Stop refuses once; not with a watcher, stop_hook_active, or no watch path" {
+  local why='agent-sandbox: your watcher on .asb/coord/to/planner-1.md is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn.'
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md hook Stop off '{"stop_hook_active":false,"last_assistant_message":"done; in my file; S has it"}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "{\"decision\":\"block\",\"reason\":\"$why\"}" ]
+  python3 -I -c 'import json, sys; m = json.loads(sys.argv[1]); assert m == {"decision": "block", "reason": sys.argv[2]}, m' "$output" "$why"
+  [ "$(cat "$S")" = idle ] # the state as without the rule
+  # a reply that asks is refused the same, and still says asks you
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md hook Stop off '{"last_assistant_message":"Send it?"}'
+  [[ "$output" == *'"decision":"block"'* ]]
+  [ "$(cat "$S")" = "asks you" ]
+  # already continuing because of a Stop hook: never a second refusal
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md hook Stop off '{"stop_hook_active": true}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = idle ]
+  # no watch path (another role, a print run, a turn of --serve): nothing
+  hook Stop off '{"stop_hook_active":false}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  AGENT_SANDBOX_WATCH='' hook Stop off '{}'
+  [ -z "$output" ]
+  # only Stop refuses
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md hook SessionStart
+  [ -z "$output" ]
+  # a watcher under Claude Code: the turn ends
+  watcher
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md hook Stop off '{"stop_hook_active":false}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = waiting ]
+  kill "$W"
+  wait "$W" 2>/dev/null || true
+  # a path with a quote and a backslash is a JSON string still
+  AGENT_SANDBOX_WATCH='in "x\y.md' hook Stop off '{}'
+  python3 -I -c 'import json, sys; assert json.loads(sys.argv[1])["reason"].startswith("agent-sandbox: your watcher on in \"x\\y.md is not running")' "$output"
+}
+
 @test "statusline.sh: a bar as wide as Claude Code lets it be, in reverse video -- working yellow, waiting green, asks you red, needs you red and bold, idle grey" {
   local B=$'\e[1m' R=$'\e[0m'
   COLUMNS=100 run bash "$P/statusline.sh" planner-1 "$S" </dev/null

@@ -283,7 +283,9 @@ its terminal.
   a change the Supervisor tells each role it affects to finish its step and say ready,
   and gives you the relaunch line (`--continue`, once the role's launch has ended). The
   roles' `[permissions]` lines let the watcher run without a prompt under any permission
-  mode.
+  mode. A reply that ends with no watcher running is refused once by the claude
+  profile's `Stop` hook, for every role whose `[serve:<role>]` names its inbox: the
+  model is told to arm it, and then ends its turn.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
   `.asb/scratch/inbox-cursor` (the last N it handled), at every wake and at every
   start, so a lost notification costs nothing.
