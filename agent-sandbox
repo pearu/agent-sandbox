@@ -6539,8 +6539,12 @@ _as_init() {
     fi
     printf '%s%s' "$lead" "$txt"
   }
-  local df="$proj/.agent-sandbox" existing="" new="" j n inst h hd lead
+  local df="$proj/.agent-sandbox" existing="" new="" j n inst h hd lead cmp
   local -a clones=() insts=() prefixes=() inboxes=() prompts=()
+  # The sections of the model's roles (an instance's, or the scoped common block's per
+  # role pattern) the file has already, each as the template renders it now: compared
+  # with the file's at the end, for the lines the model gained since.
+  local -a chk_h=() chk_a=()
   # A section the file has -- or has commented out, which is the user's to uncomment --
   # is never written again; compared by its header alone.
   [[ -f "$df" ]] && existing="$(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' "$df")"
@@ -6694,7 +6698,7 @@ _as_init() {
           done <<<"${bodies[k]%$'\n'}"
           grep -qE '^[[:space:]]*[^#[:space:]]' <<<"$body" || continue # nothing left
           a="$(_init_render "$hd" "$body" "" "" "" "$lead")"
-          _init_has "$hd" || new+="$a"$'\n'
+          if _init_has "$hd"; then chk_h+=("$hd") chk_a+=("$a"); else new+="$a"$'\n'; fi
         done
         n=0
       done
@@ -6716,7 +6720,8 @@ _as_init() {
           lead=""
           ((n == 1)) && lead="${leads[k]}"
           a="$(_init_render "${heads[k]}" "${bodies[k]}" "$inst" "$n" "$h" "$lead")"
-          _init_has "$(_init_render "${heads[k]}" "" "$inst" "$n" "$h" | head -1)" || new+="$a"$'\n'
+          hd="$(_init_render "${heads[k]}" "" "$inst" "$n" "$h" | head -1)"
+          if _init_has "$hd"; then chk_h+=("$hd") chk_a+=("$a"); else new+="$a"$'\n'; fi
           [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*clone[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
             && clones+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
           [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*inbox[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
@@ -6733,6 +6738,7 @@ _as_init() {
       i=$((j + 1))
       continue
     fi
+    cmp=0
     if [[ "${rn:-}" == default ]]; then
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "" "" "" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "" "" "" | head -1)"
@@ -6751,12 +6757,17 @@ _as_init() {
         && prompts+=("$rn"$'\t'"$h"$'\t'"$rn"$'\t'""$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$rn" "" "$h" | sed -n 2p)")
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "$rn" "" "$h" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "$rn" "" "$h" | head -1)"
+      cmp=1
     else
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "" "" "" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "" "" "" | head -1)"
       [[ -n "$existing" ]] && a="" # the common sections are written once, with the file
     fi
-    [[ -n "$a" ]] && ! _init_has "$hd" && new+="$a"$'\n'
+    if [[ -n "$a" ]] && _init_has "$hd"; then
+      if ((cmp)); then chk_h+=("$hd") chk_a+=("$a"); fi
+    elif [[ -n "$a" ]]; then
+      new+="$a"$'\n'
+    fi
     ((i += 1))
   done
   # --enable-gpu / --disable-gpu (_init_gpu, the caller's): a `[gpu:PATTERN] mode` line
@@ -6995,8 +7006,86 @@ _as_init() {
     _as_msg "--init: environment $env is not built yet ($a at $envpath$([[ "$_conda_mode" == sandbox ]] && printf ", under agent-sandbox's conda root")): $invoked --role $setup claude builds it"
   fi
 
+  # --init never changes a section that exists, so a line the model gained since the file
+  # was written (a key whose KEY the file's section lacks, or a bare line -- a host, a rule
+  # -- it lacks verbatim) would be silently absent: said here, with the --apply line for
+  # each section. A line the file has commented out is the user's choice; a key's value
+  # is never compared.
+  _init_norm() { # LINE -> as the parser reads it: no comment, no surrounding blanks
+    local x="${1%%#*}"
+    x="${x#"${x%%[![:space:]]*}"}"
+    printf '%s' "${x%"${x##*[![:space:]]}"}"
+  }
+  _init_missing() { # HEADER RENDERED -> the rendered lines the file's section HEADER lacks
+    local want="${1%%]*}]" l x cur="" have="" keys="" on=0
+    want="${want#\# }"
+    while IFS= read -r l || [[ -n "$l" ]]; do
+      if [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
+        cur="${BASH_REMATCH[2]}"
+        continue
+      fi
+      [[ "$cur" == "$want" ]] || continue
+      x="${l#"${l%%[![:space:]]*}"}"
+      while [[ "$x" == '#'* ]]; do
+        x="${x#\#}"
+        x="${x#"${x%%[![:space:]]*}"}"
+      done
+      x="$(_init_norm "$x")"
+      [[ -n "$x" ]] || continue
+      have+="$x"$'\n' keys+="$(_init_key "$x")"$'\n'
+    done <"$df"
+    while IFS= read -r l; do
+      if ((! on)); then
+        [[ "$l" == '['* ]] && on=1
+        continue
+      fi
+      x="$(_init_norm "$l")"
+      [[ -n "$x" ]] || continue
+      if [[ -n "$(_init_key "$x")" ]]; then
+        grep -qxF -- "$(_init_key "$x")" <<<"$keys" || printf '%s\n' "$x"
+      else
+        grep -qxF -- "$x" <<<"$have" || printf '%s\n' "$x"
+      fi
+    done <<<"$2"
+  }
+  _init_q() { printf "'%s'" "${1//\'/\'\\\'\'}"; } # WORD -> quoted for a shell
+  # A header may come twice (the common block's copy for a role and the role's own): its
+  # lines are compared with all of the file's under it, and said in one --apply.
+  local l miss nmiss=0 applies=""
+  local -a mh=() mm=()
+  for i in ${chk_h[@]+"${!chk_h[@]}"}; do
+    hd="${chk_h[i]%%]*}]"
+    hd="${hd#\# }"
+    miss="$(_init_missing "$hd" "${chk_a[i]}")"
+    [[ -n "$miss" ]] || continue
+    for j in ${mh[@]+"${!mh[@]}"}; do
+      [[ "${mh[j]}" == "$hd" ]] && break
+    done
+    if ((${#mh[@]} == 0)) || [[ "${mh[j]}" != "$hd" ]]; then
+      j=${#mh[@]}
+      mh+=("$hd") mm+=("")
+    fi
+    while IFS= read -r l; do
+      grep -qxF -- "$l" <<<"${mm[j]}" || mm[j]+="$l"$'\n'
+    done <<<"$miss"
+  done
+  for j in ${mh[@]+"${!mh[@]}"}; do
+    applies+="    $invoked --apply $(_init_q "${mh[j]}")"
+    while IFS= read -r l; do
+      applies+=" $(_init_q "$l")"
+      nmiss=$((nmiss + 1))
+    done <<<"${mm[j]%$'\n'}"
+    applies+=$'\n'
+  done
+  if ((nmiss)); then
+    printf '\n' >&2
+    _as_msg "--init: $nmiss line$( ((nmiss == 1)) || printf s) model '$model' has now that your .agent-sandbox lacks -- --init never changes a section that exists; add $( ((nmiss == 1)) && printf it || printf them) with:"
+    printf '%s' "$applies" >&2
+  fi
+
   {
     printf '\nNext, yours:\n'
+    ((nmiss)) && printf '  - the --apply line%s above: what model '"'"'%s'"'"' gained that your existing sections lack\n' "$( ((nmiss == 1)) || printf s)" "$model"
     printf '  - read .agent-sandbox and the purpose files in .asb/roles/; add what this project needs\n'
     printf '    (hosts to [allow], paths a role reads as read-only lines in its own [connect:...] section)\n'
     if [[ -z "$env" ]]; then

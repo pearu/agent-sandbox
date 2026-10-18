@@ -78,4 +78,7 @@ A model directory holds:
 Run again with more instances, `--init` adds what is missing and touches nothing else
 that exists, except a purpose file, a `bin/` script or a prompt it wrote and nobody changed since:
 that one takes the model's current text (`.asb/init.sums` records what it wrote). The changed
-`.agent-sandbox` or purpose file then needs `asb --trust` again.
+`.agent-sandbox` or purpose file then needs `asb --trust` again. A section that exists is
+never changed: a re-run reports the lines the model gained that such a section lacks (a
+key it does not set, a bare line not in it; commented-out lines count as there), with an
+`asb --apply` line per section to add them.

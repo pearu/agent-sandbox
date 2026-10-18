@@ -942,3 +942,59 @@ shared_env() {
   [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | grep -cxF -- '- A turn cut short (a lost connection, an interruption) is resumed at your next wake or')" -eq 1 ]
   grep -qxF '  prompt without asking: nothing in your inbox changed, so the message is still yours' "$PROJ/.asb/roles/gate.md"
 }
+
+@test "run again on a file from an older model: the lines the model gained that an existing section lacks, one --apply per section, loud" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"your .agent-sandbox lacks"* && "$output" != *"--apply line"* ]] # a fresh file: nothing
+  grep -qxF 'Bash(gh pr comment:*)' "$PROJ/.agent-sandbox"
+  # the file as an older model wrote it: no start line for the Gate, one rule fewer
+  sed -i -e '/^\[briefing:gate\]/,/^\[/{/^start = /d}' -e '/^Bash(gh pr comment:\*)$/d' "$PROJ/.agent-sandbox"
+  run ! grep -q '^start = .asb/start/gate.md' "$PROJ/.agent-sandbox"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles
+  [ "$status" -eq 0 ]
+  cmp "$H/before" "$PROJ/.agent-sandbox" # an existing section is never changed
+  [[ "$output" == *"agent-sandbox: --init: 2 lines model 'roles' has now that your .agent-sandbox lacks -- --init never changes a section that exists; add them with:"* ]]
+  [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 2 ]
+  grep -qxF "    agent-sandbox --apply '[permissions:gate]' 'Bash(gh pr comment:*)'" <<<"$output"
+  grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'start = .asb/start/gate.md'" <<<"$output"
+  # before the summary, which points at it
+  [ "$(grep -n 'lacks -- --init never' <<<"$output" | cut -d: -f1)" -lt "$(grep -n '^Next, yours:' <<<"$output" | cut -d: -f1)" ]
+  [[ "$output" == *"  - the --apply lines above: what model 'roles' gained that your existing sections lack"* ]]
+}
+
+@test "run again: a line the file has commented out, or a key with another value, is the user's -- nothing said" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  sed -i -e '/^\[briefing:gate\]/,/^\[/s/^start = .*/# start = .asb\/start\/gate.md/' \
+    -e '/^\[briefing:supervisor\]/,/^\[/s/^start = .*/start = other.md/' \
+    -e 's/^Bash(gh pr comment:\*)$/# Bash(gh pr comment:*)/' "$PROJ/.agent-sandbox"
+  grep -qxF '# start = .asb/start/gate.md' "$PROJ/.agent-sandbox"
+  grep -qxF 'start = other.md' "$PROJ/.agent-sandbox"
+  grep -qxF '# Bash(gh pr comment:*)' "$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing added to it"* ]]
+  [[ "$output" != *"your .agent-sandbox lacks"* && "$output" != *"--apply line"* ]]
+}
+
+@test "run again on a composed file: only the model being initialised is reported (#267)" {
+  init -- github
+  [ "$status" -eq 0 ]
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"your .agent-sandbox lacks"* ]] # appended to a file: its own sections are new
+  grep -qxF 'file = .asb/roles/gh-fix.md' "$PROJ/.agent-sandbox"
+  sed -i -e '/^file = .asb\/roles\/gh-fix.md$/d' -e '/^\[briefing:gate\]/,/^\[/{/^start = /d}' "$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: --init: 1 line model 'roles' has now that your .agent-sandbox lacks -- --init never changes a section that exists; add it with:"* ]]
+  [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 1 ]
+  grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'start = .asb/start/gate.md'" <<<"$output"
+  [[ "$output" == *"  - the --apply line above: what model 'roles' gained"* ]]
+  init -- github
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 1 ]
+  grep -qxF "    agent-sandbox --apply '[briefing:gh-fix-*]' 'file = .asb/roles/gh-fix.md'" <<<"$output"
+}
