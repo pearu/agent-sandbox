@@ -225,6 +225,95 @@ hex() { printf '%b' "$1" | od -An -tx1 | tr -d ' \n'; }
   [ "$(cat "$S")" = idle ]
 }
 
+# tasks ENTRY... -- a Stop input whose background_tasks holds each ENTRY (a JSON object)
+tasks() {
+  local IFS=,
+  printf '{"hook_event_name":"Stop","last_assistant_message":"%s","background_tasks":[%s],"session_crons":[]}' "${M:-ok}" "$*"
+}
+
+# the entries a live Stop input carried (2.1.300): the roles model's watcher, and a
+# command the session ran in the background
+WT='{"id":"b01uoyluy","type":"shell","status":"running","description":"Arm inbox watcher for planner-1","command":".asb/bin/inbox-wait -a .asb/coord/planner-1/alive .asb/coord/to/planner-1.md"}'
+ST='{"id":"bsy1vrv0j","type":"shell","status":"running","description":"Sleep 90 seconds in background","command":"sleep 90"}'
+
+@test "state-hook.sh: a background command of the session's own other than the watcher makes Stop say running, from background_tasks" {
+  watcher
+  hook Stop off "$(tasks "$WT" "$ST")"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = running ]
+  # the watcher alone: waiting
+  hook Stop off "$(tasks "$WT")"
+  [ "$(cat "$S")" = waiting ]
+  # a question still comes first
+  local M='Run the suite now?'
+  hook Stop off "$(tasks "$WT" "$ST")"
+  M=ok
+  [ "$(cat "$S")" = "asks you" ]
+  # an entry with no command (a subagent), one whose description alone names the
+  # watcher, and keys in another order count; an empty array is nothing running
+  hook Stop off "$(tasks '{"id":"a1","type":"subagent","status":"running","description":"x","agent_type":"Explore"}')"
+  [ "$(cat "$S")" = running ]
+  hook Stop off "$(tasks '{"command":"make test","description":"not inbox-wait, \"really\" { [","id":"x"}' "$WT")"
+  [ "$(cat "$S")" = running ]
+  hook Stop off "$(tasks)"
+  [ "$(cat "$S")" = waiting ]
+  # a command naming inbox-wait anywhere is the watcher
+  hook Stop off "$(tasks '{"type":"shell","command":"cd x && .asb/bin/inbox-wait a.md b.md"}')"
+  [ "$(cat "$S")" = waiting ]
+  kill "$W"
+  wait "$W" 2>/dev/null || true
+  hook Stop off "$(tasks "$WT" "$ST")"
+  [ "$(cat "$S")" = running ]
+  hook Stop off "$(tasks)"
+  [ "$(cat "$S")" = idle ]
+  # the field's name in the reply is not the field; an array that never ends is no answer
+  hook Stop off '{"last_assistant_message":"\"background_tasks\":[{}]"}'
+  [ "$(cat "$S")" = idle ]
+  hook Stop off '{"background_tasks":[{"command":"sleep 9"}'
+  [ "$(cat "$S")" = idle ]
+  # SessionStart is unchanged
+  hook SessionStart off "$(tasks "$ST")"
+  [ "$(cat "$S")" = idle ]
+}
+
+@test "state-hook.sh: without background_tasks, running is a Bash tool wrapper other than the watcher's among Claude Code's children" {
+  # Claude Code runs a Bash call as `bash -c '... eval '\''CMD'\'' < /dev/null && pwd -P >| F'`
+  # (measured, 2.1.300); CLAUDE_PID is this shell, whose child the wrapper is
+  local me=$BASHPID x
+  bash -c "true && eval 'sleep 30' < /dev/null && pwd -P >| /dev/null" 3>&- &
+  x=$!
+  CLAUDE_PID=$me run bash "$P/state-hook.sh" Stop off "$S" <<<'{"last_assistant_message":"ok"}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = running ]
+  # background_tasks, when there, wins
+  CLAUDE_PID=$me run bash "$P/state-hook.sh" Stop off "$S" <<<'{"background_tasks":[]}'
+  [ "$(cat "$S")" = idle ]
+  # not Claude Code's child, or no CLAUDE_PID: nothing
+  local other
+  sleep 30 3>&- &
+  other=$!
+  CLAUDE_PID=$other run bash "$P/state-hook.sh" Stop off "$S" <<<'{}'
+  kill "$other"
+  [ "$(cat "$S")" = idle ]
+  run env -u CLAUDE_PID bash "$P/state-hook.sh" Stop off "$S" <<<'{}'
+  [ "$(cat "$S")" != running ] # waiting, when the host runs a watcher of its own
+  kill "$x"
+  wait "$x" 2>/dev/null || true
+  # the watcher's own wrapper is the watcher; a bash that is not a -c wrapper is not one
+  bash -c "true && eval 'sleep 30; : inbox-wait' < /dev/null && pwd -P >| /dev/null" 3>&- &
+  x=$!
+  printf 'sleep 30\n' >"$BATS_TEST_TMPDIR/s.sh"
+  bash "$BATS_TEST_TMPDIR/s.sh" 3>&- &
+  local y=$!
+  sleep 0.2
+  CLAUDE_PID=$me run bash "$P/state-hook.sh" Stop off "$S" <<<'{}'
+  kill "$x" "$y"
+  wait "$x" "$y" 2>/dev/null || true
+  [ "$(cat "$S")" = idle ]
+}
+
 @test "state-hook.sh: the watcher rule -- with AGENT_SANDBOX_WATCH and no watcher, Stop refuses once; not with a watcher, stop_hook_active, or no watch path" {
   local why='agent-sandbox: your watcher on .asb/coord/to/planner-1.md is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn.'
   AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md hook Stop off '{"stop_hook_active":false,"last_assistant_message":"done; in my file; S has it"}'
@@ -263,13 +352,13 @@ hex() { printf '%b' "$1" | od -An -tx1 | tr -d ' \n'; }
   python3 -I -c 'import json, sys; assert json.loads(sys.argv[1])["reason"].startswith("agent-sandbox: your watcher on in \"x\\y.md is not running")' "$output"
 }
 
-@test "statusline.sh: a bar as wide as Claude Code lets it be, in reverse video -- working yellow, waiting green, asks you red, needs you red and bold, idle grey" {
+@test "statusline.sh: a bar as wide as Claude Code lets it be, in reverse video -- working and running yellow, waiting green, asks you red, needs you red and bold, idle grey" {
   local B=$'\e[1m' R=$'\e[0m'
   COLUMNS=100 run bash "$P/statusline.sh" planner-1 "$S" </dev/null
   [ "$status" -eq 0 ]
   [ "$output" = "${B}planner-1${R}" ] # no state file: the role alone, no bar
   local st c
-  for st in working:33 waiting:32 "asks you:31" "needs you:31" idle:90; do
+  for st in working:33 running:33 waiting:32 "asks you:31" "needs you:31" idle:90; do
     c="${st##*:}" st="${st%:*}"
     printf '%s\n' "$st" >"$S"
     COLUMNS=100 run bash "$P/statusline.sh" planner-1 "$S" </dev/null
@@ -337,6 +426,8 @@ hex() { printf '%b' "$1" | od -An -tx1 | tr -d ' \n'; }
   [ "$output" = "$(hex '\e]111\a')" ] # idle
   osc Stop on '{"last_assistant_message":"Send it?"}'
   [ "$output" = "$(hex '\e]11;#402020\a')" ] # asks you, as needs you
+  osc Stop on "$(tasks "$WT" "$ST")"
+  [ "$output" = "$(hex '\e]11;#203040\a')" ] # running, as working
   osc SessionStart on
   [ "$output" = "$(hex '\e]111\a')" ]
   osc SessionEnd on

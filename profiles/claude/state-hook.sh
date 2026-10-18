@@ -10,6 +10,8 @@
 #                                         agent_needs_input (from the hook's stdin
 #                                         JSON); nothing for idle_prompt and the rest
 #   Stop                      asks you    the reply's last line ends with a question
+#                             running     else, a background command of the session's own
+#                                         other than the watcher runs: it wakes when that ends
 #                             waiting     else, a watcher runs: a message will wake it
 #                             idle        else: the prompt is the user's
 #   SessionStart              waiting     a watcher runs (a resumed session's)
@@ -22,8 +24,14 @@
 # trailing whitespace and markdown emphasis stripped, ends with `?`: a question the
 # turn ended on. A watcher is a process named inbox-wait (the roles model's
 # .asb/bin/inbox-wait, a script, so the kernel names it after the file) among
-# Claude Code's descendants, CLAUDE_PID's, or anywhere in view without one. Anything
-# that fails to read falls through to the next test.
+# Claude Code's descendants, CLAUDE_PID's, or anywhere in view without one. A
+# background command is an entry of the Stop input's background_tasks (the hooks
+# reference: one per in-flight task -- a shell, a subagent, a monitor...; a shell's has
+# its command line) whose command does not name inbox-wait; without that field, a
+# child of CLAUDE_PID that is the Bash tool's wrapper, `bash -c ... eval '...'`
+# (measured, 2.1.300), its command line not naming inbox-wait -- at Stop the turn's
+# own Bash calls have ended, so a wrapper still running is a background one; without
+# CLAUDE_PID, none. Anything that fails to read falls through to the next test.
 #
 # THE WATCHER RULE. With AGENT_SANDBOX_WATCH set -- the profile sets it in the Stop hook's
 # command for a role whose [serve:ROLE] watch names its inbox, at a terminal launch, not
@@ -104,6 +112,70 @@ watching() {
   return 1
 }
 
+# jtasks -- the number of entries of the stdin JSON's background_tasks array whose
+# "command" does not name inbox-wait (an entry with no command counts); status 1 when
+# there is no such array, or it does not end.
+jtasks() {
+  awk 'BEGIN { RS = "\001" }
+    { t = t $0 }
+    END {
+      k = "\"background_tasks\""; p = 0; f = 0
+      while ((j = index(substr(t, p + 1), k)) > 0) {
+        p += j; r = substr(t, p + length(k))
+        if (match(r, /^[ \t\r\n]*:[ \t\r\n]*\[/)) { f = 1; break }
+      }
+      if (!f) exit 1
+      r = substr(r, RLENGTH + 1); n = length(r)
+      d = 1; s = 0; e = 0; want = 0; key = ""; cmd = ""; str = ""; c = 0
+      for (i = 1; i <= n; i++) {
+        ch = substr(r, i, 1)
+        if (s) {
+          if (e) e = 0
+          else if (ch == "\\") e = 1
+          else if (ch == "\"") {
+            s = 0
+            if (d == 2) { if (want) { key = str; want = 0 } else if (key == "command") cmd = str }
+            continue
+          }
+          str = str ch
+          continue
+        }
+        if (ch == "\"") { s = 1; str = "" }
+        else if (ch == "{" || ch == "[") {
+          d++
+          if (d == 2 && ch == "{") { want = 1; key = ""; cmd = "" }
+        } else if (ch == "}" || ch == "]") {
+          d--
+          if (d == 1 && ch == "}" && !index(cmd, "inbox-wait")) c++
+          if (d == 0) { print c; exit 0 }
+        } else if (ch == "," && d == 2) want = 1
+      }
+      exit 1
+    }' 2>/dev/null
+}
+
+# running -- whether the session has a background command other than the watcher: from
+# background_tasks in the stdin JSON (in $input), or, without it, the process view.
+running() {
+  local n d c p s pid="${CLAUDE_PID:-}" a
+  if n="$(jtasks <<<"$input")"; then
+    ((n > 0))
+    return
+  fi
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  for d in /proc/[0-9]*; do
+    { read -r c <"$d/comm"; } 2>/dev/null || continue
+    [[ "$c" == bash ]] || continue
+    { read -r s <"$d/stat"; } 2>/dev/null || continue
+    s="${s##*) }" s="${s#* }" p="${s%% *}"
+    [[ "$p" == "$pid" ]] || continue
+    a=()
+    { mapfile -d '' a <"$d/cmdline"; } 2>/dev/null || continue
+    [[ "${a[1]:-}" == -c && "${a[2]:-}" == *"eval '"* && "${a[2]}" != *inbox-wait* ]] && return 0
+  done
+  return 1
+}
+
 # refuse -- print the Stop refusal for the watch path in AGENT_SANDBOX_WATCH, a JSON
 # string (backslash, quote and control characters escaped).
 refuse() {
@@ -121,6 +193,8 @@ case "$event" in
     watching && w=1
     if asks; then
       state="asks you"
+    elif running; then
+      state=running
     elif ((w)); then
       state=waiting
     else
@@ -153,7 +227,7 @@ fi
 
 [[ "$background" == on ]] || exit 0
 case "$event:$state" in
-  *:working) seq=$'\e]11;#203040\a' ;;
+  *:working | *:running) seq=$'\e]11;#203040\a' ;;
   *:"needs you" | *:"asks you") seq=$'\e]11;#402020\a' ;;
   *:waiting | *:idle | SessionEnd:) seq=$'\e]111\a' ;;
   *) exit 0 ;;

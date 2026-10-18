@@ -329,6 +329,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The status line says `RUNNING` when a background command of the role's own is still
+  going; `WAITING` is the watcher alone** (a Reviewer whose CUDA suite ran in the
+  background, beside its inbox watcher, ended a turn and its bar read `WAITING`, as if
+  it waited for the Supervisor, while it was at work and would wake when the suite
+  ended). After a reply, and after `ASKS YOU`, the state is `running` (yellow, as
+  `working`) when the `Stop` input's `background_tasks` holds a task whose command does
+  not name `inbox-wait` -- or, without that field, Claude Code runs a Bash tool wrapper
+  other than the watcher's; then `waiting`, then `idle`. With `[claude]
+  state-background = on`, `running` tints like `working`.
 - **The roles model's Gate watches its inbox like every other role, and the Supervisor
   watches the Gate's messages**. In a live roles project the Gate's status bar read
   `IDLE` at start and stayed so after it had pushed: it had no watcher, its terminal

@@ -75,10 +75,14 @@ are copied beside the briefing and named in the `--settings` from there:
 `refusal-hook.sh` (a refused host, after a Bash call), `state-hook.sh` (what the
 session is doing, from `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
 `Notification`, and `PostToolUse`/`PostToolUseFailure` for any tool, into the sandbox's
-`/tmp`: `working`, `needs you`, and after a reply one of three -- `asks you` when the
+`/tmp`: `working`, `needs you`, and after a reply one of four -- `asks you` when the
 `Stop` input's `last_assistant_message` (the transcript's tail without it) ends its last
-line with `?`, `waiting` when a process named `inbox-wait` runs under Claude Code
-(`CLAUDE_PID`), `idle` otherwise, and the same watcher test at `SessionStart`; with
+line with `?`, `running` when a background command of the role's own is running; it
+wakes when that ends (an entry of the `Stop` input's `background_tasks` whose command
+does not name `inbox-wait`; without that field, a Bash tool wrapper, `bash -c ... eval`,
+other than the watcher's among Claude Code's children), `waiting` when a process named
+`inbox-wait` runs under Claude Code (`CLAUDE_PID`), `idle` otherwise, and the same
+watcher test at `SessionStart`; with
 `[claude] state-background = on` also the terminal's background, reset by
 a `SessionEnd` hook; no hook fires on an Esc interrupt, so the state stays `working`
 until the next event; and, for a role whose `[serve:ROLE] watch` names its inbox, the
