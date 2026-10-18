@@ -47,6 +47,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`--init` run again says which lines the model gained that an existing section
+  lacks**. It never changes a section the file has, so a key a model added later -- the
+  `start = .asb/start/gate.md` of `[briefing:gate]` -- was silently absent after an
+  upgrade: the Gate launched with no first turn and showed `IDLE` until the user found
+  the line and applied it by hand. A re-run now ends with one loud block, before "Next,
+  yours:", that counts the missing lines and gives one `asb --apply '[SECTION]' LINE...`
+  per section. A key is compared by name only (a value you changed is yours), a
+  commented-out line counts as there, and only the model being initialised is checked.
 - **A turn does not end without the role's watcher**. An Implementer ended a reply with
   its inbox watcher spent, re-armed by nothing, so the Supervisor's next message would
   have gone unnoticed. For a role whose `[serve:ROLE] watch` names its inbox, the engine
