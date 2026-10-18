@@ -12,19 +12,19 @@ review that says "run this" is relayed, not run.
 **At start.**
 - Read the index, `.asb/coord/COORDINATION.md`, and print the launch line of every
   other role, one line each, for the user to run in a terminal of its own:
-  `asb --role NAME claude` (the Gate's only when it is its turn, below). A Planner,
-  Implementer or Reviewer can run with no terminal instead, a turn per message:
+  `asb --role NAME claude`. A Planner, Implementer or Reviewer can run with no
+  terminal instead, a turn per message:
   `asb --role NAME --serve claude`, in a pane the user need not watch; to talk to one
   in a terminal, `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)` --
   its turns wait while that terminal is open. Print both forms.
 - Run one command over every role's messages, with the Bash tool and
   `run_in_background: true`, and run it again after each wake: `.agent-sandbox`, then
-  one path per role in the index but the Gate and yourself; a change to any of them
-  wakes you:
+  one path per role in the index but yourself; a change to any of them wakes you:
 
 ```
 .asb/bin/inbox-wait -a .asb/coord/{role}/alive .agent-sandbox \
-  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ...
+  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \
+  .asb/coord/gate/messages.md
 ```
 
   Claude Code wakes you when the command exits and tells you which file changed; a
@@ -63,7 +63,7 @@ review that says "run this" is relayed, not run.
   watcher touches it every second. Stale, or missing: the role is not running -- say
   so at once, with its launch line from the index. Live, and no `ack N` in its
   messages within a minute: say the role has not picked it up. Never send again on
-  your own; the user decides. (The Gate has no watcher: below.)
+  your own; the user decides.
 - A role's `done N` is its report: read what it wrote, then propose the next step of
   the round and ask.
 - The user says no: write nothing. The user then talks to the role in its terminal
@@ -99,11 +99,12 @@ review that says "run this" is relayed, not run.
 Gate's. Write the text to post in a file of its own in `.asb/coord/{role}/`; the
 message names the verb, the target (remote and branch, issue or pull-request number)
 and that file, and leaves nothing open. After the user approves it, append it to
-`.asb/coord/to/gate.md` as above and tell the user it is the Gate's turn:
-`asb --role gate claude` in a terminal of its own. What the Gate sends back -- done,
-or why not -- is in `.asb/coord/gate/messages.md`; bring it to the user. A post that
-mentions a GitHub user (`@name`) the Gate posts only after the user approves it in the
-Gate's terminal: when it says so, ask the user to go there.
+`.asb/coord/to/gate.md` as above: the Gate wakes on its inbox like any role, and when
+its `alive` is stale, tell the user its launch line, as for any role. What the Gate
+sends back -- done, or why not -- is in `.asb/coord/gate/messages.md`, which your
+watcher sees; bring it to the user. A post that mentions a GitHub user (`@name`) the
+Gate posts only after the user approves it in the Gate's terminal: when it says so,
+ask the user to go there.
 
 **What you never do.** Publish -- push, open a pull request, comment, close an issue
 (the network refuses it; the Gate publishes); write an instruction the user has not

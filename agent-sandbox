@@ -250,7 +250,8 @@
 #                         arguments and the prompt) per change to the file the
 #                         dot-file's [serve:R] watch names; --shutdown ends it.
 #                         A file .asb/coord/to/R.reset makes the next turn a new
-#                         session.
+#                         session. A [serve:R] with watch alone is not served: its
+#                         watcher is enforced at a terminal, and --serve refuses.
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -424,7 +425,7 @@ Engine flags (before CMD):
   --serve               a role with no terminal: hold its launch, and run one
                         turn of its session per change to the file its
                         [serve:ROLE] watch names, told the text of prompt;
-                        needs --role; --shutdown or Ctrl-C ends it
+                        needs --role and both keys; --shutdown or Ctrl-C ends it
   --overlay auto|off    what `copy-on-write` uses: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only moves `copy-on-write` to `copy`
@@ -3445,8 +3446,10 @@ _as_serve_path_ok() {
 
 # _as_serve_notes -- the review's lines for the [serve] sections (_as_trust_notes):
 # what the loop will wait on and say, for which roles. Information: a loop widens
-# nothing, it runs the role as the role runs. A section that lacks a key, or names a
-# path outside the project, is said, and --serve refuses for its roles.
+# nothing, it runs the role as the role runs. A section with `watch` alone is a watch
+# only: the watcher is enforced at a terminal, and the role is not served. A section
+# that lacks `watch`, or names a path outside the project, is said, and --serve refuses
+# for its roles.
 _as_serve_notes() {
   local e g k v w p n sec
   local -a globs=()
@@ -3467,7 +3470,10 @@ _as_serve_notes() {
     for k in watch prompt; do
       v="$w"
       [[ "$k" == prompt ]] && v="$p"
-      if [[ -z "$v" ]]; then
+      if [[ -z "$v" && "$k" == prompt ]]; then
+        _as_serve_path_ok "$w" \
+          && _as_msg ".agent-sandbox: $sec, for $n: watch only -- the watcher on $w is enforced, the role is not served (no prompt: --serve refuses). It widens nothing"
+      elif [[ -z "$v" ]]; then
         _as_msg ".agent-sandbox: $sec has no '$k = PATH'; --serve refuses for $n until it has both watch and prompt"
       elif ! _as_serve_path_ok "$v"; then
         _as_msg ".agent-sandbox: $sec $k '$v' is not a path in the project (relative to it, no '..'); --serve refuses for $n"
@@ -3632,6 +3638,10 @@ _as_serve_check() {
     return 1
   fi
   _as_serve_resolve "$_role"
+  if [[ -n "$_serve_watch" && -z "$_serve_prompt" ]]; then
+    _as_msg "--serve: role '$_role': its [serve] names no prompt -- watch only: this role is not served"
+    return 1
+  fi
   if [[ -z "$_serve_watch" || -z "$_serve_prompt" ]]; then
     _as_msg "--serve: role '$_role' has no [serve] section with both 'watch = PATH' (what it waits on) and 'prompt = PATH' (what each turn is told). Add one: $invoked --apply '[serve:$_role]' 'watch = PATH' 'prompt = PATH'"
     return 1
@@ -5585,6 +5595,7 @@ _as_dotfile_line() {
       # [serve] and [serve:<glob>] (#277): what `asb --role R --serve CMD` waits on, and
       # what it says at each turn -- two paths in the project, kept with the section's
       # glob; the latest line matching the role wins, key by key (_as_serve_resolve).
+      # `watch` alone is a watch only: the role's watcher is enforced, it is not served.
       if [[ "$line" != *=* ]]; then
         _as_msg ".agent-sandbox: [serve] expects 'key = value', ignoring: $line"
       else
@@ -5775,7 +5786,9 @@ _as_check_plan() {
     local _serve_watch="" _serve_prompt=""
     _as_serve_resolve "${_role:-default}"
     if [[ -n "$_serve_watch$_serve_prompt" ]]; then
-      if [[ -n "$_serve_watch" && -n "$_serve_prompt" ]] && _as_serve_path_ok "$_serve_watch" && _as_serve_path_ok "$_serve_prompt"; then
+      if [[ -z "$_serve_prompt" ]] && _as_serve_path_ok "$_serve_watch"; then
+        printf '  --serve: watch only -- the watcher on %s is enforced, the role is not served\n' "$_serve_watch"
+      elif [[ -n "$_serve_watch" && -n "$_serve_prompt" ]] && _as_serve_path_ok "$_serve_watch" && _as_serve_path_ok "$_serve_prompt"; then
         printf '  --serve: a turn of its session per change to %s, told the text of %s%s\n' "$_serve_watch" "$_serve_prompt" \
           "$([[ -f "$_proj/$_serve_prompt" ]] || printf ' -- MISSING: --serve refuses')"
       else

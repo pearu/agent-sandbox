@@ -733,7 +733,8 @@ shared_env() {
   [ "$(cat "$PROJ/.asb/bin/inbox-wait")" = $'#!/bin/sh\nexit 0' ]
 }
 
-@test "the roles model: every watcher is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one over every non-Gate role's messages in the index (#288)" {
+# shellcheck disable=SC2016 # backquotes are the purpose files' text, not ours
+@test "the roles model: every watcher is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one over every other role's messages in the index, the Gate's too (#288)" {
   init -- roles planner=2 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local r f sup="$PROJ/.asb/roles/supervisor.md" idx="$PROJ/.asb/coord/COORDINATION.md"
@@ -745,11 +746,29 @@ shared_env() {
     grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$f"
     grep -qF 'arm no watcher, read and act' "$f"
   done
-  # the Supervisor: one command, its paths from the index, every role's but the Gate's and its own
+  # the Gate arms one as the others do; it is never served, so no --serve rule
+  f="$PROJ/.asb/roles/gate.md"
+  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/gate/alive .asb/coord/to/gate.md" "$f"
+  grep -qxF '**At start.** From the project directory, run this command with the Bash tool and' "$f"
+  grep -qxF "\`run_in_background: true\`, and run it again after each wake; a change to your inbox" "$f"
+  grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$f"
+  grep -qxF 'At start and at every wake, read your inbox, `.asb/coord/to/gate.md`, from your' "$f"
+  run ! grep -qE 'you have no watcher|opened when it is|arm no watcher|--serve' "$f"
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/gate.md" | wc -l)" -eq 0 ]
+  # the Supervisor: one command, its paths from the index, every role's but its own
   grep -qxF "  \`run_in_background: true\`, and run it again after each wake: \`.agent-sandbox\`, then" "$sup"
-  grep -qxF '  one path per role in the index but the Gate and yourself; a change to any of them' "$sup"
+  grep -qxF '  one path per role in the index but yourself; a change to any of them wakes you:' "$sup"
   grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
-  grep -qxF '  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ...' "$sup"
+  grep -qxF "  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \\" "$sup"
+  grep -qxF '  .asb/coord/gate/messages.md' "$sup"
+  run ! grep -qE 'but the Gate|Gate has no watcher|only when it is its turn' "$sup"
+  # the Gate's turn: it wakes on its inbox; a stale alive gets its launch line, as any role's
+  local flat
+  flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
+  [[ "$flat" == *'`.asb/coord/to/gate.md` as above: the Gate wakes on its inbox like any role, and when its `alive` is stale, tell the user its launch line, as for any role.'* ]]
+  [[ "$flat" == *'is in `.asb/coord/gate/messages.md`, which your watcher sees; bring it to the user.'* ]]
+  [[ "$flat" == *'A post that mentions a GitHub user (`@name`) the Gate posts only after the user approves it in the Gate'"'"'s terminal'* ]]
+  run ! grep -qF "tell the user it is the Gate's turn" "$sup"
   grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$sup"
   for r in planner-1 planner-2 implementer-1 reviewer-1; do
     grep -q "^| [A-Z][0-9]* | $r | .asb/coord/$r/messages.md |" "$idx"
@@ -780,7 +799,7 @@ shared_env() {
 }
 
 # shellcheck disable=SC2016 # backquotes and $(...) are the purpose files' text, not ours
-@test "the roles model: a [serve:ROLE] per Planner, Implementer and Reviewer, its prompt file written and kept; none for the Supervisor, the Gate or setup (#277)" {
+@test "the roles model: a [serve:ROLE] per Planner, Implementer and Reviewer, its prompt file written and kept; the Gate's watch only; none for the Supervisor or setup (#277)" {
   init -- roles planner=2 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local df="$PROJ/.agent-sandbox" r m
@@ -791,10 +810,13 @@ shared_env() {
     grep -qF 'Under `--serve` (no terminal) each message is a turn of your own' "$PROJ/.asb/roles/$r.md"
   done
   grep -qxF '[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve claude' "$df"
-  for r in supervisor gate setup; do
+  for r in supervisor setup; do
     run ! grep -qF "[serve:$r]" "$df"
     [ ! -e "$PROJ/.asb/serve/$r.md" ]
   done
+  # the Gate: watch alone -- its watcher enforced, never served
+  [ "$(section '[serve:gate]' "$df")" = 'watch = .asb/coord/to/gate.md' ]
+  [ ! -e "$PROJ/.asb/serve/gate.md" ]
   # the Supervisor names both forms, and the terminal on a served session
   grep -qF '`asb --role NAME --serve claude`' "$PROJ/.asb/roles/supervisor.md"
   grep -qF '`asb --role NAME claude --resume $(cat .asb/coord/NAME/session)`' "$PROJ/.asb/roles/supervisor.md"
@@ -802,8 +824,13 @@ shared_env() {
   approve
   [ "$status" -eq 0 ]
   [[ "$output" == *"[serve:implementer-1], for the roles implementer-1: \`asb --role ROLE --serve CMD\` holds the role's launch on the host and, at each change to .asb/coord/to/implementer-1.md, runs one turn of the role's session in its sandbox, told the text of .asb/serve/implementer-1.md"* ]]
+  [[ "$output" == *"[serve:gate], for the roles gate: watch only -- the watcher on .asb/coord/to/gate.md is enforced, the role is not served"* ]]
+  [[ "$output" != *"[serve:gate] has no"* ]]
   check implementer-1
   [[ "$output" == *"--serve: a turn of its session per change to .asb/coord/to/implementer-1.md, told the text of .asb/serve/implementer-1.md"$'\n'* ]]
+  check gate
+  [[ "$output" == *"  --serve: watch only -- the watcher on .asb/coord/to/gate.md is enforced, the role is not served"$'\n'* ]]
+  [[ "$output" == *"  watcher: a turn does not end while .asb/coord/to/gate.md has no watcher running (the Stop hook refuses once)"$'\n'* ]]
   # run again: a prompt you changed is kept
   printf 'mine\n' >"$PROJ/.asb/serve/planner-1.md"
   init -- roles planner=2 implementer=1 reviewer=1
@@ -812,32 +839,32 @@ shared_env() {
   [ "$(cat "$PROJ/.asb/serve/planner-1.md")" = mine ]
 }
 
-@test "the roles model: a [briefing] start for the Planners, Implementers, Reviewers and the Supervisor, its file written from the model's start/ and kept; none for the Gate or setup" {
+@test "the roles model: a [briefing] start for the Planners, Implementers, Reviewers, the Supervisor and the Gate, its file written from the model's start/ and kept; none for setup" {
   init -- roles planner=2 implementer=1 reviewer=0
   [ "$status" -eq 0 ]
   local df="$PROJ/.agent-sandbox" r m sec
   m="$(dirname "$ENGINE")/models/roles"
-  for r in planner implementer supervisor; do
+  for r in planner implementer supervisor gate; do
     sec="[briefing:$r-*]"
-    [[ "$r" == supervisor ]] && sec="[briefing:$r]"
-    [ "$(section "$sec" "$df" | sed 's/[[:space:]]*#.*//')" = "start = .asb/start/$r.md" ]
+    [[ "$r" == supervisor || "$r" == gate ]] && sec="[briefing:$r]"
+    section "$sec" "$df" | sed 's/[[:space:]]*#.*//' | grep -qxF "start = .asb/start/$r.md"
     cmp -s "$PROJ/.asb/start/$r.md" "$m/start/$r.md"
     [ "$(awk 'length > 88' "$m/start/$r.md" | wc -l)" -eq 0 ]
   done
   [ "$(awk '/^start = / && length > 88' "$df" | wc -l)" -eq 0 ]
   grep -qF 'Arm your watcher as your purpose file says' "$PROJ/.asb/start/planner.md"
   grep -qF "read every role's messages" "$PROJ/.asb/start/supervisor.md"
-  # no Reviewer instance: no file for it; the Gate and setup start as typed
+  cmp -s "$PROJ/.asb/start/gate.md" "$m/start/planner.md" # the watching roles' text
+  # no Reviewer instance: no file for it; setup starts as typed
   [ ! -e "$PROJ/.asb/start/reviewer.md" ]
-  for r in gate setup; do
-    run ! grep -qE '^start = ' <(section "[briefing:$r]" "$df")
-    [ ! -e "$PROJ/.asb/start/$r.md" ]
-  done
+  run ! grep -qE '^start = ' <(section "[briefing:setup]" "$df")
+  [ ! -e "$PROJ/.asb/start/setup.md" ]
   # the review names each; --check names a Planner's
   approve
   [ "$status" -eq 0 ]
   [[ "$output" == *"[briefing:planner-*] start, for the roles planner-*: its first turn at every start is the text of .asb/start/planner.md"* ]]
   [[ "$output" == *"[briefing:supervisor] start, for the roles supervisor: its first turn at every start is the text of .asb/start/supervisor.md"* ]]
+  [[ "$output" == *"[briefing:gate] start, for the roles gate: its first turn at every start is the text of .asb/start/gate.md"* ]]
   check planner-2
   [[ "$output" == *"  first turn at every start: the text of .asb/start/planner.md"$'\n'* ]]
   # run again: a start text you changed is kept, one nobody changed takes the model's
@@ -865,7 +892,7 @@ shared_env() {
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }
 
-@test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, resets by the marker or asks for /clear and /start; every other role writes to its memory before done" {
+@test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, resets by the marker or asks for /clear and /start; every other role writes to its memory before done, and resumes a turn cut short without asking" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local sup="$PROJ/.asb/roles/supervisor.md" r f
@@ -885,7 +912,13 @@ shared_env() {
     grep -qxF -- "  the build behaves, what the tests need, what the Reviewer tends to raise." "$f"
     # in **Protocol.**, and nothing of /clear or /start in a role's own file
     [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -c '^- Before you report a Task done')" -eq 1 ]
+    # a turn cut short is resumed without asking, in **Protocol.**
+    [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -cxF -- '- A turn cut short (a lost connection, an interruption) is resumed at your next wake or')" -eq 1 ]
+    [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/${r%-*}.md" | wc -l)" -eq 0 ]
     run ! grep -qE '/clear|/start|\.reset' "$f"
   done
   run ! grep -qE '/clear|/start|\.reset|Before you report a Task done' "$PROJ/.asb/roles/gate.md"
+  # the Gate has no **Protocol.**: the bullet closes **Executing a message.**
+  [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | grep -cxF -- '- A turn cut short (a lost connection, an interruption) is resumed at your next wake or')" -eq 1 ]
+  grep -qxF '  prompt without asking: nothing in your inbox changed, so the message is still yours' "$PROJ/.asb/roles/gate.md"
 }

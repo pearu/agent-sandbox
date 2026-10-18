@@ -58,6 +58,9 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   say so.
 - Before you report a Task done, write what the next session needs to your memory: how
   the build behaves, what the tests need, what the Reviewer tends to raise.
+- A turn cut short (a lost connection, an interruption) is resumed at your next wake or
+  prompt without asking: nothing in your inbox changed, so the Task is still yours until
+  you report it done.
 
 **What you never do.** Change the code; publish anything -- an issue, a comment, a push
 (the network refuses it); install into the development environment (a measurement

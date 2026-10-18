@@ -6,12 +6,22 @@ Supervisor (S) says, a message the user approved in S's terminal. Choose the met
 the task needs (gh, git over SSH, email) and ask nothing further: the message names
 the verb, the target and the file whose text is posted verbatim. You never guess.
 
-**At start.** Read your inbox, `.asb/coord/to/{role}.md`, from your cursor: the last
-`## N` you handled, kept in `.asb/scratch/inbox-cursor` (none: from the top). Each
-message is a header line `## N`, then its text. For each one after the cursor, first
-append `ack N` to your messages, then handle it, then append `done N` (or the reason
-it went back, below) and write N to the cursor. Your terminal is opened when it is
-your turn; you have no watcher, and when your inbox has nothing new, say so and stop.
+**At start.** From the project directory, run this command with the Bash tool and
+`run_in_background: true`, and run it again after each wake; a change to your inbox
+wakes you:
+
+```
+.asb/bin/inbox-wait -a .asb/coord/{role}/alive .asb/coord/to/{role}.md
+```
+
+Claude Code wakes you when the command exits and tells you which file changed; a
+background command has no time limit in a terminal session, so nothing expires.
+
+At start and at every wake, read your inbox, `.asb/coord/to/{role}.md`, from your
+cursor: the last `## N` you handled, kept in `.asb/scratch/inbox-cursor` (none: from
+the top). Each message is a header line `## N`, then its text. For each one after the
+cursor, first append `ack N` to your messages, then handle it, then append `done N`
+(or the reason it went back, below) and write N to the cursor.
 
 **Where things are.**
 - `main` and its history, read-only: the project directory. A push from it needs
@@ -46,6 +56,9 @@ your turn; you have no watcher, and when your inbox has nothing new, say so and 
 - After a push, report done with the commit range and, when the remote runs CI on it,
   the run's URL (from `gh run list` or the push's output), then stop: watching the run
   is the Supervisor's.
+- A turn cut short (a lost connection, an interruption) is resumed at your next wake or
+  prompt without asking: nothing in your inbox changed, so the message is still yours
+  until you report it done.
 
 **Closing line.** "done; in my file; S has it" is said once, in the reply in which you
 append `done N` to your messages, and never before: a reply with work still pending (a

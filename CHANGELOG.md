@@ -329,6 +329,24 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The roles model's Gate watches its inbox like every other role, and the Supervisor
+  watches the Gate's messages**. In a live roles project the Gate's status bar read
+  `IDLE` at start and stayed so after it had pushed: it had no watcher, its terminal
+  being opened only on its turn. And the Supervisor never heard the Gate's reports: its
+  watcher ran over every role's messages "but the Gate and yourself", so
+  `.asb/coord/gate/messages.md` was not watched. The Gate now arms `inbox-wait` at start
+  and after each wake, its terminal stays open, and `--init` writes it a `[briefing]
+  start` file and a `[serve:gate]` with `watch` alone, so the Stop hook keeps its
+  watcher armed; the Supervisor's watcher includes the Gate's messages, and a stale
+  `alive` gets the Gate's launch line as any role's. The role with the outward
+  credentials is now always running. The engine takes a `[serve:ROLE]` with `watch`
+  alone as a watch only: the review and `--check` say so, and `--serve` refuses the
+  role ("its [serve] names no prompt"); `prompt` is required for `--serve` only. (And
+  a turn cut short -- an Implementer's ended with "API Error: Connection lost
+  mid-response", then "I'll carry on unless you want something else", and its Task sat
+  idle until the user typed "carry on" -- is now resumed at the next wake or prompt
+  without asking: the Planner's, Implementer's, Reviewer's and Gate's purpose files say
+  so.)
 - **The roles model's closing line comes with the `done N` write, never before**. An
   Implementer ended a reply with "done; in my file; S has it" while its suite still ran
   and its Handoff was unwritten, so nothing had reached the Supervisor. The Planner's,
