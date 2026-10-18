@@ -6965,6 +6965,11 @@ _as_init() {
     _init_purpose "$f" ".asb/bin/$(basename -- "$f")" "" "" "" || return 1
     [[ -x "$proj/.asb/bin/$(basename -- "$f")" ]] || chmod 755 -- "$proj/.asb/bin/$(basename -- "$f")" || return 1
   done
+  # The project's test commands for the roles (`tests`, #301): written once with the
+  # values empty, for the project to fill, and kept as the purpose files are.
+  if [[ -f "$mdir/tests" ]]; then
+    _init_purpose "$mdir/tests" ".asb/tests" "" "" "" || return 1
+  fi
   # The coord index: a row per instance, added for the ones it does not list yet; a model
   # without one (github: its setup role is single) has none.
   local idx="$proj/.asb/coord/COORDINATION.md" idxrows="" dirs coordf

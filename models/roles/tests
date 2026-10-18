@@ -1,0 +1,10 @@
+# The project's test commands for the roles (docs/roles.md, "Test economy"). Fill in
+# the two lines; each is run from the project directory, in the role's environment.
+# iterate: what an iterating round runs: the tests the change affects, from the changed
+#   paths since the branch's base (a Reviewer's copy may have no .git: the command takes
+#   the paths as arguments, or the Reviewer runs the Handoff's listed tests).
+# final: the whole suite, run once by the Reviewer when it would accept with zero
+#   findings.
+# Left empty, a role runs what the Task says.
+iterate =
+final =

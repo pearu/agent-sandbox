@@ -73,10 +73,13 @@ A model directory holds:
 - `serve/<role>.md` -- the per-turn prompt of `asb --role R --serve claude` (#277), for
   a role whose template section `[serve:<role>-{n}]` has `prompt = PATH`: written per
   instance to that PATH, with the purpose files' placeholders, and kept as they are.
+- `tests` -- the project's test commands for the roles (the roles model's `iterate` and
+  `final`, empty for the project to fill: docs/roles.md, "Test economy"), written to
+  `.asb/tests` and kept as the purpose files are.
 - `README.md` -- what the model is, and which of its "may not"s are enforced.
 
 Run again with more instances, `--init` adds what is missing and touches nothing else
-that exists, except a purpose file, a `bin/` script or a prompt it wrote and nobody changed since:
+that exists, except a purpose file, a `bin/` script, a prompt or `.asb/tests` it wrote and nobody changed since:
 that one takes the model's current text (`.asb/init.sums` records what it wrote). The changed
 `.agent-sandbox` or purpose file then needs `asb --trust` again. A section that exists is
 never changed: a re-run reports the lines the model gained that such a section lacks (a

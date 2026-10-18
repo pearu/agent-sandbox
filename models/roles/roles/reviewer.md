@@ -54,6 +54,11 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   goes in your Review directory, named in the Review, never in your scratch, which no
   other role can read. It runs on the project's environment; if it needs more, the
   Review says what.
+- Tests, per round: run the `iterate` command of `.asb/tests` on the Handoff's changed
+  paths (or its listed tests) and say whether the Handoff's selection matches. When you
+  would accept with zero findings, run the `final` command once, the whole suite,
+  before you accept, and report it in that Review; a failure is a finding, not an
+  acceptance. Nobody else runs the whole suite in a round.
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.

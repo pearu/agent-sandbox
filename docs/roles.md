@@ -208,6 +208,7 @@ Every role launches from the repository itself:
         coord/ roles/ scratch/  messages, inboxes and the index; purpose files; scratch
         bin/                    the inbox watcher, inbox-wait
         serve/                  the prompt of a role run with no terminal (--serve)
+        tests                   the project's test commands (Test economy, below)
         impl/1/ impl/2/         I1's and I2's clones, on branches impl-1 and impl-2
         git/1/  git/2/          their histories, kept apart from the trees
 
@@ -240,6 +241,37 @@ Every role launches from the repository itself:
   build in the clone, into its environment. One checkout, one build: a second
   environment over the same checkout serves Python-level roles only, since its compiled
   parts are the checkout's one build.
+
+### Test economy
+
+Every revision of a change is tested by the Implementer and again by the Reviewer, so
+which tests a round runs is a cost that multiplies (#301). The model's policy, told in
+the purpose files:
+
+- **Iterating rounds run the affected tests only.** The Implementer runs the tests its
+  change affects and the Handoff lists what ran; the Reviewer runs the same selection on
+  the Handoff's changed paths and says whether it matches.
+- **The whole suite runs once**, when the Reviewer would accept with zero findings,
+  before it accepts; that Review reports it, and a failure there is a finding, not an
+  acceptance. The Supervisor may ask the Reviewer for that run at any point.
+- **The Supervisor's merge rule is unchanged**: the suite again only when `main` moved
+  since the branch's base. CI is unchanged too.
+
+What "affected" means is the project's, so the project supplies the commands:
+`--init` writes `.asb/tests` with two empty lines, kept like a purpose file once you
+fill them:
+
+    iterate = scripts/test-affected.sh      # the tests the change affects
+    final = pytest                          # the whole suite
+
+Each runs from the project directory, in the role's environment. `iterate` selects from
+the paths changed since the branch's base; a Reviewer's copy has no `.git`, so the
+command should take the paths as arguments (or the Reviewer runs the Handoff's listed
+tests). With a line left empty, the roles run what the Task says. One project built its
+`iterate` from pytest-testmon's selection plus a path-to-tests map for what coverage
+cannot see (code run in subprocesses, scripts, the environment's definition), falling
+back to the whole suite when the map says every test depends on the change -- one way
+to do it, not the model's.
 
 ## 5. Messages
 
@@ -347,7 +379,8 @@ Planner, Implementer and Reviewer in `.asb/serve/` (for `--serve`, below), the f
 turn of every start of each Planner, Implementer, Reviewer, the Supervisor and the
 Gate in
 `.asb/start/` (`[briefing] start`: a relaunched role arms its watcher and reads its
-inbox without a keypress), and
+inbox without a keypress), the project's test commands in `.asb/tests` (two empty
+lines for you to fill: Test economy, section 4), and
 `.asb/.gitignore`
 (`.asb/` is never committed); it makes each Implementer's clone (with your git identity) and,
 with `--env`, its environment. Without counts you get one of each role; `reviewer=0`

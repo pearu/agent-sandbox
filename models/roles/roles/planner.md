@@ -57,6 +57,8 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   then, do not declare the Task or its step done, and do not hand it on for a merge;
   rule on deviations and open questions as they come, and when the Reviewer accepts,
   say so.
+- A Task names what its tests cover only when the project's `.asb/tests` does not; the
+  test policy is the project's, not the Task's.
 - Before you report a Task done, write what the next session needs to your memory: how
   the build behaves, what the tests need, what the Reviewer tends to raise.
 - A turn cut short (a lost connection, an interruption) is resumed at your next wake or
