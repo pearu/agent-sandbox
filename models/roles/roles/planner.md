@@ -51,6 +51,7 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user.
 - When you are blocked, write why in your messages and stop.
+- When you stop for the user's word, your last line is the question.
 - A Task is done when the Reviewer has accepted its Handoff and the Implementer has
   resolved every finding the review raised, and the user has accepted the change. Until
   then, do not declare the Task or its step done, and do not hand it on for a merge;

@@ -76,8 +76,9 @@ are copied beside the briefing and named in the `--settings` from there:
 session is doing, from `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
 `Notification`, and `PostToolUse`/`PostToolUseFailure` for any tool, into the sandbox's
 `/tmp`: `working`, `needs you`, and after a reply one of four -- `asks you` when the
-`Stop` input's `last_assistant_message` (the transcript's tail without it) ends its last
-line with `?`, `running` when a background command of the role's own is running; it
+`Stop` input's `last_assistant_message` (the transcript's tail without it) ends one of
+its last three lines with `?` (blank lines, quotes -- `>`, `▎` -- and fenced code not
+counted), `running` when a background command of the role's own is running; it
 wakes when that ends (an entry of the `Stop` input's `background_tasks` whose command
 does not name `inbox-wait`; without that field, a Bash tool wrapper, `bash -c ... eval`,
 other than the watcher's among Claude Code's children), `waiting` when a process named

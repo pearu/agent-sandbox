@@ -221,9 +221,10 @@ Sections:
   ([network](network.md#refusals-reach-the-session)). It also sets a status line
   (#287): a bar across the terminal in the state's colour, the role -- the
   project's name for the default role -- in bold, then what the session is doing:
-  `WORKING` (yellow) while a turn runs; `NEEDS YOU` (red, bold) at a permission
+  `WORKING` (yellow) while a turn runs; `NEEDS YOU` (blue, bold) at a permission
   prompt, an elicitation or a question for you (not the idle reminder); and after a
-  reply, `ASKS YOU` (red) when its last line ends with a question, else `RUNNING`
+  reply, `ASKS YOU` (blue) when one of its last three lines ends with a question --
+  blank lines, quotes (`>`, `▎`) and fenced code not counted -- else `RUNNING`
   (yellow) when a background command of the role's own is running; it wakes when that
   ends -- the suite it started in the background, not its watcher -- else `WAITING`
   (green) when a watcher runs -- a process named `inbox-wait`, the roles model's,
@@ -532,7 +533,7 @@ Sections:
   your `~/.config/gh` (#88).
   `state-background = on` (default off) tints the terminal's background with the
   session's state, which the status line shows in any case (see `[briefing]`):
-  `#203040` while it works or runs a background command, `#402020` while it needs
+  `#203040` while it works or runs a background command, `#202840` while it needs
   you or asks you, and the terminal's own background (OSC 111) while it waits, when
   idle and at exit.
   Claude Code's hooks are detached from the terminal, so the claude profile's

@@ -139,10 +139,13 @@ hex() { printf '%b' "$1" | od -An -tx1 | tr -d ' \n'; }
   [ -z "$output" ]
 }
 
-@test "state-hook.sh: Stop says asks you when the reply's last line ends with a question, from last_assistant_message" {
+@test "state-hook.sh: Stop says asks you when one of the reply's last three lines ends with a question, quotes not counted, from last_assistant_message" {
   local m
   # shellcheck disable=SC2016 # backticks of markdown, in JSON
-  for m in 'Send it?' 'Send it?\n\n' '**Send it?**  ' 'Shall I go on?_' 'Which `x`?`' 'First.\n\nWhich one, A or B?' 'a \"quoted\" word?' 'a\\\\b?'; do
+  for m in 'Send it?' 'Send it?\n\n' '**Send it?**  ' 'Shall I go on?_' 'Which `x`?`' 'First.\n\nWhich one, A or B?' 'a \"quoted\" word?' 'a\\\\b?' \
+    'Is it?\nDone.' 'Is it?\nA.\n\nB.' \
+    'Send this to P1, on your yes?\nThe message:\n\n> ## 22\n> Report done 22.' \
+    'Send it?\n\n▎ ## 22\n▎ Report\n▎ done 22.\n  > quoted too'; do
     printf 'idle\n' >"$S"
     hook Stop off "{\"session_id\":\"x\",\"last_assistant_message\": \"$m\",\"background_tasks\":[]}"
     [ "$status" -eq 0 ]
@@ -152,9 +155,9 @@ hex() { printf '%b' "$1" | od -An -tx1 | tr -d ' \n'; }
       false
     }
   done
-  # a question earlier in the reply, one in quotes, one inside a code block, or none
+  # a question four lines up, mid-line, in quotes, in a quote line, in a code block, none
   # shellcheck disable=SC2016 # backticks of markdown, in JSON
-  for m in 'Is it?\nDone.' 'Is it? I will wait.' 'He said \"why?\"' '```\nwhy?\n```' '' 'Done.'; do
+  for m in 'Is it?\nA.\nB.\n\nC.' 'Is it?\nA.\nB.\n> q\nC.' 'Is it? I will wait.' 'He said \"why?\"' '> Why?\nDone.' '```\nwhy?\n```' 'Done.\n```\nx\ny\nwhy?\n```' '' 'Done.'; do
     printf 'asks you\n' >"$S"
     hook Stop off "{\"last_assistant_message\":\"$m\"}"
     [ "$status" -eq 0 ]
@@ -352,13 +355,13 @@ ST='{"id":"bsy1vrv0j","type":"shell","status":"running","description":"Sleep 90 
   python3 -I -c 'import json, sys; assert json.loads(sys.argv[1])["reason"].startswith("agent-sandbox: your watcher on in \"x\\y.md is not running")' "$output"
 }
 
-@test "statusline.sh: a bar as wide as Claude Code lets it be, in reverse video -- working and running yellow, waiting green, asks you red, needs you red and bold, idle grey" {
+@test "statusline.sh: a bar as wide as Claude Code lets it be, in reverse video -- working and running yellow, waiting green, asks you blue, needs you blue and bold, idle grey" {
   local B=$'\e[1m' R=$'\e[0m'
   COLUMNS=100 run bash "$P/statusline.sh" planner-1 "$S" </dev/null
   [ "$status" -eq 0 ]
   [ "$output" = "${B}planner-1${R}" ] # no state file: the role alone, no bar
   local st c
-  for st in working:33 running:33 waiting:32 "asks you:31" "needs you:31" idle:90; do
+  for st in working:33 running:33 waiting:32 "asks you:34" "needs you:34" idle:90; do
     c="${st##*:}" st="${st%:*}"
     printf '%s\n' "$st" >"$S"
     COLUMNS=100 run bash "$P/statusline.sh" planner-1 "$S" </dev/null
@@ -401,7 +404,7 @@ ST='{"id":"bsy1vrv0j","type":"shell","status":"running","description":"Sleep 90 
   # a long name is cut at 40, control characters dropped, and the bar keeps its width
   printf 'needs you\n' >"$S"
   COLUMNS=80 run bash "$P/statusline.sh" "$(printf 'r%.0s' {1..200})"$'\e' "$S" </dev/null
-  [ "$output" = "$(bar "7;31" "$(printf 'r%.0s' {1..39})~" "NEEDS YOU" 80)" ]
+  [ "$output" = "$(bar "7;34" "$(printf 'r%.0s' {1..39})~" "NEEDS YOU" 80)" ]
   [ "$(plain "$output" | wc -L)" -eq 76 ]
 }
 
@@ -417,15 +420,15 @@ ST='{"id":"bsy1vrv0j","type":"shell","status":"running","description":"Sleep 90 
   osc PostToolUse on
   [ "$output" = "$(hex '\e]11;#203040\a')" ]
   osc PermissionRequest on
-  [ "$output" = "$(hex '\e]11;#402020\a')" ]
+  [ "$output" = "$(hex '\e]11;#202840\a')" ]
   osc Notification on '{"notification_type":"permission_prompt"}'
-  [ "$output" = "$(hex '\e]11;#402020\a')" ]
+  [ "$output" = "$(hex '\e]11;#202840\a')" ]
   osc Notification on '{"notification_type":"idle_prompt"}'
   [ "$output" = "" ]
   osc Stop on
   [ "$output" = "$(hex '\e]111\a')" ] # idle
   osc Stop on '{"last_assistant_message":"Send it?"}'
-  [ "$output" = "$(hex '\e]11;#402020\a')" ] # asks you, as needs you
+  [ "$output" = "$(hex '\e]11;#202840\a')" ] # asks you, as needs you
   osc Stop on "$(tasks "$WT" "$ST")"
   [ "$output" = "$(hex '\e]11;#203040\a')" ] # running, as working
   osc SessionStart on

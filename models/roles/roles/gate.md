@@ -45,6 +45,7 @@ cursor, first append `ack N` to your messages, then handle it, then append `done
 - A post that mentions a GitHub user (`@name`) notifies a person: do not post it on
   the message alone. Append `back N: mentions @...; the user approves it here` and tell
   S; post it when the user approves it in this terminal.
+- When you stop for the user's word, your last line is the question.
 - Push by URL, so the output is clean from a read-only history:
   `git push "$(git remote get-url origin)" BRANCH`. A push to an SSH remote needs its
   host in the project's file: when it fails for lack of SSH, send back exactly

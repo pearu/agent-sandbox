@@ -9,7 +9,8 @@
 #   Notification              needs you   for a permission_prompt, an elicitation or
 #                                         agent_needs_input (from the hook's stdin
 #                                         JSON); nothing for idle_prompt and the rest
-#   Stop                      asks you    the reply's last line ends with a question
+#   Stop                      asks you    one of the reply's last three lines ends with
+#                                         a question
 #                             running     else, a background command of the session's own
 #                                         other than the watcher runs: it wakes when that ends
 #                             waiting     else, a watcher runs: a message will wake it
@@ -20,11 +21,13 @@
 #
 # The reply is the stdin JSON's last_assistant_message, which Stop carries; without
 # it, the last assistant text in the tail of transcript_path (the hooks reference says
-# the transcript may lag the turn at Stop, so it is the second choice). Its last line,
-# trailing whitespace and markdown emphasis stripped, ends with `?`: a question the
-# turn ended on. A watcher is a process named inbox-wait (the roles model's
-# .asb/bin/inbox-wait, a script, so the kernel names it after the file) among
-# Claude Code's descendants, CLAUDE_PID's, or anywhere in view without one. A
+# the transcript may lag the turn at Stop, so it is the second choice). One of its last
+# three lines -- not counting blank ones, quotes (a line starting with `>` or `▎`) and a
+# fenced code block -- ends with `?`, trailing whitespace and markdown emphasis
+# stripped: a question the turn ended on, a quoted message below it or not. A watcher
+# is a process named inbox-wait (the roles model's .asb/bin/inbox-wait, a script, so
+# the kernel names it after the file) among Claude Code's descendants, CLAUDE_PID's,
+# or anywhere in view without one. A
 # background command is an entry of the Stop input's background_tasks (the hooks
 # reference: one per in-flight task -- a shell, a subagent, a monitor...; a shell's has
 # its command line) whose command does not name inbox-wait; without that field, a
@@ -58,11 +61,13 @@ event="${1:-}"
 background="${2:-off}"
 statef="${3:-/tmp/agent-sandbox-state}"
 
-# jlast KEY -- the last line of the last JSON string value of KEY on stdin, unescaped
-# (\n, \t, \", \\) and with trailing whitespace stripped; status 1 when there is none.
+# jlast KEY [N] -- the last N (default 1) lines of the last JSON string value of KEY on
+# stdin, unescaped (\n, \t, \", \\), a line each, trailing whitespace stripped; lines
+# that are blank, quotes (starting with `>` or `▎`) or in a fenced code block (``` lines
+# and what is between them) are not counted; status 1 when there is no such value.
 # awk, since bash's own regex and pattern removal are quadratic on a long reply.
 jlast() {
-  awk -v k="\"$1\"" 'BEGIN { RS = "\001" }
+  awk -v k="\"$1\"" -v want="${2:-1}" 'BEGIN { RS = "\001" }
     { t = t $0 }
     END {
       p = 0; i = 0
@@ -75,23 +80,32 @@ jlast() {
       v = substr(r, 1, RLENGTH - 1)
       gsub(/\\\\/, "\002", v); gsub(/\\n/, "\n", v); gsub(/\\[rt]/, " ", v)
       gsub(/\\"/, "\"", v); gsub(/\002/, "\\", v)
-      sub(/[ \t\r\n]+$/, "", v)
-      n = split(v, l, "\n")
-      printf "%s", l[n]
+      n = split(v, l, "\n"); o = ""; c = 0; f = 0
+      for (i = n; i > 0 && c < want; i--) {
+        x = l[i]; sub(/[ \t\r]+$/, "", x)
+        if (x ~ /^[ \t]*```/) { f = !f; continue }
+        if (f || x ~ /^[ \t]*$/ || x ~ /^[ \t]*(>|▎)/) continue
+        o = (c++ ? x "\n" : x) o
+      }
+      printf "%s", o
     }' 2>/dev/null
 }
 
-# asks -- whether the turn's reply (the stdin JSON, in $input) ends with a question.
+# asks -- whether the turn's reply (the stdin JSON, in $input) ends with a question: one
+# of its last three lines, as jlast counts them.
 asks() {
-  local line tp
-  line="$(jlast last_assistant_message <<<"$input")" || {
+  local lines line tp
+  lines="$(jlast last_assistant_message 3 <<<"$input")" || {
     tp="$(jlast transcript_path <<<"$input")" || return 1
     [[ -f "$tp" && -r "$tp" ]] || return 1
-    line="$(tail -c 65536 -- "$tp" 2>/dev/null | grep -F '"role":"assistant"' \
-      | tail -n 1 | jlast text)" || return 1
+    lines="$(tail -c 65536 -- "$tp" 2>/dev/null | grep -F '"role":"assistant"' \
+      | tail -n 1 | jlast text 3)" || return 1
   }
-  line="${line%"${line##*[!*_\`~[:space:]]}"}"
-  [[ "$line" == *"?" ]]
+  while IFS= read -r line; do
+    line="${line%"${line##*[!*_\`~[:space:]]}"}"
+    [[ "$line" == *"?" ]] && return 0
+  done <<<"$lines"
+  return 1
 }
 
 # watching -- whether a watcher (a process named inbox-wait) runs in this session.
@@ -228,7 +242,7 @@ fi
 [[ "$background" == on ]] || exit 0
 case "$event:$state" in
   *:working | *:running) seq=$'\e]11;#203040\a' ;;
-  *:"needs you" | *:"asks you") seq=$'\e]11;#402020\a' ;;
+  *:"needs you" | *:"asks you") seq=$'\e]11;#202840\a' ;;
   *:waiting | *:idle | SessionEnd:) seq=$'\e]111\a' ;;
   *) exit 0 ;;
 esac

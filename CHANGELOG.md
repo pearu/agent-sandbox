@@ -329,6 +329,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The status line's `ASKS YOU` and `NEEDS YOU` are blue, and `ASKS YOU` looks at the
+  reply's last three lines** (the red bar was found ugly; and a Supervisor that asked
+  for the user's yes in prose above a quoted message ending "Report done 22." showed no
+  question). `needs you` stays bold; with `[claude] state-background = on` both tint
+  `#202840` instead of `#402020`. The question may end any of the last three lines,
+  not counting blank lines, quotes (`>`, `▎`) and fenced code. The roles model's
+  purpose files make the question the last line: the Supervisor ends the reply that
+  shows a message with `Send it?`, and every other role's file says "When you stop for
+  the user's word, your last line is the question."
 - **The status line says `RUNNING` when a background command of the role's own is still
   going; `WAITING` is the watcher alone** (a Reviewer whose CUDA suite ran in the
   background, beside its inbox watcher, ended a turn and its bar read `WAITING`, as if
