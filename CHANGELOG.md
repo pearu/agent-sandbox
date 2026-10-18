@@ -47,6 +47,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A test policy per project in the roles model** (#301). Nothing told the roles which
+  tests a round runs, so the Implementer and the Reviewer each ran the whole suite on
+  every revision -- eight full GPU runs across four rounds that changed one plotting
+  module. Iterating rounds now run only the affected tests, and the Reviewer runs the
+  whole suite once, when it would accept with zero findings; the Supervisor's merge rule
+  and CI are unchanged. The project supplies the two commands in `.asb/tests` (`iterate`,
+  `final`), which `--init roles` writes empty and keeps once filled; left empty, a role
+  runs what the Task says.
 - **`--init` run again says which lines the model gained that an existing section
   lacks**. It never changes a section the file has, so a key a model added later -- the
   `start = .asb/start/gate.md` of `[briefing:gate]` -- was silently absent after an

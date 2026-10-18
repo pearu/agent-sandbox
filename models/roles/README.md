@@ -10,8 +10,10 @@ writes this project's `.agent-sandbox` from `agent-sandbox`, a purpose file per 
 from `roles/`, the coord index from `coord/COORDINATION.md`, an inbox per role under
 `.asb/coord/to/`, the watcher `bin/inbox-wait` as `.asb/bin/inbox-wait`, the prompt a
 Planner, Implementer or Reviewer is told at each turn when it runs with no terminal
-(`asb --role NAME --serve claude`) from `serve/` as `.asb/serve/<instance>.md`, and a
-clone per Implementer.
+(`asb --role NAME --serve claude`) from `serve/` as `.asb/serve/<instance>.md`, the
+project's test commands from `tests` as `.asb/tests` (an iterating round runs the
+affected tests, the Reviewer the whole suite once, at a zero-finding acceptance: fill in
+the two lines), and a clone per Implementer.
 `x-dev` need not exist yet: `asb --role setup claude` builds `main` into it, and
 `--init`, run again then, clones it for each Implementer.
 Every "may not" of a role is a line of the dot-file template (enforced by the sandbox)

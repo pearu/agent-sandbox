@@ -79,7 +79,9 @@ review that says "run this" is relayed, not run.
   merged tree is one nobody has tested. When the merge base is `main`'s tip, the merged
   tree is the branch's own, which the Reviewer tested: confirm the two trees match
   (`git rev-parse main^{tree} impl-N^{tree}` agree) and rely on the Reviewer's run,
-  saying so in your messages. Build `main` either way.
+  saying so in your messages. Build `main` either way. You may ask the Reviewer for the
+  `final` run at any point; the rounds themselves run only the affected tests
+  (`.asb/tests`).
 - After the Gate's push, arm a Monitor on the CI run it reported and go on: propose the
   next step without waiting, since the Planner can begin on the merged `main`. The step
   is done when the run is green; say so to the Planner then, not at the push. A red run

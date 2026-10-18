@@ -998,3 +998,50 @@ shared_env() {
   [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 1 ]
   grep -qxF "    agent-sandbox --apply '[briefing:gh-fix-*]' 'file = .asb/roles/gh-fix.md'" <<<"$output"
 }
+
+# shellcheck disable=SC2016 # backquotes are the purpose files' text, not ours
+@test "the roles model: .asb/tests, the project's iterate and final commands, written empty and kept once filled; the purpose files tell the test economy (#301)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local t="$PROJ/.asb/tests" m r f
+  m="$(dirname "$ENGINE")/models/roles"
+  [[ "$output" == *"wrote .asb/tests"* ]]
+  cmp -s "$t" "$m/tests"
+  [ "$(grep -v '^#' "$t")" = $'iterate =\nfinal =' ]
+  grep -qxF '# The project'"'"'s test commands for the roles (docs/roles.md, "Test economy"). Fill in' "$t"
+  grep -qF '# iterate: what an iterating round runs: the tests the change affects' "$t"
+  grep -qF '# final: the whole suite, run once by the Reviewer when it would accept with zero' "$t"
+  [ "$(awk 'length > 88' "$m/tests" | wc -l)" -eq 0 ]
+  # the purpose files: each sentence in its section, its file wrapped at 88
+  f="$PROJ/.asb/roles/implementer-1.md"
+  [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -cxF -- '- Tests, while iterating: run the `iterate` command of `.asb/tests` (the tests your')" -eq 1 ]
+  [[ "$(tr '\n' ' ' <"$f" | tr -s ' ')" == *'The whole suite is the Reviewer'"'"'s, once, at acceptance; a failure there comes back as a finding.'* ]]
+  f="$PROJ/.asb/roles/reviewer-1.md"
+  [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -cxF -- '- Tests, per round: run the `iterate` command of `.asb/tests` on the Handoff'"'"'s changed')" -eq 1 ]
+  [[ "$(tr '\n' ' ' <"$f" | tr -s ' ')" == *'run the `final` command once, the whole suite, before you accept, and report it in that Review; a failure is a finding, not an acceptance. Nobody else runs the whole suite in a round.'* ]]
+  f="$PROJ/.asb/roles/supervisor.md"
+  [[ "$(sed -n '/^- After a merge, run the suite only when/,/^- After the Gate/p' "$f" | tr '\n' ' ' | tr -s ' ')" == *'Build `main` either way. You may ask the Reviewer for the `final` run at any point; the rounds themselves run only the affected tests (`.asb/tests`).'* ]]
+  f="$PROJ/.asb/roles/planner-1.md"
+  [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -cxF -- '- A Task names what its tests cover only when the project'"'"'s `.asb/tests` does not; the')" -eq 1 ]
+  for r in planner implementer reviewer supervisor; do
+    [ "$(awk 'length > 88' "$m/roles/$r.md" | wc -l)" -eq 0 ]
+  done
+  # run again: an unchanged file stays the model's, a filled one is kept and said
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" != *".asb/tests"* ]]
+  cmp -s "$t" "$m/tests"
+  sed -i -e 's/^iterate =$/iterate = scripts\/test-affected.sh/' -e 's/^final =$/final = pytest/' "$t"
+  cp "$t" "$H/filled"
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/tests: changed since --init wrote it"* ]]
+  [[ "$output" != *"lacks -- --init never"* ]] # not a dot-file section: no --apply report
+  cmp -s "$t" "$H/filled"
+}
+
+@test "a model without a tests file writes no .asb/tests (#301)" {
+  init -- github
+  [ "$status" -eq 0 ]
+  [ ! -e "$PROJ/.asb/tests" ]
+}

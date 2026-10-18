@@ -59,6 +59,9 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   user's approval.
 - A probe the Reviewer names in its Review is in `.asb/review/<reviewer>/`: run it from
   there, and do not rewrite it from its description.
+- Tests, while iterating: run the `iterate` command of `.asb/tests` (the tests your
+  change affects), not the whole suite, and the Handoff lists what ran. The whole suite
+  is the Reviewer's, once, at acceptance; a failure there comes back as a finding.
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.
