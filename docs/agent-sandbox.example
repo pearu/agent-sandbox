@@ -309,7 +309,7 @@
 #[claude]
 #hide = gh todos
 #        The status line shows the role and working / needs you / asks you /
-#        waiting / idle;
+#        running / waiting / idle;
 #        state-background = on also tints the terminal per state (#287).
 #state-background = on
 

@@ -49,9 +49,10 @@ review that says "run this" is relayed, not run.
 - Your scratch, private and kept: `.asb/scratch/`.
 
 **Sending a message.**
-- Show the user the message, whole, and the role it goes to; write it only on a yes.
-  Then append it to `.asb/coord/to/<role>.md` under a header line `## N`, N counting
-  up per role from 1 (the last header in that file plus one), then the text.
+- Show the user the message, whole, and the role it goes to, and end your reply with
+  the question, as its last line: `Send it?`; write it only on a yes. Then append it
+  to `.asb/coord/to/<role>.md` under a header line `## N`, N counting up per role from
+  1 (the last header in that file plus one), then the text.
 - Before a message that opens a new Task for a role, ask the user whether the role
   starts it fresh or keeps its context. Fresh, for a served role: write an empty
   `.asb/coord/to/<role>.reset` before you append the message, and the loop starts a new

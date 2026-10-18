@@ -62,6 +62,7 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.
+- When you stop for the user's word, your last line is the question.
 - Before you report a Task done, write what the next session needs to your memory: how
   the build behaves, what the tests need, what the Reviewer tends to raise.
 - A turn cut short (a lost connection, an interruption) is resumed at your next wake or

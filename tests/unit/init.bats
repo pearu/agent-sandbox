@@ -892,6 +892,26 @@ shared_env() {
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }
 
+@test "the roles model: a reply that stops for the user's word ends with the question -- the Supervisor's Send it?, a bullet in every other role's file" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" r f q="- When you stop for the user's word, your last line is the question."
+  # in **Sending a message.**, the bullet that shows the user the message
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- Show the user the message, whole, and the role it goes to, and end your reply with')" -eq 1 ]
+  # shellcheck disable=SC2016 # backticks: the text, not a command
+  grep -qxF -- '  the question, as its last line: `Send it?`; write it only on a yes. Then append it' "$sup"
+  for r in planner-1 implementer-1 reviewer-1; do
+    f="$PROJ/.asb/roles/$r.md"
+    [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -cxF -- "$q")" -eq 1 ]
+  done
+  # the Gate's is in **Executing a message.**
+  [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | grep -cxF -- "$q")" -eq 1 ]
+  run ! grep -qF -- "$q" "$sup"
+  for r in supervisor planner implementer reviewer gate; do
+    [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
+  done
+}
+
 @test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, resets by the marker or asks for /clear and /start; every other role writes to its memory before done, and resumes a turn cut short without asking" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]

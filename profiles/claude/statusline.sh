@@ -10,9 +10,9 @@
 # colour: the role in bold -- or, for the role "default", the project's name, from
 # the stdin JSON's workspace.project_dir -- then what the session is doing, as
 # state-hook.sh last wrote it to STATE (default /tmp/agent-sandbox-state), in
-# capitals, then padding to the edge. Colours: working yellow, waiting green, asks
-# you red, needs you red and bold, idle grey. No state file, or one that says
-# anything else: the name alone, no bar. The name is cut at 40 characters.
+# capitals, then padding to the edge. Colours: working and running yellow, waiting
+# green, asks you blue, needs you blue and bold, idle grey. No state file, or one that
+# says anything else: the name alone, no bar. The name is cut at 40 characters.
 set -u
 role="${1:-default}"
 statef="${2:-/tmp/agent-sandbox-state}"
@@ -33,10 +33,10 @@ state=""
 [[ -r "$statef" ]] && { read -r state <"$statef"; } 2>/dev/null
 rest=22 # the state after the bold name: plain, or bold for needs you
 case "$state" in
-  working) sgr='7;33' ;;
+  working | running) sgr='7;33' ;;
   waiting) sgr='7;32' ;;
-  "asks you") sgr='7;31' ;;
-  "needs you") sgr='7;31' rest=1 ;;
+  "asks you") sgr='7;34' ;;
+  "needs you") sgr='7;34' rest=1 ;;
   idle) sgr='7;90' ;;
   *)
     printf '\e[1m%s\e[0m\n' "$name"
