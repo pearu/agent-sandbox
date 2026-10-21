@@ -232,7 +232,7 @@ other_agent() { # a second claude, as an update or another install would give
   trust
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *".agent-sandbox has changed since this role's keeper started"* ]]
+  [[ "$output" == *"agent-sandbox: role 'default': .agent-sandbox has changed since this role's keeper started. Joining it under the policy it started with (1 other session of it still joined); the change applies at the next keeper, once nothing is joined. To apply it now, end the role from any terminal: asb --role default --shutdown claude, then launch it again."* ]]
   [ -s "$H/join" ]
   release_bg
 }

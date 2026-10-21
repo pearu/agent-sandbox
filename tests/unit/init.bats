@@ -687,6 +687,7 @@ shared_env() {
   head -1 "$PROJ/.asb/roles/gate.md" | grep -q 'called G: the Gate of'
   grep -qF "git push \"\$(git remote get-url origin)\" BRANCH" "$PROJ/.asb/roles/gate.md"
   grep -qF "asb --apply '[ssh:gate]' HOST" "$PROJ/.asb/roles/gate.md"
+  grep -qF 'asb --role gate --shutdown claude`, then its launch again' "$PROJ/.asb/roles/gate.md"
   run ! grep -qF 'publish -- push the branch' "$PROJ/.asb/roles/supervisor.md"
   grep -q '^| G | gate | .asb/coord/gate/messages.md | - |$' "$PROJ/.asb/coord/COORDINATION.md"
 }

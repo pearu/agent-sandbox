@@ -475,7 +475,17 @@ names are gone; there are no aliases for removed names before 1.0.
 - **The refusal of a join that would change a running role's policy names
   `--shutdown`**: "exit what is joined into it (or `asb --role R --shutdown claude` from
   any terminal, when its own is out of reach), then launch again" -- a role joined from a
-  terminal that is gone, or from `--serve`, has nothing to exit by hand.
+  terminal that is gone, or from `--serve`, has nothing to exit by hand. **So does every
+  message whose change reaches a running role only at its next keeper**: a role asked for
+  a host, the user ran `asb --apply '[allow:R]' HOST` and relaunched, but a morning session
+  of the role in another terminal was still joined, so the relaunch joined the old keeper
+  under the old policy, and the role went on being refused and recommending the same
+  `--apply`. The join's "`.agent-sandbox` has changed" line now counts the other sessions
+  still joined and ends "To apply it now, end the role from any terminal:
+  `asb --role R --shutdown claude`, then launch it again."; the briefing's "ask them to
+  relaunch" and its SSH line, the refusal hook's note on an allowlist refusal (from a new
+  `restart` file beside the briefing, checked against the engine's shape), and the Gate's
+  and `gh-fix`'s purpose files name that restart instead of "a relaunch".
 - **An SSH host whose config says `IdentitiesOnly yes` refused the broker's key**: a
   `~/.ssh/config` stanza with `IdentityFile ~/.ssh/tob_ex` and `IdentitiesOnly yes`, the
   host named under `[ssh:implementer-1]`; the engine loaded `~/.ssh/tob_ex` into the

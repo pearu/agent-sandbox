@@ -3878,6 +3878,8 @@ _as_connect_report() {
 #   apply-section        the section a refused host is asked for in ([allow] or
 #                        [allow:ROLE], as the text below decides), for the
 #                        profile's refusal hook, which has no policy of its own
+#   restart              the command that restarts this role (its --shutdown), for
+#                        the same hook to name after an --apply
 #   telemetry-hosts      the hosts the agent reaches on its own (profile_telemetry_hosts,
 #                        #276), whose refusal the hook leaves out of its note
 # and one file of the session dir itself, bound read-only over its placeholder:
@@ -4058,7 +4060,11 @@ _as_briefing_write() {
   local ssh_sect="[ssh]" ssh_host="" ssh_ask=""
   [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})) && ssh_sect="[ssh:$_role]"
   ssh_host="$(_as_git_ssh_host "$cwd")"
-  ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a relaunch"
+  # A relaunch alone may join a session of the role still running, under the old
+  # policy: the restart is named, the --shutdown that ends every session of it.
+  local restart
+  restart="$(_as_self_cmd --role "${_role:-default}" --shutdown)"
+  ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a restart of this role: $restart, then launch it again"
   if ((${#_ssh_hosts[@]} == 0)); then
     ssh_line="none -- $ssh_ask"
   elif ((${_git_refuse:-0} || ${_git_fetch_only:-0} || ${_retrieve_only:-0})); then
@@ -4197,7 +4203,10 @@ _as_briefing_write() {
     printf "  any section the same way, e.g. asb --apply '%s' '~/data/ = read-only'\n" "$csect"
     [[ -n "$ssh_host" ]] && printf "  -- or SSH for a push to origin: asb --apply '%s' %s\n" "$ssh_sect" "$ssh_host"
     printf '  or, for a host and for this launch only: asb --allow example.com ...\n\n'
-    printf 'then ask them to relaunch.\n'
+    printf 'then ask them to restart this role for it to apply:\n\n'
+    printf '      %s\n\n' "$restart"
+    printf 'then launch it again -- a launch that joins a session of this role still\n'
+    printf 'running keeps the old policy.\n'
     printf 'Continue without it only when the user says so: a mirror, another channel\n'
     printf 'or another tool for the same thing is going on without it. One clear\n'
     printf 'request costs less than twenty workarounds. A host refused during a\n'
@@ -4205,6 +4214,7 @@ _as_briefing_write() {
     printf 'the command to ask for.\n'
   } >"$md" || return 1
   printf '%s\n' "$sect" >"$bdir/apply-section" || return 1
+  printf '%s\n' "$restart" >"$bdir/restart" || return 1
   : >"$bdir/telemetry-hosts" || return 1
   if declare -F profile_telemetry_hosts >/dev/null; then
     profile_telemetry_hosts >"$bdir/telemetry-hosts" || return 1
@@ -8987,8 +8997,15 @@ agent_sandbox() (
         _as_keeper_unlock
         return 2
       }
-      ((_keeper_dotfile_changed)) \
-        && _as_msg "role '${_role:-default}': .agent-sandbox has changed since this role's keeper started. Joining it under the policy it started with; the change applies at the next keeper, once nothing is joined."
+      # Named with the --shutdown that applies it now: a relaunch while another session
+      # of the role is joined joins it again, under the old policy. The lock is held, so
+      # the count is of the others (this join is not on the record yet).
+      if ((_keeper_dotfile_changed)); then
+        local _kjoined=""
+        _as_keeper_count "$_keeper_sb/keeper"
+        ((_kc_n == 0)) || _kjoined=" ($_kc_n other session$( ((_kc_n == 1)) || printf s) of it still joined)"
+        _as_msg "role '${_role:-default}': .agent-sandbox has changed since this role's keeper started. Joining it under the policy it started with$_kjoined; the change applies at the next keeper, once nothing is joined. To apply it now, end the role from any terminal: $(_as_self_cmd --role "${_role:-default}" --shutdown), then launch it again."
+      fi
       # The CA bind can be lost under a running role (_as_ca_check); the join goes on.
       _as_ca_check "$_keeper_sb" "/proc/$_keeper_target/mountinfo"
       [[ -z "$_ca_note" ]] || _as_msg "$_ca_note"
