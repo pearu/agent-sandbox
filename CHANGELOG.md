@@ -461,6 +461,21 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A running role whose proxy CA the host had taken away failed every HTTPS request
+  without a word**. The CA is a single-file bind over
+  `/etc/ssl/certs/ca-certificates.crt`, and a `ca-certificates` upgrade (unattended, at
+  06:00) replaced the host's file by a rename, which detached the bind in the role's
+  long-lived keeper: no mount at that path in its `mountinfo`, the host's new bundle
+  showing through, and `x509: certificate signed by unknown authority` for everything
+  until the role was restarted. Each join into a running role, and `--status`, now
+  check the keeper's bind and say so, loud, naming the fix
+  (`asb --role R --shutdown claude`); the join goes on. A bind still there over a host
+  bundle that changed since the launch is a one-line note, since HTTPS works. Silent
+  outside the proxy modes. See [network.md](docs/network.md#the-proxy-ca).
+- **The refusal of a join that would change a running role's policy names
+  `--shutdown`**: "exit what is joined into it (or `asb --role R --shutdown claude` from
+  any terminal, when its own is out of reach), then launch again" -- a role joined from a
+  terminal that is gone, or from `--serve`, has nothing to exit by hand.
 - **An SSH host whose config says `IdentitiesOnly yes` refused the broker's key**: a
   `~/.ssh/config` stanza with `IdentityFile ~/.ssh/tob_ex` and `IdentitiesOnly yes`, the
   host named under `[ssh:implementer-1]`; the engine loaded `~/.ssh/tob_ex` into the

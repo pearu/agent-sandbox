@@ -158,6 +158,71 @@ setup() {
   run ! grep -qF "$old_line" "$combined"                       # old CA gone
 }
 
+@test "_as_ca_bind records the system bundle it bound, and the SHA-256 of what it put in the bundle" {
+  local AGENT_SANDBOX_SESSION_BASE="$BATS_TEST_TMPDIR/base" AGENT_SANDBOX_PROXY_CA="$BATS_TEST_TMPDIR/ca.pem"
+  make_fake_ca "$AGENT_SANDBOX_PROXY_CA"
+  local -a args=()
+  local _ca_record=""
+  _as_ca_bind
+  local bundle
+  bundle="$(_as_system_ca_bundle)"
+  [ "$_ca_record" = "$bundle"$'\t'"$(sha256sum "$bundle" | cut -d' ' -f1)" ]
+  rm -f "$AGENT_SANDBOX_PROXY_CA"
+  _ca_record=""
+  _as_ca_bind 2>/dev/null
+  [ -z "$_ca_record" ] # nothing bound, nothing recorded
+}
+
+# ca_check_fixture -- a keeper directory whose CA record names a bundle of the test's
+# own, and two mountinfo files: one with a mount at that path, one without.
+ca_check_fixture() {
+  SB="$BATS_TEST_TMPDIR/sb"
+  B="$BATS_TEST_TMPDIR/etc ssl/ca-certificates.crt" # a space: mountinfo escapes it
+  mkdir -p "$SB/keeper" "${B%/*}"
+  printf 'CERTS\n' >"$B"
+  touch -d '2026-10-21 06:00:12' "$B"
+  printf '%s\t%s\n' "$B" "$(sha256sum "$B" | cut -d' ' -f1)" >"$SB/keeper/ca"
+  printf '1 0 0:1 / / rw - tmpfs tmpfs rw\n2 1 0:2 /x %s ro - ext4 /dev/x ro\n' \
+    "${B// /\\040}" >"$BATS_TEST_TMPDIR/mi.bound"
+  printf '1 0 0:1 / / rw - tmpfs tmpfs rw\n3 1 0:3 /x %s ro - ext4 /dev/x ro\n' \
+    "${B%/*}" >"$BATS_TEST_TMPDIR/mi.lost"
+  # shellcheck disable=SC2034 # read by the engine's functions, by dynamic scope
+  invoked=asb profile=claude _cmd_word=claude _profile_given=0 _role=gate
+}
+
+@test "_as_ca_check: the bind gone from the keeper's mountinfo is a loud line naming when, and the --shutdown" {
+  ca_check_fixture
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.lost"
+  [ "$_ca_note" = "warning — role 'gate': the host replaced $B (at 2026-10-21 06:00:12) and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role gate --shutdown claude" ]
+  # the profile as it was chosen
+  _profile_given=1
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.lost"
+  [[ "$_ca_note" == *": asb --role gate --shutdown --profile claude" ]]
+}
+
+@test "_as_ca_check: the bind there but the host's bundle changed since is a note" {
+  ca_check_fixture
+  printf 'CERTS\nNEW\n' >"$B"
+  touch -d '2026-10-21 06:00:12' "$B"
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.bound"
+  [ "$_ca_note" = "note: role 'gate': the host's $B has changed (at 2026-10-21 06:00:12) since the role started; it keeps the bundle it started with, the proxy's CA included, so HTTPS works -- the host's new one applies at its next launch" ]
+}
+
+@test "_as_ca_check: silent with the bind there and the bundle unchanged, with no record, and with no mountinfo to read" {
+  ca_check_fixture
+  _ca_note=x
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.bound"
+  [ -z "$_ca_note" ]
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/no-such-mountinfo" # cannot be read: no alarm
+  [ -z "$_ca_note" ]
+  : >"$BATS_TEST_TMPDIR/mi.empty"
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.empty"
+  [ -z "$_ca_note" ]
+  rm -f "$SB/keeper/ca" # not a proxy mode, or no CA was bound
+  _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.lost"
+  [ -z "$_ca_note" ]
+}
+
 @test "_as_ca_env points the CA variables at the bundle unless the caller set them" {
   local -a args=()
   (

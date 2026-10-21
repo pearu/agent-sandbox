@@ -190,3 +190,17 @@ slugify() {
   [ ! -s "$H/argv" ] # it launched nothing
   release_bg
 }
+
+@test "--status of a running role whose CA bind is gone says so, with the --shutdown that fixes it" {
+  make_fake_ca "$H/ca.pem"
+  engine_bg AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  run_engine -- asb --status claude
+  [ "$status" -eq 0 ]
+  # the stub keeper runs on the host, where nothing is mounted at the bundle's path
+  [[ "$output" == *"dot-file: none approved"*$'\n'"  warning — role 'default': the host replaced /etc/"*"and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role default --shutdown claude"$'\n'* ]]
+  release_bg
+  engine_bg -- asb claude --version # no proxy CA, so no bind to lose
+  run_engine -- asb --status claude
+  [[ "$output" != *"proxy's CA"* ]]
+  release_bg
+}

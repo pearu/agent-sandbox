@@ -107,7 +107,7 @@ trust() {
     # shellcheck disable=SC2086 # the spec is flag and value
     run_engine -- asb $spec claude --version
     [ "$status" -eq 2 ]
-    [[ "$output" == *"role 'default' is running"*"cannot change"* ]]
+    [[ "$output" == *"role 'default' is running"*"cannot change: exit what is joined into it (or \`asb --role default --shutdown claude\` from any terminal, when its own is out of reach), then launch again."* ]]
     [ ! -s "$H/join" ]
   done
   TEST_PRESET="" run_engine AGENT_SANDBOX_NET=none -- asb claude --version
@@ -211,7 +211,7 @@ other_agent() { # a second claude, as an update or another install would give
   [ "$status" -eq 0 ]
   run_engine -- asb --allow evil.example claude --version
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--allow evil.example is not part of its policy (allow: "*"pypi.org"* ]]
+  [[ "$output" == *"--allow evil.example is not part of its policy (allow: "*"pypi.org"*"(or \`asb --role default --shutdown claude\` from any terminal"* ]]
   release_bg
 }
 
@@ -367,4 +367,37 @@ STUB
   cp "$H/bwrap.working" "$H/bin/bwrap"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
+}
+
+# The proxy CA's bind is one file, and a host that replaces that file by a rename (a
+# ca-certificates upgrade) detaches it under a running role (_as_ca_check). The stub
+# keeper runs on the host, where nothing is mounted at the bundle's path: what a role
+# whose bind was detached looks like from outside.
+@test "a join into a role whose CA bind is gone says so, loud, with the --shutdown that fixes it, and joins" {
+  make_fake_ca "$H/ca.pem"
+  engine_bg AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  local bundle
+  bundle="$(cut -f1 "$SBOX/keeper/ca")" # the system bundle the bind is over
+  [ "$(grep -A1 -x -- "$H/base/ca-bundle.crt" "$H/argv.bg" | tail -1)" = "$bundle" ]
+  [ "$(cut -f2 "$SBOX/keeper/ca")" = "$(sha256sum "$bundle" | cut -d' ' -f1)" ]
+  run_engine AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: warning — role 'default': the host replaced $bundle (at "*") and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role default --shutdown claude"* ]]
+  [ -s "$H/join" ] # joined all the same
+  release_bg
+}
+
+@test "a launch the proxy CA was not bound for records no CA bind, and its joins say nothing of one" {
+  make_fake_ca "$H/ca.pem"
+  TEST_PRESET="" engine_bg AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ ! -e "$SBOX/keeper/ca" ]
+  TEST_PRESET="" run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"proxy's CA"* ]]
+  release_bg
+  engine_bg -- asb claude --version # proxy, but no proxy CA: nothing bound
+  [ ! -e "$SBOX/keeper/ca" ]
+  run_engine -- asb claude --version
+  [[ "$output" != *"the host replaced"* ]]
+  release_bg
 }
