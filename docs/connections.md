@@ -281,6 +281,10 @@ them shut.
 > **`--preset native` must behave identically to `--preset none`, while going through
 > every sandbox mechanism.** A difference between the two is a bug in agent-sandbox.
 
+The one intended difference is on PATH: the tools environment `install.sh` builds (`gh`
+by default, [config.md](config.md)) is there under `native` as under every preset, and
+not under `none`, which runs outside the sandbox.
+
 That makes it a differential oracle, which is a test this repository does not otherwise
 have: it catches the sandbox quietly *distorting* the agent rather than failing outright.
 It also bisects a failure — something that breaks under `native` but works under

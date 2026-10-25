@@ -84,6 +84,9 @@ teardown_file() {
   "$H/.local/share/agent-sandbox/micromamba/bin/micromamba" --version
   [ -d "$H/.local/share/agent-sandbox/conda" ]
   grep -qxE 'host|sandbox' "$H/.config/agent-sandbox/conda" # no terminal: host if it has conda, else sandbox
+  # the tools env, built from conda-forge with that micromamba: conda-forge's gh
+  [[ "$out" == *"tools env $H/.local/share/agent-sandbox/tools/a (the default; "*"): gh "*" (gh)"* ]]
+  "$H/.local/share/agent-sandbox/tools/current/bin/gh" --version
   [[ "$out" == *"CA generated: $H/.mitmproxy/mitmproxy-ca-cert.pem"* ]]
   [ -f "$H/.mitmproxy/mitmproxy-ca-cert.pem" ]
   grep -q '^api.github.com$' "$H/.config/agent-sandbox/allowlist.txt"

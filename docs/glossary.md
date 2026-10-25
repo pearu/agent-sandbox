@@ -201,6 +201,8 @@ is always free. *shipped*
 - **`shared`** — every managed channel `read-write`: the engine before 0.3.
 - **`native`** — sandboxed, but isolating no state: must behave identically to `--preset
   none`, so any difference is a bug. Flag only, never from a file or the environment.
+  The one PATH difference is the tools environment ([config.md](config.md)): on PATH
+  under `native`, absent under `none`, which runs outside the sandbox.
 
 A `[connect]` line then moves one channel and nothing else. A preset moves only the
 channels the profile declares, never a path declaration. *shipped*. **`none`**, a fifth
@@ -365,7 +367,8 @@ writable from inside it would let the agent change its own sandbox; `~/.local/bi
 [connections-study.md](connections-study.md) (whether each mode does what it says).
 
 **Differential oracle.** Using `--preset native` against `--preset none`: any difference
-is the sandbox distorting the agent rather than failing outright.
+is the sandbox distorting the agent rather than failing outright. The tools environment
+on `native`'s PATH is the one intended difference.
 
 **Mutation check.** Breaking the thing a test is for, and confirming the test then fails.
 A test that passes either way is recorded as proving nothing.

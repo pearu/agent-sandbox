@@ -296,6 +296,14 @@ Stated plainly. These are what the adversary above can still do.
   declaration of its prefix) can reshape what other projects' sandboxes then run.
   The micromamba binary itself is a pinned release (a SHA-256 per architecture in
   `install.sh`), bound read-only.
+- **The tools environment comes from conda-forge unpinned.** `install.sh` rebuilds it
+  at every run with the newest builds of the packages in
+  `~/.config/agent-sandbox/tools.txt` (`gh` by default), on the host, trusting
+  conda-forge as conda does; no checksum here pins them. What it builds runs only inside
+  sandboxes, from a read-only bind of one slot (not the package cache it is hardlinked
+  to), and its commands come before `/usr/bin` on the sandbox's PATH, so a package
+  listed there shadows the system's command of the same name in every sandbox. Only the
+  listed packages' own commands are linked onto PATH, not their dependencies'.
 - **The path refusals are a blocklist.** Secret stores and the sandbox's
   control plane are refused by name (the guarantees table has the list), and
   so is a directory containing one. A credential inside a directory you

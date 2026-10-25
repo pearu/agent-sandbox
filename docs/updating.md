@@ -26,3 +26,10 @@ profiles with the current ones. A plain `git pull` alone does not take effect:
 the command runs from the copy under `~/.local/share/agent-sandbox`, not from
 the checkout, so the re-run is what promotes your pull. (If you installed with
 `--dev`, `asb` points at the checkout and a pull is live immediately.)
+
+The same re-run updates the tools environment sandboxes find on PATH (`gh` by
+default): `./install.sh` rebuilds it from conda-forge every time, so its packages are
+the newest conda-forge has. A change to the list in `~/.config/agent-sandbox/tools.txt`
+takes effect at that run too. A failed rebuild (no network, a spec conda-forge cannot
+solve) warns and leaves the previous environment in place; the log of the failed run is
+`~/.local/share/agent-sandbox/tools/<slot>.log`.

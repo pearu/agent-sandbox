@@ -160,8 +160,13 @@
 #                                       file's [conda] base, else what install.sh
 #                                       asked (~/.config/agent-sandbox/conda), else
 #                                       host when the host has conda.
-#   AGENT_SANDBOX_HOME=/dir            where install.sh put micromamba and the conda
-#                                       root (default ~/.local/share/agent-sandbox)
+#   AGENT_SANDBOX_HOME=/dir            where install.sh put micromamba, the conda
+#                                       root and the tools env (default
+#                                       ~/.local/share/agent-sandbox). The tools env
+#                                       (tools/current, install.sh's, from
+#                                       ~/.config/agent-sandbox/tools.txt, default gh)
+#                                       is bound read-only, its bin/ on PATH before
+#                                       the system directories (every preset)
 #   AGENT_SANDBOX_PROXY_CA=/file       the egress proxy's CA certificate
 #                                       (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
 #   AGENT_SANDBOX_NET=proxy|strict|open|none  network mode (default: proxy)
@@ -4427,6 +4432,42 @@ _as_conda_base() {
 _as_conda_home() { printf '%s' "${AGENT_SANDBOX_HOME:-$HOME/.local/share/agent-sandbox}"; }
 _as_micromamba_bin() { printf '%s/micromamba/bin' "$(_as_conda_home)"; }
 _as_conda_root() { printf '%s/conda' "$(_as_conda_home)"; }
+
+# ----- the tools env: install.sh's conda-forge CLI tools (gh, ...) on the inner PATH -----
+# install.sh builds it from ~/.config/agent-sandbox/tools.txt (default: gh) into one of
+# two slots, <home>/tools/a or b, and points <home>/tools/current at the one that built;
+# each slot's bin/ links the listed packages' own executables only. A launch binds that
+# slot read-only and puts its bin/ after the conda env and before the system directories,
+# so a project's own copy of a tool wins and the host's /usr/bin one does not.
+# _as_tools_slot -- the slot in use, or nothing (never built, or the build failed).
+_as_tools_slot() {
+  local home s
+  home="$(_as_conda_home)"
+  s="$(readlink -- "$home/tools/current" 2>/dev/null || true)"
+  [[ "$s" == a || "$s" == b ]] && [[ -d "$home/tools/$s/bin" ]] && printf '%s' "$home/tools/$s"
+  return 0
+}
+
+# _as_path_tools DIR -- the inner PATH being built with DIR right before its first system
+# directory (/usr..., /bin, /sbin, /snap/bin), or at its end when it has none; any copy of
+# DIR already on it (a nested launch) is dropped.
+_as_path_tools() {
+  local out="" p put=0
+  local -a parts=()
+  _as_split parts ':' "${_inner_path:-$PATH}"
+  for p in "${parts[@]}"; do
+    [[ -z "$p" || "$p" == "$1" ]] && continue
+    case "$p" in
+      /usr | /usr/* | /bin | /sbin | /snap/bin)
+        ((put)) || out="${out:+$out:}$1"
+        put=1
+        ;;
+    esac
+    out="${out:+$out:}$p"
+  done
+  ((put)) || out="${out:+$out:}$1"
+  printf '%s' "$out"
+}
 
 # _as_conda_mode [DOTFILE_BASE] -- sets _conda_mode (host | sandbox), _conda_mode_src
 # (what said so) and _conda_hbase (the host's conda base, _as_conda_base's, or empty).
@@ -8757,6 +8798,16 @@ agent_sandbox() (
   if _as_preset_is_native; then
     _as_msg "preset native: state isolation is OFF -- every channel read-write, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--preset none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter, the profile's environment pins and the CWD bind still apply."
   fi
+  # The tools env (install.sh's; _as_tools_slot): after whatever conda put first (decided
+  # above), before the system directories. Under every preset, `native` included: which
+  # executables are on PATH is not state isolation, so it is the one PATH difference
+  # between `native` and `none` (which runs outside the sandbox).
+  local _tools_slot=""
+  _tools_slot="$(_as_tools_slot)"
+  if [[ -n "$_tools_slot" ]]; then
+    _inner_path="$(_as_path_tools "$_tools_slot/bin")"
+    _as_info "tools env $_tools_slot on PATH before the system directories: $(cd -- "$_tools_slot/bin" && printf '%s ' * | sed 's/ $//')"
+  fi
   # Seed every channel the profile declares from the preset. An explicit
   # [connect] line, knob or flag then overwrites its own channel and nothing
   # else, which is what makes "a preset plus overrides" the whole vocabulary.
@@ -9590,6 +9641,14 @@ agent_sandbox() (
     _pkgs_dirs="$_pkgs"
     [[ -n "$_conda_base" && -d "$_conda_base/pkgs" ]] && _pkgs_dirs+=",$_conda_base/pkgs"
     args+=(--setenv CONDA_PKGS_DIRS "${CONDA_PKGS_DIRS:-$_pkgs_dirs}")
+  fi
+
+  # The tools env's slot, read-only, and `current` naming it, so a launch from inside
+  # finds the same slot (_as_tools_slot) and keeps it on its PATH. Under `native` the
+  # host's $HOME is bound whole, the real `current` with it.
+  if [[ -n "$_tools_slot" ]]; then
+    args+=(--ro-bind "$_tools_slot" "$_tools_slot")
+    _as_preset_is_native || args+=(--symlink "${_tools_slot##*/}" "${_tools_slot%/*}/current")
   fi
 
   # The channels, the path declarations and the per-session scratch, by depth: here,
