@@ -8,14 +8,17 @@ number, each in a layer of its own over the project as the setup role built it:
     asb --role gh-setup claude               # builds main into torch-dev; again after main moves
     asb --role gh-review-1234 claude         # review pull request 1234
     asb --role gh-triage-5678 claude         # triage issue 5678
-    asb --ssh github.com --role gh-fix-1234 claude   # implement 1234, able to push
-    asb --apply '[ssh:gh-fix-*]' github.com  # ...or let every fixer here push, for good
+    asb --role gh-fix-1234 claude            # implement 1234; it pushes over HTTPS on your word
     asb --delete --role gh-review-1234       # when its work is done
 
 - **gh-setup**, one per project, builds `main` as checked out into the `--env`
   environment, from the project's CI and documentation, and records why in
   `.asb/setup.md` and how in `.asb/build_env.sh` (`setup`, the full build; `rebuild`,
-  the incremental one the other roles run after their change). It writes the checkout
+  the incremental one the other roles run after their change). Last, it checks what
+  the other roles will need -- a current `gh`, the fixers' push path, ghstack's lines,
+  the GPU's `/dev/nvidia-uvm` -- fixes what it can, and records the rest, with the
+  command you run on the host, under `## Readiness` in `.asb/setup.md`, which every
+  role reads at its start. It writes the checkout
   and the environment, reads the web with GET only, and has no git transport and no gh
   login. Submodules are yours: it cannot fetch, so `git submodule update --init
   --recursive` on the host first -- or `asb --apply '[net:gh-setup]' 'git = fetch'`,
@@ -31,11 +34,14 @@ number, each in a layer of its own over the project as the setup role built it:
   duplicates, concludes (confirmed / not reproducible / needs information / duplicate),
   and posts the triage and labels when you say so.
 - **gh-fix** implements an issue or a pull request on a branch, and publishes it when you
-  say so: over SSH, to your fork or directly as the checkout's remotes say, or with
-  `ghstack submit` where the project uses it. SSH is opt-in: `--ssh github.com` for one
-  launch, or `asb --apply '[ssh:gh-fix-*]' github.com` for every fixer of the project,
-  reviewed and approved like any other line; ghstack's login is opt-in per project too,
-  `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
+  say so: over HTTPS, as you, with your gh login (`[net:gh-fix-*] git = allow` and
+  `gh = read-only`, both in the file you approve), to your fork or directly as the
+  checkout's remotes say -- to the remote's HTTPS URL whatever its scheme, saying so
+  once when `origin` is SSH. SSH is for ghstack, which pushes through `origin` as it is:
+  where the project uses it, ghstack's login and, for an SSH `origin`, SSH are opt-in
+  per project, `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'` and
+  `asb --apply '[ssh:gh-fix-*]' github.com` (or `--ssh github.com` for one launch),
+  reviewed and approved like any other line.
 
 Each sees the project and its environment through overlays of its own
 (`project = copy-on-write`): its checkout, incremental rebuild, commits and installs stay

@@ -2,8 +2,8 @@
 #   asb --role gh-review-<N> claude    review pull request N
 #   asb --role gh-triage-<N> claude    triage issue N
 #   asb --role gh-fix-<N> claude       implement issue or pull request N
-#   (a fixer that publishes over SSH: asb --ssh github.com --role gh-fix-<N> claude,
-#    or for every fixer here, the [ssh:gh-fix-*] line below)
+#   (a fixer pushes over HTTPS, as you, with your gh login; the [ssh:gh-fix-*] line
+#    below is for ghstack, which pushes through origin as it is)
 # Each works on the project as you built it, through a layer of its own: its checkout,
 # build, commits and installs never reach the project, your environment or another
 # instance. Delete one when its work is done -- a fixer's after it is published:
@@ -27,12 +27,12 @@ docs.python.org
 .python.org
 # ---- the fixer publishes: on your word ---------------------------------------------
 [net:gh-fix-*]
-git = allow                       # it pushes over HTTPS too; over SSH, to the [ssh:gh-fix-*] host below
+git = allow                       # it pushes over HTTPS, as you, with your gh login; over SSH only where [ssh:gh-fix-*] grants it (ghstack)
 [connect:gh-fix-*]
 # ~/.ghstackrc = read-only        # ghstack's login (token): off; for a ghstack project:
 #   asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'
 [ssh:gh-fix-*]
-# github.com                      # SSH as you, for the push: off; for every fixer here:
+# github.com                      # SSH as you, for ghstack (it pushes through origin as it is, an SSH URL): off; for a ghstack project:
 #   asb --apply '[ssh:gh-fix-*]' github.com
 [briefing:gh-review-*]
 file = .asb/roles/gh-review.md
