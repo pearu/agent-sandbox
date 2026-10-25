@@ -317,7 +317,13 @@ init() {
   grep -qF 'is never restated' "$PROJ/.asb/roles/gh-review.md"
   for k in gh-review gh-triage gh-fix; do
     grep -qF "1. Check the build: \`$ep\` has \`conda-meta/\`" "$PROJ/.asb/roles/$k.md"
+    grep -qF "\`## Readiness\` section names a host-side" "$PROJ/.asb/roles/$k.md" # gh-setup's readiness record, read at start
   done
+  grep -qF '**Last, readiness.**' "$PROJ/.asb/roles/gh-setup.md"
+  grep -qF "under \`## Readiness\`" "$PROJ/.asb/roles/gh-setup.md"
+  # the fixer pushes over HTTPS with the gh login; SSH is ghstack's
+  grep -qF "git -c credential.helper='!gh auth git-credential' push https://github.com/<owner>/<repo>.git <branch>" "$PROJ/.asb/roles/gh-fix.md"
+  grep -qF "ghstack pushes through \`origin\` as it is" "$PROJ/.asb/roles/gh-fix.md"
   init MAMBA_ROOT_PREFIX="$H/base" -- github --env missing # again: the empty prefix is still accepted
   [ "$status" -eq 0 ]
   [[ "$output" == *"environment missing is not built yet (empty at $ep)"* ]]

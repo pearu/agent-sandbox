@@ -496,12 +496,20 @@ API writes (`gh pr review`, labels) stay told, on the user's word.
 **The fixer keeps the overlay.** A clone would cost the full rebuild the overlay avoids;
 its commits live in its layer's `.git`, so its work is published before the instance is
 deleted, and live instances are reset after `main` is rebuilt (a layered `.git` over a
-moved lower is the layered-build hazard, in git's metadata). It publishes over SSH
-through the broker, as the user does -- opt-in per project, `asb --apply
-'[ssh:gh-fix-*]' github.com`, or `--ssh github.com` for one launch -- to the checkout's
-remotes as they are: an `upstream` plus `origin` is a fork workflow, `origin` alone
-direct access; `ghstack submit` where the project uses it, its login opt-in per project (it holds a token):
-`asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
+moved lower is the layered-build hazard, in git's metadata). It publishes over HTTPS, as
+the user, with the user's gh login (`gh auth git-credential` as git's credential
+helper): `[net:gh-fix-*] git = allow` admits git's receive-pack and `[connect:gh-*] gh =
+read-only` supplies the token, both lines of the reviewed file, so no further opt-in.
+It follows the checkout's remotes -- an `upstream` plus `origin` is a fork workflow,
+`origin` alone direct access -- and pushes to the chosen remote's HTTPS URL whatever
+its scheme, saying once when that remote is SSH. SSH stays the reviewed opt-in for the
+one case that needs it: `ghstack submit`, where the project uses it, pushes through
+`origin` as it is, usually an SSH URL, so it needs `asb --apply '[ssh:gh-fix-*]'
+github.com` (or `--ssh github.com` for one launch), and its login, opt-in per project
+(it holds a token): `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`.
+Granting SSH automatically when `origin` is an SSH URL was rejected: an act-as-you
+grant is a line in the reviewed dot-file, and `.git/config` is writable by `gh-setup`
+(`project = read-write`).
 
 Measured 2026-10-06 on a scratch private repository: a `gh-fix` instance launched with
 `--ssh github.com` committed on a new branch in its layer and pushed it over SSH through
@@ -509,6 +517,13 @@ the broker; the host checkout stayed on `main`, untouched. A `gh-review` instanc
 refused `--ssh` (as it was then; since #293 `--ssh` is honoured under `git = fetch`),
 and fetched that branch over HTTPS with gh's token as git's credential helper. ghstack
 is unmeasured: it pushes to `pytorch/pytorch`, which a test cannot.
+
+Measured 2026-10-25 on the installed engine (0.3.0-131), the same scratch repository,
+a dot-file of `[net] mode = proxy, git = allow` and `[connect] gh = read-only`: inside
+the sandbox, with no SSH agent socket, `git -c credential.helper='!gh auth
+git-credential' push https://github.com/<owner>/<repo>.git HEAD:<branch>` created the
+branch (exit 0; seen on GitHub from the host). With `git = fetch` the same push was
+refused by the proxy, HTTP 403, exit 128.
 
 Measured 2026-10-06 on a pytorch checkout built two days earlier and its environment
 (torch an editable scikit-build-core install: Python from the tree, 524 MB compiled in

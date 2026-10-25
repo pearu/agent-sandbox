@@ -227,7 +227,8 @@ names are gone; there are no aliases for removed names before 1.0.
   `--ssh-unrestricted`, `--ssh-key` and `--ssh-timeout` stay launch-only, and a role
   whose `[net] git` is `fetch` or `refuse` gets none of them. The github model writes
   `[ssh:gh-fix-*]` with `github.com` commented out and the line that turns it on,
-  `asb --apply '[ssh:gh-fix-*]' github.com`; a fixer without SSH asks for exactly that.
+  `asb --apply '[ssh:gh-fix-*]' github.com`, for ghstack; a ghstack fixer without SSH
+  asks for exactly that.
 - **A refused host reaches the session as it happens**: the proxy also appends each
   refusal of a session to that session's own `refused.log`, bound read-only at
   `/run/agent-sandbox/refused.log`, and the claude profile's hook after every Bash call
@@ -301,8 +302,8 @@ names are gone; there are no aliases for removed names before 1.0.
 - **The `github` model**: `asb --init github --env NAME` appends, once, sections for
   `gh-review-<N>`, `gh-triage-<N>` and `gh-fix-<N>` -- a reviewer, a triager and a fixer
   per pull request or issue, each seeing your built checkout and environment through a
-  layer of its own. Review and triage never push; the fixer publishes over SSH, or with
-  ghstack; every post is on your word, after the project's AI policy.
+  layer of its own. Review and triage never push; the fixer publishes over HTTPS with
+  your gh login, or with ghstack; every post is on your word, after the project's AI policy.
 - **`gh-setup` in the `github` model**: one per project, it builds `main` as checked out
   into the `--env` environment from the project's CI and documentation, records why in
   `.asb/setup.md` and how in `.asb/build_env.sh` -- `setup` for the full build,
@@ -357,6 +358,26 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The github model's fixer pushes over HTTPS, as you, with your gh login; SSH is for
+  ghstack.** The model's file already gave fixers `[net:gh-fix-*] git = allow` and
+  `[connect:gh-*] gh = read-only`, so a fixer could push over HTTPS with no opt-in, yet
+  its purpose file said to push over SSH or stop and ask for `[ssh:gh-fix-*]`: some
+  fixers pushed over HTTPS, others stopped. `gh-fix` now pushes to the HTTPS URL of the
+  remote the fork rule picks, whatever its scheme, with `gh auth git-credential` as
+  git's credential helper, and says once when that remote is SSH. `[ssh:gh-fix-*]
+  github.com` stays a reviewed opt-in, for ghstack, which pushes through `origin` as it
+  is. Measured 2026-10-25 on a private scratch repository: with `git = allow` and the
+  gh login, an HTTPS push from inside the sandbox created the branch (no SSH agent
+  inside); with `git = fetch` the proxy refused it, HTTP 403.
+- **gh-setup ends with a readiness check, recorded under `## Readiness` in
+  `.asb/setup.md`**, which gh-review, gh-triage and gh-fix read at start: a current `gh`
+  (`gh pr checks --json`; else re-run `install.sh` on the host), the user's gh login,
+  the fixers' push path (fork or direct, the HTTPS URL; for a ghstack project the two
+  `--apply` lines), and, when the build used CUDA, the missing `/dev/nvidia-uvm` after a
+  host reboot (`nvidia-smi` lists the GPUs, CUDA says "unknown error"; on the host
+  `nvidia-modprobe -u -c 0`, then the role's restart). It fixes what is in its reach and
+  names the host-side command for the rest, so an issue is found before a role trips on
+  it.
 - **The status line's `ASKS YOU` and `NEEDS YOU` are blue, and `ASKS YOU` looks at the
   reply's last three lines** (the red bar was found ugly; and a Supervisor that asked
   for the user's yes in prose above a quoted message ending "Report done 22." showed no

@@ -24,7 +24,7 @@ in the forms `--ssh HOST` takes, and per role with a suffix
 
 ```ini
 [ssh:gh-fix-*]
-github.com                # the fixers push; no other role gets SSH
+github.com                # the fixers' ghstack pushes through an SSH origin; no other role gets SSH
 ```
 
 `asb --apply '[ssh:gh-fix-*]' github.com` adds the line and runs the review. Like

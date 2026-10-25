@@ -97,8 +97,9 @@ orders.
 1. Check the build: `{envpath}` has `conda-meta/` and the project imports from this
    checkout (its package's `__file__` under the project directory). If not, stop and
    tell the user: `asb --role gh-setup claude` builds it -- nothing here works without
-   it. Then read `.asb/setup.md`, and after your change rebuild with
-   `.asb/build_env.sh rebuild` -- that, and nothing more.
+   it. Then read `.asb/setup.md`: where its `## Readiness` section names a host-side
+   step your work needs and you find it not done, tell the user before you start. After
+   your change rebuild with `.asb/build_env.sh rebuild` -- that, and nothing more.
 2. Read the PR: `gh pr view N --comments`, the issues it links and their comments,
    `gh pr diff N`, its checks.
 3. Test the premise: a claim the change rests on (a dependency "does not support X")
