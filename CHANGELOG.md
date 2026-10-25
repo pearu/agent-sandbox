@@ -305,7 +305,9 @@ names are gone; there are no aliases for removed names before 1.0.
 - **gh-review's briefing** says it once: what is on record for the PR is linked, not
   restated; a reply answers its question; what the draft leaves out is listed for the
   user to opt in; a one-line reply the user takes as their own carries no footer where
-  the project's policy allows.
+  the project's policy allows. It files a new issue for a problem the review finds beyond
+  the PR, on your word: it looks for it on record first, shows you the draft, and runs
+  `gh issue create` when told.
 - **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
 - **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
   its own layer, kept until `asb --delete`.
