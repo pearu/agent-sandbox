@@ -32,6 +32,11 @@ log="$dir/refused.log"
 
 section="$(head -n 1 -- "$dir/apply-section" 2>/dev/null)"
 [[ "$section" =~ ^\[allow(:[A-Za-z0-9._-]+)?\]$ ]] || section="[allow]"
+# The --shutdown that restarts this role, as the engine spells it (DIR/restart): an
+# --apply reaches a role only at its next keeper, and a relaunch that joins a session of
+# it still running keeps the old policy. Only the engine's shape passes.
+restart="$(head -n 1 -- "$dir/restart" 2>/dev/null)"
+[[ "$restart" =~ ^[A-Za-z0-9._-]+\ --role\ [A-Za-z0-9._-]+\ --shutdown(\ --profile)?\ [A-Za-z0-9._-]+$ ]] || restart=""
 
 # One entry per line, an exact hostname or a .domain; anything else is ignored.
 own=()
@@ -65,7 +70,10 @@ while IFS=$'\t' read -r _ host _ why _; do
   [[ "$done_hosts" == *" $host "* ]] && continue
   is_own "$host" && continue
   case "$why" in
-    allowlist) note="$host was refused by the sandbox ($why) during this command." ask=" The user adds the host, on the host, with: asb --apply '$section' $host." ;;
+    allowlist)
+      note="$host was refused by the sandbox ($why) during this command."
+      ask=" The user adds the host, on the host, with: asb --apply '$section' $host. It applies once this role is restarted${restart:+: $restart}, then launched again -- a launch that joins a session of this role still running keeps the old policy."
+      ;;
     "[deny]" | retrieve-only | "git refuse" | "git push" | non-public)
       owner="the project's policy"
       [[ "$why" == non-public ]] && owner="the sandbox's policy (a local or LAN address)"

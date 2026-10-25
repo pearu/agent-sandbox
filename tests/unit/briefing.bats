@@ -111,7 +111,7 @@ trust() {
 @test "the briefing's SSH line names each host and where it came from: the dot-file's section, --ssh" {
   make_ssh_stubs
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
-  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh]' HOST, then a relaunch" "$OUT/briefing.md"
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh]' HOST, then a restart of this role: asb --role default --shutdown claude, then launch it again" "$OUT/briefing.md"
   printf '[ssh]\ngithub.com\n[ssh:impl-*]\ngit@gitlab.example\n' >"$PROJ/.agent-sandbox"
   trust
   run_engine BWRAP_COPY="$OUT" -- asb --role impl-1 --ssh flag.example --ssh github.com claude --version
@@ -477,6 +477,10 @@ CHECK
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
   [ "$(cat "$OUT/apply-section")" = '[allow:reviewer-1]' ]
+  [ "$(cat "$OUT/restart")" = 'asb --role reviewer-1 --shutdown claude' ]
+  grep -qxF '      asb --role reviewer-1 --shutdown claude' "$OUT/briefing.md"
+  grep -qxF 'then ask them to restart this role for it to apply:' "$OUT/briefing.md"
+  grep -qxF 'running keeps the old policy.' "$OUT/briefing.md"
   printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
   approve
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
@@ -488,6 +492,7 @@ CHECK
   local hook="${ENGINE%/*}/profiles/claude/refusal-hook.sh" D="$BATS_TEST_TMPDIR/run" S="$BATS_TEST_TMPDIR/seen"
   mkdir -p "$D"
   printf '[allow:reviewer-1]\n' >"$D/apply-section"
+  printf 'asb --role reviewer-1 --shutdown claude\n' >"$D/restart"
   printf '%s\n' $'2026-10-15T10:00:00\tprefix.dev\tCONNECT\tallowlist' \
     $'2026-10-15T10:00:01\tevil"host\\n\tCONNECT\tallowlist' \
     $'2026-10-15T10:00:02\tshop.example\tGET\t[deny]' \
@@ -504,7 +509,9 @@ assert len(lines) == 2, lines  # one per distinct host; the invalid line skipped
 assert lines[0] == ("agent-sandbox: prefix.dev was refused by the sandbox (allowlist) during this command. "
     "Going on with a mirror, another channel or another tool for the same thing is going on without it, "
     "and whether to do that is the user's decision. The user adds the host, on the host, with: "
-    "asb --apply '[allow:reviewer-1]' prefix.dev. This session continues without it only once the user has said so."), lines[0]
+    "asb --apply '[allow:reviewer-1]' prefix.dev. It applies once this role is restarted: "
+    "asb --role reviewer-1 --shutdown claude, then launched again -- a launch that joins a session of this role "
+    "still running keeps the old policy. This session continues without it only once the user has said so."), lines[0]
 assert lines[1] == ("agent-sandbox: shop.example was refused by the project's policy ([deny]) during this command; "
     "--apply does not lift it. Going on with a mirror, another channel or another tool for the same thing is going "
     "on without it, and whether to do that is the user's decision. This session continues without it only once the "
@@ -529,9 +536,11 @@ CHECK
   [ -z "$output" ]
   # no section from the engine, or a malformed one: the unsuffixed [allow]
   printf "x'; rm -rf ~\n" >"$D/apply-section"
+  printf 'asb --role x; rm -rf ~ --shutdown claude\n' >"$D/restart" # nor a restart of another shape
   printf 'list\n' >>"$D/refused.log"
   run bash "$hook" PostToolUse "$D" "$S"
-  [[ "$output" == *"asb --apply '[allow]' late.example."* ]]
+  [[ "$output" == *"asb --apply '[allow]' late.example. It applies once this role is restarted, then launched again -- "* ]]
+  [[ "$output" != *"rm -rf"* ]]
   # an event it was not written for, or no log: silent
   run bash "$hook" PreToolUse "$D" "$BATS_TEST_TMPDIR/seen2"
   [ "$status" -eq 0 ] && [ -z "$output" ]
@@ -655,18 +664,18 @@ CHECK
   approve
   run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh:supervisor]' github.com (the host of origin), then a relaunch" "$OUT/briefing.md"
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh:supervisor]' github.com (the host of origin), then a restart of this role: asb --role supervisor --shutdown claude, then launch it again" "$OUT/briefing.md"
   grep -qxF "  -- or SSH for a push to origin: asb --apply '[ssh:supervisor]' github.com" "$OUT/briefing.md"
   grep -qF "SSH: none -- to ask the user for a host, the command is asb --apply '[ssh:supervisor]' github.com" "$OUT/hook-SessionStart.json"
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh:reviewer-1]' github.com (the host of origin), then a relaunch" "$OUT/briefing.md"
+  grep -qxF -- "- SSH reachable through a constrained agent: none -- to ask the user for a host, the command is asb --apply '[ssh:reviewer-1]' github.com (the host of origin), then a restart of this role: asb --role reviewer-1 --shutdown claude, then launch it again" "$OUT/briefing.md"
   run ! grep -qF 'closes SSH' "$OUT/briefing.md"
   grep -qF "GIT TRANSPORT REFUSED: git cannot fetch or push over HTTPS from here, to any host, and there is no SSH host; the repository on disk is your only remote." "$OUT/briefing.md"
   git -C "$PROJ" remote set-url origin https://github.com/pearu/torch-op-bench.git
   run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
   [ "$status" -eq 0 ]
-  grep -qF "the command is asb --apply '[ssh:supervisor]' HOST, then a relaunch" "$OUT/briefing.md" # no SSH remote: no host to name
+  grep -qF "the command is asb --apply '[ssh:supervisor]' HOST, then a restart of this role: asb --role supervisor --shutdown claude" "$OUT/briefing.md" # no SSH remote: no host to name
 }
 
 @test "the briefing says \$HOME is read-only and where a tool can write instead: ~/.cache and /tmp, by its variable" {

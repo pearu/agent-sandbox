@@ -709,7 +709,7 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 | verb | does | refused when |
 |---|---|---|
-| `--status` | the keeper (running since when, under which dot-file), the processes in its namespace (a host-side view), and the daemon's sessions (a joined `agents`); for a role not running, where its stores are | — |
+| `--status` | the keeper (running since when, under which dot-file, whether the proxy CA's bind still holds: [network.md](network.md#the-proxy-ca)), the processes in its namespace (a host-side view), and the daemon's sessions (a joined `agents`); for a role not running, where its stores are | — |
 | `--shutdown` | ends the keeper, every joined process, and the daemon with its pool | — |
 | `--delete` | removes the role's stores, all of them; the next launch starts from the source | anything is joined, or a daemon runs: it names `--shutdown`. An idle keeper is ended first |
 | `--reset <channel\|path>` | discards one store, in whatever mode, and takes the source's version again (for `own`, the profile's start template, else empty), keeping the rest; renamed from `--reset-connection`, which is refused with the new name, and takes a path declaration too | the same as `--delete` |

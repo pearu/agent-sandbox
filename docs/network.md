@@ -261,7 +261,26 @@ path: `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
 `CARGO_HTTP_CAINFO`, unless you set them yourself. A tool
 with yet another knob needs it forwarded via `AGENT_SANDBOX_FORWARD`.
 `AGENT_SANDBOX_PROXY_CA` overrides the CA's location; a missing CA is a warning
-at launch. Do not change the host's CA state while a session runs; relaunch.
+at launch.
+
+The bind is over a single file, and the kernel attaches a file bind to that directory
+entry. When the host replaces `/etc/ssl/certs/ca-certificates.crt` by a rename -- a
+`ca-certificates` upgrade does, unattended-upgrades at 06:00 included -- the bind under a
+running role is detached: the sandbox sees the host's new bundle, without the proxy CA,
+and every HTTPS request fails (`x509: certificate signed by unknown authority`) until the
+role is restarted. A new launch binds again, so only a running role meets it. Each join
+into a running role, and `--status`, check the keeper's bind (its mount namespace's
+`mountinfo`, read on the host) and say, loud:
+
+```
+agent-sandbox: warning — role 'R': the host replaced /etc/ssl/certs/ca-certificates.crt (at 2026-10-21 06:00:12) and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role R --shutdown claude
+```
+
+The join goes on. `asb --role R --shutdown claude`, then launching again, fixes it. With
+the bind still there but the host's bundle no longer the one the role started with
+(compared with the SHA-256 the launch recorded), the line is a `note:` instead: HTTPS
+works, and the host's new certificates reach the role at its next launch. Nothing is
+said outside the proxy modes, nor when the keeper's `mountinfo` cannot be read.
 
 ## One-time host setup
 

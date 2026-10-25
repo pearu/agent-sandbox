@@ -509,3 +509,51 @@ wait_gone() { # wait_gone PID -- up to 10 s
   release a
   wait "$first"
 }
+
+# The proxy CA's bind is one file over the system bundle, and a host that replaces that
+# file by a rename -- a ca-certificates upgrade -- detaches it under a running role
+# (_as_ca_check). The host's /etc cannot be replaced here; the bind is unmounted from
+# inside the keeper's mount namespace instead, entered through its owner as a join
+# enters it, which leaves the mountinfo a detach leaves: no mount at the bundle's path.
+@test "the proxy CA's bind under a running role: silent while it holds, a note when the host's bundle changed, loud with --shutdown once it is gone" {
+  make_fake_ca "$I/ca.pem"
+  local -a px=(AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_PROXY_CA="$I/ca.pem" XDG_STATE_HOME="$IHOME/.local/state")
+  bg_sandboxed a "${px[@]}" -- --profile probe --exec sh -c "$(hold a)"
+  local bundle t
+  bundle="$(cut -f1 "$SB/keeper/ca")"
+  t="$(keeper_payload)"
+  awk -v m="$bundle" '$5 == m {f=1} END {exit !f}' "/proc/$t/mountinfo" # bound, as launched
+  run_sandboxed "${px[@]}" -- --profile probe --exec true
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"proxy's CA"* && "$output" != *"$bundle has changed"* ]]
+  # what the role got is no longer the host's bundle
+  printf '%s\t%s\n' "$bundle" 0000 >"$SB/keeper/ca"
+  run_sandboxed "${px[@]}" -- --profile probe --exec true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: note: role 'default': the host's $bundle has changed (at "*") since the role started; it keeps the bundle it started with, the proxy's CA included, so HTTPS works -- the host's new one applies at its next launch"* ]]
+  engine_cmd
+  run bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_SESSION_BASE="$I/base" "${px[@]}" \
+    "${ENGINE_CMD[@]}" --status --profile probe
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  note: role 'default': the host's $bundle has changed"* ]]
+  # the bind gone
+  python3 -I - "$t" "$bundle" <<'PY2' || skip "cannot unmount inside the keeper's mount namespace here"
+import ctypes, fcntl, os, sys
+# Enter the mount namespace's OWNER (bwrap nests a capability-less user namespace below
+# it; see components/join.py), then the mount namespace, and take the bind off.
+libc = ctypes.CDLL(None, use_errno=True)
+mnt = os.open(f"/proc/{sys.argv[1]}/ns/mnt", os.O_RDONLY)
+if libc.setns(fcntl.ioctl(mnt, 0xB701), 0) or libc.setns(mnt, 0) or libc.umount2(sys.argv[2].encode(), 0):
+    sys.exit(os.strerror(ctypes.get_errno()))
+PY2
+  run ! awk -v m="$bundle" '$5 == m {f=1} END {exit !f}' "/proc/$t/mountinfo"
+  run_sandboxed "${px[@]}" -- --profile probe --exec true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: warning — role 'default': the host replaced $bundle (at "*") and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: agent-sandbox --role default --shutdown --profile probe"* ]]
+  run bash -c 'cd "$1" && shift && exec "$@"' _ "$IWORK" env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_SESSION_BASE="$I/base" "${px[@]}" \
+    "${ENGINE_CMD[@]}" --status --profile probe
+  [[ "$output" == *$'\n'"  warning — role 'default': the host replaced $bundle"*"--shutdown --profile probe"* ]]
+  release a
+}

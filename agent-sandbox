@@ -103,7 +103,12 @@
 #                                           plus the egress proxy's CA, so TLS
 #                                           interception is trusted inside the
 #                                           sandbox only; the host never trusts
-#                                           that CA
+#                                           that CA. A single-file bind: a host
+#                                           that replaces the file (a
+#                                           ca-certificates upgrade) detaches it
+#                                           under a running role, which a join
+#                                           and --status then say, with the
+#                                           --shutdown that fixes it
 #     $CWD                                  read-write (unless CWD == $HOME,
 #                                           in which case nothing extra is
 #                                           bound — refuse to expose all of
@@ -2491,6 +2496,8 @@ _as_connect_placeholder() {
 #   <sandbox>/keeper/dotfile    the approved dot-file's hash then, or -
 #   <sandbox>/keeper/session    its session directory
 #   <sandbox>/keeper/seccomp    its syscall filter file, or empty
+#   <sandbox>/keeper/ca         the system CA bundle's path and SHA-256 as the proxy
+#                               modes bound it (_as_ca_bind), absent otherwise
 #   <sandbox>/keeper/joined/N   one per join: the joining engine's PID and start time
 
 # The payload's marker: argv[0] of the process that holds the namespaces.
@@ -2683,12 +2690,12 @@ _as_keeper_admit() {
       have=""
       local k2
       for k2 in "${!kl[@]}"; do [[ "${k2%%$'\t'*}" == "$key" ]] && have+="${have:+, }${k2#*$'\t'}"; done
-      [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running, and $where $val is not part of its policy (${key#+}: ${have:-none}). A running role's policy cannot change: exit what is joined into it, then launch again."
+      [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running, and $where $val is not part of its policy (${key#+}: ${have:-none}). A running role's policy cannot change: exit what is joined into it (or \`$(_as_self_cmd --role "${_role:-default}" --shutdown)\` from any terminal, when its own is out of reach), then launch again."
       return 1
     fi
     have="${kv[$key]-}"
     [[ "$have" == "$val" ]] && continue
-    [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running with ${key} = ${have:-(none)}, and $where asks for '$val'. A running role's policy cannot change: exit what is joined into it, then launch again."
+    [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running with ${key} = ${have:-(none)}, and $where asks for '$val'. A running role's policy cannot change: exit what is joined into it (or \`$(_as_self_cmd --role "${_role:-default}" --shutdown)\` from any terminal, when its own is out of reach), then launch again."
     return 1
   done < <(_as_keeper_policy set)
   [[ "$(cat "$kd/dotfile" 2>/dev/null)" == "$(_as_keeper_dotfile_hash)" ]] || _keeper_dotfile_changed=1
@@ -3031,6 +3038,7 @@ _as_keeper_start() {
   fi
   printf '%s\n' "${_session_dir:-}" >"$kd/session"
   printf '%s\n' "${_seccomp_bpf:-}" >"$kd/seccomp"
+  [[ -z "${_ca_record:-}" ]] || printf '%s\n' "$_ca_record" >"$kd/ca"
   # The join-scoped paths, for each join to make its own stores for.
   ((${#_join_scoped[@]})) && printf '%s\n' "${_join_scoped[@]}" >"$kd/join-scoped"
   (_as_keeper_supervise "$sb" -- "$@") &
@@ -3348,6 +3356,10 @@ _as_role_status() {
     printf '  dot-file: the approved one of then (%s)' "${dot:0:12}"
   fi
   [[ "$dot" == "$now" ]] && printf '\n' || printf ', changed since\n'
+  # The proxy CA's bind (_as_ca_check): said here as a join says it.
+  local _ca_note=""
+  _as_ca_check "$sb" "/proc/$_keeper_target/mountinfo"
+  [[ -z "$_ca_note" ]] || printf '  %s\n' "$_ca_note"
   # --serve (#277): the loop holding it, what it waits on, and the session it runs.
   if _as_serve_record "$sb"; then
     local sw="" sf="" sid=""
@@ -3866,6 +3878,8 @@ _as_connect_report() {
 #   apply-section        the section a refused host is asked for in ([allow] or
 #                        [allow:ROLE], as the text below decides), for the
 #                        profile's refusal hook, which has no policy of its own
+#   restart              the command that restarts this role (its --shutdown), for
+#                        the same hook to name after an --apply
 #   telemetry-hosts      the hosts the agent reaches on its own (profile_telemetry_hosts,
 #                        #276), whose refusal the hook leaves out of its note
 # and one file of the session dir itself, bound read-only over its placeholder:
@@ -4046,7 +4060,11 @@ _as_briefing_write() {
   local ssh_sect="[ssh]" ssh_host="" ssh_ask=""
   [[ -n "${_role:-}" && "$_role" != default ]] && ((${#_df_role_globs[@]})) && ssh_sect="[ssh:$_role]"
   ssh_host="$(_as_git_ssh_host "$cwd")"
-  ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a relaunch"
+  # A relaunch alone may join a session of the role still running, under the old
+  # policy: the restart is named, the --shutdown that ends every session of it.
+  local restart
+  restart="$(_as_self_cmd --role "${_role:-default}" --shutdown)"
+  ssh_ask="to ask the user for a host, the command is asb --apply '$ssh_sect' ${ssh_host:-HOST}${ssh_host:+ (the host of origin)}, then a restart of this role: $restart, then launch it again"
   if ((${#_ssh_hosts[@]} == 0)); then
     ssh_line="none -- $ssh_ask"
   elif ((${_git_refuse:-0} || ${_git_fetch_only:-0} || ${_retrieve_only:-0})); then
@@ -4185,7 +4203,10 @@ _as_briefing_write() {
     printf "  any section the same way, e.g. asb --apply '%s' '~/data/ = read-only'\n" "$csect"
     [[ -n "$ssh_host" ]] && printf "  -- or SSH for a push to origin: asb --apply '%s' %s\n" "$ssh_sect" "$ssh_host"
     printf '  or, for a host and for this launch only: asb --allow example.com ...\n\n'
-    printf 'then ask them to relaunch.\n'
+    printf 'then ask them to restart this role for it to apply:\n\n'
+    printf '      %s\n\n' "$restart"
+    printf 'then launch it again -- a launch that joins a session of this role still\n'
+    printf 'running keeps the old policy.\n'
     printf 'Continue without it only when the user says so: a mirror, another channel\n'
     printf 'or another tool for the same thing is going on without it. One clear\n'
     printf 'request costs less than twenty workarounds. A host refused during a\n'
@@ -4193,6 +4214,7 @@ _as_briefing_write() {
     printf 'the command to ask for.\n'
   } >"$md" || return 1
   printf '%s\n' "$sect" >"$bdir/apply-section" || return 1
+  printf '%s\n' "$restart" >"$bdir/restart" || return 1
   : >"$bdir/telemetry-hosts" || return 1
   if declare -F profile_telemetry_hosts >/dev/null; then
     profile_telemetry_hosts >"$bdir/telemetry-hosts" || return 1
@@ -7316,9 +7338,60 @@ _as_ca_bind() {
   # served stale, and every agent that verifies the proxy leaf then fails TLS
   # ("SSL certificate verification failed"). The inputs are small and the mv is
   # atomic, so an unconditional rebuild is cheap and closes that staleness hole.
+  # The system bundle's hash is taken from the copy in the bundle, so it is what this
+  # launch got, whatever the host does to its file meanwhile (see _as_ca_check).
+  local sum
   tmp="$(mktemp "$base/ca-bundle.XXXXXX")" || return 0
-  cat "$bundle" "$ca" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$combined"
+  cat "$bundle" >"$tmp" && sum="$(_as_sha256_file "$tmp")" && cat "$ca" >>"$tmp" \
+    && chmod 644 "$tmp" && mv -f "$tmp" "$combined"
   args+=(--ro-bind "$combined" "$bundle")
+  _ca_record="$bundle"$'\t'"$sum"
+  return 0
+}
+
+# _as_ca_check SANDBOXDIR MOUNTINFO -- set _ca_note to what a running role's CA bind
+# needs said, or to nothing. MOUNTINFO is the keeper payload's (/proc/PID/mountinfo),
+# read on the host.
+#
+# THE BIND IS A SINGLE FILE, and a bind on a file is attached to that directory entry.
+# When the host replaces the file by a rename -- what a ca-certificates upgrade does --
+# the entry the bind is on is gone, the kernel detaches the bind in every namespace,
+# and the sandbox sees the host's new file through it: no proxy CA, and every HTTPS
+# request fails (x509: certificate signed by unknown authority) until the role is
+# restarted. Measured on a host on 2026-10-21: an unattended upgrade at 06:00, no
+# mount at the bundle's path in the role's mountinfo after it; and reproduced with a
+# file bind under bwrap (kernel 6.8): a rename over its target on the host, and the
+# mount is gone and the new file shows inside. A launch started later
+# binds again, so only a running role -- a join, or --status -- can meet it.
+#
+# Only for a launch whose keeper recorded the bind (the proxy modes, keeper/ca). The
+# bind gone is loud and names the fix; the bind there but the host's bundle no longer
+# the one it got is a note: HTTPS works, and the new certificates come at the next
+# launch. Nothing that cannot be read is guessed at: silent.
+_as_ca_check() {
+  local kd="$1/keeper" mi="$2" path="" sum="" esc line now when r="${_role:-default}"
+  local -a f
+  _ca_note=""
+  IFS=$'\t' read -r path sum 2>/dev/null <"$kd/ca" || return 0
+  [[ -n "$path" && -n "$sum" ]] || return 0
+  # mountinfo escapes these four in a path (the kernel's show_path, "\t\n\\ ").
+  esc="${path//\\/\\134}" esc="${esc// /\\040}" esc="${esc//$'\t'/\\011}" esc="${esc//$'\n'/\\012}"
+  local found=0
+  local -a lines=()
+  { mapfile -t lines <"$mi"; } 2>/dev/null || return 0
+  ((${#lines[@]})) || return 0
+  for line in "${lines[@]}"; do
+    read -r -a f <<<"$line"
+    [[ "${f[4]:-}" == "$esc" ]] && found=1 && break
+  done
+  when="$(date -d "@$(stat -L -c %Y -- "$path" 2>/dev/null)" '+%F %T' 2>/dev/null)" || when=""
+  if ((! found)); then
+    _ca_note="warning — role '$r': the host replaced $path${when:+ (at $when)} and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: $(_as_self_cmd --role "$r" --shutdown)"
+    return 0
+  fi
+  now="$(_as_sha256_file "$path")"
+  [[ -n "$now" && "$now" != "$sum" ]] || return 0
+  _ca_note="note: role '$r': the host's $path has changed${when:+ (at $when)} since the role started; it keeps the bundle it started with, the proxy's CA included, so HTTPS works -- the host's new one applies at its next launch"
   return 0
 }
 
@@ -8881,7 +8954,7 @@ agent_sandbox() (
   # joined instead. The lock taken here is held until this invocation is on the
   # keeper's record -- through the whole build when there is no keeper -- so two
   # first launches of one role at once are one keeper, not two.
-  local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0
+  local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0 _ca_record="" _ca_note=""
   if :; then
     # Checked before anything is built: without python3 there is no join, and a
     # keeper started for nothing would have seeded its stores for nothing too.
@@ -8924,8 +8997,18 @@ agent_sandbox() (
         _as_keeper_unlock
         return 2
       }
-      ((_keeper_dotfile_changed)) \
-        && _as_msg "role '${_role:-default}': .agent-sandbox has changed since this role's keeper started. Joining it under the policy it started with; the change applies at the next keeper, once nothing is joined."
+      # Named with the --shutdown that applies it now: a relaunch while another session
+      # of the role is joined joins it again, under the old policy. The lock is held, so
+      # the count is of the others (this join is not on the record yet).
+      if ((_keeper_dotfile_changed)); then
+        local _kjoined=""
+        _as_keeper_count "$_keeper_sb/keeper"
+        ((_kc_n == 0)) || _kjoined=" ($_kc_n other session$( ((_kc_n == 1)) || printf s) of it still joined)"
+        _as_msg "role '${_role:-default}': .agent-sandbox has changed since this role's keeper started. Joining it under the policy it started with$_kjoined; the change applies at the next keeper, once nothing is joined. To apply it now, end the role from any terminal: $(_as_self_cmd --role "${_role:-default}" --shutdown), then launch it again."
+      fi
+      # The CA bind can be lost under a running role (_as_ca_check); the join goes on.
+      _as_ca_check "$_keeper_sb" "/proc/$_keeper_target/mountinfo"
+      [[ -z "$_ca_note" ]] || _as_msg "$_ca_note"
       local -a _run_argv=()
       if ((_do_exec)); then
         _run_argv=("$@")

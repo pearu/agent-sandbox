@@ -49,7 +49,9 @@ cursor, first append `ack N` to your messages, then handle it, then append `done
 - Push by URL, so the output is clean from a read-only history:
   `git push "$(git remote get-url origin)" BRANCH`. A push to an SSH remote needs its
   host in the project's file: when it fails for lack of SSH, send back exactly
-  `asb --apply '[ssh:{role}]' HOST` (the host of `origin`), then a relaunch.
+  `asb --apply '[ssh:{role}]' HOST` (the host of `origin`), then a restart of this role:
+  `asb --role {role} --shutdown claude`, then its launch again (a launch that joins a
+  session of it still running keeps the old policy).
 - A pull request, a comment, an issue: `gh pr create`, `gh pr comment`,
   `gh issue comment`, `gh issue create`, `gh issue close`, with `--body-file` for the
   named file. Mail only where the project's file grants a route (an allow line for the
