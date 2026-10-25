@@ -185,6 +185,21 @@ inside is `micromamba` (`micromamba create -p PREFIX ...`), not `conda`.
 `--uninstall` removes the micromamba and asks before removing the conda root, where the
 environments live (`--yes` keeps it).
 
+Inside a sandbox a tool like `gh` would be the host's `/usr/bin` one, which a
+distribution can leave far behind (Ubuntu ships gh 2.46, without `gh pr checks --json`).
+So the installer also builds a small **tools environment** from conda-forge with that
+micromamba, at `~/.local/share/agent-sandbox/tools`, and **rebuilds it at every run**, so
+re-running `./install.sh` is how the tools are updated. What it holds is yours to say:
+`~/.config/agent-sandbox/tools.txt`, one conda package spec per line (`#` comments), and
+`gh` when there is no such file; a file listing none removes the environment. Every
+sandbox gets it read-only, its commands on PATH after the conda env and your own
+directories and before `/usr/bin` and the other system directories: a project that has
+its own `gh` keeps it, and otherwise conda-forge's beats the distribution's. Only the
+listed packages' own commands are on PATH, not their dependencies' (a tool that pulls in
+Python does not put a `python3` ahead of the system one). A failed update warns and
+keeps the previous environment; until one has been built, sandboxes are unchanged.
+It applies under every preset, `--preset native` included.
+
 It then puts two commands in `~/.local/bin`, both the engine: `agent-sandbox`
 and its short name `asb`. It puts nothing at `claude`, and does not need to know
 how Claude Code was installed: `asb claude` runs whatever `claude` your PATH

@@ -47,6 +47,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A tools environment on every sandbox's PATH**: inside a sandbox `gh` was the host's
+  `/usr/bin/gh`, and Ubuntu ships 2.46 even in its newest series, without `gh pr checks
+  --json`. `install.sh` now builds a conda-forge environment with its own micromamba at
+  `~/.local/share/agent-sandbox/tools` and rebuilds it at every run, so it stays
+  current. Its packages are `~/.config/agent-sandbox/tools.txt`, one conda spec per line,
+  and `gh` without that file. A sandbox binds it read-only with its `bin/` after the
+  conda env and before the system directories, so a project's own `gh` still wins; only
+  the listed packages' commands are on PATH, not their dependencies'. A failed rebuild
+  warns and keeps the previous environment, and without one a sandbox is unchanged; it
+  applies under every preset, `--preset native` included. `--uninstall` removes it.
 - **A test policy per project in the roles model** (#301). Nothing told the roles which
   tests a round runs, so the Implementer and the Reviewer each ran the whole suite on
   every revision -- eight full GPU runs across four rounds that changed one plotting

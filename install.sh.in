@@ -47,7 +47,9 @@
 #
 # Installs mitmproxy >= 12 into a private environment (venv, else conda), a pinned
 # micromamba for conda inside sandboxes (asking, where the host has conda, which one
-# sandboxes use), and
+# sandboxes use), a tools environment from conda-forge whose commands (gh by default;
+# ~/.config/agent-sandbox/tools.txt lists them) every sandbox finds on PATH, rebuilt at
+# each run so it stays current, and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
 # user unit so nothing else needs to be carried across hosts. The
 # allowlist is only written if it doesn't already exist (so re-runs
@@ -275,6 +277,7 @@ uninstall_plan_and_run() {
   local p
   for p in "${remove_cmds[@]}"; do info "remove $p"; done
   [[ -e "$STATE_DIR/micromamba" ]] && info "remove agent-sandbox's micromamba, $STATE_DIR/micromamba/bin/micromamba"
+  [[ -e "$STATE_DIR/tools" ]] && info "remove the sandboxes' tools env, $STATE_DIR/tools"
   for p in "${to_remove[@]}"; do info "remove $p$( ((keep_root)) && [[ "$p" == "$STATE_DIR" ]] && printf ', all but %s (asked below)' "$root")"; done
   for p in "${leave_alone[@]}"; do warn "leave alone: $p"; done
   ((purge_config)) || [[ -d "$CONFIG_DIR" ]] \
@@ -621,6 +624,141 @@ choose_conda() {
   info "change it there (host or sandbox); a project picks its own with [conda] base in .agent-sandbox"
 }
 
+# ----- the tools env: current CLI tools on PATH inside every sandbox -----
+# Inside a sandbox a command like gh is the host's /usr/bin one, and a distribution's can
+# lag far behind (Ubuntu ships gh 2.46, without `gh pr checks --json`). agent-sandbox
+# keeps a small conda-forge environment of its own for such tools, made with its own
+# micromamba and rebuilt -- so updated -- at every install.sh run. The engine binds it
+# read-only and puts its bin/ on the sandbox's PATH after the conda env and before the
+# system directories, so a project's own copy of a tool still wins.
+#
+# What it holds is the user's: package specs in $TOOLS_LIST, one per line (`#` comments),
+# `gh` when the file is absent; a file with none removes the env. A change takes effect
+# at the next install.sh run.
+#
+# Layout, under $TOOLS_DIR (in $STATE_DIR, never bound whole into a sandbox): two slots,
+# a/ and b/, each an env/ (the conda prefix) and a bin/ of relative symlinks to the
+# executables the LISTED packages ship -- not their dependencies', so a tool that pulls
+# in python does not put a python ahead of /usr/bin. `current` names the slot in use. A
+# run builds the other slot from scratch and switches `current` only when that worked, so
+# a failed update leaves the working env as it was, and a running sandbox keeps the slot
+# it bound until the run after next. Prefixes never move (conda envs are not
+# relocatable), and the package cache is the env's own (pkgs/), not the sandboxes'
+# writable one: an env is hardlinked to its cache.
+TOOLS_DIR="$STATE_DIR/tools"
+TOOLS_LIST="$CONFIG_DIR/tools.txt"
+TOOLS_DEFAULT=gh
+
+# tools_specs -- the package specs, one per line: $TOOLS_LIST's (whitespace dropped, so
+# `gh >=2.60` is one spec), or the default when there is no such file.
+tools_specs() {
+  if [[ -f "$TOOLS_LIST" ]]; then
+    sed 's/#.*//; s/[[:space:]]//g' "$TOOLS_LIST" | grep -v '^$' || true
+  else
+    printf '%s\n' "$TOOLS_DEFAULT"
+  fi
+}
+
+# tools_meta PREFIX NAME -- the conda-meta record of package NAME in PREFIX, or nothing.
+tools_meta() {
+  local f
+  for f in "$1"/conda-meta/*.json; do
+    [[ -f "$f" ]] || continue
+    [[ "$(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n 1)" == "$2" ]] \
+      && printf '%s' "$f" && return 0
+  done
+  return 0
+}
+
+# tools_unregister -- micromamba lists every env it creates in ~/.conda/environments.txt,
+# where the host's `conda env list` shows it; the tools env is not the user's, so its
+# lines go again.
+tools_unregister() {
+  local f="$HOME/.conda/environments.txt"
+  [[ -f "$f" ]] && grep -qF "$TOOLS_DIR/" "$f" || return 0
+  awk -v p="$TOOLS_DIR/" 'index($0, p) != 1' "$f" >"$f.agent-sandbox" \
+    && cat "$f.agent-sandbox" >"$f"
+  rm -f "$f.agent-sandbox"
+}
+
+install_tools() {
+  section "Tools env (on PATH inside every sandbox)"
+  local -a specs=()
+  local src="$TOOLS_LIST" cur next spec name meta exe log v
+  mapfile -t specs < <(tools_specs)
+  [[ -f "$TOOLS_LIST" ]] || src="the default; list your own in $TOOLS_LIST"
+  if ((${#specs[@]} == 0)); then
+    if [[ ! -e "$TOOLS_DIR" ]]; then
+      ok "no tools: $TOOLS_LIST lists none"
+    elif ((DRY_RUN)); then
+      info "(dry-run) $TOOLS_LIST lists no tools: would remove $TOOLS_DIR"
+    else
+      rm -rf -- "$TOOLS_DIR"
+      ok "$TOOLS_LIST lists no tools: removed $TOOLS_DIR"
+    fi
+    return 0
+  fi
+  if ((DRY_RUN)); then
+    info "(dry-run) would build the tools env ${specs[*]} ($src) from conda-forge with $MICROMAMBA under $TOOLS_DIR"
+    return 0
+  fi
+  if [[ ! -x "$MICROMAMBA" ]]; then
+    warn "no micromamba at $MICROMAMBA: the tools env (${specs[*]}) was not built"
+    return 0
+  fi
+  cur="$(readlink -- "$TOOLS_DIR/current" 2>/dev/null || true)"
+  next=a
+  [[ "$cur" == a ]] && next=b
+  rm -rf -- "${TOOLS_DIR:?}/$next"
+  mkdir -p "$TOOLS_DIR/$next/bin"
+  log="$TOOLS_DIR/$next.log"
+  info "building the tools env ${specs[*]} ($src) from conda-forge"
+  # CONDA_PKGS_DIRS: the env's own cache, whatever a ~/.condarc names; the host's
+  # conda variables name the host's conda, not this root.
+  if ! env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV -u CONDA_SHLVL -u MAMBA_ROOT_PREFIX \
+    CONDA_PKGS_DIRS="$TOOLS_DIR/pkgs" "$MICROMAMBA" create -q -y -r "$TOOLS_DIR" \
+    -p "$TOOLS_DIR/$next/env" --override-channels -c conda-forge "${specs[@]}" >"$log" 2>&1; then
+    tools_unregister
+    rm -rf -- "${TOOLS_DIR:?}/$next"
+    warn "building the tools env failed ($(grep -v '^[[:space:]]*$' "$log" | tail -n 1)); the log is $log"
+    if [[ -n "$cur" && -d "$TOOLS_DIR/$cur/bin" ]]; then
+      warn "sandboxes keep the previous tools env, $TOOLS_DIR/$cur"
+    else
+      warn "sandboxes get the system's tools until a later install.sh run builds it"
+    fi
+    return 0
+  fi
+  tools_unregister
+  rm -f -- "$log"
+  # bin/: the listed packages' own executables, relative links into the env
+  local -a shown=()
+  for spec in "${specs[@]}"; do
+    name="${spec%%[<>=!~,]*}"
+    name="${name##*::}"
+    meta="$(tools_meta "$TOOLS_DIR/$next/env" "$name")"
+    if [[ -z "$meta" ]]; then
+      warn "tools: no record of package '$name' in the env; nothing of it is on PATH"
+      continue
+    fi
+    v="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$meta" | head -n 1)"
+    local -a exes=()
+    while IFS= read -r exe; do
+      [[ -f "$TOOLS_DIR/$next/env/bin/$exe" && -x "$TOOLS_DIR/$next/env/bin/$exe" ]] || continue
+      [[ -e "$TOOLS_DIR/$next/bin/$exe" ]] && continue
+      ln -s "../env/bin/$exe" "$TOOLS_DIR/$next/bin/$exe"
+      exes+=("$exe")
+    done < <(grep -o '"bin/[^"/]*"' "$meta" | sed 's/^"bin\///; s/"$//' | sort -u)
+    if ((${#exes[@]} == 0)); then
+      warn "tools: package $name $v has no executables in bin/; nothing of it is on PATH"
+    else
+      shown+=("$name $v (${exes[*]})")
+    fi
+  done
+  ln -sfn "$next" "$TOOLS_DIR/current.new"
+  mv -T -- "$TOOLS_DIR/current.new" "$TOOLS_DIR/current"
+  ok "tools env $TOOLS_DIR/$next ($src): $(printf '%s; ' "${shown[@]}" | sed 's/; $//')"
+}
+
 # --rebuild-bwrap is the whole run: it needs neither the engine nor a checkout.
 if ((REBUILD_BWRAP)); then
   rebuild_bwrap
@@ -656,6 +794,11 @@ ok "profiles: $(for f in "${profiles[@]}"; do basename -- "$(dirname -- "$f")"; 
 if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == micromamba ]]; then
   install_micromamba
   choose_conda
+  exit 0
+fi
+# ... and the tools env alone, with a stubbed micromamba: AGENT_SANDBOX_INSTALL_STEP=tools.
+if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == tools ]]; then
+  install_tools
   exit 0
 fi
 
@@ -943,6 +1086,8 @@ fi
 # ----- 5b. micromamba, and which conda sandboxes use (defined above) -----
 install_micromamba
 choose_conda
+# ----- 5c. the tools env, with that micromamba (defined above) -----
+install_tools
 
 # ----- 6. mitmproxy CA: generated on the host, trusted only inside sandboxes -----
 # The engine binds (system bundle + this CA) over the system bundle's path in

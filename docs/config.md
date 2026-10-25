@@ -476,7 +476,9 @@ Sections:
   position: something that breaks under `native` but works under `--preset none`
   is broken in the sandbox mechanism, not in the isolation. It is also the far
   end for building a policy from either direction — start at `native` and close
-  channels until the use case is met, or start at `isolated` and open them.
+  channels until the use case is met, or start at `isolated` and open them. The one
+  PATH difference is the tools environment (below): on PATH under `native` as under
+  every preset, absent under `none`, which runs outside the sandbox.
 
   State isolation is off, which is more than every channel at `read-write`:
 
@@ -913,3 +915,35 @@ of it is bound into the sandbox.
 | `<project>/.agent-sandbox` | the per-project policy (git-ignored by default) |
 | `~/.config/agent-sandbox/trust/` | approved dot-file hashes, one file per project |
 | `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/` | the role's copy of Claude Code's config file (see above) |
+| `~/.config/agent-sandbox/tools.txt` | the tools environment's packages (below); read by `install.sh` only |
+| `~/.local/share/agent-sandbox/tools/` | the tools environment `install.sh` builds; its slot in use is the one exception to "never bound": read-only |
+
+### The tools environment
+
+`install.sh` builds a small conda-forge environment with its own micromamba, and every
+sandbox finds its commands on PATH, under every preset, `--preset native` included. It
+exists for command-line tools a distribution ships too old -- `gh` above all: Ubuntu's
+2.46 lacks `gh pr checks --json` -- and that are not any project's requirement, so they
+belong in no project's env.
+
+`~/.config/agent-sandbox/tools.txt` lists its packages, one conda package spec per line
+(`gh`, `gh >=2.60`, `conda-forge::ripgrep`); `#` starts a comment and blank lines are
+ignored. With no such file the list is `gh`; a file listing none removes the
+environment at the next run. The file is yours and `install.sh` never writes it. Every
+`install.sh` run rebuilds the environment from conda-forge, so a change to the list,
+and a newer release of a listed tool, takes effect at the next run.
+
+Inside the sandbox the environment is read-only and its `bin/` goes after the conda env
+(and micromamba, under `[conda] base = sandbox`) and after your own directories on
+PATH, right before the first system directory (`/usr/...`, `/bin`, `/sbin`,
+`/snap/bin`): a project's own `gh` wins, and the tools environment's wins over the
+distribution's. That `bin/` holds links to the listed packages' own commands only, not
+their dependencies' -- a tool that pulls in Python puts no `python3` ahead of
+`/usr/bin/python3`.
+
+It lives in two slots, `tools/a/` and `tools/b/`, and `tools/current` names the one in
+use: a run builds the other one and switches only when the build worked, so a failed
+update (no network, a spec conda-forge cannot solve) warns and changes nothing, and a
+first build that fails leaves sandboxes as they were. A running sandbox keeps the slot
+it started with until the second run after its start rebuilds that slot. `--uninstall` removes it with the rest of
+`~/.local/share/agent-sandbox`.

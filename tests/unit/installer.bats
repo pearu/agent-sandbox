@@ -638,15 +638,17 @@ STUB
   [[ "$output" == *"no terminal to ask on"* ]]
 }
 
-@test "--uninstall: the micromamba goes; the sandboxes' conda environments are asked about, and --yes keeps them" {
+@test "--uninstall: the micromamba and the tools env go; the sandboxes' conda environments are asked about, and --yes keeps them" {
   fake_install
   local st="$T/home/.local/share/agent-sandbox"
-  mkdir -p "$st/micromamba/bin" "$st/conda/envs/dev"
+  mkdir -p "$st/micromamba/bin" "$st/conda/envs/dev" "$st/tools/a/bin"
   : >"$st/micromamba/bin/micromamba"
+  ln -s a "$st/tools/current"
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
     "$REPO_ROOT/install.sh" --uninstall --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"remove agent-sandbox's micromamba, $st/micromamba/bin/micromamba"* ]]
+  [[ "$output" == *"remove the sandboxes' tools env, $st/tools"* ]]
   [[ "$output" == *"remove $st, all but $st/conda (asked below)"* ]]
   [[ "$output" == *"(dry-run) would ask: $st/conda -- the sandboxes' conda environments live there: remove? [y/N] (--yes keeps it)"* ]]
   [ -e "$st/micromamba/bin/micromamba" ]
@@ -663,4 +665,129 @@ STUB
   [ "$status" -eq 0 ]
   [[ "$output" == *"the sandboxes' conda environments live there: remove? [y/N]"* ]]
   [ ! -d "$st" ]
+}
+
+# ---- the tools env: conda-forge CLI tools on PATH inside every sandbox ------------------
+
+# tools_step -- install.sh's tools step alone, for real, against a stub micromamba at the
+# installed path ($T/mm-fail present: it fails).
+tools_step() {
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="/usr/bin:/bin" \
+    AGENT_SANDBOX_INSTALL_STEP=tools "$REPO_ROOT/install.sh"
+}
+
+# a micromamba that "creates" -p PREFIX with each spec as a package shipping bin/<name>
+# (`nobin` ships none), plus a python dependency nobody listed; it records its argv and
+# CONDA_PKGS_DIRS in $T/mm-called
+stub_tools_micromamba() {
+  local mm="$T/home/.local/share/agent-sandbox/micromamba/bin"
+  mkdir -p "$mm"
+  cat >"$mm/micromamba" <<STUB
+#!/usr/bin/env bash
+echo "\$* | CONDA_PKGS_DIRS=\${CONDA_PKGS_DIRS:-}" >>"$T/mm-called"
+[[ -e "$T/mm-fail" ]] && { echo "critical libmamba nothing provides what was asked" >&2; exit 1; }
+prefix="" specs=()
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    -p) prefix="\$2"; shift ;;
+    -r | -c) shift ;;
+    -*) ;;
+    *) specs+=("\$1") ;;
+  esac
+  shift
+done
+mkdir -p "\$prefix/conda-meta" "\$prefix/bin" "\$HOME/.conda"
+echo "\$prefix" >>"\$HOME/.conda/environments.txt" # as micromamba registers an env
+record() { # record NAME FILE...
+  local n="\$1" f files=""
+  shift
+  for f in "\$@"; do files+="\${files:+,}
+    \"\$f\""; : >"\$prefix/\$f"; chmod +x "\$prefix/\$f"; done
+  printf '{\n  "name": "%s",\n  "version": "1.0",\n  "files": [%s\n  ]\n}\n' "\$n" "\$files" >"\$prefix/conda-meta/\$n-1.0-0.json"
+}
+record python bin/python3 bin/python
+for s in "\${specs[@]}"; do
+  n="\${s%%[<>=!~,]*}"; n="\${n##*::}"
+  if [[ "\$n" == nobin ]]; then record nobin; else record "\$n" "bin/\$n"; fi
+done
+STUB
+  chmod +x "$mm/micromamba"
+}
+
+@test "tools env: gh by default, built into a slot whose bin/ holds the listed packages' executables only; current names it" {
+  stub_tools_micromamba
+  local tools="$T/home/.local/share/agent-sandbox/tools"
+  mkdir -p "$T/home/.conda" && echo /my/env >"$T/home/.conda/environments.txt"
+  tools_step
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$tools/current")" = a ]
+  [ "$(readlink "$tools/a/bin/gh")" = ../env/bin/gh ]
+  [ -x "$tools/a/bin/gh" ]
+  # the dependency's python is in the env, not on the sandbox's PATH
+  [ -x "$tools/a/env/bin/python3" ]
+  [ "$(find "$tools/a/bin" -mindepth 1 -printf '%f\n')" = gh ]
+  [[ "$output" == *"building the tools env gh (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge"* ]]
+  [[ "$output" == *"tools env $tools/a ("*"): gh 1.0 (gh)"* ]]
+  # from conda-forge alone, into the env's own package cache
+  grep -qF "create -q -y -r $tools -p $tools/a/env --override-channels -c conda-forge gh | CONDA_PKGS_DIRS=$tools/pkgs" "$T/mm-called"
+  [ ! -e "$T/home/.config/agent-sandbox/tools.txt" ] # the default is not written
+  # micromamba's registration of the env is undone; the user's own envs stay listed
+  [ "$(cat "$T/home/.conda/environments.txt")" = /my/env ]
+  # every run rebuilds (so updates), into the other slot; the one before stays
+  tools_step
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$tools/current")" = b ]
+  [ -x "$tools/b/bin/gh" ] && [ -x "$tools/a/bin/gh" ]
+  tools_step
+  [ "$(readlink "$tools/current")" = a ]
+}
+
+@test "tools env: a failed update keeps the working one and warns; a failed first build warns; install.sh goes on" {
+  stub_tools_micromamba
+  local tools="$T/home/.local/share/agent-sandbox/tools"
+  : >"$T/mm-fail"
+  tools_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] building the tools env failed (critical libmamba nothing provides what was asked); the log is $tools/a.log"* ]]
+  [[ "$output" == *"sandboxes get the system's tools until a later install.sh run builds it"* ]]
+  [ ! -e "$tools/current" ] && [ ! -e "$tools/a" ]
+  rm "$T/mm-fail"
+  tools_step
+  [ "$(readlink "$tools/current")" = a ]
+  : >"$T/mm-fail"
+  tools_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sandboxes keep the previous tools env, $tools/a"* ]]
+  [ "$(readlink "$tools/current")" = a ] && [ -x "$tools/a/bin/gh" ] && [ ! -e "$tools/b" ]
+  # no micromamba at all: said, not fatal
+  rm "$T/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  tools_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] no micromamba at $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba: the tools env (gh) was not built"* ]]
+}
+
+@test "tools env: ~/.config/agent-sandbox/tools.txt is the list -- comments, blanks, spaces in a spec, a channel prefix; one with none removes the env" {
+  stub_tools_micromamba
+  local tools="$T/home/.local/share/agent-sandbox/tools" list="$T/home/.config/agent-sandbox/tools.txt"
+  mkdir -p "${list%/*}"
+  printf '# my tools\n\ngh >=2.60   # current gh\nconda-forge::ripgrep\n  nobin\n' >"$list"
+  tools_step
+  [ "$status" -eq 0 ]
+  grep -qF -- "-c conda-forge gh>=2.60 conda-forge::ripgrep nobin |" "$T/mm-called"
+  [ "$(find "$tools/a/bin" -mindepth 1 -printf '%f\n' | sort | paste -sd' ')" = "gh ripgrep" ]
+  [[ "$output" == *"[warn] tools: package nobin 1.0 has no executables in bin/; nothing of it is on PATH"* ]]
+  [[ "$output" == *"tools env $tools/a ($list): gh 1.0 (gh); ripgrep 1.0 (ripgrep)"* ]]
+  printf '# nothing\n' >"$list"
+  : >"$T/mm-called"
+  tools_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$list lists no tools: removed $tools"* ]]
+  [ ! -e "$tools" ] && [ ! -s "$T/mm-called" ]
+}
+
+@test "--dry-run: the tools env's plan, nothing built" {
+  dry
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(dry-run) would build the tools env gh (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge with $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba under $T/home/.local/share/agent-sandbox/tools"* ]]
+  [ ! -e "$T/home/.local/share/agent-sandbox/tools" ]
 }
