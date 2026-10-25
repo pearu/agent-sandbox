@@ -378,6 +378,28 @@ names are gone; there are no aliases for removed names before 1.0.
   `nvidia-modprobe -u -c 0`, then the role's restart). It fixes what is in its reach and
   names the host-side command for the rest, so an issue is found before a role trips on
   it.
+- **A gh-review, gh-triage or gh-fix instance re-syncs its layer when `main` moved under
+  it; nothing is deleted or reset after a pull.** The github model's docs said to delete
+  or reset every live instance after `main` moved on the host, since their
+  copy-on-write layers lie over the old tree: impractical with many instances. Measured
+  2026-10-25 on a scratch repository: a fixer's next launch after `main` moved had its
+  branch checked out with its commit, `main` at the host's new commit, and the host's
+  changes showing through as changes it did not make; `git reset --hard` to the branch,
+  removing the untracked files `main` tracks, and a rebase put its commit on the new
+  `main`. The three purpose files now say so in step 1: a fixer rebases its branch, a
+  reviewer without one re-applies the PR's diff on `main`, a triager resets to `main`,
+  and each rebuilds. The rebase is `git rebase --fork-point main`: when the host
+  rewrote `main`'s history, a plain `git rebase main` replayed the rewritten-away commit
+  too and conflicted, while `--fork-point` (the host's reflog of `main` shows through)
+  replayed only the fixer's commit. Such a branch keeps its old base only as long as the
+  host's reflog does (30 days by default, `gc.reflogExpireUnreachable`; an expired
+  reflog plus `git gc --prune=now` broke one), so an unpublished fixer is launched or
+  published within that window. An instance running while `main` moves -- including
+  one that exited within its keeper's two-second grace -- is shut down first
+  (`asb --role R --shutdown claude`): a lower tree changing under a mounted overlay is
+  undefined, and a session joined in the grace kept seeing the old `main`. The four
+  purpose files (gh-setup's too) also say once that `main` is the project's default
+  branch, `master` where that is its name.
 - **The status line's `ASKS YOU` and `NEEDS YOU` are blue, and `ASKS YOU` looks at the
   reply's last three lines** (the red bar was found ugly; and a Supervisor that asked
   for the user's yes in prose above a quoted message ending "Report done 22." showed no

@@ -54,11 +54,19 @@ existing `.agent-sandbox` (`[...:gh-*]`); add a `[...:gh-fix-1234]` section only
 number that needs something specific. Any `gh-<other>-N` name is admitted with the
 shared boundary and no purpose.
 
-Before deleting a fixer, publish its work: its commits live in its layer. After you
-rebuild or move `main`, delete or reset live instances: their layers lie over the old
-tree. Launch from the shell you build in: an instance's `PATH` is that shell's, and a
-build that cannot find its compilers reconfigures from scratch. conda's base reaches
+Before deleting a fixer, publish its work: its commits live in its layer. After `main`
+moves (a pull on the host, then `asb --role gh-setup claude` again), an instance
+re-syncs its layer at its next launch -- a fixer rebases its branch, a reviewer
+re-applies the diff; nothing is deleted or reset. After a rewrite of `main`'s history on
+the host, an instance's branch keeps its old base only as long as the host's reflog
+keeps it (30 days by default, `gc.reflogExpireUnreachable`), so launch or publish each
+unpublished fixer within that window. Shut down the instances running at the time before
+the pull (`asb --role R --shutdown claude`; an instance that exited is still running for
+its keeper's two-second grace): a lower tree changing under a mounted overlay is
+undefined. Launch from the shell you build in: an instance's `PATH` is that shell's, and
+a build that cannot find its compilers reconfigures from scratch. conda's base reaches
 `gh-setup` whether or not an env is active in that shell, so it can create the
 environment the dot-file names: the host's (`MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PREFIX`, or
-`conda` on PATH), or under `[conda] base = sandbox` agent-sandbox's own, whose command is
-`micromamba` and whose environments are under `~/.local/share/agent-sandbox/conda/envs`.
+`conda` on PATH), or under `[conda] base = sandbox` agent-sandbox's own, whose command
+is `micromamba` and whose environments are under
+`~/.local/share/agent-sandbox/conda/envs`.

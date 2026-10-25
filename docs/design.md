@@ -495,8 +495,8 @@ API writes (`gh pr review`, labels) stay told, on the user's word.
 
 **The fixer keeps the overlay.** A clone would cost the full rebuild the overlay avoids;
 its commits live in its layer's `.git`, so its work is published before the instance is
-deleted, and live instances are reset after `main` is rebuilt (a layered `.git` over a
-moved lower is the layered-build hazard, in git's metadata). It publishes over HTTPS, as
+deleted; after `main` moves on the host it rebases its branch at its next launch (a
+layered `.git` over a moved lower, measured below). It publishes over HTTPS, as
 the user, with the user's gh login (`gh auth git-credential` as git's credential
 helper): `[net:gh-fix-*] git = allow` admits git's receive-pack and `[connect:gh-*] gh =
 read-only` supplies the token, both lines of the reviewed file, so no further opt-in.
@@ -534,9 +534,29 @@ relinked libraries and the reinstalled package copied up whole. The build needs 
 user's build environment: the env activated and CUDA on `PATH`, else CMake reconfigures
 with other flags and queues ~700 steps. A PR's base is usually newer than the built
 `main`; applying the PR's own diff keeps the rebuild small (hunks against newer code
-may not apply), and the reviewer rebases only when the PR needs newer changes. A
-rebuild of `main` on the host changes the lower under live layers: delete or reset the
-instances after it.
+may not apply), and the reviewer rebases only when the PR needs newer changes.
+Measured 2026-10-25 (0.3.0-131, a scratch repository, `project = copy-on-write`): after
+a fixer committed on its branch and exited, and `main` moved on the host, its next
+launch had the branch checked out with its commit, `main` at the host's new commit, and
+the host's changes showing through as changes it did not make (a modified file, an
+untracked file `main` tracks); `git reset --hard` to the branch, removing those
+untracked files, and `git rebase main` put the commit on the new `main`, the host's
+checkout untouched. When the host rewrote `main` instead (the branch's base D replaced
+by a D' changing the same file), `git rebase main` replayed D too and conflicted, while
+`git rebase --fork-point main` replayed only the fixer's commit onto D' (`main`'s reflog
+shows through from the host, so `git merge-base --fork-point` finds D); on a plain move
+it did what `git rebase main` did. The old base lives only in the host's repository: a
+plain `git gc` there kept D, but
+`git reflog expire --expire=now --expire-unreachable=now --all && git gc --prune=now`
+pruned it and broke the layer's branch ("Could not read" D in `git log` and the rebase);
+unreachable reflog entries expire after 30 days by default, so an unpublished branch is
+re-synced or pushed within that window. A launch within the keeper's two-second grace
+(`AGENT_SANDBOX_KEEPER_GRACE`) joined the still-mounted overlay, and a host change to
+`main` inside it was not seen: the joined session kept the old `main` and the old files,
+a fresh launch after the grace the new ones. So an instance re-syncs its layer at its
+next launch -- the purpose files say how -- and nothing is deleted or reset; only an
+instance running while `main` moves is shut down first, since a lower changing under a
+mounted overlay is undefined.
 
 Posting is told, not enforced: the reviewer drafts, shows, and posts only on the user's
 word, after reading the project's policy on AI-written contributions. A read-only
