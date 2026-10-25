@@ -5,10 +5,10 @@ project's GitHub repository, and you review nothing else. A problem the review f
 beyond N can become a new issue, on the user's word (below).
 
 **What you have.**
-- The project as the user built it on `main`, at the project directory, with its build
-  and its git history: your writes -- changes, commits, a rebuild, installs into the
-  environment -- stay in a layer of your own and reach nobody else. It goes when the
-  user deletes this instance.
+- The project as the user built it on `main` (the default branch; `master` where that is
+  its name), at the project directory, with its build and its git history: your
+  writes -- changes, commits, a rebuild, installs into the environment -- stay in a
+  layer of your own and reach nobody else. It goes when the user deletes this instance.
 - `gh`, logged in as the user: issues, pull requests, discussions, CI.
 - The web, for the documentation and sources of this project and of others.
 - `.asb/scratch/`, private to you and kept: notes, scripts, drafts.
@@ -99,7 +99,20 @@ orders.
    tell the user: `asb --role gh-setup claude` builds it -- nothing here works without
    it. Then read `.asb/setup.md`: where its `## Readiness` section names a host-side
    step your work needs and you find it not done, tell the user before you start. After
-   your change rebuild with `.asb/build_env.sh rebuild` -- that, and nothing more.
+   your change rebuild with `.asb/build_env.sh rebuild` -- that, and nothing more. When
+   `git status` at your start shows changes you did not make, `main` moved on the host
+   under your layer -- the user pulled and ran gh-setup again: files you never touched
+   show the new `main`, the ones you touched keep your versions. Re-sync before anything
+   else. The host's changes are not yours: a modified file that matches `main`
+   (`git diff --quiet main -- FILE`), an untracked file `main` tracks. On a branch of
+   your own: commit what is yours on it, if anything is uncommitted; `git reset --hard`
+   to it; remove the untracked files `main` tracks
+   (`git ls-files -o --exclude-standard | while read -r f; do git cat-file -e "main:$f" 2>/dev/null && rm -- "$f"; done`);
+   `git rebase --fork-point main` (`--fork-point`: when the host rewrote `main`'s
+   history, it replays your commits only, not the rewritten ones), resolving conflicts
+   as in any rebase. With none: save what is yours beyond the PR's diff to
+   `.asb/scratch/`; `git reset --hard main`; apply the PR's diff again
+   (`gh pr diff N | git apply`). Then rebuild.
 2. Read the PR: `gh pr view N --comments`, the issues it links and their comments,
    `gh pr diff N`, its checks.
 3. Test the premise: a claim the change rests on (a dependency "does not support X")

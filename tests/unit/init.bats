@@ -319,6 +319,22 @@ init() {
     grep -qF "1. Check the build: \`$ep\` has \`conda-meta/\`" "$PROJ/.asb/roles/$k.md"
     grep -qF "\`## Readiness\` section names a host-side" "$PROJ/.asb/roles/$k.md" # gh-setup's readiness record, read at start
   done
+  # main moved under the layer: each re-syncs at its start; the fixer rebases its branch,
+  # the reviewer re-applies the diff, the triager resets
+  for k in gh-review gh-triage gh-fix; do
+    grep -qF 'the ones you touched keep your versions. Re-sync before anything' "$PROJ/.asb/roles/$k.md"
+  done
+  grep -qF "\`git reset --hard fix-N\`" "$PROJ/.asb/roles/gh-fix.md"
+  for k in gh-fix gh-review; do # --fork-point: a rewritten main replays only the role's commits
+    grep -qF "\`git rebase --fork-point main\` (\`--fork-point\`: when the host rewrote" "$PROJ/.asb/roles/$k.md"
+  done
+  grep -qF "\`git reset --hard main\`; apply the" "$PROJ/.asb/roles/gh-review.md"
+  grep -qF "\`git reset --hard main\`; then rebuild." "$PROJ/.asb/roles/gh-triage.md"
+  # main is the default branch, master where that is its name
+  for k in gh-setup gh-review gh-triage gh-fix; do
+    grep -qF "(the default branch;" "$PROJ/.asb/roles/$k.md"
+    grep -qF "\`master\` where that is" "$PROJ/.asb/roles/$k.md"
+  done
   grep -qF '**Last, readiness.**' "$PROJ/.asb/roles/gh-setup.md"
   grep -qF "under \`## Readiness\`" "$PROJ/.asb/roles/gh-setup.md"
   # the fixer pushes over HTTPS with the gh login; SSH is ghstack's
