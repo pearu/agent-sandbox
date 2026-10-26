@@ -319,6 +319,10 @@ names are gone; there are no aliases for removed names before 1.0.
   the project's policy allows. It files a new issue for a problem the review finds beyond
   the PR, on your word: it looks for it on record first, shows you the draft, and runs
   `gh issue create` when told.
+- **gh-triage files a new issue for a problem the triage finds beyond the issue**, on
+  your word, as gh-review does: it lists such findings with the triage, looks for each
+  on record first, shows you the draft, and runs `gh issue create` when told. Labels,
+  assignees and mentions only when you name them.
 - **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
 - **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
   its own layer, kept until `asb --delete`.
