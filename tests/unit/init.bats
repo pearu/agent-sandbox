@@ -330,6 +330,13 @@ init() {
   done
   grep -qF "\`git reset --hard main\`; apply the" "$PROJ/.asb/roles/gh-review.md"
   grep -qF "\`git reset --hard main\`; then rebuild." "$PROJ/.asb/roles/gh-triage.md"
+  # a finding beyond N becomes a new issue on the user's word, posted nowhere else
+  for k in gh-review gh-triage; do
+    grep -qF '**A finding beyond N.**' "$PROJ/.asb/roles/$k.md"
+    grep -qF "gh issue list --search '<terms>' --state all" "$PROJ/.asb/roles/$k.md"
+    grep -qF "\`gh issue create --title '<title>' --body-file .asb/scratch/issue-<slug>.md\` only" "$PROJ/.asb/roles/$k.md"
+    grep -qF 'anywhere but N and the issues the user told you to file' "$PROJ/.asb/roles/$k.md"
+  done
   # main is the default branch, master where that is its name
   for k in gh-setup gh-review gh-triage gh-fix; do
     grep -qF "(the default branch;" "$PROJ/.asb/roles/$k.md"
