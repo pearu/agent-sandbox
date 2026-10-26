@@ -234,7 +234,8 @@ Sections:
   sandbox's `/tmp`, redrawn every second. `briefing.md` also says
   that what a session hands you to run is one line or a file -- the CLI prefixes
   every line of a reply, so a pasted heredoc or patch breaks -- and where its
-  writable stores are on the host, a `copy-on-write` project's layer included. It lists
+  writable stores are on the host, a `copy-on-write` project's layer included, and that a
+  file it names for you to read or open is named by its host path. It lists
   names and paths only, never the contents of anything shared. Turning it off
   grants and hides nothing; it only stops the sandbox describing itself.
   If you pass your own `--settings`, the two are merged (Claude Code honours

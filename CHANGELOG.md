@@ -516,6 +516,10 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A file a session named for you to read was named by its inside path** (#311): "the
+  draft is ready in .asb/scratch/x.md", a path you cannot open on the host. The briefing
+  now says a file named to the user is named by its host path, from the list of where
+  the session's stores are on the host, and the short form at session start says so too.
 - **A running role whose proxy CA the host had taken away failed every HTTPS request
   without a word**. The CA is a single-file bind over
   `/etc/ssl/certs/ca-certificates.crt`, and a `ca-certificates` upgrade (unattended, at
