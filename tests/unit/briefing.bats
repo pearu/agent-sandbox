@@ -612,6 +612,9 @@ CHECK
   # shellcheck disable=SC2016 # the backticks are literal text in the briefing
   grep -qF '`git apply PATH`, `git commit -F PATH`, `bash PATH`. The whole command, path' "$md"
   grep -qF "never typed -- a single copied line's prefix is harmless to a shell." "$md"
+  # a file named to the user is named by its host path, not the inside one (#311)
+  grep -qF 'A file you name for the user to read or open -- a draft, a report, a log --' "$md"
+  grep -qF 'is named by its host path, from the list below: an inside path such as' "$md"
   grep -qxF -- "- the project (read-write) is the project directory itself, $PROJ" "$md"
   # the store the launch bound there, as the bwrap argv has it
   local slot
@@ -619,7 +622,7 @@ CHECK
   argv_has --bind "$slot" "$PROJ/.asb/scratch"
   grep -qxF -- "- .asb/scratch/ (own) is, on the host, $slot" "$md"
   # the short form: one clause, pointing at the paths
-  grep -qF 'What you hand the user to run is one line or a file (where your files are on the host: briefing.md).' "$OUT/hook-SessionStart.json"
+  grep -qF 'What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md).' "$OUT/hook-SessionStart.json"
   # a copy-on-write project: a file written into it is in the role's layer
   run_engine BWRAP_COPY="$OUT" -- asb --role rev-1 --connect 'project = copy-on-write' claude --version
   [ "$status" -eq 0 ]
