@@ -1,10 +1,12 @@
 #!/usr/bin/env bats
-# asb --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS] (#317): one tmux session, named
-# after the project directory, with a window per role, each running `asb --role ROLE`
-# with the rest of the command line. A stub `tmux` first on the harness's PATH dumps its
-# argv, one token per line, to $TMUX_DUMP, and answers `has-session` from $TMUX_HAS (set:
-# a session of that name is open), so these assert on the command the engine builds.
-# shellcheck disable=SC2016 # ${SHELL:-bash} is the window's, not ours
+# asb --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS] (#317, #320): one tmux session,
+# named after the project directory, with a pane per role, five to a window -- the first
+# role of each window on top, the others in a row below -- each running
+# `asb --role ROLE` with the rest of the command line. A stub `tmux` first on the
+# harness's PATH dumps its argv, one token per line, to $TMUX_DUMP, and answers
+# `has-session` from $TMUX_HAS (set: a session of that name is open), so these assert on
+# the command the engine builds; the layout tmux makes of it was measured with tmux 3.4.
+# shellcheck disable=SC2016 # ${SHELL:-bash} and #{@role} are the pane's and tmux's, not ours
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -33,11 +35,54 @@ STUB
   chmod +x "$1"
 }
 
-# window LINE... -- the command a window runs for those engine words.
+# window LINE... -- the command a pane runs for those engine words.
 window() {
   local l
   printf -v l '%q ' "$SELF" "$@"
   printf '%s; exec "${SHELL:-bash}"' "${l% }"
+}
+
+# The chain's pieces, as the stub dumps them. WINDOW_OPTS: what a window gets after it is
+# made; titled ROLE: the pane's title and the @role its border shows; split ROLE WORDS...:
+# a pane below, laid out again; tail_of NAME: the first window and its top pane selected.
+WINDOW_OPTS=(";" set-option -w main-pane-height 50% ";" set-option -w pane-border-status top
+  ";" set-option -w pane-border-format " #{@role} ")
+titled() { printf '%s\n' ";" select-pane -T "$1" ";" set-option -p @role "$1"; }
+split() {
+  local r="$1"
+  shift
+  printf '%s\n' ";" split-window -c "$PROJ" bash -c "$(window --role "$r" "$@")" ";" select-layout main-horizontal
+  titled "$r"
+}
+tail_of() { printf '%s\n' ";" select-window -t "=$1:^" ";" select-pane -t "=$1:^.{top}"; }
+
+# same_argv -- the dump in $TM is exactly the array `want`, token by token.
+same_argv() {
+  local -a T
+  mapfile -t T <"$TM"
+  local i
+  for i in "${!want[@]}"; do
+    [ "${T[i]-<none>}" = "${want[i]}" ] || {
+      echo "token $i: got '${T[i]-<none>}', want '${want[i]}'"
+      return 1
+    }
+  done
+  [ "${#T[@]}" -eq "${#want[@]}" ] || {
+    echo "${#T[@]} tokens, want ${#want[@]}"
+    return 1
+  }
+}
+
+# pane_cmds -- PC: the command of every pane, in the order of the chain.
+pane_cmds() {
+  local -a T
+  mapfile -t T <"$TM"
+  PC=()
+  local i
+  for ((i = 2; i < ${#T[@]}; i++)); do
+    [[ "${T[i - 2]}" == bash && "${T[i - 1]}" == -c ]] && PC+=("${T[i]}")
+  done
+  return 0
 }
 
 # a PATH with the system's commands but tmux: symlinks to /usr/bin and /bin, and $H/bin
@@ -51,50 +96,104 @@ no_tmux_path() {
   NOTMUX="$H/bin:$H/sys"
 }
 
-@test "--roles: a window per role in order, named by it, in the project, running --role ROLE with the engine words before and after, then select the first; not at a terminal, detached and the attach line printed" {
-  run_engine TMUX_DUMP="$TM" -- asb --verbose --roles planner-1 rev.2 --allow pypi.org claude --continue -x
+@test "--roles, one role: one pane, its border showing the role, in the project, running --role ROLE with the engine words before and after; not at a terminal, detached and the attach line printed" {
+  run_engine TMUX_DUMP="$TM" -- asb --verbose --roles planner-1 --allow pypi.org claude --continue -x
   [ "$status" -eq 0 ]
-  mapfile -t T <"$TM"
   local -a want=(
     new-session -d -s proj -n planner-1 -c "$PROJ" bash -c "$(window --role planner-1 --verbose --allow pypi.org claude --continue -x)"
-    ";" new-window -n rev.2 -c "$PROJ" bash -c "$(window --role rev.2 --verbose --allow pypi.org claude --continue -x)"
-    ";" select-window -t "=proj:^"
+    "${WINDOW_OPTS[@]}"
   )
-  [ "${#T[@]}" -eq "${#want[@]}" ]
-  local i
-  for i in "${!want[@]}"; do [ "${T[i]}" = "${want[i]}" ]; done
-  [[ "$output" == *"tmux session 'proj': a window per role (planner-1 rev.2). To attach to it: tmux attach -t proj"* ]]
+  mapfile -t -O "${#want[@]}" want < <(titled planner-1 && tail_of proj)
+  same_argv
+  [[ "$output" == *"tmux session 'proj': a pane per role (planner-1). To attach to it: tmux attach -t proj"* ]]
   # the session is looked up by its exact name: tmux matches a prefix otherwise
   [ "$(cat "$TM.has")" = $'has-session\n-t\n=proj' ]
   [ ! -s "$H/argv" ] # nothing launched from here
 }
 
-@test "--roles: at a terminal, the chain ends attached to the session" {
+@test "--roles, two roles: the first on top, the second split below it and laid out main-horizontal" {
+  run_engine TMUX_DUMP="$TM" -- asb --verbose --roles planner-1 rev.2 --allow pypi.org claude --continue -x
+  [ "$status" -eq 0 ]
+  local -a want=(
+    new-session -d -s proj -n planner-1 -c "$PROJ" bash -c "$(window --role planner-1 --verbose --allow pypi.org claude --continue -x)"
+    "${WINDOW_OPTS[@]}"
+  )
+  mapfile -t -O "${#want[@]}" want < <(titled planner-1 && split rev.2 --verbose --allow pypi.org claude --continue -x && tail_of proj)
+  same_argv
+  [[ "$output" == *"a pane per role (planner-1 rev.2)"* ]]
+}
+
+@test "--roles, five roles: one window, the first role on top and four split below, each laid out again; the first window's top pane selected last" {
+  run_engine TMUX_DUMP="$TM" -- asb --roles supervisor planner-1 implementer-1 reviewer-1 gate claude --continue
+  [ "$status" -eq 0 ]
+  local -a want=(
+    new-session -d -s proj -n supervisor -c "$PROJ" bash -c "$(window --role supervisor claude --continue)"
+    "${WINDOW_OPTS[@]}"
+  )
+  mapfile -t -O "${#want[@]}" want < <(
+    titled supervisor
+    for r in planner-1 implementer-1 reviewer-1 gate; do split "$r" claude --continue; done
+    tail_of proj
+  )
+  same_argv
+  [ "$(grep -cx new-window "$TM")" -eq 0 ] && [ "$(grep -cx split-window "$TM")" -eq 4 ]
+  [ "$(grep -cx 'main-horizontal' "$TM")" -eq 4 ]
+}
+
+@test "--roles, six roles: the sixth starts a second window, named by it and laid out the same way" {
+  run_engine TMUX_DUMP="$TM" -- asb --roles r1 r2 r3 r4 r5 r6 claude
+  [ "$status" -eq 0 ]
+  local -a want=(
+    new-session -d -s proj -n r1 -c "$PROJ" bash -c "$(window --role r1 claude)"
+    "${WINDOW_OPTS[@]}"
+  )
+  mapfile -t -O "${#want[@]}" want < <(
+    titled r1
+    for r in r2 r3 r4 r5; do split "$r" claude; done
+    printf '%s\n' ";" new-window -n r6 -c "$PROJ" bash -c "$(window --role r6 claude)" "${WINDOW_OPTS[@]}"
+    titled r6
+    tail_of proj
+  )
+  same_argv
+  # eleven roles: three windows, named by the first, sixth and eleventh
+  run_engine TMUX_DUMP="$TM" -- asb --roles r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 claude
+  [ "$status" -eq 0 ]
+  mapfile -t T <"$TM"
+  local -a names=()
+  local i
+  for i in "${!T[@]}"; do
+    [[ "${T[i]}" == new-window ]] && names+=("${T[i + 2]}")
+  done
+  [ "${names[*]}" = "r6 r11" ] && [ "${T[5]}" = r1 ]
+  [ "$(grep -cx split-window "$TM")" -eq 8 ]
+}
+
+@test "--roles: at a terminal, the chain ends attached to the session, after the first window and its top pane are selected" {
   run_engine_tty '' TMUX_DUMP="$TM" -- asb --roles a b claude
   [ "$status" -eq 0 ]
   mapfile -t T <"$TM"
-  [ "${T[*]: -8}" = "; select-window -t =proj:^ ; attach-session -t =proj" ]
+  [ "${T[*]: -12}" = "; select-window -t =proj:^ ; select-pane -t =proj:^.{top} ; attach-session -t =proj" ]
   [[ "$output" != *"To attach to it"* ]]
 }
 
-@test "--roles: the roles end at a word that starts with - or names a profile; a path to the agent, --profile alone, and --serve each reach every window" {
+@test "--roles: the roles end at a word that starts with - or names a profile; a path to the agent, --profile alone, and --serve each reach every pane" {
   run_engine TMUX_DUMP="$TM" -- asb --roles a b claude
   [ "$status" -eq 0 ]
-  mapfile -t T <"$TM"
-  [ "${T[10]}" = "$(window --role a claude)" ] && [ "${T[19]}" = "$(window --role b claude)" ]
+  pane_cmds
+  [ "${#PC[@]}" -eq 2 ] && [ "${PC[0]}" = "$(window --role a claude)" ] && [ "${PC[1]}" = "$(window --role b claude)" ]
   run_engine TMUX_DUMP="$TM" -- asb --roles a "$H/bin/claude" -p hi
   [ "$status" -eq 0 ]
-  mapfile -t T <"$TM"
-  [ "${T[10]}" = "$(window --role a "$H/bin/claude" -p hi)" ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role a "$H/bin/claude" -p hi)" ]
   run_engine TMUX_DUMP="$TM" -- asb --roles a --profile claude
   [ "$status" -eq 0 ]
-  mapfile -t T <"$TM"
-  [ "${T[10]}" = "$(window --role a --profile claude)" ] # no empty command word
-  # a served role in a window: --serve is one of the words, and needs no --role here
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role a --profile claude)" ] # no empty command word
+  # a served role in a pane: --serve is one of the words, and needs no --role here
   run_engine TMUX_DUMP="$TM" -- asb --roles a b --serve claude
   [ "$status" -eq 0 ]
-  mapfile -t T <"$TM"
-  [ "${T[19]}" = "$(window --role b --serve claude)" ]
+  pane_cmds
+  [ "${PC[1]}" = "$(window --role b --serve claude)" ]
 }
 
 @test "--roles: the session name is the project directory's, with . and : made _" {
@@ -103,7 +202,7 @@ no_tmux_path() {
   [ "$status" -eq 0 ]
   mapfile -t T <"$TM"
   [ "${T[3]}" = my_pro_j ] && [ "${T[7]}" = "$(cd "$H/my.pro:j" && pwd -P)" ]
-  [ "${T[*]: -4}" = "; select-window -t =my_pro_j:^" ]
+  [ "${T[*]: -8}" = "; select-window -t =my_pro_j:^ ; select-pane -t =my_pro_j:^.{top}" ]
 }
 
 @test "--roles: refused with no role, a role twice, a bad name, twice, with --role, a verb, --exec, a review" {
@@ -165,7 +264,7 @@ no_tmux_path() {
   no_tmux_path
   run_engine TMUX_DUMP="$TM" PATH="$NOTMUX" -- asb --roles a claude
   [ "$status" -eq 1 ]
-  [[ "$output" == *"--roles opens its windows with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there"* ]]
+  [[ "$output" == *"--roles opens its panes with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there"* ]]
   [ ! -e "$TM" ]
   local tools="$H/home/.local/share/agent-sandbox/tools"
   stub_tmux "$tools/a/bin/tmux"
@@ -176,9 +275,9 @@ no_tmux_path() {
   [ "${T[0]}" = new-session ] && [ "${T[10]}" = "$(window --role a claude)" ]
 }
 
-@test "--roles reviews an unapproved dot-file once, here, before the windows open; a window's launch then starts without a review" {
+@test "--roles reviews an unapproved dot-file once, here, before the panes open; a pane's launch then starts without a review" {
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
-  # no terminal: refused, nothing opened (every window would ask)
+  # no terminal: refused, nothing opened (every pane would ask)
   run_engine TMUX_DUMP="$TM" -- asb --roles a b claude
   [ "$status" -eq 1 ]
   [[ "$output" == *"--roles: .agent-sandbox needs your review, and there is no terminal here to ask at: run asb --trust first"* ]]
@@ -186,18 +285,18 @@ no_tmux_path() {
   # no at the terminal: nothing recorded, nothing opened
   run_engine_tty 'n\n' TMUX_DUMP="$TM" -- asb --roles a b claude
   [ "$status" -eq 1 ]
-  [[ "$output" == *"not approved; --roles opens no windows."* ]]
+  [[ "$output" == *"not approved; --roles opens no panes."* ]]
   [ ! -e "$TM" ] && [ ! -e "$REC.approved" ]
-  # yes: one review for both windows, recorded as a launch records it
+  # yes: one review for both panes, recorded as a launch records it
   run_engine_tty 'y\n' TMUX_DUMP="$TM" -- asb --roles a b claude
   [ "$status" -eq 0 ]
   [ "$(grep -c 'approve this .agent-sandbox' <<<"$output")" -eq 1 ]
   [[ "$output" == *"[allow]"*"pypi.org"*"approved."* ]]
   cmp -s "$REC.approved" "$PROJ/.agent-sandbox"
   [ ! -s "$H/argv" ] # nothing launched from here
-  # a window's command, at a terminal of its own: it launches, and asks nothing
-  mapfile -t T <"$TM"
-  local line="${T[19]%; exec*}"
+  # a pane's command, at a terminal of its own: it launches, and asks nothing
+  pane_cmds
+  local line="${PC[1]%; exec*}"
   [ "$line" = "$(printf '%q ' "$SELF" --role b claude | sed 's/ $//')" ]
   : >"$H/argv"
   {
@@ -205,7 +304,7 @@ no_tmux_path() {
     printf ' %q' env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
       BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
       AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-      AGENT_SANDBOX_PRESET=shared AGENT_SANDBOX_VERBOSE=on SHELL=true bash -c "${T[19]}"
+      AGENT_SANDBOX_PRESET=shared AGENT_SANDBOX_VERBOSE=on SHELL=true bash -c "${PC[1]}"
   } >"$H/win.sh"
   run bash -c 'printf "n\n" | script -qec "bash $1" /dev/null' _ "$H/win.sh"
   [ "$status" -eq 0 ]

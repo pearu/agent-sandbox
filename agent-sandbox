@@ -428,8 +428,10 @@ Engine flags (before CMD):
                         give roles matching NAME. Default: [sandbox] role, else
                         `default`.
   --roles ROLE...       open one tmux session, named after the project
-                        directory, with a window per role, each running
-                        `--role ROLE` with the rest of the command line; the
+                        directory, with a pane per role, each running
+                        `--role ROLE` with the rest of the command line, five
+                        to a window: the first role on top, the others in a
+                        row below; the
                         roles end at the first word that starts with `-` or
                         names a profile. Reviews the dot-file once, here,
                         first. Refused with --role, a verb, --exec, a review,
@@ -8238,21 +8240,33 @@ _as_launch_pasta() {
 }
 
 # _as_roles_open [AGENT ARGS...] -- `asb --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]`
-# (#317): one tmux session, named after the project directory, with a window per role
-# in the order given, named by it and started in the project, each running
+# (#317, #320): one tmux session, named after the project directory, with a pane per
+# role in the order given, five to a window: in each window the first role has the top
+# pane, full width and half the height, and the others share the bottom half in one
+# row (tmux's main-horizontal layout); a sixth role starts the next window. A window is
+# named by its first role, a pane's border shows its role, every pane starts in the
+# project and runs
 #
 #   asb --role ROLE [ENGINE FLAGS] CMD [AGENT ARGS]; exec "${SHELL:-bash}"
 #
-# so a window whose launch ends drops to a shell and its last output stays readable.
-# NOTHING HERE IS POLICY: every window runs this engine, plainly, which enforces
+# so a pane whose launch ends drops to a shell and its last output stays readable.
+# NOTHING HERE IS POLICY: every pane runs this engine, plainly, which enforces
 # everything; this only builds the tmux command. Two things happen before it, in this
 # terminal: a session of that name already open is refused, and the dot-file review a
-# launch runs is run here, once -- launched together, every window would ask it.
+# launch runs is run here, once -- launched together, every pane would ask it.
+#
+# The chain's commands without a target act on the window and pane the previous one
+# made. split-window halves the active pane, so the layout is applied after each split
+# and the next split has room (five panes fit tmux's detached 80x24; attaching resizes
+# them to the terminal). The border shows the pane option @role, not the pane title: a
+# program may set its own title with an escape sequence, and that replaces the one
+# select-pane -T gives (measured, tmux 3.4).
 #
 # tmux is the host's when on PATH, else the tools env's (install.sh's default list has
 # it). Targets are exact (`=NAME`): tmux matches a session by prefix otherwise, and a
 # window named by digits as an index, so the first window is selected as `^`, the
-# lowest index, which new-session gives it.
+# lowest index, which new-session gives it, and its top pane as `{top}`, whatever the
+# user's base indexes.
 # Reads the engine's _roles, _roles_flags, _cmd_word and invoked by dynamic scope.
 # shellcheck disable=SC2154
 _as_roles_open() {
@@ -8264,7 +8278,7 @@ _as_roles_open() {
     [[ -n "$slot" && -x "$slot/bin/tmux" ]] && tmux="$slot/bin/tmux"
   fi
   if [[ -z "$tmux" ]]; then
-    _as_msg "--roles opens its windows with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there (tmux is in its default list; a ~/.config/agent-sandbox/tools.txt of your own needs a tmux line): run install.sh again, or install tmux"
+    _as_msg "--roles opens its panes with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there (tmux is in its default list; a ~/.config/agent-sandbox/tools.txt of your own needs a tmux line): run install.sh again, or install tmux"
     return 1
   fi
   name="$(basename -- "$dir")"
@@ -8275,7 +8289,7 @@ _as_roles_open() {
     return 1
   fi
   # The review a launch runs (_as_trust_prompt), once, here; a no opens nothing, as every
-  # window would refuse, and so does no terminal to ask at.
+  # pane would refuse, and so does no terminal to ask at.
   local df="$dir/.agent-sandbox" rec need=0
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$dir")"
   if [[ -f "$df" ]]; then
@@ -8289,7 +8303,7 @@ _as_roles_open() {
       return 1
     fi
     if ! _as_trust_prompt "$dir"; then
-      _as_msg "not approved; --roles opens no windows."
+      _as_msg "not approved; --roles opens no panes."
       return 1
     fi
   fi
@@ -8297,21 +8311,31 @@ _as_roles_open() {
   self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
   local -a cmd=() args=()
   [[ -n "$_cmd_word" ]] && cmd=("$_cmd_word")
+  local i=0
   for r in "${_roles[@]}"; do
     printf -v line '%q ' "$self" --role "$r" ${_roles_flags[@]+"${_roles_flags[@]}"} ${cmd[@]+"${cmd[@]}"} "$@"
     line="${line% }; exec \"\${SHELL:-bash}\""
-    if ((${#args[@]} == 0)); then
-      args=(new-session -d -s "$name" -n "$r" -c "$dir" bash -c "$line")
+    if ((i % 5)); then
+      args+=(";" split-window -c "$dir" bash -c "$line" ";" select-layout main-horizontal)
     else
-      args+=(";" new-window -n "$r" -c "$dir" bash -c "$line")
+      if ((i == 0)); then
+        args=(new-session -d -s "$name" -n "$r" -c "$dir" bash -c "$line")
+      else
+        args+=(";" new-window -n "$r" -c "$dir" bash -c "$line")
+      fi
+      args+=(";" set-option -w main-pane-height 50%
+        ";" set-option -w pane-border-status top
+        ";" set-option -w pane-border-format " #{@role} ")
     fi
+    args+=(";" select-pane -T "$r" ";" set-option -p @role "$r")
+    i=$((i + 1))
   done
-  args+=(";" select-window -t "=$name:^")
+  args+=(";" select-window -t "=$name:^" ";" select-pane -t "=$name:^.{top}")
   local attach=0
   [[ -t 0 && -t 1 ]] && attach=1
   ((attach)) && args+=(";" attach-session -t "=$name")
   "$tmux" "${args[@]}" || return
-  ((attach)) || _as_msg "tmux session '$name': a window per role (${_roles[*]}). To attach to it: tmux attach -t $(printf '%q' "$name")"
+  ((attach)) || _as_msg "tmux session '$name': a pane per role (${_roles[*]}). To attach to it: tmux attach -t $(printf '%q' "$name")"
   return 0
 }
 
@@ -8645,7 +8669,7 @@ agent_sandbox() (
         shift
         ;;
       --roles)
-        # A tmux session with a window per role (#317). The roles are every word up to
+        # A tmux session with a pane per role (#317, #320). The roles are every word up to
         # the first that starts with `-` or names a profile, as --list reads its word.
         ((! _roles_set)) || {
           _as_msg "--roles is given once, with every role after it"
@@ -8707,9 +8731,9 @@ agent_sandbox() (
       return 2
     fi
   fi
-  # ---- --roles (#317): what it cannot be combined with, and the words its windows run ----
-  # Each window runs this invocation's engine words but `--roles ROLE...`, after its own
-  # `--role ROLE`. --serve is one of them: a window can hold a served role.
+  # ---- --roles (#317): what it cannot be combined with, and the words its panes run ----
+  # Each pane runs this invocation's engine words but `--roles ROLE...`, after its own
+  # `--role ROLE`. --serve is one of them: a pane can hold a served role.
   if ((_roles_set)); then
     if ((${#_roles[@]} == 0)); then
       _as_msg "--roles needs the roles to open, before the command: $invoked --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]"
@@ -8723,13 +8747,13 @@ agent_sandbox() (
         return 2
       }
       [[ -z "${_rseen[$_rw]:-}" ]] || {
-        _as_msg "--roles: role '$_rw' is listed twice; a role runs in one window"
+        _as_msg "--roles: role '$_rw' is listed twice; a role runs in one pane"
         return 2
       }
       _rseen[$_rw]=1
     done
     if ((_role_flag_set)); then
-      _as_msg "--roles opens a window per role, each with its own --role; it is not combined with --role"
+      _as_msg "--roles opens a pane per role, each with its own --role; it is not combined with --role"
       return 2
     fi
     if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_summarize)) \
