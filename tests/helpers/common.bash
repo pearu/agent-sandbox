@@ -168,8 +168,11 @@ STUB
 # Runs CMD (asb | agent-sandbox | a path) from $H/proj with a clean
 # environment plus the given variables, the stub bwrap first on PATH, and the
 # argv recorded in $H/argv. Uses bats' `run`, so $status and $output are set.
+# RUN_EXPECT=N (`RUN_EXPECT=127 run_engine -- ...`) hands bats `run -N`: the test
+# expects that exit code, and bats stops warning BW01 for a 127.
 run_engine() {
-  local -a envs=()
+  local -a envs=() expect=()
+  [[ -n "${RUN_EXPECT:-}" ]] && expect=("-$RUN_EXPECT")
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     envs+=("$1")
     shift
@@ -187,7 +190,7 @@ run_engine() {
   # setting the knob would override the .agent-sandbox value that the dot-file
   # tests exist to check. With no filter present the engine warns and runs on,
   # so every other suite sees the argv it saw before, plus that warning.
-  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
+  run "${expect[@]}" env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
     BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
     AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"

@@ -50,7 +50,7 @@ set +x
 : >"${BWRAP_DUMP:?}"; exit 127
 STUB
   chmod +x "$H/bin/bwrap"
-  run_engine -- asb claude --version
+  RUN_EXPECT=127 run_engine -- asb claude --version
   [ "$status" -eq 127 ]
   [[ "$output" == *"the sandbox did not start"* ]]
   [[ "$output" == *"without the sandbox"* ]]
