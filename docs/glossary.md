@@ -297,7 +297,9 @@ daemon's sessions), `--shutdown` (ends the keeper and everything in it, the daem
 pool), `--delete` (removes the role's stores; refused while anything runs in it, naming
 `--shutdown`), `--reset`; and across roles (#314), `--list` and `--list-all` (the role
 sessions you can resume, this project's or every project's, with a one-line summary each:
-the line the session keeps itself, else the conversation's title, else its first prompt).
+the line the session keeps itself, else the conversation's title, else its first prompt),
+and `--summarize` (for a stopped role, one headless turn in its sandbox writes that line
+and a longer description, then its own transcript is deleted).
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*

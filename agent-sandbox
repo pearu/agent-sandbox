@@ -262,6 +262,13 @@
 #                         A file .asb/coord/to/R.reset makes the next turn a new
 #                         session. A [serve:R] with watch alone is not served: its
 #                         watcher is enforced at a terminal, and --serve refuses.
+#   --summarize           with a stopped role R (#314): one headless turn of a new
+#                         session in R's sandbox, under R's policy, as a turn of
+#                         --serve runs (the profile's serve-new arguments, a fresh
+#                         id, the engine's prompt); it writes R's summary line and
+#                         <store>/summary/description.md. The turn's transcript
+#                         is deleted afterwards. Refused while R runs, when R has
+#                         no conversation, and under --preset native.
 #   --engine-help         engine usage even when a profile is selected (with a
 #                         profile, -h/--help goes to the agent, and its help
 #                         ends with a footer pointing here)
@@ -451,6 +458,13 @@ Engine flags (before CMD):
                         one-line summary; WORD keeps the roles whose name,
                         summary or conversations mention it. Ignores --role
   --list-all [WORD]     the same for every project, from any directory
+  --summarize           with a stopped role: one headless turn in its sandbox,
+                        under its policy, reads its conversations, memory and
+                        files and writes its summary line and a description
+                        (<store>/summary/description.md), which --list shows;
+                        the turn's own transcript is deleted afterwards. Costs
+                        one model call; refused while the role runs and under
+                        --preset native
   --delete              remove every store of this role; refused while anything
                         runs in it (see --shutdown)
   --connect SPEC        open one channel at one mode: 'channel=mode [source]
@@ -3429,7 +3443,10 @@ _as_names_profile() {
 # the `project` field of its history.jsonl's first record, else the slug, which is lossy.
 # THE SUMMARY is the store's own line (summary/line) when present, else the title Claude
 # Code recorded in the newest conversation (custom-title, then ai-title), else its first
-# prompt. The engine finds the stores and asks whether each keeper is live; one python3
+# prompt. Under it, the description --summarize wrote (<store>/summary/description.md):
+# for --list its first 5 non-blank lines, and its path when it has more; for --list-all
+# its path. The project's line is bold, as role names are cyan, on a terminal.
+# The engine finds the stores and asks whether each keeper is live; one python3
 # run reads the transcripts of all of them. Role names are cyan on a terminal, unless
 # NO_COLOR is set (no-color.org: to a non-empty value); nothing else is coloured. One
 # line at the end names the command that resumes a role.
@@ -3519,6 +3536,9 @@ def scan(path):  # (has a user record, title, first prompt)
         pass
     return user, title.get("custom-title") or title.get("ai-title"), prompt
 
+def printable(s):  # printed on the host's terminal: no control characters
+    return "".join(c for c in s if c.isprintable())
+
 def stamp(t):
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
 
@@ -3578,9 +3598,15 @@ for prof, sb, st in zip(rest[0::3], rest[1::3], rest[2::3]):
                 break
         if not hit:
             continue
+    # The description --summarize wrote (#314): named by its path, a regular file only.
+    desc = os.path.join(sb, "summary", "description.md")
+    try:
+        desc = desc if stat.S_ISREG(os.lstat(desc).st_mode) else ""
+    except OSError:
+        desc = ""
     b = blocks.setdefault((prof, slug), {"proj": "", "roles": []})
     b["proj"] = b["proj"] or proj
-    b["roles"].append((active, role, st, created, summary or "no conversation"))
+    b["roles"].append((active, role, st, created, summary or "no conversation", desc))
 
 if not blocks:
     sys.exit(11)
@@ -3588,11 +3614,32 @@ for (prof, slug), b in sorted(blocks.items(), key=lambda kv: -max(r[0] for r in 
     proj, roles = b["proj"], sorted(b["roles"], key=lambda r: -r[0])
     wr = max(len(r[1]) for r in roles)
     ws = max(len(r[2]) for r in roles)
-    print(proj or f"{slug}  (the path is not recorded; this is the store's slug)")
-    for active, role, st, created, summary in roles:
+    head = proj or f"{slug}  (the path is not recorded; this is the store's slug)"
+    print(f"\033[1m{head}\033[0m" if color else head)
+    for active, role, st, created, summary, desc in roles:
         name = f"\033[36m{role}\033[0m" if color else role
         print(f"  {name}{' ' * (wr - len(role))}   {st:<{ws}}   created {stamp(created)}   active {stamp(active)}")
         print(f"    {summary}")
+        if not desc:
+            continue
+        if scope == "all":
+            print("    description: " + printable(desc))
+            continue
+        # --list shows the description itself: its first 5 non-blank lines, then its path
+        # when there is more. Written inside the sandbox, so read as the line is.
+        shown = []
+        try:
+            fd = os.open(desc, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as fh:
+                if stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                    body = fh.read(65536).decode("utf-8", "replace")
+                    shown = [t for t in (printable(x.replace("\t", " ")).rstrip() for x in body.splitlines()) if t.strip()]
+        except OSError:
+            pass
+        for t in shown[:5]:
+            print(f"    {t}")
+        if len(shown) > 5:
+            print("    full description: " + printable(desc))
 profs = {prof for prof, _ in blocks}
 prof = profs.pop() if len(profs) == 1 else "PROFILE"
 where = "cd PROJECT_DIR && " if scope == "all" else ""
@@ -3616,6 +3663,184 @@ PY
       ;;
     *) return "$rc" ;;
   esac
+  return 0
+}
+
+# _as_role_has_conversation STORE -- has the role a conversation to summarize? --list's
+# test (_as_role_list): a transcript of its own with a user record in it.
+_as_role_has_conversation() {
+  python3 - "$1" <<'PY'
+import glob, json, os, sys
+for f in glob.glob(os.path.join(sys.argv[1], "transcripts", "*", "*_projects_*", "*.jsonl")):
+    try:
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"user"' in line:
+                    try:
+                        if json.loads(line).get("type") == "user":
+                            sys.exit(0)
+                    except (ValueError, AttributeError):
+                        pass
+    except OSError:
+        pass
+sys.exit(1)
+PY
+}
+
+# _as_summarize_forget STORE ID -- delete what the turn of session ID left in the role's
+# transcripts (#314), so that `--continue` resumes the role's own conversation and
+# --list never sees the summarizer: <ID>.jsonl and a directory <ID> in every place the
+# channel keeps -- each store the record names (a path outside the role's state, when a
+# source moved it), and every store under the role's transcripts, which covers an
+# overlay's upper layer -- and the records of session ID in a prompt history there.
+# Measured, Claude Code 2.1.311: a -p turn writes no prompt-history record, and
+# <ID>.jsonl in the project's conversations directory; the history is filtered all the
+# same, should a later version write one. ID is a fresh uuid, so nothing else has it.
+_as_summarize_forget() {
+  python3 - "$1" "$2" <<'PY'
+import glob, json, os, shutil, sys
+sb, sid = sys.argv[1], sys.argv[2]
+places = set()
+try:
+    with open(os.path.join(sb, "record.tsv"), encoding="utf-8", errors="replace") as fh:
+        for row in fh:
+            f = row.rstrip("\n").split("\t")
+            if len(f) == 4 and f[0] == "transcripts" and f[3] not in ("", "-"):
+                places.add(f[3])
+except OSError:
+    pass
+for base in (sb, os.path.join(sb, "@run")):
+    places.update(glob.glob(os.path.join(base, "transcripts", "*", "*")))
+sidb = sid.encode()
+for p in sorted(places):
+    if os.path.islink(p):
+        continue
+    if os.path.isdir(p):
+        for q in (os.path.join(p, sid + ".jsonl"), os.path.join(p, sid)):
+            if os.path.isdir(q) and not os.path.islink(q):
+                shutil.rmtree(q, ignore_errors=True)
+            elif os.path.lexists(q):
+                os.unlink(q)
+    elif os.path.isfile(p) and p.endswith("history.jsonl"):
+        with open(p, "rb") as fh:
+            data = fh.read()
+        if sidb not in data:
+            continue
+        keep = []
+        for line in data.splitlines(keepends=True):
+            if sidb in line:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    r = None
+                if isinstance(r, dict) and r.get("sessionId") == sid:
+                    continue
+            keep.append(line)
+        tmp = p + ".asb-summarize"
+        with open(tmp, "wb") as fh:
+            fh.writelines(keep)
+        os.replace(tmp, p)
+PY
+}
+
+# _as_summary_line_since FILE SECONDS -- FILE's first line, as --list reads it (a regular
+# file only, its first 4 KiB, no control characters), when it was written at SECONDS
+# (the epoch, a fraction allowed) or later, less a second for the clock's tick; else
+# nothing.
+_as_summary_line_since() {
+  python3 - "$1" "$2" <<'PY'
+import os, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError:
+    sys.exit(0)
+with os.fdopen(fd, "rb") as fh:
+    st = os.fstat(fh.fileno())
+    if stat.S_ISREG(st.st_mode) and st.st_mtime >= float(sys.argv[2]) - 1:
+        line = fh.read(4096).decode("utf-8", "replace").split("\n", 1)[0]
+        print("".join(c for c in " ".join(line.split()) if c.isprintable()))
+PY
+}
+
+# _as_role_summarize [AGENT ARGS...] -- `asb --role R --summarize CMD` (#314): one
+# headless turn of a new session in R's sandbox, under R's policy, the way a turn of
+# --serve runs -- the engine again with AGENT_SANDBOX_SERVE_TURN set (no [briefing]
+# start, no watcher), the profile's serve-new arguments with a fresh id, and the
+# engine's prompt (_as_summarize_prompt). The turn writes R's summary line and
+# <store>/summary/description.md; then the engine deletes the turn's own transcript
+# (_as_summarize_forget), whatever the turn did. For a stopped role only: a running one
+# would be joined, and the turn would see and change what its sessions are doing. Not
+# under --preset native: there the conversations are the user's own ~/.claude ones,
+# not the role's, which --list does not read either. Its permission prompts are off
+# (the profile's serve-new), as a --serve turn's are: what bounds it is the sandbox.
+# shellcheck disable=SC2154
+_as_role_summarize() {
+  local sb role="${_role:-default}" id prompt out start rc=0 sig="" res line desc i
+  local -a targ=()
+  sb="$(_as_sandbox_dir)"
+  if _as_inside_sandbox; then
+    _as_msg "--summarize runs on the host: it starts the role's sandbox"
+    return 1
+  fi
+  if _as_preset_is_native; then
+    _as_msg "--summarize is refused under --preset native: the conversations there are your own, not the role's"
+    return 1
+  fi
+  if (($#)); then
+    _as_msg "--summarize takes no agent arguments: $invoked --role $role --summarize ${_cmd_word:-$profile}"
+    return 2
+  fi
+  if ((! ${#profile_serve_new[@]})); then
+    _as_msg "--summarize: profile '$profile' says nothing of how to run one turn of a session ([agent] serve-new)"
+    return 1
+  fi
+  if _as_keeper_live "$sb"; then
+    _as_msg "role '$role' is running; summarize it once it has stopped: $(_as_self_cmd --role "$role" --shutdown)"
+    return 1
+  fi
+  if ! _as_role_has_conversation "$sb"; then
+    _as_msg "role '$role' has no conversation to summarize"
+    return 1
+  fi
+  id="$(cat /proc/sys/kernel/random/uuid)"
+  prompt="$(_as_summarize_prompt "$id" "$sb/record.tsv")"
+  for i in "${profile_serve_new[@]}"; do targ+=("${i//\{id\}/$id}"); done
+  out="$(mktemp)" || return 1
+  start="$EPOCHREALTIME"
+  _as_msg "role '$role': summarizing in its sandbox, one headless turn"
+  # In the foreground, so a ^C reaches the turn too; the trap only defers this shell's
+  # own end until the turn's transcript is gone.
+  trap 'sig=1' INT TERM HUP
+  AGENT_SANDBOX_SERVE_TURN=1 "$engine" "${_summ_flags[@]}" --role "$role" "${_cmd_word:-$profile_command}" \
+    "${targ[@]}" "$prompt" </dev/null >"$out" || rc=$?
+  _as_summarize_forget "$sb" "$id" || _as_msg "role '$role': could not delete the summarizing turn's transcript ($id.jsonl)"
+  trap - INT TERM HUP
+  if [[ -n "$sig" ]]; then
+    rm -f -- "$out"
+    _as_msg "role '$role': summarizing interrupted"
+    return 130
+  fi
+  res="$(_as_summary_line_since "$sb/summary/line" "$start")" || res=""
+  if ((rc)); then
+    _as_msg "role '$role': the summarizing turn ended with status $rc"
+    sed 's/^/  /' -- "$out" >&2
+    rm -f -- "$out"
+    return 1
+  fi
+  rm -f -- "$out"
+  if [[ -z "$res" ]]; then
+    _as_msg "role '$role': the turn left no new summary line in $sb/summary/line"
+    return 1
+  fi
+  desc="$sb/summary/description.md"
+  printf "role '%s' summarized:\n    %s\n" "$role" "$res"
+  if [[ ! -f "$desc" || -L "$desc" ]]; then
+    printf '    description: none written\n'
+  elif (($(stat -c %Y -- "$desc") >= ${start%.*})); then
+    printf '    description: %s\n' "$desc"
+  else
+    printf '    description: not rewritten by this turn; %s is an older one\n' "$desc"
+  fi
   return 0
 }
 
@@ -4122,6 +4347,38 @@ _as_connect_report() {
 # reading it, which is another agent's job and out of scope.
 _as_briefing_inside() { printf '/run/agent-sandbox'; }
 _as_summary_inside() { printf '%s/summary' "$(_as_briefing_inside)"; }
+
+# _as_summarize_prompt ID RECORD -- the text `--summarize` (#314) tells its one turn:
+# summarize the role's work for the user, from its earlier conversations, its memory
+# and its files, into the two files of the summary directory, and nothing else. Where
+# the conversations and the memory are inside is RECORD's (the role's record.tsv, from
+# its last launch): the `transcripts` and `memory` channels' paths, which are the paths
+# inside. ID is the turn's own session, which is not one to read.
+_as_summarize_prompt() {
+  local id="$1" rec="$2" ch mode path store tr="" mem="" sum
+  sum="$(_as_summary_inside)"
+  if [[ -f "$rec" && ! -L "$rec" ]]; then
+    while IFS=$'\t' read -r ch mode path store; do
+      case "$ch" in
+        transcripts) tr+="${tr:+, }$path" ;;
+        memory) mem+="${mem:+, }$path" ;;
+      esac
+    done <"$rec"
+  fi
+  printf 'You are asked to summarize the work of this role of agent-sandbox for the user, who is not in this session and will read only the two files below.\n\n'
+  if [[ -n "$tr" ]]; then
+    printf 'Read the role'"'"'s earlier conversations: the .jsonl files under %s. This session is %s; its own %s.jsonl is not one of them.\n' "$tr" "$id" "$id"
+  else
+    printf 'Read the role'"'"'s earlier conversations (where this sandbox keeps them: %s/briefing.md). This session is %s; its own %s.jsonl is not one of them.\n' "$(_as_briefing_inside)" "$id" "$id"
+  fi
+  [[ -n "$mem" ]] && printf 'Read the role'"'"'s memory: %s.\n' "$mem"
+  printf 'Read the files in the writable places %s/briefing.md lists under "Where the user reaches your files", with the host path of each.\n\n' "$(_as_briefing_inside)"
+  printf 'Then write exactly two files:\n\n'
+  # shellcheck disable=SC2016 # the backticks name a command for the reader
+  printf -- '- %s/line: one line, what the role worked on and where it stands. `asb --list` shows it.\n' "$sum"
+  printf -- '- %s/description.md: what the sessions worked on, what they found or concluded, what is left open, and the files they produced, each named by its host path (the briefing gives the host path of each writable place).\n\n' "$sum"
+  printf 'Change nothing else and write nothing else. Reply with the line only.\n'
+}
 
 # A JSON string literal for $1, in bash: no jq, no python on this path.
 _as_json_str() {
@@ -7999,6 +8256,8 @@ agent_sandbox() (
   local _do_list="" _list_word=""
   # --serve (#277): the words this invocation was given, for the processes it starts.
   local _do_serve=0
+  # --summarize (#314): one headless turn that writes a stopped role's summary.
+  local _do_summarize=0
   local -a _argv_given=("$@")
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -8317,9 +8576,29 @@ agent_sandbox() (
         _do_serve=1
         shift
         ;;
+      --summarize)
+        # A stopped role's summary line and description (#314), written by one headless
+        # turn in its sandbox; the turn's own transcript is deleted afterwards.
+        _do_summarize=1
+        shift
+        ;;
       *) break ;;
     esac
   done
+  # ---- --summarize (#314): what it cannot be combined with ----
+  # The engine's own words, but --summarize, are what the turn is started with.
+  local -a _summ_flags=()
+  if ((_do_summarize)); then
+    local _sw
+    for _sw in "${_argv_given[@]:0:$((${#_argv_given[@]} - $#))}"; do
+      [[ "$_sw" == --summarize ]] || _summ_flags+=("$_sw")
+    done
+    if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_engine_help || _do_serve)) \
+      || [[ -n "$_reset_connection" || -n "$_do_list" ]] || ((${#_apply_words[@]})); then
+      _as_msg "--summarize runs one turn in a stopped role's sandbox; it is not combined with --exec, --serve, a verb or a review: run them on their own"
+      return 2
+    fi
+  fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
   # The engine's own words, but --serve, are what the loop starts its holder, and every
   # turn, with: the same flags, so each joins the launch the first one started.
@@ -8459,12 +8738,13 @@ agent_sandbox() (
     fi
     _check_plan=1
   fi
-  # The role verbs act on a profile's stores and start no agent: with no command, the
-  # only profile there is, as for --check.
+  # The role verbs act on a profile's stores and start no agent (--summarize starts a
+  # turn of its own): with no command, the only profile there is, as for --check.
   local _verb=""
   ((_do_status)) && _verb=--status
   ((_do_shutdown)) && _verb=--shutdown
   ((_do_delete)) && _verb=--delete
+  ((_do_summarize)) && _verb=--summarize
   [[ -n "$_reset_connection" ]] && _verb="--reset $_reset_connection"
   if [[ -n "$_verb" && -z "$profile" && -z "$_cmd_word" ]]; then
     local -a _vps=("$profile_dir"/*/profile.sh)
@@ -9195,6 +9475,12 @@ agent_sandbox() (
   if [[ -n "$_reset_connection" ]]; then
     _as_connect_reset "$_reset_connection" || return 1
     return 0
+  fi
+
+  # ---- --summarize: one headless turn in the stopped role's sandbox, then exit (#314) ----
+  if ((_do_summarize)); then
+    _as_role_summarize "$@"
+    return $?
   fi
 
   # ---- --serve: the loop, or the holder it starts (#277) ----

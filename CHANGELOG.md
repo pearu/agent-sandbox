@@ -67,6 +67,16 @@ names are gone; there are no aliases for removed names before 1.0.
   `UserPromptSubmit`); not in a print run, `--serve`'s turns included; `--check` says
   it. `asb --list` and `--list-all` colour role names cyan on a terminal (not with
   `NO_COLOR`).
+- **`asb --role R --summarize claude`: a stopped role's summary, from all its work**
+  (#314): one headless turn of a new session in the role's sandbox, under its policy, as
+  a `--serve` turn runs (`-p`, a fresh `--session-id`, `--permission-mode
+  bypassPermissions`), reads the role's conversations, memory and files and writes its
+  summary line and a description, `<store>/summary/description.md`: what the sessions
+  worked on, what they found, what is left open, and the files they produced by their
+  host paths. It prints both, then deletes the turn's own transcript, so `--continue`
+  resumes the role's conversation and `--list` never sees the summarizer. One model
+  call; refused while the role runs, when it has no conversation, and under `--preset
+  native`. `asb --list` shows the description under the role's line, its first 5 non-blank lines and then `full description: PATH` when there is more; `asb --list-all` names it, `description: PATH`. Both print each project's line bold on a terminal (not with `NO_COLOR`).
 - **A tools environment on every sandbox's PATH**: inside a sandbox `gh` was the host's
   `/usr/bin/gh`, and Ubuntu ships 2.46 even in its newest series, without `gh pr checks
   --json`. `install.sh` now builds a conda-forge environment with its own micromamba at

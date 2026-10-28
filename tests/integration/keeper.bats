@@ -569,3 +569,35 @@ PY2
   release a
   wait "$BG_PID"
 }
+
+@test "--summarize (#314): one turn in the stopped role's sandbox writes the summary files; its transcript is deleted, the role's own kept" {
+  # The probe as a summarizing agent: its conversation goes where the transcripts channel
+  # is inside, and it writes the two summary files where the briefing binds them.
+  printf '%s\n' "profile_channels+=(\"transcripts	dir:\$HOME/.probe/projects/w\")" >>"$IPROFILES/probe/profile.sh"
+  cat >"$I/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+id=""
+while [[ $# -gt 1 ]]; do
+  [[ "$1" == --session-id ]] && id="$2"
+  shift
+done
+[[ -n "$id" ]] || exit 0
+printf '%s\n' "$1" >"$PWD/prompt.seen"
+printf '{"type":"user"}\n' >"$HOME/.probe/projects/w/$id.jsonl"
+printf 'Summarized under bwrap\n' >/run/agent-sandbox/summary/line
+printf '# The role\n' >/run/agent-sandbox/summary/description.md
+PROBE
+  local -a own_tr=("${BASE[@]}" AGENT_SANDBOX_CONNECT='transcripts=own')
+  run_sandboxed "${own_tr[@]}" -- probe
+  [ "$status" -eq 0 ]
+  local own
+  own="$(awk -F'\t' '$1 == "transcripts" { print $4 }' "$SB/record.tsv")"
+  [[ "$own" == "$SB/transcripts/own/"*_projects_w ]]
+  printf '{"type":"user","message":{"content":"work"}}\n' >"$own/mine.jsonl"
+  run_sandboxed "${own_tr[@]}" -- --summarize probe
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default' summarized:"$'\n'"    Summarized under bwrap"$'\n'"    description: $SB/summary/description.md"* ]]
+  [ "$(cat "$SB/summary/description.md")" = "# The role" ]
+  grep -q "the .jsonl files under $IHOME/.probe/projects/w" "$IWORK/prompt.seen"
+  [ "$(ls "$own")" = mine.jsonl ] # the turn's own transcript is gone
+}
