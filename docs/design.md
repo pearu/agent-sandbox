@@ -105,7 +105,11 @@ time, `-p --resume ID` after, `--permission-mode bypassPermissions`) and the tex
 `[serve:R] prompt`. **A served role is bounded by its policy alone**: with nobody to
 answer a prompt, Claude Code's permission prompts are off, which the threat model
 allows -- it treats the agent as compromised and enforces every limit outside it --
-and is why the Gate, whose policy can publish, is never served. A turn that exits
+and is why the Gate, whose policy can publish, is never served. `asb --role R
+--summarize claude` (#314) runs one such turn too, in a stopped role's own launch, with
+the engine's prompt to read the role's conversations, memory and files and write its
+summary line and `summary/description.md`: it is bounded by R's policy alone in the
+same way, and what it reads and writes is what R's sessions could. A turn that exits
 non-zero is one line in the role's `messages.md`, written by a rename. It is the daemon-holds-the-launch pattern above with the engine as the daemon:
 the loop starts a *holder*, the engine again with the same words, which joins the launch
 with a command that only waits (`--status` lists it as `agent-sandbox-serve`); every
@@ -241,7 +245,11 @@ Stated plainly. These are what the adversary above can still do.
   so a line can mislead about what the session did. `asb --list` drops control
   characters from it, reads at most 4 KiB, and opens only a regular file, not
   following a link, so the line cannot carry terminal escapes, name a host file to be
-  read, or block the listing with a FIFO. The directory holds nothing else of the
+  read, or block the listing with a FIFO. `--summarize` prints the line it wrote the
+  same way; `asb --list` prints the first 5
+  non-blank lines of `summary/description.md` the same way (a regular file only, its
+  first 64 KiB read, control characters dropped); `--list-all` and `--summarize` only
+  name its path. The directory holds nothing else of the
   engine's, and its size is bounded only by the store's filesystem, as the other
   writable stores are.
 - **`--allow` is scoped per session.** The engine mints a per-session token,

@@ -2,7 +2,8 @@
 # The role verbs (#126): --reset takes one channel or declared path back to the source,
 # --delete removes every store of the role, --status shows what --shutdown would end.
 # (--shutdown itself is in routing.bats, with the rest of #123.) Each does its work and
-# exits; none launches the agent.
+# exits; none launches the agent -- but --summarize (#314), whose one turn is the stub
+# join below.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -360,7 +361,7 @@ To resume: asb --role ROLE claude --continue"
   [[ "$output" == "$PROJ"$'\n'"  via-link "* ]]
 }
 
-@test "--list colours role names cyan at a terminal, nothing else; plain through a pipe and with NO_COLOR (#314)" {
+@test "--list colours role names cyan and the project's line bold at a terminal, nothing else; plain through a pipe and with NO_COLOR (#314)" {
   list_fixture
   # through a pipe (run captures it): plain
   run_engine TZ=UTC -- asb --list
@@ -368,14 +369,16 @@ To resume: asb --role ROLE claude --continue"
   [[ "$output" != *$'\e'* ]]
   command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
   engine_cmd
-  local C=$'\e[36m' R=$'\e[0m'
+  local C=$'\e[36m' R=$'\e[0m' B=$'\e[1m'
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC script -qec "$(printf "%q " "${@:4}") --list" /dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   output="${output//$'\r'/}"
+  [ "${lines[0]//$'\r'/}" = "${B}$PROJ${R}" ]
   [[ "$output" == *$'\n'"  ${C}rev${R}     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13"$'\n'* ]]
   [[ "$output" == *$'\n'"  ${C}setup${R}   stopped   "* ]]
-  # nothing but the role names
+  # nothing but the role names and the project's line
   local plain="${output//$C/}"
+  plain="${plain//$B/}"
   plain="${plain//$R/}"
   [[ "$plain" != *$'\e'* ]]
   [ "$(grep -o $'\e\\[36m' <<<"$output" | wc -l)" -eq 5 ]
@@ -424,4 +427,199 @@ To resume: asb --role ROLE claude --continue"
   [ "$status" -eq 0 ]
   [[ "$output" == "$PROJ"$'\n'"  default   running (1 joined)   created "* ]]
   release_bg
+}
+
+# ----- --summarize (#314) --------------------------------------------------------------
+
+# summ_setup -- a stopped default role with one conversation, and a stub join that plays
+# the summarizing turn: it records its argv, then writes what a turn of the session its
+# --session-id names would -- the transcript, a directory of the same name, a prompt
+# history record -- into the role's transcripts stores, and the summary files
+# ($SUMM_LINE, empty for none; no description when $SUMM_NODESC is set). Exits $JOIN_EXIT.
+summ_setup() {
+  local slug="${PROJ//[^A-Za-z0-9-]/-}"
+  run_engine -- asb claude --version
+  CONV="$SBOX/transcripts/own/$(slugify "$H/home/.claude/projects/$slug")"
+  HIST="$SBOX/transcripts/own/$(slugify "$H/home/.claude/history.jsonl")"
+  [ -d "$CONV" ]
+  printf '%s\n' "$(user_rec 'the role at work' 2026-10-27T10:00:00Z)" >"$CONV/mine.jsonl"
+  printf '%s\n' '{"display":"the role at work","sessionId":"mine"}' >"$HIST"
+  # a python script: the engine runs its join through python3 (_as_python)
+  cat >"$H/bin/summ-join" <<STUB
+import os, sys
+with open(os.environ["JOIN_DUMP"], "w") as fh:
+    fh.writelines(a + "\\n" for a in sys.argv[1:])
+a = sys.argv[1:]
+if "--session-id" in a:
+    i = a[a.index("--session-id") + 1]
+    with open("$CONV/" + i + ".jsonl", "w") as fh:
+        fh.write('{"type":"user","sessionId":"%s"}\\n' % i)
+    os.makedirs("$CONV/" + i + "/subagents")
+    with open("$HIST", "a") as fh:
+        fh.write('{"display":"summarize","sessionId":"%s"}\\n' % i)
+    with open("$SBOX/summary/line", "w") as fh:
+        fh.write(os.environ.get("SUMM_LINE", "") + "\\n")
+    if not os.environ.get("SUMM_NODESC"):
+        with open("$SBOX/summary/description.md", "w") as fh:
+            fh.write("# What the role did\\n")
+sys.exit(int(os.environ.get("JOIN_EXIT", "0")))
+STUB
+  chmod +x "$H/bin/summ-join"
+}
+
+@test "--summarize runs one headless turn of a new session in the role's sandbox, then deletes its transcript (#314)" {
+  summ_setup
+  # A turn with its own prompt, as a --serve turn: no [briefing] start, so its file is
+  # not read -- a missing one refuses a launch, but not this turn.
+  printf '[briefing]\nstart = nosuch.md\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  run_engine -- asb claude -p hello
+  [[ "$output" == *"([briefing] start), which does not exist. Refusing"* ]]
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=$'Pinned CUDA \e[31min CI' -- asb --summarize claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default': summarizing in its sandbox, one headless turn"* ]]
+  # the turn: print mode, a fresh session id, no permission prompts, the engine's prompt last
+  local id="" i
+  for ((i = 0; i < ${#JOINV[@]}; i++)); do [[ "${JOINV[i]}" == --session-id ]] && id="${JOINV[i + 1]}"; done
+  [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+  [[ " ${JOINV[*]} " == *"/claude -p --session-id $id --permission-mode bypassPermissions You are asked "* ]]
+  # (the dump is one argument per line, and the prompt has several)
+  local j
+  j="$(cat "$H/join")"
+  [[ "$j" == *$'\n'"bypassPermissions"$'\n'"You are asked to summarize the work of this role"* ]]
+  [[ "$j" == *"the .jsonl files under "*"$H/home/.claude/projects/"*"This session is $id; its own $id.jsonl is not one of them"* ]]
+  [[ "$j" == *"/run/agent-sandbox/summary/line: one line"*"/run/agent-sandbox/summary/description.md: "*"Reply with the line only." ]]
+  # its transcript, its directory and its history record are gone; the role's own stay
+  [ ! -e "$CONV/$id.jsonl" ]
+  [ ! -e "$CONV/$id" ]
+  [ -s "$CONV/mine.jsonl" ]
+  [ "$(cat "$HIST")" = '{"display":"the role at work","sessionId":"mine"}' ]
+  # the new line, as text, and the description's host path
+  [[ "$output" == *"role 'default' summarized:"$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"* ]]
+  run_engine TZ=UTC -- asb --list
+  [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    # What the role did"$'\n'"To resume: "* ]]
+  run_engine TZ=UTC -- asb --list-all
+  [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"$'\n'* ]]
+}
+
+@test "--summarize needs no command when one profile is installed, takes no agent arguments, and is not combined with another verb (#314)" {
+  summ_setup
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=line -- asb --role default --summarize
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default' summarized:"* ]]
+  run_engine -- asb --summarize claude -r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--summarize takes no agent arguments"* ]]
+  local v
+  for v in --status --delete --shutdown --serve --list '--exec true'; do
+    # shellcheck disable=SC2086 # --exec and its command are two words
+    run_engine -- asb --summarize $v claude
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--summarize runs one turn in a stopped role's sandbox; it is not combined with"* ]]
+  done
+  [ ! -s "$H/join" ] # none of them ran a turn
+}
+
+@test "--summarize is refused while the role runs, naming --shutdown; for a role with no conversation; and under native (#314)" {
+  summ_setup
+  engine_bg -- asb claude --version
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" -- asb --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'default' is running; summarize it once it has stopped: asb --role default --shutdown claude"* ]]
+  release_bg
+  [ ! -s "$H/join" ]
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" -- asb --role fresh --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'fresh' has no conversation to summarize"* ]]
+  rm "$CONV/mine.jsonl" # a transcript with no user record is no conversation either
+  printf '{"type":"mode"}\n' >"$CONV/s.jsonl"
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" -- asb --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'default' has no conversation to summarize"* ]]
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" -- asb --preset native --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--summarize is refused under --preset native"* ]]
+  [ ! -s "$H/join" ]
+}
+
+@test "--summarize exits non-zero when the turn fails or leaves the line empty, and deletes the transcript all the same (#314)" {
+  summ_setup
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=line JOIN_EXIT=3 -- asb --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'default': the summarizing turn ended with status 3"* ]]
+  [[ "$output" != *"summarized:"* ]]
+  [ "$(find "$CONV" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ] # mine.jsonl alone
+  [ "$(wc -l <"$HIST")" -eq 1 ]
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE= -- asb --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'default': the turn left no new summary line in $SBOX/summary/line"* ]]
+  [ "$(find "$CONV" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]
+  # a description older than the turn is not the turn's; none at all is said too
+  touch -d '-1 hour' "$SBOX/summary/description.md"
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=new SUMM_NODESC=1 -- asb --summarize claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"    new"$'\n'"    description: not rewritten by this turn; $SBOX/summary/description.md is an older one"* ]]
+  rm "$SBOX/summary/description.md"
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=new SUMM_NODESC=1 -- asb --summarize claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"    new"$'\n'"    description: none written"* ]]
+  # nor is a line older than the turn
+  printf 'old\n' >"$SBOX/summary/line"
+  touch -d '-1 hour' "$SBOX/summary/line"
+  run_engine -- asb --summarize claude # the harness's own join stub writes nothing
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the turn left no new summary line"* ]]
+}
+
+@test "--list shows the description's first 5 non-blank lines, then its path when there is more; --list-all its path only; a link is not read (#314)" {
+  list_fixture
+  local sb d
+  sb="$(store_dir "$PROJ" own)"
+  d="$sb/summary/description.md"
+  printf '# x\n' >"$H/elsewhere.md"
+  ln -s "$H/elsewhere.md" "$d"
+  run_engine TZ=UTC -- asb --list
+  [[ "$output" != *"# x"* && "$output" != *"description"* ]]
+  rm "$d"
+  # short: shown whole, blank lines skipped, control characters dropped
+  printf '# Summary\n\n  Pinned \e[31mCUDA\n\t\nOpen: arm64\n' >"$d"
+  run_engine TZ=UTC -- asb --list
+  [[ "$output" == *$'\n'"    My own line"$'\n'"    # Summary"$'\n'"      Pinned [31mCUDA"$'\n'"    Open: arm64"$'\n'"To resume: "* ]]
+  [[ "$output" != *"description:"* ]]
+  # exactly 5: still whole
+  printf 'l1\nl2\n\nl3\nl4\nl5\n\n' >"$d"
+  run_engine TZ=UTC -- asb --list
+  [[ "$output" == *$'\n'"    My own line"$'\n'"    l1"$'\n'"    l2"$'\n'"    l3"$'\n'"    l4"$'\n'"    l5"$'\n'"To resume: "* ]]
+  # longer: the first 5, then the path
+  printf 'l1\nl2\n\nl3\nl4\nl5\nl6\nl7\n' >"$d"
+  run_engine TZ=UTC -- asb --list
+  [[ "$output" == *$'\n'"    l5"$'\n'"    full description: $d"$'\n'"To resume: "* ]]
+  [[ "$output" != *"l6"* ]]
+  # --list-all: the path, never the content
+  run_engine TZ=UTC -- asb --list-all
+  [[ "$output" == *$'\n'"    My own line"$'\n'"    description: $d"$'\n'* ]]
+  [[ "$output" != *"l1"* ]]
+  [ "$(grep -c 'description:' <<<"$output")" -eq 1 ]
+}
+
+@test "--list-all prints each project's line bold at a terminal, the slug line too; plain through a pipe (#314)" {
+  list_fixture
+  local sb
+  sb="$(store_dir /no/record r)"
+  conv "$sb" s "2026-10-20 08:00 UTC" "$(user_rec 'x' 2026-10-20T07:00:00Z)"
+  mkdir -p "$H/nowhere"
+  RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
+  [[ "$output" != *$'\e'* ]]
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC script -qec "$(printf "%q " "${@:4}") --list-all" /dev/null' _ "$H/nowhere" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  output="${output//$'\r'/}"
+  local B=$'\e[1m' R=$'\e[0m'
+  [[ "$output" == "${B}/elsewhere/other${R}"$'\n'* ]]
+  [[ "$output" == *$'\n'"${B}$PROJ${R}"$'\n'* ]]
+  [[ "$output" == *$'\n'"${B}-no-record  (the path is not recorded; this is the store's slug)${R}"$'\n'* ]]
+  [ "$(grep -o $'\e\\[1m' <<<"$output" | wc -l)" -eq 3 ]
+  [[ "$output" == *$'\n'"To resume: cd PROJECT_DIR && "*" --role ROLE claude --continue" ]] # plain
 }
