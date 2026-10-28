@@ -59,7 +59,9 @@
 # .agent-sandbox's [permissions] rules for this launch's role, in the agent's
 # own syntax, each once (a profile that reads none leaves them unapplied), and
 # _watch_path: the role's `[serve:ROLE] watch` (the inbox it keeps a watcher on),
-# relative to the project, empty without one and on a turn of --serve. A
+# relative to the project, empty without one and on a turn of --serve, and
+# _summary_line: where the session's summary line is inside (#314), empty when the
+# engine did not bind its directory (the briefing off, a keeper without it). A
 # profile must not touch the engine's bwrap argument list directly -- the
 # declarations above are the whole interface, so that the sandbox's isolation
 # guarantees stay reviewable in one place (the engine).
@@ -314,6 +316,13 @@ profile_telemetry_hosts() {
 # command carries AGENT_SANDBOX_WATCH=PATH, and state-hook.sh refuses once a turn that
 # ends with no inbox-wait running. Not in a print run (_claude_watch_ok).
 #
+# The summary rule (#314): where the engine bound the session's summary directory
+# (_summary_line, the engine's: the line's path inside), the Stop hook's command also
+# carries AGENT_SANDBOX_SUMMARY=PATH, and state-hook.sh refuses once a turn that ends
+# with the line missing, empty, or not newer than the turn's prompt. Not in a print run
+# either (_claude_watch_ok), a turn of --serve included: its turn is the run, and its
+# output is the user's.
+#
 # `/start`: for a role with a `[briefing] start` text (_start_text, the engine's), a
 # command whose body is that text, so that after `/clear` at the role's terminal
 # `/start` runs it as a turn -- the watcher re-armed, the inbox read -- without a
@@ -365,6 +374,12 @@ profile_briefing_args() {
     printf -v q '%q' "$_watch_path"
     q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
     watch_env="AGENT_SANDBOX_WATCH=$q "
+  fi
+  # shellcheck disable=SC2154 # _summary_line: the engine's, by dynamic scope
+  if [[ -n "${_summary_line:-}" ]] && _claude_watch_ok "$@"; then
+    printf -v q '%q' "$_summary_line"
+    q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
+    watch_env+="AGENT_SANDBOX_SUMMARY=$q "
   fi
   for ev in "${state_events[@]}"; do
     if [[ "$ev" == Stop ]]; then
@@ -460,16 +475,21 @@ _claude_start_ok() {
   return 0
 }
 
-# profile_check_notes -- engine hook: the line --check prints for a role with a watch
-# path, what the Stop hook does about it (profile_briefing_args).
+# profile_check_notes -- engine hook: the lines --check prints for a role with a watch
+# path, and for a session with a summary line: what the Stop hook does about each
+# (profile_briefing_args).
 profile_check_notes() {
-  [[ -n "${_watch_path:-}" ]] || return 0
-  printf 'watcher: a turn does not end while %s has no watcher running (the Stop hook refuses once)\n' "$_watch_path"
+  [[ -z "${_watch_path:-}" ]] \
+    || printf 'watcher: a turn does not end while %s has no watcher running (the Stop hook refuses once)\n' "$_watch_path"
+  [[ -z "${_summary_line:-}" ]] \
+    || printf 'summary: a turn does not end until the session'"'"'s summary line is newer than its prompt (the Stop hook refuses once)\n'
+  return 0
 }
 
 # _claude_watch_ok [AGENT ARGS...] -- may the Stop hook refuse a turn that ends without
-# the role's watcher? Not in a print run (-p): its turn is the run, which ends with it,
-# and a watcher armed there would die with it. Words after a `--` are not Claude Code's.
+# the role's watcher, or without a current summary line? Not in a print run (-p): its
+# turn is the run, which ends with it, and a watcher armed there would die with it.
+# Words after a `--` are not Claude Code's.
 _claude_watch_ok() {
   local a
   for a in "$@"; do

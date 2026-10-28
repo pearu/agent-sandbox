@@ -557,3 +557,15 @@ PY2
   [[ "$output" == *$'\n'"  warning — role 'default': the host replaced $bundle"*"--shutdown --profile probe"* ]]
   release a
 }
+
+@test "the session's summary line (#314): the role's summary/ is writable inside, under the read-only briefing, and a join writes the same line" {
+  bg_sandboxed a "${BASE[@]}" -- --profile probe --exec sh -c "echo from-a >/run/agent-sandbox/summary/line; touch /run/agent-sandbox/x 2>a.ro || echo refused >>a.ro; $(hold a)"
+  [ "$(cat "$SB/summary/line")" = from-a ]
+  grep -q refused "$IWORK/a.ro" # the briefing directory around it stays read-only
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec sh -c 'cat /run/agent-sandbox/summary/line >b.saw; echo from-b >/run/agent-sandbox/summary/line'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/b.saw")" = from-a ]
+  [ "$(cat "$SB/summary/line")" = from-b ] # one line per role: the last writer wins
+  release a
+  wait "$BG_PID"
+}

@@ -235,7 +235,11 @@ Sections:
   that what a session hands you to run is one line or a file -- the CLI prefixes
   every line of a reply, so a pasted heredoc or patch breaks -- and where its
   writable stores are on the host, a `copy-on-write` project's layer included, and that a
-  file it names for you to read or open is named by its host path. It lists
+  file it names for you to read or open is named by its host path. Every session
+  is also told to keep a one-line summary of itself current in
+  `/run/agent-sandbox/summary/line`, the role store's `summary/` bound read-write
+  (`<store>/summary/line` on the host), which `asb --list` shows; the claude profile's
+  `Stop` hook holds a turn's end until the line is newer than the turn's prompt. It lists
   names and paths only, never the contents of anything shared. Turning it off
   grants and hides nothing; it only stops the sandbox describing itself.
   If you pass your own `--settings`, the two are merged (Claude Code honours

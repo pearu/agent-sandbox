@@ -355,6 +355,80 @@ ST='{"id":"bsy1vrv0j","type":"shell","status":"running","description":"Sleep 90 
   python3 -I -c 'import json, sys; assert json.loads(sys.argv[1])["reason"].startswith("agent-sandbox: your watcher on in \"x\\y.md is not running")' "$output"
 }
 
+@test "state-hook.sh: the summary rule (#314) -- UserPromptSubmit stamps the prompt per session; Stop refuses once while the line is missing, empty or older; never with stop_hook_active or without AGENT_SANDBOX_SUMMARY" {
+  local L="$BATS_TEST_TMPDIR/line" T="$BATS_TEST_TMPDIR/agent-sandbox-prompt.sess-1"
+  local why="agent-sandbox: write this session's one-line summary to $L -- what the session is about and where it stands, one line, rewritten whenever that changes -- then end your turn; do not mention it to the user."
+  # the stamp: per session id, beside the state file, whether or not the rule is on
+  hook UserPromptSubmit off '{"session_id":"sess-1","prompt":"go"}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -f "$T" ]
+  [ "$(cat "$S")" = working ]
+  hook UserPromptSubmit off '{"session_id":"sess-2"}'
+  [ -f "$BATS_TEST_TMPDIR/agent-sandbox-prompt.sess-2" ]
+  # missing: refused, as one JSON object, the state written as without the rule
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-1","stop_hook_active":false}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "{\"decision\":\"block\",\"reason\":\"$why\"}" ]
+  python3 -I -c 'import json, sys; m = json.loads(sys.argv[1]); assert m == {"decision": "block", "reason": sys.argv[2]}, m' "$output" "$why"
+  [ "$(cat "$S")" = idle ]
+  # already continuing because of a Stop hook: never a second refusal
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-1","stop_hook_active": true}'
+  [ -z "$output" ]
+  # empty: refused
+  : >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-1"}'
+  [ "$output" = "{\"decision\":\"block\",\"reason\":\"$why\"}" ]
+  # older than the prompt: refused; newer: the turn ends
+  printf 'Fixing the CI pin\n' >"$L"
+  touch -d '-1 minute' "$L"
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-1"}'
+  [ "$output" = "{\"decision\":\"block\",\"reason\":\"$why\"}" ]
+  touch -d '+1 second' "$L"
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-1"}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # the stamp is the session's own: a newer prompt of sess-1 makes the line old again,
+  # while sess-2's older stamp does not
+  touch -d '+2 seconds' "$T"
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-1"}'
+  [[ "$output" == *'"decision":"block"'* ]]
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-2"}'
+  [ -z "$output" ]
+  # no stamp (no prompt seen: a resumed session's first Stop): only a missing or empty line
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"sess-3"}'
+  [ -z "$output" ]
+  AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{}'
+  [ -z "$output" ]
+  AGENT_SANDBOX_SUMMARY="$BATS_TEST_TMPDIR/none" hook Stop off '{"session_id":"sess-3"}'
+  [[ "$output" == *'"decision":"block"'* ]]
+  # without the variable (a print run, the briefing off): nothing
+  rm -f "$L"
+  hook Stop off '{"session_id":"sess-1"}'
+  [ -z "$output" ]
+  AGENT_SANDBOX_SUMMARY='' hook Stop off '{"session_id":"sess-1"}'
+  [ -z "$output" ]
+  # only Stop refuses
+  AGENT_SANDBOX_SUMMARY="$L" hook SessionStart
+  [ -z "$output" ]
+}
+
+@test "state-hook.sh: a Stop that fails the watcher rule and the summary rule is refused once, naming both" {
+  local L="$BATS_TEST_TMPDIR/line"
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"s"}'
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  local why="agent-sandbox: your watcher on .asb/coord/to/planner-1.md is not running; arm it as your purpose file says (the Bash tool, run_in_background: true); write this session's one-line summary to $L -- what the session is about and where it stands, one line, rewritten whenever that changes -- then end your turn; do not mention it to the user."
+  python3 -I -c 'import json, sys; m = json.loads(sys.argv[1]); assert m == {"decision": "block", "reason": sys.argv[2]}, m' "$output" "$why"
+  # the line written: the watcher's refusal alone, as without the summary rule
+  printf 'x\n' >"$L"
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md AGENT_SANDBOX_SUMMARY="$L" hook Stop off '{"session_id":"s"}'
+  [ "$output" = '{"decision":"block","reason":"agent-sandbox: your watcher on .asb/coord/to/planner-1.md is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn."}' ]
+  # a path with a quote and a backslash is a JSON string still
+  AGENT_SANDBOX_SUMMARY='in "x\y' hook Stop off '{}'
+  python3 -I -c 'import json, sys; assert "summary to in \"x\\y -- what" in json.loads(sys.argv[1])["reason"]' "$output"
+}
+
 @test "statusline.sh: a bar as wide as Claude Code lets it be, in reverse video -- working and running yellow, waiting green, asks you blue, needs you blue and bold, idle grey" {
   local B=$'\e[1m' R=$'\e[0m'
   COLUMNS=100 run bash "$P/statusline.sh" planner-1 "$S" </dev/null

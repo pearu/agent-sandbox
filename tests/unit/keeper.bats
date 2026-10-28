@@ -321,6 +321,30 @@ STUB
   release_bg
 }
 
+@test "keeper start makes the role's summary directory; a join's Stop hook has the summary rule only where its keeper bound that directory (#314)" {
+  engine_bg -- asb claude --version
+  [ -d "$SBOX/summary" ]
+  local sess
+  sess="$(cat "$SBOX/keeper/session")"
+  [ -d "$sess/briefing/summary" ]
+  cat >"$H/bin/join-stub.py" <<'STUB'
+import glob, os, shutil, sys
+for f in glob.glob(os.environ["SESS"] + "/briefing/join.*/settings.json"):
+    shutil.copy(f, os.environ["SNAP"])
+STUB
+  run_engine SESS="$sess" SNAP="$H/snap.json" -- asb claude --continue
+  [ "$status" -eq 0 ]
+  grep -qE '"AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/join\.[0-9]+/state-hook\.sh Stop off"' "$H/snap.json"
+  # a keeper started without the bind (an older engine's): no rule for its joins
+  rmdir "$sess/briefing/summary"
+  rm -f "$H/snap.json"
+  run_engine SESS="$sess" SNAP="$H/snap.json" -- asb claude --continue
+  [ "$status" -eq 0 ]
+  grep -q 'state-hook.sh Stop' "$H/snap.json"
+  run ! grep -q AGENT_SANDBOX_SUMMARY "$H/snap.json"
+  release_bg
+}
+
 @test "different roles are different keepers" {
   engine_bg -- asb --role one claude --version
   run_engine -- asb --role two --preset isolated claude --version

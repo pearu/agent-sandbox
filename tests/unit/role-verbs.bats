@@ -269,7 +269,7 @@ list_fixture() {
     no conversation
   own     stopped   created 2026-10-22 09:00   active 2026-10-22 10:00
     My own line
-  resume: cd $PROJ && asb --role ROLE claude --continue"
+To resume: asb --role ROLE claude --continue"
   [ "$output" = "$want" ]
   [ ! -s "$H/argv" ] # nothing launched
 }
@@ -282,9 +282,11 @@ list_fixture() {
   [ "${lines[0]}" = /elsewhere/other ]
   [ "${lines[1]}" = "  gh-x   stopped   created 2026-10-27 07:00   active 2026-10-27 08:00" ]
   [ "${lines[2]}" = "    other project" ]
-  [ "${lines[3]}" = "  resume: cd /elsewhere/other && asb --role ROLE claude --continue" ]
-  [ "${lines[4]}" = "$PROJ" ]
+  [ "${lines[3]}" = "$PROJ" ]
   [[ "$output" == *"CUDA version pinned in CI"* ]]
+  # one resume line, at the very end, for every project
+  [ "${lines[-1]}" = "To resume: cd PROJECT_DIR && asb --role ROLE claude --continue" ]
+  [ "$(grep -c 'resume' <<<"$output")" -eq 1 ]
   RUN_CWD="$H/nowhere" run_engine -- asb --list
   [ "$output" = "asb --list: no role of this project has stores" ]
 }
@@ -301,9 +303,9 @@ list_fixture() {
   [ "$status" -eq 0 ]
   [[ "$output" == *$'\n'"/p/one"$'\n'* || "$output" == "/p/one"$'\n'* ]]
   [[ "$output" != *WRONG* ]]
-  [[ "$output" == *"cd /p/two && asb --role ROLE claude --continue"* ]]
+  [[ "$output" == *$'\n'"/p/two"$'\n'* || "$output" == "/p/two"$'\n'* ]]
   [[ "$output" == *"-p-three  (the path is not recorded; this is the store's slug)"$'\n'"  r3 "* ]]
-  [[ "$output" == *"resume: from the project's directory: asb --role ROLE claude --continue"* ]]
+  [ "${lines[-1]}" = "To resume: cd PROJECT_DIR && asb --role ROLE claude --continue" ]
 }
 
 @test "--list WORD keeps the roles whose name, summary or conversations mention it" {
@@ -358,6 +360,55 @@ list_fixture() {
   [[ "$output" == "$PROJ"$'\n'"  via-link "* ]]
 }
 
+@test "--list colours role names cyan at a terminal, nothing else; plain through a pipe and with NO_COLOR (#314)" {
+  list_fixture
+  # through a pipe (run captures it): plain
+  run_engine TZ=UTC -- asb --list
+  [ "$status" -eq 0 ]
+  [[ "$output" != *$'\e'* ]]
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
+  engine_cmd
+  local C=$'\e[36m' R=$'\e[0m'
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC script -qec "$(printf "%q " "${@:4}") --list" /dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  output="${output//$'\r'/}"
+  [[ "$output" == *$'\n'"  ${C}rev${R}     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13"$'\n'* ]]
+  [[ "$output" == *$'\n'"  ${C}setup${R}   stopped   "* ]]
+  # nothing but the role names
+  local plain="${output//$C/}"
+  plain="${plain//$R/}"
+  [[ "$plain" != *$'\e'* ]]
+  [ "$(grep -o $'\e\\[36m' <<<"$output" | wc -l)" -eq 5 ]
+  [[ "$output" == *$'\n'"To resume: "*" --role ROLE claude --continue" ]] # as the engine was invoked
+  # NO_COLOR at the terminal: plain
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" NO_COLOR=1 script -qec "$(printf "%q " "${@:4}") --list" /dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  rev "* && "$output" != *$'\e'* ]]
+}
+
+@test "--list prints the session's own line as text: no control characters, and never through a link or a FIFO (#314)" {
+  local sb
+  sb="$(store_dir "$PROJ" esc)"
+  conv "$sb" s "2026-10-22 10:00 UTC" "$(user_rec 'hello' 2026-10-22T09:00:00Z)" '{"type":"ai-title","aiTitle":"The title"}'
+  mkdir -p "$sb/summary"
+  printf 'Fixing \e]0;owned\a the \e[31mpin\xc2\x9b\n' >"$sb/summary/line" # ESC, BEL, a C1 CSI
+  run_engine -- asb --list
+  [ "$status" -eq 0 ]
+  [[ "${lines[1]}" == "  esc   stopped   "* ]]
+  [ "${lines[2]}" = "    Fixing ]0;owned the [31mpin" ]
+  printf 'secret first line\n' >"$H/secret"
+  ln -sf "$H/secret" "$sb/summary/line.tmp" && mv -f "$sb/summary/line.tmp" "$sb/summary/line"
+  run_engine -- asb --list
+  [ "$status" -eq 0 ]
+  [ "${lines[2]}" = "    The title" ]
+  rm -f "$sb/summary/line"
+  mkfifo "$sb/summary/line"
+  # shellcheck disable=SC2016 # the inner shell's own arguments
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --list' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [ "${lines[2]}" = "    The title" ]
+}
+
 @test "--list-all with no stores at all says so in one line" {
   run_engine -- asb --list-all
   [ "$status" -eq 0 ]
@@ -367,6 +418,7 @@ list_fixture() {
 @test "a launch writes the project's path into its store, and --list shows a running role" {
   run_engine -- asb claude --version
   [ "$(cat "$SBOX/project")" = "$PROJ" ]
+  [ -d "$SBOX/summary" ] # the session's own line's directory (#314)
   engine_bg -- asb claude --version
   run_engine -- asb --list
   [ "$status" -eq 0 ]

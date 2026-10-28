@@ -45,6 +45,16 @@
 # and a second refusal would loop on a condition the model did not fix. The state file
 # is written as without the rule.
 #
+# THE SUMMARY RULE (#314). Every UserPromptSubmit stamps the prompt's time: it truncates
+# agent-sandbox-prompt.SESSION_ID (the stdin JSON's session_id) beside STATE, in /tmp,
+# whether or not the rule is on. With AGENT_SANDBOX_SUMMARY set -- the profile sets it in the Stop hook's
+# command to the session's summary line, where the engine bound its directory, not in a
+# print run -- a Stop is refused once when that file is missing, empty, or not newer
+# than the stamp (`-nt`: nanosecond mtimes, at the kernel's clock tick); without a stamp
+# (no prompt seen, a resumed session's first Stop) only when it is missing or empty. Not
+# when stop_hook_active is true, as above. A Stop that fails both rules is refused once,
+# naming both: one JSON object per hook output.
+#
 # STATE (default /tmp/agent-sandbox-state; /tmp is the sandbox's own tmpfs) is
 # written by rename, so the status line never reads half a file.
 #
@@ -60,6 +70,8 @@ set -u
 event="${1:-}"
 background="${2:-off}"
 statef="${3:-/tmp/agent-sandbox-state}"
+stampd="${statef%/*}"
+[[ "$statef" == */* ]] || stampd=.
 
 # jlast KEY [N] -- the last N (default 1) lines of the last JSON string value of KEY on
 # stdin, unescaped (\n, \t, \", \\), a line each, trailing whitespace stripped; lines
@@ -190,15 +202,48 @@ running() {
   return 1
 }
 
-# refuse -- print the Stop refusal for the watch path in AGENT_SANDBOX_WATCH, a JSON
-# string (backslash, quote and control characters escaped).
-refuse() {
-  local w="$AGENT_SANDBOX_WATCH"
+# jstr S -- S as the inside of a JSON string (backslash, quote and control characters).
+jstr() {
+  local w="$1"
   w="${w//\\/\\\\}" w="${w//\"/\\\"}" w="${w//[[:cntrl:]]/ }"
-  printf '{"decision":"block","reason":"agent-sandbox: your watcher on %s is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn."}\n' "$w"
+  printf '%s' "$w"
 }
 
-state="" block=0
+# sid -- the stdin JSON's session_id (in $input), when it looks like one.
+sid() {
+  local re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_-]+)"'
+  [[ "$input" =~ $re ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# stale -- whether the summary line in AGENT_SANDBOX_SUMMARY is missing, empty, or not
+# newer than this session's prompt stamp (when there is one).
+stale() {
+  local f="$AGENT_SANDBOX_SUMMARY" s stamp
+  [[ -s "$f" ]] || return 0
+  s="$(sid)" || return 1
+  stamp="$stampd/agent-sandbox-prompt.$s"
+  [[ -e "$stamp" ]] || return 1
+  [[ ! "$f" -nt "$stamp" ]]
+}
+
+# refuse WATCH SUMMARY -- print the one Stop refusal: for the watch path in
+# AGENT_SANDBOX_WATCH when WATCH is 1, for the summary line in AGENT_SANDBOX_SUMMARY when
+# SUMMARY is 1, both in one reason when both are.
+refuse() {
+  local r="agent-sandbox:"
+  (($1)) && r+=" your watcher on $(jstr "$AGENT_SANDBOX_WATCH") is not running; arm it as your purpose file says (the Bash tool, run_in_background: true)"
+  (($1 && $2)) && r+=";"
+  (($2)) && r+=" write this session's one-line summary to $(jstr "$AGENT_SANDBOX_SUMMARY") -- what the session is about and where it stands, one line, rewritten whenever that changes"
+  if (($2)); then
+    r+=" -- then end your turn; do not mention it to the user"
+  else
+    r+=", then end your turn"
+  fi
+  printf '{"decision":"block","reason":"%s."}\n' "$r"
+}
+
+state="" block=0 bsum=0
 case "$event" in
   SessionStart) if watching; then state=waiting; else state=idle; fi ;;
   Stop)
@@ -215,9 +260,19 @@ case "$event" in
       state=idle
     fi
     re='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
-    [[ -n "${AGENT_SANDBOX_WATCH:-}" ]] && ((! w)) && [[ ! "$input" =~ $re ]] && block=1
+    if [[ ! "$input" =~ $re ]]; then
+      [[ -n "${AGENT_SANDBOX_WATCH:-}" ]] && ((! w)) && block=1
+      [[ -n "${AGENT_SANDBOX_SUMMARY:-}" ]] && stale && bsum=1
+    fi
     ;;
-  UserPromptSubmit | PostToolUse | PostToolUseFailure) state=working ;;
+  UserPromptSubmit)
+    state=working
+    input="$(head -c 65536 2>/dev/null)" || input=""
+    if s="$(sid)"; then
+      : >"$stampd/agent-sandbox-prompt.$s" 2>/dev/null
+    fi
+    ;;
+  PostToolUse | PostToolUseFailure) state=working ;;
   PermissionRequest) state="needs you" ;;
   Notification)
     input="$(head -c 65536 2>/dev/null)" || input=""
@@ -237,7 +292,7 @@ if [[ -n "$state" ]]; then
   { printf '%s\n' "$state" >"$tmp" && mv -f -- "$tmp" "$statef"; } 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
 fi
 
-((block)) && refuse
+((block || bsum)) && refuse "$block" "$bsum"
 
 [[ "$background" == on ]] || exit 0
 case "$event:$state" in

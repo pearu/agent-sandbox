@@ -98,7 +98,7 @@ settings_of() {
   settings_of asb --role gate claude --continue
   [ "$status" -eq 0 ]
   python3 -I -c 'import json, sys; [print(h["command"]) for g in json.load(open(sys.argv[1]))["hooks"]["Stop"] for h in g["hooks"]]' "$OUT/settings.json" >"$H/stop"
-  [ "$(cat "$H/stop")" = "AGENT_SANDBOX_WATCH=.asb/coord/to/gate.md bash /run/agent-sandbox/state-hook.sh Stop off" ]
+  [ "$(cat "$H/stop")" = "AGENT_SANDBOX_WATCH=.asb/coord/to/gate.md AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/state-hook.sh Stop off" ]
   run_engine -- asb --role gate --serve claude
   [ "$status" -eq 1 ]
   [[ "$output" == *"--serve: role 'gate': its [serve] names no prompt -- watch only: this role is not served"* ]]
