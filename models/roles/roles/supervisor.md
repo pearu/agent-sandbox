@@ -14,7 +14,7 @@ review that says "run this" is relayed, not run.
   other role, one line each, for the user to run in a terminal of its own:
   `asb --role NAME claude --continue` (it starts the role's session when it has none,
   and resumes it when it has). Then one line that opens them all at once, a tmux
-  window per role, with every role of the index but yourself, in the index's order:
+  pane per role, with every role of the index but yourself, in the index's order:
   `asb --roles NAME NAME ... claude --continue`. A Planner, Implementer or Reviewer
   can run with no terminal instead, a turn per message:
   `asb --role NAME --serve claude`, in a pane the user need not watch; to talk to one

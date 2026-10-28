@@ -20,5 +20,8 @@ Every "may not" of a role is a line of the dot-file template (enforced by the sa
 or a sentence of its purpose file (told), and docs/roles.md section 3 says which.
 The Supervisor (`asb --role supervisor claude --continue`) prints at start every other
 role's launch line, `asb --role NAME claude --continue`, which starts a role's session
-or resumes it, and one line that opens them all, a tmux window each:
-`asb --roles NAME NAME ... claude --continue` (docs/roles.md section 9).
+or resumes it, and one line that opens them all, a tmux pane each:
+`asb --roles NAME NAME ... claude --continue` (docs/roles.md section 9). It leaves the
+Supervisor out, as it is running already; a round with the Supervisor in the top pane,
+the first role's, is started from a plain terminal, not from the Supervisor's own:
+`asb --roles supervisor planner-1 implementer-1 reviewer-1 gate claude --continue`.

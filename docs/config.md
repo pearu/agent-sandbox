@@ -812,8 +812,8 @@ name comes from `--role`, then `AGENT_SANDBOX_ROLE`, then `[sandbox] role` in
 this file, else `default`. A name is a letter or digit followed by letters,
 digits, `.`, `_` or `-`, at most 200 characters; `--role default` is the same as
 no `--role`.
-`asb --roles impl-1 rev-1 claude` runs several roles at once, a tmux window
-each, every one a launch of its own (`asb --role impl-1 claude`, ...); see
+`asb --roles impl-1 rev-1 claude` runs several roles at once, a tmux pane
+each, the first on top, every one a launch of its own (`asb --role impl-1 claude`, ...); see
 [roles.md](roles.md#9-one-round-terminal-by-terminal).
 
 What a role gets comes from **role-suffixed sections**:

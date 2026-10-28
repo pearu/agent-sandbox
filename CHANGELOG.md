@@ -47,18 +47,22 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
-- **`asb --roles ROLE... [OPTIONS] CMD [AGENT OPTIONS]`: one tmux session with a window
-  per role** (#317). The session is named after the project directory; each window is
-  named by its role, starts in the project and runs `asb --role ROLE` with the rest of
-  the command line, then drops to a shell when its launch ends. The roles end at the
-  first word that starts with `-` or names a profile. The dot-file review runs once,
-  in the terminal that runs `--roles`, before the windows open; then it attaches, or,
-  not at a terminal, prints the attach command. A session of that name already open is
-  refused, naming `tmux attach -t NAME` and `tmux kill-session -t NAME`; so are
-  `--role`, a verb, `--exec`, a review and a sandbox. tmux is the host's, else the
-  tools env's: `install.sh` now installs `gh` and `tmux` there by default. The roles
-  model's Supervisor prints the one line besides the per-role ones, and every launch
-  line says `claude --continue`, which starts a session or resumes it.
+- **`asb --roles ROLE... [OPTIONS] CMD [AGENT OPTIONS]`: one tmux session with a pane
+  per role** (#317, #320), five to a window: in each window the first role has the top
+  pane, full width and half the height, and the others share the bottom half in one
+  row; a sixth role starts the next window, laid out the same way. The session is named
+  after the project directory; a window is named by its first role, a pane's border
+  shows its role, and each pane starts in the project and runs `asb --role ROLE` with
+  the rest of the command line, then drops to a shell when its launch ends. The roles
+  end at the first word that starts with `-` or names a profile. The dot-file review
+  runs once, in the terminal that runs `--roles`, before the panes open; then it
+  attaches with the first window's top pane active, or, not at a terminal, prints the
+  attach command. A session of that name already open is refused, naming
+  `tmux attach -t NAME` and `tmux kill-session -t NAME`; so are `--role`, a verb,
+  `--exec`, a review and a sandbox. tmux is the host's, else the tools env's:
+  `install.sh` now installs `gh` and `tmux` there by default. The roles model's
+  Supervisor prints the one line besides the per-role ones, and every launch line says
+  `claude --continue`, which starts a session or resumes it.
 - **`asb --list [WORD]` and `asb --list-all [WORD]`: the role sessions you can resume**
   (#314): one block per project -- this one's, or every project's from any directory --
   and in it one entry per role store, newest activity first: running or stopped,

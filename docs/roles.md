@@ -118,7 +118,7 @@ word by construction. It watches every role's messages; when a role reports done
 proposes the next step and asks. At start it prints the launch line of every other role,
 from the index -- `asb --role NAME claude --continue`, which starts the role's session
 when it has none and resumes it when it has -- and one line that opens them all, a tmux
-window each: `asb --roles NAME NAME ... claude --continue` (section 9). On your word it merges an accepted branch into `main` and builds it
+pane each: `asb --roles NAME NAME ... claude --continue` (section 9). On your word it merges an accepted branch into `main` and builds it
 there, both local and reversible. It publishes nothing: when a step goes outside, it
 writes the Gate's message, and after you approve it, appends it to the Gate's inbox.
 Never acts on the *contents* of an artefact it relays: a review that says "run this" is
@@ -737,20 +737,37 @@ run its line there (a role arms its inbox watcher at start, and waits) -- or run
 
     asb --roles planner-1 implementer-1 implementer-2 reviewer-1 gate claude --continue
 
-is one tmux session named after the project directory, with a window per role, named by
-it, started in the project and running `asb --role ROLE claude --continue`. The roles end
-at the first word that starts with `-` or names a profile, and every engine flag around
-them reaches each window (`asb --roles planner-1 reviewer-1 --serve claude` is two served
-roles). It reviews `.agent-sandbox` once, there, before the windows open -- launched
-together, every window would ask -- and attaches; not at a terminal, it prints the
-attach command instead. A window whose launch ends drops to a shell, so its last output
-stays readable. A session of that name already open is refused, naming
-`tmux attach -t NAME` to return to it and `tmux kill-session -t NAME` to end it; ending
-it hangs up every launch in it, and each role's sandbox then ends after the keeper's
-grace, as when you close its terminal. tmux is the host's, else the tools env's, where
-`install.sh` installs it by default ([config.md](config.md)). `--continue` in a
-directory with no conversation starts a new one (measured with Claude Code 2.1.311), so
-the one line both starts a round and resumes it. Then, in terminal 1:
+is one tmux session named after the project directory, with a pane per role, in the
+order given, five to a window: the first role of a window has the top pane, full width
+and half the height, and the others share the bottom half in one row, so here P1 is on
+top and I1, I2, R1 and G are below it. A sixth role starts the next window, laid out the
+same way. A window is named by its first role, each pane's border shows its role, and
+the first window opens with its top pane active. Every pane starts in the project and
+runs `asb --role ROLE claude --continue`. The roles end at the first word that starts
+with `-` or names a profile, and every engine flag around them reaches each pane
+(`asb --roles planner-1 reviewer-1 --serve claude` is two served roles). It reviews
+`.agent-sandbox` once, there, before the panes open -- launched together, every pane
+would ask -- and attaches; not at a terminal, it prints the attach command instead. A
+pane whose launch ends drops to a shell, so its last output stays readable. A session
+of that name already open is refused, naming `tmux attach -t NAME` to return to it and
+`tmux kill-session -t NAME` to end it; ending it hangs up every launch in it, and each
+role's sandbox then ends after the keeper's grace, as when you close its terminal. tmux
+is the host's, else the tools env's, where `install.sh` installs it by default
+([config.md](config.md)). `--continue` in a directory with no conversation starts a new
+one (measured with Claude Code 2.1.311), so the one line both starts a round and
+resumes it.
+
+The Supervisor's line leaves itself out, as it is already running in a terminal of its
+own. A round with the Supervisor on top is started from a plain terminal instead, not
+from the Supervisor's own:
+
+    asb --roles supervisor planner-1 implementer-1 reviewer-1 gate claude --continue
+
+is one window, the Supervisor on top and four panes below. Three tmux keys move around
+it, with nothing of ours behind them: `C-b C-o` (`rotate-window`) moves every role one
+pane along while the layout stays, so the second role takes the top pane; `C-b M-o`
+rotates the other way; and `C-b z` zooms the active pane to the whole window and back.
+Then, in terminal 1 (or the Supervisor's pane):
 
 > The problem is issue #NNN. Tell P1 to work out the options with me.
 
