@@ -368,7 +368,7 @@ stop_cmds() {
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  [[ "$output" == *$'\n'"  summary: a turn does not end until the session's summary line is newer than its prompt (the Stop hook refuses once)"$'\n'* ]]
+  [[ "$output" == *$'\n'"  summary: a turn does not end while the session's summary line is missing or empty (the Stop hook refuses once)"$'\n'* ]]
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_BRIEFING=off "${@:4}" --check 2>&1 </dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" != *"summary:"* ]]

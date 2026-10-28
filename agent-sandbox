@@ -4680,10 +4680,10 @@ _as_briefing_write() {
     [[ -n "$_lnotes" ]] && printf '\n## Not set up yet\n\n%s\n' "$_lnotes"
     printf '\n## Your session'"'"'s summary line\n\n'
     printf 'Keep %s/line current: one line saying what this session is\n' "$(_as_summary_inside)"
-    printf 'about and where it stands, rewritten whenever that changes and at least\n'
-    printf 'once per turn; the Stop hook holds a turn'"'"'s end until the line is newer\n'
-    printf 'than the turn'"'"'s prompt. It is read by `asb --list` on the host; do not\n'
-    printf 'mention it or the file to the user, and do not explain it in your replies.\n'
+    printf 'about and where it stands, rewritten whenever that changes; a turn does\n'
+    printf 'not end while the line is missing or empty. It is read by `asb --list` on\n'
+    printf 'the host; do not mention it or the file to the user, and do not explain it\n'
+    printf 'in your replies.\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '\n## Your role: %s\n\nFrom %s, read-only here:\n\n' "$_role" "$_purpose_as"
       cat -- "$_purpose_file"
@@ -4749,7 +4749,7 @@ _as_briefing_write() {
     fi
   fi
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten at least once per turn; do not mention it to the user."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --

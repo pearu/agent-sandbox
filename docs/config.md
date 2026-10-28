@@ -239,7 +239,7 @@ Sections:
   is also told to keep a one-line summary of itself current in
   `/run/agent-sandbox/summary/line`, the role store's `summary/` bound read-write
   (`<store>/summary/line` on the host), which `asb --list` shows; the claude profile's
-  `Stop` hook holds a turn's end until the line is newer than the turn's prompt. `asb
+  `Stop` hook holds a turn's end while the line is missing or empty. `asb
   --role R --summarize claude` rewrites a stopped role's line from all its conversations
   in one headless turn, with a description beside it (`<store>/summary/description.md`). It lists
   names and paths only, never the contents of anything shared. Turning it off

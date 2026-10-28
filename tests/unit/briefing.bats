@@ -883,9 +883,9 @@ start_project() {
   local md="$OUT/briefing.md"
   grep -qxF "## Your session's summary line" "$md"
   grep -qxF "Keep $IN/summary/line current: one line saying what this session is" "$md"
-  grep -qxF "than the turn's prompt. It is read by \`asb --list\` on the host; do not" "$md"
-  grep -qxF 'mention it or the file to the user, and do not explain it in your replies.' "$md"
-  grep -qF "Keep $IN/summary/line current, one line on what this session is about and where it stands, rewritten at least once per turn; do not mention it to the user." "$OUT/hook-SessionStart.json"
+  grep -qxF "not end while the line is missing or empty. It is read by \`asb --list\` on" "$md"
+  grep -qxF 'the host; do not mention it or the file to the user, and do not explain it' "$md"
+  grep -qF "Keep $IN/summary/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user." "$OUT/hook-SessionStart.json"
   # engine-owned, not a hand-over place: not in the list of where the user reaches files
   # shellcheck disable=SC2016 # the inner shell's own $1
   run ! bash -c 'sed -n "/^## Handing the user/,/^## Other projects/p" "$1" | grep -q summary' _ "$md"

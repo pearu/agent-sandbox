@@ -319,9 +319,8 @@ profile_telemetry_hosts() {
 # The summary rule (#314): where the engine bound the session's summary directory
 # (_summary_line, the engine's: the line's path inside), the Stop hook's command also
 # carries AGENT_SANDBOX_SUMMARY=PATH, and state-hook.sh refuses once a turn that ends
-# with the line missing, empty, or not newer than the turn's prompt. Not in a print run
-# either (_claude_watch_ok), a turn of --serve included: its turn is the run, and its
-# output is the user's.
+# with the line missing or empty. Not in a print run either (_claude_watch_ok), a turn
+# of --serve included: its turn is the run, and its output is the user's.
 #
 # `/start`: for a role with a `[briefing] start` text (_start_text, the engine's), a
 # command whose body is that text, so that after `/clear` at the role's terminal
@@ -482,12 +481,12 @@ profile_check_notes() {
   [[ -z "${_watch_path:-}" ]] \
     || printf 'watcher: a turn does not end while %s has no watcher running (the Stop hook refuses once)\n' "$_watch_path"
   [[ -z "${_summary_line:-}" ]] \
-    || printf 'summary: a turn does not end until the session'"'"'s summary line is newer than its prompt (the Stop hook refuses once)\n'
+    || printf 'summary: a turn does not end while the session'"'"'s summary line is missing or empty (the Stop hook refuses once)\n'
   return 0
 }
 
 # _claude_watch_ok [AGENT ARGS...] -- may the Stop hook refuse a turn that ends without
-# the role's watcher, or without a current summary line? Not in a print run (-p): its
+# the role's watcher, or with no summary line? Not in a print run (-p): its
 # turn is the run, which ends with it, and a watcher armed there would die with it.
 # Words after a `--` are not Claude Code's.
 _claude_watch_ok() {
