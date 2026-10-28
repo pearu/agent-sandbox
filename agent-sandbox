@@ -446,6 +446,11 @@ Engine flags (before CMD):
                         installed
   --status              show this role's sandbox: the keeper, what runs in it,
                         the background daemon's sessions
+  --list [WORD]         the role sessions of this project you can resume: per
+                        role running or stopped, created, last active, and a
+                        one-line summary; WORD keeps the roles whose name,
+                        summary or conversations mention it. Ignores --role
+  --list-all [WORD]     the same for every project, from any directory
   --delete              remove every store of this role; refused while anything
                         runs in it (see --shutdown)
   --connect SPEC        open one channel at one mode: 'channel=mode [source]
@@ -3035,6 +3040,8 @@ _as_keeper_start() {
   rm -rf -- "$kd"
   mkdir -p -- "$kd/joined" || return 1
   : >"$sb/keeper.log"
+  # The project's path, which the store's slug does not keep (--list, #314).
+  printf '%s\n' "$_proj" >"$sb/project" || :
   _as_keeper_policy all >"$kd/policy"
   _as_keeper_dotfile_hash >"$kd/dotfile"
   # The copy a join parses: the approved file as it is now (see the trust gate).
@@ -3399,6 +3406,201 @@ PY
   else
     printf '  no background daemon\n'
   fi
+  return 0
+}
+
+# _as_names_profile WORD -- does WORD, or its basename, name an installed profile? As
+# the profile resolution reads a command word. Uses the engine's $profile_dir.
+# shellcheck disable=SC2154
+_as_names_profile() {
+  local b
+  b="$(basename -- "$1")"
+  [[ "$b" =~ ^[a-z][a-z0-9_-]*$ && -r "$profile_dir/$b/profile.sh" ]]
+}
+
+# _as_role_list here|all [WORD] -- the role sessions you can resume (#314): one block per
+# project, one entry per role store, newest activity first. `here` is the project of the
+# current directory, `all` every project, so it reads only the state directory and never
+# asks _as_project_dir. Host-side and read-only: no lock is taken, nothing is pruned.
+#
+# THE PROJECT'S PATH is the store's `project` file (every keeper start writes it), else
+# the `project` field of its history.jsonl's first record, else the slug, which is lossy.
+# THE SUMMARY is the store's own line (summary/line) when present, else the title Claude
+# Code recorded in the newest conversation (custom-title, then ai-title), else its first
+# prompt. The engine finds the stores and asks whether each keeper is live; one python3
+# run reads the transcripts of all of them.
+# shellcheck disable=SC2154
+_as_role_list() {
+  local scope="$1" word="${2:-}" state p sb st n f pid start only="" rc=0
+  local _keeper_target="" _keeper_spid=""
+  local -a rows=()
+  state="$(_as_state_dir)"
+  # The resolved path, as a launch keys its stores: its $cwd, which _as_project_dir
+  # reads, is `pwd -P`, and is not set yet here, where that helper would give $PWD.
+  [[ "$scope" == all ]] || only="$(_as_path_slug "$(pwd -P)")"
+  for p in "$profile_dir"/*/profile.sh; do
+    [[ -r "$p" ]] || continue
+    p="$(basename -- "$(dirname -- "$p")")"
+    for sb in "$state/$p"/*/*/; do
+      sb="${sb%/}"
+      [[ -d "$sb" && ! -L "$sb" && "${sb##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+      [[ -z "$only" || "$(basename -- "$(dirname -- "$sb")")" == "$only" ]] || continue
+      st=stopped
+      if _as_keeper_live "$sb"; then
+        n=0
+        for f in "$sb/keeper/joined"/*; do
+          [[ -f "$f" ]] || continue
+          pid="" start=""
+          { read -r pid start <"$f"; } 2>/dev/null
+          _as_proc_is "$pid" "$start" && n=$((n + 1))
+        done
+        st=running
+        ((n)) && st="running ($n joined)"
+      fi
+      rows+=("$p" "$sb" "$st")
+    done
+  done
+  python3 - "$scope" "$word" "$invoked" ${rows[@]+"${rows[@]}"} <<'PY' || rc=$?
+import glob, json, os, shlex, sys, time
+from datetime import datetime
+
+scope, word, invoked, rest = sys.argv[1], sys.argv[2].casefold(), sys.argv[3], sys.argv[4:]
+if not rest:
+    sys.exit(10)
+
+def first_record(path, key):  # the first record of a jsonl file that has KEY
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if f'"{key}"' in line:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if key in r:
+                        return r
+    except OSError:
+        pass
+    return None
+
+def user_text(r):  # a non-meta user record's prompt, or ""
+    if r.get("type") != "user" or r.get("isMeta"):
+        return ""
+    c = (r.get("message") or {}).get("content")
+    if isinstance(c, list):
+        c = " ".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+    return " ".join(c.split())[:100] if isinstance(c, str) else ""
+
+def scan(path):  # (has a user record, title, first prompt)
+    user, title, prompt = False, {}, ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '-title"' not in line and '"user"' not in line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                t = r.get("type")
+                if t in ("custom-title", "ai-title"):
+                    v = r.get("customTitle" if t == "custom-title" else "aiTitle")
+                    if isinstance(v, str) and v.strip():
+                        title[t] = " ".join(v.split())
+                elif t == "user":
+                    user = True
+                    prompt = prompt or user_text(r)
+    except OSError:
+        pass
+    return user, title.get("custom-title") or title.get("ai-title"), prompt
+
+def stamp(t):
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+
+blocks = {}
+for prof, sb, st in zip(rest[0::3], rest[1::3], rest[2::3]):
+    role, slug = os.path.basename(sb), os.path.basename(os.path.dirname(sb))
+    proj = ""
+    try:
+        with open(os.path.join(sb, "project"), encoding="utf-8") as fh:
+            proj = fh.readline().strip()
+    except OSError:
+        for h in sorted(glob.glob(os.path.join(sb, "transcripts", "*", "*history.jsonl"))):
+            r = first_record(h, "project")
+            if r and isinstance(r.get("project"), str):
+                proj = r["project"]
+                break
+    convs = [f for f in glob.glob(os.path.join(sb, "transcripts", "*", "*_projects_*", "*.jsonl")) if os.path.isfile(f)]
+    convs.sort(key=os.path.getmtime, reverse=True)
+    created, summary, text = None, None, ""
+    for f in convs:
+        r = first_record(f, "timestamp")
+        try:
+            t = datetime.fromisoformat(r["timestamp"].replace("Z", "+00:00")).timestamp()
+            created = t if created is None else min(created, t)
+        except (TypeError, KeyError, ValueError, AttributeError):
+            pass
+        if summary is None:
+            user, title, prompt = scan(f)
+            if user:
+                summary = title or prompt or "(no prompt text)"
+    if summary is not None:
+        try:
+            with open(os.path.join(sb, "summary", "line"), encoding="utf-8", errors="replace") as fh:
+                summary = " ".join(fh.readline().split()) or summary
+        except OSError:
+            pass
+    smtime = os.path.getmtime(sb)
+    active = os.path.getmtime(convs[0]) if convs else smtime
+    if created is None:
+        created = smtime
+    if word:
+        hit = word in role.casefold() or word in (summary or "").casefold()
+        for f in convs if not hit else ():
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    hit = word in fh.read().casefold()
+            except OSError:
+                pass
+            if hit:
+                break
+        if not hit:
+            continue
+    b = blocks.setdefault((prof, slug), {"proj": "", "roles": []})
+    b["proj"] = b["proj"] or proj
+    b["roles"].append((active, role, st, created, summary or "no conversation"))
+
+if not blocks:
+    sys.exit(11)
+for (prof, slug), b in sorted(blocks.items(), key=lambda kv: -max(r[0] for r in kv[1]["roles"])):
+    proj, roles = b["proj"], sorted(b["roles"], key=lambda r: -r[0])
+    wr = max(len(r[1]) for r in roles)
+    ws = max(len(r[2]) for r in roles)
+    print(proj or f"{slug}  (the path is not recorded; this is the store's slug)")
+    for active, role, st, created, summary in roles:
+        print(f"  {role:<{wr}}   {st:<{ws}}   created {stamp(created)}   active {stamp(active)}")
+        print(f"    {summary}")
+    where = f"cd {shlex.quote(proj)} && " if proj else "from the project's directory: "
+    print(f"  resume: {where}{invoked} --role ROLE {prof} --continue")
+PY
+  case "$rc" in
+    0) ;;
+    10)
+      if [[ "$scope" == all ]]; then
+        printf '%s\n' "$invoked --list-all: no role has stores (nothing under $state)"
+      else
+        printf '%s\n' "$invoked --list: no role of this project has stores"
+      fi
+      ;;
+    11)
+      if [[ "$scope" == all ]]; then
+        printf '%s\n' "$invoked --list-all: no role of any project mentions '$2'"
+      else
+        printf '%s\n' "$invoked --list: no role of this project mentions '$2'"
+      fi
+      ;;
+    *) return "$rc" ;;
+  esac
   return 0
 }
 
@@ -7759,6 +7961,8 @@ agent_sandbox() (
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
+  # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
+  local _do_list="" _list_word=""
   # --serve (#277): the words this invocation was given, for the processes it starts.
   local _do_serve=0
   local -a _argv_given=("$@")
@@ -8013,6 +8217,18 @@ agent_sandbox() (
         _do_status=1
         shift
         ;;
+      --list | --list-all)
+        # The role sessions you can resume (#314), this project's or every project's;
+        # the word after it, if any, is the search word -- unless it names a profile, as
+        # CMD's basename does below: then it is the command word, which a verb ignores.
+        _do_list=here
+        [[ "$1" == --list-all ]] && _do_list=all
+        shift
+        if [[ $# -gt 0 && "$1" != -* ]] && ! _as_names_profile "$1"; then
+          _list_word="$1"
+          shift
+        fi
+        ;;
       --overlay)
         # What `copy-on-write` is implemented WITH. `off` forces the copy fallback on a
         # host that could mount an overlay; it can only move `copy-on-write` to `copy`,
@@ -8160,6 +8376,18 @@ agent_sandbox() (
   local _help_footer=""
   [[ "${1:-}" == -h || "${1:-}" == --help ]] && _help_footer=1
 
+  # ---- --list, --list-all: the role sessions you can resume (#314) ----
+  # Profile- and role-independent: they read the state directory and exit.
+  if [[ -n "$_do_list" ]]; then
+    if [[ -n "$_cmd_word" ]] && { ! _as_names_profile "$_cmd_word" || (($# > 0)); }; then
+      local _lv=--list
+      [[ "$_do_list" == all ]] && _lv=--list-all
+      _as_msg "$_lv takes one search word at most, then the command, which it ignores: $invoked $_lv [WORD] [CMD]"
+      return 2
+    fi
+    _as_role_list "$_do_list" "$_list_word"
+    return $?
+  fi
   # ---- --init: write a project's files from a development model (#225) ----
   # Profile-independent; never launches the agent, approves nothing.
   if ((_do_init)); then

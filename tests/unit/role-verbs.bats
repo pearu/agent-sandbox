@@ -204,3 +204,172 @@ slugify() {
   [[ "$output" != *"proxy's CA"* ]]
   release_bg
 }
+
+# ----- --list, --list-all (#314) -----------------------------------------------------
+
+# store_dir PROJECT ROLE -- where the engine keeps that role's stores; made.
+store_dir() {
+  local d="$H/home/.local/state/agent-sandbox/claude/${1//[^A-Za-z0-9-]/-}/$2"
+  mkdir -p "$d/transcripts/own"
+  printf '%s' "$d"
+}
+
+# conv STORE NAME MTIME RECORD... -- a conversation file of the store, last written at MTIME.
+conv() {
+  local d="$1/transcripts/own/home_tester_.claude_projects_x" f
+  mkdir -p "$d/memory"
+  f="$d/$2.jsonl"
+  printf '%s\n' "${@:4}" >"$f"
+  touch -d "$3" "$f"
+}
+
+user_rec() { printf '{"type":"user","message":{"role":"user","content":"%s"},"timestamp":"%s"}' "$1" "$2"; }
+
+# The fixture: four roles of $PROJ, one of another project, all with known times.
+list_fixture() {
+  local sb
+  sb="$(store_dir "$PROJ" rev)"
+  printf '%s\n' "$PROJ" >"$sb/project"
+  conv "$sb" old "2026-10-21 09:00 UTC" '{"type":"mode"}' "$(user_rec 'earlier' 2026-10-20T08:00:00.000Z)" \
+    '{"type":"ai-title","aiTitle":"The old session"}'
+  conv "$sb" new "2026-10-26 15:13 UTC" '{"type":"permission-mode"}' "$(user_rec 'look at CI' 2026-10-23T18:15:00.000Z)" \
+    '{"type":"ai-title","aiTitle":"An AI title"}' '{"type":"custom-title","customTitle":"CUDA version pinned in CI"}' \
+    '{"type":"ai-title","aiTitle":"A later AI title"}'
+  sb="$(store_dir "$PROJ" tri)"
+  conv "$sb" s "2026-10-26 12:01 UTC" "$(user_rec 'triage it' 2026-10-26T11:50:00.000Z)" \
+    '{"type":"ai-title","aiTitle":"Issue triage: skip build"}'
+  sb="$(store_dir "$PROJ" fresh)"
+  conv "$sb" s "2026-10-25 10:00 UTC" \
+    '{"type":"user","isMeta":true,"message":{"role":"user","content":"<meta caveat>"},"timestamp":"2026-10-25T09:00:00Z"}' \
+    '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Fix the\nbuild   please"},{"type":"image"}]}}'
+  sb="$(store_dir "$PROJ" setup)"
+  conv "$sb" s "2026-10-24 10:00 UTC" '{"type":"mode","timestamp":"2026-10-14T16:20:00Z"}'
+  sb="$(store_dir "$PROJ" own)"
+  mkdir -p "$sb/summary"
+  printf 'My own line\nnot this\n' >"$sb/summary/line"
+  conv "$sb" s "2026-10-22 10:00 UTC" "$(user_rec 'hello' 2026-10-22T09:00:00Z)" '{"type":"ai-title","aiTitle":"Not shown"}'
+  sb="$(store_dir /elsewhere/other gh-x)"
+  printf '/elsewhere/other\n' >"$sb/project"
+  conv "$sb" s "2026-10-27 08:00 UTC" "$(user_rec 'other project' 2026-10-27T07:00:00Z)"
+}
+
+@test "--list shows this project's roles, newest first: state, created, active, and the summary chain" {
+  list_fixture
+  run_engine TZ=UTC -- asb --role ignored --list
+  [ "$status" -eq 0 ]
+  local want
+  want="$PROJ
+  rev     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13
+    CUDA version pinned in CI
+  tri     stopped   created 2026-10-26 11:50   active 2026-10-26 12:01
+    Issue triage: skip build
+  fresh   stopped   created 2026-10-25 09:00   active 2026-10-25 10:00
+    Fix the build please
+  setup   stopped   created 2026-10-14 16:20   active 2026-10-24 10:00
+    no conversation
+  own     stopped   created 2026-10-22 09:00   active 2026-10-22 10:00
+    My own line
+  resume: cd $PROJ && asb --role ROLE claude --continue"
+  [ "$output" = "$want" ]
+  [ ! -s "$H/argv" ] # nothing launched
+}
+
+@test "--list-all works outside any project: projects ordered by their newest role" {
+  list_fixture
+  mkdir -p "$H/nowhere"
+  RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = /elsewhere/other ]
+  [ "${lines[1]}" = "  gh-x   stopped   created 2026-10-27 07:00   active 2026-10-27 08:00" ]
+  [ "${lines[2]}" = "    other project" ]
+  [ "${lines[3]}" = "  resume: cd /elsewhere/other && asb --role ROLE claude --continue" ]
+  [ "${lines[4]}" = "$PROJ" ]
+  [[ "$output" == *"CUDA version pinned in CI"* ]]
+  RUN_CWD="$H/nowhere" run_engine -- asb --list
+  [ "$output" = "asb --list: no role of this project has stores" ]
+}
+
+@test "--list-all names a project by its project file, else its history, else its slug" {
+  local sb
+  sb="$(store_dir /p/one r1)"
+  printf '/p/one\n' >"$sb/project"
+  printf '{"display":"x","project":"/p/WRONG"}\n' >"$sb/transcripts/own/home_tester_.claude_history.jsonl"
+  sb="$(store_dir /p/two r2)"
+  printf '{"display":"x"}\n{"display":"y","project":"/p/two"}\n' >"$sb/transcripts/own/home_tester_.claude_history.jsonl"
+  store_dir /p/three r3 >/dev/null
+  run_engine -- asb --list-all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"/p/one"$'\n'* || "$output" == "/p/one"$'\n'* ]]
+  [[ "$output" != *WRONG* ]]
+  [[ "$output" == *"cd /p/two && asb --role ROLE claude --continue"* ]]
+  [[ "$output" == *"-p-three  (the path is not recorded; this is the store's slug)"$'\n'"  r3 "* ]]
+  [[ "$output" == *"resume: from the project's directory: asb --role ROLE claude --continue"* ]]
+}
+
+@test "--list WORD keeps the roles whose name, summary or conversations mention it" {
+  list_fixture
+  run_engine TZ=UTC -- asb --list cuda # the summary, any case
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  rev "* ]]
+  [[ "$output" != *"  tri "* && "$output" != *"  own "* ]]
+  run_engine -- asb --list SETU # the role name
+  [[ "$output" == *"  setup "* && "$output" != *"  rev "* ]]
+  run_engine -- asb --list 'The old session' # a conversation that is not the newest
+  [[ "$output" == *"  rev "* && "$output" != *"  fresh "* ]]
+  run_engine -- asb --list 'not shown' # the store's line wins, the transcript still matches
+  [[ "$output" == *"  own "*"My own line"* ]]
+  run_engine -- asb --list zzqx
+  [ "$status" -eq 0 ]
+  [ "$output" = "asb --list: no role of this project mentions 'zzqx'" ]
+  run_engine -- asb --list-all 'other project'
+  [[ "$output" == "/elsewhere/other"$'\n'* && "$output" != *"$PROJ"* ]]
+  run_engine -- asb --list-all zzqx
+  [ "$output" = "asb --list-all: no role of any project mentions 'zzqx'" ]
+}
+
+@test "--list takes a command word and ignores it, as the other verbs do; a second other word is refused" {
+  list_fixture
+  run_engine TZ=UTC -- asb --list
+  local all="$output"
+  [[ "$all" == *"  rev "*"  tri "* ]]
+  run_engine TZ=UTC -- asb --list claude # the profile, not a search word
+  [ "$status" -eq 0 ]
+  [ "$output" = "$all" ]
+  run_engine TZ=UTC -- asb --list-all /usr/local/bin/claude # a path whose basename names it
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  rev "*"  tri "* ]]
+  run_engine -- asb --list cuda claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  rev "* && "$output" != *"  tri "* ]]
+  run_engine -- asb --list cuda foo
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--list takes one search word at most, then the command, which it ignores: asb --list [WORD] [CMD]"* ]]
+  run_engine -- asb --list-all claude cuda
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--list-all takes one search word at most"* ]]
+}
+
+@test "--list through a symlink to the project finds the stores a launch through it made" {
+  ln -s "$PROJ" "$H/link"
+  RUN_CWD="$H/link" run_engine PWD="$H/link" -- asb --role via-link claude --version
+  [ -d "${SBOX%/default}/via-link" ]                       # the launch keys the store by the resolved path
+  RUN_CWD="$H/link" run_engine PWD="$H/link" -- asb --list # a shell exports the logical path
+  [ "$status" -eq 0 ]
+  [[ "$output" == "$PROJ"$'\n'"  via-link "* ]]
+}
+
+@test "--list-all with no stores at all says so in one line" {
+  run_engine -- asb --list-all
+  [ "$status" -eq 0 ]
+  [[ "$output" == "asb --list-all: no role has stores (nothing under "*")" ]]
+}
+
+@test "a launch writes the project's path into its store, and --list shows a running role" {
+  run_engine -- asb claude --version
+  [ "$(cat "$SBOX/project")" = "$PROJ" ]
+  engine_bg -- asb claude --version
+  run_engine -- asb --list
+  [ "$status" -eq 0 ]
+  [[ "$output" == "$PROJ"$'\n'"  default   running (1 joined)   created "* ]]
+  release_bg
+}

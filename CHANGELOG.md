@@ -47,6 +47,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`asb --list [WORD]` and `asb --list-all [WORD]`: the role sessions you can resume**
+  (#314): one block per project -- this one's, or every project's from any directory --
+  and in it one entry per role store, newest activity first: running or stopped,
+  created and last active, a one-line summary, and the `cd … && asb --role ROLE claude
+  --continue` that resumes one. The summary is the store's own line when present
+  (`summary/line`), else the title Claude Code recorded in the newest conversation
+  (`custom-title`, then `ai-title`), else its first prompt. WORD keeps the roles whose
+  name, summary or conversations mention it. Every launch now writes the project's path
+  to the store's `project` file, since the store's slug does not keep it; an older store
+  falls back to its history's first record.
 - **A tools environment on every sandbox's PATH**: inside a sandbox `gh` was the host's
   `/usr/bin/gh`, and Ubuntu ships 2.46 even in its newest series, without `gh pr checks
   --json`. `install.sh` now builds a conda-forge environment with its own micromamba at

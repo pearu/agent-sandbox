@@ -278,7 +278,8 @@ Sections:
   file in the project (relative to it, no `..`; `{role}` is the role's name, and the
   latest line matching the role wins) whose text the session runs as its first turn at
   every interactive start -- a new session, or one resumed with `--continue` or
-  `--resume ID`, which otherwise sits at its prompt until you type. A role whose purpose
+  `--resume ID`, which otherwise sits at its prompt until you type. (`asb --list` shows
+which roles of the project have a session to resume, with a one-line summary each.) A role whose purpose
   file says "at start, arm your watcher" needs a turn to do it in. The profile decides
   how the text is handed over (`profile_start_args`; claude: the prompt after its own
   arguments, so a prompt you type yourself still wins) and declines where it is not a
