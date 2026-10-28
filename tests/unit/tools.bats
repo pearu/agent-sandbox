@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# The tools env (install.sh's conda-forge CLI tools, gh by default): bound read-only, its
-# bin/ on the sandbox's PATH after the conda env and before the system directories; no
-# tools env, no change. Stub bwrap, so these assert on the argv.
+# The tools env (install.sh's conda-forge CLI tools, gh and tmux by default): bound
+# read-only, its bin/ on the sandbox's PATH after the conda env and before the system
+# directories; no tools env, no change. Stub bwrap, so these assert on the argv.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"

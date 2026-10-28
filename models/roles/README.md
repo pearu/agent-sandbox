@@ -18,3 +18,7 @@ the two lines), and a clone per Implementer.
 `--init`, run again then, clones it for each Implementer.
 Every "may not" of a role is a line of the dot-file template (enforced by the sandbox)
 or a sentence of its purpose file (told), and docs/roles.md section 3 says which.
+The Supervisor (`asb --role supervisor claude --continue`) prints at start every other
+role's launch line, `asb --role NAME claude --continue`, which starts a role's session
+or resumes it, and one line that opens them all, a tmux window each:
+`asb --roles NAME NAME ... claude --continue` (docs/roles.md section 9).

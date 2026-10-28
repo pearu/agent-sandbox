@@ -47,9 +47,9 @@
 #
 # Installs mitmproxy >= 12 into a private environment (venv, else conda), a pinned
 # micromamba for conda inside sandboxes (asking, where the host has conda, which one
-# sandboxes use), a tools environment from conda-forge whose commands (gh by default;
-# ~/.config/agent-sandbox/tools.txt lists them) every sandbox finds on PATH, rebuilt at
-# each run so it stays current, and
+# sandboxes use), a tools environment from conda-forge whose commands (gh and tmux by
+# default; ~/.config/agent-sandbox/tools.txt lists them) every sandbox finds on PATH,
+# rebuilt at each run so it stays current, and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
 # user unit so nothing else needs to be carried across hosts. The
 # allowlist is only written if it doesn't already exist (so re-runs
@@ -647,15 +647,16 @@ choose_conda() {
 # writable one: an env is hardlinked to its cache.
 TOOLS_DIR="$STATE_DIR/tools"
 TOOLS_LIST="$CONFIG_DIR/tools.txt"
-TOOLS_DEFAULT=gh
+# gh, and tmux for `asb --roles` (#317) when the host has none.
+TOOLS_DEFAULT=(gh tmux)
 
 # tools_specs -- the package specs, one per line: $TOOLS_LIST's (whitespace dropped, so
-# `gh >=2.60` is one spec), or the default when there is no such file.
+# `gh >=2.60` is one spec), or the default's, one per line, when there is no such file.
 tools_specs() {
   if [[ -f "$TOOLS_LIST" ]]; then
     sed 's/#.*//; s/[[:space:]]//g' "$TOOLS_LIST" | grep -v '^$' || true
   else
-    printf '%s\n' "$TOOLS_DEFAULT"
+    printf '%s\n' "${TOOLS_DEFAULT[@]}"
   fi
 }
 

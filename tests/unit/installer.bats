@@ -714,7 +714,7 @@ STUB
   chmod +x "$mm/micromamba"
 }
 
-@test "tools env: gh by default, built into a slot whose bin/ holds the listed packages' executables only; current names it" {
+@test "tools env: gh and tmux by default (#317), built into a slot whose bin/ holds the listed packages' executables only; current names it" {
   stub_tools_micromamba
   local tools="$T/home/.local/share/agent-sandbox/tools"
   mkdir -p "$T/home/.conda" && echo /my/env >"$T/home/.conda/environments.txt"
@@ -723,13 +723,14 @@ STUB
   [ "$(readlink "$tools/current")" = a ]
   [ "$(readlink "$tools/a/bin/gh")" = ../env/bin/gh ]
   [ -x "$tools/a/bin/gh" ]
+  [ "$(readlink "$tools/a/bin/tmux")" = ../env/bin/tmux ]
   # the dependency's python is in the env, not on the sandbox's PATH
   [ -x "$tools/a/env/bin/python3" ]
-  [ "$(find "$tools/a/bin" -mindepth 1 -printf '%f\n')" = gh ]
-  [[ "$output" == *"building the tools env gh (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge"* ]]
-  [[ "$output" == *"tools env $tools/a ("*"): gh 1.0 (gh)"* ]]
+  [ "$(find "$tools/a/bin" -mindepth 1 -printf '%f\n' | sort | paste -sd' ')" = "gh tmux" ]
+  [[ "$output" == *"building the tools env gh tmux (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge"* ]]
+  [[ "$output" == *"tools env $tools/a ("*"): gh 1.0 (gh); tmux 1.0 (tmux)"* ]]
   # from conda-forge alone, into the env's own package cache
-  grep -qF "create -q -y -r $tools -p $tools/a/env --override-channels -c conda-forge gh | CONDA_PKGS_DIRS=$tools/pkgs" "$T/mm-called"
+  grep -qF "create -q -y -r $tools -p $tools/a/env --override-channels -c conda-forge gh tmux | CONDA_PKGS_DIRS=$tools/pkgs" "$T/mm-called"
   [ ! -e "$T/home/.config/agent-sandbox/tools.txt" ] # the default is not written
   # micromamba's registration of the env is undone; the user's own envs stay listed
   [ "$(cat "$T/home/.conda/environments.txt")" = /my/env ]
@@ -763,7 +764,7 @@ STUB
   rm "$T/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
   tools_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[warn] no micromamba at $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba: the tools env (gh) was not built"* ]]
+  [[ "$output" == *"[warn] no micromamba at $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba: the tools env (gh tmux) was not built"* ]]
 }
 
 @test "tools env: ~/.config/agent-sandbox/tools.txt is the list -- comments, blanks, spaces in a spec, a channel prefix; one with none removes the env" {
@@ -788,6 +789,6 @@ STUB
 @test "--dry-run: the tools env's plan, nothing built" {
   dry
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(dry-run) would build the tools env gh (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge with $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba under $T/home/.local/share/agent-sandbox/tools"* ]]
+  [[ "$output" == *"(dry-run) would build the tools env gh tmux (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge with $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba under $T/home/.local/share/agent-sandbox/tools"* ]]
   [ ! -e "$T/home/.local/share/agent-sandbox/tools" ]
 }

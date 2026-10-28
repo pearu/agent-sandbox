@@ -301,6 +301,11 @@ the line the session keeps itself, else the conversation's title, else its first
 and `--summarize` (for a stopped role, one headless turn in its sandbox writes that line
 and a longer description, then its own transcript is deleted).
 
+**Several roles at once.** *shipped* (#317): `--roles ROLE... CMD` opens one tmux session,
+named after the project directory, with a window per role, each running `--role ROLE`
+with the rest of the command line; the dot-file is reviewed once, before the windows
+open. It only builds the tmux command: every window is a plain launch.
+
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*
 

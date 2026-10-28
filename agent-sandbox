@@ -427,7 +427,14 @@ Engine flags (before CMD):
                         dot-file's role-suffixed sections ([connect:<glob>]...)
                         give roles matching NAME. Default: [sandbox] role, else
                         `default`.
-  --preset NAME         where every channel sits before any override:
+  --roles ROLE...       open one tmux session, named after the project
+                        directory, with a window per role, each running
+                        `--role ROLE` with the rest of the command line; the
+                        roles end at the first word that starts with `-` or
+                        names a profile. Reviews the dot-file once, here,
+                        first. Refused with --role, a verb, --exec, a review,
+                        or while a session of that name is open
+  --preset NAME        where every channel sits before any override:
                         `isolated` (nothing of your install), `inherit`
                         (read your files live, keep the sandbox's writes to
                         itself) or `shared` (one directory, both ways).
@@ -1144,7 +1151,7 @@ _as_role_resolve() {
   elif [[ -n "${_df_role:-}" ]]; then
     name="$_df_role" src=".agent-sandbox [sandbox] role"
   fi
-  if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || ((${#name} > 200)); then
+  if ! _as_role_name_ok "$name"; then
     _as_msg "role ($src): '$name' is not a role name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters"
     return 1
   fi
@@ -1162,6 +1169,11 @@ _as_role_resolve() {
   _role="$name"
   [[ "$_role" == default ]] || _as_info "role: $_role ($src)"
   return 0
+}
+
+# _as_role_name_ok NAME -- is NAME a role name (_as_role_resolve says what that is)?
+_as_role_name_ok() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && ((${#1} <= 200))
 }
 
 # ----- presets: one position for every channel at once -----------------------
@@ -8225,6 +8237,84 @@ _as_launch_pasta() {
   ' agent-sandbox-strict "$nftbin" "$sshrules" "$_session_dir" "$seccomp_bpf" "$@")
 }
 
+# _as_roles_open [AGENT ARGS...] -- `asb --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]`
+# (#317): one tmux session, named after the project directory, with a window per role
+# in the order given, named by it and started in the project, each running
+#
+#   asb --role ROLE [ENGINE FLAGS] CMD [AGENT ARGS]; exec "${SHELL:-bash}"
+#
+# so a window whose launch ends drops to a shell and its last output stays readable.
+# NOTHING HERE IS POLICY: every window runs this engine, plainly, which enforces
+# everything; this only builds the tmux command. Two things happen before it, in this
+# terminal: a session of that name already open is refused, and the dot-file review a
+# launch runs is run here, once -- launched together, every window would ask it.
+#
+# tmux is the host's when on PATH, else the tools env's (install.sh's default list has
+# it). Targets are exact (`=NAME`): tmux matches a session by prefix otherwise, and a
+# window named by digits as an index, so the first window is selected as `^`, the
+# lowest index, which new-session gives it.
+# Reads the engine's _roles, _roles_flags, _cmd_word and invoked by dynamic scope.
+# shellcheck disable=SC2154
+_as_roles_open() {
+  local dir name tmux slot self line r
+  dir="$(pwd -P)"
+  tmux="$(command -v tmux 2>/dev/null || true)"
+  if [[ -z "$tmux" ]]; then
+    slot="$(_as_tools_slot)"
+    [[ -n "$slot" && -x "$slot/bin/tmux" ]] && tmux="$slot/bin/tmux"
+  fi
+  if [[ -z "$tmux" ]]; then
+    _as_msg "--roles opens its windows with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there (tmux is in its default list; a ~/.config/agent-sandbox/tools.txt of your own needs a tmux line): run install.sh again, or install tmux"
+    return 1
+  fi
+  name="$(basename -- "$dir")"
+  name="${name//[.:]/_}" # tmux refuses both in a session name
+  if "$tmux" has-session -t "=$name" 2>/dev/null; then
+    _as_msg "a tmux session named '$name' is already open. To return to it: tmux attach -t $(printf '%q' "$name")"
+    _as_msg "to end it, and every launch in it: tmux kill-session -t $(printf '%q' "$name")"
+    return 1
+  fi
+  # The review a launch runs (_as_trust_prompt), once, here; a no opens nothing, as every
+  # window would refuse, and so does no terminal to ask at.
+  local df="$dir/.agent-sandbox" rec need=0
+  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$dir")"
+  if [[ -f "$df" ]]; then
+    _as_dotfile_trusted "$dir" "$df" || need=1
+  elif [[ -f "$rec" ]]; then
+    need=1
+  fi
+  if ((need)); then
+    if ! _as_has_terminal; then
+      _as_msg "--roles: .agent-sandbox needs your review, and there is no terminal here to ask at: run $invoked --trust first"
+      return 1
+    fi
+    if ! _as_trust_prompt "$dir"; then
+      _as_msg "not approved; --roles opens no windows."
+      return 1
+    fi
+  fi
+  # This same engine, by the name it was run as (asb, agent-sandbox), from any directory.
+  self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+  local -a cmd=() args=()
+  [[ -n "$_cmd_word" ]] && cmd=("$_cmd_word")
+  for r in "${_roles[@]}"; do
+    printf -v line '%q ' "$self" --role "$r" ${_roles_flags[@]+"${_roles_flags[@]}"} ${cmd[@]+"${cmd[@]}"} "$@"
+    line="${line% }; exec \"\${SHELL:-bash}\""
+    if ((${#args[@]} == 0)); then
+      args=(new-session -d -s "$name" -n "$r" -c "$dir" bash -c "$line")
+    else
+      args+=(";" new-window -n "$r" -c "$dir" bash -c "$line")
+    fi
+  done
+  args+=(";" select-window -t "=$name:^")
+  local attach=0
+  [[ -t 0 && -t 1 ]] && attach=1
+  ((attach)) && args+=(";" attach-session -t "=$name")
+  "$tmux" "${args[@]}" || return
+  ((attach)) || _as_msg "tmux session '$name': a window per role (${_roles[*]}). To attach to it: tmux attach -t $(printf '%q' "$name")"
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # The engine
 # ---------------------------------------------------------------------------
@@ -8259,6 +8349,9 @@ agent_sandbox() (
   # --summarize (#314): one headless turn that writes a stopped role's summary.
   local _do_summarize=0
   local -a _argv_given=("$@")
+  # --roles ROLE... (#317): the roles, and where their words are in _argv_given.
+  local -a _roles=() _roles_flags=()
+  local _roles_set=0 _roles_at=0 _roles_n=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
   # `_role` is the sandbox key's second half; only `default` exists until roles
@@ -8551,6 +8644,21 @@ agent_sandbox() (
         _role_flag="${1#--role=}" _role_flag_set=1
         shift
         ;;
+      --roles)
+        # A tmux session with a window per role (#317). The roles are every word up to
+        # the first that starts with `-` or names a profile, as --list reads its word.
+        ((! _roles_set)) || {
+          _as_msg "--roles is given once, with every role after it"
+          return 2
+        }
+        _roles_set=1 _roles_at=$((${#_argv_given[@]} - $#))
+        shift
+        while (($# > 0)) && [[ "$1" != -* ]] && ! _as_names_profile "$1"; do
+          _roles+=("$1")
+          shift
+        done
+        _roles_n=$((${#_argv_given[@]} - $# - _roles_at))
+        ;;
       --preset)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
           || {
@@ -8593,11 +8701,48 @@ agent_sandbox() (
     for _sw in "${_argv_given[@]:0:$((${#_argv_given[@]} - $#))}"; do
       [[ "$_sw" == --summarize ]] || _summ_flags+=("$_sw")
     done
-    if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_engine_help || _do_serve)) \
+    if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_engine_help || _do_serve || _roles_set)) \
       || [[ -n "$_reset_connection" || -n "$_do_list" ]] || ((${#_apply_words[@]})); then
-      _as_msg "--summarize runs one turn in a stopped role's sandbox; it is not combined with --exec, --serve, a verb or a review: run them on their own"
+      _as_msg "--summarize runs one turn in a stopped role's sandbox; it is not combined with --exec, --serve, --roles, a verb or a review: run them on their own"
       return 2
     fi
+  fi
+  # ---- --roles (#317): what it cannot be combined with, and the words its windows run ----
+  # Each window runs this invocation's engine words but `--roles ROLE...`, after its own
+  # `--role ROLE`. --serve is one of them: a window can hold a served role.
+  if ((_roles_set)); then
+    if ((${#_roles[@]} == 0)); then
+      _as_msg "--roles needs the roles to open, before the command: $invoked --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]"
+      return 2
+    fi
+    local _rw
+    local -A _rseen=()
+    for _rw in "${_roles[@]}"; do
+      _as_role_name_ok "$_rw" || {
+        _as_msg "--roles: '$_rw' is not a role name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters"
+        return 2
+      }
+      [[ -z "${_rseen[$_rw]:-}" ]] || {
+        _as_msg "--roles: role '$_rw' is listed twice; a role runs in one window"
+        return 2
+      }
+      _rseen[$_rw]=1
+    done
+    if ((_role_flag_set)); then
+      _as_msg "--roles opens a window per role, each with its own --role; it is not combined with --role"
+      return 2
+    fi
+    if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_summarize)) \
+      || [[ -n "$_reset_connection" || -n "$_do_list" ]] || ((${#_apply_words[@]})); then
+      _as_msg "--roles opens a session of role launches; it is not combined with --exec, a verb or a review: run them on their own"
+      return 2
+    fi
+    if _as_inside_sandbox; then
+      _as_msg "--roles opens a tmux session on the host, and this is a sandbox: run it from a terminal of yours"
+      return 2
+    fi
+    local _rflags_end=$((${#_argv_given[@]} - $#))
+    _roles_flags=("${_argv_given[@]:0:_roles_at}" "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}")
   fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
   # The engine's own words, but --serve, are what the loop starts its holder, and every
@@ -8613,7 +8758,7 @@ agent_sandbox() (
       _as_msg "--serve runs a role's session with no terminal; it is not combined with --exec, a verb or a review: run them on their own"
       return 2
     fi
-    if ((! _role_flag_set)) && [[ -z "${AGENT_SANDBOX_ROLE:-}" ]]; then
+    if ((! _role_flag_set && ! _roles_set)) && [[ -z "${AGENT_SANDBOX_ROLE:-}" ]]; then
       _as_msg "--serve needs the role it serves: $invoked --role NAME --serve CMD (its [serve:NAME] section says what to wait on and what to say)"
       return 2
     fi
@@ -8849,6 +8994,11 @@ agent_sandbox() (
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
   ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
+  # ---- --roles (#317): a tmux session of role launches, opened from here ----
+  if ((_roles_set)); then
+    _as_roles_open "$@"
+    return $?
+  fi
 
   # ---- --preset none: no sandbox at all, before any project machinery ----
   # The flag is its only form (see the preset block), and with no sandbox there is no
