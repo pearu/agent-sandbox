@@ -79,9 +79,8 @@ names are gone; there are no aliases for removed names before 1.0.
   `/run/agent-sandbox/summary/`, and the briefing tells every session to keep
   `summary/line` current -- what it is about and where it stands -- and not to mention
   it to the user. The claude profile's `Stop` hook refuses once a turn that ends with
-  the line missing, empty or not newer than the turn's prompt (stamped at
-  `UserPromptSubmit`); not in a print run, `--serve`'s turns included; `--check` says
-  it. `asb --list` and `--list-all` colour role names cyan on a terminal (not with
+  the line missing or empty; not in a print run, `--serve`'s turns included; `--check`
+  says it. `asb --list` and `--list-all` colour role names cyan on a terminal (not with
   `NO_COLOR`).
 - **`asb --role R --summarize claude`: a stopped role's summary, from all its work**
   (#314): one headless turn of a new session in the role's sandbox, under its policy, as

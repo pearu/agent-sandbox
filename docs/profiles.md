@@ -94,14 +94,12 @@ running and to arm it in the background, and Claude Code goes on with that -- bu
 when the input's `stop_hook_active` is true, so never twice in a row; not in a print
 run, nor on a turn of `--serve`, whose loop is the watcher; `--check` says it for the
 role; and, for every session where the engine bound the role's summary directory
-(the briefing on, #314), the summary rule: `UserPromptSubmit` stamps the prompt's
-time in `/tmp/agent-sandbox-prompt.SESSION_ID`, the `Stop` command carries
+(the briefing on, #314), the summary rule: the `Stop` command carries
 `AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line`, and a turn that ends with
-that line missing, empty, or not newer than the stamp (without a stamp, a resumed
-session's first `Stop`: only missing or empty) is refused once in the same way, the
-reason saying to write the one-line summary there and not to mention it to the user
--- not with `stop_hook_active`, not in a print run, `--serve`'s turns included; a
-`Stop` that fails both rules gets one refusal naming both; `--check` says it) and
+that line missing or empty is refused once in the same way, the reason saying to
+write the one-line summary there -- not with `stop_hook_active`, not in a print run,
+`--serve`'s turns included; a `Stop` that fails both rules gets one refusal naming
+both; `--check` says it) and
 `statusline.sh`
 (the `statusLine`: a bar of the state's colour with the role and that state, padded to
 `COLUMNS` less 4, the most Claude Code shows of the line without cutting it,
