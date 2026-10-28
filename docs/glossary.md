@@ -295,7 +295,8 @@ renamed from `--reset-connection`, which is refused with the new name.
 **Role verbs.** *shipped* (#123, #126): `--status` (the keeper, what runs in it, the
 daemon's sessions), `--shutdown` (ends the keeper and everything in it, the daemon with its
 pool), `--delete` (removes the role's stores; refused while anything runs in it, naming
-`--shutdown`), `--reset`.
+`--shutdown`), `--reset`; and across roles (#314), `--list` and `--list-all` (the role
+sessions you can resume, this project's or every project's, with a one-line summary each).
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*
