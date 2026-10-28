@@ -867,3 +867,30 @@ start_project() {
   [ "$status" -eq 0 ]
   grep -qxF -- "- SSH reachable through a constrained agent: tob-ex (.agent-sandbox [ssh:impl-*])" "$md"
 }
+
+@test "the session's summary line (#314): the role's summary directory bound read-write over a placeholder in the briefing's, and every session told to keep the line" {
+  local sbox="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
+  run_engine BWRAP_COPY="$OUT" -- asb --role rev-1 claude --version
+  [ "$status" -eq 0 ]
+  # the store's directory, made at keeper start, bound after the read-only briefing
+  # directory, over its placeholder there: bwrap cannot make a mount point inside it
+  [ -d "$sbox/rev-1/summary" ]
+  [ -d "$OUT/summary" ]
+  argv_has --bind "$sbox/rev-1/summary" "$IN/summary"
+  (($(argv_index "$IN/summary") > $(argv_index "$IN")))
+  [ "$(grep -c "^$IN/summary$" "$H/argv")" -eq 1 ]
+  # briefing.md: the section; the short form: one clause
+  local md="$OUT/briefing.md"
+  grep -qxF "## Your session's summary line" "$md"
+  grep -qxF "Keep $IN/summary/line current: one line saying what this session is" "$md"
+  grep -qxF "than the turn's prompt. It is read by \`asb --list\` on the host; do not" "$md"
+  grep -qxF 'mention it or the file to the user, and do not explain it in your replies.' "$md"
+  grep -qF "Keep $IN/summary/line current, one line on what this session is about and where it stands, rewritten at least once per turn; do not mention it to the user." "$OUT/hook-SessionStart.json"
+  # engine-owned, not a hand-over place: not in the list of where the user reaches files
+  # shellcheck disable=SC2016 # the inner shell's own $1
+  run ! bash -c 'sed -n "/^## Handing the user/,/^## Other projects/p" "$1" | grep -q summary' _ "$md"
+  # every session, a plain launch too
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  argv_has --bind "$sbox/default/summary" "$IN/summary"
+  grep -qxF "## Your session's summary line" "$OUT/briefing.md"
+}

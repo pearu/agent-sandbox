@@ -3042,6 +3042,8 @@ _as_keeper_start() {
   : >"$sb/keeper.log"
   # The project's path, which the store's slug does not keep (--list, #314).
   printf '%s\n' "$_proj" >"$sb/project" || :
+  # The session's own summary line (#314), bound read-write when the briefing is on.
+  mkdir -p -- "$sb/summary" || return 1
   _as_keeper_policy all >"$kd/policy"
   _as_keeper_dotfile_hash >"$kd/dotfile"
   # The copy a join parses: the approved file as it is now (see the trust gate).
@@ -3428,10 +3430,13 @@ _as_names_profile() {
 # THE SUMMARY is the store's own line (summary/line) when present, else the title Claude
 # Code recorded in the newest conversation (custom-title, then ai-title), else its first
 # prompt. The engine finds the stores and asks whether each keeper is live; one python3
-# run reads the transcripts of all of them.
+# run reads the transcripts of all of them. Role names are cyan on a terminal, unless
+# NO_COLOR is set (no-color.org: to a non-empty value); nothing else is coloured. One
+# line at the end names the command that resumes a role.
 # shellcheck disable=SC2154
 _as_role_list() {
-  local scope="$1" word="${2:-}" state p sb st n f pid start only="" rc=0
+  local scope="$1" word="${2:-}" state p sb st n f pid start only="" rc=0 color=0
+  [[ -t 1 && -z "${NO_COLOR:-}" ]] && color=1
   local _keeper_target="" _keeper_spid=""
   local -a rows=()
   state="$(_as_state_dir)"
@@ -3460,11 +3465,11 @@ _as_role_list() {
       rows+=("$p" "$sb" "$st")
     done
   done
-  python3 - "$scope" "$word" "$invoked" ${rows[@]+"${rows[@]}"} <<'PY' || rc=$?
-import glob, json, os, shlex, sys, time
+  python3 - "$scope" "$word" "$invoked" "$color" ${rows[@]+"${rows[@]}"} <<'PY' || rc=$?
+import glob, json, os, stat, sys, time
 from datetime import datetime
 
-scope, word, invoked, rest = sys.argv[1], sys.argv[2].casefold(), sys.argv[3], sys.argv[4:]
+scope, word, invoked, color, rest = sys.argv[1], sys.argv[2].casefold(), sys.argv[3], sys.argv[4] == "1", sys.argv[5:]
 if not rest:
     sys.exit(10)
 
@@ -3545,11 +3550,18 @@ for prof, sb, st in zip(rest[0::3], rest[1::3], rest[2::3]):
             if user:
                 summary = title or prompt or "(no prompt text)"
     if summary is not None:
+        # The session's own line: written inside the sandbox, so a regular file only (not
+        # a link out, not a FIFO that would hang this), and its first 4 KiB.
         try:
-            with open(os.path.join(sb, "summary", "line"), encoding="utf-8", errors="replace") as fh:
-                summary = " ".join(fh.readline().split()) or summary
+            fd = os.open(os.path.join(sb, "summary", "line"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as fh:
+                if stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                    line = fh.read(4096).decode("utf-8", "replace").split("\n", 1)[0]
+                    summary = " ".join(line.split()) or summary
         except OSError:
             pass
+        # Text from the sandbox printed on the host's terminal: no control characters.
+        summary = "".join(c for c in summary if c.isprintable())
     smtime = os.path.getmtime(sb)
     active = os.path.getmtime(convs[0]) if convs else smtime
     if created is None:
@@ -3578,10 +3590,13 @@ for (prof, slug), b in sorted(blocks.items(), key=lambda kv: -max(r[0] for r in 
     ws = max(len(r[2]) for r in roles)
     print(proj or f"{slug}  (the path is not recorded; this is the store's slug)")
     for active, role, st, created, summary in roles:
-        print(f"  {role:<{wr}}   {st:<{ws}}   created {stamp(created)}   active {stamp(active)}")
+        name = f"\033[36m{role}\033[0m" if color else role
+        print(f"  {name}{' ' * (wr - len(role))}   {st:<{ws}}   created {stamp(created)}   active {stamp(active)}")
         print(f"    {summary}")
-    where = f"cd {shlex.quote(proj)} && " if proj else "from the project's directory: "
-    print(f"  resume: {where}{invoked} --role ROLE {prof} --continue")
+profs = {prof for prof, _ in blocks}
+prof = profs.pop() if len(profs) == 1 else "PROFILE"
+where = "cd PROJECT_DIR && " if scope == "all" else ""
+print(f"To resume: {where}{invoked} --role ROLE {prof} --continue")
 PY
   case "$rc" in
     0) ;;
@@ -4096,9 +4111,17 @@ _as_connect_report() {
 #                        host-wide blocked.log is never bound: it records every
 #                        session of every project. Nor is the session dir, which
 #                        holds proxy.token and owner.id.
+# and one directory of the role's store, bound READ-WRITE over its placeholder:
+#   summary/             <store>/summary (#314), made at keeper start: the session
+#                        keeps summary/line, one line on what it is about and where
+#                        it stands, which `asb --list` shows. The briefing asks for
+#                        it, and the profile may enforce it (the claude profile's
+#                        Stop hook, by _summary_line). Joins share the keeper's
+#                        mounts, so they share the line: the last writer wins.
 # Names and paths only, never contents: summarising shared material would mean
 # reading it, which is another agent's job and out of scope.
 _as_briefing_inside() { printf '/run/agent-sandbox'; }
+_as_summary_inside() { printf '%s/summary' "$(_as_briefing_inside)"; }
 
 # A JSON string literal for $1, in bash: no jq, no python on this path.
 _as_json_str() {
@@ -4384,6 +4407,12 @@ _as_briefing_write() {
     local _lnotes
     _lnotes="$(_as_channel_login_notes)"
     [[ -n "$_lnotes" ]] && printf '\n## Not set up yet\n\n%s\n' "$_lnotes"
+    printf '\n## Your session'"'"'s summary line\n\n'
+    printf 'Keep %s/line current: one line saying what this session is\n' "$(_as_summary_inside)"
+    printf 'about and where it stands, rewritten whenever that changes and at least\n'
+    printf 'once per turn; the Stop hook holds a turn'"'"'s end until the line is newer\n'
+    printf 'than the turn'"'"'s prompt. It is read by `asb --list` on the host; do not\n'
+    printf 'mention it or the file to the user, and do not explain it in your replies.\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '\n## Your role: %s\n\nFrom %s, read-only here:\n\n' "$_role" "$_purpose_as"
       cat -- "$_purpose_file"
@@ -4435,6 +4464,9 @@ _as_briefing_write() {
   # a placeholder in the briefing directory, which is itself bound read-only.
   : >"$_session_dir/refused.log" || return 1
   : >"$bdir/refused.log" || return 1
+  # The summary directory's placeholder: bwrap cannot make a mount point inside the
+  # read-only bind (measured, 0.12.0), so it is made here, before.
+  mkdir -p -- "$bdir/summary" || return 1
 
   local short _lnshort conda_short=""
   # a few words for conda: the command, and where its environments are
@@ -4446,7 +4478,7 @@ _as_briefing_write() {
     fi
   fi
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten at least once per turn; do not mention it to the user."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --
@@ -4468,6 +4500,8 @@ _as_briefing_write() {
   done
 
   args+=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log")
+  # The role's summary directory, read-write, over its placeholder (made at keeper start).
+  args+=(--bind "$_keeper_sb/summary" "$(_as_summary_inside)")
   return 0
 }
 
@@ -9124,6 +9158,11 @@ agent_sandbox() (
   # there the loop is what watches.
   local _watch_path=""
   [[ -n "${AGENT_SANDBOX_SERVE_TURN:-}" ]] || _as_watch_resolve "${_role:-default}"
+  # The session's summary line (#314), handed to the profile the same way as _watch_path
+  # (profile_briefing_args, profile_check_notes): where it is inside, when the briefing
+  # binds it. A join clears it below when the keeper it joins has no such bind.
+  local _summary_line=""
+  case "${_knob_briefing:-on}" in on | 1) _summary_line="$(_as_summary_inside)/line" ;; esac
   _as_connect_report
   local _ln
   while IFS= read -r _ln; do
@@ -9306,6 +9345,7 @@ agent_sandbox() (
           # This join's own hook settings (they merge its --settings), beside the
           # briefing the keeper already has in view.
           _join_brief="$_ksess/briefing/join.$BASHPID"
+          [[ -d "$_ksess/briefing/summary" ]] || _summary_line=""
           mkdir -p -- "$_join_brief" || return 1
           local _brief_out_host="$_join_brief" _brief_out_inside
           _brief_out_inside="$(_as_briefing_inside)/join.$BASHPID"

@@ -235,6 +235,15 @@ Stated plainly. These are what the adversary above can still do.
   the time-of-check/time-of-use race on an attacker-controlled zero-TTL record
   remains, and it still requires the name to be on the allowlist. `strict` mode
   narrows it further (the netns has no route but the proxy).
+- **The session's summary line is the agent's text, shown on the host.** Every
+  session has its role store's `summary/` read-write (#314), and `asb --list` prints
+  the first line of `summary/line` on the user's terminal. The agent chooses the text,
+  so a line can mislead about what the session did. `asb --list` drops control
+  characters from it, reads at most 4 KiB, and opens only a regular file, not
+  following a link, so the line cannot carry terminal escapes, name a host file to be
+  read, or block the listing with a FIFO. The directory holds nothing else of the
+  engine's, and its size is bounded only by the store's filesystem, as the other
+  writable stores are.
 - **`--allow` is scoped per session.** The engine mints a per-session token,
   carries it in the sandbox's proxy URL, and the addon grants the global
   allowlist plus only the matching live session's `--allow`, so one session's

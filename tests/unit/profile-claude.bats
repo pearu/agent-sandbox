@@ -173,7 +173,7 @@ settings_of() {
 # for any tool, beside the refusal hook's Bash entry), and SessionEnd only when it is on.
 check_state_settings() {
   python3 -I - "$@" <<'CHECK'
-import json, sys
+import json, re, sys
 path, role, bg = sys.argv[1:4]
 IN = "/run/agent-sandbox"
 m = json.load(open(path))
@@ -182,7 +182,9 @@ hooks = m["hooks"]
 def cmds(ev):
     return [h["command"] for g in hooks.get(ev, []) for h in g["hooks"]]
 for ev in ("SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest", "Notification"):
-    assert f"bash {IN}/state-hook.sh {ev} {bg}" in cmds(ev), (ev, cmds(ev))
+    # the Stop hook's command may set the rules' variables before it (the watcher, the summary)
+    got = [re.sub(r"^(AGENT_SANDBOX_(WATCH|SUMMARY)=\S+ )+", "", c) if ev == "Stop" else c for c in cmds(ev)]
+    assert f"bash {IN}/state-hook.sh {ev} {bg}" in got, (ev, cmds(ev))
 assert f"cat {IN}/hook-SessionStart.json" in cmds("SessionStart"), cmds("SessionStart")
 for ev in ("PostToolUse", "PostToolUseFailure"):
     refusal, state = hooks[ev]
@@ -223,9 +225,9 @@ CHECK
 import json, sys
 m = json.load(open(sys.argv[1]))
 assert m["statusLine"] == {"type": "command", "command": "echo MINE"}, m["statusLine"]
-for ev, theirs in (("Stop", "echo their-stop"), ("Notification", "echo their-note")):
+for ev, theirs, env in (("Stop", "echo their-stop", "AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line "), ("Notification", "echo their-note", "")):
     got = [h["command"] for g in m["hooks"][ev] for h in g["hooks"]]
-    assert got == [theirs, f"bash /run/agent-sandbox/state-hook.sh {ev} off"], got
+    assert got == [theirs, f"{env}bash /run/agent-sandbox/state-hook.sh {ev} off"], got
 CHECK
   # without one of theirs, ours is added to their settings
   settings_of asb --role planner-1 claude --settings '{"model":"opus"}' --version
@@ -312,7 +314,7 @@ stop_cmds() {
   [ "$status" -eq 0 ]
   settings_of asb --role planner-1 claude --continue
   [ "$status" -eq 0 ]
-  [ "$(stop_cmds "$OUT/settings.json")" = "AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md bash /run/agent-sandbox/state-hook.sh Stop off" ]
+  [ "$(stop_cmds "$OUT/settings.json")" = "AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/state-hook.sh Stop off" ]
   # only the Stop hook carries it
   [ "$(grep -o AGENT_SANDBOX_WATCH "$OUT/settings.json" | wc -l)" -eq 1 ]
   # a role with no [serve] section: the hook as before
@@ -338,6 +340,38 @@ stop_cmds() {
   local c
   c="$(stop_cmds "$OUT/settings.json")"
   [ "$(bash -c "${c%% bash *} bash -c 'printf %s \"\$AGENT_SANDBOX_WATCH\"'")" = '.asb/in "box.md' ]
+}
+
+@test "the summary rule (#314): every session's Stop hook carries AGENT_SANDBOX_SUMMARY, the line's path inside; not a print run, nor with the briefing off" {
+  local want="AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/state-hook.sh Stop off"
+  settings_of asb claude --continue
+  [ "$status" -eq 0 ]
+  [ "$(stop_cmds "$OUT/settings.json")" = "$want" ]
+  # only the Stop hook carries it
+  [ "$(grep -o AGENT_SANDBOX_SUMMARY "$OUT/settings.json" | wc -l)" -eq 1 ]
+  settings_of asb --role planner-1 claude
+  [ "$(stop_cmds "$OUT/settings.json")" = "$want" ]
+  # a print run: its turn is the run, its output the user's
+  settings_of asb --role planner-1 claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" planner-1 off
+  run ! grep -q AGENT_SANDBOX_SUMMARY "$OUT/settings.json"
+  settings_of asb claude --print --continue 'Reply ok.'
+  run ! grep -q AGENT_SANDBOX_SUMMARY "$OUT/settings.json"
+  # the briefing off: no summary directory is bound, and no rule
+  settings_of AGENT_SANDBOX_BRIEFING=off asb claude --continue
+  [ "$status" -eq 0 ]
+  run ! grep -q /run/agent-sandbox/summary "$H/argv"
+}
+
+@test "the summary rule: --check says it with the briefing on, and not with it off" {
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  summary: a turn does not end until the session's summary line is newer than its prompt (the Stop hook refuses once)"$'\n'* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_BRIEFING=off "${@:4}" --check 2>&1 </dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"summary:"* ]]
 }
 
 @test "the watcher rule: --check says it for a role with a [serve] watch, and not for one without" {
