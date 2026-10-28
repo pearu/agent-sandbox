@@ -315,7 +315,7 @@ Stated plainly. These are what the adversary above can still do.
   `install.sh`), bound read-only.
 - **The tools environment comes from conda-forge unpinned.** `install.sh` rebuilds it
   at every run with the newest builds of the packages in
-  `~/.config/agent-sandbox/tools.txt` (`gh` by default), on the host, trusting
+  `~/.config/agent-sandbox/tools.txt` (`gh` and `tmux` by default), on the host, trusting
   conda-forge as conda does; no checksum here pins them. What it builds runs only inside
   sandboxes, from a read-only bind of one slot (not the package cache it is hardlinked
   to), and its commands come before `/usr/bin` on the sandbox's PATH, so a package

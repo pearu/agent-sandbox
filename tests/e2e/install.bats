@@ -87,6 +87,9 @@ teardown_file() {
   # the tools env, built from conda-forge with that micromamba: conda-forge's gh
   [[ "$out" == *"tools env $H/.local/share/agent-sandbox/tools/a (the default; "*"): gh "*" (gh)"* ]]
   "$H/.local/share/agent-sandbox/tools/current/bin/gh" --version
+  # and tmux, for asb --roles (#317)
+  [[ "$out" == *"tools env $H/.local/share/agent-sandbox/tools/a (the default; "*"); tmux "*" (tmux)"* ]]
+  "$H/.local/share/agent-sandbox/tools/current/bin/tmux" -V
   [[ "$out" == *"CA generated: $H/.mitmproxy/mitmproxy-ca-cert.pem"* ]]
   [ -f "$H/.mitmproxy/mitmproxy-ca-cert.pem" ]
   grep -q '^api.github.com$' "$H/.config/agent-sandbox/allowlist.txt"

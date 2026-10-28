@@ -811,6 +811,19 @@ shared_env() {
   run ! grep -qF 'Bash(tail:*)' "$PROJ/.agent-sandbox"
 }
 
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: the Supervisor prints every launch line with claude --continue, and one asb --roles line with every other role (#317)" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local flat
+  flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/supervisor.md" | tr -s ' ')"
+  [[ "$flat" == *'one line each, for the user to run in a terminal of its own: `asb --role NAME claude --continue` (it starts the role'"'"'s session when it has none, and resumes it when it has).'* ]]
+  [[ "$flat" == *'one line that opens them all at once, a tmux window per role, with every role of the index but yourself, in the index'"'"'s order: `asb --roles NAME NAME ... claude --continue`.'* ]]
+  # no terminal line without --continue is left
+  run ! grep -qF '`asb --role NAME claude`' "$PROJ/.asb/roles/supervisor.md"
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
+}
+
 @test "the roles model: what another role must run is in the Review directory, never in scratch; the Implementer runs it from there" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]

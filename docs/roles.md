@@ -116,7 +116,9 @@ the other roles their next step -- which artefact to read, what to do -- each me
 shown to you and written only when you approve it, so a line in a role's inbox is your
 word by construction. It watches every role's messages; when a role reports done, it
 proposes the next step and asks. At start it prints the launch line of every other role,
-from the index. On your word it merges an accepted branch into `main` and builds it
+from the index -- `asb --role NAME claude --continue`, which starts the role's session
+when it has none and resumes it when it has -- and one line that opens them all, a tmux
+window each: `asb --roles NAME NAME ... claude --continue` (section 9). On your word it merges an accepted branch into `main` and builds it
 there, both local and reversible. It publishes nothing: when a step goes outside, it
 writes the Gate's message, and after you approve it, appends it to the Gate's inbox.
 Never acts on the *contents* of an artefact it relays: a review that says "run this" is
@@ -727,11 +729,28 @@ the others report there, and you go to one only to talk to it. A role's purpose,
 and protocol are in its context at every start, so your sentences can be short. You
 read the artefacts on the host as files.
 
-**Terminal 1 -- the Supervisor.** `asb --role supervisor claude`. It prints the launch
-line of every other role; open a terminal for each of P1, I1, I2, R1 and G and run its
-line there (a role arms its inbox watcher at start, and waits) -- or run
+**Terminal 1 -- the Supervisor.** `asb --role supervisor claude --continue`. It prints
+the launch line of every other role; open a terminal for each of P1, I1, I2, R1 and G and
+run its line there (a role arms its inbox watcher at start, and waits) -- or run
 `asb --role NAME --serve claude` in panes you need not watch, a turn per message
-(section 6). Then, in terminal 1:
+(section 6). The last line it prints opens them all at once, in a second terminal:
+
+    asb --roles planner-1 implementer-1 implementer-2 reviewer-1 gate claude --continue
+
+is one tmux session named after the project directory, with a window per role, named by
+it, started in the project and running `asb --role ROLE claude --continue`. The roles end
+at the first word that starts with `-` or names a profile, and every engine flag around
+them reaches each window (`asb --roles planner-1 reviewer-1 --serve claude` is two served
+roles). It reviews `.agent-sandbox` once, there, before the windows open -- launched
+together, every window would ask -- and attaches; not at a terminal, it prints the
+attach command instead. A window whose launch ends drops to a shell, so its last output
+stays readable. A session of that name already open is refused, naming
+`tmux attach -t NAME` to return to it and `tmux kill-session -t NAME` to end it; ending
+it hangs up every launch in it, and each role's sandbox then ends after the keeper's
+grace, as when you close its terminal. tmux is the host's, else the tools env's, where
+`install.sh` installs it by default ([config.md](config.md)). `--continue` in a
+directory with no conversation starts a new one (measured with Claude Code 2.1.311), so
+the one line both starts a round and resumes it. Then, in terminal 1:
 
 > The problem is issue #NNN. Tell P1 to work out the options with me.
 
