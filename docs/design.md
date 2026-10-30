@@ -422,9 +422,11 @@ and its README says which. The user-between-roles rule is half enforced (#274): 
 acts on its inbox, which only the Supervisor may write, and the Supervisor writes a
 message only after the user approved it in its terminal, or, for the revisions within a
 Task the user opted in to the relay (#326), under the word the user gave when the Task
-opened -- the one step the sandbox cannot see, so told. The artefacts themselves are
-not routed: every artefact directory is readable to every role, since copying artefacts
-into inboxes would cost a copy per hand-off, and the message names the artefact anyway.
+opened, or, for two notices to the Planner that carry the round's state, the Reviewer's
+acceptance and a merged step's green CI run (#331), on its own -- the one step the
+sandbox cannot see, so told. The artefacts themselves are not routed: every artefact
+directory is readable to every role, since copying artefacts into inboxes would cost a
+copy per hand-off, and the message names the artefact anyway.
 
 **The mechanisms, need by need.**
 
