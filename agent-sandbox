@@ -4721,8 +4721,8 @@ _as_briefing_write() {
     printf 'Continue without it only when the user says so: a mirror, another channel\n'
     printf 'or another tool for the same thing is going on without it. One clear\n'
     printf 'request costs less than twenty workarounds. A host refused during a\n'
-    printf 'command is reported to this session right after it, naming the host and\n'
-    printf 'the command to ask for.\n'
+    printf 'command that fails is reported to this session right after it, naming\n'
+    printf 'the host and the command to ask for.\n'
   } >"$md" || return 1
   printf '%s\n' "$sect" >"$bdir/apply-section" || return 1
   printf '%s\n' "$restart" >"$bdir/restart" || return 1
@@ -4730,6 +4730,8 @@ _as_briefing_write() {
   if declare -F profile_telemetry_hosts >/dev/null; then
     profile_telemetry_hosts >"$bdir/telemetry-hosts" || return 1
   fi
+  # and the tools env's (#304), the engine's own table
+  _as_tools_telemetry | cut -f2 >>"$bdir/telemetry-hosts" || return 1
   # The proxy's per-session refusals: created here, empty, so the addon (which runs
   # as this user) only ever appends to a file the engine made; bound read-only over
   # a placeholder in the briefing directory, which is itself bound read-only.
@@ -4957,6 +4959,22 @@ _as_tools_slot() {
   s="$(readlink -- "$home/tools/current" 2>/dev/null || true)"
   [[ "$s" == a || "$s" == b ]] && [[ -d "$home/tools/$s/bin" ]] && printf '%s' "$home/tools/$s"
   return 0
+}
+
+# _as_tools_telemetry -- the tools env's tools that send usage telemetry on their own (#304),
+# one "TOOL<TAB>HOST<TAB>NAME=VALUE" line each: the host it goes to, in the allowlist's
+# syntax, and the variable that turns it off. The proxy refuses the host like any unlisted
+# one; the engine adds it to the briefing directory's telemetry-hosts, so the refusal hook
+# leaves it out of its note (under every preset), and pins the variable in every sandbox but
+# `native`, where it is the user's state, with DO_NOT_TRACK=1 for every tool that honours
+# that convention. Always, whether the tool is installed or not: an entry for an absent tool
+# costs nothing. A host goes here only when its tool works without it. A user who wants the
+# telemetry opts in with an [allow] line and the variable forwarded.
+#   gh  cafe.github.com, refused in a role's gh calls, every one of which succeeded (#304);
+#       `gh help environment` (2.103.3): GH_TELEMETRY "Set to `false` or `0` to disable
+#       telemetry. Takes precedence over `DO_NOT_TRACK`."
+_as_tools_telemetry() {
+  printf '%s\t%s\t%s\n' gh cafe.github.com GH_TELEMETRY=false
 }
 
 # _as_path_tools DIR -- the inner PATH being built with DIR right before its first system
@@ -6334,6 +6352,24 @@ _as_check_plan() {
     if ((_tn)) && ! ((${_hosts_public:-0})) && [[ "${_knob_net:-proxy}" == proxy || "${_knob_net:-proxy}" == strict ]]; then
       printf "  network: the agent's own telemetry is refused and not reported to it (%d hosts)\n" "$_tn"
     fi
+    # The tools' telemetry (#304): off by its variable under every mode, but not under
+    # `native`, where the variables are the shell's; its host refused where the allowlist
+    # applies, under `native` too. Under `native` without the allowlist, nothing to say.
+    local _tt_tool _tt_host _tt_env _tt_refused=0
+    if ! ((${_hosts_public:-0})) && [[ "${_knob_net:-proxy}" == proxy || "${_knob_net:-proxy}" == strict ]]; then
+      _tt_refused=1
+    fi
+    while IFS=$'\t' read -r _tt_tool _tt_host _tt_env; do
+      if _as_preset_is_native; then
+        if ((_tt_refused)); then
+          printf "  telemetry: %s's %s is refused and not reported; under native its usage telemetry is not turned off (%s and DO_NOT_TRACK are your shell's)\n" "$_tt_tool" "$_tt_host" "${_tt_env%%=*}"
+        fi
+      elif ((_tt_refused)); then
+        printf "  telemetry: %s's usage telemetry is off (%s, DO_NOT_TRACK=1) and %s is refused; opt in with an [allow] line\n" "$_tt_tool" "$_tt_env" "$_tt_host"
+      else
+        printf "  telemetry: %s's usage telemetry is off (%s, DO_NOT_TRACK=1)\n" "$_tt_tool" "$_tt_env"
+      fi
+    done < <(_as_tools_telemetry)
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation; git'"'"'s fetch where [net] git allows it, not a push), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
@@ -10123,8 +10159,26 @@ agent_sandbox() (
     --setenv TERM "${TERM:-xterm-256color}"
     --setenv AGENT_SANDBOX 1
   )
+  # The tools' telemetry is off (#304): each tool's own variable (_as_tools_telemetry) and
+  # DO_NOT_TRACK=1 for every tool that honours it, under every preset but `native`. An
+  # opt-out protects nothing in the mechanism: it is state, a preference, and `native` is
+  # parity of the sandbox's state with `none` (the environment is every exported
+  # variable), so nothing is set there and the shell's values pass with the rest. The host
+  # is still refused there by the network mode, and still in telemetry-hosts. Set here,
+  # before everything forwarded, so a value the user forwards ([env] NAME) wins: that,
+  # with an [allow] line for the host, is the opt-in.
+  if ! _as_preset_is_native; then
+    local _tt
+    while IFS=$'\t' read -r _ _ _tt; do
+      args+=(--setenv "${_tt%%=*}" "${_tt#*=}")
+    done < <(_as_tools_telemetry)
+    args+=(--setenv DO_NOT_TRACK 1)
+  fi
   # THE PROFILE'S ENVIRONMENT UNDER `native` (#173). A pin is policy, like the network
-  # mode and the syscall filter: it applies under every preset. A refusal guards the
+  # mode and the syscall filter: it applies under every preset -- a pin that protects the
+  # mechanism, that is, as DISABLE_AUTOUPDATER does (an updater writing into the app
+  # breaks the sandbox). A pin that protects nothing in the mechanism, a tool's telemetry
+  # opt-out (#304), is state, and is not set under `native`. A refusal guards the
   # isolation (a variable that would move state out from under it), and `native` has no
   # isolation to guard and forwards the whole environment, as `none` does: there it
   # does not apply. And the variable the agent reads its base from (`base-env`) is set

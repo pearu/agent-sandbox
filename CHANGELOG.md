@@ -577,6 +577,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A tool's own telemetry stopped a session** (#304): gh sends usage telemetry to
+  `cafe.github.com`, which the proxy refused, and the refusal hook reported it beside an
+  ordinary `gh` call that had succeeded; the session stopped to ask for the host. The
+  engine now keeps a table of the tools env's telemetry: gh's host joins the agent's own
+  in `telemetry-hosts`, so the hook leaves it out of its note, and every sandbox but
+  `--preset native` gets `GH_TELEMETRY=false` and `DO_NOT_TRACK=1`, so gh does not send
+  it; under `native` an opt-out is your state, so the values are your shell's, and the
+  host is still refused. `--check` says so in one line; an `[allow]` line and a
+  forwarded `GH_TELEMETRY` opt in. And the hook now
+  reports refusals only after a command that failed: on `PostToolUse` it counts them as
+  seen and says nothing, for every reason. They are still in `refused.log` and
+  `blocked.log`.
 - **A file a session named for you to read was named by its inside path** (#311): "the
   draft is ready in .asb/scratch/x.md", a path you cannot open on the host. The briefing
   now says a file named to the user is named by its host path, from the list of where

@@ -505,6 +505,14 @@ which roles of the project have a session to resume, with a one-line summary eac
   private, because binding it whole leaves nowhere to create the sandbox's own
   briefing.
 
+  A pin is policy when it protects the mechanism: an updater writing into the app
+  breaks the sandbox, so `DISABLE_AUTOUPDATER` stays. The tools' telemetry opt-outs
+  (`GH_TELEMETRY=false`, `DO_NOT_TRACK=1`, #304) protect nothing in it; they are a
+  preference, which is state, and under `native` they are not set: the values in your
+  shell pass with the rest of the environment, as Claude's own telemetry settings do.
+  The hosts are still refused by the network mode, and left out of the agent's note,
+  as under every preset.
+
   Because that is the whole of the isolation switched off, `native` is accepted
   **only as the `--preset` flag** — never from `AGENT_SANDBOX_PRESET` or a project
   file, either of which could set it for every launch without anyone noticing —
@@ -951,6 +959,12 @@ PATH, right before the first system directory (`/usr/...`, `/bin`, `/sbin`,
 distribution's. That `bin/` holds links to the listed packages' own commands only, not
 their dependencies' -- a tool that pulls in Python puts no `python3` ahead of
 `/usr/bin/python3`.
+
+Its tools' usage telemetry is off and refused (#304): the engine sets `GH_TELEMETRY=false`
+and `DO_NOT_TRACK=1` in every sandbox but `--preset native`, where the values are your
+shell's, and gh's `cafe.github.com` is refused without a note to the agent wherever the
+allowlist applies, under every preset. To opt in, see
+[network.md](network.md#refusals-reach-the-session).
 
 It lives in two slots, `tools/a/` and `tools/b/`, and `tools/current` names the one in
 use: a run builds the other one and switches only when the build worked, so a failed

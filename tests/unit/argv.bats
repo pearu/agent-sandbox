@@ -147,6 +147,50 @@ setup() {
   [ "$(grep -c '^PIP_CERT$' "$H/argv")" -eq 1 ]
 }
 
+@test "the tools' telemetry is off in every sandbox but native (#304): GH_TELEMETRY=false and DO_NOT_TRACK=1 pinned, a value the user forwards wins, and under native the shell's values or none" {
+  # the last --setenv of a name is the one bwrap leaves
+  setenv_last() {
+    local i v=""
+    for ((i = 0; i + 2 < ${#ARGV[@]}; i++)); do [[ "${ARGV[i]}" == --setenv && "${ARGV[i + 1]}" == "$1" ]] && v="${ARGV[i + 2]}"; done
+    printf '%s' "$v"
+  }
+  setenv_count() {
+    local i n=0
+    for ((i = 0; i + 2 < ${#ARGV[@]}; i++)); do [[ "${ARGV[i]}" == --setenv && "${ARGV[i + 1]}" == "$1" ]] && n=$((n + 1)); done
+    printf '%s' "$n"
+  }
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value GH_TELEMETRY)" = false ]
+  [ "$(setenv_last GH_TELEMETRY)" = false ]
+  [ "$(setenv_value DO_NOT_TRACK)" = 1 ]
+  [ "$(setenv_last DO_NOT_TRACK)" = 1 ]
+  # not forwarded unasked: a value in the launching shell does not reach in
+  run_engine GH_TELEMETRY=true DO_NOT_TRACK=0 -- asb claude --version
+  [ "$(setenv_last GH_TELEMETRY)" = false ]
+  [ "$(setenv_last DO_NOT_TRACK)" = 1 ]
+  # native: no pin -- an opt-out is state, and native's state is the user's
+  TEST_PRESET="" run_engine -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  [ -z "$(setenv_last GH_TELEMETRY)" ]
+  [ -z "$(setenv_last DO_NOT_TRACK)" ]
+  [ "$(setenv_count GH_TELEMETRY)" = 0 ]
+  [ "$(setenv_count DO_NOT_TRACK)" = 0 ]
+  # and the shell's values are swept in with the rest of the environment, alone
+  TEST_PRESET="" run_engine GH_TELEMETRY=true DO_NOT_TRACK=0 -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_count GH_TELEMETRY)" = 1 ]
+  [ "$(setenv_last GH_TELEMETRY)" = true ]
+  [ "$(setenv_count DO_NOT_TRACK)" = 1 ]
+  [ "$(setenv_last DO_NOT_TRACK)" = 0 ]
+  # the opt-in: forwarded by name, the user's value comes after the pin and wins
+  run_engine AGENT_SANDBOX_FORWARD="GH_TELEMETRY DO_NOT_TRACK" GH_TELEMETRY=true DO_NOT_TRACK=0 -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"not forwarding GH_TELEMETRY"* ]]
+  [ "$(setenv_last GH_TELEMETRY)" = true ]
+  [ "$(setenv_last DO_NOT_TRACK)" = 0 ]
+}
+
 @test "a path declared read-only or read-write binds the path; a missing one is skipped with a note" {
   mkdir -p "$H/ro1" "$H/rw1"
   run_engine -- asb --connect "$H/ro1 = read-only" --connect "$H/nope = read-only" \

@@ -465,7 +465,7 @@ CHECK
   # the briefing says what going on without it means, and that refusals are reported
   grep -q 'a mirror, another channel' "$OUT/briefing.md"
   grep -q 'or another tool for the same thing is going on without it' "$OUT/briefing.md"
-  grep -q 'command is reported to this session right after it' "$OUT/briefing.md"
+  grep -q 'command that fails is reported to this session right after it' "$OUT/briefing.md"
   grep -q 'a mirror or another tool for the same thing counts as going on without it' "$OUT/hook-SessionStart.json"
 }
 
@@ -524,11 +524,11 @@ CHECK
   [ "$status" -eq 0 ] && [ -z "$output" ]
   # one new line: only that host, under the event it was called for
   printf '%s\n' $'2026-10-15T10:01:00\tconda.anaconda.org\tCONNECT\tallowlist' >>"$D/refused.log"
-  run bash "$hook" PostToolUse "$D" "$S"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
   [ "$status" -eq 0 ]
   printf '%s' "$output" >"$BATS_TEST_TMPDIR/out.json"
   python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' "$BATS_TEST_TMPDIR/out.json"
-  [[ "$output" == *'"hookEventName":"PostToolUse"'* && "$output" == *"asb --apply '[allow:reviewer-1]' conda.anaconda.org."* ]]
+  [[ "$output" == *'"hookEventName":"PostToolUseFailure"'* && "$output" == *"asb --apply '[allow:reviewer-1]' conda.anaconda.org."* ]]
   [[ "$output" != *prefix.dev* && "$output" != *shop.example* ]]
   # a line still being written (no newline yet) waits for the next call
   printf '2026-10-15T10:02:00\tlate.example\tCONNECT\tallow' >>"$D/refused.log"
@@ -538,7 +538,7 @@ CHECK
   printf "x'; rm -rf ~\n" >"$D/apply-section"
   printf 'asb --role x; rm -rf ~ --shutdown claude\n' >"$D/restart" # nor a restart of another shape
   printf 'list\n' >>"$D/refused.log"
-  run bash "$hook" PostToolUse "$D" "$S"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
   [[ "$output" == *"asb --apply '[allow]' late.example. It applies once this role is restarted, then launched again -- "* ]]
   [[ "$output" != *"rm -rf"* ]]
   # an event it was not written for, or no log: silent
@@ -576,7 +576,7 @@ CHECK
   printf '%s\n' $'2026-10-16T10:00:00\thttp-intake.logs.us5.datadoghq.com\tCONNECT\tallowlist' \
     $'2026-10-16T10:00:01\tdatadoghq.com\tCONNECT\tallowlist' \
     $'2026-10-16T10:00:02\tbrowser-intake-us5-datadoghq.com\tCONNECT\tallowlist' >"$D/refused.log"
-  run bash "$hook" PostToolUse "$D" "$S"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
   [ "$status" -eq 0 ] && [ -z "$output" ]
   # a mix: only the unlisted host, and not one that merely ends in the same letters
   printf '%s\n' $'2026-10-16T10:01:00\thttp-intake.logs.us5.datadoghq.com\tCONNECT\tallowlist' \
@@ -597,8 +597,88 @@ CHECK
   # no list from the engine: every host is reported, as before
   rm "$D/telemetry-hosts"
   printf '%s\n' $'2026-10-16T10:02:00\thttp-intake.logs.us5.datadoghq.com\tCONNECT\tallowlist' >>"$D/refused.log"
-  run bash "$hook" PostToolUse "$D" "$S"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
   [[ "$output" == *"http-intake.logs.us5.datadoghq.com was refused by the sandbox (allowlist)"* ]]
+}
+
+@test "refusal-hook.sh reports only a failed command's refusals (#304): PostToolUse consumes them silently, PostToolUseFailure reports, for every reason" {
+  local hook="${ENGINE%/*}/profiles/claude/refusal-hook.sh" D="$BATS_TEST_TMPDIR/run" S="$BATS_TEST_TMPDIR/seen"
+  mkdir -p "$D"
+  printf '[allow]\n' >"$D/apply-section"
+  # a command that exited 0: nothing said, and the line counted as seen
+  printf '%s\n' $'2026-10-30T10:00:00\texample.com\tCONNECT\tallowlist' >"$D/refused.log"
+  run bash "$hook" PostToolUse "$D" "$S"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = 1 ]
+  # so a failure right after it, with no new line, has nothing to say either
+  run bash "$hook" PostToolUseFailure "$D" "$S"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = 1 ]
+  # a failed command's refusal: the note, as before, and the state advances
+  printf '%s\n' $'2026-10-30T10:01:00\texample.com\tCONNECT\tallowlist' >>"$D/refused.log"
+  run bash "$hook" PostToolUseFailure "$D" "$S"
+  [ "$status" -eq 0 ]
+  [[ "$output" == '{"hookSpecificOutput":{"hookEventName":"PostToolUseFailure","additionalContext":"agent-sandbox: example.com was refused by the sandbox (allowlist) during this command.'* ]]
+  [[ "$output" == *"asb --apply '[allow]' example.com."* ]]
+  [ "$(cat "$S")" = 2 ]
+  # every policy reason is consumed the same way after a success...
+  local why n=2
+  for why in '[deny]' retrieve-only 'git refuse' 'git push' non-public; do
+    printf '2026-10-30T10:02:00\tshop.example\tPOST\t%s\n' "$why" >>"$D/refused.log"
+    n=$((n + 1))
+    run bash "$hook" PostToolUse "$D" "$S"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(cat "$S")" = "$n" ]
+  done
+  # ...and reported after a failure
+  for why in '[deny]' retrieve-only 'git refuse' 'git push' non-public; do
+    printf '2026-10-30T10:03:00\tshop.example\tPOST\t%s\n' "$why" >>"$D/refused.log"
+    n=$((n + 1))
+    run bash "$hook" PostToolUseFailure "$D" "$S"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"agent-sandbox: shop.example was refused by "*" ($why) during this command; --apply does not lift it."* ]]
+    [ "$(cat "$S")" = "$n" ]
+  done
+}
+
+@test "the tools' telemetry (#304): gh's host beside the agent's own in telemetry-hosts, under native too, the hook leaves it out, one line in --check, and under native it does not say off" {
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF .datadoghq.com "$OUT/telemetry-hosts"
+  grep -qxF cafe.github.com "$OUT/telemetry-hosts"
+  # the hook, with the engine's file: a refusal of it during a failed command says nothing
+  local hook="${ENGINE%/*}/profiles/claude/refusal-hook.sh" S="$BATS_TEST_TMPDIR/seen"
+  printf '%s\n' $'2026-10-30T10:00:00\tcafe.github.com\tCONNECT\tallowlist' >"$OUT/refused.log"
+  run bash "$hook" PostToolUseFailure "$OUT" "$S"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  telemetry: gh's usage telemetry is off (GH_TELEMETRY=false, DO_NOT_TRACK=1) and cafe.github.com is refused; opt in with an [allow] line"$'\n'* ]]
+  # native: the host is still refused and in telemetry-hosts; the variables are the shell's
+  rm -f "$OUT/telemetry-hosts"
+  TEST_PRESET="" run_engine BWRAP_COPY="$OUT" -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF cafe.github.com "$OUT/telemetry-hosts"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --preset native --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  telemetry: gh's cafe.github.com is refused and not reported; under native its usage telemetry is not turned off (GH_TELEMETRY and DO_NOT_TRACK are your shell's)"$'\n'* ]]
+  [[ "$output" != *"usage telemetry is off"* ]]
+  printf '[net]\nhosts = public\n' >"$PROJ/.agent-sandbox"
+  approve
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  telemetry: gh's usage telemetry is off (GH_TELEMETRY=false, DO_NOT_TRACK=1)"$'\n'* ]]
+  [[ "$output" != *"cafe.github.com is refused"* ]]
+  # native without the allowlist: nothing refused, nothing pinned, nothing to say
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --preset native --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"network: every public host"* ]]
+  [[ "$output" != *"  telemetry: "* ]]
 }
 
 @test "what the session hands the user is one line or a file, and the briefing names where its files are on the host" {
