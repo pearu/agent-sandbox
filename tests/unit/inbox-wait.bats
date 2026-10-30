@@ -69,6 +69,17 @@ waited() {
   [ "$(cat "$T/out")" = "$T/later.md" ]
 }
 
+@test "inbox-wait: a file removed is a change -- the Supervisor waits so for a reset marker to be taken" {
+  : >"$T/r.reset"
+  "$IW" -t 10 "$T/r.reset" >"$T/out" &
+  local pid=$!
+  sleep 1.5
+  rm -f "$T/r.reset"
+  waited "$pid"
+  [ "$st" -eq 0 ]
+  [ "$(cat "$T/out")" = "$T/r.reset" ]
+}
+
 @test "inbox-wait: with no -t (or -t 0) it waits for ever" {
   "$IW" "$T/inbox.md" &
   local pid=$!

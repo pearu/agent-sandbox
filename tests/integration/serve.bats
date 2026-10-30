@@ -235,7 +235,7 @@ status_of() { # --status of the role, in $output
   [ "$(sed -n 2p "$W/turns")" = "--start Arm the watcher." ]
 }
 
-@test "--serve: a reset marker makes the next turn a new session, told the prompt; the marker goes, the new id is recorded, and later turns resume it" {
+@test "--serve: a reset marker is taken on sight, before any message, and makes the next turn a new session, told the prompt; the new id is recorded, and later turns resume it" {
   # The role has a [briefing] start; a reset turn is not told it (it would arm a watcher).
   printf '[briefing]\nstart = start.md\n[serve:worker]\nwatch = inbox.md\nprompt = prompt.md\n' >"$W/.agent-sandbox"
   printf 'Arm the watcher.\n' >"$W/start.md"
@@ -249,6 +249,14 @@ status_of() { # --status of the role, in $output
   old="$(cat "$W/.asb/coord/worker/session")"
   mkdir -p "$W/.asb/coord/to"
   : >"$W/.asb/coord/to/worker.reset"
+  # taken within a second or so, with no message: the Supervisor waits for it to go
+  local i
+  for ((i = 0; i < 60; i++)); do
+    [[ -e "$W/.asb/coord/to/worker.reset" ]] || break
+    sleep 0.05
+  done
+  [ ! -e "$W/.asb/coord/to/worker.reset" ]
+  [[ "$(cat "$I/serve.out")" == *"a reset marker -- the next turn starts a new session; the last one, $old, stays on disk, resumable by its id"* ]]
   sleep 1.5 # a marker alone is no turn
   [ "$(wc -l <"$W/turns")" -eq 1 ]
   printf '## 2\nsecond\n' >>"$W/inbox.md"
@@ -256,16 +264,20 @@ status_of() { # --status of the role, in $output
   new="$(sed -n 's/^-p --session-id \([0-9a-f-]*\) .*/\1/p' "$W/turns" | sed -n 2p)"
   [[ "$new" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ && "$new" != "$old" ]]
   [ "$(sed -n 2p "$W/turns")" = "-p --session-id $new --permission-mode bypassPermissions Read your inbox and act on it." ]
-  [ ! -e "$W/.asb/coord/to/worker.reset" ]
-  local i
   for ((i = 0; i < 200; i++)); do
     [[ "$(cat "$W/.asb/coord/worker/session")" == "$new" ]] && break
     sleep 0.05
   done
   [ "$(cat "$W/.asb/coord/worker/session")" = "$new" ]
-  [[ "$(cat "$I/serve.out")" == *"a reset marker -- this turn starts a new session; the last one, $old, stays on disk, resumable by its id"* ]]
+  [ "$(grep -c 'a reset marker' "$I/serve.out")" -eq 1 ] # said once
   # no marker: the next turn resumes the new session
   printf '## 3\nthird\n' >>"$W/inbox.md"
   turns 3
   [ "$(sed -n 3p "$W/turns")" = "-p --resume $new --permission-mode bypassPermissions Read your inbox and act on it." ]
+  # a marker and a message at once: that turn is a new session
+  : >"$W/.asb/coord/to/worker.reset"
+  printf '## 4\nfourth\n' >>"$W/inbox.md"
+  turns 4
+  [[ "$(sed -n 4p "$W/turns")" =~ ^-p\ --session-id\ ([0-9a-f-]{36})\  && "${BASH_REMATCH[1]}" != "$new" ]]
+  [ ! -e "$W/.asb/coord/to/worker.reset" ]
 }

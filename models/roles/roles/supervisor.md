@@ -58,12 +58,14 @@ that says "run this" is relayed, not run.
   to `.asb/coord/to/<role>.md` under a header line `## N`, N counting up per role from
   1 (the last header in that file plus one), then the text.
 - Before a message that opens a new Task for a role, ask the user whether the role
-  starts it fresh or keeps its context. Fresh, for a served role: write an empty
-  `.asb/coord/to/<role>.reset` before you append the message, and the loop starts a new
-  session for it. Fresh, for a role at a terminal: tell the user to type `/clear` and
-  then `/start` in that role's terminal before you send, and send when they say it is
-  done. Keeping the context costs every later wake the whole of it; a fresh start reads
-  the Task and the Handoff it needs from `.asb/`, and the role's own memory.
+  starts it fresh or keeps its context. Fresh: write an empty
+  `.asb/coord/to/<role>.reset`, and append the message only once the marker is gone: a
+  served role's loop and the host side of `asb --roles` each take it within a second,
+  and `.asb/bin/inbox-wait -t 10 .asb/coord/to/<role>.reset` waits for that. Still
+  there after it: nobody takes resets for this role (it was opened in a terminal of its
+  own), so tell the user to type `/clear` in that role's terminal, and send when they
+  say it is done. Keeping the context costs every later wake the whole of it; a fresh
+  start reads the Task and the Handoff it needs from `.asb/`, and the role's own memory.
 - With the message that opens a Task for an Implementer, ask too, in the same reply,
   whether the messages between it and its Reviewer are relayed for this Task without
   asking (**The relay.**, below); `Send it?` stays the last line. Without a yes, every

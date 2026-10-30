@@ -955,7 +955,7 @@ shared_env() {
   done
 }
 
-@test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, resets by the marker or asks for /clear and /start; every other role writes to its memory before done, and resumes a turn cut short without asking" {
+@test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, writes the reset marker and sends once it is gone, or asks for /clear when nobody took it; every other role writes to its memory before done, and resumes a turn cut short without asking" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local sup="$PROJ/.asb/roles/supervisor.md" r f
@@ -964,10 +964,11 @@ shared_env() {
   local flat
   flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
   # shellcheck disable=SC2016 # backticks: the text, not a command
-  [[ "$flat" == *'Fresh, for a served role: write an empty `.asb/coord/to/<role>.reset` before you append the message'* ]]
+  [[ "$flat" == *'Fresh: write an empty `.asb/coord/to/<role>.reset`, and append the message only once the marker is gone: a served role'"'"'s loop and the host side of `asb --roles` each take it within a second, and `.asb/bin/inbox-wait -t 10 .asb/coord/to/<role>.reset` waits for that.'* ]]
   # shellcheck disable=SC2016 # backticks: the text, not a command
-  [[ "$flat" == *'tell the user to type `/clear` and then `/start` in that role'"'"'s terminal before you send'* ]]
-  [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | wc -l)" -eq 7 ]
+  [[ "$flat" == *'Still there after it: nobody takes resets for this role (it was opened in a terminal of its own), so tell the user to type `/clear` in that role'"'"'s terminal, and send when they say it is done.'* ]]
+  [[ "$flat" != *'/start'* ]]
+  [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | wc -l)" -eq 9 ]
   [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
   # the next bullet: the relay is asked about with the message that opens a Task (#326)
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- With the message that opens a Task for an Implementer, ask too, in the same reply,')" -eq 1 ]
