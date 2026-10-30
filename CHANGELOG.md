@@ -47,6 +47,21 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **After the Gate's push the roles model's Supervisor proposes the Planner's next step
+  in the same reply, and a Task already written for the waiting Implementer is asked
+  about ahead and goes when the run is green** (#333). Only the Implementer's and the
+  Reviewer's next Task wait for the CI run; the Planner's step -- the next Task to plan,
+  or, where it is already written, planning ahead -- is proposed with the watch, and the
+  reply ends on that proposal or on a question, never on the watch alone. When the
+  Planner has already written the waiting Implementer's next Task, the Supervisor says
+  so and asks then, with the fresh-or-keep and relay questions as for any Task; on your
+  yes, at green, it writes the `.reset` marker if fresh, sends the message once the
+  marker is gone and reports it in one line, with no second question. A red run lapses
+  that yes: the finding goes to the Implementer as before, and the Task is asked about
+  again once the fix is merged and its run is green. It is your word on that one
+  message, given ahead, not a message that goes without asking. `docs/roles.md` says so
+  in section 4's builds and section 5's inboxes; `asb --init roles` run again takes the
+  new purpose file where you have not changed it.
 - **The roles model's Supervisor tells the Planner on its own that the Reviewer accepted
   and that a merged step's CI run is green, and an Implementer's next Task waits for the
   run** (#331). Two messages to the Planner outside a Task's relay go without asking,

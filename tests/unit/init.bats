@@ -1004,8 +1004,8 @@ shared_env() {
   [[ "$flat" == *'When the Reviewer accepts the Handoff -- a Review with no findings, the first one or the one that ends the revision loop -- append the acceptance to the Planner on your own, asking for its confirmation that the step is ready, and report it in one line.'* ]]
   [[ "$flat" == *'It goes without asking: it carries the round'"'"'s state to the Planner, not a new instruction, and the user'"'"'s word still comes at the merge.'* ]]
   # the CI bullet, in **Sending a message.**
-  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- "- After the Gate's push, arm a Monitor on the CI run it reported and go on: propose the")" -eq 1 ]
-  [[ "$flat" == *'propose the next step without waiting, since the Planner can begin on the merged `main`.'* ]]
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- "- After the Gate's push, arm a Monitor on the CI run it reported and, in the same reply,")" -eq 1 ]
+  [[ "$flat" == *'The Planner can begin on the merged `main`;'* ]]
   [[ "$flat" == *'The step is done when the run is green, not at the push.'* ]]
   [[ "$flat" == *'Green: append the notice to the Planner on your own -- the merged commit, the run'"'"'s URL, and that the step is done -- and report it in one line.'* ]]
   [[ "$flat" == *'Like the Reviewer'"'"'s acceptance (above), it goes without asking: it closes a step the user approved, the merge and the push.'* ]]
@@ -1014,10 +1014,30 @@ shared_env() {
   # the next bullet: the next Task waits for the run
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- The message that opens the next Task for an Implementer or a Reviewer whose previous')" -eq 1 ]
   [[ "$flat" == *'The message that opens the next Task for an Implementer or a Reviewer whose previous Task'"'"'s merge has a run that is not yet green waits for the run: propose it, with the fresh-or-keep and relay questions as for any Task, once the run is green, and never write its `.reset` marker before.'* ]]
-  [[ "$flat" == *'Red: the finding goes to the Implementer in its context, the Reviewer keeps its context for the revision'"'"'s review, and the waiting Task opens after the fix is merged and its run is green.'* ]]
+  [[ "$flat" == *'Red: the finding goes to the Implementer in its context, the Reviewer keeps its context for the revision'"'"'s review, a yes given ahead lapses, and the waiting Task opens after the fix is merged and its run is green'* ]]
   # the relay's list and the never list carve out the notice
   [[ "$flat" == *'the merge proposal, every message to a Planner but the Reviewer'"'"'s acceptance and the notice of a green run (above) or to the Gate, the fresh-or-keep question before a new Task.'* ]]
   [[ "$flat" == *'write an instruction the user has not approved here, unless the relay covers it or it is the Reviewer'"'"'s acceptance or the notice of a green run to the Planner;'* ]]
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: after the Gate's push the Supervisor's reply ends on the Planner's step or a question, never on the watch; a Task already written for the waiting Implementer is asked about ahead and goes at green (#333)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" flat
+  flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
+  # the CI bullet, in **Sending a message.**: the Planner's step in the same reply
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- "- After the Gate's push, arm a Monitor on the CI run it reported and, in the same reply,")" -eq 1 ]
+  [[ "$flat" == *'After the Gate'"'"'s push, arm a Monitor on the CI run it reported and, in the same reply, propose the Planner'"'"'s next step: the next Task to plan, or, where that Task is already written, planning ahead -- the Task after it, an outline whose base commit is filled in later.'* ]]
+  [[ "$flat" == *'The Planner can begin on the merged `main`; only the Implementer'"'"'s and the Reviewer'"'"'s next Task wait for the run (below).'* ]]
+  [[ "$flat" == *'Your reply ends on that proposal or on a question, never on the watch alone.'* ]]
+  run ! grep -qF 'propose the next step without waiting' "$sup"
+  # the next-Task bullet: a Task already written is asked about ahead
+  [[ "$flat" == *'When the Planner has already written the waiting Implementer'"'"'s next Task, do not wait to ask: say so, and ask now, with the fresh-or-keep and relay questions as for any Task, whether it goes to the Implementer when the run is green.'* ]]
+  [[ "$flat" == *'That yes is the user'"'"'s word on that one message, given ahead and conditioned on the run: the message is still asked about, not one that goes without asking.'* ]]
+  [[ "$flat" == *'On yes, at green: write the `.reset` marker if the user said fresh, append the message once the marker is gone, report it in one line, and ask no second question.'* ]]
+  [[ "$flat" == *'Red: the finding goes to the Implementer in its context, the Reviewer keeps its context for the revision'"'"'s review, a yes given ahead lapses, and the waiting Task opens after the fix is merged and its run is green, asked about again then.'* ]]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
 }
 

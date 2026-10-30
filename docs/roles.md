@@ -239,13 +239,17 @@ Every role launches from the repository itself:
   merge, so `main` always holds the integration state and its build, which you can try
   on the host. The Supervisor re-runs the suite only when `main` moved since the
   branch's base; otherwise the merged tree is the branch's own, already tested by the
-  Reviewer, and it says so. After the Gate's push it watches the CI run and goes on; the
-  step is done when the run is green, and the Supervisor tells the Planner so on its
-  own, with the commit and the run's URL -- one of the two messages outside a Task's
-  relay you do not approve (section 5), since it closes a step you approved, the merge
-  and the push. A red run is a finding on `main` for the Implementer, proposed to you as
-  before; and the next Task of that Implementer or its Reviewer opens only once the run
-  is green, so a red run finds both with their context.
+  Reviewer, and it says so. After the Gate's push it watches the CI run and, in the same
+  turn, proposes the Planner's next step, ending on that or on a question, never on the
+  watch alone; the step is done when the run is green, and the Supervisor tells the
+  Planner so on its own, with the commit and the run's URL -- one of the two messages
+  outside a Task's relay you do not approve (section 5), since it closes a step you
+  approved, the merge and the push. A red run is a finding on `main` for the
+  Implementer, proposed to you as before; and the next Task of that Implementer or its
+  Reviewer opens only once the run is green, so a red run finds both with their context.
+  A Task the Planner has already written for that Implementer is asked about while the
+  run is in, and on your yes it goes at green without another question; red lapses that
+  yes.
 - **Environments.** The development environment is a conda environment you name
   (`x-dev` here): `main`'s, the Supervisor installs into it, you activate it on the host.
   Each Implementer gets a clone of it in its tree, `.asb/impl/N/.env`, and installs
@@ -311,6 +315,9 @@ instance when run again. The Supervisor watches them all; you can read them all.
 counting up per role from 1, and the Supervisor writes one only after you approved it in
 its terminal, or, within a Task you opted in to the relay (below), on the word you gave
 when it opened; two notices to the Planner go without a question (the relay, below).
+Your word on a message can also be given ahead, conditioned on a CI run: a Task already
+written for an Implementer whose merge's run is not yet green is asked about then, and
+goes when the run is green (section 4).
 
 - **Authenticity is the path.** The dot-file enforces who writes under `to/`, so a role
   needs no signature: it acts on its inbox, and on you in its own terminal, and on
@@ -410,7 +417,7 @@ relaunched for it:
   terminal of your own -- and the Supervisor asks you to type `/clear` there, and sends
   once you say it is done. For an Implementer or a Reviewer whose last merge has a CI
   run that is not yet green, no marker is written: the message that opens its next Task
-  is proposed only once the run is green, and a red run is fixed in the context the
+  is sent only once the run is green, and a red run is fixed in the context the
   merge was made in.
 - **A role at a terminal** starts fresh with `/clear`, nothing else: a new session id,
   the old transcript kept on disk. The inbox watcher, a background shell, survives it
