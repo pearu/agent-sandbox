@@ -115,9 +115,14 @@ session directory and binds that one file read-only at
 `/run/agent-sandbox/refused.log`; the addon appends each refusal attributed to the
 session (by its proxy token) to it, as `timestamp  host  method  why`, where `why`
 is `allowlist`, `[deny]`, `retrieve-only`, `git refuse`, `git push` or `non-public`
-(the last for HTTPS only, through the tunnel's token). The claude profile's hook on
-every Bash call, `PostToolUse` and `PostToolUseFailure` (a broken command usually
-exits nonzero), reports the lines that are new since the previous call, once each,
+(the last for HTTPS only, through the tunnel's token). The claude profile's hook runs
+after every Bash call, on `PostToolUse` and `PostToolUseFailure` (a broken command
+usually exits nonzero), and takes the lines that are new since the previous call. It
+reports them only after a command that failed (#304): a refusal during a command that
+exited 0 did not affect the task, so on `PostToolUse` the hook counts those lines as
+seen, never to be reported later, and says nothing. The rule is the same for every
+reason. Every refusal is still in `refused.log` and `blocked.log`; only what the agent
+is told mid-command changes. After a failed command it reports each new line once,
 next to the command's result, as statements rather than instructions: the host was
 refused, going on with a mirror, another channel or another tool for the same thing
 is going on without it and is the user's decision, the user adds the host with
@@ -131,6 +136,31 @@ writes to `/run/agent-sandbox/telemetry-hosts`), is left out of the note: it is 
 refused and still in `refused.log`, but it is no blocked action of the session's, and
 reported beside a command's result the model took it for one (#276). `--check` says so in
 one line under its network lines.
+
+The same holds for the tools the sandbox ships, in the tools environment
+([config.md](config.md#the-tools-environment)) (#304). The engine keeps a table of
+those that send usage telemetry on their own, with the host and the tool's own
+opt-out: for `gh`, `cafe.github.com` and `GH_TELEMETRY=false`. Each tool's host is
+added to `telemetry-hosts` beside the agent's own, so a refusal of it is left out of
+the note, and its variable is set under every preset but `native`, with
+`DO_NOT_TRACK=1` for every tool that honours that convention; with them the tool
+makes no such request at all. The entry is there whether the tool is installed or
+not. `--check` says it in one line, `telemetry: gh's usage telemetry is off
+(GH_TELEMETRY=false, DO_NOT_TRACK=1) and cafe.github.com is refused; opt in with an
+[allow] line`. To have a tool's telemetry, allow its host with an ordinary `[allow]`
+line, and forward the tool's variable with your value (`[env] GH_TELEMETRY`, with
+`GH_TELEMETRY=true` in your shell): a forwarded value comes after the engine's and
+wins.
+
+Under `native` the variables are not set. `native` is parity of the sandbox's state
+with `--preset none`, and its environment is every exported variable; what still
+applies there is engine policy that protects the mechanism, such as the network mode
+and `DISABLE_AUTOUPDATER`. A telemetry opt-out protects nothing in the mechanism: it
+is a preference, and under `native` preferences are yours, so the values in your shell
+pass with the rest. The host is still in `telemetry-hosts` and still refused where the
+allowlist applies, and `--check` says that instead: `telemetry: gh's cafe.github.com
+is refused and not reported; under native its usage telemetry is not turned off
+(GH_TELEMETRY and DO_NOT_TRACK are your shell's)`.
 
 `blocked.log` itself is never bound into a sandbox: it records every session of
 every project, and a session must not learn what the others tried. Nor is the

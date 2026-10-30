@@ -5,11 +5,20 @@
 #
 # The proxy appends each refusal of this session to DIR/refused.log
 # (/run/agent-sandbox, bound read-only), one "<ts>\t<host>\t<method>\t<why>" line.
-# After every Bash call this reports the lines that are new since the last call,
-# once each, as additionalContext next to the tool result: a refused host then
+# After a Bash call that failed this reports the lines that are new since the last
+# call, once each, as additionalContext next to the tool result: a refused host then
 # reaches the conversation when it happens, not only through the briefing read at
 # the start. Both events, because a command a refusal broke usually exits nonzero,
 # and Claude Code reports that as PostToolUseFailure, not PostToolUse.
+#
+# Only a failed command's refusals are reported (#304): a refusal during a command
+# that exited 0 did not affect the task -- gh's own telemetry inside a gh call that
+# succeeded, say. PostToolUse consumes: it advances STATE past the new lines, so they
+# are never reported later, and prints nothing. PostToolUseFailure reports. The rule
+# is the same for every reason (allowlist, [deny], retrieve-only, git refuse, git
+# push, non-public). Every refusal is still in refused.log and the host's blocked.log,
+# so the user's view is unchanged; this changes only what the agent is told
+# mid-command.
 #
 # No policy here: the section to ask for is the engine's (DIR/apply-section). Only
 # two fields of a line reach the text, and only when they pass a strict check: the
@@ -63,6 +72,8 @@ seen=0
 ((n == seen)) && exit 0
 printf '%s\n' "$n" >"$state" 2>/dev/null
 ((n > seen)) || exit 0 # the log never shrinks; a stale count is just reset
+# A command that succeeded: its refusals did not affect it (#304), consumed above.
+[[ "$event" == PostToolUseFailure ]] || exit 0
 
 text="" done_hosts=" "
 while IFS=$'\t' read -r _ host _ why _; do
