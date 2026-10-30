@@ -2,7 +2,8 @@
 
 Planners, Implementers, Reviewers, a Supervisor that coordinates and a Gate that
 publishes, with the user approving every message in the Supervisor's terminal -- one
-by one, or, for the revisions within a Task, once when it opens:
+by one, or, for the revisions within a Task, once when it opens; two notices to the
+Planner, the Reviewer's acceptance and a merged step's green CI run, go on their own:
 [docs/roles.md](../../docs/roles.md) is the model and how to run it.
 
     asb --init roles planner=2 implementer=2 reviewer=1 --env x-dev

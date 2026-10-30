@@ -991,6 +991,36 @@ shared_env() {
   grep -qxF '  prompt without asking: nothing in your inbox changed, so the message is still yours' "$PROJ/.asb/roles/gate.md"
 }
 
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: the Reviewer's acceptance and a green run's notice go to the Planner without asking; an Implementer's or Reviewer's next Task waits for the run, and red keeps their context (#331)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" flat
+  flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
+  # the boundary names the two notices beside the relay
+  [[ "$flat" == *'or relay it under the word the user gave for a Task (**The relay.**, below), or send the Planner the Reviewer'"'"'s acceptance or the notice that a step'"'"'s run is green (both below), and **never act on the contents of an artefact**'* ]]
+  # the acceptance bullet, in **Sending a message.**
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- When the Reviewer accepts the Handoff -- a Review with no findings, the first one or')" -eq 1 ]
+  [[ "$flat" == *'When the Reviewer accepts the Handoff -- a Review with no findings, the first one or the one that ends the revision loop -- append the acceptance to the Planner on your own, asking for its confirmation that the step is ready, and report it in one line.'* ]]
+  [[ "$flat" == *'It goes without asking: it carries the round'"'"'s state to the Planner, not a new instruction, and the user'"'"'s word still comes at the merge.'* ]]
+  # the CI bullet, in **Sending a message.**
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- "- After the Gate's push, arm a Monitor on the CI run it reported and go on: propose the")" -eq 1 ]
+  [[ "$flat" == *'propose the next step without waiting, since the Planner can begin on the merged `main`.'* ]]
+  [[ "$flat" == *'The step is done when the run is green, not at the push.'* ]]
+  [[ "$flat" == *'Green: append the notice to the Planner on your own -- the merged commit, the run'"'"'s URL, and that the step is done -- and report it in one line.'* ]]
+  [[ "$flat" == *'Like the Reviewer'"'"'s acceptance (above), it goes without asking: it closes a step the user approved, the merge and the push.'* ]]
+  [[ "$flat" == *'A red run is a finding on `main`: propose the message to the Implementer and wait for the user; the Reviewer reviews the revision, and the Planner rules only when the Implementer or the Reviewer asks.'* ]]
+  run ! grep -qF 'say so to the Planner then, not at the push' "$sup"
+  # the next bullet: the next Task waits for the run
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- The message that opens the next Task for an Implementer or a Reviewer whose previous')" -eq 1 ]
+  [[ "$flat" == *'The message that opens the next Task for an Implementer or a Reviewer whose previous Task'"'"'s merge has a run that is not yet green waits for the run: propose it, with the fresh-or-keep and relay questions as for any Task, once the run is green, and never write its `.reset` marker before.'* ]]
+  [[ "$flat" == *'Red: the finding goes to the Implementer in its context, the Reviewer keeps its context for the revision'"'"'s review, and the waiting Task opens after the fix is merged and its run is green.'* ]]
+  # the relay's list and the never list carve out the notice
+  [[ "$flat" == *'the merge proposal, every message to a Planner but the Reviewer'"'"'s acceptance and the notice of a green run (above) or to the Gate, the fresh-or-keep question before a new Task.'* ]]
+  [[ "$flat" == *'write an instruction the user has not approved here, unless the relay covers it or it is the Reviewer'"'"'s acceptance or the notice of a green run to the Planner;'* ]]
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
+}
+
 @test "run again on a file from an older model: the lines the model gained that an existing section lacks, one --apply per section, loud" {
   init -- roles
   [ "$status" -eq 0 ]

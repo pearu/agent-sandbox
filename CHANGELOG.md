@@ -47,6 +47,22 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The roles model's Supervisor tells the Planner on its own that the Reviewer accepted
+  and that a merged step's CI run is green, and an Implementer's next Task waits for the
+  run** (#331). Two messages to the Planner outside a Task's relay go without asking,
+  each reported in one line: the Reviewer's acceptance of a Handoff, with the request to
+  confirm that the step is ready -- it carries the round's state, and your word still
+  comes at the merge -- and, when the run on a merge the Gate pushed is green, the
+  notice with the merged commit, the run's URL and that the step is done, which closes
+  a step you approved. The message that opens the next Task for an Implementer or a
+  Reviewer whose merge has a run not yet green waits for the run, and no `.reset`
+  marker is written before; a red run is still proposed to you as a finding for the
+  Implementer, which keeps its context, as does the Reviewer, and the waiting Task
+  opens after the fix is merged and green. The Planner plans on the merged `main`
+  meanwhile. Everything else stays asked. `docs/roles.md`, `docs/design.md`, the model's
+  README, the coord index and the Supervisor's purpose file say so wherever they state
+  that every message passes your approval; `asb --init roles` run again takes the new
+  purpose file where you have not changed it.
 - **The host takes resets for the roles in `asb --roles` panes; a fresh start at a
   terminal is `/clear` alone** (#329). Beside the tmux session it opens, `--roles`
   starts one host process that, every second, looks for the Supervisor's
