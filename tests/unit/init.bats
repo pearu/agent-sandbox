@@ -969,6 +969,10 @@ shared_env() {
   [[ "$flat" == *'tell the user to type `/clear` and then `/start` in that role'"'"'s terminal before you send'* ]]
   [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | wc -l)" -eq 7 ]
   [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
+  # the next bullet: the relay is asked about with the message that opens a Task (#326)
+  [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- With the message that opens a Task for an Implementer, ask too, in the same reply,')" -eq 1 ]
+  # shellcheck disable=SC2016 # backticks: the text, not a command
+  [[ "$flat" == *'whether the messages between it and its Reviewer are relayed for this Task without asking (**The relay.**, below); `Send it?` stays the last line.'* ]]
   for r in planner-1 implementer-1 reviewer-1; do
     f="$PROJ/.asb/roles/$r.md"
     grep -qxF -- "- Before you report a Task done, write what the next session needs to your memory: how" "$f"

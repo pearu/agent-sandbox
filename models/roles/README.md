@@ -1,7 +1,8 @@
 # The roles model
 
 Planners, Implementers, Reviewers, a Supervisor that coordinates and a Gate that
-publishes, with the user approving every message in the Supervisor's terminal:
+publishes, with the user approving every message in the Supervisor's terminal -- one
+by one, or, for the revisions within a Task, once when it opens:
 [docs/roles.md](../../docs/roles.md) is the model and how to run it.
 
     asb --init roles planner=2 implementer=2 reviewer=1 --env x-dev
