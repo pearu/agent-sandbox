@@ -388,16 +388,25 @@ relaunched for it:
   you whether the role starts it fresh or keeps its context -- and, for an Implementer's
   Task, whether its revisions are relayed (above). The role itself is not told: it
   reads its inbox from its cursor either way.
-- **A served role** gets an empty `.asb/coord/to/<role>.reset`, written before the
-  message is appended, and the loop's next turn is a new session (below).
-- **A role at a terminal**: the Supervisor asks you to type `/clear` and then `/start`
-  in that role's terminal, and sends once you say it is done. `/start` is the role's
-  `[briefing] start` text as a command, which the claude profile provides for a role
-  that has one: it re-reads the inbox from the cursor and re-arms the watcher. `/clear`
-  does not end the watcher already running (measured, Claude Code 2.1.300: still
-  `1 shell` after it), so the start text arms none when one runs -- "unless one is
-  already running (a background shell of yours)"; without that, `/start` armed a second,
-  and at the next message both woke the session, which handled the message once.
+- **The marker, for every role.** For a fresh start the Supervisor writes an empty
+  `.asb/coord/to/<role>.reset` and appends the message only once the marker is gone. A
+  served role's loop takes it as soon as it appears, and its next turn is a new session
+  (below); for a role in a pane of `asb --roles` (section 9), the host side of that
+  command takes it, typing `/clear` in the role's pane. Either takes it within a second.
+  Still there after ten, nobody takes resets for that role -- you opened it in a
+  terminal of your own -- and the Supervisor asks you to type `/clear` there, and sends
+  once you say it is done.
+- **A role at a terminal** starts fresh with `/clear`, nothing else: a new session id,
+  the old transcript kept on disk. The inbox watcher, a background shell, survives it
+  (still `1 shell`), the briefing comes back because the claude profile delivers it
+  through a SessionStart hook, which Claude Code fires again on `/clear`, and the next
+  message wakes the cleared session, which re-arms the watcher, reads the inbox from its
+  cursor and acts (measured, Claude Code 2.1.314). `/clear` sent while the role is in
+  a turn is queued and runs when that turn ends (measured, 2.1.314); the marker goes
+  only once it is typed, so the message is written after the `/clear` is in the role's
+  queue. The start text keeps "unless one is already running (a background shell of
+  yours)", for a relaunch: `/start` after `/clear` once armed a second watcher, and at
+  the next message both woke the session.
 - **What carries over** is what each Planner, Implementer and Reviewer writes to its
   memory before it reports a Task done: how the build behaves, what the tests need,
   what the Reviewer tends to raise.
@@ -497,8 +506,9 @@ as the watcher in a terminal does, so the Supervisor sees the role running.
   which only the Supervisor writes -- makes the next turn a new session: a fresh id,
   told the prompt as every turn is, written to `.asb/coord/<role>/session`, and the
   marker removed (from inside the directory; a link is removed, never followed). The
-  marker alone is no turn: the loop looks for it when a message arrives, so it goes
-  before the message. Not the `[briefing] start` text: that one says to arm the
+  loop takes the marker as soon as it appears, while it waits and while a turn runs,
+  and says so; the marker alone is no turn, and the Supervisor appends its message once
+  the marker is gone. Not the `[briefing] start` text: that one says to arm the
   watcher, and a `-p` turn that runs one in the background does not end (measured).
   The old session's transcript stays on disk, resumable by its id with `--resume`.
 - **The pause.** While anything else is joined into the role's launch -- that terminal,
@@ -788,7 +798,15 @@ would ask -- and attaches; not at a terminal, it prints the attach command inste
 pane whose launch ends drops to a shell, so its last output stays readable. A session
 of that name already open is refused, naming `tmux attach -t NAME` to return to it and
 `tmux kill-session -t NAME` to end it; ending it hangs up every launch in it, and each
-role's sandbox then ends after the keeper's grace, as when you close its terminal. tmux
+role's sandbox then ends after the keeper's grace, as when you close its terminal.
+Beside the session it starts one process on the host that takes the Supervisor's reset
+markers for those roles (section 5): each second it looks for
+`.asb/coord/to/ROLE.reset`, and for one it types `/clear` and Enter in that role's pane
+-- the pane whose tmux option `@role` is the role -- and removes the marker. It types
+nothing else, outlives the terminal you ran `--roles` in, ends when the session does,
+and logs to `~/.local/state/agent-sandbox/claude/<project slug>/.roles-resets.log`;
+the line `--roles` prints names it. It is not started for served roles, whose loop
+takes its own marker, nor in a project without `.asb/coord/to/`. tmux
 is the host's, else the tools env's, where `install.sh` installs it by default
 ([config.md](config.md)). `--continue` in a directory with no conversation starts a new
 one (measured with Claude Code 2.1.311), so the one line both starts a round and

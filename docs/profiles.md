@@ -30,6 +30,7 @@ Variables a profile declares (all optional unless marked):
 | `profile_verbs_observe=(...)` | (Or `[agent] verbs-observe`.) The subset of `profile_verbs` that only ask questions. |
 | `profile_daemon_argv=(...)` | (Or `[agent] daemon`.) Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
 | `profile_serve_new=(...)`, `profile_serve_resume=(...)` | (Or `[agent] serve-new`, `serve-resume`.) The agent's arguments for one turn of `asb --role R --serve CMD` (#277): the session's first turn, and every later one; `{id}` is the session's id, and the prompt follows them. Without both, `--serve` refuses. claude: `-p --session-id {id} --permission-mode bypassPermissions` and `-p --resume {id} --permission-mode bypassPermissions`. |
+| `profile_clear="..."` | (Or `[agent] clear`.) What the host side of `asb --roles` types into a role's pane, then Enter, when the Supervisor writes the role's reset marker `.asb/coord/to/ROLE.reset` (#329): a fresh start of the session at its terminal. Empty: `--roles` takes no resets. claude: `/clear`. |
 
 Functions a profile defines:
 
@@ -132,6 +133,7 @@ single-valued one.
 |---|---|
 | `[agent] verbs`, `verbs-observe`, `daemon`, `status`, `serve-new`, `serve-resume` | `profile_verbs`, `profile_verbs_observe`, `profile_daemon_argv`, `profile_status_argv`, `profile_serve_new`, `profile_serve_resume` (space-separated words) |
 | `[agent] command` | `profile_command` |
+| `[agent] clear` | `profile_clear`, the whole value |
 | `[agent] base` | the agent's state directory (`~/.claude`), bound **read-write** before anything else, so every channel and declaration layers on it; created when absent; checked as any read-write bind is (never `/`, `$HOME` or a parent of it, nothing protected), and resolved again at bind time (#175) |
 | `[agent] base-env` | the variable the agent itself reads to move its state (claude: `CLAUDE_CONFIG_DIR`); set and non-empty in the launching shell, it wins over `base` (#190). `{base}` in the dot-file is the base so resolved |
 | `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch: a tmpfs each, empty inside and gone at exit |

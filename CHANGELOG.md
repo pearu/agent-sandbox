@@ -47,6 +47,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The host takes resets for the roles in `asb --roles` panes; a fresh start at a
+  terminal is `/clear` alone** (#329). Beside the tmux session it opens, `--roles`
+  starts one host process that, every second, looks for the Supervisor's
+  `.asb/coord/to/ROLE.reset`, types the profile's `[agent] clear` (claude: `/clear`) and
+  Enter in that role's pane, and removes the marker (a link removed, never followed);
+  it types nothing else, outlives the terminal, ends with the session, and logs to
+  `.roles-resets.log` in the project's state directory. A `--serve` loop takes the
+  marker as soon as it appears, not only when a message arrives. The Supervisor has one
+  rule for every role: write the marker, send once it is gone, and ask you for `/clear`
+  in the role's terminal only when nobody took it in ten seconds. `/start` after
+  `/clear` is gone from the docs: the inbox watcher survives `/clear`, the briefing
+  comes back through the SessionStart hook, and the next message wakes the cleared
+  session (measured, Claude Code 2.1.314); `/clear` sent mid-turn is queued and runs
+  when the turn ends.
 - **The roles model's Supervisor relays the revisions within a Task, on your opt-in**
   (#326): with the message that opens a Task it asks too, beside "Send it?" and the
   fresh-or-keep question, whether the messages between the Implementer and its Reviewer

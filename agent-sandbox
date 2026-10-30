@@ -259,8 +259,8 @@
 #                         turn of R's session (the profile's serve-new/serve-resume
 #                         arguments and the prompt) per change to the file the
 #                         dot-file's [serve:R] watch names; --shutdown ends it.
-#                         A file .asb/coord/to/R.reset makes the next turn a new
-#                         session. A [serve:R] with watch alone is not served: its
+#                         A file .asb/coord/to/R.reset, taken as it appears, makes
+#                         the next turn a new session. A [serve:R] with watch alone is not served: its
 #                         watcher is enforced at a terminal, and --serve refuses.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
@@ -435,7 +435,11 @@ Engine flags (before CMD):
                         roles end at the first word that starts with `-` or
                         names a profile. Reviews the dot-file once, here,
                         first. Refused with --role, a verb, --exec, a review,
-                        or while a session of that name is open
+                        or while a session of that name is open. Beside the
+                        session, a host-side watcher takes the Supervisor's
+                        reset markers (.asb/coord/to/ROLE.reset): it types the
+                        profile's fresh start (claude: /clear) in that role's
+                        pane, removes the marker, and ends with the session
   --preset NAME        where every channel sits before any override:
                         `isolated` (nothing of your install), `inherit`
                         (read your files live, keep the sandbox's writes to
@@ -3870,8 +3874,10 @@ _as_role_summarize() {
 # [permissions]. The session is named: the first turn makes it with a fresh id, written
 # to .asb/coord/R/session, and every later turn, and a later --serve, resumes it -- until
 # a reset: an R.reset beside R's inbox, in .asb/coord/to/, which only the Supervisor
-# writes, makes the next turn a new session, and the marker goes. The old session stays
-# on disk, resumable by its id.
+# writes, makes the next turn a new session. The loop takes the marker as soon as it
+# appears, while it waits and while a turn runs (#329), as asb --roles's host side
+# takes it for a role in a pane, so the Supervisor sees it go within a second. The old
+# session stays on disk, resumable by its id.
 #
 # NOTHING OF THE PROJECT RUNS ON THE HOST. The loop polls the watched file itself -- its
 # modification time, inode and size, inbox-wait's test -- and touches the role's alive
@@ -4023,18 +4029,18 @@ _as_serve_put() {
 # send the removal elsewhere; the marker itself, a link included, is removed, never
 # followed. Its content is not read.
 _as_serve_reset() {
-  local proj
+  local proj who="${3:---serve}"
   proj="$(realpath -e -- "$1")" || return 1
   [[ -e "$proj/.asb/coord/to/$2.reset" || -L "$proj/.asb/coord/to/$2.reset" ]] || return 1
   (
     cd -P -- "$proj/.asb/coord/to" 2>/dev/null || exit 1
     if [[ "$PWD" != "$proj/.asb/coord/to" ]]; then
-      _as_msg "--serve: $1/.asb/coord/to is not a directory of the project; not reading a reset marker there"
+      _as_msg "$who: $1/.asb/coord/to is not a directory of the project; not reading a reset marker there"
       exit 1
     fi
     [[ -e "$2.reset" || -L "$2.reset" ]] || exit 1
     rm -f -- "$2.reset" || {
-      _as_msg "--serve: could not remove $1/.asb/coord/to/$2.reset; no reset"
+      _as_msg "$who: could not remove $1/.asb/coord/to/$2.reset; no reset"
       exit 1
     }
   )
@@ -4140,7 +4146,7 @@ _as_serve_check() {
 # shellcheck disable=SC2154
 _as_serve() {
   local sb proj="$_proj" role="$_role" rdir sessf alivef seenf watch prompt
-  local id="" sig last seen="" text hpid tpid rc i new pending=0 said="" fpid me mestart
+  local id="" sig last seen="" text hpid tpid rc i new pending=0 said="" fpid me mestart fresh=0
   local _serve_stop=0 why="" parent
   local -a cmdw=("$_cmd_word" "$@") targ=() turnw=()
   sb="$(_as_sandbox_dir)"
@@ -4191,6 +4197,19 @@ _as_serve() {
     fi
     return 0
   }
+  # _sv_reset -- a reset marker (the Supervisor's), taken on sight: the next turn is a
+  # new session, told the prompt as every turn is. Not the role's [briefing] start text:
+  # that one says to arm the watcher, and a -p turn that runs one in the background does
+  # not end (measured, Claude Code 2.1.300: still running after 90 s, the watcher its
+  # child). The marker alone is no turn.
+  _sv_reset() {
+    [[ -e "$proj/.asb/coord/to/$role.reset" || -L "$proj/.asb/coord/to/$role.reset" ]] || return 0
+    if _as_serve_reset "$proj" "$role"; then
+      ((fresh)) || _as_msg "role '$role': a reset marker -- the next turn starts a new session${id:+; the last one, $id, stays on disk, resumable by its id}"
+      fresh=1
+    fi
+    return 0
+  }
   for ((i = 0; i < 1200; i++)); do
     _as_keeper_live "$sb" && break
     _sv_live || break
@@ -4215,6 +4234,7 @@ _as_serve() {
     # Wait for a change.
     while ((! pending)) && _sv_live; do
       _sv_alive
+      _sv_reset
       sig="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
       [[ "$sig" != "$last" ]] && pending=1 && break
       sleep 1
@@ -4226,19 +4246,17 @@ _as_serve() {
       [[ -n "$said" ]] || _as_msg "role '$role': something else is joined (pid $fpid), a terminal most likely; the turn waits until it has gone"
       said=1
       _sv_alive
+      _sv_reset
       sleep 1
     done
     [[ -z "$why" ]] || break
     pending=0
     last="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
     printf '%s\n' "$last" >"$seenf"
-    # A reset (the Supervisor's marker): this turn is a new session, told the prompt as
-    # every turn is. Not the role's [briefing] start text: that one says to arm the
-    # watcher, and a -p turn that runs one in the background does not end (measured,
-    # Claude Code 2.1.300: still running after 90 s, the watcher its child).
-    if _as_serve_reset "$proj" "$role"; then
-      _as_msg "role '$role': a reset marker -- this turn starts a new session${id:+; the last one, $id, stays on disk, resumable by its id}"
-      id=""
+    # A reset taken since the last turn, or written with this message: a new session.
+    _sv_reset
+    if ((fresh)); then
+      fresh=0 id=""
     fi
     if ! text="$(_as_serve_text "$proj" "$prompt")"; then
       _as_msg "role '$role': no turn; waiting for the next change"
@@ -4257,6 +4275,7 @@ _as_serve() {
     tpid=$!
     while kill -0 "$tpid" 2>/dev/null && _sv_live; do
       _sv_alive
+      _sv_reset
       sleep 0.5
     done
     [[ -z "$why" ]] || break
@@ -4294,7 +4313,7 @@ _as_serve() {
   [[ -z "${tpid:-}" ]] || wait "$tpid" 2>/dev/null || true
   wait "$hpid" 2>/dev/null || true
   rm -f -- "$sb/serve"
-  unset -f _sv_live _sv_alive
+  unset -f _sv_live _sv_alive _sv_reset
   [[ "$why" == start ]] && return 1
   return 0
 }
@@ -5307,6 +5326,9 @@ _as_trust_show() {
 #   [agent] serve-new, serve-resume -- profile_serve_new, profile_serve_resume: the
 #           agent's arguments for one turn of `--serve` (#277), the session's first and
 #           every later one, `{id}` its id; the prompt follows them
+#   [agent] clear   -- profile_clear: what `asb --roles` types into a role's pane, then
+#                      Enter, for a fresh start on the Supervisor's reset marker (#329);
+#                      none: --roles takes no resets
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -5345,6 +5367,7 @@ _as_profile_dotfile() {
       status) profile_status_argv+=(${words[@]+"${words[@]}"}) ;;
       serve-new) profile_serve_new+=(${words[@]+"${words[@]}"}) ;;
       serve-resume) profile_serve_resume+=(${words[@]+"${words[@]}"}) ;;
+      clear) profile_clear="$v" ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
       visible) profile_visible+=(${words[@]+"${words[@]}"}) ;;
       *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
@@ -5595,6 +5618,7 @@ _as_profile_facts_dotfile() {
   local profile="$1" profile_base="" profile_base_env="" profile_home="${2%/*}"
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
   local -a profile_serve_new=() profile_serve_resume=()
+  local profile_clear=""
   local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
@@ -8303,7 +8327,15 @@ _as_launch_pasta() {
 # window named by digits as an index, so the first window is selected as `^`, the
 # lowest index, which new-session gives it, and its top pane as `{top}`, whatever the
 # user's base indexes.
-# Reads the engine's _roles, _roles_flags, _cmd_word and invoked by dynamic scope.
+#
+# Once the session is made, and before attaching to it (a tmux of its own, so that the
+# watcher starts only once there is a session to watch), the host side that takes the
+# Supervisor's reset markers is started (#329, _as_roles_resets): one process for the
+# session, typing the profile's [agent] clear into a role's pane and nothing else. Not
+# for served roles (--serve among the words), whose loop takes its own marker, nor for
+# a project without .asb/coord/to/, nor under a profile with no [agent] clear.
+# Reads the engine's _roles, _roles_flags, _cmd_word, profile, profile_clear and invoked
+# by dynamic scope.
 # shellcheck disable=SC2154
 _as_roles_open() {
   local dir name tmux slot self line r
@@ -8367,12 +8399,83 @@ _as_roles_open() {
     i=$((i + 1))
   done
   args+=(";" select-window -t "=$name:^" ";" select-pane -t "=$name:^.{top}")
-  local attach=0
-  [[ -t 0 && -t 1 ]] && attach=1
-  ((attach)) && args+=(";" attach-session -t "=$name")
   "$tmux" "${args[@]}" || return
-  ((attach)) || _as_msg "tmux session '$name': a pane per role (${_roles[*]}). To attach to it: tmux attach -t $(printf '%q' "$name")"
+  # The host takes resets (#329), for a project with the roles model's inboxes, a profile
+  # that says what starts a session fresh, and roles at a terminal (a served role's loop
+  # takes its own marker): one watcher for the session, out of this terminal's session,
+  # so closing this terminal leaves it running (_as_roles_resets).
+  local log
+  if [[ -n "${profile_clear:-}" && -d "$dir/.asb/coord/to" ]] && ! _as_roles_served; then
+    log="$(_as_state_dir)/$profile/$(_as_path_slug "$dir")/.roles-resets.log"
+    if mkdir -p -- "${log%/*}" \
+      && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "$profile_clear" "${_roles[@]}" </dev/null >>"$log" 2>&1; then
+      _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types $profile_clear in that role's pane, then goes (log: $log)"
+    else
+      _as_msg "could not start the watcher that takes resets; a fresh start is $profile_clear typed in the role's pane by you"
+    fi
+  fi
+  if [[ -t 0 && -t 1 ]]; then
+    "$tmux" attach-session -t "=$name"
+    return
+  fi
+  _as_msg "tmux session '$name': a pane per role (${_roles[*]}). To attach to it: tmux attach -t $(printf '%q' "$name")"
   return 0
+}
+
+# _as_roles_served -- are the roles of `asb --roles` served (--serve among the engine
+# words every pane runs)? Reads the engine's _roles_flags by dynamic scope.
+# shellcheck disable=SC2154
+_as_roles_served() {
+  local w
+  for w in ${_roles_flags[@]+"${_roles_flags[@]}"}; do
+    [[ "$w" == --serve ]] && return 0
+  done
+  return 1
+}
+
+# _as_roles_resets TMUX NAME PROJECT KEYS ROLE... -- the host side of `asb --roles`
+# (#329), run as `ENGINE __roles-resets ...`, an internal word no user types: started by
+# _as_roles_open with setsid, stdin from /dev/null and its output to
+# <state>/<profile>/<project slug>/.roles-resets.log, so it outlives the terminal that
+# ran --roles. Every second, for each ROLE: an empty PROJECT/.asb/coord/to/ROLE.reset --
+# the Supervisor's marker for a fresh start, the same one a served role's loop takes --
+# makes it type KEYS (the profile's [agent] clear; claude: /clear), then Enter, into
+# the pane of tmux session NAME whose @role is ROLE, and remove the marker from inside
+# the directory, a link removed, never followed (_as_serve_reset). The marker is removed
+# after the keys are sent, so the Supervisor, which appends its message once the marker
+# is gone, never has it arrive before them. A marker with no pane of that role stays,
+# and so the Supervisor sees nobody took it. One that cannot be removed is typed for
+# once, not again until it has gone. It types nothing else, ever, and ends when the
+# session NAME is gone.
+_as_roles_resets() {
+  local tmux="$1" name="$2" proj="$3" keys="$4" r pane p pr
+  shift 4
+  local -A stuck=()
+  while "$tmux" has-session -t "=$name" 2>/dev/null; do
+    for r in "$@"; do
+      if [[ ! -e "$proj/.asb/coord/to/$r.reset" && ! -L "$proj/.asb/coord/to/$r.reset" ]]; then
+        unset 'stuck[$r]'
+        continue
+      fi
+      [[ -z "${stuck[$r]:-}" ]] || continue
+      pane=""
+      while read -r p pr; do
+        if [[ "$pr" == "$r" ]]; then
+          pane="$p"
+          break
+        fi
+      done < <("$tmux" list-panes -s -t "=$name" -F '#{pane_id} #{@role}' 2>/dev/null)
+      [[ -n "$pane" ]] || continue
+      stuck[$r]=1
+      "$tmux" send-keys -t "$pane" "$keys" Enter || continue
+      if _as_serve_reset "$proj" "$r" --roles; then
+        unset 'stuck[$r]'
+        _as_msg "$(date -Iseconds) role '$r': a reset marker -- typed $keys in pane $pane, and removed the marker"
+      fi
+    done
+    sleep 1
+  done
+  _as_msg "$(date -Iseconds) tmux session '$name' is gone; no more resets taken"
 }
 
 # ---------------------------------------------------------------------------
@@ -8391,6 +8494,15 @@ agent_sandbox() (
   # on the checkout's own copy being the one under test.
   connect_sync="${AGENT_SANDBOX_CONNECT_SYNC:-$(dirname -- "$engine")/components/connect-sync.py}"
   invoked="$(basename -- "$0")"
+
+  # ---- internal: the host side of `asb --roles` (#329) ----
+  # `ENGINE __roles-resets TMUX NAME PROJECT KEYS ROLE...` is the watcher _as_roles_open
+  # starts beside the tmux session it opens; nobody types it. See _as_roles_resets.
+  if [[ "${1:-}" == __roles-resets ]]; then
+    shift
+    _as_roles_resets "$@"
+    return
+  fi
 
   # ---- engine flags (must precede the agent's own arguments) ----
   # See ENGINE FLAGS in the header and docs/ssh.md. Parsing stops at the
@@ -9023,6 +9135,8 @@ agent_sandbox() (
   # One turn of --serve (#277): the agent's arguments for a session's first turn and for
   # every later one, `{id}` the session's id; the prompt goes last. None: no --serve.
   local -a profile_serve_new=() profile_serve_resume=()
+  # What `asb --roles` types into a role's pane, then Enter, on a reset marker (#329).
+  local profile_clear=""
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()

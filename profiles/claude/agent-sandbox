@@ -45,6 +45,13 @@ status = agents
 # sandbox runs as your uid), and under --restricted (its --help).
 serve-new = -p --session-id {id} --permission-mode bypassPermissions
 serve-resume = -p --resume {id} --permission-mode bypassPermissions
+# What `asb --roles` types into a role's pane, then Enter, when the Supervisor writes the
+# role's reset marker (#329): a fresh start. /clear gives a new session id and keeps the
+# old transcript; the inbox watcher, a background shell, survives it, and the briefing
+# comes back through the SessionStart hook, so the next message wakes the cleared session
+# (measured, 2.1.314). Sent while a turn runs, it is queued and runs when the turn ends
+# (measured, 2.1.314).
+clear = /clear
 
 # Paths under ~/.claude blanked for every launch: empty inside, gone at exit.
 #

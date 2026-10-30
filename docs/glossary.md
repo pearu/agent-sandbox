@@ -305,7 +305,8 @@ and a longer description, then its own transcript is deleted).
 session, named after the project directory, with a pane per role, five to a window, the
 first role of each on top and the others in a row below, each running `--role ROLE` with
 the rest of the command line; the dot-file is reviewed once, before the panes open. It
-only builds the tmux command: every pane is a plain launch.
+only builds the tmux command: every pane is a plain launch. Beside the session one host
+process takes the Supervisor's reset markers, typing `/clear` in that role's pane (#329).
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*

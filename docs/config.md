@@ -98,9 +98,12 @@ Sections:
   `.asb/coord/to/ROLE.reset`, beside the role's inbox, makes the next turn a new session
   -- a fresh id, told the prompt as every turn is, recorded in `.asb/coord/ROLE/session`
   -- and the loop removes it (from inside the directory, a link removed and never
-  followed; its content is not read). Only a turn looks for it, so it is written before
-  the message it applies to. The old session's transcript stays on disk, resumable by
-  its id. The roles model's Supervisor writes it to start a role's new Task fresh.
+  followed; its content is not read). The loop takes it as soon as it appears, while it
+  waits and while a turn runs (#329), and the marker alone is no turn. The old
+  session's transcript stays on disk, resumable by its id. The roles model's Supervisor
+  writes it to start a role's new Task fresh, and sends the message once it is gone; for
+  a role in a pane of `asb --roles`, the host side of that command takes it instead,
+  typing `/clear` in the pane.
   **At a terminal**, `watch` also names the file a session of the role keeps a watcher
   on: the claude profile's `Stop` hook refuses, once, a turn that ends with no
   `inbox-wait` running (see [profiles](profiles.md)), and `--check` says so for the
@@ -821,7 +824,9 @@ this file, else `default`. A name is a letter or digit followed by letters,
 digits, `.`, `_` or `-`, at most 200 characters; `--role default` is the same as
 no `--role`.
 `asb --roles impl-1 rev-1 claude` runs several roles at once, a tmux pane
-each, the first on top, every one a launch of its own (`asb --role impl-1 claude`, ...); see
+each, the first on top, every one a launch of its own (`asb --role impl-1 claude`, ...),
+and a host process beside them that types `/clear` in a role's pane when the Supervisor
+writes its reset marker (#329); see
 [roles.md](roles.md#9-one-round-terminal-by-terminal).
 
 What a role gets comes from **role-suffixed sections**:

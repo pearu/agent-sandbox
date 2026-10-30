@@ -29,6 +29,10 @@ if [[ "${1:-}" == has-session ]]; then
   [[ -n "${TMUX_HAS:-}" ]]
   exit
 fi
+if [[ "${1:-}" == attach-session ]]; then
+  printf '%s\n' "$@" >"${TMUX_DUMP:?}.attach"
+  exit
+fi
 : >"${TMUX_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$TMUX_DUMP"; done
 STUB
@@ -168,12 +172,18 @@ no_tmux_path() {
   [ "$(grep -cx split-window "$TM")" -eq 8 ]
 }
 
-@test "--roles: at a terminal, the chain ends attached to the session, after the first window and its top pane are selected" {
+@test "--roles: at a terminal, the chain ends with the first window and its top pane selected, and a tmux of its own then attaches to the session" {
   run_engine_tty '' TMUX_DUMP="$TM" -- asb --roles a b claude
   [ "$status" -eq 0 ]
   mapfile -t T <"$TM"
-  [ "${T[*]: -12}" = "; select-window -t =proj:^ ; select-pane -t =proj:^.{top} ; attach-session -t =proj" ]
+  [ "${T[*]: -8}" = "; select-window -t =proj:^ ; select-pane -t =proj:^.{top}" ]
+  [ "$(cat "$TM.attach")" = $'attach-session\n-t\n=proj' ]
   [[ "$output" != *"To attach to it"* ]]
+  # not at a terminal: no attach
+  rm -f "$TM.attach"
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b claude
+  [ "$status" -eq 0 ]
+  [ ! -e "$TM.attach" ]
 }
 
 @test "--roles: the roles end at a word that starts with - or names a profile; a path to the agent, --profile alone, and --serve each reach every pane" {
@@ -311,4 +321,123 @@ no_tmux_path() {
   [[ "$output" != *"approve this"* ]]
   [[ "$output" == *"session allowlist: pypi.org"* ]] # under the approved file
   [ -s "$H/argv" ]
+}
+
+# THE HOST TAKES RESETS (#329). --roles starts one watcher beside the session, out of
+# the terminal's session; it is the engine again, with the internal word __roles-resets.
+
+# stub_setsid -- a setsid first on PATH that records a start of the watcher (its argv in
+# $H/setsid, where its stdin and stdout point in $H/setsid.fds, and whether the tmux
+# session had been made by then) and runs anything else as the real one does.
+stub_setsid() {
+  cat >"$H/bin/setsid" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -f && "${3:-}" == __roles-resets ]]; then
+  printf '%s\n' "$@" >"$SETSID_DUMP"
+  printf '%s\n' "$(readlink /proc/$$/fd/0)" "$(readlink /proc/$$/fd/1)" >"$SETSID_DUMP.fds"
+  [[ -e "$TMUX_DUMP" ]] && echo made >>"$SETSID_DUMP.fds"
+  exit 0
+fi
+exec /usr/bin/setsid "$@"
+STUB
+  chmod +x "$H/bin/setsid"
+}
+
+@test "--roles starts the host side that takes resets once the session is made: setsid -f, the engine with __roles-resets, tmux, the session, the project, /clear and the roles; stdin /dev/null, its output to the project's .roles-resets.log" {
+  stub_setsid
+  mkdir -p "$PROJ/.asb/coord/to"
+  local log
+  log="$H/home/.local/state/agent-sandbox/claude/$(printf '%s' "$PROJ" | sed 's:[^A-Za-z0-9-]:-:g')/.roles-resets.log"
+  run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b.2 claude --continue
+  [ "$status" -eq 0 ]
+  mapfile -t S <"$H/setsid"
+  local -a want=(-f "$SELF" __roles-resets "$H/bin/tmux" proj "$PROJ" /clear a b.2)
+  [ "${S[*]}" = "${want[*]}" ] && [ "${#S[@]}" -eq "${#want[@]}" ]
+  [ "$(cat "$H/setsid.fds")" = "$(printf '/dev/null\n%s\nmade' "$log")" ]
+  [[ "$output" == *"the host takes resets: an empty .asb/coord/to/ROLE.reset types /clear in that role's pane, then goes (log: $log)"* ]]
+  [[ "$output" == *"To attach to it: tmux attach -t proj"* ]]
+  # served roles: their loop takes the marker; a project without the inboxes: nothing to take
+  rm -f "$H/setsid"
+  run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b --serve claude
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/setsid" ] && [[ "$output" != *"takes resets"* ]]
+  rm -r "$PROJ/.asb"
+  run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b claude
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/setsid" ] && [[ "$output" != *"takes resets"* ]]
+}
+
+# stub_tmux_watched -- a tmux for the watcher: every call appended to $H/calls; has-session
+# succeeds for its first $HAS_N calls; list-panes prints $H/panes.
+stub_tmux_watched() {
+  cat >"$H/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CALLS"
+case "$1" in
+  has-session)
+    n=$(($(cat "$CALLS.n" 2>/dev/null || echo 0) + 1))
+    echo "$n" >"$CALLS.n"
+    ((n <= HAS_N))
+    ;;
+  list-panes) cat "$PANES" ;;
+esac
+STUB
+  chmod +x "$H/bin/tmux"
+}
+
+# resets ROLE... -- run the watcher for session `sess` of the project, as --roles starts it
+resets() {
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" CALLS="$H/calls" PANES="$H/panes" HAS_N="${HAS_N:-1}" \
+    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" /clear "$@" </dev/null
+}
+
+@test "the host side of --roles: a role's marker types /clear Enter in its pane and goes, a link removed and never followed; nothing for a role without one, nor for a marker with no pane; it ends when the session has gone" {
+  stub_tmux_watched
+  local to="$PROJ/.asb/coord/to"
+  mkdir -p "$to"
+  printf '%%1 a\n%%2 b\n%%3 c\n%%4 \n' >"$H/panes"
+  : >"$to/a.reset"
+  echo keep >"$H/victim"
+  ln -s "$H/victim" "$to/b.reset"
+  : >"$to/d.reset" # no pane is role d's
+  resets a b c d
+  [ "$status" -eq 0 ]
+  local fmt='#{pane_id} #{@role}'
+  local -a want=(
+    "has-session -t =sess"
+    "list-panes -s -t =sess -F $fmt"
+    "send-keys -t %1 /clear Enter"
+    "list-panes -s -t =sess -F $fmt"
+    "send-keys -t %2 /clear Enter"
+    "list-panes -s -t =sess -F $fmt"
+    "has-session -t =sess"
+  )
+  mapfile -t C <"$H/calls"
+  [ "$(printf '%s\n' "${C[@]}")" = "$(printf '%s\n' "${want[@]}")" ]
+  [ ! -e "$to/a.reset" ] && [ ! -L "$to/b.reset" ]
+  [ "$(cat "$H/victim")" = keep ]
+  [ -e "$to/d.reset" ] # nobody took it: the Supervisor sees that
+  [[ "$output" == *"role 'a': a reset marker -- typed /clear in pane %1, and removed the marker"* ]]
+  [[ "$output" == *"role 'b': a reset marker -- typed /clear in pane %2, and removed the marker"* ]]
+  [[ "$output" == *"tmux session 'sess' is gone; no more resets taken"* ]]
+  # no session at all: one look, and it ends
+  rm -f "$H/calls" "$H/calls.n"
+  HAS_N=0 resets a
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/calls")" = "has-session -t =sess" ]
+}
+
+@test "the host side of --roles: a marker it cannot remove is typed for once, not at every second" {
+  stub_tmux_watched
+  local to="$PROJ/.asb/coord/to"
+  mkdir -p "$to"
+  printf '%%1 a\n' >"$H/panes"
+  : >"$to/a.reset"
+  chmod 555 "$to"
+  HAS_N=3 resets a
+  chmod 755 "$to"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^send-keys' "$H/calls")" -eq 1 ]
+  [ "$(grep -c '^has-session' "$H/calls")" -eq 4 ]
+  [[ "$output" == *"--roles: could not remove $PROJ/.asb/coord/to/a.reset; no reset"* ]]
 }

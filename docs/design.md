@@ -391,6 +391,14 @@ Stated plainly. These are what the adversary above can still do.
   them -- a role with the project read-write, the Supervisor in the roles model, which
   writes the inboxes anyway -- chooses when the served role runs and what it is told,
   within its own sandbox and policy. The prompt file is not part of the approval.
+- **Whoever can write `.asb/coord/to/` can clear a role in a pane of `asb --roles`.**
+  The host side of `--roles` (#329) types the profile's `[agent] clear` (claude:
+  `/clear`) and Enter into the pane of a role whose `ROLE.reset` appears there, and
+  nothing else: only the file's presence is read, never its content. A sandbox that can
+  write that directory -- the Supervisor in the roles model, or a role with the project
+  read-write -- can make a role in a pane start a new session at the end of its current
+  turn; the old transcript stays on disk. The marker is removed from inside the
+  directory, a link never followed.
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
