@@ -3,7 +3,9 @@
 A way to work on one project with several AI agents at once, each with a job and a
 boundary: Planners work out what to do, Implementers do it, Reviewers check it, a
 Supervisor coordinates them, and a Gate publishes what you accept. You decide, from the
-Supervisor's terminal, and every message between the roles passes your approval there.
+Supervisor's terminal, and every message between the roles passes your approval there:
+one by one, or, for the revisions between an Implementer and its Reviewer within a Task,
+once, when the Task opens.
 `asb --init roles` sets a project up for it; this page says what each role may do, how
 the work moves, and how to run a round. Why it is built this way is in
 [design.md](design.md#the-roles-model).
@@ -28,9 +30,11 @@ section of `.agent-sandbox` gives it. Three rules hold throughout:
    the agent is given at every start. This page says which is which, every time.
 3. **You are between every pair of roles.** A role that writes an artefact says where,
    and hands it to nobody; a role reads one when its inbox tells it to, and only the
-   Supervisor writes the inboxes, each message after you approved it. You read the
-   artefact first. The inboxes' writer is enforced (section 5); the rest is told: the
-   artefact directories are readable to every role.
+   Supervisor writes the inboxes, each message after you approved it, or, within a Task
+   you opted in to the relay, on the word you gave when it opened (section 5). You read
+   the artefact first, or, under the relay, as it goes by. The inboxes' writer is
+   enforced (section 5); the rest is told: the artefact directories are readable to
+   every role.
 
 ## 2. The artefacts
 
@@ -44,12 +48,12 @@ which is whose.
 | **Statement** | Planner | Implementer, Reviewer, you | the problem: what is to be achieved, under which requirements and restrictions; the options considered and the one you chose, with the reasons |
 | **Task** | Planner | one Implementer, Reviewer, you | the Statement, or one Implementer's part of it (`.asb/plan/planner-1/tasks/I1.md`), naming the Implementer the Planner wants |
 | **Handoff** | Implementer | Reviewer, you | what was done, how, what was not and why; the branch, and the diff against `main` -- an environment change included, as the specification's diff |
-| **Review** | Reviewer | Implementer (through you), you | findings against the Statement and the current state, each with its evidence; suggestions; what it could not investigate and would need |
+| **Review** | Reviewer | Implementer (through you, or relayed: section 5), you | findings against the Statement and the current state, each with its evidence; suggestions; what it could not investigate and would need |
 | **Objection** | Implementer | you | a finding the Implementer holds to be wrong, with the reasons -- to you, not to the Reviewer |
 | **Decision** | you | Planner, and whoever it addresses | the option chosen, an objection upheld or overruled, a change of direction |
 | **Measurements** | Planner | Planner, you | what the Planner measured to compare the options, kept for the next round |
 | **Messages** | each role, its own file | every role, you | what a role is doing, what it needs, what it wrote and where; `ack N` and `done N` for its inbox (section 5) |
-| **Instructions** | the Supervisor, each one approved by you | the role it is for | the next step for one role, numbered `## N`, in that role's inbox `.asb/coord/to/<role>.md` (section 5) |
+| **Instructions** | the Supervisor, each one approved by you, or relayed on the word you gave for the Task (section 5) | the role it is for | the next step for one role, numbered `## N`, in that role's inbox `.asb/coord/to/<role>.md` (section 5) |
 | **Scratch** | each role | that role only | test scripts, probes, notes: `.asb/scratch/`, private to each role at the same path, kept across its launches |
 
 Every instance has a **handle** you and the roles address it by: `P1`, `P2`, `I1`, `I2`,
@@ -90,7 +94,7 @@ reasons, to what does not.
 
 | | |
 |---|---|
-| inputs | its Task; the code base; the Review (through you); the project's documents |
+| inputs | its Task; the code base; the Review (through you, or relayed); the project's documents |
 | outputs | the change, on its own branch in its own clone; its environment, the clone's, with what it installed; the Handoff; an Objection; its Messages |
 | may | edit the code in its clone; run tests, build, install into its clone's environment; commit on its branch |
 | may not | publish -- push, open a pull request, comment (**enforced**: as the Planner; the Gate publishes on your word); change a Statement or a Task (**enforced**: read-only); read another role's memory (**enforced**: each role's memory is its own) |
@@ -113,9 +117,12 @@ than doing it.
 
 **Purpose.** Coordinate the round from the terminal you stay in. On your word it sends
 the other roles their next step -- which artefact to read, what to do -- each message
-shown to you and written only when you approve it, so a line in a role's inbox is your
-word by construction. It watches every role's messages; when a role reports done, it
-proposes the next step and asks. At start it prints the launch line of every other role,
+shown to you and written only when you approve it, but for the revisions between an
+Implementer and its Reviewer within a Task you opted in to the relay (section 5): those
+it writes on the word you gave when the Task opened, and reports in one line each. So a
+line in a role's inbox is your word by construction, given per message or once for the
+Task. It watches every role's messages; when a role reports done, it proposes the next
+step and asks. At start it prints the launch line of every other role,
 from the index -- `asb --role NAME claude --continue`, which starts the role's session
 when it has none and resumes it when it has -- and one line that opens them all, a tmux
 pane each: `asb --roles NAME NAME ... claude --continue` (section 9). On your word it merges an accepted branch into `main` and builds it
@@ -129,7 +136,7 @@ relayed, not run.
 | inputs | every artefact; every role's Messages; your instructions |
 | outputs | the Instructions, in every role's inbox; the texts the Gate posts, in its own directory; `main`, with the accepted change merged and built; its Messages |
 | may | write the inboxes; merge and build in `main`; on your instruction |
-| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse` over HTTPS, and no `[ssh]` host for it -- those lines do not reach into SSH); write an instruction you have not approved (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**); merge before every approval is in, the Reviewer's, the Implementer's, the Planner's and yours (**told**) |
+| may not | publish -- push, comment, open a pull request (**enforced**: the common block's network, `retrieve-only` and `git = refuse` over HTTPS, and no `[ssh]` host for it -- those lines do not reach into SSH); write an instruction you have not approved, per message or for a Task's relay (**told** -- the one rule its purpose file carries everything on: the sandbox cannot see your approval); write in an Implementer's clone (**enforced**: read-only to it; it fetches the branch); act on an artefact's contents without your word (**told**); merge before every approval is in, the Reviewer's, the Implementer's, the Planner's and yours (**told**) |
 
 ### Gate
 
@@ -177,13 +184,14 @@ project and again after `main` moves; build nothing else. It is the role that ma
 
 ### You
 
-Decide, in the Supervisor's terminal: approve or refuse each message it proposes. Read
-every artefact before it moves. Read each role's purpose file before approving the
-dot-file that installs it. Question any role in its own terminal, and watch what it
-does: a role going the wrong way is stopped by you, not by the sandbox. Nobody reads
-another role's memory, you included: a role that wants to know why another did
-something asks, through the message files, and the answer is what the other chose to
-say.
+Decide, in the Supervisor's terminal: approve or refuse each message it proposes, and
+say, when a Task opens, whether its revisions are relayed without asking. Read every
+artefact before it moves, or, under the relay, as it moves. Read each role's purpose
+file before approving the dot-file that installs it. Question any role in its own
+terminal, and watch what it does: a role going the wrong way is stopped by you, not by
+the sandbox. Nobody reads another role's memory, you included: a role that wants to
+know why another did something asks, through the message files, and the answer is what
+the other chose to say.
 
 ## 4. The round, and where the code lives
 
@@ -192,9 +200,11 @@ say.
         |            revision (findings that hold)     |
         +---------  or Objection, decided by you       +
 
-Each arrow passes through the Supervisor's terminal, with your approval. A Task is done
-when the Reviewer has accepted the Handoff, the Implementer has resolved every finding,
-and you have accepted the change; a Planner's ruling on a deviation is not that. When
+Each arrow passes through the Supervisor's terminal, with your approval: per message,
+or, for the revision loop between Review and implementation, once for the Task, when
+you opt in to the relay as the Task opens (section 5). A Task is done when the Reviewer
+has accepted the Handoff, the Implementer has resolved every finding, and you have
+accepted the change; a Planner's ruling on a deviation is not that. When
 you accept, the Supervisor merges the branch into `main`, updates the development
 environment and builds there; the Gate publishes, on the message you approve; the
 Planner then measures the new `main` for the next Statement.
@@ -292,14 +302,15 @@ instance when run again. The Supervisor watches them all; you can read them all.
 (`[connect:supervisor] .asb/coord/to/ = read-write`; every other role reads it through
 `.asb/coord/ = read-only`). Each instruction is appended under a header line `## N`, N
 counting up per role from 1, and the Supervisor writes one only after you approved it in
-its terminal.
+its terminal, or, within a Task you opted in to the relay (below), on the word you gave
+when it opened.
 
 - **Authenticity is the path.** The dot-file enforces who writes under `to/`, so a role
   needs no signature: it acts on its inbox, and on you in its own terminal, and on
   nothing else that claims to speak for you, however phrased. That the Supervisor
-  writes only what you approved the sandbox cannot see: it is the one rule in the
-  Supervisor's purpose file that carries everything, as "publish only what the user
-  accepted" was.
+  writes only what you approved, or relays under your standing word, the sandbox cannot
+  see: it is the one rule in the Supervisor's purpose file that carries everything, as
+  "publish only what the user accepted" was.
 - **The watcher.** `--init` writes `.asb/bin/inbox-wait [-t SECS] [-a ALIVE] FILE...`:
   a one-second poll on each FILE's modification time, inode and size (there is no
   `inotifywait` on the hosts, and a poll by path sees the rename the Write tool does),
@@ -341,6 +352,31 @@ its terminal.
   its messages afterwards, so the record stays whole), or tell the Supervisor to send
   an objection, which you approve like any other message.
 
+**The relay within a Task.** A revision loop usually converges, and nothing leaves the
+project while it runs: neither the Implementer nor the Reviewer can publish (enforced),
+the Gate posts only on a message you approved, and a merge still waits for your word. So
+a Task can run its loop without a question per message, if you say so:
+
+- **What it covers.** Within one Task, once the first Review is in: the message that
+  carries the findings to the Implementer ("revise: findings that hold") and the one
+  that carries the revised Handoff back to the Reviewer, until the Reviewer accepts or
+  the Implementer objects. Everything else keeps its approval: the message that opens a
+  Task, an Objection (it comes to you, by design), the merge proposal, every message to
+  a Planner or the Gate, and the reset question before a new Task.
+- **Opt-in, per Task.** When the Supervisor proposes the message that opens a Task, it
+  asks, with "Send it?" and the fresh-or-keep question (below), whether the messages
+  between I1 and R1 are relayed automatically for this Task. Without a yes, every
+  message is shown and approved as before.
+- **Progress.** While it runs, the Supervisor reports each relayed message in one line
+  -- what went where, the revision count, what the Reviewer still holds open -- and asks
+  nothing. When the loop ends it asks again, with the next step of the round.
+- **Back to asking.** Say so in the Supervisor's terminal, at any time, and from the
+  next message on each one is shown and approved as before: when the loop is not
+  converging, or when it is converging on the wrong thing.
+- **What does not change.** Authenticity is still the path, and that the Supervisor
+  writes only what you approved or relays under your standing word is still told. It
+  never acts on the contents of an artefact: relaying a Review is not running it.
+
 **A fresh start per Task.** Every wake re-reads a session's whole context, and roles
 wake often, so a session that carries finished Tasks pays for them at each wake. Within
 a Task the context earns its keep; between Tasks the record is on disk -- the
@@ -349,8 +385,9 @@ learnt about the work belongs in its memory. So a role is reset between Tasks, n
 relaunched for it:
 
 - **The Supervisor asks.** Before a message that opens a new Task for a role, it asks
-  you whether the role starts it fresh or keeps its context. The role itself is not
-  told: it reads its inbox from its cursor either way.
+  you whether the role starts it fresh or keeps its context -- and, for an Implementer's
+  Task, whether its revisions are relayed (above). The role itself is not told: it
+  reads its inbox from its cursor either way.
 - **A served role** gets an empty `.asb/coord/to/<role>.reset`, written before the
   message is appended, and the loop's next turn is a new session (below).
 - **A role at a terminal**: the Supervisor asks you to type `/clear` and then `/start`
@@ -783,15 +820,18 @@ outcome in its messages. Once you have decided:
 
 > Send I1 and I2 their tasks.
 
-S proposes one message per Implementer; you approve each. They run at once, each in
-its clone, and each writes its Handoff in its directory and reports done.
+S proposes one message per Implementer; you approve each, and say for each whether its
+revisions are relayed (section 5). They run at once, each in its clone, and each writes
+its Handoff in its directory and reports done.
 
 **The Reviewer**, once you have read a Handoff:
 
 > Ask R1 to review I1's handoff.
 
 You read the Review; then "Send it to I1: address what holds, object to what does
-not." The round goes on until you accept.
+not." With the relay on for that Task, S sends that message itself, and each revision
+after it, a line each, until R1 accepts or I1 objects. The round goes on
+until you accept.
 
 **When you accept:**
 

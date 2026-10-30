@@ -47,6 +47,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The roles model's Supervisor relays the revisions within a Task, on your opt-in**
+  (#326): with the message that opens a Task it asks too, beside "Send it?" and the
+  fresh-or-keep question, whether the messages between the Implementer and its Reviewer
+  are relayed for this Task. With a yes, once the first Review is in, the findings to
+  the Implementer and the revised Handoff back to the Reviewer go on that word, each
+  reported in one line (what went where, the revision count, what the Reviewer still
+  holds open), until the Reviewer accepts or the Implementer objects; then it asks
+  again, with the next step. Opening a Task, an Objection, the merge proposal, every
+  message to a Planner or the Gate and the reset question keep their approval, and you
+  return to asking at any time by saying so in its terminal. `docs/roles.md`, the
+  Supervisor's purpose file and the coord index describe it; `asb --init roles` run
+  again takes the new purpose file where you have not changed it.
 - **`asb --roles ROLE... [OPTIONS] CMD [AGENT OPTIONS]`: one tmux session with a pane
   per role** (#317, #320), five to a window: in each window the first role has the top
   pane, full width and half the height, and the others share the bottom half in one
