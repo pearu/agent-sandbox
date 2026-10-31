@@ -355,3 +355,29 @@ STUB
   run_engine AGENT_SANDBOX_GPU_DEVICES="$H/none*" -- asb claude --version
   run ! argv_has --ro-bind /sys /sys
 }
+
+@test "proxy: the proxy URL carries install.sh's recorded port, the knob's over it, and a bad knob refuses the launch (#335)" {
+  mkdir -p "$H/home/.config/agent-sandbox"
+  printf '8890\n' >"$H/home/.config/agent-sandbox/proxy-port"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$(setenv_value HTTPS_PROXY)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8890$ ]]
+  [ "$(setenv_value http_proxy)" = "$(setenv_value HTTPS_PROXY)" ]
+  [[ "$output" == *"agent-sandbox: proxy: port 8890 (install.sh's choice"* ]] # said where the routine lines are
+  run_engine AGENT_SANDBOX_PROXY_PORT=9123 -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$(setenv_value HTTPS_PROXY)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:9123$ ]]
+  run_engine AGENT_SANDBOX_PROXY_PORT=80 -- asb claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"AGENT_SANDBOX_PROXY_PORT=80: expected a port, 1024-65535"* ]]
+  [ ! -s "$H/argv" ] # nothing launched
+  run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROXY_PORT=80 -- asb claude --version
+  [ "$status" -eq 0 ] # no proxy in that mode, so its port is not asked for
+}
+
+@test "proxy: at the default port the routine lines say nothing about it" {
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$(setenv_value HTTPS_PROXY)" == *@127.0.0.1:8888 ]]
+  [[ "$output" != *"proxy: port"* ]]
+}

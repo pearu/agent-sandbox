@@ -331,6 +331,9 @@ release_bg() {
 # `run !` line that follows it, not after.
 bats_require_minimum_version 1.5.0
 
+# test_proxy_port: the proxy's port the engine under test resolves (#335).
+load "$BATS_TEST_DIRNAME/../helpers/proxy-port"
+
 # True if the tokens appear consecutively in ARGV.
 argv_has() {
   local -a want=("$@")

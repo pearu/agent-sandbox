@@ -10,7 +10,7 @@ Type=simple
 # slower than HTTP/1.1; with response streaming in the addon this is near-native.
 ExecStart=@MITMDUMP@ \
     --listen-host 127.0.0.1 \
-    --listen-port 8888 \
+    --listen-port @PROXY_PORT@ \
     --set block_global=false \
     --set termlog_verbosity=info \
     --set flow_detail=0 \

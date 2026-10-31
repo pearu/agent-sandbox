@@ -270,3 +270,31 @@ ca_check_fixture() {
   _as_ssh_sysconfig_copies "$BATS_TEST_TMPDIR/missing" # no such directory: nothing
   [ "${#args[@]}" -eq 0 ]
 }
+
+@test "_as_proxy_port: AGENT_SANDBOX_PROXY_PORT, else the port install.sh recorded, else 8888 (#335)" {
+  HOME="$BATS_TEST_TMPDIR/home"
+  unset AGENT_SANDBOX_PROXY_PORT
+  [ "$(_as_proxy_port)" = 8888 ] # nothing recorded
+  mkdir -p "$HOME/.config/agent-sandbox"
+  printf '8890\n' >"$HOME/.config/agent-sandbox/proxy-port"
+  [ "$(_as_proxy_port)" = 8890 ]                               # the file, its newline dropped
+  [ "$(AGENT_SANDBOX_PROXY_PORT=9123 _as_proxy_port)" = 9123 ] # the knob over the file
+  [ "$(AGENT_SANDBOX_PROXY_PORT=1024 _as_proxy_port)" = 1024 ]
+  [ "$(AGENT_SANDBOX_PROXY_PORT=65535 _as_proxy_port)" = 65535 ]
+}
+
+@test "_as_proxy_port: a bad knob refuses, naming it and the value; a bad file is said in one line and 8888 used" {
+  HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/agent-sandbox"
+  local v
+  for v in 80 1023 65536 abc 08888 '88 88'; do
+    # shellcheck disable=SC2016 # $1 is the inner shell's: the engine's path
+    run -2 env AGENT_SANDBOX_PROXY_PORT="$v" bash -c 'source "$1"; _as_proxy_port' _ "$ENGINE"
+    [ "$output" = "agent-sandbox: AGENT_SANDBOX_PROXY_PORT=$v: expected a port, 1024-65535" ]
+  done
+  printf 'eighty\n' >"$HOME/.config/agent-sandbox/proxy-port"
+  run --separate-stderr _as_proxy_port
+  [ "$status" -eq 0 ]
+  [ "$output" = 8888 ]
+  [ "$stderr" = "agent-sandbox: $HOME/.config/agent-sandbox/proxy-port: 'eighty' is not a port (1024-65535); using 8888 (re-run install.sh to record one)" ]
+}

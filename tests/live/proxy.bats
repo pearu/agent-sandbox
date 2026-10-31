@@ -1,9 +1,12 @@
 #!/usr/bin/env bats
-# Against the host's real proxy on 127.0.0.1:8888 (AGENT_SANDBOX_LIVE=1).
+# Against the host's real proxy on 127.0.0.1:PORT, the port install.sh recorded for
+# this account (8888 unless it chose another; test_proxy_port) (AGENT_SANDBOX_LIVE=1).
 
 setup() {
+  load "$BATS_TEST_DIRNAME/../helpers/proxy-port"
   [[ "${AGENT_SANDBOX_LIVE:-0}" == 1 ]] || skip "set AGENT_SANDBOX_LIVE=1 to run live tests"
-  (echo >/dev/tcp/127.0.0.1/8888) 2>/dev/null || skip "no proxy on 127.0.0.1:8888"
+  PP="$(test_proxy_port "$HOME")"
+  (echo >"/dev/tcp/127.0.0.1/$PP") 2>/dev/null || skip "no proxy on 127.0.0.1:$PP"
   # The proxy MITMs TLS with a CA trusted only inside the sandbox; a host client
   # must be handed that CA (the host system store deliberately does not trust it).
   CA="${AGENT_SANDBOX_PROXY_CA:-$HOME/.mitmproxy/mitmproxy-ca-cert.pem}"
@@ -20,7 +23,7 @@ probe_session() {
   printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$SESS/owner.id"
   echo liveprobe >"$SESS/proxy.token"
   printf 'api.anthropic.com\n' >"$SESS/allow.txt" # a profile's own host, as a launch opens it
-  PX=http://liveprobe:x@127.0.0.1:8888
+  PX="http://liveprobe:x@127.0.0.1:$PP"
 }
 teardown() {
   [[ -n "${SESS:-}" ]] && rm -rf "$SESS"
@@ -38,12 +41,13 @@ teardown() {
 }
 
 @test "a client with no session token is refused with 407 (#233)" {
-  run curl -s --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null -w '%{http_connect}' https://api.anthropic.com/
+  run curl -s --proxy "http://127.0.0.1:$PP" --max-time 20 -o /dev/null -w '%{http_connect}' https://api.anthropic.com/
   [ "$output" = 407 ]
 }
 
 @test "the proxy's leaf certificates carry an Authority Key Identifier (mitmproxy 12+)" {
   probe_session
-  run bash -c 'openssl s_client -proxy 127.0.0.1:8888 -proxy_user liveprobe -proxy_pass pass:x -connect api.github.com:443 -servername api.github.com </dev/null 2>/dev/null | openssl x509 -noout -text | grep -c "Authority Key Identifier"'
+  # shellcheck disable=SC2016 # $1 is the inner shell's: the proxy's port
+  run bash -c 'openssl s_client -proxy "127.0.0.1:$1" -proxy_user liveprobe -proxy_pass pass:x -connect api.github.com:443 -servername api.github.com </dev/null 2>/dev/null | openssl x509 -noout -text | grep -c "Authority Key Identifier"' _ "$PP"
   [ "$output" = 1 ]
 }

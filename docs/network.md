@@ -7,7 +7,7 @@ re-introduced.
 
 | Mode | What the sandbox gets | Use |
 |---|---|---|
-| `proxy` (default) | The host network namespace (`--share-net`) plus `HTTPS_PROXY`/`HTTP_PROXY` pointing at the host proxy on `127.0.0.1:8888`, and the proxy CA trusted inside. Every client that honours the proxy variables is filtered by the allowlist. | everyday work |
+| `proxy` (default) | The host network namespace (`--share-net`) plus `HTTPS_PROXY`/`HTTP_PROXY` pointing at the host proxy on `127.0.0.1:8888` (or the port `install.sh` chose, [below](#its-port)), and the proxy CA trusted inside. Every client that honours the proxy variables is filtered by the allowlist. | everyday work |
 | `strict` | Its own network namespace, owned by `pasta` and forwarded to the host in userspace; an nftables rule inside allows only the proxy on the default gateway. Closes the raw-socket loophole (a tool ignoring the proxy variables has no route out) and blocks localhost/LAN: pasta's port forwarding is off in both directions, so no host loopback service is mirrored into the sandbox and no sandbox listener is published on the host. Needs the `passt` package and its AppArmor profile (`install.sh` adds it) and nftables. `--ssh HOST` works (a firewall pinhole to the host's resolved IPv4 and an `/etc/hosts` entry; `--ssh-unrestricted` is refused). | the network closed to everything but the proxy |
 | `open` | The host network, no proxy. | debugging only |
 | `none` | No network. | offline work |
@@ -53,6 +53,29 @@ mitmdump --listen-host 127.0.0.1 --listen-port 8888 --set block_global=false \
          --set termlog_verbosity=info --set flow_detail=0 --set http2=false \
          -s ~/.config/agent-sandbox/allowlist_addon.py
 ```
+
+### Its port
+
+The proxy's port is `install.sh`'s choice (#335), one account's proxy per port, so a
+second install in another account on the same host gets a port of its own:
+
+- `install.sh --proxy-port N` takes `N` (1024-65535);
+- otherwise a port an earlier run recorded is kept, so a re-run never moves a working
+  proxy (when something other than this account's running proxy listens there, the run
+  says so; `--proxy-port` moves it);
+- otherwise `8888`, unless a listener that is not this account's own proxy holds it
+  (what listens is read with `ss -ltn`, else `netstat -ltn`, else a connect to
+  `127.0.0.1:8888`); then the next free port above `8888`. The run's summary names a
+  port that is not `8888`.
+
+The choice is recorded in `~/.config/agent-sandbox/proxy-port` (the number alone); the
+unit's `--listen-port` is filled from it at install time, and the engine reads it at
+each launch. `AGENT_SANDBOX_PROXY_PORT=N` overrides the file for a launch, like every
+other knob; a value that is not a port 1024-65535 refuses the launch, and a file that
+does not hold one is said and passed over for `8888`. The proxy URL in `proxy` mode,
+and in `strict` mode the nft rule and the proxy URL at the gateway, carry the port.
+With `--verbose` a launch names a port that is not `8888`; so does `--status`, verbose
+or not.
 
 Distro packages are too old: Ubuntu 24.04 and 26.04 ship mitmproxy 8.1.1,
 whose leaf certificates lack an Authority Key Identifier, and Python 3.13+

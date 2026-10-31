@@ -68,9 +68,9 @@ pasta_argv() {
   grep -qx /etc/ssl/certs/ca-certificates.crt "$H/argv" # CA bound as in proxy mode
   grepd -- '-4 route show default'                      # the gateway is read INSIDE the netns
   grepd 'policy drop'                                   # the firewall drops by default
-  grepd 'ip daddr %s tcp dport 8888 accept'             # allows only the gateway proxy (filled in from $gw)
+  grepd 'ip daddr %s tcp dport %s accept'               # allows only the gateway proxy (filled in from $gw, $pport)
   # shellcheck disable=SC2016 # literal \$: these are patterns for the wrapper's own text
-  grepd 'pxy="http://\${auth:+\$auth@}\$gw:8888"' # proxy URL built inside, gateway + optional per-session token
+  grepd 'pxy="http://\${auth:+\$auth@}\$gw:\$pport"' # proxy URL built inside, gateway + optional per-session token
   # shellcheck disable=SC2016
   grepd 'setenv HTTPS_PROXY "\$pxy"' # proxy env points at that URL
   run ! grepd '10\.9\.9\.1'          # no gateway is baked in on the host side
@@ -292,4 +292,27 @@ S
   mapfile -t ARGV <"$H/argv"
   argv_has --seccomp 10                                      # the flag reached bwrap through pasta
   [ "$(cat "$H/argv.fd10")" = "$H/seccomp/$(uname -m).bpf" ] # and the wrapper opened the filter on fd 10
+}
+
+@test "strict: the nft rule and the proxy URL carry the proxy's port: 8888, install.sh's recorded one, the knob's (#335)" {
+  # an nft that keeps the ruleset it is given
+  printf '#!/usr/bin/env bash\ncat >"%s/nft.rules"\n' "$H" >"$H/bin/nft"
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qx '  ip daddr 10.9.9.1 tcp dport 8888 accept' "$H/nft.rules"
+  [[ "$(grep -A1 -x HTTPS_PROXY "$H/argv" | tail -1)" =~ ^http://[0-9a-f]{32}:x@10\.9\.9\.1:8888$ ]]
+  mkdir -p "$H/home/.config/agent-sandbox"
+  printf '8890\n' >"$H/home/.config/agent-sandbox/proxy-port"
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qx '  ip daddr 10.9.9.1 tcp dport 8890 accept' "$H/nft.rules"
+  run ! grep -q 8888 "$H/nft.rules"
+  [[ "$(grep -A1 -x HTTPS_PROXY "$H/argv" | tail -1)" =~ ^http://[0-9a-f]{32}:x@10\.9\.9\.1:8890$ ]]
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" AGENT_SANDBOX_PROXY_PORT=9123 -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qx '  ip daddr 10.9.9.1 tcp dport 9123 accept' "$H/nft.rules"
+  [[ "$(grep -A1 -x HTTPS_PROXY "$H/argv" | tail -1)" =~ ^http://[0-9a-f]{32}:x@10\.9\.9\.1:9123$ ]]
+  run_engine AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" AGENT_SANDBOX_PROXY_PORT=x -- asb claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"AGENT_SANDBOX_PROXY_PORT=x: expected a port, 1024-65535"* ]]
 }

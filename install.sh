@@ -44,6 +44,12 @@
 #                             bwrap and apt's candidate are older than 0.12.0
 #                             (CVE-2026-87766). Asks for sudo for apt; with
 #                             --dry-run it only prints the plan.
+#   ./install.sh --proxy-port N
+#                             the proxy listens on 127.0.0.1:N (1024-65535).
+#                             Without it: the port recorded by an earlier run,
+#                             else 8888, else -- when another account's
+#                             listener holds 8888 -- the next free port above
+#                             it. Recorded in ~/.config/agent-sandbox/proxy-port.
 #
 # Installs mitmproxy >= 12 into a private environment (venv, else conda), a pinned
 # micromamba for conda inside sandboxes (asking, where the host has conda, which one
@@ -63,8 +69,25 @@ UNINSTALL=0
 PURGE_CONFIG=0
 ASSUME_YES=0
 REBUILD_BWRAP=0
-for arg in "$@"; do
+PROXY_PORT_ARG=""
+# A port for the proxy: 1024-65535, no leading zero (as the engine's _as_proxy_port).
+proxy_port_ok() { [[ "$1" =~ ^[1-9][0-9]{3,4}$ ]] && (($1 >= 1024 && $1 <= 65535)); }
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  arg="${args[i]}"
   case "$arg" in
+    --proxy-port | --proxy-port=*)
+      if [[ "$arg" == --proxy-port ]]; then
+        i=$((i + 1))
+        PROXY_PORT_ARG="${args[i]:-}"
+      else
+        PROXY_PORT_ARG="${arg#--proxy-port=}"
+      fi
+      proxy_port_ok "$PROXY_PORT_ARG" || {
+        echo "install.sh: --proxy-port '$PROXY_PORT_ARG': expected a port, 1024-65535" >&2
+        exit 2
+      }
+      ;;
     --dry-run) DRY_RUN=1 ;;
     --dev) DEV=1 ;;
     --uninstall) UNINSTALL=1 ;;
@@ -3464,7 +3487,65 @@ ALLOW_EOF
   ok "wrote starter $CONFIG_DIR/allowlist.txt"
 fi
 
-# 7c. systemd user unit (static; safe to overwrite)
+# 7c. the proxy's port (#335): one account's proxy per port, so a second install on
+# the host (another account's) cannot have 8888 while the first one's holds it. The
+# unit and the engine read the number from $PROXY_PORT_FILE; the engine's
+# AGENT_SANDBOX_PROXY_PORT overrides it per launch.
+#   --proxy-port N   N.
+#   a recorded port  kept, so a re-run never moves a working proxy; said, when
+#                    something other than our running unit listens there.
+#   neither          8888, unless a listener that is not our unit holds it (our unit
+#                    is one that is active: an install from before the file existed
+#                    listened on 8888); then the next free port above 8888.
+# What listens is read from `ss -ltn` (iproute2, on every Ubuntu), else `netstat -ltn`:
+# a listener at ANY address holds the port, since mitmdump cannot bind 127.0.0.1:N under
+# a 0.0.0.0:N. With neither tool, a connect to 127.0.0.1:N (bash's /dev/tcp) stands in;
+# it sees loopback and wildcard listeners, which are the ones in the way.
+PROXY_PORT_FILE="$CONFIG_DIR/proxy-port"
+listening_ports() {
+  if command -v ss >/dev/null; then
+    ss -ltn 2>/dev/null | awk 'NR > 1 { sub(/.*:/, "", $4); print $4 }'
+  elif command -v netstat >/dev/null; then
+    netstat -ltn 2>/dev/null | awk '$1 ~ /^tcp/ { sub(/.*:/, "", $4); print $4 }'
+  else
+    return 1
+  fi
+}
+LISTENING="$(listening_ports)" && HAVE_LISTENING=1 || HAVE_LISTENING=0
+port_busy() { # $1 = port
+  if ((HAVE_LISTENING)); then
+    grep -qx -- "$1" <<<"$LISTENING"
+  else
+    (echo >"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+  fi
+}
+our_unit_active() { systemctl --user is-active --quiet agent-sandbox-mitmproxy.service 2>/dev/null; }
+PROXY_PORT_WHY=""
+recorded_port=""
+[[ -f "$PROXY_PORT_FILE" ]] && recorded_port="$(tr -d '[:space:]' <"$PROXY_PORT_FILE" || true)"
+if [[ -n "$PROXY_PORT_ARG" ]]; then
+  PROXY_PORT="$PROXY_PORT_ARG" PROXY_PORT_WHY="--proxy-port"
+  if [[ "$PROXY_PORT" != "$recorded_port" ]] && port_busy "$PROXY_PORT"; then
+    warn "127.0.0.1:$PROXY_PORT is already in use: the proxy will not start there until it is free"
+  fi
+elif proxy_port_ok "$recorded_port"; then
+  PROXY_PORT="$recorded_port" PROXY_PORT_WHY="recorded by an earlier run"
+  if port_busy "$PROXY_PORT" && ! our_unit_active; then
+    warn "127.0.0.1:$PROXY_PORT is in use by something other than this account's proxy: re-run with --proxy-port N to move it"
+  fi
+else
+  [[ -n "$recorded_port" ]] && warn "$PROXY_PORT_FILE holds '$recorded_port', not a port; choosing again"
+  PROXY_PORT=8888 PROXY_PORT_WHY="the default"
+  if port_busy 8888 && ! our_unit_active; then
+    while port_busy "$PROXY_PORT" && ((PROXY_PORT < 65535)); do PROXY_PORT=$((PROXY_PORT + 1)); done
+    PROXY_PORT_WHY="8888 is held by another listener; the next free port"
+  fi
+fi
+printf '%s\n' "$PROXY_PORT" >"$PROXY_PORT_FILE"
+chmod 0644 "$PROXY_PORT_FILE"
+ok "proxy port $PROXY_PORT ($PROXY_PORT_WHY), in $PROXY_PORT_FILE"
+
+# 7d. systemd user unit (static but for its paths and port; safe to overwrite)
 cat >"$SYSTEMD_DIR/agent-sandbox-mitmproxy.service" <<'UNIT_EOF'
 [Unit]
 Description=mitmproxy enforcing allowlist for the agent sandbox
@@ -3478,7 +3559,7 @@ Type=simple
 # slower than HTTP/1.1; with response streaming in the addon this is near-native.
 ExecStart=@MITMDUMP@ \
     --listen-host 127.0.0.1 \
-    --listen-port 8888 \
+    --listen-port @PROXY_PORT@ \
     --set block_global=false \
     --set termlog_verbosity=info \
     --set flow_detail=0 \
@@ -3492,7 +3573,8 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 UNIT_EOF
-sed -i -e "s|@ENGINE@|$LAUNCH_TARGET|g" -e "s|@MITMDUMP@|$MITMDUMP|g" "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
+sed -i -e "s|@ENGINE@|$LAUNCH_TARGET|g" -e "s|@MITMDUMP@|$MITMDUMP|g" -e "s|@PROXY_PORT@|$PROXY_PORT|g" \
+  "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 ok "wrote $SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 
 # ----- 8. systemd: reload, enable, start -----
@@ -3640,7 +3722,7 @@ fi
 # and a last one, without a token, checks that an anonymous client is refused.
 probe_token=""
 proxy_get() { # $1 = url; echoes the HTTP code (000 = refused/failed)
-  curl -sS --cacert "$PROXY_CA" --proxy "http://${probe_token:+$probe_token:x@}127.0.0.1:8888" --max-time 15 \
+  curl -sS --cacert "$PROXY_CA" --proxy "http://${probe_token:+$probe_token:x@}127.0.0.1:$PROXY_PORT" --max-time 15 \
     -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || true
 }
 probe_session=""
@@ -3682,7 +3764,7 @@ else
   esac
   rm -rf -- "$probe_session"
   probe_token=""
-  anon_code="$(curl -sS --cacert "$PROXY_CA" --proxy http://127.0.0.1:8888 --max-time 15 \
+  anon_code="$(curl -sS --cacert "$PROXY_CA" --proxy "http://127.0.0.1:$PROXY_PORT" --max-time 15 \
     -o /dev/null -w '%{http_connect}' https://api.github.com/ 2>/dev/null || true)"
   if [[ "$anon_code" == 407 ]]; then
     ok "proxy refuses a client with no session token (407)"
@@ -3699,7 +3781,7 @@ fi
 # machinery is present (it is opt-in), never in dry-run, always bounded by a
 # timeout, and only ever a warning -- proxy is the mode this install sets up.
 strict_smoke() {
-  local nft="$1" out gwr lor rawr
+  local nft="$1" port="$2" out gwr lor rawr
   command -v pasta >/dev/null || {
     info "strict mode: passt not installed, skipping its check (needed only for AGENT_SANDBOX_NET=strict)"
     return 0
@@ -3721,15 +3803,15 @@ strict_smoke() {
   # mirrored), and an arbitrary host (must not).
   # shellcheck disable=SC2016
   out="$(timeout -k 2 20 pasta --config-net --quiet -T none -U none -t none -u none -- bash -c '
-    nft=$1
+    nft=$1 port=$2
     gw=$(ip -4 route show default 2>/dev/null | sed -n "s/.*via \([0-9.]*\).*/\1/p" | head -1)
     [ -n "$gw" ] || { echo "gw=none"; exit 0; }
-    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport 8888 accept\n }\n}\n" "$gw" | "$nft" -f - || { echo "nft=failed"; exit 0; }
+    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport %s accept\n }\n}\n" "$gw" "$port" | "$nft" -f - || { echo "nft=failed"; exit 0; }
     pr() { timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null && echo REACHED || echo blocked; }
-    echo "gw=$(pr "$gw" 8888)"
-    echo "lo=$(pr 127.0.0.1 8888)"
+    echo "gw=$(pr "$gw" "$port")"
+    echo "lo=$(pr 127.0.0.1 "$port")"
     echo "raw=$(pr 1.1.1.1 443)"
-  ' agent-sandbox-strict-check "$nft" 2>/dev/null || true)"
+  ' agent-sandbox-strict-check "$nft" "$port" 2>/dev/null || true)"
   if [[ "$out" == *gw=none* ]]; then
     info "strict mode: no IPv4 gateway inside a test netns here, skipping its check"
     return 0
@@ -3749,7 +3831,7 @@ strict_smoke() {
   elif [[ "$gwr" != REACHED ]]; then
     warn "strict mode: the proxy at the netns gateway was not reachable from a test netns; strict would have no working egress (is the proxy up?)"
   elif [[ "$lor" == REACHED ]]; then
-    warn "strict mode: a host loopback port (127.0.0.1:8888) was reachable from a test netns — host services are not isolated as strict promises"
+    warn "strict mode: a host loopback port (127.0.0.1:$port) was reachable from a test netns — host services are not isolated as strict promises"
   else
     ok "strict mode enforces its contract (only the proxy on the gateway is reachable; raw egress and host loopback blocked)"
   fi
@@ -3758,7 +3840,7 @@ strict_smoke() {
 if ((DRY_RUN)); then
   info "(dry-run) strict-mode check skipped"
 else
-  strict_smoke "$nftbin"
+  strict_smoke "$nftbin" "$PROXY_PORT"
 fi
 
 # ----- 11. summary -----
@@ -3772,3 +3854,5 @@ Next steps:
   - Edit the allowlist:     \$EDITOR $CONFIG_DIR/allowlist.txt
   - Bypass proxy one-shot:  AGENT_SANDBOX_NET=open asb claude
 SUMMARY
+[[ "$PROXY_PORT" == 8888 ]] \
+  || printf '  - The proxy listens on 127.0.0.1:%s, not 8888 (%s).\n' "$PROXY_PORT" "$PROXY_PORT_WHY"

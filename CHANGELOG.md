@@ -47,6 +47,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The proxy's port is chosen per account** (#335, step 1 of its plan), so a second
+  install in another account on the same host has a proxy of its own. `install.sh` takes
+  `8888`, or, when a listener that is not this account's proxy holds `8888`, the next
+  free port above it, or `--proxy-port N`; it records the port in
+  `~/.config/agent-sandbox/proxy-port`, fills the unit's `--listen-port` from it, and a
+  re-run keeps it. The engine reads the file at each launch, `AGENT_SANDBOX_PROXY_PORT`
+  overrides it, and the port goes into the proxy URL and, in `strict` mode, the nft rule;
+  `--status` names a port that is not `8888`. See `docs/network.md`.
 - **After the Gate's push the roles model's Supervisor proposes the Planner's next step
   in the same reply, and a Task already written for the waiting Implementer is asked
   about ahead and goes when the run is green** (#333). Only the Implementer's and the

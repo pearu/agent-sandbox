@@ -289,8 +289,10 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Nine more variables name locations rather than behaviour and are rarely set by
-hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROFILE_DIR`,
+Ten more variables name locations rather than behaviour and are rarely set by
+hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROXY_PORT` (the proxy's port on
+127.0.0.1; `install.sh` records its choice, 8888 or another account's next free
+one, in `~/.config/agent-sandbox/proxy-port`), `AGENT_SANDBOX_PROFILE_DIR`,
 `AGENT_SANDBOX_HOME` (where `install.sh` put micromamba and its conda root),
 `AGENT_SANDBOX_GPU_DEVICES` (which device nodes are the GPUs', as globs),
 `AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),

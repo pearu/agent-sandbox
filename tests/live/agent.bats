@@ -12,7 +12,9 @@ setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   [[ "${AGENT_SANDBOX_LIVE:-0}" == 1 ]] || skip "set AGENT_SANDBOX_LIVE=1 to run live tests (real network + your credentials)"
   command -v bwrap >/dev/null || skip "bwrap not installed"
-  (echo >/dev/tcp/127.0.0.1/8888) 2>/dev/null || skip "no proxy on 127.0.0.1:8888 (start agent-sandbox-mitmproxy)"
+  local pp
+  pp="$(test_proxy_port "$HOME")"
+  (echo >"/dev/tcp/127.0.0.1/$pp") 2>/dev/null || skip "no proxy on 127.0.0.1:$pp (start agent-sandbox-mitmproxy)"
   [ -r "$HOME/.claude/.credentials.json" ] || skip "no Claude credentials in ~/.claude"
   ls "$HOME/.local/share/claude/versions"/* >/dev/null 2>&1 || skip "no Claude binary under ~/.local/share/claude/versions"
 }
