@@ -206,6 +206,19 @@ Sections:
   keeps all of it out. Per role with `[gpu:<role>]`; `AGENT_SANDBOX_GPU` in your shell
   wins over the file; `asb --init MODEL --disable-gpu` (or `--enable-gpu`) writes the
   line for a model's roles. The driver's libraries are in `/usr`, already in view.
+  `devices = NODE ...` names which device nodes are the GPUs', space-separated paths or
+  globs, as `AGENT_SANDBOX_GPU_DEVICES` takes them (#335). It **replaces** the default
+  list, so it names every node it needs: one NVIDIA card for CUDA is
+  `devices = /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia1`, and
+  the review notes a card listed without `/dev/nvidiactl` or `/dev/nvidia-uvm`. In
+  `[gpu:<role>]` it replaces the unsuffixed list for those roles, as a key does -- the
+  way to give the Implementer one card and the Reviewer the other. An entry must be under
+  `/dev/` and have no `..` component; any other is said at the review and ignored. Globs
+  expand at launch; a node this host lacks is said and skipped. `AGENT_SANDBOX_GPU_DEVICES`
+  in your shell wins over the file, and `mode = off` (or `AGENT_SANDBOX_GPU=off`) keeps
+  every node out whatever the list says. The review prints each list as written, and
+  `--check` the nodes a launch binds and the list it came from. A role's list is part
+  of its running policy: a join that names another is refused.
 - **`[seccomp]`** — key/value lines. `mode = on|off` asks for the default-deny
   syscall filter for sessions in this project, the same grant as
   `AGENT_SANDBOX_SECCOMP` (which wins if set in your shell). The value is the

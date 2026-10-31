@@ -2671,6 +2671,13 @@ _as_keeper_policy() {
   [[ "$v" == 1 ]] && v=on
   [[ "$v" == 0 ]] && v=off
   if ((all)) || [[ -n "${AGENT_SANDBOX_GPU:-}" ]]; then _kp gpu "$v" AGENT_SANDBOX_GPU; fi
+  # The GPU device list (#335), as written: the keeper's resolved one (knob, dot-file or
+  # default); a join's own AGENT_SANDBOX_GPU_DEVICES must name the same.
+  if ((all)); then
+    _kp gpu-devices "$(_as_gpu_spec)" "${_gpu_devices_from:-default}"
+  elif [[ -n "${AGENT_SANDBOX_GPU_DEVICES:-}" ]]; then
+    _kp gpu-devices "$AGENT_SANDBOX_GPU_DEVICES" AGENT_SANDBOX_GPU_DEVICES
+  fi
   if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_WRITE:-}" ]]; then _kp conda-write "${_knob_conda_write:-}" AGENT_SANDBOX_CONDA_WRITE; fi
   if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_PKGS:-}" ]]; then _kp conda-pkgs "${_knob_conda_pkgs:-}" AGENT_SANDBOX_CONDA_PKGS; fi
   if ((all)) || [[ -n "${AGENT_SANDBOX_CONDA_BASE:-}" ]]; then _kp conda-base "${AGENT_SANDBOX_CONDA_BASE:-${_conda_mode:-}}" AGENT_SANDBOX_CONDA_BASE; fi
@@ -4681,6 +4688,8 @@ _as_briefing_write() {
     printf -- '- extra read-only paths: %s\n' "$ro_line"
     if ((${#_gpu_nodes[@]})); then
       printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
+    elif [[ -n "${_gpu_devices_from:-}" && "${_knob_gpu:-on}" != off && "${_knob_gpu:-on}" != 0 ]]; then
+      printf -- '- no GPU devices (%s names %s, none of it on the host)\n' "$_gpu_devices_from" "$(_as_gpu_spec | grep . || echo none)"
     else
       printf -- '- no GPU devices (none on the host, or [gpu] mode = off)\n'
     fi
@@ -5268,6 +5277,7 @@ _as_trust_digest() {
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
   local -a files=()
@@ -5347,6 +5357,7 @@ _as_dotfile_briefing_files() {
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
   _as_briefing_files "$1"
@@ -5392,6 +5403,7 @@ _as_profile_dotfile() {
   local -a _df_profile_names=() words=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
+  local -a _df_gpu_devices=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local profile=agent # the section the parse hands over as the profile's
@@ -5717,6 +5729,7 @@ _as_trust_notes() {
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
+  local -a _df_gpu_devices=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   for f in "${profile_dir:-}"/*/profile.sh; do
@@ -5806,6 +5819,19 @@ _as_trust_notes() {
     "" | on | 1 | off | 0) ;;
     *) _as_msg ".agent-sandbox: [gpu] mode '$_df_gpu_mode' unknown (on|off); ignoring" ;;
   esac
+  # [gpu] devices (#335): the nodes it asks for, literally, per section, so a reviewer
+  # sees what a project binds; and CUDA's driver nodes, when a card is named without them.
+  for h in ${_df_gpu_devices[@]+"${_df_gpu_devices[@]}"}; do
+    v="${h%%$'\t'*}" k="${h#*$'\t'}"
+    if [[ "$v" == "*" ]]; then v="[gpu]" n="every role"; else n="the roles $v" v="[gpu:$v]"; fi
+    if [[ -n "$k" ]]; then
+      _as_msg ".agent-sandbox: $v devices: only these GPU device nodes are passed in, for $n, in place of the default list: $k"
+    else
+      _as_msg ".agent-sandbox: $v devices: no GPU device node is passed in, for $n"
+    fi
+    f="$(_as_gpu_cuda_note "$k")"
+    [[ -z "$f" ]] || _as_msg ".agent-sandbox: $v devices names an NVIDIA card without $f: CUDA needs /dev/nvidiactl and /dev/nvidia-uvm (and /dev/nvidia-uvm-tools) as well"
+  done
   for pair in ${_df_profile_pairs[@]+"${_df_profile_pairs[@]}"}; do
     n="${pair%%$'\t'*}" k="${pair#*$'\t'}" over=""
     for line in ${facts[@]+"${facts[@]}"}; do
@@ -6160,13 +6186,15 @@ _as_dotfile_line() {
       fi
       ;;
     gpu)
-      # The host's GPUs, passed in by default; `mode = off` keeps them out.
+      # The host's GPUs, passed in by default; `mode = off` keeps them out, and
+      # `devices` names which nodes are theirs (#335), replacing the default list.
       if [[ "$line" != *=* ]]; then
         _as_msg ".agent-sandbox: [gpu] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
           mode) _df_gpu_mode="$cv" ;;
+          devices) _as_gpu_devices_line "$sglob" "$cv" ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [gpu] key '$ck'" ;;
         esac
       fi
@@ -6288,6 +6316,86 @@ _as_dotfile_line() {
   return 0
 }
 
+# _as_gpu_devices_line GLOB VALUE -- one `[gpu] devices = NODE ...` line (#335) into the
+# caller's _df_gpu_devices, as `GLOB<TAB>the entries kept`. The line replaces the list
+# (a later line, or a role's, is the one that applies); the entries are node paths or
+# globs, split on spaces, expanded at launch. A `--dev-bind` of any path is a widening, so
+# an entry outside /dev/, or with a `..` component, is said and ignored; the rest stand.
+_as_gpu_devices_line() {
+  local g="$1" sec="[gpu]" e kept=""
+  local -a ents=()
+  [[ "$g" == "*" ]] || sec="[gpu:$g]"
+  read -r -a ents <<<"$2"
+  for e in ${ents[@]+"${ents[@]}"}; do
+    if [[ "$e" != /dev/?* ]]; then
+      _as_msg ".agent-sandbox: $sec devices '$e': not a node under /dev/; ignoring it"
+    elif [[ "/$e/" == */../* ]]; then
+      _as_msg ".agent-sandbox: $sec devices '$e': a '..' component; ignoring it"
+    else
+      kept+="${kept:+ }$e"
+    fi
+  done
+  _df_gpu_devices+=("$g"$'\t'"$kept")
+}
+
+# The GPUs' device nodes when nothing names them (AGENT_SANDBOX_GPU_DEVICES, [gpu]
+# devices): NVIDIA's, AMD's ROCm (/dev/kfd) and the render nodes.
+_as_gpu_default='/dev/nvidia* /dev/kfd /dev/dri'
+
+# _as_gpu_spec -- the GPU device list this launch uses, as globs: AGENT_SANDBOX_GPU_DEVICES,
+# else the dot-file's [gpu] devices for the role, else the default. Reads the launch's
+# _gpu_devices_from and _knob_gpu_devices by dynamic scope.
+_as_gpu_spec() {
+  if [[ -n "${_gpu_devices_from:-}" ]]; then
+    printf '%s' "${_knob_gpu_devices:-}"
+  else
+    printf '%s' "$_as_gpu_default"
+  fi
+}
+
+# _as_gpu_nodes SPEC [SAY] -- the device nodes SPEC's entries expand to on this host, one
+# per line, in its order. With SAY, an entry that names no node here is said (a listed
+# node that is absent is skipped, never an error).
+_as_gpu_nodes() {
+  local e n found
+  local -a ents=()
+  read -r -a ents <<<"$1"
+  for e in ${ents[@]+"${ents[@]}"}; do
+    found=0
+    # shellcheck disable=SC2086 # the entry is a glob, expanded here
+    for n in $e; do
+      [[ -e "$n" ]] || continue
+      printf '%s\n' "$n"
+      found=1
+    done
+    ((found)) || [[ -z "${2:-}" ]] || _as_msg "gpu: $e is not on this host; not passed in"
+  done
+}
+
+# _as_gpu_cuda_note LIST -- the entries LIST names an NVIDIA card with (/dev/nvidiaN) but
+# not the driver nodes CUDA needs as well: the missing ones, space-separated. Matched as
+# globs, so `/dev/nvidia*` names all of them.
+_as_gpu_cuda_note() {
+  local e d card=0 ctl=0 uvm=0 miss=""
+  local -a ents=()
+  read -r -a ents <<<"$1"
+  for e in ${ents[@]+"${ents[@]}"}; do
+    # shellcheck disable=SC2053 # the entry is the pattern
+    [[ /dev/nvidiactl == $e ]] && ctl=1
+    # shellcheck disable=SC2053
+    [[ /dev/nvidia-uvm == $e ]] && uvm=1
+    [[ "$e" == /dev/nvidia[0-9]* ]] && card=1
+    for d in 0 1 2 3 4 5 6 7 8 9; do
+      # shellcheck disable=SC2053
+      [[ /dev/nvidia$d == $e ]] && card=1
+    done
+  done
+  ((card)) || return 0
+  ((ctl)) || miss+=" /dev/nvidiactl"
+  ((uvm)) || miss+=" /dev/nvidia-uvm"
+  printf '%s' "${miss# }"
+}
+
 # _as_dotfile_apply_role ROLE -- the role-suffixed [allow], [deny], [env], [conda],
 # [net], [gpu], [ssh] and [permissions] lines (#221) whose glob matches ROLE, in file
 # order, after the unsuffixed ones: a key overrides, a list adds. `--all` applies every
@@ -6396,9 +6504,12 @@ _as_check_plan() {
     case "${_knob_gpu:-on}" in
       off | 0) printf '  gpu: off -- no GPU device in the sandbox\n' ;;
       *)
-        local _gn _gl=""
-        for _gn in ${AGENT_SANDBOX_GPU_DEVICES:-/dev/nvidia* /dev/kfd /dev/dri}; do [[ -e "$_gn" ]] && _gl+="${_gl:+ }$_gn"; done
+        local _gl
+        _gl="$(_as_gpu_nodes "$(_as_gpu_spec)" | paste -sd' ')"
         printf '  gpu: on -- %s\n' "${_gl:-none on this host}"
+        # A list named for this launch (#335), as written: what the project asks for.
+        [[ -z "${_gpu_devices_from:-}" ]] \
+          || printf '  gpu devices: %s -- %s\n' "$(_as_gpu_spec | grep . || echo none)" "$_gpu_devices_from"
         ;;
     esac
     case "${_conda_mode:-}" in
@@ -7467,6 +7578,9 @@ _as_init() {
     done
     for pt in ${keep[@]+"${keep[@]}"}; do
       a="[gpu:$pt]"$'\n'"mode = $([[ "$_init_gpu" == enable ]] && echo on || echo off)"$'\n'
+      # One card per role instead of every one (#335): the nodes CUDA needs, and the card.
+      [[ "$_init_gpu" == enable ]] \
+        && a+="#devices = /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia0"$'\n'
       _init_has "[gpu:$pt]" || new+="$a"
     done
   fi
@@ -9256,6 +9370,11 @@ agent_sandbox() (
   local _knob_conda_write="${AGENT_SANDBOX_CONDA_WRITE:-}" _knob_net="${AGENT_SANDBOX_NET:-}"
   local _knob_seccomp="${AGENT_SANDBOX_SECCOMP:-}"
   local _knob_gpu="${AGENT_SANDBOX_GPU:-}" # on (the default) | off
+  # Which device nodes are the GPUs' (#335): AGENT_SANDBOX_GPU_DEVICES, else the dot-file's
+  # [gpu] devices, else _as_gpu_default; _gpu_devices_from names the source, empty for the
+  # default (_as_gpu_spec).
+  local _knob_gpu_devices="${AGENT_SANDBOX_GPU_DEVICES:-}" _gpu_devices_from=""
+  [[ -n "$_knob_gpu_devices" ]] && _gpu_devices_from=AGENT_SANDBOX_GPU_DEVICES
   local _knob_briefing="${AGENT_SANDBOX_BRIEFING:-}"
   local _knob_conda_pkgs="${AGENT_SANDBOX_CONDA_PKGS:-}"
   # PATH for INSIDE the sandbox. Empty means "pass the launching shell's PATH";
@@ -9286,6 +9405,7 @@ agent_sandbox() (
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
+  local -a _df_gpu_devices=() # [gpu] devices (#335): one `glob<TAB>entries` per line, in the order applied
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local -a _df_connect=()
@@ -9481,6 +9601,17 @@ agent_sandbox() (
           on | 1 | off | 0) _knob_gpu="$_df_gpu_mode" ;;
           *) ;; # unknown: the default (on) stays, as the review said
         esac
+      fi
+      # [gpu] devices (#335): the role's line, the last applied, replaces the default list;
+      # an AGENT_SANDBOX_GPU_DEVICES in your shell wins over it.
+      if ((${#_df_gpu_devices[@]})); then
+        local _gdl="${_df_gpu_devices[${#_df_gpu_devices[@]} - 1]}" _gds="[gpu]"
+        [[ "${_gdl%%$'\t'*}" == "*" ]] || _gds="[gpu:${_gdl%%$'\t'*}]"
+        if [[ -z "$_gpu_devices_from" ]]; then
+          _knob_gpu_devices="${_gdl#*$'\t'}" _gpu_devices_from="$_gds devices"
+        else
+          _as_msg "AGENT_SANDBOX_GPU_DEVICES=$_knob_gpu_devices overrides the .agent-sandbox $_gds devices '${_gdl#*$'\t'}'"
+        fi
       fi
       # briefing: an explicit AGENT_SANDBOX_BRIEFING in your shell wins over the
       # file. Turning it off hides nothing and grants nothing; it only stops the
@@ -10197,13 +10328,17 @@ agent_sandbox() (
     off | 0) ;;
     on | 1)
       local _gn
-      # AGENT_SANDBOX_GPU_DEVICES: which device nodes are the GPUs', as globs; NVIDIA's,
-      # AMD's ROCm (/dev/kfd) and the render nodes by default.
-      for _gn in ${AGENT_SANDBOX_GPU_DEVICES:-/dev/nvidia* /dev/kfd /dev/dri}; do
-        [[ -e "$_gn" ]] || continue
+      # Which device nodes are the GPUs', as globs (_as_gpu_spec): AGENT_SANDBOX_GPU_DEVICES,
+      # else the role's [gpu] devices (#335), else NVIDIA's, AMD's ROCm (/dev/kfd) and the
+      # render nodes. A list named for the launch replaces the default; a node it names
+      # that this host lacks is said and skipped. Measured (#335): with only nvidiactl,
+      # nvidia-uvm, nvidia-uvm-tools and one /dev/nvidiaN, nvidia-smi and torch see that
+      # card alone, as device 0.
+      while IFS= read -r _gn; do
+        [[ -n "$_gn" ]] || continue
         args+=(--dev-bind "$_gn" "$_gn")
         _gpu_nodes+=("$_gn")
-      done
+      done < <(_as_gpu_nodes "$(_as_gpu_spec)" "${_gpu_devices_from:+say}")
       # The driver's management library (NVML: nvidia-smi, torch's device queries)
       # reads the devices' PCI records under /sys, which is otherwise not in the
       # sandbox: without it, measured, "GPU access blocked by the operating system".

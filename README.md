@@ -247,6 +247,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[conda] prefix` | the same for an env given by its path, such as a clone in a role's tree; `name` and `prefix` are one setting, the later wins (none) ([config.md](docs/config.md)) |
 | — | — | `[share-memory]` | which other projects' agent memory this session may read, read-only: paths, `~/dir/*` wildcards, or `all` for every project's state. Sugar for `[connect]`: by default a role sees only its own project, and its memory is its own under `isolated` and `inherit` (#196) ([config.md](docs/config.md#memory-scoping)) |
 | — | `AGENT_SANDBOX_GPU` | `[gpu] mode` | the host's GPUs in the sandbox: their device nodes (`/dev/nvidia*`, `/dev/kfd`, `/dev/dri`) and `/sys` read-only for the driver's library; `off` keeps them out; per role with `[gpu:<role>]` (on) ([config.md](docs/config.md)) |
+| — | `AGENT_SANDBOX_GPU_DEVICES` | `[gpu] devices` | which device nodes are the GPUs', as paths or globs under `/dev/`, space-separated; replaces the default list, so one card for CUDA is `/dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidiaN`; per role with `[gpu:<role>]`; a node the host lacks is said and skipped (`/dev/nvidia* /dev/kfd /dev/dri`) ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_SECCOMP` | `[seccomp] mode` | default-deny syscall filter, compiled per machine by `install.sh`; `off` disables it (on) ([seccomp](components/seccomp/README.md)) |
 | — | — | `[permissions]` | agent permission rules a session gets without asking, one per line in the agent's own syntax (claude: its settings' `permissions.allow`, e.g. `Bash(git push:*)`, `Read`); per role with `[permissions:ROLE]`, a union; a widening the review names, and `--check` lists; handed over with the briefing, so not with `[briefing] mode = off` (none) ([config.md](docs/config.md)) |
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
@@ -289,12 +290,11 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Ten more variables name locations rather than behaviour and are rarely set by
+Nine more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROXY_PORT` (the proxy's port on
 127.0.0.1; `install.sh` records its choice, 8888 or another account's next free
 one, in `~/.config/agent-sandbox/proxy-port`), `AGENT_SANDBOX_PROFILE_DIR`,
 `AGENT_SANDBOX_HOME` (where `install.sh` put micromamba and its conda root),
-`AGENT_SANDBOX_GPU_DEVICES` (which device nodes are the GPUs', as globs),
 `AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),
 `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,
 `AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper) and

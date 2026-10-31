@@ -156,8 +156,13 @@
 #        /dev/dri) are passed in, and /sys read-only for the driver's library.
 #        `off` keeps them out. Per role with [gpu:<role>]. An AGENT_SANDBOX_GPU
 #        set in your shell wins over this line.
+# devices : the GPUs' device nodes, space-separated paths or globs under /dev/,
+#        in place of the default list (an AGENT_SANDBOX_GPU_DEVICES set in your
+#        shell wins). One card for CUDA needs the driver's nodes too; in
+#        [gpu:<role>] it replaces this list for those roles.
 #[gpu]
 #mode = on
+#devices = /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia0
 
 
 # ---- seccomp: the syscall filter ------------------------------------------

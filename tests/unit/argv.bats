@@ -356,6 +356,90 @@ STUB
   run ! argv_has --ro-bind /sys /sys
 }
 
+# [gpu] devices (#335): the project's GPU device list. Real /dev paths that exist on every
+# host stand in for GPU nodes (the stub bwrap binds nothing), since a list outside /dev/
+# is refused; /dev/nvidia-absent-335 is one that exists nowhere.
+gpu_dotfile() { # gpu_dotfile TEXT -- write and approve the project's dot-file
+  local PROJ
+  PROJ="$(cd "$H/proj" && pwd -P)"
+  printf '%b' "$1" >"$PROJ/.agent-sandbox"
+  mkdir -p "$H/home/.config/agent-sandbox/trust"
+  sha256sum -- "$PROJ/.agent-sandbox" | cut -d' ' -f1 >"$H/home/.config/agent-sandbox/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+}
+gpu_binds() { # the --dev-bind sources of the launch, one per line
+  local i
+  for ((i = 0; i < ${#ARGV[@]}; i++)); do
+    [[ "${ARGV[i]}" == --dev-bind ]] && printf '%s\n' "${ARGV[i + 1]}"
+  done
+  return 0
+}
+
+@test "[gpu] devices replaces the default list: only its nodes bind, an absent one is said and skipped, /sys with them (#335)" {
+  gpu_dotfile '[gpu]\ndevices = /dev/null /dev/nvidia-absent-335 /dev/zer*\n'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: gpu: /dev/nvidia-absent-335 is not on this host; not passed in"* ]]
+  [ "$(gpu_binds | paste -sd' ')" = "/dev/null /dev/zero" ] # the glob expanded; nothing of the default
+  argv_has --ro-bind /sys /sys
+  [ "$(argv_index --dev-bind)" -gt "$(argv_index --dev)" ]
+  # a list of which nothing is on the host binds nothing, and so no /sys either
+  gpu_dotfile '[gpu]\ndevices = /dev/nvidia-absent-335\n'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -z "$(gpu_binds)" ]
+  run ! argv_has --ro-bind /sys /sys
+}
+
+@test "[gpu] devices: the list is the default's replacement, whatever the host has (#335)" {
+  # Deterministic on a host without GPUs too: the resolved list, by the launch's rule.
+  run bash -c '. "$1"; _gpu_devices_from=""; _as_gpu_spec; echo; _gpu_devices_from="[gpu] devices" _knob_gpu_devices="/dev/nvidia1"; _as_gpu_spec' _ "$ENGINE"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "/dev/nvidia* /dev/kfd /dev/dri" ]
+  [ "${lines[1]}" = "/dev/nvidia1" ]
+}
+
+@test "[gpu] mode = off beats [gpu] devices, and AGENT_SANDBOX_GPU=off beats both (#335)" {
+  gpu_dotfile '[gpu]\nmode = off\ndevices = /dev/null\n'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -z "$(gpu_binds)" ]
+  run ! argv_has --ro-bind /sys /sys
+  gpu_dotfile '[gpu]\ndevices = /dev/null\n'
+  run_engine AGENT_SANDBOX_GPU=off -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -z "$(gpu_binds)" ]
+  run ! argv_has --ro-bind /sys /sys
+  run_engine -- asb claude --version # and on, the same file binds its list
+  [ "$status" -eq 0 ]
+  [ "$(gpu_binds | paste -sd' ')" = "/dev/null" ]
+}
+
+@test "[gpu] devices: AGENT_SANDBOX_GPU_DEVICES in the shell wins over the file, and says so (#335)" {
+  : >"$H/dev-nvidia0"
+  gpu_dotfile '[gpu]\ndevices = /dev/null\n'
+  run_engine AGENT_SANDBOX_GPU_DEVICES="$H/dev-nvidia0" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: AGENT_SANDBOX_GPU_DEVICES=$H/dev-nvidia0 overrides the .agent-sandbox [gpu] devices '/dev/null'"* ]]
+  [ "$(gpu_binds | paste -sd' ')" = "$H/dev-nvidia0" ]
+}
+
+@test "[gpu:<role>] devices replaces the unsuffixed list for those roles, not adds to it (#335)" {
+  gpu_dotfile '[gpu]\ndevices = /dev/null\n[gpu:impl-*]\ndevices = /dev/zero\n[gpu:reviewer]\nmode = on\n'
+  run_engine -- asb --role impl-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(gpu_binds | paste -sd' ')" = "/dev/zero" ]
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -eq 0 ]
+  [ "$(gpu_binds | paste -sd' ')" = "/dev/null" ]
+}
+
+@test "[gpu] devices refuses an entry outside /dev/ or with a '..' component: it never binds, the rest do (#335)" {
+  gpu_dotfile '[gpu]\ndevices = /etc/passwd /dev/../etc/passwd /dev/null\n'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(gpu_binds | paste -sd' ')" = "/dev/null" ]
+}
+
 @test "proxy: the proxy URL carries install.sh's recorded port, the knob's over it, and a bad knob refuses the launch (#335)" {
   mkdir -p "$H/home/.config/agent-sandbox"
   printf '8890\n' >"$H/home/.config/agent-sandbox/proxy-port"

@@ -974,3 +974,16 @@ start_project() {
   argv_has --bind "$sbox/default/summary" "$IN/summary"
   grep -qxF "## Your session's summary line" "$OUT/briefing.md"
 }
+
+@test "the briefing's GPU line names the nodes a [gpu] devices list bound, or the list when none of it is here (#335)" {
+  printf '[gpu]\ndevices = /dev/null /dev/nvidia-absent-335\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- the host's GPUs: /dev/null" "$OUT/briefing.md"
+  printf '[gpu]\ndevices = /dev/nvidia-absent-335\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- no GPU devices ([gpu] devices names /dev/nvidia-absent-335, none of it on the host)" "$OUT/briefing.md"
+}
