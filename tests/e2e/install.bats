@@ -253,6 +253,9 @@ probe_session() {
   done
   [ -n "$env" ]
   # Break it the way a swapped interpreter does: mitmdump runs but cannot import.
+  # Replace the file, never write through it: with AGENT_SANDBOX_E2E_MITMDUMP set, the
+  # launcher here is a symlink to a real install's mitmdump, which `cat >` would overwrite.
+  rm -f "$env/bin/mitmdump"
   cat >"$env/bin/mitmdump" <<'X'
 #!/usr/bin/env bash
 echo "ModuleNotFoundError: No module named 'mitmproxy'" >&2
