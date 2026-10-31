@@ -214,6 +214,19 @@ default syscall filter on; without the nodes, "no CUDA GPUs are available". What
 grants: the GPUs themselves (their memory, compute, and whatever the driver exposes
 through its ioctls), and a read-only view of the host's hardware description in `/sys`.
 
+Which nodes are the GPUs' is the policy's: `[gpu] devices = NODE ...` (#335), per role
+with `[gpu:<role>]`, replaces the default list, and `AGENT_SANDBOX_GPU_DEVICES` in the
+launching shell wins over it. It is how two roles on one host get a card each: measured
+2026-10-31 on a host with two NVIDIA cards, binding only `/dev/nvidiactl`,
+`/dev/nvidia-uvm`, `/dev/nvidia-uvm-tools` and `/dev/nvidia1` shows that card alone to
+`nvidia-smi -L` and to PyTorch (one device, numbered 0, a CUDA computation runs); with no
+`/dev/nvidiaN` bound PyTorch counts none; `/dev/nvidia-modeset` and `/dev/nvidia-caps`
+are not needed for CUDA. The split is enforced by the nodes, not by
+`CUDA_VISIBLE_DEVICES`, which a process inside can change. `/proc/driver/nvidia/gpus`
+still lists every card's bus (information, not access). A `--dev-bind` of any path is a
+widening, so an entry must be under `/dev/` and have no `..` component; the review says
+and drops any other, and prints each list as written.
+
 ## Residual risks
 
 Stated plainly. These are what the adversary above can still do.

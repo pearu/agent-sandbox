@@ -47,6 +47,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`[gpu] devices = NODE ...` names a role's GPUs** (#335, step 2 of its plan), so the
+  Implementer and the Reviewer on a two-GPU host get a card each instead of both landing
+  on GPU 0. It is the dot-file form of `AGENT_SANDBOX_GPU_DEVICES` (which wins over it):
+  paths or globs under `/dev/`, replacing the default list -- one card for CUDA is
+  `/dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidiaN` -- and per role in
+  `[gpu:<role>]`, where it replaces the unsuffixed list. An entry outside `/dev/` or
+  with `..` is said at the review and ignored; a node the host lacks is said and
+  skipped. The review prints each list, `--check` the nodes and the list's source, and a
+  join that names another list than its running role's is refused. See `docs/config.md`.
 - **The proxy's port is chosen per account** (#335, step 1 of its plan), so a second
   install in another account on the same host has a proxy of its own. `install.sh` takes
   `8888`, or, when a listener that is not this account's proxy holds `8888`, the next

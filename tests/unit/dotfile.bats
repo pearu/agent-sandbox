@@ -925,3 +925,34 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   argv_has --bind "$C/projects/$s/memory" "$C/projects/$s/memory" # the channel's path is this slug's
   run ! grep -qF "$C/projects/$wrong" "$H/argv"
 }
+
+@test "the review prints each [gpu] devices list as written, per section, refuses an entry outside /dev/ or with '..', and notes CUDA's driver nodes (#335)" {
+  printf '%s\n' '[gpu]' 'devices = /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia1' \
+    '[gpu:impl-*]' 'devices = /dev/nvidia0 /etc/passwd /dev/../etc/shadow' \
+    '[gpu:rev]' 'devices = /dev/nvidia*' '[gpu:none]' 'devices =' >"$PROJ/.agent-sandbox"
+  run_trust 'n\nn\n'
+  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu] devices: only these GPU device nodes are passed in, for every role, in place of the default list: /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia1"* ]]
+  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices '/etc/passwd': not a node under /dev/; ignoring it"* ]]
+  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices '/dev/../etc/shadow': a '..' component; ignoring it"* ]]
+  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices: only these GPU device nodes are passed in, for the roles impl-*, in place of the default list: /dev/nvidia0"$'\n'* ]]
+  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices names an NVIDIA card without /dev/nvidiactl /dev/nvidia-uvm: CUDA needs /dev/nvidiactl and /dev/nvidia-uvm (and /dev/nvidia-uvm-tools) as well"* ]]
+  [[ "$output" == *"[gpu:rev] devices: only these GPU device nodes are passed in, for the roles rev, in place of the default list: /dev/nvidia*"* ]]
+  [[ "$output" == *"[gpu:none] devices: no GPU device node is passed in, for the roles none"* ]]
+  # the card is listed with its driver nodes ([gpu]), or a glob that names them ([gpu:rev]): no note
+  [ "$(grep -c 'CUDA needs' <<<"$output")" -eq 1 ]
+}
+
+@test "--check prints the GPU nodes a launch binds, and the [gpu] devices list as written with its source (#335)" {
+  printf '[gpu]\ndevices = /dev/null /dev/nvidia-absent-335\n[gpu:impl]\ndevices = /dev/zero\n[gpu:default]\nmode = on\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n  gpu: on -- /dev/null\n  gpu devices: /dev/null /dev/nvidia-absent-335 -- [gpu] devices\n'* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role impl 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n  gpu: on -- /dev/zero\n  gpu devices: /dev/zero -- [gpu:impl] devices\n'* ]]
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_GPU_DEVICES=/dev/full "${@:4}" --check 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n  gpu: on -- /dev/full\n  gpu devices: /dev/full -- AGENT_SANDBOX_GPU_DEVICES\n'* ]]
+}

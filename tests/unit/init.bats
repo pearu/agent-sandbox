@@ -420,6 +420,7 @@ init() {
   has_section '[gpu:gh-*]' "$PROJ/.agent-sandbox"
   run ! grep -qF '[gpu:gh-fix-*]' "$PROJ/.agent-sandbox" # covered by gh-*
   grep -A1 -F '[gpu:gh-*]' "$PROJ/.agent-sandbox" | grep -qx 'mode = off'
+  run ! grep -q '^#devices = ' "$PROJ/.agent-sandbox" # an example for GPUs that are off: none
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
   init -- roles planner=1 implementer=1 reviewer=1 --enable-gpu
   [ "$status" -eq 0 ]
@@ -427,6 +428,9 @@ init() {
     has_section "[gpu:$p]" "$PROJ/.agent-sandbox"
   done
   grep -A1 -F '[gpu:supervisor]' "$PROJ/.agent-sandbox" | grep -qx 'mode = on'
+  # and, commented out, how to give the role one card instead of every one (#335)
+  grep -A2 -F '[gpu:implementer-*]' "$PROJ/.agent-sandbox" \
+    | grep -qxF '#devices = /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia0'
 }
 
 # section HEADER FILE -- the lines of every section FILE has under HEADER.

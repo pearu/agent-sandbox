@@ -425,3 +425,27 @@ STUB
   [[ "$output" != *"the host replaced"* ]]
   release_bg
 }
+
+@test "the GPU device list is the keeper's policy: a join whose AGENT_SANDBOX_GPU_DEVICES changes it is refused, one that repeats it joins (#335)" {
+  printf '[gpu]\ndevices = /dev/null\n' >"$PROJ/.agent-sandbox"
+  trust
+  engine_bg -- asb claude --version
+  grep -qxF $'gpu-devices\t/dev/null\t[gpu] devices' "$SBOX/keeper/policy"
+  run_engine AGENT_SANDBOX_GPU_DEVICES=/dev/zero -- asb claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'default' is running with gpu-devices = /dev/null, and AGENT_SANDBOX_GPU_DEVICES asks for '/dev/zero'. A running role's policy cannot change"* ]]
+  [ ! -s "$H/join" ]
+  run_engine AGENT_SANDBOX_GPU_DEVICES=/dev/null -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ -s "$H/join" ]
+  release_bg
+}
+
+@test "a keeper without a GPU list records the default one, and a join naming another is refused (#335)" {
+  engine_bg -- asb claude --version
+  grep -qxF $'gpu-devices\t/dev/nvidia* /dev/kfd /dev/dri\tdefault' "$SBOX/keeper/policy"
+  run_engine AGENT_SANDBOX_GPU_DEVICES=/dev/nvidia1 -- asb claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"running with gpu-devices = /dev/nvidia* /dev/kfd /dev/dri, and AGENT_SANDBOX_GPU_DEVICES asks for '/dev/nvidia1'"* ]]
+  release_bg
+}
