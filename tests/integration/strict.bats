@@ -10,7 +10,8 @@
 # the closed default (nothing but the proxy), and --host-port/--agent-port
 # opening exactly the two probe ports. Skips unless pasta can create a namespace
 # here (needs passt + its AppArmor profile, or the userns sysctl relaxed) and
-# 8899 and 8877 are free.
+# 8899 and 8877 are free. A third publishes 8877 at 0.0.0.0 and fetches it over HTTP
+# at the host's own non-loopback address (#335).
 
 # Not in parallel within this file: its tests bind fixed host ports (8877, 8899) and one
 # checks that 8877 is NOT published while another publishes it (measured under bats
@@ -104,13 +105,25 @@ except Exception:
     print("blocked")' "$1" "$2"
 }
 
+# http_host HOST PORT: an HTTP GET from the host side -> the status code | blocked. A
+# TCP connect is not enough for a port published at an address: pasta accepts on the
+# host before the sandbox answers, so only an answer shows that the replies got out.
+http_host() {
+  python3 -c 'import sys,urllib.request
+try:
+    print(urllib.request.urlopen("http://%s:%s/" % (sys.argv[1], sys.argv[2]), timeout=5).status)
+except Exception:
+    print("blocked")' "$1" "$2"
+}
+
 # launch_strict [ENGINE FLAGS...]: run the engine in strict mode with the probe,
 # in the background rather than with bats' run so the host side can look for
 # the published port while the sandbox is alive. Sets RC (engine exit code),
 # PUBLISHED (host 127.0.0.1:8877 -> REACHED | blocked) and REPORT. fd 3 is
 # closed so a stray pasta cannot hold bats open; the engine's output is echoed
 # (bats shows it only when the test fails). PROBE_BIND (default 0.0.0.0) is the
-# address the probe's server binds inside.
+# address the probe's server binds inside. With HTTP_ADDR set, HTTP_PUBLISHED is an
+# HTTP GET of HTTP_ADDR:8877 from the host (http_host).
 launch_strict() {
   rm -f "$IWORK/report" "$IWORK/listening" "$IWORK/done"
   engine_cmd
@@ -131,6 +144,8 @@ launch_strict() {
   # bound inside within a second; wait that long so it would show.
   sleep 1.5
   PUBLISHED=$(conn_host 127.0.0.1 8877)
+  # shellcheck disable=SC2034 # read by the test that sets HTTP_ADDR
+  [ -n "${HTTP_ADDR:-}" ] && HTTP_PUBLISHED=$(http_host "$HTTP_ADDR" 8877)
   : >"$IWORK/done"
   RC=0
   wait "$pid" || RC=$?
@@ -168,4 +183,17 @@ launch_strict() {
   [ "$(report proxy_via_gw)" = REACHED ]
   [ "$(report proxy_via_lo)" = blocked ] # the proxy's port was not opened
   [ "$(report raw_external)" = blocked ]
+}
+
+@test "strict: --agent-port 0.0.0.0:PORT is reached at the host's own non-loopback address, its answer let out by the chain (#335)" {
+  local addr
+  addr="$(ip -4 -o addr show scope global 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4; exit}')"
+  [ -n "$addr" ] || skip "this host has no non-loopback IPv4 address"
+  HTTP_ADDR="$addr" launch_strict --agent-port 0.0.0.0:8877
+  [ "$RC" -eq 0 ]
+  [[ "$(cat "$I/engine.out")" == *"agent port 8877 published at 0.0.0.0:8877 -- every address of this host"* ]]
+  [ "$HTTP_PUBLISHED" = 200 ]            # an answer from inside, through the host's $addr
+  [ "$PUBLISHED" = REACHED ]             # 0.0.0.0 covers the loopback too
+  [ "$(report raw_external)" = blocked ] # the reply rule opens nothing outward
+  [ "$(report host_loopback)" = blocked ]
 }

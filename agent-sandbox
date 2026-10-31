@@ -196,9 +196,9 @@
 #       none   : no network at all (offline work).
 #   AGENT_SANDBOX_HOST_PORTS="5432 11434"   (strict) host 127.0.0.1 ports the
 #   AGENT_SANDBOX_AGENT_PORTS="8000"        sandbox may reach / agent ports
-#                                       published on the host's 127.0.0.1; the
-#                                       same as --host-port / --agent-port
-#                                       below (a list, or `none`)
+#                                       published on the host's 127.0.0.1 (or
+#                                       ADDR:PORT); the same as --host-port /
+#                                       --agent-port below (a list, or `none`)
 #   AGENT_SANDBOX_PROFILE_DIR=/dir      where profiles live (default: the
 #                                       profiles/ directory next to this file)
 #   AGENT_SANDBOX_SESSION_BASE=/dir     where per-session state lives (default:
@@ -238,9 +238,14 @@
 #                         session even if a knob or the dot-file lists ports.
 #                         A raw path to that one service, unfiltered by the
 #                         proxy.
-#   --agent-port PORT     (strict mode) publish a port the agent listens on at
+#   --agent-port [ADDR:]PORT
+#                         (strict mode) publish a port the agent listens on at
 #                         the host's 127.0.0.1:PORT -- a dev server you open
-#                         in a browser. Same rules. Both are TCP only; the
+#                         in a browser. Same rules. ADDR:PORT publishes it at
+#                         ADDR instead, an IPv4 address of the host or 0.0.0.0
+#                         for every one: reachable from the network, the
+#                         host's firewall is yours; one address per port, no
+#                         IPv6 yet (#335). Both are TCP only; the
 #                         flags, the knobs above and a trusted .agent-sandbox
 #                         [net] section form a union; noted and ignored in the
 #                         other modes (proxy/open already share the host's
@@ -388,8 +393,11 @@ Engine flags (before CMD):
                         domain and its subdomains
   --host-port PORT      (strict) let the sandbox reach the host's
                         127.0.0.1:PORT; repeatable; 1024-65535, or none
-  --agent-port PORT     (strict) publish the agent's PORT at the host's
-                        127.0.0.1:PORT; repeatable; 1024-65535, or none
+  --agent-port [ADDR:]PORT
+                        (strict) publish the agent's PORT at the host's
+                        127.0.0.1:PORT, or at ADDR (an IPv4 address of the
+                        host, 0.0.0.0 = every one: reachable from the
+                        network); repeatable; 1024-65535, or none
   --ssh HOST            allow SSH to HOST via a per-session, destination-
                         constrained agent (the key stays on the host);
                         repeatable; adds to a trusted .agent-sandbox [ssh]
@@ -518,7 +526,7 @@ Environment knobs:
   AGENT_SANDBOX_OVERLAY=auto|off  what `copy-on-write` uses (default: auto)
   AGENT_SANDBOX_NET=proxy|strict|open|none   network mode (default: proxy)
   AGENT_SANDBOX_HOST_PORTS="5432 11434"  (strict) same as --host-port, or none
-  AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port, or none
+  AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port ([ADDR:]PORT), or none
   AGENT_SANDBOX_PROFILE_DIR     where profiles live
   AGENT_SANDBOX_SESSION_BASE    where per-session state lives
   AGENT_SANDBOX_JOIN            the join helper (default: components/join.py)
@@ -4655,7 +4663,19 @@ _as_briefing_write() {
   local ports=""
   if [[ "$net" == strict ]]; then
     ((${#_host_ports[@]} > 0)) && ports="host ports reachable: ${_host_ports[*]}. "
-    ((${#_agent_ports[@]} > 0)) && ports="${ports}ports published to the host: ${_agent_ports[*]}. "
+    if ((${#_agent_ports[@]} > 0)); then
+      # Each with where it is published: an address reaches beyond the host (#335).
+      local _bp _bl=""
+      for _bp in "${_agent_ports[@]}"; do
+        case "$_bp" in
+          0.0.0.0:*) _bp="${_bp##*:} at every address of the host, reachable from the network" ;;
+          *:*) _bp="${_bp##*:} at the host's ${_bp%:*}, reachable from wherever that address is" ;;
+          *) _bp="$_bp at the host's 127.0.0.1" ;;
+        esac
+        _bl+="${_bl:+; }$_bp"
+      done
+      ports="${ports}ports published to the host: $_bl. "
+    fi
   fi
 
   # ONE DIRECTORY, bound read-only at $inside, rather than a bind per file: the
@@ -4890,10 +4910,64 @@ _as_port_ok() { # $1 = label for messages, $2 = token
   return 0
 }
 
+# An --agent-port token (the flag, AGENT_SANDBOX_AGENT_PORTS, [net] agent-port): PORT,
+# published at the host's 127.0.0.1 as before, or ADDR:PORT (#335), published at ADDR,
+# an IPv4 literal of this host or 0.0.0.0 for every IPv4 address of it. A hostname, an
+# IPv6 literal or a CIDR is refused; IPv6 is not taken yet. Prints the token in its one
+# spelling -- the port without leading zeros, `127.0.0.1:` dropped (that is the bare
+# port) -- or says why it is bad and fails. `none` passes as itself.
+_as_agent_port_norm() { # $1 = label for messages, $2 = token
+  local label="$1" t="$2" addr="" port="$2" o ok=1
+  local -a oct=()
+  if [[ "$t" == *:* ]]; then
+    addr="${t%:*}" port="${t##*:}"
+    if [[ "$addr" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+      _as_split oct . "$addr"
+      addr=""
+      for o in "${oct[@]}"; do
+        ((10#$o <= 255)) || ok=0
+        addr="${addr:+$addr.}$((10#$o))"
+      done
+    else
+      ok=0
+    fi
+    [[ "$port" =~ ^[0-9]+$ ]] || ok=0
+  elif [[ "$t" != none && ! "$t" =~ ^[0-9]+$ ]]; then
+    ok=0
+  fi
+  if ! ((ok)); then
+    _as_msg "$label: bad port '$t' (expected PORT, or ADDR:PORT with ADDR an IPv4 address of this host or 0.0.0.0 for every one -- not a hostname, a CIDR or IPv6, which is not taken yet; or none)"
+    return 1
+  fi
+  _as_port_ok "$label${addr:+ $t}" "$port" || return 1
+  [[ "$port" == none ]] && printf none && return 0
+  port=$((10#$port))
+  if [[ -z "$addr" || "$addr" == 127.0.0.1 ]]; then printf '%s' "$port"; else printf '%s:%s' "$addr" "$port"; fi
+}
+
+# Where a normalized agent-port token is published, as the launch line, the review,
+# --check and the briefing say it. An address is said loudly: it is reachable from
+# wherever that address is, and the host's firewall is the user's.
+_as_agent_port_say() { # $1 = token from _as_agent_port_norm
+  local t="$1"
+  case "$t" in
+    *:*)
+      if [[ "${t%:*}" == 0.0.0.0 ]]; then
+        printf '%s -- every address of this host, reachable from the network (the host'"'"'s firewall is yours)' "$t"
+      else
+        printf '%s -- that address of this host, reachable from wherever it is (the host'"'"'s firewall is yours)' "$t"
+      fi
+      ;;
+    *) printf "the host's 127.0.0.1:%s" "$t" ;;
+  esac
+}
+
 # Union of strict-mode port opt-ins from every source (flags, knob, dot-file)
 # into the array named by $2, deduplicated in the order given. A `none` in any
 # source empties it and sets the flag named by $3: one `none` closes that
 # direction for the session whatever the other sources list. A bad token fails.
+# --agent-port tokens may carry an address (_as_agent_port_norm); one port takes one
+# address, so the same port named with two fails.
 _as_ports_merge() { # $1 = label, $2 = out array name, $3 = out none-flag name, $4.. = tokens
   local label="$1"
   local -n _pm_out="$2" _pm_none="$3"
@@ -4902,14 +4976,24 @@ _as_ports_merge() { # $1 = label, $2 = out array name, $3 = out none-flag name, 
   local t u seen
   for t in "$@"; do
     [[ -z "$t" ]] && continue
-    _as_port_ok "$label" "$t" || return 1
+    if [[ "$label" == --agent-port ]]; then
+      t="$(_as_agent_port_norm "$label" "$t")" || return 1
+    else
+      _as_port_ok "$label" "$t" || return 1
+    fi
     if [[ "$t" == none ]]; then
       _pm_none=1
       continue
     fi
-    t=$((10#$t))
+    [[ "$t" == *:* ]] || t=$((10#$t))
     seen=0
-    for u in "${acc[@]}"; do [[ "$u" == "$t" ]] && seen=1; done
+    for u in "${acc[@]}"; do
+      [[ "$u" == "$t" ]] && seen=1 && continue
+      if [[ "${u##*:}" == "${t##*:}" ]]; then
+        _as_msg "$label: port ${t##*:} is named twice, as $u and $t; one address per port"
+        return 1
+      fi
+    done
     ((seen)) || acc+=("$t")
   done
   if ((_pm_none)); then _pm_out=(); else _pm_out=("${acc[@]}"); fi
@@ -5806,6 +5890,16 @@ _as_trust_notes() {
     "" | allow | fetch | refuse) ;;
     *) _as_msg ".agent-sandbox: [net] git '$_df_net_git' unknown (allow|fetch|refuse); ignoring" ;;
   esac
+  # [net] agent-port: each token as written and where it is published (#335); one with
+  # an address is a widening past the host's loopback. A bad one refuses the launch.
+  for h in ${_df_net_agent_port[@]+"${_df_net_agent_port[@]}"}; do
+    if v="$(_as_agent_port_norm "[net] agent-port" "$h")"; then
+      [[ "$v" == none ]] && continue
+      _as_msg ".agent-sandbox: [net] agent-port = $h: (strict) published at $(_as_agent_port_say "$v")"
+    else
+      _as_msg ".agent-sandbox: [net] agent-port = $h: a launch refuses it"
+    fi
+  done
   case "$_df_seccomp_mode" in
     "" | on | 1) ;;
     off | 0) _as_msg ".agent-sandbox: seccomp mode 'off': the default-deny syscall filter is off for this project" ;;
@@ -6522,6 +6616,18 @@ _as_check_plan() {
     ((${_git_refuse:-0})) && printf '  git transport: refused -- git over HTTPS to any host\n'
     ((${_git_fetch_only:-0})) && printf '  git transport: fetch only -- a push over HTTPS is refused\n'
     ((${_hosts_public:-0})) && printf '  network: every public host -- the allowlist does not apply; localhost, the LAN and [deny] stay refused\n'
+    # The agent ports as a strict launch publishes them (#335): flags, knob and the file.
+    if [[ "${_knob_net:-proxy}" == strict ]]; then
+      local -a _ck_ap=() _ck_knob=()
+      local _ck_none=0 _ck_t
+      [[ -n "${AGENT_SANDBOX_AGENT_PORTS:-}" ]] && _as_split _ck_knob $', \t\n' "$AGENT_SANDBOX_AGENT_PORTS"
+      if _as_ports_merge --agent-port _ck_ap _ck_none ${_agent_ports[@]+"${_agent_ports[@]}"} \
+        ${_ck_knob[@]+"${_ck_knob[@]}"} ${_df_net_agent_port[@]+"${_df_net_agent_port[@]}"}; then
+        for _ck_t in ${_ck_ap[@]+"${_ck_ap[@]}"}; do
+          printf '  network: agent port %s published at %s\n' "${_ck_t##*:}" "$(_as_agent_port_say "$_ck_t")"
+        done
+      fi
+    fi
     # The agent's own telemetry (#276): refused like any unlisted host, and kept out of the
     # refusal hook's note. Under hosts = public it is not refused, so nothing to say.
     local _tn=0
@@ -8405,19 +8511,26 @@ _as_keeper_exec() {
 # Verified on Ubuntu 24.04 (passt 2024-02-20): with the defaults a host-only
 # 127.0.0.1 listener was reachable from inside and a sandbox listener appeared
 # on the host; with none, neither.
-# $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes,
-# or empty), $3 = -T spec, $4 = -t spec, $5 = seccomp filter path (or empty),
+# $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes, the
+# replies on ports published at an address, or empty), $3 = -T spec, $4 = -t specs
+# separated by spaces (one per address; `none`), $5 = seccomp filter path (or empty),
 # $6 = the proxy's port on the host (_as_proxy_port), which the gateway forwards to,
 # $7.. = "bwrap -- agent": its options are in the session directory's bwrap.args
 # (_as_launch), and the per-session proxy token in its proxy.token.
 _as_launch_pasta() {
   local nftbin="$1" sshrules="$2" tcp_ns="$3" tcp_host="$4" seccomp_bpf="$5" pport="$6"
   shift 6
+  # One -t per published address (pasta takes it repeated).
+  local -a tspecs=() topts=()
+  local ts
+  read -ra tspecs <<<"$tcp_host"
+  for ts in "${tspecs[@]}"; do topts+=(-t "$ts"); done
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
-  # IPs) is spliced into the chain after the proxy rule.
+  # IPs, and the replies on ports published at an address) is spliced into the
+  # chain after the proxy rule.
   # shellcheck disable=SC2016
-  _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
+  _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none "${topts[@]}" -u none -- bash -c '
     nftbin=$1 sshrules=$2 sd=$3 bpf=$4 pport=$5
     shift 5
     # The per-session proxy token, from the file the proxy addon reads too: not on
@@ -8796,7 +8909,7 @@ agent_sandbox() (
       --host-port | --agent-port)
         [[ $# -ge 2 && -n "$2" && "$2" != -* ]] \
           || {
-            _as_msg "$1 needs a port (1024-65535), or none"
+            _as_msg "$1 needs a port (1024-65535$([[ "$1" == --agent-port ]] && printf ', or ADDR:PORT')), or none"
             return 2
           }
         if [[ "$1" == --host-port ]]; then _host_ports+=("$2"); else _agent_ports+=("$2"); fi
@@ -9152,7 +9265,7 @@ agent_sandbox() (
     }
   done
   for _h in "${_host_ports[@]}"; do _as_port_ok --host-port "$_h" || return 2; done
-  for _h in "${_agent_ports[@]}"; do _as_port_ok --agent-port "$_h" || return 2; done
+  for _h in "${_agent_ports[@]}"; do _as_agent_port_norm --agent-port "$_h" >/dev/null || return 2; done
 
   # ---- --engine-help: the engine's own usage, even with a profile selected ----
   if ((_do_engine_help)); then
@@ -10050,7 +10163,15 @@ agent_sandbox() (
   # What this invocation named itself, before the dot-file's ports join them: a join
   # is checked on these (see _as_keeper_policy).
   local -a _keeper_join_host_ports=(${_host_ports[@]+"${_host_ports[@]}"} ${_knob_host_ports[@]+"${_knob_host_ports[@]}"})
-  local -a _keeper_join_agent_ports=(${_agent_ports[@]+"${_agent_ports[@]}"} ${_knob_agent_ports[@]+"${_knob_agent_ports[@]}"})
+  local -a _keeper_join_agent_ports=()
+  local _kj_t
+  # In their one spelling (_as_agent_port_norm), as the keeper records the merged set:
+  # `+agent-port 0.0.0.0:2222` is the token with its address, so a join naming another
+  # address for that port is refused like any other change.
+  for _h in ${_agent_ports[@]+"${_agent_ports[@]}"} ${_knob_agent_ports[@]+"${_knob_agent_ports[@]}"}; do
+    _kj_t="$(_as_agent_port_norm --agent-port "$_h" 2>/dev/null)" || _kj_t="$_h"
+    _keeper_join_agent_ports+=("$_kj_t")
+  done
   _as_ports_merge --host-port _host_ports _host_none "${_host_ports[@]}" "${_knob_host_ports[@]}" "${_df_net_host_port[@]}" || return 1
   _as_ports_merge --agent-port _agent_ports _agent_none "${_agent_ports[@]}" "${_knob_agent_ports[@]}" "${_df_net_agent_port[@]}" || return 1
 
@@ -10967,7 +11088,7 @@ agent_sandbox() (
         return 1
       }
       # Port opt-ins (see _as_launch_pasta): pasta -T/-t specs, or none.
-      local _tcp_ns=none _tcp_host=none
+      local _tcp_ns=none _tcp_host=none _reply_nftrule=""
       if ((${#_host_ports[@]})); then
         _tcp_ns="$(
           IFS=,
@@ -10977,12 +11098,30 @@ agent_sandbox() (
       elif ((_host_none)); then
         _as_msg "strict: host ports: none this session"
       fi
+      # A bare port is published on the host's loopback; ADDR:PORT on ADDR (#335): one
+      # pasta -t spec per address. A client on ADDR is not on the netns's loopback, so
+      # the replies to it leave by the netns's own interface, which the output chain
+      # drops (measured): a rule lets out what is established on those ports only --
+      # not `tcp sport PORT` alone, which would let the agent open a connection from
+      # that port to anywhere (measured too).
+      local _ap _ap_lo="" _ap_addrs="" _ap_spec _reply_ports=""
+      local -A _ap_by=()
+      for _ap in ${_agent_ports[@]+"${_agent_ports[@]}"}; do
+        if [[ "$_ap" == *:* ]]; then
+          [[ -n "${_ap_by[${_ap%:*}]:-}" ]] || _ap_addrs+=" ${_ap%:*}"
+          _ap_by[${_ap%:*}]+="${_ap_by[${_ap%:*}]:+,}${_ap##*:}"
+          _reply_ports+="${_reply_ports:+, }${_ap##*:}"
+          _as_msg "strict: agent port ${_ap##*:} published at $(_as_agent_port_say "$_ap")"
+        else
+          _ap_lo+="${_ap_lo:+,}$_ap"
+        fi
+      done
       if ((${#_agent_ports[@]})); then
-        _tcp_host="127.0.0.1/$(
-          IFS=,
-          printf '%s' "${_agent_ports[*]}"
-        )"
-        _as_msg "strict: agent ports published at the host's 127.0.0.1: ${_agent_ports[*]}"
+        _tcp_host=""
+        [[ -n "$_ap_lo" ]] && _tcp_host="127.0.0.1/$_ap_lo"
+        for _ap_spec in $_ap_addrs; do _tcp_host+="${_tcp_host:+ }$_ap_spec/${_ap_by[$_ap_spec]}"; done
+        [[ -n "$_ap_lo" ]] && _as_msg "strict: agent ports published at the host's 127.0.0.1: ${_ap_lo//,/ }"
+        [[ -n "$_reply_ports" ]] && printf -v _reply_nftrule '  tcp sport { %s } ct state established accept\n' "$_reply_ports"
       elif ((_agent_none)); then
         _as_msg "strict: agent ports: none this session"
       fi
@@ -11009,7 +11148,7 @@ agent_sandbox() (
       fi
       _bwrap_opts=("${args[@]}")
       _as_session_begin || return 1 # the wrapper is given its path now
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" "$_proxy_port" bwrap
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules$_reply_nftrule" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" "$_proxy_port" bwrap
       _as_launch -- "${_run_argv[@]}"
       ;;
     *)

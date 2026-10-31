@@ -163,7 +163,8 @@ agent-port = 8000
 `agent-port` publishes a port the agent listens on at the host's
 `127.0.0.1:8000`. The mirror image is `host-port`, for a database or a local
 model server running on the host that the agent must reach. Both are TCP,
-1024–65535, loopback only, and may repeat. See
+1024–65535, loopback only, and may repeat -- but `agent-port = 0.0.0.0:8000`
+publishes on every address of the host, for clients on other machines. See
 [network.md](network.md#strict-mode-opening-ports).
 
 ## Files outside the project

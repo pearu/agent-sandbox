@@ -467,3 +467,18 @@ check_role() {
     [[ "$output" =~ SSH\ +tob-ex\ \(\.agent-sandbox\ \[ssh:impl-\*\]\)\ --\ through\ the\ broker\;\ plus\ any\ host\ a\ launch\ names\ with\ --ssh\;\ \[net\]\ git\ and\ retrieve-only\ do\ not\ reach\ into\ them:\ a\ push\ over\ SSH\ to\ a\ remote\ on\ them\ is\ possible\ where\ the\ account\ allows ]]
   done
 }
+
+@test "[net] agent-port: the review and --check say each token and where it is published, an address loudly (#335)" {
+  printf '[net]\nmode = strict\nagent-port = 8000\nagent-port = 0.0.0.0:2222\nagent-port = 192.168.1.153:2223\n[net:other]\nagent-port = host:9000\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *".agent-sandbox: [net] agent-port = 8000: (strict) published at the host's 127.0.0.1:8000"* ]]
+  [[ "$output" == *".agent-sandbox: [net] agent-port = 0.0.0.0:2222: (strict) published at 0.0.0.0:2222 -- every address of this host, reachable from the network (the host's firewall is yours)"* ]]
+  [[ "$output" == *".agent-sandbox: [net] agent-port = 192.168.1.153:2223: (strict) published at 192.168.1.153:2223 -- that address of this host, reachable from wherever it is (the host's firewall is yours)"* ]]
+  [[ "$output" == *"[net] agent-port: bad port 'host:9000'"* ]]
+  [[ "$output" == *".agent-sandbox: [net] agent-port = host:9000: a launch refuses it"* ]]
+  printf '[net]\nmode = strict\nagent-port = 8000\nagent-port = 0.0.0.0:2222\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  network: agent port 8000 published at the host's 127.0.0.1:8000"* ]]
+  [[ "$output" == *"  network: agent port 2222 published at 0.0.0.0:2222 -- every address of this host, reachable from the network (the host's firewall is yours)"* ]]
+}

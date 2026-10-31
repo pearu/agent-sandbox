@@ -239,7 +239,10 @@ Stated plainly. These are what the adversary above can still do.
   forwarding is off both ways, so host loopback services are not mirrored in
   and sandbox listeners are not published on the host, except the TCP ports
   you open with `--host-port`/`--agent-port`; a host port is a raw path to that
-  service, and if the service forwards traffic, egress control ends there), at
+  service, and if the service forwards traffic, egress control ends there; an agent
+  port with an address, `--agent-port 0.0.0.0:PORT`, is reachable from the network,
+  and whatever reaches it talks to the agent's listener, with the host's firewall the
+  only gate), at
   the cost of a `passt` dependency. In the default `proxy` mode the
   allowlist is a control on well-behaved clients, not a network boundary; the
   user chooses the mode and its residual risk.

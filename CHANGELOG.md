@@ -47,6 +47,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`--agent-port ADDR:PORT` publishes an agent's port at an address of the host, not
+  only its loopback** (#335, step 3 of its plan): `0.0.0.0` for every IPv4 address, or
+  one IPv4 literal; the same token in `AGENT_SANDBOX_AGENT_PORTS` and `[net] agent-port`.
+  A bare `PORT` is the host's `127.0.0.1` as before. A hostname, a CIDR and IPv6 are
+  refused, and so is one port named with two addresses. It is said loudly at launch,
+  in the review, `--check` and the briefing, and the keeper's policy carries the
+  address. In `strict` mode the nft chain lets out the replies on those ports
+  (`tcp sport { ... } ct state established accept`): a client that is not on the
+  host's loopback was answered through the namespace's interface, which the chain
+  dropped. See `docs/network.md`.
 - **`[gpu] devices = NODE ...` names a role's GPUs** (#335, step 2 of its plan), so the
   Implementer and the Reviewer on a two-GPU host get a card each instead of both landing
   on GPU 0. It is the dot-file form of `AGENT_SANDBOX_GPU_DEVICES` (which wins over it):
