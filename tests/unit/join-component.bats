@@ -11,7 +11,8 @@ setup() {
 @test "exit_status: the command's code, or 128 + its signal -- without os.waitstatus_to_exitcode (Python < 3.9)" {
   run python3 - "$JOIN" <<'PY'
 import importlib.util, os, signal, sys
-del os.waitstatus_to_exitcode  # as on Python 3.8 and older
+if sys.version_info >= (3, 9):
+    del os.waitstatus_to_exitcode  # as on Python 3.8 and older, which have none to delete
 spec = importlib.util.spec_from_file_location("join", sys.argv[1])
 join = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(join)

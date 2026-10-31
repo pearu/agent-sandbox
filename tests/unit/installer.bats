@@ -792,3 +792,90 @@ STUB
   [[ "$output" == *"(dry-run) would build the tools env gh tmux (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge with $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba under $T/home/.local/share/agent-sandbox/tools"* ]]
   [ ! -e "$T/home/.local/share/agent-sandbox/tools" ]
 }
+
+# ---- the proxy's port (#335) ------------------------------------------------
+# What listens is a stub `ss` first on PATH; whether our unit runs is a stub
+# `systemctl` whose is-active answers $T/active (present: active).
+
+port_stubs() { # port_stubs PORT... -- the ports something listens on
+  mkdir -p "$T/home/.local/bin"
+  {
+    printf '#!/bin/sh\necho "State Recv-Q Send-Q Local Address:Port Peer Address:Port"\n'
+    local p
+    for p in "$@"; do printf 'echo "LISTEN 0 4096 127.0.0.1:%s 0.0.0.0:*"\n' "$p"; done
+  } >"$T/home/.local/bin/ss"
+  # shellcheck disable=SC2016 # $2 is the stub's own argument
+  printf '#!/bin/sh\n[ "$2" = is-active ] && { [ -e "%s/active" ]; exit; }\nexit 0\n' "$T" >"$T/home/.local/bin/systemctl"
+  chmod +x "$T/home/.local/bin/ss" "$T/home/.local/bin/systemctl"
+}
+unit_port() { sed -n 's/^ *--listen-port \([^ ]*\) .*/\1/p' "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"; }
+
+@test "proxy port: 8888 when it is free, recorded and in the unit; the summary says nothing of it" {
+  port_stubs 22 631
+  dry
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 8888 ]
+  [ "$(stat -c %a "$T/home/.config/agent-sandbox/proxy-port")" = 644 ]
+  [ "$(unit_port)" = 8888 ]
+  [[ "$output" == *"[ok] proxy port 8888 (the default), in $T/home/.config/agent-sandbox/proxy-port"* ]]
+  [[ "$output" != *"The proxy listens on"* ]]
+}
+
+@test "proxy port: --proxy-port N is recorded and in the unit; a bad N exits 2" {
+  port_stubs
+  dry -- --proxy-port 9123
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 9123 ]
+  [ "$(unit_port)" = 9123 ]
+  [[ "$output" == *"[ok] proxy port 9123 (--proxy-port)"* ]]
+  [[ "$output" == *"The proxy listens on 127.0.0.1:9123, not 8888 (--proxy-port)."* ]]
+  dry -- --proxy-port=9124
+  [ "$(unit_port)" = 9124 ]
+  local v
+  for v in 80 70000 x ''; do
+    dry -- --proxy-port "$v"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--proxy-port '$v': expected a port, 1024-65535"* ]]
+  done
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 9124 ] # a refused run changed nothing
+}
+
+@test "proxy port: 8888 held by another listener -> the next free port; held by our own active unit -> 8888" {
+  port_stubs 8888 8889
+  dry
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 8890 ]
+  [ "$(unit_port)" = 8890 ]
+  [[ "$output" == *"proxy port 8890 (8888 is held by another listener; the next free port)"* ]]
+  [[ "$output" == *"The proxy listens on 127.0.0.1:8890, not 8888"* ]]
+  # an install from before the file: its active unit is what holds 8888
+  rm "$T/home/.config/agent-sandbox/proxy-port"
+  : >"$T/active"
+  dry
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 8888 ]
+  [ "$(unit_port)" = 8888 ]
+}
+
+@test "proxy port: a re-run keeps the recorded port, busy with our unit or not; it warns when another listener holds it" {
+  port_stubs 8888 8889
+  dry
+  [ "$(unit_port)" = 8890 ]
+  port_stubs 8890 # now our own proxy listens there
+  : >"$T/active"
+  dry
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 8890 ]
+  [[ "$output" == *"proxy port 8890 (recorded by an earlier run)"* ]]
+  [[ "$output" != *"[warn] 127.0.0.1:8890"* ]]
+  port_stubs # 8888 is free again: still not moved
+  dry
+  [ "$(unit_port)" = 8890 ]
+  port_stubs 8890 # held, and our unit is not running: said, not moved
+  rm "$T/active"
+  dry
+  [ "$(unit_port)" = 8890 ]
+  [[ "$output" == *"[warn] 127.0.0.1:8890 is in use by something other than this account's proxy: re-run with --proxy-port N to move it"* ]]
+  dry -- --proxy-port 8888 # the flag moves it
+  [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 8888 ]
+}

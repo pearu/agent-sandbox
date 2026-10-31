@@ -53,7 +53,9 @@ run_sandboxed() {
   run env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="${SESSION_BASE:-$I/base}" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on \
+    ${AGENT_SANDBOX_PROXY_PORT:+AGENT_SANDBOX_PROXY_PORT="$AGENT_SANDBOX_PROXY_PORT"} \
+    "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
   popd >/dev/null || return 1
   declare -gA REPORT=()
   local k v

@@ -64,7 +64,9 @@ bg_sandboxed() {
   (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
     AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE="${KEEPER_GRACE:-0}" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" "${envs[@]}" "${ENGINE_CMD[@]}" "$@") \
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
+    ${AGENT_SANDBOX_PROXY_PORT:+AGENT_SANDBOX_PROXY_PORT="$AGENT_SANDBOX_PROXY_PORT"} \
+    "${envs[@]}" "${ENGINE_CMD[@]}" "$@") \
     </dev/null >"$I/$name.out" 2>&1 3>&- &
   BG_PID=$!
   BGS+=("$BG_PID")
@@ -287,7 +289,7 @@ wait_gone() { # wait_gone PID -- up to 10 s
       --profile probe --exec sh -c 'readlink /proc/self/ns/net >net.b; printf "%s" "$HTTPS_PROXY" >proxy.b'
     [ "$status" -eq 0 ]
     [ "$(readlink "/proc/$t/ns/net")" = "$(cat "$IWORK/net.b")" ]
-    [[ "$(cat "$IWORK/proxy.b")" == http://*:8888 ]]
+    [[ "$(cat "$IWORK/proxy.b")" == http://*:"$(test_proxy_port "$IHOME")" ]]
     release "a$mode"
     wait "$BG_PID"
     wait_gone "$t"

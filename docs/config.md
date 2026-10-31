@@ -940,6 +940,7 @@ of it is bound into the sandbox.
 | `~/.config/agent-sandbox/trust/` | approved dot-file hashes, one file per project |
 | `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/` | the role's copy of Claude Code's config file (see above) |
 | `~/.config/agent-sandbox/tools.txt` | the tools environment's packages (below); read by `install.sh` only |
+| `~/.config/agent-sandbox/proxy-port` | the proxy's port, written by `install.sh` (8888, or the next free one when another account's proxy holds 8888, or `--proxy-port N`); read by the unit at install time and by the engine at each launch, `AGENT_SANDBOX_PROXY_PORT` overrides it ([network.md](network.md#its-port)) |
 | `~/.local/share/agent-sandbox/tools/` | the tools environment `install.sh` builds; its slot in use is the one exception to "never bound": read-only |
 
 ### The tools environment

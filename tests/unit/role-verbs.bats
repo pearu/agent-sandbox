@@ -623,3 +623,18 @@ STUB
   [ "$(grep -o $'\e\\[1m' <<<"$output" | wc -l)" -eq 3 ]
   [[ "$output" == *$'\n'"To resume: cd PROJECT_DIR && "*" --role ROLE claude --continue" ]] # plain
 }
+
+@test "--status names the proxy's port when it is not 8888 (#335)" {
+  engine_bg -- asb claude --version
+  run_engine -- asb --status claude
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"proxy: "* ]] # the default is not said
+  mkdir -p "$H/home/.config/agent-sandbox"
+  printf '8890\n' >"$H/home/.config/agent-sandbox/proxy-port"
+  run_engine -- asb --status claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n  proxy: 127.0.0.1:8890\n'* ]]
+  run_engine AGENT_SANDBOX_PROXY_PORT=9123 -- asb --status claude
+  [[ "$output" == *$'\n  proxy: 127.0.0.1:9123\n'* ]]
+  release_bg
+}

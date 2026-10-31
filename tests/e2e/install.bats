@@ -9,10 +9,13 @@
 # (network, about a minute) unless AGENT_SANDBOX_E2E_MITMDUMP names an existing
 # mitmdump >= 12 to reuse. On a kernel that restricts unprivileged user
 # namespaces the installer's AppArmor step uses sudo unless the profile is
-# already installed. The proxy-dependent tests need port 8888 free and skip
-# otherwise (the shim cannot start a second proxy on the same port).
+# already installed. The proxy's port is the installer's choice (#335): 8888, or,
+# when another listener holds 8888 (this account's real proxy, on a dev box), the
+# next free port above it. The suite reads the port the install recorded in the
+# throwaway HOME and probes that, so it runs whether or not 8888 is busy here.
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+load "$BATS_TEST_DIRNAME/../helpers/proxy-port"
 
 # run_install OUT: the installer against the throwaway HOME, shim first on PATH;
 # stdout+stderr to OUT, exit code to OUT.rc
@@ -58,11 +61,12 @@ setup_file() {
     mkdir -p "$H/.local/share/agent-sandbox/proxy-venv/bin"
     ln -s "$AGENT_SANDBOX_E2E_MITMDUMP" "$H/.local/share/agent-sandbox/proxy-venv/bin/mitmdump"
   fi
-  PORT_FREE=1
-  (echo >/dev/tcp/127.0.0.1/8888) 2>/dev/null && PORT_FREE=0
-  export E H B PORT_FREE
+  export E H B
   export SYSTEMCTL_SHIM_LOG="$E/systemctl.log" SYSTEMCTL_SHIM_STATE="$E/state"
   run_install "$E/install1.out"
+  # the port the install chose, as the installed engine reads it
+  PP="$(test_proxy_port "$H")"
+  export PP
   sleep 1 # let the shim-started proxy come up before the tests probe it
 }
 
@@ -96,6 +100,14 @@ teardown_file() {
   run ! grep -q '^api.anthropic.com$' "$H/.config/agent-sandbox/allowlist.txt" # the profile's [allow], per launch
   cmp -s "$H/.config/agent-sandbox/allowlist_addon.py" "$REPO_ROOT/components/allowlist_addon.py"
   grep -qE "^ExecStart=$H/.local/share/agent-sandbox/proxy-(env|venv)/bin/mitmdump" "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  # the proxy's port (#335): recorded, in the unit, and 8888 unless 8888 was held here
+  grep -q -- "--listen-port $PP " "$H/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  [[ "$out" == *"proxy port $PP ("* ]]
+  if (echo >/dev/tcp/127.0.0.1/8888) 2>/dev/null && [ "$PP" != 8888 ]; then
+    [[ "$out" == *"8888 is held by another listener; the next free port"* ]]
+  else
+    [ "$PP" = 8888 ]
+  fi
   [ "$(readlink "$H/.local/bin/asb")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
   [ "$(readlink "$H/.local/bin/agent-sandbox")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ]
   # and `claude` is still Claude Code's own launcher, untouched (#151)
@@ -120,7 +132,6 @@ teardown_file() {
 }
 
 @test "the installed unit runs a proxy that enforces the installed allowlist" {
-  ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
   local out
   out=$(cat "$E/install1.out")
   [[ "$out" == *"agent-sandbox-mitmproxy.service is active"* ]]
@@ -131,7 +142,7 @@ teardown_file() {
   [[ "$out" == *"proxy refuses a client with no session token (407)"* ]]
   [[ "$out" != *"SECURITY:"* ]]
   # a client with no session token: refused at CONNECT with the challenge, and logged
-  run curl -sS --cacert "$H/.mitmproxy/mitmproxy-ca-cert.pem" --proxy http://127.0.0.1:8888 --max-time 20 -o /dev/null https://example.com/
+  run curl -sS --cacert "$H/.mitmproxy/mitmproxy-ca-cert.pem" --proxy "http://127.0.0.1:$PP" --max-time 20 -o /dev/null https://example.com/
   [ "$status" -ne 0 ]
   [[ "$output" == *"407"* ]]
   grep -q $'\texample.com\tCONNECT\t-\tno session$' "$H/.config/agent-sandbox/blocked.log"
@@ -150,11 +161,10 @@ probe_session() {
   printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" >"$SESS/owner.id"
   echo e2eprobe >"$SESS/proxy.token"
   : >"$SESS/allow.txt"
-  PX=http://e2eprobe:x@127.0.0.1:8888
+  PX="http://e2eprobe:x@127.0.0.1:$PP"
 }
 
 @test "F1: the proxy gates the real destination, not a spoofed Host header, and refuses non-public addresses" {
-  ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
   local allow="$H/.config/agent-sandbox/allowlist.txt"
   local blog="$H/.config/agent-sandbox/blocked.log"
 
@@ -191,11 +201,10 @@ probe_session() {
 }
 
 @test "asb claude runs the fake agent sandboxed: proxy variables set, TLS verified by the bound CA, allowed host reached, others refused and logged" {
-  ((PORT_FREE)) || skip "port 8888 is in use by another proxy"
   run launch claude env
   [ "$status" -eq 0 ]
   # the session token: the profile's [allow] opens api.anthropic.com for this launch (#181)
-  [[ "$output" =~ HTTPS_PROXY=http://[0-9a-f]{32}:x@127\.0\.0\.1:8888 ]]
+  [[ "$output" =~ HTTPS_PROXY=http://[0-9a-f]{32}:x@127\.0\.0\.1:$PP ]]
   [[ "$output" == *"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"* ]]
   [[ "$output" == *"HOME=$H"* ]]
   run launch claude fetch https://api.anthropic.com/v1/models
@@ -230,10 +239,11 @@ probe_session() {
   grep -q '^my.custom.host$' "$H/.config/agent-sandbox/allowlist.txt"
   [ "$(grep -c '^api.github.com$' "$H/.config/agent-sandbox/allowlist.txt")" -eq 1 ]
   [ "$(grep -c '^--user restart agent-sandbox-mitmproxy.service$' "$SYSTEMCTL_SHIM_LOG")" -eq 2 ]
-  if ((PORT_FREE)); then
-    sleep 1
-    "$B/systemctl" --user is-active --quiet agent-sandbox-mitmproxy.service
-  fi
+  # the port is kept, not moved because its own proxy now holds it (#335)
+  [[ "$out" == *"proxy port $PP (recorded by an earlier run)"* ]]
+  [[ "$out" != *"[warn] 127.0.0.1:$PP"* ]]
+  sleep 1
+  "$B/systemctl" --user is-active --quiet agent-sandbox-mitmproxy.service
 }
 
 @test "re-running install.sh detects a broken proxy environment and recreates it" {

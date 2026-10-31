@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
 # strict net mode end to end with the REAL pasta + bwrap + nftables. Something
-# must answer TCP on the host's loopback 8888: the installed proxy if this host
-# has one, else a fake started here; a host-only listener sits on 8899. A probe
+# must answer TCP on the host's loopback proxy port -- this account's, as
+# test_proxy_port reads it (8888 unless install.sh chose another), handed to the
+# engine -- the installed proxy if this host has one, else a fake started here;
+# a host-only listener sits on 8899. A probe
 # inside the sandbox checks the proxy at the gateway, the same
 # two ports at 127.0.0.1, and raw egress; meanwhile the test checks from the host
 # whether a listener the probe starts inside (8877) is published. Two scenarios:
@@ -48,8 +50,8 @@ sleep 1.5
 # root; the sandbox must still present the invoking user, as every other mode does
 say uid "$(id -u)"
 say https_proxy "${HTTPS_PROXY:-<unset>}"   # must be set, or the agent has no route to the API
-say proxy_via_gw "$(conn "$GW" 8888)"
-say proxy_via_lo "$(conn 127.0.0.1 8888)"
+say proxy_via_gw "$(conn "$GW" "$PP")"
+say proxy_via_lo "$(conn 127.0.0.1 "$PP")"
 say host_loopback "$(conn 127.0.0.1 8899)"
 say raw_external "$(conn 1.1.1.1 443)"
 say net_ifaces "$(ip -brief addr show 2>/dev/null | awk '{printf "%s ", $1}')"
@@ -61,16 +63,20 @@ say inside_listener "$(conn 127.0.0.1 8877)"
 : >"$PWD/listening"
 for _ in $(seq 1 75); do [ -e "$PWD/done" ] && break; sleep 0.2; done
 PROBE
-  # Host side. The probe only ever TCP-connects to 8888, so the installed proxy
-  # serves when this host has one; otherwise a fake that accepts and closes
-  # stands in (CI). Plus a listener on 8899 that only the host knows about.
+  # Host side. The probe only ever TCP-connects to the proxy's port, so the
+  # installed proxy serves when this host has one; otherwise a fake that accepts
+  # and closes stands in (CI). Plus a listener on 8899 that only the host knows
+  # about. The port is this account's (the real HOME's record, or the variable),
+  # and launch_strict hands it to the engine, which runs under a throwaway HOME.
+  PP="$(test_proxy_port "$HOME")"
+  export PP
   PROXY_PID=""
-  if ! (echo >"/dev/tcp/127.0.0.1/8888") 2>/dev/null; then
-    python3 -c 'import socketserver
+  if ! (echo >"/dev/tcp/127.0.0.1/$PP") 2>/dev/null; then
+    python3 -c 'import socketserver,sys
 class H(socketserver.BaseRequestHandler):
     def handle(self): pass
 socketserver.ThreadingTCPServer.allow_reuse_address=True
-socketserver.ThreadingTCPServer(("127.0.0.1",8888),H).serve_forever()' &
+socketserver.ThreadingTCPServer(("127.0.0.1",int(sys.argv[1])),H).serve_forever()' "$PP" &
     PROXY_PID=$!
   fi
   python3 -c 'import socketserver
@@ -111,8 +117,8 @@ launch_strict() {
   (
     cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
       AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" \
-      AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_NET=strict \
-      AGENT_SANDBOX_FORWARD="GW PROBE_BIND" GW="$GW" PROBE_BIND="${PROBE_BIND:-0.0.0.0}" \
+      AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_PORT="$PP" \
+      AGENT_SANDBOX_FORWARD="GW PROBE_BIND PP" GW="$GW" PROBE_BIND="${PROBE_BIND:-0.0.0.0}" PP="$PP" \
       "${ENGINE_CMD[@]}" "$@" probe run
   ) >"$I/engine.out" 2>&1 3>&- &
   local pid=$!
@@ -140,15 +146,15 @@ launch_strict() {
 @test "strict: the proxy is reachable at the gateway only; raw egress, host loopback services and publishing sandbox listeners are blocked" {
   launch_strict
   [ "$RC" -eq 0 ]
-  [ "$(report uid)" = "$(id -u)" ]               # not 0: pasta's root mapping must not show through
-  [ "$(report proxy_via_gw)" = REACHED ]         # gateway:8888 -> host proxy, allowed by nft
-  [[ "$(report https_proxy)" == http://*:8888 ]] # the agent env carries the gateway proxy (survives --clearenv)
-  [ "$(report proxy_via_lo)" = blocked ]         # the proxy is reached at the gateway only
-  [ "$(report host_loopback)" = blocked ]        # the host-only 127.0.0.1:8899 is not mirrored into the netns
-  [ "$(report raw_external)" = blocked ]         # 1.1.1.1:443 dropped by the firewall
-  [ "$(report inside_listener)" = REACHED ]      # the sandbox's own loopback works
-  [ "$PUBLISHED" = blocked ]                     # the sandbox's 8877 is not published on the host
-  [[ "$(report net_ifaces)" != "lo " ]]          # pasta gave the netns a real interface
+  [ "$(report uid)" = "$(id -u)" ]                # not 0: pasta's root mapping must not show through
+  [ "$(report proxy_via_gw)" = REACHED ]          # gateway:PP -> host proxy, allowed by nft
+  [[ "$(report https_proxy)" == http://*:"$PP" ]] # the agent env carries the gateway proxy (survives --clearenv)
+  [ "$(report proxy_via_lo)" = blocked ]          # the proxy is reached at the gateway only
+  [ "$(report host_loopback)" = blocked ]         # the host-only 127.0.0.1:8899 is not mirrored into the netns
+  [ "$(report raw_external)" = blocked ]          # 1.1.1.1:443 dropped by the firewall
+  [ "$(report inside_listener)" = REACHED ]       # the sandbox's own loopback works
+  [ "$PUBLISHED" = blocked ]                      # the sandbox's 8877 is not published on the host
+  [[ "$(report net_ifaces)" != "lo " ]]           # pasta gave the netns a real interface
 }
 
 @test "strict: --host-port and --agent-port open exactly those ports; everything else stays blocked" {
@@ -160,6 +166,6 @@ launch_strict() {
   [ "$(report host_loopback)" = REACHED ] # the opened host port
   [ "$PUBLISHED" = REACHED ]              # the opened agent port, from the host
   [ "$(report proxy_via_gw)" = REACHED ]
-  [ "$(report proxy_via_lo)" = blocked ] # 8888 was not opened
+  [ "$(report proxy_via_lo)" = blocked ] # the proxy's port was not opened
   [ "$(report raw_external)" = blocked ]
 }

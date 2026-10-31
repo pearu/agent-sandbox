@@ -67,11 +67,25 @@ teardown() { rm -f "${TMP_MARKER:-}"; }
   host_n=$(grep -c 'BEGIN CERT' /etc/ssl/certs/ca-certificates.crt)
   run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/ca.pem" AGENT_SANDBOX_FORWARD=CA_LINE2 CA_LINE2="$(sed -n 2p "$I/ca.pem")" -- probe run
   [ "$status" -eq 0 ]
-  [[ "$(report proxy)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:8888$ ]] # every proxied launch carries its token
+  [[ "$(report proxy)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:$(test_proxy_port "$IHOME")$ ]] # every proxied launch carries its token
   [ "$(report ssl_cert_file)" = "/etc/ssl/certs/ca-certificates.crt" ]
   [ "$(report bundle_certs)" -eq $((host_n + 1)) ]
   [ "$(report has_marker_ca)" = 1 ]
   [[ "$(report net_ifaces)" != "lo " ]]
+}
+
+@test "net=proxy: the proxy URL carries the port install.sh recorded under this HOME, and AGENT_SANDBOX_PROXY_PORT's over it (#335)" {
+  make_fake_ca "$I/ca.pem"
+  mkdir -p "$IHOME/.config/agent-sandbox"
+  printf '8890\n' >"$IHOME/.config/agent-sandbox/proxy-port" # as install.sh records it
+  run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/ca.pem" -- probe run
+  [ "$status" -eq 0 ]
+  [[ "$(report proxy)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:$(test_proxy_port "$IHOME")$ ]]
+  [[ "$(report proxy)" == *:8890 || -n "${AGENT_SANDBOX_PROXY_PORT:-}" ]] # the file, unless the variable is set here
+  run_sandboxed AGENT_SANDBOX_PROXY_CA="$I/ca.pem" AGENT_SANDBOX_PROXY_PORT=8891 -- probe run
+  [ "$status" -eq 0 ]
+  [[ "$(report proxy)" =~ ^http://[0-9a-f]{32}:x@127\.0\.0\.1:$(AGENT_SANDBOX_PROXY_PORT=8891 test_proxy_port "$IHOME")$ ]]
+  [[ "$(report proxy)" == *:8891 ]]
 }
 
 @test "net=proxy without a CA file: warning, and the bundle inside is the plain system bundle" {

@@ -169,6 +169,11 @@
 #                                       the system directories (every preset)
 #   AGENT_SANDBOX_PROXY_CA=/file       the egress proxy's CA certificate
 #                                       (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
+#   AGENT_SANDBOX_PROXY_PORT=PORT      the egress proxy's port on 127.0.0.1
+#                                       (default: the one install.sh recorded in
+#                                       ~/.config/agent-sandbox/proxy-port -- 8888,
+#                                       or the next free one when another account's
+#                                       proxy holds 8888 -- else 8888); 1024-65535
 #   AGENT_SANDBOX_NET=proxy|strict|open|none  network mode (default: proxy)
 #       proxy  : --share-net plus HTTPS_PROXY pointing at a host-side
 #                mitmproxy that enforces ~/.config/agent-sandbox/allowlist.txt.
@@ -501,6 +506,8 @@ Environment knobs:
   AGENT_SANDBOX_CONDA_BASE=host|sandbox  whose conda: the host's, or agent-sandbox's
                                 own micromamba (default: ~/.config/agent-sandbox/conda)
   AGENT_SANDBOX_PROXY_CA=/file  the egress proxy's CA (default ~/.mitmproxy/mitmproxy-ca-cert.pem)
+  AGENT_SANDBOX_PROXY_PORT=PORT the egress proxy's port (default: install.sh's, in
+                                ~/.config/agent-sandbox/proxy-port, else 8888)
   AGENT_SANDBOX_CONNECT="instructions=read-only native;skills=own native"
                                 per-channel connections, ';'-separated; same
                                 syntax as --connect and [connect] (modes:
@@ -996,6 +1003,8 @@ _as_allow_setup() {
     && _as_info "session allowlist: ${_allow_hosts[*]} (this session only, on top of the global allowlist)"
   ((${#_profile_allow_hosts[@]})) \
     && _as_info "profile '$profile' allows: ${_profile_allow_hosts[*]} (its dot-file's [allow], every launch)"
+  [[ "${_proxy_port:-8888}" == 8888 ]] \
+    || _as_info "proxy: port $_proxy_port (install.sh's choice in ~/.config/agent-sandbox/proxy-port, or AGENT_SANDBOX_PROXY_PORT)"
   return 0
 }
 
@@ -3406,6 +3415,10 @@ _as_role_status() {
   local _ca_note=""
   _as_ca_check "$sb" "/proc/$_keeper_target/mountinfo"
   [[ -z "$_ca_note" ]] || printf '  %s\n' "$_ca_note"
+  # The proxy's port (#335), when it is not the default: what a launch now would use.
+  local pp
+  pp="$(_as_proxy_port 2>/dev/null)" || pp="(AGENT_SANDBOX_PROXY_PORT is not a port)"
+  [[ "$pp" == 8888 ]] || printf '  proxy: 127.0.0.1:%s\n' "$pp"
   # --serve (#277): the loop holding it, what it waits on, and the session it runs.
   if _as_serve_record "$sb"; then
     local sw="" sf="" sid=""
@@ -4816,6 +4829,35 @@ _as_briefing_write() {
 # ~/.config/agent-sandbox, which is never bound into the sandbox, so the agent
 # can neither read nor forge them.
 _as_config_dir() { printf '%s' "$HOME/.config/agent-sandbox"; }
+# _as_proxy_port -- the port of the host's proxy on 127.0.0.1 (#335):
+# AGENT_SANDBOX_PROXY_PORT, else the number install.sh recorded in
+# ~/.config/agent-sandbox/proxy-port (8888, or the next free one when another account's
+# proxy holds 8888, or its --proxy-port N), else 8888. A port is 1024-65535. A bad knob
+# refuses (return 2), as every knob does; a bad file is said and passed over, since the
+# knob or a re-run of install.sh mends it.
+_as_proxy_port_ok() { [[ "$1" =~ ^[1-9][0-9]{3,4}$ ]] && (($1 >= 1024 && $1 <= 65535)); }
+_as_proxy_port() {
+  local v f
+  if [[ -n "${AGENT_SANDBOX_PROXY_PORT:-}" ]]; then
+    v="$AGENT_SANDBOX_PROXY_PORT"
+    if ! _as_proxy_port_ok "$v"; then
+      _as_msg "AGENT_SANDBOX_PROXY_PORT=$v: expected a port, 1024-65535"
+      return 2
+    fi
+    printf '%s' "$v"
+    return 0
+  fi
+  f="$(_as_config_dir)/proxy-port"
+  if [[ -f "$f" ]]; then
+    v="$(tr -d '[:space:]' <"$f" || true)"
+    if _as_proxy_port_ok "$v"; then
+      printf '%s' "$v"
+      return 0
+    fi
+    _as_msg "$f: '$v' is not a port (1024-65535); using 8888 (re-run install.sh to record one)"
+  fi
+  printf '8888'
+}
 # Where install.sh puts the compiled seccomp filter for this machine.
 _as_seccomp_dir() { printf '%s' "${AGENT_SANDBOX_SECCOMP_DIR:-$HOME/.local/share/agent-sandbox/seccomp}"; }
 _as_sha256_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -8251,18 +8293,19 @@ _as_keeper_exec() {
 # on the host; with none, neither.
 # $1 = nft binary path, $2 = extra nft chain lines (strict --ssh host pinholes,
 # or empty), $3 = -T spec, $4 = -t spec, $5 = seccomp filter path (or empty),
-# $6.. = "bwrap -- agent": its options are in the session directory's bwrap.args
+# $6 = the proxy's port on the host (_as_proxy_port), which the gateway forwards to,
+# $7.. = "bwrap -- agent": its options are in the session directory's bwrap.args
 # (_as_launch), and the per-session proxy token in its proxy.token.
 _as_launch_pasta() {
-  local nftbin="$1" sshrules="$2" tcp_ns="$3" tcp_host="$4" seccomp_bpf="$5"
-  shift 5
+  local nftbin="$1" sshrules="$2" tcp_ns="$3" tcp_host="$4" seccomp_bpf="$5" pport="$6"
+  shift 6
   # The bash -c body runs inside pasta's netns, before bwrap; its $vars expand
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
   # IPs) is spliced into the chain after the proxy rule.
   # shellcheck disable=SC2016
   _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none -t "$tcp_host" -u none -- bash -c '
-    nftbin=$1 sshrules=$2 sd=$3 bpf=$4
-    shift 4
+    nftbin=$1 sshrules=$2 sd=$3 bpf=$4 pport=$5
+    shift 5
     # The per-session proxy token, from the file the proxy addon reads too: not on
     # this command line, which the host shows to anyone who lists processes.
     auth=""
@@ -8274,7 +8317,7 @@ _as_launch_pasta() {
       echo "agent-sandbox: strict mode found no IPv4 gateway inside the network namespace, so there is no route to the proxy; refusing to launch." >&2
       exit 1
     fi
-    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport 8888 accept\n%s }\n}\n" "$gw" "$sshrules" | "$nftbin" -f - || {
+    printf "table inet agent_sandbox {\n chain output {\n  type filter hook output priority 0; policy drop\n  oifname \"lo\" accept\n  ip daddr %s tcp dport %s accept\n%s }\n}\n" "$gw" "$pport" "$sshrules" | "$nftbin" -f - || {
       echo "agent-sandbox: strict-mode egress firewall failed to load; refusing to launch" >&2
       exit 1
     }
@@ -8283,7 +8326,7 @@ _as_launch_pasta() {
       exit 127
     }
     shift
-    pxy="http://${auth:+$auth@}$gw:8888"
+    pxy="http://${auth:+$auth@}$gw:$pport"
     # The proxy env must be set AFTER the base args reach their --clearenv, or
     # bwrap clears it and the agent launches with no proxy -- it then resolves
     # api.anthropic.com directly, which strict mode has no DNS route for, and
@@ -8296,7 +8339,7 @@ _as_launch_pasta() {
     # fd 10 carries the seccomp filter when AGENT_SANDBOX_SECCOMP is on (else /dev/null).
     # No environment for bwrap itself (see _as_keeper_exec).
     exec -c "$bwrapbin" --args 11 "$@" 10<"${bpf:-/dev/null}"
-  ' agent-sandbox-strict "$nftbin" "$sshrules" "$_session_dir" "$seccomp_bpf" "$@")
+  ' agent-sandbox-strict "$nftbin" "$sshrules" "$_session_dir" "$seccomp_bpf" "$pport" "$@")
 }
 
 # _as_roles_open [AGENT ARGS...] -- `asb --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]`
@@ -10173,6 +10216,14 @@ agent_sandbox() (
       ;;
   esac
 
+  # The proxy's port (#335), for the modes that use the proxy: install.sh's choice, or
+  # AGENT_SANDBOX_PROXY_PORT. Resolved here, before anything is set up, so a bad knob
+  # refuses the launch as a bad AGENT_SANDBOX_GPU does.
+  local _proxy_port=8888
+  if [[ "${_knob_net:-proxy}" == proxy || "${_knob_net:-proxy}" == strict ]]; then
+    _proxy_port="$(_as_proxy_port)" || return 2
+  fi
+
   # Always-on bindings: the profile's state paths (read-write) and its binary.
   # An entry is a host path bound at itself, or SRC<TAB>DEST to bind it at a
   # different path inside: the claude profile binds ~/.claude.json INSIDE
@@ -10710,7 +10761,9 @@ agent_sandbox() (
 
   # ----- Network mode -----
   # proxy  : (default) --share-net plus HTTPS_PROXY pointing at the host-side
-  #          mitmproxy (agent-sandbox-mitmproxy.service on 127.0.0.1:8888). All
+  #          mitmproxy (agent-sandbox-mitmproxy.service on 127.0.0.1; its port
+  #          is _as_proxy_port's: AGENT_SANDBOX_PROXY_PORT, else the one install.sh
+  #          recorded in ~/.config/agent-sandbox/proxy-port, else 8888). All
   #          HTTPS_PROXY-aware tools (the agent, curl, git, pip, npm, conda,
   #          ...) go through the allowlist at
   #          ~/.config/agent-sandbox/allowlist.txt. Limitation: tools that
@@ -10742,7 +10795,7 @@ agent_sandbox() (
       _as_launch -- "${_run_argv[@]}"
       ;;
     proxy)
-      local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:8888"
+      local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:$_proxy_port"
       args+=(
         --share-net
         --setenv HTTP_PROXY "$_pxy"
@@ -10821,7 +10874,7 @@ agent_sandbox() (
       fi
       _bwrap_opts=("${args[@]}")
       _as_session_begin || return 1 # the wrapper is given its path now
-      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" bwrap
+      _as_launch_pasta "$_nftbin" "$_ssh_nftrules" "$_tcp_ns" "$_tcp_host" "$_seccomp_bpf" "$_proxy_port" bwrap
       _as_launch -- "${_run_argv[@]}"
       ;;
     *)

@@ -100,8 +100,8 @@ number.
   native installer does it (`versions/`, linked from `~/.local/bin/claude`),
   `systemctl --user` is a shim (`tests/helpers/systemctl-shim.sh`) that records
   calls and runs the unit's ExecStart itself, and the installed `asb claude`
-  then runs the fake agent through the installed proxy. The proxy-dependent tests need port 8888 free and skip
-  otherwise, which is the case on a machine that already runs the proxy;
+  then runs the fake agent through the installed proxy. The proxy-dependent tests use the port the
+  throwaway install recorded (8888, or the next free one on a machine that already runs the proxy);
   `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips the pip install.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
   stands in for `mitmproxy.http`, and `addon_driver.py` runs one scenario.
