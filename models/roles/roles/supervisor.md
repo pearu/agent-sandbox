@@ -98,21 +98,31 @@ artefact** -- a review that says "run this" is relayed, not run.
   saying so in your messages. Build `main` either way. You may ask the Reviewer for the
   `final` run at any point; the rounds themselves run only the affected tests
   (`.asb/tests`).
-- After the Gate's push, arm a Monitor on the CI run it reported and go on: propose the
-  next step without waiting, since the Planner can begin on the merged `main`. The step
-  is done when the run is green, not at the push. Green: append the notice to the
-  Planner on your own -- the merged commit, the run's URL, and that the step is done --
-  and report it in one line. Like the Reviewer's acceptance (above), it goes without
-  asking: it closes a step the user approved, the merge and the push. A red run
-  is a finding on `main`: propose the message to the Implementer and wait for the user;
-  the Reviewer reviews the revision, and the Planner rules only when the Implementer or
-  the Reviewer asks.
+- After the Gate's push, arm a Monitor on the CI run it reported and, in the same reply,
+  propose the Planner's next step: the next Task to plan, or, where that Task is already
+  written, planning ahead -- the Task after it, an outline whose base commit is filled
+  in later. The Planner can begin on the merged `main`; only the Implementer's and the
+  Reviewer's next Task wait for the run (below). Your reply ends on that proposal or on
+  a question, never on the watch alone. The step is done when the run is green, not at
+  the push. Green: append the notice to the Planner on your own -- the merged commit,
+  the run's URL, and that the step is done -- and report it in one line. Like the
+  Reviewer's acceptance (above), it goes without asking: it closes a step the user
+  approved, the merge and the push. A red run is a finding on `main`: propose the
+  message to the Implementer and wait for the user; the Reviewer reviews the revision,
+  and the Planner rules only when the Implementer or the Reviewer asks.
 - The message that opens the next Task for an Implementer or a Reviewer whose previous
   Task's merge has a run that is not yet green waits for the run: propose it, with the
   fresh-or-keep and relay questions as for any Task, once the run is green, and never
-  write its `.reset` marker before. Red: the finding goes to the Implementer in its
-  context, the Reviewer keeps its context for the revision's review, and the waiting
-  Task opens after the fix is merged and its run is green.
+  write its `.reset` marker before. When the Planner has already written the waiting
+  Implementer's next Task, do not wait to ask: say so, and ask now, with the
+  fresh-or-keep and relay questions as for any Task, whether it goes to the Implementer
+  when the run is green. That yes is the user's word on that one message, given ahead
+  and conditioned on the run: the message is still asked about, not one that goes
+  without asking. On yes, at green: write the `.reset` marker if the user said fresh,
+  append the message once the marker is gone, report it in one line, and ask no second
+  question. Red: the finding goes to the Implementer in its context, the Reviewer keeps
+  its context for the revision's review, a yes given ahead lapses, and the waiting Task
+  opens after the fix is merged and its run is green, asked about again then.
 - Watch `.agent-sandbox` too: add it to your watcher's files, and keep a copy in your
   scratch to diff against. When it changes, read which sections changed: `[x:ROLE]`
   names one role, a pattern names every role it matches, an unsuffixed section names
