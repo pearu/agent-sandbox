@@ -64,10 +64,11 @@ proxy, a tunnel), the sandbox's egress control ends there.
 
 ## The proxy
 
-`install.sh` puts mitmproxy 12 or newer into a private environment under
-`~/.local/share/agent-sandbox` (a dedicated conda env when mamba/conda is
-available, else a venv from a regular-build `python3 >= 3.12` with `venv`;
-a broken environment is recreated on the next `install.sh`) and runs it as the systemd user
+`install.sh` puts mitmproxy 12 or newer into a private environment,
+`~/.local/share/agent-sandbox/proxy-env`, built from conda-forge with the installer's own
+micromamba, as the tools environment is, never with the host's conda or python (a
+working environment an earlier run made is kept, `proxy-venv` included; a broken one is
+recreated on the next `install.sh`) and runs it as the systemd user
 service `agent-sandbox-mitmproxy.service`:
 
 ```

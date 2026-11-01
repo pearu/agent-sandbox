@@ -125,24 +125,13 @@ engine sets (see [network.md](network.md)); a tool with yet another knob needs
 it forwarded via `AGENT_SANDBOX_FORWARD`. If you changed the host's CA state
 while a session was running, relaunch.
 
-**`no way to run mitmproxy: need mamba/conda on PATH (preferred), or a python3 >= 3.12 ...` (install.sh)**
-The installer builds the proxy in a private environment and needs one of two
-runtimes on the host. Provide either:
-
-- **A Python venv** — `python3 >= 3.12` with the `venv` and `ensurepip`
-  modules. On Debian/Ubuntu: `sudo apt install python3-venv` (it pulls
-  `ensurepip`); if your system `python3` is older than 3.12, install a newer
-  one (e.g. from `deadsnakes`) or use conda below. Verify:
-  `python3 -c 'import sys, venv, ensurepip; print(sys.version)'`.
-- **conda or mamba** — install Miniforge/Miniconda so `mamba` or `conda` is on
-  `PATH`; the installer creates a dedicated env from `conda-forge` and does not
-  touch your base env.
-
-Then re-run `./install.sh`. Everything lands under
-`~/.local/share/agent-sandbox`, so nothing system-wide changes and it is
-removed by deleting that directory. (There is no bundled mitmproxy binary: the
-upstream tarball publishes no checksums, so a supply-chain-safe route would
-have to pin a hash per release — see `AGENTS.md`.)
+**`creating ~/.local/share/agent-sandbox/proxy-env with micromamba failed (...); the log is ...` (install.sh)**
+The installer builds the proxy's environment from conda-forge with its own micromamba,
+the one it fetched in the step before (`fetching ... micromamba-linux-64 failed` is that
+step's). The parenthesis is micromamba's last line and the log has the rest; the usual
+cause is that the host cannot reach `conda.anaconda.org`. The host's conda and python
+play no part, so installing one does not help. Fix the cause and re-run `./install.sh`;
+everything lands under `~/.local/share/agent-sandbox`, so nothing system-wide changes.
 
 **`certificate verify failed: Missing Authority Key Identifier` (Python 3.13+)**
 The proxy is an old mitmproxy (8.x) whose leaf certificates lack that
@@ -266,11 +255,11 @@ creating one and regaining capabilities.
 
 The proxy runtime (`~/.local/share/agent-sandbox/proxy-env` or `proxy-venv`) is
 probed with `mitmdump --version` on every run and rebuilt if it no longer works.
-The usual cause is a venv built from a conda env's interpreter that a later
-`mamba env update` swapped (for example to a free-threaded build, whose
-`lib/python3.Xt` layout hides the venv's packages). Nothing to do: the rebuild is
-automatic. With mamba/conda on PATH the rebuild is a dedicated conda env, which
-does not have this failure mode. Note that the running proxy service keeps
+The usual cause is a `proxy-venv` an earlier `install.sh` built from a conda env's
+interpreter that a later `mamba env update` swapped (for example to a free-threaded
+build, whose `lib/python3.Xt` layout hides the venv's packages). Nothing to do: the
+rebuild is automatic, and it is `proxy-env`, a conda-forge environment built with the
+installer's own micromamba, which does not have this failure mode. Note that the running proxy service keeps
 working until its next restart, so a broken environment is a latent outage; the
 rebuild (and the restart the installer performs) is what removes it.
 

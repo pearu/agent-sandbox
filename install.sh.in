@@ -51,11 +51,12 @@
 #                             listener holds 8888 -- the next free port above
 #                             it. Recorded in ~/.config/agent-sandbox/proxy-port.
 #
-# Installs mitmproxy >= 12 into a private environment (venv, else conda), a pinned
-# micromamba for conda inside sandboxes (asking, where the host has conda, which one
-# sandboxes use), a tools environment from conda-forge whose commands (gh and tmux by
+# Fetches a pinned micromamba (for conda inside sandboxes too, asking, where the host
+# has conda, which one sandboxes use) and builds with it, from conda-forge, mitmproxy
+# >= 12 in a private environment and a tools environment whose commands (gh and tmux by
 # default; ~/.config/agent-sandbox/tools.txt lists them) every sandbox finds on PATH,
-# rebuilt at each run so it stays current, and
+# rebuilt at each run so it stays current -- neither the host's conda nor its python is
+# used -- and
 # embeds the canonical mitmproxy addon, starter allowlist, and systemd
 # user unit so nothing else needs to be carried across hosts. The
 # allowlist is only written if it doesn't already exist (so re-runs
@@ -516,6 +517,7 @@ rebuild_bwrap() {
 # pinned here are the trust anchor; the release's own .sha256 asset is a cross-check.
 # Where the host has conda too, the user picks which one sandboxes use, once
 # (~/.config/agent-sandbox/conda); a project's dot-file can pick per role ([conda] base).
+# install.sh builds the proxy's environment and the tools env with it too.
 MICROMAMBA_VERSION=2.9.0-0
 MICROMAMBA_URL="https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION"
 MICROMAMBA_SUMS="366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3  micromamba-linux-64
@@ -539,7 +541,7 @@ micromamba_sum() { awk -v f="$1" '$2 == f {print $1}' <<<"$MICROMAMBA_SUMS"; }
 micromamba_ok() { [[ -f "$1" ]] && sha256sum -c --status - <<<"$(micromamba_sum "$2")  $1" 2>/dev/null; }
 
 install_micromamba() {
-  section "micromamba (conda inside sandboxes)"
+  section "micromamba (the proxy env, the tools env, conda inside sandboxes)"
   local asset sum part check
   asset="$(micromamba_asset)" || err "no micromamba build for $(uname -m) (agent-sandbox installs micromamba-linux-64 or micromamba-linux-aarch64)"
   sum="$(micromamba_sum "$asset")"
@@ -694,13 +696,13 @@ tools_meta() {
   return 0
 }
 
-# tools_unregister -- micromamba lists every env it creates in ~/.conda/environments.txt,
-# where the host's `conda env list` shows it; the tools env is not the user's, so its
-# lines go again.
-tools_unregister() {
+# micromamba_unregister DIR -- micromamba lists every env it creates in
+# ~/.conda/environments.txt, where the host's `conda env list` shows it; the tools env
+# and the proxy env are not the user's, so the lines of DIR and below it go again.
+micromamba_unregister() {
   local f="$HOME/.conda/environments.txt"
-  [[ -f "$f" ]] && grep -qF "$TOOLS_DIR/" "$f" || return 0
-  awk -v p="$TOOLS_DIR/" 'index($0, p) != 1' "$f" >"$f.agent-sandbox" \
+  [[ -f "$f" ]] && grep -qF "$1" "$f" || return 0
+  awk -v p="$1" '$0 != p && index($0, p "/") != 1' "$f" >"$f.agent-sandbox" \
     && cat "$f.agent-sandbox" >"$f"
   rm -f "$f.agent-sandbox"
 }
@@ -742,7 +744,7 @@ install_tools() {
   if ! env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV -u CONDA_SHLVL -u MAMBA_ROOT_PREFIX \
     CONDA_PKGS_DIRS="$TOOLS_DIR/pkgs" "$MICROMAMBA" create -q -y -r "$TOOLS_DIR" \
     -p "$TOOLS_DIR/$next/env" --override-channels -c conda-forge "${specs[@]}" >"$log" 2>&1; then
-    tools_unregister
+    micromamba_unregister "$TOOLS_DIR"
     rm -rf -- "${TOOLS_DIR:?}/$next"
     warn "building the tools env failed ($(grep -v '^[[:space:]]*$' "$log" | tail -n 1)); the log is $log"
     if [[ -n "$cur" && -d "$TOOLS_DIR/$cur/bin" ]]; then
@@ -752,7 +754,7 @@ install_tools() {
     fi
     return 0
   fi
-  tools_unregister
+  micromamba_unregister "$TOOLS_DIR"
   rm -f -- "$log"
   # bin/: the listed packages' own executables, relative links into the env
   local -a shown=()
@@ -781,6 +783,93 @@ install_tools() {
   ln -sfn "$next" "$TOOLS_DIR/current.new"
   mv -T -- "$TOOLS_DIR/current.new" "$TOOLS_DIR/current"
   ok "tools env $TOOLS_DIR/$next ($src): $(printf '%s; ' "${shown[@]}" | sed 's/; $//')"
+}
+
+# ----- the egress proxy: mitmproxy >= 12 in its own environment -----
+# Distro packages are too old (Ubuntu 24.04 ships 8.1.1, whose certificates
+# Python >= 3.13 rejects), so mitmproxy runs from a private environment under
+# $STATE_DIR. It is made as the tools env is, from conda-forge with agent-sandbox's
+# own micromamba, never with the host's conda or python, so it builds the same from
+# ANY shell state (a conda env active or not, whatever python3 is on PATH, or none):
+#   1. an existing environment is reused only if it still runs (`mitmdump --version`):
+#      $PROXY_CONDA, or a $PROXY_VENV an earlier install.sh made; a broken one is
+#      installer-owned and is removed;
+#   2. otherwise $PROXY_CONDA is created, its own interpreter and binary packages,
+#      untouched by dev-env updates; the root and package cache are the tools env's.
+MITMPROXY_SPEC='mitmproxy>=12,<13'
+PROXY_VENV="$STATE_DIR/proxy-venv"
+PROXY_CONDA="$STATE_DIR/proxy-env"
+PROXY_PROBE="" PROXY_VERSION="" MITMDUMP=""
+# proxy_env_ok DIR: DIR/bin/mitmdump runs and reports >= 12. Sets PROXY_PROBE
+# (the probe's output, for messages) and PROXY_VERSION.
+proxy_env_ok() {
+  local v
+  [[ -x "$1/bin/mitmdump" ]] || {
+    PROXY_PROBE="no executable bin/mitmdump"
+    return 1
+  }
+  if ! PROXY_PROBE=$("$1/bin/mitmdump" --version 2>&1); then return 1; fi
+  v=$(awk '/^Mitmproxy:/ {print $2}' <<<"$PROXY_PROBE")
+  [[ "${v%%.*}" -ge 12 ]] 2>/dev/null || {
+    PROXY_PROBE="reports version '${v:-?}'; need mitmproxy >= 12"
+    return 1
+  }
+  PROXY_VERSION="$v"
+  return 0
+}
+# proxy_micromamba VERB ARGS... -- micromamba on $PROXY_CONDA from conda-forge alone, as
+# the tools env is built: the host's conda variables name the host's conda, not this root.
+proxy_micromamba() {
+  local verb="$1"
+  shift
+  env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV -u CONDA_SHLVL -u MAMBA_ROOT_PREFIX \
+    CONDA_PKGS_DIRS="$TOOLS_DIR/pkgs" "$MICROMAMBA" "$verb" -q -y -r "$TOOLS_DIR" \
+    -p "$PROXY_CONDA" --override-channels -c conda-forge "$@"
+}
+
+install_proxy() {
+  section "Egress proxy (mitmproxy)"
+  local d log="$PROXY_CONDA.log"
+  mkdir -p "$STATE_DIR"
+  # 1. reuse a working environment; a broken one gets recreated
+  for d in "$PROXY_VENV" "$PROXY_CONDA"; do
+    [[ -e "$d" ]] || continue
+    if proxy_env_ok "$d"; then
+      MITMDUMP="$d/bin/mitmdump"
+      ok "reusing $d"
+      break
+    fi
+    if ((DRY_RUN)); then
+      info "(dry-run) $d is broken (${PROXY_PROBE##*$'\n'}); would recreate it"
+    else
+      warn "$d is broken: ${PROXY_PROBE##*$'\n'} -- recreating it (a conda env update can swap the interpreter under a venv)"
+      rm -rf -- "$d"
+    fi
+  done
+  # 2. create when nothing usable exists
+  if [[ -z "$MITMDUMP" ]]; then
+    MITMDUMP="$PROXY_CONDA/bin/mitmdump"
+    if ((DRY_RUN)); then
+      info "(dry-run) would create $PROXY_CONDA with micromamba ($MICROMAMBA) from conda-forge: '$MITMPROXY_SPEC' pip"
+    else
+      [[ -x "$MICROMAMBA" ]] || err "no micromamba at $MICROMAMBA to create $PROXY_CONDA with"
+      info "creating $PROXY_CONDA with micromamba from conda-forge: '$MITMPROXY_SPEC' pip (about a minute)"
+      if ! proxy_micromamba create "$MITMPROXY_SPEC" pip >"$log" 2>&1; then
+        micromamba_unregister "$PROXY_CONDA"
+        rm -rf -- "$PROXY_CONDA"
+        err "creating $PROXY_CONDA with micromamba failed ($(grep -v '^[[:space:]]*$' "$log" | tail -n 1)); the log is $log"
+      fi
+      micromamba_unregister "$PROXY_CONDA"
+      rm -f -- "$log"
+      proxy_env_ok "$PROXY_CONDA" || err "$MITMDUMP does not run after installation: ${PROXY_PROBE##*$'\n'}"
+      ok "installed into $PROXY_CONDA"
+    fi
+  fi
+  ((DRY_RUN)) || ok "mitmdump $PROXY_VERSION at $MITMDUMP"
+  if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" ]]; then
+    info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
+  fi
+  return 0
 }
 
 # --rebuild-bwrap is the whole run: it needs neither the engine nor a checkout.
@@ -823,6 +912,11 @@ fi
 # ... and the tools env alone, with a stubbed micromamba: AGENT_SANDBOX_INSTALL_STEP=tools.
 if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == tools ]]; then
   install_tools
+  exit 0
+fi
+# ... and the proxy's environment alone, likewise: AGENT_SANDBOX_INSTALL_STEP=proxy.
+if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == proxy ]]; then
+  install_proxy
   exit 0
 fi
 
@@ -985,134 +1079,11 @@ else
   ok "kernel does not restrict unprivileged userns; no profiles needed"
 fi
 
-# ----- 5. the egress proxy: mitmproxy >= 12 in its own environment -----
-# Distro packages are too old (Ubuntu 24.04 ships 8.1.1, whose certificates
-# Python >= 3.13 rejects), so mitmproxy runs from a private environment under
-# $STATE_DIR, chosen so this works from ANY shell state (a conda env active or
-# not, whatever python3 is on PATH):
-#   1. an existing environment (venv or conda) is reused only if it still runs
-#      (`mitmdump --version`); a broken one is installer-owned and is recreated;
-#   2. otherwise a dedicated conda env when mamba/conda is available: its own
-#      regular-build interpreter and binary packages, untouched by dev-env updates;
-#   3. else a venv from a suitable interpreter: python3 >= 3.12 with venv and
-#      ensurepip and NOT a free-threaded build (mitmproxy's aioquic ships only an
-#      abi3 wheel, which free-threaded builds cannot load or build). /usr/bin's
-#      python3 is tried before PATH's; a conda env's interpreter is accepted last,
-#      with a warning, since it can change underneath the venv (then see 1).
-section "Egress proxy (mitmproxy)"
-MITMPROXY_SPEC='mitmproxy>=12,<13'
-PROXY_VENV="$STATE_DIR/proxy-venv"
-PROXY_CONDA="$STATE_DIR/proxy-env"
-VENV_PY="" VENV_PY_KIND="" PROXY_PROBE="" PROXY_VERSION="" MITMDUMP=""
-# conda_cmd: mamba or conda from PATH, else the exe conda init recorded even when
-# no env is active. Prints the command; nothing if none.
-conda_cmd() {
-  local c
-  for c in mamba conda; do
-    command -v "$c" && return 0
-  done
-  for c in "${MAMBA_EXE:-}" "${CONDA_EXE:-}"; do
-    [[ -n "$c" && -x "$c" ]] && {
-      printf '%s\n' "$c"
-      return 0
-    }
-  done
-  return 1
-}
-# python_suitable PY: >= 3.12, venv + ensurepip present, not free-threaded.
-# Prints "conda" if PY belongs to a conda env, else "ok".
-python_suitable() {
-  [[ -n "$1" && -x "$1" ]] || return 1
-  "$1" - <<'PYCHK' 2>/dev/null
-import os, sys, sysconfig
-if sys.version_info < (3, 12): sys.exit(1)
-import venv, ensurepip  # noqa: F401
-if sysconfig.get_config_var("Py_GIL_DISABLED"): sys.exit(1)
-print("conda" if os.path.isdir(os.path.join(sys.prefix, "conda-meta")) else "ok")
-PYCHK
-}
-# find_venv_python: first suitable interpreter into VENV_PY / VENV_PY_KIND.
-find_venv_python() {
-  local py kind
-  for py in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)"; do
-    [[ -n "$py" ]] || continue
-    kind="$(python_suitable "$py")" || continue
-    VENV_PY="$py" VENV_PY_KIND="$kind"
-    return 0
-  done
-  return 1
-}
-# proxy_env_ok DIR: DIR/bin/mitmdump runs and reports >= 12. Sets PROXY_PROBE
-# (the probe's output, for messages) and PROXY_VERSION.
-proxy_env_ok() {
-  local v
-  [[ -x "$1/bin/mitmdump" ]] || {
-    PROXY_PROBE="no executable bin/mitmdump"
-    return 1
-  }
-  if ! PROXY_PROBE=$("$1/bin/mitmdump" --version 2>&1); then return 1; fi
-  v=$(awk '/^Mitmproxy:/ {print $2}' <<<"$PROXY_PROBE")
-  [[ "${v%%.*}" -ge 12 ]] 2>/dev/null || {
-    PROXY_PROBE="reports version '${v:-?}'; need mitmproxy >= 12"
-    return 1
-  }
-  PROXY_VERSION="$v"
-  return 0
-}
-mkdir -p "$STATE_DIR"
-# 1. reuse a working environment; a broken one gets recreated
-for d in "$PROXY_VENV" "$PROXY_CONDA"; do
-  [[ -e "$d" ]] || continue
-  if proxy_env_ok "$d"; then
-    MITMDUMP="$d/bin/mitmdump"
-    ok "reusing $d"
-    break
-  fi
-  if ((DRY_RUN)); then
-    info "(dry-run) $d is broken (${PROXY_PROBE##*$'\n'}); would recreate it"
-  else
-    warn "$d is broken: ${PROXY_PROBE##*$'\n'} -- recreating it (a conda env update can swap the interpreter under a venv)"
-    rm -rf -- "$d"
-  fi
-done
-# 2./3. create when nothing usable exists
-if [[ -z "$MITMDUMP" ]]; then
-  cc="$(conda_cmd)" || true
-  if ((DRY_RUN)); then
-    if [[ -n "$cc" ]]; then
-      MITMDUMP="$PROXY_CONDA/bin/mitmdump"
-      info "(dry-run) would create $PROXY_CONDA with $(basename -- "$cc") and install '$MITMPROXY_SPEC'"
-    else
-      MITMDUMP="$PROXY_VENV/bin/mitmdump"
-      info "(dry-run) would create $PROXY_VENV (a venv from a suitable python3) and install '$MITMPROXY_SPEC'"
-    fi
-  elif [[ -n "$cc" ]]; then
-    info "Creating $PROXY_CONDA with $(basename -- "$cc") (about a minute)"
-    "$cc" create -y -q -p "$PROXY_CONDA" -c conda-forge "$MITMPROXY_SPEC" pip >/dev/null
-    MITMDUMP="$PROXY_CONDA/bin/mitmdump"
-    ok "installed into $PROXY_CONDA"
-  elif find_venv_python; then
-    [[ "$VENV_PY_KIND" == conda ]] && warn "$VENV_PY belongs to a conda env; a venv built from it breaks if that env's interpreter changes (install.sh then recreates it)"
-    info "Creating $PROXY_VENV from $VENV_PY and installing '$MITMPROXY_SPEC' with pip (about a minute)"
-    "$VENV_PY" -m venv "$PROXY_VENV"
-    "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check "$MITMPROXY_SPEC"
-    MITMDUMP="$PROXY_VENV/bin/mitmdump"
-    ok "installed into $PROXY_VENV"
-  else
-    err "no way to run mitmproxy: need mamba/conda on PATH (preferred), or a python3 >= 3.12 with venv and ensurepip that is not a free-threaded build (Debian/Ubuntu: sudo apt install python3-venv)"
-  fi
-  if ! ((DRY_RUN)); then
-    proxy_env_ok "$(dirname -- "$(dirname -- "$MITMDUMP")")" || err "$MITMDUMP does not run after installation: ${PROXY_PROBE##*$'\n'}"
-  fi
-fi
-((DRY_RUN)) || ok "mitmdump $PROXY_VERSION at $MITMDUMP"
-if command -v mitmdump >/dev/null && [[ "$(command -v mitmdump)" != "$MITMDUMP" ]]; then
-  info "another mitmdump on PATH, $(command -v mitmdump) ($(mitmdump --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}')), is not the one the proxy runs"
-fi
-
-# ----- 5b. micromamba, and which conda sandboxes use (defined above) -----
+# ----- 5. micromamba, and which conda sandboxes use (defined above) -----
 install_micromamba
 choose_conda
+# ----- 5b. the egress proxy's environment, with that micromamba (defined above) -----
+install_proxy
 # ----- 5c. the tools env, with that micromamba (defined above) -----
 install_tools
 
@@ -1164,8 +1135,8 @@ else
     "$PROXY_VENV/bin/pip" install -q --disable-pip-version-check pyseccomp >/dev/null 2>&1 || true
     SC_PY="$PROXY_VENV/bin/python"
   elif [[ -x "$PROXY_CONDA/bin/python" ]]; then
-    # A conda env created for mitmproxy need not include pip; pyseccomp is PyPI-only.
-    [[ -x "$PROXY_CONDA/bin/pip" ]] || "$(conda_cmd)" install -y -q -p "$PROXY_CONDA" -c conda-forge pip >/dev/null 2>&1 || true
+    # An env an earlier install.sh made need not include pip; pyseccomp is PyPI-only.
+    [[ -x "$PROXY_CONDA/bin/pip" ]] || proxy_micromamba install pip >/dev/null 2>&1 || true
     "$PROXY_CONDA/bin/python" -m pip install -q pyseccomp >/dev/null 2>&1 || true
     SC_PY="$PROXY_CONDA/bin/python"
   fi

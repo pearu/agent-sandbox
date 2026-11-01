@@ -146,8 +146,8 @@ newer recommended: the installer warns below it, and
 [troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604)
 has the recipe for Ubuntu 24.04 and 26.04), `curl`, `git`, `python3` on `PATH` when you
 launch (every session is joined into its role's running sandbox by a small
-standard-library helper), and either `python3 >= 3.12` with `venv` or conda/mamba
-(for the proxy runtime). On Ubuntu 24.04+ the installer needs `sudo` once, to install an
+standard-library helper). The proxy runtime needs neither conda nor `python3-venv`: the
+installer builds it with a micromamba it fetches itself. On Ubuntu 24.04+ the installer needs `sudo` once, to install an
 AppArmor profile allowing bwrap to use user namespaces (and, if you use the
 strict network mode, one for pasta); nothing else needs root.
 
@@ -167,11 +167,13 @@ in that account's `~/.config`, and `asb` goes on that account's PATH.
 There is no system-wide mode, and the installer refuses to run through `sudo` —
 it asks for sudo itself for the one step that needs it, the AppArmor profile.
 
-The installer is idempotent: it sets up the proxy (mitmproxy 12+ in a private
-environment under `~/.local/share/agent-sandbox`), installs agent-sandbox's own
+The installer is idempotent: it installs agent-sandbox's own
 **micromamba** (a pinned release, checked against its SHA-256, at
 `~/.local/share/agent-sandbox/micromamba/bin/micromamba`, with an empty conda root for
-its environments at `~/.local/share/agent-sandbox/conda`), generates the CA, writes
+its environments at `~/.local/share/agent-sandbox/conda`), sets up the proxy with it
+(mitmproxy 12+ in a private conda-forge environment,
+`~/.local/share/agent-sandbox/proxy-env`; a working one an earlier run made is kept),
+generates the CA, writes
 the allowlist (keeping your edits on re-runs), installs the systemd user unit, and **copies the engine and profiles under
 `~/.local/share/agent-sandbox`**. Because the command runs from the copy, you
 can move or delete this clone afterward; re-run `./install.sh` after pulling to

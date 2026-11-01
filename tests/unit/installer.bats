@@ -136,15 +136,127 @@ systemctl_stub() {
   cmp -s "$T/repo/install.sh" "$REPO_ROOT/install.sh"
 }
 
-@test "--dry-run chooses a dedicated conda proxy env when mamba/conda is on PATH (a venv only otherwise)" {
-  mkdir -p "$T/bin" "$T/home"
-  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/mamba"
-  chmod +x "$T/bin/mamba"
-  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+# ---- the proxy's environment: made with agent-sandbox's micromamba (#335) -----------
+
+# host_conda_stubs -- a `conda`, `mamba` and `python3` first in $T/bin that record every
+# call in $T/host-called and succeed: what install.sh must not build the proxy env with.
+host_conda_stubs() {
+  mkdir -p "$T/bin"
+  local c
+  for c in conda mamba python3; do
+    printf '#!/bin/sh\necho "%s $*" >>"%s/host-called"\nexit 0\n' "$c" "$T" >"$T/bin/$c"
+    chmod +x "$T/bin/$c"
+  done
+}
+
+@test "--dry-run: a new proxy env would be created with agent-sandbox's micromamba, whatever conda or python the host has" {
+  host_conda_stubs
+  local st="$T/home/.local/share/agent-sandbox"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    MAMBA_EXE="$T/bin/mamba" CONDA_EXE="$T/bin/conda" "$REPO_ROOT/install.sh" --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"would create $T/home/.local/share/agent-sandbox/proxy-env with mamba"* ]]
-  grep -q "^ExecStart=$T/home/.local/share/agent-sandbox/proxy-env/bin/mitmdump" \
-    "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  [[ "$output" == *"(dry-run) would create $st/proxy-env with micromamba ($st/micromamba/bin/micromamba) from conda-forge: 'mitmproxy>=12,<13' pip"* ]]
+  [[ "$output" != *"proxy-venv"* ]]
+  grep -q "^ExecStart=$st/proxy-env/bin/mitmdump" "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
+  # the micromamba comes first: its section is before the proxy's
+  [[ "$output" == *"==> micromamba ("*"==> Egress proxy (mitmproxy)"* ]]
+}
+
+# proxy_step [ENV=VAL ...] -- install.sh's proxy-env step alone, for real, against a stub
+# micromamba at the installed path; $T/bin (host_conda_stubs) first on PATH, and a
+# systemctl there that does nothing, should anything get as far as the unit.
+proxy_step() {
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\nexit 0\n' >"$T/bin/systemctl" && chmod +x "$T/bin/systemctl"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$@" \
+    AGENT_SANDBOX_INSTALL_STEP=proxy "$REPO_ROOT/install.sh"
+}
+
+# a micromamba that "creates" -p PREFIX with a bin/mitmdump reporting mitmproxy 12.3.1
+# and a bin/pip, registers it as micromamba does, and records its argv, CONDA_PKGS_DIRS
+# and MAMBA_ROOT_PREFIX in $T/mm-called ($T/mm-fail present: it fails, after a partial env)
+stub_proxy_micromamba() {
+  local mm="$T/home/.local/share/agent-sandbox/micromamba/bin"
+  mkdir -p "$mm"
+  cat >"$mm/micromamba" <<STUB
+#!/usr/bin/env bash
+echo "\$* | CONDA_PKGS_DIRS=\${CONDA_PKGS_DIRS:-} MAMBA_ROOT_PREFIX=\${MAMBA_ROOT_PREFIX:-}" >>"$T/mm-called"
+prefix=""
+while [[ \$# -gt 0 ]]; do
+  [[ "\$1" == -p ]] && prefix="\$2"
+  shift
+done
+mkdir -p "\$prefix/bin" "\$prefix/conda-meta" "\$HOME/.conda"
+echo "\$prefix" >>"\$HOME/.conda/environments.txt"
+[[ -e "$T/mm-fail" ]] && { echo "critical libmamba nothing provides mitmproxy" >&2; exit 1; }
+printf '#!/bin/sh\necho "Mitmproxy: 12.3.1"\necho "Python: 3.14.10"\n' >"\$prefix/bin/mitmdump"
+printf '#!/bin/sh\nexit 0\n' >"\$prefix/bin/pip"
+chmod +x "\$prefix/bin/mitmdump" "\$prefix/bin/pip"
+STUB
+  chmod +x "$mm/micromamba"
+}
+
+@test "proxy env: created with agent-sandbox's micromamba from conda-forge, the tools env's root and cache; the host's conda and python untouched" {
+  stub_proxy_micromamba
+  host_conda_stubs
+  local st="$T/home/.local/share/agent-sandbox"
+  mkdir -p "$T/home/.conda" && echo /my/env >"$T/home/.conda/environments.txt"
+  proxy_step MAMBA_EXE="$T/bin/mamba" CONDA_EXE="$T/bin/conda" MAMBA_ROOT_PREFIX=/host/conda CONDA_PREFIX=/host/conda
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"creating $st/proxy-env with micromamba from conda-forge: 'mitmproxy>=12,<13' pip"* ]]
+  [[ "$output" == *"installed into $st/proxy-env"* ]]
+  [[ "$output" == *"mitmdump 12.3.1 at $st/proxy-env/bin/mitmdump"* ]]
+  [ "$(cat "$T/mm-called")" = "create -q -y -r $st/tools -p $st/proxy-env --override-channels -c conda-forge mitmproxy>=12,<13 pip | CONDA_PKGS_DIRS=$st/tools/pkgs MAMBA_ROOT_PREFIX=" ]
+  [ ! -e "$T/host-called" ] # neither conda, mamba nor python3 was asked
+  [ ! -e "$st/proxy-venv" ]
+  [ ! -e "$st/proxy-env.log" ]
+  # micromamba's registration of the env is undone; the user's own envs stay listed
+  [ "$(cat "$T/home/.conda/environments.txt")" = /my/env ]
+}
+
+@test "proxy env: a working one is kept, proxy-env or an older proxy-venv; nothing is created" {
+  stub_proxy_micromamba
+  local st="$T/home/.local/share/agent-sandbox" d
+  for d in proxy-env proxy-venv; do
+    rm -rf "${st:?}/proxy-env" "$st/proxy-venv" "$T/mm-called"
+    mkdir -p "$st/$d/bin"
+    printf '#!/bin/sh\necho "Mitmproxy: 12.1.2"\n' >"$st/$d/bin/mitmdump"
+    chmod +x "$st/$d/bin/mitmdump"
+    proxy_step
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"reusing $st/$d"* ]]
+    [[ "$output" == *"mitmdump 12.1.2 at $st/$d/bin/mitmdump"* ]]
+    [ ! -e "$T/mm-called" ]
+  done
+}
+
+@test "proxy env: a broken one is removed and the proxy env recreated with micromamba" {
+  stub_proxy_micromamba
+  local st="$T/home/.local/share/agent-sandbox" d
+  for d in proxy-venv proxy-env; do
+    rm -rf "${st:?}/proxy-env" "$st/proxy-venv" "$T/mm-called"
+    mkdir -p "$st/$d/bin"
+    printf '#!/bin/sh\necho "ModuleNotFoundError: No module named mitmproxy" >&2\nexit 1\n' >"$st/$d/bin/mitmdump"
+    chmod +x "$st/$d/bin/mitmdump"
+    proxy_step
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[warn] $st/$d is broken: ModuleNotFoundError: No module named mitmproxy -- recreating it"* ]]
+    grep -q "^create -q -y -r $st/tools -p $st/proxy-env --override-channels -c conda-forge mitmproxy>=12,<13 pip |" "$T/mm-called"
+    [[ "$output" == *"mitmdump 12.3.1 at $st/proxy-env/bin/mitmdump"* ]]
+    if [ "$d" = proxy-venv ]; then [ ! -e "$st/$d" ]; fi
+  done
+}
+
+@test "proxy env: a failed create stops the install with micromamba's last line and the log; no half-made env is left" {
+  stub_proxy_micromamba
+  local st="$T/home/.local/share/agent-sandbox"
+  : >"$T/mm-fail"
+  proxy_step
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[err] creating $st/proxy-env with micromamba failed (critical libmamba nothing provides mitmproxy); the log is $st/proxy-env.log"* ]]
+  [ ! -e "$st/proxy-env" ]
+  [ -s "$st/proxy-env.log" ]
+  [ ! -s "$T/home/.conda/environments.txt" ]
 }
 
 # a bwrap that only knows its version; any other invocation succeeds (the smoke test)

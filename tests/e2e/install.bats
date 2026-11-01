@@ -6,8 +6,8 @@
 # `asb claude` runs the fake agent through the installed proxy (#151).
 #
 # Opt-in (AGENT_SANDBOX_E2E=1). It installs mitmproxy into the throwaway HOME
-# (network, about a minute) unless AGENT_SANDBOX_E2E_MITMDUMP names an existing
-# mitmdump >= 12 to reuse. On a kernel that restricts unprivileged user
+# with the micromamba it fetches (network, about a minute) unless
+# AGENT_SANDBOX_E2E_MITMDUMP names an existing mitmdump >= 12 to reuse. On a kernel that restricts unprivileged user
 # namespaces the installer's AppArmor step uses sudo unless the profile is
 # already installed. The proxy's port is the installer's choice (#335): 8888, or,
 # when another listener holds 8888 (this account's real proxy, on a dev box), the
