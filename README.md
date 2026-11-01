@@ -101,7 +101,8 @@ there is nothing here to put a boundary around.
 provider-agnostic and everything agent-specific lives in a profile, so a new
 agent needs a profile rather than engine changes
 ([profiles.md](docs/profiles.md)). Two profiles ship: `claude`, and `sshd`, a
-sandboxed ssh login for other machines (`asb --profile sshd --role NAME`, #335). MCP
+sandboxed ssh login for other machines (`asb --profile sshd --role NAME`, #335;
+[sshd.md](docs/sshd.md)). MCP
 servers are covered automatically, since the agent spawns them inside the
 sandbox.
 
@@ -330,6 +331,9 @@ commented template in
   Planners, Implementers, Reviewers, a Supervisor and a Gate, with you deciding: what
   each may do, how the work moves, and `asb --init roles` to set it up.
 - [docs/ssh.md](docs/ssh.md): the SSH broker.
+- [docs/sshd.md](docs/sshd.md): the `sshd` profile, a sandboxed ssh login to this
+  account for other machines: the policy, the recipe on a shared host and a cloud
+  instance, the roles' side.
 - [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git, `gh`,
   package installs, ports, editors — and how to tell what is blocking you.
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.

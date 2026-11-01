@@ -47,6 +47,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its
+  plan): the policy line by line, the recipe on a shared host (a dedicated ordinary
+  account, `install.sh` as it, the launch in the background) and on a cloud instance,
+  the roles' side (`[ssh] ALIAS`, and `[net] host-port` when they run on the same host),
+  what a session sees and never sees, operations and limits, measured on an Ubuntu 24.04
+  host. `docs/design.md` gains the profile's mechanism and its residual risks: an escape
+  lands in the launching account, every GPU's bus is listed, the keys file is the next
+  launch's, the host key is readable by sessions, and the proxy of its own is orphaned
+  with the sandbox by a SIGKILL of the keeper's supervisor.
 - **The `sshd` profile: a sandboxed ssh login** (#335, step 4 of its plan).
   `asb --profile sshd --role NAME`, run in a project directory, runs an OpenSSH server as
   the role's agent, in the foreground (background it: nohup, tmux; `--shutdown` ends it
