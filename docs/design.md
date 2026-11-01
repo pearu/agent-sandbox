@@ -263,6 +263,16 @@ role's sandbox. It is built from the mechanisms above, not beside them:
 
 Stated plainly. These are what the adversary above can still do.
 
+- **The admin's script of `asb --setup-remote` carries code from a checkout to root on
+  another host.** Where a remote host needs root (#344), the script embeds install.sh's
+  AppArmor profile texts and, for the bubblewrap rebuild, install.sh itself, taken from
+  the engine's own checkout or the one `install.sh` ran from. A checkout a sandbox can
+  write to -- one that is a session's working directory -- is then a path from that
+  sandbox to root there, at the admin's next run. The script names the checkout, its
+  `git describe` (`-dirty` when it has local changes) and install.sh's SHA-256 in its
+  header; asb never runs it, so it is read first. Run the command from an install whose
+  checkout no session has open read-write.
+
 - **Raw-socket egress is unfiltered in `proxy` mode.** The sandbox shares the
   host network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its
   own resolver) can reach anything the host can, including localhost services,

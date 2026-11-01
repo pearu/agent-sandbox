@@ -598,9 +598,8 @@ which roles of the project have a session to resume, with a one-line summary eac
 
 - **`[remote:<alias>]`** — key/value lines describing a sandboxed login on another host
   (#344): the `sshd` profile run there by an account of its own, which the roles reach
-  as the SSH host `<alias>`. `asb --setup-remote <alias>` is what will act on it, coming
-  in a later version; in this one the section is parsed, reviewed and approved with the
-  file, `--check` lists it, and nothing else reads it. The name is letters, digits, `-`,
+  as the SSH host `<alias>`. `asb --setup-remote <alias>` acts on it (below); no launch
+  reads it. The name is letters, digits, `-`,
   `_` and `.`, and takes no role suffix; `[remote]` without one is ignored with a
   warning. `host = DEST` (required) is the ssh destination, in the forms `[ssh]` takes:
   a hostname, `user@host`, or an alias of your `~/.ssh/config` (a port is the alias's).
@@ -624,6 +623,46 @@ which roles of the project have a session to resume, with a one-line summary eac
   line -- or a missing `host` or `port` makes the section unusable, said there; an
   unknown key is said and ignored. A name written twice makes the file unusable: the
   review says so and `--trust` does not ask, and `--check` exits non-zero.
+
+  `asb --setup-remote <alias>`, run by you on the host in the project, applies the
+  section. In this version it does the first phase, the preflight, and stops there; the
+  account's part (carrying the kit, the install as the account, the policy, the launch)
+  comes in a later one. It is refused inside a sandbox (it holds your ssh access: a role
+  proposes the line, you run it), without the section, for a section unusable as
+  written, and while the file is not approved (`--trust`), since the section is what it
+  acts on. The preflight is one ssh session to `host` as the ssh user `ssh -G` resolves
+  (`BatchMode`, so your key and the host key in `known_hosts` must already work), a probe
+  script on its stdin that writes nothing there: the distribution and kernel, the
+  package manager, bubblewrap (and apt's candidate), pasta (and whether it knows
+  `--hostname`), `nft`, `sshd`, `apparmor_restrict_unprivileged_userns`, user namespaces
+  *as measured* (`unshare -Urn`, `bwrap --unshare-all`, `pasta --config-net`), which of
+  install.sh's AppArmor profiles are there, `sudo -n` (reported, never used), the account
+  and its home's free space, the GPUs and each `gpu` node with its mode (a node the host
+  lacks is said, not a fault: the login's policy says the same at launch), and whether
+  conda.anaconda.org and github.com answer on 443. It reports one line per item, then
+  the verdict. With everything present and working and the account there (or the ssh
+  user itself, not root), the host is ready, and the command exits 0. Otherwise root is
+  needed there once, and asb never runs sudo: it writes the admin's script to
+  `.asb/remote/<alias>/admin.sh` (mode 0600; `.asb/remote/` gets a `.gitignore`), prints
+  how to run it -- `ssh HOST sudo bash -s < .asb/remote/<alias>/admin.sh` with sudo
+  that needs no password, `scp` then `ssh -t HOST sudo bash ...` when sudo asks for one,
+  as root (`ssh root@HOST bash -s < ...`) when you have none -- and exits 1. The script,
+  every item explained above it, does only what was measured missing: the packages for
+  the host's family (apt-get, dnf, pacman, zypper: `bubblewrap passt nftables
+  openssh-server`, pacman's `openssh`); install.sh's AppArmor profiles for bwrap and
+  pasta, only where the kernel restricts user namespaces and the measured test failed or
+  the binary is missing; on Ubuntu, below bubblewrap 0.12.0 (or apt offering less),
+  `install.sh --rebuild-bwrap`, with install.sh carried whole inside the script so the
+  host needs no checkout; and, for a named account that is absent, the account
+  (`adduser --disabled-password` on apt hosts, `useradd -m` elsewhere) with your public
+  key in its `authorized_keys` (the first `IdentityFile` of `ssh -G HOST` with a `.pub`,
+  else the first key of `ssh-add -L`), your own way in. What it cannot do -- no
+  checkout to take the profiles and install.sh from, bubblewrap below 0.12.0 on a host
+  that is not Ubuntu, user namespaces blocked by something other than AppArmor -- it
+  says, there and in the script, as a step by hand. The profile texts and install.sh are
+  taken from the engine's own checkout, else from the checkout `install.sh` ran from
+  (recorded in `install.manifest`), never from a copy of their own. A re-run measures
+  again and reaches the verdict again.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

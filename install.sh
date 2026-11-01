@@ -3676,6 +3676,9 @@ elif ((${#manifest_lines[@]})); then
     printf '# back to searching, which is less exact.\n'
     printf 'version\t1\n'
     printf 'statedir\t%s\n' "$STATE_DIR"
+    # The checkout this ran from: `asb --setup-remote` carries install.sh and its
+    # AppArmor profiles from it to a remote host's admin script (#344).
+    printf 'checkout\t%s\n' "$SCRIPT_DIR"
     printf 'unit\t%s\t%s\n' "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service" \
       "$(fingerprint "$SYSTEMD_DIR/agent-sandbox-mitmproxy.service")"
     printf '%s\n' "${manifest_lines[@]}"

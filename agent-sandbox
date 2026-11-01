@@ -271,6 +271,14 @@
 #   --apply '[SECTION]' LINE...
 #                         add the lines to that section of the file, then the
 #                         --trust review; host only. See docs/config.md.
+#   --setup-remote ALIAS  host only, the file approved: the preflight of the
+#                         host its [remote:ALIAS] section names (#344), over
+#                         ssh as you, read-only: packages, user namespaces as
+#                         measured, the account, GPUs. Ready: says so, exit 0.
+#                         Root needed there: writes .asb/remote/ALIAS/admin.sh,
+#                         says how to run it, exit 1; asb never runs it, nor
+#                         sudo. Run it again after. The account's part comes
+#                         in a later version. See docs/config.md.
 #   --serve               with --role R: a role with no terminal (#277). Runs on the
 #                         host, in the foreground: holds R's launch and runs one
 #                         turn of R's session (the profile's serve-new/serve-resume
@@ -418,6 +426,11 @@ Engine flags (before CMD):
                         add the lines to that section of this project's
                         .agent-sandbox (creating either), then the --trust
                         review; host only. What a blocked session prints
+  --setup-remote ALIAS  the preflight of the host [remote:ALIAS] names, over
+                        ssh as you, read-only; where root is needed there,
+                        writes .asb/remote/ALIAS/admin.sh and says how to run
+                        it (asb never runs it, nor sudo), else says it is
+                        ready. Host only, the file approved first
   --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
@@ -6670,8 +6683,9 @@ _as_dotfile_line() {
 }
 
 # ---- [remote:ALIAS] (#344): a sandboxed login on another host, described --------
-# The section is parsed, reviewed and approved with the file; `--check` lists it. Nothing
-# acts on it yet: `--setup-remote ALIAS`, which will, comes in a later version.
+# The section is parsed, reviewed and approved with the file; `--check` lists it.
+# `--setup-remote ALIAS` acts on it: in this version its first phase, the preflight of the
+# host and the admin's script where root is needed there (below).
 #   host    = an ssh destination: a hostname, user@host, or a ~/.ssh/config alias (required)
 #   account = the account that runs the login there, as adduser takes a name (default: the
 #             ssh user)
@@ -6709,7 +6723,8 @@ _as_remote_say() {
 }
 
 # _as_remote_eval ALIAS [say] -- the section [remote:ALIAS] of the caller's _df_remote into
-# the caller's _rm_host, _rm_account, _rm_port (the token in its one spelling) and _rm_bad
+# the caller's _rm_host, _rm_account, _rm_port (the token in its one spelling), _rm_gpu (the
+# gpu nodes, space-separated) and _rm_bad
 # (how many faults make it unusable: a bad value, a key set twice that takes one, a missing
 # host or port). With `say`, the review's line for each line as written, and each fault.
 # An unknown key or a line without `=` is said and ignored; it is no fault.
@@ -6718,7 +6733,7 @@ _as_remote_eval() {
   local -a ws=()
   local -A seen=()
   [[ "${2:-}" == say ]] && _rm_say=1
-  _rm_host="" _rm_account="" _rm_port="" _rm_bad=0
+  _rm_host="" _rm_account="" _rm_port="" _rm_gpu="" _rm_bad=0
   for e in ${_df_remote[@]+"${_df_remote[@]}"}; do
     [[ "${e%%$'\t'*}" == "$_rm_alias" ]] || continue
     line="${e#*$'\t'}"
@@ -6797,6 +6812,7 @@ _as_remote_eval() {
           _as_remote_say "gpu = $cv: $bad; unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif ((${#ws[@]})); then
+          _rm_gpu="${ws[*]}"
           _as_remote_say "gpu = $cv: only these GPU device nodes of that host are passed into the login's sandbox"
         else
           _as_remote_say "gpu = : no GPU device node of that host is passed into the login's sandbox"
@@ -6854,7 +6870,7 @@ _as_remote_eval() {
 # it, and one line for the whole, last. Fails when a name is written twice: the file
 # cannot be approved.
 _as_remote_notes() {
-  local a h reached rc=0 dups _rm_host _rm_account _rm_port _rm_bad
+  local a h reached rc=0 dups _rm_host _rm_account _rm_port _rm_gpu _rm_bad
   dups="$(_as_remote_names dups)"
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
@@ -6870,9 +6886,9 @@ _as_remote_notes() {
     done
     [[ -n "$reached" ]] || _as_msg ".agent-sandbox: [remote:$a]: no [ssh] line names $a, so no role reaches it yet"
     if ((_rm_bad)); then
-      _as_msg ".agent-sandbox: [remote:$a]: unusable as written, for the reasons above; ${invoked:-asb} --setup-remote $a (not in this version yet) will refuse it"
+      _as_msg ".agent-sandbox: [remote:$a]: unusable as written, for the reasons above; ${invoked:-asb} --setup-remote $a refuses it"
     else
-      _as_msg ".agent-sandbox: [remote:$a]: a sandboxed login on $_rm_host as ${_rm_account:-the ssh user}, set up by ${invoked:-asb} --setup-remote $a (not in this version yet)"
+      _as_msg ".agent-sandbox: [remote:$a]: a sandboxed login on $_rm_host as ${_rm_account:-the ssh user}, set up by ${invoked:-asb} --setup-remote $a"
     fi
   done < <(_as_remote_names)
   return "$rc"
@@ -6889,7 +6905,7 @@ _as_check_remotes() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local a first=1 _rm_host _rm_account _rm_port _rm_bad
+  local a first=1 _rm_host _rm_account _rm_port _rm_gpu _rm_bad
   _as_dotfile_parse "$1" 2>/dev/null
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
@@ -6903,6 +6919,593 @@ _as_check_remotes() {
     fi
   done < <(_as_remote_names)
   return 0
+}
+
+# ---- asb --setup-remote ALIAS (#344): the preflight and the admin's script --------------
+# The first phase of applying a [remote:ALIAS] section: one read-only ssh session to its
+# host as the ssh user, running the probe below on stdin; a report, line by line; then a
+# verdict. Where root is needed there -- the packages, install.sh's AppArmor profiles where
+# the kernel restricts unprivileged user namespaces AND the measured test fails, the
+# bubblewrap rebuild below 0.12.0, the account when the section names one that is absent --
+# it writes the admin's script to .asb/remote/ALIAS/admin.sh, says how to run it, and
+# stops. asb never runs it, and never runs sudo. A re-run measures again.
+
+# _as_remote_probe ACCOUNT [NODE...] -- the probe script, on stdout: bash with POSIX tools
+# (id, df, stat, timeout), read-only, one `key<TAB>value` line per item, `end<TAB>ok`
+# last. ACCOUNT and the NODEs were checked by _as_remote_eval and are quoted here. The
+# paths it reads are under $AGENT_SANDBOX_TEST_PROBE_ROOT and the hosts it tries are
+# $AGENT_SANDBOX_TEST_PROBE_NET, when set where it runs: the unit tests' throwaway root.
+_as_remote_probe() {
+  local account="$1" n
+  shift
+  printf '# agent-sandbox --setup-remote: the preflight. Read-only: it writes nothing.\n'
+  printf 'account=%q\n' "$account"
+  printf 'gpu_nodes=('
+  for n in "$@"; do printf ' %q' "$n"; done
+  printf ' )\n'
+  cat <<'PROBE'
+R="${AGENT_SANDBOX_TEST_PROBE_ROOT-}"
+net_targets="${AGENT_SANDBOX_TEST_PROBE_NET-conda.anaconda.org:443 github.com:443}"
+PATH="$PATH:$R/usr/sbin:$R/sbin"
+say() { printf '%s\t%s\n' "$1" "$2"; }
+has() { command -v "$1" >/dev/null 2>&1; }
+t() { if has timeout; then timeout "$@"; else shift; "$@"; fi; }
+id_="" ver_="" like_="" kernel=""
+if [[ -r "$R/etc/os-release" ]]; then
+  while IFS='=' read -r k v; do
+    v="${v#[\"\']}" v="${v%[\"\']}"
+    case "$k" in ID) id_="$v" ;; VERSION_ID) ver_="$v" ;; ID_LIKE) like_="$v" ;; esac
+  done <"$R/etc/os-release"
+fi
+read -r kernel 2>/dev/null <"$R/proc/sys/kernel/osrelease" || true
+say os "${id_:-unknown} ${ver_:-?}"
+say os_like "$like_"
+say kernel "${kernel:-unknown}"
+say user "$(id -un)"
+say uid "$(id -u)"
+pm=none
+for p in apt-get dnf pacman zypper; do has "$p" && pm="$p" && break; done
+say pkgmgr "$pm"
+if has bwrap; then
+  v="$(bwrap --version 2>/dev/null </dev/null)"
+  say bwrap "${v##* }"
+else
+  say bwrap missing
+fi
+c=""
+if [[ "$pm" == apt-get ]] && has apt-cache; then
+  while read -r a b _; do
+    [[ "$a" == Candidate: ]] && c="$b"
+  done < <(apt-cache policy bubblewrap 2>/dev/null </dev/null)
+  [[ "$c" == "(none)" ]] && c=""
+fi
+say bwrap_candidate "${c:-unknown}"
+if has pasta; then
+  v="$(pasta --version 2>/dev/null </dev/null)"
+  v="${v%%$'\n'*}"
+  say pasta "${v##* }"
+  h="$(pasta --help 2>&1 </dev/null)"
+  [[ "$h" == *--hostname* ]] && say pasta_hostname yes || say pasta_hostname no
+else
+  say pasta missing
+fi
+has nft && say nft "$(command -v nft)" || say nft missing
+has sshd && say sshd "$(command -v sshd)" || say sshd missing
+r=""
+read -r r 2>/dev/null <"$R/proc/sys/kernel/apparmor_restrict_unprivileged_userns" || true
+say userns_restrict "${r:-n/a}"
+if has unshare; then
+  t 8 unshare -Urn true </dev/null >/dev/null 2>&1 && say userns ok || say userns blocked
+else
+  say userns missing
+fi
+if has bwrap; then
+  t 8 bwrap --unshare-all --ro-bind / / true </dev/null >/dev/null 2>&1 && say bwrap_userns ok || say bwrap_userns blocked
+else
+  say bwrap_userns missing
+fi
+if has pasta; then
+  t 8 pasta --config-net --quiet -- true </dev/null >/dev/null 2>&1 3>&- && say pasta_netns ok || say pasta_netns blocked
+else
+  say pasta_netns missing
+fi
+p=""
+for n in bwrap pasta; do [[ -e "$R/etc/apparmor.d/$n" ]] && p+=" $n"; done
+say profiles "${p# }"
+if [[ "$(id -u)" == 0 ]]; then
+  say sudo root
+elif has sudo && sudo -n true </dev/null >/dev/null 2>&1; then
+  say sudo ok
+elif g=" $(id -nG 2>/dev/null) " && has sudo && [[ "$g" == *" sudo "* || "$g" == *" wheel "* || "$g" == *" admin "* ]]; then
+  say sudo password
+else
+  say sudo none
+fi
+home="$HOME"
+if [[ -z "$account" || "$account" == "$(id -un)" ]]; then
+  say account self
+elif e="$(getent passwd "$account" 2>/dev/null)" && [[ -n "$e" ]]; then
+  say account present
+  IFS=: read -r _ _ _ _ _ home _ <<<"$e"
+else
+  say account absent
+fi
+free=""
+{ read -r _ && read -r _ _ _ free _; } < <(df -Pk -- "$home" 2>/dev/null)
+say home "$home"$'\t'"${free:-?}"
+ng=0
+if has nvidia-smi; then
+  while IFS= read -r l; do
+    [[ -n "$l" ]] && say gpu "$l" && ng=$((ng + 1))
+  done < <(nvidia-smi -L 2>/dev/null </dev/null)
+fi
+((ng)) || say gpus none
+for n in ${gpu_nodes[@]+"${gpu_nodes[@]}"}; do
+  if [[ -e "$R$n" ]]; then
+    say gpu_node "$n"$'\t'"$(stat -c %a -- "$R$n" 2>/dev/null || echo '?')"
+  else
+    say gpu_node "$n"$'\t'missing
+  fi
+done
+for x in $net_targets; do
+  if has timeout; then
+    timeout 5 "$BASH" -c 'exec 3<>"/dev/tcp/$1/$2"' _ "${x%:*}" "${x##*:}" </dev/null >/dev/null 2>&1 \
+      && say net "$x"$'\t'ok || say net "$x"$'\t'unreachable
+  else
+    say net "$x"$'\t'unknown
+  fi
+done
+say end ok
+PROBE
+}
+
+# _as_remote_checkout -- where the admin's script takes install.sh's AppArmor profile texts
+# and install.sh itself from: `DIR<TAB>how`. The engine's own tree when it is a checkout
+# (it has install.sh and components/apparmor beside it: a checkout run directly, or a
+# --dev install), else the checkout install.sh ran from, which install.sh records in
+# install.manifest (`checkout<TAB>DIR`). Nothing when neither has them: an install
+# copies neither (#344).
+_as_remote_checkout() {
+  local d k v
+  d="$(dirname -- "${engine:-$(readlink -f -- "${BASH_SOURCE[0]}")}")"
+  if [[ -r "$d/install.sh" && -r "$d/components/apparmor/bwrap" && -r "$d/components/apparmor/pasta" ]]; then
+    printf '%s\tthe engine'"'"'s own checkout' "$d"
+    return 0
+  fi
+  while IFS=$'\t' read -r k v _; do
+    [[ "$k" == checkout ]] || continue
+    if [[ -r "$v/install.sh" && -r "$v/components/apparmor/bwrap" && -r "$v/components/apparmor/pasta" ]]; then
+      printf '%s\tthe checkout install.sh ran from, as install.manifest records it' "$v"
+      return 0
+    fi
+  done <"$(_as_conda_home)/install.manifest" 2>/dev/null
+  return 0
+}
+
+# _as_remote_pubkey HOST -- the owner's public key for a new account's authorized_keys
+# (#344, decision (e)): `KEY<TAB>where from`. The first IdentityFile of `ssh -G HOST`
+# whose .pub exists, else the first key `ssh-add -L` lists; nothing when neither has one.
+# Only a line of the shape a public key has is taken, without its comment.
+_as_remote_pubkey() {
+  local f k="" src="" re='^((ssh|ecdsa|sk)-[A-Za-z0-9@.-]+) ([A-Za-z0-9+/]+=*)( |$)'
+  while read -r f; do
+    f="${f/#\~/$HOME}"
+    [[ -r "$f.pub" ]] || continue
+    IFS= read -r k <"$f.pub" || true
+    [[ "$k" =~ $re ]] && src="$f.pub" && break
+    k=""
+  done < <(ssh -G "$1" 2>/dev/null | awk '$1=="identityfile"{print $2}')
+  if [[ -z "$src" ]] && command -v ssh-add >/dev/null; then
+    while IFS= read -r k; do
+      [[ "$k" =~ $re ]] && src="ssh-add -L" && break
+    done < <(ssh-add -L 2>/dev/null)
+  fi
+  [[ -n "$src" ]] || return 0
+  printf '%s %s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" "$src"
+}
+
+# _as_remote_pkg FAMILY WHAT -- the package of WHAT (bwrap, pasta, nft, sshd) in a family.
+_as_remote_pkg() {
+  case "$2" in
+    bwrap) printf bubblewrap ;;
+    pasta) printf passt ;;
+    nft) printf nftables ;;
+    sshd) [[ "$1" == pacman ]] && printf openssh || printf openssh-server ;;
+  esac
+}
+
+# _as_setup_remote CWD ALIAS -- `asb --setup-remote ALIAS`, its first phase: the
+# refusals, the preflight over ssh, the report, and either the ready verdict (0) or the
+# admin's script (1). Refusals are 2. Uses invoked and engine by dynamic scope.
+# shellcheck disable=SC2154
+_as_setup_remote() {
+  local cwd="$1" alias="$2" file a
+  file="$cwd/.agent-sandbox"
+  local p="remote $alias:"
+  if [[ -n "${AGENT_SANDBOX:-}" ]] || _as_inside_sandbox; then
+    _as_msg "--setup-remote runs on the host: it holds your ssh access; a role proposes the line, you run it."
+    return 2
+  fi
+  case "$alias" in . | ..)
+    _as_msg "--setup-remote: '$alias' cannot name a remote"
+    return 2
+    ;;
+  esac
+  if [[ ! -f "$file" ]]; then
+    _as_msg "--setup-remote: no .agent-sandbox in $cwd: a remote is described there, in [remote:$alias]"
+    return 2
+  fi
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local _rm_host _rm_account _rm_port _rm_bad _rm_gpu
+  _as_dotfile_parse "$file" 2>/dev/null
+  if ! grep -qxF -- "$alias" <<<"$(_as_remote_names)"; then
+    a="$(_as_remote_names | paste -sd' ' -)"
+    _as_msg "--setup-remote: .agent-sandbox has no [remote:$alias]${a:+ (it has: $a)}"
+    return 2
+  fi
+  if grep -qxF -- "$alias" <<<"$(_as_remote_names dups)"; then
+    _as_msg "--setup-remote: [remote:$alias] is written more than once in .agent-sandbox; rename or remove one"
+    return 2
+  fi
+  _as_remote_eval "$alias"
+  if ((_rm_bad)); then
+    _as_msg "--setup-remote: [remote:$alias] is unusable as written; $invoked --check says why"
+    return 2
+  fi
+  if ! _as_dotfile_trusted "$cwd" "$file"; then
+    _as_msg "--setup-remote: .agent-sandbox is not approved as it stands, and [remote:$alias] in it is what this acts on: review it first ($invoked --trust)"
+    return 2
+  fi
+
+  # ---- the preflight: one ssh session, the probe on stdin ----
+  local g rhost ruser rport
+  g="$(ssh -G "$_rm_host" 2>/dev/null)" || {
+    _as_msg "$p cannot resolve '$_rm_host' (ssh -G failed)"
+    return 1
+  }
+  rhost="$(awk '$1=="hostname"{print $2; exit}' <<<"$g")"
+  ruser="$(awk '$1=="user"{print $2; exit}' <<<"$g")"
+  rport="$(awk '$1=="port"{print $2; exit}' <<<"$g")"
+  _as_msg "$p the preflight, over ssh to $ruser@$rhost port $rport ($_rm_host), read-only"
+  local out err rc=0
+  local -a nodes=()
+  read -r -a nodes <<<"$_rm_gpu"
+  err="$(mktemp)" || return 1
+  out="$(_as_remote_probe "$_rm_account" ${nodes[@]+"${nodes[@]}"} \
+    | ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$_rm_host" bash -s 2>"$err")" || rc=$?
+  if [[ "$out" != *$'\nend\tok'* ]]; then
+    _as_msg "$p the preflight did not complete (ssh exit $rc): $(tail -n 3 -- "$err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
+    _as_msg "$p it needs ssh to reach $_rm_host without a question (BatchMode): your key there, and its host key in ~/.ssh/known_hosts (ssh $_rm_host once)"
+    rm -f -- "$err"
+    return 1
+  fi
+  rm -f -- "$err"
+
+  # ---- the report ----
+  local k v w
+  local -A P=()
+  local -a gpus=() gnodes=() nets=()
+  while IFS=$'\t' read -r k v w; do
+    v="${v//[[:cntrl:]]/?}" w="${w//[[:cntrl:]]/?}"
+    case "$k" in
+      gpu) gpus+=("$v") ;;
+      gpu_node) gnodes+=("$v"$'\t'"$w") ;;
+      net) nets+=("$v"$'\t'"$w") ;;
+      home) P[home]="$v" P[free]="$w" ;;
+      ?*) P[$k]="$v" ;;
+    esac
+  done <<<"$out"
+  local vre='^[0-9]+(\.[0-9]+)*$'
+  local pm="${P[pkgmgr]:-none}" restrict="${P[userns_restrict]:-n/a}"
+  local ubuntu=0
+  [[ " ${P[os]%% *} ${P[os_like]:-} " == *" ubuntu "* && "$pm" == apt-get ]] && ubuntu=1
+  local -a pkgs=() byhand=()
+  local rebuild=0 prof_bwrap=0 prof_pasta=0 adduser=0 fault=0
+  _as_msg "$p ${P[os]:-unknown}, kernel ${P[kernel]:-unknown}, packages by ${pm/none/no package manager asb knows (apt-get, dnf, pacman, zypper)}"
+  case "${P[sudo]:-none}" in
+    root) w="root" ;;
+    ok) w="sudo without a password" ;;
+    password) w="sudo with a password" ;;
+    *) w="no sudo" ;;
+  esac
+  _as_msg "$p logged in as ${P[user]:-?} ($w; asb never uses it)"
+  # bubblewrap: present, at 0.12.0 or newer, or what the admin's script does about it
+  local bv="${P[bwrap]:-missing}" cand="${P[bwrap_candidate]:-unknown}" cv
+  # apt's candidate is a Debian version: [EPOCH:]UPSTREAM[-REVISION], compared upstream
+  cv="${cand#*:}" cv="${cv%%[-+~]*}"
+  if [[ "$bv" == missing ]]; then
+    pkgs+=("$(_as_remote_pkg "$pm" bwrap)")
+    if [[ "$cv" =~ $vre ]] && ! printf '%s\n' 0.12.0 "$cv" | sort -V -C; then
+      rebuild=1
+      _as_msg "$p bwrap missing (package bubblewrap; apt offers $cand, below 0.12.0, so a rebuild follows it)"
+    else
+      _as_msg "$p bwrap missing (package bubblewrap)"
+    fi
+  elif [[ "$bv" =~ $vre ]] && printf '%s\n' 0.12.0 "$bv" | sort -V -C; then
+    _as_msg "$p bwrap $bv ok"
+  else
+    rebuild=1
+    _as_msg "$p bwrap $bv: below 0.12.0, which fixes CVE-2026-87766; a rebuild is needed"
+  fi
+  if ((rebuild && ! ubuntu)); then
+    rebuild=0
+    byhand+=("bubblewrap below 0.12.0 on a host that is not Ubuntu: install 0.12.0 or newer by hand (docs/troubleshooting.md, 'bubblewrap older than 0.12.0')")
+  fi
+  local pav="${P[pasta]:-missing}"
+  if [[ "$pav" == missing ]]; then
+    pkgs+=(passt)
+    _as_msg "$p pasta missing (package passt)"
+  elif [[ "${P[pasta_hostname]:-}" == yes ]]; then
+    _as_msg "$p pasta $pav ok"
+  else
+    _as_msg "$p pasta $pav ok (it has no --hostname: a strict sandbox there is named by pasta)"
+  fi
+  if [[ "${P[nft]:-missing}" == missing ]]; then
+    pkgs+=(nftables)
+    _as_msg "$p nft missing (package nftables)"
+  else
+    _as_msg "$p nft ${P[nft]} ok"
+  fi
+  if [[ "${P[sshd]:-missing}" == missing ]]; then
+    pkgs+=("$(_as_remote_pkg "$pm" sshd)")
+    _as_msg "$p sshd missing (package $(_as_remote_pkg "$pm" sshd))"
+  else
+    _as_msg "$p sshd ${P[sshd]} ok"
+  fi
+  # user namespaces, as measured: an unconfined binary, then bwrap's and pasta's own
+  local why="apparmor_restrict_unprivileged_userns=$restrict"
+  case "${P[userns]:-missing}" in
+    ok) _as_msg "$p user namespaces ok (unshare -Urn)" ;;
+    blocked) _as_msg "$p user namespaces blocked for an unconfined binary (unshare -Urn; $why)" ;;
+    *) _as_msg "$p user namespaces not measured for an unconfined binary (no unshare)" ;;
+  esac
+  local x prof
+  for x in bwrap pasta; do
+    local tv="${P[${x}_userns]:-}"
+    [[ "$x" == pasta ]] && tv="${P[pasta_netns]:-missing}"
+    [[ " ${P[profiles]:-} " == *" $x "* ]] && prof="the profile /etc/apparmor.d/$x present" || prof="no profile for $x"
+    case "$tv" in
+      ok) _as_msg "$p $x's namespaces ok" ;;
+      blocked | missing)
+        if [[ "$tv" == blocked ]]; then
+          _as_msg "$p $x's namespaces blocked ($why, $prof)"
+        else
+          _as_msg "$p $x's namespaces not measured ($x missing; $why, $prof)"
+        fi
+        if [[ "$restrict" == 1 && "$prof" == "no profile"* ]]; then
+          [[ "$x" == bwrap ]] && prof_bwrap=1 || prof_pasta=1
+        elif [[ "$tv" == blocked && "$restrict" == 1 ]]; then
+          byhand+=("$x is blocked from a user namespace though /etc/apparmor.d/$x exists: look at that profile (apparmor_parser -r it; aa-status)")
+        elif [[ "$tv" == blocked ]]; then
+          byhand+=("$x is blocked from a user namespace, and not by AppArmor's restriction: look at user.max_user_namespaces and kernel.unprivileged_userns_clone (sysctl)")
+        fi
+        ;;
+    esac
+  done
+  # the account
+  local free="${P[free]:-?}"
+  [[ "$free" =~ ^[0-9]+$ ]] && free="$((free / 1048576)) GB free" || free="free space unknown"
+  case "${P[account]:-}" in
+    self)
+      if [[ "${P[uid]:-}" == 0 ]]; then
+        fault=1
+        _as_msg "$p the account is the ssh user, root: a login does not run as root; name an account in [remote:$alias] (account = NAME)"
+      else
+        _as_msg "$p the account is the ssh user ${P[user]:-?}, home ${P[home]:-?}, $free"
+      fi
+      ;;
+    present) _as_msg "$p the account $_rm_account present, home ${P[home]:-?}, $free" ;;
+    *)
+      adduser=1
+      _as_msg "$p the account $_rm_account absent (adduser; the home of ${P[user]:-?}, ${P[home]:-?}, has $free)"
+      ;;
+  esac
+  # GPUs: what the host has, and the section's nodes -- a missing one is the policy's to
+  # say at launch, not a fault of the preflight
+  if ((${#gpus[@]})); then
+    for x in "${gpus[@]}"; do _as_msg "$p $x"; done
+  else
+    _as_msg "$p no GPU listed by nvidia-smi -L"
+  fi
+  for x in ${gnodes[@]+"${gnodes[@]}"}; do
+    if [[ "${x#*$'\t'}" == missing ]]; then
+      _as_msg "$p gpu ${x%%$'\t'*} missing on that host (the login's policy says the same at launch)"
+    else
+      _as_msg "$p gpu ${x%%$'\t'*} mode ${x#*$'\t'}"
+    fi
+  done
+  for x in ${nets[@]+"${nets[@]}"}; do
+    case "${x#*$'\t'}" in
+      ok) _as_msg "$p ${x%%$'\t'*} reachable" ;;
+      unreachable) _as_msg "$p ${x%%$'\t'*} unreachable (the account's part needs it)" ;;
+      *) _as_msg "$p ${x%%$'\t'*} not measured (no timeout)" ;;
+    esac
+  done
+  if ((${#pkgs[@]})) && [[ "$pm" == none ]]; then
+    byhand+=("no package manager asb knows: install ${pkgs[*]} by hand")
+    pkgs=()
+  fi
+
+  # ---- the verdict ----
+  if ((! ${#pkgs[@]} && ! rebuild && ! prof_bwrap && ! prof_pasta && ! adduser && ! ${#byhand[@]})); then
+    if ((fault)); then
+      _as_msg "$p not ready, for the reason above"
+      return 1
+    fi
+    _as_msg "$p ready for the account's part (not in this version yet: step 3 of #344)"
+    return 0
+  fi
+
+  # ---- the admin's script ----
+  local co="" cohow="" key="" keysrc="" rel=".asb/remote/$alias/admin.sh"
+  if ((rebuild || prof_bwrap || prof_pasta)); then
+    co="$(_as_remote_checkout)"
+    cohow="${co#*$'\t'}" co="${co%%$'\t'*}"
+    if [[ -n "$co" ]]; then
+      w=""
+      ((prof_bwrap || prof_pasta)) && w="install.sh's AppArmor profiles"
+      ((rebuild)) && w="${w:+$w and }install.sh, for the rebuild,"
+      _as_msg "$p the admin's script carries $w from $co ($cohow)"
+    else
+      _as_msg "$p no checkout of agent-sandbox found (none beside the engine, none in install.manifest): the admin's script says what to do by hand for the profiles and the rebuild"
+    fi
+  fi
+  if ((adduser)); then
+    key="$(_as_remote_pubkey "$_rm_host")"
+    keysrc="${key#*$'\t'}" key="${key%%$'\t'*}"
+    if [[ -n "$key" ]]; then
+      _as_msg "$p the admin's script puts your public key ($keysrc) into $_rm_account's authorized_keys, your own way in"
+    else
+      _as_msg "$p no public key of yours found (no .pub beside an IdentityFile of ssh -G $_rm_host, none in ssh-add -L): add one to $_rm_account's ~/.ssh/authorized_keys by hand"
+    fi
+  fi
+  local dir="$cwd/.asb/remote/$alias" tmp
+  mkdir -p -- "$dir" || return 1
+  [[ -e "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
+  tmp="$(mktemp "$dir/.admin.sh.XXXXXX")" || return 1
+  local run root_dest="root@${_rm_host#*@}"
+  case "${P[sudo]:-none}" in
+    root) run="ssh $_rm_host bash -s < $rel" ;;
+    ok) run="ssh $_rm_host sudo bash -s < $rel" ;;
+    password) run="scp $rel $_rm_host:asb-admin-$alias.sh && ssh -t $_rm_host sudo bash asb-admin-$alias.sh" ;;
+    *) run="ssh $root_dest bash -s < $rel" ;;
+  esac
+  {
+    _as_remote_admin_script
+  } >"$tmp" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+  chmod 600 -- "$tmp" && mv -f -- "$tmp" "$dir/admin.sh" || return 1
+  _as_msg "$p root is needed there once: the admin's script is $rel ($dir/admin.sh); asb never runs it, so read it, then run it:"
+  case "${P[sudo]:-none}" in
+    password) _as_msg "$p   $run    (sudo asks for your password there, so it runs at a terminal)" ;;
+    root | ok) _as_msg "$p   $run" ;;
+    *) _as_msg "$p   $run    (you have no sudo there: the host's admin runs it as root)" ;;
+  esac
+  for x in ${byhand[@]+"${byhand[@]}"}; do _as_msg "$p by hand (the script says so too): $x"; done
+  _as_msg "$p then $invoked --setup-remote $alias again: it measures again and goes on from there"
+  return 1
+}
+
+# _as_remote_admin_script -- the admin's script, on stdout, from _as_setup_remote's locals
+# (dynamic scope): every item explained in a comment above it, only what the preflight
+# measured missing. Every command reads /dev/null: the script itself may be bash's stdin.
+# shellcheck disable=SC2154,SC2016 # it writes shell text, quoted as written
+_as_remote_admin_script() {
+  local x
+  printf '#!/usr/bin/env bash\n'
+  printf '# agent-sandbox: the admin'"'"'s script for [remote:%s] of %s,\n' "$alias" "$cwd"
+  printf '# the host %s (%s@%s port %s), written by `%s --setup-remote %s`.\n' "$_rm_host" "$ruser" "$rhost" "$rport" "$invoked" "$alias"
+  printf '#\n# It does, as root on that host and once, only what the preflight measured missing:\n'
+  ((${#pkgs[@]})) && printf '#   - the packages: %s\n' "${pkgs[*]}"
+  ((prof_bwrap && prof_pasta)) && printf '#   - AppArmor profiles for bwrap and pasta\n'
+  ((prof_bwrap != prof_pasta)) && printf '#   - an AppArmor profile for %s\n' "$( ((prof_bwrap)) && printf bwrap || printf pasta)"
+  ((rebuild)) && printf '#   - bubblewrap 0.12.0, rebuilt from Ubuntu'"'"'s own source (install.sh --rebuild-bwrap)\n'
+  ((adduser)) && printf '#   - the account %s%s\n' "$_rm_account" "${key:+, with your public key in its authorized_keys}"
+  for x in ${byhand[@]+"${byhand[@]}"}; do printf '#   - BY HAND: %s\n' "$x"; done
+  printf '# asb never runs it, and never runs sudo. Run it yourself, or have the host'"'"'s admin run it:\n'
+  printf '#   %s\n' "$run"
+  printf '# then `%s --setup-remote %s` again: it measures again and goes on from there.\n' "$invoked" "$alias"
+  if [[ -n "$co" ]]; then
+    x=""
+    ((prof_bwrap || prof_pasta)) && x="The AppArmor profiles"
+    ((rebuild)) && x="${x:+$x and }install.sh"
+    printf '# %s: from %s (%s)' "${x/#install/Install}" "$co" "$cohow"
+    x="$(git -C "$co" describe --always --dirty --tags 2>/dev/null || true)"
+    printf '%s; install.sh sha256 %s.\n' "${x:+, at $x}" "$(_as_sha256_file "$co/install.sh")"
+  fi
+  printf 'set -euo pipefail\n'
+  printf '[ "$(id -u)" -eq 0 ] || { echo "admin.sh: run it as root (see its header)" >&2; exit 1; }\n'
+  if ((${#pkgs[@]})); then
+    printf '\n# The packages the preflight found missing: %s. A sandboxed login needs\n' "${pkgs[*]}"
+    printf '# bubblewrap (the sandbox), passt (pasta: its network namespace), nftables (its\n'
+    printf '# firewall) and the sshd binary of openssh-server (the login itself).\n'
+    case "$pm" in
+      apt-get) printf 'DEBIAN_FRONTEND=noninteractive apt-get update </dev/null\nDEBIAN_FRONTEND=noninteractive apt-get install -y %s </dev/null\n' "${pkgs[*]}" ;;
+      dnf) printf 'dnf install -y %s </dev/null\n' "${pkgs[*]}" ;;
+      pacman) printf 'pacman -S --needed --noconfirm %s </dev/null\n' "${pkgs[*]}" ;;
+      zypper) printf 'zypper --non-interactive install %s </dev/null\n' "${pkgs[*]}" ;;
+    esac
+  fi
+  if ((prof_bwrap || prof_pasta)); then
+    printf '\n# This kernel restricts unprivileged user namespaces\n'
+    printf '# (apparmor_restrict_unprivileged_userns=1), and the preflight measured bwrap or pasta\n'
+    printf '# blocked, or missing, with no profile of theirs. Each gets install.sh'"'"'s profile, which\n'
+    printf '# grants that binary just a user namespace, loaded with apparmor_parser.\n'
+    if [[ -z "$co" ]]; then
+      printf '# BY HAND: no checkout of agent-sandbox was found where asb ran; its install.sh\n'
+      printf '# installs these profiles (components/apparmor/bwrap and pasta in its repository).\n'
+    else
+      if ((prof_bwrap)); then
+        printf '# bwrap: /etc/apparmor.d/bwrap.\n'
+        printf 'if [ ! -e /etc/apparmor.d/bwrap ]; then\n'
+        printf '  cat >/etc/apparmor.d/bwrap <<'"'"'AA_BWRAP_EOF'"'"'\n'
+        cat -- "$co/components/apparmor/bwrap"
+        printf 'AA_BWRAP_EOF\nfi\napparmor_parser -r /etc/apparmor.d/bwrap </dev/null\n'
+      fi
+      if ((prof_pasta)); then
+        printf '# pasta: /etc/apparmor.d/pasta.\n'
+        printf 'if [ ! -e /etc/apparmor.d/pasta ]; then\n'
+        printf '  cat >/etc/apparmor.d/pasta <<'"'"'AA_PASTA_EOF'"'"'\n'
+        cat -- "$co/components/apparmor/pasta"
+        printf 'AA_PASTA_EOF\nfi\napparmor_parser -r /etc/apparmor.d/pasta </dev/null\n'
+      fi
+    fi
+  fi
+  if ((rebuild)); then
+    printf '\n# bubblewrap below 0.12.0 lacks the fix for CVE-2026-87766, a sandbox escape during\n'
+    printf '# setup, and Ubuntu'"'"'s own update dropped it again. install.sh --rebuild-bwrap builds\n'
+    printf '# Ubuntu'"'"'s own 0.12.0-1 source package unchanged (pinned SHA-256 sums, fetched with\n'
+    printf '# curl from launchpad.net), installs it, and checks it. install.sh is carried whole below,\n'
+    printf '# so the host needs no checkout; it refuses to run under sudo (it is a per-user\n'
+    printf '# installer), so SUDO_USER is cleared for this one subcommand, which does only this.\n'
+    printf '# It comes after the profiles: its last step runs the new bwrap in a user namespace.\n'
+    if [[ -n "$co" ]]; then
+      printf 'asb_work="$(mktemp -d)"\n'
+      printf 'cat >"$asb_work/install.sh" <<'"'"'ASB_INSTALL_SH_EOF'"'"'\n'
+      cat -- "$co/install.sh"
+      printf 'ASB_INSTALL_SH_EOF\n'
+      printf '(cd "$asb_work" && env -u SUDO_USER TMPDIR="$asb_work" bash ./install.sh --rebuild-bwrap </dev/null)\n'
+      printf 'echo "admin.sh: the rebuilt package stays in $asb_work"\n'
+    else
+      printf '# BY HAND: no checkout of agent-sandbox was found where asb ran; from one, as root:\n'
+      printf '#   env -u SUDO_USER bash install.sh --rebuild-bwrap\n'
+    fi
+  fi
+  if ((adduser)); then
+    printf '\n# The account %s, named by the section, does not exist: it is created as an\n' "$_rm_account"
+    printf '# ordinary account with no password, reached by key only; the login runs as it.\n'
+    if [[ -n "$key" ]]; then
+      printf '# Your public key (%s) goes into its authorized_keys: your own way in to\n' "$keysrc"
+      printf '# set it up, over the system sshd, outside any sandbox.\n'
+    else
+      printf '# BY HAND: no public key of yours was found where asb ran; put one into\n'
+      printf '# ~%s/.ssh/authorized_keys (700/600, owned by %s) so you can reach it.\n' "$_rm_account" "$_rm_account"
+    fi
+    printf 'if ! getent passwd %s >/dev/null; then\n' "$_rm_account"
+    if [[ "$pm" == apt-get ]]; then
+      printf '  adduser --disabled-password --gecos '"''"' %s </dev/null\n' "$_rm_account"
+    else
+      printf '  useradd -m -s /bin/bash %s </dev/null\n' "$_rm_account"
+    fi
+    if [[ -n "$key" ]]; then
+      printf '  asb_home="$(getent passwd %s | cut -d: -f6)"\n' "$_rm_account"
+      printf '  asb_group="$(id -gn %s)"\n' "$_rm_account"
+      printf '  install -d -m 700 -o %s -g "$asb_group" "$asb_home/.ssh"\n' "$_rm_account"
+      printf '  printf '"'"'%%s\\n'"'"' %q >>"$asb_home/.ssh/authorized_keys"\n' "$key"
+      printf '  chown %s:"$asb_group" "$asb_home/.ssh/authorized_keys"\n' "$_rm_account"
+      printf '  chmod 600 "$asb_home/.ssh/authorized_keys"\n'
+    fi
+    printf 'fi\n'
+  fi
+  printf '\necho "admin.sh: done; now, where asb runs: %s --setup-remote %s"\n' "$invoked" "$alias"
 }
 
 # _as_gpu_devices_line GLOB VALUE -- one `[gpu] devices = NODE ...` line (#335) into the
@@ -9289,6 +9892,7 @@ agent_sandbox() (
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
+  local _setup_remote="" # --setup-remote ALIAS (#344)
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
   local _do_list="" _list_word=""
@@ -9456,6 +10060,15 @@ agent_sandbox() (
         }
         _apply_words=("$@")
         shift $#
+        ;;
+      --setup-remote)
+        # --setup-remote ALIAS (#344): the word after it is its own, and nothing follows.
+        [[ $# -eq 2 && -n "$2" && "$2" != -* ]] || {
+          _as_msg "--setup-remote takes one name, a [remote:ALIAS] section of this project's .agent-sandbox, and nothing after it: --setup-remote ALIAS"
+          return 2
+        }
+        _setup_remote="$2"
+        shift 2
         ;;
       --init)
         # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
@@ -9802,6 +10415,12 @@ agent_sandbox() (
       return 2
     fi
     _as_init "$_init_model" "$_init_env" ${_init_counts[@]+"${_init_counts[@]}"}
+    return $?
+  fi
+  # ---- --setup-remote ALIAS: the preflight of a [remote:ALIAS] host (#344) ----
+  # Profile-independent; host only; runs nothing with sudo, ever.
+  if [[ -n "$_setup_remote" ]]; then
+    _as_setup_remote "$(pwd -P)" "$_setup_remote"
     return $?
   fi
   # ---- --apply: add lines to the current project's .agent-sandbox, then --trust's review ----
