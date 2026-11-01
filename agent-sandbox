@@ -9028,8 +9028,15 @@ _as_launch_pasta() {
   # there, not here. $sshrules (built on the host from --ssh, already resolved to
   # IPs, and the replies on ports published at an address) is spliced into the
   # chain after the proxy rule.
+  # The namespace keeps the host's name: a 2026 passt (git20260120, Ubuntu 26.04) names
+  # the namespace it makes `pasta-<host>` unless told otherwise with --hostname, while
+  # the 2024 one (git20240220, 24.04) has no such option and leaves the name alone
+  # (measured 2026-11-01). A tool inside that records the host's name would otherwise
+  # record pasta-<host>.
+  local -a hopts=()
+  pasta --help 2>&1 | grep -q -- '--hostname' && hopts=(--hostname "$(uname -n)")
   # shellcheck disable=SC2016
-  _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none "${topts[@]}" -u none -- bash -c '
+  _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none "${topts[@]}" -u none ${hopts[@]+"${hopts[@]}"} -- bash -c '
     nftbin=$1 sshrules=$2 sd=$3 bpf=$4 pport=$5
     shift 5
     # The per-session proxy token, from the file the proxy addon reads too: not on

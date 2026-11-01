@@ -17,6 +17,13 @@ setup() {
   cat >"$H/bin/pasta" <<'S'
 #!/usr/bin/env bash
 set +x
+# `pasta --help`: the engine reads it for --hostname, which a 2026 passt has
+# (PASTA_HELP_HOSTNAME=1 says this stub does) and a 2024 one does not.
+if [ "$1" = --help ]; then
+  echo "Usage: pasta [OPTION]... [COMMAND] [ARGS]..."
+  [ -n "${PASTA_HELP_HOSTNAME:-}" ] && echo "  -H, --hostname NAME 	Hostname to configure client with"
+  exit 0
+fi
 if [ -n "${PASTA_DUMP:-}" ]; then
   : >"$PASTA_DUMP"
   for a in "$@"; do printf '%s\n' "$a" >>"$PASTA_DUMP"; done
@@ -367,4 +374,19 @@ STUB
     -- asb --agent-port 8000 --agent-port 0.0.0.0:2222 --agent-port 192.168.7.9:2223 claude --version
   [ "$status" -eq 0 ]
   grep -qF "ports published to the host: 8000 at the host's 127.0.0.1; 2222 at every address of the host, reachable from the network; 2223 at the host's 192.168.7.9, reachable from wherever that address is." "$H/copied/briefing/briefing.md"
+}
+
+@test "strict: a pasta that knows --hostname is told the host's name, so the namespace is not renamed pasta-<host> as a 2026 passt does by default" {
+  run_engine PASTA_DUMP="$H/pasta_argv" PASTA_HELP_HOSTNAME=1 AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  local -a P
+  mapfile -t P <"$H/pasta_argv"
+  local joined=" ${P[*]} "
+  [[ "$joined" == *" --hostname $(uname -n) -- "* ]]
+}
+
+@test "strict: a pasta without --hostname (the 2024 passt) is given no such option" {
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qx -- --hostname "$H/pasta_argv"
 }

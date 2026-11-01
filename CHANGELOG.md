@@ -701,6 +701,12 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A strict sandbox keeps the host's name on a 2026 passt.** passt as of git20260120
+  (Ubuntu 26.04) names the namespace it makes `pasta-<host>` unless told otherwise, so
+  `hostname` inside said `pasta-ey`, and a tool there that records the host's name
+  recorded that; the 2024 passt (24.04) left the name alone. The engine now passes
+  `--hostname` with the host's name to a pasta whose `--help` lists the option
+  (measured 2026-11-01 on both; found at #335's live step).
 - **A tool's own telemetry stopped a session** (#304): gh sends usage telemetry to
   `cafe.github.com`, which the proxy refused, and the refusal hook reported it beside an
   ordinary `gh` call that had succeeded; the session stopped to ask for the host. The
