@@ -215,6 +215,23 @@ other_agent() { # a second claude, as an update or another install would give
   release_bg
 }
 
+@test "an agent port's address is in the keeper's policy: a join naming the port with another address is refused, the same token joins (#335)" {
+  engine_bg -- asb --agent-port 0.0.0.0:2222 --agent-port 8000 claude --version
+  grep -qx $'+agent-port\t0.0.0.0:2222\t--agent-port' "$SBOX/keeper/policy"
+  grep -qx $'+agent-port\t8000\t--agent-port' "$SBOX/keeper/policy"
+  run_engine -- asb --agent-port 0.0.0.0:2222 claude --version
+  [ "$status" -eq 0 ]
+  run_engine -- asb --agent-port 127.0.0.1:8000 claude --version # the bare port's other spelling
+  [ "$status" -eq 0 ]
+  run_engine -- asb --agent-port 2222 claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--agent-port/AGENT_SANDBOX_AGENT_PORTS 2222 is not part of its policy (agent-port: 0.0.0.0:2222, 8000)"* ]]
+  run_engine AGENT_SANDBOX_AGENT_PORTS=192.168.1.153:2222 -- asb claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"192.168.1.153:2222 is not part of its policy"* ]]
+  release_bg
+}
+
 @test "the policy a join is checked against is the keeper's own record of it" {
   engine_bg -- asb --preset isolated claude --version
   grep -qx $'preset\tisolated\t--preset' "$SBOX/keeper/policy"

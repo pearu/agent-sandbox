@@ -194,7 +194,10 @@ Sections:
   mode, where pasta's port forwarding is off in both directions,
   `host-port = PORT` lets the sandbox reach the host's `127.0.0.1:PORT` and
   `agent-port = PORT` publishes a port the agent listens on at the host's
-  `127.0.0.1:PORT`. Each may repeat; TCP; 1024–65535; `none` closes that
+  `127.0.0.1:PORT`; `agent-port = ADDR:PORT` publishes it at ADDR instead, an IPv4
+  address of the host or `0.0.0.0` for every one (#335), reachable from the network
+  -- the review says so, per token, and the host's firewall is yours; one address per
+  port, no IPv6 yet. Each may repeat; TCP; 1024–65535; `none` closes that
   direction for the session. They join the `--host-port`/`--agent-port` flags
   and the `AGENT_SANDBOX_HOST_PORTS` / `AGENT_SANDBOX_AGENT_PORTS` knobs as a
   union, and are noted and ignored in the other modes. See

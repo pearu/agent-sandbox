@@ -238,7 +238,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[net] hosts` | `public`: every public host, the allowlist not applying to the role -- localhost, the LAN and `[deny]` stay refused (allowlist) ([network.md](docs/network.md)) |
 | — | — | `[net] retrieve-only` | `on`: GET and HEAD only (a GraphQL query, not a mutation; git's fetch where `[net] git` allows it, not a push), but to the profile's own hosts -- read, publish nothing (off) ([network.md](docs/network.md)) |
 | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS` | `[net] host-port` | `strict` only: host loopback ports the sandbox may reach, space-separated in the variable; `none` closes the direction (none) ([network.md](docs/network.md)) |
-| `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback; `none` closes the direction (none) ([network.md](docs/network.md)) |
+| `--agent-port [ADDR:]PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback, or at ADDR (an IPv4 address of the host, `0.0.0.0` = every one: reachable from the network); `none` closes the direction (none) ([network.md](docs/network.md)) |
 | — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |
 | — | `AGENT_SANDBOX_CONDA_WRITE` | `[conda] write` | `1` makes the active conda env writable; its base install and other envs stay read-only (read-only) |
 | — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | the sandbox-owned package cache conda downloads into, persistent; a relative path is the project's, like `[conda] prefix` (`~/.cache/agent-sandbox/conda-pkgs`) |

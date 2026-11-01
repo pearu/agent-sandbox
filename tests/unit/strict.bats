@@ -316,3 +316,55 @@ S
   [ "$status" -eq 2 ]
   [[ "$output" == *"AGENT_SANDBOX_PROXY_PORT=x: expected a port, 1024-65535"* ]]
 }
+
+@test "strict: --agent-port ADDR:PORT publishes at that address, one pasta -t per address; the chain lets out replies on those ports only; said per port (#335)" {
+  # an nft that keeps the ruleset it is given
+  printf '#!/usr/bin/env bash\ncat >"%s/nft.rules"\n' "$H" >"$H/bin/nft"
+  printf '[net]\nagent-port = 0.0.0.0:2222\n' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    AGENT_SANDBOX_AGENT_PORTS="192.168.7.9:4000" -- asb --agent-port 8000 --agent-port 127.0.0.1:3000 --agent-port 0.0.0.0:2223 claude --version
+  [ "$status" -eq 0 ]
+  mapfile -t P <"$H/pasta_argv"
+  [[ " ${P[*]} " == *" -t 127.0.0.1/8000,3000 -t 0.0.0.0/2223,2222 -t 192.168.7.9/4000 -u none "* ]]
+  [[ "$output" == *"agent ports published at the host's 127.0.0.1: 8000 3000"* ]]
+  [[ "$output" == *"strict: agent port 2222 published at 0.0.0.0:2222 -- every address of this host, reachable from the network (the host's firewall is yours)"* ]]
+  [[ "$output" == *"strict: agent port 2223 published at 0.0.0.0:2223 -- every address of this host"* ]]
+  [[ "$output" == *"strict: agent port 4000 published at 192.168.7.9:4000 -- that address of this host, reachable from wherever it is (the host's firewall is yours)"* ]]
+  # replies on the ports published at an address, and only what is established on them
+  grep -qx '  tcp sport { 2223, 4000, 2222 } ct state established accept' "$H/nft.rules"
+  [ "$(grep -c 'sport' "$H/nft.rules")" -eq 1 ]
+  # bare ports only: the chain and the -t spec are today's
+  printf '[net]\nagent-port = 8000\n' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine PASTA_DUMP="$H/pasta_argv" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    -- asb --agent-port 8000 claude --version
+  [ "$status" -eq 0 ]
+  mapfile -t P <"$H/pasta_argv"
+  [[ " ${P[*]} " == *" -U none -t 127.0.0.1/8000 -u none "* ]]
+  run ! grep -q sport "$H/nft.rules"
+  [[ "$output" != *"reachable from"* ]]
+}
+
+@test "strict: the briefing names where each agent port is published, an address as reachable beyond the host (#335)" {
+  # a stub bwrap that copies the session directory out, as briefing.bats's does
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+if [ "${1:-}" = --help ]; then
+  printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'
+  exit 0
+fi
+: >"${BWRAP_DUMP:?}"
+for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+mkdir -p "$BWRAP_COPY"
+cp -r "$AGENT_SANDBOX_SESSION_BASE"/session.*/. "$BWRAP_COPY"/.. 2>/dev/null || true
+. "${0%/*}/keeper-tail"
+STUB
+  chmod +x "$H/bin/bwrap"
+  run_engine BWRAP_COPY="$H/copied/briefing" AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+    -- asb --agent-port 8000 --agent-port 0.0.0.0:2222 --agent-port 192.168.7.9:2223 claude --version
+  [ "$status" -eq 0 ]
+  grep -qF "ports published to the host: 8000 at the host's 127.0.0.1; 2222 at every address of the host, reachable from the network; 2223 at the host's 192.168.7.9, reachable from wherever that address is." "$H/copied/briefing/briefing.md"
+}

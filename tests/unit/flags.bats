@@ -363,6 +363,40 @@ STUB
   [ "$status" -eq 1 ] && [[ "$output" == *"below 1024"* ]]
 }
 
+@test "--agent-port [ADDR:]PORT: an IPv4 address or 0.0.0.0 taken, in the flag, its = form, the knob and [net]; a hostname, IPv6, a CIDR, a system port, two addresses for one port refused (#335)" {
+  run_engine -- asb --agent-port 0.0.0.0:2222 --agent-port=192.168.1.153:2223 --agent-port 127.0.0.1:2224 claude --version
+  [ "$status" -eq 0 ]
+  local t
+  for t in localhost:2222 ::1:2222 '[::1]:2222' 10.0.0.0/8:2222 192.168.1.0/24 256.1.1.1:2222 0.0.0.0:none :2222; do
+    run_engine -- asb --agent-port "$t" claude --version
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--agent-port: bad port '$t' (expected PORT, or ADDR:PORT with ADDR an IPv4 address of this host or 0.0.0.0 for every one -- not a hostname, a CIDR or IPv6, which is not taken yet; or none)"* ]]
+    [ ! -s "$H/argv" ]
+  done
+  run_engine -- asb --agent-port=example.org:2222 claude --version
+  [ "$status" -eq 2 ] && [[ "$output" == *"bad port 'example.org:2222'"* ]]
+  run_engine -- asb --agent-port 0.0.0.0:22 claude --version
+  [ "$status" -eq 2 ] && [[ "$output" == *"--agent-port 0.0.0.0:22: port 22 refused (below 1024"* ]]
+  run_engine -- asb --host-port 0.0.0.0:5432 claude --version # the other direction takes no address
+  [ "$status" -eq 2 ] && [[ "$output" == *"--host-port: bad port '0.0.0.0:5432'"* ]]
+  # one address per port, across the flag, the knob and the file
+  run_engine -- asb --agent-port 2222 --agent-port 0.0.0.0:2222 claude --version
+  [ "$status" -eq 1 ] && [[ "$output" == *"--agent-port: port 2222 is named twice, as 2222 and 0.0.0.0:2222; one address per port"* ]]
+  run_engine AGENT_SANDBOX_AGENT_PORTS="192.168.1.153:2222" -- asb --agent-port 0.0.0.0:2222 claude --version
+  [ "$status" -eq 1 ] && [[ "$output" == *"port 2222 is named twice, as 0.0.0.0:2222 and 192.168.1.153:2222"* ]]
+  run_engine -- asb --agent-port 127.0.0.1:2222 --agent-port 2222 claude --version # one spelling of the same thing
+  [ "$status" -eq 0 ]
+  run_engine AGENT_SANDBOX_AGENT_PORTS="localhost:2222" -- asb claude --version
+  [ "$status" -eq 1 ] && [[ "$output" == *"bad port 'localhost:2222'"* ]]
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  printf '[net]\nagent-port = 0.0.0.0:2222\n' >"$proj/.agent-sandbox"
+  mkdir -p "$H/home/.config/agent-sandbox/trust"
+  sha256sum -- "$proj/.agent-sandbox" | cut -d' ' -f1 >"$H/home/.config/agent-sandbox/trust/$(printf '%s' "$proj" | sha256sum | cut -d' ' -f1)"
+  run_engine -- asb --agent-port 2222 claude --version
+  [ "$status" -eq 1 ] && [[ "$output" == *"port 2222 is named twice, as 2222 and 0.0.0.0:2222"* ]]
+}
+
 @test "unknown network mode is refused" {
   run_engine AGENT_SANDBOX_NET=bogus -- asb claude --version
   [ "$status" -eq 1 ]

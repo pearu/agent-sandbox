@@ -26,15 +26,37 @@ listens on appears on the host. Open exactly what a project needs:
 | | Effect | Flag | Knob | `.agent-sandbox` |
 |---|---|---|---|---|
 | host port | the sandbox reaches the host's `127.0.0.1:PORT` (a database, a local model server) | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS="PORT PORT"` | `[net]` `host-port = PORT` |
-| agent port | a port the agent listens on is published at the host's `127.0.0.1:PORT` (a dev server you open in a browser) | `--agent-port PORT` | `AGENT_SANDBOX_AGENT_PORTS="PORT"` | `[net]` `agent-port = PORT` |
+| agent port | a port the agent listens on is published at the host's `127.0.0.1:PORT` (a dev server you open in a browser), or with `ADDR:PORT` at that address of the host (a service other machines connect to) | `--agent-port [ADDR:]PORT` | `AGENT_SANDBOX_AGENT_PORTS="[ADDR:]PORT"` | `[net]` `agent-port = [ADDR:]PORT` |
 
 Rules: TCP only (UDP is not forwarded; open an issue if you need it). Ports
 1024–65535; the engine refuses a system port rather than let pasta fail to bind
 it. The three sources form a union; `none` in any
 of them closes that direction for the session, whatever the others list.
-Loopback on both sides, never the LAN. The engine prints what it opened at
-launch. In `proxy` and `open` modes the sandbox already shares the host's
-network, and `none` has no network, so the flags are noted and ignored there.
+A host port and a bare agent port are loopback on both sides, never the LAN. The
+engine prints what it opened at launch. In `proxy` and `open` modes the sandbox
+already shares the host's network, and `none` has no network, so the flags are noted
+and ignored there.
+
+An agent port with an address (#335) is published at that address instead of the
+loopback: `0.0.0.0:PORT` on every IPv4 address of the host, `192.0.2.10:PORT` on that
+one (pasta refuses an address the host does not have). It is reachable from wherever
+that address is -- the LAN, or the internet on a host with a public address -- and
+the host's firewall, or a cloud provider's, is yours to set; agent-sandbox adds none.
+So it is said loudly: at launch, per port (`strict: agent port 2222 published at
+0.0.0.0:2222 -- every address of this host, reachable from the network`), in the
+`--trust` review and `--check`, and in the briefing. One address per port: the same
+port named with two refuses the launch (`127.0.0.1:PORT` is the bare port). An IPv4
+literal or `0.0.0.0` only: a hostname, a CIDR and IPv6 are refused, IPv6 is not taken
+yet. A running role's keeper records the token with its address, so a join that names
+the port with another address is refused like any other change to its policy.
+
+Inside, the firewall lets out the replies on those ports and nothing else: a client
+on another address is answered through the namespace's own interface, not its
+loopback, which the drop policy would otherwise stop (measured), so the chain gets
+`tcp sport { PORT, ... } ct state established accept` for the ports published at an
+address. A connection the agent opens from such a port is still dropped: only a
+connection that came in is established. A bare port needs no rule; its client is the
+host's loopback, answered on the namespace's.
 
 A host port is not an allowlist entry: it is a raw TCP path to that one host
 service, which the proxy never sees. If that service forwards traffic (a SOCKS
