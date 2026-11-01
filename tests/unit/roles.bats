@@ -217,7 +217,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 @test "the review reads every role's lines, whatever role launches (#221)" {
   dotfile $'[env:impl-*]\nPINNED = yes\n[net:reviewer]\nmode = bogus\n'
   run_review
-  [[ "$output" == *"[env] PINNED = ...: a project's file only forwards"* ]]
+  [[ "$output" == *"[env:impl-*] PINNED = yes: sets PINNED inside, for the roles impl-*, under the profile sshd; ignored under claude, where a project's file only forwards"* ]]
   [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
 }
 

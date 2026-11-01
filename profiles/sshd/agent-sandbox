@@ -1,0 +1,22 @@
+# profiles/sshd/agent-sandbox -- the sshd profile's own dot-file (#335).
+#
+# The same grammar as a project's .agent-sandbox, read by the engine right after
+# profile.sh. This profile states nothing as data yet: it has no state directory of its
+# own to bind ([agent] base) -- its per-role files live in the role's store, bound
+# read-only by profile.sh -- and no host of its own to reach ([allow]): what a session
+# may reach is the project's policy alone.
+#
+# A project's .agent-sandbox for it (docs/config.md):
+#
+#   [net]
+#   mode = strict                  # required
+#   agent-port = 0.0.0.0:PORT      # exactly one; a bare PORT is the host's loopback
+#
+#   [allow]
+#   pypi.org
+#
+#   [env]
+#   TMPDIR = /path/to/project/tmp  # a project's file may set a variable under this profile
+#
+#   [sshd]
+#   authorized-keys = /path/outside/the/project/keys   # required

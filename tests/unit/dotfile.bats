@@ -175,7 +175,8 @@ trust() {
   [ "$(setenv_value MY_TOOL)" = on ]
   run ! setenv_value PINNED
   run_review
-  [[ "$output" == *"[env] PINNED = ...: a project's file only forwards"* ]]
+  # claude ignores it; the sshd profile, which lets a project set a variable, sets it (#335)
+  [[ "$output" == *"[env] PINNED = yes: sets PINNED inside, for every role, under the profile sshd; ignored under claude, where a project's file only forwards"* ]]
   [[ "$output" == *"[env] -HOME: a project's file only forwards"* ]]
 }
 
