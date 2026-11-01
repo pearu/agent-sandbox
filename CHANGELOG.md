@@ -68,8 +68,9 @@ names are gone; there are no aliases for removed names before 1.0.
   `.asb/remote/<alias>/admin.sh` with only what was measured missing -- the packages,
   install.sh's AppArmor profiles where the restriction blocks bwrap or pasta, Ubuntu's
   bubblewrap rebuild below 0.12.0 (install.sh carried inside it), the named account with
-  your public key -- and the command prints how to run it and exits 1; asb never runs it,
-  nor sudo. Refused inside a sandbox, without the section, for an unusable section, and
+  your public key -- and the command copies it to `~/asb-admin-<alias>.sh` in your home
+  on the host, prints the one line that runs it (`ssh -t HOST sudo bash
+  asb-admin-<alias>.sh`) and exits 1; asb never runs it, nor sudo. Refused inside a sandbox, without the section, for an unusable section, and
   while the file is not approved. `install.sh` records the checkout it ran from in
   `install.manifest`, where the command takes install.sh and the profile texts from.
 - **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its

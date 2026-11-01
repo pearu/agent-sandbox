@@ -24,6 +24,12 @@ if [[ "$1" == -G ]]; then
   printf 'hostname %s.example.org\nuser %s\nport 2223\nidentityfile ~/.ssh/id_rsa\nidentityfile ~/.ssh/id_ed25519\n' "$s" "$u"
   exit 0
 fi
+if [[ "$*" == *"umask 077; cat >"* ]]; then
+  # the copy of the admin's script into the user's home there
+  [[ -n "${COPY_FAIL:-}" ]] && exit 255
+  cat >"$PROBE_H/copied.sh"
+  exit 0
+fi
 printf '%s\n' "$@" >"$PROBE_H/ssh.argv"
 cat >"$PROBE_H/probe.sh"
 [[ -n "${PROBE_FAIL:-}" ]] && { echo "ssh: connect to host x port 22: Connection refused" >&2; exit 255; }
@@ -197,9 +203,9 @@ p='agent-sandbox: remote r1:'
   [[ "$output" == *"$p pasta missing (package passt)"* ]]
   [[ "$output" == *"$p bwrap's namespaces not measured (bwrap missing; apparmor_restrict_unprivileged_userns=1, no profile for bwrap)"* ]]
   [[ "$output" == *"$p the admin's script carries install.sh's AppArmor profiles from $ENGDIR (the engine's own checkout)"* ]]
-  [[ "$output" == *"$p root is needed there once: the admin's script is .asb/remote/r1/admin.sh ($ADMIN); asb never runs it, so read it, then run it:"* ]]
-  [[ "$output" == *"$p   scp .asb/remote/r1/admin.sh qgpu3:asb-admin-r1.sh && ssh -t qgpu3 sudo bash asb-admin-r1.sh    (sudo asks for your password there, so it runs at a terminal)"* ]]
-  [[ "$output" == *"$p then agent-sandbox --setup-remote r1 again: it measures again and goes on from there" ]]
+  [[ "$output" == *"$p qgpu3 needs root once: ~/asb-admin-r1.sh there does it. Read it, then run:"$'\n'"$p   ssh -t qgpu3 sudo bash asb-admin-r1.sh"$'\n'* ]]
+  cmp -s "$ADMIN" "$H/copied.sh" # the copy there is the script here, byte for byte
+  [[ "$output" == *"$p then: agent-sandbox --setup-remote r1" ]]
   [ "$(stat -c %a "$ADMIN")" = 600 ]
   grep -qx 'DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap passt </dev/null' "$ADMIN"
   grep -qx 'set -euo pipefail' "$ADMIN"
@@ -321,14 +327,25 @@ p='agent-sandbox: remote r1:'
   section 'account = tob'
   setup_remote
   [ "$status" -eq 1 ]
-  [[ "$output" == *"$p   ssh qgpu3 sudo bash -s < .asb/remote/r1/admin.sh"$'\n'* ]]
+  [[ "$output" == *"$p   ssh -t qgpu3 sudo bash asb-admin-r1.sh"$'\n'* ]]
   remote_host sudo=none accounts=
   setup_remote
-  [[ "$output" == *"$p   ssh root@qgpu3 bash -s < .asb/remote/r1/admin.sh    (you have no sudo there: the host's admin runs it as root)"* ]]
+  [[ "$output" == *"$p qgpu3 needs root once, and you have no sudo there: the host's admin runs the script (~/asb-admin-r1.sh there, or .asb/remote/r1/admin.sh here):"$'\n'"$p   ssh root@qgpu3 bash -s < .asb/remote/r1/admin.sh"$'\n'* ]]
   remote_host sudo=root uid=0 user=root accounts=
   setup_remote
   [[ "$output" == *"$p logged in as root (root; asb never uses it)"* ]]
-  [[ "$output" == *"$p   ssh qgpu3 bash -s < .asb/remote/r1/admin.sh"$'\n'* ]]
+  [[ "$output" == *"$p   ssh -t qgpu3 bash asb-admin-r1.sh"$'\n'* ]]
+}
+
+@test "--setup-remote: a copy of the admin's script that fails is said, with the scp to do it by hand, and the run line still (#344)" {
+  remote_host bwrap=missing pasta=missing profiles=
+  section 'account = tob'
+  rm -f "$H/copied.sh"
+  setup_remote COPY_FAIL=1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p qgpu3 needs root once: .asb/remote/r1/admin.sh does it, but the copy to qgpu3 failed (ssh exit 255). Copy it yourself (scp .asb/remote/r1/admin.sh qgpu3:asb-admin-r1.sh), read it there, then run:"$'\n'"$p   ssh -t qgpu3 sudo bash asb-admin-r1.sh"$'\n'* ]]
+  [ ! -e "$H/copied.sh" ]
+  [ -s "$ADMIN" ]
 }
 
 @test "--setup-remote: root as the ssh user with no account named is not ready, and no admin's script fixes it (#344)" {
