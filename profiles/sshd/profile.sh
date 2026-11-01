@@ -109,9 +109,8 @@ profile_prepare() {
     _as_msg "profile sshd needs exactly one agent port, the one sshd listens on (--agent-port [ADDR:]PORT, AGENT_SANDBOX_AGENT_PORTS or [net] agent-port); this launch has ${#_agent_ports[@]}${_agent_ports[*]:+: ${_agent_ports[*]}}. Refusing to launch"
     return 1
   fi
-  local tok="${_agent_ports[0]}" port addr=127.0.0.1 ak sshd keygen sftp="" c dir out
+  local tok="${_agent_ports[0]}" port ak sshd keygen sftp="" c dir out
   port="${tok##*:}"
-  [[ "$tok" == *:* ]] && addr="${tok%:*}"
   ak="$(_sshd_authorized_keys)" || return 1
   sshd="$(_sshd_find sshd /usr/sbin /sbin /usr/local/sbin)" || {
     _as_msg "profile sshd: no sshd on PATH or in /usr/sbin, /sbin (Debian/Ubuntu: sudo apt install openssh-server). Refusing to launch"
@@ -152,7 +151,11 @@ profile_prepare() {
     printf '# The sshd profile'"'"'s configuration for role %s, written at every launch (#335).\n' "${_role:-default}"
     printf '# Inside the sandbox its agent (sshd-agent.sh) puts the SetEnv line before it.\n'
     printf 'Port %s\n' "$port"
-    printf 'ListenAddress %s\n' "$addr"
+    # Every address of the namespace, whatever the token's: a 2026 passt (git20260120,
+    # Ubuntu 26.04) delivers a connection from the host's loopback to the namespace's own
+    # address, not to its 127.0.0.1, where a 2024 passt (24.04) delivered it (measured on
+    # both). The namespace is private: only the published port is reachable from outside.
+    printf 'ListenAddress 0.0.0.0\n'
     printf 'HostKey %s\n' "$(_sshd_q "$dir/ssh_host_ed25519_key")"
     printf 'AuthorizedKeysFile %s\n' "$(_sshd_q "$dir/authorized_keys")"
     printf 'PidFile none\n'

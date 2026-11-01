@@ -201,7 +201,10 @@ that has not exactly one agent port, or whose `[sshd] authorized-keys` is missin
 relative or unreadable; it keeps the role's host key (ed25519, made once), copies the
 keys file, writes `/etc/group` without the `tty` line (a pty's `chown` to gid 5 fails in
 the user namespace; without the group sshd uses the user's own) and the configuration:
-`Port` and `ListenAddress` from the agent-port token (`127.0.0.1` for a bare port),
+`Port` from the agent-port token and `ListenAddress 0.0.0.0`, every address of the
+namespace whatever the token's (a 2026 passt delivers a connection from the host's
+loopback to the namespace's own address, not to its `127.0.0.1`, measured on Ubuntu
+26.04; the namespace is private, so only the published port is reachable),
 `HostKey`, `AuthorizedKeysFile` (the copy), `PidFile none`, `UsePAM no`,
 `PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
 `PermitUserEnvironment no`, `PermitUserRC no`, `DisableForwarding yes`,

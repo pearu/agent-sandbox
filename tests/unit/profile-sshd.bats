@@ -122,7 +122,7 @@ sshd_launch() {
     AGENT_SANDBOX_PROXY_PORT="$PORT" AGENT_SANDBOX_SESSION_BASE= ${envs[@]+"${envs[@]}"} -- asb --profile sshd "$@"
 }
 
-@test "sshd: the generated configuration, line by line; Port and ListenAddress from --agent-port; the keys copied; the group file without tty; bound read-only" {
+@test "sshd: the generated configuration, line by line; Port from --agent-port, ListenAddress 0.0.0.0; the keys copied; the group file without tty; bound read-only" {
   policy
   sshd_launch -- --agent-port 40123
   [ "$status" -eq 0 ]
@@ -138,7 +138,7 @@ sshd_launch() {
   done
   cat >"$H/cfg.want" <<EOF
 Port 40123
-ListenAddress 127.0.0.1
+ListenAddress 0.0.0.0
 HostKey "$d/ssh_host_ed25519_key"
 AuthorizedKeysFile "$d/authorized_keys"
 PidFile none
@@ -174,7 +174,7 @@ EOF
   [ "${#JOINV[@]}" -eq 1 ]
 }
 
-@test "sshd: Port and ListenAddress from AGENT_SANDBOX_AGENT_PORTS and from [net] agent-port; the host key is kept across launches" {
+@test "sshd: Port from AGENT_SANDBOX_AGENT_PORTS and from [net] agent-port, ListenAddress 0.0.0.0 whatever the token's address; the host key is kept across launches" {
   policy
   sshd_launch AGENT_SANDBOX_AGENT_PORTS=0.0.0.0:40124 --
   [ "$status" -eq 0 ]
@@ -189,7 +189,7 @@ EOF
   sshd_launch --
   [ "$status" -eq 0 ]
   grep -qx 'Port 40125' "$cfg"
-  grep -qx 'ListenAddress 192.168.7.7' "$cfg"
+  grep -qx 'ListenAddress 0.0.0.0' "$cfg" # not the token's 192.168.7.7
   [ "$(cat "$(role_dir)/sshd/ssh_host_ed25519_key")" = "$key1" ]
 }
 
@@ -406,7 +406,7 @@ b" PATH=/usr/bin:/bin bash -c '
   local want
   # shellcheck disable=SC2016 # literal values
   for want in "setenv A=one two" 'setenv B=x"y' 'setenv C=back\slash' 'setenv D=#hash' "setenv E=it's" 'setenv F=$HOME' "setenv G=" \
-    "setenv PATH=/usr/bin:/bin" "port 40123" "listenaddress 127.0.0.1:40123" "permituserenvironment no" "disableforwarding yes"; do
+    "setenv PATH=/usr/bin:/bin" "port 40123" "listenaddress 0.0.0.0:40123" "permituserenvironment no" "disableforwarding yes"; do
     printf '%s\n' "$output" | grep -qixF -- "$want" || {
       echo "missing: $want"
       false
