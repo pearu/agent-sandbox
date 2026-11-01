@@ -643,10 +643,13 @@ which roles of the project have a session to resume, with a one-line summary eac
   the verdict. With everything present and working and the account there (or the ssh
   user itself, not root), the host is ready, and the command exits 0. Otherwise root is
   needed there once, and asb never runs sudo: it writes the admin's script to
-  `.asb/remote/<alias>/admin.sh` (mode 0600; `.asb/remote/` gets a `.gitignore`), prints
-  how to run it -- `ssh HOST sudo bash -s < .asb/remote/<alias>/admin.sh` with sudo
-  that needs no password, `scp` then `ssh -t HOST sudo bash ...` when sudo asks for one,
-  as root (`ssh root@HOST bash -s < ...`) when you have none -- and exits 1. The script,
+  `.asb/remote/<alias>/admin.sh` (mode 0600; `.asb/remote/` gets a `.gitignore`), copies
+  it to `~/asb-admin-<alias>.sh` in your home on the host over the same ssh (a copy into
+  your own home there is neither root nor a change of the system), prints the one line
+  that runs it -- `ssh -t HOST sudo bash asb-admin-<alias>.sh`; `ssh -t HOST bash ...`
+  when you are root there; `ssh root@HOST bash -s < .asb/remote/<alias>/admin.sh` for the
+  host's admin when you have no sudo -- and exits 1; a copy that fails is said, with the
+  `scp` to do it yourself. The script,
   every item explained above it, does only what was measured missing: the packages for
   the host's family (apt-get, dnf, pacman, zypper: `bubblewrap passt nftables
   openssh-server`, pacman's `openssh`); install.sh's AppArmor profiles for bwrap and

@@ -428,9 +428,10 @@ Engine flags (before CMD):
                         review; host only. What a blocked session prints
   --setup-remote ALIAS  the preflight of the host [remote:ALIAS] names, over
                         ssh as you, read-only; where root is needed there,
-                        writes .asb/remote/ALIAS/admin.sh and says how to run
-                        it (asb never runs it, nor sudo), else says it is
-                        ready. Host only, the file approved first
+                        writes .asb/remote/ALIAS/admin.sh, copies it to your
+                        home there and says the one line that runs it (asb
+                        never runs it, nor sudo), else says it is ready. Host
+                        only, the file approved first
   --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
@@ -7369,12 +7370,15 @@ _as_setup_remote() {
   mkdir -p -- "$dir" || return 1
   [[ -e "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
   tmp="$(mktemp "$dir/.admin.sh.XXXXXX")" || return 1
-  local run root_dest="root@${_rm_host#*@}"
+  # The script goes to the ssh user's home there too, over the same ssh, so that one
+  # line runs it: sudo with a password needs a terminal, so the script cannot ride on
+  # stdin. A copy into your own home there is neither root nor a change of the system.
+  # The run line is settled first: the script's own header quotes it.
+  local there="asb-admin-$alias.sh" run copied=1 crc=0
   case "${P[sudo]:-none}" in
-    root) run="ssh $_rm_host bash -s < $rel" ;;
-    ok) run="ssh $_rm_host sudo bash -s < $rel" ;;
-    password) run="scp $rel $_rm_host:asb-admin-$alias.sh && ssh -t $_rm_host sudo bash asb-admin-$alias.sh" ;;
-    *) run="ssh $root_dest bash -s < $rel" ;;
+    root) run="ssh -t $_rm_host bash $there" ;;
+    ok | password) run="ssh -t $_rm_host sudo bash $there" ;;
+    *) run="ssh root@${_rm_host#*@} bash -s < $rel" ;;
   esac
   {
     _as_remote_admin_script
@@ -7383,14 +7387,20 @@ _as_setup_remote() {
     return 1
   }
   chmod 600 -- "$tmp" && mv -f -- "$tmp" "$dir/admin.sh" || return 1
-  _as_msg "$p root is needed there once: the admin's script is $rel ($dir/admin.sh); asb never runs it, so read it, then run it:"
-  case "${P[sudo]:-none}" in
-    password) _as_msg "$p   $run    (sudo asks for your password there, so it runs at a terminal)" ;;
-    root | ok) _as_msg "$p   $run" ;;
-    *) _as_msg "$p   $run    (you have no sudo there: the host's admin runs it as root)" ;;
-  esac
+  ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$_rm_host" "umask 077; cat >$there" <"$dir/admin.sh" 2>/dev/null || {
+    crc=$?
+    copied=0
+  }
+  if ((! copied)); then
+    _as_msg "$p $_rm_host needs root once: $rel does it, but the copy to $_rm_host failed (ssh exit $crc). Copy it yourself (scp $rel $_rm_host:$there), read it there, then run:"
+  elif [[ "${P[sudo]:-none}" == none ]]; then
+    _as_msg "$p $_rm_host needs root once, and you have no sudo there: the host's admin runs the script (~/$there there, or $rel here):"
+  else
+    _as_msg "$p $_rm_host needs root once: ~/$there there does it. Read it, then run:"
+  fi
+  _as_msg "$p   $run"
   for x in ${byhand[@]+"${byhand[@]}"}; do _as_msg "$p by hand (the script says so too): $x"; done
-  _as_msg "$p then $invoked --setup-remote $alias again: it measures again and goes on from there"
+  _as_msg "$p then: $invoked --setup-remote $alias"
   return 1
 }
 
@@ -7412,7 +7422,7 @@ _as_remote_admin_script() {
   for x in ${byhand[@]+"${byhand[@]}"}; do printf '#   - BY HAND: %s\n' "$x"; done
   printf '# asb never runs it, and never runs sudo. Run it yourself, or have the host'"'"'s admin run it:\n'
   printf '#   %s\n' "$run"
-  printf '# then `%s --setup-remote %s` again: it measures again and goes on from there.\n' "$invoked" "$alias"
+  printf '# then: %s --setup-remote %s\n' "$invoked" "$alias"
   if [[ -n "$co" ]]; then
     x=""
     ((prof_bwrap || prof_pasta)) && x="The AppArmor profiles"
