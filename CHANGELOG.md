@@ -73,6 +73,28 @@ names are gone; there are no aliases for removed names before 1.0.
   asb-admin-<alias>.sh`) and exits 1; asb never runs it, nor sudo. Refused inside a sandbox, without the section, for an unusable section, and
   while the file is not approved. `install.sh` records the checkout it ran from in
   `install.manifest`, where the command takes install.sh and the profile texts from.
+- **`asb --setup-remote <alias>`, the account's part and its update** (#344, step 3 of
+  its plan). After a ready preflight, as the account (`ssh -l ACCOUNT HOST`, BatchMode,
+  never sudo): the checkout, as a `git archive` of its HEAD, and your micromamba are
+  carried into the account's install and `install.sh` runs there when that install is
+  of another commit (the remote needs neither git nor curl); the login's policy is
+  generated from the section into the scratch (strict, the port, `[allow]`, `[gpu]
+  devices`, `[env]`, and `[sshd] authorized-keys` naming a keys file outside it with
+  the public half of `~/.ssh/asb-<alias>`, a key made once here), approved there and the
+  login launched in the background. Here: its host key into `~/.ssh/known_hosts` under
+  `[HostName]:PORT`, the alias `<alias>` in a marked block of `~/.ssh/config` (appended,
+  rewritten in place on every run, the file backed up once; `ProxyJump HOST` for a bare
+  port), and the checks through it -- the account inside the sandbox, an allowed host
+  2xx/3xx, `example.com` 403, no direct connection, exactly the section's cards -- whose
+  failure is the exit status. A re-run is the update: the diff of a changed policy and a
+  relaunch, a launch after a reboot, or `up to date`. It ends with the `--apply
+  '[ssh:ROLE]' <alias>` line when no `[ssh]` line names the remote, and the line to run
+  after a reboot. `host` equal to the section's name, and a scratch that is `/`, the
+  account's home or has a `..` component, are refused. `asb --apply '[remote:<alias>]'
+  LINE...` adds to the section and ends with `then: asb --setup-remote <alias>`.
+  `install.sh` needs curl only when micromamba is not already in place. The preflight
+  says `pasta ok (its build names no version)` for Ubuntu 24.04's `pasta unknown
+  version`, and no longer notes a pasta without `--hostname`.
 - **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its
   plan): the policy line by line, the recipe on a shared host (a dedicated ordinary
   account, `install.sh` as it, the launch in the background) and on a cloud instance,

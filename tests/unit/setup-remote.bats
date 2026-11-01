@@ -1,8 +1,11 @@
 #!/usr/bin/env bats
-# `asb --setup-remote ALIAS` (#344, step 2): the refusals, the preflight of the host a
-# [remote:ALIAS] section names, the report, and the verdict -- ready, or the admin's
-# script. A stub `ssh` runs the probe it is fed on stdin locally, in a throwaway root
-# (remote_host) whose stub tools and files shape every answer. Nothing runs sudo.
+# `asb --setup-remote ALIAS` (#344, steps 2 and 3): the refusals, the preflight of the
+# host a [remote:ALIAS] section names, the report, and the verdict -- the admin's script,
+# or the account's part and the local side. A stub `ssh` runs the probe it is fed on
+# stdin locally, in a throwaway root (remote_host) whose stub tools and files shape every
+# answer; with `-l ACCOUNT` it plays the account's side in a fake home there
+# ($R/home/ACCOUNT, with a stub install.sh and a stub asb), and for the alias it plays
+# the login (a stub id, curl and nvidia-smi, AGENT_SANDBOX=1). Nothing runs sudo.
 
 # shellcheck disable=SC2016 # the admin's script's lines are matched as written, $ included
 setup() {
@@ -13,24 +16,68 @@ setup() {
   ADMIN="$PROJ/.asb/remote/r1/admin.sh"
   ENGDIR="$(dirname -- "$(readlink -f -- "$ENGINE")")" # the engine's own checkout
   # The stub ssh: `-G` resolves a spec as ssh would (user@ pins the user; else tester),
-  # with two IdentityFiles; anything else is the preflight, whose argv goes to
+  # with two IdentityFiles -- an alias of ~/.ssh/config (the block the account's part
+  # writes) by the real ssh reading that file. The copy of the admin's script goes to
+  # $H/copied.sh. With -l ACCOUNT, the account's side: the command runs in
+  # $R/home/ACCOUNT, its argv to $H/acct.argv, its command to $H/acct.cmds; after a carry
+  # the stub install.sh replaces the carried one. To the alias r1 (or ALIAS_NAME): the
+  # login, its script to $H/check.sh. Anything else is the preflight, whose argv goes to
   # $H/ssh.argv and whose stdin, the probe, to $H/probe.sh, then runs in $R.
   cat >"$H/bin/ssh" <<'X'
 #!/usr/bin/env bash
 set +x
 if [[ "$1" == -G ]]; then
   s="$2" u=tester
+  if [[ -f "$HOME/.ssh/config" ]] && grep -qx "Host $s" "$HOME/.ssh/config"; then
+    exec /usr/bin/ssh -G -F "$HOME/.ssh/config" "$s"
+  fi
   [[ "$s" == *@* ]] && u="${s%@*}" s="${s#*@}"
   printf 'hostname %s.example.org\nuser %s\nport 2223\nidentityfile ~/.ssh/id_rsa\nidentityfile ~/.ssh/id_ed25519\n' "$s" "$u"
   exit 0
 fi
-if [[ "$*" == *"umask 077; cat >"* ]]; then
+orig=("$@")
+acct=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) shift 2 ;;
+    -l) acct="$2" && shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+dest="$1"
+shift
+cmd="$*"
+if [[ "$cmd" == *"umask 077; cat >"* ]]; then
   # the copy of the admin's script into the user's home there
   [[ -n "${COPY_FAIL:-}" ]] && exit 255
   cat >"$PROBE_H/copied.sh"
   exit 0
 fi
-printf '%s\n' "$@" >"$PROBE_H/ssh.argv"
+if [[ -n "$acct" ]]; then
+  AH="$PROBE_R/home/$acct"
+  mkdir -p "$AH"
+  printf '%s\n' "${orig[@]}" >"$PROBE_H/acct.argv"
+  printf '%s\n' "$cmd" >>"$PROBE_H/acct.cmds"
+  [[ -n "${ACCT_FAIL:-}" ]] && { echo "tob@qgpu3: Permission denied (publickey)." >&2; exit 255; }
+  env -i HOME="$AH" PATH="$PROBE_H/acct-bin:/usr/bin:/bin" PROBE_H="$PROBE_H" INSTALL_RC="${INSTALL_RC:-0}" /bin/bash -c "$cmd"
+  rc=$?
+  if [[ "$cmd" == *"tar -xf"* && -f "$AH/.local/share/agent-sandbox/src/install.sh" ]]; then
+    cp "$PROBE_H/stub-install.sh" "$AH/.local/share/agent-sandbox/src/install.sh"
+    echo carry >>"$PROBE_H/acct.log"
+  fi
+  exit "$rc"
+fi
+if [[ "$dest" == "${ALIAS_NAME:-r1}" ]]; then
+  printf '%s\n' "${orig[@]}" >"$PROBE_H/login.argv"
+  cat >"$PROBE_H/check.sh"
+  # the login is the User the alias names
+  u="$(/usr/bin/ssh -G -F "$HOME/.ssh/config" "$dest" | awk '$1 == "user" {print $2}')"
+  exec env -i HOME=/nonexistent PATH="$PROBE_H/login-bin:/usr/bin:/bin" AGENT_SANDBOX=1 \
+    LOGIN_USER="${LOGIN_USER:-$u}" DIRECT_OPEN="${DIRECT_OPEN:-}" LOGIN_GPUS="${LOGIN_GPUS:-GPU-1}" \
+    /bin/bash -s <"$PROBE_H/check.sh"
+fi
+printf '%s\n' "${orig[@]}" >"$PROBE_H/ssh.argv"
 cat >"$PROBE_H/probe.sh"
 [[ -n "${PROBE_FAIL:-}" ]] && { echo "ssh: connect to host x port 22: Connection refused" >&2; exit 255; }
 exec env -i PATH="$PROBE_R/usr/bin:$PROBE_R/bin" HOME="$PROBE_R/home/tester" \
@@ -38,6 +85,75 @@ exec env -i PATH="$PROBE_R/usr/bin:$PROBE_R/bin" HOME="$PROBE_R/home/tester" \
 X
   printf '#!/usr/bin/env bash\nexit 1\n' >"$H/bin/ssh-add"
   chmod +x "$H/bin/ssh" "$H/bin/ssh-add"
+  # The account's side: install.sh records its run and installs the stub asb, which
+  # records each call, approves (a copy of the file approved), launches (a marker, and
+  # the role's host key made once where the sshd profile keeps it), and says --status.
+  mkdir -p "$H/acct-bin" "$H/login-bin"
+  cat >"$H/stub-install.sh" <<'X'
+#!/bin/bash
+echo "install.sh $*" >>"$PROBE_H/install.calls"
+mkdir -p "$HOME/.local/bin" "$HOME/.local/share/agent-sandbox/app"
+cp "$PROBE_H/stub-asb" "$HOME/.local/bin/asb" && chmod +x "$HOME/.local/bin/asb"
+: >"$HOME/.local/share/agent-sandbox/app/agent-sandbox"
+if [[ "${INSTALL_RC:-0}" != 0 ]]; then
+  echo "==> The proxy's environment"
+  echo "    [err] micromamba create failed"
+fi
+exit "${INSTALL_RC:-0}"
+X
+  cat >"$H/stub-asb" <<'X'
+#!/bin/bash
+echo "$(pwd -P): asb $*" >>"$PROBE_H/asb.calls"
+role="" verb=launch
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --role) role="$2" && shift 2 ;;
+    --trust | --status | --shutdown) verb="${1#--}" && shift ;;
+    *) shift ;;
+  esac
+done
+m="$HOME/.running-$role"
+case "$verb" in
+  trust)
+    read -r a
+    echo "trust answered $a" >>"$PROBE_H/asb.calls"
+    cp .agent-sandbox "$HOME/.approved"
+    ;;
+  status)
+    if [[ -e "$m" ]]; then
+      printf "role '%s' of %s: running since now (supervisor pid 1)\n  processes:\n         7  /usr/sbin/sshd -D -e -f /tmp/x/sshd_config\n" "$role" "$PWD"
+    else
+      printf "role '%s' of %s: not running\n" "$role" "$PWD"
+    fi
+    ;;
+  shutdown) rm -f "$m" ;;
+  launch)
+    cmp -s .agent-sandbox "$HOME/.approved" || { echo "not approved" >&2 && exit 1; }
+    slug="$(pwd -P)"
+    d="$HOME/.local/state/agent-sandbox/sshd/${slug//[^A-Za-z0-9-]/-}/$role/sshd"
+    mkdir -p "$d"
+    [[ -f "$d/ssh_host_ed25519_key" ]] || ssh-keygen -q -t ed25519 -N '' -C "agent-sandbox sshd, role $role" -f "$d/ssh_host_ed25519_key" </dev/null
+    : >"$m"
+    ;;
+esac
+X
+  # the account's nvidia-smi -q, as a 615 driver writes it (the lines it is read for)
+  cat >"$H/acct-bin/nvidia-smi" <<'X'
+#!/bin/bash
+printf 'GPU 00000000:01:00.0\n    GPU UUID                  : GPU-0\n    Minor Number              : 0\n'
+printf 'GPU 00000000:21:00.0\n    GPU UUID                  : GPU-1\n    Minor Number              : 1\n'
+X
+  printf '#!/bin/bash\n[[ "$1" == -un ]] && echo "$LOGIN_USER" || echo "uid=1001($LOGIN_USER)"\n' >"$H/login-bin/id"
+  cat >"$H/login-bin/curl" <<'X'
+#!/bin/bash
+case "$*" in
+  *--noproxy*) [[ -n "$DIRECT_OPEN" ]] && exit 0 || exit 7 ;;
+  *example.com*) printf '000 403' && exit 56 ;;
+  *) printf '200' ;;
+esac
+X
+  printf '#!/bin/bash\nfor g in $LOGIN_GPUS; do echo "$g"; done\n' >"$H/login-bin/nvidia-smi"
+  chmod +x "$H/stub-install.sh" "$H/stub-asb" "$H/acct-bin/"* "$H/login-bin/"*
 }
 
 # stub NAME BODY -- an executable $R/usr/bin/NAME running BODY (bash).
@@ -89,7 +205,7 @@ remote_host() {
 # section [LINE...] -- [remote:r1] with host, port and the LINEs; approved unless NOAPPROVE.
 section() {
   {
-    printf '[remote:r1]\nhost = qgpu3\nport = 0.0.0.0:2222\n'
+    printf '[remote:r1]\nhost = qgpu3\nport = %s\n' "${PORT:-0.0.0.0:2222}"
     printf '%s\n' "$@"
   } >"$PROJ/.agent-sandbox"
   [[ -n "${NOAPPROVE:-}" ]] && return 0
@@ -182,7 +298,7 @@ p='agent-sandbox: remote r1:'
   [[ "$output" == *"$p GPU 0: NVIDIA GeForce RTX 2060 (UUID: GPU-0)"* ]]
   [[ "$output" == *"$p gpu /dev/nvidia1 mode 666"* ]]
   [[ "$output" == *"$p 127.0.0.1:1 unreachable (the account's part needs it)"* ]]
-  [[ "$output" == *"$p ready for the account's part (not in this version yet: step 3 of #344)" ]]
+  [[ "$output" == *"$p ready for the account's part"$'\n'"$p the account's part, over ssh as "* ]]
   [ ! -e "$ADMIN" ]
   [ ! -e "$PROJ/.asb" ]
   grep -qx 'BatchMode=yes' "$H/ssh.argv"
@@ -308,7 +424,7 @@ p='agent-sandbox: remote r1:'
   [ "$status" -eq 0 ]
   [[ "$output" == *"$p logged in as tester (no sudo; asb never uses it)"* ]]
   [[ "$output" == *"$p the account is the ssh user tester, home $R/home/tester, "* ]]
-  [[ "$output" == *"$p ready for the account's part (not in this version yet: step 3 of #344)" ]]
+  [[ "$output" == *"$p ready for the account's part"$'\n'"$p the account's part, over ssh as "* ]]
   [ ! -e "$ADMIN" ]
 }
 
@@ -316,10 +432,12 @@ p='agent-sandbox: remote r1:'
   remote_host
   section 'gpu = /dev/nvidiactl /dev/nvidia3'
   setup_remote
-  [ "$status" -eq 0 ]
   [[ "$output" == *"$p gpu /dev/nvidiactl mode 666"* ]]
   [[ "$output" == *"$p gpu /dev/nvidia3 missing on that host (the login's policy says the same at launch)"* ]]
   [[ "$output" == *"$p ready for the account's part"* ]]
+  # and the check after the launch finds the login without that card
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p check: nvidia-smi inside lists 'GPU-1', where the section's nodes are 'unknown': FAILED"* ]]
 }
 
 @test "--setup-remote: the run line follows sudo: without a password, none, and root (#344)" {
@@ -400,4 +518,337 @@ p='agent-sandbox: remote r1:'
   order="$(script_code "$ADMIN" | grep -oE 'apt-get install|apparmor_parser -r /etc/apparmor.d/[a-z]+|--rebuild-bwrap|^  adduser' | paste -sd, -)"
   [ "$order" = "apt-get install,apparmor_parser -r /etc/apparmor.d/bwrap,apparmor_parser -r /etc/apparmor.d/pasta,--rebuild-bwrap,  adduser" ]
   grep -qx '#   - AppArmor profiles for bwrap and pasta' "$ADMIN"
+}
+
+# ---- the account's part and the local side (#344, step 3) ----
+
+# full_section -- a section with every key, the login on that host's loopback.
+full_section() {
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'gpu = /dev/nvidiactl /dev/nvidia1' \
+    'allow = pypi.org files.pythonhosted.org' 'env = TMPDIR=/home/tob/bench/tmp' 'env = CUDA_VISIBLE_DEVICES=0'
+}
+
+# user_ssh_config -- a ~/.ssh/config of the user's own, before any run.
+user_ssh_config() {
+  mkdir -p "$H/home/.ssh"
+  printf 'Host build\n  HostName build.example.org\n  User me\n\n# a comment of mine\nHost *.lan\n  ForwardAgent no' >"$H/home/.ssh/config"
+  cp "$H/home/.ssh/config" "$BATS_TEST_TMPDIR/config.orig"
+}
+
+@test "--setup-remote: the account's part for a full section: install.sh as the account, exactly the policy, the keys file, approved, launched, the host key back under [127.0.0.1]:PORT, the alias through ProxyJump, the checks (#344)" {
+  remote_host
+  full_section
+  user_ssh_config
+  setup_remote
+  [ "$status" -eq 0 ]
+  local T="$R/home/tob"
+  # as the account, never as the ssh user, never sudo
+  grep -qx -- '-l' "$H/acct.argv"
+  grep -qx 'tob' "$H/acct.argv"
+  grep -qx 'BatchMode=yes' "$H/acct.argv"
+  [[ "$output" == *"$p the account's part, over ssh as tob to qgpu3 (ssh -l tob qgpu3; BatchMode; never sudo)"* ]]
+  [[ "$output" == *"$p not set up yet as tob (install: no, the login's store: no)"* ]]
+  # the checkout carried as a git archive, install.sh run there
+  [ "$(cat "$H/acct.log")" = carry ]
+  [ -f "$T/.local/share/agent-sandbox/src/agent-sandbox" ]
+  cmp "$T/.local/share/agent-sandbox/src/profiles/sshd/profile.sh" "$REPO_ROOT/profiles/sshd/profile.sh"
+  [ "$(cat "$H/install.calls")" = "install.sh " ]
+  [ "$(cat "$T/.local/share/agent-sandbox/src/.asb-carried")" = "$(git -C "$ENGDIR" describe --always --tags HEAD)" ]
+  [[ "$output" == *"$p install.sh as tob (its output: ~/asb-install-r1.log there)"$'\n'"$p install.sh ok"* ]]
+  # the policy, every line
+  cat >"$BATS_TEST_TMPDIR/want" <<W
+# Generated by \`asb --setup-remote r1\` from [remote:r1] of $PROJ.
+# The next run of it overwrites this file: change the section there, not this file.
+[net]
+mode = strict
+agent-port = 2222
+
+[allow]
+pypi.org
+files.pythonhosted.org
+
+[gpu]
+devices = /dev/nvidiactl /dev/nvidia1
+
+[env]
+TMPDIR = /home/tob/bench/tmp
+CUDA_VISIBLE_DEVICES = 0
+
+[sshd]
+authorized-keys = ~/.config/agent-sandbox/asb-r1-keys
+W
+  cmp "$BATS_TEST_TMPDIR/want" "$T/bench/.agent-sandbox"
+  [[ "$output" == *"$p the policy $T/bench/.agent-sandbox: new, from the section"* ]]
+  # the key: made once here, its public half the keys file there, outside the scratch
+  [ -f "$H/home/.ssh/asb-r1" ]
+  [[ "$(cat "$H/home/.ssh/asb-r1.pub")" == "ssh-ed25519 "*" agent-sandbox remote r1" ]]
+  cmp "$H/home/.ssh/asb-r1.pub" "$T/.config/agent-sandbox/asb-r1-keys"
+  [ "$(stat -c %a "$T/.config/agent-sandbox/asb-r1-keys")" = 600 ]
+  # approved with a y, then launched in the scratch as the role r1
+  grep -qxF "$T/bench: asb --profile sshd --trust" "$H/asb.calls"
+  grep -qx 'trust answered y' "$H/asb.calls"
+  grep -qxF "$T/bench: asb --profile sshd --role r1" "$H/asb.calls"
+  [[ "$output" == *"$p the login is running there"* ]]
+  # the host key back, under the name ssh looks up for the jump
+  local hk
+  hk="$(cut -d' ' -f1,2 "$T/.local/state/agent-sandbox/sshd/${T//[^A-Za-z0-9-]/-}-bench/r1/sshd/ssh_host_ed25519_key.pub")"
+  [ "$(cat "$H/home/.ssh/known_hosts")" = "[127.0.0.1]:2222 $hk agent-sandbox remote r1 (#344)" ]
+  # the alias block, appended; the rest of the file byte for byte, and its backup
+  cat >"$BATS_TEST_TMPDIR/block" <<W
+# >>> agent-sandbox remote r1 (#344) >>>
+# Written by \`asb --setup-remote r1\` from [remote:r1] of $PROJ;
+# every run rewrites these lines. Change the section, not them.
+Host r1
+  HostName 127.0.0.1
+  Port 2222
+  User tob
+  IdentityFile ~/.ssh/asb-r1
+  IdentitiesOnly yes
+  ProxyJump qgpu3
+# <<< agent-sandbox remote r1 <<<
+W
+  { cat "$BATS_TEST_TMPDIR/config.orig" && printf '\n\n' && cat "$BATS_TEST_TMPDIR/block"; } >"$BATS_TEST_TMPDIR/config.want"
+  cmp "$BATS_TEST_TMPDIR/config.want" "$H/home/.ssh/config"
+  cmp "$BATS_TEST_TMPDIR/config.orig" "$H/home/.ssh/config.before-agent-sandbox"
+  [[ "$output" == *"$p the alias r1 in ~/.ssh/config (a marked block; the file as it was before: $H/home/.ssh/config.before-agent-sandbox)"* ]]
+  # the checks, through the alias
+  [ "$(tail -n 2 "$H/login.argv" | paste -sd' ' -)" = "bash -s" ]
+  [[ "$output" == *"$p check: ssh r1 logs in as tob, inside the sandbox (AGENT_SANDBOX=1): ok"* ]]
+  [[ "$output" == *"$p check: https://pypi.org/ through the proxy: HTTP 200: ok"* ]]
+  [[ "$output" == *"$p check: a direct connection to https://pypi.org/, around the proxy, fails: ok"* ]]
+  [[ "$output" == *"$p check: https://example.com/, not allowed, is refused by the proxy (403): ok"* ]]
+  [[ "$output" == *"$p check: nvidia-smi inside lists exactly the card(s) of the section's nodes (GPU-1): ok"* ]]
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$p for a role to reach it: agent-sandbox --apply '[ssh:ROLE]' r1"$'\n'"$p after a reboot of qgpu3: agent-sandbox --setup-remote r1" ]]
+  run ! grep -q sudo "$H/acct.cmds"
+}
+
+@test "--setup-remote: a port published at an address: HostName the host's own, no ProxyJump, the host key as [HostName]:PORT; a literal address is the HostName, and our line replaced (#344)" {
+  remote_host
+  section
+  setup_remote
+  [ "$status" -eq 0 ]
+  # no account named: the ssh user is the account
+  grep -qx 'tester' "$H/acct.argv"
+  [[ "$output" == *"$p the alias r1 in ~/.ssh/config (created; a marked block)"* ]]
+  [ ! -e "$H/home/.ssh/config.before-agent-sandbox" ] # no file before: nothing to back up
+  grep -qx '  HostName qgpu3.example.org' "$H/home/.ssh/config"
+  grep -qx '  Port 2222' "$H/home/.ssh/config"
+  grep -qx '  User tester' "$H/home/.ssh/config"
+  [[ "$(cat "$H/home/.ssh/known_hosts")" == "[qgpu3.example.org]:2222 ssh-ed25519 "*" agent-sandbox remote r1 (#344)" ]]
+  run ! grep -q ProxyJump "$H/home/.ssh/config"
+  PORT=192.0.2.7:2222 section
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p relaunching the login (the policy changed)"* ]]
+  [ "$(grep -c '^Host ' "$H/home/.ssh/config")" -eq 1 ]
+  grep -qx '  HostName 192.0.2.7' "$H/home/.ssh/config"
+  [ "$(wc -l <"$H/home/.ssh/known_hosts")" -eq 1 ]
+  [[ "$(cat "$H/home/.ssh/known_hosts")" == "[192.0.2.7]:2222 ssh-ed25519 "* ]]
+}
+
+@test "--setup-remote: a section whose host is its own name is a fault at the review, and refused by the command before any ssh (#344)" {
+  remote_host
+  printf '[remote:qgpu3]\nhost = qgpu3\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [[ "$output" == *".agent-sandbox: [remote:qgpu3] host = qgpu3: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias qgpu3; name the section otherwise; unusable as written"* ]]
+  [[ "$output" == *".agent-sandbox: [remote:qgpu3]: unusable as written, for the reasons above"* ]]
+  setup_remote qgpu3
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--setup-remote: [remote:qgpu3] has host = qgpu3, its own name: the alias this writes into ~/.ssh/config, Host qgpu3, would shadow your alias qgpu3. Name the section otherwise"* ]]
+  [ ! -e "$H/ssh.argv" ]
+  [ ! -e "$H/home/.ssh/asb-qgpu3" ]
+}
+
+@test "--setup-remote: a scratch that is /, the home, or has a '..' component is refused; one that is the home by its absolute path, once the account's side says so (#344)" {
+  remote_host
+  local s
+  # shellcheck disable=SC2088 # the section's own words, written as they are
+  for s in / '~' '~/' '~/a/../b' /srv/../etc; do
+    section 'account = tob' "scratch = $s"
+    setup_remote
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--setup-remote: [remote:r1] scratch = $s: the login's one writable place is a project directory, never / nor the account's home, nor a path with a '..' component"* ]]
+    [ ! -e "$H/ssh.argv" ]
+  done
+  section 'account = tob' "scratch = $R/home/tob/"
+  setup_remote
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p scratch = $R/home/tob/ is tob's home there ($R/home/tob): the login's one writable place is a project directory, never the home itself"* ]]
+  [ ! -e "$H/acct.log" ] # nothing carried
+  [ ! -e "$R/home/tob/.agent-sandbox" ]
+}
+
+@test "--setup-remote: run again unchanged: nothing carried or installed, no approval, no relaunch -- up to date; the checks again (#344)" {
+  remote_host
+  full_section
+  user_ssh_config
+  setup_remote
+  [ "$status" -eq 0 ]
+  cp "$H/home/.ssh/config" "$BATS_TEST_TMPDIR/config.after"
+  : >"$H/asb.calls"
+  setup_remote
+  [ "$status" -eq 0 ]
+  local d T="$R/home/tob"
+  d="$(git -C "$ENGDIR" describe --always --tags HEAD)"
+  [[ "$output" == *"$p set up already: tob's install (of $d) and the login's store there; this run is the update"* ]]
+  [[ "$output" == *"$p tob's install is of $d, as the checkout: nothing carried"* ]]
+  [[ "$output" == *"$p the policy $T/bench/.agent-sandbox: unchanged"* ]]
+  [[ "$output" == *"$p up to date: the login is running"* ]]
+  [[ "$output" == *"$p the alias r1 in ~/.ssh/config: unchanged"* ]]
+  [[ "$output" == *"$p check: ssh r1 logs in as tob, inside the sandbox (AGENT_SANDBOX=1): ok"* ]]
+  [[ "$output" == *"$p set up: ssh r1"* ]]
+  [ "$(cat "$H/acct.log")" = carry ]
+  [ "$(wc -l <"$H/install.calls")" -eq 1 ]
+  cmp "$BATS_TEST_TMPDIR/config.after" "$H/home/.ssh/config"
+  cmp "$BATS_TEST_TMPDIR/config.orig" "$H/home/.ssh/config.before-agent-sandbox" # backed up once
+  [ "$(wc -l <"$H/home/.ssh/known_hosts")" -eq 1 ]
+  run ! grep -E 'trust|shutdown|--role r1$' "$H/asb.calls"
+}
+
+@test "--setup-remote: a changed section: the diff of the two policies said, approved again, shut down and relaunched (#344)" {
+  remote_host
+  full_section
+  setup_remote
+  [ "$status" -eq 0 ]
+  : >"$H/asb.calls"
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'gpu = /dev/nvidiactl /dev/nvidia1' \
+    'allow = pypi.org files.pythonhosted.org' 'allow = download.pytorch.org' 'env = TMPDIR=/home/tob/bench/tmp' 'env = CUDA_VISIBLE_DEVICES=0'
+  setup_remote
+  [ "$status" -eq 0 ]
+  local T="$R/home/tob"
+  [[ "$output" == *"$p the policy $T/bench/.agent-sandbox: changed:"$'\n'"$p   +download.pytorch.org"$'\n'* ]]
+  [[ "$output" == *"$p relaunching the login (the policy changed)"* ]]
+  grep -qx 'download.pytorch.org' "$T/bench/.agent-sandbox"
+  [ "$(sed 's/^[^:]*: //' "$H/asb.calls" | grep -v -- '--status' | paste -sd, -)" = "asb --profile sshd --trust,trust answered y,asb --profile sshd --role r1 --shutdown,asb --profile sshd --role r1" ]
+  [ "$(cat "$H/acct.log")" = carry ] # the checkout is the same: not carried again
+}
+
+@test "--setup-remote: not running (a reboot): launched again, without approval; the keys file, the host key and the alias block mended (#344)" {
+  remote_host
+  full_section
+  setup_remote
+  [ "$status" -eq 0 ]
+  local T="$R/home/tob"
+  rm "$T/.running-r1"
+  echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther someone' >>"$T/.config/agent-sandbox/asb-r1-keys"
+  : >"$H/home/.ssh/known_hosts"
+  sed -i 's/^  Port 2222$/  Port 9999/' "$H/home/.ssh/config"
+  cp "$H/home/.ssh/config" "$BATS_TEST_TMPDIR/config.edited"
+  : >"$H/asb.calls"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p the login is not running (a reboot of qgpu3?): launching it"* ]]
+  [ "$(sed 's/^[^:]*: //' "$H/asb.calls" | grep -v -- '--status' | paste -sd, -)" = "asb --profile sshd --role r1" ]
+  cmp "$H/home/.ssh/asb-r1.pub" "$T/.config/agent-sandbox/asb-r1-keys"
+  [ "$(wc -l <"$H/home/.ssh/known_hosts")" -eq 1 ]
+  grep -qx '  Port 2222' "$H/home/.ssh/config"
+  [[ "$output" == *"$p the alias r1 in ~/.ssh/config (its marked block rewritten)"* ]]
+}
+
+@test "--setup-remote: a checkout at another commit than the account's install is carried and installed again, and the login relaunched (#344)" {
+  remote_host
+  full_section
+  setup_remote
+  [ "$status" -eq 0 ]
+  echo v0.0.0-1-gdeadbee >"$R/home/tob/.local/share/agent-sandbox/src/.asb-carried"
+  : >"$H/asb.calls"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p set up already: tob's install (of v0.0.0-1-gdeadbee) and the login's store there; this run is the update"* ]]
+  [[ "$output" == *"$p carrying the checkout $ENGDIR (the engine's own checkout) at $(git -C "$ENGDIR" describe --always --tags HEAD) into tob's ~/.local/share/agent-sandbox"* ]]
+  [[ "$output" == *"$p relaunching the login (the install changed)"* ]]
+  [ "$(paste -sd, "$H/acct.log")" = carry,carry ]
+  [ "$(wc -l <"$H/install.calls")" -eq 2 ]
+}
+
+@test "--setup-remote: your micromamba is carried into the account's install, where install.sh looks for it (#344)" {
+  remote_host
+  full_section
+  mkdir -p "$H/home/.local/share/agent-sandbox/micromamba/bin"
+  printf 'not the pinned build\n' >"$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"and your micromamba into tob's ~/.local/share/agent-sandbox"* ]]
+  [[ "$output" == *"$p your micromamba ($H/home/.local/share/agent-sandbox/micromamba/bin/micromamba) is not the build $ENGDIR's install.sh pins: install.sh there fetches that one (curl)"* ]]
+  cmp "$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba" "$R/home/tob/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  [ "$(stat -c %a "$R/home/tob/.local/share/agent-sandbox/micromamba/bin/micromamba")" = 755 ]
+}
+
+@test "--setup-remote: the account unreachable, install.sh failing, a check failing: each said, exit 1 (#344)" {
+  remote_host
+  full_section
+  setup_remote ACCT_FAIL=1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p cannot read the account's state as tob (ssh exit 255): tob@qgpu3: Permission denied (publickey)."* ]]
+  [[ "$output" == *"$p it needs ssh -l tob qgpu3 to work without a question: your public key in tob's ~/.ssh/authorized_keys"* ]]
+  setup_remote INSTALL_RC=1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p install.sh failed there (exit 1); its last lines:"$'\n'"$p   ==> The proxy's environment"$'\n'"$p       [err] micromamba create failed" ]]
+  [ ! -e "$H/asb.calls" ]
+  [ ! -e "$R/home/tob/.local/share/agent-sandbox/src/.asb-carried" ]
+  setup_remote DIRECT_OPEN=1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p check: a direct connection to https://pypi.org/, around the proxy, succeeded: FAILED"* ]]
+  [[ "$output" == *"$p set up, and 1 check(s) failed (above): ssh r1"* ]]
+}
+
+@test "--setup-remote: a block of yours above the alias that sets its options first is said, exit 1 (#344)" {
+  remote_host
+  full_section
+  mkdir -p "$H/home/.ssh"
+  printf 'Host *\n  User someone\n' >"$H/home/.ssh/config"
+  setup_remote
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p ssh -G r1 does not resolve to the block (user): a Host or Match block above it in ~/.ssh/config sets that first. Move the marked block above it"* ]]
+}
+
+@test "--setup-remote: an [ssh] line that names the remote: no --apply line to say (#344)" {
+  remote_host
+  section 'account = tob' '[ssh:impl-1]' 'r1'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$p after a reboot of qgpu3: agent-sandbox --setup-remote r1" ]]
+}
+
+# apply_remote ANSWERS ARGS... -- `--apply ARGS...` in the project, ANSWERS on stdin.
+apply_remote() {
+  local answers="$1"
+  shift
+  engine_cmd
+  run bash -c 'cd "$1" && printf "%b" "$2" | env -i HOME="$3" PATH="$4" "${@:5}" 2>&1' _ \
+    "$PROJ" "$answers" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --apply "$@"
+}
+
+@test "--apply on a [remote:ALIAS] section: appended under it, the review says the line, then the --setup-remote line; a new one created; [remote] without a name refused (#344)" {
+  section 'account = tob' '' '[allow]' 'pypi.org'
+  apply_remote 'y\n' '[remote:r1]' 'allow = download.pytorch.org'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to [remote:r1]: allow = download.pytorch.org"* ]]
+  [[ "$output" == *".agent-sandbox: [remote:r1] allow = download.pytorch.org: the login's sandbox reaches these hosts through its allowlist proxy there"* ]]
+  [[ "$output" == *"approved."* ]]
+  [[ "$output" == *"agent-sandbox: then: agent-sandbox --setup-remote r1" ]]
+  [[ "$output" != *"first role section"* && "$output" != *"applies at the next launch"* ]]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[remote:r1]\nhost = qgpu3\nport = 0.0.0.0:2222\naccount = tob\nallow = download.pytorch.org\n\n[allow]\npypi.org' ]
+  apply_remote 'y\n' '[remote:r2]' 'host = qgpu3' 'port = 2224'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: then: agent-sandbox --setup-remote r2" ]]
+  [ "$(tail -n 3 "$PROJ/.agent-sandbox")" = $'[remote:r2]\nhost = qgpu3\nport = 2224' ]
+  apply_remote 'y\n' '[remote]' 'host = qgpu3'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--apply: [remote] takes the remote's name, letters, digits, '-', '_' and '.': --apply '[remote:ALIAS]' 'allow = HOST ...'"* ]]
+}
+
+@test "--setup-remote: a pasta whose build names no version is ok, said so; one without --hostname gets no note (#344)" {
+  remote_host pasta='unknown version'
+  section
+  setup_remote
+  [[ "$output" == *"$p pasta ok (its build names no version)"$'\n'* ]]
+  [[ "$output" != *"pasta version ok"* ]]
+  remote_host
+  stub pasta "case \"\$1\" in --version) printf 'pasta 2024_02_20.1e6f92b\n' ;; --help) echo '  --config-net' ;; *) true ;; esac"
+  setup_remote
+  [[ "$output" == *"$p pasta 2024_02_20.1e6f92b ok"$'\n'* ]]
+  [[ "$output" != *"--hostname"* ]]
 }

@@ -605,11 +605,12 @@ which roles of the project have a session to resume, with a one-line summary eac
   a hostname, `user@host`, or an alias of your `~/.ssh/config` (a port is the alias's).
   `account = NAME` is the account that runs the login there, a name as `adduser` takes
   it (lowercase letters, digits, `-` and `_`, starting with a letter or `_`, at most 32);
-  absent, it is the ssh user. `port = [ADDR:]PORT` (required) is where the login listens
+  absent, it is the ssh user. `host` is not `<alias>` itself: the alias block below would
+  shadow it, so the review calls that unusable. `port = [ADDR:]PORT` (required) is where the login listens
   there, one token in the forms `--agent-port` takes: a bare port on that host's
   loopback, for roles that run on that host, or `0.0.0.0:PORT` for every address of it.
   `scratch = PATH` is the project directory there, the login's one writable place: an
-  absolute path, or under `~`, the account's home there. `gpu = NODE ...` names that
+  absolute path, or under `~`, the account's home there; absent, `~/<alias>`. `gpu = NODE ...` names that
   host's GPU device nodes, as `[gpu] devices` takes them (under `/dev/`, no `..`).
   `allow = HOST ...` are hosts its allowlist proxy lets through, as `[allow]` takes them;
   `env = NAME=VALUE` is set inside it; several `allow` and `env` lines add up. The
@@ -625,23 +626,25 @@ which roles of the project have a session to resume, with a one-line summary eac
   review says so and `--trust` does not ask, and `--check` exits non-zero.
 
   `asb --setup-remote <alias>`, run by you on the host in the project, applies the
-  section. In this version it does the first phase, the preflight, and stops there; the
-  account's part (carrying the kit, the install as the account, the policy, the launch)
-  comes in a later one. It is refused inside a sandbox (it holds your ssh access: a role
+  section. It ends in one of three ways, each a re-run away from the next: root is
+  needed there (the admin's script, below); the host is ready and the login is not set
+  up (the account's part); it is set up (the same steps, as an update). It is refused inside a sandbox (it holds your ssh access: a role
   proposes the line, you run it), without the section, for a section unusable as
   written, and while the file is not approved (`--trust`), since the section is what it
-  acts on. The preflight is one ssh session to `host` as the ssh user `ssh -G` resolves
+  acts on; for a `scratch` that is `/` or the account's home (`~`), or has a `..`
+  component; and for an `<alias>` that is not a role name (the login runs as the role
+  `<alias>` there). The preflight is one ssh session to `host` as the ssh user `ssh -G` resolves
   (`BatchMode`, so your key and the host key in `known_hosts` must already work), a probe
   script on its stdin that writes nothing there: the distribution and kernel, the
-  package manager, bubblewrap (and apt's candidate), pasta (and whether it knows
-  `--hostname`), `nft`, `sshd`, `apparmor_restrict_unprivileged_userns`, user namespaces
+  package manager, bubblewrap (and apt's candidate), pasta (its version, or that its
+  build names none, as Ubuntu 24.04's says `unknown version`), `nft`, `sshd`, `apparmor_restrict_unprivileged_userns`, user namespaces
   *as measured* (`unshare -Urn`, `bwrap --unshare-all`, `pasta --config-net`), which of
   install.sh's AppArmor profiles are there, `sudo -n` (reported, never used), the account
   and its home's free space, the GPUs and each `gpu` node with its mode (a node the host
   lacks is said, not a fault: the login's policy says the same at launch), and whether
   conda.anaconda.org and github.com answer on 443. It reports one line per item, then
   the verdict. With everything present and working and the account there (or the ssh
-  user itself, not root), the host is ready, and the command exits 0. Otherwise root is
+  user itself, not root), the host is ready, and the account's part follows. Otherwise root is
   needed there once, and asb never runs sudo: it writes the admin's script to
   `.asb/remote/<alias>/admin.sh` (mode 0600; `.asb/remote/` gets a `.gitignore`), copies
   it to `~/asb-admin-<alias>.sh` in your home on the host over the same ssh (a copy into
@@ -666,6 +669,68 @@ which roles of the project have a session to resume, with a one-line summary eac
   taken from the engine's own checkout, else from the checkout `install.sh` ran from
   (recorded in `install.manifest`), never from a copy of their own. A re-run measures
   again and reaches the verdict again.
+
+  The account's part runs over `ssh -l ACCOUNT HOST` (the section's host as your
+  `~/.ssh/config` resolves it, the user overridden; `BatchMode`): your public key must
+  be in the account's `authorized_keys`, as the admin's script puts it for an account
+  it makes. asb never runs sudo there, nor `sudo -u`. First the key: `~/.ssh/asb-<alias>`
+  (ed25519, no passphrase, comment `agent-sandbox remote <alias>`), made once here and
+  kept; it is the roles' key for the login. Then one read-only session reads the
+  account's state: its install, the checkout it was carried from, the login's store,
+  the policy and keys file there, whether the login runs, and the GPUs' minor numbers.
+  A scratch that is the account's home by its absolute path is refused there. When the
+  account's install is absent or of another commit than the checkout's (`git describe`
+  of its HEAD), the checkout is carried as a `git archive` of HEAD (uncommitted changes
+  are not, and that is said) into the account's `~/.local/share/agent-sandbox/src`,
+  with your micromamba (`~/.local/share/agent-sandbox/micromamba/bin/micromamba`) beside
+  it where install.sh looks, so its checksum check passes and nothing is fetched with
+  curl -- the remote needs neither git nor curl -- and `install.sh` runs there as the
+  account, its output in `~/asb-install-<alias>.log` there; on a failure its last lines
+  are said and the command stops. The commit carried is recorded there, and a re-run
+  carries nothing while it matches. The checkout is the engine's own, else the one
+  `install.manifest` records; without one the command stops. The policy is generated
+  from the section into the scratch's `.agent-sandbox`, with a header saying it is
+  generated from `[remote:<alias>]` of this project and is overwritten by the next run:
+  `[net] mode = strict` and `agent-port` the section's port, `[allow]` its hosts, `[gpu]
+  devices` its nodes (`mode = off` for a `gpu` line naming none; no `gpu` line, no
+  `[gpu]`), `[env]` its pairs, and `[sshd] authorized-keys =
+  ~/.config/agent-sandbox/asb-<alias>-keys`, outside the scratch, a file holding the key's
+  public half, rewritten every run. A new or changed policy is written and approved there
+  (`asb --profile sshd --trust`, answered `y`: you approved the section here, which is
+  what the content comes from); a changed one is said as the lines that differ. The
+  login is launched in the background as the role `<alias>` (`setsid nohup asb
+  --profile sshd --role <alias>`, its log `~/asb-<alias>-sshd.log` there), and the
+  command waits up to a minute for `--status` to show sshd running. On a re-run: an
+  unchanged policy and keys file with the login running is `up to date`; a changed
+  policy, keys file or install is a `--shutdown` and a relaunch; a login not running (a
+  reboot of the host) is launched again. Then the local side, every run: the role's host
+  key into `~/.ssh/known_hosts` with the comment `agent-sandbox remote <alias> (#344)`,
+  replacing the line of an earlier run (another line for that name, not ours, is left and
+  said), and the alias, a marked block in `~/.ssh/config` between `# >>> agent-sandbox
+  remote <alias> (#344) >>>` and `# <<< agent-sandbox remote <alias> <<<`, rewritten in
+  place, appended at the end the first time, nothing outside the markers touched, the
+  file copied to `~/.ssh/config.before-agent-sandbox` before the first write into it:
+  `Host <alias>` with `User` the account, `Port` the login's port, `IdentityFile
+  ~/.ssh/asb-<alias>`, `IdentitiesOnly yes`, and the address: for a port at an address,
+  `HostName` the host's own (`ssh -G HOST`), or the address when it is a literal other
+  than `0.0.0.0`; for a bare port, the host's loopback, `HostName 127.0.0.1` and
+  `ProxyJump HOST` (your ssh to the host carries it). The host key's name is what ssh and
+  the roles' broker look it up by, `[HostName]:PORT`. When `ssh -G <alias>` does not
+  resolve to the block (a `Host` or `Match` block of yours above it sets an option
+  first), that is said and the command fails. Then the checks, through the alias, one line
+  each: the login is the account inside the sandbox (`AGENT_SANDBOX=1`); the first host
+  the section allows by name answers 2xx or 3xx through the proxy; `https://example.com/`
+  is refused (403), unless the section allows it; a direct connection to that host,
+  around the proxy, fails; and where `gpu` names `/dev/nvidiaN` nodes, `nvidia-smi` inside
+  lists exactly those cards (by their minor numbers). A failed check makes the exit
+  status 1. The command ends with `set up: ssh <alias>`, the `asb --apply '[ssh:ROLE]'
+  <alias>` line when no `[ssh]` line names the remote yet, and `after a reboot of HOST:
+  asb --setup-remote <alias>`: no crontab, a re-run relaunches.
+
+  `asb --apply '[remote:<alias>]' 'allow = HOST ...'` adds lines to the section as to any
+  (the section is created when absent; `[remote]` without a name is refused), the review
+  says each remote line as above, and once approved the command ends with `then: asb
+  --setup-remote <alias>`; it never reaches the host itself.
 
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the

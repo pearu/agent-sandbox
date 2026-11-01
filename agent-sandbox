@@ -274,11 +274,19 @@
 #   --setup-remote ALIAS  host only, the file approved: the preflight of the
 #                         host its [remote:ALIAS] section names (#344), over
 #                         ssh as you, read-only: packages, user namespaces as
-#                         measured, the account, GPUs. Ready: says so, exit 0.
-#                         Root needed there: writes .asb/remote/ALIAS/admin.sh,
-#                         says how to run it, exit 1; asb never runs it, nor
-#                         sudo. Run it again after. The account's part comes
-#                         in a later version. See docs/config.md.
+#                         measured, the account, GPUs. Root needed there:
+#                         writes .asb/remote/ALIAS/admin.sh, says how to run
+#                         it, exit 1; asb never runs it, nor sudo. Ready: the
+#                         account's part, over ssh -l ACCOUNT: the checkout
+#                         (git archive) and micromamba carried and install.sh
+#                         run when its install is of another commit, the
+#                         policy from the section, the keys file with the key
+#                         ~/.ssh/asb-ALIAS, approved, the login launched (or
+#                         relaunched when changed, or launched after a reboot);
+#                         then the host key into ~/.ssh/known_hosts, the alias
+#                         ALIAS in a marked block of ~/.ssh/config, and the
+#                         checks through it (a failure: exit 1). Run it again
+#                         after a change, or a reboot. See docs/config.md.
 #   --serve               with --role R: a role with no terminal (#277). Runs on the
 #                         host, in the foreground: holds R's launch and runs one
 #                         turn of R's session (the profile's serve-new/serve-resume
@@ -430,8 +438,13 @@ Engine flags (before CMD):
                         ssh as you, read-only; where root is needed there,
                         writes .asb/remote/ALIAS/admin.sh, copies it to your
                         home there and says the one line that runs it (asb
-                        never runs it, nor sudo), else says it is ready. Host
-                        only, the file approved first
+                        never runs it, nor sudo); else, as the account (ssh
+                        -l ACCOUNT), installs asb there from this checkout,
+                        writes and approves the login's policy, launches it,
+                        and here writes the alias ALIAS (~/.ssh/config) and
+                        its host key, then checks it. Again: the update, or
+                        the relaunch after a reboot. Host only, the file
+                        approved first
   --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
@@ -6725,16 +6738,18 @@ _as_remote_say() {
 
 # _as_remote_eval ALIAS [say] -- the section [remote:ALIAS] of the caller's _df_remote into
 # the caller's _rm_host, _rm_account, _rm_port (the token in its one spelling), _rm_gpu (the
-# gpu nodes, space-separated) and _rm_bad
+# gpu nodes, space-separated; `off` for a gpu line naming none), _rm_scratch, _rm_allow
+# (the hosts, space-separated), _rm_env (`NAME=VALUE` lines) and _rm_bad
 # (how many faults make it unusable: a bad value, a key set twice that takes one, a missing
-# host or port). With `say`, the review's line for each line as written, and each fault.
+# host or port, a host that is the remote's own name). With `say`, the review's line for
+# each line as written, and each fault.
 # An unknown key or a line without `=` is said and ignored; it is no fault.
 _as_remote_eval() {
   local _rm_alias="$1" _rm_say=0 e line ck cv v w bad
   local -a ws=()
   local -A seen=()
   [[ "${2:-}" == say ]] && _rm_say=1
-  _rm_host="" _rm_account="" _rm_port="" _rm_gpu="" _rm_bad=0
+  _rm_host="" _rm_account="" _rm_port="" _rm_gpu="" _rm_bad=0 _rm_scratch="" _rm_allow="" _rm_env=""
   for e in ${_df_remote[@]+"${_df_remote[@]}"}; do
     [[ "${e%%$'\t'*}" == "$_rm_alias" ]] || continue
     line="${e#*$'\t'}"
@@ -6756,7 +6771,11 @@ _as_remote_eval() {
     esac
     case "$ck" in
       host)
-        if _as_ssh_spec_ok "$cv"; then
+        if _as_ssh_spec_ok "$cv" && [[ "${cv#*@}" == "$_rm_alias" ]]; then
+          # --setup-remote writes `Host ALIAS` into ~/.ssh/config: it would shadow this one.
+          _as_remote_say "host = $cv: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias $cv; name the section otherwise; unusable as written"
+          _rm_host="$cv" _rm_bad=$((_rm_bad + 1))
+        elif _as_ssh_spec_ok "$cv"; then
           _rm_host="$cv"
           _as_remote_say "host = $cv: the host the login runs on, reached over ssh as you reach it from here"
         else
@@ -6789,7 +6808,10 @@ _as_remote_eval() {
         ;;
       scratch)
         case "$cv" in
-          /* | \~ | \~/*) _as_remote_say "scratch = $cv: the project directory there, the login's one writable place ('~' is the account's home there)" ;;
+          /* | \~ | \~/*)
+            _rm_scratch="$cv"
+            _as_remote_say "scratch = $cv: the project directory there, the login's one writable place ('~' is the account's home there)"
+            ;;
           *)
             _as_remote_say "scratch = $cv: relative; it is absolute or under '~' (the account's home there); unusable as written"
             _rm_bad=$((_rm_bad + 1))
@@ -6816,6 +6838,7 @@ _as_remote_eval() {
           _rm_gpu="${ws[*]}"
           _as_remote_say "gpu = $cv: only these GPU device nodes of that host are passed into the login's sandbox"
         else
+          _rm_gpu=off
           _as_remote_say "gpu = : no GPU device node of that host is passed into the login's sandbox"
         fi
         ;;
@@ -6832,6 +6855,7 @@ _as_remote_eval() {
           _as_remote_say "allow = $cv: bad host '$bad' (a hostname, or .domain); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif ((${#ws[@]})); then
+          _rm_allow+="${_rm_allow:+ }${ws[*]}"
           _as_remote_say "allow = $cv: the login's sandbox reaches these hosts through its allowlist proxy there"
         else
           _as_remote_say "allow = : names no host; ignoring"
@@ -6849,6 +6873,7 @@ _as_remote_eval() {
         else
           w="${cv#*=}"
           w="${w#"${w%%[![:space:]]*}"}"
+          _rm_env+="$v=$w"$'\n'
           _as_remote_say "env = $cv: sets $v to '$w' inside the login's sandbox"
         fi
         ;;
@@ -6871,7 +6896,7 @@ _as_remote_eval() {
 # it, and one line for the whole, last. Fails when a name is written twice: the file
 # cannot be approved.
 _as_remote_notes() {
-  local a h reached rc=0 dups _rm_host _rm_account _rm_port _rm_gpu _rm_bad
+  local a h reached rc=0 dups _rm_host _rm_account _rm_port _rm_gpu _rm_bad _rm_scratch _rm_allow _rm_env
   dups="$(_as_remote_names dups)"
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
@@ -6906,7 +6931,7 @@ _as_check_remotes() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local a first=1 _rm_host _rm_account _rm_port _rm_gpu _rm_bad
+  local a first=1 _rm_host _rm_account _rm_port _rm_gpu _rm_bad _rm_scratch _rm_allow _rm_env
   _as_dotfile_parse "$1" 2>/dev/null
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
@@ -6984,7 +7009,8 @@ say bwrap_candidate "${c:-unknown}"
 if has pasta; then
   v="$(pasta --version 2>/dev/null </dev/null)"
   v="${v%%$'\n'*}"
-  say pasta "${v##* }"
+  # Ubuntu 24.04's passt says `pasta unknown version`: no version to report
+  case "$v" in *"unknown version"* | "" | pasta) say pasta none ;; *) say pasta "${v##* }" ;; esac
   h="$(pasta --help 2>&1 </dev/null)"
   [[ "$h" == *--hostname* ]] && say pasta_hostname yes || say pasta_hostname no
 else
@@ -7143,7 +7169,7 @@ _as_setup_remote() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local _rm_host _rm_account _rm_port _rm_bad _rm_gpu
+  local _rm_host _rm_account _rm_port _rm_bad _rm_gpu _rm_scratch _rm_allow _rm_env
   _as_dotfile_parse "$file" 2>/dev/null
   if ! grep -qxF -- "$alias" <<<"$(_as_remote_names)"; then
     a="$(_as_remote_names | paste -sd' ' -)"
@@ -7155,8 +7181,24 @@ _as_setup_remote() {
     return 2
   fi
   _as_remote_eval "$alias"
+  if [[ -n "$_rm_host" && "${_rm_host#*@}" == "$alias" ]]; then
+    _as_msg "--setup-remote: [remote:$alias] has host = $_rm_host, its own name: the alias this writes into ~/.ssh/config, Host $alias, would shadow your alias $_rm_host. Name the section otherwise"
+    return 2
+  fi
   if ((_rm_bad)); then
     _as_msg "--setup-remote: [remote:$alias] is unusable as written; $invoked --check says why"
+    return 2
+  fi
+  if ! _as_role_name_ok "$alias"; then
+    _as_msg "--setup-remote: '$alias' is not a role name, and the login runs as the role $alias there (a letter or digit, then letters, digits, '.', '_' or '-')"
+    return 2
+  fi
+  # The scratch, as written: / or the home itself (~), or a '..' component, is refused
+  # here; an absolute path that is the home is refused once the account's side says it.
+  a="${_rm_scratch#\~}" a="/${a#/}"
+  while [[ "$a" == */ && "$a" != / ]]; do a="${a%/}"; done
+  if [[ -n "$_rm_scratch" && ("$a" == / || "$a/" == */../*) ]]; then
+    _as_msg "--setup-remote: [remote:$alias] scratch = $_rm_scratch: the login's one writable place is a project directory, never / nor the account's home, nor a path with a '..' component"
     return 2
   fi
   if ! _as_dotfile_trusted "$cwd" "$file"; then
@@ -7176,7 +7218,7 @@ _as_setup_remote() {
   _as_msg "$p the preflight, over ssh to $ruser@$rhost port $rport ($_rm_host), read-only"
   local out err rc=0
   local -a nodes=()
-  read -r -a nodes <<<"$_rm_gpu"
+  [[ "$_rm_gpu" == off ]] || read -r -a nodes <<<"$_rm_gpu"
   err="$(mktemp)" || return 1
   out="$(_as_remote_probe "$_rm_account" ${nodes[@]+"${nodes[@]}"} \
     | ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$_rm_host" bash -s 2>"$err")" || rc=$?
@@ -7242,10 +7284,10 @@ _as_setup_remote() {
   if [[ "$pav" == missing ]]; then
     pkgs+=(passt)
     _as_msg "$p pasta missing (package passt)"
-  elif [[ "${P[pasta_hostname]:-}" == yes ]]; then
-    _as_msg "$p pasta $pav ok"
+  elif [[ "$pav" == none ]]; then
+    _as_msg "$p pasta ok (its build names no version)"
   else
-    _as_msg "$p pasta $pav ok (it has no --hostname: a strict sandbox there is named by pasta)"
+    _as_msg "$p pasta $pav ok"
   fi
   if [[ "${P[nft]:-missing}" == missing ]]; then
     pkgs+=(nftables)
@@ -7339,8 +7381,9 @@ _as_setup_remote() {
       _as_msg "$p not ready, for the reason above"
       return 1
     fi
-    _as_msg "$p ready for the account's part (not in this version yet: step 3 of #344)"
-    return 0
+    _as_msg "$p ready for the account's part"
+    _as_remote_account
+    return $?
   fi
 
   # ---- the admin's script ----
@@ -7516,6 +7559,571 @@ _as_remote_admin_script() {
     printf 'fi\n'
   fi
   printf '\necho "admin.sh: done; now, where asb runs: %s --setup-remote %s"\n' "$invoked" "$alias"
+}
+
+# ---- asb --setup-remote ALIAS (#344): the account's part, and its update ----------------
+# After a ready preflight, as the account: `ssh -l ACCOUNT HOST`, BatchMode (the admin's
+# script put your key in its authorized_keys; with no account named, the ssh user), never
+# sudo. One read-only session reads the account's state (_as_remote_state_script). The
+# checkout -- a `git archive` of its HEAD -- and your micromamba are carried into the
+# account's ~/.local/share/agent-sandbox when its install is not of that HEAD (the
+# remote needs neither git nor curl), and install.sh runs there as the account. The
+# policy is generated from the section, written into the scratch when it differs from
+# the one there, approved there, and the login launched in the background, or relaunched
+# when the policy, the keys file or the install changed, or launched again when it is not
+# running (a reboot). Then the local side: the role's host key into ~/.ssh/known_hosts,
+# the alias in a marked block of ~/.ssh/config, and the checks, through that alias.
+# Three outcomes, each a re-run away from the next: root needed (the admin's script),
+# ready and not set up (all of the above), set up (the same, as an update).
+
+# _as_remote_state_script ALIAS SCRATCH -- the account's side's state probe, on stdout:
+# bash, read-only, `key<TAB>value` lines, `end<TAB>ok` last. SCRATCH may start with ~.
+_as_remote_state_script() {
+  printf '# agent-sandbox --setup-remote: the account'"'"'s state. Read-only.\n'
+  printf 'alias=%q\nscratch=%q\n' "$1" "$2"
+  declare -f _as_path_slug _as_sha256_str
+  cat <<'STATE'
+say() { printf '%s\t%s\n' "$1" "$2"; }
+S="$HOME/.local/share/agent-sandbox"
+asb="$HOME/.local/bin/asb"
+case "$scratch" in "~") p="$HOME" ;; "~/"*) p="$HOME/${scratch#\~/}" ;; *) p="$scratch" ;; esac
+p="${p%/}"
+rp="$p"
+[ -d "$p" ] && rp="$(cd -- "$p" && pwd -P)"
+say home "$HOME"
+say scratch "$p"
+say scratch_real "$rp"
+if [ -x "$asb" ] && [ -f "$S/app/agent-sandbox" ]; then say installed yes; else say installed no; fi
+[ -r "$S/src/.asb-carried" ] && say carried "$(head -n 1 -- "$S/src/.asb-carried")"
+[ -f "$S/micromamba/bin/micromamba" ] && say micromamba "$(sha256sum <"$S/micromamba/bin/micromamba" | cut -d' ' -f1)"
+st="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox/sshd/$(_as_path_slug "$rp")/$alias"
+if [ -d "$st" ]; then say store yes; else say store no; fi
+if [ -f "$p/.agent-sandbox" ]; then
+  say policy_file yes
+  while IFS= read -r l || [ -n "$l" ]; do say policy "$l"; done <"$p/.agent-sandbox"
+fi
+k="$HOME/.config/agent-sandbox/asb-$alias-keys"
+if [ -f "$k" ]; then
+  while IFS= read -r l || [ -n "$l" ]; do say keys "$l"; done <"$k"
+fi
+r=no
+if [ -x "$asb" ] && [ -d "$p" ]; then
+  case "$(cd -- "$p" && "$asb" --profile sshd --role "$alias" --status 2>&1 </dev/null)" in *": running since "*) r=yes ;; esac
+fi
+say running "$r"
+# each card's minor number (its /dev/nvidiaN) and UUID, from `nvidia-smi -q`: the query
+# fields lack minor_number on a 615 driver (measured)
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi -q 2>/dev/null </dev/null | awk -F' *: *' '
+    /^GPU / {u = ""; m = ""}
+    $1 ~ /^ *GPU UUID$/ {u = $2}
+    $1 ~ /^ *Minor Number$/ {m = $2}
+    u != "" && m ~ /^[0-9]+$/ {printf "gpuid\t%s %s\n", m, u; u = ""; m = ""}'
+fi
+say end ok
+STATE
+}
+
+# _as_remote_apply_script -- the account's side's changes, on stdout, from
+# _as_remote_account's locals (dynamic scope): the scratch, the policy when it is to be
+# written (wpol), the keys file, the approval, the shutdown (down) and the launch (up),
+# the wait for --status to show sshd running, and the role's host key back.
+# shellcheck disable=SC2154,SC2016 # it writes shell text, quoted as written
+_as_remote_apply_script() {
+  printf '# agent-sandbox --setup-remote: the account'"'"'s part of [remote:%s].\n' "$alias"
+  printf 'alias=%q\np=%q\nwpol=%q\ndown=%q\nup=%q\npub=%q\nwait=%q\n' \
+    "$alias" "$rscratch" "$wpol" "$down" "$up" "$pub" 60
+  declare -f _as_path_slug _as_sha256_str
+  printf 'write_policy() {\n  cat <<'"'"'ASB_POLICY_EOF'"'"'\n%s\nASB_POLICY_EOF\n}\n' "$policy"
+  cat <<'APPLY'
+say() { printf '%s\t%s\n' "$1" "$2"; }
+tail_say() { tail -n "$2" -- "$1" 2>/dev/null | while IFS= read -r l; do say log "$l"; done; }
+asb="$HOME/.local/bin/asb"
+log="$HOME/asb-$alias-sshd.log"
+mkdir -p -- "$p" || { say error "cannot make the scratch $p"; exit 1; }
+if [ "$wpol" = 1 ]; then
+  { write_policy >"$p/.agent-sandbox.asb-new" && mv -f -- "$p/.agent-sandbox.asb-new" "$p/.agent-sandbox"; } \
+    || { say error "cannot write $p/.agent-sandbox"; exit 1; }
+fi
+k="$HOME/.config/agent-sandbox/asb-$alias-keys"
+(umask 077 && mkdir -p -- "${k%/*}" && printf '%s\n' "$pub" >"$k.new" && mv -f -- "$k.new" "$k") \
+  || { say error "cannot write $k"; exit 1; }
+cd -- "$p" || exit 1
+if [ "$wpol" = 1 ]; then
+  printf 'y\n' | "$asb" --profile sshd --trust >"$HOME/asb-$alias-trust.log" 2>&1 \
+    || { say error "asb --profile sshd --trust failed in $p (its output: ~/asb-$alias-trust.log)"; tail_say "$HOME/asb-$alias-trust.log" 8; exit 1; }
+fi
+if [ "$down" = 1 ]; then
+  "$asb" --profile sshd --role "$alias" --shutdown </dev/null >/dev/null 2>&1 || true
+fi
+if [ "$up" = 1 ]; then
+  setsid nohup "$asb" --profile sshd --role "$alias" </dev/null >"$log" 2>&1 &
+  i=0 ok=0
+  while [ "$i" -lt "$wait" ]; do
+    case "$("$asb" --profile sshd --role "$alias" --status 2>&1 </dev/null)" in
+      *": running since "*"sshd -D"*) ok=1 && break ;;
+    esac
+    sleep 1
+    i=$((i + 1))
+  done
+  if [ "$ok" != 1 ]; then
+    say error "the login is not running after $wait s (its log: ~/asb-$alias-sshd.log)"
+    tail_say "$log" 10
+    exit 1
+  fi
+fi
+hk="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox/sshd/$(_as_path_slug "$(pwd -P)")/$alias/sshd/ssh_host_ed25519_key.pub"
+if [ -r "$hk" ]; then say hostkey "$(head -n 1 -- "$hk")"; else say error "no host key at $hk"; exit 1; fi
+say end ok
+APPLY
+}
+
+# _as_remote_policy -- the login's policy, on stdout, from _as_remote_account's locals
+# (dynamic scope) and the section (_rm_*): strict, the one agent port, the allow hosts,
+# the gpu nodes, the env pairs, and the keys file outside the scratch.
+# shellcheck disable=SC2154,SC2016 # the backquotes are the comment's own
+_as_remote_policy() {
+  local h
+  local -a hs=()
+  printf '# Generated by `asb --setup-remote %s` from [remote:%s] of %s.\n' "$alias" "$alias" "$cwd"
+  printf '# The next run of it overwrites this file: change the section there, not this file.\n'
+  printf '[net]\nmode = strict\nagent-port = %s\n' "$_rm_port"
+  if [[ -n "$_rm_allow" ]]; then
+    read -r -a hs <<<"$_rm_allow"
+    printf '\n[allow]\n'
+    for h in "${hs[@]}"; do printf '%s\n' "$h"; done
+  fi
+  if [[ "$_rm_gpu" == off ]]; then
+    printf '\n[gpu]\nmode = off\n'
+  elif [[ -n "$_rm_gpu" ]]; then
+    printf '\n[gpu]\ndevices = %s\n' "$_rm_gpu"
+  fi
+  if [[ -n "$_rm_env" ]]; then
+    printf '\n[env]\n'
+    while IFS= read -r h; do
+      [[ -n "$h" ]] && printf '%s = %s\n' "${h%%=*}" "${h#*=}"
+    done <<<"$_rm_env"
+  fi
+  printf '\n[sshd]\nauthorized-keys = ~/.config/agent-sandbox/asb-%s-keys\n' "$alias"
+}
+
+# _as_remote_ssh_config ALIAS BLOCK -- put BLOCK (the marked lines, markers included)
+# into ~/.ssh/config: in place of the block of ALIAS there, else appended. Nothing
+# outside the markers changes; the file is written through (a symlink stays one, the
+# mode stays), and copied to ~/.ssh/config.before-agent-sandbox before the first write
+# into it (a file with no block of ours yet; one this made has nothing to keep).
+# Prints `written`, `unchanged` or `created`, and the backup's path when it made one.
+_as_remote_ssh_config() {
+  local alias="$1" block="$2" f="$HOME/.ssh/config" bk c nc pre rest post new begin end ours=0
+  bk="$f.before-agent-sandbox"
+  begin="# >>> agent-sandbox remote $alias (#344) >>>"
+  end="# <<< agent-sandbox remote $alias <<<"
+  if [[ ! -e "$f" ]]; then
+    (umask 077 && mkdir -p -- "${f%/*}" && printf '%s\n' "$block" >"$f") || return 1
+    printf 'created'
+    return 0
+  fi
+  c="$(
+    cat -- "$f"
+    printf x
+  )" || return 1
+  c="${c%x}"
+  nc=$'\n'"$c"
+  [[ "$nc" == *$'\n''# >>> agent-sandbox remote '* ]] && ours=1
+  if [[ "$nc" == *$'\n'"$begin"$'\n'* ]]; then
+    pre="${nc%%$'\n'"$begin"$'\n'*}"
+    rest=$'\n'"${nc#*$'\n'"$begin"$'\n'}"
+    if [[ "$rest" != *$'\n'"$end"* ]]; then
+      _as_msg "remote $alias: $f has the line '$begin' and no '$end' after it: mend it by hand, then run this again"
+      return 1
+    fi
+    post="${rest#*$'\n'"$end"}"
+    new="${pre:+${pre#$'\n'}$'\n'}$block$post"
+  else
+    new="$c"
+    [[ -z "$c" || "$c" == *$'\n' ]] || new+=$'\n'
+    [[ -z "$c" ]] || new+=$'\n'
+    new+="$block"$'\n'
+  fi
+  if [[ "$new" == "$c" ]]; then
+    printf 'unchanged'
+    return 0
+  fi
+  if ((! ours)) && [[ ! -e "$bk" ]]; then
+    cp -p -- "$f" "$bk" || return 1
+    printf 'written\t%s' "$bk"
+  else
+    printf 'written'
+  fi
+  printf '%s' "$new" >"$f.asb-new" && cat -- "$f.asb-new" >"$f" && rm -f -- "$f.asb-new" || return 1
+}
+
+# _as_remote_known_hosts ALIAS NAME KEY -- KEY (`TYPE BASE64`) for NAME in
+# ~/.ssh/known_hosts, marked as this remote's: a line of ours from an earlier run (any
+# name) is replaced; a line another tool wrote for NAME is left. Prints how many of those
+# there are for NAME with another key.
+_as_remote_known_hosts() {
+  local alias="$1" name="$2" key="$3" f="$HOME/.ssh/known_hosts" mark others=0 l
+  mark="agent-sandbox remote $alias (#344)"
+  (umask 077 && mkdir -p -- "${f%/*}" && touch -- "$f") || return 1
+  while IFS= read -r l; do
+    [[ -z "$l" || "$l" == \#* || "$l" == *" $mark" || "$l" == *" $key"* ]] || others=$((others + 1))
+  done < <(ssh-keygen -F "$name" -f "$f" 2>/dev/null)
+  {
+    awk -v s=" $mark" 'length($0) < length(s) || substr($0, length($0) - length(s) + 1) != s' "$f"
+    printf '%s %s %s\n' "$name" "$key" "$mark"
+  } >"$f.asb-new" && cat -- "$f.asb-new" >"$f" && rm -f -- "$f.asb-new" || return 1
+  printf '%s' "$others"
+}
+
+# _as_remote_account -- the account's part and the local side (see above), from
+# _as_setup_remote's locals (dynamic scope): 0 when every check passed, 1 otherwise.
+# shellcheck disable=SC2154
+_as_remote_account() {
+  local acct dest co cohow desc k v w x out err rc=0 setup=0
+  local -A S=()
+  local -a sopts=(-T -o BatchMode=yes -o ConnectTimeout=15) gids=() pol_old=() keys_old=()
+  acct="${_rm_account:-$ruser}" dest="${_rm_host#*@}"
+  local scratch="${_rm_scratch:-~/$alias}"
+  _as_msg "$p the account's part, over ssh as $acct to $dest (ssh -l $acct $dest; BatchMode; never sudo)"
+
+  # ---- the checkout and micromamba that would be carried ----
+  co="$(_as_remote_checkout)"
+  cohow="${co#*$'\t'}" co="${co%%$'\t'*}"
+  if [[ -z "$co" ]] || ! git -C "$co" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    _as_msg "$p no git checkout of agent-sandbox found (none beside the engine, none in install.manifest): the account's install is carried from one (git archive). Run this from a checkout, or install.sh from one"
+    return 1
+  fi
+  desc="$(git -C "$co" describe --always --tags HEAD 2>/dev/null)" || desc="$(git -C "$co" rev-parse --short HEAD)"
+  local mm
+  mm="$(_as_conda_home)/micromamba/bin/micromamba"
+
+  # ---- the key: the roles' key for this remote, made once, kept ----
+  local key="$HOME/.ssh/asb-$alias" pub
+  if [[ ! -f "$key" ]]; then
+    (umask 077 && mkdir -p -- "$HOME/.ssh") || return 1
+    ssh-keygen -q -t ed25519 -N '' -C "agent-sandbox remote $alias" -f "$key" </dev/null >/dev/null || {
+      _as_msg "$p ssh-keygen could not make $key"
+      return 1
+    }
+    _as_msg "$p made the key ~/.ssh/asb-$alias (ed25519, no passphrase): the roles' key for $alias, kept"
+  fi
+  IFS= read -r pub <"$key.pub" || true
+  if [[ ! "$pub" =~ ^ssh-ed25519\ [A-Za-z0-9+/]+=*( |$) ]]; then
+    _as_msg "$p ~/.ssh/asb-$alias.pub is not an ed25519 public key; remove the pair and run this again"
+    return 1
+  fi
+
+  # ---- the account's state ----
+  err="$(mktemp)" || return 1
+  out="$(_as_remote_state_script "$alias" "$scratch" | ssh "${sopts[@]}" -l "$acct" "$dest" bash -s 2>"$err")" || rc=$?
+  if [[ "$out" != *$'\nend\tok'* ]]; then
+    _as_msg "$p cannot read the account's state as $acct (ssh exit $rc): $(tail -n 3 -- "$err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
+    _as_msg "$p it needs ssh -l $acct $dest to work without a question: your public key in $acct's ~/.ssh/authorized_keys (the admin's script puts it there for an account it makes)"
+    rm -f -- "$err"
+    return 1
+  fi
+  rm -f -- "$err"
+  while IFS=$'\t' read -r k v; do
+    case "$k" in
+      policy) pol_old+=("$v") ;;
+      keys) keys_old+=("$v") ;;
+      gpuid) gids+=("$v") ;;
+      ?*) S[$k]="$v" ;;
+    esac
+  done <<<"$out"
+  local rscratch="${S[scratch]:-}" home="${S[home]:-}"
+  if [[ -z "$rscratch" || "$rscratch" == "${home%/}" || "${S[scratch_real]:-}" == "${home%/}" || "$rscratch" == / ]]; then
+    _as_msg "$p scratch = $scratch is $acct's home there ($home): the login's one writable place is a project directory, never the home itself"
+    return 1
+  fi
+  [[ "${S[installed]:-}" == yes && "${S[store]:-}" == yes ]] && setup=1
+  if ((setup)); then
+    _as_msg "$p set up already: $acct's install${S[carried]:+ (of ${S[carried]})} and the login's store there; this run is the update"
+  else
+    _as_msg "$p not set up yet as $acct (install: ${S[installed]:-no}, the login's store: ${S[store]:-no})"
+  fi
+
+  # ---- carry and install, when the account's install is not of this HEAD ----
+  local carried=0 tmpd
+  if [[ "${S[installed]:-}" == yes && "${S[carried]:-}" == "$desc" ]]; then
+    _as_msg "$p $acct's install is of $desc, as the checkout: nothing carried"
+  else
+    [[ -z "$(git -C "$co" status --porcelain --untracked-files=no 2>/dev/null)" ]] \
+      || _as_msg "$p $co has uncommitted changes: what is carried is its HEAD, $desc"
+    tmpd="$(mktemp -d)" || return 1
+    if ! git -C "$co" archive --format=tar --prefix=src/ -o "$tmpd/carry.tar" HEAD; then
+      _as_msg "$p git archive of $co failed"
+      rm -rf -- "$tmpd"
+      return 1
+    fi
+    w="the checkout $co ($cohow) at $desc"
+    if [[ -f "$mm" ]]; then
+      x="$(_as_sha256_file "$mm")"
+      if [[ "${S[micromamba]:-}" != "$x" ]]; then
+        if ! { cp -- "$mm" "$tmpd/micromamba" && tar -rf "$tmpd/carry.tar" -C "$tmpd" micromamba; }; then
+          rm -rf -- "$tmpd"
+          return 1
+        fi
+        w+=" and your micromamba"
+      fi
+      grep -qE "^(MICROMAMBA_SUMS=\")?$x  micromamba-linux-" "$co/install.sh" 2>/dev/null \
+        || _as_msg "$p your micromamba ($mm) is not the build $co's install.sh pins: install.sh there fetches that one (curl)"
+    else
+      _as_msg "$p no micromamba in your install ($mm): install.sh there fetches it (curl)"
+    fi
+    _as_msg "$p carrying $w into $acct's ~/.local/share/agent-sandbox"
+    # shellcheck disable=SC2016 # run there
+    ssh "${sopts[@]}" -l "$acct" "$dest" 'set -e; umask 022; S="$HOME/.local/share/agent-sandbox"; mkdir -p "$S"; t="$(mktemp -d "$S/.carry.XXXXXX")"; trap '"'"'rm -rf "$t"'"'"' EXIT; tar -xf - -C "$t"; rm -rf "$S/src"; mv "$t/src" "$S/src"; if [ -f "$t/micromamba" ]; then mkdir -p "$S/micromamba/bin"; chmod 755 "$t/micromamba"; mv -f "$t/micromamba" "$S/micromamba/bin/micromamba"; fi' \
+      <"$tmpd/carry.tar" 2>"$tmpd/err" || {
+      _as_msg "$p the carry failed: $(tail -n 3 -- "$tmpd/err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
+      rm -rf -- "$tmpd"
+      return 1
+    }
+    rm -rf -- "$tmpd"
+    _as_msg "$p install.sh as $acct (its output: ~/asb-install-$alias.log there)"
+    out="$(ssh "${sopts[@]}" -l "$acct" "$dest" "cd && bash .local/share/agent-sandbox/src/install.sh </dev/null >asb-install-$alias.log 2>&1 && printf '%s\n' $(printf %q "$desc") >.local/share/agent-sandbox/src/.asb-carried || { r=\$?; tail -n 12 asb-install-$alias.log; exit \$r; }" 2>&1)" || {
+      rc=$?
+      _as_msg "$p install.sh failed there (exit $rc); its last lines:"
+      while IFS= read -r x; do _as_msg "$p   ${x//[[:cntrl:]]/}"; done <<<"$out"
+      return 1
+    }
+    _as_msg "$p install.sh ok"
+    carried=1
+  fi
+
+  # ---- the policy, the keys file, the approval, the launch ----
+  local policy old wpol=0 down=0 up=0 why=""
+  policy="$(_as_remote_policy)"
+  old=""
+  ((${#pol_old[@]})) && old="$(printf '%s\n' "${pol_old[@]}")"
+  local pf="$rscratch/.agent-sandbox"
+  if [[ "${S[policy_file]:-}" != yes ]]; then
+    wpol=1
+    _as_msg "$p the policy $pf: new, from the section"
+  elif [[ "$old" != "$policy" ]]; then
+    wpol=1 why="the policy changed"
+    _as_msg "$p the policy $pf: changed:"
+    diff -U0 <(printf '%s\n' "$old") <(printf '%s\n' "$policy") | sed -n '/^[-+][^-+]/p; /^[-+]$/p' \
+      | while IFS= read -r x; do _as_msg "$p   $x"; done || true
+  else
+    _as_msg "$p the policy $pf: unchanged"
+  fi
+  if [[ "$(printf '%s\n' ${keys_old[@]+"${keys_old[@]}"})" != "$pub" ]]; then
+    ((${#keys_old[@]})) && why="${why:+$why, }the keys file changed"
+    _as_msg "$p the keys file ~/.config/agent-sandbox/asb-$alias-keys there: the key ~/.ssh/asb-$alias.pub"
+  fi
+  ((carried && setup)) && why="${why:+$why, }the install changed"
+  if [[ "${S[running]:-}" == yes ]]; then
+    if [[ -n "$why" ]]; then
+      down=1 up=1
+      _as_msg "$p relaunching the login ($why)"
+    else
+      _as_msg "$p up to date: the login is running"
+    fi
+  else
+    up=1
+    if ((setup)); then
+      _as_msg "$p the login is not running (a reboot of $dest?): launching it"
+    else
+      _as_msg "$p launching the login: asb --profile sshd --role $alias, in the background (its log: ~/asb-$alias-sshd.log there)"
+    fi
+  fi
+  err="$(mktemp)" || return 1
+  rc=0
+  out="$(_as_remote_apply_script | ssh "${sopts[@]}" -l "$acct" "$dest" bash -s 2>"$err")" || rc=$?
+  local hostkey=""
+  while IFS=$'\t' read -r k v; do
+    v="${v//[[:cntrl:]]/?}"
+    case "$k" in
+      error) _as_msg "$p $v" ;;
+      log) _as_msg "$p   $v" ;;
+      hostkey) hostkey="$v" ;;
+    esac
+  done <<<"$out"
+  if [[ "$out" != *$'\nend\tok'* ]]; then
+    [[ "$out" == *$'\nerror\t'* || "$out" == error$'\t'* ]] \
+      || _as_msg "$p the account's part did not complete (ssh exit $rc): $(tail -n 3 -- "$err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
+    rm -f -- "$err"
+    return 1
+  fi
+  rm -f -- "$err"
+  ((up)) && _as_msg "$p the login is running there"
+
+  # ---- the local side: the host key, the alias ----
+  local hname jump="" khname n
+  case "$_rm_port" in
+    0.0.0.0:*) hname="$rhost" ;;
+    *:*) hname="${_rm_port%:*}" ;;
+    *) hname=127.0.0.1 jump="$_rm_host" ;;
+  esac
+  local aport="${_rm_port##*:}"
+  khname="[$hname]:$aport"
+  if [[ ! "$hostkey" =~ ^(ssh-ed25519\ [A-Za-z0-9+/]+=*) ]]; then
+    _as_msg "$p the login's host key did not come back as an ed25519 key"
+    return 1
+  fi
+  hostkey="${BASH_REMATCH[1]}"
+  n="$(_as_remote_known_hosts "$alias" "$khname" "$hostkey")" || return 1
+  _as_msg "$p its host key into ~/.ssh/known_hosts as $khname ($(ssh-keygen -lf <(printf '%s %s\n' "$khname" "$hostkey") 2>/dev/null | awk '{print $2}'))"
+  ((n == 0)) || _as_msg "$p ~/.ssh/known_hosts has $n more line(s) for $khname with another key, not this run's: left as they are, and ssh accepts any of them for that name"
+  local block
+  block="$(
+    printf '# >>> agent-sandbox remote %s (#344) >>>\n' "$alias"
+    # shellcheck disable=SC2016 # the backquotes are the comment's own
+    printf '# Written by `asb --setup-remote %s` from [remote:%s] of %s;\n' "$alias" "$alias" "$cwd"
+    printf '# every run rewrites these lines. Change the section, not them.\n'
+    printf 'Host %s\n  HostName %s\n  Port %s\n  User %s\n' "$alias" "$hname" "$aport" "$acct"
+    printf '  IdentityFile ~/.ssh/asb-%s\n  IdentitiesOnly yes\n' "$alias"
+    [[ -z "$jump" ]] || printf '  ProxyJump %s\n' "$jump"
+    printf '# <<< agent-sandbox remote %s <<<' "$alias"
+  )"
+  out="$(_as_remote_ssh_config "$alias" "$block")" || return 1
+  case "$out" in
+    created) _as_msg "$p the alias $alias in ~/.ssh/config (created; a marked block)" ;;
+    unchanged) _as_msg "$p the alias $alias in ~/.ssh/config: unchanged" ;;
+    written$'\t'*) _as_msg "$p the alias $alias in ~/.ssh/config (a marked block; the file as it was before: ${out#*$'\t'})" ;;
+    *) _as_msg "$p the alias $alias in ~/.ssh/config (its marked block rewritten)" ;;
+  esac
+  # An earlier Host or Match block of yours sets an option first, and ssh takes the first.
+  local g bad=""
+  g="$(ssh -G "$alias" 2>/dev/null)" || g=""
+  for x in "hostname $hname" "port $aport" "user $acct"; do
+    grep -qixF -- "$x" <<<"$g" || bad+="${bad:+, }${x%% *}"
+  done
+  [[ -z "$jump" ]] || grep -qixF -- "proxyjump $jump" <<<"$g" || bad+="${bad:+, }proxyjump"
+  if [[ -n "$bad" ]]; then
+    _as_msg "$p ssh -G $alias does not resolve to the block ($bad): a Host or Match block above it in ~/.ssh/config sets that first. Move the marked block above it"
+    return 1
+  fi
+
+  # ---- the checks, through the alias ----
+  local fails=0
+  _as_remote_checks || fails=$?
+
+  # ---- the end ----
+  # an [ssh] line, or an [ssh:ROLE] one (the parser keeps those as the role's lines)
+  local reached=""
+  for x in ${_df_ssh[@]+"${_df_ssh[@]}"} ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
+    [[ "${x#*$'\t'}" == "$alias" || "${x#*$'\t'}" == ssh$'\t'"$alias" ]] && reached=1 && break
+  done
+  if ((fails)); then
+    _as_msg "$p set up, and $fails check(s) failed (above): ssh $alias"
+  else
+    _as_msg "$p set up: ssh $alias"
+  fi
+  [[ -n "$reached" ]] || _as_msg "$p for a role to reach it: $invoked --apply '[ssh:ROLE]' $alias"
+  _as_msg "$p after a reboot of $dest: $invoked --setup-remote $alias"
+  ((fails == 0))
+}
+
+# _as_remote_checks -- through the alias just written, one session: the login is the
+# account inside the sandbox; an allowed host answers 2xx/3xx through the proxy;
+# https://example.com/ is refused (403) unless the section allows it; a direct
+# connection fails; nvidia-smi lists exactly the cards of the section's /dev/nvidiaN
+# nodes, when it names any. One line each; returns how many failed. From
+# _as_remote_account's locals (dynamic scope).
+# shellcheck disable=SC2154,SC2016
+_as_remote_checks() {
+  local fails=0 h try="" ex=1 out k v x
+  local -A C=()
+  local -a hs=() inside=() cards=()
+  read -r -a hs <<<"$_rm_allow"
+  for h in ${hs[@]+"${hs[@]}"}; do
+    [[ -z "$try" && "$h" != .* ]] && try="$h"
+    [[ "$h" == example.com || "$h" == .example.com || "$h" == .com ]] && ex=0
+  done
+  out="$(
+    {
+      printf 'try=%q ex=%q\n' "$try" "$ex"
+      cat <<'CHECK'
+say() { printf '%s\t%s\n' "$1" "$2"; }
+say user "$(id -un)"
+say sandbox "${AGENT_SANDBOX:-}"
+if command -v curl >/dev/null 2>&1; then
+  if [ -n "$try" ]; then
+    say allowed "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://$try/" 2>/dev/null)"
+    if curl -sS -o /dev/null --noproxy '*' --max-time 8 "https://$try/" 2>/dev/null; then say direct open; else say direct closed; fi
+  fi
+  [ "$ex" = 1 ] && say refused "$(curl -sS -o /dev/null -w '%{http_code} %{http_connect}' --max-time 20 https://example.com/ 2>/dev/null)"
+else
+  say curl missing
+fi
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null | while IFS= read -r u; do [ -n "$u" ] && say gpu "$u"; done
+fi
+say end ok
+CHECK
+    } | ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$alias" bash -s 2>/dev/null
+  )" || true
+  while IFS=$'\t' read -r k v; do
+    v="${v//[[:cntrl:]]/?}"
+    case "$k" in
+      gpu) inside+=("$v") ;;
+      ?*) C[$k]="$v" ;;
+    esac
+  done <<<"$out"
+  if [[ "${C[end]:-}" != ok ]]; then
+    _as_msg "$p check: a login through the alias (ssh $alias) did not complete: FAILED"
+    return 1
+  fi
+  if [[ "${C[user]:-}" == "$acct" && "${C[sandbox]:-}" == 1 ]]; then
+    _as_msg "$p check: ssh $alias logs in as $acct, inside the sandbox (AGENT_SANDBOX=1): ok"
+  else
+    _as_msg "$p check: ssh $alias logs in as ${C[user]:-?}, AGENT_SANDBOX='${C[sandbox]:-}', where $acct inside the sandbox is expected: FAILED"
+    fails=$((fails + 1))
+  fi
+  if [[ "${C[curl]:-}" == missing ]]; then
+    _as_msg "$p check: the egress, not measured: no curl inside the login"
+  else
+    if [[ -n "$try" ]]; then
+      if [[ "${C[allowed]:-}" =~ ^[23][0-9][0-9]$ ]]; then
+        _as_msg "$p check: https://$try/ through the proxy: HTTP ${C[allowed]}: ok"
+      else
+        _as_msg "$p check: https://$try/ through the proxy: HTTP ${C[allowed]:-none}, where 2xx or 3xx is expected: FAILED"
+        fails=$((fails + 1))
+      fi
+      if [[ "${C[direct]:-}" == closed ]]; then
+        _as_msg "$p check: a direct connection to https://$try/, around the proxy, fails: ok"
+      else
+        _as_msg "$p check: a direct connection to https://$try/, around the proxy, succeeded: FAILED"
+        fails=$((fails + 1))
+      fi
+    else
+      _as_msg "$p check: the egress to an allowed host, not measured: the section allows no host by name"
+    fi
+    if ((ex)); then
+      if [[ " ${C[refused]:-} " == *" 403 "* ]]; then
+        _as_msg "$p check: https://example.com/, not allowed, is refused by the proxy (403): ok"
+      else
+        _as_msg "$p check: https://example.com/, not allowed, answered '${C[refused]:-none}' (code, then the proxy's CONNECT code), where 403 is expected: FAILED"
+        fails=$((fails + 1))
+      fi
+    fi
+  fi
+  # the cards: the section's /dev/nvidiaN nodes, by the minor number nvidia-smi reports
+  local -a nodes=()
+  [[ "$_rm_gpu" == off ]] || read -r -a nodes <<<"$_rm_gpu"
+  local m any=0
+  for x in ${nodes[@]+"${nodes[@]}"}; do
+    [[ "$x" =~ ^/dev/nvidia([0-9]+)$ ]] || continue
+    any=1 m="${BASH_REMATCH[1]}"
+    for v in ${gids[@]+"${gids[@]}"}; do
+      [[ "${v%% *}" == "$m" ]] && cards+=("${v#* }")
+    done
+  done
+  if ((any)); then
+    local got wanted
+    got="$(printf '%s\n' ${inside[@]+"${inside[@]}"} | sort | paste -sd' ' -)"
+    wanted="$(printf '%s\n' ${cards[@]+"${cards[@]}"} | sort | paste -sd' ' -)"
+    if [[ -n "$wanted" && "$got" == "$wanted" ]]; then
+      _as_msg "$p check: nvidia-smi inside lists exactly the card(s) of the section's nodes ($got): ok"
+    else
+      _as_msg "$p check: nvidia-smi inside lists '${got:-none}', where the section's nodes are '${wanted:-unknown}': FAILED"
+      fails=$((fails + 1))
+    fi
+  fi
+  return "$fails"
 }
 
 # _as_gpu_devices_line GLOB VALUE -- one `[gpu] devices = NODE ...` line (#335) into the
@@ -9171,7 +9779,7 @@ _as_apply() {
     _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
     return 1
   fi
-  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve) lines=() have=() add=()
+  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve remote) lines=() have=() add=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
@@ -9190,7 +9798,14 @@ _as_apply() {
     _as_msg "--apply: [$name] is not a section of .agent-sandbox (sections: $(printf '[%s] ' "${names[@]}" | sed 's/ $//'))"
     return 2
   fi
-  if [[ -n "$glob" ]]; then
+  if [[ "$name" == remote ]]; then
+    # [remote:ALIAS] (#344): the suffix is the remote's name, not a role glob, and it is
+    # required; the lines are its `key = value` lines, which the review says one by one.
+    if [[ ! "$glob" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      _as_msg "--apply: [remote] takes the remote's name, letters, digits, '-', '_' and '.': --apply '[remote:ALIAS]' 'allow = HOST ...'"
+      return 2
+    fi
+  elif [[ -n "$glob" ]]; then
     case "$name" in
       sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions | briefing | serve) ;;
       *)
@@ -9207,7 +9822,7 @@ _as_apply() {
   }
   [[ -f "$file" ]] && mapfile -t lines <"$file"
   local first_role=0
-  if [[ -n "$glob" ]]; then
+  if [[ -n "$glob" && "$name" != remote ]]; then
     first_role=1
     for l in ${lines[@]+"${lines[@]}"}; do
       _ap_norm "$l"
@@ -9267,6 +9882,11 @@ _as_apply() {
   _as_trust_review "$cwd" || return $?
   if ! _as_dotfile_trusted "$cwd" "$file"; then
     _as_msg "the change stays in .agent-sandbox, unapproved, for you to look at: $invoked --trust reviews it again."
+    return 0
+  fi
+  # A remote's section applies where it is set up: --apply never reaches another host.
+  if [[ "$name" == remote ]]; then
+    _as_msg "then: $invoked --setup-remote $glob"
     return 0
   fi
   # When it applies: at a launch. A running role's policy does not change.
