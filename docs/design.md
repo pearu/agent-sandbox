@@ -227,6 +227,38 @@ still lists every card's bus (information, not access). A `--dev-bind` of any pa
 widening, so an entry must be under `/dev/` and have no `..` component; the review says
 and drops any other, and prints each list as written.
 
+### A sandboxed ssh login: the `sshd` profile
+
+`asb --profile sshd --role NAME` (#335, [sshd.md](sshd.md)) makes the agent an
+unprivileged OpenSSH server, so another machine logs in to the account inside the
+role's sandbox. It is built from the mechanisms above, not beside them:
+
+- **sshd holds the keeper.** It is the agent joined into the role's launch, so the
+  launch lives as long as the daemon, a job a session detaches survives its session, and
+  `--shutdown` ends the sandbox with every session and job. A login shell that joined per
+  session could not carry a detached job past the keeper's grace (measured).
+- **A proxy of its own, and the session directory in the role's store.** logind removes
+  `/run/user/UID` at the account's last logout and stops its user manager with the proxy
+  unit (pam_systemd(8)); such a launch outlives its owner's login, on an account that may
+  never log in. So every launch runs the installed mitmdump and addon as a child of the
+  keeper's supervisor, on the account's port or the next free one, and keeps its session
+  directory (the proxy token) under the role's store, which is never bound in. No
+  linger, unit or root.
+- **The launch's environment is handed over per session.** sshd gives a session an
+  environment of its own; the profile's agent writes the launch's (proxy URL with its
+  token, CA variables, PATH, the policy's `[env]`) into one `SetEnv` line before
+  exec'ing sshd.
+- **`/etc/group` without the `tty` line**, bound over the system's: a pty's `chown` to
+  gid 5 fails in the user namespace, and with no `tty` group sshd uses the user's own.
+- **sshd listens on `0.0.0.0` inside.** A 2026 passt delivers a connection from the
+  host's loopback to the namespace's own address; the namespace is private, so only the
+  published port is reachable.
+- **The policy is the project's `.agent-sandbox`**: `strict` and exactly one agent port
+  are required, `[sshd] authorized-keys` names the keys that may log in (copied at each
+  launch into the role's store, bound read-only with the host key and the generated
+  configuration), and the configuration turns off PAM, passwords, forwarding, tunnels,
+  user rc files and user environment.
+
 ## Residual risks
 
 Stated plainly. These are what the adversary above can still do.
@@ -417,6 +449,35 @@ Stated plainly. These are what the adversary above can still do.
   read-write -- can make a role in a pane start a new session at the end of its current
   turn; the old transcript stays on disk. The marker is removed from inside the
   directory, a link never followed.
+- **An escape from an `sshd` sandbox lands in the account that launched it** (#335).
+  That account has the host's full network and loopback, its own home with the install,
+  the trust store and the keys file, and every GPU node its permissions allow (NVIDIA's
+  are mode 0666 on the Ubuntu 24.04 host measured). On a shared host a dedicated
+  ordinary account, no sudo and none of the owner's keys, is what keeps an escape out of
+  the owner's; on a cloud instance it is the instance user, with sudo where that user
+  has it, and the instance is the boundary.
+- **An `sshd` session sees every GPU's bus, not only its own card.**
+  `/proc/driver/nvidia/gpus` lists every card on the host (information, not access: the
+  device nodes are what grant a card), and `/sys` is visible read-only, as for any
+  sandbox with its GPUs on.
+- **The `sshd` keys file is the next launch's, not the running one's.** It is copied
+  into the role's store at launch and the copy is bound read-only, so a session cannot
+  widen the running sshd's keys (measured: a write is refused). A keys file inside the
+  project is writable by every session, which could add a key the next launch lets in;
+  the review warns of such a path. Outside the project, under `~/.config/agent-sandbox`,
+  no session sees it.
+- **An `sshd` session can read the role's host key.** The host's private key is in the
+  role's sshd directory, bound read-only, and sessions run as its owner (measured). A
+  session that sends it out through an allowed host gives its holder a way to pose as
+  this sshd to a client whose traffic they can intercept. It does not log anyone in or
+  sign anything else: the clients' keys are their own. Removing the role's store makes a
+  new one, which the clients must then be given.
+- **The `sshd` profile's proxy of its own is an unsandboxed process of the account.**
+  It runs the installed mitmdump and addon, as the account's own proxy unit does, and
+  ends with the keeper. A SIGKILL of the keeper's supervisor orphans it together with
+  the sandbox: measured, sshd keeps serving logins whose requests the proxy now refuses
+  (407, the session's owner gone), and `--status` and `--shutdown` call the role not
+  running, so the processes are ended by hand ([sshd.md](sshd.md#limits)).
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent

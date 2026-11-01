@@ -238,9 +238,9 @@ If you are an agent running inside this sandbox while maintaining it:
 - **Strict network mode** is implemented with pasta: it owns an isolated netns,
   bwrap runs inside sharing it, and an nftables rule allows only the proxy on
   the gateway, closing the raw-socket loophole. Needs `passt` + its AppArmor
-  profile; `--ssh` is unavailable there. A seccomp/firejail backend and the
-  SNI/tls_passthrough evaluation are recorded as open design questions in
-  `docs/design.md`.
+  profile; an `--ssh` host gets a pinhole there (direct, outside the proxy;
+  `docs/ssh.md`). A seccomp/firejail backend and the SNI/tls_passthrough
+  evaluation are recorded as open design questions in `docs/design.md`.
 
 ## Pitfalls that already cost time
 
