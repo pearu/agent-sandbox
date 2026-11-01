@@ -15,7 +15,7 @@
 #   curl -fsSL <raw url of install.sh> | bash
 #                             standalone: clones the repository into
 #                             ~/.local/share/agent-sandbox/src first
-#   ./install.sh --dry-run    no sudo, no systemctl, no environment creation;
+#   ./install.sh --dry-run    no sudo, no systemctl that changes anything, no environment creation;
 #                             everything else runs against $HOME (CI uses this
 #                             with a throwaway HOME).
 #   ./install.sh --yes, -y    do not ask: --uninstall's confirmation (it keeps the
@@ -791,7 +791,7 @@ fi
 
 # ----- 1. sanity: find (or fetch) the engine and the profiles -----
 section "Sanity check"
-((DRY_RUN)) && info "dry run: nothing privileged, no systemctl, no environment creation"
+((DRY_RUN)) && info "dry run: nothing privileged, no systemctl that changes anything, no environment creation"
 if [[ ! -f "$SCRIPT_DIR/agent-sandbox" ]]; then
   command -v git >/dev/null || err "standalone run needs git to clone $REPO_URL"
   SRC="$STATE_DIR/src"
@@ -1588,7 +1588,10 @@ section "Agents"
 for f in "${profiles[@]}"; do
   name=$(basename -- "$(dirname -- "$f")")
   cmd=$(profile_query "$f" profile_command)
-  if bin="$(agent_on_path "$cmd")"; then
+  if [[ "$cmd" == */* ]]; then
+    # a command the profile ships (sshd's agent, #335): nothing to find on PATH
+    ok "$name: its agent ships with the profile ($(basename -- "$cmd"))"
+  elif bin="$(agent_on_path "$cmd")"; then
     ok "$name: \`$cmd\` is $bin"
   else
     warn "$name: \`$cmd\` is not on PATH"
@@ -3578,18 +3581,31 @@ sed -i -e "s|@ENGINE@|$LAUNCH_TARGET|g" -e "s|@MITMDUMP@|$MITMDUMP|g" -e "s|@PRO
 ok "wrote $SYSTEMD_DIR/agent-sandbox-mitmproxy.service"
 
 # ----- 8. systemd: reload, enable, start -----
+# An account with no user manager -- one that never logs in interactively, a dedicated
+# account for the sshd profile (#335) -- has nothing to start the unit: `systemctl
+# --user` reaches none (asked read-only, a dry run too). That is a note, not an error:
+# the unit is written above anyway, for a later login, and the sshd profile runs a proxy
+# of its own at every launch, needing neither.
 section "Systemd user service"
-run_sys systemctl --user daemon-reload
-if ((DRY_RUN)); then
-  info "(dry-run) would enable and (re)start agent-sandbox-mitmproxy.service"
+USER_MANAGER=1
+systemctl --user show-environment >/dev/null 2>&1 || USER_MANAGER=0
+if ((! USER_MANAGER)); then
+  info "note: this account has no user manager (systemctl --user reaches none), so the proxy unit is written but not started."
+  info "      The sshd profile (asb --profile sshd) runs a proxy of its own at every launch and needs no unit. For the other"
+  info "      profiles, log in as this account (or: sudo loginctl enable-linger $(id -un)) and re-run install.sh."
 else
-  systemctl --user enable agent-sandbox-mitmproxy.service >/dev/null 2>&1 || true
-  systemctl --user restart agent-sandbox-mitmproxy.service
-  sleep 1
-  if systemctl --user is-active --quiet agent-sandbox-mitmproxy.service; then
-    ok "agent-sandbox-mitmproxy.service is active"
+  run_sys systemctl --user daemon-reload
+  if ((DRY_RUN)); then
+    info "(dry-run) would enable and (re)start agent-sandbox-mitmproxy.service"
   else
-    warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
+    systemctl --user enable agent-sandbox-mitmproxy.service >/dev/null 2>&1 || true
+    systemctl --user restart agent-sandbox-mitmproxy.service
+    sleep 1
+    if systemctl --user is-active --quiet agent-sandbox-mitmproxy.service; then
+      ok "agent-sandbox-mitmproxy.service is active"
+    else
+      warn "agent-sandbox-mitmproxy.service did not start; inspect: journalctl --user -u agent-sandbox-mitmproxy"
+    fi
   fi
 fi
 
@@ -3663,6 +3679,7 @@ for name in agent-sandbox asb; do
 done
 for f in "${profiles[@]}"; do
   cmd=$(profile_query "$f" profile_command)
+  [[ "$cmd" == */* ]] && continue # shipped with the profile (above)
   existing="$(command -v "$cmd" 2>/dev/null || true)"
   if [[ -n "$existing" ]] && is_our_launcher "$existing"; then
     warn "\`$cmd\` on PATH is agent-sandbox, not the agent ($existing). Remove it: rm $existing"
@@ -3744,6 +3761,8 @@ probe_session_begin() {
 }
 if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
+elif ((! USER_MANAGER)); then
+  info "proxy check skipped: the unit is not running (no user manager; see above)"
 elif ! probe_session_begin; then
   warn "could not make a probe session to check the proxy with; skipping the proxy check"
 else
@@ -3839,6 +3858,8 @@ strict_smoke() {
 }
 if ((DRY_RUN)); then
   info "(dry-run) strict-mode check skipped"
+elif ((! USER_MANAGER)); then
+  info "strict-mode check skipped: it needs the proxy, whose unit is not running (no user manager)"
 else
   strict_smoke "$nftbin" "$PROXY_PORT"
 fi

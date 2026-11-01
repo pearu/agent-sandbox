@@ -37,6 +37,13 @@
 #                               message. Names in profile_env_set are refused
 #                               the same way, so a forward cannot override
 #                               what the profile pins.
+#   profile_ro_binds=(...)      host paths bound READ-ONLY, in the grammar of
+#                               profile_config_binds, applied after them (#335).
+#   profile_self_contained=1    a proxy of its own for every launch, and the
+#                               session directory in the role's store (#335).
+#   profile_project_env_set=1   a project's [env] NAME = VALUE is set (#335).
+#   profile_by_name_only=1      never the default profile of a verb (#335).
+#   (docs/profiles.md says each in full; the sshd profile uses all four.)
 #
 # Functions a profile defines:
 #
@@ -50,6 +57,10 @@
 #                               Left empty, the first turn is declined.
 #   profile_check_notes()       optional. Prints lines --check shows for the
 #                               role, after the engine's own (one per line).
+#   profile_trust_notes CWD KEY=VALUE...
+#                               optional. Prints lines the dot-file's review
+#                               says about the project's section named after
+#                               the profile (#335).
 #
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),

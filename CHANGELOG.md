@@ -47,6 +47,29 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The `sshd` profile: a sandboxed ssh login** (#335, step 4 of its plan).
+  `asb --profile sshd --role NAME`, run in a project directory, runs an OpenSSH server as
+  the role's agent, in the foreground (background it: nohup, tmux; `--shutdown` ends it
+  and every job in it), so another machine logs in to this account inside the role's
+  sandbox: commands, `bash -s`, sftp, rsync, detached jobs, pty sessions, egress only
+  through the sandbox's proxy, the project's `.agent-sandbox` the policy. It needs the
+  `strict` mode and exactly one agent port (`--agent-port [ADDR:]PORT` or its other
+  forms), which is where sshd listens, and `[sshd] authorized-keys = PATH`, the keys that
+  may log in, copied at each launch; the review warns when that file is inside the
+  project. Every session gets the launch's environment (the proxy URL with its token,
+  the CA variables, the policy's `[env]`, PATH) but what sshd sets per session itself.
+  The profile is self-contained: every launch runs a proxy of its own -- the installed
+  mitmdump and addon with the unit's options, on the account's port when nothing
+  listens there, else the next free one, said at launch -- a child of the role's keeper,
+  and keeps its session directory in the role's store instead of `$XDG_RUNTIME_DIR`,
+  which logind removes at the account's last logout; so no linger, unit or root is
+  needed, and the launch outlives the owner's login. A project's `[env] NAME = VALUE` is
+  set under this profile (the review says for which roles; still ignored under
+  `claude`). `install.sh` on an account with no user manager writes the unit, says so
+  and goes on. New profile-contract declarations: `profile_ro_binds`,
+  `profile_self_contained`, `profile_project_env_set`, `profile_by_name_only` and the
+  `profile_trust_notes` hook; `AGENT_SANDBOX_MITMDUMP` names the proxy's binary. See
+  `docs/profiles.md` and `docs/config.md`.
 - **`--agent-port ADDR:PORT` publishes an agent's port at an address of the host, not
   only its loopback** (#335, step 3 of its plan): `0.0.0.0` for every IPv4 address, or
   one IPv4 literal; the same token in `AGENT_SANDBOX_AGENT_PORTS` and `[net] agent-port`.

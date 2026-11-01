@@ -121,7 +121,12 @@ Sections:
   into the sandbox (the values come from your shell, not this file), one or more
   per line, on top of the built-in set. A line `NAME = VALUE` sets a variable and
   `-NAME` refuses one; both are a profile's (its own dot-file), so in a project's
-  file the review warns of them and they are ignored. Do not list secrets for unrelated services.
+  file the review warns of them and they are ignored -- except `NAME = VALUE` under a
+  profile that lets a project set a variable, `sshd` (#335): there it is set inside, a
+  leading `~` being your home, per role with `[env:<role>]`, and the review says what
+  each line sets, for which roles, and that `claude` ignores it. A name the profile pins
+  or refuses, and `HOME`, `USER` and `AGENT_SANDBOX`, are not set (said at launch), and
+  the proxy and CA variables stay the network mode's. Do not list secrets for unrelated services.
   Names the profile pins inside are refused with a message rather than
   forwarded, since a forwarded value would override the profile's: for `claude`
   that is `DISABLE_AUTOUPDATER`, `CLAUDE_CONFIG_DIR` and
@@ -201,7 +206,9 @@ Sections:
   direction for the session. They join the `--host-port`/`--agent-port` flags
   and the `AGENT_SANDBOX_HOST_PORTS` / `AGENT_SANDBOX_AGENT_PORTS` knobs as a
   union, and are noted and ignored in the other modes. See
-  [network.md](network.md#strict-mode-opening-ports).
+  [network.md](network.md#strict-mode-opening-ports). The `sshd` profile (#335)
+  requires `mode = strict` and exactly one agent port, the one its sshd listens on:
+  `agent-port = PORT` (the host's loopback) or `ADDR:PORT`.
 - **`[gpu]`** — key/value lines. `mode = on|off` (default on): the host's GPUs in the
   sandbox -- their device nodes (`/dev/nvidia*` and `nvidia-caps/`, AMD's `/dev/kfd`,
   the render nodes `/dev/dri`) bound in, and `/sys` read-only, which the driver's
@@ -581,6 +588,14 @@ which roles of the project have a session to resume, with a one-line summary eac
   repaints is unmeasured. Like the status line it comes with the briefing, so not
   with `[briefing] mode = off`.
 
+- **`[sshd]`** — key/value lines, read by the `sshd` profile (#335).
+  `authorized-keys = /path/to/keys` (required) is the file of public keys that may log
+  in to the role's sshd, as `~/.ssh/authorized_keys` takes them: an absolute path, or
+  under `~`, readable at launch; it is copied into the role's store at every launch,
+  and that copy is what sshd reads. A relative path, a missing or unreadable file refuse
+  the launch. Keep it outside the project: the project is read-write in every session,
+  and the review warns when the file is inside it.
+
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
 engine at code to source. They stay command-line/environment knobs; see
@@ -955,6 +970,8 @@ of it is bound into the sandbox.
 | `<project>/.agent-sandbox` | the per-project policy (git-ignored by default) |
 | `~/.config/agent-sandbox/trust/` | approved dot-file hashes, one file per project |
 | `~/.local/state/agent-sandbox/claude/<slug>/<role>/config/<mode>/` | the role's copy of Claude Code's config file (see above) |
+| `~/.local/state/agent-sandbox/sshd/<slug>/<role>/sshd/` | the `sshd` profile's role (#335): its host key (kept), the copy of `[sshd] authorized-keys` and the `/etc/group` and `sshd_config` written at each launch; bound read-only inside |
+| `~/.local/state/agent-sandbox/sshd/<slug>/<role>/sessions/` | that role's session directories (the proxy token, the CA bundle), where the `sshd` profile keeps them instead of `$XDG_RUNTIME_DIR` (#335); never bound |
 | `~/.config/agent-sandbox/tools.txt` | the tools environment's packages (below); read by `install.sh` only |
 | `~/.config/agent-sandbox/proxy-port` | the proxy's port, written by `install.sh` (8888, or the next free one when another account's proxy holds 8888, or `--proxy-port N`); read by the unit at install time and by the engine at each launch, `AGENT_SANDBOX_PROXY_PORT` overrides it ([network.md](network.md#its-port)) |
 | `~/.local/share/agent-sandbox/tools/` | the tools environment `install.sh` builds; its slot in use is the one exception to "never bound": read-only |

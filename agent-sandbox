@@ -203,7 +203,14 @@
 #                                       profiles/ directory next to this file)
 #   AGENT_SANDBOX_SESSION_BASE=/dir     where per-session state lives (default:
 #                                       $XDG_RUNTIME_DIR/agent-sandbox.<uid>,
-#                                       falling back to /tmp/agent-sandbox.<uid>)
+#                                       falling back to /tmp/agent-sandbox.<uid>;
+#                                       under a self-contained profile, sshd, the
+#                                       role's store: <state>/<profile>/<slug>/
+#                                       <role>/sessions)
+#   AGENT_SANDBOX_MITMDUMP=/path        the mitmdump a self-contained profile's
+#                                       proxy of its own runs (default: install.sh's,
+#                                       ~/.local/share/agent-sandbox/proxy-venv or
+#                                       proxy-env, bin/mitmdump)
 #   AGENT_SANDBOX_JOIN=/path            the join helper (default:
 #                                       components/join.py next to this file)
 #   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long a role's keeper waits once
@@ -529,6 +536,8 @@ Environment knobs:
   AGENT_SANDBOX_AGENT_PORTS="8000"       (strict) same as --agent-port ([ADDR:]PORT), or none
   AGENT_SANDBOX_PROFILE_DIR     where profiles live
   AGENT_SANDBOX_SESSION_BASE    where per-session state lives
+  AGENT_SANDBOX_MITMDUMP=/path  the mitmdump a self-contained profile (sshd) runs as its
+                                own proxy (default: install.sh's proxy environment)
   AGENT_SANDBOX_JOIN            the join helper (default: components/join.py)
   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long an idle role's keeper waits
                                 before it ends (default: 2)
@@ -2826,6 +2835,13 @@ _as_keeper_supervise() {
   # The session directory is now this process's: the janitor and the proxy addon
   # judge it by its owner, and the engine that made it is about to exit.
   [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$me" "$mestart" >"$_session_dir/owner.id"
+  # A self-contained profile's proxy of its own (#335): up before the sandbox, ended
+  # with it. One that does not come up refuses the launch (_as_keeper_start says so).
+  if [[ -n "${_own_proxy:-}" ]] && ! _as_own_proxy_start; then
+    : >"$kd/failed-proxy"
+    printf '1\n' >"$kd/failed"
+    exit 1
+  fi
   "$@" &
   local b=$! found="" t tstart init istart i
   for ((i = 0; i < 1000; i++)); do
@@ -2839,6 +2855,7 @@ _as_keeper_supervise() {
     local brc=0
     kill "$b" 2>/dev/null
     { wait "$b"; } 2>/dev/null || brc=$?
+    _as_own_proxy_stop
     printf '%s\n' "$brc" >"$kd/failed"
     exit 1
   fi
@@ -2903,6 +2920,7 @@ _as_keeper_supervise() {
   local dog=$!
   { wait "$b"; } 2>/dev/null
   kill "$dog" 2>/dev/null
+  _as_own_proxy_stop
   flock 8 # held already when it ended because it was idle; taken when it ended from inside
   _as_session_cleanup
   _as_run_scoped_clear "$sb"
@@ -3107,6 +3125,8 @@ _as_keeper_start() {
     cp -- "$_dotfile" "$kd/dotfile.copy" || return 1
   fi
   printf '%s\n' "${_session_dir:-}" >"$kd/session"
+  # A proxy of its own (#335): its port, for --status.
+  [[ -z "${_own_proxy:-}" ]] || printf '%s\n' "$_proxy_port" >"$kd/own-proxy"
   printf '%s\n' "${_seccomp_bpf:-}" >"$kd/seccomp"
   [[ -z "${_ca_record:-}" ]] || printf '%s\n' "$_ca_record" >"$kd/ca"
   # The join-scoped paths, for each join to make its own stores for.
@@ -3119,6 +3139,12 @@ _as_keeper_start() {
     sleep 0.01
   done
   wait "$sup" 2>/dev/null
+  if [[ -e "$kd/failed-proxy" ]]; then
+    _as_msg "role '${_role:-default}': its proxy of its own did not come up on 127.0.0.1:$_proxy_port; refusing to launch. Its output is in $sb/keeper.log"
+    kill "$sup" 2>/dev/null
+    rm -rf -- "$kd"
+    return 1
+  fi
   local frc=1
   read -r frc 2>/dev/null <"$kd/failed" || frc=1
   ((frc)) || frc=1
@@ -3432,8 +3458,12 @@ _as_role_status() {
   [[ -z "$_ca_note" ]] || printf '  %s\n' "$_ca_note"
   # The proxy's port (#335), when it is not the default: what a launch now would use.
   local pp
-  pp="$(_as_proxy_port 2>/dev/null)" || pp="(AGENT_SANDBOX_PROXY_PORT is not a port)"
-  [[ "$pp" == 8888 ]] || printf '  proxy: 127.0.0.1:%s\n' "$pp"
+  if [[ -s "$sb/keeper/own-proxy" ]]; then
+    printf '  proxy: its own, at 127.0.0.1:%s\n' "$(cat "$sb/keeper/own-proxy")"
+  else
+    pp="$(_as_proxy_port 2>/dev/null)" || pp="(AGENT_SANDBOX_PROXY_PORT is not a port)"
+    [[ "$pp" == 8888 ]] || printf '  proxy: 127.0.0.1:%s\n' "$pp"
+  fi
   # --serve (#277): the loop holding it, what it waits on, and the session it runs.
   if _as_serve_record "$sb"; then
     local sw="" sf="" sid=""
@@ -4887,6 +4917,155 @@ _as_proxy_port() {
   fi
   printf '8888'
 }
+# ----- a proxy of its own (#335): a self-contained profile's -----
+# Under a profile that declares profile_self_contained (sshd), every launch runs its own
+# proxy, a child of the keeper's supervisor for the sandbox's lifetime, rather than
+# relying on the account's unit: a user manager and its units stop at the account's last
+# logout (pam_systemd(8)) unless linger is on, and such a launch outlives its owner's
+# login. It is the installed mitmdump with the installed addon and the unit's options.
+
+# _as_mitmdump -- the mitmdump a proxy of its own runs: AGENT_SANDBOX_MITMDUMP, else the
+# proxy environment install.sh built, found where its MITMDUMP ends up (the venv first,
+# then the conda env, as install.sh reuses them). Prints nothing and fails without one.
+_as_mitmdump() {
+  local c
+  if [[ -n "${AGENT_SANDBOX_MITMDUMP:-}" ]]; then
+    [[ -f "$AGENT_SANDBOX_MITMDUMP" && -x "$AGENT_SANDBOX_MITMDUMP" ]] || return 1
+    printf '%s' "$AGENT_SANDBOX_MITMDUMP"
+    return 0
+  fi
+  for c in "$(_as_conda_home)/proxy-venv/bin/mitmdump" "$(_as_conda_home)/proxy-env/bin/mitmdump"; do
+    [[ -f "$c" && -x "$c" ]] && printf '%s' "$c" && return 0
+  done
+  return 1
+}
+
+# _as_port_listening PORT -- does a TCP socket listen on PORT here, at any address? As
+# install.sh judges the proxy's port: a listener on 0.0.0.0 or :: holds 127.0.0.1 too.
+_as_port_listening() {
+  local hex
+  printf -v hex '%04X' "$1"
+  awk -v h="$hex" '$4 == "0A" { n = split($2, a, ":"); if (a[n] == h) { f = 1; exit } } END { exit !f }' \
+    /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+# _as_port_owned PID PORT -- does PID, or a process below it, listen on 127.0.0.1:PORT?
+# What tells the proxy's readiness apart from another program's listener on that port.
+_as_port_owned() {
+  local hex ino q f l
+  local -a inos=() pids=("$1") c=()
+  printf -v hex '0100007F:%04X' "$2"
+  mapfile -t inos < <(awk -v h="$hex" '$2 == h && $4 == "0A" { print $10 }' /proc/net/tcp 2>/dev/null)
+  ((${#inos[@]})) || return 1
+  for ((q = 0; q < ${#pids[@]}; q++)); do
+    for f in /proc/"${pids[q]}"/task/*/children; do
+      c=()
+      { read -r -a c <"$f"; } 2>/dev/null || true
+      pids+=(${c[@]+"${c[@]}"})
+    done
+  done
+  for q in "${pids[@]}"; do
+    for f in /proc/"$q"/fd/*; do
+      l="$(readlink -- "$f" 2>/dev/null)" || continue
+      for ino in "${inos[@]}"; do
+        [[ "$l" == "socket:[$ino]" ]] && return 0
+      done
+    done
+  done
+  return 1
+}
+
+# _as_own_proxy_plan -- for a launch under a self-contained profile in a proxied mode:
+# set _own_proxy (the mitmdump) and _proxy_port, which the strict chain and the proxy URL
+# then use: the account's port (_as_proxy_port, in _proxy_port on entry) when nothing
+# listens there, else the next one above it that is free. Says the launch line. Refuses
+# without a mitmdump or the installed addon. Reads and sets the engine's locals.
+# shellcheck disable=SC2154
+_as_own_proxy_plan() {
+  local acct="$_proxy_port" p="$_proxy_port" note="" addon
+  _own_proxy="$(_as_mitmdump)" || {
+    if [[ -n "${AGENT_SANDBOX_MITMDUMP:-}" ]]; then
+      _as_msg "profile '$profile' runs a proxy of its own, and AGENT_SANDBOX_MITMDUMP=$AGENT_SANDBOX_MITMDUMP is not an executable file"
+    else
+      _as_msg "profile '$profile' runs a proxy of its own, and there is no mitmdump in $(_as_conda_home)/proxy-venv or proxy-env: run install.sh, which builds it, or set AGENT_SANDBOX_MITMDUMP"
+    fi
+    return 1
+  }
+  addon="$(_as_config_dir)/allowlist_addon.py"
+  [[ -r "$addon" ]] || {
+    _as_msg "profile '$profile' runs a proxy of its own, and its addon $addon is missing: run install.sh"
+    return 1
+  }
+  if _as_port_listening "$p"; then
+    while _as_port_listening "$p"; do
+      ((p < 65535)) || {
+        _as_msg "profile '$profile' runs a proxy of its own, and no port above $acct is free for it"
+        return 1
+      }
+      p=$((p + 1))
+    done
+    note=" (the account's port, $acct, is in use)"
+  fi
+  _proxy_port="$p"
+  _as_msg "$profile: proxy of its own at 127.0.0.1:$p$note"
+  return 0
+}
+
+# _as_own_proxy_start SANDBOXDIR -- in the keeper's supervisor, before the sandbox: start
+# the proxy of its own (_own_proxy) on 127.0.0.1:$_proxy_port, its output into the
+# keeper's log, with the environment the unit gives it and the session base this launch
+# uses, so the addon finds its sessions; wait until it listens there, at most 10 s. Sets
+# _own_proxy_pid; fails when it exits or does not listen in time (then it is ended).
+# shellcheck disable=SC2154
+_as_own_proxy_start() {
+  local i
+  printf 'agent-sandbox: proxy of its own: %s on 127.0.0.1:%s, sessions in %s\n' "$_own_proxy" "$_proxy_port" "$(_as_session_base)"
+  env -i HOME="$HOME" USER="${USER:-$(id -un)}" PATH="$PATH" AGENT_SANDBOX_SESSION_BASE="$(_as_session_base)" \
+    PYTHONUNBUFFERED=1 "$_own_proxy" --listen-host 127.0.0.1 --listen-port "$_proxy_port" \
+    --set block_global=false --set termlog_verbosity=info --set flow_detail=0 --set http2=false \
+    -s "$(_as_config_dir)/allowlist_addon.py" &
+  _own_proxy_pid=$!
+  for ((i = 0; i < 100; i++)); do
+    kill -0 "$_own_proxy_pid" 2>/dev/null || break
+    _as_port_owned "$_own_proxy_pid" "$_proxy_port" && return 0
+    sleep 0.1
+  done
+  _as_own_proxy_stop
+  return 1
+}
+
+# _as_own_proxy_stop -- end the proxy of its own, if one runs: TERM, then KILL after 5 s.
+_as_own_proxy_stop() {
+  [[ -n "${_own_proxy_pid:-}" ]] || return 0
+  kill "$_own_proxy_pid" 2>/dev/null
+  (sleep 5 && kill -KILL "$_own_proxy_pid") 2>/dev/null 8>&- &
+  local dog=$!
+  { wait "$_own_proxy_pid"; } 2>/dev/null
+  kill "$dog" 2>/dev/null
+  _own_proxy_pid=""
+  return 0
+}
+
+# _as_default_profile DIR -- the profile a verb or --check with no command acts on: the
+# only one installed in DIR, not counting those chosen by --profile alone
+# (profile_by_name_only). Prints nothing when there is none, or several.
+_as_default_profile() {
+  local f n="" cnt=0
+  for f in "$1"/*/profile.sh; do
+    [[ -r "$f" ]] || continue
+    # shellcheck disable=SC1090,SC2030,SC2329 # the profile's top level, in a subshell, only declares
+    (
+      _as_msg() { :; }
+      profile_by_name_only=0
+      source "$f" >/dev/null 2>&1 || exit 1
+      ((profile_by_name_only))
+    ) && continue
+    cnt=$((cnt + 1)) n="$(basename -- "$(dirname -- "$f")")"
+  done
+  ((cnt == 1)) && printf '%s' "$n"
+  return 0
+}
+
 # Where install.sh puts the compiled seccomp filter for this machine.
 _as_seccomp_dir() { printf '%s' "${AGENT_SANDBOX_SECCOMP_DIR:-$HOME/.local/share/agent-sandbox/seccomp}"; }
 _as_sha256_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -5357,8 +5536,8 @@ _as_trust_digest() {
     printf '%s' "$sum"
     return 0
   }
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
-  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
@@ -5437,8 +5616,8 @@ _as_trust_forget() {
 
 # _as_dotfile_briefing_files PROJECT FILE -- _as_briefing_files for FILE, parsed here.
 _as_dotfile_briefing_files() {
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
-  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_deny=() _df_role_lines=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
@@ -5482,8 +5661,8 @@ _as_trust_show() {
 _as_profile_dotfile() {
   local file="$1" pname="$profile" kv k v h line base="" base_env="" from=""
   [[ -f "$file" ]] || return 0
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
-  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=()
   local -a _df_profile_names=() words=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
@@ -5774,6 +5953,7 @@ _as_profile_facts() {
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
     local -a profile_channels=() profile_dotfile_keys=()
+    local profile_project_env_set=0
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
     # shellcheck disable=SC1090
@@ -5781,6 +5961,25 @@ _as_profile_facts() {
     _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
     for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done
     for l in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do printf 'key\t%s\t%s\n' "$name" "$l"; done
+    ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
+    true
+  )
+}
+
+# _as_profile_trust_notes FILE CWD KEY=VALUE... -- what the profile at FILE says at the
+# review of CWD's dot-file about its own section's pairs (profile_trust_notes): one line
+# each, said by the engine. Sourced in a subshell, as _as_profile_facts is.
+_as_profile_trust_notes() {
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && _as_msg ".agent-sandbox: $line"
+  done < <(
+    # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
+    _as_msg() { :; }
+    # shellcheck disable=SC1090
+    source "$1" >/dev/null 2>&1 || exit 0
+    declare -F profile_trust_notes >/dev/null || exit 0
+    profile_trust_notes "${@:2}" 2>/dev/null
   )
 }
 
@@ -5808,8 +6007,8 @@ _as_instruction_channel() {
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
 _as_trust_notes() {
   local cwd="$1" file="$2" v f cs spec key mode p h pair n k line ch entry cpath over in_ch in_path contains
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
-  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=()
   local -a _df_profile_names=() facts=() fields=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
@@ -5848,8 +6047,26 @@ _as_trust_notes() {
       _as_msg ".agent-sandbox: $v bad rule '$k' (a tool name, or Tool(specifier), as the agent's settings take it); ignoring"
     fi
   done
-  for h in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
-    _as_msg ".agent-sandbox: [env] ${h%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
+  # [env] NAME = VALUE: a profile's, except under a profile that lets a project's file set
+  # one (profile_project_env_set, #335): said per line, with the roles and the profiles.
+  local -a env_yes=() env_no=()
+  for n in ${_df_profile_names[@]+"${_df_profile_names[@]}"}; do
+    over=""
+    for line in ${facts[@]+"${facts[@]}"}; do
+      [[ "$line" == "env-set"$'\t'"$n" ]] && over=1 && break
+    done
+    if [[ -n "$over" ]]; then env_yes+=("$n"); else env_no+=("$n"); fi
+  done
+  for h in ${_df_env_set_by[@]+"${_df_env_set_by[@]}"}; do
+    v="${h%%$'\t'*}" k="${h#*$'\t'}"
+    if ((${#env_yes[@]} == 0)); then
+      _as_msg ".agent-sandbox: [env] ${k%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
+      continue
+    fi
+    if [[ "$v" == "*" ]]; then v="[env]" n="every role"; else n="the roles $v" v="[env:$v]"; fi
+    f="$v ${k%%=*} = ${k#*=}: sets ${k%%=*} inside, for $n, under the profile $(printf '%s\n' "${env_yes[@]}" | paste -sd' ' | sed 's/ /, /g')"
+    ((${#env_no[@]})) && f+="; ignored under $(printf '%s\n' "${env_no[@]}" | paste -sd' ' | sed 's/ /, /g'), where a project's file only forwards"
+    _as_msg ".agent-sandbox: $f"
   done
   _as_serve_notes
   _as_briefing_start_notes
@@ -5932,6 +6149,14 @@ _as_trust_notes() {
       [[ "$line" == "key"$'\t'"$n"$'\t'"$k" ]] && over=1 && break
     done
     [[ -n "$over" ]] || _as_msg ".agent-sandbox: [$n] key '$k' is not one this profile reads; ignoring"
+  done
+  # What a profile says of its own section's values (profile_trust_notes, #335).
+  for n in ${_df_profile_names[@]+"${_df_profile_names[@]}"}; do
+    local -a pv=()
+    for pair in ${_df_profile_vals[@]+"${_df_profile_vals[@]}"}; do
+      [[ "${pair%%$'\t'*}" == "$n" ]] && pv+=("${pair#*$'\t'}")
+    done
+    ((${#pv[@]})) && _as_profile_trust_notes "$profile_dir/$n/profile.sh" "$cwd" "${pv[@]}"
   done
   for cs in ${_df_connect[@]+"${_df_connect[@]}"}; do
     spec="${cs#*$'\t'}"
@@ -6217,7 +6442,9 @@ _as_dotfile_line() {
     env)
       # [env] (#177): `NAME` forwards it when set in the launching shell (several per
       # line); `NAME = VALUE` sets it; `-NAME` refuses it, never forwarded. A
-      # project's file may only forward; setting and refusing are a profile's.
+      # project's file may only forward; setting and refusing are a profile's -- but
+      # setting is the project's too under a profile that says so (profile_project_env_set,
+      # #335), and the review says for which roles (_df_env_set_by keeps the glob).
       if [[ "$line" == -* ]]; then
         ck="${line#-}"
         ck="${ck//[[:space:]]/}"
@@ -6230,6 +6457,7 @@ _as_dotfile_line() {
         _as_dotfile_kv "$line"
         if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
           _df_env_set+=("$ck=$cv")
+          _df_env_set_by+=("$sglob"$'\t'"$ck=$cv")
         else
           _as_msg ".agent-sandbox: [env] '$ck' is not a variable name; ignoring: $line"
         fi
@@ -6404,6 +6632,7 @@ _as_dotfile_line() {
         _as_dotfile_kv "$line"
         [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
         _df_profile_pairs+=("$section"$'\t'"$ck")
+        _df_profile_vals+=("$section"$'\t'"$ck=$cv")
       fi
       ;;
   esac
@@ -9319,14 +9548,14 @@ agent_sandbox() (
     _as_trust_check "$(pwd -P)" || _crc=$?
     ((_crc)) && return "$_crc"
     if [[ -z "$profile" && -z "$_cmd_word" ]]; then
-      local -a _cps=("$profile_dir"/*/profile.sh)
-      [[ ${#_cps[@]} -eq 1 && -r "${_cps[0]}" ]] || return 0
-      profile="$(basename -- "$(dirname -- "${_cps[0]}")")"
+      profile="$(_as_default_profile "$profile_dir")"
+      [[ -n "$profile" ]] || return 0
     fi
     _check_plan=1
   fi
   # The role verbs act on a profile's stores and start no agent (--summarize starts a
-  # turn of its own): with no command, the only profile there is, as for --check.
+  # turn of its own): with no command, the only profile there is, as for --check -- a
+  # profile chosen by --profile alone (profile_by_name_only, sshd) not counted.
   local _verb=""
   ((_do_status)) && _verb=--status
   ((_do_shutdown)) && _verb=--shutdown
@@ -9334,8 +9563,7 @@ agent_sandbox() (
   ((_do_summarize)) && _verb=--summarize
   [[ -n "$_reset_connection" ]] && _verb="--reset $_reset_connection"
   if [[ -n "$_verb" && -z "$profile" && -z "$_cmd_word" ]]; then
-    local -a _vps=("$profile_dir"/*/profile.sh)
-    [[ ${#_vps[@]} -eq 1 && -r "${_vps[0]}" ]] && profile="$(basename -- "$(dirname -- "${_vps[0]}")")"
+    profile="$(_as_default_profile "$profile_dir")"
   fi
 
   # ---- profile ----
@@ -9386,6 +9614,13 @@ agent_sandbox() (
   # shellcheck disable=SC2034
   local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
+  # Read-only binds (#335), SRC<TAB>DEST as profile_config_binds; a self-contained profile
+  # (a proxy of its own per launch, its sessions under the role's store); a project's
+  # [env] NAME = VALUE honoured; a profile never chosen but by --profile. See profiles.md.
+  local -a profile_ro_binds=()
+  local profile_self_contained=0 profile_project_env_set=0 profile_by_name_only=0
+  # The role's store on the host, never bound (#335): set before profile_prepare.
+  local profile_role_dir=""
   # Background service (#123): the verbs that join the role's launch and never start
   # one (the observing ones answer "not running" when there is none), and the argv
   # tokens that mark the daemon, which holds the role's keeper while it runs.
@@ -9512,7 +9747,7 @@ agent_sandbox() (
   _proj="$(_as_project_dir)"
 
   # ---- per-project config (.agent-sandbox), trust-gated ----
-  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=()
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=()
   local -a _df_net_host_port=() _df_net_agent_port=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode=""
   local _df_share_set=0 _memory_mode _dotfile="$_proj/.agent-sandbox"
@@ -9908,6 +10143,14 @@ agent_sandbox() (
   # started; the keeper being joined is the one the live file named.
   ((_df_from_keeper)) && _df_role="$_pre_role"
   _as_role_resolve || return 1
+  # A SELF-CONTAINED PROFILE'S SESSIONS LIVE IN THE ROLE'S STORE (#335), not under
+  # $XDG_RUNTIME_DIR: logind removes /run/user/UID and all it holds at the account's last
+  # logout (pam_systemd(8)), and such a launch outlives its owner's login. The store is
+  # host-only (never bound), and the proxy of its own is told this base. An explicit
+  # AGENT_SANDBOX_SESSION_BASE still wins.
+  if ((profile_self_contained)) && [[ -z "${AGENT_SANDBOX_SESSION_BASE:-}" ]]; then
+    AGENT_SANDBOX_SESSION_BASE="$(_as_sandbox_dir)/sessions"
+  fi
   local _pb
   for _pb in ${_df_preset_by[@]+"${_df_preset_by[@]}"}; do
     # shellcheck disable=SC2053 # the glob is the pattern
@@ -10302,6 +10545,8 @@ agent_sandbox() (
     _as_join_scoped_clear "$_keeper_sb"
   fi
 
+  # shellcheck disable=SC2034 # the profile's to read (profile_prepare)
+  profile_role_dir="$_keeper_sb"
   if declare -F profile_prepare >/dev/null; then
     profile_prepare || return 1
   fi
@@ -10475,9 +10720,13 @@ agent_sandbox() (
   # The proxy's port (#335), for the modes that use the proxy: install.sh's choice, or
   # AGENT_SANDBOX_PROXY_PORT. Resolved here, before anything is set up, so a bad knob
   # refuses the launch as a bad AGENT_SANDBOX_GPU does.
-  local _proxy_port=8888
+  local _proxy_port=8888 _own_proxy="" _own_proxy_pid=""
   if [[ "${_knob_net:-proxy}" == proxy || "${_knob_net:-proxy}" == strict ]]; then
     _proxy_port="$(_as_proxy_port)" || return 2
+    # A self-contained profile's launch runs a proxy of its own (#335): this port is its.
+    if ((profile_self_contained)); then
+      _as_own_proxy_plan || return 1
+    fi
   fi
 
   # Always-on bindings: the profile's state paths (read-write) and its binary.
@@ -10521,6 +10770,21 @@ agent_sandbox() (
       _as_placeholder_files+=("$_dst")
     fi
     args+=(--bind "$_src" "$_dst")
+  done
+  # The profile's read-only binds (#335), the same grammar: the sshd profile's state and
+  # its /etc/group without the tty line. After /etc and $HOME, so each lands over them.
+  for _p in ${profile_ro_binds[@]+"${profile_ro_binds[@]}"}; do
+    IFS=$'\t' read -r _src _dst <<<"$_p"
+    _dst="${_dst:-$_src}"
+    [[ -e "$_src" ]] \
+      || {
+        _as_msg "profile '$profile': read-only path '$_src' does not exist (create it in profile_prepare)"
+        return 1
+      }
+    if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dst" ]]; then
+      _as_placeholder_files+=("$_dst")
+    fi
+    args+=(--ro-bind "$_src" "$_dst")
   done
   # Under `native` the host's $HOME is bound whole, so a binary living in it is
   # already inside; binding it again is a no-op that can still FAIL, because
@@ -10715,6 +10979,27 @@ agent_sandbox() (
       args+=(--setenv "$_var" "${!_var}")
     fi
   done
+  # A PROJECT'S [env] NAME = VALUE (#335), under a profile that allows it
+  # (profile_project_env_set): the role's lines, set after everything forwarded, so they
+  # win over a forward. Never a name the profile pins or refuses, nor one the engine
+  # pins here (HOME, USER, AGENT_SANDBOX): said, and left as it is. The proxy and CA
+  # variables are set after this, by the network mode, and win. A leading `~` is $HOME,
+  # as in a profile's file. Elsewhere the review says such a line is ignored.
+  if ((profile_project_env_set)); then
+    local _ev
+    for _kv2 in ${_df_env_set[@]+"${_df_env_set[@]}"}; do
+      _var="${_kv2%%=*}" _ev="${_kv2#*=}" _hit=0
+      for _r in HOME USER AGENT_SANDBOX ${_refuse[@]+"${_refuse[@]}"}; do
+        [[ "$_r" == "$_var" ]] && _hit=1 && break
+      done
+      if ((_hit)); then
+        _as_msg "not setting $_var from .agent-sandbox [env]: profile '$profile' or the engine sets it inside the sandbox"
+        continue
+      fi
+      [[ "$_ev" == \~ || "$_ev" == \~/* ]] && _ev="$HOME${_ev#\~}"
+      args+=(--setenv "$_var" "$_ev")
+    done
+  fi
   if ((bind_cwd)); then
     case "$_connect_project_mode" in
       read-only) args+=(--ro-bind "$cwd" "$cwd") ;;

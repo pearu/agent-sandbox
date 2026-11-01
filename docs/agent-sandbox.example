@@ -318,6 +318,15 @@
 #        state-background = on also tints the terminal per state (#287).
 #state-background = on
 
+# [sshd] -- read by the sshd profile (#335), `asb --profile sshd --role NAME`: a
+#        sandboxed ssh login. authorized-keys (required) is the file of public
+#        keys that may log in, an absolute path OUTSIDE the project (sessions can
+#        write the project), copied at each launch. The profile also needs
+#        [net] mode = strict and exactly one [net] agent-port, where sshd listens,
+#        and under it a project's [env] NAME = VALUE is set inside.
+#[sshd]
+#authorized-keys = /path/outside/the/project/keys
+
 
 # Not settable here, on purpose:
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project

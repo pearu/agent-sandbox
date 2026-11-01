@@ -100,7 +100,8 @@ there is nothing here to put a boundary around.
 **Covered.** Any agent you start locally with `asb`: the engine is
 provider-agnostic and everything agent-specific lives in a profile, so a new
 agent needs a profile rather than engine changes
-([profiles.md](docs/profiles.md)). Only the `claude` profile ships today. MCP
+([profiles.md](docs/profiles.md)). Two profiles ship: `claude`, and `sshd`, a
+sandboxed ssh login for other machines (`asb --profile sshd --role NAME`, #335). MCP
 servers are covered automatically, since the agent spawns them inside the
 sandbox.
 
@@ -239,7 +240,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[net] retrieve-only` | `on`: GET and HEAD only (a GraphQL query, not a mutation; git's fetch where `[net] git` allows it, not a push), but to the profile's own hosts -- read, publish nothing (off) ([network.md](docs/network.md)) |
 | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS` | `[net] host-port` | `strict` only: host loopback ports the sandbox may reach, space-separated in the variable; `none` closes the direction (none) ([network.md](docs/network.md)) |
 | `--agent-port [ADDR:]PORT` | `AGENT_SANDBOX_AGENT_PORTS` | `[net] agent-port` | `strict` only: agent ports published on the host's loopback, or at ADDR (an IPv4 address of the host, `0.0.0.0` = every one: reachable from the network); `none` closes the direction (none) ([network.md](docs/network.md)) |
-| — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA) |
+| — | `AGENT_SANDBOX_FORWARD` | `[env]` | extra environment variables to forward, by name, space-separated (only the built-in set: locale, proxy, CA, CUDA); under the `sshd` profile a project's `NAME = VALUE` also sets one (#335) ([config.md](docs/config.md)) |
 | — | `AGENT_SANDBOX_CONDA_WRITE` | `[conda] write` | `1` makes the active conda env writable; its base install and other envs stay read-only (read-only) |
 | — | `AGENT_SANDBOX_CONDA_PKGS` | `[conda] pkgs` | the sandbox-owned package cache conda downloads into, persistent; a relative path is the project's, like `[conda] prefix` (`~/.cache/agent-sandbox/conda-pkgs`) |
 | — | `AGENT_SANDBOX_CONDA_BASE` | `[conda] base` | whose conda the sandbox gets: `host` (yours, passed through) or `sandbox` (agent-sandbox's own `micromamba` and its conda root; none of the host's conda is bound) (`~/.config/agent-sandbox/conda`, which `install.sh` asks; else `host` where the host has conda) ([config.md](docs/config.md)) |
@@ -252,6 +253,7 @@ not exist. Values and defaults are in the last column.
 | — | — | `[permissions]` | agent permission rules a session gets without asking, one per line in the agent's own syntax (claude: its settings' `permissions.allow`, e.g. `Bash(git push:*)`, `Read`); per role with `[permissions:ROLE]`, a union; a widening the review names, and `--check` lists; handed over with the briefing, so not with `[briefing] mode = off` (none) ([config.md](docs/config.md)) |
 | — | — | `[claude] hide` | extra paths under `~/.claude` to blank inside, space separated; `daemon/` is hidden already ([config.md](docs/config.md)) |
 | — | — | `[claude] state-background` | `on` tints the terminal's background with the session's state, as the status line shows it: working or running, needs you or asks you, and your own background while it waits or is idle; written over Claude Code's own stdout from its hooks, reset at exit; with the briefing (off) ([config.md](docs/config.md)) |
+| — | — | `[sshd] authorized-keys` | the `sshd` profile's keys file: the public keys that may log in to the role's sshd, an absolute path outside the project, copied at each launch; required, and the profile also needs `[net] mode = strict` and exactly one `agent-port` (#335) ([config.md](docs/config.md)) |
 | — | — | `[channel:<name>]` | a **profile's own dot-file** only (`profiles/<name>/agent-sandbox`): one section per channel, a path per line under `{base}` (the profile's base, which `[agent] base-env` -- claude: `CLAUDE_CONFIG_DIR` -- can move), a trailing `/` for a directory, and per path `outside:`, `filter:`, `vendor:` or `start:` (a template file the store starts as, under `{profile}`, the profile's directory). In a project's file it is warned of at the review and ignored ([profiles.md](docs/profiles.md#the-profiles-dot-file)) |
 | — | — | `[preset:<name>]` | a **profile's own dot-file** only: a preset's rungs (`isolated`, `inherit` or `shared`), in the `[connect]` grammar, for the channels where they are not the ladder's. A project picks a preset with `[sandbox] preset` and moves a channel with `[connect]`; a `[preset:...]` in a project's file is warned of at the review and ignored ([profiles.md](docs/profiles.md#the-profiles-dot-file)) |
 | — | — | `[serve] watch`, `[serve] prompt` | what `--serve` waits on (a file in the project, an inbox) and what each turn is told (a file in the project, its text); per role with `[serve:ROLE]`, both required; the review says what the loop will wait on and read (none) ([config.md](docs/config.md)) |
@@ -290,10 +292,12 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Nine more variables name locations rather than behaviour and are rarely set by
+Ten more variables name locations rather than behaviour and are rarely set by
 hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROXY_PORT` (the proxy's port on
 127.0.0.1; `install.sh` records its choice, 8888 or another account's next free
-one, in `~/.config/agent-sandbox/proxy-port`), `AGENT_SANDBOX_PROFILE_DIR`,
+one, in `~/.config/agent-sandbox/proxy-port`), `AGENT_SANDBOX_MITMDUMP` (the mitmdump
+a self-contained profile, `sshd`, runs as its proxy of its own; `install.sh`'s by
+default), `AGENT_SANDBOX_PROFILE_DIR`,
 `AGENT_SANDBOX_HOME` (where `install.sh` put micromamba and its conda root),
 `AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),
 `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,

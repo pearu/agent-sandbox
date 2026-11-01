@@ -26,6 +26,10 @@ Variables a profile declares (all optional unless marked):
 | `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). The dot-file's `[env]` names add to it. |
 | `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. The dot-file's `[env] NAME = VALUE` adds to it. |
 | `profile_env_refuse=(...)` | Names a user may not forward with `[env]` or `AGENT_SANDBOX_FORWARD`: refused with a message. Names in `profile_env_set` are refused the same way, so a forward cannot override what the profile pins. |
+| `profile_ro_binds=(...)` | Host paths bound **read-only** into the sandbox (#335), in the grammar of `profile_config_binds` (a path bound at itself, or `SRC<TAB>DEST`), applied right after them, so after the system's `/etc` and the blank `$HOME`: a `DEST` there lands over them. `SRC` must exist; create it in `profile_prepare()`. sshd: the role's sshd directory at itself, and its `/etc/group` without the `tty` line over `/etc/group`. |
+| `profile_self_contained=1` | The profile needs nothing of the account but its install (#335). Every launch in the `proxy` or `strict` mode runs **a proxy of its own**, a child of the keeper's supervisor for the sandbox's lifetime: the installed mitmdump (`AGENT_SANDBOX_MITMDUMP`, else install.sh's `proxy-venv/` or `proxy-env/` under `~/.local/share/agent-sandbox`) with the installed addon and the unit's options, `--listen-host 127.0.0.1`, on the account's port (`~/.config/agent-sandbox/proxy-port`, `AGENT_SANDBOX_PROXY_PORT`) when nothing listens there, else on the next free port above it; that port is the proxy URL's and the strict chain's. The launch says `PROFILE: proxy of its own at 127.0.0.1:PORT` (and, on another port, why); the supervisor starts it before the sandbox, waits until it listens there (10 s at most), ends it when the keeper ends, and one that does not come up refuses the launch, naming the keeper's log, which has its output. And **the session directory lives in the role's store**, `<state>/<profile>/<slug>/<role>/sessions/`, not under `$XDG_RUNTIME_DIR`, which logind removes at the account's last logout (pam_systemd(8)); the proxy is told that base (`AGENT_SANDBOX_SESSION_BASE`), and an explicit `AGENT_SANDBOX_SESSION_BASE` still wins. A self-contained launch needs no user manager, linger or unit. |
+| `profile_project_env_set=1` | A project's `[env] NAME = VALUE` (and `[env:<role>]`'s) is set inside (#335), after everything forwarded; without it such a line is the profile's alone and ignored in a project's file. A name the profile pins (`profile_env_set`) or refuses, or one the engine pins (`HOME`, `USER`, `AGENT_SANDBOX`), is said and not set; the network mode's proxy and CA variables come later and win. The review says what each line sets, for which roles, and under which profiles it is ignored. |
+| `profile_by_name_only=1` | The profile is chosen by `--profile NAME` alone (#335): it is not counted when a verb or `--check` with no command falls back to the only profile installed. sshd sets it, so `asb --role R --shutdown` still means claude. |
 | `profile_verbs=(...)` | (Or `[agent] verbs` in the dot-file.) Agent verbs that observe or manage a background service. The engine joins them into the role's running launch, where the service is, and never starts a launch for one: with none running, a verb in `profile_verbs_observe` answers that the role is not running (exit 0) and any other is refused. They get no briefing arguments. |
 | `profile_verbs_observe=(...)` | (Or `[agent] verbs-observe`.) The subset of `profile_verbs` that only ask questions. |
 | `profile_daemon_argv=(...)` | (Or `[agent] daemon`.) Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
@@ -43,11 +47,17 @@ Functions a profile defines:
 | `profile_check_notes()` | Optional. Prints lines `--check` shows for the role, after the engine's own, one per line; it reads the engine's locals by dynamic scope, `_watch_path` among them (the role's `[serve] watch`, empty without one and on a turn of `--serve`). claude: the watcher rule's line, for a role with a watch path. |
 | `profile_telemetry_hosts()` | Optional. Prints, one per line, the hosts the agent reaches on its own rather than for a command (telemetry, metrics, error reports, feature flags), as the allowlist writes them: an exact hostname or a `.domain`. They are refused like any unlisted host; the engine writes them to the briefing directory's `telemetry-hosts`, so a profile's refusal hook can leave them out of what it reports, and `--check` counts them (#276). These are the agent's own hosts; the hosts of the tools the engine ships (gh's `cafe.github.com`) are the engine's table, added to the same file (#304). |
 | `profile_route()` | Optional. Called with the agent's argv once the project's trusted `.agent-sandbox` is read, for a launch that is not a `--trust` review. Returns 0 to let the engine sandbox it, or runs the invocation itself and does not return. Inside a sandbox it is not reached: there the engine itself runs what an `asb` names as it is, with no second sandbox (#197). |
-| `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. |
+| `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. Failing refuses the join: the sshd profile refuses a second launch of a running role there, since a second sshd could not listen on its port. |
+| `profile_trust_notes()` | Optional. Called at the dot-file's review with the project directory and the `KEY=VALUE` pairs of the project's section named after this profile (#335), in a subshell with only the profile sourced; prints one line per note, which the engine says as `.agent-sandbox: LINE`. sshd: who may log in (`[sshd] authorized-keys`), a relative path a launch refuses, and a keys file inside the project, which sessions can write. |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
-`AGENT_SANDBOX_PROFILE_DIR`, `_as_msg` for prefixed stderr messages, and, in
+`AGENT_SANDBOX_PROFILE_DIR`, `_as_msg` for prefixed stderr messages,
+`profile_role_dir` in `profile_prepare()` (the role's store on the host, never bound
+into a sandbox, #335), and, by dynamic scope there, the launch's resolved `_knob_net`
+(the network mode), `_agent_ports` (the agent-port tokens, merged from every source and
+normalized: `PORT`, or `ADDR:PORT` for an address other than `127.0.0.1`), `_role` and
+`_df_profile_kv` (the approved dot-file's pairs of the profile's section), and, in
 `profile_briefing_args()`, the array `_permission_rules`: the trusted dot-file's
 `[permissions]` rules for this launch's role, each once, in the agent's own syntax, for
 the profile to hand to the agent (claude: `permissions.allow` in its `--settings`). A
@@ -176,6 +186,34 @@ the writes were then silently lost), forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AU
 `DISABLE_AUTOUPDATER=1`, refuses to forward `CLAUDE_CODE_PROJECT_DIR_NAME`, and
 routes `update`, `upgrade` and `install` to the host (see
 [updating.md](updating.md)).
+
+## `sshd`: a sandboxed ssh login
+
+`profiles/sshd/` (#335) runs an OpenSSH server as the agent: `asb --profile sshd --role
+NAME`, no command. Its `profile_command` is the path of `sshd-agent.sh` beside it, which the
+engine binds read-only at itself, so it runs whatever the account's PATH (sshd itself is
+in `/usr/sbin`, often off a user's PATH); inside the sandbox it writes one `SetEnv` line
+-- every variable of its environment, the launch's, but `HOME`, `USER`, `LOGNAME`,
+`SHELL`, `MAIL`, `TERM`, `PWD`, `OLDPWD`, `SHLVL`, `_`, `SSH_*` and its own two -- into
+`/tmp`, before an `Include` of the configuration `profile_prepare()` wrote on the host,
+and execs `sshd -D -e -f` it. `profile_prepare()` refuses a launch that is not `strict`,
+that has not exactly one agent port, or whose `[sshd] authorized-keys` is missing,
+relative or unreadable; it keeps the role's host key (ed25519, made once), copies the
+keys file, writes `/etc/group` without the `tty` line (a pty's `chown` to gid 5 fails in
+the user namespace; without the group sshd uses the user's own) and the configuration:
+`Port` from the agent-port token and `ListenAddress 0.0.0.0`, every address of the
+namespace whatever the token's (a 2026 passt delivers a connection from the host's
+loopback to the namespace's own address, not to its `127.0.0.1`, measured on Ubuntu
+26.04; the namespace is private, so only the published port is reachable),
+`HostKey`, `AuthorizedKeysFile` (the copy), `PidFile none`, `UsePAM no`,
+`PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
+`PermitUserEnvironment no`, `PermitUserRC no`, `DisableForwarding yes`,
+`PermitTunnel no`, `StrictModes no`, `Subsystem sftp` (the host's sftp-server, else
+`internal-sftp`), `LogLevel VERBOSE`. sshd's log goes to the launch's stderr; the proxy's
+to the keeper's log. It declares `profile_self_contained`, `profile_project_env_set`,
+`profile_by_name_only`, `profile_ro_binds` and `profile_trust_notes`, refuses a
+command or arguments in `profile_route()`, and a second launch of a running role in
+`profile_before_join()`.
 
 ## Roadmap profiles
 

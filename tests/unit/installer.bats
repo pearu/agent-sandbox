@@ -17,7 +17,20 @@ dry() { # dry [ENV=VAL ...] -- extra install.sh args
   run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" "${envs[@]}" "$REPO_ROOT/install.sh" --dry-run "$@"
 }
 
+# A `systemctl` first on PATH that reaches a user manager (every call succeeds), or with
+# NONE set, one that reaches none, as for an account that never logs in.
+systemctl_stub() {
+  mkdir -p "$T/home/.local/bin"
+  if [[ "${1:-}" == none ]]; then
+    printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' >"$T/home/.local/bin/systemctl"
+  else
+    printf '#!/bin/sh\nexit 0\n' >"$T/home/.local/bin/systemctl"
+  fi
+  chmod +x "$T/home/.local/bin/systemctl"
+}
+
 @test "--dry-run: writes config, renders the unit with the proxy path, symlinks asb and agent-sandbox; nothing privileged" {
+  systemctl_stub
   dry
   [ "$status" -eq 0 ]
   [ -f "$T/home/.config/agent-sandbox/allowlist_addon.py" ]
@@ -878,4 +891,30 @@ unit_port() { sed -n 's/^ *--listen-port \([^ ]*\) .*/\1/p' "$T/home/.config/sys
   [[ "$output" == *"[warn] 127.0.0.1:8890 is in use by something other than this account's proxy: re-run with --proxy-port N to move it"* ]]
   dry -- --proxy-port 8888 # the flag moves it
   [ "$(cat "$T/home/.config/agent-sandbox/proxy-port")" = 8888 ]
+}
+
+# ---- an account with no user manager; the sshd profile (#335) ----------------
+
+@test "no user manager: a note naming the sshd profile's own proxy, the unit written anyway, nothing started, the install goes on" {
+  systemctl_stub none
+  dry
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"note: this account has no user manager (systemctl --user reaches none), so the proxy unit is written but not started."* ]]
+  [[ "$output" == *"The sshd profile (asb --profile sshd) runs a proxy of its own at every launch and needs no unit."* ]]
+  [[ "$output" != *"would run: systemctl --user daemon-reload"* ]]
+  [[ "$output" != *"would enable and (re)start"* ]]
+  [ -f "$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service" ]
+  [ "$(readlink "$T/home/.local/bin/asb")" = "$T/home/.local/share/agent-sandbox/app/agent-sandbox" ] # what follows still ran
+  [[ "$output" == *"Next steps:"* ]]
+}
+
+@test "the sshd profile is installed with its agent, which the Agents section names as shipped, not as missing from PATH" {
+  systemctl_stub
+  dry
+  [ "$status" -eq 0 ]
+  [ -x "$T/home/.local/share/agent-sandbox/app/profiles/sshd/sshd-agent.sh" ]
+  [ -f "$T/home/.local/share/agent-sandbox/app/profiles/sshd/profile.sh" ]
+  [[ "$output" == *"[ok] sshd: its agent ships with the profile (sshd-agent.sh)"* ]]
+  [[ "$output" != *"sshd-agent.sh\` is not on PATH"* ]]
+  [[ "$output" != *"/sshd-agent.sh is not on PATH"* ]]
 }
