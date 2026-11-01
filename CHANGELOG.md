@@ -47,6 +47,17 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
+  sandboxed login on another host, described where the rest of the policy is. `host`
+  (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the
+  ssh user), `port` (an `--agent-port` token, required), `scratch` (absolute or under
+  `~`), `gpu` (as `[gpu] devices`), `allow` and `env` (`NAME=VALUE`; lines add up). The
+  review says each line and what it means, an `[ssh]` line naming the alias, a remote no
+  `[ssh]` line reaches, and one line for the whole; a bad value or a missing `host` or
+  `port` makes the section unusable, an unknown key is ignored, a name written twice
+  makes the file unusable (`--trust` does not ask, `--check` exits 1). `--check` lists
+  each remote after the role's plan. Nothing acts on it yet: `asb --setup-remote
+  <alias>` comes in a later step.
 - **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its
   plan): the policy line by line, the recipe on a shared host (a dedicated ordinary
   account, `install.sh` as it, the launch in the background) and on a cloud instance,
