@@ -102,7 +102,7 @@ number.
   calls and runs the unit's ExecStart itself, and the installed `asb claude`
   then runs the fake agent through the installed proxy. The proxy-dependent tests use the port the
   throwaway install recorded (8888, or the next free one on a machine that already runs the proxy);
-  `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips the pip install.
+  `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips building the proxy env.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
   stands in for `mitmproxy.http`, and `addon_driver.py` runs one scenario.
 - **Assert a negative with `run ! cmd`, never `! cmd`.** Bash suppresses
@@ -189,19 +189,17 @@ If you are an agent running inside this sandbox while maintaining it:
 - **Multi-provider engine + profiles**; `claude` is the flagship profile.
   Roadmap profiles: `codex`, `gemini`, `ollama`/OpenAI-compatible, and a
   generic `command` profile for arbitrary workers.
-- **Proxy runtime**: mitmproxy 12+ in a private environment under
-  `~/.local/share/agent-sandbox`, venv + pip preferred, conda/mamba fallback.
-  Distro packages are too old (Ubuntu 24.04 and 26.04 ship 8.1.1, whose leaf
+- **Proxy runtime**: mitmproxy 12+ in a private conda-forge environment under
+  `~/.local/share/agent-sandbox`, built with install.sh's own pinned micromamba as the
+  tools env is, never with the host's conda or python (#335); a working `proxy-venv`
+  an earlier install made is still used. Distro packages are too old (Ubuntu 24.04 and 26.04 ship 8.1.1, whose leaf
   certificates lack an Authority Key Identifier and fail Python 3.13's strict
   verification).
-- **Roadmap: standalone mitmproxy binary route.** `downloads.mitmproxy.org`
+- **No standalone mitmproxy binary route.** `downloads.mitmproxy.org`
   serves `mitmproxy-<ver>-linux-<arch>.tar.gz` (~119 MB) but publishes no
   checksums or signatures, so a secure route must pin a SHA256 per version and
-  architecture in this repo. Deliberately not implemented: narrow audience
-  (no `python3-venv` and no conda), maintenance per release, not CI-testable.
-  Handled at the documentation level instead: `docs/troubleshooting.md` tells a
-  user on such a host how to get a Python venv or conda so the installer can
-  build the proxy environment.
+  architecture in this repo. Its audience was hosts with no `python3-venv` and
+  no conda; install.sh's own micromamba builds the proxy env there (#335).
 - **Roadmap: a no-systemd mode.** Claude Code runs under WSL and in
   devcontainers; WSL without systemd would need the proxy started another way,
   and containers additionally block bwrap's user namespaces under Docker's

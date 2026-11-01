@@ -105,8 +105,8 @@ account, so whatever escapes the sandbox lands there and not in the owner's.
    them there, the step says `already present` and needs no root. Where they are
    missing, run `install.sh` once in an account with sudo (the owner's own) first.
    Missing packages are named with the `apt` line to give them (`bubblewrap`, `curl`;
-   `passt` and `nftables` for `strict`; a `python3-venv` or a conda for the proxy's
-   environment); the sshd binary is `openssh-server`'s. A bubblewrap below 0.12.0 is a
+   `passt` and `nftables` for `strict`); the proxy's environment needs none, install.sh
+   builds it with the micromamba it fetches. The sshd binary is `openssh-server`'s. A bubblewrap below 0.12.0 is a
    warning, and its rebuild (`install.sh --rebuild-bwrap`) is the owner's, host-wide.
    An account that never logs in has no user manager: install.sh writes the proxy unit,
    says `note: this account has no user manager ...`, and goes on. That is fine here:

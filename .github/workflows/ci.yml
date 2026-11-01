@@ -95,8 +95,8 @@ jobs:
   # the installed launcher then drives the fake agent through the installed
   # proxy. Needs bwrap for the launch tests; port 8888 is free on a fresh
   # runner, so the two
-  # proxy-dependent tests run here rather than skip. install.sh's pip route
-  # uses the environment's python (>= 3.12 with venv), provided by micromamba.
+  # proxy-dependent tests run here rather than skip. install.sh builds the
+  # proxy's environment with the micromamba it fetches, as it does the tools env.
   e2e:
     strategy:
       fail-fast: false
@@ -139,9 +139,6 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Install bubblewrap and enable user namespaces
         run: |
           sudo apt-get update

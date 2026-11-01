@@ -706,10 +706,11 @@ reasons attached in the repository history.
 - **Strict network mode** (decided, shipped) is implemented with pasta (it owns the netns; bwrap
   runs inside sharing it; an nftables rule allows only the proxy). slirp4netns
   could not, because it cannot enter bwrap's unprivileged netns from outside.
-- **A standalone mitmproxy binary route** for hosts with neither
-  `python3-venv` nor conda: `downloads.mitmproxy.org` serves a 119 MB tarball
-  but publishes no checksums or signatures, so it needs a SHA256 pinned per
-  version and architecture in this repository. Deliberately deferred.
+- **A standalone mitmproxy binary route** was for hosts with neither
+  `python3-venv` nor conda; since `install.sh` builds the proxy's environment with its
+  own micromamba (#335), there are none. `downloads.mitmproxy.org` serves a 119 MB
+  tarball but publishes no checksums or signatures, so it would need a SHA256 pinned per
+  version and architecture in this repository. Not pursued.
 - **What passes between sandboxes** (issues #90, #55). The per-path
   dispositions above default an unclassified path to *shared*, and the leak
   study found six such paths. [connections.md](connections.md) proposes the

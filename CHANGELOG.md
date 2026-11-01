@@ -523,6 +523,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **install.sh builds the proxy's environment with its own micromamba**, from
+  conda-forge, as it builds the tools env, and no longer with the host's conda or a venv
+  from the host's python: a host needs neither conda nor `python3-venv`. Found at #335's
+  live step: an install as a dedicated account with no conda on its PATH and a system
+  python 3.12 without `ensurepip` stopped at the proxy with `no way to run mitmproxy`.
+  The micromamba is now fetched before the proxy step. A working `proxy-env` or
+  `proxy-venv` an earlier run made is kept; a broken one is recreated, now with
+  micromamba, and a create that fails stops the install with micromamba's last line and
+  its log.
 - **The github model's fixer pushes over HTTPS, as you, with your gh login; SSH is for
   ghstack.** The model's file already gave fixers `[net:gh-fix-*] git = allow` and
   `[connect:gh-*] gh = read-only`, so a fixer could push over HTTPS with no opt-in, yet
