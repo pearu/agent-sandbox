@@ -596,6 +596,35 @@ which roles of the project have a session to resume, with a one-line summary eac
   the launch. Keep it outside the project: the project is read-write in every session,
   and the review warns when the file is inside it.
 
+- **`[remote:<alias>]`** — key/value lines describing a sandboxed login on another host
+  (#344): the `sshd` profile run there by an account of its own, which the roles reach
+  as the SSH host `<alias>`. `asb --setup-remote <alias>` is what will act on it, coming
+  in a later version; in this one the section is parsed, reviewed and approved with the
+  file, `--check` lists it, and nothing else reads it. The name is letters, digits, `-`,
+  `_` and `.`, and takes no role suffix; `[remote]` without one is ignored with a
+  warning. `host = DEST` (required) is the ssh destination, in the forms `[ssh]` takes:
+  a hostname, `user@host`, or an alias of your `~/.ssh/config` (a port is the alias's).
+  `account = NAME` is the account that runs the login there, a name as `adduser` takes
+  it (lowercase letters, digits, `-` and `_`, starting with a letter or `_`, at most 32);
+  absent, it is the ssh user. `port = [ADDR:]PORT` (required) is where the login listens
+  there, one token in the forms `--agent-port` takes: a bare port on that host's
+  loopback, for roles that run on that host, or `0.0.0.0:PORT` for every address of it.
+  `scratch = PATH` is the project directory there, the login's one writable place: an
+  absolute path, or under `~`, the account's home there. `gpu = NODE ...` names that
+  host's GPU device nodes, as `[gpu] devices` takes them (under `/dev/`, no `..`).
+  `allow = HOST ...` are hosts its allowlist proxy lets through, as `[allow]` takes them;
+  `env = NAME=VALUE` is set inside it; several `allow` and `env` lines add up. The
+  review says each line as written and what it means, says on an `[ssh]` line that names
+  `<alias>` that it is this file's remote, notes a remote no `[ssh]` line names (no role
+  reaches it yet), and ends with one line for the section: the login, the host and the
+  account, or that it is unusable as written. A bad value -- a port token
+  `--agent-port` refuses, a gpu entry outside `/dev/`, an account name `adduser` would
+  refuse, a relative scratch, an env line without `=`, a host that is not an ssh
+  destination, a bad allow host, a second `host`, `account`, `port`, `scratch` or `gpu`
+  line -- or a missing `host` or `port` makes the section unusable, said there; an
+  unknown key is said and ignored. A name written twice makes the file unusable: the
+  review says so and `--trust` does not ask, and `--check` exits non-zero.
+
 `proxy-ca`, `profile-dir` and `session-base` are **not** accepted in the file,
 on purpose: `proxy-ca` is a trust anchor, and `profile-dir` would point the
 engine at code to source. They stay command-line/environment knobs; see
@@ -671,9 +700,13 @@ anything:
   (the earlier never applies), and a `[share-memory]` path with nothing to share yet.
   Advice: they do not change the exit status.
 
+After the role's plan it lists the file's `[remote:<alias>]` sections, one line each:
+`remote <alias>: HOST as ACCOUNT, port TOKEN` (`as the ssh user` without an account),
+or that one is unusable as written.
+
 It exits non-zero when a launch would refuse the file whatever you answer -- a control
-character, an approved file that has gone, or a policy the launch refuses (an unknown
-mode, a source it does not know) -- so an author can run it while writing the file, and
+character, an approved file that has gone, a `[remote:<alias>]` name written twice, or a
+policy the launch refuses (an unknown mode, a source it does not know) -- so an author can run it while writing the file, and
 a CI job or a pre-commit hook can run it where nobody could answer a question.
 `asb --trust` is the review, then the question, then the record.
 

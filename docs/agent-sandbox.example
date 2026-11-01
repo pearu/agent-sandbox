@@ -327,6 +327,25 @@
 #[sshd]
 #authorized-keys = /path/outside/the/project/keys
 
+# [remote:<alias>] -- a sandboxed login on another host (#344): the sshd profile run
+#        there by an account of its own, which the roles reach as the SSH host
+#        <alias> (name it in [ssh] or [ssh:ROLE]). `asb --setup-remote <alias>`,
+#        which will set it up, comes in a later version; for now the section is
+#        reviewed, approved and listed by --check, and nothing acts on it.
+#        host (required): an ssh destination, as [ssh] takes it. account: the
+#        account that runs it there (default: the ssh user). port (required): an
+#        --agent-port token, where the login listens there. scratch: the project
+#        directory there, absolute or under ~ (the account's home). gpu: that
+#        host's nodes, as [gpu] devices takes them. allow, env: lines add up.
+#[remote:bench-ex]
+#host = ex.example.org
+#account = tob
+#port = 0.0.0.0:2222
+#scratch = /home/tob/bench
+#gpu = /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia1
+#allow = pypi.org files.pythonhosted.org .githubusercontent.com
+#env = TMPDIR=/home/tob/bench/tmp
+
 
 # Not settable here, on purpose:
 #   proxy-ca  — the CA the sandbox trusts; a trust anchor, not a per-project

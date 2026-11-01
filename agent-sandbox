@@ -5541,6 +5541,7 @@ _as_trust_digest() {
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
+  local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$file" 2>/dev/null
   local -a files=()
@@ -5621,6 +5622,7 @@ _as_dotfile_briefing_files() {
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
+  local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
   _as_briefing_files "$1"
@@ -5667,6 +5669,7 @@ _as_profile_dotfile() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local -a _df_gpu_devices=()
+  local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local profile=agent # the section the parse hands over as the profile's
@@ -6001,7 +6004,9 @@ _as_instruction_channel() {
 #     or containing one (the channel keeps its mode inside it, #196);
 #     else one under $HOME, outside the project -- $HOME is empty inside, so `own` is
 #     sandbox-only storage and any other mode shows the real one; and a file -- bound
-#     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy).
+#     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy);
+#   - each [remote:ALIAS] in full (_as_remote_notes, #344).
+# Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice.
 # Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
 # serves them all. What depends on the host or the moment -- a path that does not
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
@@ -6013,6 +6018,7 @@ _as_trust_notes() {
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local -a _df_gpu_devices=()
+  local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   for f in "${profile_dir:-}"/*/profile.sh; do
@@ -6025,16 +6031,23 @@ _as_trust_notes() {
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
     [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg ".agent-sandbox allow: bad host '$h'; ignoring"
   done
-  # [ssh]: a widening -- a role signs in as you over SSH -- said per host and section.
+  # [ssh]: a widening -- a role signs in as you over SSH -- said per host and section,
+  # and that the host is one of the file's [remote:ALIAS] sections when it is (#344).
+  local remotes
+  remotes="$(_as_remote_names)"
   for h in ${_df_ssh[@]+"${_df_ssh[@]}"}; do
     v="${h%%$'\t'*}" k="${h#*$'\t'}"
     if [[ "$v" == "*" ]]; then v="[ssh]" n="every role"; else n="the roles $v" v="[ssh:$v]"; fi
     if _as_ssh_spec_ok "$k"; then
-      _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n; [net] git and retrieve-only do not reach into it: a push over SSH to a remote on it is possible where the account allows"
+      f=""
+      grep -qxF -- "$k" <<<"$remotes" && f="; $k is the remote $k of this file, [remote:$k]"
+      _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n; [net] git and retrieve-only do not reach into it: a push over SSH to a remote on it is possible where the account allows$f"
     else
       _as_msg ".agent-sandbox: $v bad host '$k' (a hostname, user@host, or ~/.ssh/config alias); ignoring"
     fi
   done
+  local remote_rc=0
+  _as_remote_notes || remote_rc=1
   # [permissions]: a widening -- the agent does it without asking you -- said per rule
   # and section.
   for h in ${_df_perm[@]+"${_df_perm[@]}"}; do
@@ -6227,7 +6240,7 @@ _as_trust_notes() {
       _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
     fi
   done
-  return 0
+  return "$remote_rc"
 }
 
 # _as_trust_prompt CWD -- the review of CWD's .agent-sandbox (#143), as a launch and
@@ -6266,7 +6279,10 @@ _as_trust_prompt() {
     return 1
   fi
   _as_dotfile_clean "$file" || return 1
-  _as_trust_show_review "$cwd"
+  _as_trust_show_review "$cwd" || {
+    _as_msg "a launch refuses this file as it is, so it cannot be approved."
+    return 1
+  }
   _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
   printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
   read -r ans || true
@@ -6376,6 +6392,17 @@ _as_dotfile_parse() {
               continue
             }
             ;;
+          remote)
+            # [remote:<alias>] is not a role suffix but a remote login's name (#344): a
+            # word an ssh alias takes, with no role suffix after it. The header is kept
+            # (`ALIAS<TAB>`), so an empty section or a second one of the name is seen.
+            [[ "$sglob" =~ ^[A-Za-z0-9._-]+$ ]] || {
+              _as_msg ".agent-sandbox: [remote:$sglob] -- a remote's name is letters, digits, '-', '_' and '.' (it takes no role suffix); ignoring the section"
+              section="-skip-"
+              continue
+            }
+            _df_remote+=("$sglob"$'\t')
+            ;;
           channel)
             # [channel:<name>] is not a role suffix but a channel's name (#190): a
             # profile's dot-file declares its channel table this way.
@@ -6395,7 +6422,7 @@ _as_dotfile_parse() {
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
         allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions | serve) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
-        channel | preset)
+        channel | preset | remote)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
             section="-skip-"
@@ -6438,6 +6465,9 @@ _as_dotfile_line() {
     # (Claude Code's permissions.allow: `Bash(git push:*)`, `Read`), kept with its
     # section's glob for the review and --check; the profile hands them to the agent.
     permissions) _df_perm+=("$sglob"$'\t'"$line") ;;
+    # [remote:<alias>] (#344): a remote login's description, kept line by line with its
+    # name; the review checks and says every line (_as_remote_notes). No launch reads it.
+    remote) _df_remote+=("$sglob"$'\t'"$line") ;;
     share-memory) _df_share+=("${line/#\~/$HOME}") ;;
     env)
       # [env] (#177): `NAME` forwards it when set in the launching shell (several per
@@ -6636,6 +6666,242 @@ _as_dotfile_line() {
       fi
       ;;
   esac
+  return 0
+}
+
+# ---- [remote:ALIAS] (#344): a sandboxed login on another host, described --------
+# The section is parsed, reviewed and approved with the file; `--check` lists it. Nothing
+# acts on it yet: `--setup-remote ALIAS`, which will, comes in a later version.
+#   host    = an ssh destination: a hostname, user@host, or a ~/.ssh/config alias (required)
+#   account = the account that runs the login there, as adduser takes a name (default: the
+#             ssh user)
+#   port    = where the login listens there, one --agent-port token (required)
+#   scratch = the project directory there, absolute or under ~ (the account's home there)
+#   gpu     = that host's GPU device nodes, as [gpu] devices takes them
+#   allow   = hosts its allowlist proxy lets through, as [allow] takes them (lines add up)
+#   env     = NAME=VALUE set inside it (lines add up)
+
+# _as_remote_names [dups] -- the names of the caller's [remote:ALIAS] sections
+# (_df_remote), in the order first written, one per line; with `dups`, only the names
+# written more than once.
+_as_remote_names() {
+  local e
+  local -A n=()
+  local -a order=()
+  for e in ${_df_remote[@]+"${_df_remote[@]}"}; do
+    [[ "$e" == *$'\t' ]] || continue
+    e="${e%$'\t'}"
+    [[ -n "${n[$e]:-}" ]] || order+=("$e")
+    n[$e]=$((${n[$e]:-0} + 1))
+  done
+  for e in ${order[@]+"${order[@]}"}; do
+    [[ "${1:-}" != dups ]] || ((${n[$e]} > 1)) || continue
+    printf '%s\n' "$e"
+  done
+  return 0
+}
+
+# _as_remote_say TEXT -- one review line of the section _as_remote_eval reads, when it
+# says them (its _rm_say and _rm_alias, by dynamic scope).
+_as_remote_say() {
+  ((_rm_say)) || return 0
+  _as_msg ".agent-sandbox: [remote:$_rm_alias] $*"
+}
+
+# _as_remote_eval ALIAS [say] -- the section [remote:ALIAS] of the caller's _df_remote into
+# the caller's _rm_host, _rm_account, _rm_port (the token in its one spelling) and _rm_bad
+# (how many faults make it unusable: a bad value, a key set twice that takes one, a missing
+# host or port). With `say`, the review's line for each line as written, and each fault.
+# An unknown key or a line without `=` is said and ignored; it is no fault.
+_as_remote_eval() {
+  local _rm_alias="$1" _rm_say=0 e line ck cv v w bad
+  local -a ws=()
+  local -A seen=()
+  [[ "${2:-}" == say ]] && _rm_say=1
+  _rm_host="" _rm_account="" _rm_port="" _rm_bad=0
+  for e in ${_df_remote[@]+"${_df_remote[@]}"}; do
+    [[ "${e%%$'\t'*}" == "$_rm_alias" ]] || continue
+    line="${e#*$'\t'}"
+    [[ -n "$line" ]] || continue
+    if [[ "$line" != *=* ]]; then
+      _as_remote_say "expects 'key = value', ignoring: $line"
+      continue
+    fi
+    _as_dotfile_kv "$line"
+    case "$ck" in
+      host | account | port | scratch | gpu)
+        if [[ -n "${seen[$ck]:-}" ]]; then
+          _as_remote_say "$ck = $cv: a second $ck line, where the section takes one; unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+          continue
+        fi
+        seen[$ck]=1
+        ;;
+    esac
+    case "$ck" in
+      host)
+        if _as_ssh_spec_ok "$cv"; then
+          _rm_host="$cv"
+          _as_remote_say "host = $cv: the host the login runs on, reached over ssh as you reach it from here"
+        else
+          _as_remote_say "host = $cv: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias; a port is the alias's); unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        fi
+        ;;
+      account)
+        if [[ "$cv" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+          _rm_account="$cv"
+          _as_remote_say "account = $cv: the account that runs the login there"
+        else
+          _as_remote_say "account = $cv: not an account name adduser takes (lowercase letters, digits, '-' and '_', starting with a letter or '_', at most 32); unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        fi
+        ;;
+      port)
+        if v="$(_as_agent_port_norm port "$cv" 2>/dev/null)" && [[ "$v" != none ]]; then
+          _rm_port="$v"
+          case "$v" in
+            0.0.0.0:*) w="every address of that host, port ${v##*:}: reachable from the network (that host's firewall is its own)" ;;
+            *:*) w="the address ${v%:*} of that host, port ${v##*:}: reachable from wherever that address is (that host's firewall is its own)" ;;
+            *) w="127.0.0.1:$v of that host only: for roles that run on that host" ;;
+          esac
+          _as_remote_say "port = $cv: the login listens at $w"
+        else
+          _as_remote_say "port = $cv: not a port --agent-port takes (PORT, or ADDR:PORT with ADDR an IPv4 address of that host or 0.0.0.0 for every one; the port 1024-65535); unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        fi
+        ;;
+      scratch)
+        case "$cv" in
+          /* | \~ | \~/*) _as_remote_say "scratch = $cv: the project directory there, the login's one writable place ('~' is the account's home there)" ;;
+          *)
+            _as_remote_say "scratch = $cv: relative; it is absolute or under '~' (the account's home there); unusable as written"
+            _rm_bad=$((_rm_bad + 1))
+            ;;
+        esac
+        ;;
+      gpu)
+        read -r -a ws <<<"$cv"
+        bad=""
+        for w in ${ws[@]+"${ws[@]}"}; do
+          if [[ "$w" != /dev/?* ]]; then
+            bad="'$w' is not a node under /dev/"
+          elif [[ "/$w/" == */../* ]]; then
+            bad="'$w' has a '..' component"
+          else
+            continue
+          fi
+          break
+        done
+        if [[ -n "$bad" ]]; then
+          _as_remote_say "gpu = $cv: $bad; unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        elif ((${#ws[@]})); then
+          _as_remote_say "gpu = $cv: only these GPU device nodes of that host are passed into the login's sandbox"
+        else
+          _as_remote_say "gpu = : no GPU device node of that host is passed into the login's sandbox"
+        fi
+        ;;
+      allow)
+        read -r -a ws <<<"$cv"
+        bad=""
+        for w in ${ws[@]+"${ws[@]}"}; do
+          [[ "$w" =~ $_as_hostre ]] || {
+            bad="$w"
+            break
+          }
+        done
+        if [[ -n "$bad" ]]; then
+          _as_remote_say "allow = $cv: bad host '$bad' (a hostname, or .domain); unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        elif ((${#ws[@]})); then
+          _as_remote_say "allow = $cv: the login's sandbox reaches these hosts through its allowlist proxy there"
+        else
+          _as_remote_say "allow = : names no host; ignoring"
+        fi
+        ;;
+      env)
+        v="${cv%%=*}"
+        v="${v%"${v##*[![:space:]]}"}"
+        if [[ "$cv" != *=* ]]; then
+          _as_remote_say "env = $cv: not NAME=VALUE; unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        elif [[ ! "$v" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          _as_remote_say "env = $cv: '$v' is not a variable name; unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        else
+          w="${cv#*=}"
+          w="${w#"${w%%[![:space:]]*}"}"
+          _as_remote_say "env = $cv: sets $v to '$w' inside the login's sandbox"
+        fi
+        ;;
+      *) _as_remote_say "key '$ck' is not one a remote takes (host, account, port, scratch, gpu, allow, env); ignoring" ;;
+    esac
+  done
+  if [[ -z "${seen[host]:-}" ]]; then
+    _as_remote_say "has no host line (an ssh destination); unusable as written"
+    _rm_bad=$((_rm_bad + 1))
+  fi
+  if [[ -z "${seen[port]:-}" ]]; then
+    _as_remote_say "has no port line (where the login listens there, as --agent-port takes it); unusable as written"
+    _rm_bad=$((_rm_bad + 1))
+  fi
+  return 0
+}
+
+# _as_remote_notes -- the review's lines for the caller's [remote:ALIAS] sections
+# (_as_trust_notes): each line as written and what it means, whether an [ssh] line names
+# it, and one line for the whole, last. Fails when a name is written twice: the file
+# cannot be approved.
+_as_remote_notes() {
+  local a h reached rc=0 dups _rm_host _rm_account _rm_port _rm_bad
+  dups="$(_as_remote_names dups)"
+  while IFS= read -r a; do
+    [[ -n "$a" ]] || continue
+    if grep -qxF -- "$a" <<<"$dups"; then
+      _as_msg ".agent-sandbox: [remote:$a] is written more than once: the file is unusable, and cannot be approved, until one is renamed or removed"
+      rc=1
+      continue
+    fi
+    _as_remote_eval "$a" say
+    reached=""
+    for h in ${_df_ssh[@]+"${_df_ssh[@]}"}; do
+      [[ "${h#*$'\t'}" == "$a" ]] && reached=1 && break
+    done
+    [[ -n "$reached" ]] || _as_msg ".agent-sandbox: [remote:$a]: no [ssh] line names $a, so no role reaches it yet"
+    if ((_rm_bad)); then
+      _as_msg ".agent-sandbox: [remote:$a]: unusable as written, for the reasons above; ${invoked:-asb} --setup-remote $a (not in this version yet) will refuse it"
+    else
+      _as_msg ".agent-sandbox: [remote:$a]: a sandboxed login on $_rm_host as ${_rm_account:-the ssh user}, set up by ${invoked:-asb} --setup-remote $a (not in this version yet)"
+    fi
+  done < <(_as_remote_names)
+  return "$rc"
+}
+
+# _as_check_remotes FILE -- `--check`'s lines for FILE's [remote:ALIAS] sections, after the
+# role's plan: one per section, and nothing when there is none.
+_as_check_remotes() {
+  [[ -f "$1" ]] || return 0
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local a first=1 _rm_host _rm_account _rm_port _rm_bad
+  _as_dotfile_parse "$1" 2>/dev/null
+  while IFS= read -r a; do
+    [[ -n "$a" ]] || continue
+    _as_remote_eval "$a"
+    ((first)) && printf '\n' >&2
+    first=0
+    if ((_rm_bad)); then
+      printf 'remote %s: unusable as written (the review above says why)\n' "$a" >&2
+    else
+      printf 'remote %s: %s as %s, port %s\n' "$a" "$_rm_host" "${_rm_account:-the ssh user}" "$_rm_port" >&2
+    fi
+  done < <(_as_remote_names)
   return 0
 }
 
@@ -7406,7 +7672,8 @@ _as_check_binds() {
 # _as_trust_check CWD -- `--check`: the review --trust shows, asking nothing and recording
 # nothing, for a project's author, a CI job or a pre-commit hook. Exits 0 when the file's
 # text is one a launch accepts once approved (whatever the approval state, which it says),
-# 1 when a launch would refuse it: a control character, or no file where one was approved.
+# 1 when a launch would refuse it: a control character, a [remote:ALIAS] written twice
+# (#344), or no file where one was approved.
 _as_trust_check() {
   local cwd="$1" file rec
   file="$cwd/.agent-sandbox"
@@ -7423,7 +7690,10 @@ _as_trust_check() {
     _as_msg "check: a launch refuses this file"
     return 1
   }
-  _as_trust_show_review "$cwd"
+  _as_trust_show_review "$cwd" || {
+    _as_msg "check: a launch refuses this file"
+    return 1
+  }
   if _as_dotfile_trusted "$cwd" "$file"; then
     _as_msg "check: approved and unchanged since; a launch uses it"
   elif [[ -f "$rec" ]]; then
@@ -9549,7 +9819,10 @@ agent_sandbox() (
     ((_crc)) && return "$_crc"
     if [[ -z "$profile" && -z "$_cmd_word" ]]; then
       profile="$(_as_default_profile "$profile_dir")"
-      [[ -n "$profile" ]] || return 0
+      [[ -n "$profile" ]] || {
+        _as_check_remotes "$(pwd -P)/.agent-sandbox"
+        return 0
+      }
     fi
     _check_plan=1
   fi
@@ -9754,6 +10027,7 @@ agent_sandbox() (
   local _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_deny=() _df_role_lines=()
   local -a _df_gpu_devices=() # [gpu] devices (#335): one `glob<TAB>entries` per line, in the order applied
+  local -a _df_remote=()      # [remote:ALIAS] (#344): `ALIAS<TAB>` per header, `ALIAS<TAB>line` per line
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
   local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
   local -a _df_connect=()
@@ -10305,8 +10579,9 @@ agent_sandbox() (
 
   # ---- --check: what the file means, then exit, before anything is started ----
   if ((_check_plan)); then
-    _as_check_plan
-    return $?
+    _as_check_plan || return $?
+    _as_check_remotes "$_dotfile"
+    return 0
   fi
 
   # ---- --shutdown: end the role's launch, then exit ----
