@@ -58,6 +58,20 @@ names are gone; there are no aliases for removed names before 1.0.
   makes the file unusable (`--trust` does not ask, `--check` exits 1). `--check` lists
   each remote after the role's plan. Nothing acts on it yet: `asb --setup-remote
   <alias>` comes in a later step.
+- **`asb --setup-remote <alias>`, its first phase: the preflight and the admin's script**
+  (#344, step 2 of its plan). One read-only ssh session to the section's host, a probe
+  on stdin, a report line per item: packages (bubblewrap and apt's candidate, passt,
+  nftables, sshd), user namespaces as measured for an unconfined binary, bwrap and pasta,
+  AppArmor's restriction and profiles, sudo (reported, never used), the account, GPUs
+  and the section's nodes, egress to conda-forge and GitHub. Everything present and
+  working: "ready for the account's part", exit 0. Otherwise the admin's script goes to
+  `.asb/remote/<alias>/admin.sh` with only what was measured missing -- the packages,
+  install.sh's AppArmor profiles where the restriction blocks bwrap or pasta, Ubuntu's
+  bubblewrap rebuild below 0.12.0 (install.sh carried inside it), the named account with
+  your public key -- and the command prints how to run it and exits 1; asb never runs it,
+  nor sudo. Refused inside a sandbox, without the section, for an unusable section, and
+  while the file is not approved. `install.sh` records the checkout it ran from in
+  `install.manifest`, where the command takes install.sh and the profile texts from.
 - **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its
   plan): the policy line by line, the recipe on a shared host (a dedicated ordinary
   account, `install.sh` as it, the launch in the background) and on a cloud instance,

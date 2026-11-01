@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # The [remote:ALIAS] section of a project's .agent-sandbox (#344, step 1): parsed,
-# reviewed and approved like every section, listed by --check, acted on by nothing yet.
+# reviewed and approved like every section, listed by --check, acted on by --setup-remote (tests/unit/setup-remote.bats).
 # Stub bwrap; these assert on the review's lines, --check's and the trust gate.
 
 setup() {
@@ -44,7 +44,7 @@ bad_section() {
   } >"$PROJ/.agent-sandbox"
 }
 
-unusable='.agent-sandbox: [remote:r1]: unusable as written, for the reasons above; agent-sandbox --setup-remote r1 (not in this version yet) will refuse it'
+unusable='.agent-sandbox: [remote:r1]: unusable as written, for the reasons above; agent-sandbox --setup-remote r1 refuses it'
 
 @test "[remote:ALIAS]: the review says every line as written, the [ssh] line that names it, and one line for the whole (#344)" {
   full_section
@@ -60,7 +60,7 @@ unusable='.agent-sandbox: [remote:r1]: unusable as written, for the reasons abov
   [[ "$output" == *"$p env = TMPDIR=/home/tob/bench/tmp: sets TMPDIR to '/home/tob/bench/tmp' inside the login's sandbox"* ]]
   [[ "$output" == *"[ssh:implementer-1] bench-ex: SSH to it as you"*"; bench-ex is the remote bench-ex of this file, [remote:bench-ex]"* ]]
   # The whole, last of the section's lines; reached, so no note that nothing reaches it.
-  [[ "$output" == *"$p env = "*"$p: a sandboxed login on ex.example.org as tob, set up by agent-sandbox --setup-remote bench-ex (not in this version yet)"* ]]
+  [[ "$output" == *"$p env = "*"$p: a sandboxed login on ex.example.org as tob, set up by agent-sandbox --setup-remote bench-ex"* ]]
   [[ "$output" != *"no role reaches"* ]]
   [[ "$output" != *unusable* ]]
 }
@@ -70,7 +70,7 @@ unusable='.agent-sandbox: [remote:r1]: unusable as written, for the reasons abov
   run_review
   [[ "$output" == *".agent-sandbox: [remote:r1] port = 2222: the login listens at 127.0.0.1:2222 of that host only: for roles that run on that host"* ]]
   [[ "$output" == *".agent-sandbox: [remote:r1]: no [ssh] line names r1, so no role reaches it yet"* ]]
-  [[ "$output" == *".agent-sandbox: [remote:r1]: a sandboxed login on pearu@qgpu3 as the ssh user, set up by agent-sandbox --setup-remote r1 (not in this version yet)"* ]]
+  [[ "$output" == *".agent-sandbox: [remote:r1]: a sandboxed login on pearu@qgpu3 as the ssh user, set up by agent-sandbox --setup-remote r1"* ]]
   [[ "$output" == *"[ssh] other-host: SSH to it as you"* ]]
   [[ "$output" != *"is the remote"* ]]
 }
