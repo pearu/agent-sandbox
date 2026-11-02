@@ -121,6 +121,17 @@ names are gone; there are no aliases for removed names before 1.0.
   sandbox on that host has the host's own addresses (measured on Ubuntu 24.04 and 26.04),
   so by the host's address a role there reaches itself, and the login only at
   `127.0.0.1`. A login at one other address is said to be out of their reach.
+- **`asb --setup-remote ALIAS --status` and `--shutdown`** (#344): one ssh session as the
+  account (`ssh [-p SSHPORT] -l ACCOUNT HOST`, BatchMode, never sudo) runs the account's
+  own `asb --profile sshd --role ALIAS --status` (or `--shutdown`) in the scratch there;
+  its answer is said and its exit status is the command's. No preflight, nothing carried
+  or written, nothing changed here; a destination is refused with these flags.
+  `--shutdown` removes nothing, and `asb --setup-remote ALIAS` starts the login again.
+  docs/remote.md's retiring a login uses it.
+- **`--setup-remote` makes the section's `TMPDIR`** (#344): an `env = TMPDIR=PATH` line
+  whose PATH (`~` the account's home) is under the scratch has that directory made
+  there, as the account, before the launch; said once, when it is made. Other `env`
+  values, and a `TMPDIR` outside the scratch, are left as written.
 - **`docs/remote.md`** (#344): the guide to `--setup-remote`, for you and for a
   Supervisor role proposing your commands: the two forms, prerequisites, root, what a
   run does, updates, how roles reach the login by port form, the files it touches here

@@ -296,6 +296,12 @@
 #                         and it agrees, else appended through --apply's review
 #                         (host, account, port default 2222, scratch
 #                         ~/ACCOUNT-HOST); declined, the file is as it was.
+#   --setup-remote ALIAS --status | --shutdown
+#                         over ssh -l ACCOUNT, the account's own asb --profile
+#                         sshd --role ALIAS --status (--shutdown) in the
+#                         scratch there, its answer said and its exit status
+#                         this one's; no preflight, nothing written. --shutdown
+#                         removes nothing: --setup-remote ALIAS starts it again.
 #   --serve               with --role R: a role with no terminal (#277). Runs on the
 #                         host, in the foreground: holds R's launch and runs one
 #                         turn of R's session (the profile's serve-new/serve-resume
@@ -458,6 +464,10 @@ Engine flags (before CMD):
                         the same for [remote:ACCOUNT-HOST], appended to the
                         file through the --apply review when it has none
                         (port 2222 unless --port; scratch ~/ACCOUNT-HOST)
+  --setup-remote ALIAS --status | --shutdown
+                        ask after that login there, or end it, as the account
+                        (its own asb --status/--shutdown); --shutdown removes
+                        nothing, and --setup-remote ALIAS starts it again
   --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
@@ -7183,18 +7193,19 @@ _as_remote_pkg() {
   esac
 }
 
-# _as_setup_remote CWD WORD [PORT] -- `asb --setup-remote WORD [--port PORT]`. WORD naming
+# _as_setup_remote CWD WORD [PORT [VERB]] -- `asb --setup-remote WORD [--port PORT]`, or
+# `asb --setup-remote WORD --status|--shutdown` (VERB). WORD naming
 # a [remote:WORD] section of CWD's .agent-sandbox is that section. Otherwise it is a
 # destination, [ACCOUNT@]HOST[:SSHPORT], and the section is [remote:ACCOUNT-HOST] (ACCOUNT
 # the one given, else your ssh login name for HOST, from `ssh -G`): used when the file has
 # it and it says what WORD and PORT say (else refused), else appended through --apply's
 # review -- host = HOST[:SSHPORT], account, port = PORT (default 2222), scratch =
 # ~/ACCOUNT-HOST -- and, approved, set up as an existing one; declined, the file is put
-# back as it was. Then _as_setup_remote_alias. Refusals are 2. Uses invoked by dynamic
-# scope.
+# back as it was. Then _as_setup_remote_alias. VERB (status or shutdown) takes a section
+# only, never a destination. Refusals are 2. Uses invoked by dynamic scope.
 # shellcheck disable=SC2154
 _as_setup_remote() {
-  local cwd="$1" word="$2" port="${3:-}" file a
+  local cwd="$1" word="$2" port="${3:-}" verb="${4:-}" file a
   file="$cwd/.agent-sandbox"
   if [[ -n "${AGENT_SANDBOX:-}" ]] || _as_inside_sandbox; then
     _as_msg "--setup-remote runs on the host: it holds your ssh access; a role proposes the line, you run it."
@@ -7226,8 +7237,12 @@ _as_setup_remote() {
   fi
   [[ -z "$rnames" ]] || have=" (it has: $(paste -sd' ' - <<<"$rnames"))"
   if grep -qxF -- "$word" <<<"$rnames"; then
-    _as_setup_remote_alias "$cwd" "$word" "$port"
+    _as_setup_remote_alias "$cwd" "$word" "$port" "$verb"
     return $?
+  fi
+  if [[ -n "$verb" ]]; then
+    _as_msg "--setup-remote $word --$verb: --$verb acts on a [remote:ALIAS] section of .agent-sandbox$have, and '$word' is not one: --setup-remote ALIAS --$verb"
+    return 2
   fi
 
   # ---- a destination: [ACCOUNT@]HOST[:SSHPORT] ----
@@ -7309,14 +7324,15 @@ _as_setup_remote() {
   return 1
 }
 
-# _as_setup_remote_alias CWD ALIAS [PORT] -- `asb --setup-remote ALIAS`: the refusals, the
-# preflight over ssh, the report (whether the host is this machine, `same`, included),
-# and either the ready verdict and the account's part (_as_remote_account) or the
-# admin's script (1). Refusals are 2. A PORT (normalized) that is not the section's
-# port is refused. Uses invoked and engine by dynamic scope.
+# _as_setup_remote_alias CWD ALIAS [PORT [VERB]] -- `asb --setup-remote ALIAS`: the
+# refusals, the preflight over ssh, the report (whether the host is this machine, `same`,
+# included), and either the ready verdict and the account's part (_as_remote_account) or
+# the admin's script (1). Refusals are 2. A PORT (normalized) that is not the section's
+# port is refused. A VERB (status, shutdown) goes, after the refusals, to _as_remote_verb
+# instead of the preflight. Uses invoked and engine by dynamic scope.
 # shellcheck disable=SC2154
 _as_setup_remote_alias() {
-  local cwd="$1" alias="$2" port="${3:-}" file a
+  local cwd="$1" alias="$2" port="${3:-}" verb="${4:-}" file a
   file="$cwd/.agent-sandbox"
   local p="remote $alias:"
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
@@ -7360,6 +7376,10 @@ _as_setup_remote_alias() {
   if ! _as_dotfile_trusted "$cwd" "$file"; then
     _as_msg "--setup-remote: .agent-sandbox is not approved as it stands, and [remote:$alias] in it is what this acts on: review it first ($invoked --trust)"
     return 2
+  fi
+  if [[ -n "$verb" ]]; then
+    _as_remote_verb "$verb"
+    return $?
   fi
 
   # ---- the preflight: one ssh session, the probe on stdin ----
@@ -7612,6 +7632,68 @@ _as_setup_remote_alias() {
   return 1
 }
 
+# _as_remote_verb VERB -- `asb --setup-remote ALIAS --status|--shutdown` (#344), from
+# _as_setup_remote_alias's locals (dynamic scope): one ssh session as the account, as
+# the account's part has (`ssh [-p SSHPORT] -l ACCOUNT HOST`, BatchMode, never sudo),
+# runs the account's own `~/.local/bin/asb --profile sshd --role ALIAS --VERB` in the
+# scratch and says its answer; its exit status is this one's. No preflight, nothing
+# carried or written there, nothing here changed. --shutdown removes nothing: it ends
+# the login, and `asb --setup-remote ALIAS` starts it again.
+# shellcheck disable=SC2154,SC2016 # the script is run there, quoted as written
+_as_remote_verb() {
+  local verb="$1" acct dest scratch out err k v rc=0 arc=""
+  local spo="${_rm_sshport:+-p $_rm_sshport }"
+  local -a sp=() lines=()
+  [[ -z "$_rm_sshport" ]] || sp=(-p "$_rm_sshport")
+  acct="$_rm_account"
+  [[ -n "$acct" ]] || acct="$(ssh -G ${sp[@]+"${sp[@]}"} "$_rm_host" 2>/dev/null | awk '$1 == "user" {print $2; exit}')"
+  dest="${_rm_host#*@}" scratch="${_rm_scratch:-~/$alias}"
+  _as_msg "$p --$verb, over ssh as $acct to $dest (ssh $spo-l $acct $dest; BatchMode; never sudo): asb --profile sshd --role $alias --$verb in $scratch there"
+  err="$(mktemp)" || return 1
+  out="$(
+    {
+      printf 'alias=%q\nscratch=%q\nverb=%q\n' "$alias" "$scratch" "$verb"
+      cat <<'VERB'
+asb="$HOME/.local/bin/asb"
+case "$scratch" in "~") p="$HOME" ;; "~/"*) p="$HOME/${scratch#\~/}" ;; *) p="$scratch" ;; esac
+if [ ! -x "$asb" ]; then printf 'none\tasb\n'; exit 0; fi
+if [ ! -d "$p" ]; then printf 'none\t%s\n' "$p"; exit 0; fi
+cd -- "$p" || exit 1
+"$asb" --profile sshd --role "$alias" "--$verb" </dev/null 2>&1 | while IFS= read -r l; do printf 'out\t%s\n' "$l"; done
+printf 'rc\t%s\n' "${PIPESTATUS[0]}"
+VERB
+    } | ssh -T -o BatchMode=yes -o ConnectTimeout=15 ${sp[@]+"${sp[@]}"} -l "$acct" "$dest" bash -s 2>"$err"
+  )" || rc=$?
+  while IFS=$'\t' read -r k v; do
+    v="${v//[[:cntrl:]]/?}"
+    case "$k" in
+      out) lines+=("$v") ;;
+      rc) arc="$v" ;;
+      none)
+        if [[ "$v" == asb ]]; then
+          _as_msg "$p $acct has no ~/.local/bin/asb there: not set up (${invoked:-asb} --setup-remote $alias sets it up)"
+        else
+          _as_msg "$p the scratch $v is not there: not set up (${invoked:-asb} --setup-remote $alias sets it up)"
+        fi
+        rm -f -- "$err"
+        return 1
+        ;;
+    esac
+  done <<<"$out"
+  if [[ ! "$arc" =~ ^[0-9]+$ ]]; then
+    _as_msg "$p cannot ask as $acct (ssh exit $rc): $(tail -n 3 -- "$err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
+    _as_msg "$p it needs ssh $spo-l $acct $dest to work without a question: your public key in $acct's ~/.ssh/authorized_keys"
+    rm -f -- "$err"
+    return 1
+  fi
+  rm -f -- "$err"
+  for v in ${lines[@]+"${lines[@]}"}; do _as_msg "$p   $v"; done
+  if [[ "$verb" == shutdown && "$arc" == 0 ]]; then
+    _as_msg "$p the login is not running there now; nothing was removed, there or here: to start it again, ${invoked:-asb} --setup-remote $alias"
+  fi
+  return "$arc"
+}
+
 # _as_remote_admin_script -- the admin's script, on stdout, from _as_setup_remote's locals
 # (dynamic scope): every item explained in a comment above it, only what the preflight
 # measured missing. Every command reads /dev/null: the script itself may be bash's stdin.
@@ -7791,14 +7873,15 @@ STATE
 
 # _as_remote_apply_script -- the account's side's changes, on stdout, from
 # _as_remote_account's locals (dynamic scope): the scratch, the policy when it is to be
-# written (wpol), the keys file, the approval, the shutdown (down) and the launch (up),
+# written (wpol), the section's TMPDIR when it is under the scratch (tmpdir), the keys
+# file, the approval, the shutdown (down) and the launch (up),
 # the wait for --status to show sshd running, the role's host key back, and the first
 # host of the account's allowlist.txt.
 # shellcheck disable=SC2154,SC2016 # it writes shell text, quoted as written
 _as_remote_apply_script() {
   printf '# agent-sandbox --setup-remote: the account'"'"'s part of [remote:%s].\n' "$alias"
-  printf 'alias=%q\np=%q\nwpol=%q\ndown=%q\nup=%q\npub=%q\nwait=%q\n' \
-    "$alias" "$rscratch" "$wpol" "$down" "$up" "$pub" 60
+  printf 'alias=%q\np=%q\nwpol=%q\ntmpdir=%q\ndown=%q\nup=%q\npub=%q\nwait=%q\n' \
+    "$alias" "$rscratch" "$wpol" "$tmpdir" "$down" "$up" "$pub" 60
   declare -f _as_path_slug _as_sha256_str
   printf 'write_policy() {\n  cat <<'"'"'ASB_POLICY_EOF'"'"'\n%s\nASB_POLICY_EOF\n}\n' "$policy"
   cat <<'APPLY'
@@ -7807,6 +7890,10 @@ tail_say() { tail -n "$2" -- "$1" 2>/dev/null | while IFS= read -r l; do say log
 asb="$HOME/.local/bin/asb"
 log="$HOME/asb-$alias-sshd.log"
 mkdir -p -- "$p" || { say error "cannot make the scratch $p"; exit 1; }
+if [ -n "$tmpdir" ] && [ ! -d "$tmpdir" ]; then
+  mkdir -p -- "$tmpdir" || { say error "cannot make TMPDIR $tmpdir"; exit 1; }
+  say made "$tmpdir"
+fi
 if [ "$wpol" = 1 ]; then
   { write_policy >"$p/.agent-sandbox.asb-new" && mv -f -- "$p/.agent-sandbox.asb-new" "$p/.agent-sandbox"; } \
     || { say error "cannot write $p/.agent-sandbox"; exit 1; }
@@ -8072,6 +8159,20 @@ _as_remote_account() {
     carried=1
   fi
 
+  # ---- the section's TMPDIR, made there when it is under the scratch ----
+  # The last TMPDIR line is the one the login gets; '~' is the account's home, as the
+  # sshd profile reads the policy's [env]. Outside the scratch, or with a '..', it is
+  # left alone: the login's one writable place is the scratch.
+  local tmpdir=""
+  while IFS= read -r x; do
+    [[ "$x" == TMPDIR=* ]] || continue
+    x="${x#TMPDIR=}" tmpdir=""
+    [[ "$x" == \~ || "$x" == \~/* ]] && x="${home%/}${x#\~}"
+    while [[ "$x" == */ && "$x" != / ]]; do x="${x%/}"; done
+    [[ "$x/" == */../* || "$x/" == */./* ]] && continue
+    [[ "$x" == "$rscratch" || "$x" == "$rscratch"/* ]] && tmpdir="$x"
+  done <<<"$_rm_env"
+
   # ---- the policy, the keys file, the approval, the launch ----
   local policy old wpol=0 down=0 up=0 why=""
   policy="$(_as_remote_policy)"
@@ -8119,6 +8220,7 @@ _as_remote_account() {
       error) _as_msg "$p $v" ;;
       log) _as_msg "$p   $v" ;;
       hostkey) hostkey="$v" ;;
+      made) _as_msg "$p made TMPDIR $v there, under the scratch (the section's env)" ;;
       allow_default) [[ "$v" =~ $_as_hostre && "$v" != .* ]] && dallow="$v" ;;
     esac
   done <<<"$out"
@@ -10771,7 +10873,7 @@ agent_sandbox() (
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
-  local _setup_remote="" _setup_remote_port="" # --setup-remote ALIAS|DEST [--port PORT] (#344)
+  local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
   local _do_list="" _list_word=""
@@ -10941,15 +11043,19 @@ agent_sandbox() (
         shift $#
         ;;
       --setup-remote)
-        # --setup-remote ALIAS|DEST [--port [ADDR:]PORT] (#344): the words after it are its own.
+        # --setup-remote ALIAS|DEST [--port [ADDR:]PORT] (#344): the words after it are its own;
+        # --setup-remote ALIAS --status|--shutdown asks after the login, or ends it.
         if [[ $# -eq 2 && -n "$2" && "$2" != -* ]]; then
           _setup_remote="$2"
           shift 2
         elif [[ $# -eq 4 && -n "$2" && "$2" != -* && "$3" == --port && -n "$4" ]]; then
           _setup_remote="$2" _setup_remote_port="$4"
           shift 4
+        elif [[ $# -eq 3 && -n "$2" && "$2" != -* && ("$3" == --status || "$3" == --shutdown) ]]; then
+          _setup_remote="$2" _setup_remote_verb="${3#--}"
+          shift 3
         else
-          _as_msg "--setup-remote takes a [remote:ALIAS] section of this project's .agent-sandbox, or a destination, and nothing after it but --port: --setup-remote ALIAS, or --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]"
+          _as_msg "--setup-remote takes a [remote:ALIAS] section of this project's .agent-sandbox, or a destination, and nothing after it but --port, or --status or --shutdown after an ALIAS: --setup-remote ALIAS [--status | --shutdown], or --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]"
           return 2
         fi
         ;;
@@ -11303,7 +11409,7 @@ agent_sandbox() (
   # ---- --setup-remote ALIAS: the preflight of a [remote:ALIAS] host (#344) ----
   # Profile-independent; host only; runs nothing with sudo, ever.
   if [[ -n "$_setup_remote" ]]; then
-    _as_setup_remote "$(pwd -P)" "$_setup_remote" "$_setup_remote_port"
+    _as_setup_remote "$(pwd -P)" "$_setup_remote" "$_setup_remote_port" "$_setup_remote_verb"
     return $?
   fi
   # ---- --apply: add lines to the current project's .agent-sandbox, then --trust's review ----

@@ -620,7 +620,8 @@ which roles of the project have a session to resume, with a one-line summary eac
   host's GPU device nodes, as `[gpu] devices` takes them (under `/dev/`, no `..`);
   `gpu = none`, or `gpu =` naming none, passes no GPU; no `gpu` line, all of them.
   `allow = HOST ...` are hosts its allowlist proxy lets through, as `[allow]` takes them;
-  `env = NAME=VALUE` is set inside it; several `allow` and `env` lines add up. The
+  `env = NAME=VALUE` is set inside it, and a `TMPDIR` under the scratch (`~` the
+  account's home) is made there before the launch; several `allow` and `env` lines add up. The
   review says each line as written and what it means, says on an `[ssh]` line that names
   `<alias>` that it is this file's remote, notes a remote no `[ssh]` line names (no role
   reaches it yet), and ends with one line for the section: the login, the host and the
@@ -758,6 +759,15 @@ which roles of the project have a session to resume, with a one-line summary eac
   reaches the login only at `127.0.0.1`), and `after a reboot of HOST: asb
   --setup-remote <alias>`: no crontab, a re-run relaunches. The whole sequence, for you
   and for a role that proposes your commands: [remote.md](remote.md).
+
+  `asb --setup-remote <alias> --status` and `asb --setup-remote <alias> --shutdown` ask
+  after the login and end it: one ssh session as the account, as the account's part
+  has, runs the account's own `~/.local/bin/asb --profile sshd --role <alias> --status`
+  (or `--shutdown`) in the scratch there; its answer is said and its exit status is the
+  command's. No preflight, nothing carried or written there, nothing changed here; the
+  same refusals as above (host only, the file approved), and a destination is refused
+  with these flags. `--shutdown` removes nothing: `asb --setup-remote <alias>` starts the
+  login again.
 
   `asb --apply '[remote:<alias>]' 'allow = HOST ...'` adds lines to the section as to any
   (the section is created when absent; `[remote]` without a name is refused), the review

@@ -63,7 +63,7 @@ if [[ -n "$acct" ]]; then
   printf '%s\n' "${orig[*]}" >>"$PROBE_H/acct.argvs"
   printf '%s\n' "$cmd" >>"$PROBE_H/acct.cmds"
   [[ -n "${ACCT_FAIL:-}" ]] && { echo "tob@qgpu3: Permission denied (publickey)." >&2; exit 255; }
-  env -i HOME="$AH" PATH="$PROBE_H/acct-bin:/usr/bin:/bin" PROBE_H="$PROBE_H" INSTALL_RC="${INSTALL_RC:-0}" /bin/bash -c "$cmd"
+  env -i HOME="$AH" PATH="$PROBE_H/acct-bin:/usr/bin:/bin" PROBE_H="$PROBE_H" INSTALL_RC="${INSTALL_RC:-0}" ASB_RC="${ASB_RC:-0}" /bin/bash -c "$cmd"
   rc=$?
   if [[ "$cmd" == *"tar -xf"* && -f "$AH/.local/share/agent-sandbox/src/install.sh" ]]; then
     cp "$PROBE_H/stub-install.sh" "$AH/.local/share/agent-sandbox/src/install.sh"
@@ -129,8 +129,13 @@ case "$verb" in
     else
       printf "role '%s' of %s: not running\n" "$role" "$PWD"
     fi
+    exit "${ASB_RC:-0}"
     ;;
-  shutdown) rm -f "$m" ;;
+  shutdown)
+    [[ -e "$m" ]] && echo "agent-sandbox: role '$role': ended, with everything that ran in it" >&2
+    rm -f "$m"
+    exit "${ASB_RC:-0}"
+    ;;
   launch)
     cmp -s .agent-sandbox "$HOME/.approved" || { echo "not approved" >&2 && exit 1; }
     slug="$(pwd -P)"
@@ -1083,4 +1088,146 @@ this_machine() {
   [ ! -e "$H/home/.ssh/config.before-agent-sandbox" ]
   head -n "$(wc -l <"$BATS_TEST_TMPDIR/config.orig")" "$H/home/.ssh/config" | cmp - "$BATS_TEST_TMPDIR/config.orig"
   grep -qx 'Host r1' "$H/home/.ssh/config"
+}
+
+@test "--setup-remote ALIAS --status: over ssh as the account, its own asb --status in the scratch, its answer said and its exit status followed; no preflight, nothing written there or here (#344)" {
+  remote_host
+  HOST=qgpu3:2224 full_section
+  user_ssh_config
+  setup_remote
+  [ "$status" -eq 0 ]
+  local T="$R/home/tob" f
+  rm -f "$H/ssh.argv" "$H/acct.argvs" "$H/login.argv"
+  : >"$H/asb.calls"
+  mkdir "$BATS_TEST_TMPDIR/before"
+  for f in config known_hosts asb-r1 asb-r1.pub; do cp "$H/home/.ssh/$f" "$BATS_TEST_TMPDIR/before/"; done
+  cp "$PROJ/.agent-sandbox" "$BATS_TEST_TMPDIR/before/proj.dot"
+  cp "$T/bench/.agent-sandbox" "$BATS_TEST_TMPDIR/before/policy"
+  setup_remote r1 --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p --status, over ssh as tob to qgpu3 (ssh -p 2224 -l tob qgpu3; BatchMode; never sudo): asb --profile sshd --role r1 --status in ~/bench there"* ]]
+  [[ "$output" == *"$p   role 'r1' of $T/bench: running since now (supervisor pid 1)"$'\n'"$p     processes:"* ]]
+  [ "$(cat "$H/asb.calls")" = "$T/bench: asb --profile sshd --role r1 --status" ]
+  # one session, as the account, batch mode, the host's ssh port; no preflight, no login
+  [ "$(wc -l <"$H/acct.argvs")" -eq 1 ]
+  grep -qx -- '-l' "$H/acct.argv"
+  grep -qx 'BatchMode=yes' "$H/acct.argv"
+  [ "$(grep -A1 -x -- -p "$H/acct.argv" | paste -sd' ' -)" = "-p 2224" ]
+  [ ! -e "$H/ssh.argv" ]
+  [ ! -e "$H/login.argv" ]
+  for f in config known_hosts asb-r1 asb-r1.pub; do cmp "$BATS_TEST_TMPDIR/before/$f" "$H/home/.ssh/$f"; done
+  cmp "$BATS_TEST_TMPDIR/before/proj.dot" "$PROJ/.agent-sandbox"
+  cmp "$BATS_TEST_TMPDIR/before/policy" "$T/bench/.agent-sandbox"
+  # its exit status is this one's
+  setup_remote ASB_RC=3 r1 --status
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"$p   role 'r1' of $T/bench: running since now"* ]]
+  # not set up there: said, exit 1
+  rm "$T/.local/bin/asb"
+  setup_remote r1 --status
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p tob has no ~/.local/bin/asb there: not set up (agent-sandbox --setup-remote r1 sets it up)"* ]]
+}
+
+@test "--setup-remote ALIAS --shutdown: the account's own asb --shutdown in the scratch; nothing removed there or here; how to start it again; --status then says not running (#344)" {
+  remote_host
+  full_section
+  user_ssh_config
+  setup_remote
+  [ "$status" -eq 0 ]
+  local T="$R/home/tob" f
+  mkdir "$BATS_TEST_TMPDIR/before"
+  for f in config known_hosts asb-r1 asb-r1.pub; do cp "$H/home/.ssh/$f" "$BATS_TEST_TMPDIR/before/"; done
+  cp "$PROJ/.agent-sandbox" "$BATS_TEST_TMPDIR/before/proj.dot"
+  : >"$H/asb.calls"
+  setup_remote r1 --shutdown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p   agent-sandbox: role 'r1': ended, with everything that ran in it"$'\n'"$p the login is not running there now; nothing was removed, there or here: to start it again, agent-sandbox --setup-remote r1" ]]
+  [ "$(cat "$H/asb.calls")" = "$T/bench: asb --profile sshd --role r1 --shutdown" ]
+  [ ! -e "$T/.running-r1" ]
+  # nothing removed: the policy, the keys file, the store, the install there; the files here
+  [ -f "$T/bench/.agent-sandbox" ]
+  [ -f "$T/.config/agent-sandbox/asb-r1-keys" ]
+  [ -d "$T/.local/state/agent-sandbox/sshd/${T//[^A-Za-z0-9-]/-}-bench/r1" ]
+  [ -x "$T/.local/bin/asb" ]
+  for f in config known_hosts asb-r1 asb-r1.pub; do cmp "$BATS_TEST_TMPDIR/before/$f" "$H/home/.ssh/$f"; done
+  cmp "$BATS_TEST_TMPDIR/before/proj.dot" "$PROJ/.agent-sandbox"
+  setup_remote r1 --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p   role 'r1' of $T/bench: not running" ]]
+  # a failing --shutdown there is this one's failure, and no restart line
+  setup_remote ASB_RC=1 r1 --shutdown
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"to start it again"* ]]
+  # and --setup-remote r1 starts it again
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p the login is not running (a reboot of qgpu3?): launching it"* ]]
+}
+
+@test "--setup-remote --status/--shutdown: refused for a destination, with --port, in a sandbox, and while the file is not approved, before any ssh; an unreachable account is said (#344)" {
+  remote_host
+  section 'account = tob'
+  setup_remote tob@qgpu3 --status
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--setup-remote tob@qgpu3 --status: --status acts on a [remote:ALIAS] section of .agent-sandbox (it has: r1), and 'tob@qgpu3' is not one: --setup-remote ALIAS --status"* ]]
+  setup_remote r1 --shutdown --port 2222
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--setup-remote ALIAS [--status | --shutdown]"* ]]
+  setup_remote AGENT_SANDBOX=1 r1 --shutdown
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--setup-remote runs on the host"* ]]
+  NOAPPROVE=1 section 'account = tob' 'allow = pypi.org'
+  setup_remote r1 --status
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"review it first (agent-sandbox --trust)"* ]]
+  [ ! -e "$H/ssh.argv" ]
+  [ ! -e "$H/acct.argv" ]
+  section 'account = tob'
+  setup_remote ACCT_FAIL=1 r1 --status
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p cannot ask as tob (ssh exit 255): tob@qgpu3: Permission denied (publickey)."* ]]
+  [[ "$output" == *"$p it needs ssh -l tob qgpu3 to work without a question: your public key in tob's ~/.ssh/authorized_keys"* ]]
+  [ ! -e "$H/ssh.argv" ]
+}
+
+@test "--setup-remote: env TMPDIR under the scratch ('~' the account's home, or absolute) is made there, said once, before the login's line; the last TMPDIR line is the one; outside the scratch, through '..', or another variable: not made, nothing said (#344)" {
+  remote_host
+  local T="$R/home/tob"
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'env = TMPDIR=~/bench/tmp/x/'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [ -d "$T/bench/tmp/x" ]
+  [[ "$output" == *"$p made TMPDIR $T/bench/tmp/x there, under the scratch (the section's env)"* ]]
+  # said before the login's line
+  [[ "$output" == *"made TMPDIR"*"the login is running there"* ]]
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"made TMPDIR"* ]]
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' "env = TMPDIR=$T/bench/t2"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [ -d "$T/bench/t2" ]
+  # the last TMPDIR line is the one
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'env = TMPDIR=~/bench/t3' 'env = TMPDIR=~/out'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/bench/t3" ]
+  [ ! -e "$T/out" ]
+  # outside the scratch, through '..', a sibling, or another variable: not made, nothing said
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'env = TMPDIR=~/other/tmp' 'env = XDG_CACHE_HOME=~/bench/cache'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/other" ]
+  [ ! -e "$T/bench/cache" ]
+  [[ "$output" != *"made TMPDIR"* ]]
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'env = TMPDIR=~/bench/../escape'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/escape" ]
+  [[ "$output" != *"made TMPDIR"* ]]
+  PORT=2222 section 'account = tob' 'scratch = ~/bench' 'env = TMPDIR=~/bench2/tmp'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/bench2" ]
 }
