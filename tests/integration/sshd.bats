@@ -200,3 +200,59 @@ EOF
   sleep 1
   [ "$(cat "$PROJ/beat")" = "$b1" ]
 }
+
+@test "sshd: [sshd] home = project -- HOME is the project and every session starts there: a command, a login shell on a pty, sftp, scp and rsync (#344)" {
+  SSH_OPTS=(-F /dev/null -i "$I/keys/client" -o IdentitiesOnly=yes -o BatchMode=yes
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10)
+  printf 'home = project\n' >>"$PROJ/.agent-sandbox"
+  local tr="$IHOME/.config/agent-sandbox/trust"
+  sha256sum -- "$PROJ/.agent-sandbox" | cut -d' ' -f1 >"$tr/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  asb_sshd </dev/null >"$I/launch.out" 2>&1 3>&- &
+  LAUNCH_PID=$!
+  local i
+  for ((i = 0; i < 150; i++)); do
+    [[ "$(banner)" == SSH-* ]] && break
+    kill -0 "$LAUNCH_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  echo "launch: $(cat "$I/launch.out")"
+  [[ "$(banner)" == SSH-* ]]
+
+  # a command: HOME and the working directory are the project
+  # shellcheck disable=SC2016 # the remote shell's
+  run s 'echo "$HOME"; pwd; cd && pwd'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PROJ"$'\n'"$PROJ"$'\n'"$PROJ" ]
+  # a login shell on a pty, its commands on stdin
+  # shellcheck disable=SC2016
+  run s -tt <<<'echo "H=$HOME P=$(pwd)"; exit'
+  printf '%s\n' "$output" | tr -d '\r' | grep -q "H=$PROJ P=$PROJ$"
+  # sftp: the remote working directory, and a relative put lands in the project
+  printf 'up\n' >"$I/up.txt"
+  run sftp "${SSH_OPTS[@]}" -P "$PORT" -b - "$(id -un)@127.0.0.1" <<EOS
+pwd
+put $I/up.txt rel-sftp.txt
+EOS
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Remote working directory: $PROJ"* ]]
+  [ "$(cat "$PROJ/rel-sftp.txt")" = up ]
+  # scp and rsync to a relative path: into the project
+  run scp "${SSH_OPTS[@]}" -P "$PORT" "$I/up.txt" "$(id -un)@127.0.0.1:rel-scp.txt"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/rel-scp.txt")" = up ]
+  if command -v rsync >/dev/null; then
+    run rsync -a -e "ssh ${SSH_OPTS[*]} -p $PORT" "$I/up.txt" "$(id -un)@127.0.0.1:rel-rsync.txt"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$PROJ/rel-rsync.txt")" = up ]
+  fi
+  # sshd could change into the home: it said nothing of it
+  run ! grep -q 'Could not chdir' "$I/ssh.err"
+
+  run asb_sshd --shutdown
+  [ "$status" -eq 0 ]
+  for ((i = 0; i < 100; i++)); do
+    kill -0 "$LAUNCH_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  LAUNCH_PID=""
+}

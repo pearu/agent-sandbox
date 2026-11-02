@@ -20,3 +20,4 @@
 #
 #   [sshd]
 #   authorized-keys = /path/outside/the/project/keys   # required
+#   home = project                 # optional: the sessions' HOME and start, the project

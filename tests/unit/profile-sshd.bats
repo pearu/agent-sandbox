@@ -371,6 +371,43 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(1); time.sleep(60)' "$PORT" &
   [[ "$output" == *".agent-sandbox: [sshd] authorized-keys = keys: a relative path; a launch refuses it (an absolute path, or under ~)"* ]]
 }
 
+@test "sshd: [sshd] home = project -- the account's passwd entry, inside, names the project, the rest of /etc/passwd as it is, bound over it; without the line no passwd file; another value refused; the review says it (#344)" {
+  local me d
+  me="$(id -un)"
+  d="$(role_dir)/sshd"
+  policy 'home = project'
+  sshd_launch -- --agent-port 40123
+  [ "$status" -eq 0 ]
+  # the account's line with the project as its home, every other field and line unchanged
+  diff <(awk -F: -v OFS=: -v u="$me" -v p="$PROJ" '$1 == u {$6 = p} {print}' /etc/passwd) "$d/passwd"
+  grep -q "^$me:[^:]*:[^:]*:[^:]*:[^:]*:$PROJ:" "$d/passwd"
+  argv_has --ro-bind "$d/passwd" /etc/passwd
+  local etc pw
+  etc="$(argv_index /etc)" pw="$(argv_index "$d/passwd")"
+  ((etc < pw))
+  # without the line: no passwd file, no bind (the account's home as /etc/passwd says it)
+  policy
+  sshd_launch -- --agent-port 40123
+  [ "$status" -eq 0 ]
+  [ ! -e "$d/passwd" ]
+  run ! argv_has --ro-bind "$d/passwd" /etc/passwd
+  # another value: refused, nothing started
+  rm -f "$H/mitm.argv"
+  policy 'home = ~/x'
+  sshd_launch -- --agent-port 40123
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"profile sshd: [sshd] home = ~/x is not a value it takes (project: the sessions' HOME is the project directory). Refusing to launch"* ]]
+  [ ! -e "$H/mitm.argv" ]
+  # the review
+  printf '[sshd]\nauthorized-keys = %s\nhome = project\n' "$H/keys" >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *".agent-sandbox: [sshd] home = project: the sessions' HOME is the project directory $PROJ, and every session starts there; dot-files a session's tools write go into the project"* ]]
+  [[ "$output" != *"key 'home' is not one this profile reads"* ]]
+  printf '[sshd]\nauthorized-keys = %s\nhome = /srv\n' "$H/keys" >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *".agent-sandbox: [sshd] home = /srv: not a value it takes (project); a launch refuses it"* ]]
+}
+
 @test "sshd: never the default profile -- a verb with no command still acts on claude, the only other one" {
   run_engine -- asb --status
   [ "$status" -eq 0 ]

@@ -25,11 +25,17 @@
 #                             directory in the project, say): remote scripts get it.
 #   profile_by_name_only=1    never the profile a verb with no command defaults to.
 #   profile_ro_binds          the role's sshd directory, read-only at itself, and its
-#                             /etc/group without the tty line over /etc/group.
+#                             /etc/group without the tty line over /etc/group; with
+#                             [sshd] home = project, its /etc/passwd with the account's
+#                             home the project directory, over /etc/passwd.
 #
 # NOTHING NAMES AN ACCOUNT, A HOME OR A PORT: the account is whoever launches, the role
 # is --role, the port and address are the launch's one agent-port token, the keys file
-# is the policy's [sshd] authorized-keys.
+# is the policy's [sshd] authorized-keys. The sessions' HOME is what sshd takes from the
+# account's passwd entry: the account's home path, an empty read-only directory inside,
+# unless the policy says [sshd] home = project (#344): then that entry, inside, names the
+# project directory, so sshd sets HOME to it and starts every session there (a login
+# shell, a command, sftp, scp and rsync alike).
 
 # The profile_* variables below are the contract: the engine reads them after sourcing
 # this file, so shellcheck sees them as unused here.
@@ -43,7 +49,7 @@ profile_project_env_set=1
 profile_by_name_only=1
 # Keys this profile reads from a project's [sshd] section; the review warns of any other.
 # shellcheck disable=SC2034
-profile_dotfile_keys=(authorized-keys)
+profile_dotfile_keys=(authorized-keys home)
 
 # _sshd_q STRING -- STRING as one double-quoted sshd_config argument: a backslash and a
 # double quote escaped, which is what sshd's argument splitting undoes (measured with
@@ -95,6 +101,20 @@ _sshd_authorized_keys() {
   printf '%s' "$ak"
 }
 
+# _sshd_home -- the [sshd] home of the launch's policy: empty (none), or `project`.
+# Says why and fails for any other value. Reads the engine's _df_profile_kv.
+_sshd_home() {
+  local kv h=""
+  for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
+    [[ "${kv%%=*}" == home ]] && h="${kv#*=}"
+  done
+  if [[ -n "$h" && "$h" != project ]]; then
+    _as_msg "profile sshd: [sshd] home = $h is not a value it takes (project: the sessions' HOME is the project directory). Refusing to launch"
+    return 1
+  fi
+  printf '%s' "$h"
+}
+
 # The launch, on the host: what the profile requires of it, then the role's sshd directory
 # -- the host key (made once, kept), a copy of the authorized keys taken now, /etc/group
 # without the tty line, and sshd's configuration -- bound read-only inside.
@@ -109,9 +129,10 @@ profile_prepare() {
     _as_msg "profile sshd needs exactly one agent port, the one sshd listens on (--agent-port [ADDR:]PORT, AGENT_SANDBOX_AGENT_PORTS or [net] agent-port); this launch has ${#_agent_ports[@]}${_agent_ports[*]:+: ${_agent_ports[*]}}. Refusing to launch"
     return 1
   fi
-  local tok="${_agent_ports[0]}" port ak sshd keygen sftp="" c dir out
+  local tok="${_agent_ports[0]}" port ak home sshd keygen sftp="" c dir out
   port="${tok##*:}"
   ak="$(_sshd_authorized_keys)" || return 1
+  home="$(_sshd_home)" || return 1
   sshd="$(_sshd_find sshd /usr/sbin /sbin /usr/local/sbin)" || {
     _as_msg "profile sshd: no sshd on PATH or in /usr/sbin, /sbin (Debian/Ubuntu: sudo apt install openssh-server). Refusing to launch"
     return 1
@@ -146,6 +167,30 @@ profile_prepare() {
   # namespace does not map (EINVAL); with no tty group sshd uses the user's own (measured).
   grep -v '^tty:' /etc/group >"$dir/group" || :
   chmod 644 "$dir/group"
+  # [sshd] home = project (#344): sshd sets a session's HOME from the account's passwd
+  # entry and changes into that directory before it runs the shell, a command or the sftp
+  # server; the environment the launch hands over cannot do the second. So the entry,
+  # inside, names the project: /etc/passwd as it is, the account's home field replaced;
+  # an account /etc/passwd lacks (a directory service's) gets its getent entry appended.
+  rm -f -- "$dir/passwd"
+  if [[ "$home" == project ]]; then
+    local me ent
+    me="$(id -un)" || return 1
+    ent="$(getent passwd "$me")" || {
+      _as_msg "profile sshd: [sshd] home = project, and getent has no passwd entry for this account. Refusing to launch"
+      return 1
+    }
+    if [[ "$_proj" == *[:$'\n']* ]]; then
+      _as_msg "profile sshd: [sshd] home = project, and the project directory $_proj has a ':' or a line break, which a passwd entry cannot hold. Refusing to launch"
+      return 1
+    fi
+    ME="$me" ENT="$ent" D="$_proj" awk -F: -v OFS=: '
+      $1 == ENVIRON["ME"] {$6 = ENVIRON["D"]; f = 1}
+      {print}
+      END {if (!f) {n = split(ENVIRON["ENT"], e, ":"); e[6] = ENVIRON["D"]; s = e[1]; for (i = 2; i <= n; i++) s = s ":" e[i]; print s}}
+    ' /etc/passwd >"$dir/passwd" || return 1
+    chmod 644 "$dir/passwd"
+  fi
   out="$dir/sshd_config"
   {
     printf '# The sshd profile'"'"'s configuration for role %s, written at every launch (#335).\n' "${_role:-default}"
@@ -176,6 +221,7 @@ profile_prepare() {
     return 1
   fi
   profile_ro_binds+=("$dir" "$dir/group"$'\t'/etc/group)
+  [[ "$home" != project ]] || profile_ro_binds+=("$dir/passwd"$'\t'/etc/passwd)
   # sshd and sftp-server are bound only when outside the system directories the sandbox
   # already has read-only.
   for c in "$sshd" "$sftp"; do
@@ -208,11 +254,20 @@ profile_route() {
 }
 
 # The review of a project's [sshd] lines (profile_trust_notes, #335): who may log in,
-# and a keys file the sessions could write.
+# a keys file the sessions could write, and the sessions' home (#344).
 profile_trust_notes() {
   local cwd="$1" kv v p
   shift
   for kv in "$@"; do
+    if [[ "${kv%%=*}" == home ]]; then
+      v="${kv#*=}"
+      if [[ "$v" == project ]]; then
+        printf '[sshd] home = project: the sessions'"'"' HOME is the project directory %s, and every session starts there; dot-files a session'"'"'s tools write go into the project\n' "$cwd"
+      else
+        printf '[sshd] home = %s: not a value it takes (project); a launch refuses it\n' "$v"
+      fi
+      continue
+    fi
     [[ "${kv%%=*}" == authorized-keys ]] || continue
     v="${kv#*=}" p="${kv#*=}"
     [[ "$p" == \~ || "$p" == \~/* ]] && p="$HOME${p#\~}"
