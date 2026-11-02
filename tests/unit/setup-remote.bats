@@ -78,6 +78,7 @@ if [[ "$dest" == "${ALIAS_NAME:-r1}" ]]; then
   u="$(/usr/bin/ssh -G -F "$HOME/.ssh/config" "$dest" | awk '$1 == "user" {print $2}')"
   exec env -i HOME=/nonexistent PATH="$PROBE_H/login-bin:/usr/bin:/bin" AGENT_SANDBOX=1 \
     LOGIN_USER="${LOGIN_USER:-$u}" DIRECT_OPEN="${DIRECT_OPEN:-}" LOGIN_GPUS="${LOGIN_GPUS:-GPU-1}" \
+    ALLOWED_OUT="${ALLOWED_OUT:-200 200}" EX_OUT="${EX_OUT:-000 403}" \
     /bin/bash -s <"$PROBE_H/check.sh"
 fi
 printf '%s\n' "${orig[@]}" >"$PROBE_H/ssh.argv"
@@ -151,8 +152,8 @@ X
 #!/bin/bash
 case "$*" in
   *--noproxy*) [[ -n "$DIRECT_OPEN" ]] && exit 0 || exit 7 ;;
-  *example.com*) printf '000 403' && exit 56 ;;
-  *) printf '200' ;;
+  *example.com*) printf '%s' "$EX_OUT" && exit 56 ;;
+  *) printf '%s' "$ALLOWED_OUT" ;;
 esac
 X
   printf '#!/bin/bash\nfor g in $LOGIN_GPUS; do echo "$g"; done\n' >"$H/login-bin/nvidia-smi"
@@ -630,9 +631,9 @@ W
   # the checks, through the alias
   [ "$(tail -n 2 "$H/login.argv" | paste -sd' ' -)" = "bash -s" ]
   [[ "$output" == *"$p check: ssh r1 logs in as tob, inside the sandbox (AGENT_SANDBOX=1): ok"* ]]
-  [[ "$output" == *"$p check: https://pypi.org/ through the proxy: HTTP 200: ok"* ]]
+  [[ "$output" == *"$p check: https://pypi.org/ through the proxy: the proxy opened the tunnel and the host answered HTTP 200: ok"* ]]
   [[ "$output" == *"$p check: a direct connection to https://pypi.org/, around the proxy, fails: ok"* ]]
-  [[ "$output" == *"$p check: https://example.com/, not allowed, is refused by the proxy (403): ok"* ]]
+  [[ "$output" == *"$p check: https://example.com/, not allowed, is refused by the proxy at CONNECT (403): ok"* ]]
   [[ "$output" == *"$p check: nvidia-smi inside lists exactly the card(s) of the section's nodes (GPU-1): ok"* ]]
   [[ "$output" == *"$p set up: ssh r1"$'\n'"$p for a role to reach it: agent-sandbox --apply '[ssh:ROLE]' r1"$'\n'"$p after a reboot of qgpu3: agent-sandbox --setup-remote r1" ]]
   run ! grep -q sudo "$H/acct.cmds"
@@ -962,4 +963,124 @@ apply_remote() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"--setup-remote takes a [remote:ALIAS] section of this project's .agent-sandbox, or a destination, and nothing after it but --port"* ]]
   [ ! -e "$H/ssh.argv" ]
+}
+
+# ---- a host that is this machine; the egress check by the proxy's CONNECT (#344, step 4) ----
+
+# this_machine -- the throwaway root reports this machine's machine-id and boot id, as the
+# preflight reads them on the host it runs on.
+this_machine() {
+  mkdir -p "$R/proc/sys/kernel/random"
+  cp /etc/machine-id "$R/etc/machine-id"
+  cat /proc/sys/kernel/random/boot_id >"$R/proc/sys/kernel/random/boot_id"
+}
+
+@test "--setup-remote: a host that is this machine (machine-id and boot id): the alias at 127.0.0.1 with no ProxyJump, for a bare port and 0.0.0.0 alike; the host key as [127.0.0.1]:PORT; another boot id is another machine (#344)" {
+  [ -s /etc/machine-id ]
+  remote_host
+  this_machine
+  PORT=2222 section 'account = tob'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p qgpu3 is this machine (its machine-id and boot id are this one's): the alias goes to the login over 127.0.0.1"* ]]
+  grep -qx '  HostName 127.0.0.1' "$H/home/.ssh/config"
+  grep -qx '  Port 2222' "$H/home/.ssh/config"
+  run ! grep -q ProxyJump "$H/home/.ssh/config"
+  [[ "$(cat "$H/home/.ssh/known_hosts")" == "[127.0.0.1]:2222 ssh-ed25519 "*" agent-sandbox remote r1 (#344)" ]]
+  PORT=0.0.0.0:2222 section 'account = tob'
+  setup_remote
+  [ "$status" -eq 0 ]
+  grep -qx '  HostName 127.0.0.1' "$H/home/.ssh/config"
+  run ! grep -q ProxyJump "$H/home/.ssh/config"
+  [ "$(wc -l <"$H/home/.ssh/known_hosts")" -eq 1 ]
+  [[ "$(cat "$H/home/.ssh/known_hosts")" == "[127.0.0.1]:2222 ssh-ed25519 "* ]]
+  # the same machine-id, another boot id: another machine (one cloned from the same image)
+  echo 00000000-0000-0000-0000-000000000000 >"$R/proc/sys/kernel/random/boot_id"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is this machine"* ]]
+  grep -qx '  HostName qgpu3.example.org' "$H/home/.ssh/config"
+  [[ "$(cat "$H/home/.ssh/known_hosts")" == "[qgpu3.example.org]:2222 ssh-ed25519 "* ]]
+}
+
+@test "--setup-remote: on this machine the end names the roles' [net:ROLE] host-port line, for the roles [ssh] names it with, unless a host-port line gives the port; a login at one other address is said unreached (#344)" {
+  [ -s /etc/machine-id ]
+  remote_host
+  this_machine
+  local q="$p and as it is on this machine, a strict role reaches it only at 127.0.0.1: agent-sandbox --apply"
+  local last="$p after a reboot of qgpu3: agent-sandbox --setup-remote r1"
+  PORT=2222 section 'account = tob'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$p for a role to reach it: agent-sandbox --apply '[ssh:ROLE]' r1"$'\n'"$q '[net:ROLE]' 'host-port = 2222'"$'\n'"$last" ]]
+  PORT=2222 section 'account = tob' '[ssh:impl-1]' 'r1'
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$q '[net:impl-1]' 'host-port = 2222'"$'\n'"$last" ]]
+  # the line it says, applied: then nothing more to say
+  apply_remote 'y\n' '[net:impl-1]' 'host-port = 2222'
+  [ "$status" -eq 0 ]
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$last" ]]
+  PORT=2222 section 'account = tob' '[ssh:impl-1]' 'r1' '[net:impl-*]' 'host-port = 2222'
+  setup_remote
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$last" ]]
+  PORT=2222 section 'account = tob' '[ssh]' 'r1' '[net]' 'host-port = 8080'
+  setup_remote
+  [[ "$output" == *"$p set up: ssh r1"$'\n'"$q '[net]' 'host-port = 2222'"$'\n'"$last" ]]
+  PORT=192.0.2.7:2222 section 'account = tob'
+  setup_remote
+  [ "$status" -eq 0 ]
+  grep -qx '  HostName 192.0.2.7' "$H/home/.ssh/config"
+  [[ "$output" == *"$p a role on this machine does not reach it: it listens at 192.0.2.7 only, and a strict sandbox here has this machine's addresses as its own; port = 2222 or 0.0.0.0:2222 in [remote:r1] is reached over 127.0.0.1"$'\n'"$last" ]]
+  [[ "$output" != *"host-port"* ]]
+}
+
+@test "--setup-remote: the egress check goes by the proxy's CONNECT: an allowed host's own 403 through the tunnel passes, a refusal at CONNECT or no answer fails; example.com must be refused at CONNECT (#344)" {
+  remote_host
+  full_section
+  setup_remote ALLOWED_OUT='403 200'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p check: https://pypi.org/ through the proxy: the proxy opened the tunnel and the host answered HTTP 403: ok"* ]]
+  setup_remote ALLOWED_OUT='000 403'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p check: https://pypi.org/ through the proxy: refused by the proxy at CONNECT (403), where it is allowed: FAILED"* ]]
+  setup_remote ALLOWED_OUT='000 000'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p check: https://pypi.org/ through the proxy: no answer (HTTP 000, the proxy's CONNECT 000): FAILED"* ]]
+  # example.com answering 403 itself, through an opened tunnel, is no refusal
+  setup_remote EX_OUT='403 200'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p check: https://example.com/, not allowed, answered '403 200' (code, then the proxy's CONNECT code), where the proxy's refusal at CONNECT (403) is expected: FAILED"* ]]
+}
+
+@test "--setup-remote: with no allow line the egress check takes the first host of the account's allowlist.txt; with none there, it says why it is not measured (#344)" {
+  remote_host
+  PORT=2222 section 'account = tob'
+  mkdir -p "$R/home/tob/.config/agent-sandbox"
+  printf '# the starter\n\n.githubusercontent.com\n  github.com  # code\npypi.org\n' >"$R/home/tob/.config/agent-sandbox/allowlist.txt"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p check: https://github.com/ (the first host of tob's allowlist.txt there) through the proxy: the proxy opened the tunnel and the host answered HTTP 200: ok"* ]]
+  [[ "$output" == *"$p check: a direct connection to https://github.com/, around the proxy, fails: ok"* ]]
+  grep -qx 'try=github.com ex=1' "$H/check.sh"
+  rm "$R/home/tob/.config/agent-sandbox/allowlist.txt"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p check: the egress to an allowed host, not measured: neither the section nor tob's allowlist.txt there names a host"* ]]
+}
+
+@test "--setup-remote: a new block in a ~/.ssh/config that has another remote's block is said appended, the rest byte for byte, no backup (#344)" {
+  remote_host
+  full_section
+  mkdir -p "$H/home/.ssh"
+  printf 'Host build\n  HostName build.example.org\n\n# >>> agent-sandbox remote r0 (#344) >>>\nHost r0\n  HostName 127.0.0.1\n# <<< agent-sandbox remote r0 <<<\n' >"$H/home/.ssh/config"
+  cp "$H/home/.ssh/config" "$BATS_TEST_TMPDIR/config.orig"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p the alias r1 in ~/.ssh/config (a marked block, appended)"* ]]
+  [ ! -e "$H/home/.ssh/config.before-agent-sandbox" ]
+  head -n "$(wc -l <"$BATS_TEST_TMPDIR/config.orig")" "$H/home/.ssh/config" | cmp - "$BATS_TEST_TMPDIR/config.orig"
+  grep -qx 'Host r1' "$H/home/.ssh/config"
 }

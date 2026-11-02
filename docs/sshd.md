@@ -189,6 +189,9 @@ Neither cloud has been exercised yet.
 
 ## The roles' side
 
+`asb --setup-remote` does the recipes above and this side in one command, from a
+`[remote:ALIAS]` section of the roles' project ([remote.md](remote.md)). By hand:
+
 The agents that log in are roles on another machine (or the same one). Their project's
 `.agent-sandbox` names the login as an SSH host, and their account's `~/.ssh/config`
 gives the alias its address, port, user and key ([ssh.md](ssh.md)):

@@ -289,7 +289,12 @@ Stated plainly. These are what the adversary above can still do.
   the login's host key is filed under `[127.0.0.1]:PORT`, a name it shares with any
   loopback service on that port elsewhere (ssh accepts any key filed under a name; the
   command leaves another tool's line for that name and says so). A role reaching such a
-  remote from inside a `strict` sandbox through the jump is not measured.
+  remote from inside a `strict` sandbox through the jump is not measured. When the
+  preflight's machine-id and boot id are this machine's, the host is taken to be this
+  one and the block is `HostName 127.0.0.1` with no jump; those two values are what the
+  host says over your ssh, so a host that reports this machine's gets that block, which
+  then reaches whatever listens on this machine's `127.0.0.1:PORT`, with the host key the
+  host sent filed for it.
 
 - **Raw-socket egress is unfiltered in `proxy` mode.** The sandbox shares the
   host network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its

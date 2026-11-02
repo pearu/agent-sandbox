@@ -285,8 +285,11 @@
 #                         relaunched when changed, or launched after a reboot);
 #                         then the host key into ~/.ssh/known_hosts, the alias
 #                         ALIAS in a marked block of ~/.ssh/config, and the
-#                         checks through it (a failure: exit 1). Run it again
-#                         after a change, or a reboot. See docs/config.md.
+#                         checks through it (a failure: exit 1). A host that
+#                         is this machine (machine-id and boot id) gets the
+#                         alias at 127.0.0.1 and the [net:ROLE] host-port line
+#                         its roles need. Run it again after a change, or a
+#                         reboot. See docs/remote.md.
 #   --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]
 #                         the same for [remote:ACCOUNT-HOST] (ACCOUNT: else your
 #                         ssh login name for HOST): used when the file has it
@@ -6708,8 +6711,9 @@ _as_dotfile_line() {
 
 # ---- [remote:ALIAS] (#344): a sandboxed login on another host, described --------
 # The section is parsed, reviewed and approved with the file; `--check` lists it.
-# `--setup-remote ALIAS` acts on it: in this version its first phase, the preflight of the
-# host and the admin's script where root is needed there (below).
+# `--setup-remote ALIAS` acts on it: the preflight of the host, the admin's script where
+# root is needed there, else the account's part, the local side and the checks (below;
+# docs/remote.md).
 #   host    = an ssh destination: a hostname, user@host, or a ~/.ssh/config alias, then
 #             :SSHPORT for the port of that host's own sshd (required)
 #   account = the account that runs the login there, as adduser takes a name (default: the
@@ -7006,9 +7010,14 @@ if [[ -r "$R/etc/os-release" ]]; then
   done <"$R/etc/os-release"
 fi
 read -r kernel 2>/dev/null <"$R/proc/sys/kernel/osrelease" || true
+mid="" bid=""
+read -r mid 2>/dev/null <"$R/etc/machine-id" || true
+read -r bid 2>/dev/null <"$R/proc/sys/kernel/random/boot_id" || true
 say os "${id_:-unknown} ${ver_:-?}"
 say os_like "$like_"
 say kernel "${kernel:-unknown}"
+say machine_id "$mid"
+say boot_id "$bid"
 say user "$(id -un)"
 say uid "$(id -u)"
 pm=none
@@ -7153,6 +7162,17 @@ _as_remote_pubkey() {
   printf '%s %s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" "$src"
 }
 
+# _as_remote_same_host MACHINE_ID BOOT_ID -- whether the host the preflight reported these
+# for is this machine: both equal this one's, and neither empty. The machine-id alone is
+# shared by machines cloned from one image; the boot id alone by a container on this
+# kernel, whose 127.0.0.1 is not this one's. Read here as the preflight reads them there.
+_as_remote_same_host() {
+  local mid="" bid=""
+  read -r mid 2>/dev/null </etc/machine-id || true
+  read -r bid 2>/dev/null </proc/sys/kernel/random/boot_id || true
+  [[ -n "$1" && -n "$2" && "$1" == "$mid" && "$2" == "$bid" ]]
+}
+
 # _as_remote_pkg FAMILY WHAT -- the package of WHAT (bwrap, pasta, nft, sshd) in a family.
 _as_remote_pkg() {
   case "$2" in
@@ -7289,9 +7309,10 @@ _as_setup_remote() {
   return 1
 }
 
-# _as_setup_remote_alias CWD ALIAS [PORT] -- `asb --setup-remote ALIAS`, its first phase:
-# the refusals, the preflight over ssh, the report, and either the ready verdict (0) or
-# the admin's script (1). Refusals are 2. A PORT (normalized) that is not the section's
+# _as_setup_remote_alias CWD ALIAS [PORT] -- `asb --setup-remote ALIAS`: the refusals, the
+# preflight over ssh, the report (whether the host is this machine, `same`, included),
+# and either the ready verdict and the account's part (_as_remote_account) or the
+# admin's script (1). Refusals are 2. A PORT (normalized) that is not the section's
 # port is refused. Uses invoked and engine by dynamic scope.
 # shellcheck disable=SC2154
 _as_setup_remote_alias() {
@@ -7389,6 +7410,12 @@ _as_setup_remote_alias() {
   local -a pkgs=() byhand=()
   local rebuild=0 prof_bwrap=0 prof_pasta=0 adduser=0 fault=0
   _as_msg "$p ${P[os]:-unknown}, kernel ${P[kernel]:-unknown}, packages by ${pm/none/no package manager asb knows (apt-get, dnf, pacman, zypper)}"
+  # this machine itself: the alias then reaches the login over 127.0.0.1 (_as_remote_account)
+  local same=0
+  if _as_remote_same_host "${P[machine_id]:-}" "${P[boot_id]:-}"; then
+    same=1
+    _as_msg "$p $_rm_host is this machine (its machine-id and boot id are this one's): the alias goes to the login over 127.0.0.1"
+  fi
   case "${P[sudo]:-none}" in
     root) w="root" ;;
     ok) w="sudo without a password" ;;
@@ -7765,7 +7792,8 @@ STATE
 # _as_remote_apply_script -- the account's side's changes, on stdout, from
 # _as_remote_account's locals (dynamic scope): the scratch, the policy when it is to be
 # written (wpol), the keys file, the approval, the shutdown (down) and the launch (up),
-# the wait for --status to show sshd running, and the role's host key back.
+# the wait for --status to show sshd running, the role's host key back, and the first
+# host of the account's allowlist.txt.
 # shellcheck disable=SC2154,SC2016 # it writes shell text, quoted as written
 _as_remote_apply_script() {
   printf '# agent-sandbox --setup-remote: the account'"'"'s part of [remote:%s].\n' "$alias"
@@ -7812,6 +7840,17 @@ if [ "$up" = 1 ]; then
 fi
 hk="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox/sshd/$(_as_path_slug "$(pwd -P)")/$alias/sshd/ssh_host_ed25519_key.pub"
 if [ -r "$hk" ]; then say hostkey "$(head -n 1 -- "$hk")"; else say error "no host key at $hk"; exit 1; fi
+# the first host the account's own allowlist passes by name, for the egress check when
+# the section allows none: the proxy there lets that file's hosts through every session
+d=""
+if [ -r "$HOME/.config/agent-sandbox/allowlist.txt" ]; then
+  while IFS= read -r l || [ -n "$l" ]; do
+    l="${l%%#*}" l="${l//[[:space:]]/}"
+    case "$l" in "" | .* | example.com) continue ;; esac
+    d="$l" && break
+  done <"$HOME/.config/agent-sandbox/allowlist.txt"
+fi
+say allow_default "$d"
 say end ok
 APPLY
 }
@@ -7851,9 +7890,10 @@ _as_remote_policy() {
 # outside the markers changes; the file is written through (a symlink stays one, the
 # mode stays), and copied to ~/.ssh/config.before-agent-sandbox before the first write
 # into it (a file with no block of ours yet; one this made has nothing to keep).
-# Prints `written`, `unchanged` or `created`, and the backup's path when it made one.
+# Prints `rewritten` (the block of ALIAS was there), `appended`, `unchanged` or `created`,
+# and the backup's path after a TAB when it made one.
 _as_remote_ssh_config() {
-  local alias="$1" block="$2" f="$HOME/.ssh/config" bk c nc pre rest post new begin end ours=0
+  local alias="$1" block="$2" f="$HOME/.ssh/config" bk c nc pre rest post new begin end ours=0 how=rewritten
   bk="$f.before-agent-sandbox"
   begin="# >>> agent-sandbox remote $alias (#344) >>>"
   end="# <<< agent-sandbox remote $alias <<<"
@@ -7879,6 +7919,7 @@ _as_remote_ssh_config() {
     post="${rest#*$'\n'"$end"}"
     new="${pre:+${pre#$'\n'}$'\n'}$block$post"
   else
+    how=appended
     new="$c"
     [[ -z "$c" || "$c" == *$'\n' ]] || new+=$'\n'
     [[ -z "$c" ]] || new+=$'\n'
@@ -7890,9 +7931,9 @@ _as_remote_ssh_config() {
   fi
   if ((! ours)) && [[ ! -e "$bk" ]]; then
     cp -p -- "$f" "$bk" || return 1
-    printf 'written\t%s' "$bk"
+    printf '%s\t%s' "$how" "$bk"
   else
-    printf 'written'
+    printf '%s' "$how"
   fi
   printf '%s' "$new" >"$f.asb-new" && cat -- "$f.asb-new" >"$f" && rm -f -- "$f.asb-new" || return 1
 }
@@ -8071,13 +8112,14 @@ _as_remote_account() {
   err="$(mktemp)" || return 1
   rc=0
   out="$(_as_remote_apply_script | ssh "${sopts[@]}" -l "$acct" "$dest" bash -s 2>"$err")" || rc=$?
-  local hostkey=""
+  local hostkey="" dallow=""
   while IFS=$'\t' read -r k v; do
     v="${v//[[:cntrl:]]/?}"
     case "$k" in
       error) _as_msg "$p $v" ;;
       log) _as_msg "$p   $v" ;;
       hostkey) hostkey="$v" ;;
+      allow_default) [[ "$v" =~ $_as_hostre && "$v" != .* ]] && dallow="$v" ;;
     esac
   done <<<"$out"
   if [[ "$out" != *$'\nend\tok'* ]]; then
@@ -8090,12 +8132,17 @@ _as_remote_account() {
   ((up)) && _as_msg "$p the login is running there"
 
   # ---- the local side: the host key, the alias ----
+  # On this machine itself (same), the login is at 127.0.0.1 unless it listens at one
+  # other address only: no jump, and roles here reach it as the owner does.
   local hname jump="" khname n
   case "$_rm_port" in
     0.0.0.0:*) hname="$rhost" ;;
     *:*) hname="${_rm_port%:*}" ;;
     *) hname=127.0.0.1 jump="$_rm_host${_rm_sshport:+:$_rm_sshport}" ;;
   esac
+  if ((${same:-0})) && [[ "$_rm_port" == 0.0.0.0:* || "$_rm_port" != *:* ]]; then
+    hname=127.0.0.1 jump=""
+  fi
   local aport="${_rm_port##*:}"
   khname="[$hname]:$aport"
   if [[ ! "$hostkey" =~ ^(ssh-ed25519\ [A-Za-z0-9+/]+=*) ]]; then
@@ -8121,7 +8168,8 @@ _as_remote_account() {
   case "$out" in
     created) _as_msg "$p the alias $alias in ~/.ssh/config (created; a marked block)" ;;
     unchanged) _as_msg "$p the alias $alias in ~/.ssh/config: unchanged" ;;
-    written$'\t'*) _as_msg "$p the alias $alias in ~/.ssh/config (a marked block; the file as it was before: ${out#*$'\t'})" ;;
+    *$'\t'*) _as_msg "$p the alias $alias in ~/.ssh/config (a marked block; the file as it was before: ${out#*$'\t'})" ;;
+    appended) _as_msg "$p the alias $alias in ~/.ssh/config (a marked block, appended)" ;;
     *) _as_msg "$p the alias $alias in ~/.ssh/config (its marked block rewritten)" ;;
   esac
   # An earlier Host or Match block of yours sets an option first, and ssh takes the first.
@@ -8152,19 +8200,71 @@ _as_remote_account() {
     _as_msg "$p set up: ssh $alias"
   fi
   [[ -n "$reached" ]] || _as_msg "$p for a role to reach it: $invoked --apply '[ssh:ROLE]' $alias"
+  ((${same:-0})) && _as_remote_same_host_roles
   _as_msg "$p after a reboot of $dest: $invoked --setup-remote $alias"
   ((fails == 0))
 }
 
+# _as_remote_same_host_roles -- the end's lines for a login on this machine, from
+# _as_remote_account's locals (dynamic scope): a strict sandbox here has the host's own
+# addresses, so a role here reaches the login only at 127.0.0.1, through [net] host-port.
+# For each role an [ssh] line names the alias with (ROLE when none does), the --apply line
+# of [net:ROLE] host-port = PORT, unless a [net] or [net:GLOB] host-port line covering that
+# role gives the port already. A login at one other address only is not reached that way.
+# shellcheck disable=SC2154
+_as_remote_same_host_roles() {
+  local x g r t ok ck cv
+  local -a globs=() hp=() ts=()
+  if [[ "$_rm_port" == *:* && "$_rm_port" != 0.0.0.0:* ]]; then
+    _as_msg "$p a role on this machine does not reach it: it listens at ${_rm_port%:*} only, and a strict sandbox here has this machine's addresses as its own; port = $aport or 0.0.0.0:$aport in [remote:$alias] is reached over 127.0.0.1"
+    return 0
+  fi
+  for x in ${_df_ssh[@]+"${_df_ssh[@]}"}; do
+    [[ "${x#*$'\t'}" == "$alias" ]] && globs+=("${x%%$'\t'*}")
+  done
+  for x in ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
+    [[ "${x#*$'\t'}" == ssh$'\t'"$alias" ]] && globs+=("${x%%$'\t'*}")
+  done
+  ((${#globs[@]})) || globs=(ROLE)
+  # the host-port lines: `*<TAB>VALUE` for [net], `GLOB<TAB>VALUE` for [net:GLOB]
+  for x in ${_df_net_host_port[@]+"${_df_net_host_port[@]}"}; do hp+=("*"$'\t'"$x"); done
+  for x in ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
+    t="${x#*$'\t'}"
+    [[ "$t" == net$'\t'* ]] || continue
+    t="${t#net$'\t'}"
+    _as_dotfile_kv "$t"
+    [[ "$ck" == host-port ]] && hp+=("${x%%$'\t'*}"$'\t'"$cv")
+  done
+  for g in "${globs[@]}"; do
+    ok=0
+    for x in ${hp[@]+"${hp[@]}"}; do
+      r="${x%%$'\t'*}"
+      # shellcheck disable=SC2053 # the line's glob, matched as one
+      [[ "$r" == "*" || "$g" == $r ]] || continue
+      _as_split ts $', \t' "${x#*$'\t'}"
+      for t in ${ts[@]+"${ts[@]}"}; do [[ "$t" =~ ^0*$aport$ ]] && ok=1; done
+    done
+    ((ok)) && continue
+    if [[ "$g" == "*" ]]; then
+      _as_msg "$p and as it is on this machine, a strict role reaches it only at 127.0.0.1: $invoked --apply '[net]' 'host-port = $aport'"
+    else
+      _as_msg "$p and as it is on this machine, a strict role reaches it only at 127.0.0.1: $invoked --apply '[net:$g]' 'host-port = $aport'"
+    fi
+  done
+  return 0
+}
+
 # _as_remote_checks -- through the alias just written, one session: the login is the
-# account inside the sandbox; an allowed host answers 2xx/3xx through the proxy;
-# https://example.com/ is refused (403) unless the section allows it; a direct
-# connection fails; nvidia-smi lists exactly the cards of the section's /dev/nvidiaN
-# nodes, when it names any. One line each; returns how many failed. From
-# _as_remote_account's locals (dynamic scope).
+# account inside the sandbox; for an allowed host (the section's first, else the first of
+# the account's allowlist.txt) the proxy opens the tunnel (CONNECT 200) and the host
+# answers with any HTTP status -- its own 403 included; https://example.com/ is refused by
+# the proxy at CONNECT (403) unless the section allows it; a direct connection fails;
+# nvidia-smi lists exactly the cards of the section's /dev/nvidiaN nodes, when it names
+# any. One line each; returns how many failed. From _as_remote_account's locals (dynamic
+# scope).
 # shellcheck disable=SC2154,SC2016
 _as_remote_checks() {
-  local fails=0 h try="" ex=1 out k v x
+  local fails=0 h try="" from="" ex=1 out k v x
   local -A C=()
   local -a hs=() inside=() cards=()
   read -r -a hs <<<"$_rm_allow"
@@ -8172,6 +8272,7 @@ _as_remote_checks() {
     [[ -z "$try" && "$h" != .* ]] && try="$h"
     [[ "$h" == example.com || "$h" == .example.com || "$h" == .com ]] && ex=0
   done
+  [[ -n "$try" || -z "${dallow:-}" ]] || try="$dallow" from=" (the first host of $acct's allowlist.txt there)"
   out="$(
     {
       printf 'try=%q ex=%q\n' "$try" "$ex"
@@ -8181,7 +8282,7 @@ say user "$(id -un)"
 say sandbox "${AGENT_SANDBOX:-}"
 if command -v curl >/dev/null 2>&1; then
   if [ -n "$try" ]; then
-    say allowed "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://$try/" 2>/dev/null)"
+    say allowed "$(curl -sS -o /dev/null -w '%{http_code} %{http_connect}' --max-time 20 "https://$try/" 2>/dev/null)"
     if curl -sS -o /dev/null --noproxy '*' --max-time 8 "https://$try/" 2>/dev/null; then say direct open; else say direct closed; fi
   fi
   [ "$ex" = 1 ] && say refused "$(curl -sS -o /dev/null -w '%{http_code} %{http_connect}' --max-time 20 https://example.com/ 2>/dev/null)"
@@ -8216,10 +8317,17 @@ CHECK
     _as_msg "$p check: the egress, not measured: no curl inside the login"
   else
     if [[ -n "$try" ]]; then
-      if [[ "${C[allowed]:-}" =~ ^[23][0-9][0-9]$ ]]; then
-        _as_msg "$p check: https://$try/ through the proxy: HTTP ${C[allowed]}: ok"
+      # `CODE CONNECT`: the host's status, and the proxy's answer to the CONNECT
+      local code="${C[allowed]:-}" conn
+      conn="${code#* }" code="${code%% *}"
+      [[ "${C[allowed]:-}" == *" "* ]] || conn=""
+      if [[ "$conn" == 200 && "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
+        _as_msg "$p check: https://$try/$from through the proxy: the proxy opened the tunnel and the host answered HTTP $code: ok"
+      elif [[ "$conn" == 403 ]]; then
+        _as_msg "$p check: https://$try/$from through the proxy: refused by the proxy at CONNECT (403), where it is allowed: FAILED"
+        fails=$((fails + 1))
       else
-        _as_msg "$p check: https://$try/ through the proxy: HTTP ${C[allowed]:-none}, where 2xx or 3xx is expected: FAILED"
+        _as_msg "$p check: https://$try/$from through the proxy: no answer (HTTP ${code:-none}, the proxy's CONNECT ${conn:-none}): FAILED"
         fails=$((fails + 1))
       fi
       if [[ "${C[direct]:-}" == closed ]]; then
@@ -8229,13 +8337,13 @@ CHECK
         fails=$((fails + 1))
       fi
     else
-      _as_msg "$p check: the egress to an allowed host, not measured: the section allows no host by name"
+      _as_msg "$p check: the egress to an allowed host, not measured: neither the section nor $acct's allowlist.txt there names a host"
     fi
     if ((ex)); then
-      if [[ " ${C[refused]:-} " == *" 403 "* ]]; then
-        _as_msg "$p check: https://example.com/, not allowed, is refused by the proxy (403): ok"
+      if [[ "${C[refused]:-}" == *" 403" ]]; then
+        _as_msg "$p check: https://example.com/, not allowed, is refused by the proxy at CONNECT (403): ok"
       else
-        _as_msg "$p check: https://example.com/, not allowed, answered '${C[refused]:-none}' (code, then the proxy's CONNECT code), where 403 is expected: FAILED"
+        _as_msg "$p check: https://example.com/, not allowed, answered '${C[refused]:-none}' (code, then the proxy's CONNECT code), where the proxy's refusal at CONNECT (403) is expected: FAILED"
         fails=$((fails + 1))
       fi
     fi

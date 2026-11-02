@@ -602,8 +602,8 @@ which roles of the project have a session to resume, with a one-line summary eac
 
 - **`[remote:<alias>]`** — key/value lines describing a sandboxed login on another host
   (#344): the `sshd` profile run there by an account of its own, which the roles reach
-  as the SSH host `<alias>`. `asb --setup-remote <alias>` acts on it (below); no launch
-  reads it. The name is letters, digits, `-`,
+  as the SSH host `<alias>`. `asb --setup-remote <alias>` acts on it (below; the guide is
+  [remote.md](remote.md)); no launch reads it. The name is letters, digits, `-`,
   `_` and `.`, and takes no role suffix; `[remote]` without one is ignored with a
   warning. `host = DEST[:SSHPORT]` (required) is the ssh destination, in the forms
   `[ssh]` takes -- a hostname, `user@host`, or an alias of your `~/.ssh/config` -- then
@@ -734,18 +734,30 @@ which roles of the project have a session to resume, with a one-line summary eac
   ~/.ssh/asb-<alias>`, `IdentitiesOnly yes`, and the address: for a port at an address,
   `HostName` the host's own (`ssh -G HOST`), or the address when it is a literal other
   than `0.0.0.0`; for a bare port, the host's loopback, `HostName 127.0.0.1` and
-  `ProxyJump HOST` (`HOST:SSHPORT` with an ssh port; your ssh to the host carries it). The host key's name is what ssh and
+  `ProxyJump HOST` (`HOST:SSHPORT` with an ssh port; your ssh to the host carries it).
+  When the host is this machine -- the `/etc/machine-id` and boot id
+  (`/proc/sys/kernel/random/boot_id`) the preflight reads there are this machine's -- a
+  bare port and `0.0.0.0:PORT` both get `HostName 127.0.0.1` and no `ProxyJump`; a port
+  at another address keeps that address. The host key's name is what ssh and
   the roles' broker look it up by, `[HostName]:PORT`. When `ssh -G <alias>` does not
   resolve to the block (a `Host` or `Match` block of yours above it sets an option
   first), that is said and the command fails. Then the checks, through the alias, one line
-  each: the login is the account inside the sandbox (`AGENT_SANDBOX=1`); the first host
-  the section allows by name answers 2xx or 3xx through the proxy; `https://example.com/`
-  is refused (403), unless the section allows it; a direct connection to that host,
+  each: the login is the account inside the sandbox (`AGENT_SANDBOX=1`); for the first
+  host the section allows by name (else the first of the account's `allowlist.txt`
+  there, which its proxy lets through for every session) the proxy opens the tunnel
+  (CONNECT 200) and the host answers with any HTTP status, its own 403 included;
+  `https://example.com/` is refused by the proxy at CONNECT (403), unless the section
+  allows it; a direct connection to that host,
   around the proxy, fails; and where `gpu` names `/dev/nvidiaN` nodes, `nvidia-smi` inside
   lists exactly those cards (by their minor numbers). A failed check makes the exit
   status 1. The command ends with `set up: ssh <alias>`, the `asb --apply '[ssh:ROLE]'
-  <alias>` line when no `[ssh]` line names the remote yet, and `after a reboot of HOST:
-  asb --setup-remote <alias>`: no crontab, a re-run relaunches.
+  <alias>` line when no `[ssh]` line names the remote yet, on this machine the `asb
+  --apply '[net:ROLE]' 'host-port = PORT'` line for each role an `[ssh]` line names it
+  with (`ROLE` when none does) that no `[net]` or `[net:<glob>]` host-port line gives the
+  port already (a strict sandbox here has this machine's addresses as its own, so it
+  reaches the login only at `127.0.0.1`), and `after a reboot of HOST: asb
+  --setup-remote <alias>`: no crontab, a re-run relaunches. The whole sequence, for you
+  and for a role that proposes your commands: [remote.md](remote.md).
 
   `asb --apply '[remote:<alias>]' 'allow = HOST ...'` adds lines to the section as to any
   (the section is created when absent; `[remote]` without a name is refused), the review
