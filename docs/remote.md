@@ -15,6 +15,8 @@ section of the project's `.agent-sandbox`:
 ```sh
 asb --setup-remote ALIAS                                     # an existing [remote:ALIAS]
 asb --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]   # writes one first
+asb --setup-remote ALIAS --status                            # is the login running there?
+asb --setup-remote ALIAS --shutdown                          # end it; ALIAS alone starts it again
 ```
 
 It runs on the host only: inside a sandbox it refuses, since it holds your ssh access.
@@ -33,7 +35,10 @@ allow = pypi.org download.pytorch.org   # hosts its proxy lets through, beyond t
 env = TMPDIR=/home/tob/tob-ex/tmp       # set inside (lines add up)
 ```
 
-`host` and `port` are required. `ALIAS` must be a role name (a letter or digit, then
+`host` and `port` are required. A `TMPDIR` in an `env` line that is under the scratch
+(`~` the account's home) is made there, as the account, before the launch; another
+`env` value, or a `TMPDIR` outside the scratch, is set as written and nothing is made.
+`ALIAS` must be a role name (a letter or digit, then
 letters, digits, `.`, `_`, `-`) and not `host` itself, since `Host ALIAS` in your
 `~/.ssh/config` would shadow it. The review (`asb --trust`) says each line and what it
 means; every key is in [config.md](config.md) under `[remote:<alias>]`.
@@ -124,6 +129,34 @@ Nothing changed and the login running: `up to date`. A reboot of the host ends t
 login; `asb --setup-remote ALIAS` launches it again (no crontab entry is made). A reboot
 of this machine needs nothing: the alias and key are files.
 
+## Asking after it, and ending it
+
+```sh
+asb --setup-remote ALIAS --status
+asb --setup-remote ALIAS --shutdown
+```
+
+Each is one ssh session as the account (`ssh [-p SSHPORT] -l ACCOUNT HOST`, `BatchMode`,
+never sudo) that runs the account's own `~/.local/bin/asb --profile sshd --role ALIAS
+--status` (or `--shutdown`) in the scratch there; its answer is said line by line, and
+its exit status is the command's. No preflight, nothing carried, no policy written,
+nothing here changed. ALIAS is a `[remote:ALIAS]` section of the file; a destination is
+refused with these flags. `--shutdown` removes nothing, there or here: it ends the
+login and every session in it, and `asb --setup-remote ALIAS` starts it again (the run
+says `the login is not running (a reboot of HOST?): launching it`). An account with no
+`~/.local/bin/asb`, or no scratch, is said as not set up, exit 1. Measured on ey
+(2026-11-02):
+
+```
+$ asb --setup-remote tob-ey-addr --shutdown
+agent-sandbox: remote tob-ey-addr: --shutdown, over ssh as tob to ey (ssh -l tob ey; BatchMode; never sudo): asb --profile sshd --role tob-ey-addr --shutdown in ~/tob-ey-addr there
+agent-sandbox: remote tob-ey-addr:   agent-sandbox: role 'tob-ey-addr': ended, with everything that ran in it
+agent-sandbox: remote tob-ey-addr: the login is not running there now; nothing was removed, there or here: to start it again, agent-sandbox --setup-remote tob-ey-addr
+$ asb --setup-remote tob-ey-addr --status
+agent-sandbox: remote tob-ey-addr: --status, over ssh as tob to ey (ssh -l tob ey; BatchMode; never sudo): asb --profile sshd --role tob-ey-addr --status in ~/tob-ey-addr there
+agent-sandbox: remote tob-ey-addr:   role 'tob-ey-addr' of /home/tob/tob-ey-addr: not running; its stores (232K) are at /home/tob/.local/state/agent-sandbox/sshd/-home-tob-tob-ey-addr/tob-ey-addr
+```
+
 ## How roles reach it
 
 A role names the login in the project and is (re)launched:
@@ -134,22 +167,47 @@ asb --apply '[ssh:ROLE]' ALIAS
 
 The role's SSH broker then holds `~/.ssh/asb-ALIAS`, constrained to the alias's host and
 port, and a `strict` role gets a pinhole to it, outside the proxy ([ssh.md](ssh.md)).
+
+A role that is running sees your `~/.ssh/config` and `~/.ssh/known_hosts` through
+read-only binds of those files as they were at its launch, file by file. `--setup-remote`
+writes both in place, and a running role sees that (measured: the alias block and the
+host key line written into bound files show inside). A file written as a new one
+since -- by an editor, `sed -i`, or `ssh-keygen -R`, which leaves `known_hosts.old` --
+or one that did not exist at the launch is not seen: the role keeps the old one, and
+gets `REMOTE HOST IDENTIFICATION HAS CHANGED` for a login whose key changed, or no
+alias. Relaunch such a role after `--setup-remote` (its broker, key and pinhole are
+also made at launch).
 What else it needs depends on where the login listens and where the role runs:
 
 | `port` | the alias block, the host another machine | roles on another host | roles on the login's host |
 |---|---|---|---|
 | `0.0.0.0:PORT` | `HostName` the host's name, `Port PORT` | yes, by the host's address | yes, through `127.0.0.1` and `[net:ROLE] host-port = PORT` |
-| `ADDR:PORT` | `HostName ADDR` | where ADDR is reachable (not measured) | no (not measured; below) |
-| `PORT` | `HostName 127.0.0.1`, `ProxyJump HOST` | no (below) | yes, through `127.0.0.1` and `[net:ROLE] host-port = PORT` |
+| `ADDR:PORT` | `HostName ADDR` | yes, where ADDR is reachable from that host | no (not measured; below) |
+| `PORT` | `HostName 127.0.0.1`, `ProxyJump HOST` | no, from a `strict` role (measured; below) | yes, through `127.0.0.1` and `[net:ROLE] host-port = PORT` |
 
 - **By address, from another host.** Measured 2026-11-02: a `strict` role on ex
   (Ubuntu 24.04) with `[ssh:probe] tob-ey-ex`, the login on ey at `0.0.0.0:2224`, ran
   `ssh tob-ey-ex 'hostname; id -un; pwd'` and got `ey`, `tob`, `/home/tob/tob-ey-ex`.
-  A port at an address is reachable from wherever that address is: that host's
-  firewall, or the cloud provider's, is the gate.
+  The same for a login at one address of ey, `port = 192.168.1.110:2225`: from your
+  shell and from a `strict` role on ex, `ey`, `tob`, `/home/tob/tob-ey-addr`. A port at
+  an address is reachable from wherever that address is: that host's firewall, or the
+  cloud provider's, is the gate.
 - **A bare port, from another host.** The alias's `ProxyJump HOST` is your own ssh to
-  the host's system sshd, with your key, which the role's broker does not hold. Not
-  usable by a role there (not measured).
+  the host's system sshd, with your key. Measured 2026-11-02, a `strict` role on ex
+  with `[ssh:probe] tob-qgpu3` (the login on qgpu3's `127.0.0.1:2222`, the jump
+  `qgpu3`, an alias for `app.cozer.ee:2223`), where your own `ssh tob-qgpu3` works:
+
+  ```
+  agent-sandbox: strict --ssh: 127.0.0.1 reachable at 127.0.0.1 on port 2222 (direct, outside the proxy)
+  ssh: Could not resolve hostname app.cozer.ee: Name or service not known
+  Connection closed by UNKNOWN port 65535
+  ```
+
+  Each of the jump's three needs fails inside: the jump host's name does not resolve
+  (`getent hosts app.cozer.ee` exits 2), its sshd by address gets no banner within
+  10 s (the pinhole is for the alias's `HostName` and `Port`, `127.0.0.1:2222`, not the
+  jump), and the broker holds only `~/.ssh/asb-tob-qgpu3`, not your key for the jump
+  host. For roles on another host, use `0.0.0.0:PORT` or `ADDR:PORT`.
 - **On the login's own host.** A `strict` sandbox there has the host's own addresses
   (measured: inside one, `ip -4 -br addr` shows the host's LAN address, on Ubuntu 24.04
   and 26.04), so a role dialing the host's address reaches its own namespace: `ssh:
@@ -232,13 +290,13 @@ install is the same one any other login of that account runs (above).
 
 ## Retiring a login
 
-There is no command for it. On the host, as the account, end the login:
+End the login first:
 
 ```sh
-ssh -l ACCOUNT HOST 'cd SCRATCH && ~/.local/bin/asb --profile sshd --role ALIAS --shutdown'
+asb --setup-remote ALIAS --shutdown
 ```
 
-Here, remove the marked block from `~/.ssh/config`, the marked line from
+Then, here, remove the marked block from `~/.ssh/config`, the marked line from
 `~/.ssh/known_hosts`, `~/.ssh/asb-ALIAS` and `~/.ssh/asb-ALIAS.pub`, the
 `[remote:ALIAS]` section and the `[ssh]` lines naming ALIAS (then `asb --trust`). Until
 the section is gone, `asb --setup-remote ALIAS` would set it up again. There, the

@@ -154,10 +154,10 @@ account, so whatever escapes the sandbox lands there and not in the owner's.
    default (`KillUserProcesses=no`); a launch outliving a real logout is not yet
    exercised.
 
-This recipe as a whole, run as a dedicated account, is not yet exercised (it is the
-live step after these docs). Its parts are measured: bwrap and pasta under the AppArmor
-profiles for another ordinary account, and the profile itself, as the owner's
-account, on an Ubuntu 24.04 host with two NVIDIA cards.
+This recipe has run as a dedicated account, `tob`, on two hosts, Ubuntu 24.04 and
+26.04 (#335), and `asb --setup-remote` runs it from a `[remote:ALIAS]` section of the
+roles' project ([remote.md](remote.md)), measured against Ubuntu 24.04 and 26.04 hosts
+(#344).
 
 The host key is made at the first launch and kept:
 `~/.local/state/agent-sandbox/sshd/<slug>/<role>/sshd/ssh_host_ed25519_key.pub`, where
