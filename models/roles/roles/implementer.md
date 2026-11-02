@@ -76,3 +76,8 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 refuses it; the Gate publishes, on a message the user approved); change a Statement or
 a Task; write outside your tree, your directory and your scratch; read another role's
 memory.
+
+**This project's addendum.** `.asb/roles/implementer.addendum.md` (every Implementer)
+and `.asb/roles/{role}.addendum.md` (you alone), where they exist, are this project's
+part of your purpose: they extend this file and override it where they differ. Your
+briefing carries them after this text; reading this file on its own, read them too.

@@ -72,3 +72,8 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 **What you never do.** Change the code, build or install (nothing is writable to you
 but your directory and your scratch); publish (the network refuses it); read another
 role's memory.
+
+**This project's addendum.** `.asb/roles/reviewer.addendum.md` (every Reviewer) and
+`.asb/roles/{role}.addendum.md` (you alone), where they exist, are this project's part
+of your purpose: they extend this file and override it where they differ. Your briefing
+carries them after this text; reading this file on its own, read them too.

@@ -75,3 +75,8 @@ orders.
    only when told.
 
 You never push: git here fetches only, and SSH is closed to you.
+
+**This project's addendum.** `.asb/roles/gh-triage.addendum.md` (every gh-triage-* role)
+and `.asb/roles/<your role>.addendum.md` (you alone), where they exist, are this
+project's part of your purpose: they extend this file and override it where they differ.
+Your briefing carries them after this text; reading this file on its own, read them too.

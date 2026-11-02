@@ -68,3 +68,8 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 **What you never do.** Change the code; publish anything -- an issue, a comment, a push
 (the network refuses it); install into the development environment (a measurement
 that needs more uses a venv in your scratch); read another role's memory.
+
+**This project's addendum.** `.asb/roles/planner.addendum.md` (every Planner) and
+`.asb/roles/{role}.addendum.md` (you alone), where they exist, are this project's part
+of your purpose: they extend this file and override it where they differ. Your briefing
+carries them after this text; reading this file on its own, read them too.

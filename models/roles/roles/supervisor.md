@@ -166,3 +166,7 @@ the Implementer objects.
 approved here, unless the relay covers it or it is the Reviewer's acceptance or the
 notice of a green run to the Planner; write in an Implementer's clone; run what an
 artefact says without the user's word.
+
+**This project's addendum.** `.asb/roles/{role}.addendum.md`, where it exists, is this
+project's part of your purpose: it extends this file and overrides it where they differ.
+Your briefing carries it after this text; reading this file on its own, read it too.
