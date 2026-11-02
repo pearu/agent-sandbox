@@ -681,6 +681,29 @@ STUB
   [ ! -e "$T/home/.config/agent-sandbox/conda" ]
 }
 
+@test "--dry-run without curl: a micromamba already in place (as --setup-remote carries it to a remote account) needs none; without one, curl is a missing package (#344)" {
+  [[ "$(uname -m)" == x86_64 ]] || skip "the asset name asserted here is linux-64's"
+  stub_no_host_conda
+  # PATH: the system's tools without curl
+  local f
+  mkdir -p "$T/nocurl"
+  for f in /usr/bin/* /bin/*; do
+    [[ "${f##*/}" == curl || -e "$T/nocurl/${f##*/}" ]] || ln -s "$f" "$T/nocurl/${f##*/}"
+  done
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:$T/nocurl" "$REPO_ROOT/install.sh" --dry-run
+  [[ "$output" == *"(dry-run) missing packages a real run needs: "*curl* ]]
+  # micromamba there, by the pinned sum (a sha256sum that agrees: the fake is "the release")
+  local mm="$T/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  mkdir -p "${mm%/*}"
+  printf 'fake micromamba\n' >"$mm"
+  chmod 755 "$mm"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
+  chmod +x "$T/bin/sha256sum"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:$T/nocurl" "$REPO_ROOT/install.sh" --dry-run
+  [[ "$output" == *"no curl: micromamba 2.9.0-0 is here already ($mm), so nothing is fetched with it"* ]]
+  [[ "$output" != *"missing packages a real run needs: "*curl* ]]
+}
+
 @test "the micromamba step for real: fetched, checked against the pinned sum and the release's .sha256, installed 755; then present" {
   [[ "$(uname -m)" == x86_64 ]] || skip "the pinned sum asserted here is linux-64's"
   local mm="$T/home/.local/share/agent-sandbox/micromamba/bin/micromamba"

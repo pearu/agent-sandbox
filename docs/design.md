@@ -273,6 +273,24 @@ Stated plainly. These are what the adversary above can still do.
   header; asb never runs it, so it is read first. Run the command from an install whose
   checkout no session has open read-write.
 
+- **`asb --setup-remote` installs code from a checkout as the remote's account.** The
+  account's part (#344) carries a `git archive` of the checkout's HEAD to the account and
+  runs its `install.sh` there, and the login then runs that engine. A checkout a sandbox
+  can commit to is a path from that sandbox to the remote account at the next run. The
+  command names the checkout and the commit it carries; run it from a checkout no session
+  has open read-write, as for the admin's script above.
+- **`~/.ssh/asb-<alias>` is the roles' key for a remote login, without a passphrase.**
+  The engine makes it once; any process of yours on the host can read it, and it logs in
+  to that login (only that: the account's sshd role takes it, inside its sandbox). A role
+  with `[ssh] <alias>` gets it through the broker, constrained to that host and port as
+  any `[ssh]` key.
+- **A bare-port remote is reached through your own ssh to its host.** The alias says
+  `ProxyJump HOST`: the hop is your ssh, with your key, to the host's system sshd, and
+  the login's host key is filed under `[127.0.0.1]:PORT`, a name it shares with any
+  loopback service on that port elsewhere (ssh accepts any key filed under a name; the
+  command leaves another tool's line for that name and says so). A role reaching such a
+  remote from inside a `strict` sandbox through the jump is not measured.
+
 - **Raw-socket egress is unfiltered in `proxy` mode.** The sandbox shares the
   host network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its
   own resolver) can reach anything the host can, including localhost services,

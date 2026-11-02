@@ -982,7 +982,16 @@ fi
 section "Packages"
 missing=()
 command -v bwrap >/dev/null || missing+=(bubblewrap)
-command -v curl >/dev/null || missing+=(curl)
+# curl fetches micromamba; where it is here already, as `asb --setup-remote` carries it
+# to a remote host's account (#344), nothing is fetched and curl is not needed.
+if ! command -v curl >/dev/null; then
+  mm_asset="$(micromamba_asset)" || mm_asset=""
+  if [[ -n "$mm_asset" ]] && micromamba_ok "$MICROMAMBA" "$mm_asset"; then
+    info "no curl: micromamba $MICROMAMBA_VERSION is here already ($MICROMAMBA), so nothing is fetched with it"
+  else
+    missing+=(curl)
+  fi
+fi
 if ((${#missing[@]} > 0)); then
   if ((DRY_RUN)); then
     warn "(dry-run) missing packages a real run needs: ${missing[*]} (sudo apt install ${missing[*]})"
@@ -1421,6 +1430,8 @@ if ((DRY_RUN)); then
   info "(dry-run) proxy request skipped"
 elif ((! USER_MANAGER)); then
   info "proxy check skipped: the unit is not running (no user manager; see above)"
+elif ! command -v curl >/dev/null; then
+  info "proxy check skipped: no curl to make the requests with"
 elif ! probe_session_begin; then
   warn "could not make a probe session to check the proxy with; skipping the proxy check"
 else
