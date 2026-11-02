@@ -56,8 +56,7 @@ names are gone; there are no aliases for removed names before 1.0.
   `[ssh]` line reaches, and one line for the whole; a bad value or a missing `host` or
   `port` makes the section unusable, an unknown key is ignored, a name written twice
   makes the file unusable (`--trust` does not ask, `--check` exits 1). `--check` lists
-  each remote after the role's plan. Nothing acts on it yet: `asb --setup-remote
-  <alias>` comes in a later step.
+  each remote after the role's plan. `asb --setup-remote <alias>` acts on it (below).
 - **`asb --setup-remote <alias>`, its first phase: the preflight and the admin's script**
   (#344, step 2 of its plan). One read-only ssh session to the section's host, a probe
   on stdin, a report line per item: packages (bubblewrap and apt's candidate, passt,
@@ -114,6 +113,18 @@ names are gone; there are no aliases for removed names before 1.0.
   measured). Opt-in: without the line nothing changes. The review says it; another value
   refuses the launch. `--setup-remote` writes it into every policy it generates, so the
   next run relaunches an existing remote login once, as a policy change.
+- **`--setup-remote` on the machine it runs on** (#344, step 4): when the preflight's
+  `/etc/machine-id` and boot id are this machine's, the alias block is `HostName
+  127.0.0.1` with the login's port and no `ProxyJump`, for a bare port and `0.0.0.0:PORT`
+  alike, and the host key is filed as `[127.0.0.1]:PORT`. The end adds the `asb --apply
+  '[net:ROLE]' 'host-port = PORT'` line for the roles `[ssh]` names it with: a strict
+  sandbox on that host has the host's own addresses (measured on Ubuntu 24.04 and 26.04),
+  so by the host's address a role there reaches itself, and the login only at
+  `127.0.0.1`. A login at one other address is said to be out of their reach.
+- **`docs/remote.md`** (#344): the guide to `--setup-remote`, for you and for a
+  Supervisor role proposing your commands: the two forms, prerequisites, root, what a
+  run does, updates, how roles reach the login by port form, the files it touches here
+  and there, the same host as a stand-in, and retiring a login.
 - **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its
   plan): the policy line by line, the recipe on a shared host (a dedicated ordinary
   account, `install.sh` as it, the launch in the background) and on a cloud instance,
@@ -757,6 +768,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`--setup-remote`'s egress check went by the host's HTTP status** (#344): an allowed
+  host answering 403 itself (download.pytorch.org at `/`) failed it, and a 403 from
+  example.com counted as the proxy's refusal wherever it came from. It now goes by the
+  proxy's answer to the CONNECT: an allowed host passes when the proxy opens the tunnel
+  and the host answers with any status, and fails on the proxy's 403 or no answer;
+  example.com passes only when the proxy refuses it at CONNECT. With no `allow` line the
+  check takes the first host of the account's `allowlist.txt`, where it said "not
+  measured".
+- **`--setup-remote` said "(its marked block rewritten)" for a new block** appended to a
+  `~/.ssh/config` that already had another remote's block; it says appended.
 - **A strict sandbox keeps the host's name on a 2026 passt.** passt as of git20260120
   (Ubuntu 26.04) names the namespace it makes `pasta-<host>` unless told otherwise, so
   `hostname` inside said `pasta-ey`, and a tool there that records the host's name

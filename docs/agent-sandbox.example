@@ -329,14 +329,17 @@
 
 # [remote:<alias>] -- a sandboxed login on another host (#344): the sshd profile run
 #        there by an account of its own, which the roles reach as the SSH host
-#        <alias> (name it in [ssh] or [ssh:ROLE]). `asb --setup-remote <alias>`,
-#        which will set it up, comes in a later version; for now the section is
-#        reviewed, approved and listed by --check, and nothing acts on it.
-#        host (required): an ssh destination, as [ssh] takes it. account: the
+#        <alias> (name it in [ssh] or [ssh:ROLE]). `asb --setup-remote <alias>`
+#        sets it up there and here, and run again updates it;
+#        `asb --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]` writes
+#        the section [remote:ACCOUNT-HOST] for your review first (docs/remote.md).
+#        host (required): an ssh destination, as [ssh] takes it, then :SSHPORT
+#        for that host's own sshd when it is not 22. account: the
 #        account that runs it there (default: the ssh user). port (required): an
 #        --agent-port token, where the login listens there. scratch: the project
-#        directory there, absolute or under ~ (the account's home). gpu: that
-#        host's nodes, as [gpu] devices takes them. allow, env: lines add up.
+#        directory there, absolute or under ~ (the account's home; default
+#        ~/<alias>). gpu: that host's nodes, as [gpu] devices takes them; none for
+#        no GPU; absent, all of them. allow, env: lines add up.
 #[remote:bench-ex]
 #host = ex.example.org
 #account = tob
