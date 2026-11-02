@@ -100,14 +100,35 @@ unusable='.agent-sandbox: [remote:r1]: unusable as written, for the reasons abov
   done
 }
 
-@test "[remote:ALIAS] host: a port or an option is not an ssh destination (#344)" {
+@test "[remote:ALIAS] host: an option or a space is not an ssh destination (#344)" {
   local t
-  for t in ex.example.org:22 -oProxyCommand=x 'a b'; do
+  for t in -oProxyCommand=x 'a b' -oProxyCommand=x:22 'ex.example.org:22:22'; do
     bad_section "host = $t" 'port = 2222'
     run_review
-    [[ "$output" == *".agent-sandbox: [remote:r1] host = $t: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias; a port is the alias's); unusable as written"* ]]
+    [[ "$output" == *".agent-sandbox: [remote:r1] host = $t: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias, then :SSHPORT when its sshd's port is to be named); unusable as written"* ]]
     [[ "$output" == *"$unusable"* ]]
   done
+}
+
+@test "[remote:ALIAS] host = HOST:SSHPORT: the port of that host's sshd, said at the review and by --check; a port out of range is unusable (#344)" {
+  bad_section 'host = tob@ex.example.org:02223' 'port = 2222'
+  run_review
+  [[ "$output" == *".agent-sandbox: [remote:r1] host = tob@ex.example.org:02223: the host the login runs on, reached over ssh as you reach it from here, its sshd at port 2223"* ]]
+  [[ "$output" == *".agent-sandbox: [remote:r1]: a sandboxed login on tob@ex.example.org:2223 as the ssh user, set up by agent-sandbox --setup-remote r1"* ]]
+  [[ "$output" != *"unusable"* ]]
+  check
+  [[ "$output" == *"remote r1: tob@ex.example.org:2223 as the ssh user, port 2222"* ]]
+  local t
+  for t in 0 70000; do
+    bad_section "host = ex.example.org:$t" 'port = 2222'
+    run_review
+    [[ "$output" == *".agent-sandbox: [remote:r1] host = ex.example.org:$t: $t is not a port (1-65535); unusable as written"* ]]
+    [[ "$output" == *"$unusable"* ]]
+  done
+  # a host that is the section's own name is so with a port too
+  bad_section 'host = r1:2223' 'port = 2222'
+  run_review
+  [[ "$output" == *".agent-sandbox: [remote:r1] host = r1:2223: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias r1; name the section otherwise; unusable as written"* ]]
 }
 
 @test "[remote:ALIAS] gpu: an entry outside /dev/ or with '..' is unusable (#344)" {

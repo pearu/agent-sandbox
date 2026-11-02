@@ -27,19 +27,20 @@ setup() {
 #!/usr/bin/env bash
 set +x
 if [[ "$1" == -G ]]; then
-  s="$2" u=tester
+  s="$2" u=tester pt=2223
+  [[ "$s" == -p ]] && pt="$3" s="$4"
   if [[ -f "$HOME/.ssh/config" ]] && grep -qx "Host $s" "$HOME/.ssh/config"; then
     exec /usr/bin/ssh -G -F "$HOME/.ssh/config" "$s"
   fi
   [[ "$s" == *@* ]] && u="${s%@*}" s="${s#*@}"
-  printf 'hostname %s.example.org\nuser %s\nport 2223\nidentityfile ~/.ssh/id_rsa\nidentityfile ~/.ssh/id_ed25519\n' "$s" "$u"
+  printf 'hostname %s.example.org\nuser %s\nport %s\nidentityfile ~/.ssh/id_rsa\nidentityfile ~/.ssh/id_ed25519\n' "$s" "$u" "$pt"
   exit 0
 fi
 orig=("$@")
 acct=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -o) shift 2 ;;
+    -o | -p) shift 2 ;;
     -l) acct="$2" && shift 2 ;;
     -*) shift ;;
     *) break ;;
@@ -51,6 +52,7 @@ cmd="$*"
 if [[ "$cmd" == *"umask 077; cat >"* ]]; then
   # the copy of the admin's script into the user's home there
   [[ -n "${COPY_FAIL:-}" ]] && exit 255
+  printf '%s\n' "${orig[@]}" >"$PROBE_H/copy.argv"
   cat >"$PROBE_H/copied.sh"
   exit 0
 fi
@@ -58,6 +60,7 @@ if [[ -n "$acct" ]]; then
   AH="$PROBE_R/home/$acct"
   mkdir -p "$AH"
   printf '%s\n' "${orig[@]}" >"$PROBE_H/acct.argv"
+  printf '%s\n' "${orig[*]}" >>"$PROBE_H/acct.argvs"
   printf '%s\n' "$cmd" >>"$PROBE_H/acct.cmds"
   [[ -n "${ACCT_FAIL:-}" ]] && { echo "tob@qgpu3: Permission denied (publickey)." >&2; exit 255; }
   env -i HOME="$AH" PATH="$PROBE_H/acct-bin:/usr/bin:/bin" PROBE_H="$PROBE_H" INSTALL_RC="${INSTALL_RC:-0}" /bin/bash -c "$cmd"
@@ -205,7 +208,7 @@ remote_host() {
 # section [LINE...] -- [remote:r1] with host, port and the LINEs; approved unless NOAPPROVE.
 section() {
   {
-    printf '[remote:r1]\nhost = qgpu3\nport = %s\n' "${PORT:-0.0.0.0:2222}"
+    printf '[remote:r1]\nhost = %s\nport = %s\n' "${HOST:-qgpu3}" "${PORT:-0.0.0.0:2222}"
     printf '%s\n' "$@"
   } >"$PROJ/.agent-sandbox"
   [[ -n "${NOAPPROVE:-}" ]] && return 0
@@ -215,7 +218,8 @@ section() {
   [ "$status" -eq 0 ]
 }
 
-# setup_remote [VAR=value ...] -- `--setup-remote r1` in the project, answered nothing.
+# setup_remote [VAR=value ...] [ARGS...] -- `--setup-remote ARGS...` (r1 by default) in the
+# project, answered SR_ANSWER (printf %b; nothing by default).
 setup_remote() {
   local -a envs=()
   while [[ $# -gt 0 && "$1" == *=* ]]; do
@@ -223,8 +227,8 @@ setup_remote() {
     shift
   done
   engine_cmd
-  run bash -c 'cd "$1" && n="$4" && env -i HOME="$2" PATH="$3" PROBE_R="$5" PROBE_H="$6" "${@:7:n}" "${@:7+n}" 2>&1 </dev/null' _ \
-    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#envs[@]}" "$R" "$H" ${envs[@]+"${envs[@]}"} "${ENGINE_CMD[@]}" --setup-remote "${@:-r1}"
+  run bash -c 'cd "$1" && n="$4" && printf "%b" "$7" | env -i HOME="$2" PATH="$3" PROBE_R="$5" PROBE_H="$6" "${@:8:n}" "${@:8+n}" 2>&1' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#envs[@]}" "$R" "$H" "${SR_ANSWER:-}" ${envs[@]+"${envs[@]}"} "${ENGINE_CMD[@]}" --setup-remote "${@:-r1}"
 }
 
 # heredoc_body FILE MARKER -- the lines of FILE between `<<'MARKER'` and MARKER.
@@ -249,15 +253,26 @@ p='agent-sandbox: remote r1:'
   [ ! -e "$H/ssh.argv" ]
 }
 
-@test "--setup-remote: refused without a .agent-sandbox, and without a [remote:ALIAS] of that name (#344)" {
+@test "--setup-remote DEST: a word that is no section is a destination; its section, [remote:ACCOUNT-HOST] with your ssh login name, is appended for review, and declined the file is as it was, or absent (#344)" {
   remote_host
-  setup_remote
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--setup-remote: no .agent-sandbox in $PROJ: a remote is described there, in [remote:r1]"* ]]
+  setup_remote qgpu3
+  [ "$status" -eq 1 ]
+  local q='agent-sandbox: remote tester-qgpu3:'
+  [[ "$output" == *"$q qgpu3 is a destination, not a section of .agent-sandbox: its section is [remote:tester-qgpu3]"* ]]
+  [[ "$output" == *"added to [remote:tester-qgpu3]: host = qgpu3"* ]]
+  [[ "$output" == *"added to [remote:tester-qgpu3]: account = tester"* ]]
+  [[ "$output" == *"added to [remote:tester-qgpu3]: port = 2222"* ]]
+  [[ "$output" == *"added to [remote:tester-qgpu3]: scratch = ~/tester-qgpu3"* ]]
+  [[ "$output" == *"$q not approved: .agent-sandbox is as it was (none); nothing was done" ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  [ ! -e "$H/ssh.argv" ]
   section
+  cp "$PROJ/.agent-sandbox" "$BATS_TEST_TMPDIR/before"
   setup_remote r2
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--setup-remote: .agent-sandbox has no [remote:r2] (it has: r1)"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: remote tester-r2: r2 is a destination, not a section of .agent-sandbox (it has: r1): its section is [remote:tester-r2]"* ]]
+  [[ "$output" == *"agent-sandbox: remote tester-r2: not approved: .agent-sandbox is as it was; nothing was done" ]]
+  cmp "$BATS_TEST_TMPDIR/before" "$PROJ/.agent-sandbox"
   [ ! -e "$H/ssh.argv" ]
 }
 
@@ -576,6 +591,7 @@ CUDA_VISIBLE_DEVICES = 0
 
 [sshd]
 authorized-keys = ~/.config/agent-sandbox/asb-r1-keys
+home = project
 W
   cmp "$BATS_TEST_TMPDIR/want" "$T/bench/.agent-sandbox"
   [[ "$output" == *"$p the policy $T/bench/.agent-sandbox: new, from the section"* ]]
@@ -851,4 +867,99 @@ apply_remote() {
   setup_remote
   [[ "$output" == *"$p pasta 2024_02_20.1e6f92b ok"$'\n'* ]]
   [[ "$output" != *"--hostname"* ]]
+}
+
+@test "--setup-remote: host = HOST:SSHPORT -- that port for every ssh to the host: the preflight, the admin's copy and its run line, the account's part, and ProxyJump HOST:SSHPORT (#344)" {
+  remote_host bwrap=missing
+  HOST=qgpu3:2224 PORT=2222 section 'account = tob'
+  setup_remote
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p the preflight, over ssh to tester@qgpu3.example.org port 2224 (-p 2224 qgpu3), read-only"* ]]
+  [ "$(grep -A1 -x -- -p "$H/ssh.argv" | paste -sd' ' -)" = "-p 2224" ]
+  [ "$(grep -A1 -x -- -p "$H/copy.argv" | paste -sd' ' -)" = "-p 2224" ]
+  [[ "$output" == *"$p   ssh -t -p 2224 qgpu3 sudo bash asb-admin-r1.sh"$'\n'* ]]
+  grep -qxF '#   ssh -t -p 2224 qgpu3 sudo bash asb-admin-r1.sh' "$ADMIN"
+  remote_host
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$p the account's part, over ssh as tob to qgpu3 (ssh -p 2224 -l tob qgpu3; BatchMode; never sudo)"* ]]
+  [[ "$output" == *"$p check: ssh r1 logs in as tob, inside the sandbox (AGENT_SANDBOX=1): ok"* ]]
+  grep -qx '  ProxyJump qgpu3:2224' "$H/home/.ssh/config"
+  grep -qx '  Port 2222' "$H/home/.ssh/config"
+  # every session as the account carried the port
+  [ "$(grep -c . "$H/acct.argvs")" -ge 3 ]
+  run ! grep -v -- '-p 2224 ' "$H/acct.argvs"
+}
+
+@test "--setup-remote: gpu = none is no GPU: said at the review, [gpu] mode = off in the policy, no GPU check (#344)" {
+  remote_host
+  PORT=2222 section 'account = tob' 'gpu = none'
+  [[ "$output" == *".agent-sandbox: [remote:r1] gpu = none: no GPU device node of that host is passed into the login's sandbox"* ]]
+  [[ "$output" != *"unusable"* ]]
+  setup_remote
+  [ "$status" -eq 0 ]
+  grep -qx 'mode = off' "$R/home/tob/r1/.agent-sandbox"
+  [ "$(grep -A1 -x '\[gpu\]' "$R/home/tob/r1/.agent-sandbox" | paste -sd' ' -)" = "[gpu] mode = off" ]
+  [[ "$output" != *"nvidia-smi inside"* ]]
+}
+
+@test "--setup-remote DEST --port: the section appended exactly, approved through the review, then set up as [remote:ACCOUNT-HOST]: the ssh port, the login's port, the scratch (#344)" {
+  remote_host
+  SR_ANSWER='y\n' setup_remote ALIAS_NAME=tob-qgpu3 tob@qgpu3:2223 --port 2224
+  [ "$status" -eq 0 ]
+  local q='agent-sandbox: remote tob-qgpu3:'
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[remote:tob-qgpu3]\nhost = qgpu3:2223\naccount = tob\nport = 2224\nscratch = ~/tob-qgpu3' ]
+  [[ "$output" == *"$q appending [remote:tob-qgpu3] to $PROJ/.agent-sandbox, for your review"* ]]
+  [[ "$output" == *".agent-sandbox: [remote:tob-qgpu3] host = qgpu3:2223: the host the login runs on, reached over ssh as you reach it from here, its sshd at port 2223"* ]]
+  [[ "$output" == *"approved."* ]]
+  [[ "$output" != *"then: agent-sandbox --setup-remote"* ]]
+  [[ "$output" == *"$q the preflight, over ssh to tester@qgpu3.example.org port 2223 (-p 2223 qgpu3), read-only"* ]]
+  [[ "$output" == *"$q the policy $R/home/tob/tob-qgpu3/.agent-sandbox: new, from the section"* ]]
+  grep -qx 'agent-port = 2224' "$R/home/tob/tob-qgpu3/.agent-sandbox"
+  grep -qx 'home = project' "$R/home/tob/tob-qgpu3/.agent-sandbox"
+  grep -qx '  ProxyJump qgpu3:2223' "$H/home/.ssh/config"
+  grep -qx '  Port 2224' "$H/home/.ssh/config"
+  [[ "$output" == *"$q set up: ssh tob-qgpu3"* ]]
+  # run again: the section is there now, and used
+  SR_ANSWER='' setup_remote ALIAS_NAME=tob-qgpu3 tob@qgpu3:2223 --port 2224
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$q [remote:tob-qgpu3] of .agent-sandbox is used"* ]]
+  [[ "$output" == *"$q up to date: the login is running"* ]]
+}
+
+@test "--setup-remote DEST: a section of that name that says otherwise is refused, each difference said; --port against an ALIAS's port too; a word that is neither is refused (#344)" {
+  remote_host
+  printf '[remote:tob-qgpu3]\nhost = qgpu3\naccount = tob\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  local q='agent-sandbox: remote tob-qgpu3:'
+  setup_remote tob@qgpu3:2223 --port 2224
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"$q [remote:tob-qgpu3] has host = qgpu3, where tob@qgpu3:2223 says qgpu3:2223"* ]]
+  [[ "$output" == *"$q [remote:tob-qgpu3] has port = 2222, where --port says 2224"* ]]
+  [[ "$output" == *"--setup-remote: [remote:tob-qgpu3] of .agent-sandbox says otherwise than the command line (above); refusing rather than choosing. Change the section, or run --setup-remote tob-qgpu3 for it as written"* ]]
+  [[ "$output" != *"has account"* ]]
+  [ ! -e "$H/ssh.argv" ]
+  printf '[remote:tob-qgpu3]\nhost = qgpu3\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  setup_remote tob@qgpu3
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"$q [remote:tob-qgpu3] has account = tester, where tob@qgpu3 says tob"* ]]
+  printf '[remote:tob-qgpu3]\nhost = qgpu3\naccount = tob\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  setup_remote tob-qgpu3 --port 2224
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--setup-remote: [remote:tob-qgpu3] has port = 2222, where --port says 2224; refusing rather than choosing. Change the section, or leave --port out"* ]]
+  local w
+  for w in a@b@c qgpu3:70000 'Tob@qgpu3'; do
+    setup_remote "$w"
+    [ "$status" -eq 2 ]
+  done
+  setup_remote a@b@c
+  [[ "$output" == *"--setup-remote: 'a@b@c' is neither a [remote:ALIAS] section of .agent-sandbox (it has: tob-qgpu3) nor a destination [ACCOUNT@]HOST[:SSHPORT]"* ]]
+  setup_remote Tob@qgpu3
+  [[ "$output" == *"--setup-remote: the account 'Tob' is not an account name adduser takes"* ]]
+  setup_remote r1 --port
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--setup-remote takes a [remote:ALIAS] section of this project's .agent-sandbox, or a destination, and nothing after it but --port"* ]]
+  [ ! -e "$H/ssh.argv" ]
 }

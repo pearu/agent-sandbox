@@ -287,6 +287,12 @@
 #                         ALIAS in a marked block of ~/.ssh/config, and the
 #                         checks through it (a failure: exit 1). Run it again
 #                         after a change, or a reboot. See docs/config.md.
+#   --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]
+#                         the same for [remote:ACCOUNT-HOST] (ACCOUNT: else your
+#                         ssh login name for HOST): used when the file has it
+#                         and it agrees, else appended through --apply's review
+#                         (host, account, port default 2222, scratch
+#                         ~/ACCOUNT-HOST); declined, the file is as it was.
 #   --serve               with --role R: a role with no terminal (#277). Runs on the
 #                         host, in the foreground: holds R's launch and runs one
 #                         turn of R's session (the profile's serve-new/serve-resume
@@ -445,6 +451,10 @@ Engine flags (before CMD):
                         its host key, then checks it. Again: the update, or
                         the relaunch after a reboot. Host only, the file
                         approved first
+  --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]
+                        the same for [remote:ACCOUNT-HOST], appended to the
+                        file through the --apply review when it has none
+                        (port 2222 unless --port; scratch ~/ACCOUNT-HOST)
   --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
@@ -6700,12 +6710,14 @@ _as_dotfile_line() {
 # The section is parsed, reviewed and approved with the file; `--check` lists it.
 # `--setup-remote ALIAS` acts on it: in this version its first phase, the preflight of the
 # host and the admin's script where root is needed there (below).
-#   host    = an ssh destination: a hostname, user@host, or a ~/.ssh/config alias (required)
+#   host    = an ssh destination: a hostname, user@host, or a ~/.ssh/config alias, then
+#             :SSHPORT for the port of that host's own sshd (required)
 #   account = the account that runs the login there, as adduser takes a name (default: the
 #             ssh user)
 #   port    = where the login listens there, one --agent-port token (required)
 #   scratch = the project directory there, absolute or under ~ (the account's home there)
-#   gpu     = that host's GPU device nodes, as [gpu] devices takes them
+#   gpu     = that host's GPU device nodes, as [gpu] devices takes them; empty or none:
+#             no GPU; absent: all of them
 #   allow   = hosts its allowlist proxy lets through, as [allow] takes them (lines add up)
 #   env     = NAME=VALUE set inside it (lines add up)
 
@@ -6737,7 +6749,8 @@ _as_remote_say() {
 }
 
 # _as_remote_eval ALIAS [say] -- the section [remote:ALIAS] of the caller's _df_remote into
-# the caller's _rm_host, _rm_account, _rm_port (the token in its one spelling), _rm_gpu (the
+# the caller's _rm_host (the destination, without a port), _rm_sshport (the port of host =
+# DEST:SSHPORT, else empty), _rm_account, _rm_port (the token in its one spelling), _rm_gpu (the
 # gpu nodes, space-separated; `off` for a gpu line naming none), _rm_scratch, _rm_allow
 # (the hosts, space-separated), _rm_env (`NAME=VALUE` lines) and _rm_bad
 # (how many faults make it unusable: a bad value, a key set twice that takes one, a missing
@@ -6749,7 +6762,7 @@ _as_remote_eval() {
   local -a ws=()
   local -A seen=()
   [[ "${2:-}" == say ]] && _rm_say=1
-  _rm_host="" _rm_account="" _rm_port="" _rm_gpu="" _rm_bad=0 _rm_scratch="" _rm_allow="" _rm_env=""
+  _rm_host="" _rm_sshport="" _rm_account="" _rm_port="" _rm_gpu="" _rm_bad=0 _rm_scratch="" _rm_allow="" _rm_env=""
   for e in ${_df_remote[@]+"${_df_remote[@]}"}; do
     [[ "${e%%$'\t'*}" == "$_rm_alias" ]] || continue
     line="${e#*$'\t'}"
@@ -6771,15 +6784,21 @@ _as_remote_eval() {
     esac
     case "$ck" in
       host)
-        if _as_ssh_spec_ok "$cv" && [[ "${cv#*@}" == "$_rm_alias" ]]; then
+        # DEST[:SSHPORT]: the port of the host's own sshd, for every ssh to it (#344)
+        v="$cv" w=""
+        [[ "$cv" =~ ^(.*):([0-9]{1,5})$ ]] && v="${BASH_REMATCH[1]}" w="${BASH_REMATCH[2]}"
+        if [[ -n "$w" ]] && ! ((10#$w >= 1 && 10#$w <= 65535)); then
+          _as_remote_say "host = $cv: $w is not a port (1-65535); unusable as written"
+          _rm_bad=$((_rm_bad + 1))
+        elif _as_ssh_spec_ok "$v" && [[ "${v#*@}" == "$_rm_alias" ]]; then
           # --setup-remote writes `Host ALIAS` into ~/.ssh/config: it would shadow this one.
-          _as_remote_say "host = $cv: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias $cv; name the section otherwise; unusable as written"
-          _rm_host="$cv" _rm_bad=$((_rm_bad + 1))
-        elif _as_ssh_spec_ok "$cv"; then
-          _rm_host="$cv"
-          _as_remote_say "host = $cv: the host the login runs on, reached over ssh as you reach it from here"
+          _as_remote_say "host = $cv: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias ${v#*@}; name the section otherwise; unusable as written"
+          _rm_host="$v" _rm_bad=$((_rm_bad + 1))
+        elif _as_ssh_spec_ok "$v"; then
+          _rm_host="$v" _rm_sshport="${w:+$((10#$w))}"
+          _as_remote_say "host = $cv: the host the login runs on, reached over ssh as you reach it from here${w:+, its sshd at port $_rm_sshport}"
         else
-          _as_remote_say "host = $cv: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias; a port is the alias's); unusable as written"
+          _as_remote_say "host = $cv: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias, then :SSHPORT when its sshd's port is to be named); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         fi
         ;;
@@ -6831,7 +6850,10 @@ _as_remote_eval() {
           fi
           break
         done
-        if [[ -n "$bad" ]]; then
+        if [[ "$cv" == none ]]; then
+          _rm_gpu=off
+          _as_remote_say "gpu = none: no GPU device node of that host is passed into the login's sandbox"
+        elif [[ -n "$bad" ]]; then
           _as_remote_say "gpu = $cv: $bad; unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif ((${#ws[@]})); then
@@ -6896,7 +6918,7 @@ _as_remote_eval() {
 # it, and one line for the whole, last. Fails when a name is written twice: the file
 # cannot be approved.
 _as_remote_notes() {
-  local a h reached rc=0 dups _rm_host _rm_account _rm_port _rm_gpu _rm_bad _rm_scratch _rm_allow _rm_env
+  local a h reached rc=0 dups _rm_host _rm_sshport _rm_account _rm_port _rm_gpu _rm_bad _rm_scratch _rm_allow _rm_env
   dups="$(_as_remote_names dups)"
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
@@ -6914,7 +6936,7 @@ _as_remote_notes() {
     if ((_rm_bad)); then
       _as_msg ".agent-sandbox: [remote:$a]: unusable as written, for the reasons above; ${invoked:-asb} --setup-remote $a refuses it"
     else
-      _as_msg ".agent-sandbox: [remote:$a]: a sandboxed login on $_rm_host as ${_rm_account:-the ssh user}, set up by ${invoked:-asb} --setup-remote $a"
+      _as_msg ".agent-sandbox: [remote:$a]: a sandboxed login on $_rm_host${_rm_sshport:+:$_rm_sshport} as ${_rm_account:-the ssh user}, set up by ${invoked:-asb} --setup-remote $a"
     fi
   done < <(_as_remote_names)
   return "$rc"
@@ -6931,7 +6953,7 @@ _as_check_remotes() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local a first=1 _rm_host _rm_account _rm_port _rm_gpu _rm_bad _rm_scratch _rm_allow _rm_env
+  local a first=1 _rm_host _rm_sshport _rm_account _rm_port _rm_gpu _rm_bad _rm_scratch _rm_allow _rm_env
   _as_dotfile_parse "$1" 2>/dev/null
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
@@ -6941,7 +6963,7 @@ _as_check_remotes() {
     if ((_rm_bad)); then
       printf 'remote %s: unusable as written (the review above says why)\n' "$a" >&2
     else
-      printf 'remote %s: %s as %s, port %s\n' "$a" "$_rm_host" "${_rm_account:-the ssh user}" "$_rm_port" >&2
+      printf 'remote %s: %s as %s, port %s\n' "$a" "$_rm_host${_rm_sshport:+:$_rm_sshport}" "${_rm_account:-the ssh user}" "$_rm_port" >&2
     fi
   done < <(_as_remote_names)
   return 0
@@ -7141,26 +7163,34 @@ _as_remote_pkg() {
   esac
 }
 
-# _as_setup_remote CWD ALIAS -- `asb --setup-remote ALIAS`, its first phase: the
-# refusals, the preflight over ssh, the report, and either the ready verdict (0) or the
-# admin's script (1). Refusals are 2. Uses invoked and engine by dynamic scope.
+# _as_setup_remote CWD WORD [PORT] -- `asb --setup-remote WORD [--port PORT]`. WORD naming
+# a [remote:WORD] section of CWD's .agent-sandbox is that section. Otherwise it is a
+# destination, [ACCOUNT@]HOST[:SSHPORT], and the section is [remote:ACCOUNT-HOST] (ACCOUNT
+# the one given, else your ssh login name for HOST, from `ssh -G`): used when the file has
+# it and it says what WORD and PORT say (else refused), else appended through --apply's
+# review -- host = HOST[:SSHPORT], account, port = PORT (default 2222), scratch =
+# ~/ACCOUNT-HOST -- and, approved, set up as an existing one; declined, the file is put
+# back as it was. Then _as_setup_remote_alias. Refusals are 2. Uses invoked by dynamic
+# scope.
 # shellcheck disable=SC2154
 _as_setup_remote() {
-  local cwd="$1" alias="$2" file a
+  local cwd="$1" word="$2" port="${3:-}" file a
   file="$cwd/.agent-sandbox"
-  local p="remote $alias:"
   if [[ -n "${AGENT_SANDBOX:-}" ]] || _as_inside_sandbox; then
     _as_msg "--setup-remote runs on the host: it holds your ssh access; a role proposes the line, you run it."
     return 2
   fi
-  case "$alias" in . | ..)
-    _as_msg "--setup-remote: '$alias' cannot name a remote"
+  case "$word" in . | ..)
+    _as_msg "--setup-remote: '$word' cannot name a remote"
     return 2
     ;;
   esac
-  if [[ ! -f "$file" ]]; then
-    _as_msg "--setup-remote: no .agent-sandbox in $cwd: a remote is described there, in [remote:$alias]"
-    return 2
+  if [[ -n "$port" ]]; then
+    port="$(_as_agent_port_norm --setup-remote "$port")" || return 2
+    if [[ "$port" == none ]]; then
+      _as_msg "--setup-remote: --port none: the login listens on one port; --port [ADDR:]PORT"
+      return 2
+    fi
   fi
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
@@ -7169,13 +7199,114 @@ _as_setup_remote() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local _rm_host _rm_account _rm_port _rm_bad _rm_gpu _rm_scratch _rm_allow _rm_env
-  _as_dotfile_parse "$file" 2>/dev/null
-  if ! grep -qxF -- "$alias" <<<"$(_as_remote_names)"; then
-    a="$(_as_remote_names | paste -sd' ' -)"
-    _as_msg "--setup-remote: .agent-sandbox has no [remote:$alias]${a:+ (it has: $a)}"
+  local _rm_host _rm_sshport _rm_account _rm_port _rm_bad _rm_gpu _rm_scratch _rm_allow _rm_env rnames="" have=""
+  if [[ -f "$file" ]]; then
+    _as_dotfile_parse "$file" 2>/dev/null
+    rnames="$(_as_remote_names)"
+  fi
+  [[ -z "$rnames" ]] || have=" (it has: $(paste -sd' ' - <<<"$rnames"))"
+  if grep -qxF -- "$word" <<<"$rnames"; then
+    _as_setup_remote_alias "$cwd" "$word" "$port"
+    return $?
+  fi
+
+  # ---- a destination: [ACCOUNT@]HOST[:SSHPORT] ----
+  local acct="" host sport="" from=""
+  if [[ ! "$word" =~ ^(([^@]+)@)?([^@:]+)(:([0-9]{1,5}))?$ ]]; then
+    _as_msg "--setup-remote: '$word' is neither a [remote:ALIAS] section of .agent-sandbox$have nor a destination [ACCOUNT@]HOST[:SSHPORT]"
     return 2
   fi
+  acct="${BASH_REMATCH[2]}" host="${BASH_REMATCH[3]}" sport="${BASH_REMATCH[5]}"
+  if ! _as_ssh_spec_ok "$host" || { [[ -n "$sport" ]] && ! ((10#$sport >= 1 && 10#$sport <= 65535)); }; then
+    _as_msg "--setup-remote: '$word' is neither a [remote:ALIAS] section of .agent-sandbox$have nor a destination [ACCOUNT@]HOST[:SSHPORT]"
+    return 2
+  fi
+  [[ -z "$sport" ]] || sport="$((10#$sport))"
+  if [[ -z "$acct" ]]; then
+    acct="$(ssh -G "$host" 2>/dev/null | awk '$1 == "user" {print $2; exit}')"
+    from=" (your ssh login name for $host)"
+  fi
+  if [[ ! "$acct" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    _as_msg "--setup-remote: the account '$acct'$from is not an account name adduser takes (lowercase letters, digits, '-' and '_', starting with a letter or '_', at most 32): name one, --setup-remote ACCOUNT@$host${sport:+:$sport}"
+    return 2
+  fi
+  local alias="$acct-$host" dest="$host${sport:+:$sport}"
+  local p="remote $alias:"
+  _as_msg "$p $word is a destination, not a section of .agent-sandbox$have: its section is [remote:$alias]"
+  if ! _as_role_name_ok "$alias"; then
+    _as_msg "--setup-remote: '$alias' is not a role name, and the login runs as the role $alias there (a letter or digit, then letters, digits, '.', '_' or '-'): name the account otherwise, or write a [remote:ALIAS] section"
+    return 2
+  fi
+  if grep -qxF -- "$alias" <<<"$rnames"; then
+    # the file has it: used as written, when it says what the command line says
+    _as_msg "$p [remote:$alias] of .agent-sandbox is used"
+    if ! grep -qxF -- "$alias" <<<"$(_as_remote_names dups)"; then
+      _as_remote_eval "$alias"
+      local -a diffs=()
+      local sacct="$_rm_account"
+      [[ -n "$sacct" || -z "$_rm_host" ]] || sacct="$(ssh -G "$_rm_host" 2>/dev/null | awk '$1 == "user" {print $2; exit}')"
+      [[ "$_rm_host${_rm_sshport:+:$_rm_sshport}" == "$dest" ]] \
+        || diffs+=("host = $_rm_host${_rm_sshport:+:$_rm_sshport}, where $word says $dest")
+      [[ "$sacct" == "$acct" ]] || diffs+=("account = ${sacct:-?}, where $word says $acct")
+      [[ -z "$port" || "$_rm_port" == "$port" ]] || diffs+=("port = ${_rm_port:-?}, where --port says $port")
+      if ((${#diffs[@]})); then
+        for a in "${diffs[@]}"; do _as_msg "$p [remote:$alias] has $a"; done
+        _as_msg "--setup-remote: [remote:$alias] of .agent-sandbox says otherwise than the command line (above); refusing rather than choosing. Change the section, or run --setup-remote $alias for it as written"
+        return 2
+      fi
+    fi
+    _as_setup_remote_alias "$cwd" "$alias" "$port"
+    return $?
+  fi
+  if [[ "$alias" == "$host" ]]; then
+    _as_msg "--setup-remote: [remote:$alias] would have host = $host, its own name; name the account otherwise"
+    return 2
+  fi
+
+  # ---- the section, appended through --apply's review ----
+  local before="" had=0 rc=0
+  if [[ -f "$file" ]]; then
+    had=1
+    before="$(
+      cat -- "$file"
+      printf x
+    )" || return 1
+    before="${before%x}"
+  fi
+  _as_msg "$p appending [remote:$alias] to $file, for your review"
+  local _ap_from_setup=1
+  _as_apply "$cwd" "[remote:$alias]" "host = $dest" "account = $acct" "port = ${port:-2222}" "scratch = ~/$alias" || rc=$?
+  if ((rc == 0)) && _as_dotfile_trusted "$cwd" "$file"; then
+    _as_setup_remote_alias "$cwd" "$alias" "$port"
+    return $?
+  fi
+  if ((had)); then
+    printf '%s' "$before" >"$file"
+  else
+    rm -f -- "$file"
+  fi
+  _as_msg "$p not approved: .agent-sandbox is as it was$( ((had)) || printf ' (none)'); nothing was done"
+  return 1
+}
+
+# _as_setup_remote_alias CWD ALIAS [PORT] -- `asb --setup-remote ALIAS`, its first phase:
+# the refusals, the preflight over ssh, the report, and either the ready verdict (0) or
+# the admin's script (1). Refusals are 2. A PORT (normalized) that is not the section's
+# port is refused. Uses invoked and engine by dynamic scope.
+# shellcheck disable=SC2154
+_as_setup_remote_alias() {
+  local cwd="$1" alias="$2" port="${3:-}" file a
+  file="$cwd/.agent-sandbox"
+  local p="remote $alias:"
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  local _rm_host _rm_sshport _rm_account _rm_port _rm_bad _rm_gpu _rm_scratch _rm_allow _rm_env
+  _as_dotfile_parse "$file" 2>/dev/null
   if grep -qxF -- "$alias" <<<"$(_as_remote_names dups)"; then
     _as_msg "--setup-remote: [remote:$alias] is written more than once in .agent-sandbox; rename or remove one"
     return 2
@@ -7187,6 +7318,10 @@ _as_setup_remote() {
   fi
   if ((_rm_bad)); then
     _as_msg "--setup-remote: [remote:$alias] is unusable as written; $invoked --check says why"
+    return 2
+  fi
+  if [[ -n "$port" && "$port" != "$_rm_port" ]]; then
+    _as_msg "--setup-remote: [remote:$alias] has port = $_rm_port, where --port says $port; refusing rather than choosing. Change the section, or leave --port out"
     return 2
   fi
   if ! _as_role_name_ok "$alias"; then
@@ -7207,24 +7342,27 @@ _as_setup_remote() {
   fi
 
   # ---- the preflight: one ssh session, the probe on stdin ----
-  local g rhost ruser rport
-  g="$(ssh -G "$_rm_host" 2>/dev/null)" || {
+  # host = DEST:SSHPORT: that port for every ssh to the host (sp), and in the lines said
+  local g rhost ruser rport spo="${_rm_sshport:+-p $_rm_sshport }"
+  local -a sp=()
+  [[ -z "$_rm_sshport" ]] || sp=(-p "$_rm_sshport")
+  g="$(ssh -G ${sp[@]+"${sp[@]}"} "$_rm_host" 2>/dev/null)" || {
     _as_msg "$p cannot resolve '$_rm_host' (ssh -G failed)"
     return 1
   }
   rhost="$(awk '$1=="hostname"{print $2; exit}' <<<"$g")"
   ruser="$(awk '$1=="user"{print $2; exit}' <<<"$g")"
   rport="$(awk '$1=="port"{print $2; exit}' <<<"$g")"
-  _as_msg "$p the preflight, over ssh to $ruser@$rhost port $rport ($_rm_host), read-only"
+  _as_msg "$p the preflight, over ssh to $ruser@$rhost port $rport ($spo$_rm_host), read-only"
   local out err rc=0
   local -a nodes=()
   [[ "$_rm_gpu" == off ]] || read -r -a nodes <<<"$_rm_gpu"
   err="$(mktemp)" || return 1
   out="$(_as_remote_probe "$_rm_account" ${nodes[@]+"${nodes[@]}"} \
-    | ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$_rm_host" bash -s 2>"$err")" || rc=$?
+    | ssh -T -o BatchMode=yes -o ConnectTimeout=15 ${sp[@]+"${sp[@]}"} "$_rm_host" bash -s 2>"$err")" || rc=$?
   if [[ "$out" != *$'\nend\tok'* ]]; then
     _as_msg "$p the preflight did not complete (ssh exit $rc): $(tail -n 3 -- "$err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
-    _as_msg "$p it needs ssh to reach $_rm_host without a question (BatchMode): your key there, and its host key in ~/.ssh/known_hosts (ssh $_rm_host once)"
+    _as_msg "$p it needs ssh to reach $_rm_host without a question (BatchMode): your key there, and its host key in ~/.ssh/known_hosts (ssh $spo$_rm_host once)"
     rm -f -- "$err"
     return 1
   fi
@@ -7419,9 +7557,9 @@ _as_setup_remote() {
   # The run line is settled first: the script's own header quotes it.
   local there="asb-admin-$alias.sh" run copied=1 crc=0
   case "${P[sudo]:-none}" in
-    root) run="ssh -t $_rm_host bash $there" ;;
-    ok | password) run="ssh -t $_rm_host sudo bash $there" ;;
-    *) run="ssh root@${_rm_host#*@} bash -s < $rel" ;;
+    root) run="ssh -t $spo$_rm_host bash $there" ;;
+    ok | password) run="ssh -t $spo$_rm_host sudo bash $there" ;;
+    *) run="ssh ${spo}root@${_rm_host#*@} bash -s < $rel" ;;
   esac
   {
     _as_remote_admin_script
@@ -7430,12 +7568,12 @@ _as_setup_remote() {
     return 1
   }
   chmod 600 -- "$tmp" && mv -f -- "$tmp" "$dir/admin.sh" || return 1
-  ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$_rm_host" "umask 077; cat >$there" <"$dir/admin.sh" 2>/dev/null || {
+  ssh -T -o BatchMode=yes -o ConnectTimeout=15 ${sp[@]+"${sp[@]}"} "$_rm_host" "umask 077; cat >$there" <"$dir/admin.sh" 2>/dev/null || {
     crc=$?
     copied=0
   }
   if ((! copied)); then
-    _as_msg "$p $_rm_host needs root once: $rel does it, but the copy to $_rm_host failed (ssh exit $crc). Copy it yourself (scp $rel $_rm_host:$there), read it there, then run:"
+    _as_msg "$p $_rm_host needs root once: $rel does it, but the copy to $_rm_host failed (ssh exit $crc). Copy it yourself (scp ${_rm_sshport:+-P $_rm_sshport }$rel $_rm_host:$there), read it there, then run:"
   elif [[ "${P[sudo]:-none}" == none ]]; then
     _as_msg "$p $_rm_host needs root once, and you have no sudo there: the host's admin runs the script (~/$there there, or $rel here):"
   else
@@ -7680,7 +7818,8 @@ APPLY
 
 # _as_remote_policy -- the login's policy, on stdout, from _as_remote_account's locals
 # (dynamic scope) and the section (_rm_*): strict, the one agent port, the allow hosts,
-# the gpu nodes, the env pairs, and the keys file outside the scratch.
+# the gpu nodes, the env pairs, the keys file outside the scratch, and the sessions' HOME
+# the scratch ([sshd] home = project).
 # shellcheck disable=SC2154,SC2016 # the backquotes are the comment's own
 _as_remote_policy() {
   local h
@@ -7704,7 +7843,7 @@ _as_remote_policy() {
       [[ -n "$h" ]] && printf '%s = %s\n' "${h%%=*}" "${h#*=}"
     done <<<"$_rm_env"
   fi
-  printf '\n[sshd]\nauthorized-keys = ~/.config/agent-sandbox/asb-%s-keys\n' "$alias"
+  printf '\n[sshd]\nauthorized-keys = ~/.config/agent-sandbox/asb-%s-keys\nhome = project\n' "$alias"
 }
 
 # _as_remote_ssh_config ALIAS BLOCK -- put BLOCK (the marked lines, markers included)
@@ -7782,10 +7921,10 @@ _as_remote_known_hosts() {
 _as_remote_account() {
   local acct dest co cohow desc k v w x out err rc=0 setup=0
   local -A S=()
-  local -a sopts=(-T -o BatchMode=yes -o ConnectTimeout=15) gids=() pol_old=() keys_old=()
+  local -a sopts=(-T -o BatchMode=yes -o ConnectTimeout=15 ${sp[@]+"${sp[@]}"}) gids=() pol_old=() keys_old=()
   acct="${_rm_account:-$ruser}" dest="${_rm_host#*@}"
   local scratch="${_rm_scratch:-~/$alias}"
-  _as_msg "$p the account's part, over ssh as $acct to $dest (ssh -l $acct $dest; BatchMode; never sudo)"
+  _as_msg "$p the account's part, over ssh as $acct to $dest (ssh $spo-l $acct $dest; BatchMode; never sudo)"
 
   # ---- the checkout and micromamba that would be carried ----
   co="$(_as_remote_checkout)"
@@ -7819,7 +7958,7 @@ _as_remote_account() {
   out="$(_as_remote_state_script "$alias" "$scratch" | ssh "${sopts[@]}" -l "$acct" "$dest" bash -s 2>"$err")" || rc=$?
   if [[ "$out" != *$'\nend\tok'* ]]; then
     _as_msg "$p cannot read the account's state as $acct (ssh exit $rc): $(tail -n 3 -- "$err" | tr -d '[:cntrl:]' | paste -sd' ' -)"
-    _as_msg "$p it needs ssh -l $acct $dest to work without a question: your public key in $acct's ~/.ssh/authorized_keys (the admin's script puts it there for an account it makes)"
+    _as_msg "$p it needs ssh $spo-l $acct $dest to work without a question: your public key in $acct's ~/.ssh/authorized_keys (the admin's script puts it there for an account it makes)"
     rm -f -- "$err"
     return 1
   fi
@@ -7955,7 +8094,7 @@ _as_remote_account() {
   case "$_rm_port" in
     0.0.0.0:*) hname="$rhost" ;;
     *:*) hname="${_rm_port%:*}" ;;
-    *) hname=127.0.0.1 jump="$_rm_host" ;;
+    *) hname=127.0.0.1 jump="$_rm_host${_rm_sshport:+:$_rm_sshport}" ;;
   esac
   local aport="${_rm_port##*:}"
   khname="[$hname]:$aport"
@@ -9880,6 +10019,8 @@ _as_apply() {
     fi
   fi
   _as_trust_review "$cwd" || return $?
+  # --setup-remote DEST (#344) appends its section through this, and says what follows
+  [[ -z "${_ap_from_setup:-}" ]] || return 0
   if ! _as_dotfile_trusted "$cwd" "$file"; then
     _as_msg "the change stays in .agent-sandbox, unapproved, for you to look at: $invoked --trust reviews it again."
     return 0
@@ -10522,7 +10663,7 @@ agent_sandbox() (
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
-  local _setup_remote="" # --setup-remote ALIAS (#344)
+  local _setup_remote="" _setup_remote_port="" # --setup-remote ALIAS|DEST [--port PORT] (#344)
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
   local _do_list="" _list_word=""
@@ -10692,13 +10833,17 @@ agent_sandbox() (
         shift $#
         ;;
       --setup-remote)
-        # --setup-remote ALIAS (#344): the word after it is its own, and nothing follows.
-        [[ $# -eq 2 && -n "$2" && "$2" != -* ]] || {
-          _as_msg "--setup-remote takes one name, a [remote:ALIAS] section of this project's .agent-sandbox, and nothing after it: --setup-remote ALIAS"
+        # --setup-remote ALIAS|DEST [--port [ADDR:]PORT] (#344): the words after it are its own.
+        if [[ $# -eq 2 && -n "$2" && "$2" != -* ]]; then
+          _setup_remote="$2"
+          shift 2
+        elif [[ $# -eq 4 && -n "$2" && "$2" != -* && "$3" == --port && -n "$4" ]]; then
+          _setup_remote="$2" _setup_remote_port="$4"
+          shift 4
+        else
+          _as_msg "--setup-remote takes a [remote:ALIAS] section of this project's .agent-sandbox, or a destination, and nothing after it but --port: --setup-remote ALIAS, or --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]"
           return 2
-        }
-        _setup_remote="$2"
-        shift 2
+        fi
         ;;
       --init)
         # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
@@ -11050,7 +11195,7 @@ agent_sandbox() (
   # ---- --setup-remote ALIAS: the preflight of a [remote:ALIAS] host (#344) ----
   # Profile-independent; host only; runs nothing with sudo, ever.
   if [[ -n "$_setup_remote" ]]; then
-    _as_setup_remote "$(pwd -P)" "$_setup_remote"
+    _as_setup_remote "$(pwd -P)" "$_setup_remote" "$_setup_remote_port"
     return $?
   fi
   # ---- --apply: add lines to the current project's .agent-sandbox, then --trust's review ----

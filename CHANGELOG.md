@@ -95,6 +95,25 @@ names are gone; there are no aliases for removed names before 1.0.
   `install.sh` needs curl only when micromamba is not already in place. The preflight
   says `pasta ok (its build names no version)` for Ubuntu 24.04's `pasta unknown
   version`, and no longer notes a pasta without `--hostname`.
+- **`asb --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]`** (#344): a word
+  that names no `[remote:<alias>]` of the project is a destination. Its section is
+  `[remote:ACCOUNT-HOST]` (ACCOUNT the one given, else your ssh login name for HOST):
+  used when the file has it and it agrees with the command line (else refused, each
+  difference said), else appended through `--apply`'s review -- `host = HOST[:SSHPORT]`,
+  `account`, `port` (`--port`, else 2222) and `scratch = ~/ACCOUNT-HOST` -- and set up
+  once approved; declined, the file is as it was. `--port` with an alias must match its
+  section's port.
+- **`host = HOST:SSHPORT` in a `[remote:<alias>]`** (#344): the port of that host's own
+  sshd, used for every ssh to it (the preflight, the admin's copy and its run line, the
+  account's part) and in the alias block's `ProxyJump HOST:SSHPORT`. `[ssh]` is
+  unchanged. **`gpu = none`** means no GPU, as an empty `gpu =` does.
+- **`[sshd] home = project`** (#344): the sessions' HOME is the project directory, and
+  every session -- a login shell, a command, sftp, scp, rsync -- starts there. Inside the
+  sandbox the account's `/etc/passwd` entry names the project (sshd takes HOME and the
+  directory it changes into from it; `SetEnv HOME` would leave sessions in the old one,
+  measured). Opt-in: without the line nothing changes. The review says it; another value
+  refuses the launch. `--setup-remote` writes it into every policy it generates, so the
+  next run relaunches an existing remote login once, as a policy change.
 - **`docs/sshd.md`, the operator's guide to the `sshd` profile** (#335, step 5 of its
   plan): the policy line by line, the recipe on a shared host (a dedicated ordinary
   account, `install.sh` as it, the launch in the background) and on a cloud instance,

@@ -594,15 +594,21 @@ which roles of the project have a session to resume, with a one-line summary eac
   under `~`, readable at launch; it is copied into the role's store at every launch,
   and that copy is what sshd reads. A relative path, a missing or unreadable file refuse
   the launch. Keep it outside the project: the project is read-write in every session,
-  and the review warns when the file is inside it.
+  and the review warns when the file is inside it. `home = project` (optional, #344)
+  makes the project directory the sessions' HOME and the directory every session starts
+  in (inside the sandbox the account's `/etc/passwd` entry names it); without it HOME is
+  an empty read-only directory at the account's home path. Another value refuses the
+  launch. The review says the line. See [sshd.md](sshd.md#the-policy).
 
 - **`[remote:<alias>]`** — key/value lines describing a sandboxed login on another host
   (#344): the `sshd` profile run there by an account of its own, which the roles reach
   as the SSH host `<alias>`. `asb --setup-remote <alias>` acts on it (below); no launch
   reads it. The name is letters, digits, `-`,
   `_` and `.`, and takes no role suffix; `[remote]` without one is ignored with a
-  warning. `host = DEST` (required) is the ssh destination, in the forms `[ssh]` takes:
-  a hostname, `user@host`, or an alias of your `~/.ssh/config` (a port is the alias's).
+  warning. `host = DEST[:SSHPORT]` (required) is the ssh destination, in the forms
+  `[ssh]` takes -- a hostname, `user@host`, or an alias of your `~/.ssh/config` -- then
+  optionally `:SSHPORT`, the port of that host's own sshd (1-65535), used for every ssh
+  to it and in the alias block's `ProxyJump`.
   `account = NAME` is the account that runs the login there, a name as `adduser` takes
   it (lowercase letters, digits, `-` and `_`, starting with a letter or `_`, at most 32);
   absent, it is the ssh user. `host` is not `<alias>` itself: the alias block below would
@@ -611,7 +617,8 @@ which roles of the project have a session to resume, with a one-line summary eac
   loopback, for roles that run on that host, or `0.0.0.0:PORT` for every address of it.
   `scratch = PATH` is the project directory there, the login's one writable place: an
   absolute path, or under `~`, the account's home there; absent, `~/<alias>`. `gpu = NODE ...` names that
-  host's GPU device nodes, as `[gpu] devices` takes them (under `/dev/`, no `..`).
+  host's GPU device nodes, as `[gpu] devices` takes them (under `/dev/`, no `..`);
+  `gpu = none`, or `gpu =` naming none, passes no GPU; no `gpu` line, all of them.
   `allow = HOST ...` are hosts its allowlist proxy lets through, as `[allow]` takes them;
   `env = NAME=VALUE` is set inside it; several `allow` and `env` lines add up. The
   review says each line as written and what it means, says on an `[ssh]` line that names
@@ -626,7 +633,18 @@ which roles of the project have a session to resume, with a one-line summary eac
   review says so and `--trust` does not ask, and `--check` exits non-zero.
 
   `asb --setup-remote <alias>`, run by you on the host in the project, applies the
-  section. It ends in one of three ways, each a re-run away from the next: root is
+  section. A word that names no section of the file is a destination:
+  `asb --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]` acts on
+  `[remote:ACCOUNT-HOST]`, ACCOUNT the one given, else your ssh login name for HOST
+  (`ssh -G`). When the file has that section it is used, and refused when its host,
+  account or port (with `--port`) say otherwise than the command line, each difference
+  said. Otherwise the section is appended through `--apply`'s review (the lines added,
+  the diff, the review, the y/N question): `host = HOST[:SSHPORT]`, `account = ACCOUNT`
+  (written even when it is your login name), `port =` the `--port` value, else `2222`,
+  and `scratch = ~/ACCOUNT-HOST` -- no `gpu` (all of them), `allow` or `env` line. Approved,
+  the command goes on as for a section that was there; declined, the file is put back as
+  it was (or removed, when this made it) and nothing is done. `ACCOUNT-HOST` must be a
+  role name. With an alias, `--port` must be the section's port. It ends in one of three ways, each a re-run away from the next: root is
   needed there (the admin's script, below); the host is ready and the login is not set
   up (the account's part); it is set up (the same steps, as an update). It is refused inside a sandbox (it holds your ssh access: a role
   proposes the line, you run it), without the section, for a section unusable as
@@ -651,8 +669,8 @@ which roles of the project have a session to resume, with a one-line summary eac
   your own home there is neither root nor a change of the system), prints the one line
   that runs it -- `ssh -t HOST sudo bash asb-admin-<alias>.sh`; `ssh -t HOST bash ...`
   when you are root there; `ssh root@HOST bash -s < .asb/remote/<alias>/admin.sh` for the
-  host's admin when you have no sudo -- and exits 1; a copy that fails is said, with the
-  `scp` to do it yourself. The script,
+  host's admin when you have no sudo; each with `-p SSHPORT` when the host has one -- and
+  exits 1; a copy that fails is said, with the `scp` to do it yourself. The script,
   every item explained above it, does only what was measured missing: the packages for
   the host's family (apt-get, dnf, pacman, zypper: `bubblewrap passt nftables
   openssh-server`, pacman's `openssh`); install.sh's AppArmor profiles for bwrap and
@@ -670,7 +688,8 @@ which roles of the project have a session to resume, with a one-line summary eac
   (recorded in `install.manifest`), never from a copy of their own. A re-run measures
   again and reaches the verdict again.
 
-  The account's part runs over `ssh -l ACCOUNT HOST` (the section's host as your
+  The account's part runs over `ssh -l ACCOUNT HOST` (`ssh -p SSHPORT -l ...` with an ssh
+  port; the section's host as your
   `~/.ssh/config` resolves it, the user overridden; `BatchMode`): your public key must
   be in the account's `authorized_keys`, as the admin's script puts it for an account
   it makes. asb never runs sudo there, nor `sudo -u`. First the key: `~/.ssh/asb-<alias>`
@@ -692,10 +711,11 @@ which roles of the project have a session to resume, with a one-line summary eac
   from the section into the scratch's `.agent-sandbox`, with a header saying it is
   generated from `[remote:<alias>]` of this project and is overwritten by the next run:
   `[net] mode = strict` and `agent-port` the section's port, `[allow]` its hosts, `[gpu]
-  devices` its nodes (`mode = off` for a `gpu` line naming none; no `gpu` line, no
-  `[gpu]`), `[env]` its pairs, and `[sshd] authorized-keys =
+  devices` its nodes (`mode = off` for `gpu = none` or a `gpu` line naming none; no `gpu`
+  line, no `[gpu]`), `[env]` its pairs, and `[sshd] authorized-keys =
   ~/.config/agent-sandbox/asb-<alias>-keys`, outside the scratch, a file holding the key's
-  public half, rewritten every run. A new or changed policy is written and approved there
+  public half, rewritten every run, and `home = project`, so sessions have the scratch as
+  HOME and start there. A new or changed policy is written and approved there
   (`asb --profile sshd --trust`, answered `y`: you approved the section here, which is
   what the content comes from); a changed one is said as the lines that differ. The
   login is launched in the background as the role `<alias>` (`setsid nohup asb
@@ -714,7 +734,7 @@ which roles of the project have a session to resume, with a one-line summary eac
   ~/.ssh/asb-<alias>`, `IdentitiesOnly yes`, and the address: for a port at an address,
   `HostName` the host's own (`ssh -G HOST`), or the address when it is a literal other
   than `0.0.0.0`; for a bare port, the host's loopback, `HostName 127.0.0.1` and
-  `ProxyJump HOST` (your ssh to the host carries it). The host key's name is what ssh and
+  `ProxyJump HOST` (`HOST:SSHPORT` with an ssh port; your ssh to the host carries it). The host key's name is what ssh and
   the roles' broker look it up by, `[HostName]:PORT`. When `ssh -G <alias>` does not
   resolve to the block (a `Host` or `Match` block of yours above it sets an option
   first), that is said and the command fails. Then the checks, through the alias, one line

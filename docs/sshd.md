@@ -47,6 +47,7 @@ CUDA_VISIBLE_DEVICES = 0
 
 [sshd]
 authorized-keys = /home/tob/.config/agent-sandbox/bench-keys
+home = project
 ```
 
 - `mode = strict` is required; a launch in any other mode refuses. Only there does the
@@ -74,6 +75,17 @@ authorized-keys = /home/tob/.config/agent-sandbox/bench-keys
   It is copied into the role's store at every launch; sshd reads the copy. The review
   says who may log in, and warns when the file is inside the project, which sessions
   can write.
+- `[sshd] home = project` (optional, #344) makes the project directory the sessions'
+  HOME, and every session starts there: a login shell, `ssh HOST cmd`, sftp (its remote
+  working directory), scp and rsync to a relative path. sshd takes a session's HOME, and
+  the directory it changes into before running anything, from the account's passwd
+  entry; so inside the sandbox `/etc/passwd` is the host's with that one entry's home
+  field the project (the role's copy, read-only, as `/etc/group` is). The environment
+  the launch hands over cannot do it: `SetEnv HOME=...` sets HOME and leaves a session in
+  the passwd home (measured, OpenSSH 9.6). Dot-files a session's tools write (`~/.cache`,
+  `~/.bashrc` read by a login shell, ...) are then the project's. Without the line HOME
+  is as below, an empty read-only directory. Any other value refuses the launch. `asb
+  --setup-remote` writes the line into the policies it generates.
 
 `tob`, `/home/tob/bench` and `2222` are examples: nothing in the feature names an
 account, a path or a port. The account is whoever launches, the role is `--role`, every
@@ -220,7 +232,9 @@ pinhole for `127.0.0.1` opens the namespace's own loopback, where nothing listen
 The remote side of a script: sessions start in the account's HOME inside the sandbox,
 which is an empty read-only directory. Use absolute paths into the project directory
 (`ssh tob-ex 'cd /home/tob/bench && ./run.sh'`, `rsync ... tob-ex:/home/tob/bench/`),
-and let `TMPDIR` from `[env]` take temporary files.
+and let `TMPDIR` from `[env]` take temporary files. With `[sshd] home = project`
+sessions start in the project instead, and relative paths are the project's
+(`ssh tob-ex ./run.sh`, `rsync ... tob-ex:sub/`).
 
 ## What a session sees, and never sees
 
@@ -231,7 +245,8 @@ shape above:
 - the system (`/usr`, `/etc`, ...) read-only, `/sys` read-only, `/etc/group` the role's
   copy without the `tty` line;
 - HOME (the account's home path) an empty read-only tmpfs, the working directory a
-  session starts in; `~/.cache` and `~/.conda` writable tmpfs, fresh at each launch;
+  session starts in (with `[sshd] home = project`, HOME and that directory are the
+  project, and `/etc/passwd` is the role's copy naming it); `~/.cache` and `~/.conda` writable tmpfs, fresh at each launch;
   under it, read-only, the tools environment on PATH and, when the launching shell had
   one active, its conda install and `.condarc`; `~/.cache/agent-sandbox/conda-pkgs`, the
   sandboxes' package cache, read-write; the role's sshd directory read-only;
