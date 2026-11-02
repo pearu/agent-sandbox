@@ -496,6 +496,27 @@ conversation would otherwise keep to the rules its earlier turns followed, so th
 briefing says the current text replaces them (the hash is kept in the role's state, not
 the project).
 
+**This project's part: addenda (#353).** Write what a role does in this project -- its
+subject, the commands, the conventions -- in an addendum, not in its purpose file:
+`.asb/roles/implementer.addendum.md` for every Implementer, `.asb/roles/implementer-1.addendum.md`
+for that one (`supervisor.addendum.md` for the one Supervisor). The purpose file is the
+model's: the role's general purpose and its relations to the other roles, which `--init`
+keeps updating; the addendum is free text, and extends it and overrides it where they
+differ -- it need not copy the model's structure, which would go stale. A role reads the
+purpose file, then the role's addendum, then the instance's, each after a line saying
+so, at every start; the purpose files say where their addenda are, for a role that reads
+the file itself. `--init` never writes or changes an addendum. An addendum is approved
+with `asb --trust` as a purpose file is, a changed one refuses the launch until it is,
+the session is told its purpose changed, and `asb --check --role NAME` names the addenda
+a role reads.
+
+A purpose file you changed before addenda existed is kept by `--init`, which then
+offers the move: the model's current text in `.asb/migrate/<instance>.md`, the
+addendum's name, and three steps -- write your part in the addendum (`diff -u` of the
+two files shows where yours differs, the model's own changes included, so this is a
+step for you or an agent rather than a patch), remove the purpose file and run `--init`
+again to take the model's text, and `asb --trust`, which shows both.
+
 `asb --check --role NAME` is the way to see what a role has before it runs: its
 policy, what can reach it from other sessions, where it can act as you (your agent's
 API, GitHub, SSH), and every path it may write.

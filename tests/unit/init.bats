@@ -157,6 +157,68 @@ init() {
   [ "$(tail -1 "$PROJ/.asb/roles/gh-review.md")" = "NEW LINE" ]
 }
 
+@test "run again: a changed purpose file with no addendum gets the migration offer -- the model's text in .asb/migrate/, the addenda named, the steps; --init never touches an addendum (#353)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=0 reviewer=0
+  [ "$status" -eq 0 ]
+  printf 'MINE\n' >>"$PROJ/.asb/roles/implementer-1.md"
+  printf 'MINE\n' >>"$PROJ/.asb/roles/supervisor.md"
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/implementer.md"
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=0 reviewer=0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/roles/implementer-1.md: changed since --init wrote it, and model 'roles' has another text (to receive it, move your part into an addendum: below)"* ]]
+  [[ "$output" == *"--init: to keep receiving model 'roles''s text for a purpose file you changed, move this project's part of it into an addendum"* ]]
+  [[ "$output" == *"  .asb/roles/implementer-1.md: the model's current text is in .asb/migrate/implementer-1.md; the addendum: .asb/roles/implementer.addendum.md (every implementer) or .asb/roles/implementer-1.addendum.md (this one)"* ]]
+  [[ "$output" == *"  .asb/roles/supervisor.md: the model's current text is in .asb/migrate/supervisor.md; the addendum: .asb/roles/supervisor.addendum.md"$'\n'* ]]
+  [[ "$output" == *"  2. remove the purpose file and run this --init again: it takes the model's text"* ]]
+  [ "$(tail -1 "$PROJ/.asb/migrate/implementer-1.md")" = "NEW LINE" ]
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
+  grep -q '`implementer-1`, called I1' "$PROJ/.asb/migrate/implementer-1.md" # rendered for the instance
+  [ "$(tail -1 "$PROJ/.asb/roles/implementer-1.md")" = MINE ]
+  # with an addendum (the role's will do), no offer: the file is the project's as before
+  printf 'OURS\n' >"$PROJ/.asb/roles/implementer.addendum.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=0 reviewer=0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept .asb/roles/implementer-1.md: changed since --init wrote it, and model 'roles' has another text (remove the file and run --init again for the model's)"* ]]
+  [[ "$output" != *"the model's current text is in .asb/migrate/implementer-1.md"* ]]
+  # step 2: the model's text taken, the copy gone, the addendum untouched
+  rm "$PROJ/.asb/roles/implementer-1.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=0 reviewer=0
+  [ "$status" -eq 0 ]
+  [ "$(tail -1 "$PROJ/.asb/roles/implementer-1.md")" = "NEW LINE" ]
+  [ ! -e "$PROJ/.asb/migrate/implementer-1.md" ]
+  [ "$(cat "$PROJ/.asb/roles/implementer.addendum.md")" = OURS ]
+  # a role-level purpose file of launch-named instances: its one addendum named
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
+  printf 'MINE\n' >>"$PROJ/.asb/roles/gh-triage.md"
+  printf 'NEW LINE\n' >>"$H/models/github/roles/gh-triage.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
+  [[ "$output" == *"  .asb/roles/gh-triage.md: the model's current text is in .asb/migrate/gh-triage.md; the addendum: .asb/roles/gh-triage.addendum.md"$'\n'* ]]
+}
+
+@test "every purpose file --init writes names the addenda its role reads, for a reader of the file alone (#353)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  init -- github
+  [ "$status" -eq 0 ]
+  local f r
+  for f in "$PROJ"/.asb/roles/*.md; do
+    r="$(basename "$f" .md)"
+    case "$r" in
+      planner-1 | implementer-1 | reviewer-1)
+        grep -qF "\`.asb/roles/${r%-1}.addendum.md\` (every " "$f"
+        grep -qF "\`.asb/roles/$r.addendum.md\` (you alone)" "$f"
+        ;;
+      gh-review | gh-triage | gh-fix) grep -qF "\`.asb/roles/$r.addendum.md\` (every $r-* role)" "$f" ;;
+      *) grep -qF "\`.asb/roles/$r.addendum.md\`, where it exists" "$f" ;;
+    esac
+  done
+  init -- market
+  # shellcheck disable=SC2016 # likewise
+  grep -qF '`.asb/roles/market.addendum.md` (every market-* role)' "$PROJ/.asb/roles/market.md"
+}
+
 @test "--env: the [conda:...] sections written, and an environment cloned from it at each Implementer's prefix" {
   mkdir -p "$H/conda/envs/x-dev/conda-meta"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=2 reviewer=1 --env x-dev

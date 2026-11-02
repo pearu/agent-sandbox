@@ -4593,9 +4593,10 @@ _as_briefing_handing() {
   return 0
 }
 
-# _as_purpose_record FILE -- 0 when the role's purpose FILE differs from the one its
-# previous launch was briefed from, 1 otherwise (first launch, unchanged, unreadable);
-# then record FILE's hash for the next launch. A resumed conversation keeps following
+# _as_purpose_record -- 0 when the role's purpose (_as_purpose_text: its file and its
+# addenda, #353) differs from the one its previous launch was briefed from, 1 otherwise
+# (first launch, unchanged, unreadable); then record its hash for the next launch --
+# with no addendum, the purpose file's own. A resumed conversation keeps following
 # the purpose its earlier turns were given unless the session is told the text it has
 # now replaces it. The record is the role's own (purpose.sha256 in its state
 # directory, beside record.tsv): a control path, never bound into any sandbox, and
@@ -4603,7 +4604,7 @@ _as_briefing_handing() {
 _as_purpose_record() {
   local dir rec cur prev="" tmp
   dir="$(_as_sandbox_dir)" rec="$(_as_sandbox_dir)/purpose.sha256"
-  cur="$(_as_sha256_file "$1")"
+  cur="$(_as_purpose_text 2>/dev/null | sha256sum | cut -d' ' -f1)" || cur=""
   [[ -n "$cur" ]] || return 1
   [[ -f "$rec" ]] && prev="$(head -n1 -- "$rec" 2>/dev/null)"
   tmp="$rec.$$"
@@ -4624,9 +4625,9 @@ _as_briefing_write() {
   # on the host). Here, where the session is handed the text: a join reuses the
   # keeper's briefing, so it is told what the keeper's launch was told.
   local purpose_note=""
-  if [[ -n "${_purpose_file:-}" ]] && _as_purpose_record "$_purpose_file"; then
-    purpose_note="agent-sandbox: this purpose file has changed since this role's previous launch; the text above is the current one, and it replaces whatever earlier turns of this conversation followed."
-    _as_msg "role '$_role': its purpose file changed since its previous launch; the session is told"
+  if [[ -n "${_purpose_file:-}" ]] && _as_purpose_record; then
+    purpose_note="agent-sandbox: this role's purpose has changed since its previous launch; the text above is the current one, and it replaces whatever earlier turns of this conversation followed."
+    _as_msg "role '$_role': its purpose changed since its previous launch (its purpose file or an addendum); the session is told"
   fi
   local inside net gal n_gal=0
   inside="$(_as_briefing_inside)"
@@ -4827,7 +4828,7 @@ _as_briefing_write() {
     printf 'in your replies.\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '\n## Your role: %s\n\nFrom %s, read-only here:\n\n' "$_role" "$_purpose_as"
-      cat -- "$_purpose_file"
+      _as_purpose_text
       [[ -n "$purpose_note" ]] && printf '\n%s\n' "$purpose_note"
     fi
     printf '\n## If you need something that is blocked\n\n'
@@ -4899,7 +4900,7 @@ _as_briefing_write() {
   # not to a subagent, which is the role's tool, not the role.
   local purpose=""
   if [[ -n "${_purpose_file:-}" ]]; then
-    purpose="$(cat -- "$_purpose_file")" || return 1
+    purpose="$(_as_purpose_text)" || return 1
     purpose=$'\n\n'"You are the role '$_role' of this project. Your purpose, from $_purpose_as (read-only here):"$'\n\n'"$purpose"
     if [[ -n "$purpose_note" ]]; then
       purpose+=$'\n\n'"$purpose_note"
@@ -5487,25 +5488,64 @@ _as_briefing_abs() {
 
 # _as_briefing_resolve PROJECT ROLE -- set _purpose_file (absolute) and _purpose_as
 # (as written, `{role}` substituted) for ROLE, or leave both empty when the role is
-# not briefed. The latest matching `file` line wins, the unsuffixed one first.
+# not briefed. The latest matching `file` line wins, the unsuffixed one first. And the
+# project's addenda the role reads (#353), in order, into _purpose_addenda (absolute)
+# and _purpose_addenda_as (as written): beside the purpose file, the role's
+# <NAME>.addendum.md, NAME from a matching [briefing:NAME-*] or [briefing:NAME], then
+# the instance's <ROLE>.addendum.md; each only when it exists.
 _as_briefing_resolve() {
-  local proj="$1" role="$2" g e pat="" briefed=0
+  local proj="$1" role="$2" g e pat="" briefed=0 base=""
   _purpose_file="" _purpose_as=""
+  _purpose_addenda=() _purpose_addenda_as=()
   for g in ${_df_briefing_globs[@]+"${_df_briefing_globs[@]}"}; do
     # shellcheck disable=SC2053 # the glob is the pattern
-    [[ "$role" == $g ]] && briefed=1
+    [[ "$role" == $g ]] && briefed=1 && base="$(_as_briefing_role_of "$g" "$base")"
   done
   for e in ${_df_briefing_files[@]+"${_df_briefing_files[@]}"}; do
     g="${e%%$'\t'*}"
     # shellcheck disable=SC2053 # the glob is the pattern
     if [[ "$g" == "*" || "$role" == $g ]]; then
       pat="${e#*$'\t'}" briefed=1
+      base="$(_as_briefing_role_of "$g" "$base")"
     fi
   done
   ((briefed)) || return 0
   pat="${pat:-.asb/roles/{role\}.md}"
   _purpose_as="${pat//\{role\}/$role}"
   _purpose_file="$(realpath -m -s -- "$(_as_briefing_abs "$proj" "$_purpose_as")")"
+  local dir dir_as n
+  local -a names=()
+  [[ -n "$base" && "$base" != "$role" ]] && names+=("$base")
+  names+=("$role")
+  dir="$(dirname -- "$_purpose_file")" dir_as="$(dirname -- "$_purpose_as")"
+  for n in "${names[@]}"; do
+    [[ -f "$dir/$n.addendum.md" ]] || continue
+    _purpose_addenda+=("$dir/$n.addendum.md")
+    if [[ "$dir_as" == . ]]; then _purpose_addenda_as+=("$n.addendum.md"); else _purpose_addenda_as+=("$dir_as/$n.addendum.md"); fi
+  done
+}
+
+# _as_briefing_role_of GLOB CURRENT -- the role a [briefing:GLOB] names, for its
+# addendum (#353): NAME for NAME-* or a plain NAME, else CURRENT.
+_as_briefing_role_of() {
+  if [[ "$1" =~ ^([A-Za-z0-9][A-Za-z0-9._-]*)-\*$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    printf '%s' "$1"
+  else
+    printf '%s' "$2"
+  fi
+}
+
+# _as_purpose_text -- the role's purpose as every reader gets it (#353): the purpose
+# file, then each addendum after a line that says where it is from and that it wins.
+_as_purpose_text() {
+  cat -- "$_purpose_file" || return 1
+  local i
+  for i in ${_purpose_addenda[@]+"${!_purpose_addenda[@]}"}; do
+    printf '\nagent-sandbox: this project'"'"'s addendum, from %s; it extends the text above and overrides it where they differ:\n\n' "${_purpose_addenda_as[i]}"
+    cat -- "${_purpose_addenda[i]}" || return 1
+  done
 }
 
 # ----- the first turn (`[briefing] start = PATH`) -------------------------------
@@ -5552,12 +5592,14 @@ _as_briefing_start_notes() {
   return 0
 }
 
-# _as_briefing_files PROJECT -- every purpose file the parsed dot-file can name, for
-# any role: each pattern with `{role}` read as the section's glob, expanded against
-# the files there now. Sorted, one per line.
+# _as_briefing_files PROJECT [unread] -- every purpose file the parsed dot-file can
+# name, for any role: each pattern with `{role}` read as the section's glob, expanded
+# against the files there now; and every addendum a role can read (#353) beside them:
+# GLOB.addendum.md, and NAME.addendum.md for [briefing:NAME-*]. Sorted, one per line.
+# With `unread`: instead, each *.addendum.md in those directories that no role reads.
 _as_briefing_files() {
-  local proj="$1" g e pat f
-  local -a globs=() out=()
+  local proj="$1" g e pat f dir name
+  local -a globs=() out=() dirs=()
   globs=(${_df_briefing_globs[@]+"${_df_briefing_globs[@]}"})
   for e in ${_df_briefing_files[@]+"${_df_briefing_files[@]}"}; do
     [[ "${e%%$'\t'*}" == "*" ]] && globs+=("*")
@@ -5566,10 +5608,27 @@ _as_briefing_files() {
   for g in "${globs[@]}"; do
     pat="$(_as_briefing_pattern "$g")"
     pat="$(_as_briefing_abs "$proj" "${pat//\{role\}/$g}")"
+    dir="$(dirname -- "$pat")" dirs+=("$dir")
+    name="$(_as_briefing_role_of "$g" "")"
     while IFS= read -r f; do
       [[ -f "$f" ]] && out+=("$(realpath -m -s -- "$f")")
-    done < <(compgen -G "$pat" || true)
+    done < <(
+      compgen -G "$pat" || true
+      compgen -G "$dir/$g.addendum.md" || true
+      [[ -n "$name" ]] && compgen -G "$dir/$name.addendum.md" || true
+    )
   done
+  if [[ "${2:-}" == unread ]]; then
+    local -A seen=()
+    for f in ${out[@]+"${out[@]}"}; do seen[$f]=1; done
+    for dir in "${dirs[@]}"; do
+      while IFS= read -r f; do
+        f="$(realpath -m -s -- "$f")"
+        [[ -f "$f" && -z "${seen[$f]:-}" ]] && printf '%s\n' "$f"
+      done < <(compgen -G "$dir/*.addendum.md" || true)
+    done | sort -u
+    return 0
+  fi
   ((${#out[@]})) && printf '%s\n' "${out[@]}" | sort -u
   return 0
 }
@@ -5665,7 +5724,7 @@ _as_trust_forget() {
   rm -rf -- "$rec.purpose"
 }
 
-# _as_dotfile_briefing_files PROJECT FILE -- _as_briefing_files for FILE, parsed here.
+# _as_dotfile_briefing_files PROJECT FILE [unread] -- _as_briefing_files for FILE, parsed here.
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
@@ -5675,7 +5734,7 @@ _as_dotfile_briefing_files() {
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$2" 2>/dev/null
-  _as_briefing_files "$1"
+  _as_briefing_files "$1" "${3:-}"
 }
 
 # _as_trust_show FILE -- a file as the review shows it: through cat -v, so nothing in
@@ -6365,22 +6424,29 @@ _as_trust_show_review() {
       printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
       _as_trust_show "$file"
     fi
-    # The purpose files it briefs roles from (#222), part of what is approved.
-    local f copy
+    # The purpose files it briefs roles from (#222), and the project's addenda to them
+    # (#353), part of what is approved.
+    local f copy kind
     while IFS= read -r f; do
       [[ -n "$f" ]] || continue
+      kind="purpose file"
+      [[ "$f" == *.addendum.md ]] && kind=addendum
       copy="$rec.purpose/$(_as_sha256_str "$f")"
       if [[ -f "$copy" ]] && cmp -s -- "$copy" "$f"; then
-        printf '\npurpose file %s: approved, unchanged.\n' "$(_as_tilde "$f")"
+        printf '\n%s %s: approved, unchanged.\n' "$kind" "$(_as_tilde "$f")"
       elif [[ -f "$copy" ]]; then
-        printf '\npurpose file %s has changed since you approved it. What changed, approved -> now (through cat -v):\n----\n' "$(_as_tilde "$f")"
+        printf '\n%s %s has changed since you approved it. What changed, approved -> now (through cat -v):\n----\n' "$kind" "$(_as_tilde "$f")"
         diff -u --label approved --label now -- "$copy" "$f" | cat -v || true # differs: 1
         printf -- '----\n'
       else
-        printf '\npurpose file %s, new to this approval (shown with cat -v):\n' "$(_as_tilde "$f")"
+        printf '\n%s %s, new to this approval (shown with cat -v):\n' "$kind" "$(_as_tilde "$f")"
         _as_trust_show "$f"
       fi
     done < <(_as_dotfile_briefing_files "$cwd" "$file")
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      printf '\naddendum %s: no role reads it -- no [briefing] section names a role or an instance %s (an addendum is <role>.addendum.md or <instance>.addendum.md beside the purpose file).\n' "$(_as_tilde "$f")" "$(basename -- "$f" .addendum.md)"
+    done < <(_as_dotfile_briefing_files "$cwd" "$file" unread)
   } >&2
   _as_trust_notes "$cwd" "$file"
 }
@@ -8721,6 +8787,10 @@ _as_check_plan() {
     ((${_retrieve_only:-0})) && printf '  network: retrieve-only -- GET and HEAD only (a GraphQL query, not a mutation; git'"'"'s fetch where [net] git allows it, not a push), but to the profile'"'"'s own hosts\n'
     if [[ -n "${_purpose_file:-}" ]]; then
       printf '  briefed from: %s%s\n' "$_purpose_as" "$([[ -f "$_purpose_file" ]] || printf ' -- MISSING: a launch refuses')"
+      local _pa
+      for _pa in ${_purpose_addenda_as[@]+"${_purpose_addenda_as[@]}"}; do
+        printf "  then this project's addendum: %s (it extends the purpose file, and wins where they differ)\n" "$_pa"
+      done
     fi
     if [[ -n "${_start_as:-}" ]]; then
       if ! _as_serve_path_ok "$_start_as"; then
@@ -9796,8 +9866,13 @@ _as_init() {
   # A purpose file is the model's until the user changes it: .asb/init.sums records the
   # hash of what --init last wrote at each path, and a file that still has it is replaced
   # by the model's current text; one changed since (or older than the record) is kept.
-  _init_purpose() { # SRC REL ROLE N HANDLE
-    local tmp sum cur rec sums="$proj/.asb/init.sums"
+  # A role's purpose file kept so, with no addendum (#353), gets the migration offer:
+  # the model's text in .asb/migrate/, and the steps said once the files are done.
+  # ADDENDA, for a role's purpose file: the names its addenda may have (role, instance).
+  local -a migrate=()
+  _init_purpose() { # SRC REL ROLE N HANDLE [ADDENDA]
+    local tmp sum cur rec sums="$proj/.asb/init.sums" mig a has=0
+    mig="$proj/.asb/migrate/$(basename -- "$2")"
     tmp="$(mktemp)" || return 1
     _init_render "" "$(sed -e "/^#@$envdrop /d" -e "s/^#@$envkeep //" -- "$1")" "$3" "$4" "$5" | sed 1d >"$tmp" || {
       rm -f -- "$tmp"
@@ -9814,8 +9889,17 @@ _as_init() {
         wrote=1
         _as_msg "updated $2 from model '$model'"
       else
+        for a in ${6:-}; do
+          [[ -f "$proj/$(dirname -- "$2")/$a.addendum.md" ]] && has=1
+        done
+        if [[ -n "${6:-}" ]] && ! ((has)); then
+          mkdir -p -- "$(dirname -- "$mig")" && cat -- "$tmp" >"$mig" || return 1
+          migrate+=("$2"$'\t'"$6")
+          _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (to receive it, move your part into an addendum: below)"
+        else
+          _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (remove the file and run --init again for the model's)"
+        fi
         rm -f -- "$tmp"
-        _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (remove the file and run --init again for the model's)"
         return 0
       fi
     else
@@ -9823,6 +9907,7 @@ _as_init() {
       _as_msg "wrote $2"
     fi
     rm -f -- "$tmp"
+    [[ -n "${6:-}" ]] && rm -f -- "$mig"
     {
       awk -v p="$2" '$2 != p' "$sums" 2>/dev/null
       printf '%s  %s\n' "$sum" "$2"
@@ -9833,7 +9918,7 @@ _as_init() {
     IFS=$'\t' read -r inst h rn n <<<"$a"
     f="$mdir/roles/$rn.md"
     [[ -f "$f" ]] || continue
-    _init_purpose "$f" ".asb/roles/$inst.md" "$inst" "$n" "$h" || return 1
+    _init_purpose "$f" ".asb/roles/$inst.md" "$inst" "$n" "$h" "$rn$([[ "$inst" == "$rn" ]] || printf ' %s' "$inst")" || return 1
   done
   # The per-turn prompts of --serve (#277), from the model's serve/<role>.md, kept as the
   # purpose files are.
@@ -9864,9 +9949,24 @@ _as_init() {
     rn="${BASH_REMATCH[1]}"
     gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*file[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
     [[ -n "$gl" && "$gl" != *'{role}'* && -f "$mdir/roles/$rn.md" ]] || continue
-    _init_purpose "$mdir/roles/$rn.md" "$gl" "$rn" "" "" || return 1
+    _init_purpose "$mdir/roles/$rn.md" "$gl" "$rn" "" "" "$rn" || return 1
     globs+=("$rn")
   done
+  # The migration offer (#353): the steps, once, for every purpose file kept above.
+  if ((${#migrate[@]})); then
+    local mrel mnames mlist inst
+    _as_msg "--init: to keep receiving model '$model''s text for a purpose file you changed, move this project's part of it into an addendum, which --init never writes: a role reads it after the purpose file, and it wins where they differ."
+    for a in "${migrate[@]}"; do
+      mrel="${a%%$'\t'*}" mnames="${a#*$'\t'}"
+      read -r rn inst <<<"$mnames"
+      mlist="$(dirname -- "$mrel")/$rn.addendum.md"
+      [[ -n "$inst" ]] && mlist+=" (every $rn) or $(dirname -- "$mrel")/$inst.addendum.md (this one)"
+      printf '  %s: the model'"'"'s current text is in .asb/migrate/%s; the addendum: %s\n' "$mrel" "$(basename -- "$mrel")" "$mlist" >&2
+    done
+    printf '  1. write in the addendum what this project adds or changes -- not a copy of the model'"'"'s text; diff -u .asb/migrate/NAME.md .asb/roles/NAME.md shows where your file differs, the model'"'"'s own changes included, so this is a step for you or an agent, not a patch\n' >&2
+    printf '  2. remove the purpose file and run this --init again: it takes the model'"'"'s text\n' >&2
+    printf '  3. %s --trust: the review shows the addendum, new, and the purpose file'"'"'s change\n' "$invoked" >&2
+  fi
   for a in ${clones[@]+"${clones[@]}"}; do
     inst="${a%%$'\t'*}"
     read -r tpath gdir br <<<"${a#*$'\t'}"
@@ -10057,7 +10157,9 @@ _as_init() {
     printf '\nNext, yours:\n'
     ((nmiss)) && printf '  - the --apply line%s above: what model '"'"'%s'"'"' gained that your existing sections lack\n' "$( ((nmiss == 1)) || printf s)" "$model"
     printf '  - read .agent-sandbox and the purpose files in .asb/roles/; add what this project needs\n'
-    printf '    (hosts to [allow], paths a role reads as read-only lines in its own [connect:...] section)\n'
+    printf '    (hosts to [allow], paths a role reads as read-only lines in its own [connect:...] section;\n'
+    printf '    what a role does in this project in .asb/roles/<role>.addendum.md, not in its purpose file,\n'
+    printf '    which --init keeps the model'"'"'s)\n'
     if [[ -z "$env" ]]; then
       printf '  - no --env: the [conda] sections are commented out; for an environment per clone,\n'
       printf '    run --init again with --env NAME, or: conda create --clone NAME -p <the prefix>\n'
@@ -11872,7 +11974,7 @@ agent_sandbox() (
     elif [[ -f "$_trust_rec" ]]; then
       # Approved once, changed since (by you, or by the agent): refuse rather
       # than ignore, or the defaults would apply in place of what you approved.
-      _as_msg ".agent-sandbox, or a purpose file it names, has changed since you approved it (by you, by the agent, or by a pull)." \
+      _as_msg ".agent-sandbox, or a purpose file or addendum it names, has changed since you approved it (by you, by the agent, or by a pull)." \
         "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: $invoked --trust"
       return 1
     else
@@ -12156,22 +12258,26 @@ agent_sandbox() (
   # text -- it was part of what was approved, and it goes into the agent's context --
   # and is read-only inside, as the dot-file is, unless a declaration says otherwise
   # (any mode but read-write).
-  local _purpose_file="" _purpose_as=""
+  # Its addenda (#353) the same way: approved with it, read with it, read-only inside.
+  local _purpose_file="" _purpose_as="" _pf
+  local -a _purpose_addenda=() _purpose_addenda_as=()
   _as_briefing_resolve "$_proj" "$_role"
   if [[ -n "$_purpose_file" ]]; then
     if [[ ! -f "$_purpose_file" ]]; then
       _as_msg "role '$_role' is briefed from '$_purpose_as' ([briefing]), which does not exist. Refusing rather than running the role without its purpose: create it, or drop the role's [briefing] section, then $invoked --trust."
       return 1
     fi
-    _as_dotfile_clean "$_purpose_file" || return 1
-    if [[ -n "${_connect_key[$_purpose_file]:-}" ]]; then
-      if [[ "${_connect_mode[$_purpose_file]}" == read-write ]]; then
-        _as_msg "connect (${_connect_where[$_purpose_file]}): '${_connect_key[$_purpose_file]} = read-write' is refused: a role's purpose file is part of its approved policy (#222). Any other mode keeps its writes inside."
-        return 1
+    for _pf in "$_purpose_file" ${_purpose_addenda[@]+"${_purpose_addenda[@]}"}; do
+      _as_dotfile_clean "$_pf" || return 1
+      if [[ -n "${_connect_key[$_pf]:-}" ]]; then
+        if [[ "${_connect_mode[$_pf]}" == read-write ]]; then
+          _as_msg "connect (${_connect_where[$_pf]}): '${_connect_key[$_pf]} = read-write' is refused: a role's purpose file and its addenda are part of its approved policy (#222, #353). Any other mode keeps its writes inside."
+          return 1
+        fi
+      elif ! _as_preset_is_native; then
+        _as_connect_parse "$_pf = read-only" "built in, #222" || return 1
       fi
-    elif ! _as_preset_is_native; then
-      _as_connect_parse "$_purpose_file = read-only" "built in, #222" || return 1
-    fi
+    done
   fi
   # The first turn (`[briefing] start`): which file, for --check; read at the launch.
   local _start_as="" _start_text=""

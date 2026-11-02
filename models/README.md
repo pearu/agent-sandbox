@@ -64,7 +64,11 @@ A model directory holds:
   Every path the written file declares under `.asb/` is created.
 - `roles/<role>.md` -- one purpose file per role, written per instance to
   `.asb/roles/<instance>.md` with the same placeholders; `[briefing:<role>]` injects it
-  at every start.
+  at every start, followed by the project's addenda, `.asb/roles/<role>.addendum.md` and
+  `.asb/roles/<instance>.addendum.md` (#353), which `--init` never writes: the model's
+  text is the role's general purpose and its relations to the other roles, the addendum
+  the project's, winning where they differ. A section a project may sensibly override
+  says so, and the file ends naming its addenda, for a role that reads it directly.
 - `coord/COORDINATION.md` -- the coord index; `{instances}` becomes a table row per
   instance.
 - `bin/` -- scripts the roles run, written to `.asb/bin/` executable, with the purpose
@@ -81,7 +85,9 @@ A model directory holds:
 Run again with more instances, `--init` adds what is missing and touches nothing else
 that exists, except a purpose file, a `bin/` script, a prompt or `.asb/tests` it wrote and nobody changed since:
 that one takes the model's current text (`.asb/init.sums` records what it wrote). The changed
-`.agent-sandbox` or purpose file then needs `asb --trust` again. A section that exists is
+`.agent-sandbox` or purpose file then needs `asb --trust` again. A purpose file kept
+because it changed, with no addendum, gets the offer to move the project's text into one
+(the model's current text in `.asb/migrate/`; docs/roles.md). A section that exists is
 never changed: a re-run reports the lines the model gained that such a section lacks (a
 key it does not set, a bare line not in it; commented-out lines count as there), with an
 `asb --apply` line per section to add them.

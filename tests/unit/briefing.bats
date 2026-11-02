@@ -313,7 +313,7 @@ CHECK
   printf 'Report, do not fix.\n' >"$PROJ/.asb/roles/reviewer-1.md"
   printf '[briefing:reviewer-*]\n' >"$PROJ/.agent-sandbox"
   approve
-  local said="this purpose file has changed since this role's previous launch; the text above is the current one, and it replaces whatever earlier turns of this conversation followed."
+  local said="this role's purpose has changed since its previous launch; the text above is the current one, and it replaces whatever earlier turns of this conversation followed."
   local rec
   # first launch: nothing to compare with, so nothing said; the hash is recorded
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
@@ -327,7 +327,7 @@ CHECK
   # unchanged: nothing said
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"its purpose file changed"* ]]
+  [[ "$output" != *"its purpose changed"* ]]
   run ! grep -qF "$said" "$OUT/hook-SessionStart.json"
   run ! grep -qF "$said" "$OUT/briefing.md"
   # changed (and approved again): said right after the purpose text, in both, and once on the host
@@ -335,7 +335,7 @@ CHECK
   approve
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"role 'reviewer-1': its purpose file changed since its previous launch; the session is told"* ]]
+  [[ "$output" == *"role 'reviewer-1': its purpose changed since its previous launch (its purpose file or an addendum); the session is told"* ]]
   grep -qF 'Report, and fix too.\n\nagent-sandbox: '"$said" "$OUT/hook-SessionStart.json"
   run ! grep -qF "$said" "$OUT/hook-SubagentStart.json"
   grep -qxF "agent-sandbox: $said" "$OUT/briefing.md"
@@ -356,8 +356,8 @@ CHECK
   [ "$status" -eq 0 ]
   compgen -G "$H/home/.local/state/agent-sandbox/claude/*/supervisor/record.tsv" # its store is there
   run ! compgen -G "$H/home/.local/state/agent-sandbox/claude/*/supervisor/purpose.sha256"
-  run ! grep -q 'purpose file has changed' "$OUT/hook-SessionStart.json"
-  run ! grep -q 'purpose file has changed' "$OUT/briefing.md"
+  run ! grep -q 'purpose has changed' "$OUT/hook-SessionStart.json"
+  run ! grep -q 'purpose has changed' "$OUT/briefing.md"
 }
 
 @test "a role with no role section to join asks for [allow]: a first [allow:ROLE] would refuse every other role name" {
@@ -405,7 +405,7 @@ CHECK
   printf 'Report, and fix too.\n' >"$PROJ/.asb/roles/reviewer.md"
   run_engine -- asb --role reviewer claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *"or a purpose file it names, has changed since you approved it"* ]]
+  [[ "$output" == *"or a purpose file or addendum it names, has changed since you approved it"* ]]
   run_review
   [[ "$output" == *"/.asb/roles/reviewer.md has changed since you approved it"*"+Report, and fix too."* ]]
   [[ "$output" != *".agent-sandbox has changed"* ]] # the dot-file itself did not
@@ -426,7 +426,7 @@ CHECK
   [[ "$output" == *"[briefing:r] mode"*"unsuffixed [briefing] only"* ]]
   run_engine -- asb --role r claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *"a role's purpose file is part of its approved policy"* ]]
+  [[ "$output" == *"a role's purpose file and its addenda are part of its approved policy"* ]]
 }
 
 @test "--check names the file a role is briefed from (#222)" {
@@ -437,6 +437,93 @@ CHECK
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role reviewer 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"briefed from: .asb/roles/reviewer.md"* ]]
+}
+
+# addenda -- a project with an Implementer's purpose file and both its addenda (#353).
+addenda() {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'MODEL TEXT.\n' >"$PROJ/.asb/roles/implementer-1.md"
+  printf 'ROLE ADDENDUM.\n' >"$PROJ/.asb/roles/implementer.addendum.md"
+  printf 'INSTANCE ADDENDUM.\n' >"$PROJ/.asb/roles/implementer-1.addendum.md"
+}
+
+@test "addenda: a role reads its purpose file, then the role's addendum, then the instance's, each after a line saying it wins; hook and briefing.md alike, bound read-only (#353)" {
+  addenda
+  printf '[briefing:implementer-*]\n[briefing:supervisor]\n' >"$PROJ/.agent-sandbox"
+  printf 'S.\n' >"$PROJ/.asb/roles/supervisor.md"
+  printf 'S ADDENDUM.\n' >"$PROJ/.asb/roles/supervisor.addendum.md"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role implementer-1 claude --version
+  [ "$status" -eq 0 ]
+  local m="agent-sandbox: this project's addendum, from"
+  local w="; it extends the text above and overrides it where they differ:"
+  grep -qF "MODEL TEXT.\n\n$m .asb/roles/implementer.addendum.md$w\n\nROLE ADDENDUM.\n\n$m .asb/roles/implementer-1.addendum.md$w\n\nINSTANCE ADDENDUM." "$OUT/hook-SessionStart.json"
+  [ "$(sed -n '/^## Your role: /,/^## /p' "$OUT/briefing.md" | grep -xF -e 'MODEL TEXT.' -e 'ROLE ADDENDUM.' -e 'INSTANCE ADDENDUM.' -e "$m .asb/roles/implementer.addendum.md$w" -e "$m .asb/roles/implementer-1.addendum.md$w" | paste -sd'|')" \
+    = "MODEL TEXT.|$m .asb/roles/implementer.addendum.md$w|ROLE ADDENDUM.|$m .asb/roles/implementer-1.addendum.md$w|INSTANCE ADDENDUM." ]
+  run ! grep -q 'ADDENDUM' "$OUT/hook-SubagentStart.json"
+  argv_has --ro-bind "$PROJ/.asb/roles/implementer.addendum.md" "$PROJ/.asb/roles/implementer.addendum.md"
+  argv_has --ro-bind "$PROJ/.asb/roles/implementer-1.addendum.md" "$PROJ/.asb/roles/implementer-1.addendum.md"
+  # another instance reads the role's addendum, not implementer-1's
+  printf 'MODEL TEXT 2.\n' >"$PROJ/.asb/roles/implementer-2.md"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role implementer-2 claude --version
+  [ "$status" -eq 0 ]
+  grep -qF 'ROLE ADDENDUM.' "$OUT/hook-SessionStart.json"
+  run ! grep -qF 'INSTANCE ADDENDUM.' "$OUT/hook-SessionStart.json"
+  # a single role's name is its role and its instance: its addendum is read once
+  run_engine BWRAP_COPY="$OUT" -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  [ "$(grep -o 'S ADDENDUM\.' "$OUT/hook-SessionStart.json" | wc -l)" -eq 1 ]
+}
+
+@test "an addendum is part of the approval: a new or changed one refuses the launch, the review shows it as an addendum, and the session is told its purpose changed (#353)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'MODEL TEXT.\n' >"$PROJ/.asb/roles/implementer-1.md"
+  printf '[briefing:implementer-*]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role implementer-1 claude --version
+  [ "$status" -eq 0 ]
+  # a new role addendum: [briefing:implementer-*] alone would not match implementer.addendum.md
+  printf 'ROLE ADDENDUM.\n' >"$PROJ/.asb/roles/implementer.addendum.md"
+  run_engine -- asb --role implementer-1 claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"or a purpose file or addendum it names, has changed since you approved it"* ]]
+  run_review
+  [[ "$output" == *"addendum "*"/.asb/roles/implementer.addendum.md, new to this approval"*"ROLE ADDENDUM."* ]]
+  [[ "$output" == *"purpose file "*"/.asb/roles/implementer-1.md: approved, unchanged."* ]]
+  approve
+  run_engine BWRAP_COPY="$OUT" -- asb --role implementer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'implementer-1': its purpose changed since its previous launch"* ]]
+  grep -qF "ROLE ADDENDUM.\n\nagent-sandbox: this role's purpose has changed since its previous launch" "$OUT/hook-SessionStart.json"
+  # changed: refused again, the review shows the difference
+  printf 'ROLE ADDENDUM, CHANGED.\n' >"$PROJ/.asb/roles/implementer.addendum.md"
+  run_engine -- asb --role implementer-1 claude --version
+  [ "$status" -ne 0 ]
+  run_review
+  [[ "$output" == *"addendum "*"/.asb/roles/implementer.addendum.md has changed since you approved it"*"+ROLE ADDENDUM, CHANGED."* ]]
+}
+
+@test "--check --role names the addenda the role reads, in order; the review says one no role reads (#353)" {
+  addenda
+  printf 'X.\n' >"$PROJ/.asb/roles/reviewer.addendum.md" # no [briefing] names a reviewer
+  printf '[briefing:implementer-*]\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role implementer-1 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"briefed from: .asb/roles/implementer-1.md"$'\n'"  then this project's addendum: .asb/roles/implementer.addendum.md (it extends the purpose file, and wins where they differ)"$'\n'"  then this project's addendum: .asb/roles/implementer-1.addendum.md "* ]]
+  [[ "$output" == *"addendum "*"/.asb/roles/reviewer.addendum.md: no role reads it -- no [briefing] section names a role or an instance reviewer"* ]]
+  [[ "$output" != *"implementer.addendum.md: no role reads it"* ]]
+  [[ "$output" != *"implementer-1.addendum.md: no role reads it"* ]]
+}
+
+@test "an addendum may not be declared read-write, as its purpose file may not (#353)" {
+  addenda
+  printf '[briefing:implementer-*]\n[connect]\n.asb/roles/implementer.addendum.md = read-write\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_engine -- asb --role implementer-1 claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a role's purpose file and its addenda are part of its approved policy"* ]]
 }
 
 @test "the proxy's refusals reach the session: an empty refused.log bound read-only, the section to ask for, a Bash hook on both outcomes" {

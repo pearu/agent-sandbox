@@ -83,3 +83,8 @@ policy. A patch or a commit message for the user goes into `.asb/scratch/`, and 
 message gives `git apply PATH` or `git commit -F PATH` with its host path from the
 briefing, the whole command on one line to copy: a multi-line block pasted from chat
 breaks.
+
+**This project's addendum.** `.asb/roles/gh-fix.addendum.md` (every gh-fix-* role) and
+`.asb/roles/<your role>.addendum.md` (you alone), where they exist, are this project's
+part of your purpose: they extend this file and override it where they differ. Your
+briefing carries them after this text; reading this file on its own, read them too.

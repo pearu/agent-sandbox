@@ -57,8 +57,8 @@ repository, else CONTRIBUTING.md, `.github/`, or the project's documentation -- 
 disclosure, a form, a restriction. If you find none, say so and ask whether to post,
 and with what disclosure.
 
-**A comment's shape**, unless the project's policy says otherwise -- where the two
-disagree, tell the user and let them decide:
+**A comment's shape**, unless the project's policy or this project's addendum says
+otherwise -- where the two disagree, tell the user and let them decide:
 1. a lead paragraph in the user's voice, first person, unwrapped -- say it is a stand-in
    for them to rewrite;
 2. all your text in one `>` quote block, wrapped at ~79 columns, short bold lead-ins per
@@ -133,3 +133,8 @@ orders.
    when told.
 
 You never push: git here fetches only, and SSH is closed to you.
+
+**This project's addendum.** `.asb/roles/gh-review.addendum.md` (every gh-review-* role)
+and `.asb/roles/<your role>.addendum.md` (you alone), where they exist, are this
+project's part of your purpose: they extend this file and override it where they differ.
+Your briefing carries them after this text; reading this file on its own, read them too.

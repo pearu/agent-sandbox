@@ -299,6 +299,14 @@ Sections:
   is kept in the role's state directory, `purpose.sha256`), the hook and "Your role"
   add one sentence: the text is the current one and replaces whatever earlier turns
   of a resumed conversation followed; `--delete` drops that record with the rest.
+  **Addenda** (#353): beside the purpose file, `<NAME>.addendum.md` (NAME from
+  `[briefing:NAME-*]` or `[briefing:NAME]`, for every instance) and
+  `<role>.addendum.md` (that instance) are read after it, in that order, each after
+  the line `agent-sandbox: this project's addendum, from PATH; it extends the text
+  above and overrides it where they differ:`. Everything above holds for them: they
+  are approved with the purpose file, read-only inside, in the hash, and `--check
+  --role` names them. The review says an addendum in those directories that no role
+  reads.
 
   ```ini
   [briefing:reviewer-*]                  # .asb/roles/reviewer-1.md, ...

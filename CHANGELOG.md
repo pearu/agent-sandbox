@@ -132,6 +132,20 @@ names are gone; there are no aliases for removed names before 1.0.
   whose PATH (`~` the account's home) is under the scratch has that directory made
   there, as the account, before the launch; said once, when it is made. Other `env`
   values, and a `TMPDIR` outside the scratch, are left as written.
+- **Role addenda** (#353): `.asb/roles/<role>.addendum.md` (every instance of a role,
+  `implementer.addendum.md` for `implementer-1` and `-2`) and
+  `.asb/roles/<instance>.addendum.md`, beside the purpose file, are the project's part of
+  a role's purpose, so the model's purpose file stays the model's and `--init` keeps
+  updating it. A role reads the purpose file, then the role's addendum, then the
+  instance's, each after a line saying it extends the text above and wins where they
+  differ: the `SessionStart` hook, `briefing.md` and the change notice alike. Addenda are
+  part of the approval (`--trust` shows each, new or as a diff; a changed one refuses the
+  launch until approved, and the session is told its purpose changed), read-only inside,
+  named by `--check --role R`; an addendum no role reads is said in the review. `--init`
+  never writes one; a purpose file it keeps because you changed it, with no addendum,
+  gets the offer: the model's current text in `.asb/migrate/`, the addendum's name, and
+  the steps (write your part, remove the file and run `--init` again, `--trust`). The
+  shipped purpose files name their addenda, for a role that reads the file itself.
 - **`docs/remote.md`** (#344): the guide to `--setup-remote`, for you and for a
   Supervisor role proposing your commands: the two forms, prerequisites, root, what a
   run does, updates, how roles reach the login by port form, the files it touches here
