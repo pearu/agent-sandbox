@@ -636,6 +636,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The policy's signatures and sync time are in the policy channel** (#355):
+  `policy-limits.json.signature.json`, `policy-limits.json.signature-iat.json`,
+  `remote-settings.json.signature.json`, `remote-settings.json.signature-iat.json` and
+  `remote-settings.json.synced-at`, which Claude Code rewrites together with the bodies at
+  a refetch, are seeded with them under `inherit` and the role's own under `isolated`
+  (starting empty; there is no template for a signature). Before, they were your native
+  files in every sandbox, so a role's bodies sat beside your signatures and its refetch
+  wrote its signatures into your base. `asb --check` no longer lists them as unclassified.
 - **install.sh builds the proxy's environment with its own micromamba**, from
   conda-forge, as it builds the tools env, and no longer with the host's conda or a venv
   from the host's python: a host needs neither conda nor `python3-venv`. Found at #335's

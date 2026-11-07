@@ -467,7 +467,7 @@ which roles of the project have a session to resume, with a one-line summary eac
   | agent-memory — `agent-memory/`, subagents' persistent memory | `own` | `own` | `read-write` | `read-write` | **the preset** (#74) |
   | logs — `responses.log`, `alerts.log`, written by your own hooks | `own` | `own` | `own` | `read-write` | **the preset** |
   | artefacts — `downloads/`, `uploads/`, `tasks/` | `own` | `own` | `read-write` | `read-write` | **the preset** (#52, #76, #78) |
-  | policy — `remote-settings.json`, `policy-limits.json` and its `.stamp.json` | `own` (from `{}`) | `seed-only` | `read-write` | `read-write` | **the preset** (#109): Claude Code refetches them inside and rewrites them, so `copy` would warn at every launch |
+  | policy — `remote-settings.json`, `policy-limits.json` and its `.stamp.json`, with their `.signature.json`, `.signature-iat.json` and `remote-settings.json.synced-at` | `own` (bodies from `{}`) | `seed-only` | `read-write` | `read-write` | **the preset** (#109): Claude Code refetches them inside and rewrites them all together, so `copy` would warn at every launch, and a role's bodies never sit beside your signatures (#355) |
   | changelog — `cache/changelog.md` | `own` | `copy` | `read-write` | `read-write` | **the preset** (#109): only your side fetches it, so a copy refreshes cleanly; a sandbox cannot plant an entry you would read as the vendor's |
 
   Read the last column as the list of things left to fold in. When a row moves to

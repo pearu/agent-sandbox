@@ -435,6 +435,10 @@ check_role() {
   : >"$c/unknown.json"
   : >"$c/cache/other"
   : >"$c/.hidden-state"
+  local f
+  for f in policy-limits.json.signature.json policy-limits.json.signature-iat.json \
+    remote-settings.json.signature.json remote-settings.json.signature-iat.json \
+    remote-settings.json.synced-at; do : >"$c/$f"; done
   printf '[claude]\nhide = newdir\n' >"$PROJ/.agent-sandbox"
   check
   [ "$status" -eq 0 ]
@@ -447,6 +451,8 @@ check_role() {
   [[ "$u" != *"debug/"* ]]        # hidden by the profile
   [[ "$u" != *"settings.json"* ]] # a channel
   [[ "$u" != *"newdir"* ]]        # hidden by the project's [claude] hide
+  [[ "$u" != *"signature"* ]]     # the policy channel's, with the bodies (#355)
+  [[ "$u" != *"synced-at"* ]]
 }
 
 @test "[ssh] under [net] git = refuse, fetch or retrieve-only: the review, --check's git line and SSH row say a push over SSH to the host is possible (#293)" {
