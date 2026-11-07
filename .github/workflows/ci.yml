@@ -207,6 +207,30 @@ jobs:
         if: always()
         run: systemctl --user stop agent-sandbox-mitmproxy.service || true
 
+  # The gate: the ruleset on main requires this check alone, so its name must not change.
+  # Every job that must pass goes in its `needs` (tests/unit/ci-workflow.bats checks that
+  # none is missing); coverage is informational and a job with `continue-on-error` is
+  # allowed to fail, so neither is listed. `always()` makes it run
+  # when a dependency failed -- otherwise it is skipped, and a skipped required check
+  # counts as passing -- and it fails unless every dependency's result is `success`.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [check, unit, integration, e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every required job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          bad=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          if [[ -n "$bad" ]]; then
+            printf 'not success:\n%s\n' "$bad" >&2
+            exit 1
+          fi
+          jq -r 'keys | join(", ") | "all success: " + .' <<<"$NEEDS"
+
   # Line coverage: kcov (engine) + coverage.py (addon, and the components join.py and
   # connect-sync.py), uploaded to Codecov for the README badge. The engine's stages run as
   # shards (COVERAGE_SHARD, tests/shard.sh); each merges its own kcov runs and passes on

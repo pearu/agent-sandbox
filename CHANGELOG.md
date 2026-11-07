@@ -816,6 +816,13 @@ names are gone; there are no aliases for removed names before 1.0.
   writes the common block's `[net:supervisor]`, the inboxes and the Gate's sections;
   the Supervisor's inbox directory is then
   `asb --apply '[connect:supervisor]' '.asb/coord/to/ = read-write'`.
+- **CI has one gate job, `ci-ok`**, which needs every job that must pass (`check`, the
+  unit shards, `integration`, `e2e`; not coverage, and not the allowed-to-fail
+  `e2e-real-systemd` experiment) and fails unless each of them
+  succeeded, a failed, cancelled or skipped one included. The ruleset on `main` is to
+  require that one check, so renaming a job or adding a matrix entry no longer leaves a
+  PR waiting for a check that never runs. A new job goes in `ci-ok`'s `needs`;
+  `tests/unit/ci-workflow.bats` fails when one is missing. Coverage stays informational.
 
 ### Fixed
 
