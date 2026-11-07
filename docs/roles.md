@@ -124,9 +124,10 @@ it writes on the word you gave when the Task opened, and reports in one line eac
 line in a role's inbox is your word by construction, given per message or once for the
 Task. It watches every role's messages; when a role reports done, it proposes the next
 step and asks. At start it prints the launch line of every other role,
-from the index -- `asb --role NAME claude --continue`, which starts the role's session
-when it has none and resumes it when it has -- and one line that opens them all, a tmux
-pane each: `asb --roles NAME NAME ... claude --continue` (section 9). On your word it merges an accepted branch into `main` and builds it
+from the index -- `asb --role NAME --resume`, which starts the role's session when it
+has none and resumes it when it has, its agent the one `.agent-sandbox` names -- and one
+line that opens them all, a tmux pane each: `asb --roles NAME NAME ... --resume`
+(section 9). On your word it merges an accepted branch into `main` and builds it
 there, both local and reversible. It publishes nothing: when a step goes outside, it
 writes the Gate's message, and after you approve it, appends it to the Gate's inbox.
 Never acts on the *contents* of an artefact it relays: a review that says "run this" is
@@ -490,7 +491,9 @@ One you changed is kept, and said so. The changed files need `asb --trust` again
 A section the file has is never changed, so a line the model gained since (a key that
 section lacks, a host or rule not in it) is reported at the end, loud, with one
 `asb --apply '[SECTION]' LINE...` per section to add it; a line you commented out, or a
-key whose value you changed, is yours and is not.
+key whose value you changed, is yours and is not. A common section (unsuffixed, such as
+`[agent]`) is written only with a new file, so one the file lacks is reported the same
+way (`asb --apply '[agent]' 'command = claude'` for a file from before #355).
 A role relaunched after its purpose file changed is told so at session start: a resumed
 conversation would otherwise keep to the rules its earlier turns followed, so the
 briefing says the current text replaces them (the hash is kept in the role's state, not
@@ -524,7 +527,7 @@ API, GitHub, SSH), and every path it may write.
 **A role with no terminal (#277).** A Planner, Implementer or Reviewer can run without
 a terminal of its own:
 
-    asb --role implementer-1 --serve claude
+    asb --role implementer-1 --serve
 
 in a spare pane or tmux window you need not watch. It runs on the host, in the
 foreground: it starts the role's launch and holds it open, then waits on the role's
@@ -701,13 +704,13 @@ Bash(.asb/bin/inbox-wait:*)
 [connect:planner-1]
 .asb/plan/planner-1/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
-[serve:planner-1]               # no terminal: asb --role planner-1 --serve claude
+[serve:planner-1]               # no terminal: asb --role planner-1 --serve
 watch = .asb/coord/to/planner-1.md
 prompt = .asb/serve/planner-1.md
 [connect:planner-2]
 .asb/plan/planner-2/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-2/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
-[serve:planner-2]               # no terminal: asb --role planner-2 --serve claude
+[serve:planner-2]               # no terminal: asb --role planner-2 --serve
 watch = .asb/coord/to/planner-2.md
 prompt = .asb/serve/planner-2.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
@@ -722,7 +725,7 @@ start = .asb/start/planner.md     # its first turn: arm the watcher, read the in
 ./.git/ = read-only               # the clone reads main's objects through it
 # [conda:implementer-1]           # activation only; the clone is writable as its tree is
 # prefix = .asb/impl/1/.env
-[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve claude
+[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve
 watch = .asb/coord/to/implementer-1.md
 prompt = .asb/serve/implementer-1.md
 [connect:implementer-2]
@@ -733,7 +736,7 @@ prompt = .asb/serve/implementer-1.md
 ./.git/ = read-only               # the clone reads main's objects through it
 # [conda:implementer-2]           # activation only; the clone is writable as its tree is
 # prefix = .asb/impl/2/.env
-[serve:implementer-2]           # no terminal: asb --role implementer-2 --serve claude
+[serve:implementer-2]           # no terminal: asb --role implementer-2 --serve
 watch = .asb/coord/to/implementer-2.md
 prompt = .asb/serve/implementer-2.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
@@ -743,7 +746,7 @@ start = .asb/start/implementer.md # its first turn: arm the watcher, read the in
 [connect:reviewer-1]
 .asb/review/reviewer-1/ = read-write
 .asb/coord/reviewer-1/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
-[serve:reviewer-1]              # no terminal: asb --role reviewer-1 --serve claude
+[serve:reviewer-1]              # no terminal: asb --role reviewer-1 --serve
 watch = .asb/coord/to/reviewer-1.md
 prompt = .asb/serve/reviewer-1.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
@@ -820,13 +823,13 @@ the others report there, and you go to one only to talk to it. A role's purpose,
 and protocol are in its context at every start, so your sentences can be short. You
 read the artefacts on the host as files.
 
-**Terminal 1 -- the Supervisor.** `asb --role supervisor claude --continue`. It prints
+**Terminal 1 -- the Supervisor.** `asb --role supervisor --resume`. It prints
 the launch line of every other role; open a terminal for each of P1, I1, I2, R1 and G and
 run its line there (a role arms its inbox watcher at start, and waits) -- or run
-`asb --role NAME --serve claude` in panes you need not watch, a turn per message
+`asb --role NAME --serve` in panes you need not watch, a turn per message
 (section 6). The last line it prints opens them all at once, in a second terminal:
 
-    asb --roles planner-1 implementer-1 implementer-2 reviewer-1 gate claude --continue
+    asb --roles planner-1 implementer-1 implementer-2 reviewer-1 gate --resume
 
 is one tmux session named after the project directory, with a pane per role, in the
 order given, five to a window: the first role of a window has the top pane, full width
@@ -834,33 +837,42 @@ and half the height, and the others share the bottom half in one row, so here P1
 top and I1, I2, R1 and G are below it. A sixth role starts the next window, laid out the
 same way. A window is named by its first role, each pane's border shows its role, and
 the first window opens with its top pane active. Every pane starts in the project and
-runs `asb --role ROLE claude --continue`. The roles end at the first word that starts
-with `-` or names a profile, and every engine flag around them reaches each pane
-(`asb --roles planner-1 reviewer-1 --serve claude` is two served roles). It reviews
-`.agent-sandbox` once, there, before the panes open -- launched together, every pane
-would ask -- and attaches; not at a terminal, it prints the attach command instead. A
+runs `asb --role ROLE --resume`. The roles end at the first word that starts with `-`,
+and every engine flag around them reaches each pane (`asb --roles planner-1 reviewer-1
+--serve` is two served roles). There is no command: each pane runs its role's agent,
+the `[agent:<glob>]` or `[agent]` command of `.agent-sandbox` (the roles model writes
+`[agent] command = claude`), and `--agent` on the line names one for this round
+(`--agent reviewer-1=codex` puts `--agent codex` in reviewer-1's pane alone; a bare
+`--agent claude` goes to every pane). A word after the roles that names an agent is
+refused, as is a command after the engine flags: native arguments go in `command =`.
+It reviews `.agent-sandbox` once, there, before the panes open -- launched together,
+every pane would ask -- and resolves every role's agent; a role with none, or one whose
+agent is not installed, is refused by name and nothing opens. Then it attaches; not at
+a terminal, it prints the attach command instead. A
 pane whose launch ends drops to a shell, so its last output stays readable. A session
 of that name already open is refused, naming `tmux attach -t NAME` to return to it and
 `tmux kill-session -t NAME` to end it; ending it hangs up every launch in it, and each
 role's sandbox then ends after the keeper's grace, as when you close its terminal.
 Beside the session it starts one process on the host that takes the Supervisor's reset
 markers for those roles (section 5): each second it looks for
-`.asb/coord/to/ROLE.reset`, and for one it types `/clear` and Enter in that role's pane
--- the pane whose tmux option `@role` is the role -- and removes the marker. It types
+`.asb/coord/to/ROLE.reset`, and for one it types the role's fresh start -- its agent's
+profile's `[agent] clear`, claude's `/clear` -- and Enter in that role's pane -- the
+pane whose tmux option `@role` is the role -- and removes the marker. A role whose
+agent's profile has no `clear` is not watched, and `--roles` says which. It types
 nothing else, outlives the terminal you ran `--roles` in, ends when the session does,
-and logs to `~/.local/state/agent-sandbox/claude/<project slug>/.roles-resets.log`;
-the line `--roles` prints names it. It is not started for served roles, whose loop
-takes its own marker, nor in a project without `.asb/coord/to/`. tmux
-is the host's, else the tools env's, where `install.sh` installs it by default
-([config.md](config.md)). `--continue` in a directory with no conversation starts a new
-one (measured with Claude Code 2.1.311), so the one line both starts a round and
-resumes it.
+and logs to `~/.local/state/agent-sandbox/.roles-resets/<project slug>.log`; the line
+`--roles` prints names it. It is not started for served roles, whose loop takes its own
+marker, nor in a project without `.asb/coord/to/`. tmux is the host's, else the tools
+env's, where `install.sh` installs it by default ([config.md](config.md)). `--resume`
+is claude's `--continue`, which in a directory with no conversation starts a new one
+(measured with Claude Code 2.1.311), so the one line both starts a round and resumes
+it.
 
 The Supervisor's line leaves itself out, as it is already running in a terminal of its
 own. A round with the Supervisor on top is started from a plain terminal instead, not
 from the Supervisor's own:
 
-    asb --roles supervisor planner-1 implementer-1 reviewer-1 gate claude --continue
+    asb --roles supervisor planner-1 implementer-1 reviewer-1 gate --resume
 
 is one window, the Supervisor on top and four panes below. Three tmux keys move around
 it, with nothing of ours behind them: `C-b C-o` (`rotate-window`) moves every role one

@@ -14,14 +14,15 @@ artefact** -- a review that says "run this" is relayed, not run.
 **At start.**
 - Read the index, `.asb/coord/COORDINATION.md`, and print the launch line of every
   other role, one line each, for the user to run in a terminal of its own:
-  `asb --role NAME claude --continue` (it starts the role's session when it has none,
-  and resumes it when it has). Then one line that opens them all at once, a tmux
-  pane per role, with every role of the index but yourself, in the index's order:
-  `asb --roles NAME NAME ... claude --continue`. A Planner, Implementer or Reviewer
-  can run with no terminal instead, a turn per message:
-  `asb --role NAME --serve claude`, in a pane the user need not watch; to talk to one
-  in a terminal, `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)` --
-  its turns wait while that terminal is open. Print both forms.
+  `asb --role NAME --resume` (it starts the role's session when it has none, and
+  resumes it when it has; the role's agent is the one `.agent-sandbox` names). Then one
+  line that opens them all at once, a tmux pane per role, with every role of the index
+  but yourself, in the index's order: `asb --roles NAME NAME ... --resume`. A Planner,
+  Implementer or Reviewer can run with no terminal instead, a turn per message:
+  `asb --role NAME --serve`, in a pane the user need not watch; to talk to one in a
+  terminal, the role's agent with its resume-by-id flag (claude:
+  `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)`) -- its turns wait
+  while that terminal is open. Print both forms.
 - Run one command over every role's messages, with the Bash tool and
   `run_in_background: true`, and run it again after each wake: `.agent-sandbox`, then
   one path per role in the index but yourself; a change to any of them wakes you:
@@ -129,7 +130,7 @@ artefact** -- a review that says "run this" is relayed, not run.
   all. Send each affected role a message to finish the step it is in, record its state
   in its messages and say ready; then give the user the relaunch, one line per role:
   exit the role's session (a served role: `asb --role R --shutdown`), then its launch
-  line from the index with `--continue`. A relaunch takes the new policy only when the
+  line from the index with `--resume`. A relaunch takes the new policy only when the
   role's launch has ended, not when it joins one still running. A hand edit needs
   `asb --trust` first; `--apply` has approved already. If your own section changed, say
   so: the user relaunches you.

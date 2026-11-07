@@ -878,15 +878,22 @@ shared_env() {
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
-@test "the roles model: the Supervisor prints every launch line with claude --continue, and one asb --roles line with every other role (#317)" {
+@test "the roles model: the Supervisor prints every launch line with --resume and no command, and one asb --roles line with every other role; the file names every role's agent (#317, #355)" {
   init -- roles planner=2 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local flat
   flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/supervisor.md" | tr -s ' ')"
-  [[ "$flat" == *'one line each, for the user to run in a terminal of its own: `asb --role NAME claude --continue` (it starts the role'"'"'s session when it has none, and resumes it when it has).'* ]]
-  [[ "$flat" == *'one line that opens them all at once, a tmux pane per role, with every role of the index but yourself, in the index'"'"'s order: `asb --roles NAME NAME ... claude --continue`.'* ]]
-  # no terminal line without --continue is left
-  run ! grep -qF '`asb --role NAME claude`' "$PROJ/.asb/roles/supervisor.md"
+  [[ "$flat" == *'one line each, for the user to run in a terminal of its own: `asb --role NAME --resume` (it starts the role'"'"'s session when it has none, and resumes it when it has; the role'"'"'s agent is the one `.agent-sandbox` names).'* ]]
+  [[ "$flat" == *'one line that opens them all at once, a tmux pane per role, with every role of the index but yourself, in the index'"'"'s order: `asb --roles NAME NAME ... --resume`.'* ]]
+  [[ "$flat" == *'then its launch line from the index with `--resume`.'* ]]
+  # no launch line naming the agent or its own resume flag is left
+  run ! grep -qE '`asb --role NAME claude`|claude --continue|with `--continue`' "$PROJ/.asb/roles/supervisor.md"
+  # what those lines resolve: an unsuffixed [agent], written once, not per role pattern
+  [ "$(sed -n '/^\[agent\]$/,/^\[/p' "$PROJ/.agent-sandbox" | grep -cx 'command = claude')" -eq 1 ]
+  run ! grep -q '^\[agent:' "$PROJ/.agent-sandbox"
+  # and the review reads it as every role's agent
+  run_review
+  [[ "$output" == *"[agent] command = claude: the agent of every role is claude (the profile claude, installed here), with no fixed arguments"* ]]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
 }
 
@@ -918,7 +925,7 @@ shared_env() {
     cmp -s "$PROJ/.asb/serve/$r.md" "$m/serve/${r%-*}.md"
     grep -qF 'Under `--serve` (no terminal) each message is a turn of your own' "$PROJ/.asb/roles/$r.md"
   done
-  grep -qxF '[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve claude' "$df"
+  grep -qxF '[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve' "$df"
   for r in supervisor setup; do
     run ! grep -qF "[serve:$r]" "$df"
     [ ! -e "$PROJ/.asb/serve/$r.md" ]
@@ -927,7 +934,10 @@ shared_env() {
   [ "$(section '[serve:gate]' "$df")" = 'watch = .asb/coord/to/gate.md' ]
   [ ! -e "$PROJ/.asb/serve/gate.md" ]
   # the Supervisor names both forms, and the terminal on a served session
-  grep -qF '`asb --role NAME --serve claude`' "$PROJ/.asb/roles/supervisor.md"
+  # (no command: the role's agent from [agent], as integration/serve.bats runs it)
+  grep -qF '`asb --role NAME --serve`,' "$PROJ/.asb/roles/supervisor.md"
+  run ! grep -qF -- '--serve claude' "$PROJ/.asb/roles/supervisor.md"
+  grep -qF "the role's agent with its resume-by-id flag (claude:" "$PROJ/.asb/roles/supervisor.md"
   grep -qF '`asb --role NAME claude --resume $(cat .asb/coord/NAME/session)`' "$PROJ/.asb/roles/supervisor.md"
   # the review says what each loop waits on and reads; --check names the role's
   approve
@@ -994,7 +1004,7 @@ shared_env() {
   grep -qxF -- "- Watch \`.agent-sandbox\` too: add it to your watcher's files, and keep a copy in your" "$sup"
   # the bullet closes **Sending a message.**, before the Gate's turn
   [ "$(grep -B2 -xF "**The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the" "$sup" | head -1)" = "  so: the user relaunches you." ]
-  grep -qF 'line from the index with `--continue`' "$sup"
+  grep -qF 'line from the index with `--resume`' "$sup"
   grep -qF "not when it joins one still running" "$sup"
   grep -qF '(a served role: `asb --role R --shutdown`)' "$sup"
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 10 ]
@@ -1119,13 +1129,34 @@ shared_env() {
   init -- roles
   [ "$status" -eq 0 ]
   cmp "$H/before" "$PROJ/.agent-sandbox" # an existing section is never changed
-  [[ "$output" == *"agent-sandbox: --init: 2 lines model 'roles' has now that your .agent-sandbox lacks -- --init never changes a section that exists; add them with:"* ]]
+  [[ "$output" == *"agent-sandbox: --init: 2 lines model 'roles' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add them with:"* ]]
   [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 2 ]
   grep -qxF "    agent-sandbox --apply '[permissions:gate]' 'Bash(gh pr comment:*)'" <<<"$output"
   grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'start = .asb/start/gate.md'" <<<"$output"
   # before the summary, which points at it
-  [ "$(grep -n 'lacks -- --init never' <<<"$output" | cut -d: -f1)" -lt "$(grep -n '^Next, yours:' <<<"$output" | cut -d: -f1)" ]
+  [ "$(grep -n 'lacks -- --init does not write' <<<"$output" | cut -d: -f1)" -lt "$(grep -n '^Next, yours:' <<<"$output" | cut -d: -f1)" ]
   [[ "$output" == *"  - the --apply lines above: what model 'roles' gained that your existing sections lack"* ]]
+}
+
+@test "run again: a common section the file lacks is said with its --apply line, not written; one with another value is the user's (#355)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"your .agent-sandbox lacks"* ]]
+  # a project an earlier --init wrote: no [agent] block
+  sed -i '/^\[agent\]$/{N;d}' "$PROJ/.agent-sandbox"
+  run ! grep -q '^\[agent\]' "$PROJ/.agent-sandbox"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles
+  [ "$status" -eq 0 ]
+  cmp "$H/before" "$PROJ/.agent-sandbox" # said, never written
+  [[ "$output" == *"agent-sandbox: --init: 1 line model 'roles' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add it with:"* ]]
+  [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 1 ]
+  grep -qxF "    agent-sandbox --apply '[agent]' 'command = claude'" <<<"$output"
+  # the section with another agent: the key is there, so nothing is said
+  printf '[agent]\ncommand = codex --model x\n' >>"$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"your .agent-sandbox lacks"* && "$output" != *"--apply line"* ]]
 }
 
 @test "run again: a line the file has commented out, or a key with another value, is the user's -- nothing said" {
@@ -1148,12 +1179,18 @@ shared_env() {
   [ "$status" -eq 0 ]
   init -- roles
   [ "$status" -eq 0 ]
-  [[ "$output" != *"your .agent-sandbox lacks"* ]] # appended to a file: its own sections are new
+  # appended to a file: its own role sections are new; its common [agent] is written only
+  # with a new file, so the line it lacks is said (#355)
+  [[ "$output" == *"agent-sandbox: --init: 1 line model 'roles' has now that your .agent-sandbox lacks"* ]]
+  [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 1 ]
+  grep -qxF "    agent-sandbox --apply '[agent]' 'command = claude'" <<<"$output"
+  run ! grep -qx '\[agent\]' "$PROJ/.agent-sandbox"
   grep -qxF 'file = .asb/roles/gh-fix.md' "$PROJ/.agent-sandbox"
   sed -i -e '/^file = .asb\/roles\/gh-fix.md$/d' -e '/^\[briefing:gate\]/,/^\[/{/^start = /d}' "$PROJ/.agent-sandbox"
+  printf '[agent]\ncommand = claude\n' >>"$PROJ/.agent-sandbox"
   init -- roles
   [ "$status" -eq 0 ]
-  [[ "$output" == *"agent-sandbox: --init: 1 line model 'roles' has now that your .agent-sandbox lacks -- --init never changes a section that exists; add it with:"* ]]
+  [[ "$output" == *"agent-sandbox: --init: 1 line model 'roles' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add it with:"* ]]
   [ "$(grep -c '^    agent-sandbox --apply ' <<<"$output")" -eq 1 ]
   grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'start = .asb/start/gate.md'" <<<"$output"
   [[ "$output" == *"  - the --apply line above: what model 'roles' gained"* ]]

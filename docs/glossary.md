@@ -301,12 +301,15 @@ the line the session keeps itself, else the conversation's title, else its first
 and `--summarize` (for a stopped role, one headless turn in its sandbox writes that line
 and a longer description, then its own transcript is deleted).
 
-**Several roles at once.** *shipped* (#317, #320): `--roles ROLE... CMD` opens one tmux
-session, named after the project directory, with a pane per role, five to a window, the
-first role of each on top and the others in a row below, each running `--role ROLE` with
-the rest of the command line; the dot-file is reviewed once, before the panes open. It
-only builds the tmux command: every pane is a plain launch. Beside the session one host
-process takes the Supervisor's reset markers, typing `/clear` in that role's pane (#329).
+**Several roles at once.** *shipped* (#317, #320, #355): `--roles ROLE... [ENGINE FLAGS]`
+opens one tmux session, named after the project directory, with a pane per role, five to
+a window, the first role of each on top and the others in a row below, each running
+`--role ROLE` with the line's engine words and its role's agent (`[agent:<glob>]` or
+`[agent]` command, or `--agent` on the line); it takes no command. The dot-file is
+reviewed once and every role's agent resolved before the panes open. It only builds the
+tmux command: every pane is a plain launch. Beside the session one host process takes
+the Supervisor's reset markers, typing the role's fresh start (its agent's profile's
+`[agent] clear`; claude: `/clear`) in that role's pane (#329).
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*
