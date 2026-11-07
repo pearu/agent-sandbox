@@ -7,7 +7,9 @@
 #
 # What the profile states as data is in its dot-file beside this script,
 # profiles/claude/agent-sandbox (#181): the verbs, the paths blanked every launch,
-# the forwarded variables and the hosts it must reach. This script keeps the rest.
+# the forwarded variables and the hosts it must reach, and its resume verb
+# (`[agent] resume`, profile_resume: the words `asb --resume` puts after the agent's
+# own arguments, before a `[briefing] start` text; #355). This script keeps the rest.
 #
 # ============================================================================
 # THE PROFILE CONTRACT

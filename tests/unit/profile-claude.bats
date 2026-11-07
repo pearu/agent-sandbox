@@ -254,6 +254,30 @@ CHECK
   check_state_settings "$OUT/settings.json" planner-1 off
 }
 
+@test "[agent] resume: the profile's resume verb is --continue, read by a launch and emitted by _as_profile_facts (#355)" {
+  grep -qxF 'resume = --continue' "$REPO_ROOT/profiles/claude/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$REPO_ROOT/profiles/claude/profile.sh" >"$H/facts"
+  )
+  grep -qxF "$(printf 'resume\tclaude\t--continue')" "$H/facts"
+  # a profile without the key emits no resume line
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf '[agent]\nclear = /clear\n' >"$H/profiles2/other/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$H/profiles2/other/profile.sh" >"$H/facts2"
+  )
+  run ! grep -q '^resume' "$H/facts2"
+  # what a launch runs: the agent's own arguments, then the profile's resume words
+  run_engine -- asb --resume claude -x
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-x --continue" ]
+}
+
 @test "profile_start_args: the first turn is the prompt after the agent's own arguments, behind a --; declined where the session is not an interactive start" {
   local -a profile_start_argv=()
   profile_start_args 'Arm your watcher.'

@@ -499,3 +499,51 @@ STUB
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --preset none claude -p hi
   [[ "$output" == *"preset none: running claude with no sandbox"* ]]
 }
+
+@test "--resume: the profile's resume words after the agent's own arguments; after the command it is the agent's (#355)" {
+  run_engine -- asb --role r --resume claude --model x
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--model x --continue" ]
+  run_engine -- asb --resume claude
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--continue" ]
+  # after the command, --resume is Claude Code's own, and the engine adds nothing
+  run_engine -- asb claude --resume 01234567-89ab-cdef-0123-456789abcdef
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--resume 01234567-89ab-cdef-0123-456789abcdef" ]
+  # a command is still the line's to name
+  run_engine -- asb --role r --resume
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no command"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "--resume: refused with --serve, --exec, a verb and a review; under a profile with no resume words, naming [agent] resume (#355)" {
+  local f
+  for f in --serve --summarize --status --shutdown --delete --check --trust; do
+    run_engine -- asb --role r --resume "$f" claude
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--resume resumes the agent's last session at a launch; it is not combined with $f"* ]]
+    [ ! -s "$H/argv" ]
+  done
+  run_engine -- asb --resume --profile claude --exec true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not combined with --exec"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine -- asb --resume claude agents
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not combined with the verb 'agents'"* ]]
+  [ ! -s "$H/argv" ]
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf '[agent]\nclear = /clear\n' >"$H/profiles2/other/agent-sandbox"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --resume --profile other true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--resume: profile 'other' says nothing of how to resume a session ([agent] resume)"* ]]
+  [ ! -s "$H/argv" ]
+  # the same profile with the key: its words, after the agent's own
+  printf '[agent]\nresume = --last 1\n' >"$H/profiles2/other/agent-sandbox"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --resume --profile other true x
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "x --last 1" ]
+}
