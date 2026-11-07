@@ -70,7 +70,7 @@ No connection for a channel means `own`.
 | agent-memory | subagents' persistent memory, per subagent | `agent-memory/` (#74) |
 | logs | what the user's own hooks write | `responses.log`, `alerts.log` |
 | artefacts | downloads, uploads, task lists | `downloads/`, `uploads/`, `tasks/` |
-| policy | the caches of server-managed settings and policy flags, with the stamp | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109) |
+| policy | the caches of server-managed settings and policy flags, with the stamp, the signatures and the sync time | `remote-settings.json`, `policy-limits.json`, `policy-limits.json.stamp.json` (#109); each body's `.signature.json` and `.signature-iat.json`, `remote-settings.json.synced-at` (#355) |
 | changelog | the cached vendor changelog | `cache/changelog.md` (#109) |
 | gh | your gh login, where `gh auth login` keeps it | `~/.config/gh/` (#88) |
 

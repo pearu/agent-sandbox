@@ -255,12 +255,23 @@ reach = searched
 # settings and policy flags, and of the vendor changelog -- each was a cross-project
 # write channel into what the user and the agent take as Anthropic's. The stamp moves
 # with its policy file: a private cache beside a shared stamp would split the pair. Each
-# starts as {} under `own` (measured: with no policy files at all a session runs
+# body starts as {} under `own` (measured: with no policy files at all a session runs
 # normally and fetches fresh ones; a 0-byte JSON file is not that).
 [channel:policy]
 {base}/remote-settings.json = start:{profile}/policy.json
 {base}/policy-limits.json = start:{profile}/policy.json
 {base}/policy-limits.json.stamp.json = start:{profile}/policy.json
+# The signatures and the sync time travel with the bodies: Claude Code 2.1.319 rewrites
+# them with the bodies at a refetch (measured 2026-11-07: the signatures, the stamp and
+# the sync time share one mtime; the issued-at files move less often), so a role's copy
+# of the policy is one consistent set, never its bodies with your signatures (#355). No
+# template: a signature or a timestamp has no `{}`, and the role's own starts empty
+# (measured 2026-11-07: a fresh isolated role ran its turn and refetched the set).
+{base}/policy-limits.json.signature.json
+{base}/policy-limits.json.signature-iat.json
+{base}/remote-settings.json.signature.json
+{base}/remote-settings.json.signature-iat.json
+{base}/remote-settings.json.synced-at
 
 [channel:changelog]
 {base}/cache/changelog.md

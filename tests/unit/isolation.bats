@@ -119,17 +119,30 @@ chan_store() { # CHANNEL MODE PATH -> the role's store for that channel path
   printf '%s' "$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/default/$1/$2/${s#_}"
 }
 
+# the policy's signatures and sync time, rewritten with the bodies at a refetch (#355)
+POLICY_SIGS=(policy-limits.json.signature.json policy-limits.json.signature-iat.json
+  remote-settings.json.signature.json remote-settings.json.signature-iat.json
+  remote-settings.json.synced-at)
+
 @test "policy is seeded once under inherit, and the changelog is a copy: another project's write reaches neither" {
   mkdir -p "$C/cache"
   printf '{"restrictions":{}}\n' >"$C/policy-limits.json"
   printf '{"sha256":"x"}\n' >"$C/policy-limits.json.stamp.json"
   printf '{}\n' >"$C/remote-settings.json"
   printf '## 2.1.285\n' >"$C/cache/changelog.md"
+  local f
+  for f in "${POLICY_SIGS[@]}"; do printf 'SIG %s\n' "$f" >"$C/$f"; done
   run_engine AGENT_SANDBOX_PRESET=inherit -- asb claude --version
   [ "$status" -eq 0 ]
-  local f
-  for f in remote-settings.json policy-limits.json policy-limits.json.stamp.json; do
+  for f in remote-settings.json policy-limits.json policy-limits.json.stamp.json "${POLICY_SIGS[@]}"; do
     argv_has --bind "$(chan_store policy seed-only "$C/$f")" "$C/$f"
+    run ! argv_has --bind "$C/$f" "$C/$f" # never yours, bound directly
+  done
+  # the signatures seeded with the bodies, and what a role rewrites stays its own
+  for f in "${POLICY_SIGS[@]}"; do
+    [ "$(cat "$(chan_store policy seed-only "$C/$f")")" = "SIG $f" ]
+    printf 'OTHER ORG\n' >"$(chan_store policy seed-only "$C/$f")"
+    [ "$(cat "$C/$f")" = "SIG $f" ]
   done
   argv_has --bind "$(chan_store changelog copy "$C/cache/changelog.md")" "$C/cache/changelog.md"
   [ "$(cat "$(chan_store policy seed-only "$C/policy-limits.json")")" = '{"restrictions":{}}' ] # seeded
@@ -145,11 +158,20 @@ chan_store() { # CHANNEL MODE PATH -> the role's store for that channel path
   [ "$status" -eq 0 ]
   argv_has --bind "$(chan_store policy own "$C/policy-limits.json")" "$C/policy-limits.json"
   [ "$(cat "$(chan_store policy own "$C/policy-limits.json")")" = '{}' ]
+  local f
+  for f in "${POLICY_SIGS[@]}"; do
+    argv_has --bind "$(chan_store policy own "$C/$f")" "$C/$f"
+    [ ! -s "$(chan_store policy own "$C/$f")" ] # no template: the role's own starts empty
+  done
   argv_has --bind "$(chan_store changelog own "$C/cache/changelog.md")" "$C/cache/changelog.md"
   run_engine AGENT_SANDBOX_PRESET=shared -- asb claude --version
   [ "$status" -eq 0 ]
   run ! argv_has --bind "$(chan_store policy seed-only "$C/policy-limits.json")" "$C/policy-limits.json"
   run ! argv_has --bind "$(chan_store policy own "$C/policy-limits.json")" "$C/policy-limits.json"
+  for f in "${POLICY_SIGS[@]}"; do
+    run ! argv_has --bind "$(chan_store policy seed-only "$C/$f")" "$C/$f"
+    run ! argv_has --bind "$(chan_store policy own "$C/$f")" "$C/$f"
+  done
 }
 
 @test "a seed-only policy file with nothing native to seed from starts from {}, not zero bytes" {
