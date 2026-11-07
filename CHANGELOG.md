@@ -156,6 +156,14 @@ names are gone; there are no aliases for removed names before 1.0.
   gets the offer: the model's current text in `.asb/migrate/`, the addendum's name, and
   the steps (write your part, remove the file and run `--init` again, `--trust`). The
   shipped purpose files name their addenda, for a role that reads the file itself.
+- **`asb --resume`, the profile's resume verb** (#355): an engine flag that resumes the
+  agent's last session in the profile's own words, `[agent] resume` in its dot-file
+  (claude: `resume = --continue`). The words go after the agent's own arguments and
+  before a `[briefing] start` text: `asb --role R --resume claude --model x` runs
+  `claude --model x --continue`, and `asb --roles A B --resume claude` gives every pane
+  `--resume`. After the command, `--resume` stays the agent's (`asb claude --resume ID`).
+  Refused under a profile without the key, naming `[agent] resume`, and with `--serve`,
+  `--exec`, a verb or a review. A command is still required on the line.
 - **`docs/remote.md`** (#344): the guide to `--setup-remote`, for you and for a
   Supervisor role proposing your commands: the two forms, prerequisites, root, what a
   run does, updates, how roles reach the login by port form, the files it touches here

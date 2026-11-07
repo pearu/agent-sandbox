@@ -52,6 +52,13 @@ serve-resume = -p --resume {id} --permission-mode bypassPermissions
 # (measured, 2.1.314). Sent while a turn runs, it is queued and runs when the turn ends
 # (measured, 2.1.314).
 clear = /clear
+# What `asb --resume` puts after the agent's own arguments (#355): the engine's intent,
+# resume the role's last session, in Claude Code's words -- the most recent conversation
+# in the working directory, which is the role's own (its transcripts are its store). A
+# `[briefing] start` text comes after it, and Claude Code runs it as the resumed
+# session's first turn (measured, 2.1.300). `asb claude --resume ID` is Claude Code's own
+# flag, after the command, and the engine leaves it alone.
+resume = --continue
 
 # Paths under ~/.claude blanked for every launch: empty inside, gone at exit.
 #

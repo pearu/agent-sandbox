@@ -310,6 +310,13 @@
 #                         A file .asb/coord/to/R.reset, taken as it appears, makes
 #                         the next turn a new session. A [serve:R] with watch alone is not served: its
 #                         watcher is enforced at a terminal, and --serve refuses.
+#   --resume              resume the agent's last session (#355): the profile's
+#                         [agent] resume words (claude: --continue) after the
+#                         agent's own arguments, before a [briefing] start text.
+#                         The engine's flag, translated by the profile; words
+#                         after CMD stay the agent's (asb claude --resume ID is
+#                         Claude Code's own). Refused under a profile with no
+#                         resume key, and with --serve, --exec, a verb or a review.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
 #                         --serve runs (the profile's serve-new arguments, a fresh
@@ -526,6 +533,12 @@ Engine flags (before CMD):
                         turn of its session per change to the file its
                         [serve:ROLE] watch names, told the text of prompt;
                         needs --role and both keys; --shutdown or Ctrl-C ends it
+  --resume              resume the agent's last session: the profile's resume
+                        words (claude: --continue) after the agent's own
+                        arguments, `asb --role R --resume claude`. The
+                        engine's flag; after CMD, --resume is the agent's
+                        (asb claude --resume ID). Refused with --serve,
+                        --exec, a verb or a review
   --overlay auto|off    what `copy-on-write` uses: an overlay where
                         bubblewrap supports one (auto), or the copy fallback
                         everywhere (off). Only moves `copy-on-write` to `copy`
@@ -5756,6 +5769,9 @@ _as_trust_show() {
 #   [agent] clear   -- profile_clear: what `asb --roles` types into a role's pane, then
 #                      Enter, for a fresh start on the Supervisor's reset marker (#329);
 #                      none: --roles takes no resets
+#   [agent] resume  -- profile_resume: the words `--resume` puts after the agent's own
+#                      arguments, to resume its last session (#355); none: --resume
+#                      refuses
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -5797,6 +5813,7 @@ _as_profile_dotfile() {
       serve-new) profile_serve_new+=(${words[@]+"${words[@]}"}) ;;
       serve-resume) profile_serve_resume+=(${words[@]+"${words[@]}"}) ;;
       clear) profile_clear="$v" ;;
+      resume) profile_resume+=(${words[@]+"${words[@]}"}) ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
       visible) profile_visible+=(${words[@]+"${words[@]}"}) ;;
       *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
@@ -6042,7 +6059,8 @@ _as_slug_expand() {
 }
 
 # _as_profile_facts_dotfile NAME FILE -- for _as_profile_facts, in its subshell: read the
-# profile's dot-file as a launch does, since its channel table is there (#190).
+# profile's dot-file as a launch does, since its channel table is there (#190), and its
+# resume words (#355).
 _as_profile_facts_dotfile() {
   local profile="$1" profile_base="" profile_base_env="" profile_home="${2%/*}"
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
@@ -6052,19 +6070,20 @@ _as_profile_facts_dotfile() {
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=()
-  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume
 }
 
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
-# profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...` and
-# `key<TAB>NAME<TAB>KEY` lines. Sourced in a subshell; a profile's top level only
+# profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...`,
+# `key<TAB>NAME<TAB>KEY` and `resume<TAB>NAME<TAB>WORD...` lines (the last only for a
+# profile with [agent] resume, #355). Sourced in a subshell; a profile's top level only
 # declares. What a profile adds at a launch (profile_prepare) is not here.
 _as_profile_facts() {
   (
     local name l
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
-    local -a profile_channels=() profile_dotfile_keys=()
+    local -a profile_channels=() profile_dotfile_keys=() profile_resume=()
     local profile_project_env_set=0
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
@@ -6073,6 +6092,11 @@ _as_profile_facts() {
     _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
     for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done
     for l in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do printf 'key\t%s\t%s\n' "$name" "$l"; done
+    if ((${#profile_resume[@]})); then
+      printf 'resume\t%s' "$name"
+      printf '\t%s' "${profile_resume[@]}"
+      printf '\n'
+    fi
     ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
     true
   )
@@ -11091,6 +11115,8 @@ agent_sandbox() (
   local _do_serve=0
   # --summarize (#314): one headless turn that writes a stopped role's summary.
   local _do_summarize=0
+  # --resume (#355): the profile's resume words go after the agent's arguments.
+  local _do_resume=0
   local -a _argv_given=("$@")
   # --roles ROLE... (#317): the roles, and where their words are in _argv_given.
   local -a _roles=() _roles_flags=()
@@ -11450,6 +11476,12 @@ agent_sandbox() (
         _do_summarize=1
         shift
         ;;
+      --resume)
+        # Resume the agent's last session (#355): an intent, which the profile's
+        # [agent] resume translates (claude: --continue).
+        _do_resume=1
+        shift
+        ;;
       *) break ;;
     esac
   done
@@ -11520,6 +11552,27 @@ agent_sandbox() (
     fi
     if ((! _role_flag_set && ! _roles_set)) && [[ -z "${AGENT_SANDBOX_ROLE:-}" ]]; then
       _as_msg "--serve needs the role it serves: $invoked --role NAME --serve CMD (its [serve:NAME] section says what to wait on and what to say)"
+      return 2
+    fi
+  fi
+  # ---- --resume (#355): a launch's, so not with what runs no interactive session ----
+  # --serve resumes its own session by id; a verb and a review start no session.
+  if ((_do_resume)); then
+    local _rz=""
+    ((_do_serve)) && _rz="--serve (which resumes its own session by id)"
+    ((_do_exec)) && _rz=--exec
+    ((_do_summarize)) && _rz=--summarize
+    ((_do_status)) && _rz=--status
+    ((_do_shutdown)) && _rz=--shutdown
+    ((_do_delete)) && _rz=--delete
+    [[ -n "$_reset_connection" ]] && _rz=--reset
+    [[ -n "$_do_list" ]] && _rz=--list
+    ((_do_init)) && _rz=--init
+    ((_do_trust)) && _rz=--trust
+    ((_do_check)) && _rz=--check
+    ((${#_apply_words[@]})) && _rz=--apply
+    if [[ -n "$_rz" ]]; then
+      _as_msg "--resume resumes the agent's last session at a launch; it is not combined with $_rz"
       return 2
     fi
   fi
@@ -11746,6 +11799,8 @@ agent_sandbox() (
   local -a profile_serve_new=() profile_serve_resume=()
   # What `asb --roles` types into a role's pane, then Enter, on a reset marker (#329).
   local profile_clear=""
+  # What --resume appends to the agent's arguments (#355; claude: --continue).
+  local -a profile_resume=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()
@@ -11763,6 +11818,10 @@ agent_sandbox() (
   # The profile's own dot-file, beside its script (#181): what the profile states as
   # data rather than code.
   _as_profile_dotfile "$profile_dir/$profile/agent-sandbox" || return 1
+  if ((_do_resume && ! ${#profile_resume[@]})); then
+    _as_msg "--resume: profile '$profile' says nothing of how to resume a session ([agent] resume)"
+    return 2
+  fi
   # {slug} in the channel table (#176), before anything reads it: --reset included.
   local _ci _slug_out
   for _ci in "${!profile_channels[@]}"; do
@@ -11781,6 +11840,20 @@ agent_sandbox() (
   if ((_roles_set)); then
     _as_roles_open "$@"
     return $?
+  fi
+  # ---- --resume (#355): the profile's resume words, after the agent's own ----
+  # Here, past --roles (whose panes each take --resume themselves) and before anything
+  # reads the agent's arguments: --preset none, the verbs, the briefing and its first
+  # turn, whose text (profile_start_args) comes after these words.
+  if ((_do_resume)); then
+    local _rv
+    for _rv in ${profile_verbs[@]+"${profile_verbs[@]}"}; do
+      if [[ "${1:-}" == "$_rv" ]]; then
+        _as_msg "--resume resumes the agent's last session at a launch; it is not combined with the verb '$1'"
+        return 2
+      fi
+    done
+    set -- "$@" "${profile_resume[@]}"
   fi
 
   # ---- --preset none: no sandbox at all, before any project machinery ----

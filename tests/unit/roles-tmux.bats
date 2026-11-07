@@ -206,6 +206,16 @@ no_tmux_path() {
   [ "${PC[1]}" = "$(window --role b --serve claude)" ]
 }
 
+@test "--roles with --resume: every pane takes --resume itself, and the line opening them adds no resume words (#355)" {
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b --resume claude --model x
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${#PC[@]}" -eq 2 ]
+  [ "${PC[0]}" = "$(window --role a --resume claude --model x)" ]
+  [ "${PC[1]}" = "$(window --role b --resume claude --model x)" ]
+  run ! grep -qF -- --continue "$TM"
+}
+
 @test "--roles: the session name is the project directory's, with . and : made _" {
   mkdir -p "$H/my.pro:j"
   RUN_CWD="$H/my.pro:j" run_engine TMUX_DUMP="$TM" -- asb --roles a claude

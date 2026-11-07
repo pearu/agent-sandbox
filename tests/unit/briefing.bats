@@ -951,6 +951,21 @@ start_project() {
   release_bg
 }
 
+@test "[briefing] start with --resume: the start text after the profile's resume words, which follow the agent's own (#355)" {
+  start_project
+  run_engine -- asb --role planner-1 --resume claude --model x
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--model x --continue -- Arm your watcher; read your inbox." ]
+  [ "${JOINB[0]}" = --settings ] # the briefing's own arguments still come first
+  # a second terminal joining the role's running launch: the same order
+  engine_bg -- asb --role planner-1 claude
+  run_engine -- asb --role planner-1 --resume claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'planner-1'"* ]]
+  [ "${JOINV[*]:1}" = "--continue -- Arm your watcher; read your inbox." ]
+  release_bg
+}
+
 @test "[briefing] start: a missing file, or a path out of the project, refuses the launch, naming it" {
   start_project
   rm "$PROJ/.asb/start/planner-1.md"
