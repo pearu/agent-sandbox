@@ -74,8 +74,8 @@
 # --- A role's agent ----------------------------------------------------------
 # `command = AGENT [ARGS]`: the role's agent and the native arguments always passed
 # to it, split at blanks. [agent:ROLE-GLOB] beats [agent] for the roles it matches.
-# The review says each line and whether AGENT names an installed profile. No launch
-# reads it yet (#355).
+# The review says each line and whether AGENT names an installed profile. `asb --role
+# ROLE` with no command runs it; `--agent ROLE=AGENT` on the line replaces it (#355).
 #[agent]
 #command = claude
 #[agent:planner-*]

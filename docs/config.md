@@ -1122,9 +1122,42 @@ bypassPermissions` or `--dangerously-skip-permissions` there turns off the agent
 own permission prompts, so inside the sandbox it does whatever the sandbox's policy
 allows without asking. `--check`
 lists the lines that match the role, and a key set twice in one section. `asb
---apply '[agent:planner-1]' 'command = codex'` adds one. No launch reads it yet.
+--apply '[agent:planner-1]' 'command = codex'` adds one.
 The profile name `agent` is reserved: a profile of that name would take this
 section as its own.
+
+A launch with no command runs the role's agent: `asb --role planner-1` runs `codex`
+here, and `asb --role gate --resume` runs `claude --permission-mode bypassPermissions
+--continue`, the fixed arguments first and everything else as if typed. On the line,
+`--agent` names it for one launch and replaces the file's whole command, fixed
+arguments included:
+
+```
+asb --role planner-1 --agent claude              # every launched role's
+asb --role planner-1 --agent planner-1=claude    # one role's
+asb --role planner-1 --agent 'planner-*=claude'  # the roles a glob matches, quoted
+```
+
+The order is the line, then `[agent:<glob>]`, then `[agent]`. On the line an exact
+role name beats a glob, and a glob beats a bare `--agent AGENT`; two exact forms, two
+globs or two bare ones that disagree are refused, and so is a role or glob that
+matches no launched role. `--agent` together with a command is refused: the agent is
+named once. With no agent anywhere the launch is refused, naming both places. AGENT
+is one word; a path is accepted when its basename names a profile. The file is read
+only once approved; a launch at a terminal asks about it first. A role verb
+(`--status`, `--shutdown`, `--delete`, `--reset`) or `--check` with no command acts on
+the role's agent's profile, else on the only profile there is. `--check` shows the
+agent that wins and where it was named above the role's `[agent]` lines, and the
+review says when a later `[agent:<glob>]` line takes a role an earlier section names
+exactly (`[agent:r1]` then `[agent:r*]`: r1 gets the `r*` line).
+
+The launch records the agent and where it was named in the role's store, `agent`:
+`--status` prints it, and `--list` ends with `asb --role ROLE --resume`, adding
+`--agent WORD` only where the line gave the agent (a typed command counts as the
+line), or the profile for a store from before the record. Only your own launch
+writes it: `--summarize`'s turn, `--exec` and `--profile NAME` alone leave it as it
+was, and `--serve` records what its line named. `--roles` takes `--agent` in a later
+step; until then a `--roles` line names its command after the roles.
 
 ## The config file: the `config` channel
 

@@ -56,10 +56,12 @@ engine() {
   BGS+=("$BG_PID")
 }
 
-# serve -- start `--role worker --serve probe`; return once it serves. Sets SERVE_PID.
+# serve [-] -- start `--role worker --serve probe` (with `-`: no command, the role's agent);
+# return once it serves. Sets SERVE_PID.
 serve() {
   local i
-  engine serve --role worker --serve probe
+  if [[ "${1:-}" == - ]]; then set --; else set -- probe; fi
+  engine serve --role worker --serve "$@"
   SERVE_PID=$BG_PID
   for ((i = 0; i < 600; i++)); do
     grep -q "serving --" "$I/serve.out" 2>/dev/null && return 0
@@ -138,6 +140,20 @@ status_of() { # --status of the role, in $output
   [ ! -e "$SB/keeper/id" ]
   [ ! -e "$SB/serve" ]
   [ "$(wc -l <"$W/turns")" -eq 2 ] # nothing else ran
+}
+
+@test "--serve with no command: the role's [agent:worker] command, its fixed arguments in every turn; the launch records the dot-file as where it was named (#355)" {
+  printf '[serve:worker]\nwatch = inbox.md\nprompt = prompt.md\n[agent:worker]\ncommand = probe -x\n' >"$W/.agent-sandbox"
+  engine_cmd
+  (cd "$W" && printf 'y\nn\n' | env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  serve -
+  printf '## 1\nfirst\n' >>"$W/inbox.md"
+  turns 1
+  [[ "$(sed -n 1p "$W/turns")" == "-x -p --session-id "* ]]
+  # the holder ran the user's words, so the record is the dot-file's, not the line's
+  [ "$(cat "$SB/agent")" = $'dotfile:[agent:worker]\nprobe -x' ]
+  status_of --shutdown
+  stopped "$SERVE_PID"
 }
 
 @test "--serve: a later loop resumes the session it recorded, and a change made while none ran is a turn at once" {

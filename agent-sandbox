@@ -317,6 +317,13 @@
 #                         after CMD stay the agent's (asb claude --resume ID is
 #                         Claude Code's own). Refused under a profile with no
 #                         resume key, and with --serve, --exec, a verb or a review.
+#   --agent [ROLE=]AGENT  the role's agent (#355): with no CMD a launch runs it,
+#                         else [agent:<glob>] command, else [agent] command, its
+#                         fixed arguments first; ROLE may be a glob, none is every
+#                         role's. An exact role beats a glob, a glob a bare AGENT;
+#                         refused with CMD, with two agents for one role, with a
+#                         ROLE matching no launched role. A role verb or --check
+#                         with no CMD uses the role's agent's profile.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
 #                         --serve runs (the profile's serve-new arguments, a fresh
@@ -504,6 +511,14 @@ Engine flags (before CMD):
                         dot-file's role-suffixed sections ([connect:<glob>]...)
                         give roles matching NAME. Default: [sandbox] role, else
                         `default`.
+  --agent [ROLE=]AGENT  the role's agent for this launch, replacing the
+                        dot-file's [agent:<glob>] / [agent] command; ROLE may
+                        be a quoted glob, no ROLE is every role's; repeatable.
+                        With no CMD a launch runs the role's agent as if typed
+                        (`asb --role R --resume`), and a role verb or --check
+                        uses its profile. Refused with a CMD, with two agents
+                        for one role, with a ROLE matching no launched role,
+                        and with --roles (for now)
   --roles ROLE...       open one tmux session, named after the project
                         directory, with a pane per role, each running
                         `--role ROLE` with the rest of the command line, five
@@ -3179,6 +3194,16 @@ _as_keeper_start() {
   : >"$sb/keeper.log"
   # The project's path, which the store's slug does not keep (--list, #314).
   printf '%s\n' "$_proj" >"$sb/project" || :
+  # The role's agent (#355, D8): where it was named, then its words -- the command typed
+  # on the line or by --agent (`line`; the word alone), or the dot-file's command with
+  # its fixed arguments (`dotfile:[agent:<glob>]`, `dotfile:[agent]`). --list's resume
+  # line and --status read it. Only the user's own launch writes it: a launch that names
+  # no agent (--exec, --profile alone) and the engine's own turns (--summarize's, which
+  # AGENT_SANDBOX_SERVE_TURN marks and which names the agent as its command) leave the
+  # last one as it is. --serve's holder runs the user's own words, so it records theirs.
+  if [[ -n "${_cmd_word:-}" && -n "${_agent_cmd_from:-}" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
+    printf '%s\n%s\n' "$_agent_cmd_from" "${_agent_cmd[*]-}" >"$sb/agent" || :
+  fi
   # The session's own summary line (#314), bound read-write when the briefing is on.
   mkdir -p -- "$sb/summary" || return 1
   _as_keeper_policy all >"$kd/policy"
@@ -3499,6 +3524,7 @@ _as_role_status() {
     if [[ -d "$sb" ]]; then
       printf "role '%s' of %s: not running; its stores (%s) are at %s\n" "${_role:-default}" "$_proj" \
         "$(du -sh -- "$sb" 2>/dev/null | cut -f1)" "$sb"
+      _as_agent_record "$sb"
     else
       printf "role '%s' of %s: not running, and nothing stored\n" "${_role:-default}" "$_proj"
     fi
@@ -3509,6 +3535,7 @@ _as_role_status() {
   dot="$(cat "$kd/dotfile" 2>/dev/null)"
   now="$(_as_keeper_dotfile_hash)"
   printf "role '%s' of %s: running since %s (supervisor pid %s)\n" "${_role:-default}" "$_proj" "$since" "$spid"
+  _as_agent_record "$sb"
   if [[ "$dot" == - ]]; then
     printf '  dot-file: none approved when it started'
   else
@@ -3562,6 +3589,21 @@ PY
     printf '  no background daemon\n'
   fi
   return 0
+}
+
+# _as_agent_record SB -- --status's line for the role's agent, from the record its last
+# launch wrote (<sb>/agent, _as_keeper_start); nothing when there is none.
+_as_agent_record() {
+  local from="" cmd="" where
+  [[ -f "$1/agent" && ! -L "$1/agent" ]] || return 0
+  { read -r from && read -r cmd; } <"$1/agent" 2>/dev/null || :
+  [[ -n "$from" && -n "$cmd" ]] || return 0
+  case "$from" in
+    line) where="named on the line" ;;
+    dotfile:*) where=".agent-sandbox ${from#dotfile:}" ;;
+    *) where="$from" ;;
+  esac
+  printf '  agent: %s -- %s\n' "$cmd" "$where"
 }
 
 # _as_names_profile WORD -- does WORD, or its basename, name an installed profile? As
@@ -3681,7 +3723,7 @@ def printable(s):  # printed on the host's terminal: no control characters
 def stamp(t):
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
 
-blocks = {}
+blocks, needs = {}, {}
 for prof, sb, st in zip(rest[0::3], rest[1::3], rest[2::3]):
     role, slug = os.path.basename(sb), os.path.basename(os.path.dirname(sb))
     proj = ""
@@ -3743,6 +3785,17 @@ for prof, sb, st in zip(rest[0::3], rest[1::3], rest[2::3]):
         desc = desc if stat.S_ISREG(os.lstat(desc).st_mode) else ""
     except OSError:
         desc = ""
+    # What resuming it needs on the line (#355, D8): --agent WORD when its last launch was
+    # given the agent there (its record says `line`), none when the dot-file named it,
+    # and the profile when there is no record (a store from before the record).
+    need = prof
+    try:
+        with open(os.path.join(sb, "agent"), encoding="utf-8", errors="replace") as fh:
+            rec = fh.read(4096).split("\n")
+        need = printable(rec[1].strip()) if rec[0] == "line" and len(rec) > 1 else ""
+    except OSError:
+        pass
+    needs.setdefault(need, []).append(role)
     b = blocks.setdefault((prof, slug), {"proj": "", "roles": []})
     b["proj"] = b["proj"] or proj
     b["roles"].append((active, role, st, created, summary or "no conversation", desc))
@@ -3779,10 +3832,14 @@ for (prof, slug), b in sorted(blocks.items(), key=lambda kv: -max(r[0] for r in 
             print(f"    {t}")
         if len(shown) > 5:
             print("    full description: " + printable(desc))
-profs = {prof for prof, _ in blocks}
-prof = profs.pop() if len(profs) == 1 else "PROFILE"
 where = "cd PROJECT_DIR && " if scope == "all" else ""
-print(f"To resume: {where}{invoked} --role ROLE {prof} --continue")
+# One line; when the roles shown differ in what they need, the line is the plainest,
+# and one line per agent word names the roles that add it.
+one = next(iter(needs)) if len(needs) == 1 else ""
+print(f"To resume: {where}{invoked} --role ROLE{' --agent ' + one if one else ''} --resume")
+if len(needs) > 1:
+    for w in sorted(w for w in needs if w):
+        print(f"  add --agent {w} for: {', '.join(sorted(set(needs[w])))}")
 PY
   case "$rc" in
     0) ;;
@@ -3925,7 +3982,8 @@ _as_role_summarize() {
     _as_msg "--summarize is refused under --preset native: the conversations there are your own, not the role's"
     return 1
   fi
-  if (($#)); then
+  # The role's agent's fixed arguments (#355, `[agent] command`) are the only ones it takes.
+  if (($# > ${_agent_fixed_n:-0})); then
     _as_msg "--summarize takes no agent arguments: $invoked --role $role --summarize ${_cmd_word:-$profile}"
     return 2
   fi
@@ -3951,7 +4009,7 @@ _as_role_summarize() {
   # own end until the turn's transcript is gone.
   trap 'sig=1' INT TERM HUP
   AGENT_SANDBOX_SERVE_TURN=1 "$engine" "${_summ_flags[@]}" --role "$role" "${_cmd_word:-$profile_command}" \
-    "${targ[@]}" "$prompt" </dev/null >"$out" || rc=$?
+    "$@" "${targ[@]}" "$prompt" </dev/null >"$out" || rc=$?
   _as_summarize_forget "$sb" "$id" || _as_msg "role '$role': could not delete the summarizing turn's transcript ($id.jsonl)"
   trap - INT TERM HUP
   if [[ -n "$sig" ]]; then
@@ -4293,8 +4351,12 @@ _as_serve() {
   mestart="$_ps_start"
   printf '%s %s\n%s\n%s\n' "$me" "$mestart" "$_serve_watch" ".asb/coord/$role/session" >"$sb/serve" || return 1
   trap '_serve_stop=1' INT TERM HUP
-  # The holder: the engine again, with the same words, joined with nothing to do.
-  ("$engine" "${_serve_flags[@]}" --serve "${cmdw[@]}") </dev/null &
+  # The holder: the engine again, with the same words, joined with nothing to do. The
+  # user's own words (#355): --agent kept, and CMD only when they typed one, so the
+  # launch it starts resolves the role's agent itself and records where it was named.
+  local -a holdw=()
+  ((${_cmd_typed:-1})) && holdw=("${cmdw[@]}")
+  ("$engine" "${_serve_given[@]}" --serve ${holdw[@]+"${holdw[@]}"}) </dev/null &
   hpid=$!
   # _sv_live -- go on? Not after a signal, once the holder has gone (the launch ended:
   # --shutdown), or once the process this loop runs under has (a TERM to it).
@@ -6132,6 +6194,111 @@ _as_agent_sect() {
   if [[ "$1" == "*" ]]; then printf '[agent]'; else printf '[agent:%s]' "$1"; fi
 }
 
+# _as_agent_flag_split VALUE -- one --agent value (#355): sets _af_role (the role or glob
+# before the first `=`, empty for a bare AGENT, which is every role's) and _af_agent. The
+# part before `=` is a role only when it could be one -- a role name, or a glob of role
+# names -- so a path with an `=` in it stays a bare AGENT. AGENT is one word: a name, or a
+# path whose basename names a profile. Fails, saying why, on an empty or blank AGENT.
+_as_agent_flag_split() {
+  local v="$1" pre="${1%%=*}" re='^[]A-Za-z0-9._*?[-]+$'
+  _af_role="" _af_agent="$v"
+  if [[ "$v" == *=* && "$pre" =~ $re ]]; then
+    _af_role="$pre" _af_agent="${v#*=}"
+  fi
+  if [[ -z "$_af_agent" || "$_af_agent" =~ [[:space:]] ]]; then
+    _as_msg "--agent '$v': AGENT is one word, the agent's command (--agent AGENT, or --agent ROLE=AGENT); its fixed arguments go in .agent-sandbox, [agent:ROLE] command = AGENT ARGS"
+    return 1
+  fi
+  return 0
+}
+
+# _as_dotfile_agent FILE -- FILE's [sandbox] role on the first line, then its [agent]
+# lines (_df_agent: GLOB<TAB>command<TAB>VALUE), one per line, in file order. Parsed
+# here, quietly: what the file gets wrong, the review said.
+_as_dotfile_agent() {
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  _as_dotfile_parse "$1" 2>/dev/null
+  printf '%s\n' "$_df_role"
+  ((${#_df_agent[@]} == 0)) || printf '%s\n' "${_df_agent[@]}"
+}
+
+# _as_agent_resolve ROLE [LINE...] -- the agent of ROLE (#355): sets _agent_cmd (its
+# words: AGENT, then the fixed arguments) and _agent_cmd_from (`line`,
+# `dotfile:[agent:<glob>]` or `dotfile:[agent]`), both empty when nothing names one.
+# First the line's --agent forms (the engine's _agent_flag): an exact role name, then a
+# glob, then a bare AGENT, the weakest; a form naming a role or glob that does not match
+# ROLE, or two exact forms, two globs or two bare ones that disagree, fail. A line form
+# replaces the dot-file's whole command, fixed arguments included. Then the LINEs, an
+# approved dot-file's _df_agent (_as_dotfile_agent): the [agent:<glob>] lines matching
+# ROLE, the later winning, over the unsuffixed [agent] lines, the later winning --
+# _as_dotfile_apply_role's order, whatever the order in the file.
+# shellcheck disable=SC2154
+_as_agent_resolve() {
+  local role="$1" e g k v ex="" exf="" gl="" glf="" ba="" baf="" sv="" sg="" uv=""
+  shift
+  _agent_cmd=() _agent_cmd_from=""
+  local _af_role _af_agent
+  for e in ${_agent_flag[@]+"${_agent_flag[@]}"}; do
+    _as_agent_flag_split "$e" || return 2
+    if [[ -z "$_af_role" ]]; then
+      if [[ -n "$ba" && "$ba" != "$_af_agent" ]]; then
+        _as_msg "--agent: two agents for every role, '$ba' (--agent $baf) and '$_af_agent' (--agent $e); name it once"
+        return 2
+      fi
+      ba="$_af_agent" baf="$e"
+      continue
+    fi
+    # shellcheck disable=SC2053 # the glob is the pattern
+    if [[ "$role" != $_af_role ]]; then
+      _as_msg "--agent $e: '$_af_role' matches no role of this launch (its role is '$role')"
+      return 2
+    fi
+    if [[ "$_af_role" == *[*?[]* ]]; then
+      if [[ -n "$gl" && "$gl" != "$_af_agent" ]]; then
+        _as_msg "--agent: two globs give role '$role' two agents, '$gl' (--agent $glf) and '$_af_agent' (--agent $e); name it once"
+        return 2
+      fi
+      gl="$_af_agent" glf="$e"
+    else
+      if [[ -n "$ex" && "$ex" != "$_af_agent" ]]; then
+        _as_msg "--agent: role '$role' is given two agents, '$ex' (--agent $exf) and '$_af_agent' (--agent $e); name it once"
+        return 2
+      fi
+      ex="$_af_agent" exf="$e"
+    fi
+  done
+  v="${ex:-${gl:-$ba}}"
+  if [[ -n "$v" ]]; then
+    _agent_cmd=("$v") _agent_cmd_from=line
+    return 0
+  fi
+  for e in "$@"; do
+    g="${e%%$'\t'*}" e="${e#*$'\t'}"
+    k="${e%%$'\t'*}" v="${e#*$'\t'}"
+    [[ "$k" == command && -n "$v" ]] || continue
+    # shellcheck disable=SC2053 # the glob is the pattern
+    if [[ "$g" == "*" ]]; then
+      uv="$v"
+    elif [[ "$role" == $g ]]; then
+      sv="$v" sg="$g"
+    fi
+  done
+  if [[ -n "$sv" ]]; then
+    read -r -a _agent_cmd <<<"$sv"
+    _agent_cmd_from="dotfile:[agent:$sg]"
+  elif [[ -n "$uv" ]]; then
+    read -r -a _agent_cmd <<<"$uv"
+    _agent_cmd_from="dotfile:[agent]"
+  fi
+  return 0
+}
+
 # _as_agent_notes -- the review's lines for the [agent] sections (#355, _as_trust_notes):
 # per line, for which roles, the agent and whether it names a profile installed here (a
 # note, not a refusal: the file may serve another host), and the fixed arguments as
@@ -6172,6 +6339,26 @@ _as_agent_notes() {
         break
       fi
     done
+  done
+  # Among suffixed sections the later line wins (_as_agent_resolve), so a role a section
+  # names exactly takes a later glob's line when that glob matches it too: said, since
+  # the exact name reads as the stronger one.
+  local -a sfx=()
+  local j eg ev lg lv
+  for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
+    [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'command$'\t'* ]] || sfx+=("$e")
+  done
+  for ((i = 0; i < ${#sfx[@]}; i++)); do
+    eg="${sfx[i]%%$'\t'*}" ev="${sfx[i]##*$'\t'}"
+    [[ "$eg" != *[*?[]* ]] || continue
+    lg="" lv=""
+    for ((j = i + 1; j < ${#sfx[@]}; j++)); do
+      g="${sfx[j]%%$'\t'*}"
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ "$eg" == $g ]] && lg="$g" lv="${sfx[j]##*$'\t'}"
+    done
+    # the line the role takes: said only when it is a glob's
+    [[ -z "$lg" || "$lg" != *[*?[]* ]] || _as_msg ".agent-sandbox: [agent:$eg] command = $ev: role $eg takes the later [agent:$lg] command = $lv instead (among suffixed sections the later line wins); put [agent:$eg] after it to keep its own"
   done
   return 0
 }
@@ -8840,7 +9027,14 @@ _as_check_plan() {
       printf '  roles in this file: %s; see another with: %s --check --role NAME\n' \
         "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
     fi
-    # The [agent] lines that match this role (#355), in file order, as written.
+    # The role's agent (#355): the one that wins, and where it was named (_as_agent_resolve),
+    # then the [agent] lines that match this role, in file order, as written.
+    if [[ -n "${_agent_cmd[*]-}" ]]; then
+      case "${_agent_cmd_from:-}" in
+        line) printf '  agent: %s -- named on the line, over any line below\n' "${_agent_cmd[*]}" ;;
+        dotfile:*) printf '  agent: %s -- .agent-sandbox %s wins\n' "${_agent_cmd[*]}" "${_agent_cmd_from#dotfile:}" ;;
+      esac
+    fi
     local _ag_e _ag_g
     for _ag_e in ${_df_agent[@]+"${_df_agent[@]}"}; do
       _ag_g="${_ag_e%%$'\t'*}" _ag_e="${_ag_e#*$'\t'}"
@@ -11150,6 +11344,10 @@ agent_sandbox() (
   local _join_stage_bound=0
   local _role=default _reset_connection="" _overlay_flag="" _overlay_mode=auto
   local _preset_flag="" _preset=inherit _role_flag="" _role_flag_set=0
+  # --agent (#355): the line's forms, as given; the role's agent once resolved, its words
+  # and where they came from (_as_agent_resolve), and how many of them are fixed args.
+  local -a _agent_flag=() _agent_cmd=()
+  local _agent_cmd_from="" _agent_fixed_n=0
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -11430,6 +11628,22 @@ agent_sandbox() (
         _role_flag="${1#--role=}" _role_flag_set=1
         shift
         ;;
+      --agent)
+        # A role's agent for this launch (#355): ROLE=AGENT, 'GLOB=AGENT', or AGENT for
+        # every role; repeatable, checked against the launched role once it is known.
+        [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || {
+          _as_msg "--agent needs an agent: --agent AGENT, or --agent ROLE=AGENT"
+          return 2
+        }
+        _as_agent_flag_split "$2" || return 2
+        _agent_flag+=("$2")
+        shift 2
+        ;;
+      --agent=*)
+        _as_agent_flag_split "${1#--agent=}" || return 2
+        _agent_flag+=("${1#--agent=}")
+        shift
+        ;;
       --roles)
         # A tmux session with a pane per role (#317, #320). The roles are every word up to
         # the first that starts with `-` or names a profile, as --list reads its word.
@@ -11486,12 +11700,15 @@ agent_sandbox() (
     esac
   done
   # ---- --summarize (#314): what it cannot be combined with ----
-  # The engine's own words, but --summarize, are what the turn is started with.
+  # The engine's own words, but --summarize, are what the turn is started with; and but
+  # --agent (#355), whose agent the turn names as its command.
   local -a _summ_flags=()
   if ((_do_summarize)); then
-    local _sw
+    local _sw _sk=0
     for _sw in "${_argv_given[@]:0:$((${#_argv_given[@]} - $#))}"; do
-      [[ "$_sw" == --summarize ]] || _summ_flags+=("$_sw")
+      ((_sk)) && _sk=0 && continue
+      [[ "$_sw" == --agent ]] && _sk=1 && continue
+      [[ "$_sw" == --summarize || "$_sw" == --agent=* ]] || _summ_flags+=("$_sw")
     done
     if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_engine_help || _do_serve || _roles_set)) \
       || [[ -n "$_reset_connection" || -n "$_do_list" ]] || ((${#_apply_words[@]})); then
@@ -11538,12 +11755,18 @@ agent_sandbox() (
   fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
   # The engine's own words, but --serve, are what the loop starts its holder, and every
-  # turn, with: the same flags, so each joins the launch the first one started.
-  local -a _serve_flags=()
+  # turn, with: the same flags, so each joins the launch the first one started. But
+  # --agent (#355): a turn names the agent as its command. The holder, which starts the
+  # launch, runs the user's own words (_serve_given, --agent kept), so the agent it
+  # resolves, and records, is the one they named, and where they named it.
+  local -a _serve_flags=() _serve_given=()
   if ((_do_serve)); then
-    local _sw
+    local _sw _sk=0
     for _sw in "${_argv_given[@]:0:$((${#_argv_given[@]} - $#))}"; do
-      [[ "$_sw" == --serve ]] || _serve_flags+=("$_sw")
+      [[ "$_sw" == --serve ]] || _serve_given+=("$_sw")
+      ((_sk)) && _sk=0 && continue
+      [[ "$_sw" == --agent ]] && _sk=1 && continue
+      [[ "$_sw" == --serve || "$_sw" == --agent=* ]] || _serve_flags+=("$_sw")
     done
     if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_engine_help)) \
       || [[ -n "$_reset_connection" ]] || ((${#_apply_words[@]})); then
@@ -11582,7 +11805,8 @@ agent_sandbox() (
   # the agent's. No CMD is right for a verb, which needs a profile but no launch
   # (`asb --profile claude --status`), and under --exec, where the words are another
   # command's. A word starting with `-` there is an option the engine does not have.
-  local _cmd_word="" _profile_given=0
+  # _cmd_typed: CMD was on the line, not the role's agent resolved below (#355).
+  local _cmd_word="" _profile_given=0 _cmd_typed=0
   [[ -n "$profile" ]] && _profile_given=1
   if ((! _do_exec)) && (($# > 0)); then
     case "$1" in
@@ -11592,10 +11816,109 @@ agent_sandbox() (
         return 2
         ;;
       *)
-        _cmd_word="$1"
+        _cmd_word="$1" _cmd_typed=1
         shift
         ;;
     esac
+  fi
+  # ---- the role's agent (#355): --agent, [agent:<glob>] command, [agent] command ----
+  # With no CMD on the line, a launch runs the role's agent: CMD becomes its first word
+  # and its fixed arguments go in front of the agent's own, so everything below -- the
+  # profile, the binary, --serve, --summarize, --resume -- reads it as if it were typed.
+  # A role verb or --check with no CMD acts on that agent's profile (else the default
+  # one, as before). The dot-file is read only once approved, as _pre_role reads it;
+  # a launch at a terminal asks about it first, as it would below. The role is named
+  # as _pre_role names it. --roles takes its agents in the next step of #355.
+  _agent_cmd_from=""
+  [[ -n "$_cmd_word" ]] && _agent_cmd=("$_cmd_word") _agent_cmd_from=line
+  local _trust_asked=0
+  if ((${#_agent_flag[@]})); then
+    local _agz=""
+    ((_do_exec)) && _agz="--exec (which runs a command instead of the agent)"
+    ((_roles_set)) && _agz="--roles (it takes --agent in the next step of #355; until then, CMD after the roles)"
+    [[ -n "$_do_list" ]] && _agz=--list
+    ((_do_init)) && _agz=--init
+    ((_do_trust)) && _agz=--trust
+    ((${#_apply_words[@]})) && _agz=--apply
+    [[ -n "$_setup_remote" ]] && _agz=--setup-remote
+    if [[ -n "$_agz" ]]; then
+      _as_msg "--agent names a role's agent for a launch, a role verb or --check; it is not combined with $_agz"
+      return 2
+    fi
+    if [[ -n "$_cmd_word" ]]; then
+      _as_msg "the agent is named once: --agent ${_agent_flag[0]} or the command '$_cmd_word', not both. Its arguments go after the command, $invoked [ENGINE FLAGS] CMD [AGENT ARGS], or in .agent-sandbox, [agent:ROLE] command = AGENT ARGS"
+      return 2
+    fi
+  fi
+  local _ag_mode=""
+  if [[ -z "$_cmd_word" ]] && (($# == 0)) && ((! _do_exec && ! _roles_set && ! _do_engine_help && ! _do_init && ! _do_trust)) \
+    && [[ -z "$_do_list" && -z "$_setup_remote" ]] && ((${#_apply_words[@]} == 0)) && ((! _profile_given || ${#_agent_flag[@]})); then
+    _ag_mode=launch
+    if ((_do_status || _do_shutdown || _do_delete || _do_check)) || [[ -n "$_reset_connection" ]]; then
+      _ag_mode=verb
+    fi
+  fi
+  if [[ -n "$_ag_mode" ]]; then
+    local _ag_proj _ag_file _ag_role="" _ag_read=0 _ag_rec
+    local -a _ag_lines=()
+    _ag_proj="$(pwd -P)"
+    _ag_file="$_ag_proj/.agent-sandbox"
+    _ag_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_ag_proj")"
+    if [[ "$_ag_mode" == launch ]] && _as_has_terminal && ! _as_inside_sandbox; then
+      if { [[ -f "$_ag_file" ]] && ! _as_dotfile_trusted "$_ag_proj" "$_ag_file"; } || { [[ ! -f "$_ag_file" && -f "$_ag_rec" ]]; }; then
+        _trust_asked=1
+        _as_trust_prompt "$_ag_proj" || _as_msg "not approved."
+      fi
+    fi
+    # --check evaluates the file as a launch would once it is approved (_as_dotfile_trusted).
+    if [[ -f "$_ag_file" ]] && { ((_do_check)) || _as_dotfile_trusted "$_ag_proj" "$_ag_file"; }; then
+      _ag_read=1
+      mapfile -t _ag_lines < <(_as_dotfile_agent "$_ag_file")
+      _ag_role="${_ag_lines[0]:-}"
+      _ag_lines=(${_ag_lines[@]+"${_ag_lines[@]:1}"})
+    fi
+    if ((_role_flag_set)); then
+      _ag_role="$_role_flag"
+    elif [[ -n "${AGENT_SANDBOX_ROLE:-}" ]]; then
+      _ag_role="$AGENT_SANDBOX_ROLE"
+    fi
+    _ag_role="${_ag_role:-default}"
+    _as_agent_resolve "$_ag_role" ${_ag_lines[@]+"${_ag_lines[@]}"} || return 2
+    if ((${#_agent_cmd[@]} == 0)); then
+      # --summarize with none falls back to the only profile there is, as it did.
+      if [[ "$_ag_mode" == launch ]] && ((! _do_summarize)); then
+        _as_msg "no agent for role '$_ag_role'. Name it on the line, $invoked --agent AGENT, or a command: $invoked [ENGINE FLAGS] CMD [AGENT ARGS] (e.g. $invoked claude); or in .agent-sandbox, [agent:$_ag_role] command = AGENT"
+        if [[ -f "$_ag_file" ]] && ((! _ag_read)); then
+          # A running launch of the role under an approved copy (any profile's: the
+          # profile is what is unknown here) is what a join would have joined.
+          local _ag_k _ag_live=0
+          for _ag_k in "$(_as_state_dir)"/*/"$(_as_path_slug "$_ag_proj")/$_ag_role"; do
+            [[ -f "$_ag_k/keeper/dotfile.copy" ]] && (_as_keeper_live "$_ag_k") && _ag_live=1
+          done
+          if ((_ag_live)); then
+            _as_msg "role $_ag_role is running; .agent-sandbox changed since you approved it: re-approve with $invoked --trust, or type the command"
+          else
+            _as_msg ".agent-sandbox is not approved, so it was not read: $invoked --trust"
+          fi
+        fi
+        _as_msg "profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+        return 2
+      fi
+    elif [[ "$_ag_mode" == launch ]]; then
+      _cmd_word="${_agent_cmd[0]}"
+      _agent_fixed_n=$((${#_agent_cmd[@]} - 1))
+      set -- "${_agent_cmd[@]:1}"
+    elif [[ -z "$profile" ]]; then
+      # A role verb or --check: the agent's profile. One the dot-file names that is not
+      # installed here leaves the default (the file may serve another host); the line's
+      # is refused, as a command naming no profile is.
+      if _as_names_profile "${_agent_cmd[0]}"; then
+        profile="$(basename -- "${_agent_cmd[0]}")"
+      elif [[ "$_agent_cmd_from" == line ]]; then
+        _as_msg "--agent '${_agent_cmd[0]}' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+        return 2
+      fi
+    fi
   fi
   # Resolve the verbosity before anything routine is printed: the dot-file notices,
   # the session allowlist and the seccomp line all come later, but the ssh-agent
@@ -11960,7 +12283,8 @@ agent_sandbox() (
   elif [[ -f "$_trust_rec" ]] && ! _as_inside_sandbox; then
     _df_needs_review=1
   fi
-  if ((_df_needs_review && ! (_do_verb || _do_shutdown || _do_status))) && _as_has_terminal; then
+  # A launch whose agent the file names has asked already (#355: see the role's agent).
+  if ((_df_needs_review && ! _trust_asked && ! (_do_verb || _do_shutdown || _do_status))) && _as_has_terminal; then
     _as_trust_prompt "$_proj" || _as_msg "not approved."
   fi
   # A JOIN READS THE KEEPER'S DOT-FILE, NOT THE LIVE ONE. A running role's policy is
@@ -12529,8 +12853,10 @@ agent_sandbox() (
       return $?
     fi
     # The loop's holder: it keeps the launch up, joined with a command that does nothing
-    # but wait, while the loop runs the turns. The agent was resolved from CMD already,
-    # so the launch it starts records that agent, which every turn names again.
+    # but wait, while the loop runs the turns. It was started with the user's own words
+    # (_serve_given): a typed CMD, or none, when it resolves the role's agent itself as
+    # the loop did; so the launch it starts records where that agent was named, and
+    # every turn names the agent the loop resolved.
     _do_exec=1
     # shellcheck disable=SC2016 # $0 is the inner shell's: the name it runs sleep under
     set -- bash -c 'exec -a "$0" sleep infinity' agent-sandbox-serve

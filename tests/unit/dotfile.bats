@@ -1040,3 +1040,96 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" != *"agent: [agent:q]"* ]] # another role's
   [[ "$output" == *"[agent:r*] command: set twice; the earlier 'command = codex' never applies"* ]]
 }
+
+@test "a launch with no command runs the role's [agent:<glob>] command, its fixed arguments first; --resume after them (#355)" {
+  printf '[agent:r]\ncommand = claude --model x\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --role r
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  [ "${JOINV[*]:1}" = "--model x" ]
+  run_engine -- asb --role r --resume
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--model x --continue" ]
+  # the record: where it was named, then its words; --status prints it
+  local sb="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/r"
+  [ "$(cat "$sb/agent")" = $'dotfile:[agent:r]\nclaude --model x' ]
+  run_engine -- asb --role r --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  agent: claude --model x -- .agent-sandbox [agent:r]"* ]]
+  # a command typed on the line is the line's, the word alone
+  run_engine -- asb --role r claude --model y
+  [ "${JOINV[*]:1}" = "--model y" ]
+  [ "$(cat "$sb/agent")" = $'line\nclaude' ]
+}
+
+@test "the role's agent: [agent] is every role's; [agent:<glob>] beats it whatever the order; among suffixed lines the later wins (#355)" {
+  # [connect:*]: every role name is one of this file's (the suffixes define roles)
+  printf '[connect:*]\n[agent:r*]\ncommand = claude -a\n[agent:r1]\ncommand = claude -b\n[agent]\ncommand = claude -u\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --role q
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-u" ]
+  run_engine -- asb --role r2
+  [ "${JOINV[*]:1}" = "-a" ]
+  run_engine -- asb --role r1
+  [ "${JOINV[*]:1}" = "-b" ]
+  # the line beats the file, its fixed arguments included
+  run_engine -- asb --role r1 --agent claude
+  [ "$status" -eq 0 ]
+  [ "${#JOINV[@]}" -eq 1 ]
+  [ "$(cat "$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/r1/agent")" = $'line\nclaude' ]
+}
+
+@test "the role's agent: an unapproved file is not read, and no agent anywhere names both places; at a terminal it is asked about once (#355)" {
+  printf '[agent]\ncommand = claude -u\n' >"$PROJ/.agent-sandbox"
+  run_engine -- asb --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no agent for role 'r'. Name it on the line, asb --agent AGENT, or a command"*"or in .agent-sandbox, [agent:r] command = AGENT"* ]]
+  [[ "$output" == *".agent-sandbox is not approved, so it was not read: asb --trust"* ]]
+  [ ! -s "$H/argv" ]
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the review on"
+  run_engine_tty 'y\n' -- asb --role r
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'approve this .agent-sandbox' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"approved."* ]]
+  [[ "$(cat "$H/join")" == *$'\n-u'* ]]
+}
+
+@test "the role's agent at a terminal: an unapproved file is asked about once, declined too, with --agent (#355)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the review on"
+  printf '[agent]\ncommand = claude -u\n' >"$PROJ/.agent-sandbox"
+  run_engine_tty 'n\nn\n' -- asb --role r --agent claude
+  [ "$(grep -c 'approve this .agent-sandbox' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"not approved."* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "the role's agent: with the file changed since approval and the role running, a launch with no command says so (#355)" {
+  printf '[agent]\ncommand = claude -u\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  engine_bg -- asb --role r claude
+  printf '# edited\n' >>"$PROJ/.agent-sandbox"
+  run_engine -- asb --role r
+  release_bg
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role r is running; .agent-sandbox changed since you approved it: re-approve with asb --trust, or type the command"* ]]
+  # not running: the plain sentence
+  run_engine -- asb --role r
+  [[ "$output" == *".agent-sandbox is not approved, so it was not read: asb --trust"* ]]
+}
+
+@test "the review says when a later [agent:<glob>] line takes a role an earlier section names exactly; --check shows the agent that wins (#355)" {
+  printf '[agent:r1]\ncommand = claude -exact\n[agent:r*]\ncommand = claude -glob\n[agent:q1]\ncommand = claude -q\n[agent:q*]\ncommand = claude -qq\n[agent:q1]\ncommand = claude -q2\n' >"$PROJ/.agent-sandbox"
+  run_trust 'n\n'
+  [[ "$output" == *"[agent:r1] command = claude -exact: role r1 takes the later [agent:r*] command = claude -glob instead (among suffixed sections the later line wins)"* ]]
+  # q1 is named again after the glob: its own later line is what it takes, nothing to say
+  [[ "$output" != *"role q1 takes"* ]]
+  trust "$PROJ"
+  run_engine -- asb --check --role r1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  agent: claude -glob -- .agent-sandbox [agent:r*] wins"$'\n'"  agent: [agent:r1] command = claude -exact"$'\n'* ]]
+  run_engine -- asb --check --role r1 --agent claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  agent: claude -- named on the line, over any line below"$'\n'"  agent: [agent:r1] command = claude -exact"$'\n'* ]]
+}
