@@ -278,6 +278,27 @@ CHECK
   [ "${JOINV[*]:1}" = "-x --continue" ]
 }
 
+@test "[agent] account-paths: the login and its refresh lock are an account's, not visible; read by a launch and emitted by _as_profile_facts (#355)" {
+  grep -qxF 'account-paths = .credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner' "$REPO_ROOT/profiles/claude/agent-sandbox"
+  grep -qxF 'visible = ide' "$REPO_ROOT/profiles/claude/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$REPO_ROOT/profiles/claude/profile.sh" >"$H/facts"
+  )
+  grep -qxF "$(printf 'account-paths\tclaude\t.credentials.json\t.oauth_refresh.lock\t.oauth_refresh.lock.owner')" "$H/facts"
+  # a profile without the key emits no account-paths line
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf '[agent]\nclear = /clear\n' >"$H/profiles2/other/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$H/profiles2/other/profile.sh" >"$H/facts2"
+  )
+  run ! grep -q '^account-paths' "$H/facts2"
+}
+
 @test "profile_start_args: the first turn is the prompt after the agent's own arguments, behind a --; declined where the session is not an interactive start" {
   local -a profile_start_argv=()
   profile_start_args 'Arm your watcher.'

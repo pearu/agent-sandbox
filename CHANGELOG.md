@@ -92,6 +92,26 @@ names are gone; there are no aliases for removed names before 1.0.
   `--summarize`'s turn, `--exec` or `--profile` alone); `--status` prints it, and
   `--list` ends with `asb --role ROLE --resume`, adding `--agent WORD` only where the line
   gave the agent, or the profile for a store from before the record.
+- **Accounts: `[agent] account`, `[agent:<glob>] account` and `--account`** (#355): an
+  account is a directory per agent and name, `~/.local/state/agent-sandbox/<agent>/accounts/NAME/`,
+  bound where the agent's base is (claude: `~/.claude`) in place of the base, so the
+  role runs on that account's login, refreshed in its one home, while `{base}`,
+  `CLAUDE_CONFIG_DIR` and every channel's store stay what they are (memory and
+  transcripts carry across a switch). `--account` takes `--agent`'s forms, precedence
+  and refusals and beats the file; `-` names the base anywhere. Refused when the
+  directory is missing (naming `asb --account-login NAME AGENT`), a symlink or not a
+  directory, for a profile with no `[agent] account-paths`, and under `--preset native`
+  or `none`; `--exec` counts; `--roles` checks every role's up front and gives a pane
+  `--account NAME` only for its own role; a join asking for another account is
+  refused. The launch records `PROFILE<TAB>NAME` in the role's store (`account`); the
+  review says each line and `--check` shows the account and its directory. The claude
+  profile's new `[agent] account-paths` is `.credentials.json .oauth_refresh.lock
+  .oauth_refresh.lock.owner` (`.credentials.json` leaves `visible`). For now an
+  account role sees of the base only its channels and the `hide` blanks: the base's
+  other entries (hook scripts, `ide/`, `cache/`, ...) are not bound into it yet. A
+  `[connect]` key or `outside:` source that is the base, a parent of it, or one of the
+  profile's `account-paths` is refused, account or not. A join takes the running role's
+  account; `--check` reports an unusable account directory with the plan and exits 1.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the

@@ -1337,21 +1337,25 @@ DF
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "a channel inside a declaration keeps its own rung: the declaration does not cover it" {
-  run_engine -- asb --connect '~/.claude/ = read-only' --connect 'instructions = own' claude --version
+  # cache/ holds the changelog channel's one file and is no channel itself; the base as a
+  # whole, which holds them all, is never a [connect] path (#355, tests/unit/accounts.bats)
+  mkdir -p "$C/cache"
+  printf 'notes\n' >"$C/cache/changelog.md"
+  run_engine -- asb --connect '~/.claude/cache/ = read-only' --connect 'changelog = own' claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$C" "$C"
-  argv_has --bind "$SBOX/instructions/own/$(slugify "$C/rules")" "$C/rules"
+  argv_has --ro-bind "$C/cache" "$C/cache"
+  argv_has --bind "$SBOX/changelog/own/$(slugify "$C/cache/changelog.md")" "$C/cache/changelog.md"
   # and the review says which way round it is
-  printf '[connect]\n~/.claude/ = read-only\n' >"$PROJ/.agent-sandbox"
+  printf '[connect]\n~/.claude/cache/ = read-only\n' >"$PROJ/.agent-sandbox"
   run_review
-  [[ "$output" == *"'~/.claude/' contains the channels "*"'instructions' ($C/CLAUDE.md)"*"each keeps its own mode inside it"* ]]
-  [[ "$output" != *"'~/.claude/' overlaps"* ]]
+  [[ "$output" == *"'~/.claude/cache/' contains the channels 'changelog' ($C/cache/changelog.md)"*"each keeps its own mode inside it"* ]]
+  [[ "$output" != *"'~/.claude/cache/' overlaps"* ]]
   local i ro=-1
   for ((i = 0; i + 2 < ${#ARGV[@]}; i++)); do
-    [[ "${ARGV[i]}" == --ro-bind && "${ARGV[i + 1]}" == "$C" ]] && ro=$i
+    [[ "${ARGV[i]}" == --ro-bind && "${ARGV[i + 1]}" == "$C/cache" ]] && ro=$i
   done
   [ "$ro" -ge 0 ]
-  [ "$(argv_index "$SBOX/instructions/own/$(slugify "$C/rules")")" -gt "$ro" ]
+  [ "$(argv_index "$SBOX/changelog/own/$(slugify "$C/cache/changelog.md")")" -gt "$ro" ]
 }
 
 @test "the same path declared twice: the later one wins, as for a channel" {

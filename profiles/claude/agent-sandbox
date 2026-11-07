@@ -96,11 +96,24 @@ hide = image-cache
 hide = gh
 
 # Paths deliberately left NATIVE, so `asb --check` does not report them as unclassified
-# (#82): anything under the base that no channel, hide or visible line names is listed
-# there, since the default for an unknown path is exposed. .credentials.json is your
-# login, the identity a sandbox runs as; ide/ exists to make Claude Code work from
-# inside a sandbox (above).
-visible = .credentials.json ide
+# (#82): anything under the base that no channel, hide, visible or account-paths line
+# names is listed there, since the default for an unknown path is exposed. ide/ exists
+# to make Claude Code work from inside a sandbox (above).
+visible = ide
+
+# The files under the base that are an account's (#355), the login first: with an
+# account named (`asb --account NAME`, `[agent] account = NAME`) they are the account
+# directory's, which is bound where the base is, and the base's are not in the sandbox;
+# with none they are the base's, your own login, the identity a sandbox runs as.
+# Measured on 2.1.319: .credentials.json holds the OAuth login, and a refresh REPLACES
+# the file (a new inode, so a bind of the file alone goes stale) and ROTATES the refresh
+# token (a copy elsewhere is dead after the first refresh on either side: an account's
+# login has one live home, so it is bound, never copied); two sessions refreshing at once
+# take turns on .oauth_refresh.lock and .oauth_refresh.lock.owner, which Claude Code
+# makes beside the credentials file, so the lock has to live in the same directory as
+# the login it guards. A directory holding only the login rebuilds the rest at its first
+# run. (#355, the measurements comment.)
+account-paths = .credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner
 
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.
