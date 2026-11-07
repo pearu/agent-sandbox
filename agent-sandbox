@@ -327,6 +327,14 @@
 #                         refused with CMD, with two agents for one role, with a
 #                         ROLE matching no launched role. A role verb or --check
 #                         with no CMD uses the role's agent's profile.
+#   --account [ROLE=]NAME the role's account (#355): <state>/AGENT/accounts/NAME/ is
+#                         bound at the agent's base (claude: ~/.claude) in place of
+#                         the base, the channels on top; else [agent:<glob>]
+#                         account, else [agent] account, else the base. NAME `-` is
+#                         the base. The --agent forms and refusals; also refused
+#                         when the directory is missing, a symlink or not one, for
+#                         a profile with no [agent] account-paths, and under
+#                         --preset native or none.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
 #                         --serve runs (the profile's serve-new arguments, a fresh
@@ -524,6 +532,14 @@ Engine flags (before CMD):
                         uses its profile. Refused with a CMD, with two agents
                         for one role, with a ROLE matching no launched role
                         (with --roles, none of the listed roles)
+  --account [ROLE=]NAME the role's account for this launch, replacing the
+                        dot-file's [agent:<glob>] / [agent] account: the
+                        directory ~/.local/state/agent-sandbox/AGENT/accounts/NAME/
+                        is the agent's state directory, bound where its base
+                        is; NAME `-` is the base. The same forms, precedence
+                        and refusals as --agent; --exec counts. Refused while
+                        the directory is missing (asb --account-login NAME
+                        AGENT), and under --preset native or none
   --roles ROLE...       open one tmux session, named after the project
                         directory, with a pane per role, each running
                         `--role ROLE` with the line's engine words, five to a
@@ -1514,6 +1530,13 @@ _as_connect_parse() {
         return 1
       fi
     done
+    # The agent's state directory and its login (#355), in every mode, account or not.
+    local _bwhy
+    # shellcheck disable=SC2031 # the launch's own profile_account_paths
+    if _bwhy="$(_as_base_refused "$_osrc" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"})"; then
+      _as_msg "connect ($where): refusing '$src_given' for '$ch': $_bwhy."
+      return 1
+    fi
     outside="$_osrc"
   else
     [[ "$src" == native ]] || {
@@ -1692,6 +1715,39 @@ _as_share_memory_sugar() {
   return 0
 }
 
+# _as_base_refused PATH BASE [ACCOUNT-PATH...] -- is PATH, as given or resolved, the
+# agent's state directory BASE (as given or resolved), a parent of it, or one of the
+# profile's account paths under it or inside one (#355)? On yes, prints why, in one
+# clause, and returns 0. A [connect] key or outside: source there would mount the base
+# over an account's directory, or the base's login into a role on another account: what
+# a role sees of the base is the profile's channels and hide list, and its login is the
+# account's. Other paths under the base are declarations like any other (a share's
+# `{base}/projects/{slug:P}/memory/` is one). Not in _as_path_protected: the base itself
+# is checked against that list at launch, and must pass it.
+_as_base_refused() {
+  local p="$1" b="$2" c bb ap
+  shift 2
+  [[ -n "$b" ]] || return 1
+  for c in "$p" "$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"; do
+    for bb in "$b" "$(readlink -f -- "$b" 2>/dev/null || printf '%s' "$b")"; do
+      if [[ "$c" == "$bb" || "$bb" == "$c"/* ]]; then
+        local how="is"
+        [[ "$c" == "$bb" ]] || how="contains"
+        printf "'%s' %s the agent's state directory '%s': what a role sees of it is the profile's channels and hide list, and its login is the account's (--account); not a [connect] path" "$c" "$how" "$bb"
+        return 0
+      fi
+      for ap in "$@"; do
+        ap="${ap%/}"
+        if [[ "$c" == "$bb/$ap" || "$c" == "$bb/$ap"/* ]]; then
+          printf "'%s' is the agent's login ('%s' in its state directory): the account's, never a [connect] path" "$c" "$ap"
+          return 0
+        fi
+      done
+    done
+  done
+  return 1
+}
+
 # _as_connect_parse_path KEY MODE WHERE -- validate a path declaration and record
 # it. Sets $_path_key to the path it resolves to, which is what the connection
 # maps are keyed by: a channel name never contains `/` and a resolved path always
@@ -1750,6 +1806,13 @@ _as_connect_parse_path() {
       return 1
     fi
   done
+  # The agent's state directory and its login (#355), in every mode, account or not.
+  local _bwhy
+  # shellcheck disable=SC2031 # the launch's own profile_account_paths
+  if _bwhy="$(_as_base_refused "$p" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"})"; then
+    _as_msg "connect ($where): refusing '$key': $_bwhy."
+    return 1
+  fi
   # Declarations may nest: they are bound by depth, outer first (#196), so the deeper
   # one governs its subtree whichever was written first. The same path again is an
   # override, as for a channel.
@@ -1784,6 +1847,11 @@ _as_connect_parse_path() {
         return 1
       fi
     done
+    # shellcheck disable=SC2031 # the launch's own profile_account_paths
+    if _bwhy="$(_as_base_refused "$src" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"})"; then
+      _as_msg "connect ($where): refusing 'outside:$outside': $_bwhy."
+      return 1
+    fi
   fi
   [[ -n "${_connect_key[$p]:-}" ]] || _connect_paths+=("$p")
   _connect_key["$p"]="$key"
@@ -2025,6 +2093,10 @@ _as_connect_bind_all() {
     # its own source needs no bind of its own only when nothing is.
     _nargs=${#args[@]}
     _bind_covered=0
+    # Under an account (#355) the base's inside path is the account's directory, so a
+    # read-write channel's own source in the base is bound back over it, as under any
+    # other outer bind.
+    [[ -n "${_acct_dir:-}" && -n "${profile_base:-}" && "$path" == "$profile_base"/* ]] && _bind_covered=1
     for b in ${_bound[@]+"${_bound[@]}"}; do
       if [[ "$path" == "$b"/* ]]; then
         _bind_covered=1
@@ -2204,7 +2276,11 @@ _as_connect_bind_channel() {
       args+=(--bind "$src" "$path")
     elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
       if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
-      [[ -e "$src" ]] && args+=(--bind "$src" "$path")
+      if [[ -e "$src" ]]; then
+        # an account's directory (#355) has no such file: the mount point is made there
+        [[ "$kind" == file ]] && _as_connect_placeholder "$path"
+        args+=(--bind "$src" "$path")
+      fi
     fi
     _rec_store="$src"
     return 0
@@ -2620,8 +2696,14 @@ _as_connect_shadows() {
 # it; the connection binds simply have to use the same list. Files only, as
 # there: an empty leftover directory is indistinguishable from an empty one the
 # user made, while an empty FILE is a channel that silently parses as nothing.
+# PATH is the inside path; what is tested and recorded is the host path behind it
+# (_as_host_path_of): under an account (#355) the base's mount points are created in the
+# account's directory, and an empty file of the same name in the real base is the
+# user's, never the cleanup's.
 _as_connect_placeholder() {
-  [[ -e "$1" ]] || _as_placeholder_files+=("$1")
+  local h
+  h="$(_as_host_path_of "$1")"
+  [[ -e "$h" ]] || _as_placeholder_files+=("$h")
 }
 
 # ----- the keeper: one launch per role, and every app joins it (#121) ---------
@@ -2759,6 +2841,15 @@ _as_keeper_policy() {
   # on a state directory other than the one its shell names.
   if [[ -n "$profile_base" ]] && { ((all)) || [[ -n "$profile_base_from" ]]; }; then
     _kp base "$profile_base" "${profile_base_from:-[agent] base}"
+  fi
+  # The account (#355): what is bound at the base's inside path, PROFILE/NAME, or `-` for
+  # the base. In `set` when the line named one (`--account -` included), so a join asking
+  # for another account than the running role's is refused: its state directory is the
+  # keeper's, fixed when it started.
+  if ((all)) || [[ "${_acct_from:-}" == line ]]; then
+    v=-
+    [[ -n "${_acct_name:-}" ]] && v="$profile/$_acct_name"
+    _kp account "$v" "$(_as_account_where "${_acct_from:-}")"
   fi
   if ((all)) || [[ -n "$_overlay_flag" || -n "${AGENT_SANDBOX_OVERLAY:-}" ]]; then
     _kp overlay "$_overlay_mode" "$([[ -n "$_overlay_flag" ]] && echo --overlay || echo AGENT_SANDBOX_OVERLAY)"
@@ -3216,6 +3307,13 @@ _as_keeper_start() {
   if [[ -n "${_cmd_word:-}" && -n "${_agent_cmd_from:-}" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
     printf '%s\n%s\n' "$_agent_cmd_from" "${_agent_cmd[*]-}" >"$sb/agent" || :
   fi
+  # The role's account (#355): PROFILE<TAB>NAME, NAME empty for the base -- the state
+  # directory this launch was built on. Only the user's own launch writes it (--exec's
+  # included, whose sandbox is the role's), as the agent's record: an engine turn's
+  # (AGENT_SANDBOX_SERVE_TURN) leaves it as it is.
+  if [[ -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
+    printf '%s\t%s\n' "$profile" "${_acct_name:-}" >"$sb/account" || :
+  fi
   # The session's own summary line (#314), bound read-write when the briefing is on.
   mkdir -p -- "$sb/summary" || return 1
   _as_keeper_policy all >"$kd/policy"
@@ -3665,7 +3763,9 @@ _as_role_list() {
   for p in "$profile_dir"/*/profile.sh; do
     [[ -r "$p" ]] || continue
     p="$(basename -- "$(dirname -- "$p")")"
-    for sb in "$state/$p"/*/*/; do
+    # A project's slug always starts with `-` (_as_path_slug): `accounts/` (#355) and
+    # anything else beside the projects is not a project's.
+    for sb in "$state/$p"/-*/*/; do
       sb="${sb%/}"
       [[ -d "$sb" && ! -L "$sb" && "${sb##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
       [[ -z "$only" || "$(basename -- "$(dirname -- "$sb")")" == "$only" ]] || continue
@@ -5855,6 +5955,10 @@ _as_trust_show() {
 #   [agent] resume  -- profile_resume: the words `--resume` puts after the agent's own
 #                      arguments, to resume its last session (#355); none: --resume
 #                      refuses
+#   [agent] account-paths -- profile_account_paths: the agent's files under its base that
+#                      are an account's, its login first (#355): with an account in
+#                      force they are the account directory's; none: the profile has
+#                      no accounts, and naming one refuses the launch
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -5896,6 +6000,7 @@ _as_profile_dotfile() {
       serve-new) profile_serve_new+=(${words[@]+"${words[@]}"}) ;;
       serve-resume) profile_serve_resume+=(${words[@]+"${words[@]}"}) ;;
       clear) profile_clear="$v" ;;
+      account-paths) profile_account_paths+=(${words[@]+"${words[@]}"}) ;;
       resume) profile_resume+=(${words[@]+"${words[@]}"}) ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
       visible) profile_visible+=(${words[@]+"${words[@]}"}) ;;
@@ -6152,13 +6257,17 @@ _as_profile_facts_dotfile() {
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=()
-  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths
+  # the caller's: the base, for the review's [connect] check (#355)
+  _pf_base="$profile_base"
 }
 
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
 # profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...`,
-# `key<TAB>NAME<TAB>KEY`, `resume<TAB>NAME<TAB>WORD...` and `clear<TAB>NAME<TAB>KEYS`
-# lines (the last two only for a profile with [agent] resume, [agent] clear: #355).
+# `key<TAB>NAME<TAB>KEY`, `resume<TAB>NAME<TAB>WORD...`, `clear<TAB>NAME<TAB>KEYS`,
+# `account-paths<TAB>NAME<TAB>PATH...` and `base<TAB>NAME<TAB>PATH` lines (the last four
+# only for a profile with [agent] resume, [agent] clear, [agent] account-paths, a base:
+# #355).
 # Sourced in a subshell; a profile's top level only declares. What a profile adds at a
 # launch (profile_prepare) is not here.
 _as_profile_facts() {
@@ -6166,8 +6275,8 @@ _as_profile_facts() {
     local name l
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
-    local -a profile_channels=() profile_dotfile_keys=() profile_resume=()
-    local profile_project_env_set=0 profile_clear=""
+    local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=()
+    local profile_project_env_set=0 profile_clear="" _pf_base=""
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
     # shellcheck disable=SC1090
@@ -6181,6 +6290,12 @@ _as_profile_facts() {
       printf '\n'
     fi
     [[ -z "$profile_clear" ]] || printf 'clear\t%s\t%s\n' "$name" "$profile_clear"
+    [[ -z "$_pf_base" ]] || printf 'base\t%s\t%s\n' "$name" "$_pf_base"
+    if ((${#profile_account_paths[@]})); then
+      printf 'account-paths\t%s' "$name"
+      printf '\t%s' "${profile_account_paths[@]}"
+      printf '\n'
+    fi
     ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
     true
   )
@@ -6250,60 +6365,89 @@ _as_dotfile_agent() {
   ((${#_df_agent[@]} == 0)) || printf '%s\n' "${_df_agent[@]}"
 }
 
-# _as_agent_resolve ROLE [LINE...] -- the agent of ROLE (#355): sets _agent_cmd (its
-# words: AGENT, then the fixed arguments) and _agent_cmd_from (`line`,
-# `dotfile:[agent:<glob>]` or `dotfile:[agent]`), both empty when nothing names one.
-# First the line's --agent forms (the engine's _agent_flag): an exact role name, then a
-# glob, then a bare AGENT, the weakest; a form naming a role or glob that does not match
-# ROLE, or two exact forms, two globs or two bare ones that disagree, fail. A line form
-# replaces the dot-file's whole command, fixed arguments included. Then the LINEs, an
-# approved dot-file's _df_agent (_as_dotfile_agent): the [agent:<glob>] lines matching
-# ROLE, the later winning, over the unsuffixed [agent] lines, the later winning --
-# _as_dotfile_apply_role's order, whatever the order in the file.
-# shellcheck disable=SC2154
-_as_agent_resolve() {
-  local role="$1" e g k v ex="" exf="" gl="" glf="" ba="" baf="" sv="" sg="" uv=""
-  shift
-  _agent_cmd=() _agent_cmd_from=""
-  local _af_role _af_agent
-  for e in ${_agent_flag[@]+"${_agent_flag[@]}"}; do
-    _as_agent_flag_split "$e" || return 2
+# _as_account_flag_split VALUE -- one --account value (#355): sets _af_role (the role or
+# glob before the first `=`, empty for a bare NAME, which is every role's) and _af_acct:
+# NAME, or `-`, the base (no account: the agent's own login, D12). NAME has a role name's
+# shape (_as_role_name_ok), so it is one path segment and never `-`. Fails, saying why.
+_as_account_flag_split() {
+  local v="$1" re='^[]A-Za-z0-9._*?[-]+$'
+  _af_role="" _af_acct="$v"
+  if [[ "$v" == *=* ]]; then
+    _af_role="${v%%=*}" _af_acct="${v#*=}"
+    if [[ ! "$_af_role" =~ $re ]]; then
+      _as_msg "--account '$v': '$_af_role' is not a role or a glob of roles (--account NAME, or --account ROLE=NAME)"
+      return 1
+    fi
+  fi
+  if [[ "$_af_acct" != - ]] && ! _as_role_name_ok "$_af_acct"; then
+    _as_msg "--account '$v': '$_af_acct' is not an account name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters -- nor '-', the agent's base (your own login)"
+    return 1
+  fi
+  return 0
+}
+
+# _as_role_form_pick FLAG ROLE FORM... -- what the line's FLAG forms (--agent, --account,
+# as given) say for ROLE (#355): an exact role name, then a glob, then a bare value, the
+# weakest; sets _lp_val, empty when no form applies. A form naming a role or glob that
+# does not match ROLE, or two exact forms, two globs or two bare ones that disagree, fail.
+_as_role_form_pick() {
+  local flag="$1" role="$2" e ex="" exf="" gl="" glf="" ba="" baf="" noun val
+  shift 2
+  _lp_val=""
+  local _af_role _af_agent _af_acct
+  noun="${flag#--}"
+  for e in "$@"; do
+    if [[ "$flag" == --agent ]]; then
+      _as_agent_flag_split "$e" || return 2
+      val="$_af_agent"
+    else
+      _as_account_flag_split "$e" || return 2
+      val="$_af_acct"
+    fi
     if [[ -z "$_af_role" ]]; then
-      if [[ -n "$ba" && "$ba" != "$_af_agent" ]]; then
-        _as_msg "--agent: two agents for every role, '$ba' (--agent $baf) and '$_af_agent' (--agent $e); name it once"
+      if [[ -n "$ba" && "$ba" != "$val" ]]; then
+        _as_msg "$flag: two ${noun}s for every role, '$ba' ($flag $baf) and '$val' ($flag $e); name it once"
         return 2
       fi
-      ba="$_af_agent" baf="$e"
+      ba="$val" baf="$e"
       continue
     fi
     # shellcheck disable=SC2053 # the glob is the pattern
     if [[ "$role" != $_af_role ]]; then
-      _as_msg "--agent $e: '$_af_role' matches no role of this launch (its role is '$role')"
+      _as_msg "$flag $e: '$_af_role' matches no role of this launch (its role is '$role')"
       return 2
     fi
     if [[ "$_af_role" == *[*?[]* ]]; then
-      if [[ -n "$gl" && "$gl" != "$_af_agent" ]]; then
-        _as_msg "--agent: two globs give role '$role' two agents, '$gl' (--agent $glf) and '$_af_agent' (--agent $e); name it once"
+      if [[ -n "$gl" && "$gl" != "$val" ]]; then
+        _as_msg "$flag: two globs give role '$role' two ${noun}s, '$gl' ($flag $glf) and '$val' ($flag $e); name it once"
         return 2
       fi
-      gl="$_af_agent" glf="$e"
+      gl="$val" glf="$e"
     else
-      if [[ -n "$ex" && "$ex" != "$_af_agent" ]]; then
-        _as_msg "--agent: role '$role' is given two agents, '$ex' (--agent $exf) and '$_af_agent' (--agent $e); name it once"
+      if [[ -n "$ex" && "$ex" != "$val" ]]; then
+        _as_msg "$flag: role '$role' is given two ${noun}s, '$ex' ($flag $exf) and '$val' ($flag $e); name it once"
         return 2
       fi
-      ex="$_af_agent" exf="$e"
+      ex="$val" exf="$e"
     fi
   done
-  v="${ex:-${gl:-$ba}}"
-  if [[ -n "$v" ]]; then
-    _agent_cmd=("$v") _agent_cmd_from=line
-    return 0
-  fi
+  _lp_val="${ex:-${gl:-$ba}}"
+  return 0
+}
+
+# _as_dotfile_pick ROLE KEY LINE... -- the value an approved dot-file's [agent] lines
+# (_df_agent's GLOB<TAB>KEY<TAB>VALUE) give KEY for ROLE (#355): the [agent:<glob>] lines
+# matching ROLE, the later winning, over the unsuffixed [agent] lines, the later winning
+# -- _as_dotfile_apply_role's order, whatever the order in the file. Sets _dp_val and
+# _dp_from (`dotfile:[agent:<glob>]` or `dotfile:[agent]`), both empty for none.
+_as_dotfile_pick() {
+  local role="$1" key="$2" e g k v sv="" sg="" uv=""
+  shift 2
+  _dp_val="" _dp_from=""
   for e in "$@"; do
     g="${e%%$'\t'*}" e="${e#*$'\t'}"
     k="${e%%$'\t'*}" v="${e#*$'\t'}"
-    [[ "$k" == command && -n "$v" ]] || continue
+    [[ "$k" == "$key" && -n "$v" ]] || continue
     # shellcheck disable=SC2053 # the glob is the pattern
     if [[ "$g" == "*" ]]; then
       uv="$v"
@@ -6312,13 +6456,141 @@ _as_agent_resolve() {
     fi
   done
   if [[ -n "$sv" ]]; then
-    read -r -a _agent_cmd <<<"$sv"
-    _agent_cmd_from="dotfile:[agent:$sg]"
+    _dp_val="$sv" _dp_from="dotfile:[agent:$sg]"
   elif [[ -n "$uv" ]]; then
-    read -r -a _agent_cmd <<<"$uv"
-    _agent_cmd_from="dotfile:[agent]"
+    _dp_val="$uv" _dp_from="dotfile:[agent]"
   fi
   return 0
+}
+
+# _as_agent_resolve ROLE [LINE...] -- the agent of ROLE (#355): sets _agent_cmd (its
+# words: AGENT, then the fixed arguments) and _agent_cmd_from (`line`,
+# `dotfile:[agent:<glob>]` or `dotfile:[agent]`), both empty when nothing names one.
+# First the line's --agent forms (the engine's _agent_flag, _as_role_form_pick); a line
+# form replaces the dot-file's whole command, fixed arguments included. Then the LINEs,
+# an approved dot-file's _df_agent (_as_dotfile_agent), by _as_dotfile_pick.
+# shellcheck disable=SC2154
+_as_agent_resolve() {
+  local role="$1" _lp_val _dp_val _dp_from
+  shift
+  _agent_cmd=() _agent_cmd_from=""
+  _as_role_form_pick --agent "$role" ${_agent_flag[@]+"${_agent_flag[@]}"} || return 2
+  if [[ -n "$_lp_val" ]]; then
+    _agent_cmd=("$_lp_val") _agent_cmd_from=line
+    return 0
+  fi
+  _as_dotfile_pick "$role" command "$@"
+  if [[ -n "$_dp_val" ]]; then
+    read -r -a _agent_cmd <<<"$_dp_val"
+    _agent_cmd_from="$_dp_from"
+  fi
+  return 0
+}
+
+# _as_account_resolve ROLE [LINE...] -- the account of ROLE (#355): sets _acct_name (NAME,
+# empty for the base) and _acct_from (`line`, `dotfile:[agent:<glob>]` or
+# `dotfile:[agent]`; empty when nothing names one). The same order as the agent's: the
+# line's --account forms (_account_flag), then [agent:<glob>] account, then [agent]
+# account. `-` names the base wherever it is said (D12), so a line's `--account -`
+# overrides a file's account, and an [agent:r] account = - the one [agent] gives.
+# shellcheck disable=SC2154
+_as_account_resolve() {
+  local role="$1" _lp_val _dp_val _dp_from
+  shift
+  _acct_name="" _acct_from=""
+  _as_role_form_pick --account "$role" ${_account_flag[@]+"${_account_flag[@]}"} || return 2
+  if [[ -n "$_lp_val" ]]; then
+    _acct_from=line
+    [[ "$_lp_val" == - ]] || _acct_name="$_lp_val"
+    return 0
+  fi
+  _as_dotfile_pick "$role" account "$@"
+  if [[ -n "$_dp_val" ]]; then
+    _acct_from="$_dp_from"
+    [[ "$_dp_val" == - ]] || _acct_name="$_dp_val"
+  fi
+  return 0
+}
+
+# _as_account_where FROM -- where an account was named, for a message: `--account`, or the
+# dot-file line's section.
+_as_account_where() {
+  case "$1" in
+    line) printf -- '--account' ;;
+    dotfile:*) printf '.agent-sandbox %s account' "${1#dotfile:}" ;;
+    *) printf 'nowhere' ;;
+  esac
+}
+
+# _as_account_dir PROFILE NAME FROM HASPATHS -- the account NAME's directory for PROFILE
+# (#355): <state>/PROFILE/accounts/NAME/, the role's state directory in place of the
+# base. Sets _acct_dir to it, resolved. Fails, saying why and what to do, when PROFILE
+# declares no [agent] account-paths (HASPATHS 0: it has no accounts), and when the
+# directory is missing, is a symlink, is not a directory, or resolves anywhere but where
+# it is named (a symlinked `accounts`): an account's login has one home, and the state
+# directory is a control path that nothing may redirect.
+_as_account_dir() {
+  local p="$1" n="$2" what st d real
+  what="the account '$n' ($(_as_account_where "$3"))"
+  _acct_dir=""
+  if (($4 == 0)); then
+    _as_msg "$what: profile '$p' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts; run it on its base: --account -"
+    return 1
+  fi
+  st="$(_as_state_dir)"
+  d="$st/$p/accounts/$n"
+  if [[ -L "$d" ]]; then
+    _as_msg "$what: $d is a symlink; an account is a directory of its own, its login's one home. Refusing to follow it"
+    return 1
+  elif [[ ! -e "$d" ]]; then
+    _as_msg "$what: there is no $d for the agent $p: log it in with ${invoked:-asb} --account-login $n $p"
+    return 1
+  elif [[ ! -d "$d" ]]; then
+    _as_msg "$what: $d is not a directory; an account is a directory of its own, its login's one home"
+    return 1
+  fi
+  real="$(readlink -f -- "$d")"
+  if [[ "$real" != "$(readlink -f -- "$st")/$p/accounts/$n" ]]; then
+    _as_msg "$what: $d resolves to $real, not where it is named; refusing to bind it"
+    return 1
+  fi
+  _acct_dir="$real"
+  return 0
+}
+
+# _as_account_check -- the launch's account (_acct_name, _acct_from: _as_account_resolve),
+# checked where it is to be bound (#355): refused under `native` (D11), which binds the
+# base natively, and by _as_account_dir; on success sets _acct_dir and says it. Nothing
+# for the base. Uses the engine's profile and profile_account_paths by dynamic scope.
+# shellcheck disable=SC2154,SC2031
+_as_account_check() {
+  [[ -n "${_acct_name:-}" ]] || return 0
+  if _as_preset_is_native; then
+    _as_msg "the account '$_acct_name' ($(_as_account_where "$_acct_from")): preset native binds the agent's own base, natively, so no account's directory can be its state directory; run it on the base with --account -, or under another preset"
+    return 1
+  fi
+  _as_account_dir "$profile" "$_acct_name" "$_acct_from" "${#profile_account_paths[@]}" || return 1
+  _as_info "account: $_acct_name ($(_as_account_where "$_acct_from")), $_acct_dir as the agent's state directory"
+  return 0
+}
+
+# _as_host_path_of INSIDE -- the host path behind INSIDE, for a mount point bwrap creates
+# there (#355): with an account in force (_acct_dir) the base's inside path is the
+# account's directory, so `{base}/X` is created at ACCOUNT/X on the host; any other path
+# is the same on both sides. A placeholder's record must name the host path, or the
+# cleanup would test, and remove, an empty file of that name in the real base.
+# shellcheck disable=SC2154
+_as_host_path_of() {
+  if [[ -n "${_acct_dir:-}" && -n "${profile_base:-}" ]]; then
+    if [[ "$1" == "$profile_base" ]]; then
+      printf '%s' "$_acct_dir"
+      return 0
+    elif [[ "$1" == "$profile_base"/* ]]; then
+      printf '%s/%s' "$_acct_dir" "${1#"$profile_base"/}"
+      return 0
+    fi
+  fi
+  printf '%s' "$1"
 }
 
 # _as_agent_notes -- the review's lines for the [agent] sections (#355, _as_trust_notes):
@@ -6333,9 +6605,18 @@ _as_agent_notes() {
   for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
     g="${e%%$'\t'*}" e="${e#*$'\t'}"
     k="${e%%$'\t'*}" v="${e#*$'\t'}"
-    [[ "$k" == command ]] || continue
     sect="$(_as_agent_sect "$g")"
     if [[ "$g" == "*" ]]; then n="every role"; else n="the roles $g"; fi
+    if [[ "$k" == account ]]; then
+      # #355: names only; which agent's directory it is depends on the role's agent.
+      if [[ "$v" == - ]]; then
+        _as_msg ".agent-sandbox: $sect account = -: $n run on the agent's base, your own login, whatever a weaker line or the defaults say"
+      else
+        _as_msg ".agent-sandbox: $sect account = $v: $n run on the account '$v' -- its directory $(_as_tilde "$(_as_state_dir)")/AGENT/accounts/$v/ is the agent's state directory, holding its login, shared read-write by every role on that account in every project; a launch is refused while it is missing (log it in with asb --account-login $v AGENT)"
+      fi
+      continue
+    fi
+    [[ "$k" == command ]] || continue
     read -r -a w <<<"$v"
     b="${w[0]##*/}"
     if [[ " ${_df_profile_names[*]-} " == *" $b "* ]]; then
@@ -6362,25 +6643,28 @@ _as_agent_notes() {
       fi
     done
   done
-  # Among suffixed sections the later line wins (_as_agent_resolve), so a role a section
-  # names exactly takes a later glob's line when that glob matches it too: said, since
-  # the exact name reads as the stronger one.
+  # Among suffixed sections the later line wins (_as_dotfile_pick), so a role a section
+  # names exactly takes a later glob's line when that glob matches it too: said, per key
+  # (command, account), since the exact name reads as the stronger one.
   local -a sfx=()
-  local j eg ev lg lv
-  for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
-    [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'command$'\t'* ]] || sfx+=("$e")
-  done
-  for ((i = 0; i < ${#sfx[@]}; i++)); do
-    eg="${sfx[i]%%$'\t'*}" ev="${sfx[i]##*$'\t'}"
-    [[ "$eg" != *[*?[]* ]] || continue
-    lg="" lv=""
-    for ((j = i + 1; j < ${#sfx[@]}; j++)); do
-      g="${sfx[j]%%$'\t'*}"
-      # shellcheck disable=SC2053 # the glob is the pattern
-      [[ "$eg" == $g ]] && lg="$g" lv="${sfx[j]##*$'\t'}"
+  local j eg ev lg lv key
+  for key in command account; do
+    sfx=()
+    for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
+      [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'"$key"$'\t'* ]] || sfx+=("$e")
     done
-    # the line the role takes: said only when it is a glob's
-    [[ -z "$lg" || "$lg" != *[*?[]* ]] || _as_msg ".agent-sandbox: [agent:$eg] command = $ev: role $eg takes the later [agent:$lg] command = $lv instead (among suffixed sections the later line wins); put [agent:$eg] after it to keep its own"
+    for ((i = 0; i < ${#sfx[@]}; i++)); do
+      eg="${sfx[i]%%$'\t'*}" ev="${sfx[i]##*$'\t'}"
+      [[ "$eg" != *[*?[]* ]] || continue
+      lg="" lv=""
+      for ((j = i + 1; j < ${#sfx[@]}; j++)); do
+        g="${sfx[j]%%$'\t'*}"
+        # shellcheck disable=SC2053 # the glob is the pattern
+        [[ "$eg" == $g ]] && lg="$g" lv="${sfx[j]##*$'\t'}"
+      done
+      # the line the role takes: said only when it is a glob's
+      [[ -z "$lg" || "$lg" != *[*?[]* ]] || _as_msg ".agent-sandbox: [agent:$eg] $key = $ev: role $eg takes the later [agent:$lg] $key = $lv instead (among suffixed sections the later line wins); put [agent:$eg] after it to keep its own"
+    done
   done
   return 0
 }
@@ -6578,19 +6862,41 @@ _as_trust_notes() {
     if [[ -n "$sbx" && "$key" != */* ]] && _as_instruction_channel "$key"; then
       _as_msg "connect: '$key = $mode $sbx': what that role's agent wrote into its $key becomes what this sandbox reads as yours -- loaded into every session, trusted like your own configuration."
     fi
-    [[ "$key" == */* ]] || continue
     for f in "$t2" "$t3"; do
       [[ "$f" == outside:?* ]] || continue
       src="${f#outside:}"
       [[ "$src" == \~ || "$src" == \~/* ]] && src="$HOME${src#\~}"
       src="$(realpath -m -s -- "$src")"
     done
-    case "$key" in
-      \~/*) p="$HOME${key#\~}" ;;
-      /*) p="$key" ;;
-      *) p="$cwd/$key" ;;
-    esac
-    p="$(realpath -m -s -- "$p")"
+    p=""
+    if [[ "$key" == */* ]]; then
+      case "$key" in
+        \~ | \~/*) p="$HOME${key#\~}" ;;
+        /*) p="$key" ;;
+        *) p="$cwd/$key" ;;
+      esac
+      p="$(realpath -m -s -- "$p")"
+    fi
+    # The agent's state directory and its login (#355): a launch refuses a key or an
+    # outside: source there, under every profile that has the base, account or not.
+    local fb bname bpath bwhy
+    local -a bap=()
+    for fb in ${facts[@]+"${facts[@]}"}; do
+      [[ "$fb" == base$'\t'* ]] || continue
+      IFS=$'\t' read -r _ bname bpath <<<"$fb"
+      bap=()
+      for line in ${facts[@]+"${facts[@]}"}; do
+        [[ "$line" == account-paths$'\t'"$bname"$'\t'* ]] || continue
+        IFS=$'\t' read -r -a fields <<<"$line"
+        bap=("${fields[@]:2}")
+      done
+      for f in ${p:+"$p"} ${src:+"$src"}; do
+        if bwhy="$(_as_base_refused "$f" "$bpath" ${bap[@]+"${bap[@]}"})"; then
+          _as_msg "connect: '$spec': $bwhy (profile $bname); a launch refuses the line."
+        fi
+      done
+    done
+    [[ "$key" == */* ]] || continue
     # Bound by depth (#196): inside a channel the declaration wins; a channel inside the
     # declaration keeps its own mode there. One line for each, naming the innermost
     # channel it is in and every one it contains.
@@ -7062,8 +7368,8 @@ _as_dotfile_line() {
       ;;
     agent)
       # [agent] and [agent:<glob>] (#355): the role's agent and the native arguments
-      # always passed to it, `command = AGENT [ARGS]`, words split at blanks; kept with
-      # the section's glob, in file order. While a profile's own dot-file is read,
+      # always passed to it, `command = AGENT [ARGS]`, words split at blanks, and its
+      # account, `account = NAME` or `-`; kept with the section's glob, in file order. While a profile's own dot-file is read,
       # `profile` is `agent` (_as_profile_dotfile) and [agent] is that profile's
       # section: its keys go to the profile, as any profile-named section's do.
       if [[ "${profile:-}" == agent ]]; then
@@ -7078,6 +7384,15 @@ _as_dotfile_line() {
               _as_msg ".agent-sandbox: [agent] command names no agent (command = AGENT [ARGS]); ignoring"
             else
               _df_agent+=("$sglob"$'\t'command$'\t'"$cv")
+            fi
+            ;;
+          account)
+            # The role's account (#355): a directory under the agent's state, its
+            # login's one home; `-` is the base, overriding an account a weaker line names.
+            if [[ "$cv" == - ]] || _as_role_name_ok "$cv"; then
+              _df_agent+=("$sglob"$'\t'account$'\t'"$cv")
+            else
+              _as_msg ".agent-sandbox: [agent] account = $cv: not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring"
             fi
             ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
@@ -9057,6 +9372,18 @@ _as_check_plan() {
         dotfile:*) printf '  agent: %s -- .agent-sandbox %s wins\n' "${_agent_cmd[*]}" "${_agent_cmd_from#dotfile:}" ;;
       esac
     fi
+    # Its account (#355): the one in force and where it was named, else the base.
+    # A directory _as_account_check refused is said so (--check reports, a launch refuses).
+    if [[ -n "${_acct_name:-}" && -n "${_acct_dir:-}" ]]; then
+      printf '  account: %s -- %s; its directory %s is the state directory\n' "$_acct_name" \
+        "$(_as_account_where "$_acct_from")" "$(_as_tilde "$_acct_dir")"
+    elif [[ -n "${_acct_name:-}" ]]; then
+      printf '  account: %s -- %s; its directory %s is NOT USABLE (above), so a launch refuses: log it in with %s --account-login %s %s\n' \
+        "$_acct_name" "$(_as_account_where "$_acct_from")" "$(_as_tilde "$(_as_state_dir)/$profile/accounts/$_acct_name")" \
+        "$invoked" "$_acct_name" "$profile"
+    elif [[ -n "${_acct_from:-}" ]]; then
+      printf '  account: the base (-, %s)\n' "$(_as_account_where "$_acct_from")"
+    fi
     local _ag_e _ag_g
     for _ag_e in ${_df_agent[@]+"${_df_agent[@]}"}; do
       _ag_g="${_ag_e%%$'\t'*}" _ag_e="${_ag_e#*$'\t'}"
@@ -9321,8 +9648,8 @@ _as_check_actas() {
 }
 
 # _as_check_unclassified -- what is in the agent's base and the profile has no word for
-# (#82): no channel path, `hide` line (the profile's or this project's) or `visible`
-# line covers it. Such a path is the native one, read-write, and every project's -- the
+# (#82): no channel path, `hide` line (the profile's or this project's), `visible` line
+# or `account-paths` entry (#355) covers it. Such a path is the native one, read-write, and every project's -- the
 # default for an unknown path is exposed, and what the agent adds is unknown until
 # someone looks. Listed as loudly as UNMEASURED, so it is decided rather than missed.
 # An entry a channel covers only part of is named with what it covers.
@@ -9335,7 +9662,9 @@ _as_check_unclassified() {
     IFS=$'\t' read -r -a _f <<<"$line"
     for entry in "${_f[@]:1}"; do known+=("${entry#*:}"); done
   done
-  for h in ${profile_hide[@]+"${profile_hide[@]}"} ${profile_visible[@]+"${profile_visible[@]}"}; do
+  # shellcheck disable=SC2031 # the launch's own profile_account_paths
+  for h in ${profile_hide[@]+"${profile_hide[@]}"} ${profile_visible[@]+"${profile_visible[@]}"} \
+    ${profile_account_paths[@]+"${profile_account_paths[@]}"}; do
     known+=("$profile_base/${h%/}")
   done
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -9586,7 +9915,13 @@ _as_check_binds() {
   ((${#_items[@]})) && mapfile -t _sorted < <(printf '%s\n' "${_items[@]}" | sort -t' ' -k1,1n -k2,2n -k3,3n)
   {
     printf '\nBinds, outer first:\n'
-    [[ -n "$profile_base" ]] && _as_check_row "$(_as_tilde "$profile_base")" read-write "the agent's base"
+    if [[ -n "$profile_base" && -n "${_acct_dir:-}" ]]; then
+      _as_check_row "$(_as_tilde "$profile_base")" read-write "account $_acct_name: $(_as_tilde "$_acct_dir") (its state directory)"
+    elif [[ -n "$profile_base" && -n "${_acct_name:-}" ]]; then
+      _as_check_row "$(_as_tilde "$profile_base")" read-write "account $_acct_name: not usable, a launch refuses"
+    elif [[ -n "$profile_base" ]]; then
+      _as_check_row "$(_as_tilde "$profile_base")" read-write "the agent's base"
+    fi
     _as_check_row "$(_as_tilde "$cwd")" "$_connect_project_mode" "the project"
     for item in ${_sorted[@]+"${_sorted[@]}"}; do
       IFS=$'\t' read -r -a fields <<<"$item"
@@ -11169,8 +11504,10 @@ _as_launch_pasta() {
 # that role's pane and nothing else. A role whose profile has no clear is not watched,
 # and said. Not for served roles (--serve among the words), whose loop takes its own
 # marker, nor for a project without .asb/coord/to/.
-# Reads the engine's _roles, _roles_flags, _agent_flag, _do_resume, profile_dir and
-# invoked by dynamic scope.
+# Each role's account (#355) is resolved and checked the same way, up front: the pane
+# gets `--account NAME` (or `-`) only when the line named that role's.
+# Reads the engine's _roles, _roles_flags, _agent_flag, _account_flag, _preset_flag,
+# _do_resume, profile_dir and invoked by dynamic scope.
 # shellcheck disable=SC2154
 _as_roles_open() {
   local dir name tmux slot self line r e
@@ -11207,10 +11544,19 @@ _as_roles_open() {
   # role, then the approved file's [agent] lines. A form matching no listed role is
   # refused, as a single launch refuses one matching its role not.
   local -a lines=() given=(${_agent_flag[@]+"${_agent_flag[@]}"}) mine=()
-  local -A agent_word=() agent_prof=() clear_of=() resume_of=()
-  local _af_role _af_agent hit b f k
-  for e in ${given[@]+"${given[@]}"}; do
-    _as_agent_flag_split "$e" || return 2
+  local -a agiven=(${_account_flag[@]+"${_account_flag[@]}"}) amine=()
+  local -A agent_word=() agent_prof=() clear_of=() resume_of=() acct_word=() acct_paths_of=()
+  local _af_role _af_agent _af_acct hit b f k fl
+  local -a forms=()
+  for e in ${given[@]+"${given[@]}"}; do forms+=("--agent"$'\t'"$e"); done
+  for e in ${agiven[@]+"${agiven[@]}"}; do forms+=("--account"$'\t'"$e"); done
+  for e in ${forms[@]+"${forms[@]}"}; do
+    fl="${e%%$'\t'*}" e="${e#*$'\t'}"
+    if [[ "$fl" == --agent ]]; then
+      _as_agent_flag_split "$e" || return 2
+    else
+      _as_account_flag_split "$e" || return 2
+    fi
     [[ -n "$_af_role" ]] || continue
     hit=0
     for r in "${_roles[@]}"; do
@@ -11218,7 +11564,7 @@ _as_roles_open() {
       [[ "$r" == $_af_role ]] && hit=1 && break
     done
     if ((! hit)); then
-      _as_msg "--agent $e: '$_af_role' matches none of the roles --roles opens (${_roles[*]}); nothing was opened"
+      _as_msg "$fl $e: '$_af_role' matches none of the roles --roles opens (${_roles[*]}); nothing was opened"
       return 2
     fi
   done
@@ -11227,7 +11573,7 @@ _as_roles_open() {
     lines=(${lines[@]+"${lines[@]:1}"})
   fi
   local -a _agent_cmd=()
-  local _agent_cmd_from="" profile profile_bin
+  local _agent_cmd_from="" profile profile_bin _acct_name _acct_from _acct_dir
   for r in "${_roles[@]}"; do
     mine=()
     for e in ${given[@]+"${given[@]}"}; do
@@ -11258,16 +11604,43 @@ _as_roles_open() {
     # What the profile says without being loaded (_as_profile_facts): its fresh start
     # for the resets below, and whether it can resume, which --resume needs of each.
     if [[ -z "${clear_of[$b]+x}" ]]; then
-      clear_of[$b]="" resume_of[$b]=""
+      clear_of[$b]="" resume_of[$b]="" acct_paths_of[$b]=""
       while IFS=$'\t' read -r f k e; do
         [[ "$k" == "$b" ]] || continue
         [[ "$f" == clear ]] && clear_of[$b]="$e"
         [[ "$f" == resume ]] && resume_of[$b]="$e"
+        [[ "$f" == account-paths ]] && acct_paths_of[$b]="$e"
       done < <(_as_profile_facts "$profile_dir/$b/profile.sh")
     fi
     if ((${_do_resume:-0})) && [[ -z "${resume_of[$b]}" ]]; then
       _as_msg "--roles: role '$r': --resume: profile '$b' says nothing of how to resume a session ([agent] resume); nothing was opened"
       return 2
+    fi
+    # Its account (#355), as its pane will resolve it: the line's --account forms that
+    # apply to the role, then the file's [agent] account lines; its directory checked
+    # under the role's agent, as the pane's launch checks it (_as_account_dir), and
+    # refused under --preset native or none (D11). The pane gets a bare --account only
+    # when the line named the role's.
+    amine=()
+    for e in ${agiven[@]+"${agiven[@]}"}; do
+      _as_account_flag_split "$e" || return 2
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ -z "$_af_role" || "$r" == $_af_role ]] && amine+=("$e")
+    done
+    local -a _account_flag=(${amine[@]+"${amine[@]}"})
+    _as_account_resolve "$r" ${lines[@]+"${lines[@]}"} || return 2
+    if [[ -n "$_acct_name" ]]; then
+      if [[ "${_preset_flag:-}" == native || "${_preset_flag:-}" == none ]]; then
+        _as_msg "--roles: role '$r': the account '$_acct_name' ($(_as_account_where "$_acct_from")): --preset $_preset_flag binds no account's directory; --account $r=- runs it on the base. Nothing was opened"
+        return 2
+      fi
+      _as_account_dir "$b" "$_acct_name" "$_acct_from" "$([[ -n "${acct_paths_of[$b]}" ]] && echo 1 || echo 0)" || {
+        _as_msg "--roles: role '$r' cannot start; nothing was opened"
+        return 2
+      }
+    fi
+    if [[ "$_acct_from" == line ]]; then
+      acct_word[$r]="${_acct_name:--}"
     fi
   done
   name="$(basename -- "$dir")"
@@ -11284,6 +11657,7 @@ _as_roles_open() {
   for r in "${_roles[@]}"; do
     aw=()
     [[ -n "${agent_word[$r]:-}" ]] && aw=(--agent "${agent_word[$r]}")
+    [[ -n "${acct_word[$r]:-}" ]] && aw+=(--account "${acct_word[$r]}")
     printf -v line '%q ' "$self" --role "$r" ${aw[@]+"${aw[@]}"} ${_roles_flags[@]+"${_roles_flags[@]}"}
     line="${line% }; exec \"\${SHELL:-bash}\""
     if ((i % 5)); then
@@ -11486,6 +11860,11 @@ agent_sandbox() (
   # and where they came from (_as_agent_resolve), and how many of them are fixed args.
   local -a _agent_flag=() _agent_cmd=()
   local _agent_cmd_from="" _agent_fixed_n=0
+  # --account (#355): the line's forms, as given; the role's account once resolved
+  # (_as_account_resolve: its name, empty for the base, and where it was named) and its
+  # directory, checked (_as_account_dir), which is bound at the base's inside path.
+  local -a _account_flag=()
+  local _acct_name="" _acct_from="" _acct_dir=""
   while (($# > 0)); do
     case "$1" in
       --profile)
@@ -11782,6 +12161,22 @@ agent_sandbox() (
         _agent_flag+=("${1#--agent=}")
         shift
         ;;
+      --account)
+        # A role's account for this launch (#355): ROLE=NAME, 'GLOB=NAME', or NAME for
+        # every role, `-` for the base; repeatable, checked as --agent is.
+        [[ $# -ge 2 && -n "$2" && ("$2" == - || "$2" != -*) ]] || {
+          _as_msg "--account needs an account: --account NAME, or --account ROLE=NAME (NAME '-': the base)"
+          return 2
+        }
+        _as_account_flag_split "$2" || return 2
+        _account_flag+=("$2")
+        shift 2
+        ;;
+      --account=*)
+        _as_account_flag_split "${1#--account=}" || return 2
+        _account_flag+=("${1#--account=}")
+        shift
+        ;;
       --roles)
         # A tmux session with a pane per role (#317, #320). The roles are every word up to
         # the first that starts with `-`; it takes no command (#355): each pane's agent is
@@ -11897,12 +12292,13 @@ agent_sandbox() (
       _as_msg "--roles opens a tmux session on the host, and this is a sandbox: run it from a terminal of yours"
       return 2
     fi
-    # Every --agent form is left out: each pane is given its own role's (_as_roles_open).
+    # Every --agent and --account form is left out: each pane is given its own role's
+    # (_as_roles_open).
     local _rflags_end=$((${#_argv_given[@]} - $#)) _rk=0
     for _rw in "${_argv_given[@]:0:_roles_at}" "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}"; do
       ((_rk)) && _rk=0 && continue
-      [[ "$_rw" == --agent ]] && _rk=1 && continue
-      [[ "$_rw" == --agent=* ]] || _roles_flags+=("$_rw")
+      [[ "$_rw" == --agent || "$_rw" == --account ]] && _rk=1 && continue
+      [[ "$_rw" == --agent=* || "$_rw" == --account=* ]] || _roles_flags+=("$_rw")
     done
   fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
@@ -12003,6 +12399,19 @@ agent_sandbox() (
     fi
     if [[ -n "$_cmd_word" ]]; then
       _as_msg "the agent is named once: --agent ${_agent_flag[0]} or the command '$_cmd_word', not both. Its arguments go after the command, $invoked [ENGINE FLAGS] CMD [AGENT ARGS], or in .agent-sandbox, [agent:ROLE] command = AGENT ARGS"
+      return 2
+    fi
+  fi
+  # --account (#355): a launch's, --exec's included, a role verb's or --check's.
+  if ((${#_account_flag[@]})); then
+    local _acz=""
+    [[ -n "$_do_list" ]] && _acz=--list
+    ((_do_init)) && _acz=--init
+    ((_do_trust)) && _acz=--trust
+    ((${#_apply_words[@]})) && _acz=--apply
+    [[ -n "$_setup_remote" ]] && _acz=--setup-remote
+    if [[ -n "$_acz" ]]; then
+      _as_msg "--account names a role's account for a launch, a role verb or --check; it is not combined with $_acz"
       return 2
     fi
   fi
@@ -12289,6 +12698,8 @@ agent_sandbox() (
   local profile_clear=""
   # What --resume appends to the agent's arguments (#355; claude: --continue).
   local -a profile_resume=()
+  # Its agent's files that are an account's, under its base (#355): none, no accounts.
+  local -a profile_account_paths=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()
@@ -12346,6 +12757,25 @@ agent_sandbox() (
   # policy to apply, so neither the project's .agent-sandbox nor a running role can
   # stand in its way.
   if [[ "$_preset_flag" == none ]]; then
+    # An account (#355, D11) is a state directory bound in a sandbox; with none there is
+    # nothing to bind it in, and running on the base instead would be another login than
+    # the one named. Refused, from the line or from an approved file, the role named as
+    # a launch names it; `--account -` runs it on the base, as asked.
+    local _na_role="" _na_proj
+    local -a _na_lines=()
+    _na_proj="$(pwd -P)"
+    if [[ -f "$_na_proj/.agent-sandbox" ]] && _as_dotfile_trusted "$_na_proj" "$_na_proj/.agent-sandbox"; then
+      mapfile -t _na_lines < <(_as_dotfile_agent "$_na_proj/.agent-sandbox")
+      _na_role="${_na_lines[0]:-}"
+      _na_lines=(${_na_lines[@]+"${_na_lines[@]:1}"})
+    fi
+    ((_role_flag_set)) && _na_role="$_role_flag"
+    [[ -z "${AGENT_SANDBOX_ROLE:-}" ]] || ((_role_flag_set)) || _na_role="$AGENT_SANDBOX_ROLE"
+    _as_account_resolve "${_na_role:-default}" ${_na_lines[@]+"${_na_lines[@]}"} || return 2
+    if [[ -n "$_acct_name" ]]; then
+      _as_msg "the account '$_acct_name' ($(_as_account_where "$_acct_from")): --preset none runs the agent with no sandbox, so no account's directory can be its state directory; run it on the base with --account -, or in a sandbox"
+      return 2
+    fi
     ((_ssh_want || ${#_allow_hosts[@]} > 0)) && _as_msg "--ssh*/--allow do nothing under --preset none: there is no sandbox to open"
     if ((_do_exec)); then
       _as_msg "preset none: running '$1' with no sandbox"
@@ -12862,6 +13292,16 @@ agent_sandbox() (
   if _as_preset_is_native; then
     _as_msg "preset native: state isolation is OFF -- every channel read-write, the config file whole, memory unscoped, and the per-session scratch not applied. This exists so that a difference from \`--preset none\` is a bug in agent-sandbox; it is not a way to run day to day. The network mode, the syscall filter, the profile's environment pins and the CWD bind still apply."
   fi
+  # ---- the account (#355): the role's state directory, when one is named ----
+  # The line's --account forms, then [agent:<glob>] account, then [agent] account, from
+  # the file this launch parsed (the keeper's copy for a join); none, or `-`: the base,
+  # as before. --exec counts: its sandbox is the role's. Resolved here, for the policy a
+  # join is checked on (_as_keeper_policy); its directory is checked (_as_account_check)
+  # only where it is bound -- at a cold start, after the keeper's join decision -- and
+  # reported by --check, so a join, a verb or --shutdown on a running role is not stopped
+  # by the live file naming an account whose directory is missing, and a join says the
+  # running role's account, not the file's.
+  _as_account_resolve "$_role" ${_df_agent[@]+"${_df_agent[@]}"} || return 2
   # The tools env (install.sh's; _as_tools_slot): after whatever conda put first (decided
   # above), before the system directories. Under every preset, `native` included: which
   # executables are on PATH is not state isolation, so it is the one PATH difference
@@ -12973,8 +13413,16 @@ agent_sandbox() (
 
   # ---- --check: what the file means, then exit, before anything is started ----
   if ((_check_plan)); then
+    # The account's directory (#355), checked as a cold start checks it, and reported:
+    # the plan is printed with it, and --check exits 1, as for a file a launch refuses.
+    local _chk_acct=0
+    _as_account_check || _chk_acct=1
     _as_check_plan || return $?
     _as_check_remotes "$_dotfile"
+    if ((_chk_acct)); then
+      _as_msg "check: a launch refuses this role: its account '$_acct_name' cannot be its state directory (above)"
+      return 1
+    fi
     return 0
   fi
 
@@ -13177,6 +13625,14 @@ agent_sandbox() (
         _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
       fi
       _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
+      # The account it runs on is the keeper's (#355), whatever the live file says now.
+      local _kacct
+      _kacct="$(awk -F'\t' '$1 == "account" { print $2 }' "$_keeper_sb/keeper/policy" 2>/dev/null)"
+      if [[ -n "$_kacct" && "$_kacct" != - ]]; then
+        _as_info "account: ${_kacct#*/}, the running role's ($(_as_tilde "$(_as_state_dir)/${_kacct%%/*}/accounts/${_kacct#*/}"))"
+      elif [[ -n "$_kacct" ]]; then
+        _as_info "account: the base, the running role's"
+      fi
       local _jrc=0
       ((_do_exec)) || ! declare -F profile_before_join >/dev/null || profile_before_join "$@"
       _as_keeper_join "$_keeper_sb" "${_run_argv[@]}" || _jrc=$?
@@ -13211,7 +13667,12 @@ agent_sandbox() (
       fi
     fi
     # A COLD START: no keeper is live, the lock is held, and this invocation builds the
-    # next launch. What a run-scoped store held belongs to a run that is over.
+    # next launch. Its account's directory is checked now (#355), before anything is
+    # made. What a run-scoped store held belongs to a run that is over.
+    _as_account_check || {
+      _as_keeper_unlock
+      return 2
+    }
     _as_run_scoped_clear "$_keeper_sb"
     _as_join_scoped_clear "$_keeper_sb"
   fi
@@ -13411,23 +13872,36 @@ agent_sandbox() (
   # a config that parses as nothing for anyone who later points
   # CLAUDE_CONFIG_DIR there natively. The rm fails with EBUSY while another
   # session still has it mounted; the last session out removes it.
-  local _p _src _dst
+  local _p _src _dst _dsth
   # The profile's base (#175): its state directory, bound read-write first so that
   # every channel and declaration layers on it. Created when absent -- a launch is the
   # only thing that needs it -- and resolved again here, fail-closed, as a declaration
   # is at bind time.
+  #
+  # AN ACCOUNT IN FORCE (#355) IS BOUND THERE INSTEAD: its directory under the state
+  # directory, at the base's inside path, so {base}, the base-env variable and every
+  # channel's store slot (named after the inside path) are what they are on the base --
+  # which is what keeps a role's memory and transcripts across a switch. The base itself
+  # is not bound at all: of it, the role sees only what a channel binds (they are bound
+  # one by one below, the read-write ones too, since nothing outer covers them) and the
+  # hide tmpfs. Its other entries, and its login, are not there (the per-entry binds are
+  # #355's next step). _as_account_dir checked the directory where it was resolved.
   if [[ -n "$profile_base" ]]; then
     mkdir -p -- "$profile_base" || {
       _as_msg "profile '$profile': cannot create its base '$profile_base'"
       return 1
     }
-    local _preal _prot_what _prot_path _prot_how
-    _preal="$(readlink -f -- "$profile_base")"
-    if [[ "$_preal" == / || "$_preal" == "$HOME" || "$HOME" == "$_preal"/* ]] || _as_path_protected "$_preal" read-write; then
-      _as_msg "profile '$profile': refusing to bind its base '$profile_base': it resolves to a protected path ('$_preal')"
-      return 1
+    if [[ -n "$_acct_dir" ]]; then
+      args+=(--bind "$_acct_dir" "$profile_base")
+    else
+      local _preal _prot_what _prot_path _prot_how
+      _preal="$(readlink -f -- "$profile_base")"
+      if [[ "$_preal" == / || "$_preal" == "$HOME" || "$HOME" == "$_preal"/* ]] || _as_path_protected "$_preal" read-write; then
+        _as_msg "profile '$profile': refusing to bind its base '$profile_base': it resolves to a protected path ('$_preal')"
+        return 1
+      fi
+      args+=(--bind "$_preal" "$profile_base")
     fi
-    args+=(--bind "$_preal" "$profile_base")
   fi
   for _p in ${profile_config_binds[@]+"${profile_config_binds[@]}"}; do
     IFS=$'\t' read -r _src _dst <<<"$_p"
@@ -13437,8 +13911,9 @@ agent_sandbox() (
         _as_msg "profile '$profile': state path '$_src' does not exist (create it in profile_prepare)"
         return 1
       }
-    if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dst" ]]; then
-      _as_placeholder_files+=("$_dst")
+    _dsth="$(_as_host_path_of "$_dst")"
+    if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dsth" ]]; then
+      _as_placeholder_files+=("$_dsth")
     fi
     args+=(--bind "$_src" "$_dst")
   done
@@ -13452,8 +13927,9 @@ agent_sandbox() (
         _as_msg "profile '$profile': read-only path '$_src' does not exist (create it in profile_prepare)"
         return 1
       }
-    if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dst" ]]; then
-      _as_placeholder_files+=("$_dst")
+    _dsth="$(_as_host_path_of "$_dst")"
+    if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dsth" ]]; then
+      _as_placeholder_files+=("$_dsth")
     fi
     args+=(--ro-bind "$_src" "$_dst")
   done

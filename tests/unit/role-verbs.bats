@@ -445,6 +445,21 @@ To resume: asb --role ROLE --agent claude --resume"
   [[ "$output" == "asb --list-all: no role has stores (nothing under "*")" ]]
 }
 
+@test "--list and --list-all leave the accounts out: <state>/claude/accounts/NAME/ is no project's role (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  mkdir -p "$acc/work/projects" "$acc/personal"
+  printf '{}\n' >"$acc/work/.credentials.json"
+  run_engine -- asb --list-all
+  [ "$status" -eq 0 ]
+  [[ "$output" == "asb --list-all: no role has stores (nothing under "*")" ]]
+  list_fixture
+  run_engine TZ=UTC -- asb --list-all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CUDA version pinned in CI"* ]]
+  [[ "$output" != *accounts* ]]
+  [[ "$output" != *"  work "* && "$output" != *"  personal "* ]]
+}
+
 @test "a launch writes the project's path into its store, and --list shows a running role" {
   run_engine -- asb claude --version
   [ "$(cat "$SBOX/project")" = "$PROJ" ]

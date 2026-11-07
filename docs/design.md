@@ -358,6 +358,22 @@ Stated plainly. These are what the adversary above can still do.
   login left in `~/.claude/gh` by the channel's first design is blanked.
   `[claude] hide` blanks named subpaths for the cases where you want one gone,
   at the cost of whatever feature used it.
+- **An account's directory is shared read-write by every role on that account, in
+  every project, as the base is today.** With an account named (`--account NAME`,
+  `[agent] account = NAME`, #355), `~/.local/state/agent-sandbox/<agent>/accounts/NAME/`
+  is bound read-write at the base's inside path in place of the base: its login, and
+  whatever the agent writes there that no channel takes, is readable and writable from
+  every role that runs on it, and a role can leave there what a later role on the
+  account reads -- the base's cross-project exposure, scoped to the account instead of
+  the user. The base's own login is not in such a role; that is the point of an
+  account, and a `[connect]` key or `outside:` source cannot bring it, or the base,
+  back (refused as written and resolved, in every mode, account or not). Until #355's next step the base's entries outside every channel (hook
+  scripts `settings.json` runs, `ide/`, `cache/`, ...) are not in an account role
+  either, so a feature that needs one does not work there. Mount points bwrap creates
+  for the channels are made inside the account's directory -- the shape
+  CVE-2026-87766 describes, already noted for the base -- and the empty files among
+  them are removed after the launch (recorded as their host path in the account's
+  directory, never the base's).
 - **What a session writes in `~/.claude` can steer later sessions -- how far
   depends on the preset.** `settings.json` has to stay writable -- `/model` and
   `/permissions` write it, and so does the agent when the user asks it to change

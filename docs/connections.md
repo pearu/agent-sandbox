@@ -494,10 +494,13 @@ written, so the deeper line governs its subtree. At one depth a declaration come
 a channel, and the per-session scratch after both. So **inside a channel** a
 declaration wins there: `~/.claude/rules/team/ = own` under `instructions = read-only`
 gives the sandbox its own `team/` and leaves the rest of `rules/` read-only. **Over a
-channel**, the channel keeps its own mode inside it: `~/.claude/ = read-only` makes the
-rest of the state directory read-only and leaves every channel where its mode puts it —
-to move a channel, set its mode. Two declarations one inside the other nest the same
-way. The dot-file's review says which of these a declaration is.
+channel**, the channel keeps its own mode inside it: `~/.claude/cache/ = read-only` makes
+the rest of `cache/` read-only and leaves the `changelog` channel's `cache/changelog.md`
+where its mode puts it — to move a channel, set its mode. Two declarations one inside the
+other nest the same way. The dot-file's review says which of these a declaration is. The
+state directory itself, a parent of it, and its login (the profile's `account-paths`) are
+never a declaration's path or source (#355): what a role sees of the base is the
+channels and the hide list, and its login is the account's.
 
 **Presets never move a declaration.** A preset positions the channels the profile
 declares; a path has no position until someone writes one.

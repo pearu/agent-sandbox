@@ -1009,11 +1009,12 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 }
 
 @test "the review says each [agent] line: the roles, whether AGENT names an installed profile, the fixed arguments; an unknown key (#355)" {
-  printf '[agent]\ncommand = claude\naccount = work\n[agent:planner-*]\ncommand = codex --model gpt\n[agent:gate]\ncommand = claude --permission-mode bypassPermissions\n[agent:fixer]\ncommand = claude --dangerously-skip-permissions\n' >"$PROJ/.agent-sandbox"
+  printf '[agent]\ncommand = claude\naccount = work\nlogin = x\n[agent:planner-*]\ncommand = codex --model gpt\n[agent:gate]\ncommand = claude --permission-mode bypassPermissions\n[agent:fixer]\ncommand = claude --dangerously-skip-permissions\n' >"$PROJ/.agent-sandbox"
   run_trust 'n\n'
   [[ "$output" == *"[agent] command = claude: the agent of every role is claude (the profile claude, installed here), with no fixed arguments"* ]]
   [[ "$output" == *"[agent:planner-*] command = codex --model gpt: the agent of the roles planner-* is codex (no profile codex is installed here; it may be where the roles run), always given the native arguments: --model gpt"* ]]
-  [[ "$output" == *"ignoring unknown [agent] key 'account'"* ]]
+  [[ "$output" == *"ignoring unknown [agent] key 'login'"* ]]
+  [[ "$output" == *"[agent] account = work: every role run on the account 'work'"* ]] # #355, P6
   [[ "$output" == *"[agent:gate] command: --permission-mode bypassPermissions turns off the agent's own permission prompts, for the roles gate"* ]]
   [[ "$output" == *"[agent:fixer] command: --dangerously-skip-permissions turns off the agent's own permission prompts, for the roles fixer"* ]]
   # said where the fixed arguments hold either flag, and only there
@@ -1029,6 +1030,22 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" == *$'\n+[agent:planner-1]\n+command = codex\n'* ]]
   [[ "$output" == *"[agent:planner-1] command = codex: the agent of the roles planner-1 is codex"* ]]
   [[ "$output" == *"approved."* ]]
+}
+
+@test "--apply '[agent:planner-1]' 'account = work' writes the section and the review shows it (#355)" {
+  printf '[connect:*]\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  run_apply 'y\n' '[agent:planner-1]' 'account = work'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[connect:*]\n\n[agent:planner-1]\naccount = work' ]
+  [[ "$output" == *"[agent:planner-1] account = work: the roles planner-1 run on the account 'work'"* ]]
+  [[ "$output" == *"approved."* ]]
+}
+
+@test "the review says a later [agent:<glob>] account line takes a role an earlier section names exactly (#355)" {
+  printf '[agent:r1]\naccount = work\n[agent:r*]\naccount = personal\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[agent:r1] account = work: role r1 takes the later [agent:r*] account = personal instead"* ]]
 }
 
 @test "--check lists the role's [agent] lines and a key set twice in one section (#355)" {

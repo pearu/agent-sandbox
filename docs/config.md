@@ -1173,6 +1173,85 @@ roles that names an installed profile is refused (`--agent claude`, or
 `[agent:<glob>] command`), as is a command after the engine words: native arguments go
 in `command =`, or on a single launch, `asb --role ROLE CMD ARGS`.
 
+### Accounts
+
+```ini
+[agent]
+account = work                    # the project's default
+
+[agent:planner-*]
+account = personal                # the planners'
+[agent:gate]
+account = -                       # the gate on your own login
+```
+
+An account is a directory per agent and name, `~/.local/state/agent-sandbox/<agent>/accounts/<name>/`
+(#355). Inside a role it **is** the agent's state directory: it is bound where the
+agent's base is (claude: `~/.claude`, or where `CLAUDE_CONFIG_DIR` moves it) in place of
+the base, so the agent's login lives there and refreshes there, its one home, and
+whatever the agent rebuilds from the login (claude: the identity block, the
+organisation's policy files) lands there too. `{base}`, `CLAUDE_CONFIG_DIR` and every
+channel's store slot are what they are on the base, so a role switched to another
+account keeps its memory, transcripts and config copy. Which files are an account's is
+the profile's to say (`[agent] account-paths` in its own dot-file; claude:
+`.credentials.json` and the refresh lock beside it); a profile that says none has no
+accounts.
+
+`account = NAME` names it in the dot-file, per role with `[agent:<glob>]`, which beats
+`[agent]` as `command` does. On the line, per launch, `--account` takes the same forms
+as `--agent` and beats the file:
+
+```
+asb --role planner-1 --account work                  # every launched role's
+asb --role planner-1 --account planner-1=personal    # one role's
+asb --role planner-1 --account 'planner-*=personal'  # the roles a glob matches, quoted
+asb --role planner-1 --account -                     # the base, whatever the file says
+```
+
+The order is the line, then `[agent:<glob>]`, then `[agent]`, then the base. `-` names
+the base wherever it is written: on the line it overrides a file's account, in a
+suffixed section an unsuffixed one's; it is never a directory's name. NAME is a role
+name's shape (a letter or digit, then letters, digits, `.`, `_` or `-`). It is resolved
+under the role's agent: `work` is `accounts/claude/work` for a claude role and
+`accounts/codex/work` for a codex role. `--exec` counts: its sandbox is the role's. A
+launch is refused when the directory is missing (it names `asb --account-login NAME
+AGENT`, which logs an account in), is a symlink or is not a directory; for a profile
+with no `account-paths`; and under `--preset native` or `--preset none`, which bind no
+account's directory (`--account -` runs the role on the base there). Under `--preset
+none` only an approved file is read for this: an unapproved file is not policy, so an
+account it names is not read and the launch runs on the base. The directory check is
+strict by design: when `~/.local/state/agent-sandbox/<agent>` itself (or `accounts/`) is
+a symlink, every account resolves elsewhere than where it is named and is refused. A
+join into a running role takes the account the role started on, whatever the file says
+now, and says so; the directory is checked when a launch starts, and `--check` reports
+an unusable one (with the plan, exit 1) instead of refusing. With `--roles`
+every role's account is checked before tmux is called, and a pane gets `--account NAME`
+only when the line named its role's. A running role's account is part of its policy: a
+join whose line asks for another one is refused. The launch records the account in the
+role's store, `account` (`PROFILE<TAB>NAME`, NAME empty for the base); the review says
+each `account` line, and `--check` shows the account in force and binds its directory
+in place of the base.
+
+**What an account role sees of the base, for now.** Only the channels the profile
+declares (each bound over the account's directory, the `read-write` ones from the base
+itself) and the `hide` blanks. The base's other entries -- hook scripts that
+`settings.json` runs, `ide/`, `cache/` and anything else no channel names -- are not
+there, and neither is the base's login: that is the point. Binding those entries one by
+one into an account role is #355's next step. A `read-write` file channel whose source
+does not exist in the base is not bound under an account, so a file the agent creates
+there lands in the account's directory, not the base. Mount points bwrap creates for the
+channels are made in the account's directory, as they are in the base; empty files
+among them are removed after the launch, empty directories stay.
+
+**A `[connect]` path is never the base or its login**, account or not, in every mode, as
+a key or an `outside:` source, as written and resolved: the agent's state directory
+itself (`~/.claude/ = read-write`), a parent of it, or one of the profile's
+`account-paths` under it (`~/.claude/.credentials.json = read-only`, `--connect
+'config=read-only outside:~/.claude/.credentials.json'`) is refused, and the review says
+so. Without an account such a line would add nothing; with one it would put the base,
+or its login, back over the account. Other paths under the base are declarations like
+any other: `[share-memory]`'s `~/.claude/projects/{slug:P}/memory/` is one.
+
 ## The config file: the `config` channel
 
 Claude Code's top-level config file, `~/.claude.json`, holds app state

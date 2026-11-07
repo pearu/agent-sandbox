@@ -319,6 +319,56 @@ no_tmux_path() {
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
 }
 
+@test "--roles --account: the role's form reaches its pane alone, as a bare --account; a bare one every pane; the pane, run, binds the account; a file's account gives no pane a word (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  mkdir -p "$acc/x" "$acc/work"
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b --account b=x --resume
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role a --resume)" ]
+  [ "${PC[1]}" = "$(window --role b --account x --resume)" ]
+  run_pane "${PC[1]}"
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2034 # read by argv_has (common.bash)
+  mapfile -t ARGV <"$H/argv"
+  argv_has --bind "$acc/x" "$H/home/.claude"
+  # a bare one, a glob, '-' and the = form, with --agent beside them
+  run_engine TMUX_DUMP="$TM" -- asb --account work --roles a b1 b2 '--account=b*=-' --account b2=x --agent b1=claude
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role a --account work)" ]
+  [ "${PC[1]}" = "$(window --role b1 --agent claude --account -)" ]
+  [ "${PC[2]}" = "$(window --role b2 --account x)" ]
+  # the file's account: the pane resolves it itself
+  agents '[agent]' 'command = claude' 'account = work'
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role a)" ] && [ "${PC[1]}" = "$(window --role b)" ]
+}
+
+@test "--roles --account: a role matching none of the listed roles, an account missing for one role, and an account under --preset native are refused up front, and tmux is never called (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  mkdir -p "$acc/work"
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b --account z=work
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--account z=work: 'z' matches none of the roles --roles opens (a b); nothing was opened"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b --account b=nosuch
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"the account 'nosuch' (--account): there is no $acc/nosuch for the agent claude: log it in with asb --account-login nosuch claude"*"--roles: role 'b' cannot start; nothing was opened"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  agents '[agent]' 'command = claude' '[agent:b]' 'account = gone'
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"the account 'gone' (.agent-sandbox [agent:b] account): there is no $acc/gone"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b --preset native --account b=work
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--roles: role 'b': the account 'work' (--account): --preset native binds no account's directory; --account b=- runs it on the base. Nothing was opened"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+}
+
 @test "--roles: one role with no agent, or one whose agent cannot start, is refused up front, by name, and tmux is never called (#355)" {
   agents '[agent:a]' 'command = claude'
   run_engine TMUX_DUMP="$TM" -- asb --roles a b
