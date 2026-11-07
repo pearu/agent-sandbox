@@ -71,6 +71,17 @@
 #prompt = turn-prompt.md
 
 
+# --- A role's agent ----------------------------------------------------------
+# `command = AGENT [ARGS]`: the role's agent and the native arguments always passed
+# to it, split at blanks. [agent:ROLE-GLOB] beats [agent] for the roles it matches.
+# The review says each line and whether AGENT names an installed profile. No launch
+# reads it yet (#355).
+#[agent]
+#command = claude
+#[agent:planner-*]
+#command = codex
+
+
 # --- Memory scoping ------------------------------------------------------
 # Which other projects' Claude memory this session may read, read-only. By
 # default it sees only its own project. List project paths (not the ~/.claude

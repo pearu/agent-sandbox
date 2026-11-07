@@ -5647,7 +5647,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -5728,7 +5728,7 @@ _as_trust_forget() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -5780,7 +5780,7 @@ _as_profile_dotfile() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -6103,6 +6103,55 @@ _as_instruction_channel() {
   return 1
 }
 
+# _as_agent_sect GLOB -- the [agent] section a _df_agent line came from, as written.
+_as_agent_sect() {
+  if [[ "$1" == "*" ]]; then printf '[agent]'; else printf '[agent:%s]' "$1"; fi
+}
+
+# _as_agent_notes -- the review's lines for the [agent] sections (#355, _as_trust_notes):
+# per line, for which roles, the agent and whether it names a profile installed here (a
+# note, not a refusal: the file may serve another host), and the fixed arguments as
+# written. `--permission-mode bypassPermissions` or `--dangerously-skip-permissions` there is
+# said in its own sentence: it turns off the agent's own prompts, so the sandbox's
+# policy is all that is left.
+_as_agent_notes() {
+  local e g k v n sect b i what flag
+  local -a w=()
+  for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
+    g="${e%%$'\t'*}" e="${e#*$'\t'}"
+    k="${e%%$'\t'*}" v="${e#*$'\t'}"
+    [[ "$k" == command ]] || continue
+    sect="$(_as_agent_sect "$g")"
+    if [[ "$g" == "*" ]]; then n="every role"; else n="the roles $g"; fi
+    read -r -a w <<<"$v"
+    b="${w[0]##*/}"
+    if [[ " ${_df_profile_names[*]-} " == *" $b "* ]]; then
+      what="${w[0]} (the profile $b, installed here)"
+    else
+      what="${w[0]} (no profile $b is installed here; it may be where the roles run)"
+    fi
+    if ((${#w[@]} > 1)); then
+      what+=", always given the native arguments: ${w[*]:1}"
+    else
+      what+=", with no fixed arguments"
+    fi
+    _as_msg ".agent-sandbox: $sect command = $v: the agent of $n is $what"
+    for ((i = 1; i < ${#w[@]}; i++)); do
+      flag=""
+      if [[ "${w[i]}" == --permission-mode=bypassPermissions || ("${w[i]}" == --permission-mode && "${w[i + 1]:-}" == bypassPermissions) ]]; then
+        flag="--permission-mode bypassPermissions"
+      elif [[ "${w[i]}" == --dangerously-skip-permissions ]]; then
+        flag="--dangerously-skip-permissions"
+      fi
+      if [[ -n "$flag" ]]; then
+        _as_msg ".agent-sandbox: $sect command: $flag turns off the agent's own permission prompts, for $n: inside the sandbox it does whatever the sandbox's policy allows without asking you"
+        break
+      fi
+    done
+  done
+  return 0
+}
+
 # _as_trust_notes CWD FILE -- what the review says about the file, before the question:
 # everything that follows from its text alone, said here, once, and not at every launch.
 #   - what the parse ignores: a malformed line, an unknown section or key, a role
@@ -6114,7 +6163,8 @@ _as_instruction_channel() {
 #     else one under $HOME, outside the project -- $HOME is empty inside, so `own` is
 #     sandbox-only storage and any other mode shows the real one; and a file -- bound
 #     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy);
-#   - each [remote:ALIAS] in full (_as_remote_notes, #344).
+#   - each [remote:ALIAS] in full (_as_remote_notes, #344);
+#   - each [agent] line: the roles, the agent, its fixed arguments (_as_agent_notes, #355).
 # Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice.
 # Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
 # serves them all. What depends on the host or the moment -- a path that does not
@@ -6129,9 +6179,10 @@ _as_trust_notes() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
+    [[ "$f" != */agent/profile.sh ]] || continue # reserved (#355): [agent] is the project's
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
     while IFS= read -r line; do facts+=("$line"); done < <(_as_profile_facts "$f")
   done
@@ -6192,6 +6243,7 @@ _as_trust_notes() {
   done
   _as_serve_notes
   _as_briefing_start_notes
+  _as_agent_notes
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
@@ -6500,6 +6552,16 @@ _as_dotfile_parse() {
             ;;
           # [serve:<glob>] (#277): what `--serve` waits on and says, for those roles.
           serve) _df_role_globs+=("$sglob") ;;
+          agent)
+            # [agent:<glob>] (#355): those roles' agent. In a profile's own dot-file,
+            # [agent] is the profile's section (_as_profile_dotfile), which takes no suffix.
+            if [[ "${profile:-}" == agent ]]; then
+              _as_msg ".agent-sandbox: [agent:$sglob] -- a profile's [agent] section does not take a role suffix; ignoring the section"
+              section="-skip-"
+              continue
+            fi
+            _df_role_globs+=("$sglob")
+            ;;
           preset)
             # [preset:<name>] is a preset's rungs in a profile's dot-file (#191).
             [[ "$sglob" =~ ^(isolated|inherit|shared)$ ]] || {
@@ -6529,7 +6591,7 @@ _as_dotfile_parse() {
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing and serve do); ignoring the section"
+            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing, serve and agent do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -6537,7 +6599,7 @@ _as_dotfile_parse() {
       fi
       _as_dotfile_is_profile "$section" && continue # a profile's own section; see below
       case "$section" in
-        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions | serve) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
+        allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions | serve | agent) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset | remote)
           [[ "$sglob" != "*" ]] || {
             _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
@@ -6765,23 +6827,51 @@ _as_dotfile_line() {
         esac
       fi
       ;;
-    *)
-      # A section named after a profile (the active one at a launch; any, at the
-      # review). The engine does not interpret these: it collects the pairs and
-      # hands them to the profile, which is the only thing that knows what its
-      # agent keeps where (docs/profiles.md). At a launch, another profile's
-      # section is skipped; the review checks every profile's.
-      _as_dotfile_is_profile "$section" || return 0
-      if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
+    agent)
+      # [agent] and [agent:<glob>] (#355): the role's agent and the native arguments
+      # always passed to it, `command = AGENT [ARGS]`, words split at blanks; kept with
+      # the section's glob, in file order. While a profile's own dot-file is read,
+      # `profile` is `agent` (_as_profile_dotfile) and [agent] is that profile's
+      # section: its keys go to the profile, as any profile-named section's do.
+      if [[ "${profile:-}" == agent ]]; then
+        _as_dotfile_profile_line "$section" "$line"
+      elif [[ "$line" != *=* ]]; then
+        _as_msg ".agent-sandbox: [agent] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
-        [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
-        _df_profile_pairs+=("$section"$'\t'"$ck")
-        _df_profile_vals+=("$section"$'\t'"$ck=$cv")
+        case "$ck" in
+          command)
+            if [[ -z "$cv" ]]; then
+              _as_msg ".agent-sandbox: [agent] command names no agent (command = AGENT [ARGS]); ignoring"
+            else
+              _df_agent+=("$sglob"$'\t'command$'\t'"$cv")
+            fi
+            ;;
+          *) _as_msg ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
+        esac
       fi
       ;;
+    *) _as_dotfile_profile_line "$section" "$line" ;;
   esac
+  return 0
+}
+
+# _as_dotfile_profile_line SECTION LINE -- a line of a section named after a profile
+# (the active one at a launch; any, at the review). The engine does not interpret
+# these: it collects the pairs and hands them to the profile, which is the only thing
+# that knows what its agent keeps where (docs/profiles.md). At a launch, another
+# profile's section is skipped; the review checks every profile's.
+_as_dotfile_profile_line() {
+  local section="$1" line="$2" ck cv
+  _as_dotfile_is_profile "$section" || return 0
+  if [[ "$line" != *=* ]]; then
+    _as_msg ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
+  else
+    _as_dotfile_kv "$line"
+    [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
+    _df_profile_pairs+=("$section"$'\t'"$ck")
+    _df_profile_vals+=("$section"$'\t'"$ck=$cv")
+  fi
   return 0
 }
 
@@ -7028,7 +7118,7 @@ _as_check_remotes() {
   [[ -f "$1" ]] || return 0
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -7291,7 +7381,7 @@ _as_setup_remote() {
   fi
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -7403,7 +7493,7 @@ _as_setup_remote_alias() {
   local p="remote $alias:"
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8726,6 +8816,14 @@ _as_check_plan() {
       printf '  roles in this file: %s; see another with: %s --check --role NAME\n' \
         "$(printf '%s\n' "${_df_role_globs[@]}" | sort -u | paste -sd' ' | sed 's/ /, /g')" "$invoked"
     fi
+    # The [agent] lines that match this role (#355), in file order, as written.
+    local _ag_e _ag_g
+    for _ag_e in ${_df_agent[@]+"${_df_agent[@]}"}; do
+      _ag_g="${_ag_e%%$'\t'*}" _ag_e="${_ag_e#*$'\t'}"
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ "${_role:-default}" == $_ag_g ]] || continue
+      printf '  agent: %s %s = %s\n' "$(_as_agent_sect "$_ag_g")" "${_ag_e%%$'\t'*}" "${_ag_e#*$'\t'}"
+    done
     case "${_knob_gpu:-on}" in
       off | 0) printf '  gpu: off -- no GPU device in the sandbox\n' ;;
       *)
@@ -9037,7 +9135,7 @@ _as_check_unclassified() {
 #   - a [connect] line at the preset's own rung, when it is the only line of the file
 #     for that channel that applies to this role (a role's line restating the preset
 #     over an unsuffixed one is an override, and is not this);
-#   - the same key twice in one section: the earlier one never applies;
+#   - the same key twice in one [connect] or [agent] section: the earlier one never applies;
 #   - a [share-memory] path with nothing to share: no memory, in a role or natively.
 # (A declaration inside an `own` one above it is NOT no-effect: paths bind by depth,
 # so the deeper one is seen there.)
@@ -9076,6 +9174,16 @@ _as_check_noeffect() {
     if [[ "${_amode[$key]}" == "$(_as_channel_preset_mode "$key" "$_preset")" ]]; then
       notes+=("${_asect[$key]} $key = ${_amode[$key]}: already preset $_preset's rung for $key; the line does nothing")
     fi
+  done
+  # [agent] (#355): the same key twice in one section; the later line is the role's.
+  local -A _agprev=()
+  for cs in ${_df_agent[@]+"${_df_agent[@]}"}; do
+    glob="${cs%%$'\t'*}" spec="${cs#*$'\t'}"
+    key="${spec%%$'\t'*}" rest="${spec#*$'\t'}"
+    sect="$(_as_agent_sect "$glob")"
+    [[ -z "${_agprev[$sect$'\t'$key]:-}" ]] \
+      || notes+=("$sect $key: set twice; the earlier '$key = ${_agprev[$sect$'\t'$key]}' never applies")
+    _agprev[$sect$'\t'$key]="$rest"
   done
   local k
   for k in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
@@ -10230,7 +10338,7 @@ _as_apply() {
     _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
     return 1
   fi
-  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve remote) lines=() have=() add=()
+  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve remote agent) lines=() have=() add=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
@@ -10258,9 +10366,9 @@ _as_apply() {
     fi
   elif [[ -n "$glob" ]]; then
     case "$name" in
-      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions | briefing | serve) ;;
+      sandbox | connect | allow | deny | env | conda | net | gpu | ssh | permissions | briefing | serve | agent) ;;
       *)
-        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing and serve do)"
+        _as_msg "--apply: [$name] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing, serve and agent do)"
         return 2
         ;;
     esac
@@ -10277,7 +10385,7 @@ _as_apply() {
     first_role=1
     for l in ${lines[@]+"${lines[@]}"}; do
       _ap_norm "$l"
-      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|permissions|briefing|serve):.+\]$ ]] && first_role=0
+      [[ "${n//[[:space:]]/}" =~ ^\[(sandbox|connect|allow|deny|env|conda|net|gpu|ssh|permissions|briefing|serve|agent):.+\]$ ]] && first_role=0
     done
   fi
   # The section's last occurrence, and its last line that is not blank or a comment:
@@ -11587,6 +11695,12 @@ agent_sandbox() (
     _as_msg "bad profile name '$profile'"
     return 2
   }
+  # Reserved (#355): a project's [agent] section chooses a role's agent, so a profile
+  # named `agent` would have it read as that profile's section.
+  [[ "$profile" != agent ]] || {
+    _as_msg "the profile name 'agent' is reserved: a project's [agent] section names a role's agent, and would be read as this profile's section. Rename $profile_dir/agent"
+    return 2
+  }
   local profile_file="$profile_dir/$profile/profile.sh"
   local profile_home="$profile_dir/$profile" # {profile}: the profile's own directory (#191)
   [[ -r "$profile_file" ]] \
@@ -11746,7 +11860,7 @@ agent_sandbox() (
   local -a _df_gpu_devices=() # [gpu] devices (#335): one `glob<TAB>entries` per line, in the order applied
   local -a _df_remote=()      # [remote:ALIAS] (#344): `ALIAS<TAB>` per header, `ALIAS<TAB>line` per line
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()

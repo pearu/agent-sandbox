@@ -245,6 +245,20 @@ STUB
   [[ "$output" == *"profiles available in $H/profiles2: other"* ]]
 }
 
+@test "the profile name 'agent' is reserved: by --profile or by the command's name, refused (#355)" {
+  mkdir -p "$H/profiles2/agent"
+  printf 'profile_command=agent\n' >"$H/profiles2/agent/profile.sh"
+  printf '#!/bin/sh\n' >"$H/bin/agent"
+  chmod +x "$H/bin/agent"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --profile agent --exec true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"the profile name 'agent' is reserved"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb agent
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"the profile name 'agent' is reserved"* ]]
+  [ ! -s "$H/argv" ]
+}
+
 # shellcheck disable=SC2088 # a literal ~ is what a profile writes; the engine expands it
 @test "[agent] base: the profile's state directory, bound read-write first and created when absent; checked as a bind (#175)" {
   mkdir -p "$H/profiles2/other"

@@ -155,6 +155,17 @@ own_bind() { argv_has --bind "$STATE/$1/$2/own/$(slugify "$3")" "$3"; }
   run ! setenv_value IMPL_ONLY
 }
 
+@test "[agent:<glob>] defines a role: a name none matches is refused, a matching one runs (#355)" {
+  dotfile $'[agent]\ncommand = claude\n[agent:planner-*]\ncommand = claude\n'
+  run_engine -- asb --role reviewer claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"role 'reviewer' matches no role section"*"planner-*"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [ -s "$H/argv" ]
+}
+
 @test "a role-suffixed [env], [net], [allow], [deny] or [conda] defines a role: a name none matches is refused (#221)" {
   dotfile $'[env:impl-*]\nIMPL_ONLY\n'
   run_engine -- asb --role reviewer claude --version
