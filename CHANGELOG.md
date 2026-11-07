@@ -47,6 +47,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`[agent]` and `[agent:<glob>]` in a project's `.agent-sandbox`** (#355, the first of
+  its launch-side steps): `command = AGENT [ARGS]`, a role's agent and the native
+  arguments always passed to it, per role with the suffix, which defines a role as the
+  other suffixed sections do. The review says each line, for which roles, whether AGENT
+  names an installed profile (a note, not a refusal), the fixed arguments as written,
+  and what `--permission-mode bypassPermissions` or `--dangerously-skip-permissions`
+  there means; `--check` lists the role's
+  lines and a key set twice in one section; `asb --apply '[agent:ROLE]' 'command = AGENT'`
+  writes it. A launch does not read it yet: that comes with `--agent`. The profile name
+  `agent` is reserved, since a profile of that name would take the section as its own.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the

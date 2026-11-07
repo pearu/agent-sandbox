@@ -957,3 +957,86 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 0 ]
   [[ "$output" == *$'\n  gpu: on -- /dev/full\n  gpu devices: /dev/full -- AGENT_SANDBOX_GPU_DEVICES\n'* ]]
 }
+
+# ---- [agent] and [agent:<glob>] (#355) ----
+
+@test "[agent] command: parsed with its section's glob, in file order; the unsuffixed one is every role's (#355)" {
+  printf '[agent]\ncommand = claude\n[agent:r]\ncommand = claude --model x\n[agent:q*]\ncommand =\n' >"$PROJ/.agent-sandbox"
+  run bash -c '
+    source "$1"
+    _df_role_globs=() _df_agent=()
+    _as_dotfile_parse "$2"
+    printf "agent=%s\n" "${_df_agent[@]}"
+    printf "glob=%s\n" "${_df_role_globs[@]}"
+  ' _ "$ENGINE" "$PROJ/.agent-sandbox"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'agent=*\tcommand\tclaude\nagent=r\tcommand\tclaude --model x\n'* ]]
+  [[ "$output" == *"[agent] command names no agent"* ]] # the empty one is said, not kept
+  [[ "$output" != *$'agent=q*'* ]]
+  # each suffix defines a role, as [sandbox:<glob>] does
+  [[ "$output" == *$'glob=r\nglob=q*'* ]]
+}
+
+@test "a profile's own dot-file: [agent] is still the profile's section, its keys read; [agent:<glob>] is skipped (#355)" {
+  source_engine
+  # shellcheck disable=SC2034 # the profile contract, read by _as_profile_dotfile
+  local profile=claude profile_base="" profile_base_env="" profile_base_from="" profile_command=claude profile_clear=""
+  # shellcheck disable=SC2034
+  local profile_home="$REPO_ROOT/profiles/claude"
+  # shellcheck disable=SC2034
+  local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
+  # shellcheck disable=SC2034
+  local -a profile_serve_new=() profile_serve_resume=() profile_channels=() profile_channel_templates=()
+  # shellcheck disable=SC2034
+  local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
+  # shellcheck disable=SC2034
+  local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
+  # shellcheck disable=SC2034
+  local -a profile_channel_start=() profile_channel_presets=() profile_channel_reach=() profile_channel_env=()
+  # shellcheck disable=SC2034
+  local -a profile_channel_create=() profile_channel_login=()
+  profile_slug() { printf 'slug'; }
+  _as_profile_dotfile "$REPO_ROOT/profiles/claude/agent-sandbox"
+  [ "$profile_clear" = /clear ]
+  [ "${profile_serve_new[*]}" = "-p --session-id {id} --permission-mode bypassPermissions" ]
+  # a suffixed [agent] in a profile's file is not the profile's, and no role section
+  local f="$H/prof-agent-sandbox"
+  printf '[agent]\ncommand = one\n[agent:r]\ncommand = two\n' >"$f"
+  run _as_profile_dotfile "$f"
+  [[ "$output" == *"[agent:r] -- a profile's [agent] section does not take a role suffix"* ]]
+  _as_profile_dotfile "$f" 2>/dev/null
+  [ "$profile_command" = one ]
+}
+
+@test "the review says each [agent] line: the roles, whether AGENT names an installed profile, the fixed arguments; an unknown key (#355)" {
+  printf '[agent]\ncommand = claude\naccount = work\n[agent:planner-*]\ncommand = codex --model gpt\n[agent:gate]\ncommand = claude --permission-mode bypassPermissions\n[agent:fixer]\ncommand = claude --dangerously-skip-permissions\n' >"$PROJ/.agent-sandbox"
+  run_trust 'n\n'
+  [[ "$output" == *"[agent] command = claude: the agent of every role is claude (the profile claude, installed here), with no fixed arguments"* ]]
+  [[ "$output" == *"[agent:planner-*] command = codex --model gpt: the agent of the roles planner-* is codex (no profile codex is installed here; it may be where the roles run), always given the native arguments: --model gpt"* ]]
+  [[ "$output" == *"ignoring unknown [agent] key 'account'"* ]]
+  [[ "$output" == *"[agent:gate] command: --permission-mode bypassPermissions turns off the agent's own permission prompts, for the roles gate"* ]]
+  [[ "$output" == *"[agent:fixer] command: --dangerously-skip-permissions turns off the agent's own permission prompts, for the roles fixer"* ]]
+  # said where the fixed arguments hold either flag, and only there
+  [ "$(grep -c 'turns off the agent' <<<"$output")" -eq 2 ]
+}
+
+@test "--apply '[agent:planner-1]' 'command = codex' writes the section and the review shows it (#355)" {
+  printf '[connect:*]\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  run_apply 'y\n' '[agent:planner-1]' 'command = codex'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[connect:*]\n\n[agent:planner-1]\ncommand = codex' ]
+  [[ "$output" == *$'\n+[agent:planner-1]\n+command = codex\n'* ]]
+  [[ "$output" == *"[agent:planner-1] command = codex: the agent of the roles planner-1 is codex"* ]]
+  [[ "$output" == *"approved."* ]]
+}
+
+@test "--check lists the role's [agent] lines and a key set twice in one section (#355)" {
+  printf '[agent]\ncommand = claude\n[agent:r*]\ncommand = codex\ncommand = claude -x\n[agent:q]\ncommand = other\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --check --role r1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'  agent: [agent] command = claude\n  agent: [agent:r*] command = codex\n  agent: [agent:r*] command = claude -x\n'* ]]
+  [[ "$output" != *"agent: [agent:q]"* ]] # another role's
+  [[ "$output" == *"[agent:r*] command: set twice; the earlier 'command = codex' never applies"* ]]
+}

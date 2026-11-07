@@ -1070,7 +1070,7 @@ preset = isolated                 # the reviewer role
 and a later line overrides an earlier one **per key**: `[connect:impl-*]` above
 changes `skills` and leaves every other channel as `[connect]` put it.
 `[sandbox]` (its `preset`), `[connect]`, and (#221) `[allow]`, `[deny]`, `[env]`,
-`[conda]`, `[net]`, `[gpu]`, `[ssh]`, `[permissions]`, `[briefing]` and `[serve]` take a suffix: a
+`[conda]`, `[net]`, `[gpu]`, `[ssh]`, `[permissions]`, `[briefing]`, `[serve]` and `[agent]` take a suffix: a
 key there overrides the unsuffixed one for the role, a list (`[allow]`, `[deny]`,
 `[ssh]`, `[permissions]`, `[env]` names) adds to it --
 
@@ -1097,6 +1097,34 @@ file without suffixed sections has one policy, and any role name
 runs under it as a separate instance. `--preset` and `--connect` apply to
 whichever role is launched. A role with `--bg` is refused for now: background
 sessions do not carry a role yet (#123).
+
+### A role's agent: `[agent]`
+
+```ini
+[agent]
+command = claude                  # every role's agent
+
+[agent:planner-*]
+command = codex                   # the planners' agent
+[agent:gate]
+command = claude --permission-mode bypassPermissions
+```
+
+`command = AGENT [ARGS]` is the role's agent and the native arguments always passed
+to it (#355). AGENT is one word, the agent's command, whose name is its profile;
+ARGS are split at blanks, with no quoting. `[agent:<glob>]` is that for the roles
+the glob matches, and it beats `[agent]` whatever their order in the file; among
+suffixed sections, the later line wins. A suffixed `[agent]` defines a role as the
+other suffixed sections do. The review says each line, for which roles, whether
+AGENT names a profile installed here (a note, not a refusal: the file may serve
+another host), and the fixed arguments as written; `--permission-mode
+bypassPermissions` or `--dangerously-skip-permissions` there turns off the agent's
+own permission prompts, so inside the sandbox it does whatever the sandbox's policy
+allows without asking. `--check`
+lists the lines that match the role, and a key set twice in one section. `asb
+--apply '[agent:planner-1]' 'command = codex'` adds one. No launch reads it yet.
+The profile name `agent` is reserved: a profile of that name would take this
+section as its own.
 
 ## The config file: the `config` channel
 
