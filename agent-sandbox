@@ -2526,12 +2526,15 @@ _as_connect_bind_path() {
     return 1
   fi
   # Resolved again at bind time and re-checked fail-closed:
-  # a symlink repointed after the parse must not mount a target that was refused.
+  # a symlink repointed after the parse must not mount a target that was refused --
+  # the agent's base or its login among them (_as_base_refused, #355).
   real="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
   # A role's store is under the engine's state directory, a control path: the one store
   # the engine itself resolved for a `sandbox:` source passes, and nothing else does.
+  # shellcheck disable=SC2031 # the launch's own profile_account_paths
   if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] \
-    || { [[ "$real" != "$sbx_store" || "$real" != "$(_as_state_dir)"/* ]] && _as_path_protected "$real" "$mode"; }; then
+    || { [[ "$real" != "$sbx_store" || "$real" != "$(_as_state_dir)"/* ]] && _as_path_protected "$real" "$mode"; } \
+    || _as_base_refused "$real" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"} >/dev/null; then
     _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
     return 1
   fi
@@ -6576,9 +6579,11 @@ _as_account_check() {
 
 # _as_host_path_of INSIDE -- the host path behind INSIDE, for a mount point bwrap creates
 # there (#355): with an account in force (_acct_dir) the base's inside path is the
-# account's directory, so `{base}/X` is created at ACCOUNT/X on the host; any other path
-# is the same on both sides. A placeholder's record must name the host path, or the
-# cleanup would test, and remove, an empty file of that name in the real base.
+# account's directory, so `{base}/X` is created at ACCOUNT/X on the host -- except under
+# an entry of the base bound there from the base (_as_base_entry_binds): `{base}/E/Y`
+# is created at BASE/E/Y, as it is with no account; any other path is the same on both
+# sides. A placeholder's record must name the host path, or the cleanup would test, and
+# remove, an empty file of that name where bwrap did not make it.
 # shellcheck disable=SC2154
 _as_host_path_of() {
   if [[ -n "${_acct_dir:-}" && -n "${profile_base:-}" ]]; then
@@ -6586,11 +6591,113 @@ _as_host_path_of() {
       printf '%s' "$_acct_dir"
       return 0
     elif [[ "$1" == "$profile_base"/* ]]; then
-      printf '%s/%s' "$_acct_dir" "${1#"$profile_base"/}"
+      local rel="${1#"$profile_base"/}" e
+      for e in ${_as_base_entries[@]+"${_as_base_entries[@]}"}; do
+        if [[ "$rel" == "$e"/* && -n "${_as_base_real:-}" ]]; then
+          printf '%s/%s' "$_as_base_real" "$rel"
+          return 0
+        fi
+      done
+      printf '%s/%s' "$_acct_dir" "$rel"
       return 0
     fi
   fi
   printf '%s' "$1"
+}
+
+# _as_base_bind -- add the profile's base to $args (#175): its state directory, bound
+# read-write first so that every channel and declaration layers on it. Created when
+# absent -- a launch is the only thing that needs it -- and resolved again here,
+# fail-closed, as a declaration is at bind time. Reads the engine's profile,
+# profile_base, profile_channels, profile_isolate_spec (_as_hide_spec, already run),
+# profile_account_paths, _acct_name and _acct_dir by dynamic scope.
+#
+# AN ACCOUNT IN FORCE (#355) IS BOUND THERE INSTEAD: its directory under the state
+# directory, at the base's inside path, so {base}, the base-env variable and every
+# channel's store slot (named after the inside path) are what they are on the base --
+# which is what keeps a role's memory and transcripts across a switch. The base itself
+# is not bound: its top-level entries are, one by one, read-write at their paths
+# (_as_base_entry_binds), all but the channels' (each bound below, the read-write ones
+# from the base itself, since nothing outer covers them), the hide list's (the tmpfs
+# below) and the profile's account-paths -- THE BASE'S LOGIN IS NEVER IN AN ACCOUNT
+# ROLE. _as_account_dir checked the directory where it was resolved; an account named
+# with no directory resolved refuses rather than fall back to the base.
+# shellcheck disable=SC2154,SC2031
+_as_base_bind() {
+  [[ -n "$profile_base" ]] || return 0
+  if [[ -n "${_acct_name:-}" && -z "${_acct_dir:-}" ]]; then
+    _as_msg "the account '$_acct_name': its directory was not resolved; refusing to run the role on the base in its place"
+    return 1
+  fi
+  mkdir -p -- "$profile_base" || {
+    _as_msg "profile '$profile': cannot create its base '$profile_base'"
+    return 1
+  }
+  local _preal _prot_what _prot_path _prot_how
+  _preal="$(readlink -f -- "$profile_base")"
+  if [[ "$_preal" == / || "$_preal" == "$HOME" || "$HOME" == "$_preal"/* ]] || _as_path_protected "$_preal" read-write; then
+    _as_msg "profile '$profile': refusing to bind its base '$profile_base': it resolves to a protected path ('$_preal')"
+    return 1
+  fi
+  if [[ -n "${_acct_dir:-}" ]]; then
+    args+=(--bind "$_acct_dir" "$profile_base")
+    _as_base_entry_binds "$_preal"
+  else
+    args+=(--bind "$_preal" "$profile_base")
+  fi
+}
+
+# _as_base_entry_binds REAL -- under an account (#355, D1), the base's own top-level
+# entries (`*`, `.[!.]*` and `..?*` of REAL, the resolved base, as they are at launch),
+# each bound read-write at its path under the base's inside path, so what a role on the
+# base finds there -- hook scripts settings.json runs, ide/, cache/ -- is there on an
+# account too. Skipped: an entry that is exactly a channel's path (the channel binds
+# it, after these, as it binds one nested in an entry), a hide list entry (the tmpfs
+# blanks it), and an account path or a directory holding one: the base's login is the
+# base's. An entry that is a symlink is made again with --symlink, its target as
+# written, never followed on the host: resolved here, it could bind what it names
+# from outside the base, where inside the sandbox it resolves to whatever is there.
+# Entries created in the base after the launch are not seen by it. Bwrap makes each
+# mount point in the account's directory; an empty file among them is removed by the
+# cleanup (as a placeholder), a directory or a symlink stays. Sets _as_base_real and
+# _as_base_entries (the names bound from the base), so _as_host_path_of places a mount
+# point under one of them in the base, where bwrap makes it.
+# shellcheck disable=SC2154,SC2031
+_as_base_entry_binds() {
+  local real="$1" e name dest line entry ap skip
+  local -a fields=() skip_paths=()
+  _as_base_real="$real" _as_base_entries=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    for entry in "${fields[@]:1}"; do
+      skip_paths+=("${entry#*:}")
+    done
+  done
+  for line in ${profile_isolate_spec[@]+"${profile_isolate_spec[@]}"}; do
+    IFS=$'\t' read -r _ entry _ <<<"$line"
+    skip_paths+=("$entry")
+  done
+  for e in "$real"/* "$real"/.[!.]* "$real"/..?*; do
+    [[ -e "$e" || -L "$e" ]] || continue
+    name="${e##*/}"
+    dest="$profile_base/$name"
+    skip=0
+    for entry in ${skip_paths[@]+"${skip_paths[@]}"}; do
+      [[ "${entry%/}" == "$dest" ]] && skip=1 && break
+    done
+    for ap in ${profile_account_paths[@]+"${profile_account_paths[@]}"}; do
+      ap="${ap%/}"
+      [[ "$ap" == "$name" || "$ap" == "$name"/* ]] && skip=1 && break
+    done
+    ((skip)) && continue
+    if [[ -L "$e" ]]; then
+      args+=(--symlink "$(readlink -- "$e")" "$dest")
+    else
+      [[ -d "$e" ]] || _as_connect_placeholder "$dest"
+      args+=(--bind "$e" "$dest")
+      _as_base_entries+=("$name")
+    fi
+  done
 }
 
 # _as_agent_notes -- the review's lines for the [agent] sections (#355, _as_trust_notes):
@@ -6878,12 +6985,14 @@ _as_trust_notes() {
       p="$(realpath -m -s -- "$p")"
     fi
     # The agent's state directory and its login (#355): a launch refuses a key or an
-    # outside: source there, under every profile that has the base, account or not.
+    # outside: source there, under every profile that has the base, account or not. Said
+    # for the profile the line chose (--profile) when there is one, else for each.
     local fb bname bpath bwhy
     local -a bap=()
     for fb in ${facts[@]+"${facts[@]}"}; do
       [[ "$fb" == base$'\t'* ]] || continue
       IFS=$'\t' read -r _ bname bpath <<<"$fb"
+      [[ -z "${profile:-}" || "$bname" == "$profile" ]] || continue
       bap=()
       for line in ${facts[@]+"${facts[@]}"}; do
         [[ "$line" == account-paths$'\t'"$bname"$'\t'* ]] || continue
@@ -9375,7 +9484,7 @@ _as_check_plan() {
     # Its account (#355): the one in force and where it was named, else the base.
     # A directory _as_account_check refused is said so (--check reports, a launch refuses).
     if [[ -n "${_acct_name:-}" && -n "${_acct_dir:-}" ]]; then
-      printf '  account: %s -- %s; its directory %s is the state directory\n' "$_acct_name" \
+      printf "  account: %s -- %s; its directory %s is the state directory; the base's other entries bound one by one, never its login\n" "$_acct_name" \
         "$(_as_account_where "$_acct_from")" "$(_as_tilde "$_acct_dir")"
     elif [[ -n "${_acct_name:-}" ]]; then
       printf '  account: %s -- %s; its directory %s is NOT USABLE (above), so a launch refuses: log it in with %s --account-login %s %s\n' \
@@ -12706,6 +12815,10 @@ agent_sandbox() (
   # Mount-point files the state binds create on the host (see that loop); the
   # cleanup removes them. Declared with _session_dir, for the same reason.
   local -a _as_placeholder_files=()
+  # Under an account (#355): the resolved base and the names of its entries bound from
+  # it one by one (_as_base_entry_binds), for _as_host_path_of.
+  local -a _as_base_entries=()
+  local _as_base_real=""
   # Declared HERE, not down with the launch locals: state isolation opens the
   # session dir well before that point, and a later `local _session_dir=""`
   # would reset it -- so _as_session_begin would make a SECOND dir, and the
@@ -13861,6 +13974,23 @@ agent_sandbox() (
     fi
   fi
 
+  # State isolation: the profile declares which parts of its state directory
+  # leak across sessions, the engine stages them, and they are bound with the channels
+  # (_as_connect_bind_all, below): each wins at its own path. The per-session scratch,
+  # skipped entirely under `native`. ONE SWITCH, not a
+  # per-path knob: the isolation this applies is deliberately unconditional, and
+  # the way to keep that true while still offering parity is to make the bypass
+  # all-or-nothing and impossible to reach by accident (see the preset's gate).
+  #
+  # The hide list is computed before the base is bound: under an account (#355) the
+  # base's entries it names are blanked, not bound (_as_base_bind).
+  local _iso_on=0
+  if ! _as_preset_is_native; then
+    _as_hide_spec
+    _iso_on=1
+  fi
+  _as_base_bind || return 1
+
   # Always-on bindings: the profile's state paths (read-write) and its binary.
   # An entry is a host path bound at itself, or SRC<TAB>DEST to bind it at a
   # different path inside: the claude profile binds ~/.claude.json INSIDE
@@ -13873,36 +14003,6 @@ agent_sandbox() (
   # CLAUDE_CONFIG_DIR there natively. The rm fails with EBUSY while another
   # session still has it mounted; the last session out removes it.
   local _p _src _dst _dsth
-  # The profile's base (#175): its state directory, bound read-write first so that
-  # every channel and declaration layers on it. Created when absent -- a launch is the
-  # only thing that needs it -- and resolved again here, fail-closed, as a declaration
-  # is at bind time.
-  #
-  # AN ACCOUNT IN FORCE (#355) IS BOUND THERE INSTEAD: its directory under the state
-  # directory, at the base's inside path, so {base}, the base-env variable and every
-  # channel's store slot (named after the inside path) are what they are on the base --
-  # which is what keeps a role's memory and transcripts across a switch. The base itself
-  # is not bound at all: of it, the role sees only what a channel binds (they are bound
-  # one by one below, the read-write ones too, since nothing outer covers them) and the
-  # hide tmpfs. Its other entries, and its login, are not there (the per-entry binds are
-  # #355's next step). _as_account_dir checked the directory where it was resolved.
-  if [[ -n "$profile_base" ]]; then
-    mkdir -p -- "$profile_base" || {
-      _as_msg "profile '$profile': cannot create its base '$profile_base'"
-      return 1
-    }
-    if [[ -n "$_acct_dir" ]]; then
-      args+=(--bind "$_acct_dir" "$profile_base")
-    else
-      local _preal _prot_what _prot_path _prot_how
-      _preal="$(readlink -f -- "$profile_base")"
-      if [[ "$_preal" == / || "$_preal" == "$HOME" || "$HOME" == "$_preal"/* ]] || _as_path_protected "$_preal" read-write; then
-        _as_msg "profile '$profile': refusing to bind its base '$profile_base': it resolves to a protected path ('$_preal')"
-        return 1
-      fi
-      args+=(--bind "$_preal" "$profile_base")
-    fi
-  fi
   for _p in ${profile_config_binds[@]+"${profile_config_binds[@]}"}; do
     IFS=$'\t' read -r _src _dst <<<"$_p"
     _dst="${_dst:-$_src}"
@@ -13941,19 +14041,6 @@ agent_sandbox() (
     :
   else
     args+=(--ro-bind "$profile_bin" "$profile_bin")
-  fi
-
-  # State isolation: the profile declares which parts of its state directory
-  # leak across sessions, the engine stages them, and they are bound with the channels
-  # (_as_connect_bind_all, below): each wins at its own path. The per-session scratch,
-  # skipped entirely under `native`. ONE SWITCH, not a
-  # per-path knob: the isolation this applies is deliberately unconditional, and
-  # the way to keep that true while still offering parity is to make the bypass
-  # all-or-nothing and impossible to reach by accident (see the preset's gate).
-  local _iso_on=0
-  if ! _as_preset_is_native; then
-    _as_hide_spec
-    _iso_on=1
   fi
 
   # If /usr/local is a symlink off /usr (e.g. to a separate filesystem),

@@ -3,8 +3,9 @@
 # reports, from INSIDE the sandbox, which login it sees at $CLAUDE_CONFIG_DIR and what
 # else of the base is there. The unit suite (tests/unit/accounts.bats) pins the argv;
 # only this shows the account's directory really is the state directory, the base's
-# login really is out of reach, and a channel still comes from the base. Fixture files
-# in a throwaway HOME, never a real login.
+# login really is out of reach, a channel still comes from the base, and so do the
+# base's other entries (P7: a hook script, a symlink). Fixture files in a throwaway
+# HOME, never a real login.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -23,12 +24,17 @@ say config_dir "$c"
 say login "$(cat "$c/.credentials.json" 2>/dev/null || echo none)"
 say base_login "$(grep -rqs "BASE-LO""GIN" "$HOME" && echo yes || echo no)"
 say hook "$([ -e "$c/response-hook.py" ] && echo yes || echo no)"
+say hook_text "$(cat "$c/response-hook.py" 2>/dev/null || echo none)"
+say link "$(readlink "$c/link" 2>/dev/null || echo none)"
+say lock "$(cat "$c/.oauth_refresh.lock" 2>/dev/null || echo none)"
 say skill "$(cat "$c/skills/s.md" 2>/dev/null || echo none)"
 say wrote "$(printf 'inside\n' >"$c/written-inside" 2>/dev/null && echo yes || echo no)"
 PROBE
   chmod +x "$IHOME/.local/share/claude/versions/9.9.9/claude"
   printf 'BASE-LOGIN\n' >"$IHOME/.claude/.credentials.json"
   printf 'echo hook\n' >"$IHOME/.claude/response-hook.py"
+  printf 'BASE-LOCK\n' >"$IHOME/.claude/.oauth_refresh.lock"
+  ln -s somewhere "$IHOME/.claude/link"
   printf 'MY-SKILL\n' >"$IHOME/.claude/skills/s.md"
   printf 'WORK-LOGIN\n' >"$ACC/.credentials.json"
 }
@@ -46,13 +52,16 @@ run_claude() {
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
 }
 
-@test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel still from the base; a write lands in the account" {
+@test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel and the base's other entries still from the base; a write lands in the account" {
   run_claude --account work
   [ "$status" -eq 0 ]
   [ "${M[config_dir]}" = "$IHOME/.claude" ]
   [ "${M[login]}" = WORK-LOGIN ]
   [ "${M[base_login]}" = no ]
-  [ "${M[hook]}" = no ] # not before #355's per-entry binds
+  [ "${M[hook]}" = yes ] # the base's hook script, bound at its path
+  [ "${M[hook_text]}" = "echo hook" ]
+  [ "${M[link]}" = somewhere ] # made again, as written
+  [ "${M[lock]}" = none ]      # the base's refresh lock is the base's
   [ "${M[skill]}" = MY-SKILL ]
   [ "${M[wrote]}" = yes ]
   [ "$(cat "$ACC/written-inside")" = inside ]
@@ -72,4 +81,14 @@ run_claude() {
   [ "$status" -eq 0 ]
   [ "${M[login]}" = BASE-LOGIN ]
   [ "${M[hook]}" = yes ]
+}
+
+@test "a channel nested in a base entry bound into an account role: its mount point is made in the base's entry, and removed after the launch" {
+  mkdir -p "$IHOME/.claude/cache" # no changelog.md: the own store's mount point is made
+  TEST_PRESET=isolated run_claude --account work
+  [ "$status" -eq 0 ]
+  [ "${M[login]}" = WORK-LOGIN ]
+  [ "${M[hook]}" = yes ]
+  [ ! -e "$IHOME/.claude/cache/changelog.md" ]
+  [ ! -e "$ACC/cache/changelog.md" ]
 }

@@ -3,9 +3,10 @@
 # `--account [ROLE=]NAME` name a directory under the agent's state,
 # <state>/<profile>/accounts/NAME/, which is bound at the base's inside path in place of
 # the base: {base}, CLAUDE_CONFIG_DIR and every channel's store slot stay what they are,
-# the channels layer on top, and nothing else of the base is in the sandbox -- the base's
-# login above all, which is the security assertion here. `-` names the base. The
-# fixtures are fake files in a fake HOME, never a real login.
+# the channels layer on top, the base's other top-level entries are bound one by one
+# (P7), and the base's login is never in the sandbox, which is the security assertion
+# here. `-` names the base. The fixtures are fake files in a fake HOME, never a real
+# login.
 # shellcheck disable=SC2088 # a `~` in a [connect] line is the engine's to expand
 
 setup() {
@@ -20,6 +21,14 @@ setup() {
   mkdir -p "$C/ide" "$C/skills" "$ACC/work" "$ACC/personal"
   printf 'BASE-LOGIN\n' >"$C/.credentials.json"
   printf 'echo hook\n' >"$C/response-hook.py"
+  # the base's other entries (P7): a nested channel, a hidden one, the refresh lock, a
+  # symlink and a channel at the top
+  mkdir -p "$C/cache" "$C/daemon"
+  printf 'notes\n' >"$C/cache/changelog.md"
+  printf 'LOCK\n' >"$C/.oauth_refresh.lock"
+  printf 'OWNER\n' >"$C/.oauth_refresh.lock.owner"
+  ln -s somewhere "$C/link"
+  printf '{}\n' >"$C/settings.json"
   printf 'WORK-LOGIN\n' >"$ACC/work/.credentials.json"
   printf 'PERSONAL-LOGIN\n' >"$ACC/personal/.credentials.json"
 }
@@ -46,20 +55,22 @@ connect_refused() {
   [ ! -s "$H/argv" ]
 }
 
-# base_is_only_channels SBOX -- THE SECURITY ASSERTION: of the base, the argv names only
-# its inside path as the account's destination and the channels' paths, each a path the
-# role's record lists (the record is what the channels bound); the base's login, and
-# every other entry of it, appear nowhere.
+# base_is_only_channels SBOX -- THE SECURITY ASSERTION: of the base, the argv names its
+# inside path only as the account's destination (and CLAUDE_CONFIG_DIR's value), and
+# below it only the channels' paths (each a path the role's record lists: the record is
+# what the channels bound), the hide tmpfs, and the base's own top-level entries bound
+# one by one at themselves or made again as symlinks (P7) -- never one of the profile's
+# account-paths: the base's login, and its refresh lock, appear nowhere.
 base_is_only_channels() {
-  local sb="$1" i a
+  local sb="$1" i a name
   local -a known=()
   mapfile -t known < <(
     cut -f3 "$sb/record.tsv"
     cut -f4 "$sb/record.tsv"
   )
-  run ! grep -qF "$C/.credentials.json" "$H/argv"
-  run ! grep -qF "$C/response-hook.py" "$H/argv"
-  run ! grep -qxF "$C/ide" "$H/argv"
+  for name in .credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner; do
+    run ! grep -qF "$C/$name" "$H/argv"
+  done
   for ((i = 0; i < ${#ARGV[@]}; i++)); do
     a="${ARGV[i]}"
     if [[ "$a" == "$C" ]]; then
@@ -75,14 +86,20 @@ base_is_only_channels() {
     case "${ARGV[i - 1]}" in
       --tmpfs) continue ;; # the hide list
     esac
-    [[ " ${known[*]} " == *" $a "* ]] || {
-      echo "argv names $a (after ${ARGV[i - 1]}), which is no channel path of the role"
-      return 1
-    }
+    [[ " ${known[*]} " == *" $a "* ]] && continue
+    # a top-level entry of the base bound at itself (its source here, its destination
+    # next), or the destination of that bind or of a --symlink made from the entry
+    if [[ "${a#"$C"/}" != */* ]]; then
+      [[ "${ARGV[i - 1]}" == --bind && "${ARGV[i + 1]}" == "$a" ]] && continue
+      [[ "${ARGV[i - 2]}" == --bind && "${ARGV[i - 1]}" == "$a" ]] && continue
+      [[ "${ARGV[i - 2]}" == --symlink && -L "$a" && "${ARGV[i - 1]}" == "$(readlink -- "$a")" ]] && continue
+    fi
+    echo "argv names $a (after ${ARGV[i - 1]}), which is neither a channel path of the role nor a top-level entry of the base bound at itself"
+    return 1
   done
 }
 
-@test "an account: its directory is bound at the base's inside path in place of the base; CLAUDE_CONFIG_DIR, the channels and the hide tmpfs as before; nothing else of the base, its login least of all" {
+@test "an account: its directory is bound at the base's inside path in place of the base; CLAUDE_CONFIG_DIR, the channels and the hide tmpfs as before; the base's other entries one by one; its login nowhere" {
   dotfile '[agent]' 'account = work'
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
@@ -94,6 +111,9 @@ base_is_only_channels() {
   argv_has --bind "$C/skills" "$C/skills"
   [ "$(argv_index "$ACC/work")" -lt "$(argv_index "$C/skills")" ]
   base_is_only_channels "$SBOX"
+  # the base's other entries, one by one (P7)
+  argv_has --bind "$C/response-hook.py" "$C/response-hook.py"
+  argv_has --bind "$C/ide" "$C/ide"
   # the base and its login are untouched; the record says the account
   [ "$(cat "$C/.credentials.json")" = BASE-LOGIN ]
   [ "$(cat "$SBOX/account")" = "claude"$'\t'"work" ]
@@ -469,4 +489,161 @@ STUB
   [[ "$output" == *"account gone: not usable, a launch refuses"* ]]
   [[ "$output" == *"check: a launch refuses this role: its account 'gone' cannot be its state directory (above)"* ]]
   [ ! -s "$H/argv" ]
+}
+
+# argv_count TOKEN... -- how many times the tokens appear consecutively in ARGV.
+argv_count() {
+  local -a want=("$@")
+  local n=${#want[@]} i j c=0
+  for ((i = 0; i + n <= ${#ARGV[@]}; i++)); do
+    for ((j = 0; j < n; j++)); do
+      [[ "${ARGV[i + j]}" == "${want[j]}" ]] || break
+    done
+    ((j == n)) && c=$((c + 1))
+  done
+  printf '%s' "$c"
+}
+
+@test "P7: the base's other top-level entries are bound one by one, read-write at their paths, before the channels; a hidden one is blanked, a channel's is the channel's, a symlink made again unfollowed; the login and its lock nowhere" {
+  mkdir -p "$H/home/.ssh"
+  ln -s "$H/home/.ssh" "$C/keys" # a symlink entry naming a secret store: made again, never followed
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$ACC/work" "$C"
+  argv_has --bind "$C/response-hook.py" "$C/response-hook.py"
+  argv_has --bind "$C/ide" "$C/ide"
+  argv_has --bind "$C/cache" "$C/cache"
+  # each after the account's directory; the channel nested in cache/ layers on top of it
+  [ "$(argv_index "$ACC/work")" -lt "$(argv_index "$C/response-hook.py")" ]
+  argv_has "$C/cache/changelog.md"
+  [ "$(argv_index "$C/cache")" -lt "$(argv_index "$C/cache/changelog.md")" ]
+  # hidden: the tmpfs, no bind
+  argv_has --tmpfs "$C/daemon"
+  run ! argv_has --bind "$C/daemon" "$C/daemon"
+  # a channel at the top: bound by its channel only (read-write at its own source here)
+  [ "$(argv_count --bind "$C/settings.json" "$C/settings.json")" -eq 1 ]
+  # symlinks: made again with their targets as written, not followed
+  argv_has --symlink somewhere "$C/link"
+  argv_has --symlink "$H/home/.ssh" "$C/keys"
+  [ "$(grep -cxF "$H/home/.ssh" "$H/argv")" -eq 1 ] # once: the --symlink target
+  run ! argv_has --bind "$C/link" "$C/link"
+  run ! argv_has --bind "$C/keys" "$C/keys"
+  # the account paths nowhere: the mutation-checked assertion
+  base_is_only_channels "$SBOX"
+  # under isolated the channel's own store is at settings.json; the base's is not bound
+  TEST_PRESET=isolated run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  [ "$(argv_count --bind "$C/settings.json" "$C/settings.json")" -eq 0 ]
+  argv_has --bind "$C/response-hook.py" "$C/response-hook.py"
+  base_is_only_channels "$SBOX"
+}
+
+@test "P7: a project's [claude] hide entry is blanked, not bound" {
+  mkdir -p "$C/secret-notes"
+  dotfile '[agent]' 'account = work' '[claude]' 'hide = secret-notes'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --tmpfs "$C/secret-notes"
+  run ! argv_has --bind "$C/secret-notes" "$C/secret-notes"
+  argv_has --bind "$C/ide" "$C/ide"
+}
+
+@test "P7: no account, no per-entry binds: the base is bound at itself and its entries are not named" {
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$C" "$C"
+  run ! grep -qxF "$C/response-hook.py" "$H/argv"
+  run ! grep -qxF "$C/ide" "$H/argv"
+  run ! grep -qxF "$C/cache" "$H/argv"
+  run ! grep -qxF "$C/link" "$H/argv"
+  run ! argv_has --symlink somewhere "$C/link"
+}
+
+@test "P7: mount points the entry binds make in the account's directory: an empty file is removed after the launch; the base's file is untouched" {
+  mountpoint_bwrap
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$C/response-hook.py" "$C/response-hook.py"
+  [ ! -e "$ACC/work/response-hook.py" ]
+  [ "$(cat "$C/response-hook.py")" = "echo hook" ]
+}
+
+@test "P7 helper: an account named but its directory not resolved refuses rather than bind the base in its place" {
+  source_engine
+  HOME="$H/home"
+  # shellcheck disable=SC2034 # read by _as_base_bind by dynamic scope
+  local profile=claude profile_base="$C" _acct_name=work _acct_dir="" rc=0
+  # shellcheck disable=SC2034
+  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=()
+  # shellcheck disable=SC2034
+  local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
+  _as_base_bind 2>"$H/err" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "${#args[@]}" -eq 0 ]
+  grep -qF "the account 'work': its directory was not resolved; refusing to run the role on the base in its place" "$H/err"
+  # resolved: the account's directory, then the entries; never the login
+  _acct_dir="$ACC/work"
+  _as_base_bind
+  [ "${args[0]} ${args[1]} ${args[2]}" = "--bind $ACC/work $C" ]
+  [[ " ${args[*]} " == *" --bind $C/response-hook.py $C/response-hook.py "* ]]
+  [[ " ${args[*]} " != *"$C/.credentials.json"* ]]
+  [[ " ${args[*]} " != *"$C/.oauth_refresh.lock"* ]]
+  # the base: bound at itself
+  args=() _acct_name="" _acct_dir=""
+  _as_base_bind
+  [ "${args[*]}" = "--bind $C $C" ]
+}
+
+@test "P7 helper: a declaration whose source is repointed at the base, or its login, between the parse and the bind is refused at the bind" {
+  source_engine
+  HOME="$H/home"
+  # shellcheck disable=SC2034 # read by _as_connect_bind_path by dynamic scope
+  local profile=claude profile_base="$C" _overlay_mode=off cwd="$PROJ" p="$H/data"
+  # shellcheck disable=SC2034
+  local -a args=() _as_placeholder_files=()
+  # shellcheck disable=SC2034
+  local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
+  # shellcheck disable=SC2034
+  local -A _connect_key=() _connect_mode=() _connect_src=() _connect_sandbox=() _connect_isdir=() _connect_scope=() _connect_host=()
+  mkdir -p "$H/realdata"
+  ln -s "$H/realdata" "$p"
+  _connect_key[$p]="$p" _connect_mode[$p]=read-only _connect_isdir[$p]=0
+  # as parsed: a plain directory, bound
+  _as_connect_bind_path "$p"
+  [ "${args[*]}" = "--ro-bind $H/realdata $p" ]
+  # repointed at the base
+  args=()
+  ln -sfn "$C" "$p"
+  run _as_connect_bind_path "$p"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to bind '$p': it resolves to a protected path ('$C')"* ]]
+  # at its login
+  ln -sfn "$C/.credentials.json" "$p"
+  run _as_connect_bind_path "$p"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"('$C/.credentials.json')"* ]]
+  # at another path under the base: a declaration like any other
+  ln -sfn "$C/ide" "$p"
+  _as_connect_bind_path "$p"
+  [ "${args[*]}" = "--ro-bind $C/ide $p" ]
+}
+
+@test "P7 helper: a mount point under a base entry bound from the base is the base's host path; one at the top is the account's" {
+  source_engine
+  HOME="$H/home"
+  # shellcheck disable=SC2034 # read by the helpers by dynamic scope
+  local profile=claude profile_base="$C" _acct_name=work _acct_dir="$ACC/work"
+  # shellcheck disable=SC2034
+  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=() _as_base_entries=()
+  # shellcheck disable=SC2034
+  local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
+  local _as_base_real=""
+  rm "$C/cache/changelog.md"
+  _as_base_bind
+  [ "$(_as_host_path_of "$C/cache/changelog.md")" = "$C/cache/changelog.md" ]
+  [ "$(_as_host_path_of "$C/CLAUDE.md")" = "$ACC/work/CLAUDE.md" ]
+  [ "$(_as_host_path_of "$C/link/x")" = "$ACC/work/link/x" ] # a symlink made again is the account's
+  [ "$(_as_host_path_of "$C")" = "$ACC/work" ]
+  # the response hook's own mount point: recorded at the account, removed while empty
+  [[ " ${_as_placeholder_files[*]} " == *" $ACC/work/response-hook.py "* ]]
 }
