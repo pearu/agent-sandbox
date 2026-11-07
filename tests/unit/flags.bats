@@ -9,7 +9,7 @@ setup() {
 @test "no command: exit 2 with the calling convention and the profiles" {
   run_engine -- asb
   [ "$status" -eq 2 ]
-  [[ "$output" == *"no command"*"asb [ENGINE FLAGS] CMD [AGENT ARGS]"* ]]
+  [[ "$output" == *"no agent for role 'default'"*"asb --agent AGENT"*"asb [ENGINE FLAGS] CMD [AGENT ARGS]"*"[agent:default] command = AGENT"* ]]
   [[ "$output" == *"profiles available"*"claude"* ]]
   [ ! -s "$H/argv" ]
   # an agent option before any command is an option the engine does not have
@@ -303,7 +303,7 @@ STUB
     bash -c "source '$ENGINE'; agent_sandbox"
   popd >/dev/null
   [ "$status" -eq 2 ]
-  [[ "$output" == *"no command"* ]]
+  [[ "$output" == *"no agent for role 'default'"* ]]
 }
 
 @test "--ssh flags: values required, mutual exclusion, lifetime syntax, key readability" {
@@ -511,11 +511,104 @@ STUB
   run_engine -- asb claude --resume 01234567-89ab-cdef-0123-456789abcdef
   [ "$status" -eq 0 ]
   [ "${JOINV[*]:1}" = "--resume 01234567-89ab-cdef-0123-456789abcdef" ]
-  # a command is still the line's to name
+  # with no command, the role's agent: none named anywhere is refused
   run_engine -- asb --role r --resume
   [ "$status" -eq 2 ]
-  [[ "$output" == *"no command"* ]]
+  [[ "$output" == *"no agent for role 'r'"* ]]
   [ ! -s "$H/argv" ]
+  # one named by --agent takes the resume words as a typed command does
+  run_engine -- asb --role r --resume --agent claude
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  [ "${JOINV[*]:1}" = "--continue" ]
+}
+
+# ---- --agent (#355) ----
+
+@test "--agent: bare, ROLE=, a quoted glob and --agent= each name the role's agent for a launch with no command (#355)" {
+  local a
+  local -a w
+  for a in "--agent claude" "--agent r=claude" "--agent r*=claude" "--agent=r=claude" "--agent=claude"; do
+    read -r -a w <<<"$a" # the words of each form, unglobbed
+    run_engine -- asb --role r "${w[@]}"
+    [ "$status" -eq 0 ]
+    [ "${JOINV[0]##*/}" = claude ]
+    [ "${#JOINV[@]}" -eq 1 ]
+  done
+  # the flag may come after --role or before it
+  run_engine -- asb --agent r=claude --role r
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  # an exact role name beats a glob, which beats a bare one
+  run_engine -- asb --agent 'r*=nosuch' --agent r=claude --role r
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  run_engine -- asb --agent nosuch --agent 'r*=claude' --role r
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  # the same agent twice is one agent
+  run_engine -- asb --agent r=claude --agent r=claude --role r
+  [ "$status" -eq 0 ]
+}
+
+@test "--agent: refused with a role it does not match, with a command, with two that disagree, and when it names no profile (#355)" {
+  run_engine -- asb --agent q=claude --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--agent q=claude: 'q' matches no role of this launch (its role is 'r')"* ]]
+  run_engine -- asb --agent 'q*=claude' --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'q*' matches no role of this launch"* ]]
+  run_engine -- asb --agent claude --role r claude
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"the agent is named once: --agent claude or the command 'claude', not both"* ]]
+  run_engine -- asb --agent r=claude --agent r=other --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'r' is given two agents, 'claude' (--agent r=claude) and 'other' (--agent r=other)"* ]]
+  run_engine -- asb --agent 'r*=claude' --agent 'r?=other' --role r1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"two globs give role 'r1' two agents"* ]]
+  run_engine -- asb --agent claude --agent other --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"two agents for every role"* ]]
+  run_engine -- asb --agent 'claude --model x' --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"AGENT is one word"* ]]
+  run_engine -- asb --agent nosuch --role r
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'nosuch' names no profile"* ]]
+  run_engine -- asb --agent claude --roles a b
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--agent names a role's agent for a launch, a role verb or --check; it is not combined with --roles"* ]]
+  run_engine -- asb --agent claude --profile claude --exec true
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not combined with --exec"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "--agent: a role verb with no command acts on the role's agent's profile, else on the only one there is (#355)" {
+  mkdir -p "$H/profiles2/other"
+  ln -s "$REPO_ROOT/profiles/claude" "$H/profiles2/claude"
+  printf 'profile_command=other\n' >"$H/profiles2/other/profile.sh"
+  printf '#!/bin/sh\n' >"$H/bin/other"
+  chmod +x "$H/bin/other"
+  local st="$H/home/.local/state/agent-sandbox" slug
+  slug="$(cd "$H/proj" && pwd -P)"
+  slug="${slug//[^A-Za-z0-9-]/-}"
+  mkdir -p "$st/other/$slug/r" "$st/claude/$slug/r"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --agent other --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'r' of "*": not running; its stores "*" are at $st/other/$slug/r"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --agent r=claude --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"are at $st/claude/$slug/r"* ]]
+  # none named: two profiles, so the verb asks which
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --status
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--status acts on one profile's stores, and there are several"* ]]
+  # the line's agent naming no profile is refused
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --agent nosuch --status
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--agent 'nosuch' names no profile"* ]]
 }
 
 @test "--resume: refused with --serve, --exec, a verb and a review; under a profile with no resume words, naming [agent] resume (#355)" {

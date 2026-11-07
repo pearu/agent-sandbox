@@ -55,8 +55,24 @@ names are gone; there are no aliases for removed names before 1.0.
   and what `--permission-mode bypassPermissions` or `--dangerously-skip-permissions`
   there means; `--check` lists the role's
   lines and a key set twice in one section; `asb --apply '[agent:ROLE]' 'command = AGENT'`
-  writes it. A launch does not read it yet: that comes with `--agent`. The profile name
-  `agent` is reserved, since a profile of that name would take the section as its own.
+  writes it. A launch with no command runs it (below). The profile name `agent` is
+  reserved, since a profile of that name would take the section as its own.
+- **`--agent`, and a launch with no command runs the role's agent** (#355): `asb --role
+  R` runs what `--agent` on the line, else `[agent:<glob>] command`, else `[agent]
+  command` names for R, its fixed arguments first, as if typed: `[agent:r] command =
+  claude --model x` makes `asb --role r --resume` run `claude --model x --continue`.
+  `--agent AGENT` is every role's, `--agent ROLE=AGENT` and `--agent 'GLOB=AGENT'` one
+  role's; an exact name beats a glob, which beats a bare one; two that disagree, a role
+  or glob that matches no launched role, and `--agent` with a command are refused, and
+  so is a launch with no agent anywhere, naming both places. A line `--agent` replaces
+  the dot-file's whole command. A role verb or `--check` with no command acts on the
+  role's agent's profile; `--check` shows the agent that wins, and the review says when a
+  later `[agent:<glob>]` line takes a role an earlier section names exactly. The user's
+  launch records the agent and where it was named in the role's store (`agent`; not
+  `--summarize`'s turn, `--exec` or `--profile` alone); `--status` prints it, and
+  `--list` ends with `asb --role ROLE --resume`, adding `--agent WORD` only where the line
+  gave the agent, or the profile for a store from before the record. Not with `--roles`
+  yet.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the

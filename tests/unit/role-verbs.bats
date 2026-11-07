@@ -270,9 +270,36 @@ list_fixture() {
     no conversation
   own     stopped   created 2026-10-22 09:00   active 2026-10-22 10:00
     My own line
-To resume: asb --role ROLE claude --continue"
+To resume: asb --role ROLE --agent claude --resume"
   [ "$output" = "$want" ]
   [ ! -s "$H/argv" ] # nothing launched
+}
+
+@test "--list's resume line: --resume, with --agent only where the role's record says the line named it, the profile with no record (#355)" {
+  local a b
+  a="$(store_dir "$PROJ" a)" b="$(store_dir "$PROJ" b)"
+  conv "$a" s "2026-10-21 09:00 UTC" "$(user_rec 'x' 2026-10-20T08:00:00Z)"
+  conv "$b" s "2026-10-22 09:00 UTC" "$(user_rec 'y' 2026-10-21T08:00:00Z)"
+  printf 'dotfile:[agent:a]\nclaude --model x\n' >"$a/agent"
+  printf 'dotfile:[agent]\nclaude\n' >"$b/agent"
+  run_engine -- asb --list
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "To resume: asb --role ROLE --resume" ]
+  # the line named it: --agent and its word
+  printf 'line\nclaude\n' >"$b/agent"
+  printf 'line\nclaude\n' >"$a/agent"
+  run_engine -- asb --list
+  [ "${lines[-1]}" = "To resume: asb --role ROLE --agent claude --resume" ]
+  # they differ: the plainest line, and one naming the roles that add --agent
+  printf 'dotfile:[agent]\nclaude\n' >"$a/agent"
+  run_engine -- asb --list
+  [ "${lines[-2]}" = "To resume: asb --role ROLE --resume" ]
+  [ "${lines[-1]}" = "  add --agent claude for: b" ]
+  # no record (a store from before it): the store's profile
+  rm "$a/agent"
+  rm -r "$b"
+  run_engine -- asb --list
+  [ "${lines[-1]}" = "To resume: asb --role ROLE --agent claude --resume" ]
 }
 
 @test "--list-all works outside any project: projects ordered by their newest role" {
@@ -286,7 +313,7 @@ To resume: asb --role ROLE claude --continue"
   [ "${lines[3]}" = "$PROJ" ]
   [[ "$output" == *"CUDA version pinned in CI"* ]]
   # one resume line, at the very end, for every project
-  [ "${lines[-1]}" = "To resume: cd PROJECT_DIR && asb --role ROLE claude --continue" ]
+  [ "${lines[-1]}" = "To resume: cd PROJECT_DIR && asb --role ROLE --agent claude --resume" ]
   [ "$(grep -c 'resume' <<<"$output")" -eq 1 ]
   RUN_CWD="$H/nowhere" run_engine -- asb --list
   [ "$output" = "asb --list: no role of this project has stores" ]
@@ -306,7 +333,7 @@ To resume: asb --role ROLE claude --continue"
   [[ "$output" != *WRONG* ]]
   [[ "$output" == *$'\n'"/p/two"$'\n'* || "$output" == "/p/two"$'\n'* ]]
   [[ "$output" == *"-p-three  (the path is not recorded; this is the store's slug)"$'\n'"  r3 "* ]]
-  [ "${lines[-1]}" = "To resume: cd PROJECT_DIR && asb --role ROLE claude --continue" ]
+  [ "${lines[-1]}" = "To resume: cd PROJECT_DIR && asb --role ROLE --agent claude --resume" ]
 }
 
 @test "--list WORD keeps the roles whose name, summary or conversations mention it" {
@@ -382,7 +409,7 @@ To resume: asb --role ROLE claude --continue"
   plain="${plain//$R/}"
   [[ "$plain" != *$'\e'* ]]
   [ "$(grep -o $'\e\\[36m' <<<"$output" | wc -l)" -eq 5 ]
-  [[ "$output" == *$'\n'"To resume: "*" --role ROLE claude --continue" ]] # as the engine was invoked
+  [[ "$output" == *$'\n'"To resume: "*" --role ROLE --agent claude --resume" ]] # as the engine was invoked
   # NO_COLOR at the terminal: plain
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" NO_COLOR=1 script -qec "$(printf "%q " "${@:4}") --list" /dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
@@ -503,6 +530,31 @@ STUB
   [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"$'\n'* ]]
 }
 
+@test "the role's agent record: only the user's launch writes it; --summarize's turn and --exec leave it, and --list stays plain (#355)" {
+  printf '[agent]\ncommand = claude --model m\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  summ_setup
+  run_engine -- asb
+  [ "$status" -eq 0 ]
+  local rec=$'dotfile:[agent]\nclaude --model m'
+  [ "$(cat "$SBOX/agent")" = "$rec" ]
+  # the turn names the agent, its fixed arguments with it, and records nothing
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=line -- asb --summarize
+  [ "$status" -eq 0 ]
+  [[ " ${JOINV[*]} " == *"/claude --model m -p --session-id "* ]]
+  [ "$(cat "$SBOX/agent")" = "$rec" ]
+  run_engine -- asb --list
+  [ "${lines[-1]}" = "To resume: asb --role ROLE --resume" ]
+  # a launch naming no agent leaves it too
+  run_engine -- asb --profile claude --exec true
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SBOX/agent")" = "$rec" ]
+  run_engine -- asb --profile claude
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SBOX/agent")" = "$rec" ]
+}
+
 @test "--summarize needs no command when one profile is installed, takes no agent arguments, and is not combined with another verb (#314)" {
   summ_setup
   run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=line -- asb --role default --summarize
@@ -621,7 +673,7 @@ STUB
   [[ "$output" == *$'\n'"${B}$PROJ${R}"$'\n'* ]]
   [[ "$output" == *$'\n'"${B}-no-record  (the path is not recorded; this is the store's slug)${R}"$'\n'* ]]
   [ "$(grep -o $'\e\\[1m' <<<"$output" | wc -l)" -eq 3 ]
-  [[ "$output" == *$'\n'"To resume: cd PROJECT_DIR && "*" --role ROLE claude --continue" ]] # plain
+  [[ "$output" == *$'\n'"To resume: cd PROJECT_DIR && "*" --role ROLE --agent claude --resume" ]] # plain
 }
 
 @test "--status names the proxy's port when it is not 8888 (#335)" {
