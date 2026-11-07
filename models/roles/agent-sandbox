@@ -4,8 +4,14 @@
 # Review it, add what this project needs -- hosts to allow, a Planner's material --
 # and approve it with `asb --trust`; `asb --check --role NAME` shows what a role has.
 
-# ---- what every role gets: --init writes it per role, [connect:planner-*] and so on --
+# ---- every role's agent: what a launch with no command runs, the native arguments
+#   after it (asb --role NAME --resume, asb --roles NAME... --resume); one role's own
+#   is an [agent:NAME] command = AGENT ARGS section of yours
+[agent]
+command = claude
+
 #@ scope = roles
+# ---- what every role gets: --init writes it per role, [connect:planner-*] and so on --
 [sandbox]
 preset = inherit
 [conda]
@@ -30,7 +36,7 @@ Bash(.asb/bin/inbox-wait:*)
 #@ inbox = .asb/coord/to/{role}.md
 .asb/plan/planner-{n}/ = read-write   # its Statements, Tasks and Measurements
 .asb/coord/planner-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
-[serve:planner-{n}]               # no terminal: asb --role {role} --serve claude
+[serve:planner-{n}]               # no terminal: asb --role {role} --serve
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
@@ -48,7 +54,7 @@ start = .asb/start/planner.md     # its first turn: arm the watcher, read the in
 #@shared {envpath}/ = copy-on-write  # another project's env: what it installs lands in its layer
 #@own [conda:implementer-{n}]           # activation only; the clone is writable as its tree is
 #@own prefix = .asb/impl/{n}/.env
-[serve:implementer-{n}]           # no terminal: asb --role {role} --serve claude
+[serve:implementer-{n}]           # no terminal: asb --role {role} --serve
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
@@ -59,7 +65,7 @@ start = .asb/start/implementer.md # its first turn: arm the watcher, read the in
 #@ inbox = .asb/coord/to/{role}.md
 .asb/review/reviewer-{n}/ = read-write
 .asb/coord/reviewer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
-[serve:reviewer-{n}]              # no terminal: asb --role {role} --serve claude
+[serve:reviewer-{n}]              # no terminal: asb --role {role} --serve
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md

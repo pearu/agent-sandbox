@@ -9,7 +9,7 @@ setup() {
 @test "no command: exit 2 with the calling convention and the profiles" {
   run_engine -- asb
   [ "$status" -eq 2 ]
-  [[ "$output" == *"no agent for role 'default'"*"asb --agent AGENT"*"asb [ENGINE FLAGS] CMD [AGENT ARGS]"*"[agent:default] command = AGENT"* ]]
+  [[ "$output" == *"no agent for role 'default'"*"asb --agent AGENT"*"asb [ENGINE FLAGS] CMD [AGENT ARGS]"*"[agent:default] command = AGENT, or for every role: asb --apply '[agent]' 'command = claude'"* ]]
   [[ "$output" == *"profiles available"*"claude"* ]]
   [ ! -s "$H/argv" ]
   # an agent option before any command is an option the engine does not have
@@ -515,6 +515,20 @@ STUB
   run_engine -- asb --role r --resume
   [ "$status" -eq 2 ]
   [[ "$output" == *"no agent for role 'r'"* ]]
+  # two profiles installed: the example names none of them
+  mkdir -p "$H/profiles2/other"
+  ln -s "$REPO_ROOT/profiles/claude" "$H/profiles2/claude"
+  printf 'profile_command=other\n' >"$H/profiles2/other/profile.sh"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --resume
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = AGENT'"* ]]
+  # a resolved agent missing on PATH: named where a role's agent is named, not by --profile
+  run_engine PATH="/usr/bin:/bin" -- "$H/bin/asb" --role r --agent claude
+  [[ "$output" == *"no 'claude' on PATH to run. Install the agent, or name its binary for role 'r': --agent r=/path/to/claude, or in .agent-sandbox, [agent:r] command = /path/to/claude"* ]]
+  [ ! -s "$H/argv" ]
+  # no role named: the bare forms
+  run_engine PATH="/usr/bin:/bin" -- "$H/bin/asb" --agent claude
+  [[ "$output" == *"no 'claude' on PATH to run. Install the agent, or name its binary: --agent /path/to/claude, or in .agent-sandbox, [agent] command = /path/to/claude"* ]]
   [ ! -s "$H/argv" ]
   # one named by --agent takes the resume words as a typed command does
   run_engine -- asb --role r --resume --agent claude
@@ -576,9 +590,6 @@ STUB
   run_engine -- asb --agent nosuch --role r
   [ "$status" -eq 2 ]
   [[ "$output" == *"'nosuch' names no profile"* ]]
-  run_engine -- asb --agent claude --roles a b
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"--agent names a role's agent for a launch, a role verb or --check; it is not combined with --roles"* ]]
   run_engine -- asb --agent claude --profile claude --exec true
   [ "$status" -eq 2 ]
   [[ "$output" == *"not combined with --exec"* ]]

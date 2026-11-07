@@ -103,7 +103,8 @@ Sections:
   session's transcript stays on disk, resumable by its id. The roles model's Supervisor
   writes it to start a role's new Task fresh, and sends the message once it is gone; for
   a role in a pane of `asb --roles`, the host side of that command takes it instead,
-  typing `/clear` in the pane.
+  typing the role's fresh start in the pane (its agent's profile's `[agent] clear`;
+  claude: `/clear`).
   **At a terminal**, `watch` also names the file a session of the role keeps a watcher
   on: the claude profile's `Stop` hook refuses, once, a turn that ends with no
   `inbox-wait` running (see [profiles](profiles.md)), and `--check` says so for the
@@ -1044,10 +1045,11 @@ name comes from `--role`, then `AGENT_SANDBOX_ROLE`, then `[sandbox] role` in
 this file, else `default`. A name is a letter or digit followed by letters,
 digits, `.`, `_` or `-`, at most 200 characters; `--role default` is the same as
 no `--role`.
-`asb --roles impl-1 rev-1 claude` runs several roles at once, a tmux pane
-each, the first on top, every one a launch of its own (`asb --role impl-1 claude`, ...),
-and a host process beside them that types `/clear` in a role's pane when the Supervisor
-writes its reset marker (#329); see
+`asb --roles impl-1 rev-1 --resume` runs several roles at once, a tmux pane
+each, the first on top, every one a launch of its own (`asb --role impl-1 --resume`,
+...) running its role's agent (below, [A role's agent](#a-roles-agent-agent)), and a host
+process beside them that types a role's fresh start (claude: `/clear`) in its pane when
+the Supervisor writes its reset marker (#329); see
 [roles.md](roles.md#9-one-round-terminal-by-terminal).
 
 What a role gets comes from **role-suffixed sections**:
@@ -1156,8 +1158,20 @@ The launch records the agent and where it was named in the role's store, `agent`
 `--agent WORD` only where the line gave the agent (a typed command counts as the
 line), or the profile for a store from before the record. Only your own launch
 writes it: `--summarize`'s turn, `--exec` and `--profile NAME` alone leave it as it
-was, and `--serve` records what its line named. `--roles` takes `--agent` in a later
-step; until then a `--roles` line names its command after the roles.
+was, and `--serve` records what its line named.
+
+`--roles` takes no command: each pane runs `asb --role ROLE` with the line's engine
+words and resolves its role's agent itself, so its record says where the file named it.
+Before any pane opens, every role's agent is resolved the same way and must name a
+profile installed here and a binary to run (and, with `--resume`, a profile that can
+resume); a role with none is refused by name, and nothing opens. `--agent` on a
+`--roles` line follows the rules above, a role or glob having to match one of the
+listed roles; a pane gets `--agent AGENT` only when the line
+named its role's agent (`asb --roles a b --agent b=codex --resume` runs
+`asb --role a --resume` and `asb --role b --agent codex --resume`). A word after the
+roles that names an installed profile is refused (`--agent claude`, or
+`[agent:<glob>] command`), as is a command after the engine words: native arguments go
+in `command =`, or on a single launch, `asb --role ROLE CMD ARGS`.
 
 ## The config file: the `config` channel
 

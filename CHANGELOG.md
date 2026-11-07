@@ -44,6 +44,26 @@ names are gone; there are no aliases for removed names before 1.0.
 - **A config or history view that cannot be made refuses the launch** (#207), rather than
   seeding the whole native file.
 - **No empty `~/.claude.json` is created** (#204): Claude Code calls a 0-byte one corrupted.
+- **`asb --roles ROLE... [OPTIONS]` takes no command** (#355): each pane runs
+  `asb --role ROLE` with the line's options and resolves its role's agent from
+  `.agent-sandbox` (`[agent:<glob>]`, then `[agent]` command), so its record says where
+  it was named. `--agent` on the line names agents for the round: a pane gets
+  `--agent AGENT` only when the line named its role's (`--agent b=codex` reaches b's pane
+  alone, a bare `--agent X` every pane), and a role or glob matching none of the listed
+  roles is refused. Every role's agent is resolved before tmux is called; a role with
+  none, or with an agent not installed, is refused by name and nothing opens. A word
+  among the roles that names a profile, a command or agent arguments after the options,
+  and `--profile` are refused. The reset watcher types each role's own fresh start, its
+  agent's profile's `[agent] clear`; a role whose profile has none is not watched, and
+  `--roles` names it. Its log is `~/.local/state/agent-sandbox/.roles-resets/<slug>.log`.
+  `asb --init roles` writes `[agent] command = claude`, and the Supervisor prints
+  `asb --role NAME --resume` and `asb --roles NAME ... --resume`. A project an earlier
+  `--init` wrote adds the section once: `asb --apply '[agent]' 'command = claude'`; the
+  no-agent refusals say it, and `asb --init roles` run again names it with that line.
+  `--init` on an existing file now reports any common (unsuffixed) section line it
+  lacks the same way, still without writing it. A missing agent binary is named as
+  `--agent ROLE=/path/to/W` or `[agent:ROLE] command = /path/to/W` when the agent was
+  resolved, not `--profile`. `--setup-remote` is refused with `--roles`.
 
 ### Added
 
@@ -71,8 +91,7 @@ names are gone; there are no aliases for removed names before 1.0.
   launch records the agent and where it was named in the role's store (`agent`; not
   `--summarize`'s turn, `--exec` or `--profile` alone); `--status` prints it, and
   `--list` ends with `asb --role ROLE --resume`, adding `--agent WORD` only where the line
-  gave the agent, or the profile for a store from before the record. Not with `--roles`
-  yet.
+  gave the agent, or the profile for a store from before the record.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the
@@ -176,7 +195,7 @@ names are gone; there are no aliases for removed names before 1.0.
   agent's last session in the profile's own words, `[agent] resume` in its dot-file
   (claude: `resume = --continue`). The words go after the agent's own arguments and
   before a `[briefing] start` text: `asb --role R --resume claude --model x` runs
-  `claude --model x --continue`, and `asb --roles A B --resume claude` gives every pane
+  `claude --model x --continue`, and `asb --roles A B --resume` gives every pane
   `--resume`. After the command, `--resume` stays the agent's (`asb claude --resume ID`).
   Refused under a profile without the key, naming `[agent] resume`, and with `--serve`,
   `--exec`, a verb or a review. A command is still required on the line.

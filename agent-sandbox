@@ -44,6 +44,9 @@
 #   asb --allow pypi.org claude   # + HTTPS to pypi.org through the egress
 #                                 # proxy, for this session only
 #   asb --role reviewer claude -r # another role of this project, resuming
+#   asb --roles planner-1 reviewer-1 --resume
+#                                 # a tmux pane per role, each running its
+#                                 # role's agent from .agent-sandbox [agent]
 #   claude                        # Claude Code itself, not sandboxed
 #
 # ============================================================================
@@ -428,6 +431,8 @@ _as_version() {
 _as_usage() {
   cat <<'USAGE'
 usage: asb [ENGINE FLAGS] CMD [AGENT ARGS...]        (asb = agent-sandbox)
+       asb --role ROLE [ENGINE FLAGS]                  (the role's agent, [agent])
+       asb --roles ROLE... [ENGINE FLAGS]              (a tmux pane per role)
        asb [ENGINE FLAGS] --profile NAME VERB          (--status, --shutdown, ...)
        asb [ENGINE FLAGS] --profile NAME --exec CMD [ARGS...]
 
@@ -517,21 +522,28 @@ Engine flags (before CMD):
                         With no CMD a launch runs the role's agent as if typed
                         (`asb --role R --resume`), and a role verb or --check
                         uses its profile. Refused with a CMD, with two agents
-                        for one role, with a ROLE matching no launched role,
-                        and with --roles (for now)
+                        for one role, with a ROLE matching no launched role
+                        (with --roles, none of the listed roles)
   --roles ROLE...       open one tmux session, named after the project
                         directory, with a pane per role, each running
-                        `--role ROLE` with the rest of the command line, five
-                        to a window: the first role on top, the others in a
-                        row below; the
-                        roles end at the first word that starts with `-` or
-                        names a profile. Reviews the dot-file once, here,
-                        first. Refused with --role, a verb, --exec, a review,
-                        or while a session of that name is open. Beside the
-                        session, a host-side watcher takes the Supervisor's
-                        reset markers (.asb/coord/to/ROLE.reset): it types the
-                        profile's fresh start (claude: /clear) in that role's
-                        pane, removes the marker, and ends with the session
+                        `--role ROLE` with the line's engine words, five to a
+                        window: the first role on top, the others in a row
+                        below; the roles end at the first word that starts
+                        with `-`. No command: each pane runs its role's agent
+                        ([agent:<glob>] or [agent] command), and gets
+                        --agent AGENT only when the line named its role's.
+                        Reviews the dot-file once, here, first, then resolves
+                        every role's agent: one with none, or not installed,
+                        refuses and nothing opens. Refused with a command, a
+                        word naming a profile among the roles, --role,
+                        --profile, a verb, --exec, a review, or while a
+                        session of that name is open. Beside the session, a
+                        host-side watcher takes the Supervisor's reset markers
+                        (.asb/coord/to/ROLE.reset): it types the role's fresh
+                        start (its agent's profile's [agent] clear; claude:
+                        /clear) in that role's pane, removes the marker, and
+                        ends with the session; a role whose profile has no
+                        clear is not watched, and said
   --preset NAME        where every channel sits before any override:
                         `isolated` (nothing of your install), `inherit`
                         (read your files live, keep the sandbox's writes to
@@ -3606,6 +3618,15 @@ _as_agent_record() {
   printf '  agent: %s -- %s\n' "$cmd" "$where"
 }
 
+# _as_agent_example -- the agent word a refusal's example names: the only profile
+# installed (_as_default_profile), else AGENT. Uses the engine's $profile_dir.
+# shellcheck disable=SC2154
+_as_agent_example() {
+  local p
+  p="$(_as_default_profile "$profile_dir")"
+  printf '%s' "${p:-AGENT}"
+}
+
 # _as_names_profile WORD -- does WORD, or its basename, name an installed profile? As
 # the profile resolution reads a command word. Uses the engine's $profile_dir.
 # shellcheck disable=SC2154
@@ -6121,32 +6142,32 @@ _as_slug_expand() {
 }
 
 # _as_profile_facts_dotfile NAME FILE -- for _as_profile_facts, in its subshell: read the
-# profile's dot-file as a launch does, since its channel table is there (#190), and its
-# resume words (#355).
+# profile's dot-file as a launch does, since its channel table is there (#190), its
+# resume words (#355) and its clear keys (#355).
 _as_profile_facts_dotfile() {
   local profile="$1" profile_base="" profile_base_env="" profile_home="${2%/*}"
   local -a profile_verbs=() profile_verbs_observe=() profile_daemon_argv=() profile_status_argv=()
   local -a profile_serve_new=() profile_serve_resume=()
-  local profile_clear=""
   local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=()
-  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear
 }
 
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
 # profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...`,
-# `key<TAB>NAME<TAB>KEY` and `resume<TAB>NAME<TAB>WORD...` lines (the last only for a
-# profile with [agent] resume, #355). Sourced in a subshell; a profile's top level only
-# declares. What a profile adds at a launch (profile_prepare) is not here.
+# `key<TAB>NAME<TAB>KEY`, `resume<TAB>NAME<TAB>WORD...` and `clear<TAB>NAME<TAB>KEYS`
+# lines (the last two only for a profile with [agent] resume, [agent] clear: #355).
+# Sourced in a subshell; a profile's top level only declares. What a profile adds at a
+# launch (profile_prepare) is not here.
 _as_profile_facts() {
   (
     local name l
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
     local -a profile_channels=() profile_dotfile_keys=() profile_resume=()
-    local profile_project_env_set=0
+    local profile_project_env_set=0 profile_clear=""
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
     # shellcheck disable=SC1090
@@ -6159,6 +6180,7 @@ _as_profile_facts() {
       printf '\t%s' "${profile_resume[@]}"
       printf '\n'
     fi
+    [[ -z "$profile_clear" ]] || printf 'clear\t%s\t%s\n' "$name" "$profile_clear"
     ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
     true
   )
@@ -10119,7 +10141,12 @@ _as_init() {
     else
       a="$(_init_render "${heads[i]}" "${bodies[i]}" "" "" "" "${leads[i]}")"
       hd="$(_init_render "${heads[i]}" "" "" "" "" | head -1)"
-      [[ -n "$existing" ]] && a="" # the common sections are written once, with the file
+      # The common sections are written once, with the file; to an existing file the lines
+      # it lacks are said, as a role section's are (_init_missing), and not written.
+      if [[ -n "$existing" ]]; then
+        chk_h+=("$hd") chk_a+=("$a")
+        a=""
+      fi
     fi
     if [[ -n "$a" ]] && _init_has "$hd"; then
       if ((cmp)); then chk_h+=("$hd") chk_a+=("$a"); fi
@@ -10475,7 +10502,7 @@ _as_init() {
   done
   if ((nmiss)); then
     printf '\n' >&2
-    _as_msg "--init: $nmiss line$( ((nmiss == 1)) || printf s) model '$model' has now that your .agent-sandbox lacks -- --init never changes a section that exists; add $( ((nmiss == 1)) && printf it || printf them) with:"
+    _as_msg "--init: $nmiss line$( ((nmiss == 1)) || printf s) model '$model' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add $( ((nmiss == 1)) && printf it || printf them) with:"
     printf '%s' "$applies" >&2
   fi
 
@@ -10862,18 +10889,20 @@ _as_strict_ssh_rules() {
   return 0
 }
 
-# _as_resolve_bin WORD -- set profile_bin to the agent WORD names (#151): a path
+# _as_resolve_bin WORD [ROLE] -- set profile_bin to the agent WORD names (#151): a path
 # (`/path/to/2.1.284`, `./build/claude`), or a name looked up on PATH as a shell would.
 # Resolved through symlinks, because that is what is bound inside and executed there:
 # the native installer's ~/.local/bin/claude is a link into its versions/, and bwrap
 # refuses to bind over a symlink. A PATH entry that is agent-sandbox itself -- this
 # engine, or any other copy of it, recognised as install.sh recognises its own: a file
 # named agent-sandbox that defines agent_sandbox() -- is passed over, with a note, so
-# the engine never runs itself as the agent; the agent is the next one on PATH.
+# the engine never runs itself as the agent; the agent is the next one on PATH. ROLE:
+# WORD is that role's agent, resolved rather than typed (#355), so a missing one is
+# named where a role's agent is named, not by --profile.
 # Reads the caller's engine and invoked by dynamic scope.
 # shellcheck disable=SC2154
 _as_resolve_bin() {
-  local w=$1 d c r shadow=""
+  local w=$1 role="${2:-}" d c r shadow=""
   profile_bin=""
   if [[ "$w" == */* ]]; then
     if [[ -f "$w" && -x "$w" ]]; then
@@ -10902,7 +10931,14 @@ _as_resolve_bin() {
     [[ -n "$shadow" ]] \
       && _as_msg "note: $shadow is agent-sandbox itself, not the agent; passing over it"
     if [[ -z "$profile_bin" ]]; then
-      _as_msg "no '$w' on PATH to run. Install the agent, or name its binary: $invoked --profile $profile /path/to/$w"
+      if [[ "$role" == default && "${_role_flag_set:-0}" == 0 && "${_roles_set:-0}" == 0 ]]; then
+        # No role named: the bare forms, which apply to the launch's one role.
+        _as_msg "no '$w' on PATH to run. Install the agent, or name its binary: --agent /path/to/$w, or in .agent-sandbox, [agent] command = /path/to/$w"
+      elif [[ -n "$role" ]]; then
+        _as_msg "no '$w' on PATH to run. Install the agent, or name its binary for role '$role': --agent $role=/path/to/$w, or in .agent-sandbox, [agent:$role] command = /path/to/$w"
+      else
+        _as_msg "no '$w' on PATH to run. Install the agent, or name its binary: $invoked --profile $profile /path/to/$w"
+      fi
       return 1
     fi
   fi
@@ -11087,21 +11123,31 @@ _as_launch_pasta() {
   ' agent-sandbox-strict "$nftbin" "$sshrules" "$_session_dir" "$seccomp_bpf" "$pport" "$@")
 }
 
-# _as_roles_open [AGENT ARGS...] -- `asb --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]`
-# (#317, #320): one tmux session, named after the project directory, with a pane per
-# role in the order given, five to a window: in each window the first role has the top
-# pane, full width and half the height, and the others share the bottom half in one
-# row (tmux's main-horizontal layout); a sixth role starts the next window. A window is
-# named by its first role, a pane's border shows its role, every pane starts in the
-# project and runs
+# _as_roles_open -- `asb --roles ROLE... [ENGINE FLAGS]` (#317, #320, #355): one tmux
+# session, named after the project directory, with a pane per role in the order given,
+# five to a window: in each window the first role has the top pane, full width and half
+# the height, and the others share the bottom half in one row (tmux's main-horizontal
+# layout); a sixth role starts the next window. A window is named by its first role, a
+# pane's border shows its role, every pane starts in the project and runs
 #
-#   asb --role ROLE [ENGINE FLAGS] CMD [AGENT ARGS]; exec "${SHELL:-bash}"
+#   asb --role ROLE [--agent AGENT] [ENGINE FLAGS]; exec "${SHELL:-bash}"
 #
-# so a pane whose launch ends drops to a shell and its last output stays readable.
+# so a pane whose launch ends drops to a shell and its last output stays readable. There
+# is no command: each pane's launch resolves its role's agent itself, from the approved
+# dot-file ([agent:<glob>] command, then [agent] command), and so records where it came
+# from. --agent is in a pane's line only when this line named that role's agent: the
+# form that won for the role, as a bare --agent AGENT (`--agent b=codex` is
+# `--agent codex` in b's pane and nothing in the others'; a bare one is in every pane).
 # NOTHING HERE IS POLICY: every pane runs this engine, plainly, which enforces
-# everything; this only builds the tmux command. Two things happen before it, in this
-# terminal: a session of that name already open is refused, and the dot-file review a
-# launch runs is run here, once -- launched together, every pane would ask it.
+# everything; this only builds the tmux command.
+#
+# Before tmux is called, in this terminal, and nothing opens when one fails: the
+# dot-file review a launch runs is run here, once -- launched together, every pane would
+# ask it; every --agent form must match a listed role; then every role's agent is
+# resolved as its pane will resolve it (_as_agent_resolve), and must name a profile
+# installed here and a binary to run (_as_resolve_bin), and with --resume a profile that
+# says how to resume; a role with no agent is refused, by name. Then a session of that
+# name already open is refused.
 #
 # The chain's commands without a target act on the window and pane the previous one
 # made. split-window halves the active pane, so the layout is applied after each split
@@ -11119,14 +11165,15 @@ _as_launch_pasta() {
 # Once the session is made, and before attaching to it (a tmux of its own, so that the
 # watcher starts only once there is a session to watch), the host side that takes the
 # Supervisor's reset markers is started (#329, _as_roles_resets): one process for the
-# session, typing the profile's [agent] clear into a role's pane and nothing else. Not
-# for served roles (--serve among the words), whose loop takes its own marker, nor for
-# a project without .asb/coord/to/, nor under a profile with no [agent] clear.
-# Reads the engine's _roles, _roles_flags, _cmd_word, profile, profile_clear and invoked
-# by dynamic scope.
+# session, typing a role's fresh start -- its agent's profile's [agent] clear -- into
+# that role's pane and nothing else. A role whose profile has no clear is not watched,
+# and said. Not for served roles (--serve among the words), whose loop takes its own
+# marker, nor for a project without .asb/coord/to/.
+# Reads the engine's _roles, _roles_flags, _agent_flag, _do_resume, profile_dir and
+# invoked by dynamic scope.
 # shellcheck disable=SC2154
 _as_roles_open() {
-  local dir name tmux slot self line r
+  local dir name tmux slot self line r e
   dir="$(pwd -P)"
   tmux="$(command -v tmux 2>/dev/null || true)"
   if [[ -z "$tmux" ]]; then
@@ -11135,13 +11182,6 @@ _as_roles_open() {
   fi
   if [[ -z "$tmux" ]]; then
     _as_msg "--roles opens its panes with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there (tmux is in its default list; a ~/.config/agent-sandbox/tools.txt of your own needs a tmux line): run install.sh again, or install tmux"
-    return 1
-  fi
-  name="$(basename -- "$dir")"
-  name="${name//[.:]/_}" # tmux refuses both in a session name
-  if "$tmux" has-session -t "=$name" 2>/dev/null; then
-    _as_msg "a tmux session named '$name' is already open. To return to it: tmux attach -t $(printf '%q' "$name")"
-    _as_msg "to end it, and every launch in it: tmux kill-session -t $(printf '%q' "$name")"
     return 1
   fi
   # The review a launch runs (_as_trust_prompt), once, here; a no opens nothing, as every
@@ -11163,13 +11203,88 @@ _as_roles_open() {
       return 1
     fi
   fi
+  # Every role's agent, as its pane will resolve it: the line's forms that apply to the
+  # role, then the approved file's [agent] lines. A form matching no listed role is
+  # refused, as a single launch refuses one matching its role not.
+  local -a lines=() given=(${_agent_flag[@]+"${_agent_flag[@]}"}) mine=()
+  local -A agent_word=() agent_prof=() clear_of=() resume_of=()
+  local _af_role _af_agent hit b f k
+  for e in ${given[@]+"${given[@]}"}; do
+    _as_agent_flag_split "$e" || return 2
+    [[ -n "$_af_role" ]] || continue
+    hit=0
+    for r in "${_roles[@]}"; do
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ "$r" == $_af_role ]] && hit=1 && break
+    done
+    if ((! hit)); then
+      _as_msg "--agent $e: '$_af_role' matches none of the roles --roles opens (${_roles[*]}); nothing was opened"
+      return 2
+    fi
+  done
+  if [[ -f "$df" ]]; then
+    mapfile -t lines < <(_as_dotfile_agent "$df")
+    lines=(${lines[@]+"${lines[@]:1}"})
+  fi
+  local -a _agent_cmd=()
+  local _agent_cmd_from="" profile profile_bin
+  for r in "${_roles[@]}"; do
+    mine=()
+    for e in ${given[@]+"${given[@]}"}; do
+      _as_agent_flag_split "$e" || return 2
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ -z "$_af_role" || "$r" == $_af_role ]] && mine+=("$e")
+    done
+    local -a _agent_flag=(${mine[@]+"${mine[@]}"})
+    _as_agent_resolve "$r" ${lines[@]+"${lines[@]}"} || return 2
+    if ((${#_agent_cmd[@]} == 0)); then
+      _as_msg "--roles: no agent for role '$r'. Name it on the line, --agent $r=AGENT (or --agent AGENT for every role), or in .agent-sandbox, [agent:$r] command = AGENT, or for every role: $invoked --apply '[agent]' 'command = $(_as_agent_example)'; nothing was opened"
+      return 2
+    fi
+    b="$(basename -- "${_agent_cmd[0]}")"
+    if ! _as_names_profile "${_agent_cmd[0]}"; then
+      e="named on the line"
+      [[ "$_agent_cmd_from" == dotfile:* ]] && e=".agent-sandbox ${_agent_cmd_from#dotfile:}"
+      _as_msg "--roles: role '$r': its agent '${_agent_cmd[0]}' ($e) names no profile installed here; profiles available in $profile_dir: $(_as_list_profiles "$profile_dir"). Nothing was opened"
+      return 2
+    fi
+    profile="$b"
+    _as_resolve_bin "${_agent_cmd[0]}" "$r" || {
+      _as_msg "--roles: role '$r' cannot start; nothing was opened"
+      return 1
+    }
+    agent_prof[$r]="$b"
+    [[ "$_agent_cmd_from" == line ]] && agent_word[$r]="${_agent_cmd[0]}"
+    # What the profile says without being loaded (_as_profile_facts): its fresh start
+    # for the resets below, and whether it can resume, which --resume needs of each.
+    if [[ -z "${clear_of[$b]+x}" ]]; then
+      clear_of[$b]="" resume_of[$b]=""
+      while IFS=$'\t' read -r f k e; do
+        [[ "$k" == "$b" ]] || continue
+        [[ "$f" == clear ]] && clear_of[$b]="$e"
+        [[ "$f" == resume ]] && resume_of[$b]="$e"
+      done < <(_as_profile_facts "$profile_dir/$b/profile.sh")
+    fi
+    if ((${_do_resume:-0})) && [[ -z "${resume_of[$b]}" ]]; then
+      _as_msg "--roles: role '$r': --resume: profile '$b' says nothing of how to resume a session ([agent] resume); nothing was opened"
+      return 2
+    fi
+  done
+  name="$(basename -- "$dir")"
+  name="${name//[.:]/_}" # tmux refuses both in a session name
+  if "$tmux" has-session -t "=$name" 2>/dev/null; then
+    _as_msg "a tmux session named '$name' is already open. To return to it: tmux attach -t $(printf '%q' "$name")"
+    _as_msg "to end it, and every launch in it: tmux kill-session -t $(printf '%q' "$name")"
+    return 1
+  fi
   # This same engine, by the name it was run as (asb, agent-sandbox), from any directory.
   self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
-  local -a cmd=() args=()
-  [[ -n "$_cmd_word" ]] && cmd=("$_cmd_word")
+  local -a args=() aw=()
   local i=0
   for r in "${_roles[@]}"; do
-    printf -v line '%q ' "$self" --role "$r" ${_roles_flags[@]+"${_roles_flags[@]}"} ${cmd[@]+"${cmd[@]}"} "$@"
+    aw=()
+    [[ -n "${agent_word[$r]:-}" ]] && aw=(--agent "${agent_word[$r]}")
+    printf -v line '%q ' "$self" --role "$r" ${aw[@]+"${aw[@]}"} ${_roles_flags[@]+"${_roles_flags[@]}"}
     line="${line% }; exec \"\${SHELL:-bash}\""
     if ((i % 5)); then
       args+=(";" split-window -c "$dir" bash -c "$line" ";" select-layout main-horizontal)
@@ -11188,18 +11303,40 @@ _as_roles_open() {
   done
   args+=(";" select-window -t "=$name:^" ";" select-pane -t "=$name:^.{top}")
   "$tmux" "${args[@]}" || return
-  # The host takes resets (#329), for a project with the roles model's inboxes, a profile
-  # that says what starts a session fresh, and roles at a terminal (a served role's loop
-  # takes its own marker): one watcher for the session, out of this terminal's session,
-  # so closing this terminal leaves it running (_as_roles_resets).
-  local log
-  if [[ -n "${profile_clear:-}" && -d "$dir/.asb/coord/to" ]] && ! _as_roles_served; then
-    log="$(_as_state_dir)/$profile/$(_as_path_slug "$dir")/.roles-resets.log"
-    if mkdir -p -- "${log%/*}" \
-      && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "$profile_clear" "${_roles[@]}" </dev/null >>"$log" 2>&1; then
-      _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types $profile_clear in that role's pane, then goes (log: $log)"
-    else
-      _as_msg "could not start the watcher that takes resets; a fresh start is $profile_clear typed in the role's pane by you"
+  # The host takes resets (#329), for a project with the roles model's inboxes and roles
+  # at a terminal (a served role's loop takes its own marker): one watcher for the
+  # session, out of this terminal's session, so closing this terminal leaves it running
+  # (_as_roles_resets). Each role's keys are its agent's profile's [agent] clear; a role
+  # whose profile has none is not watched, and said.
+  local log p
+  local -a watch=() none=()
+  local -A said=()
+  if [[ -d "$dir/.asb/coord/to" ]] && ! _as_roles_served; then
+    for r in "${_roles[@]}"; do
+      p="${agent_prof[$r]}"
+      if [[ -n "${clear_of[$p]}" ]]; then
+        watch+=("$r"$'\t'"${clear_of[$p]}")
+      else
+        none+=("$r")
+      fi
+    done
+    ((${#none[@]} == 0)) \
+      || _as_msg "no reset taken for ${none[*]}: their agent's profile says nothing of a fresh start ([agent] clear); a fresh start there is yours to give"
+    if ((${#watch[@]})); then
+      local how=""
+      for e in "${watch[@]}"; do
+        k="${e#*$'\t'}"
+        [[ -n "${said[$k]:-}" ]] && continue
+        said[$k]=1
+        how+="${how:+, }$k"
+      done
+      log="$(_as_state_dir)/.roles-resets/$(_as_path_slug "$dir").log"
+      if mkdir -p -- "${log%/*}" \
+        && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "${watch[@]}" </dev/null >>"$log" 2>&1; then
+        _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start ($how) in that role's pane, then goes (log: $log)"
+      else
+        _as_msg "could not start the watcher that takes resets; a fresh start is the role's ($how) typed in its pane by you"
+      fi
     fi
   fi
   if [[ -t 0 && -t 1 ]]; then
@@ -11221,26 +11358,27 @@ _as_roles_served() {
   return 1
 }
 
-# _as_roles_resets TMUX NAME PROJECT KEYS ROLE... -- the host side of `asb --roles`
+# _as_roles_resets TMUX NAME PROJECT ROLE<TAB>KEYS... -- the host side of `asb --roles`
 # (#329), run as `ENGINE __roles-resets ...`, an internal word no user types: started by
 # _as_roles_open with setsid, stdin from /dev/null and its output to
-# <state>/<profile>/<project slug>/.roles-resets.log, so it outlives the terminal that
-# ran --roles. Every second, for each ROLE: an empty PROJECT/.asb/coord/to/ROLE.reset --
+# <state>/.roles-resets/<project slug>.log, so it outlives the terminal that ran
+# --roles. Every second, for each ROLE: an empty PROJECT/.asb/coord/to/ROLE.reset --
 # the Supervisor's marker for a fresh start, the same one a served role's loop takes --
-# makes it type KEYS (the profile's [agent] clear; claude: /clear), then Enter, into
-# the pane of tmux session NAME whose @role is ROLE, and remove the marker from inside
-# the directory, a link removed, never followed (_as_serve_reset). The marker is removed
+# makes it type the role's KEYS (its agent's profile's [agent] clear; claude: /clear),
+# then Enter, into the pane of tmux session NAME whose @role is ROLE, and remove the
+# marker from inside the directory, a link removed, never followed (_as_serve_reset). The marker is removed
 # after the keys are sent, so the Supervisor, which appends its message once the marker
 # is gone, never has it arrive before them. A marker with no pane of that role stays,
 # and so the Supervisor sees nobody took it. One that cannot be removed is typed for
 # once, not again until it has gone. It types nothing else, ever, and ends when the
 # session NAME is gone.
 _as_roles_resets() {
-  local tmux="$1" name="$2" proj="$3" keys="$4" r pane p pr
-  shift 4
+  local tmux="$1" name="$2" proj="$3" r keys rk pane p pr
+  shift 3
   local -A stuck=()
   while "$tmux" has-session -t "=$name" 2>/dev/null; do
-    for r in "$@"; do
+    for rk in "$@"; do
+      r="${rk%%$'\t'*}" keys="${rk#*$'\t'}"
       if [[ ! -e "$proj/.asb/coord/to/$r.reset" && ! -L "$proj/.asb/coord/to/$r.reset" ]]; then
         unset 'stuck[$r]'
         continue
@@ -11284,7 +11422,7 @@ agent_sandbox() (
   invoked="$(basename -- "$0")"
 
   # ---- internal: the host side of `asb --roles` (#329) ----
-  # `ENGINE __roles-resets TMUX NAME PROJECT KEYS ROLE...` is the watcher _as_roles_open
+  # `ENGINE __roles-resets TMUX NAME PROJECT ROLE<TAB>KEYS...` is the watcher _as_roles_open
   # starts beside the tmux session it opens; nobody types it. See _as_roles_resets.
   if [[ "${1:-}" == __roles-resets ]]; then
     shift
@@ -11646,14 +11784,19 @@ agent_sandbox() (
         ;;
       --roles)
         # A tmux session with a pane per role (#317, #320). The roles are every word up to
-        # the first that starts with `-` or names a profile, as --list reads its word.
+        # the first that starts with `-`; it takes no command (#355): each pane's agent is
+        # its role's. A word naming a profile is a misread agent, not a role.
         ((! _roles_set)) || {
           _as_msg "--roles is given once, with every role after it"
           return 2
         }
         _roles_set=1 _roles_at=$((${#_argv_given[@]} - $#))
         shift
-        while (($# > 0)) && [[ "$1" != -* ]] && ! _as_names_profile "$1"; do
+        while (($# > 0)) && [[ "$1" != -* ]]; do
+          if _as_names_profile "$1"; then
+            _as_msg "'$1' names an agent, not a role: --agent $1, or [agent:<glob>] command"
+            return 2
+          fi
           _roles+=("$1")
           shift
         done
@@ -11721,7 +11864,7 @@ agent_sandbox() (
   # `--role ROLE`. --serve is one of them: a pane can hold a served role.
   if ((_roles_set)); then
     if ((${#_roles[@]} == 0)); then
-      _as_msg "--roles needs the roles to open, before the command: $invoked --roles ROLE... [ENGINE FLAGS] CMD [AGENT ARGS]"
+      _as_msg "--roles needs the roles to open: $invoked --roles ROLE... [ENGINE FLAGS]"
       return 2
     fi
     local _rw
@@ -11741,8 +11884,12 @@ agent_sandbox() (
       _as_msg "--roles opens a pane per role, each with its own --role; it is not combined with --role"
       return 2
     fi
+    if [[ -n "$profile" ]]; then
+      _as_msg "--roles takes no --profile: each role's agent names its profile, --agent AGENT or [agent:<glob>] command = AGENT"
+      return 2
+    fi
     if ((_do_exec || _do_shutdown || _do_status || _do_delete || _do_trust || _do_check || _do_init || _do_summarize)) \
-      || [[ -n "$_reset_connection" || -n "$_do_list" ]] || ((${#_apply_words[@]})); then
+      || [[ -n "$_reset_connection" || -n "$_do_list" || -n "$_setup_remote" ]] || ((${#_apply_words[@]})); then
       _as_msg "--roles opens a session of role launches; it is not combined with --exec, a verb or a review: run them on their own"
       return 2
     fi
@@ -11750,8 +11897,13 @@ agent_sandbox() (
       _as_msg "--roles opens a tmux session on the host, and this is a sandbox: run it from a terminal of yours"
       return 2
     fi
-    local _rflags_end=$((${#_argv_given[@]} - $#))
-    _roles_flags=("${_argv_given[@]:0:_roles_at}" "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}")
+    # Every --agent form is left out: each pane is given its own role's (_as_roles_open).
+    local _rflags_end=$((${#_argv_given[@]} - $#)) _rk=0
+    for _rw in "${_argv_given[@]:0:_roles_at}" "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}"; do
+      ((_rk)) && _rk=0 && continue
+      [[ "$_rw" == --agent ]] && _rk=1 && continue
+      [[ "$_rw" == --agent=* ]] || _roles_flags+=("$_rw")
+    done
   fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
   # The engine's own words, but --serve, are what the loop starts its holder, and every
@@ -11828,14 +11980,18 @@ agent_sandbox() (
   # A role verb or --check with no CMD acts on that agent's profile (else the default
   # one, as before). The dot-file is read only once approved, as _pre_role reads it;
   # a launch at a terminal asks about it first, as it would below. The role is named
-  # as _pre_role names it. --roles takes its agents in the next step of #355.
+  # as _pre_role names it. --roles resolves each of its roles' agents itself
+  # (_as_roles_open), and each pane again, as this launch.
   _agent_cmd_from=""
   [[ -n "$_cmd_word" ]] && _agent_cmd=("$_cmd_word") _agent_cmd_from=line
   local _trust_asked=0
+  if ((_roles_set)) && { [[ -n "$_cmd_word" ]] || (($# > 0)); }; then
+    _as_msg "--roles takes no command: name the agents with --agent or [agent:<glob>] command; native arguments go in command =, or $invoked --role ROLE CMD ARGS"
+    return 2
+  fi
   if ((${#_agent_flag[@]})); then
     local _agz=""
     ((_do_exec)) && _agz="--exec (which runs a command instead of the agent)"
-    ((_roles_set)) && _agz="--roles (it takes --agent in the next step of #355; until then, CMD after the roles)"
     [[ -n "$_do_list" ]] && _agz=--list
     ((_do_init)) && _agz=--init
     ((_do_trust)) && _agz=--trust
@@ -11887,7 +12043,7 @@ agent_sandbox() (
     if ((${#_agent_cmd[@]} == 0)); then
       # --summarize with none falls back to the only profile there is, as it did.
       if [[ "$_ag_mode" == launch ]] && ((! _do_summarize)); then
-        _as_msg "no agent for role '$_ag_role'. Name it on the line, $invoked --agent AGENT, or a command: $invoked [ENGINE FLAGS] CMD [AGENT ARGS] (e.g. $invoked claude); or in .agent-sandbox, [agent:$_ag_role] command = AGENT"
+        _as_msg "no agent for role '$_ag_role'. Name it on the line, $invoked --agent AGENT, or a command: $invoked [ENGINE FLAGS] CMD [AGENT ARGS] (e.g. $invoked claude); or in .agent-sandbox, [agent:$_ag_role] command = AGENT, or for every role: $invoked --apply '[agent]' 'command = $(_as_agent_example)'"
         if [[ -f "$_ag_file" ]] && ((! _ag_read)); then
           # A running launch of the role under an approved copy (any profile's: the
           # profile is what is unknown here) is what a join would have joined.
@@ -11969,6 +12125,15 @@ agent_sandbox() (
   # A footer pointing at --engine-help is appended after the agent's own --help.
   local _help_footer=""
   [[ "${1:-}" == -h || "${1:-}" == --help ]] && _help_footer=1
+
+  # ---- --roles (#317): a tmux session of role launches, opened from here ----
+  # Before any profile is chosen: there is no command, and each role's agent names its
+  # own (#355). _as_roles_open reviews the dot-file and resolves every role's agent
+  # before it calls tmux.
+  if ((_roles_set)); then
+    _as_roles_open
+    return $?
+  fi
 
   # ---- --list, --list-all: the role sessions you can resume (#314) ----
   # Profile- and role-independent: they read the state directory and exit.
@@ -12158,12 +12323,9 @@ agent_sandbox() (
   fi
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
   # profile's command looked up on PATH.
-  ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" || return 1
-  # ---- --roles (#317): a tmux session of role launches, opened from here ----
-  if ((_roles_set)); then
-    _as_roles_open "$@"
-    return $?
-  fi
+  local _rb_role=""
+  ((_cmd_typed)) || [[ -z "$_agent_cmd_from" ]] || _rb_role="${_ag_role:-}"
+  ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
   # ---- --resume (#355): the profile's resume words, after the agent's own ----
   # Here, past --roles (whose panes each take --resume themselves) and before anything
   # reads the agent's arguments: --preset none, the verbs, the briefing and its first

@@ -90,4 +90,5 @@ because it changed, with no addendum, gets the offer to move the project's text 
 (the model's current text in `.asb/migrate/`; docs/roles.md). A section that exists is
 never changed: a re-run reports the lines the model gained that such a section lacks (a
 key it does not set, a bare line not in it; commented-out lines count as there), with an
-`asb --apply` line per section to add them.
+`asb --apply` line per section to add them. A common (unsuffixed) section is written only
+with a new file; the lines of one an existing file lacks are reported the same way.
