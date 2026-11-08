@@ -159,6 +159,31 @@ two_roles_first_out() {
   [ "${M[hist1]}" = yes ]
 }
 
+@test "two roles on one account, the creator out first: the second keeps its mount points, and removes them when it exits" {
+  two_roles_first_out --account work
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+  local left
+  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  [ -z "$left" ] || {
+    echo "empty files left: $left"
+    false
+  }
+  [ ! -s "$IHOME/.local/state/agent-sandbox/placeholders" ] # and the list is empty again
+}
+
+@test "a user's own empty file at a mount-point path is never removed, by the launch nor by the last one out" {
+  : >"$ACC/history.jsonl"
+  bg_claude a ra --account work
+  bg_claude b rb --account work
+  finish a
+  finish b
+  [ -f "$ACC/history.jsonl" ]
+  [ ! -s "$ACC/history.jsonl" ]
+  run ! grep -qxF "$ACC/history.jsonl" "$IHOME/.local/state/agent-sandbox/placeholders"
+  [ ! -e "$ACC/.claude.json" ] # the engine's own still go
+}
+
 @test "two roles on one account at once: the last to exit removes the mount points" {
   bg_claude a ra --account work
   bg_claude b rb --account work
