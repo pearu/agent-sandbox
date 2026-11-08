@@ -814,6 +814,93 @@ _as_session_begin() {
   return 0
 }
 
+# _as_placeholders_in_use HOSTPATH... -- print the index (from 1) of each of the given
+# host paths that another live keeper has a mount on, one per line; all of them when a
+# live keeper's mount table cannot be read (a stray empty file is harmless, a detached
+# mount is not). The live keepers are the ones _as_keeper_live finds under the state directory,
+# every profile's and project's, this launch's own excepted; what is read is the mount
+# table of each one's payload, the process that holds its mount namespace.
+#
+# WHAT IS COMPARED. A mountinfo line names its mount point inside the sandbox, which
+# is not the host path. The host location of a mount point is its PARENT mount's
+# device and root (field 4: the path within that device's filesystem, not the inside
+# path) plus the mount point's path below the parent's mount point -- for a file bound
+# into the base, the base's bind (device, root = the base or account directory on the
+# host) plus `/.claude.json`. The placeholder is resolved the same way from the host's
+# own table: the mount it lives on, its device, root, and the rest of the path. Both
+# sides are compared in mountinfo's escaped form (space, tab, backslash as \ooo).
+_as_placeholders_in_use() {
+  local f d p e t _keeper_target _keeper_spid _ng=0
+  local -a tabs=()
+  shopt -q nullglob && _ng=1
+  shopt -s nullglob
+  for f in "$(_as_state_dir)"/*/-*/*/keeper/id; do
+    d="${f%/keeper/id}"
+    [[ -n "${_keeper_sb:-}" && "$d" == "$_keeper_sb" ]] && continue
+    _as_keeper_live "$d" || continue
+    tabs+=("/proc/$_keeper_target/mountinfo")
+  done
+  ((_ng)) || shopt -u nullglob
+  ((${#tabs[@]})) || return 0
+  {
+    for p in "$@"; do
+      e="$(readlink -f -- "$p" 2>/dev/null)" || e=""
+      [[ "$e" != *$'\n'* ]] || e=""
+      e="${e//\\/\\134}" e="${e// /\\040}" e="${e//$'\t'/\\011}"
+      printf 'P\t%s\n' "$e"
+    done
+    printf 'H\n'
+    cat /proc/self/mountinfo || exit 1
+    for t in "${tabs[@]}"; do
+      printf 'T\n'
+      cat -- "$t" || exit 1
+    done
+  } 2>/dev/null | awk -F'\t' '
+    function flush(  i, pi, rel, loc) {
+      for (i in mp) {
+        pi = par[i]
+        if (!(pi in mp)) continue
+        if (mp[pi] == "/") rel = mp[i]
+        else if (index(mp[i], mp[pi] "/") == 1) rel = substr(mp[i], length(mp[pi]) + 1)
+        else continue
+        loc = dev[pi] SUBSEP (root[pi] == "/" ? "" : root[pi]) rel
+        if (loc in want) used[want[loc]] = 1
+      }
+      split("", mp); split("", par); split("", dev); split("", root)
+    }
+    $1 == "P" { n++; canon[n] = $2; next }
+    $1 == "H" { sect = "H"; next }
+    $1 == "T" {
+      if (sect == "H") {
+        for (k = 1; k <= n; k++) {
+          if (canon[k] == "") { bad[k] = 1; continue }
+          best = ""; bl = -1
+          for (j = 1; j <= hn; j++) {
+            m = hmp[j]
+            if (m == "/" || canon[k] == m || index(canon[k], m "/") == 1)
+              if (length(m) >= bl) { bl = length(m); best = j }
+          }
+          if (best == "") { bad[k] = 1; continue }
+          rel = (hmp[best] == "/") ? canon[k] : substr(canon[k], length(hmp[best]) + 1)
+          want[hdev[best] SUBSEP (hroot[best] == "/" ? "" : hroot[best]) rel] = k
+        }
+      } else flush()
+      sect = "T"; next
+    }
+    {
+      split($0, w, " ")
+      if (sect == "H") { hn++; hdev[hn] = w[3]; hroot[hn] = w[4]; hmp[hn] = w[5] }
+      else if (sect == "T") { mp[w[1]] = w[5]; par[w[1]] = w[2]; dev[w[1]] = w[3]; root[w[1]] = w[4] }
+    }
+    END {
+      if (sect == "T") flush()
+      for (k = 1; k <= n; k++) if (bad[k] || used[k]) print k
+    }'
+  # A table that could not be read (the pipeline failed before awk saw it all): keep
+  # every one.
+  ((PIPESTATUS[0] == 0)) || seq 1 $#
+}
+
 _as_session_cleanup() {
   # Kill only if the recorded PID is still an ssh-agent -- guards against a
   # PID that was already reaped and recycled to an unrelated process.
@@ -826,9 +913,20 @@ _as_session_cleanup() {
   fi
   # Empty mount-point files the state binds created on the host (see the
   # state-bind loop). Still empty means nothing wrote through the placeholder
-  # itself; EBUSY means another session has it mounted and will remove it.
+  # itself. One another live session still has a mount on is kept: unlinking a
+  # mount point does NOT fail with EBUSY (Linux >= 3.18), it succeeds and
+  # detaches the mount in every other mount namespace -- the second of two
+  # roles on one base lost its .claude.json and history.jsonl when the first
+  # exited. The last session out removes it.
   local _pf
+  local -A _pf_keep=()
+  if [[ -n "${_as_placeholder_files[*]+x}" ]]; then
+    while read -r _pf; do
+      _pf_keep["${_as_placeholder_files[_pf - 1]}"]=1
+    done < <(_as_placeholders_in_use "${_as_placeholder_files[@]}")
+  fi
   for _pf in ${_as_placeholder_files[@]+"${_as_placeholder_files[@]}"}; do
+    [[ -n "${_pf_keep["$_pf"]:-}" ]] && continue
     { [[ -f "$_pf" && ! -s "$_pf" ]] && rm -f -- "$_pf"; } 2>/dev/null || true
   done
   _as_placeholder_files=()
@@ -13870,8 +13968,9 @@ agent_sandbox() (
   # directory bound read-write. Those are recorded and removed again by the
   # cleanup while still empty: left behind, an empty ~/.claude/.claude.json is
   # a config that parses as nothing for anyone who later points
-  # CLAUDE_CONFIG_DIR there natively. The rm fails with EBUSY while another
-  # session still has it mounted; the last session out removes it.
+  # CLAUDE_CONFIG_DIR there natively. One that another live session still has
+  # mounted is kept (an rm would succeed and detach that session's mount, not
+  # fail with EBUSY); the last session out removes it.
   local _p _src _dst _dsth
   # The profile's base (#175): its state directory, bound read-write first so that
   # every channel and declaration layers on it. Created when absent -- a launch is the
