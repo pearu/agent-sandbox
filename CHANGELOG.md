@@ -140,6 +140,15 @@ names are gone; there are no aliases for removed names before 1.0.
   login file (the profile's first `account-paths` entry), by path; the exit status is
   the login's when it failed, 1 with no login file, else 0. A profile without `login`,
   or without `account-paths`, refuses it.
+  `asb --list` and `--list-all` end each role's line with its agent and account (`claude,
+  account work`, `claude, base`), plus `, login due in N days` within 7 days of the
+  login's expiry and `, login expired: asb --account-login NAME AGENT` past it (`run
+  /login` for the base); `--status` prints the account, its directory and the expiry
+  date always; the briefing says which agent and account the session runs as, and when
+  the login is due within the window, by names only. The new profile key `[agent]
+  account-expiry` (claude: `.credentials.json claudeAiOauth.refreshTokenExpiresAt`,
+  epoch milliseconds) says where the expiry is written; the engine reads that one
+  number and nothing else of the file, and says nothing when it is unknown.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the

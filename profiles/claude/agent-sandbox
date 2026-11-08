@@ -118,6 +118,12 @@ visible = ide
 # the login it guards. A directory holding only the login rebuilds the rest at its first
 # run. (#355, the measurements comment.)
 account-paths = .credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner
+# Where the login's end is written (#355): FILE under the state directory (the base, or
+# an account's), then the JSON key path of a number of epoch MILLISECONDS -- the refresh
+# token's own expiry, after which the login is gone and has to be done again (measured,
+# 2.1.319). `asb --list`, `--status` and the briefing say when a login is due within 7
+# days or has expired; the engine reads that one number and nothing else of the file.
+account-expiry = .credentials.json claudeAiOauth.refreshTokenExpiresAt
 
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.

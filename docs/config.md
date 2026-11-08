@@ -1293,6 +1293,22 @@ login's when it failed, 1 when there is no login file, else 0. Refused for a bad
 AGENT that names no profile, and a profile with no `account-paths` or no `login` key.
 An account's login lasts about a month; run the same line again to renew it.
 
+**When a login is due.** `asb --list` ends each role's line with its agent and account,
+from the role's record (`claude, account work`, or `claude, base` -- also for a store
+from before the record), and adds, within 7 days of the login's expiry, `, login due in
+N days`, and past it `, login expired: asb --account-login work claude` (for the base,
+`run /login`); `--list-all` the same. `asb --role R --status` prints the account with its
+directory and the expiry date always: `account: work (~/.local/state/agent-sandbox/claude/accounts/work),
+login valid until 2026-12-07` (or `login due DATE (in N days): ...`, `login expired DATE:
+...`) -- a running role's account from its keeper's policy, a stopped one's from its
+record. The briefing tells the session which agent and account it runs as (`You run as
+claude on the account 'work'`, or `on the user's own login`), and within the same
+window when the login is due and the command that renews it, which is the user's to
+run. The expiry is read through the profile's `[agent] account-expiry` (claude: the
+refresh token's `claudeAiOauth.refreshTokenExpiresAt` in `.credentials.json`, the
+account's or the base's): that one number and nothing else of the file, never through
+a symlink. With no file, no such key or no number there, nothing is said of the login.
+
 **A `[connect]` path is never the base or its login**, account or not, in every mode, as
 a key or an `outside:` source, as written and resolved: the agent's state directory
 itself (`~/.claude/ = read-write`), a parent of it, or one of the profile's
