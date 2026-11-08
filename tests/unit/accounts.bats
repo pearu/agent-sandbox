@@ -1045,6 +1045,23 @@ codex_profile() {
   [ "$status" -eq 1 ]
   [ -f "$H/target/keep" ]
   [ -L "$ST/claude/$slug/account-login" ]
+  rm "$ST/claude/$slug/account-login"
+  # the slug's directory a symlink: the login role's store behind it stays
+  mkdir -p "$H/slugt/account-login"
+  : >"$H/slugt/account-login/keep"
+  ln -s "$H/slugt" "$ST/claude/-tmp-y"
+  run _as_account_login_clean "$ST" claude -tmp-y
+  [ "$status" -eq 1 ]
+  [ -f "$H/slugt/account-login/keep" ]
+  [ -L "$ST/claude/-tmp-y" ]
+  # <state>/<profile> a symlink: no level under it is the login role's own
+  mkdir -p "$H/proft/$slug/account-login"
+  : >"$H/proft/$slug/account-login/keep"
+  ln -s "$H/proft" "$ST/codex"
+  run _as_account_login_clean "$ST" codex "$slug"
+  [ "$status" -eq 1 ]
+  [ -f "$H/proft/$slug/account-login/keep" ]
+  [ -L "$ST/codex" ]
 }
 
 # config_store -- the host path of the role's config file store, from its record.
