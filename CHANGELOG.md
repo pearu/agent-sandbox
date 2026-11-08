@@ -123,7 +123,7 @@ names are gone; there are no aliases for removed names before 1.0.
   account; `--check` reports an unusable account directory with the plan and exits 1.
   A cold start on another account than the role's stores last ran on (the record; none
   is the base), `--exec` included, calls the new profile hook `profile_account_switched`
-  once the stores are ready: the claude profile sets `profileFetchedAt` to 0 in the
+  once the stores are ready: the claude profile sets `oauthAccount.profileFetchedAt` to 0 in the
   role's `.claude.json` store (never the native file under `config = read-write`), so
   `/status` names the account in force from the first turn, not the last one's
   organisation for up to a day (`profile.py forget-profile`).

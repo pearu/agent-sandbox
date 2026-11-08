@@ -268,8 +268,9 @@ profile_before_join() {
 # profile_account_switched -- engine hook (#355), called at a cold start whose account is
 # not the one the role's stores last ran on (the base counts as one), once the stores
 # are ready. Claude Code caches the account's profile -- the organisation /status names
-# -- in ~/.claude.json with profileFetchedAt, and refetches it only after 12-24 h
-# (measured 2026-11-07); profileFetchedAt 0 makes it refetch at the next run. So the
+# -- in ~/.claude.json's oauthAccount block, stamped oauthAccount.profileFetchedAt (epoch
+# ms), and refetches it only after 12-24 h (measured 2026-11-07); 0 there makes it
+# refetch at the next run. So the
 # role's config file forgets it: only in a store the role owns, never the native file,
 # which `read-write` and `native` bind. A file that cannot be rewritten is said, and the
 # launch goes on: /status names the old organisation until Claude Code refetches.
@@ -280,7 +281,7 @@ profile_account_switched() {
   case "$mode" in own | seed-only | copy | copy-on-write) ;; *) return 0 ;; esac
   store="$(_as_channel_store config "$profile_base/.claude.json" "$mode")"
   _claude_py forget-profile "$store" \
-    || _as_msg "config: could not reset profileFetchedAt in $store; /status may name the previous account's organisation until Claude Code refetches it"
+    || _as_msg "config: could not reset oauthAccount.profileFetchedAt in $store; /status may name the previous account's organisation until Claude Code refetches it"
   return 0
 }
 

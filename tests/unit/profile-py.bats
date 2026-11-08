@@ -166,31 +166,37 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   [ "$(pyget "$T/out3.json" 'd["statusLine"]')" = "None" ]
 }
 
-@test "forget-profile: profileFetchedAt becomes 0, by a rename that keeps the file's mode; the other keys stay (#355)" {
-  printf '%s' '{"profileFetchedAt":123,"oauthAccount":{"o":"x"},"projects":{"/p":{"t":1}}}' >"$T/c.json"
+@test "forget-profile: oauthAccount.profileFetchedAt becomes 0, by a rename that keeps the file's mode; the other keys stay (#355)" {
+  printf '%s' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{"/p":{"t":1}}}' >"$T/c.json"
   chmod 640 "$T/c.json"
   local ino
   ino="$(stat -c %i "$T/c.json")"
   run py forget-profile "$T/c.json"
   [ "$status" -eq 0 ]
-  [ "$(pyget "$T/c.json" 'd["profileFetchedAt"]')" = 0 ]
-  [ "$(pyget "$T/c.json" 'd["oauthAccount"]["o"], d["projects"]["/p"]["t"]')" = "('x', 1)" ]
+  [ "$(pyget "$T/c.json" 'd["oauthAccount"]["profileFetchedAt"]')" = 0 ]
+  [ "$(pyget "$T/c.json" 'd["oauthAccount"]["organizationName"], d["projects"]["/p"]["t"]')" = "('X', 1)" ]
+  [ "$(pyget "$T/c.json" '"profileFetchedAt" in d')" = False ] # not added at the top
   [ "$(stat -c %a "$T/c.json")" = 640 ]
   [ "$(stat -c %i "$T/c.json")" != "$ino" ] # renamed over, not rewritten in place
   # no temporary file left beside it
   [ "$(find "$T" -maxdepth 1 -name '.forget-profile.*' | wc -l)" -eq 0 ]
 }
 
-@test "forget-profile: no profileFetchedAt, or 0 already, leaves the file as it is; a missing file is no error and is not made (#355)" {
-  printf '%s' '{"oauthAccount":{"o":"x"}}' >"$T/c.json"
-  cp "$T/c.json" "$T/before"
+@test "forget-profile: no oauthAccount, none in it, or 0 already, leaves the file as it is; a missing file is no error and is not made (#355)" {
+  printf '%s' '{"projects":{}}' >"$T/n.json"
   local ino
+  ino="$(stat -c %i "$T/n.json")"
+  run py forget-profile "$T/n.json"
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %i "$T/n.json")" = "$ino" ]
+  printf '%s' '{"oauthAccount":{"organizationName":"X"}}' >"$T/c.json"
+  cp "$T/c.json" "$T/before"
   ino="$(stat -c %i "$T/c.json")"
   run py forget-profile "$T/c.json"
   [ "$status" -eq 0 ]
   cmp "$T/c.json" "$T/before"
   [ "$(stat -c %i "$T/c.json")" = "$ino" ]
-  printf '%s' '{"profileFetchedAt":0}' >"$T/z.json"
+  printf '%s' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":0}}' >"$T/z.json"
   ino="$(stat -c %i "$T/z.json")"
   run py forget-profile "$T/z.json"
   [ "$status" -eq 0 ]
@@ -198,6 +204,17 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   run py forget-profile "$T/none.json"
   [ "$status" -eq 0 ]
   [ ! -e "$T/none.json" ]
+}
+
+@test "forget-profile: a top-level profileFetchedAt is not Claude Code's key and is left as it is (#355)" {
+  printf '%s' '{"profileFetchedAt":123,"projects":{}}' >"$T/t.json"
+  cp "$T/t.json" "$T/before"
+  local ino
+  ino="$(stat -c %i "$T/t.json")"
+  run py forget-profile "$T/t.json"
+  [ "$status" -eq 0 ]
+  cmp "$T/t.json" "$T/before"
+  [ "$(stat -c %i "$T/t.json")" = "$ino" ]
 }
 
 @test "forget-profile: a file that is not JSON is left as it is, and said, exit 1 (#355)" {

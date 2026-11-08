@@ -109,11 +109,13 @@ def mark_trust(path, project):
 
 
 def forget_profile(path):
-    """Set profileFetchedAt to 0 in the config FILE, so Claude Code refetches the
-    account's profile at its next run (#355). A missing FILE, or one with no
-    profileFetchedAt (or 0 already), is left as it is. Written to a temporary file
-    beside it, with its mode, and renamed over it: this runs before the launch binds
-    the file, so no running sandbox holds the old one."""
+    """Set oauthAccount.profileFetchedAt to 0 in the config FILE, so Claude Code
+    refetches the account's profile -- the block /status reads the organisation from --
+    at its next run (#355). A missing FILE, one with no oauthAccount block, or a block
+    with no profileFetchedAt (or 0 already), is left as it is; a top-level
+    profileFetchedAt is not Claude Code's and is not touched. Written to a temporary
+    file beside it, with its mode, and renamed over it: this runs before the launch
+    binds the file, so no running sandbox holds the old one."""
     try:
         data = _load_json(path)
     except FileNotFoundError:
@@ -121,9 +123,10 @@ def forget_profile(path):
     except ValueError as exc:
         print(f"forget-profile: {path}: not JSON, left as it is: {exc}", file=sys.stderr)
         return 1
-    if not isinstance(data, dict) or data.get("profileFetchedAt", 0) == 0:
+    account = data.get("oauthAccount") if isinstance(data, dict) else None
+    if not isinstance(account, dict) or account.get("profileFetchedAt", 0) == 0:
         return 0
-    data["profileFetchedAt"] = 0
+    account["profileFetchedAt"] = 0
     mode = stat.S_IMODE(os.stat(path).st_mode)
     fd, tmp = tempfile.mkstemp(prefix=".forget-profile.", dir=os.path.dirname(os.path.abspath(path)))
     try:

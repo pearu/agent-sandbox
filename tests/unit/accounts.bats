@@ -795,15 +795,18 @@ argv_count() {
 
 # config_store -- the host path of the role's config file store, from its record.
 config_store() { awk -F'\t' '$1 == "config" { print $4 }' "$SBOX/record.tsv"; }
-# fetched FILE -- the file's profileFetchedAt (None when absent).
-fetched() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("profileFetchedAt"))' "$1"; }
+# fetched FILE -- the file's oauthAccount.profileFetchedAt (None when absent); the
+# organisation beside it must be what the fixture wrote, or nothing.
+fetched() {
+  python3 -c 'import json,sys; a=json.load(open(sys.argv[1])).get("oauthAccount") or {}; assert a.get("organizationName", "X") == "X"; print(a.get("profileFetchedAt"))' "$1"
+}
 # set_fetched FILE N -- set it in place, as Claude Code's last run would have.
 set_fetched() {
-  python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["profileFetchedAt"]=int(sys.argv[2]); json.dump(d, open(p, "w"))' "$1" "$2"
+  python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.setdefault("oauthAccount", {})["profileFetchedAt"]=int(sys.argv[2]); json.dump(d, open(p, "w"))' "$1" "$2"
 }
 
-@test "P8: a relaunch on another account resets profileFetchedAt in the role's config store; the same account leaves it; the base after an account resets it, the base after the base leaves it" {
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+@test "P8: a relaunch on another account resets oauthAccount.profileFetchedAt in the role's config store; the same account leaves it; the base after an account resets it, the base after the base leaves it" {
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   # the first launch on the base, no record: the base, no switch; seed-only seeds 123
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
@@ -839,7 +842,7 @@ set_fetched() {
 }
 
 @test "P8: the first launch under an account (no record: the base) resets the seeded copy" {
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   [ ! -e "$SBOX/account" ]
   run_engine -- asb --account work claude --version
   [ "$status" -eq 0 ]
@@ -861,7 +864,7 @@ set_fetched() {
   [ "$status" -eq 0 ]
   [ "$(fetched "$store")" = 0 ]
   # copy: the base after work, so a switch; the copy is synced from 123 first
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   dotfile '[connect]' 'config = copy'
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
@@ -872,7 +875,7 @@ set_fetched() {
 }
 
 @test "P8: under config = read-write the native file is never touched at a switch" {
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   dotfile '[connect]' 'config = read-write'
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
@@ -886,7 +889,7 @@ set_fetched() {
 }
 
 @test "P8: config = copy-on-write, a copy store on a file, is reset at a switch; the native file is not" {
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   dotfile '[connect]' 'config = copy-on-write'
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
@@ -901,7 +904,7 @@ set_fetched() {
 }
 
 @test "P8: a reset that fails (a store that is not JSON) is said, and the launch goes on; the store is left and the record written" {
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local store
@@ -909,14 +912,14 @@ set_fetched() {
   printf 'not json' >"$store"
   run_engine -- asb --account work claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"config: could not reset profileFetchedAt in $store;"* ]]
+  [[ "$output" == *"config: could not reset oauthAccount.profileFetchedAt in $store;"* ]]
   [ "$(cat "$store")" = "not json" ]
   [ -s "$H/argv" ]
   [ "$(cat "$SBOX/account")" = "claude"$'\t'"work" ]
 }
 
 @test "P8: a cold --exec on another account counts as a switch, as it writes the record" {
-  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"organizationName":"X","profileFetchedAt":123},"projects":{}}' >"$H/home/.claude.json"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   local store
