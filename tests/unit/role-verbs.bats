@@ -553,6 +553,24 @@ To resume: asb --role ROLE --agent claude --resume"
   [ "${lines[9]}" = "  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, account junk" ]
   [ "${lines[11]}" = "  f   stopped   created 2026-10-20 08:00   active 2026-10-20 09:00   claude, base" ]
   [[ "$output" != *login* ]]
+  # A FIFO and a directory where the login should be: the account's directory is a role's
+  # writable state, so its agent can put either there. Neither is read, and a FIFO is not
+  # waited on: --list and --status finish, saying nothing of the login.
+  mkdir -p "$acc/fifo" "$acc/dir/.credentials.json"
+  mkfifo "$acc/fifo/.credentials.json"
+  acct_role g fifo "2026-10-19 09:00 UTC"
+  acct_role h dir "2026-10-18 09:00 UTC"
+  engine_cmd
+  # shellcheck disable=SC2016 # the inner shell's own arguments
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC "${@:4}" --list' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  grep -qxF "  g   stopped   created 2026-10-20 08:00   active 2026-10-19 09:00   claude, account fifo" <<<"$output"
+  grep -qxF "  h   stopped   created 2026-10-20 08:00   active 2026-10-18 09:00   claude, account dir" <<<"$output"
+  [[ "$output" != *login* ]]
+  # shellcheck disable=SC2016 # the inner shell's own arguments
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC "${@:4}" --role g --status claude' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: fifo (~/.local/state/agent-sandbox/claude/accounts/fifo)" <<<"$output"
   # a record that does not read as one is not guessed at: no agent, no account
   printf 'claude\t../../x\n' >"${SBOX%/default}/a/account"
   run_engine TZ=UTC -- asb --list
@@ -583,6 +601,13 @@ To resume: asb --role ROLE --agent claude --resume"
   rm "$acc/work/.credentials.json"
   run_engine TZ=UTC -- asb --status claude
   grep -qxF "  account: work (~/.local/state/agent-sandbox/claude/accounts/work)" <<<"$output"
+  # a tampered record, a name that is no account's: no account line at all
+  login_file "$H/home/.local/x/.credentials.json" "$(expiry_ms 3)" # where the name leads from accounts/
+  printf 'claude\t../../../../x\n' >"$SBOX/account"
+  run_engine TZ=UTC -- asb --status claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not running; its stores"* ]]
+  [[ "$output" != *"account:"* && "$output" != *login* ]]
   # running: the keeper's policy says it, whatever the record says now
   ms="$(expiry_ms 30)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
   login_file "$acc/work/.credentials.json" "$ms"
