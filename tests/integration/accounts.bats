@@ -49,7 +49,7 @@ teardown() {
   local p f spid
   for p in ${BGS[@]+"${BGS[@]}"}; do : >"$IWORK/go-$p"; done
   # Only keepers this test started, by the supervisor pid their record names.
-  for f in "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id.hidden; do
+  for f in "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id.hidden "$I"/xs/agent-sandbox/claude/*/*/keeper/id; do
     [[ -r "$f" ]] || continue
     read -r spid _ <"$f" 2>/dev/null && [[ -n "$spid" ]] && kill "$spid" 2>/dev/null
   done
@@ -58,6 +58,7 @@ teardown() {
 
 # bg_claude NAME ROLE [ENGINE ARGS...] -- launch role ROLE in the background, its probe
 # holding until go-NAME; return once it is inside (report-NAME exists). Sets BG_PID_NAME.
+# BG_ENV: extra VAR=value words for the launch.
 bg_claude() {
   local name="$1" role="$2" i
   shift 2
@@ -65,7 +66,7 @@ bg_claude() {
   # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
   env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
-    AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET=shared \
+    AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET=shared ${BG_ENV[@]+"${BG_ENV[@]}"} \
     bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" --role "$role" "$@" \
     "$IHOME/.local/share/claude/versions/9.9.9/claude" hold "$name" </dev/null >"$I/out-$name" 2>&1 3>&- &
   printf -v "BG_PID_$name" '%s' "$!"
@@ -234,4 +235,20 @@ two_roles_first_out() {
   [ ! -s "$state/placeholders" ] # nothing listed
   finish a
   [ -n "$(empty_files "$ACC")" ] # unlisted: left behind
+}
+
+# A launch under another XDG_STATE_HOME has a list and a keeper record of its own, out
+# of the other's sight; the session base they share still names its keeper.
+@test "a role under another XDG_STATE_HOME on the same base keeps its mount points when the creator exits" {
+  bg_claude a ra
+  BG_ENV=(XDG_STATE_HOME="$I/xs")
+  bg_claude b rb
+  BG_ENV=()
+  finish a
+  finish b
+  declare -A M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
 }

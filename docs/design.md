@@ -535,14 +535,16 @@ Stated plainly. These are what the adversary above can still do.
   last session out removes an empty file listed in `<state>/placeholders`. After a
   SIGKILL the entry stays: if you then delete that file and make an empty one of your
   own at the same path, a later launch takes it for the engine's and removes it at its
-  exit (only an empty regular file; anything with content stays). The list and the live
-  keepers are found under `$XDG_STATE_HOME`, the live sessions' records under the
-  session base. A launch with a different `XDG_STATE_HOME` has a list of its own, so it
-  does not adopt the other's files and leaves them behind; one with both a different
-  `XDG_STATE_HOME` and a different `AGENT_SANDBOX_SESSION_BASE` is not seen at all, so
-  if it binds over the same files, another session's exit can detach its mount points.
-  A launch whose list lock times out (10 s) lists nothing and leaves its empty files
-  behind.
+  exit (only an empty regular file; anything with content stays). The list is under
+  `$XDG_STATE_HOME`; the live sessions and their keepers are found under the session
+  base (and the keepers under the state directory too). A launch with a different
+  `XDG_STATE_HOME` has a list of its own, so it does not adopt the other's files and
+  leaves them behind, but its mounts are seen. A launch with a different session base
+  (`AGENT_SANDBOX_SESSION_BASE`, or another `XDG_RUNTIME_DIR`) is seen only through
+  its keeper record, so not while it starts (before its supervisor writes that record),
+  and not at all when its `XDG_STATE_HOME` differs too: then, if it binds over the
+  same files, another session's exit can detach its mount points. A launch whose list lock times out
+  (10 s) lists nothing and leaves its empty files behind.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
   on the host with your full environment, as `claude update` does.
 - **The proxy is a host process that sees all traffic.** Its CA's private key

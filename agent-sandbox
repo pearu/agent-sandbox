@@ -860,6 +860,14 @@ _as_placeholders_in_use() {
     _as_keeper_live "$d" || continue
     tabs+=("/proc/$_keeper_target/mountinfo")
   done
+  # And every live keeper the session base knows of, whatever its state directory: a
+  # launch with another XDG_STATE_HOME has another list and another keeper record, but
+  # the same session base (its supervisor records the payload there, `keeper`).
+  for f in "$(_as_session_base)"/session.*/keeper; do
+    { read -r opid ostart <"$f"; } 2>/dev/null || continue
+    _as_proc_is "$opid" "$ostart" || continue
+    tabs+=("/proc/$opid/mountinfo")
+  done
   ((_ng)) || shopt -u nullglob
   i=0
   for p in "$@"; do
@@ -3251,7 +3259,10 @@ _as_keeper_supervise() {
   mestart="$_ps_start"
   # The session directory is now this process's: the janitor and the proxy addon
   # judge it by its owner, and the engine that made it is about to exit.
-  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$me" "$mestart" >"$_session_dir/owner.id"
+  # Replaced, never rewritten in place: a reader (_as_placeholders_in_use) meeting an
+  # empty file would take the session for dead.
+  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$me" "$mestart" >"$_session_dir/owner.id.new" \
+    && mv -f -- "$_session_dir/owner.id.new" "$_session_dir/owner.id"
   # A self-contained profile's proxy of its own (#335): up before the sandbox, ended
   # with it. One that does not come up refuses the launch (_as_keeper_start says so).
   if [[ -n "${_own_proxy:-}" ]] && ! _as_own_proxy_start; then
@@ -3283,6 +3294,10 @@ _as_keeper_supervise() {
   istart="$_ps_start"
   printf '%s %s %s %s %s %s\n' "$me" "$mestart" "$t" "$tstart" "$init" "$istart" >"$kd/id.new" \
     && mv -f -- "$kd/id.new" "$kd/id"
+  # The payload in the session directory too, for _as_placeholders_in_use from a launch
+  # under another state directory (another XDG_STATE_HOME) on the same session base.
+  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$t" "$tstart" >"$_session_dir/keeper.new" \
+    && mv -f -- "$_session_dir/keeper.new" "$_session_dir/keeper"
   local grace sl
   grace="$(_as_keeper_grace)"
   exec 8>"$sb/keeper.lock"
