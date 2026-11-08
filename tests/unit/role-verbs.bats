@@ -260,15 +260,15 @@ list_fixture() {
   [ "$status" -eq 0 ]
   local want
   want="$PROJ
-  rev     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13
+  rev     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13   claude, base
     CUDA version pinned in CI
-  tri     stopped   created 2026-10-26 11:50   active 2026-10-26 12:01
+  tri     stopped   created 2026-10-26 11:50   active 2026-10-26 12:01   claude, base
     Issue triage: skip build
-  fresh   stopped   created 2026-10-25 09:00   active 2026-10-25 10:00
+  fresh   stopped   created 2026-10-25 09:00   active 2026-10-25 10:00   claude, base
     Fix the build please
-  setup   stopped   created 2026-10-14 16:20   active 2026-10-24 10:00
+  setup   stopped   created 2026-10-14 16:20   active 2026-10-24 10:00   claude, base
     no conversation
-  own     stopped   created 2026-10-22 09:00   active 2026-10-22 10:00
+  own     stopped   created 2026-10-22 09:00   active 2026-10-22 10:00   claude, base
     My own line
 To resume: asb --role ROLE --agent claude --resume"
   [ "$output" = "$want" ]
@@ -308,7 +308,7 @@ To resume: asb --role ROLE --agent claude --resume"
   RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = /elsewhere/other ]
-  [ "${lines[1]}" = "  gh-x   stopped   created 2026-10-27 07:00   active 2026-10-27 08:00" ]
+  [ "${lines[1]}" = "  gh-x   stopped   created 2026-10-27 07:00   active 2026-10-27 08:00   claude, base" ]
   [ "${lines[2]}" = "    other project" ]
   [ "${lines[3]}" = "$PROJ" ]
   [[ "$output" == *"CUDA version pinned in CI"* ]]
@@ -401,7 +401,7 @@ To resume: asb --role ROLE --agent claude --resume"
   [ "$status" -eq 0 ]
   output="${output//$'\r'/}"
   [ "${lines[0]//$'\r'/}" = "${B}$PROJ${R}" ]
-  [[ "$output" == *$'\n'"  ${C}rev${R}     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13"$'\n'* ]]
+  [[ "$output" == *$'\n'"  ${C}rev${R}     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13   claude, base"$'\n'* ]]
   [[ "$output" == *$'\n'"  ${C}setup${R}   stopped   "* ]]
   # nothing but the role names and the project's line
   local plain="${output//$C/}"
@@ -458,6 +458,234 @@ To resume: asb --role ROLE --agent claude --resume"
   [[ "$output" == *"CUDA version pinned in CI"* ]]
   [[ "$output" != *accounts* ]]
   [[ "$output" != *"  work "* && "$output" != *"  personal "* ]]
+}
+
+# ----- the agent, its account and the login's expiry (#355, P10) ----------------------
+
+# expiry_ms DAYS -- epoch milliseconds DAYS days from now, less an hour: `due in DAYS
+# days` (the days left are rounded up); a negative DAYS is past.
+expiry_ms() { printf '%s' "$((($(date +%s) + $1 * 86400 - 3600) * 1000))"; }
+
+# login_file FILE MS -- a stub credentials file holding the expiry and nothing else.
+login_file() {
+  mkdir -p "$(dirname -- "$1")"
+  printf '{"claudeAiOauth":{"refreshTokenExpiresAt":%s}}\n' "$2" >"$1"
+}
+
+# acct_role ROLE ACCOUNT MTIME -- a stopped role of $PROJ whose record says ACCOUNT (empty:
+# the base), with one conversation last written at MTIME.
+acct_role() {
+  local sb
+  sb="$(store_dir "$PROJ" "$1")"
+  printf '%s\n' "$PROJ" >"$sb/project"
+  printf 'claude\t%s\n' "$2" >"$sb/account"
+  conv "$sb" s "$3" "$(user_rec "$1" 2026-10-20T08:00:00Z)"
+}
+
+@test "--list ends a role's line with its agent and account, and the login's due or expired state within 7 days (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  login_file "$H/home/.claude/.credentials.json" "$(expiry_ms 30)"
+  login_file "$acc/work/.credentials.json" "$(expiry_ms 30)"
+  login_file "$acc/soon/.credentials.json" "$(expiry_ms 3)"
+  login_file "$acc/old/.credentials.json" "$(expiry_ms -2)"
+  acct_role a "" "2026-10-25 09:00 UTC"
+  acct_role b work "2026-10-24 09:00 UTC"
+  acct_role c soon "2026-10-23 09:00 UTC"
+  acct_role d old "2026-10-22 09:00 UTC"
+  acct_role e "" "2026-10-21 09:00 UTC"
+  rm "${SBOX%/default}/e/account" # no record: the base
+  run_engine TZ=UTC -- asb --list
+  [ "$status" -eq 0 ]
+  local want
+  want="$PROJ
+  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base
+    a
+  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   claude, account work
+    b
+  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account soon, login due in 3 days
+    c
+  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --account-login old claude
+    d
+  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, base
+    e
+To resume: asb --role ROLE --agent claude --resume"
+  [ "$output" = "$want" ]
+  # the base's login, read from the base's own file: due, then expired
+  login_file "$H/home/.claude/.credentials.json" "$(expiry_ms 1)"
+  run_engine TZ=UTC -- asb --list
+  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login due in 1 day" ]
+  [ "${lines[9]}" = "  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, base, login due in 1 day" ]
+  [ "${lines[3]}" = "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   claude, account work" ]
+  login_file "$H/home/.claude/.credentials.json" "$(expiry_ms -1)"
+  run_engine TZ=UTC -- asb --list
+  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired: run /login" ]
+  # --list-all says the same
+  mkdir -p "$H/nowhere"
+  RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$PROJ" ]
+  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired: run /login" ]
+  [ "${lines[5]}" = "  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account soon, login due in 3 days" ]
+  [ "${lines[7]}" = "  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --account-login old claude" ]
+}
+
+@test "--list says nothing of the login when its expiry is unknown: no file, no key, not a number, a link, not JSON (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  mkdir -p "$acc/nofile" "$acc/nokey" "$acc/str" "$acc/link" "$acc/junk"
+  printf '{"claudeAiOauth":{}}\n' >"$acc/nokey/.credentials.json"
+  printf '{"claudeAiOauth":{"refreshTokenExpiresAt":"%s"}}\n' "$(expiry_ms 1)" >"$acc/str/.credentials.json"
+  login_file "$H/elsewhere.json" "$(expiry_ms 1)"
+  ln -s "$H/elsewhere.json" "$acc/link/.credentials.json"
+  printf 'not json\n' >"$acc/junk/.credentials.json"
+  rm -f "$H/home/.claude/.credentials.json" # the base's: none
+  acct_role a nofile "2026-10-25 09:00 UTC"
+  acct_role b nokey "2026-10-24 09:00 UTC"
+  acct_role c str "2026-10-23 09:00 UTC"
+  acct_role d link "2026-10-22 09:00 UTC"
+  acct_role e junk "2026-10-21 09:00 UTC"
+  acct_role f "" "2026-10-20 09:00 UTC"
+  run_engine TZ=UTC -- asb --list
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account nofile" ]
+  [ "${lines[3]}" = "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   claude, account nokey" ]
+  [ "${lines[5]}" = "  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account str" ]
+  [ "${lines[7]}" = "  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account link" ]
+  [ "${lines[9]}" = "  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, account junk" ]
+  [ "${lines[11]}" = "  f   stopped   created 2026-10-20 08:00   active 2026-10-20 09:00   claude, base" ]
+  [[ "$output" != *login* ]]
+  # A FIFO and a directory where the login should be: the account's directory is a role's
+  # writable state, so its agent can put either there. Neither is read, and a FIFO is not
+  # waited on: --list and --status finish, saying nothing of the login.
+  mkdir -p "$acc/fifo" "$acc/dir/.credentials.json"
+  mkfifo "$acc/fifo/.credentials.json"
+  acct_role g fifo "2026-10-19 09:00 UTC"
+  acct_role h dir "2026-10-18 09:00 UTC"
+  engine_cmd
+  # shellcheck disable=SC2016 # the inner shell's own arguments
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC "${@:4}" --list' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  grep -qxF "  g   stopped   created 2026-10-20 08:00   active 2026-10-19 09:00   claude, account fifo" <<<"$output"
+  grep -qxF "  h   stopped   created 2026-10-20 08:00   active 2026-10-18 09:00   claude, account dir" <<<"$output"
+  [[ "$output" != *login* ]]
+  # shellcheck disable=SC2016 # the inner shell's own arguments
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC "${@:4}" --role g --status claude' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: fifo (~/.local/state/agent-sandbox/claude/accounts/fifo)" <<<"$output"
+  # a record that does not read as one is not guessed at: no agent, no account
+  printf 'claude\t../../x\n' >"${SBOX%/default}/a/account"
+  run_engine TZ=UTC -- asb --list
+  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00" ]
+}
+
+@test "--status prints the role's account, its directory and the login's expiry date, stopped and running (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts" ms day
+  ms="$(expiry_ms 30)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  login_file "$H/home/.claude/.credentials.json" "$ms"
+  run_engine -- asb claude --version # the base: the record's NAME is empty
+  [ "$(cat "$SBOX/account")" = "claude	" ]
+  run_engine TZ=UTC -- asb --status claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  account: none, the base (~/.claude), login valid until $day"* ]]
+  # the base's login expired: the date, and what renews it
+  ms="$(expiry_ms -1)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  login_file "$H/home/.claude/.credentials.json" "$ms"
+  run_engine TZ=UTC -- asb --status claude
+  [[ "$output" == *$'\n'"  account: none, the base (~/.claude), login expired $day: run /login"* ]]
+  # an account's, due: from the stopped store's record
+  ms="$(expiry_ms 3)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  login_file "$acc/work/.credentials.json" "$ms"
+  printf 'claude\twork\n' >"$SBOX/account"
+  run_engine TZ=UTC -- asb --status claude
+  [[ "$output" == *$'\n'"  account: work (~/.local/state/agent-sandbox/claude/accounts/work), login due $day (in 3 days): asb --account-login work claude"* ]]
+  # unknown: the account and its directory, nothing of the login
+  rm "$acc/work/.credentials.json"
+  run_engine TZ=UTC -- asb --status claude
+  grep -qxF "  account: work (~/.local/state/agent-sandbox/claude/accounts/work)" <<<"$output"
+  # a tampered record, a name that is no account's: no account line at all
+  login_file "$H/home/.local/x/.credentials.json" "$(expiry_ms 3)" # where the name leads from accounts/
+  printf 'claude\t../../../../x\n' >"$SBOX/account"
+  run_engine TZ=UTC -- asb --status claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not running; its stores"* ]]
+  [[ "$output" != *"account:"* && "$output" != *login* ]]
+  # running: the keeper's policy says it, whatever the record says now
+  ms="$(expiry_ms 30)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  login_file "$acc/work/.credentials.json" "$ms"
+  engine_bg -- asb --account work claude --version
+  printf 'claude\t\n' >"$SBOX/account"
+  run_engine TZ=UTC -- asb --status claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"running since"* ]]
+  [[ "$output" == *$'\n'"  account: work (~/.local/state/agent-sandbox/claude/accounts/work), login valid until $day"$'\n'* ]]
+  release_bg
+}
+
+@test "what renews the base's login is the profile's [agent] login-renew; a profile without it names none (#355)" {
+  # two profiles on the same base: claude without the key, `other` with its own text
+  mkdir -p "$H/profiles"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other"
+  sed -i '/^login-renew = /d' "$H/profiles/claude/agent-sandbox"
+  sed -i 's|^login-renew = .*|login-renew = sign in again from the menu|' "$H/profiles/other/agent-sandbox"
+  run ! grep -q '^login-renew' "$H/profiles/claude/agent-sandbox"
+  grep -qxF 'login-renew = sign in again from the menu' "$H/profiles/other/agent-sandbox"
+  local rms day sb
+  rms="$(expiry_ms -1)" day="$(TZ=UTC date -d "@$((rms / 1000))" +%F)"
+  login_file "$H/home/.claude/.credentials.json" "$rms"
+  acct_role a "" "2026-10-25 09:00 UTC"
+  sb="$H/home/.local/state/agent-sandbox/other/${PROJ//[^A-Za-z0-9-]/-}/b"
+  mkdir -p "$sb/transcripts/own"
+  printf '%s\n' "$PROJ" >"$sb/project"
+  printf 'other\t\n' >"$sb/account"
+  conv "$sb" s "2026-10-24 09:00 UTC" "$(user_rec b 2026-10-20T08:00:00Z)"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
+  [ "$status" -eq 0 ]
+  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired" <<<"$output"
+  grep -qxF "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   other, base, login expired: run sign in again from the menu" <<<"$output"
+  # --status: the date, and a renewal only where the profile names one
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: none, the base (~/.claude), login expired $day" <<<"$output"
+  cp "$H/bin/claude" "$H/bin/other" # the agent a verb of the `other` profile resolves
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: none, the base (~/.claude), login expired $day: run sign in again from the menu" <<<"$output"
+  rms="$(expiry_ms 3)" day="$(TZ=UTC date -d "@$((rms / 1000))" +%F)"
+  login_file "$H/home/.claude/.credentials.json" "$rms"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
+  grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days)" <<<"$output"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days): run sign in again from the menu" <<<"$output"
+  # an account's renewal is the engine's, with or without the key
+  login_file "$H/home/.local/state/agent-sandbox/claude/accounts/old/.credentials.json" "$(expiry_ms -1)"
+  printf 'claude\told\n' >"${SBOX%/default}/a/account"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
+  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account old, login expired: asb --account-login old claude" <<<"$output"
+}
+
+@test "the login file's other fields never reach any output: only the expiry is read (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts" ms
+  ms="$(expiry_ms 2)"
+  mkdir -p "$acc/work"
+  printf '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-SECRETACCESS","refreshToken":"sk-ant-ort01-SECRETREFRESH","expiresAt":%s,"refreshTokenExpiresAt":%s,"scopes":["user:inference"],"subscriptionType":"SECRETPLAN"}}\n' "$ms" "$ms" >"$acc/work/.credentials.json"
+  cp "$acc/work/.credentials.json" "$H/home/.claude/.credentials.json"
+  acct_role a work "2026-10-25 09:00 UTC"
+  acct_role b "" "2026-10-24 09:00 UTC"
+  run_engine TZ=UTC -- asb --list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude, account work, login due in 2 days"* ]]
+  [[ "$output" == *"claude, base, login due in 2 days"* ]]
+  [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
+  run_engine TZ=UTC -- asb --list-all
+  [[ "$output" == *"claude, account work, login due in 2 days"* ]]
+  [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
+  run_engine TZ=UTC -- asb --role a --status claude
+  [[ "$output" == *"account: work ("*"login due "* ]]
+  [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
+  run_engine TZ=UTC -- asb --role b --status claude
+  [[ "$output" == *"account: none, the base ("*"login due "* ]]
+  [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
 }
 
 @test "a launch writes the project's path into its store, and --list shows a running role" {

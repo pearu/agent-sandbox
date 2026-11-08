@@ -1089,3 +1089,77 @@ start_project() {
   [ "$status" -eq 0 ]
   grep -qxF -- "- no GPU devices ([gpu] devices names /dev/nvidia-absent-335, none of it on the host)" "$OUT/briefing.md"
 }
+
+# login_file FILE DAYS -- a stub credentials file whose login expires DAYS days from now
+# (less an hour), holding that and nothing else; prints the expiry's day (UTC).
+login_file() {
+  local ms=$((($(date +%s) + $2 * 86400 - 3600) * 1000))
+  mkdir -p "$(dirname -- "$1")"
+  printf '{"claudeAiOauth":{"refreshTokenExpiresAt":%s}}\n' "$ms" >"$1"
+  TZ=UTC date -d "@$((ms / 1000))" +%F
+}
+
+@test "the briefing names the agent and the account it runs as, the user's own login for the base, with no date when the login is far off (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  login_file "$H/home/.claude/.credentials.json" 30 >/dev/null
+  login_file "$acc/work/.credentials.json" 30 >/dev/null
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb claude --version
+  [ "$status" -eq 0 ]
+  local md="$OUT/briefing.md"
+  grep -qxF '## Your agent' "$md"
+  grep -qxF "You run as claude on the user's own login." "$md"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF "You run as claude on the account 'work'." "$md"
+  run ! grep -q 'login is due\|login expired\|account-login' "$md"
+  # names only: no path of the account's directory or of the login
+  run ! grep -qF -e "$acc" -e '.credentials.json' -e 'accounts/work' "$md"
+  # an unknown expiry says nothing of it
+  rm "$acc/work/.credentials.json"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF "You run as claude on the account 'work'." "$md"
+}
+
+@test "the briefing says when the login is due within 7 days, or expired, and what the user renews it with (#355)" {
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts" day
+  day="$(login_file "$acc/work/.credentials.json" 5)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
+  [ "$status" -eq 0 ]
+  local md="$OUT/briefing.md"
+  grep -qxF "You run as claude on the account 'work'. Its login is due on $day; the user renews it with asb --account-login work claude." "$md"
+  day="$(login_file "$acc/work/.credentials.json" -3)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
+  grep -qxF "You run as claude on the account 'work'. Its login expired on $day; the user renews it with asb --account-login work claude." "$md"
+  # the base's, from the base's own file
+  day="$(login_file "$H/home/.claude/.credentials.json" 2)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF "You run as claude on the user's own login. Its login is due on $day; the user renews it with /login." "$md"
+  # the login's other fields never reach the briefing
+  printf '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-SECRETACCESS","refreshToken":"sk-ant-ort01-SECRETREFRESH","refreshTokenExpiresAt":1,"subscriptionType":"SECRETPLAN"}}\n' >"$H/home/.claude/.credentials.json"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF "You run as claude on the user's own login. Its login expired on 1970-01-01; the user renews it with /login." "$md"
+  [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
+  run ! grep -rq 'SECRET\|sk-ant' "$H/copied"
+}
+
+@test "the briefing's renewal for the base is the profile's [agent] login-renew; without it the sentence ends at the date (#355)" {
+  mkdir -p "$H/profiles"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  sed -i '/^login-renew = /d' "$H/profiles/claude/agent-sandbox"
+  run ! grep -q '^login-renew' "$H/profiles/claude/agent-sandbox"
+  local day md="$OUT/briefing.md"
+  day="$(login_file "$H/home/.claude/.credentials.json" 2)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF "You run as claude on the user's own login. Its login is due on $day." "$md"
+  day="$(login_file "$H/home/.claude/.credentials.json" -1)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
+  grep -qxF "You run as claude on the user's own login. Its login expired on $day." "$md"
+  # another text, as written
+  sed -i 's|^account-expiry = .*|&\nlogin-renew = sign in again from the menu|' "$H/profiles/claude/agent-sandbox"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
+  grep -qxF "You run as claude on the user's own login. Its login expired on $day; the user renews it with sign in again from the menu." "$md"
+}

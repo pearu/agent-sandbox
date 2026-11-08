@@ -13,7 +13,10 @@
 # account's (`[agent] account-paths`, profile_account_paths: with an account named, the
 # account's directory is bound where the base is; #355), and what starts a login
 # (`[agent] login`, profile_login: the arguments `asb --account-login NAME claude` runs
-# on the account's directory; #355). This script keeps the rest.
+# on the account's directory; #355), and where the login's expiry is written
+# (`[agent] account-expiry`, profile_account_expiry: FILE KEYPATH, read by --list,
+# --status and the briefing; #355), and what renews the base's login (`[agent]
+# login-renew`, profile_login_renew: /login; #355). This script keeps the rest.
 #
 # ============================================================================
 # THE PROFILE CONTRACT
