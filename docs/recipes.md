@@ -238,7 +238,7 @@ memory and other stores unchanged ([config.md](config.md#accounts)).
 
 Log the other subscription in once, from a shell on the host. It prints a URL and
 takes the code you paste (not shown as you paste it); its login lasts about a month,
-and the same line renews it:
+and the same line logs it in again:
 
 ```
 asb --account-login work claude
@@ -261,10 +261,22 @@ the file for that launch, and `--resume` to continue its conversation:
 asb --role implementer-1 --account work --resume
 ```
 
-A running role keeps the account it started on, and a launch asking for another is
-refused: end it first (`asb --role implementer-1
---shutdown`). For a lasting change, `asb --apply '[agent:implementer-1]' 'account =
-work'`. `asb --list` names each role's account and says when its login is due.
+A running role keeps the account it started on. A launch whose `--account` asks for
+another is refused, so end the role first:
+
+```
+asb --role implementer-1 --shutdown
+```
+
+For a lasting change, edit the file:
+
+```
+asb --apply '[agent:implementer-1]' 'account = work'
+```
+
+A running role does not take that change: a launch joins it on its old account, says
+so, and the next launch after it ends takes the new one. `asb --list` names each
+role's account and says when its login is due.
 
 ## When you need something that is blocked
 
