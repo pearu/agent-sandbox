@@ -890,6 +890,11 @@ names are gone; there are no aliases for removed names before 1.0.
   `<state>/placeholders`, and a file is removed only by the last session out that
   holds it, never while another live session or keeper still has it mounted. An empty
   file of your own at such a path is never removed.
+- **install.sh fetches micromamba from micro.mamba.pm where GitHub's release download
+  fails.** The pinned build comes from micro.mamba.pm as a conda package instead, its
+  `bin/micromamba` checked against the same pinned SHA-256 (the release's `.sha256`
+  cross-check is skipped with a warning when GitHub cannot serve it either). Unpacking
+  the package needs bzip2.
 - **`--setup-remote`'s egress check went by the host's HTTP status** (#344): an allowed
   host answering 403 itself (download.pytorch.org at `/`) failed it, and a 403 from
   example.com counted as the proxy's refusal wherever it came from. It now goes by the
