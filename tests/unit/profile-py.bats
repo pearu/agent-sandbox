@@ -166,6 +166,48 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   [ "$(pyget "$T/out3.json" 'd["statusLine"]')" = "None" ]
 }
 
+@test "forget-profile: profileFetchedAt becomes 0, by a rename that keeps the file's mode; the other keys stay (#355)" {
+  printf '%s' '{"profileFetchedAt":123,"oauthAccount":{"o":"x"},"projects":{"/p":{"t":1}}}' >"$T/c.json"
+  chmod 640 "$T/c.json"
+  local ino
+  ino="$(stat -c %i "$T/c.json")"
+  run py forget-profile "$T/c.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/c.json" 'd["profileFetchedAt"]')" = 0 ]
+  [ "$(pyget "$T/c.json" 'd["oauthAccount"]["o"], d["projects"]["/p"]["t"]')" = "('x', 1)" ]
+  [ "$(stat -c %a "$T/c.json")" = 640 ]
+  [ "$(stat -c %i "$T/c.json")" != "$ino" ] # renamed over, not rewritten in place
+  # no temporary file left beside it
+  [ "$(find "$T" -maxdepth 1 -name '.forget-profile.*' | wc -l)" -eq 0 ]
+}
+
+@test "forget-profile: no profileFetchedAt, or 0 already, leaves the file as it is; a missing file is no error and is not made (#355)" {
+  printf '%s' '{"oauthAccount":{"o":"x"}}' >"$T/c.json"
+  cp "$T/c.json" "$T/before"
+  local ino
+  ino="$(stat -c %i "$T/c.json")"
+  run py forget-profile "$T/c.json"
+  [ "$status" -eq 0 ]
+  cmp "$T/c.json" "$T/before"
+  [ "$(stat -c %i "$T/c.json")" = "$ino" ]
+  printf '%s' '{"profileFetchedAt":0}' >"$T/z.json"
+  ino="$(stat -c %i "$T/z.json")"
+  run py forget-profile "$T/z.json"
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %i "$T/z.json")" = "$ino" ]
+  run py forget-profile "$T/none.json"
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/none.json" ]
+}
+
+@test "forget-profile: a file that is not JSON is left as it is, and said, exit 1 (#355)" {
+  printf 'not json' >"$T/bad.json"
+  run py forget-profile "$T/bad.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not JSON, left as it is"* ]]
+  [ "$(cat "$T/bad.json")" = "not json" ]
+}
+
 @test "a call it does not understand is a usage error, exit 2" {
   run py
   [ "$status" -eq 2 ]

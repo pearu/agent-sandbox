@@ -121,6 +121,12 @@ names are gone; there are no aliases for removed names before 1.0.
   `[connect]` key or `outside:` source that is the base, a parent of it, or one of the
   profile's `account-paths` is refused, account or not. A join takes the running role's
   account; `--check` reports an unusable account directory with the plan and exits 1.
+  A cold start on another account than the role's stores last ran on (the record; none
+  is the base), `--exec` included, calls the new profile hook `profile_account_switched`
+  once the stores are ready: the claude profile sets `profileFetchedAt` to 0 in the
+  role's `.claude.json` store (never the native file under `config = read-write`), so
+  `/status` names the account in force from the first turn, not the last one's
+  organisation for up to a day (`profile.py forget-profile`).
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the
