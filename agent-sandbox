@@ -6999,6 +6999,8 @@ _as_account_login() {
   # default network mode and isolated's own stores whatever the shell exports (pearu,
   # 2026-11-08). Only these two are taken out; the plumbing variables cross as they do
   # into any launch.
+  # An agent's login may read a pasted code without echoing it (claude auth login does).
+  _as_msg "--account-login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
   trap ':' INT
   (cd -- "$real" && exec env -u AGENT_SANDBOX_NET -u AGENT_SANDBOX_CONNECT "$self" --role account-login --preset isolated --account "$name" "$agent" ${login[@]+"${login[@]}"}) || rc=$?
   trap - INT
