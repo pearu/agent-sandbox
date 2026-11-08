@@ -1270,7 +1270,8 @@ your own shell (refused inside a sandbox). It makes the account's directory,
 first: a symlink or a non-directory there is refused, nothing is made through one; an
 existing directory is a re-login), then runs the agent's own login in it, in the
 foreground at your terminal: what the profile's `[agent] login` says (claude: `claude
-auth login`, which prints a URL and takes the pasted code). It runs sandboxed, as the
+auth login`, which prints a URL and takes the pasted code, not echoing it: just before
+the login starts, the command says so). It runs sandboxed, as the
 role `account-login` of a fixed scratch project, `~/.cache/agent-sandbox/account-login/`
 (under `XDG_CACHE_HOME` when set; made when absent, never given a dot-file, and one found
 there is refused), under `--preset isolated` and the default network mode, so only the
