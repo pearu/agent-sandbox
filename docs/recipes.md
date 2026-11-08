@@ -229,6 +229,43 @@ agent's own binary chooses to respect, which cannot be verified from outside,
 and this project's claim is that limits are enforced around the agent rather
 than honoured by it.
 
+## Two subscriptions in one project
+
+**Crossing: credentials.** A role runs on your own login, the agent's base
+(`~/.claude`), unless it names an **account**: another login of the agent, kept in a
+directory of its own and bound in place of the base, with the role's conversations,
+memory and other stores unchanged ([config.md](config.md#accounts)).
+
+Log the other subscription in once, from a shell on the host. It prints a URL and
+takes the code you paste (not shown as you paste it); its login lasts about a month,
+and the same line renews it:
+
+```
+asb --account-login work claude
+```
+
+Then give the project a default and the heavy role the other one:
+
+```ini
+[agent]
+command = claude
+account = work                    # every role of this project
+[agent:implementer-1]
+account = -                       # the heavy role on your own login
+```
+
+To move a role to the other subscription, relaunch it with `--account`, which beats
+the file for that launch, and `--resume` to continue its conversation:
+
+```
+asb --role implementer-1 --account work --resume
+```
+
+A running role keeps the account it started on, and a launch asking for another is
+refused: end it first (`asb --role implementer-1
+--shutdown`). For a lasting change, `asb --apply '[agent:implementer-1]' 'account =
+work'`. `asb --list` names each role's account and says when its login is due.
+
 ## When you need something that is blocked
 
 You cannot widen the sandbox from inside — `.agent-sandbox` is trust-gated

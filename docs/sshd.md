@@ -300,8 +300,9 @@ the role's host key (see [design.md](design.md#residual-risks)).
 - Sessions run as the account's uid, so they share it with everything else the account
   runs: a dedicated account is what keeps them apart from yours.
 - The keys file is read at launch; a change needs a relaunch.
-- `asb --list` shows an sshd role with the claude-style resume line (`To resume:
-  agent-sandbox --role ROLE sshd --continue`), which does not apply to it.
+- `asb --list` shows an sshd role with the resume line (`To resume: agent-sandbox
+  --role ROLE --resume`), which does not apply to it: the profile has no resume words,
+  so `--resume` is refused.
 - A SIGKILL of the keeper's supervisor (the process `--status` names) orphans the
   launch: measured (2026-11-01), the sandbox and its sshd keep serving logins, sessions
   stay confined but the proxy, which also keeps running, refuses their requests (407:
