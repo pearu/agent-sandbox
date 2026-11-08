@@ -620,6 +620,47 @@ To resume: asb --role ROLE --agent claude --resume"
   release_bg
 }
 
+@test "what renews the base's login is the profile's [agent] login-renew; a profile without it names none (#355)" {
+  # two profiles on the same base: claude without the key, `other` with its own text
+  mkdir -p "$H/profiles"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other"
+  sed -i '/^login-renew = /d' "$H/profiles/claude/agent-sandbox"
+  sed -i 's|^login-renew = .*|login-renew = sign in again from the menu|' "$H/profiles/other/agent-sandbox"
+  run ! grep -q '^login-renew' "$H/profiles/claude/agent-sandbox"
+  grep -qxF 'login-renew = sign in again from the menu' "$H/profiles/other/agent-sandbox"
+  local rms day sb
+  rms="$(expiry_ms -1)" day="$(TZ=UTC date -d "@$((rms / 1000))" +%F)"
+  login_file "$H/home/.claude/.credentials.json" "$rms"
+  acct_role a "" "2026-10-25 09:00 UTC"
+  sb="$H/home/.local/state/agent-sandbox/other/${PROJ//[^A-Za-z0-9-]/-}/b"
+  mkdir -p "$sb/transcripts/own"
+  printf '%s\n' "$PROJ" >"$sb/project"
+  printf 'other\t\n' >"$sb/account"
+  conv "$sb" s "2026-10-24 09:00 UTC" "$(user_rec b 2026-10-20T08:00:00Z)"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
+  [ "$status" -eq 0 ]
+  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired" <<<"$output"
+  grep -qxF "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   other, base, login expired: run sign in again from the menu" <<<"$output"
+  # --status: the date, and a renewal only where the profile names one
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: none, the base (~/.claude), login expired $day" <<<"$output"
+  cp "$H/bin/claude" "$H/bin/other" # the agent a verb of the `other` profile resolves
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: none, the base (~/.claude), login expired $day: run sign in again from the menu" <<<"$output"
+  rms="$(expiry_ms 3)" day="$(TZ=UTC date -d "@$((rms / 1000))" +%F)"
+  login_file "$H/home/.claude/.credentials.json" "$rms"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
+  grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days)" <<<"$output"
+  # an account's renewal is the engine's, with or without the key
+  login_file "$H/home/.local/state/agent-sandbox/claude/accounts/old/.credentials.json" "$(expiry_ms -1)"
+  printf 'claude\told\n' >"${SBOX%/default}/a/account"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
+  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account old, login expired: asb --account-login old claude" <<<"$output"
+}
+
 @test "the login file's other fields never reach any output: only the expiry is read (#355)" {
   local acc="$H/home/.local/state/agent-sandbox/claude/accounts" ms
   ms="$(expiry_ms 2)"

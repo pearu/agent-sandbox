@@ -124,6 +124,10 @@ account-paths = .credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner
 # 2.1.319). `asb --list`, `--status` and the briefing say when a login is due within 7
 # days or has expired; the engine reads that one number and nothing else of the file.
 account-expiry = .credentials.json claudeAiOauth.refreshTokenExpiresAt
+# What renews the base's login when it is due (#355): Claude Code's in-session command.
+# The base is your own login, not an account, so `asb --account-login` is not its renewal;
+# --list and --status say `run /login`, the briefing `the user renews it with /login`.
+login-renew = /login
 
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.

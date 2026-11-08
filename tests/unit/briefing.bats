@@ -1144,3 +1144,22 @@ login_file() {
   [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
   run ! grep -rq 'SECRET\|sk-ant' "$H/copied"
 }
+
+@test "the briefing's renewal for the base is the profile's [agent] login-renew; without it the sentence ends at the date (#355)" {
+  mkdir -p "$H/profiles"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  sed -i '/^login-renew = /d' "$H/profiles/claude/agent-sandbox"
+  run ! grep -q '^login-renew' "$H/profiles/claude/agent-sandbox"
+  local day md="$OUT/briefing.md"
+  day="$(login_file "$H/home/.claude/.credentials.json" 2)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF "You run as claude on the user's own login. Its login is due on $day." "$md"
+  day="$(login_file "$H/home/.claude/.credentials.json" -1)"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
+  grep -qxF "You run as claude on the user's own login. Its login expired on $day." "$md"
+  # another text, as written
+  sed -i 's|^account-expiry = .*|&\nlogin-renew = sign in again from the menu|' "$H/profiles/claude/agent-sandbox"
+  run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
+  grep -qxF "You run as claude on the user's own login. Its login expired on $day; the user renews it with sign in again from the menu." "$md"
+}

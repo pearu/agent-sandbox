@@ -148,7 +148,9 @@ names are gone; there are no aliases for removed names before 1.0.
   the login is due within the window, by names only. The new profile key `[agent]
   account-expiry` (claude: `.credentials.json claudeAiOauth.refreshTokenExpiresAt`,
   epoch milliseconds) says where the expiry is written; the engine reads that one
-  number and nothing else of the file, and says nothing when it is unknown.
+  number and nothing else of the file, and says nothing when it is unknown. What renews
+  the base's login is the profile's, `[agent] login-renew` (claude: `login-renew =
+  /login`); a profile without it gets no renewal named for its base.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the

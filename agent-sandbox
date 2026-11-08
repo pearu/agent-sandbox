@@ -4007,8 +4007,8 @@ _as_agent_record() {
 # the store's record (<sb>/account: PROFILE<TAB>NAME; none is the base), with its
 # directory and, when the profile says where the login's expiry is written ([agent]
 # account-expiry), its date, always (D13): valid until, due (within 7 days) or expired,
-# with what renews it. Nothing when the record does not read as one. Uses the engine's
-# profile, profile_base and profile_account_expiry.
+# with what renews it (_as_login_renew). Nothing when the record does not read as one.
+# Uses the engine's profile, profile_base, profile_account_expiry and profile_login_renew.
 # shellcheck disable=SC2154
 _as_account_record() {
   local sb="$1" v p="$profile" n="" dir line ms="" _due="" _due_date="" _due_days=0
@@ -4036,9 +4036,13 @@ _as_account_record() {
   _as_login_due "$ms"
   case "$_due" in
     valid) line+=", login valid until $_due_date" ;;
-    due) line+=", login due $_due_date (in $_due_days day$( ((_due_days == 1)) || printf s)): $(_as_login_renew "$p" "$n")" ;;
-    expired) line+=", login expired $_due_date: $(_as_login_renew "$p" "$n")" ;;
+    due) line+=", login due $_due_date (in $_due_days day$( ((_due_days == 1)) || printf s))" ;;
+    expired) line+=", login expired $_due_date" ;;
   esac
+  if [[ "$_due" == due || "$_due" == expired ]]; then
+    v="$(_as_login_renew "$p" "$n" "${profile_login_renew:-}")"
+    [[ -z "$v" ]] || line+=": $v"
+  fi
   printf '  %s\n' "$line"
 }
 
@@ -4087,7 +4091,7 @@ _as_role_list() {
   [[ -t 1 && -z "${NO_COLOR:-}" ]] && color=1
   local _keeper_target="" _keeper_spid=""
   local -a rows=() acct=() xpairs=() xrow=() xms=() fl=()
-  local -A pf_base=() pf_xfile=() pf_xkey=()
+  local -A pf_base=() pf_xfile=() pf_xkey=() pf_renew=()
   local ff rp an i _due _due_date _due_days
   state="$(_as_state_dir)"
   # The resolved path, as a launch keys its stores: its $cwd, which _as_project_dir
@@ -4098,12 +4102,13 @@ _as_role_list() {
   for p in "$profile_dir"/*/profile.sh; do
     [[ -r "$p" ]] || continue
     p="$(basename -- "$(dirname -- "$p")")"
-    # What the role lines need of the profile, read without loading it: its base and
-    # where its login's expiry is written.
+    # What the role lines need of the profile, read without loading it: its base, where
+    # its login's expiry is written, and what renews the base's login.
     while IFS=$'\t' read -r -a fl; do
       case "${fl[0]:-}" in
         base) pf_base[$p]="${fl[2]:-}" ;;
         account-expiry) pf_xfile[$p]="${fl[2]:-}" pf_xkey[$p]="${fl[3]:-}" ;;
+        login-renew) pf_renew[$p]="${fl[2]:-}" ;;
       esac
     done < <(_as_profile_facts "$profile_dir/$p/profile.sh")
     # A project's slug always starts with `-` (_as_path_slug): `accounts/` (#355) and
@@ -4168,7 +4173,11 @@ _as_role_list() {
         f+=", login due in $_due_days day"
         ((_due_days == 1)) || f+=s
         ;;
-      expired) f+=", login expired: $(_as_login_renew "$p" "$an")" ;;
+      expired)
+        f+=", login expired"
+        ff="$(_as_login_renew "$p" "$an" "${pf_renew[$p]:-}")"
+        [[ -z "$ff" ]] || f+=": $ff"
+        ;;
     esac
     rows[i * 4 + 3]="$f"
   done
@@ -5204,8 +5213,10 @@ _as_purpose_record() {
 # _as_briefing_agent -- the briefing's sentence on the agent and its account (#355): the
 # account's name, or the user's own login for the base, and, within 7 days of the login's
 # expiry or past it (D13), when it is due and what the user renews it with. Names only:
-# no path, nothing of the login itself. Uses the engine's profile, profile_base,
-# profile_account_expiry, _acct_name and _acct_dir.
+# no path, nothing of the login itself. For the base, what renews it is the profile's
+# [agent] login-renew; without one the sentence ends at the date. Uses the engine's
+# profile, profile_base, profile_account_expiry, profile_login_renew, _acct_name and
+# _acct_dir.
 # shellcheck disable=SC2154
 _as_briefing_agent() {
   local n="${_acct_name:-}" dir ms="" s _due="" _due_date="" _due_days=0
@@ -5226,10 +5237,11 @@ _as_briefing_agent() {
   esac
   if [[ "$_due" == due || "$_due" == expired ]]; then
     if [[ -n "$n" ]]; then
-      s+="; the user renews it with asb --account-login $n $profile."
-    else
-      s+="; the user renews it with /login."
+      s+="; the user renews it with asb --account-login $n $profile"
+    elif [[ -n "${profile_login_renew:-}" ]]; then
+      s+="; the user renews it with $profile_login_renew"
     fi
+    s+=.
   fi
   printf '\n## Your agent\n\n%s\n' "$s"
 }
@@ -6390,6 +6402,9 @@ _as_trust_show() {
 #                      of the login's expiry in epoch milliseconds (#355): --list,
 #                      --status and the briefing say a login due within 7 days or
 #                      expired; none: they say nothing of it
+#   [agent] login-renew -- profile_login_renew: the text, as written, that renews the
+#                      base's login, said when it is due (#355; claude: /login); none:
+#                      nothing is said of how
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -6439,6 +6454,13 @@ _as_profile_dotfile() {
           profile_account_expiry=("${words[@]}")
         else
           _as_msg "profile '$pname': $file: [agent] account-expiry takes FILE KEYPATH, two words; ignoring"
+        fi
+        ;;
+      login-renew)
+        if [[ "$v" == *[$'\t\n']* ]]; then
+          _as_msg "profile '$pname': $file: [agent] login-renew is one line of text, without a tab; ignoring"
+        else
+          profile_login_renew="$v"
         fi
         ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
@@ -6696,7 +6718,7 @@ _as_profile_facts_dotfile() {
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=()
-  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login, profile_account_expiry
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login, profile_account_expiry, profile_login_renew
   # the caller's: the base, for the review's [connect] check (#355)
   _pf_base="$profile_base"
 }
@@ -6705,10 +6727,10 @@ _as_profile_facts_dotfile() {
 # profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...`,
 # `key<TAB>NAME<TAB>KEY`, `resume<TAB>NAME<TAB>WORD...`, `clear<TAB>NAME<TAB>KEYS`,
 # `account-paths<TAB>NAME<TAB>PATH...`, `base<TAB>NAME<TAB>PATH` and
-# `login<TAB>NAME[<TAB>WORD...]` and `account-expiry<TAB>NAME<TAB>FILE<TAB>KEYPATH` lines
-# (the last six only for a profile with [agent] resume, [agent] clear, [agent]
-# account-paths, a base, [agent] login -- empty or not -- and [agent] account-expiry:
-# #355).
+# `login<TAB>NAME[<TAB>WORD...]`, `account-expiry<TAB>NAME<TAB>FILE<TAB>KEYPATH` and
+# `login-renew<TAB>NAME<TAB>TEXT` lines (the last seven only for a profile with [agent]
+# resume, [agent] clear, [agent] account-paths, a base, [agent] login -- empty or not --
+# [agent] account-expiry and [agent] login-renew: #355).
 # Sourced in a subshell; a profile's top level only declares. What a profile adds at a
 # launch (profile_prepare) is not here.
 _as_profile_facts() {
@@ -6717,7 +6739,7 @@ _as_profile_facts() {
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
     local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=() profile_login=() profile_account_expiry=()
-    local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0
+    local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0 profile_login_renew=""
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
     # shellcheck disable=SC1090
@@ -6743,6 +6765,7 @@ _as_profile_facts() {
       printf '\n'
     fi
     ((${#profile_account_expiry[@]} != 2)) || printf 'account-expiry\t%s\t%s\t%s\n' "$name" "${profile_account_expiry[@]}"
+    [[ -z "$profile_login_renew" ]] || printf 'login-renew\t%s\t%s\n' "$name" "$profile_login_renew"
     ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
     true
   )
@@ -7059,14 +7082,15 @@ _as_login_due() {
   fi
 }
 
-# _as_login_renew PROFILE NAME -- what renews the login of account NAME of PROFILE
-# (#355): `asb --account-login NAME PROFILE`, or for the base (NAME empty) `run /login`,
-# Claude Code's own command, in a session.
+# _as_login_renew PROFILE NAME TEXT -- what renews the login of account NAME of PROFILE
+# (#355): `asb --account-login NAME PROFILE`; for the base (NAME empty) `run TEXT`, TEXT
+# the profile's [agent] login-renew (claude: /login, Claude Code's in-session command),
+# and nothing at all when the profile has none: no renewal is invented.
 _as_login_renew() {
   if [[ -n "$2" ]]; then
     printf '%s --account-login %s %s' "${invoked:-asb}" "$2" "$1"
-  else
-    printf 'run /login'
+  elif [[ -n "$3" ]]; then
+    printf 'run %s' "$3"
   fi
 }
 
@@ -13588,6 +13612,8 @@ agent_sandbox() (
   local profile_login_set=0
   # Where its agent's login says when it expires, FILE KEYPATH (#355): none, nothing said.
   local -a profile_account_expiry=()
+  # What renews the base's login, said when it is due (#355; claude: /login): none, not said.
+  local profile_login_renew=""
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()

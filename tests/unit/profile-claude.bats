@@ -323,6 +323,40 @@ CHECK
   grep -qF "[agent] account-expiry takes FILE KEYPATH, two words; ignoring" "$H/said"
 }
 
+@test "[agent] login-renew: what renews the base's login, emitted by _as_profile_facts; a value with a tab is said and ignored (#355)" {
+  grep -qxF 'login-renew = /login' "$REPO_ROOT/profiles/claude/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$REPO_ROOT/profiles/claude/profile.sh" >"$H/facts"
+  )
+  grep -qxF "$(printf 'login-renew\tclaude\t/login')" "$H/facts"
+  # the rest of the line, as written
+  mkdir -p "$H/profiles2/other"
+  printf 'profile_command=true\n' >"$H/profiles2/other/profile.sh"
+  printf '[agent]\nlogin-renew = sign in   again\n' >"$H/profiles2/other/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$H/profiles2/other/profile.sh" >"$H/facts2"
+  )
+  grep -qxF "$(printf 'login-renew\tother\tsign in   again')" "$H/facts2"
+  # a tab in it: said, ignored, not emitted
+  printf '[agent]\nlogin-renew = run\t/login\n' >"$H/profiles2/other/agent-sandbox"
+  (
+    # shellcheck disable=SC1090
+    source "$ENGINE"
+    _as_profile_facts "$H/profiles2/other/profile.sh" >"$H/facts3"
+    # shellcheck disable=SC2034 # the profile _as_profile_dotfile names in what it says
+    local profile=other
+    local profile_login_renew=""
+    _as_profile_dotfile "$H/profiles2/other/agent-sandbox" 2>"$H/said" || :
+    [ -z "$profile_login_renew" ]
+  )
+  run ! grep -q '^login-renew' "$H/facts3"
+  grep -qF "[agent] login-renew is one line of text, without a tab; ignoring" "$H/said"
+}
+
 @test "profile_start_args: the first turn is the prompt after the agent's own arguments, behind a --; declined where the session is not an interactive start" {
   local -a profile_start_argv=()
   profile_start_args 'Arm your watcher.'
