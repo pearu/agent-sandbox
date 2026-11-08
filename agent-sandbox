@@ -335,6 +335,20 @@
 #                         when the directory is missing, a symlink or not one, for
 #                         a profile with no [agent] account-paths, and under
 #                         --preset native or none.
+#   --account-login NAME AGENT
+#                         alone on the line, host only (#355): make the account
+#                         NAME's directory for AGENT, <state>/AGENT/accounts/NAME/
+#                         (mode 700; an existing one is a re-login), run AGENT's
+#                         login there -- the profile's [agent] login (claude: auth
+#                         login) -- in the foreground, as the role account-login
+#                         of the scratch project ~/.cache/agent-sandbox/account-login/
+#                         (no dot-file) under --preset isolated and the default
+#                         network mode, then remove that role's stores and say
+#                         whether the login file (the first account-paths entry)
+#                         is there. Exit: the login's status when it failed, 1
+#                         with no login file, else 0. Refused for a bad NAME, an
+#                         AGENT naming no profile, a profile with no account-paths
+#                         or no login key, a symlink or a non-directory there.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
 #                         --serve runs (the profile's serve-new arguments, a fresh
@@ -540,6 +554,14 @@ Engine flags (before CMD):
                         and refusals as --agent; --exec counts. Refused while
                         the directory is missing (asb --account-login NAME
                         AGENT), and under --preset native or none
+  --account-login NAME AGENT
+                        log the account NAME of AGENT in, alone on the line,
+                        host only: makes ~/.local/state/agent-sandbox/AGENT/accounts/NAME/
+                        (mode 700; again: a re-login) and runs the agent's own
+                        login there (claude: claude auth login), sandboxed,
+                        from a scratch project with no dot-file, under
+                        --preset isolated; then says whether the account has
+                        its login file. Exit 1 when it has none
   --roles ROLE...       open one tmux session, named after the project
                         directory, with a pane per role, each running
                         `--role ROLE` with the line's engine words, five to a
@@ -4013,7 +4035,7 @@ _as_names_profile() {
 # line at the end names the command that resumes a role.
 # shellcheck disable=SC2154
 _as_role_list() {
-  local scope="$1" word="${2:-}" state p sb st n f pid start only="" rc=0 color=0
+  local scope="$1" word="${2:-}" state p sb st n f pid start only="" rc=0 color=0 skip
   [[ -t 1 && -z "${NO_COLOR:-}" ]] && color=1
   local _keeper_target="" _keeper_spid=""
   local -a rows=()
@@ -4021,6 +4043,8 @@ _as_role_list() {
   # The resolved path, as a launch keys its stores: its $cwd, which _as_project_dir
   # reads, is `pwd -P`, and is not set yet here, where that helper would give $PWD.
   [[ "$scope" == all ]] || only="$(_as_path_slug "$(pwd -P)")"
+  # --account-login's scratch project (#355) holds no session anyone resumes.
+  skip="$(_as_path_slug "$(realpath -m -- "$(_as_account_login_scratch)")")"
   for p in "$profile_dir"/*/profile.sh; do
     [[ -r "$p" ]] || continue
     p="$(basename -- "$(dirname -- "$p")")"
@@ -4030,6 +4054,7 @@ _as_role_list() {
       sb="${sb%/}"
       [[ -d "$sb" && ! -L "$sb" && "${sb##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
       [[ -z "$only" || "$(basename -- "$(dirname -- "$sb")")" == "$only" ]] || continue
+      [[ "$(basename -- "$(dirname -- "$sb")")" != "$skip" ]] || continue
       st=stopped
       if _as_keeper_live "$sb"; then
         n=0
@@ -6220,6 +6245,10 @@ _as_trust_show() {
 #                      are an account's, its login first (#355): with an account in
 #                      force they are the account directory's; none: the profile has
 #                      no accounts, and naming one refuses the launch
+#   [agent] login   -- profile_login (profile_login_set 1 when the key is there, empty or
+#                      not): the agent's arguments that start a login, which
+#                      `asb --account-login` runs on an account's directory (#355);
+#                      none: --account-login refuses
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -6263,6 +6292,7 @@ _as_profile_dotfile() {
       clear) profile_clear="$v" ;;
       account-paths) profile_account_paths+=(${words[@]+"${words[@]}"}) ;;
       resume) profile_resume+=(${words[@]+"${words[@]}"}) ;;
+      login) profile_login=(${words[@]+"${words[@]}"}) profile_login_set=1 ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
       visible) profile_visible+=(${words[@]+"${words[@]}"}) ;;
       *) _as_msg "profile '$pname': $file: [agent] key '$k' is not one the engine reads; ignoring" ;;
@@ -6518,7 +6548,7 @@ _as_profile_facts_dotfile() {
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=()
-  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login
   # the caller's: the base, for the review's [connect] check (#355)
   _pf_base="$profile_base"
 }
@@ -6526,8 +6556,9 @@ _as_profile_facts_dotfile() {
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
 # profile loaded: `channel<TAB>NAME<TAB>CHANNEL<TAB>kind:path...`,
 # `key<TAB>NAME<TAB>KEY`, `resume<TAB>NAME<TAB>WORD...`, `clear<TAB>NAME<TAB>KEYS`,
-# `account-paths<TAB>NAME<TAB>PATH...` and `base<TAB>NAME<TAB>PATH` lines (the last four
-# only for a profile with [agent] resume, [agent] clear, [agent] account-paths, a base:
+# `account-paths<TAB>NAME<TAB>PATH...`, `base<TAB>NAME<TAB>PATH` and
+# `login<TAB>NAME[<TAB>WORD...]` lines (the last five only for a profile with [agent]
+# resume, [agent] clear, [agent] account-paths, a base, [agent] login -- empty or not:
 # #355).
 # Sourced in a subshell; a profile's top level only declares. What a profile adds at a
 # launch (profile_prepare) is not here.
@@ -6536,8 +6567,8 @@ _as_profile_facts() {
     local name l
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
-    local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=()
-    local profile_project_env_set=0 profile_clear="" _pf_base=""
+    local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=() profile_login=()
+    local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
     # shellcheck disable=SC1090
@@ -6555,6 +6586,11 @@ _as_profile_facts() {
     if ((${#profile_account_paths[@]})); then
       printf 'account-paths\t%s' "$name"
       printf '\t%s' "${profile_account_paths[@]}"
+      printf '\n'
+    fi
+    if ((profile_login_set)); then
+      printf 'login\t%s' "$name"
+      ((${#profile_login[@]} == 0)) || printf '\t%s' "${profile_login[@]}"
       printf '\n'
     fi
     ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
@@ -6833,6 +6869,144 @@ _as_account_check() {
   _as_account_dir "$profile" "$_acct_name" "$_acct_from" "${#profile_account_paths[@]}" || return 1
   _as_info "account: $_acct_name ($(_as_account_where "$_acct_from")), $_acct_dir as the agent's state directory"
   return 0
+}
+
+# ---- asb --account-login NAME AGENT (#355): an account's login, sandboxed ----------
+# The account's directory is made here, and the agent's own login runs in it as a role
+# of a fixed scratch project with no dot-file, under `isolated` and the default network
+# mode, so that no project's policy (a strict or retrieve-only role) stands between the
+# login and its token exchange: only the profile's allowlist applies (D10). The role's
+# stores there are removed after every run, since under `isolated` the config channel is
+# the role's own copy and would carry one account's into the next login.
+
+# _as_account_login_scratch -- the scratch project a login runs from, as named (not made).
+_as_account_login_scratch() {
+  printf '%s' "${XDG_CACHE_HOME:-$HOME/.cache}/agent-sandbox/account-login"
+}
+
+# _as_account_login_clean STATE PROFILE SLUG -- remove the login role's stores,
+# STATE/PROFILE/SLUG/account-login, and SLUG's directory when that leaves it empty. THE
+# PATH GUARD: SLUG is one path segment that starts with `-` (a project's, _as_path_slug),
+# neither level is a symlink, and the directory resolves where it is named; anything
+# else removes nothing. An idle keeper (its grace) is ended first, as --delete does; one
+# with a launch joined in it fails here, and nothing is removed. Nothing there: success.
+_as_account_login_clean() {
+  local st="$1" p="$2" slug="$3" sb pd
+  pd="$st/$p/$slug" sb="$st/$p/$slug/account-login"
+  if [[ "$slug" != -* || "$slug" == */* || "$p" == */* || -z "$p" ]]; then
+    _as_msg "--account-login: not removing the login role's stores: '$st/$p/$slug' is not a project's directory"
+    return 1
+  fi
+  [[ -e "$sb" || -L "$sb" ]] || return 0
+  if [[ -L "$pd" || -L "$sb" || ! -d "$sb" || "$(readlink -f -- "$sb")" != "$(readlink -f -- "$st")/$p/$slug/account-login" ]]; then
+    _as_msg "--account-login: not removing $sb: it is not the login role's own directory (a symlink, or not a directory)"
+    return 1
+  fi
+  _as_keeper_stop_idle "$sb" || return 1
+  chmod -R u+rwX -- "$sb" 2>/dev/null
+  rm -rf --one-file-system -- "$sb" || {
+    _as_msg "--account-login: could not remove all of $sb"
+    return 1
+  }
+  rmdir -- "$pd" 2>/dev/null || true
+  return 0
+}
+
+# _as_account_login NAME AGENT -- `asb --account-login NAME AGENT`: make the account
+# NAME's directory for AGENT's profile, <state>/PROFILE/accounts/NAME/ (mode 700; an
+# existing one is a re-login), run the profile's [agent] login there as the role
+# `account-login` of the scratch project, in the foreground, then remove that role's
+# stores and say whether the account has its login now: the profile's first
+# account-paths entry, by its path, never read. Returns the login's status when it
+# failed, else 1 when the login file is not there, else 0. Refusals are 2. Ctrl-C at the
+# login ends the login, not this: the stores are still removed; a run killed outright
+# leaves them, and the next run removes them first. Uses profile_dir and invoked by
+# dynamic scope.
+# shellcheck disable=SC2154
+_as_account_login() {
+  local name="$1" agent="$2" p st d x scratch real slug self rc=0 login_set=0 cred
+  local -a f=() apaths=() login=()
+  if [[ -n "${AGENT_SANDBOX:-}" ]] || _as_inside_sandbox; then
+    _as_msg "--account-login runs on the host: the login it makes is the account's, for every role on it in every project; a role proposes the line, you run it."
+    return 2
+  fi
+  if ! _as_role_name_ok "$name"; then
+    _as_msg "--account-login: '$name' is not an account name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters (the base, your own login, logs in with /login inside a session)"
+    return 2
+  fi
+  if ! _as_names_profile "$agent"; then
+    _as_msg "--account-login: '$agent' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+    return 2
+  fi
+  p="$(basename -- "$agent")"
+  while IFS=$'\t' read -r -a f; do
+    case "${f[0]:-}" in
+      account-paths) apaths=("${f[@]:2}") ;;
+      login) login_set=1 login=("${f[@]:2}") ;;
+    esac
+  done < <(_as_profile_facts "$profile_dir/$p/profile.sh")
+  if ((${#apaths[@]} == 0)); then
+    _as_msg "--account-login: profile '$p' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts to log in"
+    return 2
+  fi
+  if ((! login_set)); then
+    _as_msg "--account-login: profile '$p' does not say what starts its agent's login ([agent] login = ARGS, possibly empty)"
+    return 2
+  fi
+  # The account's directory: every level checked before anything is made, so nothing is
+  # made through a symlink, and an existing one is taken only when it is a directory.
+  st="$(_as_state_dir)"
+  d="$st/$p/accounts/$name"
+  for x in "$st/$p" "$st/$p/accounts" "$d"; do
+    if [[ -L "$x" ]]; then
+      _as_msg "--account-login: $x is a symlink; an account is a directory of its own, its login's one home. Refusing to follow it"
+      return 2
+    elif [[ -e "$x" && ! -d "$x" ]]; then
+      _as_msg "--account-login: $x is not a directory; an account is a directory of its own, its login's one home"
+      return 2
+    fi
+  done
+  mkdir -p -- "$st/$p/accounts" || return 1
+  if [[ ! -e "$d" ]]; then
+    mkdir -m 700 -- "$d" || return 1
+    _as_msg "--account-login: made $(_as_tilde "$d"), the account '$name' of $p"
+  fi
+  # The scratch project: made when absent, never given a dot-file; one found there is
+  # not this command's, and a login reads none.
+  scratch="$(_as_account_login_scratch)"
+  mkdir -p -- "$scratch" || return 1
+  real="$(cd -- "$scratch" && pwd -P)" || return 1
+  if [[ -e "$real/.agent-sandbox" || -L "$real/.agent-sandbox" ]]; then
+    _as_msg "--account-login: $real/.agent-sandbox is there; the scratch project a login runs from has no dot-file, so that no project's policy applies to it. Remove it, then run this again"
+    return 2
+  fi
+  slug="$(_as_path_slug "$real")"
+  # What an earlier run killed outright left (Ctrl-C does not leave it, below); a login
+  # still running there is not ended.
+  if ! _as_account_login_clean "$st" "$p" "$slug"; then
+    _as_msg "--account-login: a login is running already (the role account-login of $real); finish it, or end it with: cd $(printf '%q' "$real") && $invoked --role account-login --shutdown $p"
+    return 2
+  fi
+  # (U1: a dead login file, an expired one, would be handled here, before the login.)
+  # This same engine, by the name it was run as (asb, agent-sandbox), as --roles runs it.
+  self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+  # Ctrl-C reaches the login (the terminal's foreground group) and ends it; here it only
+  # interrupts the wait, so the cleanup still runs. A handler, not an ignore, so the
+  # login does not inherit an ignored SIGINT.
+  trap ':' INT
+  (cd -- "$real" && exec "$self" --role account-login --preset isolated --account "$name" "$agent" ${login[@]+"${login[@]}"}) || rc=$?
+  trap - INT
+  _as_account_login_clean "$st" "$p" "$slug" \
+    || _as_msg "--account-login: the login role's stores are still at $st/$p/$slug/account-login; the next run removes them"
+  ((rc == 0)) || _as_msg "--account-login: the login ended with status $rc"
+  cred="$d/${apaths[0]}"
+  if [[ -e "$cred" || -L "$cred" ]]; then
+    _as_msg "--account-login: the account '$name' of $p has its login: $(_as_tilde "$cred")"
+  else
+    _as_msg "--account-login: the account '$name' of $p has no login: there is no $(_as_tilde "$cred")"
+    ((rc)) || rc=1
+  fi
+  return "$rc"
 }
 
 # _as_host_path_of INSIDE [DEPTH] -- the host path behind INSIDE, for a mount point bwrap
@@ -12283,6 +12457,8 @@ agent_sandbox() (
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
+  # --account-login NAME AGENT (#355): its two words.
+  local -a _account_login=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
   local _do_list="" _list_word=""
@@ -12478,6 +12654,15 @@ agent_sandbox() (
           _as_msg "--setup-remote takes a [remote:ALIAS] section of this project's .agent-sandbox, or a destination, and nothing after it but --port, or --status or --shutdown after an ALIAS: --setup-remote ALIAS [--status | --shutdown], or --setup-remote [ACCOUNT@]HOST[:SSHPORT] [--port [ADDR:]PORT]"
           return 2
         fi
+        ;;
+      --account-login)
+        # --account-login NAME AGENT (#355): the whole line, those two words and nothing else.
+        if [[ $# -ne 3 || ${#_argv_given[@]} -ne 3 ]]; then
+          _as_msg "--account-login takes an account's name and its agent, and nothing else on the line: $invoked --account-login NAME AGENT (e.g. $invoked --account-login work claude)"
+          return 2
+        fi
+        _account_login=("$2" "$3")
+        shift 3
         ;;
       --init)
         # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
@@ -12706,6 +12891,12 @@ agent_sandbox() (
       *) break ;;
     esac
   done
+  # ---- --account-login NAME AGENT (#355): an account's login, sandboxed, then exit ----
+  # Alone on the line (above), so nothing else of this invocation applies to it.
+  if ((${#_account_login[@]})); then
+    _as_account_login "${_account_login[@]}"
+    return $?
+  fi
   # ---- --summarize (#314): what it cannot be combined with ----
   # The engine's own words, but --summarize, are what the turn is started with; and but
   # --agent (#355), whose agent the turn names as its command.
@@ -13169,6 +13360,10 @@ agent_sandbox() (
   local -a profile_resume=()
   # Its agent's files that are an account's, under its base (#355): none, no accounts.
   local -a profile_account_paths=()
+  # What starts its agent's login, for --account-login (#355); read here only so that the
+  # profile's dot-file sets these and nothing global.
+  local -a profile_login=()
+  local profile_login_set=0
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()

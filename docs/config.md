@@ -1264,6 +1264,30 @@ account; one under a symlink made again, wherever its target is); empty files am
 them are removed after the launch, empty directories and the symlinks made again
 stay.
 
+**Logging an account in: `asb --account-login NAME AGENT`.** Alone on the line, at
+your own shell (refused inside a sandbox). It makes the account's directory,
+`~/.local/state/agent-sandbox/<agent>/accounts/NAME/`, with mode 700 (each level checked
+first: a symlink or a non-directory there is refused, nothing is made through one; an
+existing directory is a re-login), then runs the agent's own login in it, in the
+foreground at your terminal: what the profile's `[agent] login` says (claude: `claude
+auth login`, which prints a URL and takes the pasted code). It runs sandboxed, as the
+role `account-login` of a fixed scratch project, `~/.cache/agent-sandbox/account-login/`
+(under `XDG_CACHE_HOME` when set; made when absent, never given a dot-file, and one found
+there is refused), under `--preset isolated` and the default network mode, so only the
+profile's own allowlist applies: no project's policy (a strict or `retrieve-only` role)
+stands between the login and its token exchange. Afterwards that role's stores are
+removed, whatever the login's outcome -- under `isolated` the config copy is the role's
+own and would carry one account's identity into the next login -- and Ctrl-C at the
+login ends the login, not the cleanup; a run killed outright leaves them, and the next
+run removes them first (a login still running there refuses the second). The scratch
+project is never listed by `--list` or `--list-all`. Last it says whether the account
+has its login file (the profile's first `account-paths` entry: claude's
+`.credentials.json`), naming its path, never reading it. The exit status is the
+login's when it failed, 1 when there is no login file, else 0. Refused for a bad NAME
+(an account name's shape; `-`, the base, logs in with `/login` inside a session), an
+AGENT that names no profile, and a profile with no `account-paths` or no `login` key.
+An account's login lasts about a month; run the same line again to renew it.
+
 **A `[connect]` path is never the base or its login**, account or not, in every mode, as
 a key or an `outside:` source, as written and resolved: the agent's state directory
 itself (`~/.claude/ = read-write`), a parent of it, or one of the profile's
