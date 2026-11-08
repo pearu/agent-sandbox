@@ -114,8 +114,9 @@ names are gone; there are no aliases for removed names before 1.0.
   never followed (any symlink in the account's directory under a name the base has is
   taken as one an earlier launch made, and replaced when stale; any other same-name
   entry of another kind there refuses the launch, naming both paths). A `read-write`
-  file channel missing in the base is created there empty under an account, as a
-  directory channel's is, unless the profile gives it a `start:` file. A base that resolves to a protected
+  file channel missing in the base is created there under an account, as a directory
+  channel's is (`{}` for a `.json` path, empty otherwise), unless the profile gives it
+  a `start:` file. A base that resolves to a protected
   path is refused under an account too, as it is without one. A
   `[connect]` key or `outside:` source that is the base, a parent of it, or one of the
   profile's `account-paths` is refused, account or not. A join takes the running role's

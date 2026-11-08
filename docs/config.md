@@ -1252,11 +1252,11 @@ starts, naming both paths: remove the account's to see the base's there, or the 
 to keep the account's. An entry created in the base after the launch is not seen by
 that launch (a role on the base sees it at once); one the agent creates at the top
 during the session lands in the account's directory. A `read-write` file channel whose
-source does not exist in the base is created there empty under an account, as a
-`read-write` directory channel's is, so what the agent writes there is the base's,
-shared as the channel says -- unless the profile gives that path a `start:` file
-(claude: the policy bodies): an empty file is not what it starts as, so it is not
-bound, and what the agent writes there lands in the account's directory. Mount points bwrap creates for the channels and the
+source does not exist in the base is created there under an account, as a
+`read-write` directory channel's is -- containing `{}` when its path ends in `.json`
+(an empty file is no JSON), empty otherwise -- so what the agent writes there is the
+base's, shared as the channel says -- unless the profile gives that path a `start:` file
+(claude: the policy bodies): that is not what it starts as, so it is not bound, and what the agent writes there lands in the account's directory. Mount points bwrap creates for the channels and the
 entries are made in the account's directory, as they are in the base (one under an
 entry bound from the base, `cache/changelog.md`, in the base's entry, as with no
 account; one under a symlink made again, wherever its target is); empty files among

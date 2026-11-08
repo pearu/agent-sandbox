@@ -2276,14 +2276,20 @@ _as_connect_bind_channel() {
       args+=(--bind "$src" "$path")
     elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
       if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
-      # Under an account (#355) a missing FILE is made in the base too, empty, so what
-      # the agent writes there is the base's, shared as the channel says, not the
-      # account directory's -- unless the profile gives the path a `start:` file: an
-      # empty file is not what that path starts as, so it is not bound and the agent's
-      # file lands in the account's directory.
+      # Under an account (#355) a missing FILE is made in the base too, so what the agent
+      # writes there is the base's, shared as the channel says, not the account
+      # directory's: `{}` for a path ending in .json (an empty file is no JSON), empty
+      # otherwise -- unless the profile gives the path a `start:` file: neither is what
+      # that path starts as, so it is not bound and the agent's file lands in the
+      # account's directory.
       if [[ "$kind" == file && ! -e "$src" && ! -L "$src" && -n "${_acct_dir:-}" && "$src" == "${profile_base:-}"/* ]] \
         && ! _as_channel_hook profile_channel_start "$path" >/dev/null; then
-        { mkdir -p -- "$(dirname -- "$src")" && : >"$src"; } || return 1
+        mkdir -p -- "$(dirname -- "$src")" || return 1
+        if [[ "$src" == *.json ]]; then
+          printf '{}\n' >"$src" || return 1
+        else
+          : >"$src" || return 1
+        fi
       fi
       if [[ -e "$src" ]]; then
         # an account's directory (#355) has no such file: the mount point is made there
