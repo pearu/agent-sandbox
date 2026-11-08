@@ -14214,6 +14214,7 @@ agent_sandbox() (
   # keeper's record -- through the whole build when there is no keeper -- so two
   # first launches of one role at once are one keeper, not two.
   local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0 _ca_record="" _ca_note=""
+  local _acct_was="" _acct_switched=0
   if :; then
     # Checked before anything is built: without python3 there is no join, and a
     # keeper started for nothing would have seeded its stores for nothing too.
@@ -14343,6 +14344,17 @@ agent_sandbox() (
       _as_keeper_unlock
       return 2
     }
+    # THE ACCOUNT THE ROLE'S STORES LAST RAN ON (#355): the record the previous launch
+    # left, read before this one's replaces it (_as_keeper_start). A missing record is
+    # the base. When it names another account than this launch's, the profile is told
+    # once the stores are ready (profile_account_switched, below): what the agent cached
+    # of the account in them is the other account's. Compared only where the record is
+    # written, so an engine turn, which leaves it, does not see a switch at every turn.
+    if [[ -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
+      _acct_was="$(cat -- "$_keeper_sb/account" 2>/dev/null)" || _acct_was=""
+      [[ -n "$_acct_was" ]] || _acct_was="$profile"$'\t'
+      [[ "$_acct_was" == "$profile"$'\t'"${_acct_name:-}" ]] || _acct_switched=1
+    fi
     _as_run_scoped_clear "$_keeper_sb"
     _as_join_scoped_clear "$_keeper_sb"
   fi
@@ -14944,6 +14956,11 @@ agent_sandbox() (
   # The channels, the path declarations and the per-session scratch, by depth: here,
   # after the working-tree bind, or the project would cover every declaration inside it.
   _as_connect_bind_all "$_iso_on" || return 1
+  # Another account than the stores last ran on (above): the profile forgets what the
+  # agent cached of the old one, in its own stores, now that a first seed exists.
+  if ((_acct_switched)) && declare -F profile_account_switched >/dev/null; then
+    profile_account_switched || return 1
+  fi
 
   # ----- per-session state: SSH agent, --allow include -----
   # Both run on the HOST, before the sandbox exists. See docs/ssh.md and

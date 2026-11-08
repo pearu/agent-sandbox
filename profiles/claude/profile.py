@@ -6,6 +6,7 @@ Code's own JSON, one subcommand each.
     profile.py trust-recorded FILE --project DIR
     profile.py mark-trust FILE --project DIR
     profile.py merge-settings --ours JSON --user VALUE --out FILE
+    profile.py forget-profile FILE
 
 Beside profile.sh, which keeps the hooks. Each subcommand does one thing and exits
 nonzero, saying why on stderr, when it cannot; what a launch then does -- refuse, or
@@ -14,7 +15,9 @@ keep the user's own settings -- is the hook's.
 
 import json
 import os
+import stat
 import sys
+import tempfile
 
 
 def _load_json(path):
@@ -102,6 +105,38 @@ def mark_trust(path, project):
         fh.seek(0)
         json.dump(data, fh)
         fh.truncate()
+    return 0
+
+
+def forget_profile(path):
+    """Set oauthAccount.profileFetchedAt to 0 in the config FILE, so Claude Code
+    refetches the account's profile -- the block /status reads the organisation from --
+    at its next run (#355). A missing FILE, one with no oauthAccount block, or a block
+    with no profileFetchedAt (or 0 already), is left as it is; a top-level
+    profileFetchedAt is not Claude Code's and is not touched. Written to a temporary
+    file beside it, with its mode, and renamed over it: this runs before the launch
+    binds the file, so no running sandbox holds the old one."""
+    try:
+        data = _load_json(path)
+    except FileNotFoundError:
+        return 0
+    except ValueError as exc:
+        print(f"forget-profile: {path}: not JSON, left as it is: {exc}", file=sys.stderr)
+        return 1
+    account = data.get("oauthAccount") if isinstance(data, dict) else None
+    if not isinstance(account, dict) or account.get("profileFetchedAt", 0) == 0:
+        return 0
+    account["profileFetchedAt"] = 0
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    fd, tmp = tempfile.mkstemp(prefix=".forget-profile.", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
     return 0
 
 
@@ -199,6 +234,8 @@ def main(argv):
         if cmd in ("trust-recorded", "mark-trust") and len(rest) == 1 and "project" in opts:
             fn = trust_recorded if cmd == "trust-recorded" else mark_trust
             return fn(rest[0], opts["project"])
+        if cmd == "forget-profile" and len(rest) == 1 and not opts:
+            return forget_profile(rest[0])
         if cmd == "merge-settings" and not rest and {"ours", "user", "out"} <= opts.keys():
             return merge_settings(opts["ours"], opts["user"], opts["out"])
     except OSError as exc:
