@@ -106,9 +106,18 @@ names are gone; there are no aliases for removed names before 1.0.
   refused. The launch records `PROFILE<TAB>NAME` in the role's store (`account`); the
   review says each line and `--check` shows the account and its directory. The claude
   profile's new `[agent] account-paths` is `.credentials.json .oauth_refresh.lock
-  .oauth_refresh.lock.owner` (`.credentials.json` leaves `visible`). For now an
-  account role sees of the base only its channels and the `hide` blanks: the base's
-  other entries (hook scripts, `ide/`, `cache/`, ...) are not bound into it yet. A
+  .oauth_refresh.lock.owner` (`.credentials.json` leaves `visible`). An account role
+  sees every other top-level entry of the base (hook scripts, `ide/`, `cache/`, ...),
+  bound one by one, read-write at its path, before the channels, as it is at launch:
+  not the channels' own paths, the `hide` list (blanked) or the `account-paths`, so
+  never the base's login; a symlink entry is made again with its target as written,
+  never followed (any symlink in the account's directory under a name the base has is
+  taken as one an earlier launch made, and replaced when stale; any other same-name
+  entry of another kind there refuses the launch, naming both paths). A `read-write`
+  file channel missing in the base is created there under an account, as a directory
+  channel's is (`{}` for a `.json` path, empty otherwise), unless the profile gives it
+  a `start:` file. A base that resolves to a protected
+  path is refused under an account too, as it is without one. A
   `[connect]` key or `outside:` source that is the base, a parent of it, or one of the
   profile's `account-paths` is refused, account or not. A join takes the running role's
   account; `--check` reports an unusable account directory with the plan and exits 1.

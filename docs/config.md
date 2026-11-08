@@ -1232,16 +1232,37 @@ role's store, `account` (`PROFILE<TAB>NAME`, NAME empty for the base); the revie
 each `account` line, and `--check` shows the account in force and binds its directory
 in place of the base.
 
-**What an account role sees of the base, for now.** Only the channels the profile
-declares (each bound over the account's directory, the `read-write` ones from the base
-itself) and the `hide` blanks. The base's other entries -- hook scripts that
-`settings.json` runs, `ide/`, `cache/` and anything else no channel names -- are not
-there, and neither is the base's login: that is the point. Binding those entries one by
-one into an account role is #355's next step. A `read-write` file channel whose source
-does not exist in the base is not bound under an account, so a file the agent creates
-there lands in the account's directory, not the base. Mount points bwrap creates for the
-channels are made in the account's directory, as they are in the base; empty files
-among them are removed after the launch, empty directories stay.
+**What an account role sees of the base.** Every top-level entry of the base as it is
+at launch, read-write at its path, as a role on the base sees it -- hook scripts that
+`settings.json` runs, `ide/`, `cache/` and anything else no channel names -- bound one
+by one over the account's directory, and then the channels the profile declares on top
+(the `read-write` ones from the base itself), so a channel inside an entry
+(`cache/changelog.md`) is the channel's. Not bound: an entry that is a channel's path
+(the channel binds it), one the `hide` list names (blanked, the profile's and the
+project's `[claude] hide`), and the profile's `account-paths` -- **the base's login and
+its refresh lock are never in an account role**; that is the point. An entry that is a
+symlink is made again in the account's directory with its target as written, never
+followed on the host.
+Where the account's directory has an entry of the same name and kind, the base's
+covers it. Any symlink there, under a name the base has, is taken to be one an earlier
+launch made again (the engine does not tell its own from yours), and is removed and
+made afresh when the base's entry is no longer a symlink to the same target. Any other mismatch (a file
+in the account's directory where the base has a directory, a directory where it has a
+file, a file or directory where it has a symlink) refuses the launch before anything
+starts, naming both paths: remove the account's to see the base's there, or the base's
+to keep the account's. An entry created in the base after the launch is not seen by
+that launch (a role on the base sees it at once); one the agent creates at the top
+during the session lands in the account's directory. A `read-write` file channel whose
+source does not exist in the base is created there under an account, as a
+`read-write` directory channel's is -- containing `{}` when its path ends in `.json`
+(an empty file is no JSON), empty otherwise -- so what the agent writes there is the
+base's, shared as the channel says -- unless the profile gives that path a `start:` file
+(claude: the policy bodies): that is not what it starts as, so it is not bound, and what the agent writes there lands in the account's directory. Mount points bwrap creates for the channels and the
+entries are made in the account's directory, as they are in the base (one under an
+entry bound from the base, `cache/changelog.md`, in the base's entry, as with no
+account; one under a symlink made again, wherever its target is); empty files among
+them are removed after the launch, empty directories and the symlinks made again
+stay.
 
 **A `[connect]` path is never the base or its login**, account or not, in every mode, as
 a key or an `outside:` source, as written and resolved: the agent's state directory

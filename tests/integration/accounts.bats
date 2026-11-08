@@ -3,8 +3,9 @@
 # reports, from INSIDE the sandbox, which login it sees at $CLAUDE_CONFIG_DIR and what
 # else of the base is there. The unit suite (tests/unit/accounts.bats) pins the argv;
 # only this shows the account's directory really is the state directory, the base's
-# login really is out of reach, and a channel still comes from the base. Fixture files
-# in a throwaway HOME, never a real login.
+# login really is out of reach, a channel still comes from the base, and so do the
+# base's other entries (P7: a hook script, a symlink). Fixture files in a throwaway
+# HOME, never a real login.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -34,12 +35,17 @@ say config_dir "$c"
 say login "$(cat "$c/.credentials.json" 2>/dev/null || echo none)"
 say base_login "$(grep -rqs "BASE-LO""GIN" "$HOME" && echo yes || echo no)"
 say hook "$([ -e "$c/response-hook.py" ] && echo yes || echo no)"
+say hook_text "$(cat "$c/response-hook.py" 2>/dev/null || echo none)"
+say link "$(readlink "$c/link" 2>/dev/null || echo none)"
+say lock "$(cat "$c/.oauth_refresh.lock" 2>/dev/null || echo none)"
 say skill "$(cat "$c/skills/s.md" 2>/dev/null || echo none)"
 say wrote "$(printf 'inside\n' >"$c/written-inside" 2>/dev/null && echo yes || echo no)"
 PROBE
   chmod +x "$IHOME/.local/share/claude/versions/9.9.9/claude"
   printf 'BASE-LOGIN\n' >"$IHOME/.claude/.credentials.json"
   printf 'echo hook\n' >"$IHOME/.claude/response-hook.py"
+  printf 'BASE-LOCK\n' >"$IHOME/.claude/.oauth_refresh.lock"
+  ln -s somewhere "$IHOME/.claude/link"
   printf 'MY-SKILL\n' >"$IHOME/.claude/skills/s.md"
   printf 'WORK-LOGIN\n' >"$ACC/.credentials.json"
   BGS=()
@@ -89,6 +95,16 @@ finish() {
 
 # empty_files DIR -- the empty files directly in DIR (mount points left behind).
 empty_files() { find "$1" -maxdepth 1 -type f -empty; }
+# base_empty_left -- the empty files in the base that are mount points left behind: not the
+# read-write file channels' sources an account launch makes there on purpose (a channel
+# with no start: file, made empty when its path is no .json)
+base_empty_left() {
+  local f
+  while IFS= read -r f; do
+    awk -v k="{base}/${f##*/}" '$1 == k && !/start:/ { found = 1 } END { exit !found }' \
+      "$REPO_ROOT/profiles/claude/agent-sandbox" || echo "$f"
+  done < <(empty_files "$IHOME/.claude")
+}
 
 run_claude() {
   rm -f "$IWORK/report"
@@ -103,25 +119,48 @@ run_claude() {
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
 }
 
-@test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel still from the base; a write lands in the account" {
+@test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel and the base's other entries still from the base; a write lands in the account" {
   run_claude --account work
   [ "$status" -eq 0 ]
   [ "${M[config_dir]}" = "$IHOME/.claude" ]
   [ "${M[login]}" = WORK-LOGIN ]
   [ "${M[base_login]}" = no ]
-  [ "${M[hook]}" = no ] # not before #355's per-entry binds
+  [ "${M[hook]}" = yes ] # the base's hook script, bound at its path
+  [ "${M[hook_text]}" = "echo hook" ]
+  [ "${M[link]}" = somewhere ] # made again, as written
+  [ "${M[lock]}" = none ]      # the base's refresh lock is the base's
   [ "${M[skill]}" = MY-SKILL ]
   [ "${M[wrote]}" = yes ]
   [ "$(cat "$ACC/written-inside")" = inside ]
   [ ! -e "$IHOME/.claude/written-inside" ]
   [ "$(cat "$IHOME/.claude/.credentials.json")" = BASE-LOGIN ]
-  # no mount point left behind in the account's directory, nor in the base
-  local left
-  left="$(find "$ACC" "$IHOME/.claude" -maxdepth 1 -type f -empty)"
+  # no mount point left behind in the account's directory; in the base, the read-write
+  # file channels' sources it lacked that have no start: file are made there on purpose
+  # (P7): {} for a .json path, empty otherwise; one with a start: file is not made
+  local left f
+  left="$(find "$ACC" -maxdepth 1 -type f -empty)"
   [ -z "$left" ] || {
     echo "empty files left: $left"
     false
   }
+  [ -f "$IHOME/.claude/CLAUDE.md" ]
+  [ ! -s "$IHOME/.claude/CLAUDE.md" ]
+  [ "$(cat "$IHOME/.claude/settings.json")" = "{}" ]
+  [ "$(cat "$IHOME/.claude/remote-settings.json.signature.json")" = "{}" ]
+  [ ! -s "$IHOME/.claude/remote-settings.json.synced-at" ]
+  [ ! -e "$IHOME/.claude/policy-limits.json" ]
+  [ ! -e "$IHOME/.claude/remote-settings.json" ]
+  [ ! -e "$IHOME/.claude/policy-limits.json.stamp.json" ]
+  while IFS= read -r f; do
+    [[ "$f" != *.json ]] || {
+      echo "an empty .json file in the base: $f"
+      false
+    }
+    awk -v k="{base}/${f##*/}" '$1 == k && !/start:/ { found = 1 } END { exit !found }' "$REPO_ROOT/profiles/claude/agent-sandbox" || {
+      echo "empty file in the base that is no file channel without a start: file: $f"
+      false
+    }
+  done < <(find "$IHOME/.claude" -maxdepth 1 -type f -empty)
 }
 
 @test "without one, the base's login, as before" {
@@ -129,6 +168,27 @@ run_claude() {
   [ "$status" -eq 0 ]
   [ "${M[login]}" = BASE-LOGIN ]
   [ "${M[hook]}" = yes ]
+}
+
+@test "a channel nested in a base entry bound into an account role: its mount point is made in the base's entry, and removed after the launch" {
+  mkdir -p "$IHOME/.claude/cache" # no changelog.md: the own store's mount point is made
+  TEST_PRESET=isolated run_claude --account work
+  [ "$status" -eq 0 ]
+  [ "${M[login]}" = WORK-LOGIN ]
+  [ "${M[hook]}" = yes ]
+  [ ! -e "$IHOME/.claude/cache/changelog.md" ]
+  [ ! -e "$ACC/cache/changelog.md" ]
+}
+
+@test "a channel nested under a base entry that is a symlink: the mount point is made through the link, and removed from there after the launch" {
+  mkdir -p "$IHOME/.claude/cache.real"
+  ln -s cache.real "$IHOME/.claude/cache" # the changelog channel's directory, a link
+  TEST_PRESET=isolated run_claude --account work
+  [ "$status" -eq 0 ]
+  [ "${M[login]}" = WORK-LOGIN ]
+  [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory
+  [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
+  [ ! -e "$ACC/cache.real/changelog.md" ]
 }
 
 # Two roles at once on one state directory share its mount-point files: the first
@@ -165,12 +225,17 @@ two_roles_first_out() {
   [ "${M[cfg1]}" = yes ]
   [ "${M[hist1]}" = yes ]
   local left
-  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  left="$(empty_files "$ACC" && base_empty_left)"
   [ -z "$left" ] || {
     echo "empty files left: $left"
     false
   }
-  [ ! -s "$IHOME/.local/state/agent-sandbox/placeholders" ] # and the list is empty again
+  # and the list is empty again
+  [ ! -s "$IHOME/.local/state/agent-sandbox/placeholders" ] || {
+    echo "still listed:"
+    cat "$IHOME/.local/state/agent-sandbox/placeholders"
+    false
+  }
 }
 
 @test "a user's own empty file at a mount-point path is never removed, by the launch nor by the last one out" {
@@ -193,7 +258,7 @@ two_roles_first_out() {
   [ -n "$(empty_files "$ACC")" ] # kept: a still has them mounted
   finish a
   local left
-  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  left="$(empty_files "$ACC" && base_empty_left)"
   [ -z "$left" ] || {
     echo "empty files left: $left"
     false
