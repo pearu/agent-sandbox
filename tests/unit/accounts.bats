@@ -885,6 +885,36 @@ set_fetched() {
   [ "$(stat -c '%i %Y %s' "$H/home/.claude.json")" = "$before" ]
 }
 
+@test "P8: config = copy-on-write, a copy store on a file, is reset at a switch; the native file is not" {
+  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  dotfile '[connect]' 'config = copy-on-write'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  local store
+  store="$(config_store)"
+  [[ "$store" == "$SBOX"/config/copy/* ]]
+  [ "$(fetched "$store")" = 123 ]
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  [ "$(fetched "$store")" = 0 ]
+  [ "$(fetched "$H/home/.claude.json")" = 123 ]
+}
+
+@test "P8: a reset that fails (a store that is not JSON) is said, and the launch goes on; the store is left and the record written" {
+  printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  local store
+  store="$(config_store)"
+  printf 'not json' >"$store"
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"config: could not reset profileFetchedAt in $store;"* ]]
+  [ "$(cat "$store")" = "not json" ]
+  [ -s "$H/argv" ]
+  [ "$(cat "$SBOX/account")" = "claude"$'\t'"work" ]
+}
+
 @test "P8: a cold --exec on another account counts as a switch, as it writes the record" {
   printf '%s\n' '{"profileFetchedAt":123,"projects":{}}' >"$H/home/.claude.json"
   run_engine -- asb claude --version
