@@ -1275,7 +1275,12 @@ role `account-login` of a fixed scratch project, `~/.cache/agent-sandbox/account
 (under `XDG_CACHE_HOME` when set; made when absent, never given a dot-file, and one found
 there is refused), under `--preset isolated` and the default network mode, so only the
 profile's own allowlist applies: no project's policy (a strict or `retrieve-only` role)
-stands between the login and its token exchange. Afterwards that role's stores are
+stands between the login and its token exchange. Nor do the shell's `AGENT_SANDBOX_NET`
+and `AGENT_SANDBOX_CONNECT`: they are unset for the login, so an exported `net=none` or
+`config=read-write` cannot block it or hand it the native config file. With
+`CLAUDE_CONFIG_DIR` set in the shell (the profile's `base-env`), the base is that
+directory, and the base's other entries come from there as at any launch on an account;
+the login itself still lands in the account's directory. Afterwards that role's stores are
 removed, whatever the login's outcome -- under `isolated` the config copy is the role's
 own and would carry one account's identity into the next login -- and Ctrl-C at the
 login ends the login, not the cleanup; a run killed outright leaves them, and the next

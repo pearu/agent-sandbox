@@ -133,7 +133,8 @@ names are gone; there are no aliases for removed names before 1.0.
   profile key `[agent] login` (claude: `login = auth login`), sandboxed as the role
   `account-login` of the scratch project `~/.cache/agent-sandbox/account-login/` (no
   dot-file, so no project's policy applies) under `--preset isolated` and the default
-  network mode. That role's stores are removed afterwards, after a failed or
+  network mode; the shell's `AGENT_SANDBOX_NET` and `AGENT_SANDBOX_CONNECT` are unset
+  for it. That role's stores are removed afterwards, after a failed or
   interrupted login too (a killed run's by the next run), and the scratch project is
   left out of `--list` and `--list-all`. It ends by saying whether the account has its
   login file (the profile's first `account-paths` entry), by path; the exit status is

@@ -343,7 +343,8 @@
 #                         login) -- in the foreground, as the role account-login
 #                         of the scratch project ~/.cache/agent-sandbox/account-login/
 #                         (no dot-file) under --preset isolated and the default
-#                         network mode, then remove that role's stores and say
+#                         network mode (AGENT_SANDBOX_NET and AGENT_SANDBOX_CONNECT
+#                         unset), then remove that role's stores and say
 #                         whether the login file (the first account-paths entry)
 #                         is there. Exit: the login's status when it failed, 1
 #                         with no login file, else 0. Refused for a bad NAME, an
@@ -6875,7 +6876,8 @@ _as_account_check() {
 # The account's directory is made here, and the agent's own login runs in it as a role
 # of a fixed scratch project with no dot-file, under `isolated` and the default network
 # mode, so that no project's policy (a strict or retrieve-only role) stands between the
-# login and its token exchange: only the profile's allowlist applies (D10). The role's
+# login and its token exchange: only the profile's allowlist applies (D10). Nor does the
+# shell's AGENT_SANDBOX_NET or AGENT_SANDBOX_CONNECT: they are unset for the login. The role's
 # stores there are removed after every run, since under `isolated` the config channel is
 # the role's own copy and would carry one account's into the next login.
 
@@ -6993,8 +6995,12 @@ _as_account_login() {
   # Ctrl-C reaches the login (the terminal's foreground group) and ends it; here it only
   # interrupts the wait, so the cleanup still runs. A handler, not an ignore, so the
   # login does not inherit an ignored SIGINT.
+  # The shell's network mode and channel overrides are not the login's: it runs under the
+  # default network mode and isolated's own stores whatever the shell exports (pearu,
+  # 2026-11-08). Only these two are taken out; the plumbing variables cross as they do
+  # into any launch.
   trap ':' INT
-  (cd -- "$real" && exec "$self" --role account-login --preset isolated --account "$name" "$agent" ${login[@]+"${login[@]}"}) || rc=$?
+  (cd -- "$real" && exec env -u AGENT_SANDBOX_NET -u AGENT_SANDBOX_CONNECT "$self" --role account-login --preset isolated --account "$name" "$agent" ${login[@]+"${login[@]}"}) || rc=$?
   trap - INT
   _as_account_login_clean "$st" "$p" "$slug" \
     || _as_msg "--account-login: the login role's stores are still at $st/$p/$slug/account-login; the next run removes them"

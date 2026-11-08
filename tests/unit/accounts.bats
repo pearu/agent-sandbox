@@ -927,6 +927,31 @@ codex_profile() {
   [[ "$output" == *"the account 'work' of codex has no login: there is no ~/.local/state/agent-sandbox/codex/accounts/work/auth.json"* ]]
 }
 
+@test "--account-login: the shell's AGENT_SANDBOX_CONNECT does not reach the login: the config is isolated's own store, never the native file" {
+  login_paths
+  printf '{"oauthAccount":{"emailAddress":"native"}}\n' >"$H/home/.claude.json"
+  run_engine AGENT_SANDBOX_CONNECT='config=read-write' -- asb --account-login work claude
+  [ "$status" -eq 0 ]
+  local slot="${C//\//_}"
+  argv_has --bind "$LSB/config/own/${slot#_}_.claude.json" "$C/.claude.json"
+  run ! grep -qxF "$H/home/.claude.json" "$H/argv"
+  # the variable itself is honoured elsewhere: a plain launch binds the native file
+  run_engine AGENT_SANDBOX_CONNECT='config=read-write' -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/.claude.json" "$C/.claude.json"
+}
+
+@test "--account-login: the shell's AGENT_SANDBOX_NET does not reach the login: it runs under the default network mode, the proxy" {
+  run_engine AGENT_SANDBOX_NET=none -- asb --account-login work claude
+  [ "$status" -eq 0 ]
+  argv_has --share-net
+  [[ "$(setenv_value HTTPS_PROXY)" == http://*@127.0.0.1:* ]]
+  # elsewhere it is honoured: no network at all
+  run_engine AGENT_SANDBOX_NET=none -- asb claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --share-net
+}
+
 @test "--account-login: the login role's stores are removed afterwards, after a failing login too, and what a killed run left is removed first" {
   login_paths
   run_engine -- asb --account-login work claude
