@@ -520,6 +520,10 @@ rebuild_bwrap() {
 # install.sh builds the proxy's environment and the tools env with it too.
 MICROMAMBA_VERSION=2.9.0-0
 MICROMAMBA_URL="https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION"
+# Where GitHub's release download fails: micro.mamba.pm serves the same build as a conda
+# package (PLATFORM/VERSION), whose bin/micromamba has the pinned SHA-256 (checked
+# 2026-11-08 for both platforms below).
+MICROMAMBA_FALLBACK_URL="https://micro.mamba.pm/api/micromamba"
 MICROMAMBA_SUMS="366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3  micromamba-linux-64
 9f93b974adcb4d166996af969b6cd371287d1a3e52733704727884d9b74cb7a7  micromamba-linux-aarch64"
 MICROMAMBA="$STATE_DIR/micromamba/bin/micromamba"
@@ -542,23 +546,34 @@ micromamba_ok() { [[ -f "$1" ]] && sha256sum -c --status - <<<"$(micromamba_sum 
 
 install_micromamba() {
   section "micromamba (the proxy env, the tools env, conda inside sandboxes)"
-  local asset sum part check
+  local asset sum part check fallback tmp
   asset="$(micromamba_asset)" || err "no micromamba build for $(uname -m) (agent-sandbox installs micromamba-linux-64 or micromamba-linux-aarch64)"
   sum="$(micromamba_sum "$asset")"
   if [[ -x "$MICROMAMBA" ]] && micromamba_ok "$MICROMAMBA" "$asset"; then
     ok "micromamba $MICROMAMBA_VERSION present: $MICROMAMBA"
   elif ((DRY_RUN)); then
     info "(dry-run) would fetch $MICROMAMBA_URL/$asset"
+    info "(dry-run) (where that fails: bin/micromamba of $MICROMAMBA_FALLBACK_URL/${asset#micromamba-}/${MICROMAMBA_VERSION%-*})"
     info "(dry-run) check it against the pinned SHA-256 $sum (and the release's $asset.sha256)"
     info "(dry-run) and install it as $MICROMAMBA (mode 755)"
   else
     mkdir -p "${MICROMAMBA%/*}"
     part="$MICROMAMBA.part"
     info "fetching micromamba $MICROMAMBA_VERSION: $MICROMAMBA_URL/$asset"
-    curl -fsSL -o "$part" "$MICROMAMBA_URL/$asset" || {
+    if ! curl -fsSL -o "$part" "$MICROMAMBA_URL/$asset"; then
       rm -f "$part"
-      err "fetching $MICROMAMBA_URL/$asset failed"
-    }
+      fallback="$MICROMAMBA_FALLBACK_URL/${asset#micromamba-}/${MICROMAMBA_VERSION%-*}"
+      warn "fetching $MICROMAMBA_URL/$asset failed; trying $fallback (the same build, as a conda package)"
+      tmp="$(mktemp -d)"
+      if curl -fsSL -o "$tmp/micromamba.tar.bz2" "$fallback" \
+        && tar -xjf "$tmp/micromamba.tar.bz2" -C "$tmp" bin/micromamba; then
+        mv -f "$tmp/bin/micromamba" "$part"
+        rm -rf "$tmp"
+      else
+        rm -rf "$tmp"
+        err "fetching $MICROMAMBA_URL/$asset failed, and $fallback too (unpacking it needs bzip2)"
+      fi
+    fi
     micromamba_ok "$part" "$asset" || {
       rm -f "$part"
       err "$asset does not match the pinned SHA-256 $sum; nothing was installed"
