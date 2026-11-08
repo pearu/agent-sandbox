@@ -127,6 +127,19 @@ names are gone; there are no aliases for removed names before 1.0.
   role's `.claude.json` store (never the native file under `config = read-write`), so
   `/status` names the account in force from the first turn, not the last one's
   organisation for up to a day (`profile.py forget-profile`).
+  `asb --account-login NAME AGENT`, alone on the line and host only, makes the account's
+  directory (mode 700; an existing one is a re-login; a symlink or a non-directory at any
+  level is refused) and runs the agent's own login in it in the foreground: the new
+  profile key `[agent] login` (claude: `login = auth login`), sandboxed as the role
+  `account-login` of the scratch project `~/.cache/agent-sandbox/account-login/` (no
+  dot-file, so no project's policy applies) under `--preset isolated` and the default
+  network mode; the shell's `AGENT_SANDBOX_NET` and `AGENT_SANDBOX_CONNECT` are unset
+  for it. That role's stores are removed afterwards, after a failed or
+  interrupted login too (a killed run's by the next run), and the scratch project is
+  left out of `--list` and `--list-all`. It ends by saying whether the account has its
+  login file (the profile's first `account-paths` entry), by path; the exit status is
+  the login's when it failed, 1 with no login file, else 0. A profile without `login`,
+  or without `account-paths`, refuses it.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the

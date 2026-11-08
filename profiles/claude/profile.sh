@@ -11,7 +11,9 @@
 # (`[agent] resume`, profile_resume: the words `asb --resume` puts after the agent's
 # own arguments, before a `[briefing] start` text; #355), and the files that are an
 # account's (`[agent] account-paths`, profile_account_paths: with an account named, the
-# account's directory is bound where the base is; #355). This script keeps the rest.
+# account's directory is bound where the base is; #355), and what starts a login
+# (`[agent] login`, profile_login: the arguments `asb --account-login NAME claude` runs
+# on the account's directory; #355). This script keeps the rest.
 #
 # ============================================================================
 # THE PROFILE CONTRACT
