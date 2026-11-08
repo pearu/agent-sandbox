@@ -95,6 +95,16 @@ finish() {
 
 # empty_files DIR -- the empty files directly in DIR (mount points left behind).
 empty_files() { find "$1" -maxdepth 1 -type f -empty; }
+# base_empty_left -- the empty files in the base that are mount points left behind: not the
+# read-write file channels' sources an account launch makes there on purpose (a channel
+# with no start: file, made empty when its path is no .json)
+base_empty_left() {
+  local f
+  while IFS= read -r f; do
+    awk -v k="{base}/${f##*/}" '$1 == k && !/start:/ { found = 1 } END { exit !found }' \
+      "$REPO_ROOT/profiles/claude/agent-sandbox" || echo "$f"
+  done < <(empty_files "$IHOME/.claude")
+}
 
 run_claude() {
   rm -f "$IWORK/report"
@@ -215,7 +225,7 @@ two_roles_first_out() {
   [ "${M[cfg1]}" = yes ]
   [ "${M[hist1]}" = yes ]
   local left
-  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  left="$(empty_files "$ACC" && base_empty_left)"
   [ -z "$left" ] || {
     echo "empty files left: $left"
     false
@@ -243,7 +253,7 @@ two_roles_first_out() {
   [ -n "$(empty_files "$ACC")" ] # kept: a still has them mounted
   finish a
   local left
-  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  left="$(empty_files "$ACC" && base_empty_left)"
   [ -z "$left" ] || {
     echo "empty files left: $left"
     false
