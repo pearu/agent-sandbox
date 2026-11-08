@@ -738,6 +738,58 @@ STUB
   [ ! -e "$mm" ]
 }
 
+# a curl whose GitHub release download fails; micro.mamba.pm serves a conda package with
+# a fake bin/micromamba, unless $1 is "down" (then it fails too)
+stub_curl_github_down() {
+  mkdir -p "$T/bin" "$T/pkg/bin"
+  printf 'fake micromamba\n' >"$T/pkg/bin/micromamba"
+  tar -cjf "$T/pkg.tar.bz2" -C "$T/pkg" bin/micromamba
+  cat >"$T/bin/curl" <<STUB
+#!/usr/bin/env bash
+out=""
+for ((i = 1; i <= \$#; i++)); do [[ "\${!i}" == -o ]] && { j=\$((i + 1)); out="\${!j}"; }; done
+url="\${!#}"
+echo "curl \$url" >>"$T/called"
+case "\$url" in
+  https://micro.mamba.pm/*) [[ "${1:-}" != down ]] && cp "$T/pkg.tar.bz2" "\$out" && exit 0 ;;
+esac
+exit 22
+STUB
+  chmod +x "$T/bin/curl"
+}
+
+@test "the micromamba step: GitHub's download failing, the same build from micro.mamba.pm, checked against the pinned sum" {
+  [[ "$(uname -m)" == x86_64 ]] || skip "the pinned sum and platform asserted here are linux-64's"
+  local mm="$T/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  stub_no_host_conda
+  : >"$T/answers"
+  # the fake binary is not the release: the pinned sum refuses it, nothing installed
+  stub_curl_github_down
+  step
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed; trying https://micro.mamba.pm/api/micromamba/linux-64/2.9.0 (the same build, as a conda package)"* ]]
+  [[ "$output" == *"micromamba-linux-64 does not match the pinned SHA-256 $MM_SUM_X86; nothing was installed"* ]]
+  [ ! -e "$mm" ] && [ ! -e "$mm.part" ]
+  # a sha256sum that agrees: installed from the fallback; the release's .sha256 cannot be had
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sha256sum"
+  chmod +x "$T/bin/sha256sum"
+  : >"$T/called"
+  step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"micromamba 2.9.0-0 installed: $mm (SHA-256 $MM_SUM_X86)"* ]]
+  [[ "$output" == *"could not fetch micromamba-linux-64.sha256 to cross-check; the pinned SHA-256 matched"* ]]
+  [ "$(cat "$mm")" = "fake micromamba" ]
+  [ "$(stat -c %a "$mm")" = 755 ]
+  grep -qx "curl https://micro.mamba.pm/api/micromamba/linux-64/2.9.0" "$T/called"
+  # both down: refused, nothing installed
+  rm -f "$mm"
+  stub_curl_github_down down
+  step
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"and https://micro.mamba.pm/api/micromamba/linux-64/2.9.0 too"* ]]
+  [ ! -e "$mm" ] && [ ! -e "$mm.part" ]
+}
+
 @test "which conda sandboxes use: asked where the host has conda, sandbox without asking where it has none, --yes says host, a file there is kept" {
   [[ "$(uname -m)" == x86_64 ]] || skip "the stubbed .sha256 is linux-64's"
   local f="$T/home/.config/agent-sandbox/conda"
