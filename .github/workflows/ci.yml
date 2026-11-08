@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mm"
           curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@v2
         with:
           download-micromamba: false
           micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
@@ -61,7 +61,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mm"
           curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@v2
         with:
           download-micromamba: false
           micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
@@ -105,7 +105,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mm"
           curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@v2
         with:
           download-micromamba: false
           micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
@@ -145,7 +145,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mm"
           curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@v2
         with:
           download-micromamba: false
           micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
@@ -302,7 +302,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mm"
           curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@v2
         with:
           download-micromamba: false
           micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
@@ -336,7 +336,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mm"
           curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@v2
         with:
           download-micromamba: false
           micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
