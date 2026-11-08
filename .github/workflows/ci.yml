@@ -27,8 +27,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # GitHub's release downloads, where the action fetches micromamba, answered 504;
+      # micro.mamba.pm serves the same build as a conda package.
+      - name: micromamba from micro.mamba.pm
+        run: |
+          mkdir -p "$RUNNER_TEMP/mm"
+          curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
       - uses: mamba-org/setup-micromamba@v3
         with:
+          download-micromamba: false
+          micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
           environment-file: environment.yml
           cache-environment: true
       - name: scripts/check.sh (lint, shfmt, bundle-sync, dry-run)
@@ -47,8 +55,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # GitHub's release downloads, where the action fetches micromamba, answered 504;
+      # micro.mamba.pm serves the same build as a conda package.
+      - name: micromamba from micro.mamba.pm
+        run: |
+          mkdir -p "$RUNNER_TEMP/mm"
+          curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
       - uses: mamba-org/setup-micromamba@v3
         with:
+          download-micromamba: false
+          micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
           environment-file: environment.yml
           cache-environment: true
       - name: Unit suites, shard ${{ matrix.shard }}/4
@@ -83,8 +99,16 @@ jobs:
           fi
           bwrap --ro-bind / / --unshare-user --unshare-pid -- true
           echo "user namespaces work on ${{ matrix.os }}"
+      # GitHub's release downloads, where the action fetches micromamba, answered 504;
+      # micro.mamba.pm serves the same build as a conda package.
+      - name: micromamba from micro.mamba.pm
+        run: |
+          mkdir -p "$RUNNER_TEMP/mm"
+          curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
       - uses: mamba-org/setup-micromamba@v3
         with:
+          download-micromamba: false
+          micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
           environment-file: environment.yml
           cache-environment: true
       - name: Integration suites (real bwrap)
@@ -115,8 +139,16 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
           bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      # GitHub's release downloads, where the action fetches micromamba, answered 504;
+      # micro.mamba.pm serves the same build as a conda package.
+      - name: micromamba from micro.mamba.pm
+        run: |
+          mkdir -p "$RUNNER_TEMP/mm"
+          curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
       - uses: mamba-org/setup-micromamba@v3
         with:
+          download-micromamba: false
+          micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
           environment-file: environment.yml
           cache-environment: true
       - name: End-to-end installer test (shim for systemd)
@@ -264,8 +296,16 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
           bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      # GitHub's release downloads, where the action fetches micromamba, answered 504;
+      # micro.mamba.pm serves the same build as a conda package.
+      - name: micromamba from micro.mamba.pm
+        run: |
+          mkdir -p "$RUNNER_TEMP/mm"
+          curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
       - uses: mamba-org/setup-micromamba@v3
         with:
+          download-micromamba: false
+          micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
           environment-file: environment.yml
           create-args: cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
           cache-environment: true
@@ -290,8 +330,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # GitHub's release downloads, where the action fetches micromamba, answered 504;
+      # micro.mamba.pm serves the same build as a conda package.
+      - name: micromamba from micro.mamba.pm
+        run: |
+          mkdir -p "$RUNNER_TEMP/mm"
+          curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$RUNNER_TEMP/mm" bin/micromamba
       - uses: mamba-org/setup-micromamba@v3
         with:
+          download-micromamba: false
+          micromamba-binary-path: ${{ runner.temp }}/mm/bin/micromamba
           environment-file: environment.yml
           create-args: cmake make pkg-config cxx-compiler openssl libcurl elfutils zlib
           cache-environment: true
