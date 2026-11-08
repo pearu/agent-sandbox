@@ -111,8 +111,11 @@ names are gone; there are no aliases for removed names before 1.0.
   bound one by one, read-write at its path, before the channels, as it is at launch:
   not the channels' own paths, the `hide` list (blanked) or the `account-paths`, so
   never the base's login; a symlink entry is made again with its target as written,
-  never followed. A base that resolves to a protected path is refused under an account
-  too, as it is without one. A
+  never followed (a stale one an earlier launch made in the account's directory is
+  replaced; any other same-name entry of another kind there refuses the launch, naming
+  both paths). A `read-write` file channel missing in the base is created there empty
+  under an account, as a directory channel's is. A base that resolves to a protected
+  path is refused under an account too, as it is without one. A
   `[connect]` key or `outside:` source that is the base, a parent of it, or one of the
   profile's `account-paths` is refused, account or not. A join takes the running role's
   account; `--check` reports an unusable account directory with the plan and exits 1.

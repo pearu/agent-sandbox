@@ -1242,18 +1242,23 @@ by one over the account's directory, and then the channels the profile declares 
 project's `[claude] hide`), and the profile's `account-paths` -- **the base's login and
 its refresh lock are never in an account role**; that is the point. An entry that is a
 symlink is made again inside with its target as written, never followed on the host.
-Where the account's directory has an entry of the same name, the base's covers it; an
-entry of another kind there (a file where the base has a directory, a symlink to
-somewhere else) fails the launch with bwrap's message, until one of the two is
-removed. An entry created in the base after the launch is not seen by that launch (a
-role on the base sees it at once); one the agent creates at the top during the session
-lands in the account's directory. A `read-write` file channel whose source does not
-exist in the base is not bound under an account, so a file the agent creates there
-lands in the account's directory, not the base. Mount points bwrap creates for the
-channels and the entries are made in the account's directory, as they are in the base
-(one under an entry bound from the base, `cache/changelog.md`, in the base's entry, as
-with no account); empty files among them are removed after the launch, empty
-directories and the symlinks made again stay.
+Where the account's directory has an entry of the same name and kind, the base's
+covers it. A symlink there is one an earlier launch made again, and is replaced when
+the base's entry is no longer a symlink to the same target. Any other mismatch (a file
+in the account's directory where the base has a directory, a directory where it has a
+file, a file or directory where it has a symlink) refuses the launch before anything
+starts, naming both paths: remove the account's to see the base's there, or the base's
+to keep the account's. An entry created in the base after the launch is not seen by
+that launch (a role on the base sees it at once); one the agent creates at the top
+during the session lands in the account's directory. A `read-write` file channel whose
+source does not exist in the base is created there empty under an account, as a
+`read-write` directory channel's is, so what the agent writes there is the base's,
+shared as the channel says. Mount points bwrap creates for the channels and the
+entries are made in the account's directory, as they are in the base (one under an
+entry bound from the base, `cache/changelog.md`, in the base's entry, as with no
+account; one under a symlink made again, wherever its target is); empty files among
+them are removed after the launch, empty directories and the symlinks made again
+stay.
 
 **A `[connect]` path is never the base or its login**, account or not, in every mode, as
 a key or an `outside:` source, as written and resolved: the agent's state directory

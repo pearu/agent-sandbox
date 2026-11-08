@@ -67,13 +67,21 @@ run_claude() {
   [ "$(cat "$ACC/written-inside")" = inside ]
   [ ! -e "$IHOME/.claude/written-inside" ]
   [ "$(cat "$IHOME/.claude/.credentials.json")" = BASE-LOGIN ]
-  # no mount point left behind in the account's directory, nor in the base
-  local left
-  left="$(find "$ACC" "$IHOME/.claude" -maxdepth 1 -type f -empty)"
+  # no mount point left behind in the account's directory; in the base, the empty files
+  # are the read-write file channels' sources it lacked, made there on purpose (P7)
+  local left f
+  left="$(find "$ACC" -maxdepth 1 -type f -empty)"
   [ -z "$left" ] || {
     echo "empty files left: $left"
     false
   }
+  [ -f "$IHOME/.claude/CLAUDE.md" ]
+  while IFS= read -r f; do
+    awk -v k="{base}/${f##*/}" '$1 == k { found = 1 } END { exit !found }' "$REPO_ROOT/profiles/claude/agent-sandbox" || {
+      echo "empty file in the base that is no file channel: $f"
+      false
+    }
+  done < <(find "$IHOME/.claude" -maxdepth 1 -type f -empty)
 }
 
 @test "without one, the base's login, as before" {
@@ -91,4 +99,15 @@ run_claude() {
   [ "${M[hook]}" = yes ]
   [ ! -e "$IHOME/.claude/cache/changelog.md" ]
   [ ! -e "$ACC/cache/changelog.md" ]
+}
+
+@test "a channel nested under a base entry that is a symlink: the mount point is made through the link, and removed from there after the launch" {
+  mkdir -p "$IHOME/.claude/cache.real"
+  ln -s cache.real "$IHOME/.claude/cache" # the changelog channel's directory, a link
+  TEST_PRESET=isolated run_claude --account work
+  [ "$status" -eq 0 ]
+  [ "${M[login]}" = WORK-LOGIN ]
+  [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory
+  [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
+  [ ! -e "$ACC/cache.real/changelog.md" ]
 }

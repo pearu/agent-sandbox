@@ -642,8 +642,121 @@ argv_count() {
   _as_base_bind
   [ "$(_as_host_path_of "$C/cache/changelog.md")" = "$C/cache/changelog.md" ]
   [ "$(_as_host_path_of "$C/CLAUDE.md")" = "$ACC/work/CLAUDE.md" ]
-  [ "$(_as_host_path_of "$C/link/x")" = "$ACC/work/link/x" ] # a symlink made again is the account's
+  [ "$(_as_host_path_of "$C/link/x")" = "$ACC/work/somewhere/x" ] # through a symlink made again: its target
   [ "$(_as_host_path_of "$C")" = "$ACC/work" ]
   # the response hook's own mount point: recorded at the account, removed while empty
   [[ " ${_as_placeholder_files[*]} " == *" $ACC/work/response-hook.py "* ]]
+}
+
+@test "P7: a symlink an earlier launch made in the account's directory is replaced when the base's entry changed; one still right is kept" {
+  ln -s old-target "$ACC/work/link" # the base's link now points at somewhere
+  mkdir -p "$H/x"
+  ln -s "$H/x" "$ACC/work/ide" # the base's ide/ is a directory now
+  ln -s somewhere "$ACC/work/keep"
+  ln -s somewhere "$C/keep"
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --symlink somewhere "$C/link"
+  argv_has --bind "$C/ide" "$C/ide"
+  [ ! -L "$ACC/work/link" ] # removed; bwrap (a stub here) makes it again
+  [ ! -L "$ACC/work/ide" ]
+  [ -d "$H/x" ] # its target untouched
+  [ "$(readlink "$ACC/work/keep")" = somewhere ]
+}
+
+@test "P7: a same-name entry of another kind in the account's directory refuses the launch before bwrap runs, naming both paths; the same kind is covered" {
+  : >"$ACC/work/ide" # a file where the base has a directory
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the account 'work': '$ACC/work/ide' is a file where the base's '$C/ide' is a directory, so the base's cannot be put over it; remove '$ACC/work/ide' (the account's) to see the base's there, or '$C/ide' (the base's) to keep the account's. Nothing was started"* ]]
+  [ ! -s "$H/argv" ]
+  rm "$ACC/work/ide"
+  mkdir "$ACC/work/response-hook.py" # a directory where the base has a file
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'$ACC/work/response-hook.py' is a directory where the base's '$C/response-hook.py' is a file"* ]]
+  [ ! -s "$H/argv" ]
+  rmdir "$ACC/work/response-hook.py"
+  : >"$ACC/work/link" # a file where the base has a symlink
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'$ACC/work/link' is a file where the base's '$C/link' is a symlink"* ]]
+  [ -e "$ACC/work/link" ] # never removed: it is not one a launch made
+  rm "$ACC/work/link"
+  # the same kind: the base's is bound over it
+  printf 'mine\n' >"$ACC/work/response-hook.py"
+  mkdir -p "$ACC/work/ide"
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$C/response-hook.py" "$C/response-hook.py"
+  argv_has --bind "$C/ide" "$C/ide"
+  [ "$(cat "$ACC/work/response-hook.py")" = mine ]
+}
+
+@test "P7: a missing read-write file channel is made empty in the base under an account, and bound from there; not without one" {
+  [ ! -e "$C/CLAUDE.md" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ ! -e "$C/CLAUDE.md" ]
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  [ -f "$C/CLAUDE.md" ]
+  [ ! -s "$C/CLAUDE.md" ]
+  argv_has --bind "$C/CLAUDE.md" "$C/CLAUDE.md"
+  [ ! -e "$ACC/work/CLAUDE.md" ] # the stub makes no mount point
+}
+
+@test "P7 helper: the entry listing ignores a GLOBIGNORE in force" {
+  source_engine
+  HOME="$H/home"
+  # shellcheck disable=SC2034 # read by _as_base_bind by dynamic scope
+  local profile=claude profile_base="$C" _acct_name=work _acct_dir="$ACC/work" _as_base_real=""
+  # shellcheck disable=SC2034
+  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=() _as_base_entries=() _as_base_links=()
+  # shellcheck disable=SC2034
+  local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
+  GLOBIGNORE='*:.*:*/*'
+  _as_base_bind
+  unset GLOBIGNORE
+  [[ " ${args[*]} " == *" --bind $C/response-hook.py $C/response-hook.py "* ]]
+  [[ " ${args[*]} " == *" --symlink somewhere $C/link "* ]]
+}
+
+@test "P7 helper: a mount point under a symlink made again is mapped through its target, to where bwrap makes it" {
+  source_engine
+  HOME="$H/home"
+  # shellcheck disable=SC2034 # read by the helpers by dynamic scope
+  local profile=claude profile_base="$C" _acct_name=work _acct_dir="$ACC/work" _as_base_real=""
+  # shellcheck disable=SC2034
+  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=() _as_base_entries=() _as_base_links=()
+  # shellcheck disable=SC2034
+  local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
+  ln -s cache "$C/clink"    # into an entry bound from the base
+  ln -s "$H/abs" "$C/alink" # outside the base
+  ln -s ./clink "$C/chain"  # through another link
+  _as_base_bind
+  [ "$(_as_host_path_of "$C/clink/changelog.md")" = "$C/cache/changelog.md" ]
+  [ "$(_as_host_path_of "$C/chain/changelog.md")" = "$C/cache/changelog.md" ]
+  [ "$(_as_host_path_of "$C/link/x")" = "$ACC/work/somewhere/x" ] # nothing there: the account's
+  [ "$(_as_host_path_of "$C/alink/x")" = "$H/abs/x" ]
+  # a loop ends
+  ln -s loop "$C/loop"
+  args=()
+  _as_base_bind
+  run _as_host_path_of "$C/loop/x"
+  [ "$status" -eq 0 ]
+}
+
+@test "the review's base/login note is for the profile --profile names when it names one, else for each profile with a base" {
+  mkdir -p "$H/profiles2/codex"
+  ln -sfn "$REPO_ROOT/profiles/claude" "$H/profiles2/claude"
+  printf 'profile_command=codex\n' >"$H/profiles2/codex/profile.sh"
+  printf '[agent]\nbase = ~/.claude\naccount-paths = .credentials.json\n' >"$H/profiles2/codex/agent-sandbox"
+  printf '[connect]\n~/.claude/.credentials.json = read-only\n' >"$PROJ/.agent-sandbox"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --check
+  [[ "$output" == *"(profile claude); a launch refuses the line."* ]]
+  [[ "$output" == *"(profile codex); a launch refuses the line."* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --profile claude --check
+  [[ "$output" == *"(profile claude); a launch refuses the line."* ]]
+  [[ "$output" != *"(profile codex)"* ]]
 }

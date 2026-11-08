@@ -373,7 +373,13 @@ Stated plainly. These are what the adversary above can still do.
   and whatever else is there) are in an account role as they are in a role on the
   base: native and read-write, bound one by one at their paths -- the same exposure
   as the base's directory bind, minus the hide list and the profile's
-  `account-paths`, which are never bound. Which of those entries an agent writes per
+  `account-paths`, which are never bound. **The login guarantee is by name**: what
+  is kept out is the profile's `account-paths` at the base's top, nothing else, and
+  every other entry is shared read-write between the base and all its accounts -- a
+  copy of a login left under `ide/` or `cache/` (by you, or by an agent asked to) is
+  in every account role, and writable from it, like any other entry. A `read-write`
+  file channel missing in the base is created there empty under an account, so it is
+  shared too. Which of those entries an agent writes per
   account, and what it leaves there for another session to read, is the profile's to
   classify (an unclassified entry is a residual risk per host; `--check` lists them).
   The entries are listed when the launch starts and mounted by bwrap after: an entry

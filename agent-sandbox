@@ -2276,6 +2276,12 @@ _as_connect_bind_channel() {
       args+=(--bind "$src" "$path")
     elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
       if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
+      # Under an account (#355) a missing FILE is made in the base too, empty, so what
+      # the agent writes there is the base's, shared as the channel says, not the
+      # account directory's.
+      if [[ "$kind" == file && ! -e "$src" && ! -L "$src" && -n "${_acct_dir:-}" && "$src" == "${profile_base:-}"/* ]]; then
+        { mkdir -p -- "$(dirname -- "$src")" && : >"$src"; } || return 1
+      fi
       if [[ -e "$src" ]]; then
         # an account's directory (#355) has no such file: the mount point is made there
         [[ "$kind" == file ]] && _as_connect_placeholder "$path"
@@ -6577,24 +6583,36 @@ _as_account_check() {
   return 0
 }
 
-# _as_host_path_of INSIDE -- the host path behind INSIDE, for a mount point bwrap creates
-# there (#355): with an account in force (_acct_dir) the base's inside path is the
-# account's directory, so `{base}/X` is created at ACCOUNT/X on the host -- except under
-# an entry of the base bound there from the base (_as_base_entry_binds): `{base}/E/Y`
-# is created at BASE/E/Y, as it is with no account; any other path is the same on both
-# sides. A placeholder's record must name the host path, or the cleanup would test, and
-# remove, an empty file of that name where bwrap did not make it.
+# _as_host_path_of INSIDE [DEPTH] -- the host path behind INSIDE, for a mount point bwrap
+# creates there (#355): with an account in force (_acct_dir) the base's inside path is
+# the account's directory, so `{base}/X` is created at ACCOUNT/X on the host -- except
+# under an entry of the base bound there from the base (_as_base_entry_binds):
+# `{base}/E/Y` is created at BASE/E/Y, as it is with no account. Under an entry made
+# again as a symlink, `{base}/L/Y`, bwrap follows the link inside the sandbox, so the
+# path is mapped again through the link's target (a relative one is under {base}); any
+# other path is the same on both sides. A placeholder's record must name the host path
+# bwrap creates, or the cleanup would test, and remove, an empty file of that name
+# where bwrap did not make it, and leave the one it did.
 # shellcheck disable=SC2154
 _as_host_path_of() {
+  local depth="${2:-0}"
   if [[ -n "${_acct_dir:-}" && -n "${profile_base:-}" ]]; then
     if [[ "$1" == "$profile_base" ]]; then
       printf '%s' "$_acct_dir"
       return 0
     elif [[ "$1" == "$profile_base"/* ]]; then
-      local rel="${1#"$profile_base"/}" e
+      local rel="${1#"$profile_base"/}" e t
       for e in ${_as_base_entries[@]+"${_as_base_entries[@]}"}; do
         if [[ "$rel" == "$e"/* && -n "${_as_base_real:-}" ]]; then
           printf '%s/%s' "$_as_base_real" "$rel"
+          return 0
+        fi
+      done
+      for e in ${_as_base_links[@]+"${_as_base_links[@]}"}; do
+        t="${e#*$'\t'}" e="${e%%$'\t'*}"
+        if [[ "$rel" == "$e"/* ]] && ((depth < 16)); then
+          [[ "$t" == /* ]] || t="$profile_base/$t"
+          _as_host_path_of "$(realpath -m -s -- "$t/${rel#"$e"/}")" $((depth + 1))
           return 0
         fi
       done
@@ -6621,7 +6639,8 @@ _as_host_path_of() {
 # from the base itself, since nothing outer covers them), the hide list's (the tmpfs
 # below) and the profile's account-paths -- THE BASE'S LOGIN IS NEVER IN AN ACCOUNT
 # ROLE. _as_account_dir checked the directory where it was resolved; an account named
-# with no directory resolved refuses rather than fall back to the base.
+# with no directory resolved refuses rather than fall back to the base. Fails when an
+# entry cannot be put over the account's (_as_base_entry_binds).
 # shellcheck disable=SC2154,SC2031
 _as_base_bind() {
   [[ -n "$profile_base" ]] || return 0
@@ -6641,7 +6660,7 @@ _as_base_bind() {
   fi
   if [[ -n "${_acct_dir:-}" ]]; then
     args+=(--bind "$_acct_dir" "$profile_base")
-    _as_base_entry_binds "$_preal"
+    _as_base_entry_binds "$_preal" || return 1
   else
     args+=(--bind "$_preal" "$profile_base")
   fi
@@ -6661,12 +6680,24 @@ _as_base_bind() {
 # mount point in the account's directory; an empty file among them is removed by the
 # cleanup (as a placeholder), a directory or a symlink stays. Sets _as_base_real and
 # _as_base_entries (the names bound from the base), so _as_host_path_of places a mount
-# point under one of them in the base, where bwrap makes it.
+# point under one of them in the base, where bwrap makes it, and _as_base_links
+# (NAME<TAB>TARGET of the symlinks made again), so it maps a path under one through it.
+#
+# A NAME THE ACCOUNT'S DIRECTORY HAS TOO: the base's is bound over it when both are of
+# a kind bwrap can mount over (a directory over a directory, a file over a file). A
+# symlink there is one an earlier launch made again: it is removed first when the
+# base's entry is no longer a symlink to the same target, and then made, or bound
+# over, afresh. Any other mismatch -- a file where the base has a directory, a
+# directory where it has a file, anything but a symlink where it has one -- would fail
+# bwrap's mount, so it is refused here, before anything starts, naming both paths.
+#
+# GLOBIGNORE is cleared for the listing: an ignore list in force would drop entries.
 # shellcheck disable=SC2154,SC2031
 _as_base_entry_binds() {
-  local real="$1" e name dest line entry ap skip
+  local real="$1" e name dest line entry ap skip a ka ke
+  local GLOBIGNORE=""
   local -a fields=() skip_paths=()
-  _as_base_real="$real" _as_base_entries=()
+  _as_base_real="$real" _as_base_entries=() _as_base_links=()
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     for entry in "${fields[@]:1}"; do
@@ -6690,8 +6721,27 @@ _as_base_entry_binds() {
       [[ "$ap" == "$name" || "$ap" == "$name"/* ]] && skip=1 && break
     done
     ((skip)) && continue
+    a="$_acct_dir/$name"
+    if [[ -L "$a" ]]; then
+      if ! [[ -L "$e" && "$(readlink -- "$a")" == "$(readlink -- "$e")" ]]; then
+        rm -f -- "$a" || {
+          _as_msg "the account '${_acct_name:-}': cannot remove the stale symlink '$a' that an earlier launch made for the base's '$e'"
+          return 1
+        }
+      fi
+    elif [[ -e "$a" ]]; then
+      ka=file ke=file
+      [[ -d "$a" ]] && ka=directory
+      [[ -d "$e" ]] && ke=directory
+      [[ -L "$e" ]] && ke=symlink
+      if [[ "$ka" != "$ke" ]]; then
+        _as_msg "the account '${_acct_name:-}': '$a' is a $ka where the base's '$e' is a $ke, so the base's cannot be put over it; remove '$a' (the account's) to see the base's there, or '$e' (the base's) to keep the account's. Nothing was started"
+        return 1
+      fi
+    fi
     if [[ -L "$e" ]]; then
       args+=(--symlink "$(readlink -- "$e")" "$dest")
+      _as_base_links+=("$name"$'\t'"$(readlink -- "$e")")
     else
       [[ -d "$e" ]] || _as_connect_placeholder "$dest"
       args+=(--bind "$e" "$dest")
@@ -12817,7 +12867,7 @@ agent_sandbox() (
   local -a _as_placeholder_files=()
   # Under an account (#355): the resolved base and the names of its entries bound from
   # it one by one (_as_base_entry_binds), for _as_host_path_of.
-  local -a _as_base_entries=()
+  local -a _as_base_entries=() _as_base_links=()
   local _as_base_real=""
   # Declared HERE, not down with the launch locals: state isolation opens the
   # session dir well before that point, and a later `local _session_dir=""`
