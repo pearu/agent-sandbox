@@ -539,12 +539,14 @@ Stated plainly. These are what the adversary above can still do.
   `$XDG_STATE_HOME`; the live sessions and their keepers are found under the session
   base (and the keepers under the state directory too). A launch with a different
   `XDG_STATE_HOME` has a list of its own, so it does not adopt the other's files and
-  leaves them behind, but its mounts are seen. A launch with a different session base
+  leaves them behind, but its mounts are held from its start: its session record names
+  every existing file it binds over. A launch with a different session base
   (`AGENT_SANDBOX_SESSION_BASE`, or another `XDG_RUNTIME_DIR`) is seen only through
-  its keeper record, so not while it starts (before its supervisor writes that record),
-  and not at all when its `XDG_STATE_HOME` differs too: then, if it binds over the
-  same files, another session's exit can detach its mount points. A launch whose list lock times out
-  (10 s) lists nothing and leaves its empty files behind.
+  its keeper record under the shared state directory, so not while it starts (before
+  its supervisor writes that record), and not at all when its `XDG_STATE_HOME` differs
+  too: in those cases, if it binds over the same files, another session's exit can
+  detach its mount points. A launch whose list lock times out (10 s) lists nothing and
+  leaves its empty files behind.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
   on the host with your full environment, as `claude update` does.
 - **The proxy is a host process that sees all traffic.** Its CA's private key

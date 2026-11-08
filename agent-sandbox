@@ -984,6 +984,11 @@ _as_placeholder_register() {
       elif [[ ! -e "$l" ]]; then
         own+=("$l")
         printf '%s\n' "$l"
+      elif [[ "$l" != *$'\n'* ]]; then
+        # Not on this list: the user's -- or another state directory's mount point,
+        # which this launch binds over all the same. Held in the record (no other
+        # session removes it while this one runs), never this launch's to remove.
+        held+=("$l")
       fi
     done
     for l in ${own[@]+"${own[@]}"}; do

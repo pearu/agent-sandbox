@@ -239,6 +239,30 @@ two_roles_first_out() {
 
 # A launch under another XDG_STATE_HOME has a list and a keeper record of its own, out
 # of the other's sight; the session base they share still names its keeper.
+# ...and before its supervisor records its keeper there (played by hiding that record
+# while a exits): its session record names every existing file it binds over.
+@test "a role under another XDG_STATE_HOME keeps its mount points from its start, before its keeper is on record" {
+  bg_claude a ra
+  BG_ENV=(XDG_STATE_HOME="$I/xs")
+  bg_claude b rb
+  BG_ENV=()
+  local spid s rec=""
+  read -r spid _ <"$(echo "$I"/xs/agent-sandbox/claude/*/rb/keeper/id)"
+  for s in "$I"/base/session.*; do
+    [[ "$(cut -d' ' -f1 "$s/owner.id")" == "$spid" ]] && rec="$s/keeper"
+  done
+  [ -e "$rec" ]
+  mv "$rec" "$rec.hidden"
+  finish a
+  mv "$rec.hidden" "$rec"
+  finish b
+  declare -A M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+}
+
 @test "a role under another XDG_STATE_HOME on the same base keeps its mount points when the creator exits" {
   bg_claude a ra
   BG_ENV=(XDG_STATE_HOME="$I/xs")
