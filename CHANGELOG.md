@@ -881,6 +881,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **Two roles on one base or one account no longer strip each other's files.** When
+  the first of them exited, its cleanup removed the empty mount-point files bwrap had
+  created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a
+  file still mounted by the other to refuse with EBUSY; on Linux >= 3.18 the unlink
+  succeeds and detaches the mount, so the running role lost its config file and prompt
+  history. The engine now lists the mount-point files it creates in
+  `<state>/placeholders`, and a file is removed only by the last session out that
+  holds it, never while another live session or keeper still has it mounted. An empty
+  file of your own at such a path is never removed.
 - **`--setup-remote`'s egress check went by the host's HTTP status** (#344): an allowed
   host answering 403 itself (download.pytorch.org at `/`) failed it, and a 403 from
   example.com counted as the proxy's refusal wherever it came from. It now goes by the

@@ -49,7 +49,7 @@ teardown() {
   local p f spid
   for p in ${BGS[@]+"${BGS[@]}"}; do : >"$IWORK/go-$p"; done
   # Only keepers this test started, by the supervisor pid their record names.
-  for f in "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id; do
+  for f in "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id.hidden; do
     [[ -r "$f" ]] || continue
     read -r spid _ <"$f" 2>/dev/null && [[ -n "$spid" ]] && kill "$spid" 2>/dev/null
   done
@@ -197,4 +197,41 @@ two_roles_first_out() {
     echo "empty files left: $left"
     false
   }
+}
+
+# A launch has its mount points from before bwrap mounts them, but is a live keeper
+# only once its supervisor has written keeper/id. Played here by hiding b's record while
+# a exits: b's session directory still says what it holds.
+@test "a session not yet on its keeper record keeps its mount points when another exits" {
+  bg_claude a ra --account work
+  bg_claude b rb --account work
+  local idf
+  idf="$(echo "$IHOME"/.local/state/agent-sandbox/claude/*/rb/keeper/id)"
+  mv "$idf" "$idf.hidden"
+  finish a
+  mv "$idf.hidden" "$idf"
+  finish b
+  declare -A M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+  [ -z "$(empty_files "$ACC")" ]
+}
+
+# Only what is on the engine's list is ever removed: a launch that could not list the
+# files it created (the list's lock held past its 10 s wait) leaves them behind.
+@test "mount points the launch could not put on the list are left, never removed" {
+  local state="$IHOME/.local/state/agent-sandbox"
+  mkdir -p "$state"
+  : >"$state/placeholders"
+  flock "$state/placeholders.lock" sleep 12 &
+  local holder=$!
+  sleep 0.3
+  bg_claude a ra --account work
+  wait "$holder"
+  [ -n "$(empty_files "$ACC")" ]
+  [ ! -s "$state/placeholders" ] # nothing listed
+  finish a
+  [ -n "$(empty_files "$ACC")" ] # unlisted: left behind
 }

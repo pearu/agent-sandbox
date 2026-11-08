@@ -815,11 +815,15 @@ _as_session_begin() {
 }
 
 # _as_placeholders_in_use HOSTPATH... -- print the index (from 1) of each of the given
-# host paths that another live keeper has a mount on, one per line; all of them when a
+# host paths that another live session holds or another live keeper has a mount on,
+# one per line (an index may repeat); all of them when a live session's record or a
 # live keeper's mount table cannot be read (a stray empty file is harmless, a detached
-# mount is not). The live keepers are the ones _as_keeper_live finds under the state directory,
-# every profile's and project's, this launch's own excepted; what is read is the mount
-# table of each one's payload, the process that holds its mount namespace.
+# mount is not). A live session is a session directory whose owner.id process is
+# alive and which names the path in its `placeholders` (_as_placeholder_register). The
+# live keepers are the ones _as_keeper_live finds under the state directory, every
+# profile's and project's; what is read is the mount table of each one's payload, the
+# process that holds its mount namespace -- which still covers a keeper whose
+# supervisor was killed with -9 and whose session directory the janitor removed.
 #
 # WHAT IS COMPARED. A mountinfo line names its mount point inside the sandbox, which
 # is not the host path. The host location of a mount point is its PARENT mount's
@@ -830,17 +834,38 @@ _as_session_begin() {
 # own table: the mount it lives on, its device, root, and the rest of the path. Both
 # sides are compared in mountinfo's escaped form (space, tab, backslash as \ooo).
 _as_placeholders_in_use() {
-  local f d p e t _keeper_target _keeper_spid _ng=0
+  local f d p e t l opid ostart _keeper_target _keeper_spid _ng=0 i
   local -a tabs=()
+  local -A sheld=()
   shopt -q nullglob && _ng=1
   shopt -s nullglob
+  # The live sessions' own records first (_as_placeholder_register): a launch holds
+  # its mount points from before bwrap mounts them, and is a live keeper only once its
+  # supervisor has written keeper/id. This launch's own session directory is gone by
+  # its release (_as_session_cleanup removes it first).
+  for f in "$(_as_session_base)"/session.*/placeholders; do
+    d="${f%/placeholders}"
+    { read -r opid ostart <"$d/owner.id"; } 2>/dev/null || continue
+    _as_proc_is "$opid" "$ostart" || continue
+    while IFS= read -r l; do
+      if [[ -n "$l" ]]; then sheld["$l"]=1; fi
+    done <"$f" || {
+      ((_ng)) || shopt -u nullglob
+      seq 1 $#
+      return 0
+    }
+  done
   for f in "$(_as_state_dir)"/*/-*/*/keeper/id; do
     d="${f%/keeper/id}"
-    [[ -n "${_keeper_sb:-}" && "$d" == "$_keeper_sb" ]] && continue
     _as_keeper_live "$d" || continue
     tabs+=("/proc/$_keeper_target/mountinfo")
   done
   ((_ng)) || shopt -u nullglob
+  i=0
+  for p in "$@"; do
+    i=$((i + 1))
+    [[ -n "${sheld["$p"]:-}" ]] && printf '%s\n' "$i"
+  done
   ((${#tabs[@]})) || return 0
   {
     for p in "$@"; do
@@ -917,9 +942,10 @@ _as_placeholder_list() { printf '%s/placeholders' "$(_as_state_dir)"; }
 
 # _as_placeholder_register -- at the launch, before bwrap: add the mount-point files
 # this launch will create (absent now) to the list, and adopt the existing ones the
-# list names -- another launch's, which this one may be the last out of. A path with a
-# newline in it is never listed (so never removed). Fails quietly: what is not on the
-# list is only ever left behind.
+# list names -- another launch's, which this one may be the last out of; an existing one
+# it does not name is the user's. Records what this launch holds in its session
+# directory. A path with a newline in it is never listed (so never removed). Fails
+# quietly: what is not on the list is only ever left behind.
 _as_placeholder_register() {
   [[ -n "${_as_placeholder_files[*]+x}${_as_placeholder_maybe[*]+x}" ]] || return 0
   local list p
@@ -940,15 +966,32 @@ _as_placeholder_register() {
         keep+=("$l")
       done <"$list"
     fi
-    for l in ${_as_placeholder_files[@]+"${_as_placeholder_files[@]}"}; do
-      [[ "$l" != *$'\n'* && -z "${seen["$l"]:-}" ]] || continue
+    local -a held=() own=(${_as_placeholder_files[@]+"${_as_placeholder_files[@]}"})
+    # An existing file is classified again here, under the lock: one that went
+    # meanwhile (the last session out removed it) is this launch's to create now.
+    for l in ${_as_placeholder_maybe[@]+"${_as_placeholder_maybe[@]}"}; do
+      if [[ -n "${seen["$l"]:-}" ]]; then
+        held+=("$l")
+        printf '%s\n' "$l"
+      elif [[ ! -e "$l" ]]; then
+        own+=("$l")
+        printf '%s\n' "$l"
+      fi
+    done
+    for l in ${own[@]+"${own[@]}"}; do
+      [[ "$l" != *$'\n'* ]] || continue
+      held+=("$l")
+      [[ -z "${seen["$l"]:-}" ]] || continue
       seen["$l"]=1
       keep+=("$l")
       add=1
     done
-    for l in ${_as_placeholder_maybe[@]+"${_as_placeholder_maybe[@]}"}; do
-      [[ -n "${seen["$l"]:-}" ]] && printf '%s\n' "$l"
-    done
+    # What this launch holds, for the release of any other session while this one is
+    # not yet a live keeper (_as_placeholders_in_use): in its session directory, which
+    # the janitor and _as_session_cleanup remove with it.
+    if [[ -n "${_session_dir:-}" ]] && ((${#held[@]})); then
+      printf '%s\n' "${held[@]}" >"$_session_dir/placeholders" || exit 1
+    fi
     ((add)) || exit 0
     printf '%s\n' "${keep[@]}" >"$list.new" && mv -f -- "$list.new" "$list"
   )
@@ -974,7 +1017,7 @@ _as_placeholder_release() {
     flock -w 10 7 || exit 0
     local -A listed=() busy=()
     local -a order=()
-    local l i=0 drop=0
+    local l drop=0
     while IFS= read -r l; do
       [[ -n "$l" && -z "${listed["$l"]:-}" ]] || continue
       listed["$l"]=1
@@ -993,11 +1036,15 @@ _as_placeholder_release() {
       drop=1
     done
     ((drop)) || exit 0
-    : >"$list.new" || exit 0
+    local -a keep=()
     for l in ${order[@]+"${order[@]}"}; do
-      [[ -n "${listed["$l"]:-}" ]] && printf '%s\n' "$l" >>"$list.new"
+      [[ -n "${listed["$l"]:-}" ]] && keep+=("$l")
     done
-    mv -f -- "$list.new" "$list"
+    if ((${#keep[@]})); then
+      printf '%s\n' "${keep[@]}" >"$list.new"
+    else
+      : >"$list.new"
+    fi && mv -f -- "$list.new" "$list"
   ) 7>"$list.lock" 2>/dev/null
   return 0
 }
