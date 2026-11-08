@@ -19,6 +19,21 @@ setup() {
   [ "${e[*]}" = 'FOO BAR BAZ' ]
 }
 
+@test "_as_placeholder_register: an existing path that is gone by the time the list is locked is the launch's own" {
+  HOME="$BATS_TEST_TMPDIR/home"
+  unset XDG_STATE_HOME
+  mkdir -p "$HOME/.claude" "$BATS_TEST_TMPDIR/session"
+  local p="$HOME/.claude/.claude.json" state="$HOME/.local/state/agent-sandbox"
+  _session_dir="$BATS_TEST_TMPDIR/session"
+  _as_placeholder_files=()
+  _as_placeholder_maybe=("$p") # existed when the binds were built; absent and unlisted now
+  _as_placeholder_register
+  grep -qxF "$p" "$state/placeholders"
+  [ "${_as_placeholder_files[*]}" = "$p" ]
+  grep -qxF "$p" "$_session_dir/placeholders"
+  [ "${#_as_placeholder_maybe[@]}" -eq 0 ]
+}
+
 @test "_as_path_protected: secret stores, the control plane and directories containing them; siblings pass" {
   HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME/.ssh" "$HOME/.gnupg/sub" "$HOME/.config/gcloud" "$HOME/.kube" "$HOME/.config/gh" \

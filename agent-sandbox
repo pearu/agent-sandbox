@@ -814,6 +814,254 @@ _as_session_begin() {
   return 0
 }
 
+# _as_placeholders_in_use HOSTPATH... -- print the index (from 1) of each of the given
+# host paths that another live session holds or another live keeper has a mount on,
+# one per line (an index may repeat); all of them when a live session's record or a
+# live keeper's mount table cannot be read (a stray empty file is harmless, a detached
+# mount is not). A live session is a session directory whose owner.id process is
+# alive and which names the path in its `placeholders` (_as_placeholder_register). The
+# live keepers are the ones _as_keeper_live finds under the state directory, every
+# profile's and project's; what is read is the mount table of each one's payload, the
+# process that holds its mount namespace -- which still covers a keeper whose
+# supervisor was killed with -9 and whose session directory the janitor removed.
+#
+# WHAT IS COMPARED. A mountinfo line names its mount point inside the sandbox, which
+# is not the host path. The host location of a mount point is its PARENT mount's
+# device and root (field 4: the path within that device's filesystem, not the inside
+# path) plus the mount point's path below the parent's mount point -- for a file bound
+# into the base, the base's bind (device, root = the base or account directory on the
+# host) plus `/.claude.json`. The placeholder is resolved the same way from the host's
+# own table: the mount it lives on, its device, root, and the rest of the path. Both
+# sides are compared in mountinfo's escaped form (space, tab, backslash as \ooo).
+_as_placeholders_in_use() {
+  local f d p e t l opid ostart _keeper_target _keeper_spid _ng=0 i
+  local -a tabs=()
+  local -A sheld=()
+  shopt -q nullglob && _ng=1
+  shopt -s nullglob
+  # The live sessions' own records first (_as_placeholder_register): a launch holds
+  # its mount points from before bwrap mounts them, and is a live keeper only once its
+  # supervisor has written keeper/id. This launch's own session directory is gone by
+  # its release (_as_session_cleanup removes it first).
+  for f in "$(_as_session_base)"/session.*/placeholders; do
+    d="${f%/placeholders}"
+    { read -r opid ostart <"$d/owner.id"; } 2>/dev/null || continue
+    _as_proc_is "$opid" "$ostart" || continue
+    while IFS= read -r l; do
+      if [[ -n "$l" ]]; then sheld["$l"]=1; fi
+    done <"$f" || {
+      ((_ng)) || shopt -u nullglob
+      seq 1 $#
+      return 0
+    }
+  done
+  for f in "$(_as_state_dir)"/*/-*/*/keeper/id; do
+    d="${f%/keeper/id}"
+    _as_keeper_live "$d" || continue
+    tabs+=("/proc/$_keeper_target/mountinfo")
+  done
+  # And every live keeper the session base knows of, whatever its state directory: a
+  # launch with another XDG_STATE_HOME has another list and another keeper record, but
+  # the same session base (its supervisor records the payload there, `keeper`).
+  for f in "$(_as_session_base)"/session.*/keeper; do
+    { read -r opid ostart <"$f"; } 2>/dev/null || continue
+    _as_proc_is "$opid" "$ostart" || continue
+    tabs+=("/proc/$opid/mountinfo")
+  done
+  ((_ng)) || shopt -u nullglob
+  i=0
+  for p in "$@"; do
+    i=$((i + 1))
+    [[ -n "${sheld["$p"]:-}" ]] && printf '%s\n' "$i"
+  done
+  ((${#tabs[@]})) || return 0
+  {
+    for p in "$@"; do
+      e="$(readlink -f -- "$p" 2>/dev/null)" || e=""
+      [[ "$e" != *$'\n'* ]] || e=""
+      e="${e//\\/\\134}" e="${e// /\\040}" e="${e//$'\t'/\\011}"
+      printf 'P\t%s\n' "$e"
+    done
+    printf 'H\n'
+    cat /proc/self/mountinfo || exit 1
+    for t in "${tabs[@]}"; do
+      printf 'T\n'
+      cat -- "$t" || exit 1
+    done
+  } 2>/dev/null | awk -F'\t' '
+    function flush(  i, pi, rel, loc) {
+      for (i in mp) {
+        pi = par[i]
+        if (!(pi in mp)) continue
+        if (mp[pi] == "/") rel = mp[i]
+        else if (index(mp[i], mp[pi] "/") == 1) rel = substr(mp[i], length(mp[pi]) + 1)
+        else continue
+        loc = dev[pi] SUBSEP (root[pi] == "/" ? "" : root[pi]) rel
+        if (loc in want) used[want[loc]] = 1
+      }
+      split("", mp); split("", par); split("", dev); split("", root)
+    }
+    $1 == "P" { n++; canon[n] = $2; next }
+    $1 == "H" { sect = "H"; next }
+    $1 == "T" {
+      if (sect == "H") {
+        for (k = 1; k <= n; k++) {
+          if (canon[k] == "") { bad[k] = 1; continue }
+          best = ""; bl = -1
+          for (j = 1; j <= hn; j++) {
+            m = hmp[j]
+            if (m == "/" || canon[k] == m || index(canon[k], m "/") == 1)
+              if (length(m) >= bl) { bl = length(m); best = j }
+          }
+          if (best == "") { bad[k] = 1; continue }
+          rel = (hmp[best] == "/") ? canon[k] : substr(canon[k], length(hmp[best]) + 1)
+          want[hdev[best] SUBSEP (hroot[best] == "/" ? "" : hroot[best]) rel] = k
+        }
+      } else flush()
+      sect = "T"; next
+    }
+    {
+      split($0, w, " ")
+      if (sect == "H") { hn++; hdev[hn] = w[3]; hroot[hn] = w[4]; hmp[hn] = w[5] }
+      else if (sect == "T") { mp[w[1]] = w[5]; par[w[1]] = w[2]; dev[w[1]] = w[3]; root[w[1]] = w[4] }
+    }
+    END {
+      if (sect == "T") flush()
+      for (k = 1; k <= n; k++) if (bad[k] || used[k]) print k
+    }'
+  # A table that could not be read (the pipeline failed before awk saw it all): keep
+  # every one.
+  ((PIPESTATUS[0] == 0)) || seq 1 $#
+}
+
+# THE ENGINE'S LIST OF MOUNT-POINT FILES. bwrap creates an empty file on the host for a
+# file bound at a path that does not exist yet, inside a directory bound read-write
+# (the state-bind loop, _as_connect_placeholder). Two roles on one base or one account
+# share those files: the first launch creates them, the next binds over the same ones.
+# Whichever exits LAST must remove them, and it may not be the one that created them --
+# while an empty file at such a path that the engine did NOT create is the user's and
+# is never removed. So the engine keeps a list of the files it created, one host path
+# per line, in <state>/placeholders, read and rewritten only under an flock on
+# <state>/placeholders.lock. One list for the user's whole state directory: its entries
+# are absolute host paths, which may lie in a base outside it (~/.claude), in an
+# account's directory or wherever a channel binds, and every launch -- any profile, any
+# account -- finds it at the same place, as it finds the live keepers.
+_as_placeholder_list() { printf '%s/placeholders' "$(_as_state_dir)"; }
+
+# _as_placeholder_register -- at the launch, before bwrap: add the mount-point files
+# this launch will create (absent now) to the list, and adopt the existing ones the
+# list names -- another launch's, which this one may be the last out of; an existing one
+# it does not name is the user's. Records what this launch holds in its session
+# directory. A path with a newline in it is never listed (so never removed). Fails
+# quietly: what is not on the list is only ever left behind.
+_as_placeholder_register() {
+  [[ -n "${_as_placeholder_files[*]+x}${_as_placeholder_maybe[*]+x}" ]] || return 0
+  local list p
+  list="$(_as_placeholder_list)"
+  mkdir -p -- "${list%/*}" 2>/dev/null || return 0
+  while IFS= read -r p; do
+    [[ -n "$p" ]] && _as_placeholder_files+=("$p")
+  done < <(
+    exec 2>/dev/null 7>"$list.lock" || exit 1
+    flock -w 10 7 || exit 1
+    local -A seen=()
+    local -a keep=()
+    local l add=0
+    if [[ -e "$list" ]]; then
+      while IFS= read -r l; do
+        [[ -n "$l" && -z "${seen["$l"]:-}" ]] || continue
+        seen["$l"]=1
+        keep+=("$l")
+      done <"$list"
+    fi
+    local -a held=() own=(${_as_placeholder_files[@]+"${_as_placeholder_files[@]}"})
+    # An existing file is classified again here, under the lock: one that went
+    # meanwhile (the last session out removed it) is this launch's to create now.
+    for l in ${_as_placeholder_maybe[@]+"${_as_placeholder_maybe[@]}"}; do
+      if [[ -n "${seen["$l"]:-}" ]]; then
+        held+=("$l")
+        printf '%s\n' "$l"
+      elif [[ ! -e "$l" ]]; then
+        own+=("$l")
+        printf '%s\n' "$l"
+      elif [[ "$l" != *$'\n'* ]]; then
+        # Not on this list: the user's -- or another state directory's mount point,
+        # which this launch binds over all the same. Held in the record (no other
+        # session removes it while this one runs), never this launch's to remove.
+        held+=("$l")
+      fi
+    done
+    for l in ${own[@]+"${own[@]}"}; do
+      [[ "$l" != *$'\n'* ]] || continue
+      held+=("$l")
+      [[ -z "${seen["$l"]:-}" ]] || continue
+      seen["$l"]=1
+      keep+=("$l")
+      add=1
+    done
+    # What this launch holds, for the release of any other session while this one is
+    # not yet a live keeper (_as_placeholders_in_use): in its session directory, which
+    # the janitor and _as_session_cleanup remove with it.
+    if [[ -n "${_session_dir:-}" ]] && ((${#held[@]})); then
+      printf '%s\n' "${held[@]}" >"$_session_dir/placeholders" || exit 1
+    fi
+    ((add)) || exit 0
+    printf '%s\n' "${keep[@]}" >"$list.new" && mv -f -- "$list.new" "$list"
+  )
+  _as_placeholder_maybe=()
+  return 0
+}
+
+# _as_placeholder_release -- at the session's exit: for each listed mount-point file of
+# this launch's, remove it when it is still an empty regular file and no other live
+# keeper has a mount on it, and drop it from the list; keep the entry (and the file)
+# while another keeper mounts it, for the last one out. Unlinking a mount point does
+# NOT fail with EBUSY (Linux >= 3.18): it succeeds and detaches the mount in every
+# other mount namespace, which is why the live keepers' mount tables are read first
+# (_as_placeholders_in_use). Not empty -- something wrote through it -- or not there,
+# or not a regular file: the entry goes, the file stays. A path not on the list is
+# never touched.
+_as_placeholder_release() {
+  [[ -n "${_as_placeholder_files[*]+x}" ]] || return 0
+  local list
+  list="$(_as_placeholder_list)"
+  [[ -e "$list" ]] || return 0
+  (
+    flock -w 10 7 || exit 0
+    local -A listed=() busy=()
+    local -a order=()
+    local l drop=0
+    while IFS= read -r l; do
+      [[ -n "$l" && -z "${listed["$l"]:-}" ]] || continue
+      listed["$l"]=1
+      order+=("$l")
+    done <"$list"
+    while read -r l; do
+      busy["${_as_placeholder_files[l - 1]}"]=1
+    done < <(_as_placeholders_in_use "${_as_placeholder_files[@]}")
+    for l in "${_as_placeholder_files[@]}"; do
+      [[ -n "${listed["$l"]:-}" ]] || continue
+      if [[ -f "$l" && ! -L "$l" && ! -s "$l" ]]; then
+        [[ -n "${busy["$l"]:-}" ]] && continue
+        rm -f -- "$l" || continue
+      fi
+      listed["$l"]=""
+      drop=1
+    done
+    ((drop)) || exit 0
+    local -a keep=()
+    for l in ${order[@]+"${order[@]}"}; do
+      [[ -n "${listed["$l"]:-}" ]] && keep+=("$l")
+    done
+    if ((${#keep[@]})); then
+      printf '%s\n' "${keep[@]}" >"$list.new"
+    else
+      : >"$list.new"
+    fi && mv -f -- "$list.new" "$list"
+  ) 7>"$list.lock" 2>/dev/null
+  return 0
+}
+
 _as_session_cleanup() {
   # Kill only if the recorded PID is still an ssh-agent -- guards against a
   # PID that was already reaped and recycled to an unrelated process.
@@ -825,13 +1073,9 @@ _as_session_cleanup() {
     rm -rf -- "$_session_dir"
   fi
   # Empty mount-point files the state binds created on the host (see the
-  # state-bind loop). Still empty means nothing wrote through the placeholder
-  # itself; EBUSY means another session has it mounted and will remove it.
-  local _pf
-  for _pf in ${_as_placeholder_files[@]+"${_as_placeholder_files[@]}"}; do
-    { [[ -f "$_pf" && ! -s "$_pf" ]] && rm -f -- "$_pf"; } 2>/dev/null || true
-  done
-  _as_placeholder_files=()
+  # state-bind loop and _as_placeholder_register).
+  _as_placeholder_release
+  _as_placeholder_files=() _as_placeholder_maybe=()
   _ssh_agent_pid="" _session_dir=""
   return 0
 }
@@ -2686,7 +2930,8 @@ _as_connect_shadows() {
 }
 
 # _as_connect_placeholder PATH -- record a mount point bwrap will CREATE on the
-# host, so the session cleanup removes it again while it is still empty.
+# host, so the session cleanup removes it again while it is still empty; an existing
+# file there is a candidate for adoption (_as_placeholder_register).
 #
 # MEASURED, and it is not cosmetic. A channel bound over a path the source does
 # not have makes bwrap create the mount point inside the state directory, which
@@ -2703,7 +2948,11 @@ _as_connect_shadows() {
 _as_connect_placeholder() {
   local h
   h="$(_as_host_path_of "$1")"
-  [[ -e "$h" ]] || _as_placeholder_files+=("$h")
+  if [[ -e "$h" ]]; then
+    _as_placeholder_maybe+=("$h")
+  else
+    _as_placeholder_files+=("$h")
+  fi
 }
 
 # ----- the keeper: one launch per role, and every app joins it (#121) ---------
@@ -3015,7 +3264,10 @@ _as_keeper_supervise() {
   mestart="$_ps_start"
   # The session directory is now this process's: the janitor and the proxy addon
   # judge it by its owner, and the engine that made it is about to exit.
-  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$me" "$mestart" >"$_session_dir/owner.id"
+  # Replaced, never rewritten in place: a reader (_as_placeholders_in_use) meeting an
+  # empty file would take the session for dead.
+  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$me" "$mestart" >"$_session_dir/owner.id.new" \
+    && mv -f -- "$_session_dir/owner.id.new" "$_session_dir/owner.id"
   # A self-contained profile's proxy of its own (#335): up before the sandbox, ended
   # with it. One that does not come up refuses the launch (_as_keeper_start says so).
   if [[ -n "${_own_proxy:-}" ]] && ! _as_own_proxy_start; then
@@ -3047,6 +3299,10 @@ _as_keeper_supervise() {
   istart="$_ps_start"
   printf '%s %s %s %s %s %s\n' "$me" "$mestart" "$t" "$tstart" "$init" "$istart" >"$kd/id.new" \
     && mv -f -- "$kd/id.new" "$kd/id"
+  # The payload in the session directory too, for _as_placeholders_in_use from a launch
+  # under another state directory (another XDG_STATE_HOME) on the same session base.
+  [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$t" "$tstart" >"$_session_dir/keeper.new" \
+    && mv -f -- "$_session_dir/keeper.new" "$_session_dir/keeper"
   local grace sl
   grace="$(_as_keeper_grace)"
   exec 8>"$sb/keeper.lock"
@@ -11320,6 +11576,7 @@ _as_launch() {
   # never from the file). A path rather than a pipe, because it has to survive setsid
   # and pasta, as the seccomp filter's does.
   _as_session_begin || return 1
+  _as_placeholder_register
   (umask 077 && printf '%s\0' "${_bwrap_opts[@]}" >"$_session_dir/bwrap.args") || return 1
   # The payload: `sleep` under the marker as its argv[0] (bwrap's --argv0 is newer
   # than the oldest bubblewrap this supports). The environment a join inherits is
@@ -11336,7 +11593,7 @@ _as_launch() {
   # The launch's exit is the supervisor's now: it removes the session directory, stops
   # the ssh agent and removes the mount-point files once the keeper ends.
   trap - EXIT INT TERM HUP
-  _session_dir="" _ssh_agent_pid="" _as_placeholder_files=()
+  _session_dir="" _ssh_agent_pid="" _as_placeholder_files=() _as_placeholder_maybe=()
   ((_do_exec)) || ! declare -F profile_before_join >/dev/null || profile_before_join "$@"
   _as_keeper_join "$_keeper_sb" "$@" || rc=$?
   [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer
@@ -12704,8 +12961,10 @@ agent_sandbox() (
   local -a profile_channels=()
   local -a profile_isolate_spec=()
   # Mount-point files the state binds create on the host (see that loop); the
-  # cleanup removes them. Declared with _session_dir, for the same reason.
-  local -a _as_placeholder_files=()
+  # cleanup removes them. Declared with _session_dir, for the same reason. The
+  # existing ones at such paths, which _as_placeholder_register adopts when the
+  # engine's list names them (another launch's mount points).
+  local -a _as_placeholder_files=() _as_placeholder_maybe=()
   # Declared HERE, not down with the launch locals: state isolation opens the
   # session dir well before that point, and a later `local _session_dir=""`
   # would reset it -- so _as_session_begin would make a SECOND dir, and the
@@ -13870,8 +14129,11 @@ agent_sandbox() (
   # directory bound read-write. Those are recorded and removed again by the
   # cleanup while still empty: left behind, an empty ~/.claude/.claude.json is
   # a config that parses as nothing for anyone who later points
-  # CLAUDE_CONFIG_DIR there natively. The rm fails with EBUSY while another
-  # session still has it mounted; the last session out removes it.
+  # CLAUDE_CONFIG_DIR there natively. One that another live session still has
+  # mounted is kept (an rm would succeed and detach that session's mount, not
+  # fail with EBUSY); the last session out removes it, whichever created it --
+  # an existing file the engine's list names is adopted, one it does not name is
+  # the user's (_as_placeholder_register).
   local _p _src _dst _dsth
   # The profile's base (#175): its state directory, bound read-write first so that
   # every channel and declaration layers on it. Created when absent -- a launch is the
@@ -13914,6 +14176,8 @@ agent_sandbox() (
     _dsth="$(_as_host_path_of "$_dst")"
     if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dsth" ]]; then
       _as_placeholder_files+=("$_dsth")
+    elif [[ -f "$_src" && "$_dst" != "$_src" ]]; then
+      _as_placeholder_maybe+=("$_dsth")
     fi
     args+=(--bind "$_src" "$_dst")
   done
@@ -13930,6 +14194,8 @@ agent_sandbox() (
     _dsth="$(_as_host_path_of "$_dst")"
     if [[ -f "$_src" && "$_dst" != "$_src" && ! -e "$_dsth" ]]; then
       _as_placeholder_files+=("$_dsth")
+    elif [[ -f "$_src" && "$_dst" != "$_src" ]]; then
+      _as_placeholder_maybe+=("$_dsth")
     fi
     args+=(--ro-bind "$_src" "$_dst")
   done

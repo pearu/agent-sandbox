@@ -17,8 +17,19 @@ setup() {
   mkdir -p "$IHOME/.local/share/claude/versions/9.9.9" "$IWORK" "$IHOME/.claude/skills" "$ACC"
   cat >"$IHOME/.local/share/claude/versions/9.9.9/claude" <<'PROBE'
 #!/usr/bin/env bash
-R="$PWD/report"; : >"$R"; say() { printf '%s=%s\n' "$1" "$2" >>"$R"; }
 c="${CLAUDE_CONFIG_DIR:-unset}"
+# `... hold NAME` (last on the line; the profile adds its own arguments first): report,
+# wait for go-NAME, report again
+if [ "$#" -ge 2 ] && [ "${@: -2:1}" = hold ]; then
+  n="${@: -1}"
+  R="$PWD/report-$n"; : >"$R"; say() { printf '%s=%s\n' "$1" "$2" >>"$R"; }
+  say cfg0 "$([ -e "$c/.claude.json" ] && echo yes || echo no)"
+  for i in $(seq 1 600); do [ -e "$PWD/go-$n" ] && break; sleep 0.05; done
+  say cfg1 "$([ -e "$c/.claude.json" ] && echo yes || echo no)"
+  say hist1 "$([ -e "$c/history.jsonl" ] && echo yes || echo no)"
+  exit 0
+fi
+R="$PWD/report"; : >"$R"; say() { printf '%s=%s\n' "$1" "$2" >>"$R"; }
 say config_dir "$c"
 say login "$(cat "$c/.credentials.json" 2>/dev/null || echo none)"
 say base_login "$(grep -rqs "BASE-LO""GIN" "$HOME" && echo yes || echo no)"
@@ -31,7 +42,53 @@ PROBE
   printf 'echo hook\n' >"$IHOME/.claude/response-hook.py"
   printf 'MY-SKILL\n' >"$IHOME/.claude/skills/s.md"
   printf 'WORK-LOGIN\n' >"$ACC/.credentials.json"
+  BGS=()
 }
+
+teardown() {
+  local p f spid
+  for p in ${BGS[@]+"${BGS[@]}"}; do : >"$IWORK/go-$p"; done
+  # Only keepers this test started, by the supervisor pid their record names.
+  for f in "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id.hidden "$I"/xs/agent-sandbox/claude/*/*/keeper/id; do
+    [[ -r "$f" ]] || continue
+    read -r spid _ <"$f" 2>/dev/null && [[ -n "$spid" ]] && kill "$spid" 2>/dev/null
+  done
+  return 0
+}
+
+# bg_claude NAME ROLE [ENGINE ARGS...] -- launch role ROLE in the background, its probe
+# holding until go-NAME; return once it is inside (report-NAME exists). Sets BG_PID_NAME.
+# BG_ENV: extra VAR=value words for the launch.
+bg_claude() {
+  local name="$1" role="$2" i
+  shift 2
+  engine_cmd
+  # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
+  env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
+    AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
+    AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET=shared ${BG_ENV[@]+"${BG_ENV[@]}"} \
+    bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" --role "$role" "$@" \
+    "$IHOME/.local/share/claude/versions/9.9.9/claude" hold "$name" </dev/null >"$I/out-$name" 2>&1 3>&- &
+  printf -v "BG_PID_$name" '%s' "$!"
+  BGS+=("$name")
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$IWORK/report-$name" ]] && return 0
+    sleep 0.05
+  done
+  echo "bg_claude $name: not inside:" >&2
+  cat "$I/out-$name" >&2
+  return 1
+}
+
+# finish NAME -- release NAME's probe and wait for its launch to end.
+finish() {
+  local pid="BG_PID_$1"
+  : >"$IWORK/go-$1"
+  wait "${!pid}"
+}
+
+# empty_files DIR -- the empty files directly in DIR (mount points left behind).
+empty_files() { find "$1" -maxdepth 1 -type f -empty; }
 
 run_claude() {
   rm -f "$IWORK/report"
@@ -72,4 +129,150 @@ run_claude() {
   [ "$status" -eq 0 ]
   [ "${M[login]}" = BASE-LOGIN ]
   [ "${M[hook]}" = yes ]
+}
+
+# Two roles at once on one state directory share its mount-point files: the first
+# launch creates them on the host, the second binds over the same ones. Removing one
+# does not fail while the other still has it mounted -- the unlink succeeds and
+# detaches that mount in every namespace -- so the first to exit used to strip the
+# second of its .claude.json and history.jsonl.
+two_roles_first_out() {
+  bg_claude a ra "$@"
+  bg_claude b rb "$@"
+  finish a
+  finish b
+  declare -gA M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+}
+
+@test "two roles on one account at once: the first to exit leaves the second's mount points in place" {
+  two_roles_first_out --account work
+  [ "${M[cfg0]}" = yes ]
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+}
+
+@test "two roles on the base at once: the first to exit leaves the second's mount points in place" {
+  two_roles_first_out
+  [ "${M[cfg0]}" = yes ]
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+}
+
+@test "two roles on one account, the creator out first: the second keeps its mount points, and removes them when it exits" {
+  two_roles_first_out --account work
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+  local left
+  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  [ -z "$left" ] || {
+    echo "empty files left: $left"
+    false
+  }
+  [ ! -s "$IHOME/.local/state/agent-sandbox/placeholders" ] # and the list is empty again
+}
+
+@test "a user's own empty file at a mount-point path is never removed, by the launch nor by the last one out" {
+  : >"$ACC/history.jsonl"
+  bg_claude a ra --account work
+  bg_claude b rb --account work
+  finish a
+  finish b
+  [ -f "$ACC/history.jsonl" ]
+  [ ! -s "$ACC/history.jsonl" ]
+  run ! grep -qxF "$ACC/history.jsonl" "$IHOME/.local/state/agent-sandbox/placeholders"
+  [ ! -e "$ACC/.claude.json" ] # the engine's own still go
+}
+
+@test "two roles on one account at once: the last to exit removes the mount points" {
+  bg_claude a ra --account work
+  bg_claude b rb --account work
+  [ -n "$(empty_files "$ACC")" ] # the mount points are there while they run
+  finish b
+  [ -n "$(empty_files "$ACC")" ] # kept: a still has them mounted
+  finish a
+  local left
+  left="$(empty_files "$ACC" && empty_files "$IHOME/.claude")"
+  [ -z "$left" ] || {
+    echo "empty files left: $left"
+    false
+  }
+}
+
+# A launch has its mount points from before bwrap mounts them, but is a live keeper
+# only once its supervisor has written keeper/id. Played here by hiding b's record while
+# a exits: b's session directory still says what it holds.
+@test "a session not yet on its keeper record keeps its mount points when another exits" {
+  bg_claude a ra --account work
+  bg_claude b rb --account work
+  local idf
+  idf="$(echo "$IHOME"/.local/state/agent-sandbox/claude/*/rb/keeper/id)"
+  mv "$idf" "$idf.hidden"
+  finish a
+  mv "$idf.hidden" "$idf"
+  finish b
+  declare -A M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+  [ -z "$(empty_files "$ACC")" ]
+}
+
+# Only what is on the engine's list is ever removed: a launch that could not list the
+# files it created (the list's lock held past its 10 s wait) leaves them behind.
+@test "mount points the launch could not put on the list are left, never removed" {
+  local state="$IHOME/.local/state/agent-sandbox"
+  mkdir -p "$state"
+  : >"$state/placeholders"
+  flock "$state/placeholders.lock" sleep 12 &
+  local holder=$!
+  sleep 0.3
+  bg_claude a ra --account work
+  wait "$holder"
+  [ -n "$(empty_files "$ACC")" ]
+  [ ! -s "$state/placeholders" ] # nothing listed
+  finish a
+  [ -n "$(empty_files "$ACC")" ] # unlisted: left behind
+}
+
+# A launch under another XDG_STATE_HOME has a list and a keeper record of its own, out
+# of the other's sight; the session base they share still names its keeper.
+# ...and before its supervisor records its keeper there (played by hiding that record
+# while a exits): its session record names every existing file it binds over.
+@test "a role under another XDG_STATE_HOME keeps its mount points from its start, before its keeper is on record" {
+  bg_claude a ra
+  BG_ENV=(XDG_STATE_HOME="$I/xs")
+  bg_claude b rb
+  BG_ENV=()
+  local spid s rec=""
+  read -r spid _ <"$(echo "$I"/xs/agent-sandbox/claude/*/rb/keeper/id)"
+  for s in "$I"/base/session.*; do
+    [[ "$(cut -d' ' -f1 "$s/owner.id")" == "$spid" ]] && rec="$s/keeper"
+  done
+  [ -e "$rec" ]
+  mv "$rec" "$rec.hidden"
+  finish a
+  mv "$rec.hidden" "$rec"
+  finish b
+  declare -A M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
+}
+
+@test "a role under another XDG_STATE_HOME on the same base keeps its mount points when the creator exits" {
+  bg_claude a ra
+  BG_ENV=(XDG_STATE_HOME="$I/xs")
+  bg_claude b rb
+  BG_ENV=()
+  finish a
+  finish b
+  declare -A M=()
+  local k v
+  while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report-b"
+  [ "${M[cfg1]}" = yes ]
+  [ "${M[hist1]}" = yes ]
 }
