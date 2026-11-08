@@ -230,7 +230,12 @@ two_roles_first_out() {
     echo "empty files left: $left"
     false
   }
-  [ ! -s "$IHOME/.local/state/agent-sandbox/placeholders" ] # and the list is empty again
+  # and the list is empty again
+  [ ! -s "$IHOME/.local/state/agent-sandbox/placeholders" ] || {
+    echo "still listed:"
+    cat "$IHOME/.local/state/agent-sandbox/placeholders"
+    false
+  }
 }
 
 @test "a user's own empty file at a mount-point path is never removed, by the launch nor by the last one out" {

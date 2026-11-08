@@ -88,11 +88,11 @@ base_is_only_channels() {
     esac
     [[ " ${known[*]} " == *" $a "* ]] && continue
     # a top-level entry of the base bound at itself (its source here, its destination
-    # next), or the destination of that bind or of a --symlink made from the entry
-    if [[ "${a#"$C"/}" != */* ]]; then
+    # next), or the destination of that bind; never a symlink entry (made again on the
+    # host, in the account's directory, not named in the argv)
+    if [[ "${a#"$C"/}" != */* && ! -L "$a" ]]; then
       [[ "${ARGV[i - 1]}" == --bind && "${ARGV[i + 1]}" == "$a" ]] && continue
       [[ "${ARGV[i - 2]}" == --bind && "${ARGV[i - 1]}" == "$a" ]] && continue
-      [[ "${ARGV[i - 2]}" == --symlink && -L "$a" && "${ARGV[i - 1]}" == "$(readlink -- "$a")" ]] && continue
     fi
     echo "argv names $a (after ${ARGV[i - 1]}), which is neither a channel path of the role nor a top-level entry of the base bound at itself"
     return 1
@@ -522,12 +522,19 @@ argv_count() {
   run ! argv_has --bind "$C/daemon" "$C/daemon"
   # a channel at the top: bound by its channel only (read-write at its own source here)
   [ "$(argv_count --bind "$C/settings.json" "$C/settings.json")" -eq 1 ]
-  # symlinks: made again with their targets as written, not followed
-  argv_has --symlink somewhere "$C/link"
-  argv_has --symlink "$H/home/.ssh" "$C/keys"
-  [ "$(grep -cxF "$H/home/.ssh" "$H/argv")" -eq 1 ] # once: the --symlink target
-  run ! argv_has --bind "$C/link" "$C/link"
-  run ! argv_has --bind "$C/keys" "$C/keys"
+  # symlinks: made again in the account's directory with their targets as written,
+  # never followed, and not in the argv (no --symlink: bwrap < 0.9 dies on an existing
+  # one)
+  [ "$(readlink "$ACC/work/link")" = somewhere ]
+  [ "$(readlink "$ACC/work/keys")" = "$H/home/.ssh" ]
+  run ! grep -qxF "$H/home/.ssh" "$H/argv"
+  run ! grep -qxF "$C/link" "$H/argv"
+  run ! grep -qxF "$C/keys" "$H/argv"
+  run ! grep -qxF -- --symlink "$H/argv"
+  # a second launch finds them there, and keeps them
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$ACC/work/link")" = somewhere ]
   # the account paths nowhere: the mutation-checked assertion
   base_is_only_channels "$SBOX"
   # under isolated the channel's own store is at settings.json; the base's is not bound
@@ -656,9 +663,8 @@ argv_count() {
   ln -s somewhere "$C/keep"
   run_engine -- asb --account work claude --version
   [ "$status" -eq 0 ]
-  argv_has --symlink somewhere "$C/link"
   argv_has --bind "$C/ide" "$C/ide"
-  [ ! -L "$ACC/work/link" ] # removed; bwrap (a stub here) makes it again
+  [ "$(readlink "$ACC/work/link")" = somewhere ] # made again with the base's target
   [ ! -L "$ACC/work/ide" ]
   [ -d "$H/x" ] # its target untouched
   [ "$(readlink "$ACC/work/keep")" = somewhere ]
@@ -670,6 +676,7 @@ argv_count() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"the account 'work': '$ACC/work/ide' is a file where the base's '$C/ide' is a directory, so the base's cannot be put over it; remove '$ACC/work/ide' (the account's) to see the base's there, or '$C/ide' (the base's) to keep the account's. Nothing was started"* ]]
   [ ! -s "$H/argv" ]
+  [ ! -L "$ACC/work/link" ] # every entry checked before anything is changed
   rm "$ACC/work/ide"
   mkdir "$ACC/work/response-hook.py" # a directory where the base has a file
   run_engine -- asb --account work claude --version
@@ -733,7 +740,7 @@ argv_count() {
   _as_base_bind
   unset GLOBIGNORE
   [[ " ${args[*]} " == *" --bind $C/response-hook.py $C/response-hook.py "* ]]
-  [[ " ${args[*]} " == *" --symlink somewhere $C/link "* ]]
+  [ "$(readlink "$ACC/work/link")" = somewhere ]
 }
 
 @test "P7 helper: a mount point under a symlink made again is mapped through its target, to where bwrap makes it" {
@@ -773,4 +780,15 @@ argv_count() {
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --profile claude --check
   [[ "$output" == *"(profile claude); a launch refuses the line."* ]]
   [[ "$output" != *"(profile codex)"* ]]
+}
+
+@test "P7: a read-write source made in the base under an account is made before the entries are listed: its new directory is bound from the base at the first launch, as at every later one" {
+  rm -r "$C/cache" # the changelog channel's file and its directory, both missing
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  [ -f "$C/cache/changelog.md" ]
+  [ ! -s "$C/cache/changelog.md" ]
+  argv_has --bind "$C/cache" "$C/cache" # an entry already: the same mount points as the next launch
+  [ "$(argv_index "$C/cache")" -lt "$(argv_index "$C/cache/changelog.md")" ]
+  run ! grep -qxF "$ACC/work/cache/changelog.md" "$H/home/.local/state/agent-sandbox/placeholders"
 }

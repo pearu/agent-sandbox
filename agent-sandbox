@@ -2520,21 +2520,8 @@ _as_connect_bind_channel() {
       args+=(--bind "$src" "$path")
     elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
       if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
-      # Under an account (#355) a missing FILE is made in the base too, so what the agent
-      # writes there is the base's, shared as the channel says, not the account
-      # directory's: `{}` for a path ending in .json (an empty file is no JSON), empty
-      # otherwise -- unless the profile gives the path a `start:` file: neither is what
-      # that path starts as, so it is not bound and the agent's file lands in the
-      # account's directory.
-      if [[ "$kind" == file && ! -e "$src" && ! -L "$src" && -n "${_acct_dir:-}" && "$src" == "${profile_base:-}"/* ]] \
-        && ! _as_channel_hook profile_channel_start "$path" >/dev/null; then
-        mkdir -p -- "$(dirname -- "$src")" || return 1
-        if [[ "$src" == *.json ]]; then
-          printf '{}\n' >"$src" || return 1
-        else
-          : >"$src" || return 1
-        fi
-      fi
+      # (Under an account a missing file was made in the base already, before the base's
+      # entries were listed: _as_base_rw_sources.)
       if [[ -e "$src" ]]; then
         # an account's directory (#355) has no such file: the mount point is made there
         [[ "$kind" == file ]] && _as_connect_placeholder "$path"
@@ -6925,10 +6912,51 @@ _as_base_bind() {
   fi
   if [[ -n "${_acct_dir:-}" ]]; then
     args+=(--bind "$_acct_dir" "$profile_base")
+    _as_base_rw_sources || return 1
     _as_base_entry_binds "$_preal" || return 1
   else
     args+=(--bind "$_preal" "$profile_base")
   fi
+}
+
+# _as_base_rw_sources -- under an account (#355), the read-write channels' own sources in
+# the base that are missing, made there before the base's entries are listed: a
+# directory, and a file -- `{}` for a path ending in .json (an empty file is no JSON),
+# empty otherwise -- unless the profile gives the file a `start:` file, which neither
+# is: that one is not made, not bound, and what the agent writes there lands in the
+# account's directory. Made in the base, what the agent writes there is the base's,
+# shared as the channel says. BEFORE THE LISTING, so a directory made for one (`cache/`
+# for `cache/changelog.md`) is an entry bound from the base in this launch as in every
+# later one: made after it, the first launch would put the file's mount point in the
+# account's directory and the next ones in the base's, and two roles on one account
+# would hold different mount points -- the first one's, which no later one holds, is
+# then left on the list when the first exits while the other runs. Only a channel at its
+# own source in the base (no relocation, no `outside:` or `sandbox:` source).
+# shellcheck disable=SC2154,SC2031
+_as_base_rw_sources() {
+  local line entry ch kind path
+  local -a fields=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    [[ "${_connect_mode[$ch]:-}" == read-write ]] || continue
+    [[ -z "${_connect_src[$ch]:-}" && -z "${_connect_sandbox[$ch]:-}" ]] || continue
+    for entry in "${fields[@]:1}"; do
+      kind="${entry%%:*}" path="${entry#*:}"
+      [[ "$path" == "$profile_base"/* && "$(_as_channel_source "$path")" == "$path" ]] || continue
+      [[ ! -e "$path" && ! -L "$path" ]] || continue
+      if [[ "$kind" == dir ]]; then
+        mkdir -p -- "$path" || return 1
+      elif ! _as_channel_hook profile_channel_start "$path" >/dev/null; then
+        mkdir -p -- "$(dirname -- "$path")" || return 1
+        if [[ "$path" == *.json ]]; then
+          printf '{}\n' >"$path" || return 1
+        else
+          : >"$path" || return 1
+        fi
+      fi
+    done
+  done
 }
 
 # _as_base_entry_binds REAL -- under an account (#355, D1), the base's own top-level
@@ -6938,9 +6966,13 @@ _as_base_bind() {
 # account too. Skipped: an entry that is exactly a channel's path (the channel binds
 # it, after these, as it binds one nested in an entry), a hide list entry (the tmpfs
 # blanks it), and an account path or a directory holding one: the base's login is the
-# base's. An entry that is a symlink is made again with --symlink, its target as
-# written, never followed on the host: resolved here, it could bind what it names
-# from outside the base, where inside the sandbox it resolves to whatever is there.
+# base's. An entry that is a symlink is made again in the account's directory, its
+# target as written, never followed on the host: resolved here, it could bind what it
+# names from outside the base, where inside the sandbox it resolves to whatever is
+# there. Made here with ln -s, not with bwrap's --symlink: bubblewrap before 0.9.0 dies
+# on a symlink already at the destination even when it is the same (its
+# SETUP_MAKE_SYMLINK takes EEXIST as an error until 0.9.0, which accepts an identical
+# one), and the account's directory keeps the one an earlier or a running launch made.
 # Entries created in the base after the launch are not seen by it. Bwrap makes each
 # mount point in the account's directory; an empty file among them is removed by the
 # cleanup (as a placeholder), a directory or a symlink stays. Sets _as_base_real and
@@ -6949,19 +6981,21 @@ _as_base_bind() {
 # (NAME<TAB>TARGET of the symlinks made again), so it maps a path under one through it.
 #
 # A NAME THE ACCOUNT'S DIRECTORY HAS TOO: the base's is bound over it when both are of
-# a kind bwrap can mount over (a directory over a directory, a file over a file). A
-# symlink there is one an earlier launch made again: it is removed first when the
-# base's entry is no longer a symlink to the same target, and then made, or bound
+# a kind bwrap can mount over (a directory over a directory, a file over a file). Any
+# symlink there is taken as one an earlier launch made again: kept when the base's
+# entry is a symlink to the same target, else removed first, and then made, or bound
 # over, afresh. Any other mismatch -- a file where the base has a directory, a
 # directory where it has a file, anything but a symlink where it has one -- would fail
-# bwrap's mount, so it is refused here, before anything starts, naming both paths.
+# bwrap's mount, so it is refused here, before anything starts, naming both paths --
+# and before anything in the account's directory is changed: every entry is checked
+# first, then the stale symlinks removed and the base's made again.
 #
 # GLOBIGNORE is cleared for the listing: an ignore list in force would drop entries.
 # shellcheck disable=SC2154,SC2031
 _as_base_entry_binds() {
-  local real="$1" e name dest line entry ap skip a ka ke
+  local real="$1" e name dest line entry ap skip a ka ke t
   local GLOBIGNORE=""
-  local -a fields=() skip_paths=()
+  local -a fields=() skip_paths=() todo=()
   _as_base_real="$real" _as_base_entries=() _as_base_links=()
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
@@ -6987,14 +7021,7 @@ _as_base_entry_binds() {
     done
     ((skip)) && continue
     a="$_acct_dir/$name"
-    if [[ -L "$a" ]]; then
-      if ! [[ -L "$e" && "$(readlink -- "$a")" == "$(readlink -- "$e")" ]]; then
-        rm -f -- "$a" || {
-          _as_msg "the account '${_acct_name:-}': cannot remove the stale symlink '$a' that an earlier launch made for the base's '$e'"
-          return 1
-        }
-      fi
-    elif [[ -e "$a" ]]; then
+    if [[ ! -L "$a" && -e "$a" ]]; then
       ka=file ke=file
       [[ -d "$a" ]] && ka=directory
       [[ -d "$e" ]] && ke=directory
@@ -7004,9 +7031,26 @@ _as_base_entry_binds() {
         return 1
       fi
     fi
+    todo+=("$e")
+  done
+  # Every entry checked: only now is anything in the account's directory changed.
+  for e in ${todo[@]+"${todo[@]}"}; do
+    name="${e##*/}" dest="$profile_base/${e##*/}" a="$_acct_dir/${e##*/}"
+    if [[ -L "$a" ]] && ! [[ -L "$e" && "$(readlink -- "$a")" == "$(readlink -- "$e")" ]]; then
+      rm -f -- "$a" || {
+        _as_msg "the account '${_acct_name:-}': cannot remove the stale symlink '$a' that an earlier launch made for the base's '$e'"
+        return 1
+      }
+    fi
     if [[ -L "$e" ]]; then
-      args+=(--symlink "$(readlink -- "$e")" "$dest")
-      _as_base_links+=("$name"$'\t'"$(readlink -- "$e")")
+      t="$(readlink -- "$e")"
+      # Another launch on the account may make the same one at the same moment.
+      if [[ ! -L "$a" ]] && ! ln -s -- "$t" "$a" 2>/dev/null \
+        && ! [[ -L "$a" && "$(readlink -- "$a")" == "$t" ]]; then
+        _as_msg "the account '${_acct_name:-}': cannot make '$a' a symlink to '$t', as the base's '$e' is. Nothing was started"
+        return 1
+      fi
+      _as_base_links+=("$name"$'\t'"$t")
     else
       [[ -d "$e" ]] || _as_connect_placeholder "$dest"
       args+=(--bind "$e" "$dest")
