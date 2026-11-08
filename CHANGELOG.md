@@ -142,8 +142,8 @@ names are gone; there are no aliases for removed names before 1.0.
   or without `account-paths`, refuses it.
   `asb --list` and `--list-all` end each role's line with its agent and account (`claude,
   account work`, `claude, base`), plus `, login due in N days` within 7 days of the
-  login's expiry and `, login expired: asb --account-login NAME AGENT` past it (`run
-  /login` for the base); `--status` prints the account, its directory and the expiry
+  login's expiry and `, login expired: asb --account-login NAME AGENT` past it (for the
+  base, the profile's `login-renew`: claude's `run /login`); `--status` prints the account, its directory and the expiry
   date always; the briefing says which agent and account the session runs as, and when
   the login is due within the window, by names only. The new profile key `[agent]
   account-expiry` (claude: `.credentials.json claudeAiOauth.refreshTokenExpiresAt`,

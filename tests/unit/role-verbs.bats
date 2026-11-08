@@ -654,6 +654,9 @@ To resume: asb --role ROLE --agent claude --resume"
   login_file "$H/home/.claude/.credentials.json" "$rms"
   run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
   grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days)" <<<"$output"
+  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
+  [ "$status" -eq 0 ]
+  grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days): run sign in again from the menu" <<<"$output"
   # an account's renewal is the engine's, with or without the key
   login_file "$H/home/.local/state/agent-sandbox/claude/accounts/old/.credentials.json" "$(expiry_ms -1)"
   printf 'claude\told\n' >"${SBOX%/default}/a/account"
