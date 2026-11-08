@@ -1024,6 +1024,25 @@ codex_profile() {
   [ ! -e "$LSB" ]
 }
 
+@test "--account-login: a hint about the unechoed code is said just before the login runs, never on a refusal" {
+  local hint="--account-login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
+  run_engine -- asb --account-login work claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$hint"*"role: account-login (--role)"* ]]
+  [[ "$output" != *"role: account-login (--role)"*"$hint"* ]]
+  # refused: by the arguments, and by the last check before the login (one running)
+  run_engine -- asb --account-login work nosuch
+  [ "$status" -eq 2 ]
+  [[ "$output" != *"paste it"* ]]
+  login_paths
+  engine_bg -- asb --account-login work claude
+  run_engine -- asb --account-login personal claude
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"a login is running already"* ]]
+  [[ "$output" != *"paste it"* ]]
+  release_bg
+}
+
 @test "--account-login: says whether the account has its login file, by its path; the exit status follows" {
   run_engine -- asb --account-login work claude
   [ "$status" -eq 0 ]
