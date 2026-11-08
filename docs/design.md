@@ -379,7 +379,7 @@ Stated plainly. These are what the adversary above can still do.
   copy of a login left under `ide/` or `cache/` (by you, or by an agent asked to) is
   in every account role, and writable from it, like any other entry. A `read-write`
   file channel missing in the base is created there empty under an account, so it is
-  shared too. Which of those entries an agent writes per
+  shared too, unless the profile gives it a `start:` file. Which of those entries an agent writes per
   account, and what it leaves there for another session to read, is the profile's to
   classify (an unclassified entry is a residual risk per host; `--check` lists them).
   The entries are listed when the launch starts and mounted by bwrap after: an entry

@@ -1243,8 +1243,9 @@ project's `[claude] hide`), and the profile's `account-paths` -- **the base's lo
 its refresh lock are never in an account role**; that is the point. An entry that is a
 symlink is made again inside with its target as written, never followed on the host.
 Where the account's directory has an entry of the same name and kind, the base's
-covers it. A symlink there is one an earlier launch made again, and is replaced when
-the base's entry is no longer a symlink to the same target. Any other mismatch (a file
+covers it. Any symlink there, under a name the base has, is taken to be one an earlier
+launch made again (the engine does not tell its own from yours), and is removed and
+made afresh when the base's entry is no longer a symlink to the same target. Any other mismatch (a file
 in the account's directory where the base has a directory, a directory where it has a
 file, a file or directory where it has a symlink) refuses the launch before anything
 starts, naming both paths: remove the account's to see the base's there, or the base's
@@ -1253,7 +1254,9 @@ that launch (a role on the base sees it at once); one the agent creates at the t
 during the session lands in the account's directory. A `read-write` file channel whose
 source does not exist in the base is created there empty under an account, as a
 `read-write` directory channel's is, so what the agent writes there is the base's,
-shared as the channel says. Mount points bwrap creates for the channels and the
+shared as the channel says -- unless the profile gives that path a `start:` file
+(claude: the policy bodies): an empty file is not what it starts as, so it is not
+bound, and what the agent writes there lands in the account's directory. Mount points bwrap creates for the channels and the
 entries are made in the account's directory, as they are in the base (one under an
 entry bound from the base, `cache/changelog.md`, in the base's entry, as with no
 account; one under a symlink made again, wherever its target is); empty files among

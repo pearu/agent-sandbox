@@ -693,17 +693,23 @@ argv_count() {
   [ "$(cat "$ACC/work/response-hook.py")" = mine ]
 }
 
-@test "P7: a missing read-write file channel is made empty in the base under an account, and bound from there; not without one" {
+@test "P7: a missing read-write file channel with no start: file is made empty in the base under an account, and bound from there; one with a start: file is not; nothing without an account" {
   [ ! -e "$C/CLAUDE.md" ]
+  [ ! -e "$C/policy-limits.json" ]
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$C/CLAUDE.md" ]
   run_engine -- asb --account work claude --version
   [ "$status" -eq 0 ]
+  # no start: file (instructions): made in the base, bound from there
   [ -f "$C/CLAUDE.md" ]
   [ ! -s "$C/CLAUDE.md" ]
   argv_has --bind "$C/CLAUDE.md" "$C/CLAUDE.md"
   [ ! -e "$ACC/work/CLAUDE.md" ] # the stub makes no mount point
+  # a start: file (the policy bodies, start:{profile}/policy.json): not made, not bound
+  [ ! -e "$C/policy-limits.json" ]
+  [ ! -e "$C/remote-settings.json" ]
+  run ! grep -qxF "$C/policy-limits.json" "$H/argv"
 }
 
 @test "P7 helper: the entry listing ignores a GLOBIGNORE in force" {

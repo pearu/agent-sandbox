@@ -68,7 +68,8 @@ run_claude() {
   [ ! -e "$IHOME/.claude/written-inside" ]
   [ "$(cat "$IHOME/.claude/.credentials.json")" = BASE-LOGIN ]
   # no mount point left behind in the account's directory; in the base, the empty files
-  # are the read-write file channels' sources it lacked, made there on purpose (P7)
+  # are the read-write file channels' sources it lacked that have no start: file, made
+  # there on purpose (P7); one with a start: file is not made
   local left f
   left="$(find "$ACC" -maxdepth 1 -type f -empty)"
   [ -z "$left" ] || {
@@ -76,9 +77,12 @@ run_claude() {
     false
   }
   [ -f "$IHOME/.claude/CLAUDE.md" ]
+  [ ! -e "$IHOME/.claude/policy-limits.json" ]
+  [ ! -e "$IHOME/.claude/remote-settings.json" ]
+  [ ! -e "$IHOME/.claude/policy-limits.json.stamp.json" ]
   while IFS= read -r f; do
-    awk -v k="{base}/${f##*/}" '$1 == k { found = 1 } END { exit !found }' "$REPO_ROOT/profiles/claude/agent-sandbox" || {
-      echo "empty file in the base that is no file channel: $f"
+    awk -v k="{base}/${f##*/}" '$1 == k && !/start:/ { found = 1 } END { exit !found }' "$REPO_ROOT/profiles/claude/agent-sandbox" || {
+      echo "empty file in the base that is no file channel without a start: file: $f"
       false
     }
   done < <(find "$IHOME/.claude" -maxdepth 1 -type f -empty)
