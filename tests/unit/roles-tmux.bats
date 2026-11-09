@@ -399,10 +399,10 @@ no_tmux_path() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"--roles: no agent for role 'a'"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
-  # two profiles installed: the example names none of them
+  # two profiles installed, codex's command gone from PATH: the example names claude (#6)
   run_engine TMUX_DUMP="$TM" "$P2" -- asb --roles a b
   [ "$status" -eq 2 ]
-  [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = AGENT'; nothing was opened"* ]]
+  [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = claude'; nothing was opened"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
 }
 

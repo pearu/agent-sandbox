@@ -515,13 +515,20 @@ STUB
   run_engine -- asb --role r --resume
   [ "$status" -eq 2 ]
   [[ "$output" == *"no agent for role 'r'"* ]]
-  # two profiles installed: the example names none of them
+  # two profiles installed, only claude's command on PATH: the example names claude (#6)
   mkdir -p "$H/profiles2/other"
   ln -s "$REPO_ROOT/profiles/claude" "$H/profiles2/claude"
   printf 'profile_command=other\n' >"$H/profiles2/other/profile.sh"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --resume
   [ "$status" -eq 2 ]
+  [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = claude'"* ]]
+  # both on PATH: the example names none of them
+  printf '#!/bin/sh\n' >"$H/bin/other"
+  chmod +x "$H/bin/other"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role r --resume
+  [ "$status" -eq 2 ]
   [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = AGENT'"* ]]
+  rm "$H/bin/other"
   # a resolved agent missing on PATH: named where a role's agent is named, not by --profile
   run_engine PATH="/usr/bin:/bin" -- "$H/bin/asb" --role r --agent claude
   [[ "$output" == *"no 'claude' on PATH to run. Install the agent, or name its binary for role 'r': --agent r=/path/to/claude, or in .agent-sandbox, [agent:r] command = /path/to/claude"* ]]
@@ -596,7 +603,7 @@ STUB
   [ ! -s "$H/argv" ]
 }
 
-@test "--agent: a role verb with no command acts on the role's agent's profile, else on the only one there is (#355)" {
+@test "--agent: a role verb with no command acts on the role's agent's profile, else on the default one (#355)" {
   mkdir -p "$H/profiles2/other"
   ln -s "$REPO_ROOT/profiles/claude" "$H/profiles2/claude"
   printf 'profile_command=other\n' >"$H/profiles2/other/profile.sh"
