@@ -104,9 +104,31 @@ fake_agent_file() {
   chmod +x "$out"
 }
 
-# plant_fake_agent HOME -- the shared fake, planted under HOME by the adapter in use the
-# way its agent's installer lays it out; sets TEST_LAUNCHER (the command on a user's
-# PATH) and TEST_BIN (the binary it resolves to).
+# install_fake_agent HOME FILE VERSION -- FILE installed for the adapter in use's profile
+# as `asb --install` installs an agent (#6), under HOME's state directory: the version's
+# directory <state>/<profile>/install/VERSION/ holding FILE at the binary's place there
+# (the recipe's: a `file` named after the command, a `tar PATH` at PATH), and `current`
+# naming VERSION. Prints the binary's path. For an adapter whose profile has an install
+# recipe, from its test_plant; the layout is the engine's, read from the profile's facts.
+install_fake_agent() {
+  local kind="" path="" cmd root bin
+  IFS=$'\t' read -r kind path < <(HOME="$1" profile_facts "$TEST_AGENT" install)
+  cmd="$(HOME="$1" profile_facts "$TEST_AGENT" command)"
+  [[ -n "$kind" ]] || return 1
+  if [[ "$kind" == file ]]; then bin="${cmd##*/}"; else bin="$path"; fi
+  root="$1/.local/state/agent-sandbox/$TEST_AGENT/install"
+  mkdir -p "$root/$3/$(dirname -- "$bin")"
+  cp -- "$2" "$root/$3/$bin"
+  chmod +x "$root/$3/$bin"
+  ln -sfn "$3" "$root/current"
+  printf '%s\n' "$root/$3/$bin"
+}
+
+# plant_fake_agent HOME -- the shared fake, planted under HOME by the adapter in use
+# where a launch runs it from (test_plant): asb's install of it for a profile with an
+# install recipe, else the way its agent's installer lays it out with its command on
+# PATH; sets TEST_LAUNCHER (what test_plant printed: the installed binary, or the
+# command on a user's PATH) and TEST_BIN (the binary it resolves to).
 plant_fake_agent() {
   mkdir -p "$1"
   fake_agent_file "$1/.fake-agent.$TEST_AGENT"

@@ -5,7 +5,7 @@
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   make_harness
-  BIN="$H/home/.local/share/claude/versions/2.1.300/claude"
+  BIN="$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude"
 }
 
 @test "default (proxy): system read-only, fresh pseudo-filesystems, HOME tmpfs remounted ro after its binds, clearenv, profile state rw, CWD rw, proxy env, CA env" {
@@ -32,7 +32,12 @@ setup() {
   # (tests/unit/config-channel.bats has the rest).
   argv_has --bind "$H/home/.local/state/agent-sandbox/claude/$(printf '%s' "$(cd "$H/proj" && pwd -P)" | sed 's:[^A-Za-z0-9-]:-:g')/default/config/seed-only/$(printf '%s' "$H/home/.claude/.claude.json" | sed 's:^/::; s:/:_:g')" "$H/home/.claude/.claude.json"
   run ! argv_has --bind "$H/home/.claude.json" "$H/home/.claude/.claude.json"
-  argv_has --ro-bind "$BIN" "$BIN"
+  # the agent asb installed (#6): its version's directory, read-only, and `current`
+  # naming it; not the binary alone, nor the install/ beside it
+  argv_has --ro-bind "$STUB_AGENT_DIR" "$STUB_AGENT_DIR"
+  argv_has --symlink 2.1.300 "${STUB_AGENT_DIR%/*}/current"
+  run ! argv_has --ro-bind "$BIN" "$BIN"
+  run ! grep -qxF -- "${STUB_AGENT_DIR%/*}" "$H/argv"
   argv_has --bind "$H/proj" "$H/proj"
   argv_has --chdir "$H/proj"
   argv_has --remount-ro "$H/home"

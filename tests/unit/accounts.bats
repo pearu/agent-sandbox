@@ -530,7 +530,9 @@ argv_count() {
   run ! grep -qxF "$H/home/.ssh" "$H/argv"
   run ! grep -qxF "$C/link" "$H/argv"
   run ! grep -qxF "$C/keys" "$H/argv"
-  run ! grep -qxF -- --symlink "$H/argv"
+  # (the one --symlink there is the installed agent's `current`, #6)
+  [ "$(grep -cxF -- --symlink "$H/argv")" -eq 1 ]
+  argv_has --symlink 2.1.300 "${STUB_AGENT_DIR%/*}/current"
   # a second launch finds them there, and keeps them
   run_engine -- asb --account work claude --version
   [ "$status" -eq 0 ]
@@ -916,7 +918,7 @@ codex_profile() {
   argv_has --bind "$LSB/settings/own/${slot#_}_settings.json" "$C/settings.json"
   run ! argv_has --bind "$C/settings.json" "$C/settings.json"
   # the agent and the profile's login args, `claude auth login`
-  [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
+  [ "${JOINV[0]}" = "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" ]
   [ "${JOINV[*]:1}" = "auth login" ]
   # a profile's empty `login =` runs the agent with no arguments
   codex_profile 'account-paths = auth.json' 'login ='

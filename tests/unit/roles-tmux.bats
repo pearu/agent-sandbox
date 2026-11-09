@@ -393,6 +393,13 @@ no_tmux_path() {
   [[ "$output" == *"no 'codex' on PATH to run. Install the agent, or name its binary for role 'b': --agent b=/path/to/codex, or in .agent-sandbox, [agent:b] command = /path/to/codex"*"--roles: role 'b' cannot start; nothing was opened"* ]]
   [[ "$output" != *"--profile"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  # an agent asb installs, not installed (#6): the line that installs it, as a launch says
+  mv "${STUB_AGENT_DIR%/*}" "$H/install.away"
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b --agent claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude is not installed for agent-sandbox: install it, asb --install claude"*"--roles: role 'a' cannot start; nothing was opened"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  mv "$H/install.away" "${STUB_AGENT_DIR%/*}"
   # no file at all: no agent for the first role
   rm "$PROJ/.agent-sandbox" "$REC" "$REC.approved"
   run_engine TMUX_DUMP="$TM" -- asb --roles a b

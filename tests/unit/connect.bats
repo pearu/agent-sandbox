@@ -318,7 +318,7 @@ EOF
   run_engine AGENT_SANDBOX_VERBOSE= AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude -p hi
   [ "$status" -eq 0 ]
   [ ! -s "$H/argv" ] # no second launch
-  join_has "$H/home/.local/share/claude/versions/2.1.300/claude" -p hi
+  join_has "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" -p hi
   # both joins name the same process
   local a b
   a="$(grep -B1 -m1 '^--$' "$H/join.bg" | head -1)"

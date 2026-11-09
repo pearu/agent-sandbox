@@ -12,7 +12,7 @@ setup() {
   PROJ="$(cd "$H/proj" && pwd -P)"
   SBOX="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
   CFG="$H/home/.config/agent-sandbox"
-  BIN="$H/home/.local/share/claude/versions/2.1.300/claude"
+  BIN="$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude"
 }
 
 teardown() {

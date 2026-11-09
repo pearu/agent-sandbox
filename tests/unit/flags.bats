@@ -55,7 +55,7 @@ STUB
   [[ "$output" == *"the sandbox did not start"* ]]
   [[ "$output" == *"without the sandbox"* ]]
   # the actual binary, not just the idea of one
-  [[ "$output" == *"claude    ($H/home/.local/share/claude/versions/2.1.300/claude)"* ]]
+  [[ "$output" == *"claude    ($H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude)"* ]]
   [[ "$output" == *"troubleshooting.md"* ]]
 }
 
@@ -111,9 +111,16 @@ STUB
   norm "$H/argv" >"$H/argv.b" && cmp -s "$H/argv.b" "$H/argv.a"
   run_engine -- agent-sandbox --profile=claude claude --version
   norm "$H/argv" >"$H/argv.b" && cmp -s "$H/argv.b" "$H/argv.a"
-  # a path whose basename is the profile's name, here the link on PATH itself
+  # a path whose basename is the profile's name, here the link on PATH itself: that
+  # profile, but the file the path names is the agent, bound alone (#6), and that is
+  # the only difference
   run_engine -- asb "$H/bin/claude" --version
-  norm "$H/argv" >"$H/argv.b" && cmp -s "$H/argv.b" "$H/argv.a"
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$STUB_AGENT_DIR/claude" "$STUB_AGENT_DIR/claude"
+  run ! argv_has --ro-bind "$STUB_AGENT_DIR" "$STUB_AGENT_DIR"
+  norm "$H/argv" | grep -vxF -e --ro-bind -e "$STUB_AGENT_DIR/claude" >"$H/argv.b"
+  grep -vxF -e --ro-bind -e "$STUB_AGENT_DIR" -e --symlink -e 2.1.300 -e "${STUB_AGENT_DIR%/*}/current" "$H/argv.a" >"$H/argv.c"
+  cmp -s "$H/argv.b" "$H/argv.c"
   # the normalisation must actually have had something to normalise, or this
   # test would be comparing raw argvs and passing for the wrong reason
   grep -q 'session\.NORMALISED' "$H/argv.a"
@@ -123,7 +130,7 @@ STUB
   run_engine -- asb claude --role x --version
   [ "$status" -eq 0 ]
   # $H/bin/claude links into versions/, as the native installer's launcher does
-  [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
+  [ "${JOINV[0]}" = "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" ]
   # everything after the command is the agent's, engine-looking words included
   join_has --role x --version
   [[ "$output" != *"role: x"* ]]
@@ -131,7 +138,7 @@ STUB
 
 @test "a versioned binary runs with --profile; without it its basename names no profile" {
   mkdir -p "$H/opt"
-  cp "$H/home/.local/share/claude/versions/2.1.300/claude" "$H/opt/2.1.284"
+  cp "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" "$H/opt/2.1.284"
   run_engine -- asb "$H/opt/2.1.284" --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"'$H/opt/2.1.284' names no profile"*"--profile NAME $H/opt/2.1.284"* ]]
@@ -150,11 +157,12 @@ STUB
   [[ "$output" == *"'$H/opt/nosuch' is not an executable file"* ]]
 }
 
-@test "no agent on PATH: refused, naming the path form" {
-  rm "$H/bin/claude"
-  run_engine -- asb claude --version
+@test "no agent on PATH, for a profile with no install recipe: refused, naming the path form" {
+  plain_profiles
+  rm "$PLAIN_BIN"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb plain --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no 'claude' on PATH to run"*"asb --profile claude /path/to/claude"* ]]
+  [[ "$output" == *"no 'plain' on PATH to run"*"asb --profile plain /path/to/plain"* ]]
   [ ! -s "$H/argv" ]
 }
 
@@ -180,7 +188,7 @@ STUB
   ln -s "$ENGINE" "$H/mine/sb"
   run_engine -- "$H/mine/sb" claude --version
   [ "$status" -eq 0 ]
-  [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
+  [ "${JOINV[0]}" = "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" ]
   mkdir -p "$H/old"
   ln -s "$ENGINE" "$H/old/claude"
   run_engine -- "$H/old/claude" --version
@@ -190,22 +198,24 @@ STUB
 }
 
 @test "a link to ANOTHER copy of the engine is passed over too: an installed copy, run from a checkout" {
+  plain_profiles
   mkdir -p "$H/old" "$H/app"
   cp "$ENGINE" "$H/app/agent-sandbox"
-  ln -s "$H/app/agent-sandbox" "$H/old/claude"
-  run_engine PATH="$H/old:$H/bin:/usr/bin:/bin" -- asb claude --version
+  ln -s "$H/app/agent-sandbox" "$H/old/plain"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" PATH="$H/old:$H/bin:/usr/bin:/bin" -- asb plain --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"note: $H/old/claude is agent-sandbox itself, not the agent; passing over it"* ]]
-  [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
+  [[ "$output" == *"note: $H/old/plain is agent-sandbox itself, not the agent; passing over it"* ]]
+  [ "${JOINV[0]}" = "$PLAIN_BIN" ]
 }
 
-@test "a link to the engine at the agent's name earlier on PATH is passed over, with a note: the agent is the next claude" {
+@test "a link to the engine at the agent's name earlier on PATH is passed over, with a note: the agent is the next one" {
+  plain_profiles
   mkdir -p "$H/old"
-  ln -s "$ENGINE" "$H/old/claude"
-  run_engine PATH="$H/old:$H/bin:/usr/bin:/bin" -- asb claude --version
+  ln -s "$ENGINE" "$H/old/plain"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" PATH="$H/old:$H/bin:/usr/bin:/bin" -- asb plain --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"note: $H/old/claude is agent-sandbox itself, not the agent; passing over it"* ]]
-  [ "${JOINV[0]}" = "$H/home/.local/share/claude/versions/2.1.300/claude" ]
+  [[ "$output" == *"note: $H/old/plain is agent-sandbox itself, not the agent; passing over it"* ]]
+  [ "${JOINV[0]}" = "$PLAIN_BIN" ]
 }
 
 @test "unknown, path-like or missing profile names are refused with exit 2" {
@@ -421,12 +431,11 @@ STUB
   run_engine -- asb --profile claude --exec /bin/echo hello world
   [ "$status" -eq 0 ]
   # the sandbox is still built; only the command at the end differs
-  argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
-    "$H/home/.local/share/claude/versions/2.1.300/claude"
+  argv_has --ro-bind "$STUB_AGENT_DIR" "$STUB_AGENT_DIR"
   # the command is what is joined into the keeper, exactly as given
   [ "${JOINV[*]}" = "/bin/echo hello world" ]
   # the agent binary is NOT the thing being executed
-  run ! join_has "$H/home/.local/share/claude/versions/2.1.300/claude"
+  run ! join_has "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude"
 }
 
 @test "--exec passes flags of its own through untouched, and needs a command" {
@@ -465,9 +474,8 @@ STUB
 @test "quiet by default: the routine status lines appear only with --verbose" {
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --allow pypi.org claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"session allowlist"* ]] # quiet by default
-  argv_has --ro-bind "$H/home/.local/share/claude/versions/2.1.300/claude" \
-    "$H/home/.local/share/claude/versions/2.1.300/claude" # and the launch is unchanged
+  [[ "$output" != *"session allowlist"* ]]               # quiet by default
+  argv_has --ro-bind "$STUB_AGENT_DIR" "$STUB_AGENT_DIR" # and the launch is unchanged
   run_engine AGENT_SANDBOX_VERBOSE= -- asb --verbose --allow pypi.org claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"session allowlist: pypi.org"* ]]
@@ -529,13 +537,16 @@ STUB
   [ "$status" -eq 2 ]
   [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = AGENT'"* ]]
   rm "$H/bin/other"
-  # a resolved agent missing on PATH: named where a role's agent is named, not by --profile
-  run_engine PATH="/usr/bin:/bin" -- "$H/bin/asb" --role r --agent claude
-  [[ "$output" == *"no 'claude' on PATH to run. Install the agent, or name its binary for role 'r': --agent r=/path/to/claude, or in .agent-sandbox, [agent:r] command = /path/to/claude"* ]]
+  # a resolved agent missing on PATH (a profile with no install recipe): named where a
+  # role's agent is named, not by --profile
+  plain_profiles
+  rm "$PLAIN_BIN"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" PATH="/usr/bin:/bin" -- "$H/bin/asb" --role r --agent plain
+  [[ "$output" == *"no 'plain' on PATH to run. Install the agent, or name its binary for role 'r': --agent r=/path/to/plain, or in .agent-sandbox, [agent:r] command = /path/to/plain"* ]]
   [ ! -s "$H/argv" ]
   # no role named: the bare forms
-  run_engine PATH="/usr/bin:/bin" -- "$H/bin/asb" --agent claude
-  [[ "$output" == *"no 'claude' on PATH to run. Install the agent, or name its binary: --agent /path/to/claude, or in .agent-sandbox, [agent] command = /path/to/claude"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" PATH="/usr/bin:/bin" -- "$H/bin/asb" --agent plain
+  [[ "$output" == *"no 'plain' on PATH to run. Install the agent, or name its binary: --agent /path/to/plain, or in .agent-sandbox, [agent] command = /path/to/plain"* ]]
   [ ! -s "$H/argv" ]
   # one named by --agent takes the resume words as a typed command does
   run_engine -- asb --role r --resume --agent claude

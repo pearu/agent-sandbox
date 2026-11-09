@@ -270,9 +270,10 @@ check() {
   [[ "$output" =~ \~/notes\ +read-only\ +declared\;\ does\ not\ exist ]]
   [[ "$output" =~ \~/.claude/projects/\{slug\}/memory ]]
   [[ "$output" =~ \~/.claude/sessions\ +tmpfs\ +blanked\ every\ launch ]]
-  [ ! -e "$REC" ]                                      # nothing approved
-  [ ! -d "$H/home/.local/state/agent-sandbox/claude" ] # no role, no record, no keeper
-  [ ! -s "$H/argv" ]                                   # bwrap never ran
+  [ ! -e "$REC" ] # nothing approved
+  # no role, no record, no keeper: only the agent the harness installed (#6)
+  [ "$(ls "$H/home/.local/state/agent-sandbox/claude")" = install ]
+  [ ! -s "$H/argv" ] # bwrap never ran
 }
 
 @test "--check --role shows another role's policy, a sandbox: source resolved as a launch would" {

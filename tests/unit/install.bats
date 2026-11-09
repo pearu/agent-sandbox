@@ -124,7 +124,7 @@ agent-sandbox: --install: fake 9.9.9 is installed at ~/.local/state/agent-sandbo
   install 'fake@v1.0'
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --install: 'v1.0' is not an exact version (1.2.3): asb --install fake@VERSION" ]
-  [ ! -e "$ST" ]
+  [ ! -e "$ST/fake" ]
   printf '1.0.0\n' >"$F/versions"
   install fake
   [ "$status" -eq 2 ]
@@ -147,7 +147,7 @@ agent-sandbox: --install: profile 'fake' has no pinned version; name one of its 
   install fake
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --install: profile 'fake' has no resolver, an executable $F/resolve.sh" ]
-  [ ! -e "$ST" ]
+  [ ! -e "$ST/fake" ]
 }
 
 @test "--install: the versions table's problems are said here; two pins is no pin" {
@@ -313,7 +313,7 @@ wrap() {
   run_engine AGENT_SANDBOX_PROFILE_DIR="$P" -- asb --install fake --sha256 "$(cat "$SRC/1.1.0/sum")"
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --install: --sha256 checks a local file, so it needs --from FILE: asb --install AGENT[@VERSION] --from FILE --sha256 SUM" ]
-  [ ! -e "$ST" ]
+  [ ! -e "$ST/fake" ]
   [ ! -s "$H/argv" ]
 }
 

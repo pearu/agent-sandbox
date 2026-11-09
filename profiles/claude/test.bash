@@ -27,12 +27,17 @@
 #
 #   test_plant HOME FILE        REQUIRED. Install FILE (the shared fake agent,
 #                               tests/helpers/fake-agent.sh, with its header) as the
-#                               agent's binary under HOME the way the agent's own
-#                               installer lays it out, executable, with the agent's
-#                               command (the profile's profile_command) on a user's
-#                               PATH linked to it. Prints the command's path. The
-#                               installer's report and the engine's binds see what a
-#                               user's machine has.
+#                               agent's binary under HOME, executable, where a launch
+#                               of `asb CMD` runs it from. For a profile with an
+#                               install recipe ([agent] install, #6), as `asb
+#                               --install` installs it: install_fake_agent HOME FILE
+#                               VERSION (tests/helpers/adapters.bash) does that and
+#                               prints the installed binary's path. For any other,
+#                               the way the agent's own installer lays it out, with
+#                               the agent's command (the profile's profile_command)
+#                               on a user's PATH linked to it; print the command's
+#                               path. The installer's report and the engine's binds
+#                               see what a user's machine has.
 #   test_root_options=(...)     The agent's options that take one value and may come
 #                               before a subcommand, as the profile's briefing
 #                               arguments do: the fake skips them in pairs before it
@@ -62,16 +67,10 @@
 #
 # docs/profiles.md ("Adding a profile") points here.
 
-# Claude Code's native installer: the binary under versions/<version>/, linked from
-# ~/.local/bin/claude (a package manager's install is just as fine to the engine, which
-# runs what the command resolves to; the e2e test reads the installer's report of this).
+# The claude profile has an install recipe (#6): `asb claude` runs asb's install of Claude
+# Code, never one on PATH, so the fake is installed as `asb --install claude` would.
 test_plant() {
-  local home="$1" v=9.9.9
-  mkdir -p "$home/.local/share/claude/versions/$v" "$home/.local/bin"
-  cp -- "$2" "$home/.local/share/claude/versions/$v/claude"
-  chmod +x "$home/.local/share/claude/versions/$v/claude"
-  ln -sfn "$home/.local/share/claude/versions/$v/claude" "$home/.local/bin/claude"
-  printf '%s\n' "$home/.local/bin/claude"
+  install_fake_agent "$1" "$2" 9.9.9
 }
 
 # Root options come before a subcommand, as Claude Code's do (`claude --settings X mcp
@@ -110,8 +109,8 @@ test_login() {
 }
 
 # The host's proxy at the port install.sh recorded (test_proxy_port,
-# tests/helpers/proxy-port.bash), a login in ~/.claude, and Claude Code from its native
-# installer.
+# tests/helpers/proxy-port.bash), a login in ~/.claude, and Claude Code installed for asb
+# (asb --install claude, #6), which is what `asb claude` runs.
 test_live_ready() {
   local pp
   pp="$(test_proxy_port "$HOME")"
@@ -123,8 +122,8 @@ test_live_ready() {
     echo "no Claude credentials in ~/.claude"
     return 1
   }
-  ls "$HOME/.local/share/claude/versions"/* >/dev/null 2>&1 || {
-    echo "no Claude binary under ~/.local/share/claude/versions"
+  [ -x "${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox/claude/install/current/claude" ] || {
+    echo "Claude Code is not installed for asb (asb --install claude)"
     return 1
   }
 }

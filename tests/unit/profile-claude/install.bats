@@ -16,6 +16,7 @@ setup() {
   C="$P/claude"
   SRC="$H/vendor"
   I="$H/home/.local/state/agent-sandbox/claude/install"
+  rm -rf "$I" # the harness's installed stub: these tests install it themselves
   mkdir -p "$P" "$SRC/2.1.999/linux-x64"
   cp -r "$REPO_ROOT/profiles/claude" "$C"
   sed -i "s/^fpr=.*/fpr=58D6AC13DA5C9314B3DC8E1E2A578F4CEAF33CC5/" "$C/resolve.sh"

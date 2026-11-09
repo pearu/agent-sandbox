@@ -20,7 +20,9 @@ them, and the entries say which one they mean.
 
 **Engine.** `agent-sandbox`, and its alias **`asb`**: the command that runs an agent in a
 sandbox, asked for by name — `asb [OPTIONS] CMD [AGENT OPTIONS]`. Its options come
-before CMD, the agent's after it; CMD is a name on PATH or a path. `claude` alone is Claude
+before CMD, the agent's after it; CMD is a name or a path (a name is asb's install of
+the agent for a profile with an install recipe, `asb --install claude`, #6; else looked
+up on PATH). `claude` alone is Claude
 Code itself: nothing shadows it, so it runs natively. *agreed* (#151); before it the
 installer put the engine at `~/.local/bin/claude`.
 

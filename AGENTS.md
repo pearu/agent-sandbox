@@ -102,7 +102,8 @@ number.
   integration, `tests/live/agent.bats`, and the agent block of `tests/e2e/install.bats`
   register their tests per adapter with `bats_test_function --description "<agent>:
   ..."` (`tests/helpers/adapters.bash`). The adapter says only what the profile does
-  not: how the agent's installer lays out its binary, its options that come before a
+  not: where its binary is planted (asb's install of it for a profile with an install
+  recipe, `install_fake_agent`; else its installer's layout), its options that come before a
   subcommand, its base's layout for `--check`, a fake login of its shape, and its live
   turn. What the profile states -- base, hide list, resume, clear and login words,
   account paths -- the tests read the engine's way (`_as_profile_facts`, the dot-file;
@@ -115,8 +116,8 @@ number.
   claude adapter) instead. The unit suites' many `asb claude` launches are not
   agent-only tests: they test the engine with claude as the vehicle, and stay.
 - **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): every
-  adapter plants the shared fake agent the way its agent's installer does it (claude:
-  `versions/`, linked from `~/.local/bin/claude`) before `install.sh` runs,
+  adapter plants the shared fake agent where a launch runs it from (claude: installed
+  as `asb --install claude` installs it, #6) before `install.sh` runs,
   `systemctl --user` is a shim (`tests/helpers/systemctl-shim.sh`) that records
   calls and runs the unit's ExecStart itself, and the installed `asb CMD`
   then runs each fake agent through the installed proxy. The proxy-dependent tests use the port the
