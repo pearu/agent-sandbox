@@ -2,7 +2,8 @@
 # tests/shard.sh K/N FILE... -- print the bats FILEs that make up shard K of N, one per line.
 #
 # For a CI matrix: every shard runs this with the same FILEs and gets a disjoint part, and
-# together the N parts are all of them. Files are weighed by their number of tests and
+# together the N parts are all of them. Files are weighed by their number of tests (an
+# `@test`, or a `bats_test_function` line, which registers one per profile adapter) and
 # dealt out heaviest first, each to the shard with the fewest tests so far (ties to the
 # lower shard), so the split is deterministic and roughly even. A file is never split:
 # within a shard its tests run in parallel anyway (tests/run.sh).
@@ -21,5 +22,5 @@ while read -r w f; do
   for ((i = 2; i <= n; i++)); do ((load[i] < load[best])) && best=$i; done
   load[best]=$((load[best] + w))
   ((best == k)) && printf '%s\n' "$f"
-done < <(for f in "$@"; do printf '%s %s\n' "$(grep -c '^@test' "$f" || true)" "$f"; done | sort -k1,1nr -k2,2)
+done < <(for f in "$@"; do printf '%s %s\n' "$(grep -cE '^@test|^[[:space:]]*bats_test_function ' "$f" || true)" "$f"; done | sort -k1,1nr -k2,2)
 exit 0

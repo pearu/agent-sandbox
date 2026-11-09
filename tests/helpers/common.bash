@@ -5,7 +5,9 @@
 # The standard harness is a stub `bwrap` that records the argv it receives:
 # the argv the engine produces for a given input is the contract under test.
 
-REPO_ROOT="$(cd -- "$BATS_TEST_DIRNAME/../.." && pwd)"
+# From this file's own place, so a suite in a subdirectory (tests/<layer>/profile-<name>/)
+# loads it as one beside it does.
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 # AGENT_SANDBOX_TEST_ENGINE lets a mutated copy of the engine be tested (mutation checks).
 ENGINE="${AGENT_SANDBOX_TEST_ENGINE:-$REPO_ROOT/agent-sandbox}"
 export REPO_ROOT ENGINE
@@ -332,7 +334,7 @@ release_bg() {
 bats_require_minimum_version 1.5.0
 
 # test_proxy_port: the proxy's port the engine under test resolves (#335).
-load "$BATS_TEST_DIRNAME/../helpers/proxy-port"
+load "$REPO_ROOT/tests/helpers/proxy-port"
 
 # True if the tokens appear consecutively in ARGV.
 argv_has() {

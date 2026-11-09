@@ -4,8 +4,8 @@
 # it can see. The harness runs `shared`, where memory is your native memory.
 
 setup() {
-  load "$BATS_TEST_DIRNAME/../helpers/common"
-  load "$BATS_TEST_DIRNAME/../helpers/integration"
+  load "$BATS_TEST_DIRNAME/../../helpers/common"
+  load "$BATS_TEST_DIRNAME/../../helpers/integration"
   require_bwrap
   I="$(mkdir -p "$BATS_TEST_TMPDIR/i" && cd "$BATS_TEST_TMPDIR/i" && pwd -P)"
   IHOME="$I/home"

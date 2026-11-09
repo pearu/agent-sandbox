@@ -144,7 +144,10 @@ run_engine_suite() {
   local stage="$1" dir="$2"
   need_kcov || return 2
   local covdir="$OUT/engine-runs/$stage" k
-  local -a files=("$dir"/*.bats)
+  # the layer's shared suites and each profile's own, tests/<layer>/profile-<name>/
+  shopt -s nullglob
+  local -a files=("$dir"/*.bats "$dir"/profile-*/*.bats)
+  shopt -u nullglob
   if [[ -n "${COVERAGE_SHARD:-}" ]]; then
     k="${COVERAGE_SHARD%/*}"
     covdir="$covdir-$k"
