@@ -310,7 +310,10 @@ Stated plainly. These are what the adversary above can still do.
   only gate), at
   the cost of a `passt` dependency. In the default `proxy` mode the
   allowlist is a control on well-behaved clients, not a network boundary; the
-  user chooses the mode and its residual risk.
+  user chooses the mode and its residual risk. `NO_PROXY` is `127.0.0.1,localhost`
+  inside (#6), so in `proxy` mode every proxy-honouring client (curl, git, pip, the
+  agent's own HTTP client) also reaches the host's loopback services directly, as a raw
+  socket could before; in `strict` that loopback is the namespace's own.
 - **DNS rebinding with a zero-TTL name can still race the destination check.**
   The proxy refuses to dial a destination that resolves to a non-public address,
   but for a domain name it resolves once to decide and mitmproxy resolves again

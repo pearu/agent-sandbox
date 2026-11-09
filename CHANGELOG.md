@@ -67,6 +67,9 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`profile_session_args`, a profile hook whose arguments every session carries** (#6),
+  the briefing on or off, first on the line, with the sandbox's preset in scope; never
+  for `--exec` or a verb.
 - **`[agent]` and `[agent:<glob>]` in a project's `.agent-sandbox`** (#355, the first of
   its launch-side steps): `command = AGENT [ARGS]`, a role's agent and the native
   arguments always passed to it, per role with the suffix, which defines a role as the
@@ -737,6 +740,12 @@ names are gone; there are no aliases for removed names before 1.0.
   `AGENT_SANDBOX_TEST_PYTHON`, and uploaded to Codecov with the engine's and the addon's.
 
 ### Changed
+
+- **`NO_PROXY` is `127.0.0.1,localhost` inside** (#6), in the `proxy` and `strict` modes,
+  where it was empty: a client that honours the proxy variables dials loopback directly,
+  since the proxy refuses it (codex's TUI's own MCP server failed its handshake with the
+  proxy's 502). In `proxy` mode those clients now reach the host's loopback services, as
+  a raw socket already could.
 
 - **The policy's signatures and sync time are in the policy channel** (#355):
   `policy-limits.json.signature.json`, `policy-limits.json.signature-iat.json`,

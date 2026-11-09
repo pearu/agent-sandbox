@@ -14,7 +14,15 @@ re-introduced.
 
 In `proxy` mode a tool that bypasses the proxy variables (raw sockets, its own
 resolver) is **not** filtered and can reach localhost and the LAN; `strict` mode
-closes that (at the cost of `--ssh` and a `passt` dependency). See the residual
+closes that (at the cost of `--ssh` and a `passt` dependency).
+
+`NO_PROXY` and `no_proxy` are `127.0.0.1,localhost` inside, in both modes (#6): a client
+that honours the proxy variables dials a loopback service directly, since the proxy
+refuses every non-public destination. An agent's own local server needs it (codex's TUI
+runs an MCP server on `127.0.0.1`, whose handshake failed with the proxy's 502 while
+`NO_PROXY` was empty). In `strict` the loopback is the namespace's own, and the host's
+stays unreachable; in `proxy` mode it is the host's, which such a client now reaches as a
+raw socket already could. See the residual
 risks in [design.md](design.md) and issue #1.
 
 ## Strict mode: opening ports

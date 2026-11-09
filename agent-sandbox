@@ -5082,6 +5082,29 @@ _as_connect_report() {
 # Names and paths only, never contents: summarising shared material would mean
 # reading it, which is another agent's job and out of scope.
 _as_briefing_inside() { printf '/run/agent-sandbox'; }
+
+# _as_no_proxy -- NO_PROXY (and no_proxy) inside, in the proxy and strict modes (#6): the
+# loopback names, so a client that honours the proxy variables dials a loopback service
+# directly instead of asking the proxy, which refuses every non-public destination. An
+# agent's own local server needs it (measured, codex 0.167: its TUI's MCP server on
+# 127.0.0.1 failed its handshake with a 502 from the proxy while NO_PROXY was empty).
+# In strict the loopback is the namespace's own, and the host's stays unreachable; in
+# proxy mode it is the host's, which a raw socket reached already (docs/design.md).
+_as_no_proxy() { printf '127.0.0.1,localhost'; }
+
+# _as_session_args PRESET [AGENT ARGS...] -- the profile's always-on arguments (#6): calls
+# profile_session_args, when the profile has it, with the agent's argv and `_preset` set
+# to PRESET (the sandbox's: native, isolated, inherit or shared), for every launch and
+# join that runs the agent as a session -- the briefing on or off, a --serve or
+# --summarize turn and --account-login included; never for --exec (the caller's own
+# command) or a verb (no session). The profile fills profile_session_argv, which the
+# caller declared and puts first, before the briefing's arguments and the agent's own.
+_as_session_args() {
+  local _preset="$1"
+  shift
+  declare -F profile_session_args >/dev/null || return 0
+  profile_session_args "$@"
+}
 _as_summary_inside() { printf '%s/summary' "$(_as_briefing_inside)"; }
 
 # _as_summarize_prompt ID RECORD -- the text `--summarize` (#314) tells its one turn:
@@ -14666,11 +14689,16 @@ agent_sandbox() (
           _brief_out_inside="$(_as_briefing_inside)/join.$BASHPID"
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
         fi
-        local -a profile_start_argv=()
+        local -a profile_start_argv=() profile_session_argv=()
+        # The session's own arguments, for the preset the keeper was built with: the
+        # sandbox this joins is that one, whatever this invocation resolved.
+        local _kpreset
+        _kpreset="$(awk -F'\t' '$1 == "preset" { print $2; exit }' "$_keeper_sb/keeper/policy" 2>/dev/null)" || _kpreset=""
+        _as_session_args "${_kpreset:-$_preset}" "$@" || return 1
         if [[ -n "$_start_text" ]] && declare -F profile_start_args >/dev/null; then
           profile_start_args "$_start_text" "$@" || return 1
         fi
-        _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
+        _run_argv=("$profile_bin" ${profile_session_argv[@]+"${profile_session_argv[@]}"} ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
       fi
       _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
       # The account it runs on is the keeper's (#355), whatever the live file says now.
@@ -15480,16 +15508,20 @@ agent_sandbox() (
   # command line verbatim. Everything else about the sandbox is identical, which
   # is the point -- including the read-only bind of the agent binary, so an agent
   # started from inside runs natively there.
-  local -a _run_argv=() profile_start_argv=()
+  local -a _run_argv=() profile_start_argv=() profile_session_argv=()
   if ((_do_exec)); then
     _run_argv=("$@")
   else
+    # The session's own arguments go FIRST, briefing or not (profile_session_args).
+    if ((! _do_verb)); then
+      _as_session_args "$_preset" "$@" || return 1
+    fi
     # The first turn's arguments go LAST, after the agent's own: claude's prompt is its
     # positional argument (profile_start_args).
     if [[ -n "$_start_text" ]] && declare -F profile_start_args >/dev/null; then
       profile_start_args "$_start_text" "$@" || return 1
     fi
-    _run_argv=("$profile_bin" ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
+    _run_argv=("$profile_bin" ${profile_session_argv[@]+"${profile_session_argv[@]}"} ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
   fi
 
   # ----- Network mode -----
@@ -15501,7 +15533,9 @@ agent_sandbox() (
   #          ...) go through the allowlist at
   #          ~/.config/agent-sandbox/allowlist.txt. Limitation: tools that
   #          bypass HTTPS_PROXY by opening raw sockets (or talking to
-  #          localhost directly) are NOT filtered.
+  #          localhost directly) are NOT filtered. NO_PROXY is
+  #          127.0.0.1,localhost (_as_no_proxy), so a proxy-honouring client
+  #          reaches the host's loopback directly too, as a raw socket can.
   # strict : pasta owns an isolated network namespace and forwards it to the
   #          host in userspace; an nftables rule in that netns drops everything
   #          except the proxy on the default gateway. Closes the raw-socket
@@ -15535,8 +15569,8 @@ agent_sandbox() (
         --setenv HTTPS_PROXY "$_pxy"
         --setenv http_proxy "$_pxy"
         --setenv https_proxy "$_pxy"
-        --setenv NO_PROXY ""
-        --setenv no_proxy ""
+        --setenv NO_PROXY "$(_as_no_proxy)"
+        --setenv no_proxy "$(_as_no_proxy)"
       )
       _as_ca_bind
       _as_ca_env
@@ -15605,12 +15639,12 @@ agent_sandbox() (
       # The proxy is reached at the netns gateway (pasta maps it to the host);
       # _as_launch_pasta reads that address inside the netns and points the proxy
       # variables at it. bwrap shares pasta's netns and makes its own user
-      # namespace (via --unshare-all in args). NO_PROXY is emptied here (it does
-      # not depend on the gateway); the proxy URLs are set inside.
+      # namespace (via --unshare-all in args). NO_PROXY is set here (it does not
+      # depend on the gateway; _as_no_proxy); the proxy URLs are set inside.
       args+=(
         --share-net
-        --setenv NO_PROXY ""
-        --setenv no_proxy ""
+        --setenv NO_PROXY "$(_as_no_proxy)"
+        --setenv no_proxy "$(_as_no_proxy)"
       )
       _as_ca_bind
       _as_ca_env
