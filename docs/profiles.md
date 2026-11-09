@@ -211,7 +211,8 @@ either sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as
    that is not a readable file, and a `--sha256 SUM` that is not 64 lowercase hex
    digits, are refused here too.
 2. A version already installed is not fetched again: it only becomes current (step 6);
-   a `--from FILE` is then said to be unused.
+   a `--from FILE` is then said to be unused, and with `--sha256 SUM` neither FILE nor
+   SUM is used (FILE must still be a readable file, and SUM well formed).
 3. It runs `resolve.sh VERSION PLATFORM` with PLATFORM this host's `ARCH-LIBC` (musl
    when `/lib/libc.musl-*` exists or `ldd` names musl, as the vendor's own script
    decides) and the tools env's `engine-bin/` first on PATH, where `install.sh` links

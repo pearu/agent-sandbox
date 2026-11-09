@@ -7479,9 +7479,9 @@ _as_account_login() {
 # rename puts it in place and any failure leaves nothing. No VERSION is the profile's pin;
 # an exact version not in its versions table installs too, said to be untested with asb.
 # A version already there is not downloaded again: current moves to it. --from FILE
-# --sha256 SUM checks FILE against SUM and runs no resolver: an offline install. AGENT_SANDBOX_INSTALL_BASE, for
-# tests, is passed to the resolver as its BASE (its source in place of the vendor's); the
-# SHA-256 the resolver gives is enforced all the same.
+# --sha256 SUM checks FILE against SUM and runs no resolver: an offline install.
+# AGENT_SANDBOX_INSTALL_BASE, for tests, is passed to the resolver as its BASE (its source
+# in place of the vendor's); the SHA-256 the resolver gives is enforced all the same.
 
 # The most bytes a download may have when the resolver states no size: 4 GiB.
 _as_install_max=4294967296

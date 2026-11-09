@@ -123,6 +123,7 @@ agent-sandbox: --install: fake 9.9.9 is installed at ~/.local/state/agent-sandbo
   [ "$output" = "agent-sandbox: --install: '1.0.0 1.1.0' is not an exact version (1.2.3): asb --install fake@VERSION" ]
   install 'fake@v1.0'
   [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: --install: 'v1.0' is not an exact version (1.2.3): asb --install fake@VERSION" ]
   [ ! -e "$ST" ]
   printf '1.0.0\n' >"$F/versions"
   install fake
@@ -235,6 +236,15 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
   install fake@1.1.0 --from "$H/no-such-file"
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --install: --from $H/no-such-file is not a readable file" ]
+  # a file that is there and cannot be read
+  if ((EUID != 0)); then
+    cp "$H/local-copy" "$H/unreadable"
+    chmod 000 "$H/unreadable"
+    install fake@1.0.0 --from "$H/unreadable"
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --install: --from $H/unreadable is not a readable file" ]
+    [ ! -e "$I/1.0.0" ]
+  fi
   install fake@1.1.0 --from "$H/local-copy"
   [ "$status" -eq 0 ]
   [ "$output" = "agent-sandbox: --install: fake 1.1.0 is installed already at ~/.local/state/agent-sandbox/fake/install/1.1.0/fakeagent ($H/local-copy not used), and is now fake's current version" ]
