@@ -738,6 +738,12 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **`NO_PROXY` is `127.0.0.1,localhost` inside** (#6), in the `proxy` and `strict` modes,
+  where it was empty: a client that honours the proxy variables dials loopback directly,
+  since the proxy refuses it (codex's TUI's own MCP server failed its handshake with the
+  proxy's 502). In `proxy` mode those clients now reach the host's loopback services, as
+  a raw socket already could.
+
 - **The policy's signatures and sync time are in the policy channel** (#355):
   `policy-limits.json.signature.json`, `policy-limits.json.signature-iat.json`,
   `remote-settings.json.signature.json`, `remote-settings.json.signature-iat.json` and

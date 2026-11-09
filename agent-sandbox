@@ -5082,6 +5082,15 @@ _as_connect_report() {
 # Names and paths only, never contents: summarising shared material would mean
 # reading it, which is another agent's job and out of scope.
 _as_briefing_inside() { printf '/run/agent-sandbox'; }
+
+# _as_no_proxy -- NO_PROXY (and no_proxy) inside, in the proxy and strict modes (#6): the
+# loopback names, so a client that honours the proxy variables dials a loopback service
+# directly instead of asking the proxy, which refuses every non-public destination. An
+# agent's own local server needs it (measured, codex 0.167: its TUI's MCP server on
+# 127.0.0.1 failed its handshake with a 502 from the proxy while NO_PROXY was empty).
+# In strict the loopback is the namespace's own, and the host's stays unreachable; in
+# proxy mode it is the host's, which a raw socket reached already (docs/design.md).
+_as_no_proxy() { printf '127.0.0.1,localhost'; }
 _as_summary_inside() { printf '%s/summary' "$(_as_briefing_inside)"; }
 
 # _as_summarize_prompt ID RECORD -- the text `--summarize` (#314) tells its one turn:
@@ -15501,7 +15510,9 @@ agent_sandbox() (
   #          ...) go through the allowlist at
   #          ~/.config/agent-sandbox/allowlist.txt. Limitation: tools that
   #          bypass HTTPS_PROXY by opening raw sockets (or talking to
-  #          localhost directly) are NOT filtered.
+  #          localhost directly) are NOT filtered. NO_PROXY is
+  #          127.0.0.1,localhost (_as_no_proxy), so a proxy-honouring client
+  #          reaches the host's loopback directly too, as a raw socket can.
   # strict : pasta owns an isolated network namespace and forwards it to the
   #          host in userspace; an nftables rule in that netns drops everything
   #          except the proxy on the default gateway. Closes the raw-socket
@@ -15535,8 +15546,8 @@ agent_sandbox() (
         --setenv HTTPS_PROXY "$_pxy"
         --setenv http_proxy "$_pxy"
         --setenv https_proxy "$_pxy"
-        --setenv NO_PROXY ""
-        --setenv no_proxy ""
+        --setenv NO_PROXY "$(_as_no_proxy)"
+        --setenv no_proxy "$(_as_no_proxy)"
       )
       _as_ca_bind
       _as_ca_env
@@ -15605,12 +15616,12 @@ agent_sandbox() (
       # The proxy is reached at the netns gateway (pasta maps it to the host);
       # _as_launch_pasta reads that address inside the netns and points the proxy
       # variables at it. bwrap shares pasta's netns and makes its own user
-      # namespace (via --unshare-all in args). NO_PROXY is emptied here (it does
-      # not depend on the gateway); the proxy URLs are set inside.
+      # namespace (via --unshare-all in args). NO_PROXY is set here (it does not
+      # depend on the gateway; _as_no_proxy); the proxy URLs are set inside.
       args+=(
         --share-net
-        --setenv NO_PROXY ""
-        --setenv no_proxy ""
+        --setenv NO_PROXY "$(_as_no_proxy)"
+        --setenv no_proxy "$(_as_no_proxy)"
       )
       _as_ca_bind
       _as_ca_env
