@@ -88,11 +88,10 @@ contract_check() {
   done
   run_engine PATH="$LPATH" -- asb --check "$TEST_CMD"
   [ "$status" -eq 0 ]
-  local got want
-  got="$(sed -n '/^Unclassified in/,/^$/{/^  /s/^  //p}' <<<"$output" | sort)"
-  want="$(printf '%s\n' ${test_base_unclassified[@]+"${test_base_unclassified[@]}"} | sed '/^$/d' | sort)"
-  [ "$got" = "$want" ] || {
-    printf 'unclassified, by --check:\n%s\nexpected (test_base_unclassified):\n%s\n' "$got" "$want"
+  # nothing unclassified: every entry is a channel's, hidden, an account's, or visible
+  # on purpose (the profile's [agent] visible, with its reason)
+  [[ "$output" != *"Unclassified in"* ]] || {
+    sed -n '/^Unclassified in/,/^$/p' <<<"$output"
     false
   }
 }
@@ -150,7 +149,7 @@ for a in $(test_adapters); do
   bats_test_function --description "$a: the adapter plants the agent as the profile's command, and a launch binds and runs that binary" -- contract_plant "$a"
   bats_test_function --description "$a: _as_profile_facts emits the profile's facts, its base among them" -- contract_facts "$a"
   bats_test_function --description "$a: every [agent] key of the profile's dot-file is one the engine reads" -- contract_keys "$a"
-  bats_test_function --description "$a: --check on the agent's base layout lists nothing unclassified but what the adapter names" -- contract_check "$a"
+  bats_test_function --description "$a: --check on the agent's base layout lists nothing unclassified" -- contract_check "$a"
   bats_test_function --description "$a: --resume puts the profile's resume words after the agent's own arguments" -- contract_resume "$a"
   bats_test_function --description "$a: the resume, clear, login and account facts are emitted where the dot-file declares them" -- contract_declared "$a"
   bats_test_function --description "$a: the adapter's fake login is the profile's login file, with the expiry where the profile reads it" -- contract_login "$a"

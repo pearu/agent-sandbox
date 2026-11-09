@@ -40,11 +40,9 @@
 #   test_base_layout=(...)      The base's top-level layout as the agent leaves it,
 #                               names and kinds only: `d NAME` for a directory, `f NAME`
 #                               for a file. The unit contract builds it and runs
-#                               `asb --check` on it.
-#   test_base_unclassified=(...) The lines of --check's "Unclassified in" list that
-#                               test_base_layout yields by design (entries the profile
-#                               deliberately leaves to no line), as --check prints them
-#                               without the indent. Any other line fails the contract.
+#                               `asb --check` on it, which must list nothing
+#                               unclassified: an entry left native on purpose is the
+#                               profile's `[agent] visible` line, with its reason.
 #   test_login DIR MARK         Write a fake login into DIR (the base, or an account's
 #                               directory) in the agent's shape: the file the profile's
 #                               account-paths names first, MARK in its values, no
@@ -101,14 +99,6 @@ test_base_layout=(
   "d paste-cache" "d backups" "d feedback-bundles" "d image-cache" "d gh" "d ide"
   "f .credentials.json" "f .oauth_refresh.lock" "f .oauth_refresh.lock.owner"
   "d telemetry" "f stats-cache.json"
-)
-# In no channel on purpose (docs/connections.md): the rest of cache/, telemetry/ and
-# stats-cache.json are the native files in every sandbox.
-# shellcheck disable=SC2034
-test_base_unclassified=(
-  "cache/ -- only changelog.md is classified"
-  "stats-cache.json"
-  "telemetry/"
 )
 
 # Claude Code's OAuth login (.credentials.json, measured on 2.1.319: claudeAiOauth with
