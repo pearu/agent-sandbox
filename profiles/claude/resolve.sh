@@ -27,7 +27,7 @@
 # (the vendor's install script, claude.ai/install.sh, read 2026-11-09). Platform names:
 # linux-x64, linux-arm64, and the -musl variants of both.
 #
-# Needs curl and gpg on PATH (gpg will come with agent-sandbox's tools env). gpg runs
+# Needs curl and gpg on PATH (asb --install puts the tools env's gpg first). gpg runs
 # in a scratch home it removes, with no agent: the user's keyring is never read.
 set -euo pipefail
 

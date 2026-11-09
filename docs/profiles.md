@@ -177,13 +177,12 @@ read yet: the launch says so.
 ## The install recipe
 
 An agent asb installs itself (#6) is described by three things in its profile
-directory. Nothing in a launch reads them yet; the installer that will (fetch, check,
-unpack under `~/.local/state/agent-sandbox/<profile>/install/<version>/`) comes next.
+directory. `asb --install` reads them (below); no launch does yet.
 
 | File | What it is |
 |---|---|
 | `agent-sandbox`, `[agent] install` | The kind of file the vendor ships: `file` or `tar PATH` (above). |
-| `versions` | The versions the profile was tested with live, one per line: `VERSION`, or `VERSION pinned` for the one asb installs. `#` starts a comment; blank lines are skipped. A version is exact -- dot-separated numbers, then an optional `-`/`+` suffix (`2.1.321`, `2.2.0-rc.1`) -- never a range. A line of another shape and a version listed again are ignored; two pinned, or versions with none pinned, leaves no pin. These problems are said when the installer reads the table (the next step); `_as_profile_facts` reads it silently, so a bad table never breaks a launch or `--check`. No checksums: they come from the vendor at install time. A version goes in when the live tests pass with it. `_as_profile_facts` emits `version<TAB>NAME<TAB>V` for each and `pin<TAB>NAME<TAB>V` for the pin. claude: `2.1.321 pinned` |
+| `versions` | The versions the profile was tested with live, one per line: `VERSION`, or `VERSION pinned` for the one asb installs. `#` starts a comment; blank lines are skipped. A version is exact -- dot-separated numbers, then an optional `-`/`+` suffix (`2.1.321`, `2.2.0-rc.1`) -- never a range. A line of another shape and a version listed again are ignored; two pinned, or versions with none pinned, leaves no pin. These problems are said when `asb --install` reads the table; `_as_profile_facts` reads it silently, so a bad table never breaks a launch or `--check`. No checksums: they come from the vendor at install time. A version goes in when the live tests pass with it. `_as_profile_facts` emits `version<TAB>NAME<TAB>V` for each and `pin<TAB>NAME<TAB>V` for the pin. claude: `2.1.321 pinned` |
 | `resolve.sh` | The resolver, vendor-specific, run on the host and reviewed as engine code: `resolve.sh VERSION PLATFORM [BASE]`. PLATFORM is the engine's `ARCH-LIBC`, `uname -m` then `gnu` or `musl` (`x86_64-gnu`, `aarch64-musl`); the script maps it to the vendor's names. BASE, for tests and mirrors, is read in place of the vendor's source: an `https://` or `file://` URL or an absolute directory. It prints one line, `URL<TAB>SHA256<TAB>SIZE` (SIZE in bytes, empty when the vendor states none), and exits 0; the engine downloads URL and keeps the file only if its SHA-256 is SHA256. Where the vendor signs what states the checksum, the script verifies that signature against a key pinned in the profile directory before it prints anything. A failure is one line on stderr and nothing on stdout: exit 2 for arguments it does not take, 1 for anything else. It fetches only metadata, never the agent, and runs nothing it fetched. |
 
 claude's resolver reads `<BASE>/<VERSION>/manifest.json` (default BASE
@@ -196,6 +195,43 @@ setup docs print it -- and the manifest names VERSION itself. The binary is
 variant of either. It needs `curl` and `gpg` on PATH; gpg runs in a scratch home with
 no agent, so your keyring is never read. The vendor signs manifests "from 2.1.89
 onward" (its docs); a version without a signature is refused.
+
+### `asb --install AGENT[@VERSION] [--from FILE]`
+
+The installer, alone on the line, on the host only (refused inside a sandbox, as
+`--account-login` is). An explicit `--install` is your word: it asks nothing.
+
+1. It reads the profile's `versions` table itself, saying what the table gets wrong.
+   VERSION defaults to the pin; a version not in the table is refused (exit 2), so only
+   live-tested versions install.
+2. A version already installed is not fetched again: it only becomes current (step 6).
+3. It runs `resolve.sh VERSION PLATFORM` with PLATFORM this host's `ARCH-LIBC` (musl
+   when `/lib/libc.musl-*` exists or `ldd` names musl, as the vendor's own script
+   decides) and the tools env's `engine-bin/` first on PATH, where `install.sh` links
+   conda-forge's `gpg` for it (no sandbox has that directory on its PATH).
+4. It downloads URL with the host's `curl -fsSL --proto '=https,file'` (redirects to
+   `https` only; the host's own proxy settings apply, never the sandbox's proxy), at
+   most SIZE bytes when stated (4 GiB otherwise), then refuses the file unless its size
+   is SIZE and its SHA-256 is SHA256. `--from FILE` takes FILE in place of the download,
+   checked the same way: the resolver still runs, since the SHA-256 comes from it.
+5. It unpacks into a temporary directory beside the destination, `.VERSION.XXXXXX`: a
+   `file` is the binary, named as the profile's command (claude: `claude`); a `tar
+   PATH` is unpacked with `tar --no-same-owner --no-same-permissions`, refused before
+   anything is written when a member is absolute or has a `..` part, and after when
+   anything in it is not a file, directory or symlink, a symlink resolves outside the
+   tree (followed as the kernel follows it, not read as text), or PATH is not an
+   executable file inside. Then one rename puts it at
+   `~/.local/state/agent-sandbox/<profile>/install/<VERSION>/` (`$XDG_STATE_HOME` is
+   honoured). Any failure removes the temporary directory: nothing is left, and the
+   current version stays.
+6. `install/current`, a symlink to `<VERSION>`, is pointed at it (replaced by a rename):
+   the version launches will run. The last line names the version, its binary's path,
+   and that it is now current.
+
+Exit 0 when installed (or already there), 2 for a refusal, 1 for a failure (the
+resolver's, the download's, a size, checksum or tarball check). `AGENT_SANDBOX_INSTALL_BASE`
+is for tests: it is passed to the resolver as BASE, the source read in place of the
+vendor's; the SHA-256 the resolver gives is enforced all the same.
 
 ## Adding a profile
 

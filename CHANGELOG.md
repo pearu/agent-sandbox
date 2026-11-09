@@ -67,6 +67,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`asb --install AGENT[@VERSION] [--from FILE]`** (#6), the host-side installer of the
+  install recipe: VERSION (default the pin; only versions in the profile's table) is
+  named by the profile's resolver, downloaded with curl (or taken from FILE), refused
+  unless its size and SHA-256 are the ones stated, a tarball's members checked (no
+  absolute or `..` member, no symlink out of the tree, nothing but files, directories
+  and symlinks, the binary at its PATH), and renamed into
+  `~/.local/state/agent-sandbox/<profile>/install/<VERSION>/`; a failure leaves nothing.
+  `install/current`, a symlink, names the version launches will run, and every
+  `--install` moves it; a version already there is not downloaded again. Refused inside
+  a sandbox. The versions table's problems are said here. `install.sh` adds conda-forge's
+  `gnupg` to the tools env for the resolvers, its `gpg` linked in the slot's new
+  `engine-bin/`, which no sandbox has on its PATH; so a `tools.txt` listing nothing now
+  leaves an env with none of your tools instead of removing it. No launch runs an
+  installed agent yet. `AGENT_SANDBOX_INSTALL_BASE` (tests) is the resolver's source.
 - **The install recipe, as profile data** (#6), the first step to agents asb installs
   itself: `[agent] install = file | tar PATH` in a profile's dot-file, a `versions`
   table of the live-tested versions with one `pinned` (exact versions, no checksums), and

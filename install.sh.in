@@ -673,13 +673,17 @@ choose_conda() {
 # system directories, so a project's own copy of a tool still wins.
 #
 # What it holds is the user's: package specs in $TOOLS_LIST, one per line (`#` comments),
-# `gh` when the file is absent; a file with none removes the env. A change takes effect
-# at the next install.sh run.
+# `gh` when the file is absent. A change takes effect at the next install.sh run. Beside
+# them, always, the packages agent-sandbox itself runs on the host ($TOOLS_ENGINE: gpg,
+# for an agent's resolver at `asb --install`, #6); their executables are linked in the
+# slot's engine-bin/, which no sandbox has on its PATH, never in bin/ unless the user
+# lists them too. So a file with no tools leaves an env of those alone, its bin/ empty.
 #
 # Layout, under $TOOLS_DIR (in $STATE_DIR, never bound whole into a sandbox): two slots,
 # a/ and b/, each an env/ (the conda prefix) and a bin/ of relative symlinks to the
 # executables the LISTED packages ship -- not their dependencies', so a tool that pulls
-# in python does not put a python ahead of /usr/bin. `current` names the slot in use. A
+# in python does not put a python ahead of /usr/bin -- and an engine-bin/ of those of
+# $TOOLS_ENGINE, which the engine runs on the host and no sandbox's PATH has. `current` names the slot in use. A
 # run builds the other slot from scratch and switches `current` only when that worked, so
 # a failed update leaves the working env as it was, and a running sandbox keeps the slot
 # it bound until the run after next. Prefixes never move (conda envs are not
@@ -689,6 +693,8 @@ TOOLS_DIR="$STATE_DIR/tools"
 TOOLS_LIST="$CONFIG_DIR/tools.txt"
 # gh, and tmux for `asb --roles` (#317) when the host has none.
 TOOLS_DEFAULT=(gh tmux)
+# What agent-sandbox runs on the host from the env (conda-forge's gnupg ships bin/gpg).
+TOOLS_ENGINE=(gnupg)
 
 # tools_specs -- the package specs, one per line: $TOOLS_LIST's (whitespace dropped, so
 # `gh >=2.60` is one spec), or the default's, one per line, when there is no such file.
@@ -722,43 +728,60 @@ micromamba_unregister() {
   rm -f "$f.agent-sandbox"
 }
 
+# tools_name SPEC -- the package's name in a spec (`gh>=2.60`, `conda-forge::gh`: gh).
+tools_name() {
+  local n="${1%%[<>=!~,]*}"
+  printf '%s' "${n##*::}"
+}
+
+# tools_link PREFIX META DIR -- link the executables package META ships in PREFIX/bin
+# into DIR (a slot's bin/ or engine-bin/), relative, and print their names, one per line.
+tools_link() {
+  local exe
+  while IFS= read -r exe; do
+    [[ -f "$1/bin/$exe" && -x "$1/bin/$exe" ]] || continue
+    [[ -e "$3/$exe" ]] && continue
+    ln -s "../env/bin/$exe" "$3/$exe"
+    printf '%s\n' "$exe"
+  done < <(grep -o '"bin/[^"/]*"' "$2" | sed 's/^"bin\///; s/"$//' | sort -u)
+}
+
 install_tools() {
   section "Tools env (on PATH inside every sandbox)"
-  local -a specs=()
-  local src="$TOOLS_LIST" cur next spec name meta exe log v
+  local -a specs=() all=()
+  local src="$TOOLS_LIST" cur next spec name meta log v s listed what
   mapfile -t specs < <(tools_specs)
   [[ -f "$TOOLS_LIST" ]] || src="the default; list your own in $TOOLS_LIST"
-  if ((${#specs[@]} == 0)); then
-    if [[ ! -e "$TOOLS_DIR" ]]; then
-      ok "no tools: $TOOLS_LIST lists none"
-    elif ((DRY_RUN)); then
-      info "(dry-run) $TOOLS_LIST lists no tools: would remove $TOOLS_DIR"
-    else
-      rm -rf -- "$TOOLS_DIR"
-      ok "$TOOLS_LIST lists no tools: removed $TOOLS_DIR"
-    fi
-    return 0
-  fi
+  what="${specs[*]:-with no tools of yours}"
+  # agent-sandbox's own packages, unless the user lists them too
+  all=(${specs[@]+"${specs[@]}"})
+  for spec in "${TOOLS_ENGINE[@]}"; do
+    listed=0
+    for s in ${specs[@]+"${specs[@]}"}; do
+      [[ "$(tools_name "$s")" == "$spec" ]] && listed=1
+    done
+    ((listed)) || all+=("$spec")
+  done
   if ((DRY_RUN)); then
-    info "(dry-run) would build the tools env ${specs[*]} ($src) from conda-forge with $MICROMAMBA under $TOOLS_DIR"
+    info "(dry-run) would build the tools env $what ($src) from conda-forge with $MICROMAMBA under $TOOLS_DIR"
     return 0
   fi
   if [[ ! -x "$MICROMAMBA" ]]; then
-    warn "no micromamba at $MICROMAMBA: the tools env (${specs[*]}) was not built"
+    warn "no micromamba at $MICROMAMBA: the tools env ($what) was not built"
     return 0
   fi
   cur="$(readlink -- "$TOOLS_DIR/current" 2>/dev/null || true)"
   next=a
   [[ "$cur" == a ]] && next=b
   rm -rf -- "${TOOLS_DIR:?}/$next"
-  mkdir -p "$TOOLS_DIR/$next/bin"
+  mkdir -p "$TOOLS_DIR/$next/bin" "$TOOLS_DIR/$next/engine-bin"
   log="$TOOLS_DIR/$next.log"
-  info "building the tools env ${specs[*]} ($src) from conda-forge"
+  info "building the tools env $what ($src) from conda-forge"
   # CONDA_PKGS_DIRS: the env's own cache, whatever a ~/.condarc names; the host's
   # conda variables name the host's conda, not this root.
   if ! env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV -u CONDA_SHLVL -u MAMBA_ROOT_PREFIX \
     CONDA_PKGS_DIRS="$TOOLS_DIR/pkgs" "$MICROMAMBA" create -q -y -r "$TOOLS_DIR" \
-    -p "$TOOLS_DIR/$next/env" --override-channels -c conda-forge "${specs[@]}" >"$log" 2>&1; then
+    -p "$TOOLS_DIR/$next/env" --override-channels -c conda-forge "${all[@]}" >"$log" 2>&1; then
     micromamba_unregister "$TOOLS_DIR"
     rm -rf -- "${TOOLS_DIR:?}/$next"
     warn "building the tools env failed ($(grep -v '^[[:space:]]*$' "$log" | tail -n 1)); the log is $log"
@@ -772,32 +795,38 @@ install_tools() {
   micromamba_unregister "$TOOLS_DIR"
   rm -f -- "$log"
   # bin/: the listed packages' own executables, relative links into the env
-  local -a shown=()
-  for spec in "${specs[@]}"; do
-    name="${spec%%[<>=!~,]*}"
-    name="${name##*::}"
+  local -a shown=() exes=()
+  for spec in ${specs[@]+"${specs[@]}"}; do
+    name="$(tools_name "$spec")"
     meta="$(tools_meta "$TOOLS_DIR/$next/env" "$name")"
     if [[ -z "$meta" ]]; then
       warn "tools: no record of package '$name' in the env; nothing of it is on PATH"
       continue
     fi
     v="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$meta" | head -n 1)"
-    local -a exes=()
-    while IFS= read -r exe; do
-      [[ -f "$TOOLS_DIR/$next/env/bin/$exe" && -x "$TOOLS_DIR/$next/env/bin/$exe" ]] || continue
-      [[ -e "$TOOLS_DIR/$next/bin/$exe" ]] && continue
-      ln -s "../env/bin/$exe" "$TOOLS_DIR/$next/bin/$exe"
-      exes+=("$exe")
-    done < <(grep -o '"bin/[^"/]*"' "$meta" | sed 's/^"bin\///; s/"$//' | sort -u)
+    mapfile -t exes < <(tools_link "$TOOLS_DIR/$next/env" "$meta" "$TOOLS_DIR/$next/bin")
     if ((${#exes[@]} == 0)); then
       warn "tools: package $name $v has no executables in bin/; nothing of it is on PATH"
     else
       shown+=("$name $v (${exes[*]})")
     fi
   done
+  # engine-bin/: agent-sandbox's own packages' executables, for the engine on the host
+  for name in "${TOOLS_ENGINE[@]}"; do
+    meta="$(tools_meta "$TOOLS_DIR/$next/env" "$name")"
+    if [[ -z "$meta" ]]; then
+      warn "tools: no record of package '$name' in the env, which agent-sandbox itself runs"
+      continue
+    fi
+    tools_link "$TOOLS_DIR/$next/env" "$meta" "$TOOLS_DIR/$next/engine-bin" >/dev/null
+  done
   ln -sfn "$next" "$TOOLS_DIR/current.new"
   mv -T -- "$TOOLS_DIR/current.new" "$TOOLS_DIR/current"
-  ok "tools env $TOOLS_DIR/$next ($src): $(printf '%s; ' "${shown[@]}" | sed 's/; $//')"
+  if ((${#shown[@]})); then
+    ok "tools env $TOOLS_DIR/$next ($src): $(printf '%s; ' "${shown[@]}" | sed 's/; $//')"
+  else
+    ok "tools env $TOOLS_DIR/$next ($src): no tools of yours"
+  fi
 }
 
 # ----- the egress proxy: mitmproxy >= 12 in its own environment -----

@@ -931,7 +931,11 @@ STUB
   [[ "$output" == *"building the tools env gh tmux (the default; list your own in $T/home/.config/agent-sandbox/tools.txt) from conda-forge"* ]]
   [[ "$output" == *"tools env $tools/a ("*"): gh 1.0 (gh); tmux 1.0 (tmux)"* ]]
   # from conda-forge alone, into the env's own package cache
-  grep -qF "create -q -y -r $tools -p $tools/a/env --override-channels -c conda-forge gh tmux | CONDA_PKGS_DIRS=$tools/pkgs" "$T/mm-called"
+  # with agent-sandbox's own gnupg (#6), whose executables are in engine-bin/, not bin/
+  grep -qF "create -q -y -r $tools -p $tools/a/env --override-channels -c conda-forge gh tmux gnupg | CONDA_PKGS_DIRS=$tools/pkgs" "$T/mm-called"
+  [ "$(readlink "$tools/a/engine-bin/gnupg")" = ../env/bin/gnupg ]
+  [ "$(find "$tools/a/engine-bin" -mindepth 1 -printf '%f\n')" = gnupg ]
+  [[ "$output" != *gnupg* ]]
   [ ! -e "$T/home/.config/agent-sandbox/tools.txt" ] # the default is not written
   # micromamba's registration of the env is undone; the user's own envs stay listed
   [ "$(cat "$T/home/.conda/environments.txt")" = /my/env ]
@@ -968,14 +972,14 @@ STUB
   [[ "$output" == *"[warn] no micromamba at $T/home/.local/share/agent-sandbox/micromamba/bin/micromamba: the tools env (gh tmux) was not built"* ]]
 }
 
-@test "tools env: ~/.config/agent-sandbox/tools.txt is the list -- comments, blanks, spaces in a spec, a channel prefix; one with none removes the env" {
+@test "tools env: ~/.config/agent-sandbox/tools.txt is the list -- comments, blanks, spaces in a spec, a channel prefix; one with none leaves agent-sandbox's own gnupg" {
   stub_tools_micromamba
   local tools="$T/home/.local/share/agent-sandbox/tools" list="$T/home/.config/agent-sandbox/tools.txt"
   mkdir -p "${list%/*}"
   printf '# my tools\n\ngh >=2.60   # current gh\nconda-forge::ripgrep\n  nobin\n' >"$list"
   tools_step
   [ "$status" -eq 0 ]
-  grep -qF -- "-c conda-forge gh>=2.60 conda-forge::ripgrep nobin |" "$T/mm-called"
+  grep -qF -- "-c conda-forge gh>=2.60 conda-forge::ripgrep nobin gnupg |" "$T/mm-called"
   [ "$(find "$tools/a/bin" -mindepth 1 -printf '%f\n' | sort | paste -sd' ')" = "gh ripgrep" ]
   [[ "$output" == *"[warn] tools: package nobin 1.0 has no executables in bin/; nothing of it is on PATH"* ]]
   [[ "$output" == *"tools env $tools/a ($list): gh 1.0 (gh); ripgrep 1.0 (ripgrep)"* ]]
@@ -983,8 +987,18 @@ STUB
   : >"$T/mm-called"
   tools_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"$list lists no tools: removed $tools"* ]]
-  [ ! -e "$tools" ] && [ ! -s "$T/mm-called" ]
+  [[ "$output" == *"building the tools env with no tools of yours ($list) from conda-forge"* ]]
+  [[ "$output" == *"tools env $tools/b ($list): no tools of yours"* ]]
+  grep -qF -- "-c conda-forge gnupg |" "$T/mm-called"
+  [ -z "$(ls -A "$tools/b/bin")" ] && [ -L "$tools/b/engine-bin/gnupg" ]
+  [ "$(readlink "$tools/current")" = b ]
+  # listed by the user too: once in the env, on the sandboxes' PATH and in engine-bin/
+  printf 'gnupg >=2.4\n' >"$list"
+  : >"$T/mm-called"
+  tools_step
+  [ "$status" -eq 0 ]
+  grep -qF -- "-c conda-forge gnupg>=2.4 |" "$T/mm-called"
+  [ -L "$tools/a/bin/gnupg" ] && [ -L "$tools/a/engine-bin/gnupg" ]
 }
 
 @test "--dry-run: the tools env's plan, nothing built" {
