@@ -121,7 +121,7 @@ slugify() {
 }
 
 @test "--check with no command checks every available profile, each under its heading; none available, the review alone; a named one always (#6)" {
-  local acc="$H/home/.local/state/agent-sandbox/claude/accounts/work" out
+  local acc="$H/home/.local/state/agent-sandbox/other/accounts/work" first second
   mkdir -p "$H/profiles" "$acc"
   ln -s "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
   cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other" # its command is claude too
@@ -129,14 +129,24 @@ slugify() {
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check
   [ "$status" -eq 0 ]
   [[ "$output" == *"=== profile claude ==="*"Policy: profile claude,"*"=== profile other ==="*"Policy: profile other,"* ]]
-  # a launch of one of them refuses the file (its account is missing): exit 1, said under it
+  # the first one's launch refuses the file (claude has no account 'work'), the last's
+  # does not: exit 1, said under the first only; the review once; the role's agent (a
+  # command naming no installed profile) said under each
   printf 'WORK-LOGIN\n' >"$acc/.credentials.json"
-  printf '[agent]\naccount = work\n' >"$PROJ/.agent-sandbox"
+  printf '[agent]\naccount = work\ncommand = codex\n' >"$PROJ/.agent-sandbox"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check
   [ "$status" -eq 1 ]
-  out="${output#*=== profile other ===}"
-  [[ "$out" == *"check: a launch refuses this role: its account 'work' cannot be its state directory (above)"* ]]
-  [[ "${output%%=== profile other ===*}" != *"check: a launch refuses"* ]]
+  first="${output%%=== profile other ===*}" second="${output#*=== profile other ===}"
+  [[ "$first" == *"=== profile claude ==="*"check: a launch refuses this role: its account 'work' cannot be its state directory (above)"* ]]
+  [[ "$second" != *"check: a launch refuses"* ]]
+  [[ "$first" == *"=== profile claude ==="*"  agent: codex -- .agent-sandbox [agent] wins"* ]]
+  [[ "$second" == *"  agent: codex -- .agent-sandbox [agent] wins"* ]]
+  [ "$(grep -c 'check: not approved yet' <<<"$output")" -eq 1 ]
+  # _check_nested from the environment is not the engine's: the review is still made
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" _check_nested=1 -- asb --check
+  [ "$status" -eq 1 ]
+  [ "$(grep -c 'check: not approved yet' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"/proj/.agent-sandbox (sha256 "* ]]
   # none available: the review alone, the skipped ones named, exit 0
   rm "$H/bin/claude"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check
@@ -144,13 +154,35 @@ slugify() {
   [[ "$output" == *"--check: no policy or mount plan shown: skipped claude other, whose command is not on PATH; check one anyway: asb --check AGENT or --profile NAME"* ]]
   [[ "$output" != *"Policy:"* ]]
   # a named profile is checked whether its command is on PATH or not
-  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check --profile other
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check --profile claude
   [ "$status" -eq 1 ]
-  [[ "$output" == *"Policy: profile other,"*"check: a launch refuses this role: its account 'work'"* ]]
-  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check claude
+  [[ "$output" == *"Policy: profile claude,"*"check: a launch refuses this role: its account 'work'"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check other
   [ "$status" -eq 0 ]
+  [[ "$output" == *"Policy: profile other,"* ]]
+  [[ "$output" != *"=== profile"* ]]
+}
+
+@test "a profile whose profile.sh fails to load is never the default, and the verbs and --check name it (#6)" {
+  mkdir -p "$H/profiles"
+  ln -s "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other" # its command is claude too
+  printf 'if then\n' >>"$H/profiles/other/profile.sh"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"acts on one profile's stores"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--check: skipped other, whose profile.sh failed to load"* ]]
   [[ "$output" == *"Policy: profile claude,"* ]]
   [[ "$output" != *"=== profile"* ]]
+  rm "$H/bin/claude"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--status acts on one profile's stores, and none installed has its command on PATH (installed: claude; failed to load: other): install the agent, or name its binary by path: asb --status /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)"* ]]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--check: no policy or mount plan shown: skipped claude, whose command is not on PATH; other, whose profile.sh failed to load; check one anyway: asb --check AGENT or --profile NAME"* ]]
 }
 
 @test "--reset transcripts reaches this project's conversations directory too ({slug}, #176)" {

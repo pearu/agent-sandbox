@@ -52,7 +52,7 @@ contract_facts() {
     "$ENGINE" "$REPO_ROOT/profiles/$1/profile.sh" >"$H/facts"
   [ -s "$H/facts" ]
   [ -z "$(awk -F'\t' -v n="$1" '$2 != n' "$H/facts")" ]
-  run ! grep -vE '^(channel|key|resume|clear|base|account-paths|login|account-expiry|login-renew|env-set|command|by-name-only)'$'\t' "$H/facts"
+  run ! grep -vE '^(channel|key|resume|clear|base|account-paths|login|account-expiry|login-renew|env-set|command|by-name-only|loaded)'$'\t' "$H/facts"
 }
 
 contract_keys() {

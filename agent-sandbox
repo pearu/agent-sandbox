@@ -5730,23 +5730,29 @@ _as_own_proxy_stop() {
 }
 
 # _as_default_candidates DIR -- the profiles installed in DIR that a verb or --check with
-# no command may fall back to, one `NAME<TAB>on|off` line each: `on` when the profile's
-# command (profile_command, or its dot-file's [agent] command) is there to run, looked
-# up as a launch looks it up (_as_resolve_bin: PATH as the engine has it, agent-sandbox
-# itself passed over, a path as it is). Those chosen by --profile alone
+# no command may fall back to, one `NAME<TAB>on|off|broken` line each: `on` when the
+# profile's command (profile_command, or its dot-file's [agent] command) is there to run,
+# looked up as a launch looks it up (_as_resolve_bin: PATH as the engine has it,
+# agent-sandbox itself passed over, a path as it is); `broken` when its profile.sh fails
+# to load, which is never a default. Those chosen by --profile alone
 # (profile_by_name_only) are left out; a profile that names no command is `off`.
 _as_default_candidates() {
-  local f n k a b cmd bno
+  local f n k a b cmd bno ok
   for f in "$1"/*/profile.sh; do
     [[ -r "$f" ]] || continue
-    n="$(basename -- "$(dirname -- "$f")")" cmd="" bno=0
+    n="$(basename -- "$(dirname -- "$f")")" cmd="" bno=0 ok=0
     while IFS=$'\t' read -r k a b; do
       [[ "$a" == "$n" ]] || continue
       case "$k" in
+        loaded) ok=1 ;;
         command) cmd="$b" ;;
         by-name-only) bno=1 ;;
       esac
     done < <(_as_profile_facts "$f")
+    if ((! ok)); then
+      printf '%s\tbroken\n' "$n"
+      continue
+    fi
     ((bno)) && continue
     if [[ -n "$cmd" ]] && _as_default_found "$cmd" "$n"; then
       printf '%s\ton\n' "$n"
@@ -5792,21 +5798,25 @@ _as_default_pick() {
 # NAME before it). None installed that a command picks (only those chosen by --profile
 # alone, or none at all): --profile NAME.
 _as_default_refusal() {
-  local -a on_path=() all=()
-  local n s lead="$2"
+  local -a on_path=() all=() broken=()
+  local n s lead="$2" bl=""
   while IFS=$'\t' read -r n s; do
     [[ -n "$n" ]] || continue
-    all+=("$n")
-    [[ "$s" == on ]] && on_path+=("$n")
+    case "$s" in
+      broken) broken+=("$n") ;;
+      on) all+=("$n") on_path+=("$n") ;;
+      *) all+=("$n") ;;
+    esac
   done <<<"$1"
+  ((${#broken[@]} == 0)) || bl="; failed to load: ${broken[*]}"
   if ((${#on_path[@]} > 1)); then
-    printf 'there are several with their command on PATH (%s): name it, %s AGENT or --profile NAME' \
-      "${on_path[*]}" "$lead"
+    printf 'there are several with their command on PATH (%s%s): name it, %s AGENT or --profile NAME' \
+      "${on_path[*]}" "$bl" "$lead"
   elif ((${#all[@]})); then
-    printf "none installed has its command on PATH (installed: %s): install the agent, or name its binary by path: %s /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)" \
-      "${all[*]}" "$lead"
+    printf "none installed has its command on PATH (installed: %s%s): install the agent, or name its binary by path: %s /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)" \
+      "${all[*]}" "$bl" "$lead"
   else
-    printf 'none installed is picked by its command (only ones chosen by --profile alone, if any): name one, %s --profile NAME' "$lead"
+    printf 'none installed is picked by its command (only ones chosen by --profile alone, if any%s): name one, %s --profile NAME' "$bl" "$lead"
   fi
 }
 
@@ -6795,7 +6805,8 @@ _as_profile_facts_dotfile() {
 # resume, [agent] clear, [agent] account-paths, a base, [agent] login -- empty or not --
 # [agent] account-expiry and [agent] login-renew: #355); `command<TAB>NAME<TAB>CMD`, the
 # command a launch looks up (profile_command, or the dot-file's [agent] command), and
-# `by-name-only<TAB>NAME` for a profile chosen by --profile alone.
+# `by-name-only<TAB>NAME` for a profile chosen by --profile alone; `loaded<TAB>NAME` once
+# its profile.sh has been sourced without failing (no line at all when it fails).
 # Sourced in a subshell; a profile's top level only declares. What a profile adds at a
 # launch (profile_prepare) is not here.
 _as_profile_facts() {
@@ -6811,6 +6822,7 @@ _as_profile_facts() {
     _as_msg() { :; }
     # shellcheck disable=SC1090
     source "$1" >/dev/null 2>&1 || exit 0
+    printf 'loaded\t%s\n' "$name"
     _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
     [[ -z "${profile_command-$name}" ]] || printf 'command\t%s\t%s\n' "$name" "${profile_command-$name}"
     ((${profile_by_name_only:-0})) && printf 'by-name-only\t%s\n' "$name"
@@ -12743,8 +12755,10 @@ agent_sandbox() (
   set -euo pipefail
 
   # The words as given: `--check` with no command checks each available profile by
-  # running this again with --profile in front (_check_nested set).
+  # running this again with --profile in front (_check_nested set). _check_nested is
+  # only ever that call's: one from anywhere else -- the environment -- is dropped.
   local -a _as_argv=("$@")
+  [[ "${FUNCNAME[1]:-}" == agent_sandbox ]] || unset _check_nested
   local engine profile_dir invoked connect_sync
   engine="$(readlink -f -- "${BASH_SOURCE[0]}")"
   profile_dir="${AGENT_SANDBOX_PROFILE_DIR:-$(dirname -- "$engine")/profiles}"
@@ -13395,7 +13409,7 @@ agent_sandbox() (
   fi
   local _ag_mode=""
   if [[ -z "$_cmd_word" ]] && (($# == 0)) && ((! _do_exec && ! _roles_set && ! _do_engine_help && ! _do_init && ! _do_trust)) \
-    && [[ -z "$_do_list" && -z "$_setup_remote" ]] && ((${#_apply_words[@]} == 0)) && ((! _profile_given || ${#_agent_flag[@]})); then
+    && [[ -z "$_do_list" && -z "$_setup_remote" ]] && ((${#_apply_words[@]} == 0)) && ((! _profile_given || ${#_agent_flag[@]} || ${_check_nested:-0})); then
     _ag_mode=launch
     if ((_do_status || _do_shutdown || _do_delete || _do_check)) || [[ -n "$_reset_connection" ]]; then
       _ag_mode=verb
@@ -13580,21 +13594,29 @@ agent_sandbox() (
     fi
     if [[ -z "$profile" && -z "$_cmd_word" ]]; then
       _default_cands="$(_as_default_candidates "$profile_dir")"
-      local -a _avail=() _skipped=()
-      local _cn _cs
+      local -a _avail=() _skipped=() _broken=()
+      local _cn _cs _cwhy=""
       while IFS=$'\t' read -r _cn _cs; do
         [[ -n "$_cn" ]] || continue
-        if [[ "$_cs" == on ]]; then _avail+=("$_cn"); else _skipped+=("$_cn"); fi
+        case "$_cs" in
+          on) _avail+=("$_cn") ;;
+          broken) _broken+=("$_cn") ;;
+          *) _skipped+=("$_cn") ;;
+        esac
       done <<<"$_default_cands"
+      ((${#_skipped[@]} == 0)) || _cwhy="${_skipped[*]}, whose command is not on PATH"
+      ((${#_broken[@]} == 0)) || _cwhy+="${_cwhy:+; }${_broken[*]}, whose profile.sh failed to load"
       if ((${#_avail[@]} == 0)); then
-        if ((${#_skipped[@]})); then
-          _as_msg "--check: no policy or mount plan shown: skipped ${_skipped[*]}, whose command is not on PATH; check one anyway: $invoked --check AGENT or --profile NAME"
+        if [[ -n "$_cwhy" ]]; then
+          _as_msg "--check: no policy or mount plan shown: skipped $_cwhy; check one anyway: $invoked --check AGENT or --profile NAME"
         else
           _as_msg "--check: no policy or mount plan shown: no profile installed is picked by its command; check one: $invoked --check --profile NAME"
         fi
         _as_check_remotes "$(pwd -P)/.agent-sandbox"
         return 0
-      elif ((${#_avail[@]} > 1)); then
+      fi
+      ((${#_broken[@]} == 0)) || _as_msg "--check: skipped ${_broken[*]}, whose profile.sh failed to load"
+      if ((${#_avail[@]} > 1)); then
         local _cp _cprc _check_rc=0 _check_nested=1
         for _cp in "${_avail[@]}"; do
           printf '\n=== profile %s ===\n' "$_cp" >&2
