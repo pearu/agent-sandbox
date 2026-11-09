@@ -5766,44 +5766,46 @@ _as_default_found() {
 
 # _as_default_profile DIR -- the profile a verb or --check with no command acts on: the
 # only one installed in DIR whose command is on PATH (_as_default_candidates). Prints
-# nothing when there is none, or several; _as_default_why says which.
+# nothing when there is none, or several; _as_default_refusal says which.
 _as_default_profile() {
+  _as_default_pick "$(_as_default_candidates "$1")"
+}
+
+# _as_default_pick CANDIDATES -- _as_default_profile from _as_default_candidates' output,
+# for a caller that keeps it for _as_default_refusal: one pass over the profiles.
+_as_default_pick() {
   local -a on_path=()
   local n s
   while IFS=$'\t' read -r n s; do
     [[ "$s" == on ]] && on_path+=("$n")
-  done < <(_as_default_candidates "$1")
+  done <<<"$1"
   ((${#on_path[@]} == 1)) && printf '%s' "${on_path[0]}"
   return 0
 }
 
-# _as_default_why DIR -- why DIR has no default profile, for a refusal that goes on
-# `: name it, ...`: `there are several with their command on PATH (a b)`, or `none
-# installed has its command on PATH (installed: a b)`.
-_as_default_why() {
+# _as_default_refusal CANDIDATES LEAD -- what a refusal with no default profile says after
+# `..., and `: why, and how to name one, LEAD being the command line so far (`asb
+# --status`). Several on PATH: name one, CMD or --profile NAME. None on PATH: install it,
+# or name its binary by path (a path whose basename names the profile, else --profile
+# NAME before it). None installed that a command picks (only those chosen by --profile
+# alone, or none at all): --profile NAME.
+_as_default_refusal() {
   local -a on_path=() all=()
-  local n s
+  local n s lead="$2"
   while IFS=$'\t' read -r n s; do
+    [[ -n "$n" ]] || continue
     all+=("$n")
     [[ "$s" == on ]] && on_path+=("$n")
-  done < <(_as_default_candidates "$1")
+  done <<<"$1"
   if ((${#on_path[@]} > 1)); then
-    printf 'there are several with their command on PATH (%s)' "${on_path[*]}"
+    printf 'there are several with their command on PATH (%s): name it, %s CMD (e.g. %s %s) or --profile NAME' \
+      "${on_path[*]}" "$lead" "$lead" "${on_path[0]}"
+  elif ((${#all[@]})); then
+    printf "none installed has its command on PATH (installed: %s): install the agent, or name its binary by path, e.g. %s /path/to/%s (with --profile NAME before a path whose name is not a profile's)" \
+      "${all[*]}" "$lead" "${all[0]}"
   else
-    printf 'none installed has its command on PATH (installed: %s)' "${all[*]:-none}"
+    printf 'none installed is picked by its command (only ones chosen by --profile alone, if any): name one, %s --profile NAME' "$lead"
   fi
-}
-
-# _as_default_example DIR -- the agent word a refusal with no default profile names in
-# its example: the first installed profile whose command is on PATH, else the first
-# installed (_as_default_candidates), else AGENT.
-_as_default_example() {
-  local n s first="" hit=""
-  while IFS=$'\t' read -r n s; do
-    first="${first:-$n}"
-    [[ "$s" == on ]] && hit="${hit:-$n}"
-  done < <(_as_default_candidates "$1")
-  printf '%s' "${hit:-${first:-AGENT}}"
 }
 
 # Where install.sh puts the compiled seccomp filter for this machine.
@@ -13558,15 +13560,17 @@ agent_sandbox() (
   # Then, with a profile -- named, or the default one -- what the file means:
   # the policy and the mount plan (_as_check_plan), from the launch path itself, which
   # stops before anything is started.
-  local _check_plan=0
+  # _default_cands: the profiles the default is picked from, read once (_as_default_candidates)
+  local _check_plan=0 _default_cands=""
   if ((_do_check)); then
     local _crc=0
     _as_trust_check "$(pwd -P)" || _crc=$?
     ((_crc)) && return "$_crc"
     if [[ -z "$profile" && -z "$_cmd_word" ]]; then
-      profile="$(_as_default_profile "$profile_dir")"
+      _default_cands="$(_as_default_candidates "$profile_dir")"
+      profile="$(_as_default_pick "$_default_cands")"
       [[ -n "$profile" ]] || {
-        _as_msg "--check: no policy or mount plan shown, which need the agent's profile, and $(_as_default_why "$profile_dir"): name it, $invoked --check CMD (e.g. $invoked --check $(_as_default_example "$profile_dir")) or --profile NAME"
+        _as_msg "--check: no policy or mount plan shown, which need the agent's profile, and $(_as_default_refusal "$_default_cands" "$invoked --check")"
         _as_check_remotes "$(pwd -P)/.agent-sandbox"
         return 0
       }
@@ -13584,7 +13588,8 @@ agent_sandbox() (
   ((_do_summarize)) && _verb=--summarize
   [[ -n "$_reset_connection" ]] && _verb="--reset $_reset_connection"
   if [[ -n "$_verb" && -z "$profile" && -z "$_cmd_word" ]]; then
-    profile="$(_as_default_profile "$profile_dir")"
+    _default_cands="$(_as_default_candidates "$profile_dir")"
+    profile="$(_as_default_pick "$_default_cands")"
   fi
 
   # ---- profile ----
@@ -13607,7 +13612,7 @@ agent_sandbox() (
     if ((_do_exec)); then
       _as_msg "--exec needs the profile whose sandbox it runs in: $invoked --profile NAME --exec $1"
     elif [[ -n "$_verb" ]]; then
-      _as_msg "$_verb acts on one profile's stores, and $(_as_default_why "$profile_dir"): name it, $invoked $_verb CMD (e.g. $invoked $_verb $(_as_default_example "$profile_dir")) or --profile NAME"
+      _as_msg "$_verb acts on one profile's stores, and $(_as_default_refusal "$_default_cands" "$invoked $_verb")"
     else
       _as_msg "no command. Name the agent to run: $invoked [ENGINE FLAGS] CMD [AGENT ARGS], e.g. $invoked claude"
     fi

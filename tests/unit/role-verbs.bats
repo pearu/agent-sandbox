@@ -98,15 +98,27 @@ slugify() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"--check: no policy or mount plan shown, which need the agent's profile, and there are several with their command on PATH (claude other): name it, asb --check CMD (e.g. asb --check claude) or --profile NAME"* ]]
   # only other's on PATH: other is the default
+  mkdir -p "$H/alt"
+  cp "$(readlink -f "$H/bin/claude")" "$H/alt/claude"
   rm "$H/bin/claude"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status
   [ "$status" -eq 0 ]
   [[ "$output" == *"its stores "*" are at $st/other/"* ]]
-  # none on PATH: refused, naming how; the by-name-only one is not offered
+  # none on PATH: refused, saying how to fix it; the by-name-only one is not offered
   rm "$H/bin/otherbin"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --shutdown
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--shutdown acts on one profile's stores, and none installed has its command on PATH (installed: claude other): name it, asb --shutdown CMD (e.g. asb --shutdown claude) or --profile NAME"* ]]
+  [[ "$output" == *"--shutdown acts on one profile's stores, and none installed has its command on PATH (installed: claude other): install the agent, or name its binary by path, e.g. asb --shutdown /path/to/claude (with --profile NAME before a path whose name is not a profile's)"* ]]
+  # ... and what it says works: the binary by path
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status "$H/alt/claude"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"its stores "*" are at $st/claude/"* ]]
+  # only profiles chosen by --profile alone installed: --profile NAME
+  rm "$H/profiles/claude" "$H/profiles/other/profile.sh"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--status acts on one profile's stores, and none installed is picked by its command (only ones chosen by --profile alone, if any): name one, asb --status --profile NAME"* ]]
+  [[ "$output" == *"profiles available in $H/profiles: byname"* ]]
 }
 
 @test "--reset transcripts reaches this project's conversations directory too ({slug}, #176)" {
