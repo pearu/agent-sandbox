@@ -5856,7 +5856,7 @@ _as_default_configured() {
   local f v=""
   f="$(_as_default_agent_file)"
   [[ -f "$f" ]] || return 0
-  IFS=$' \t' read -r v _ <"$f" 2>/dev/null || :
+  IFS=$' \t\r' read -r v _ <"$f" 2>/dev/null || :
   printf '%s' "$v"
 }
 
@@ -12769,9 +12769,11 @@ _as_not_installed() {
 # (#6): BIN in the version's directory <state>/PROFILE/install/current names, and
 # profile_bin_dir to that directory, resolved: what a launch binds, read-only, whole and
 # alone. Refused (_as_not_installed) with no current, a current that is not a symlink or
-# names no directory, or a version's directory without the binary.
+# names anything but a version directory beside it (one path component of the versions
+# table's shape, a real directory, not a symlink), or a version's directory without
+# the binary.
 _as_installed_bin() {
-  local cur dir
+  local cur dir ver
   cur="$(_as_state_dir)/$1/install/current"
   if [[ ! -L "$cur" ]]; then
     if [[ -e "$cur" ]]; then
@@ -12781,11 +12783,21 @@ _as_installed_bin() {
     fi
     return 1
   fi
-  dir="$(readlink -f -- "$cur" 2>/dev/null || true)"
-  if [[ -z "$dir" || ! -d "$dir" ]]; then
-    _as_not_installed "$1" "$(_as_tilde "$cur") points at $(readlink -- "$cur"), which is not there"
+  # current names a version beside it: one path component of the versions table's
+  # shape, a real directory there -- never `..`, `.`, an absolute or longer path, or a
+  # symlink, any of which would have the launch bind (and, outside native, make a
+  # `current` beside) whatever it leads to.
+  ver="$(readlink -- "$cur" 2>/dev/null || true)"
+  if [[ ! "$ver" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then
+    _as_not_installed "$1" "$(_as_tilde "$cur") points at '$ver', which is not a version beside it"
     return 1
   fi
+  dir="${cur%/*}/$ver"
+  if [[ -L "$dir" || ! -d "$dir" ]]; then
+    _as_not_installed "$1" "$(_as_tilde "$cur") points at $ver, which is not there as a directory"
+    return 1
+  fi
+  dir="$(readlink -f -- "$dir")"
   if [[ ! -f "$dir/$2" || ! -x "$dir/$2" ]]; then
     _as_not_installed "$1" "$(_as_tilde "$dir") has no executable $2"
     return 1
@@ -13626,7 +13638,7 @@ agent_sandbox() (
           _set_default=1 _set_default_agent=("$2")
           shift 2
         else
-          _as_msg "--set-default-agent takes an agent, or nothing to print the one set, and nothing else on the line: $invoked --set-default-agent [AGENT] (e.g. $invoked --set-default-agent claude)"
+          _as_msg "--set-default-agent takes an agent, or nothing to print the one set, and nothing else on the line: $invoked --set-default-agent [AGENT]"
           return 2
         fi
         ;;
@@ -13645,7 +13657,7 @@ agent_sandbox() (
           _as_msg "--install: --sha256 checks a local file, so it needs --from FILE: $invoked --install AGENT[@VERSION] --from FILE --sha256 SUM"
           return 2
         else
-          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: $invoked --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (e.g. $invoked --install claude)"
+          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: $invoked --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]"
           return 2
         fi
         ;;

@@ -150,6 +150,20 @@ other_agent() { # a second claude, as an update or another install would give
   release_bg
 }
 
+@test "a BUSY keeper refuses a launch by name after asb --install moved current (#6): it runs the version it started with" {
+  other_agent
+  engine_bg -- asb claude --version
+  local new="${STUB_AGENT_DIR%/*}/2.1.301"
+  mkdir -p "$new"
+  cp "$H/other/claude" "$new/claude"
+  ln -sfn 2.1.301 "${STUB_AGENT_DIR%/*}/current"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"running with agent = $BIN, and this launch's agent asks for '$new/claude'"* ]]
+  [ ! -s "$H/join" ]
+  release_bg
+}
+
 @test "an IDLE keeper is replaced by a launch with another agent binary: an update just works" {
   other_agent
   engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb claude --version

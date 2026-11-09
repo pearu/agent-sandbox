@@ -169,6 +169,21 @@ slugify() {
   [[ "$output" == *"profiles available in $H/profiles: byname"* ]]
 }
 
+@test "a default-agent file written with CRLF line ends names the profile, not NAME plus a carriage return" {
+  mkdir -p "$H/profiles" "$H/home/.config/agent-sandbox"
+  ln -s "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other"
+  install_stub_as other
+  mkdir -p "$H/home/.local/state/agent-sandbox/other/${PROJ//[^A-Za-z0-9-]/-}/r"
+  printf 'other\r\n' >"$H/home/.config/agent-sandbox/default-agent"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --set-default-agent
+  [ "$status" -eq 0 ]
+  [ "$output" = other ]
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"its stores "*" are at $H/home/.local/state/agent-sandbox/other/"* ]]
+}
+
 @test "--set-default-agent runs on the host only" {
   run_engine AGENT_SANDBOX=1 -- asb --set-default-agent claude
   [ "$status" -eq 2 ]

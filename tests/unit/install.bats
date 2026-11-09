@@ -307,7 +307,7 @@ wrap() {
     # shellcheck disable=SC2086 # the words, split
     run_engine AGENT_SANDBOX_PROFILE_DIR="$P" -- asb $words
     [ "$status" -eq 2 ]
-    [ "$output" = "agent-sandbox: --install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (e.g. asb --install claude)" ]
+    [ "$output" = "agent-sandbox: --install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]" ]
   done
   # --sha256 without --from
   run_engine AGENT_SANDBOX_PROFILE_DIR="$P" -- asb --install fake --sha256 "$(cat "$SRC/1.1.0/sum")"

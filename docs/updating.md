@@ -15,7 +15,11 @@ asb --install claude@2.1.330    # another; one the profile was not tested with i
 
 Each version is kept beside the others under
 `~/.local/state/agent-sandbox/claude/install/`, and the last one installed is the one
-launches run (`install/current`); a running role keeps the one it started with. A new
+launches run (`install/current`). A running role keeps the one it started with: after
+`asb --install` moves `current`, a launch of that role by name is refused while the
+role is busy (something is joined to it), naming the version it runs and the one asked
+for -- finish or `asb --role R --shutdown` it first -- and an idle role's sandbox is
+replaced by one running the new version. A new
 asb release may pin a newer version: run `asb --install claude` after updating asb.
 
 **Upgrading from an asb before #6:** those ran whatever `claude` your PATH found. Now

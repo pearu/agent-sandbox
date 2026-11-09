@@ -101,8 +101,31 @@ setup() {
   ln -s 9.9.9 "$I/current"
   run_engine -- asb claude --version
   [ "$status" -eq 1 ]
-  [ "$output" = "agent-sandbox: claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at 9.9.9, which is not there): install it, asb --install claude" ]
+  [ "$output" = "agent-sandbox: claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at 9.9.9, which is not there as a directory): install it, asb --install claude" ]
   [ ! -s "$H/argv" ]
+  # current naming anything but a version beside it -- the parent (whose directory has an
+  # executable claude too), install/ itself, an absolute or a longer path -- is never
+  # bound: nothing of what it leads to reaches the argv
+  local t
+  mkdir -p "$H/elsewhere/2.1.300"
+  cp "$STUB_AGENT_DIR/claude" "${I%/*}/claude"
+  cp "$STUB_AGENT_DIR/claude" "$I/claude"
+  cp "$STUB_AGENT_DIR/claude" "$H/elsewhere/2.1.300/claude"
+  for t in .. . "$H/elsewhere/2.1.300" ../install/2.1.300 2.1.300/; do
+    ln -sfn "$t" "$I/current"
+    run_engine -- asb claude --version
+    [ "$status" -eq 1 ]
+    [ "$output" = "agent-sandbox: claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at '$t', which is not a version beside it): install it, asb --install claude" ]
+    [ ! -s "$H/argv" ]
+  done
+  # a version beside it that is a symlink (to the parent here): refused, not followed
+  ln -s .. "$I/9.9.9"
+  ln -sfn 9.9.9 "$I/current"
+  run_engine -- asb claude --version
+  [ "$status" -eq 1 ]
+  [ "$output" = "agent-sandbox: claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at 9.9.9, which is not there as a directory): install it, asb --install claude" ]
+  [ ! -s "$H/argv" ]
+  rm "$I/9.9.9" "$I/claude" "${I%/*}/claude"
   rm "$I/current"
   mkdir "$I/current"
   run_engine -- asb claude --version

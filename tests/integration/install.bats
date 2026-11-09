@@ -81,7 +81,7 @@ AGENT
 }
 
 @test "native: the current version runs read-only too, over the host's read-write HOME" {
-  TEST_PRESET= run_sandboxed AGENT_SANDBOX_NET=none -- --preset native fakei
+  TEST_PRESET='' run_sandboxed AGENT_SANDBOX_NET=none -- --preset native fakei
   [ "$status" -eq 0 ] || {
     echo "$output"
     false

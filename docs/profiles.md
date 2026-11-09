@@ -207,7 +207,7 @@ read-only too, over the read-write `$HOME`, so the agent cannot change itself un
 any preset; the rest of the state directory is the host's there, as all of `$HOME`
 is. A path keeps the single read-only file bind. A running role keeps the version it
 started with: after an `asb --install` moves `current`, an idle keeper is replaced
-and a busy one refuses a join, as for any change of the agent's binary.
+and a busy one refuses a launch of the role by name (naming both binaries), as for any change of the agent's binary.
 
 | File | What it is |
 |---|---|
