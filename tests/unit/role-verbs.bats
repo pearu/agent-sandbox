@@ -67,7 +67,7 @@ slugify() {
   cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --reset config
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--reset config acts on one profile's stores, and there are several with their command on PATH (claude other): name it, asb --reset config CMD (e.g. asb --reset config claude) or --profile NAME"* ]]
+  [[ "$output" == *"--reset config acts on one profile's stores, and there are several with their command on PATH (claude other): name it, asb --reset config AGENT or --profile NAME"* ]]
 }
 
 @test "the default profile is the only installed one whose command is on PATH; none or several refuse, naming how (#6)" {
@@ -95,7 +95,7 @@ slugify() {
   chmod +x "$H/bin/otherbin"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--status acts on one profile's stores, and there are several with their command on PATH (claude other): name it, asb --status CMD (e.g. asb --status claude) or --profile NAME"* ]]
+  [[ "$output" == *"--status acts on one profile's stores, and there are several with their command on PATH (claude other): name it, asb --status AGENT or --profile NAME"* ]]
   # only other's on PATH: other is the default
   mkdir -p "$H/alt"
   cp "$(readlink -f "$H/bin/claude")" "$H/alt/claude"
@@ -107,7 +107,7 @@ slugify() {
   rm "$H/bin/otherbin"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --shutdown
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--shutdown acts on one profile's stores, and none installed has its command on PATH (installed: claude other): install the agent, or name its binary by path, e.g. asb --shutdown /path/to/claude (with --profile NAME before a path whose name is not a profile's)"* ]]
+  [[ "$output" == *"--shutdown acts on one profile's stores, and none installed has its command on PATH (installed: claude other): install the agent, or name its binary by path: asb --shutdown /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)"* ]]
   # ... and what it says works: the binary by path
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role r --status "$H/alt/claude"
   [ "$status" -eq 0 ]
@@ -141,7 +141,7 @@ slugify() {
   rm "$H/bin/claude"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--check: no policy or mount plan shown: skipped claude other, whose command is not on PATH; check one anyway: asb --check CMD (e.g. asb --check claude) or --profile NAME"* ]]
+  [[ "$output" == *"--check: no policy or mount plan shown: skipped claude other, whose command is not on PATH; check one anyway: asb --check AGENT or --profile NAME"* ]]
   [[ "$output" != *"Policy:"* ]]
   # a named profile is checked whether its command is on PATH or not
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --check --profile other

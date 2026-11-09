@@ -819,7 +819,7 @@ yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at lau
 (as a diff when it changed since you approved it), the notes, and whether it is
 approved. Then, for each profile it checks, what the file means, as a launch would
 apply it once approved, without starting anything. A profile named -- `asb --check
-claude`, `--profile NAME`, the role's agent -- is checked whether its command is on PATH
+AGENT`, `--profile NAME`, the role's agent -- is checked whether its command is on PATH
 or not. With none named, it checks every available profile: installed, not one chosen
 by `--profile` alone, its command on PATH. Several get a section each, headed `===
 profile NAME ===`; with none available, the review alone, and one line naming the

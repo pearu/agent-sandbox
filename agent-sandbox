@@ -5787,7 +5787,7 @@ _as_default_pick() {
 
 # _as_default_refusal CANDIDATES LEAD -- what a refusal with no default profile says after
 # `..., and `: why, and how to name one, LEAD being the command line so far (`asb
-# --status`). Several on PATH: name one, CMD or --profile NAME. None on PATH: install it,
+# --status`). Several on PATH: name one, AGENT or --profile NAME. None on PATH: install it,
 # or name its binary by path (a path whose basename names the profile, else --profile
 # NAME before it). None installed that a command picks (only those chosen by --profile
 # alone, or none at all): --profile NAME.
@@ -5800,11 +5800,11 @@ _as_default_refusal() {
     [[ "$s" == on ]] && on_path+=("$n")
   done <<<"$1"
   if ((${#on_path[@]} > 1)); then
-    printf 'there are several with their command on PATH (%s): name it, %s CMD (e.g. %s %s) or --profile NAME' \
-      "${on_path[*]}" "$lead" "$lead" "${on_path[0]}"
+    printf 'there are several with their command on PATH (%s): name it, %s AGENT or --profile NAME' \
+      "${on_path[*]}" "$lead"
   elif ((${#all[@]})); then
-    printf "none installed has its command on PATH (installed: %s): install the agent, or name its binary by path, e.g. %s /path/to/%s (with --profile NAME before a path whose name is not a profile's)" \
-      "${all[*]}" "$lead" "${all[0]}"
+    printf "none installed has its command on PATH (installed: %s): install the agent, or name its binary by path: %s /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)" \
+      "${all[*]}" "$lead"
   else
     printf 'none installed is picked by its command (only ones chosen by --profile alone, if any): name one, %s --profile NAME' "$lead"
   fi
@@ -13588,7 +13588,7 @@ agent_sandbox() (
       done <<<"$_default_cands"
       if ((${#_avail[@]} == 0)); then
         if ((${#_skipped[@]})); then
-          _as_msg "--check: no policy or mount plan shown: skipped ${_skipped[*]}, whose command is not on PATH; check one anyway: $invoked --check CMD (e.g. $invoked --check ${_skipped[0]}) or --profile NAME"
+          _as_msg "--check: no policy or mount plan shown: skipped ${_skipped[*]}, whose command is not on PATH; check one anyway: $invoked --check AGENT or --profile NAME"
         else
           _as_msg "--check: no policy or mount plan shown: no profile installed is picked by its command; check one: $invoked --check --profile NAME"
         fi
