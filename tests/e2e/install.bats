@@ -1,9 +1,13 @@
 #!/usr/bin/env bats
 # End to end: install.sh for real (no --dry-run) against a throwaway HOME, with
-# a fake Claude installed the way Claude Code's native installer does it (a binary
-# under versions/, linked from ~/.local/bin/claude) and `systemctl --user`
-# replaced by a shim that runs the unit's ExecStart itself; then the installed
-# `asb claude` runs the fake agent through the installed proxy (#151).
+# the shared fake agent (tests/helpers/fake-agent.sh) planted for every profile with a
+# test adapter, the way that agent's installer lays it out (profiles/<name>/test.bash,
+# test_plant; claude: a binary under versions/, linked from ~/.local/bin/claude), and
+# `systemctl --user` replaced by a shim that runs the unit's ExecStart itself; then the
+# installed `asb CMD` runs each fake agent through the installed proxy (#151).
+#
+# The installer and proxy tests are the installer's own; the agent tests are one block
+# per adapter, named after it, in the same places in the order (the uninstall last).
 #
 # Opt-in (AGENT_SANDBOX_E2E=1). It installs mitmproxy into the throwaway HOME
 # with the micromamba it fetches (network, about a minute) unless
@@ -14,8 +18,13 @@
 # next free port above it. The suite reads the port the install recorded in the
 # throwaway HOME and probes that, so it runs whether or not 8888 is busy here.
 
+# shellcheck disable=SC2154,SC2016,SC2030,SC2031
+# (file-wide: the tests are functions registered with bats_test_function, where `run`
+# sets $status and $output out of ShellCheck's sight, and the adapter's test_* names are
+# sourced at run time; the single-quoted scripts run in another shell)
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 load "$BATS_TEST_DIRNAME/../helpers/proxy-port"
+load "$BATS_TEST_DIRNAME/../helpers/adapters"
 
 # run_install OUT: the installer against the throwaway HOME, shim first on PATH;
 # stdout+stderr to OUT, exit code to OUT.rc
@@ -52,11 +61,20 @@ setup_file() {
   E="$BATS_FILE_TMPDIR/e2e"
   H="$E/home"
   B="$E/bin"
-  mkdir -p "$H/.local/share/claude/versions/9.9.9" "$H/.local/bin" "$B" "$E/proj" "$E/state"
-  cp "$BATS_TEST_DIRNAME/../helpers/fake-claude.sh" "$H/.local/share/claude/versions/9.9.9/claude"
+  mkdir -p "$H/.local/bin" "$B" "$E/proj" "$E/state"
+  # every adapter's fake, planted before the install runs, so it reports each agent; and
+  # what each launcher pointed at then, for the uninstall to be measured against
+  local a
+  for a in $(test_adapters); do
+    (
+      export HOME="$H"
+      use_adapter "$a"
+      plant_fake_agent "$H"
+      printf '%s\n' "$TEST_LAUNCHER" "$TEST_BIN" "$(readlink "$TEST_LAUNCHER")" >"$E/plant.$a"
+    )
+  done
   cp "$BATS_TEST_DIRNAME/../helpers/systemctl-shim.sh" "$B/systemctl"
-  chmod +x "$H/.local/share/claude/versions/9.9.9/claude" "$B/systemctl"
-  ln -s "$H/.local/share/claude/versions/9.9.9/claude" "$H/.local/bin/claude"
+  chmod +x "$B/systemctl"
   if [[ -n "${AGENT_SANDBOX_E2E_MITMDUMP:-}" ]]; then
     mkdir -p "$H/.local/share/agent-sandbox/proxy-venv/bin"
     ln -s "$AGENT_SANDBOX_E2E_MITMDUMP" "$H/.local/share/agent-sandbox/proxy-venv/bin/mitmdump"
@@ -200,28 +218,47 @@ probe_session() {
   grep -q $'\t127.0.0.1\t' "$blog"
 }
 
-@test "asb claude runs the fake agent sandboxed: proxy variables set, TLS verified by the bound CA, allowed host reached, others refused and logged" {
-  run launch claude env
+# agent_setup NAME -- the adapter in use, under the throwaway HOME, and where setup_file
+# planted its fake: TEST_LAUNCHER (the command), TEST_BIN (the binary), TEST_LINK (what the
+# command pointed at then).
+agent_setup() {
+  HOME="$H" use_adapter "$1"
+  { read -r TEST_LAUNCHER && read -r TEST_BIN && read -r TEST_LINK; } <"$E/plant.$1"
+}
+
+agent_runs() {
+  agent_setup "$1"
+  run launch "$TEST_CMD" env
   [ "$status" -eq 0 ]
-  # the session token: the profile's [allow] opens api.anthropic.com for this launch (#181)
+  # the session token: the profile's [allow] opens its hosts for this launch (#181)
   [[ "$output" =~ HTTPS_PROXY=http://[0-9a-f]{32}:x@127\.0\.0\.1:$PP ]]
   [[ "$output" == *"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"* ]]
   [[ "$output" == *"HOME=$H"* ]]
-  run launch claude fetch https://api.anthropic.com/v1/models
-  [[ "$output" == *"code=401 rc=0"* || "$output" == *"code=200 rc=0"* ]]
+  # a host of the profile's own [allow] (its first exact name), reached through the proxy
+  # with TLS verified by the bound CA: any HTTP status is the host's answer, as a refused
+  # CONNECT has none (code=000)
+  local host
+  host="$(HOME="$H" profile_get "$1" _profile_allow_hosts | grep -v '^\.' | head -n 1)"
+  [ -n "$host" ]
+  run launch "$TEST_CMD" fetch "https://$host/"
+  [[ "$output" =~ code=[1-5][0-9][0-9]\ rc=0 ]]
   local blocked_before
   blocked_before="$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log" 2>/dev/null || true)"
-  run launch claude fetch https://example.com/
+  run launch "$TEST_CMD" fetch https://example.com/
   # A refused CONNECT yields no HTTP response (code=000) and the proxy's 403 in
   # the error; curl's exit code for it varies by version (56, or 97 since 7.83),
   # so assert on those two facts, not the exit number.
   [[ "$output" == *"code=000"* && "$output" == *"403"* ]]
-  run launch claude fetch http://example.com/
+  run launch "$TEST_CMD" fetch http://example.com/
   [[ "$output" == *"code=403 rc=0"* ]]
   # both of THIS test's refusals are logged (counted from before them, so another test's
   # requests, or their absence, cannot decide it)
   [ "$(grep -c $'\texample.com\t' "$H/.config/agent-sandbox/blocked.log")" -ge "$((${blocked_before:-0} + 2))" ]
 }
+
+for a in $(test_adapters); do
+  bats_test_function --description "$a: asb runs the fake agent sandboxed: proxy variables set, TLS verified by the bound CA, allowed host reached, others refused and logged" -- agent_runs "$a"
+done
 
 @test "re-running install.sh reuses the proxy environment and CA, keeps the allowlist, restarts the service" {
   echo "my.custom.host" >>"$H/.config/agent-sandbox/allowlist.txt"
@@ -277,42 +314,57 @@ X
   "$md" --version 2>/dev/null | grep -q '^Mitmproxy: 12'
 }
 
-@test "asb claude --bg runs in the role: sandboxed, its daemon inside and holding the launch, ended by --shutdown (#123)" {
-  run launch claude --bg 'do a thing'
+agent_bg() {
+  agent_setup "$1"
+  local -a daemon=() verb=()
+  mapfile -t daemon < <(HOME="$H" profile_get "$1" profile_daemon_argv)
+  mapfile -t verb < <(HOME="$H" profile_get "$1" profile_status_argv)
+  ((${#daemon[@]} && ${#verb[@]})) || skip "the $1 profile has no background daemon ([agent] daemon and status)"
+  run launch "$TEST_CMD" --bg 'do a thing'
   [ "$status" -eq 0 ]
   [[ "$output" == *"backgrounded"*"SANDBOXED, wrapper=none"* ]]
   # the daemon the --bg left behind holds the role's launch, and a verb joins it
   sleep 3 # past the keeper's idle grace
-  run launch claude agents
+  run launch "$TEST_CMD" "${verb[@]}"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"agents: daemon running"* ]]
+  [[ "$output" == *"${verb[0]}: daemon running"* ]]
   # --status shows what --shutdown would end: the daemon among its processes, and the
-  # sessions a joined `agents` lists
-  run launch --status claude
+  # sessions a joined status verb lists
+  run launch --status "$TEST_CMD"
   [ "$status" -eq 0 ]
   [[ "$output" == *"running since"* ]]
-  [[ "$output" == *"daemon run"* ]]
-  [[ "$output" == *"background sessions:"*"agents: daemon running"* ]]
-  run launch --shutdown claude
+  [[ "$output" == *"${daemon[*]}"* ]]
+  [[ "$output" == *"background sessions:"*"${verb[0]}: daemon running"* ]]
+  run launch --shutdown "$TEST_CMD"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ended, with everything that ran in it"* ]]
   # and afterwards a question gets the empty answer, without starting anything
-  run launch claude agents
+  run launch "$TEST_CMD" "${verb[@]}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"is not running"* ]]
-  [[ "$output" != *"agents:"* ]]
+  [[ "$output" != *"${verb[0]}:"* ]]
 }
 
-@test "--uninstall removes asb, agent-sandbox and our state, leaves the agent's claude alone, and is re-runnable" {
-  local native="$H/.local/share/claude/versions/9.9.9/claude"
-  [ "$(readlink "$H/.local/bin/claude")" = "$native" ]
-  run_install "$E/uninstall.out" --uninstall --yes
-  [ "$(cat "$E/uninstall.out.rc")" -eq 0 ] || {
-    cat "$E/uninstall.out"
+for a in $(test_adapters); do
+  bats_test_function --description "$a: asb --bg runs in the role: sandboxed, its daemon inside and holding the launch, ended by --shutdown (#123)" -- agent_bg "$a"
+done
+
+# The first adapter's run uninstalls; a later one's runs it again on a machine that is
+# already clean, which is the re-run this test asks for anyway.
+agent_uninstall() {
+  agent_setup "$1"
+  local native="$TEST_LINK"
+  [ -n "$native" ]
+  [ "$(readlink "$TEST_LAUNCHER")" = "$native" ]
+  run_install "$E/uninstall.$1.out" --uninstall --yes
+  [ "$(cat "$E/uninstall.$1.out.rc")" -eq 0 ] || {
+    cat "$E/uninstall.$1.out"
     false
   }
-  # the machine is as it was before agent-sandbox: its own claude, no asb, our state gone
-  [ "$(readlink "$H/.local/bin/claude")" = "$native" ]
+  # the machine is as it was before agent-sandbox: the agent's own command, no asb, our
+  # state gone
+  [ "$(readlink "$TEST_LAUNCHER")" = "$native" ]
+  [ -x "$TEST_BIN" ]
   [ ! -e "$H/.local/bin/asb" ]
   [ ! -e "$H/.local/bin/agent-sandbox" ]
   # our state gone but the sandboxes' conda environments, which --yes keeps
@@ -324,8 +376,12 @@ X
   (
     cd "$E" && HOME="$H" PATH="$B:$PATH" AGENT_SANDBOX_HOME='' \
       SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG" SYSTEMCTL_SHIM_STATE="$SYSTEMCTL_SHIM_STATE" \
-      "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall2.out" 2>&1
-    echo $? >"$E/uninstall2.out.rc"
+      "$REPO_ROOT/install.sh" --uninstall --yes >"$E/uninstall2.$1.out" 2>&1
+    echo $? >"$E/uninstall2.$1.out.rc"
   )
-  [ "$(cat "$E/uninstall2.out.rc")" -eq 0 ]
+  [ "$(cat "$E/uninstall2.$1.out.rc")" -eq 0 ]
 }
+
+for a in $(test_adapters); do
+  bats_test_function --description "$a: --uninstall removes asb, agent-sandbox and our state, leaves the agent alone, and is re-runnable" -- agent_uninstall "$a"
+done

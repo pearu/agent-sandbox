@@ -16,7 +16,7 @@ step() { printf '\n==> %s\n' "$*"; }
 # defect.
 # probes/ are host-only scripts, never run in CI -- but they are shell, and the
 # bats suites show what happens to code the linter is not pointed at.
-mapfile -t shell_files < <(git ls-files -- agent-sandbox install.sh install.sh.in 'scripts/*.sh' 'profiles/*.sh' tests/run.sh 'tests/helpers/*.sh' 'tests/helpers/*.bash' 'probes/*.sh' 'probes/*/*.sh' 'models/*/bin/*')
+mapfile -t shell_files < <(git ls-files -- agent-sandbox install.sh install.sh.in 'scripts/*.sh' 'profiles/*.sh' 'profiles/*/test.bash' tests/run.sh 'tests/helpers/*.sh' 'tests/helpers/*.bash' 'probes/*.sh' 'probes/*/*.sh' 'models/*/bin/*')
 # The bats suites are shell too, and ShellCheck parses @test natively. They
 # were left out of this list once, and 50 negative assertions that could not
 # fail (`! cmd`; SC2314) accumulated where the one linter that knows about

@@ -163,7 +163,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.local/share/claude/versions/9.9.9"
-          cp tests/helpers/fake-claude.sh "$HOME/.local/share/claude/versions/9.9.9/claude"
+          cp tests/helpers/fake-agent.sh "$HOME/.local/share/claude/versions/9.9.9/claude"
           chmod +x "$HOME/.local/share/claude/versions/9.9.9/claude"
           ./install.sh
           systemctl --user is-active --quiet agent-sandbox-mitmproxy.service

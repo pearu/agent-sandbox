@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2012 # version dirs: plain names
 # Run the e2e installer suite (tests/e2e/install.bats) UNCHANGED, twice on this
-# host -- once with the fake agent (tests/helpers/fake-claude.sh, the committed
+# host -- once with the fake agent (tests/helpers/fake-agent.sh, the committed
 # fixture) and once with the REAL claude swapped in -- and diff the two, per test.
 # Only the agent is swapped; install.bats is never edited.
 #
@@ -33,7 +33,7 @@
 set -uo pipefail
 
 REPO="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-FIXTURE="$REPO/tests/helpers/fake-claude.sh"
+FIXTURE="$REPO/tests/helpers/fake-agent.sh"
 [ -f "$FIXTURE" ] || {
   echo "fixture not found: $FIXTURE"
   exit 1
@@ -77,7 +77,7 @@ echo "   real claude: $nat"
 FAKE_TAP="$(mktemp)"
 REAL_TAP="$(mktemp)"
 cleanup() {
-  git -C "$REPO" checkout -- tests/helpers/fake-claude.sh 2>/dev/null && echo "   restored fake-claude.sh"
+  git -C "$REPO" checkout -- tests/helpers/fake-agent.sh 2>/dev/null && echo "   restored fake-agent.sh"
   rm -f "$FAKE_TAP" "$REAL_TAP"
 }
 trap cleanup EXIT INT TERM
@@ -95,7 +95,7 @@ command -v timeout >/dev/null && tmo="timeout 90"
 {
   printf '#!/bin/sh\n'
   printf '# TEMPORARY: swapped in by probes/e2e-real-claude.sh to run the REAL claude.\n'
-  printf '# Restore with: git checkout -- tests/helpers/fake-claude.sh\n'
+  printf '# Restore with: git checkout -- tests/helpers/fake-agent.sh\n'
   printf 'exec %s "%s" "$@"\n' "$tmo" "$nat"
 } >"$FIXTURE"
 chmod +x "$FIXTURE"

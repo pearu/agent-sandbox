@@ -967,6 +967,9 @@ else
   chmod 755 "$APP_DIR/agent-sandbox"
   rm -rf "$APP_DIR/profiles" "$APP_DIR/models"
   cp -a "$SCRIPT_DIR/profiles" "$APP_DIR/profiles"
+  # A profile's test adapter is the test suites' (profiles/<name>/test.bash); nothing
+  # installed reads it.
+  rm -f "$APP_DIR"/profiles/*/test.bash
   # The development models `asb --init` writes a project's files from (#225).
   [[ -d "$SCRIPT_DIR/models" ]] && cp -a "$SCRIPT_DIR/models" "$APP_DIR/models"
   # Components the ENGINE runs on the host, beside it in both layouts: the
