@@ -67,6 +67,9 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`profile_session_args`, a profile hook whose arguments every session carries** (#6),
+  the briefing on or off, first on the line, with the sandbox's preset in scope; never
+  for `--exec` or a verb.
 - **`[agent]` and `[agent:<glob>]` in a project's `.agent-sandbox`** (#355, the first of
   its launch-side steps): `command = AGENT [ARGS]`, a role's agent and the native
   arguments always passed to it, per role with the suffix, which defines a role as the

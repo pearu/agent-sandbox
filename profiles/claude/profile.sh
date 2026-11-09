@@ -58,6 +58,12 @@
 #
 #   profile_prepare()           optional. Runs right before the sandbox is
 #                               assembled; create state files here.
+#   profile_session_args ARGS...
+#                               optional. Sets profile_session_argv to what every
+#                               invocation that runs the agent as a session
+#                               carries, the briefing on or off (not --exec, not a
+#                               verb); the engine puts them first. _preset (the
+#                               sandbox's preset) is in scope (#6).
 #   profile_start_args TEXT ARGS...
 #                               optional. Sets profile_start_argv to the
 #                               agent's arguments that run TEXT as the
