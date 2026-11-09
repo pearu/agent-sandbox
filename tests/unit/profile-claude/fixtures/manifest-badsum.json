@@ -1,0 +1,20 @@
+{
+  "version": "2.1.999",
+  "platforms": {
+    "darwin-arm64": {
+      "binary": "claude",
+      "checksum": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 20
+    },
+    "linux-arm64": {
+      "binary": "claude",
+      "checksum": "1111111111111111111111111111111111111111111111111111111111111111",
+      "size": 20
+    },
+    "linux-x64": {
+      "binary": "claude",
+      "checksum": "not-a-sha256",
+      "size": 20
+    }
+  }
+}

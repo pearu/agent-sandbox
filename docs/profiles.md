@@ -157,6 +157,7 @@ single-valued one.
 | `[agent] login` | `profile_login` (space-separated words, possibly none) and `profile_login_set=1`: what `asb --account-login` runs on an account's directory (#355) |
 | `[agent] login-renew` | `profile_login_renew` (the rest of the line, as written): what renews the base's login, said when it is due (#355); a value with a tab is said and ignored |
 | `[agent] account-expiry` | `profile_account_expiry` (two words, FILE KEYPATH): where the login's expiry is written, in epoch milliseconds, for `--list`, `--status` and the briefing (#355); any other number of words is said and ignored |
+| `[agent] install` | `profile_install`: how asb installs the agent (#6), the kind of file the profile's `resolve.sh` names -- `file` (one binary, nothing beside it) or `tar PATH` (a tarball, the binary at the relative `PATH` inside it: no part starting with `.` or `-`, so no leading `/` and no `..`); any other shape is said and ignored. `_as_profile_facts` emits it, `install<TAB>NAME<TAB>KIND[<TAB>PATH]`. See [The install recipe](#the-install-recipe). claude: `file` |
 | `[agent] base` | the agent's state directory (`~/.claude`), bound **read-write** before anything else, so every channel and declaration layers on it; created when absent; checked as any read-write bind is (never `/`, `$HOME` or a parent of it, nothing protected), and resolved again at bind time (#175) |
 | `[agent] base-env` | the variable the agent itself reads to move its state (claude: `CLAUDE_CONFIG_DIR`); set and non-empty in the launching shell, it wins over `base` (#190). `{base}` in the dot-file is the base so resolved |
 | `[agent] hide` | `profile_hide`: paths under the agent's state directory blanked every launch: a tmpfs each, empty inside and gone at exit |
@@ -173,6 +174,29 @@ named after the profile (`[claude]`), and only the keys the profile lists in
 `[channel:<name>]`, which is a profile's. Other sections in a profile's dot-file are not
 read yet: the launch says so.
 
+## The install recipe
+
+An agent asb installs itself (#6) is described by three things in its profile
+directory. Nothing in a launch reads them yet; the installer that will (fetch, check,
+unpack under `~/.local/state/agent-sandbox/<profile>/install/<version>/`) comes next.
+
+| File | What it is |
+|---|---|
+| `agent-sandbox`, `[agent] install` | The kind of file the vendor ships: `file` or `tar PATH` (above). |
+| `versions` | The versions the profile was tested with live, one per line: `VERSION`, or `VERSION pinned` for the one asb installs. `#` starts a comment; blank lines are skipped. A version is exact -- dot-separated numbers, then an optional `-`/`+` suffix (`2.1.321`, `2.2.0-rc.1`) -- never a range. A line of another shape and a version listed again are ignored; two pinned, or versions with none pinned, leaves no pin. These problems are said when the installer reads the table (the next step); `_as_profile_facts` reads it silently, so a bad table never breaks a launch or `--check`. No checksums: they come from the vendor at install time. A version goes in when the live tests pass with it. `_as_profile_facts` emits `version<TAB>NAME<TAB>V` for each and `pin<TAB>NAME<TAB>V` for the pin. claude: `2.1.321 pinned` |
+| `resolve.sh` | The resolver, vendor-specific, run on the host and reviewed as engine code: `resolve.sh VERSION PLATFORM [BASE]`. PLATFORM is the engine's `ARCH-LIBC`, `uname -m` then `gnu` or `musl` (`x86_64-gnu`, `aarch64-musl`); the script maps it to the vendor's names. BASE, for tests and mirrors, is read in place of the vendor's source: an `https://` or `file://` URL or an absolute directory. It prints one line, `URL<TAB>SHA256<TAB>SIZE` (SIZE in bytes, empty when the vendor states none), and exits 0; the engine downloads URL and keeps the file only if its SHA-256 is SHA256. Where the vendor signs what states the checksum, the script verifies that signature against a key pinned in the profile directory before it prints anything. A failure is one line on stderr and nothing on stdout: exit 2 for arguments it does not take, 1 for anything else. It fetches only metadata, never the agent, and runs nothing it fetched. |
+
+claude's resolver reads `<BASE>/<VERSION>/manifest.json` (default BASE
+`https://downloads.claude.ai/claude-code-releases`) and uses it only when
+`manifest.json.sig` is a good signature by Anthropic's release key --
+`release-key.asc`, as published at `https://downloads.claude.ai/keys/claude-code.asc`,
+fingerprint `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE` as the vendor's
+setup docs print it -- and the manifest names VERSION itself. The binary is
+`<BASE>/<VERSION>/<platform>/claude`, platform `linux-x64`, `linux-arm64` or a `-musl`
+variant of either. It needs `curl` and `gpg` on PATH; gpg runs in a scratch home with
+no agent, so your keyring is never read. The vendor signs manifests "from 2.1.89
+onward" (its docs); a version without a signature is refused.
+
 ## Adding a profile
 
 1. Create `profiles/<name>/profile.sh` implementing the contract;
@@ -182,6 +206,9 @@ read yet: the launch says so.
 3. Run `scripts/check.sh`, then `install.sh` (or `install.sh --dry-run` first):
    the installer reports the agent it finds on PATH.
    `asb <name>` then runs it.
+   For an agent asb installs, add its [install recipe](#the-install-recipe):
+   `[agent] install`, a `versions` table with the live-tested version pinned, and a
+   `resolve.sh` that checks the vendor's signature where there is one.
 4. Add `profiles/<name>/test.bash`, the profile's test adapter (the contract is at the
    top of `profiles/claude/test.bash`): every shared test then runs for it. Its own
    tests, for what only this agent has, go under `tests/<layer>/profile-<name>/`. A new

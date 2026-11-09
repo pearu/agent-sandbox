@@ -1,0 +1,5 @@
+# profiles/claude/versions -- the Claude Code versions this profile was tested with
+# live (#6), one per line; `pinned` marks the one asb installs. Exact versions only. A
+# version goes in when the live tests pass with it (docs/profiles.md, "The install
+# recipe"); no checksum here: resolve.sh reads it from the vendor's signed manifest.
+2.1.321 pinned
