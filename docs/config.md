@@ -817,9 +817,13 @@ yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at lau
 
 **`asb --check`** is the same review, asking nothing and recording nothing: the file
 (as a diff when it changed since you approved it), the notes, and whether it is
-approved. Then, with a profile -- `asb --check claude`, or the only one installed whose command is on PATH --
-what the file means, as a launch would apply it once approved, without starting
-anything:
+approved. Then, for each profile it checks, what the file means, as a launch would
+apply it once approved, without starting anything. A profile named -- `asb --check
+claude`, `--profile NAME`, the role's agent -- is checked whether its command is on PATH
+or not. With none named, it checks every available profile: installed, not one chosen
+by `--profile` alone, its command on PATH. Several get a section each, headed `===
+profile NAME ===`; with none available, the review alone, and one line naming the
+profiles skipped and how to check one anyway. What it shows of a profile:
 
 - **the policy** for the role the file names (`--role R` for another): every channel
   and declaration, its mode, its source, and what set it -- the preset, a `[connect]`
@@ -862,7 +866,7 @@ After the role's plan it lists the file's `[remote:<alias>]` sections, one line 
 `remote <alias>: HOST as ACCOUNT, port TOKEN` (`as the ssh user` without an account),
 or that one is unusable as written.
 
-It exits non-zero when a launch would refuse the file whatever you answer -- a control
+It exits non-zero when a launch of any profile it checked would refuse the file whatever you answer -- a control
 character, an approved file that has gone, a `[remote:<alias>]` name written twice, or a
 policy the launch refuses (an unknown mode, a source it does not know) -- so an author can run it while writing the file, and
 a CI job or a pre-commit hook can run it where nobody could answer a question.
@@ -1148,7 +1152,7 @@ named once. With no agent anywhere the launch is refused, naming both places. AG
 is one word; a path is accepted when its basename names a profile. The file is read
 only once approved; a launch at a terminal asks about it first. A role verb
 (`--status`, `--shutdown`, `--delete`, `--reset`) or `--check` with no command acts on
-the role's agent's profile, else on the only installed one whose command is on PATH. `--check` shows the
+the role's agent's profile, else on the only installed one whose command is on PATH (`--check`: on each). `--check` shows the
 agent that wins and where it was named above the role's `[agent]` lines, and the
 review says when a later `[agent:<glob>]` line takes a role an earlier section names
 exactly (`[agent:r1]` then `[agent:r*]`: r1 gets the `r*` line).

@@ -522,8 +522,10 @@ Engine flags (before CMD):
                         names apart.
                         Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
-                        nothing; exits non-zero when a launch would refuse
-                        the file (for an author, CI or a pre-commit hook)
+                        nothing, then the plan for CMD's profile, else for
+                        each available one (installed, its command on PATH);
+                        exits non-zero when a launch of any of them would
+                        refuse the file (for an author, CI or a pre-commit hook)
   --verbose             also print the routine status lines (dot-file values
                         applied, session allowlist, seccomp filter in use).
                         Refusals, warnings and "not sandboxed" notices are
@@ -12740,6 +12742,9 @@ _as_roles_resets() {
 agent_sandbox() (
   set -euo pipefail
 
+  # The words as given: `--check` with no command checks each available profile by
+  # running this again with --profile in front (_check_nested set).
+  local -a _as_argv=("$@")
   local engine profile_dir invoked connect_sync
   engine="$(readlink -f -- "${BASH_SOURCE[0]}")"
   profile_dir="${AGENT_SANDBOX_PROFILE_DIR:-$(dirname -- "$engine")/profiles}"
@@ -13557,23 +13562,50 @@ agent_sandbox() (
     return $?
   fi
   # ---- --check: the same review, asking nothing and recording nothing ----
-  # Then, with a profile -- named, or the default one -- what the file means:
-  # the policy and the mount plan (_as_check_plan), from the launch path itself, which
-  # stops before anything is started.
-  # _default_cands: the profiles the default is picked from, read once (_as_default_candidates)
+  # Then, with a profile, what the file means: the policy and the mount plan
+  # (_as_check_plan), from the launch path itself, which stops before anything is
+  # started. A profile named (CMD, --profile, the role's agent) is checked whether its
+  # command is on PATH or not. With none named, every available profile -- installed,
+  # not chosen by --profile alone, its command on PATH (_as_default_candidates) -- is:
+  # one, here; several, each by this function again with --profile in front, under a
+  # heading of its name, the review and the remotes once; none, the review alone.
+  # Exits non-zero when a launch of any checked profile refuses the file.
+  # _default_cands: the profiles the default is picked from, read once
   local _check_plan=0 _default_cands=""
   if ((_do_check)); then
-    local _crc=0
-    _as_trust_check "$(pwd -P)" || _crc=$?
-    ((_crc)) && return "$_crc"
+    if ((! ${_check_nested:-0})); then
+      local _crc=0
+      _as_trust_check "$(pwd -P)" || _crc=$?
+      ((_crc)) && return "$_crc"
+    fi
     if [[ -z "$profile" && -z "$_cmd_word" ]]; then
       _default_cands="$(_as_default_candidates "$profile_dir")"
-      profile="$(_as_default_pick "$_default_cands")"
-      [[ -n "$profile" ]] || {
-        _as_msg "--check: no policy or mount plan shown, which need the agent's profile, and $(_as_default_refusal "$_default_cands" "$invoked --check")"
+      local -a _avail=() _skipped=()
+      local _cn _cs
+      while IFS=$'\t' read -r _cn _cs; do
+        [[ -n "$_cn" ]] || continue
+        if [[ "$_cs" == on ]]; then _avail+=("$_cn"); else _skipped+=("$_cn"); fi
+      done <<<"$_default_cands"
+      if ((${#_avail[@]} == 0)); then
+        if ((${#_skipped[@]})); then
+          _as_msg "--check: no policy or mount plan shown: skipped ${_skipped[*]}, whose command is not on PATH; check one anyway: $invoked --check CMD (e.g. $invoked --check ${_skipped[0]}) or --profile NAME"
+        else
+          _as_msg "--check: no policy or mount plan shown: no profile installed is picked by its command; check one: $invoked --check --profile NAME"
+        fi
         _as_check_remotes "$(pwd -P)/.agent-sandbox"
         return 0
-      }
+      elif ((${#_avail[@]} > 1)); then
+        local _cp _cprc _check_rc=0 _check_nested=1
+        for _cp in "${_avail[@]}"; do
+          printf '\n=== profile %s ===\n' "$_cp" >&2
+          _cprc=0
+          agent_sandbox --profile "$_cp" ${_as_argv[@]+"${_as_argv[@]}"} || _cprc=$?
+          ((_check_rc)) || _check_rc=$_cprc
+        done
+        _as_check_remotes "$(pwd -P)/.agent-sandbox"
+        return "$_check_rc"
+      fi
+      profile="${_avail[0]}"
     fi
     _check_plan=1
   fi
@@ -14410,7 +14442,8 @@ agent_sandbox() (
     local _chk_acct=0
     _as_account_check || _chk_acct=1
     _as_check_plan || return $?
-    _as_check_remotes "$_dotfile"
+    # once, by the caller, when it checks several profiles
+    ((${_check_nested:-0})) || _as_check_remotes "$_dotfile"
     if ((_chk_acct)); then
       _as_msg "check: a launch refuses this role: its account '$_acct_name' cannot be its state directory (above)"
       return 1
