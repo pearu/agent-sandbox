@@ -15,7 +15,8 @@
 # live stay serial: e2e shares one install and port 8888, live your credentials.
 #
 # AGENT_SANDBOX_TEST_SHARD=K/N runs only shard K of N of the unit or integration suite's
-# files (tests/shard.sh), for a CI matrix.
+# files (tests/shard.sh), for a CI matrix: tests/<layer>/*.bats, the suites every profile
+# shares, and tests/<layer>/profile-*/*.bats, each profile's own.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 command -v bats >/dev/null || {
@@ -28,7 +29,11 @@ case "$suite" in
   default) set -- tests/unit tests/integration "$@" ;;
   unit | integration)
     if [[ -n "${AGENT_SANDBOX_TEST_SHARD:-}" ]]; then
-      mapfile -t shard < <(tests/shard.sh "$AGENT_SANDBOX_TEST_SHARD" "tests/$suite"/*.bats)
+      # a layer's shared suites and its agent-only ones, tests/<layer>/profile-<name>/
+      shopt -s nullglob
+      files=("tests/$suite"/*.bats "tests/$suite"/profile-*/*.bats)
+      shopt -u nullglob
+      mapfile -t shard < <(tests/shard.sh "$AGENT_SANDBOX_TEST_SHARD" "${files[@]}")
       ((${#shard[@]})) || {
         echo "tests/run.sh: shard $AGENT_SANDBOX_TEST_SHARD of tests/$suite has no files"
         exit 0

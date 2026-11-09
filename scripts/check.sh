@@ -16,7 +16,7 @@ step() { printf '\n==> %s\n' "$*"; }
 # defect.
 # probes/ are host-only scripts, never run in CI -- but they are shell, and the
 # bats suites show what happens to code the linter is not pointed at.
-mapfile -t shell_files < <(git ls-files -- agent-sandbox install.sh install.sh.in 'scripts/*.sh' 'profiles/*.sh' tests/run.sh 'tests/helpers/*.sh' 'tests/helpers/*.bash' 'probes/*.sh' 'probes/*/*.sh' 'models/*/bin/*')
+mapfile -t shell_files < <(git ls-files -- agent-sandbox install.sh install.sh.in 'scripts/*.sh' 'profiles/*.sh' 'profiles/*/test.bash' tests/run.sh 'tests/helpers/*.sh' 'tests/helpers/*.bash' 'probes/*.sh' 'probes/*/*.sh' 'models/*/bin/*')
 # The bats suites are shell too, and ShellCheck parses @test natively. They
 # were left out of this list once, and 50 negative assertions that could not
 # fail (`! cmd`; SC2314) accumulated where the one linter that knows about
@@ -33,6 +33,16 @@ step "shellcheck"
 shellcheck -x "${shell_files[@]}"
 step "shellcheck (bats suites)"
 shellcheck -x "${bats_files[@]}"
+step "no bare negation in the bats suites (\`! cmd\` asserts nothing; use \`run ! cmd\`)"
+# SC2314 above flags `! cmd` in an @test, but not in a function registered with
+# bats_test_function (tests/*/profile-contract.bats, the live and e2e agent tests), which
+# ShellCheck does not take for a test: measured, `fn() { ! true; echo after; }` registered
+# so runs ok, unflagged. This grep is the guard there. `run !`, `[ ! ...` and `[[ ! ...`
+# do not start with `!`, so they pass.
+if grep -nE '^[[:space:]]*![[:space:]]' "${bats_files[@]}"; then
+  echo "a bare negation in a bats suite (above) asserts nothing: write \`run ! cmd\`" >&2
+  exit 1
+fi
 
 step "shfmt -d (tracked files, formatting per .editorconfig)"
 shfmt -d "${fmt_files[@]}"

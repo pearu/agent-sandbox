@@ -2,7 +2,7 @@
 # The claude profile: the binary, state paths.
 
 setup() {
-  load "$BATS_TEST_DIRNAME/../helpers/common"
+  load "$BATS_TEST_DIRNAME/../../helpers/common"
   make_harness
   V="$H/home/.local/share/claude/versions"
   # the slug tests call the profile's functions directly

@@ -55,6 +55,7 @@ Functions a profile defines:
 | `profile_before_join()` | Optional. Called with the agent's argv just before it is joined into the role's launch (not for `--exec`). The claude profile records workspace trust for a `--bg` there, which cannot answer the prompt. Failing refuses the join: the sshd profile refuses a second launch of a running role there, since a second sshd could not listen on its port. |
 | `profile_account_switched()` | Optional. Called at a cold start (never a join) whose account is not the one the role's stores last ran on, after the channels' stores are ready (#355): the record `<sb>/account` the previous launch left, a missing one being the base, against the account in force (`--account`, `[agent] account`, the base). A launch's own `--exec` counts; an engine turn (`--serve`'s, `--summarize`'s) neither records nor compares. Failing refuses the launch. claude: sets `oauthAccount.profileFetchedAt` to 0 in the role's `.claude.json` store (`config` under `own`, `seed-only`, `copy` or `copy-on-write`; never the native file under `read-write` or `native`), so Claude Code refetches the account's profile at its first run and `/status` names the organisation of the account in force, not the last one's (it otherwise refetches only after 12-24 h). |
 | `profile_trust_notes()` | Optional. Called at the dot-file's review with the project directory and the `KEY=VALUE` pairs of the project's section named after this profile (#335), in a subshell with only the profile sourced; prints one line per note, which the engine says as `.agent-sandbox: LINE`. sshd: who may log in (`[sshd] authorized-keys`), a relative path a launch refuses, and a keys file inside the project, which sessions can write. |
+| `profiles/<name>/test.bash` | Not the engine's: the profile's **test adapter**, sourced only by the test suites (install.sh leaves it out of the install). With it, every shared test runs for the profile -- `tests/unit/profile-contract.bats`, `tests/integration/profile-contract.bats`, `tests/live/agent.bats` and the agent block of `tests/e2e/install.bats` -- once per adapter. It says what the profile does not: how the agent's installer lays the binary out (`test_plant`), the agent's options that come before a subcommand, the base's top-level layout for `--check`, a fake login of the agent's shape, and how to run one cheap real turn for the live suite. What the profile states (its base, hide list, resume, clear and login words, account paths) the tests read from `_as_profile_facts` and the dot-file. The contract is at the top of `profiles/claude/test.bash`. |
 
 What the engine provides to a profile: `AGENT_SANDBOX_ENGINE` (real path of the
 engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
@@ -179,7 +180,10 @@ read yet: the launch says so.
 3. Run `scripts/check.sh`, then `install.sh` (or `install.sh --dry-run` first):
    the installer reports the agent it finds on PATH.
    `asb <name>` then runs it.
-4. Add tests under `tests/` for the profile's hooks.
+4. Add `profiles/<name>/test.bash`, the profile's test adapter (the contract is at the
+   top of `profiles/claude/test.bash`): every shared test then runs for it. Its own
+   tests, for what only this agent has, go under `tests/<layer>/profile-<name>/`. A new
+   profile adds these two and changes no shared test.
 5. Nothing in the engine should need to change. If it does, the contract is
    missing something; extend the contract (and this document) rather than
    special-casing a profile.

@@ -39,6 +39,7 @@ systemctl_stub() {
   [ "$(grep -c '^api.anthropic.com$' "$T/home/.config/agent-sandbox/allowlist.txt")" -eq 0 ]
   [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/profile.sh" ]
   [ -f "$T/home/.local/share/agent-sandbox/app/profiles/claude/agent-sandbox" ]
+  [ ! -e "$T/home/.local/share/agent-sandbox/app/profiles/claude/test.bash" ] # the test suites', not installed
   [ -f "$T/home/.local/share/agent-sandbox/app/models/roles/agent-sandbox" ]
   local unit="$T/home/.config/systemd/user/agent-sandbox-mitmproxy.service"
   [ -f "$unit" ]

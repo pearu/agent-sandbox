@@ -88,10 +88,12 @@ from the service or as caches, and what it gets depends on where it lives:
 - The caches of managed settings and policy flags, and of the vendor changelog, are the
   `policy` and `changelog` channels (#109): `seed-only` and `copy` under `inherit`, so a
   sandbox's write to them stays its own.
-- The rest of `cache/`, `telemetry/`, `usage-data/` and `stats-cache.json` are in no channel:
-  they are the native files, readable and writable from every sandbox, as everything in
-  `~/.claude` outside a channel is. `stats-cache.json` is left so deliberately — aggregated
-  token and cost counts, nothing of any session's work (#81). `usage-data/` is #79.
+- The rest of `cache/`, `telemetry/` and `stats-cache.json` are in no channel: they are the
+  native files, readable and writable from every sandbox, as everything in `~/.claude`
+  outside a channel is. `stats-cache.json` is left so deliberately — aggregated token and
+  cost counts, nothing of any session's work (#81). The profile names all three as
+  `[agent] visible`, so `asb --check` does not list them as unclassified. (`usage-data/`
+  is in the `transcripts` channel since #79.)
 
 ## The scale
 

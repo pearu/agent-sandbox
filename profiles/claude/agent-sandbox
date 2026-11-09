@@ -104,6 +104,15 @@ hide = gh
 # names is listed there, since the default for an unknown path is exposed. ide/ exists
 # to make Claude Code work from inside a sandbox (above).
 visible = ide
+# cache/ holds Claude Code's caches; the rest of it is native on purpose -- changelog.md in
+# it is the `changelog` channel (#109), bound by depth over this (docs/connections.md).
+visible = cache
+# telemetry/ is a cache Claude Code regenerates; no project paths were found in it
+# (docs/connections.md, docs/cross-project-channels.md group D).
+visible = telemetry
+# stats-cache.json: aggregated token and cost counts, nothing of any session's work --
+# left native deliberately (#81, docs/connections.md).
+visible = stats-cache.json
 
 # The files under the base that are an account's (#355), the login first: with an
 # account named (`asb --account NAME`, `[agent] account = NAME`) they are the account

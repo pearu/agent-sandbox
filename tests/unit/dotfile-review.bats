@@ -430,7 +430,7 @@ check_role() {
 
 @test "--check lists what in the agent's base no channel, hide or visible line covers (#82)" {
   local c="$H/home/.claude"
-  mkdir -p "$c/gh" "$c/debug" "$c/cache" "$c/newdir"
+  mkdir -p "$c/gh" "$c/debug" "$c/cache" "$c/newdir" "$c/partdir/inner" "$c/telemetry"
   : >"$c/settings.json"
   : >"$c/unknown.json"
   : >"$c/cache/other"
@@ -439,14 +439,17 @@ check_role() {
   for f in policy-limits.json.signature.json policy-limits.json.signature-iat.json \
     remote-settings.json.signature.json remote-settings.json.signature-iat.json \
     remote-settings.json.synced-at; do : >"$c/$f"; done
-  printf '[claude]\nhide = newdir\n' >"$PROJ/.agent-sandbox"
+  : >"$c/stats-cache.json"
+  printf '[claude]\nhide = newdir partdir/inner\n' >"$PROJ/.agent-sandbox"
   check
   [ "$status" -eq 0 ]
   local u
   u="$(sed -n '/^Unclassified in/,/^$/p' <<<"$output")"
   [[ "$u" == *"unknown.json"* ]]
   [[ "$u" == *".hidden-state"* ]]
-  [[ "$u" == *"cache/ -- only changelog.md is classified"* ]]
+  [[ "$u" == *"partdir/ -- only inner is classified"* ]]
+  [[ "$u" != *"cache"* ]]         # visible: native on purpose, changelog.md its channel (#109)
+  [[ "$u" != *"telemetry"* ]]     # visible
   [[ "$u" != *"gh/"* ]]           # hidden: a login left there by the first gh channel
   [[ "$u" != *"debug/"* ]]        # hidden by the profile
   [[ "$u" != *"settings.json"* ]] # a channel

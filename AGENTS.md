@@ -24,7 +24,7 @@ sandbox. It is a security tool. Treat every change to it as one.
 | `.github/workflows/ci.yml` | CI: `check` (scripts/check.sh), `integration` and `e2e` on Ubuntu 22.04, 24.04 and 26.04, an allowed-to-fail `e2e-real-systemd` experiment, a `coverage` job (kcov + coverage.py -> Codecov badge), and `ci-ok`, the gate that needs every job that must pass: the ruleset on main requires it alone, so its name never changes and a new required job goes in its `needs`. |
 | `environment.yml` | The development tooling env (`agent-sandbox` mamba env): git-filter-repo, shellcheck, shfmt. Anything you install into that env for development goes in here, so the env can be recreated. |
 | `docs/` | Design, threat model and residual risks (`docs/design.md`), network, SSH, profiles, prior art, troubleshooting. The trust surface for users. |
-| `tests/` | bats suites, run with `tests/run.sh`: `unit/` (engine helpers, flags, the bwrap argv, the claude profile, the proxy addon with a stubbed mitmproxy, the installer's dry run), `integration/` (the real bwrap with a probe profile; `memory.bats` scopes per-project memory with the claude profile), `live/` (opt-in, real network and the host's proxy), `e2e/` (opt-in: `install.sh` for real against a throwaway HOME with a fake Claude binary and a `systemctl` shim, then the installed launcher through the installed proxy). Harness in `tests/helpers/`. |
+| `tests/` | bats suites, run with `tests/run.sh`: `unit/` (engine helpers, flags, the bwrap argv, the proxy addon with a stubbed mitmproxy, the installer's dry run), `integration/` (the real bwrap with a probe profile), `live/` (opt-in, real network and the host's proxy), `e2e/` (opt-in: `install.sh` for real against a throwaway HOME with a fake agent per profile and a `systemctl` shim, then the installed launcher through the installed proxy). In each layer, `profile-contract.bats` runs for every profile with a test adapter (`profiles/<name>/test.bash`), and `profile-<name>/` holds that profile's own tests (the claude profile's under real bwrap: accounts, config file, isolation, memory). Harness in `tests/helpers/`. |
 
 ## The engine is security-sensitive
 
@@ -95,12 +95,31 @@ number.
   does), that writes key=value lines to `$PWD/report` from inside the sandbox. They `skip` when unprivileged
   user namespaces are unavailable. SSH tests need a short session base because
   of the unix-socket path limit; `make_short_base` provides one.
-- **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): a
-  fake Claude binary (`tests/helpers/fake-claude.sh`) is installed the way the
-  native installer does it (`versions/`, linked from `~/.local/bin/claude`),
+- **Two kinds of tests: shared and agent-only.** A test that is the same for every
+  agent is written once and runs once per profile **test adapter**,
+  `profiles/<name>/test.bash` (its contract is at the top of
+  `profiles/claude/test.bash`): `tests/<layer>/profile-contract.bats` in unit and
+  integration, `tests/live/agent.bats`, and the agent block of `tests/e2e/install.bats`
+  register their tests per adapter with `bats_test_function --description "<agent>:
+  ..."` (`tests/helpers/adapters.bash`). The adapter says only what the profile does
+  not: how the agent's installer lays out its binary, its options that come before a
+  subcommand, its base's layout for `--check`, a fake login of its shape, and its live
+  turn. What the profile states -- base, hide list, resume, clear and login words,
+  account paths -- the tests read the engine's way (`_as_profile_facts`, the dot-file;
+  `profile_facts`, `profile_get`). The agent is the shared fake,
+  `tests/helpers/fake-agent.sh`, whose words (`--version`, `fetch URL`, `env`, `args`,
+  `sh`, `--bg`) are the tests' own. A test only one agent can have goes under
+  `tests/<layer>/profile-<name>/`. **A new profile adds its adapter and its
+  `profile-<name>/` directories, and changes no shared test**; if a shared test needs
+  to change for it, the adapter contract is missing something -- extend it (and the
+  claude adapter) instead. The unit suites' many `asb claude` launches are not
+  agent-only tests: they test the engine with claude as the vehicle, and stay.
+- **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): every
+  adapter plants the shared fake agent the way its agent's installer does it (claude:
+  `versions/`, linked from `~/.local/bin/claude`) before `install.sh` runs,
   `systemctl --user` is a shim (`tests/helpers/systemctl-shim.sh`) that records
-  calls and runs the unit's ExecStart itself, and the installed `asb claude`
-  then runs the fake agent through the installed proxy. The proxy-dependent tests use the port the
+  calls and runs the unit's ExecStart itself, and the installed `asb CMD`
+  then runs each fake agent through the installed proxy. The proxy-dependent tests use the port the
   throwaway install recorded (8888, or the next free one on a machine that already runs the proxy);
   `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips building the proxy env.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
@@ -110,12 +129,15 @@ number.
   test body of `! true` followed by anything else is reported `ok`: the line
   reads like a guarantee and enforces nothing. Fifty of them had accumulated
   here before anyone noticed, two asserting the opposite of what the engine
-  does. `run !` (bats >= 1.5.0, declared in `tests/helpers/common.bash`) fails
+  does. `run !` (bats >= 1.5.0; the suites declare 1.11.0, for `bats_test_function`, in `tests/helpers/common.bash`) fails
   the test when the command succeeds. It replaces `$status` and `$output`, so
   check a message *before* the `run !` that follows it. `[ ! -s "$f" ]` is fine;
   there the negation is the test operator's own. ShellCheck reports the bad
   form as SC2314, and `scripts/check.sh` runs ShellCheck on the `.bats` files
-  -- that is the actual guard; the rule here is so you know why it fires.
+  -- that is the actual guard; the rule here is so you know why it fires. SC2314
+  does not see a function registered with `bats_test_function` (the shared
+  profile-contract, live and e2e agent tests) as a test, so `scripts/check.sh` also
+  greps every `.bats` file for a line starting with `! `, which is the guard there.
 - **GitHub's runners have conda on PATH.** A test that assumes no host conda must
   stub `conda` and `mamba` (exit 1, first on PATH) and clear `CONDA_*`/`MAMBA_*`
   from the environment it runs the engine or installer with. Under `env -i` on a
