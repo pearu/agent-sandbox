@@ -817,7 +817,7 @@ yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at lau
 
 **`asb --check`** is the same review, asking nothing and recording nothing: the file
 (as a diff when it changed since you approved it), the notes, and whether it is
-approved. Then, with a profile -- `asb --check claude`, or the only one installed --
+approved. Then, with a profile -- `asb --check claude`, or the only one installed whose command is on PATH --
 what the file means, as a launch would apply it once approved, without starting
 anything:
 
@@ -1148,7 +1148,7 @@ named once. With no agent anywhere the launch is refused, naming both places. AG
 is one word; a path is accepted when its basename names a profile. The file is read
 only once approved; a launch at a terminal asks about it first. A role verb
 (`--status`, `--shutdown`, `--delete`, `--reset`) or `--check` with no command acts on
-the role's agent's profile, else on the only profile there is. `--check` shows the
+the role's agent's profile, else on the only installed one whose command is on PATH. `--check` shows the
 agent that wins and where it was named above the role's `[agent]` lines, and the
 review says when a later `[agent:<glob>]` line takes a role an earlier section names
 exactly (`[agent:r1]` then `[agent:r*]`: r1 gets the `r*` line).

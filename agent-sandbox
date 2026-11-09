@@ -611,8 +611,8 @@ Engine flags (before CMD):
   --reset CHANNEL|PATH  discard what this role holds at CHANNEL (or a declared
                         PATH) and take the source's again, then exit. What the
                         conflict warning points at. Like --status, --shutdown
-                        and --delete, it needs no CMD when one profile is
-                        installed
+                        and --delete, it needs no CMD when one installed
+                        profile has its command on PATH
   --status              show this role's sandbox: the keeper, what runs in it,
                         the background daemon's sessions
   --list [WORD]         the role sessions of this project you can resume: per
@@ -4046,8 +4046,8 @@ _as_account_record() {
   printf '  %s\n' "$line"
 }
 
-# _as_agent_example -- the agent word a refusal's example names: the only profile
-# installed (_as_default_profile), else AGENT. Uses the engine's $profile_dir.
+# _as_agent_example -- the agent word a refusal's example names: the default profile
+# (_as_default_profile), else AGENT. Uses the engine's $profile_dir.
 # shellcheck disable=SC2154
 _as_agent_example() {
   local p
@@ -5727,24 +5727,83 @@ _as_own_proxy_stop() {
   return 0
 }
 
-# _as_default_profile DIR -- the profile a verb or --check with no command acts on: the
-# only one installed in DIR, not counting those chosen by --profile alone
-# (profile_by_name_only). Prints nothing when there is none, or several.
-_as_default_profile() {
-  local f n="" cnt=0
+# _as_default_candidates DIR -- the profiles installed in DIR that a verb or --check with
+# no command may fall back to, one `NAME<TAB>on|off` line each: `on` when the profile's
+# command (profile_command, or its dot-file's [agent] command) is there to run, looked
+# up as a launch looks it up (_as_resolve_bin: PATH as the engine has it, agent-sandbox
+# itself passed over, a path as it is). Those chosen by --profile alone
+# (profile_by_name_only) are left out; a profile that names no command is `off`.
+_as_default_candidates() {
+  local f n k a b cmd bno
   for f in "$1"/*/profile.sh; do
     [[ -r "$f" ]] || continue
-    # shellcheck disable=SC1090,SC2030,SC2329 # the profile's top level, in a subshell, only declares
-    (
-      _as_msg() { :; }
-      profile_by_name_only=0
-      source "$f" >/dev/null 2>&1 || exit 1
-      ((profile_by_name_only))
-    ) && continue
-    cnt=$((cnt + 1)) n="$(basename -- "$(dirname -- "$f")")"
+    n="$(basename -- "$(dirname -- "$f")")" cmd="" bno=0
+    while IFS=$'\t' read -r k a b; do
+      [[ "$a" == "$n" ]] || continue
+      case "$k" in
+        command) cmd="$b" ;;
+        by-name-only) bno=1 ;;
+      esac
+    done < <(_as_profile_facts "$f")
+    ((bno)) && continue
+    if [[ -n "$cmd" ]] && _as_default_found "$cmd" "$n"; then
+      printf '%s\ton\n' "$n"
+    else
+      printf '%s\toff\n' "$n"
+    fi
   done
-  ((cnt == 1)) && printf '%s' "$n"
   return 0
+}
+
+# _as_default_found CMD NAME -- is profile NAME's command CMD there to run, as
+# _as_resolve_bin finds it for a launch? Its messages are not said: a default is looked
+# for, not a launch made.
+# shellcheck disable=SC2034 # read by _as_resolve_bin, by dynamic scope
+_as_default_found() {
+  local engine="${engine:-}" invoked="${invoked:-agent-sandbox}" profile="$2" profile_bin="" _role_flag_set=0 _roles_set=0
+  _as_resolve_bin "$1" 2>/dev/null
+}
+
+# _as_default_profile DIR -- the profile a verb or --check with no command acts on: the
+# only one installed in DIR whose command is on PATH (_as_default_candidates). Prints
+# nothing when there is none, or several; _as_default_why says which.
+_as_default_profile() {
+  local -a on_path=()
+  local n s
+  while IFS=$'\t' read -r n s; do
+    [[ "$s" == on ]] && on_path+=("$n")
+  done < <(_as_default_candidates "$1")
+  ((${#on_path[@]} == 1)) && printf '%s' "${on_path[0]}"
+  return 0
+}
+
+# _as_default_why DIR -- why DIR has no default profile, for a refusal that goes on
+# `: name it, ...`: `there are several with their command on PATH (a b)`, or `none
+# installed has its command on PATH (installed: a b)`.
+_as_default_why() {
+  local -a on_path=() all=()
+  local n s
+  while IFS=$'\t' read -r n s; do
+    all+=("$n")
+    [[ "$s" == on ]] && on_path+=("$n")
+  done < <(_as_default_candidates "$1")
+  if ((${#on_path[@]} > 1)); then
+    printf 'there are several with their command on PATH (%s)' "${on_path[*]}"
+  else
+    printf 'none installed has its command on PATH (installed: %s)' "${all[*]:-none}"
+  fi
+}
+
+# _as_default_example DIR -- the agent word a refusal with no default profile names in
+# its example: the first installed profile whose command is on PATH, else the first
+# installed (_as_default_candidates), else AGENT.
+_as_default_example() {
+  local n s first="" hit=""
+  while IFS=$'\t' read -r n s; do
+    first="${first:-$n}"
+    [[ "$s" == on ]] && hit="${hit:-$n}"
+  done < <(_as_default_candidates "$1")
+  printf '%s' "${hit:-${first:-AGENT}}"
 }
 
 # Where install.sh puts the compiled seccomp filter for this machine.
@@ -6730,7 +6789,9 @@ _as_profile_facts_dotfile() {
 # `login<TAB>NAME[<TAB>WORD...]`, `account-expiry<TAB>NAME<TAB>FILE<TAB>KEYPATH` and
 # `login-renew<TAB>NAME<TAB>TEXT` lines (the last seven only for a profile with [agent]
 # resume, [agent] clear, [agent] account-paths, a base, [agent] login -- empty or not --
-# [agent] account-expiry and [agent] login-renew: #355).
+# [agent] account-expiry and [agent] login-renew: #355); `command<TAB>NAME<TAB>CMD`, the
+# command a launch looks up (profile_command, or the dot-file's [agent] command), and
+# `by-name-only<TAB>NAME` for a profile chosen by --profile alone.
 # Sourced in a subshell; a profile's top level only declares. What a profile adds at a
 # launch (profile_prepare) is not here.
 _as_profile_facts() {
@@ -6740,11 +6801,15 @@ _as_profile_facts() {
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
     local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=() profile_login=() profile_account_expiry=()
     local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0 profile_login_renew=""
+    # not the caller's (a launch has its own): unset, the launch's defaults apply below
+    unset profile_command profile_by_name_only
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
     # shellcheck disable=SC1090
     source "$1" >/dev/null 2>&1 || exit 0
     _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
+    [[ -z "${profile_command-$name}" ]] || printf 'command\t%s\t%s\n' "$name" "${profile_command-$name}"
+    ((${profile_by_name_only:-0})) && printf 'by-name-only\t%s\n' "$name"
     for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done
     for l in ${profile_dotfile_keys[@]+"${profile_dotfile_keys[@]}"}; do printf 'key\t%s\t%s\n' "$name" "$l"; done
     if ((${#profile_resume[@]})); then
@@ -13356,7 +13421,7 @@ agent_sandbox() (
     _ag_role="${_ag_role:-default}"
     _as_agent_resolve "$_ag_role" ${_ag_lines[@]+"${_ag_lines[@]}"} || return 2
     if ((${#_agent_cmd[@]} == 0)); then
-      # --summarize with none falls back to the only profile there is, as it did.
+      # --summarize with none falls back to the default profile, as it did.
       if [[ "$_ag_mode" == launch ]] && ((! _do_summarize)); then
         _as_msg "no agent for role '$_ag_role'. Name it on the line, $invoked --agent AGENT, or a command: $invoked [ENGINE FLAGS] CMD [AGENT ARGS] (e.g. $invoked claude); or in .agent-sandbox, [agent:$_ag_role] command = AGENT, or for every role: $invoked --apply '[agent]' 'command = $(_as_agent_example)'"
         if [[ -f "$_ag_file" ]] && ((! _ag_read)); then
@@ -13490,7 +13555,7 @@ agent_sandbox() (
     return $?
   fi
   # ---- --check: the same review, asking nothing and recording nothing ----
-  # Then, with a profile -- named, or the only one there is -- what the file means:
+  # Then, with a profile -- named, or the default one -- what the file means:
   # the policy and the mount plan (_as_check_plan), from the launch path itself, which
   # stops before anything is started.
   local _check_plan=0
@@ -13501,6 +13566,7 @@ agent_sandbox() (
     if [[ -z "$profile" && -z "$_cmd_word" ]]; then
       profile="$(_as_default_profile "$profile_dir")"
       [[ -n "$profile" ]] || {
+        _as_msg "--check: no policy or mount plan shown, which need the agent's profile, and $(_as_default_why "$profile_dir"): name it, $invoked --check CMD (e.g. $invoked --check $(_as_default_example "$profile_dir")) or --profile NAME"
         _as_check_remotes "$(pwd -P)/.agent-sandbox"
         return 0
       }
@@ -13508,8 +13574,9 @@ agent_sandbox() (
     _check_plan=1
   fi
   # The role verbs act on a profile's stores and start no agent (--summarize starts a
-  # turn of its own): with no command, the only profile there is, as for --check -- a
-  # profile chosen by --profile alone (profile_by_name_only, sshd) not counted.
+  # turn of its own): with no command, the default profile, as for --check -- the only
+  # one installed whose command is on PATH, a profile chosen by --profile alone
+  # (profile_by_name_only, sshd) not counted.
   local _verb=""
   ((_do_status)) && _verb=--status
   ((_do_shutdown)) && _verb=--shutdown
@@ -13540,7 +13607,7 @@ agent_sandbox() (
     if ((_do_exec)); then
       _as_msg "--exec needs the profile whose sandbox it runs in: $invoked --profile NAME --exec $1"
     elif [[ -n "$_verb" ]]; then
-      _as_msg "$_verb acts on one profile's stores, and there are several: name it, $invoked $_verb CMD (e.g. $invoked $_verb claude) or --profile NAME"
+      _as_msg "$_verb acts on one profile's stores, and $(_as_default_why "$profile_dir"): name it, $invoked $_verb CMD (e.g. $invoked $_verb $(_as_default_example "$profile_dir")) or --profile NAME"
     else
       _as_msg "no command. Name the agent to run: $invoked [ENGINE FLAGS] CMD [AGENT ARGS], e.g. $invoked claude"
     fi
