@@ -18,6 +18,7 @@ asb claude                       # sandboxed: this directory read-write, little 
 asb --ssh github.com claude      # + git push through a per-session, host-constrained ssh-agent
 asb --allow pypi.org claude      # + one more host through the egress proxy, this session only
 asb --role reviewer claude -r    # another role of this project, resuming one of its sessions
+asb --account work claude        # on another login, a second subscription (asb --account-login)
 claude                           # Claude Code itself, not sandboxed
 ```
 

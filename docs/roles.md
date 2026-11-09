@@ -338,14 +338,14 @@ goes when the run is green (section 4).
   when the command exits and tells it which file changed; a background command has no
   time limit in a terminal session, so nothing expires (measured with Claude Code
   2.1.300: 13.6 minutes idle with no notice, and the reply 5 s after the write). A
-  session relaunched with `--continue` has no turn to do it in until something gives it
+  session relaunched with `--resume` has no turn to do it in until something gives it
   one, so the launch does: `[briefing:...] start = .asb/start/<role>.md` is the text it
   runs as its first turn at every start -- arm the watcher, read the inbox, report --
   and the role is running, and seen running, without a keypress. The
   Supervisor runs one over every role's `messages.md` but its own, and
   over `.agent-sandbox`: a running role keeps the policy its launch started with, so on
   a change the Supervisor tells each role it affects to finish its step and say ready,
-  and gives you the relaunch line (`--continue`, once the role's launch has ended). The
+  and gives you the relaunch line (`--resume`, once the role's launch has ended). The
   roles' `[permissions]` lines let the watcher run without a prompt under any permission
   mode. A reply that ends with no watcher running is refused once by the claude
   profile's `Stop` hook, for every role whose `[serve:<role>]` names its inbox -- the

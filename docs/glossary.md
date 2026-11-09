@@ -25,7 +25,17 @@ Code itself: nothing shadows it, so it runs natively. *agreed* (#151); before it
 installer put the engine at `~/.local/bin/claude`.
 
 **Agent.** The program being sandboxed: Claude Code for the `claude` profile. The engine
-itself is agent-agnostic; everything specific to one agent lives in its profile. *shipped*
+itself is agent-agnostic; everything specific to one agent lives in its profile. A role's
+agent is named by the command, `--agent` or the dot-file's `[agent] command`, so one
+project's roles can run different agents (#355). *shipped*
+
+**Account.** One login of an agent: the directory
+`~/.local/state/agent-sandbox/<agent>/accounts/<name>/`, bound in a role in place of the
+agent's base (claude: `~/.claude`), so the login and what the agent derives from it are
+the account's while every channel stays as on the base. Named per role by `--account` or
+`[agent] account`; with none, or `-`, the role runs on the **base**, your own login.
+`asb --account-login NAME AGENT` logs one in. So two subscriptions can serve one project
+([config.md](config.md#accounts), #355). *shipped*
 
 **Profile.** `profiles/<name>/` (`profile.sh` and its dot-file, `agent-sandbox`): the agent-specific half of the engine — where the
 agent keeps its state, which channels it has and which paths each maps to, how its argv is
@@ -396,4 +406,5 @@ A test that passes either way is recorded as proving nothing.
 | native | the host's unsandboxed agent and its state; the `native` **source**; the `native` **preset** (sandboxed, isolating nothing) | the source / the preset |
 | none | the old name of `own` (refused since 0.3); a network mode; the fifth preset, no sandbox (once `--sandbox none`) | the full context |
 | shared | the `shared` preset; storage shared between launches | the preset by name |
+| account | an agent's login (`--account`, `[agent] account`, #355); a user account on a host (`[remote:<alias>] account`, the host's own user) | *the agent's account*, *the user account* |
 | copy | the `copy` mode; the per-project copy of Claude Code's config file (0.2.1), now the `config` channel's store | *the `config` channel* |

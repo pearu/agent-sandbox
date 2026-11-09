@@ -30,6 +30,8 @@ trust() {
   mkdir -p "$H/home/.local/share/agent-sandbox/micromamba/bin"
   printf '#!/bin/sh\n' >"$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
   chmod +x "$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  # Its [agent] account is work: the account's directory, which a launch requires.
+  mkdir -p "$H/home/.local/state/agent-sandbox/claude/accounts/work"
   run_engine AGENT_SANDBOX_NET=proxy AGENT_SANDBOX_SECCOMP=off -- asb claude --version
   [ "$status" -eq 0 ]
   # Any unrecognized section or key would produce one of these:

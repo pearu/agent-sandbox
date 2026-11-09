@@ -233,6 +233,21 @@ Working as designed: the agent only signs for hosts named in `--ssh`. Add
 `~/.gitconfig` is not bound in. Set a repo-local identity from a host shell;
 the engine prints the exact commands at launch.
 
+## Login expired
+
+An agent's login ends (claude's about a month after it was made), whether it is the
+base, your own `~/.claude`, or an [account](config.md#accounts). The engine reads the
+expiry from the login file and says it: `asb --list` adds `, login due in N days` to a
+role's line within 7 days of it and `, login expired: ...` past it, `asb --role R
+--status` prints the date always, and the briefing tells the session in the same
+window, so it can tell you. What renews it, as they name it:
+
+- an account: `asb --account-login NAME claude`, from a shell on the host. On an
+  existing account directory it runs the agent's login there again;
+- the base: `/login` inside a session.
+
+Nothing is said when the expiry cannot be read: no login file, or no expiry in it.
+
 ## "no seccomp filter for <arch>"
 
 The filter is compiled per machine by `install.sh` into
