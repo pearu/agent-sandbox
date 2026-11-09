@@ -82,7 +82,8 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
   [ "$status" -eq 0 ]
   [[ "$output" == *"downloading fake 1.0.0 for "*" (size not stated) from file://$SRC/1.0.0/asset"* ]]
   [ "$(readlink "$I/current")" = 1.0.0 ]
-  [ "$("$I/1.0.0/fakeagent")" = v100 ] && [ "$("$I/1.1.0/fakeagent")" = v110 ]
+  [ "$("$I/1.0.0/fakeagent")" = v100 ]
+  [ "$("$I/1.1.0/fakeagent")" = v110 ]
   # installed already: no resolver, no download -- the source is gone
   rm -r "$SRC"
   install fake@1.1.0
@@ -102,6 +103,12 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
   install fake@'>=1.0'
   [ "$status" -eq 2 ]
   [[ "$output" == "agent-sandbox: --install: fake >=1.0 is not in profile 'fake''s versions table"* ]]
+  # two listed versions as one word: compared whole, never as a part of the list
+  install 'fake@1.0.0 1.1.0'
+  [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: --install: fake 1.0.0 1.1.0 is not in profile 'fake''s versions table, $F/versions: asb installs only the versions tested with it (listed: 1.0.0 1.1.0)" ]
+  install 'fake@0.0 1'
+  [ "$status" -eq 2 ]
   [ ! -e "$ST" ]
   printf '1.0.0\n' >"$F/versions"
   install fake
@@ -209,7 +216,59 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
   [ "$(readlink "$I/current")" = 1.1.0 ]
   install fake@1.0.0 --from "$H/no-such-file"
   [ "$status" -eq 2 ]
-  [ "$output" = "agent-sandbox: --install: --from $H/no-such-file is not a file" ]
+  [ "$output" = "agent-sandbox: --install: --from $H/no-such-file is not a readable file" ]
+  # installed already: a missing FILE is still refused, and a good one is said unused
+  install fake@1.1.0 --from "$H/no-such-file"
+  [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: --install: --from $H/no-such-file is not a readable file" ]
+  install fake@1.1.0 --from "$H/local-copy"
+  [ "$status" -eq 0 ]
+  [ "$output" = "agent-sandbox: --install: fake 1.1.0 is installed already at ~/.local/state/agent-sandbox/fake/install/1.1.0/fakeagent ($H/local-copy not used), and is now fake's current version" ]
+}
+
+# wrap TOOL -- $H/bin/TOOL records its arguments, one per line after a `--call` line, in
+# $H/TOOL.calls, then runs /usr/bin/TOOL (or /bin/TOOL) with them.
+wrap() {
+  local real
+  real="$(PATH=/usr/bin:/bin command -v "$1")"
+  # shellcheck disable=SC2016 # the stub's own expansions
+  printf '#!/bin/sh\n{ echo --call; for a in "$@"; do printf "%%s\\n" "$a"; done; } >>"%s"\nexec %s "$@"\n' \
+    "$H/$1.calls" "$real" >"$H/bin/$1"
+  chmod +x "$H/bin/$1"
+}
+
+@test "--install: curl is held to https and file, redirects to https only; tar unpacks as the user, modes masked" {
+  wrap curl
+  release 1.1.0 "$(binary v110)"
+  install fake
+  [ "$status" -eq 0 ]
+  grep -qxF -- "--proto" "$H/curl.calls"
+  [ "$(grep -A1 -xF -- --proto "$H/curl.calls" | tail -n 1)" = "=https,file" ]
+  [ "$(grep -A1 -xF -- --proto-redir "$H/curl.calls" | tail -n 1)" = "=https" ]
+  wrap tar
+  printf '[agent]\ninstall = tar pkg/bin/fakeagent\n' >"$F/agent-sandbox"
+  release 1.0.0 "$(tarball good f:pkg/bin/fakeagent)"
+  install fake@1.0.0
+  [ "$status" -eq 0 ]
+  # the unpacking call: -x with both options
+  local x
+  x="$(awk '/^--call$/ { if (c ~ /\n-x\n/) print c; c = "" ; next } { c = c "\n" $0 } END { if (c ~ /\n-x\n/) print c }' "$H/tar.calls")"
+  [[ "$x" == *$'\n'--no-same-owner$'\n'* ]]
+  [[ "$x" == *$'\n'--no-same-permissions$'\n'* ]]
+}
+
+@test "--install, tar PATH: a tar whose listing fails (no --quoting-style) refuses; nothing left" {
+  printf '[agent]\ninstall = tar pkg/bin/fakeagent\n' >"$F/agent-sandbox"
+  release 1.1.0 "$(tarball good f:pkg/bin/fakeagent)"
+  # a tar that does not know --quoting-style, as busybox's and bsdtar do not
+  # shellcheck disable=SC2016 # the stub's own expansions
+  printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --quoting-style=escape ] && { echo "tar: unrecognized option" >&2; exit 1; }; done\nexec /usr/bin/tar "$@"\n' >"$H/bin/tar"
+  chmod +x "$H/bin/tar"
+  install fake
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: --install: tar cannot list the download's members (not a tarball, or not GNU tar); nothing installed" ]]
+  nothing_left
+  run ! test -e "$I/current"
 }
 
 @test "--install: refused inside a sandbox, and with anything else on the line (2)" {
@@ -291,7 +350,8 @@ with tarfile.open(sys.argv[1], "w:gz") as t:
   [ "$status" -eq 0 ]
   [[ "$output" == *"fake 1.1.0 is installed at ~/.local/state/agent-sandbox/fake/install/1.1.0/pkg/bin/fakeagent, and is now fake's current version" ]]
   [ "$("$I/1.1.0/pkg/bin/fakeagent")" = tree ]
-  [ -x "$I/1.1.0/pkg/bin/h" ] && [ -f "$I/1.1.0/pkg/lib/helper" ]
+  [ -x "$I/1.1.0/pkg/bin/h" ]
+  [ -f "$I/1.1.0/pkg/lib/helper" ]
   [ "$(readlink "$I/current")" = 1.1.0 ]
 }
 
@@ -321,12 +381,13 @@ with tarfile.open(sys.argv[1], "w:gz") as t:
     esac
     nothing_left
     [ ! -e "$I/current" ]
-    [ ! -e "$H/evil" ] && [ ! -e "$ST/fake/evil" ]
+    [ ! -e "$H/evil" ]
+    [ ! -e "$ST/fake/evil" ]
   done
   # not a tarball at all
   release 1.1.0 "$(binary v110)"
   install fake
   [ "$status" -eq 1 ]
-  [[ "$output" == *"agent-sandbox: --install: tar cannot read the download as a tarball; nothing installed" ]]
+  [[ "$output" == *"agent-sandbox: --install: tar cannot list the download's members (not a tarball, or not GNU tar); nothing installed" ]]
   nothing_left
 }

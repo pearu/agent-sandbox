@@ -59,6 +59,15 @@ fake_tools() {
   argv_has --ro-bind "$H/elsewhere/tools/a" "$H/elsewhere/tools/a"
 }
 
+@test "a tools env with no tools of the user's (an empty bin/, install.sh's engine-bin/ only): nothing on PATH, nothing said" {
+  mkdir -p "$TOOLS/a/bin" "$TOOLS/a/engine-bin"
+  ln -s a "$TOOLS/current"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value PATH)" = "$H/bin:/usr/bin:/bin" ]
+  [[ "$output" != *"tools env"* ]]
+}
+
 @test "the tools env goes after the conda env and micromamba, so a project's own gh wins" {
   fake_tools
   local MM="$H/home/.local/share/agent-sandbox/micromamba/bin" ROOT="$H/home/.local/share/agent-sandbox/conda"

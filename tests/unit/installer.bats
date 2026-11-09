@@ -990,7 +990,8 @@ STUB
   [[ "$output" == *"building the tools env with no tools of yours ($list) from conda-forge"* ]]
   [[ "$output" == *"tools env $tools/b ($list): no tools of yours"* ]]
   grep -qF -- "-c conda-forge gnupg |" "$T/mm-called"
-  [ -z "$(ls -A "$tools/b/bin")" ] && [ -L "$tools/b/engine-bin/gnupg" ]
+  [ -z "$(ls -A "$tools/b/bin")" ]
+  [ -L "$tools/b/engine-bin/gnupg" ]
   [ "$(readlink "$tools/current")" = b ]
   # listed by the user too: once in the env, on the sandboxes' PATH and in engine-bin/
   printf 'gnupg >=2.4\n' >"$list"
@@ -998,7 +999,8 @@ STUB
   tools_step
   [ "$status" -eq 0 ]
   grep -qF -- "-c conda-forge gnupg>=2.4 |" "$T/mm-called"
-  [ -L "$tools/a/bin/gnupg" ] && [ -L "$tools/a/engine-bin/gnupg" ]
+  [ -L "$tools/a/bin/gnupg" ]
+  [ -L "$tools/a/engine-bin/gnupg" ]
 }
 
 @test "--dry-run: the tools env's plan, nothing built" {

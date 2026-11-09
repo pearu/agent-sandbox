@@ -198,13 +198,16 @@ onward" (its docs); a version without a signature is refused.
 
 ### `asb --install AGENT[@VERSION] [--from FILE]`
 
-The installer, alone on the line, on the host only (refused inside a sandbox, as
-`--account-login` is). An explicit `--install` is your word: it asks nothing.
+The installer, alone on the line, on the host only (refused inside a sandbox on
+either sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as
+`--account-login` and `--setup-remote` are). An explicit `--install` is your word: it asks nothing.
 
 1. It reads the profile's `versions` table itself, saying what the table gets wrong.
-   VERSION defaults to the pin; a version not in the table is refused (exit 2), so only
-   live-tested versions install.
-2. A version already installed is not fetched again: it only becomes current (step 6).
+   VERSION defaults to the pin; a version that is not exact, or not a line of the table
+   (compared whole), is refused (exit 2), so only live-tested versions install. A
+   `--from FILE` that is not a readable file is refused here too.
+2. A version already installed is not fetched again: it only becomes current (step 6);
+   a `--from FILE` is then said to be unused.
 3. It runs `resolve.sh VERSION PLATFORM` with PLATFORM this host's `ARCH-LIBC` (musl
    when `/lib/libc.musl-*` exists or `ldd` names musl, as the vendor's own script
    decides) and the tools env's `engine-bin/` first on PATH, where `install.sh` links
@@ -217,7 +220,8 @@ The installer, alone on the line, on the host only (refused inside a sandbox, as
 5. It unpacks into a temporary directory beside the destination, `.VERSION.XXXXXX`: a
    `file` is the binary, named as the profile's command (claude: `claude`); a `tar
    PATH` is unpacked with `tar --no-same-owner --no-same-permissions`, refused before
-   anything is written when a member is absolute or has a `..` part, and after when
+   anything is written when a member is absolute or has a `..` part, or when tar cannot
+   list the members (`--quoting-style=escape`: GNU tar), and after when
    anything in it is not a file, directory or symlink, a symlink resolves outside the
    tree (followed as the kernel follows it, not read as text), or PATH is not an
    executable file inside. Then one rename puts it at
