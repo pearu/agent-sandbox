@@ -84,7 +84,9 @@ For every launch, of every instance (gh-setup included) or of one:
     asb --apply '[agent:gh-fix-1234]' 'account = work'
 
 Of the `[agent:...]` sections that match an instance, the later in the file wins, not
-the narrower: add the one for a number after the `gh-*` one. When an instance hits its
+the narrower: add the one for a number after the `gh-*` one. `--apply` adds no line a
+section has already, wherever it is, so a switch to an account named there before is an
+edit of the file, approved with `asb --trust`, or `--account` for one launch. When an instance hits its
 account's usage limit, end it and relaunch it on the other:
 
     asb --role gh-fix-1234 --shutdown claude

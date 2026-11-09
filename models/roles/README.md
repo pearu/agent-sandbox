@@ -52,7 +52,9 @@ For every launch, `asb --apply '[agent:planner-1]' 'account = work'`, then the s
 lines without `--account`. The Supervisor watches `.agent-sandbox`, so it asks the role
 to finish its step and gives you that relaunch too; a role stopped at its limit cannot
 answer, so do not wait for it. Back to your own login: `--account -` for one launch, or
-`asb --apply '[agent:planner-1]' 'account = -'` (a section's later line wins). A running
+`asb --apply '[agent:planner-1]' 'account = -'` (a section's later line wins; `--apply`
+adds no line the section has already, so a switch back to `work` is an edit of the file,
+approved with `asb --trust`, or `--account work` for one launch). A running
 role keeps the account it started on: a launch that asks for another is refused, and a
 change to the file is taken by the first launch after the role has ended. `asb --list`
 names each role's account and says when its login is due.
