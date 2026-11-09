@@ -5,11 +5,12 @@
 # The stub bwrap of tests/helpers/common.bash; the agent is the shared fake
 # (tests/helpers/fake-agent.sh), planted the way its installer lays it out.
 
-# shellcheck disable=SC2154,SC2016,SC2030,SC2031
-# (file-wide: the tests are functions registered with bats_test_function, where `run`
-# sets $status and $output out of ShellCheck's sight, and the adapter's test_* names are
-# sourced at run time; the single-quoted scripts run in another shell)
+# The tests are functions registered with bats_test_function, which ShellCheck does not
+# see as tests: SC2314 cannot flag a bare `! cmd` in them, so scripts/check.sh's grep for
+# one is the guard (assert a failure with `run !`), and what `run` sets and the adapter
+# defines is declared below for it.
 load "$BATS_TEST_DIRNAME/../helpers/adapters"
+declare status output test_base_layout
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -46,6 +47,7 @@ contract_facts() {
   [[ "$base" == "$H/home/"* ]] # under HOME, as a launch resolves it
   [ "$(profile_get "$1" profile_base)" = "$base" ]
   # every line is this profile's, and of a kind the facts know
+  # shellcheck disable=SC2016 # for the inner bash
   env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c 'source "$1"; _as_profile_facts "$2"' _ \
     "$ENGINE" "$REPO_ROOT/profiles/$1/profile.sh" >"$H/facts"
   [ -s "$H/facts" ]
@@ -62,6 +64,7 @@ contract_keys() {
   [[ "$output" != *"profile '$1': "* ]]
   # and the engine's reader, called alone, reads it without a message
   local msgs
+  # shellcheck disable=SC2016 # for the inner bash
   msgs="$(env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c '
     source "$1"; _as_msg() { printf "%s\n" "$*"; }
     profile=$2 profile_home=$3
@@ -112,6 +115,7 @@ contract_declared() {
   contract_setup "$1"
   # what the dot-file's [agent] section declares, read as text, has its facts line
   local key
+  # shellcheck disable=SC2016 # for the inner bash
   env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c 'source "$1"; _as_profile_facts "$2"' _ \
     "$ENGINE" "$REPO_ROOT/profiles/$1/profile.sh" >"$H/facts"
   for key in resume clear login account-paths account-expiry login-renew; do

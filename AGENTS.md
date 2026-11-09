@@ -129,12 +129,15 @@ number.
   test body of `! true` followed by anything else is reported `ok`: the line
   reads like a guarantee and enforces nothing. Fifty of them had accumulated
   here before anyone noticed, two asserting the opposite of what the engine
-  does. `run !` (bats >= 1.5.0, declared in `tests/helpers/common.bash`) fails
+  does. `run !` (bats >= 1.5.0; the suites declare 1.11.0, for `bats_test_function`, in `tests/helpers/common.bash`) fails
   the test when the command succeeds. It replaces `$status` and `$output`, so
   check a message *before* the `run !` that follows it. `[ ! -s "$f" ]` is fine;
   there the negation is the test operator's own. ShellCheck reports the bad
   form as SC2314, and `scripts/check.sh` runs ShellCheck on the `.bats` files
-  -- that is the actual guard; the rule here is so you know why it fires.
+  -- that is the actual guard; the rule here is so you know why it fires. SC2314
+  does not see a function registered with `bats_test_function` (the shared
+  profile-contract, live and e2e agent tests) as a test, so `scripts/check.sh` also
+  greps every `.bats` file for a line starting with `! `, which is the guard there.
 - **GitHub's runners have conda on PATH.** A test that assumes no host conda must
   stub `conda` and `mamba` (exit 1, first on PATH) and clear `CONDA_*`/`MAMBA_*`
   from the environment it runs the engine or installer with. Under `env -i` on a

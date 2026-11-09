@@ -6,11 +6,12 @@
 # real login: a fake one, of the agent's shape, where a test needs one. One test per
 # adapter for each, named after it.
 
-# shellcheck disable=SC2154,SC2016,SC2030,SC2031
-# (file-wide: the tests are functions registered with bats_test_function, where `run`
-# sets $status and $output out of ShellCheck's sight, and the adapter's test_* names are
-# sourced at run time; the single-quoted scripts run in another shell)
+# The tests are functions registered with bats_test_function, which ShellCheck does not
+# see as tests: SC2314 cannot flag a bare `! cmd` in them, so scripts/check.sh's grep for
+# one is the guard (assert a failure with `run !`), and what `run` sets and the adapter
+# defines is declared below for it.
 load "$BATS_TEST_DIRNAME/../helpers/adapters"
+declare status output
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -71,6 +72,7 @@ contract_base() {
   mkdir -p "$BASE"
   printf 'CONTRACT-BASE\n' >"$BASE/contract-marker"
   local script
+  # shellcheck disable=SC2016 # the script runs inside, in the fake's bash
   printf -v script 'printf "marker=%%s\\n" "$(cat %q/contract-marker 2>/dev/null)"
 printf "env=%%s\\n" "${%s-unset}"
 printf "inside\\n" >%q/contract-written 2>/dev/null && echo wrote=yes' \
@@ -94,6 +96,7 @@ contract_hide() {
   for h in "${hide[@]}"; do
     mkdir -p "$BASE/$h"
     printf 'CANARY\n' >"$BASE/$h/canary"
+    # shellcheck disable=SC2016 # the script runs inside
     printf -v script '%sif [ -d %q ] && [ -z "$(ls -A %q)" ]; then echo hide%d=blank; else echo hide%d=seen; fi\n' \
       "$script" "$BASE/$h" "$BASE/$h" "$i" "$i"
     i=$((i + 1))
@@ -120,6 +123,7 @@ contract_account() {
       "$script" "$BASE/$p" "$i" "$i"
     i=$((i + 1))
   done
+  # shellcheck disable=SC2016 # the script runs inside
   script+='if grep -rqs BASELOGIN""MARK "$HOME"; then echo login=seen; else echo login=nowhere; fi'
   # without an account, the base's login is the sandbox's: the probe sees it
   run_agent "$TEST_CMD" sh "$script"

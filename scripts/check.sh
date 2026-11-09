@@ -33,6 +33,16 @@ step "shellcheck"
 shellcheck -x "${shell_files[@]}"
 step "shellcheck (bats suites)"
 shellcheck -x "${bats_files[@]}"
+step "no bare negation in the bats suites (\`! cmd\` asserts nothing; use \`run ! cmd\`)"
+# SC2314 above flags `! cmd` in an @test, but not in a function registered with
+# bats_test_function (tests/*/profile-contract.bats, the live and e2e agent tests), which
+# ShellCheck does not take for a test: measured, `fn() { ! true; echo after; }` registered
+# so runs ok, unflagged. This grep is the guard there. `run !`, `[ ! ...` and `[[ ! ...`
+# do not start with `!`, so they pass.
+if grep -nE '^[[:space:]]*![[:space:]]' "${bats_files[@]}"; then
+  echo "a bare negation in a bats suite (above) asserts nothing: write \`run ! cmd\`" >&2
+  exit 1
+fi
 
 step "shfmt -d (tracked files, formatting per .editorconfig)"
 shfmt -d "${fmt_files[@]}"

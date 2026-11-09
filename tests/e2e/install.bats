@@ -18,10 +18,11 @@
 # next free port above it. The suite reads the port the install recorded in the
 # throwaway HOME and probes that, so it runs whether or not 8888 is busy here.
 
-# shellcheck disable=SC2154,SC2016,SC2030,SC2031
-# (file-wide: the tests are functions registered with bats_test_function, where `run`
-# sets $status and $output out of ShellCheck's sight, and the adapter's test_* names are
-# sourced at run time; the single-quoted scripts run in another shell)
+# shellcheck disable=SC2030,SC2031
+# (file-wide: the agent tests are functions registered with bats_test_function, which
+# ShellCheck takes for code beside the @test subshells, so it reports their $status and
+# $output as modified in a subshell. SC2314 cannot flag a bare `! cmd` in them either:
+# scripts/check.sh's grep for one is the guard.)
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 load "$BATS_TEST_DIRNAME/../helpers/proxy-port"
 load "$BATS_TEST_DIRNAME/../helpers/adapters"
@@ -51,9 +52,10 @@ launch() {
   (cd "$E/proj" && HOME="$H" PATH="$H/.local/bin:$B:$PATH" "$H/.local/bin/asb" "$@")
 }
 
-# `run !` needs bats 1.5's flag handling; this suite does not load helpers/common.bash,
+# `run !` needs bats 1.5's flag handling, bats_test_function 1.11; this suite does not
+# load helpers/common.bash,
 # which declares it for the others, so it says so itself (else bats warns BW02).
-bats_require_minimum_version 1.5.0
+bats_require_minimum_version 1.11.0
 
 setup_file() {
   [[ "${AGENT_SANDBOX_E2E:-0}" == 1 ]] || skip "set AGENT_SANDBOX_E2E=1 to run the end-to-end installer test"
@@ -99,7 +101,12 @@ teardown_file() {
   }
   local out
   out=$(cat "$E/install1.out")
-  [[ "$out" == *"claude: \`claude\` is $H/.local/share/claude/versions/9.9.9/claude"* ]]
+  # every adapter's agent found, at the binary its fake was planted as (setup_file)
+  local a launcher bin link
+  for a in $(test_adapters); do
+    { read -r launcher && read -r bin && read -r link; } <"$E/plant.$a"
+    [[ "$out" == *"$a: \`${launcher##*/}\` is $bin"* ]]
+  done
   [[ "$out" == *"mitmdump 12."* ]]
   # agent-sandbox's own micromamba, fetched and checked against the pinned sum, and its root
   [[ "$out" == *"micromamba 2.9.0-0 installed: $H/.local/share/agent-sandbox/micromamba/bin/micromamba"* ]]
@@ -128,8 +135,11 @@ teardown_file() {
   fi
   [ "$(readlink "$H/.local/bin/asb")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ] # a true install: a copy, not the checkout
   [ "$(readlink "$H/.local/bin/agent-sandbox")" = "$H/.local/share/agent-sandbox/app/agent-sandbox" ]
-  # and `claude` is still Claude Code's own launcher, untouched (#151)
-  [ "$(readlink "$H/.local/bin/claude")" = "$H/.local/share/claude/versions/9.9.9/claude" ]
+  # and each agent's command is still the agent's own launcher, untouched (#151)
+  for a in $(test_adapters); do
+    { read -r launcher && read -r bin && read -r link; } <"$E/plant.$a"
+    [ "$(readlink "$launcher")" = "$link" ]
+  done
   [[ "$out" == *"\`asb\` on PATH resolves to the agent-sandbox engine"* ]]
   cmp -s "$H/.local/share/agent-sandbox/app/agent-sandbox" "$REPO_ROOT/agent-sandbox"
   # The components the ENGINE runs on the host land beside it, and byte-identical.

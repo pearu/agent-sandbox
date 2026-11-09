@@ -14,6 +14,9 @@
 # Adapters define the same names, so one test uses one: use_adapter sources it in the
 # test's own process.
 
+# bats_test_function, at the top level of the suites that load this: bats 1.11.0.
+bats_require_minimum_version 1.11.0
+
 _ADAPTERS_REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${REPO_ROOT:=$_ADAPTERS_REPO}"
 # AGENT_SANDBOX_TEST_ENGINE lets a mutated copy of the engine be tested (common.bash).

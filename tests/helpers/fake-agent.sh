@@ -29,8 +29,10 @@
 #   FAKE_STATUS          whether the daemon it can reach is running
 : "${FAKE_AGENT:=agent}"
 [ -n "${FAKE_ROOT_OPTIONS+x}" ] || FAKE_ROOT_OPTIONS=()
-[ -n "${FAKE_DAEMON+x}" ] || FAKE_DAEMON=(daemon run)
-: "${FAKE_STATUS:=agents}"
+# Neutral raw defaults, no agent's words: what runs the raw file (CI's e2e-real-systemd
+# job, which only needs it found) never asks for a daemon.
+[ -n "${FAKE_DAEMON+x}" ] || FAKE_DAEMON=(fake-agent-daemon run)
+: "${FAKE_STATUS:=fake-agent-status}"
 skipped=1
 while [ "$skipped" = 1 ] && [ $# -ge 2 ]; do
   skipped=0

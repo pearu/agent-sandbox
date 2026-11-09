@@ -328,10 +328,12 @@ release_bg() {
 # negated command, so a test body of `! true` is reported ok (measured, bats
 # 1.14.0; ShellCheck reports it as SC2314). `run !` needs bats 1.5.0, and
 # declaring that here, in the helper every suite loads, is what makes bats
-# honour the `!` flag instead of warning BW02 and running `!` as a command.
+# honour the `!` flag instead of warning BW02 and running `!` as a command. 1.11.0 is
+# for bats_test_function, which the shared suites register their tests with
+# (tests/helpers/adapters.bash declares it too, at the top level where they do).
 # Mind that `run` replaces $status and $output: check a message BEFORE the
 # `run !` line that follows it, not after.
-bats_require_minimum_version 1.5.0
+bats_require_minimum_version 1.11.0
 
 # test_proxy_port: the proxy's port the engine under test resolves (#335).
 load "$REPO_ROOT/tests/helpers/proxy-port"

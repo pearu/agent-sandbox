@@ -12,11 +12,12 @@
 # --clearenv so the agent got ENOTFOUND. Each test here fails on those engines.
 # Cost: a few short calls of the agent's cheapest model per run.
 
-# shellcheck disable=SC2154,SC2016,SC2030,SC2031
-# (file-wide: the tests are functions registered with bats_test_function, where `run`
-# sets $status and $output out of ShellCheck's sight, and the adapter's test_* names are
-# sourced at run time; the single-quoted scripts run in another shell)
+# The tests are functions registered with bats_test_function, which ShellCheck does not
+# see as tests: SC2314 cannot flag a bare `! cmd` in them, so scripts/check.sh's grep for
+# one is the guard (assert a failure with `run !`), and what `run` sets and the adapter
+# defines is declared below for it.
 load "$BATS_TEST_DIRNAME/../helpers/adapters"
+declare status output test_live_briefing_ask test_live_briefing_marker
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
