@@ -823,7 +823,9 @@ AGENT`, `--profile NAME`, the role's agent -- is checked whether its command is 
 or not. With none named, it checks every available profile: installed, not one chosen
 by `--profile` alone, its command on PATH. Several get a section each, headed `===
 profile NAME ===`; with none available, the review alone, and one line naming the
-profiles skipped and how to check one anyway. What it shows of a profile:
+profiles skipped and how to check one anyway. A profile whose `profile.sh` fails to load
+is never checked this way; with others available, one line says so: `--check: skipped
+NAME, whose profile.sh failed to load`. What it shows of a profile:
 
 - **the policy** for the role the file names (`--role R` for another): every channel
   and declaration, its mode, its source, and what set it -- the preset, a `[connect]`
