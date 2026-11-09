@@ -70,3 +70,29 @@ environment the dot-file names: the host's (`MAMBA_ROOT_PREFIX`, `CONDA_ROOT_PRE
 `conda` on PATH), or under `[conda] base = sandbox` agent-sandbox's own, whose command
 is `micromamba` and whose environments are under
 `~/.local/share/agent-sandbox/conda/envs`.
+
+An instance runs on your own Claude login unless it names an **account**, another login
+logged in once on the host with `asb --account-login work claude`
+([config.md](../../docs/config.md#accounts)). For one launch, `--account` goes before
+the command, and `--resume` goes on with the instance's conversation:
+
+    asb --role gh-fix-1234 --account work --resume claude
+
+For every launch, of every instance (gh-setup included) or of one:
+
+    asb --apply '[agent:gh-*]' 'account = work'
+    asb --apply '[agent:gh-fix-1234]' 'account = work'
+
+Of the `[agent:...]` sections that match an instance, the later in the file wins, not
+the narrower: add the one for a number after the `gh-*` one. `--apply` adds no line a
+section has already, wherever it is, so a switch to an account named there before is an
+edit of the file, approved with `asb --trust`, or `--account` for one launch. When an instance hits its
+account's usage limit, end it and relaunch it on the other:
+
+    asb --role gh-fix-1234 --shutdown claude
+    asb --role gh-fix-1234 --account work --resume claude
+
+A running instance keeps the account it started on: a launch that asks for another is
+refused, and a change to the file is taken by the first launch after it has ended.
+`--account -` is your own login, whatever the file says. `asb --list` names each
+instance's account and says when its login is due.
