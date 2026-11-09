@@ -33,7 +33,8 @@ install_of() {
   local bad
   for bad in 'install = tar' 'install = file bin/x' 'install = zip x' 'install = tar a b' \
     'install = tar /abs/codex' 'install = tar ../codex' 'install = tar bin/../codex' \
-    'install = tar ./codex' 'install = tar bin//codex' 'install = tar bin/' 'install ='; do
+    'install = tar ./codex' 'install = tar bin//codex' 'install = tar bin/' 'install =' \
+    'install = tar -codex' 'install = tar bin/-codex' 'install = tar --x/codex'; do
     [ -z "$(install_of "$bad")" ]
     grep -qxF "agent-sandbox: profile 'other': $P/agent-sandbox: [agent] install takes 'file', or 'tar PATH' with PATH the binary's relative path inside the tarball; ignoring" \
       "$BATS_TEST_TMPDIR/said"

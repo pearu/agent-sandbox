@@ -6566,7 +6566,7 @@ _as_profile_dotfile() {
       install)
         if [[ "${words[*]-}" == file ]]; then
           profile_install=(file)
-        elif ((${#words[@]} == 2)) && [[ "${words[0]}" == tar && "${words[1]}" =~ ^[A-Za-z0-9_+-][A-Za-z0-9._+-]*(/[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$ ]]; then
+        elif ((${#words[@]} == 2)) && [[ "${words[0]}" == tar && "${words[1]}" =~ ^[A-Za-z0-9_+][A-Za-z0-9._+-]*(/[A-Za-z0-9_+][A-Za-z0-9._+-]*)*$ ]]; then
           profile_install=(tar "${words[1]}")
         else
           _as_msg "profile '$pname': $file: [agent] install takes 'file', or 'tar PATH' with PATH the binary's relative path inside the tarball; ignoring"
@@ -6823,7 +6823,9 @@ _as_slug_expand() {
 # dot-separated numbers, then an optional -/+ suffix -- never a range. A line of another
 # shape and a version listed again are said and ignored; with more than one pinned, or
 # versions and none pinned, that is said and none is the pin. No file, no versions.
-# Uses the engine's profile.
+# Uses the engine's profile. Said only where the caller lets _as_msg speak: the facts
+# read it silently, so a bad table never breaks a launch or --check; the installer
+# (next) is where its problems are said.
 _as_profile_versions() {
   local file="$1" line v n=0
   local -a w=() pins=()
@@ -6901,7 +6903,7 @@ _as_profile_facts() {
     source "$1" >/dev/null 2>&1 || exit 0
     printf 'loaded\t%s\n' "$name"
     _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
-    _as_profile_versions "${1%/*}/versions"
+    _as_profile_versions "${1%/*}/versions" # silent here (_as_msg above): what the table gets wrong is the installer's to say
     [[ -z "${profile_command-$name}" ]] || printf 'command\t%s\t%s\n' "$name" "${profile_command-$name}"
     ((${profile_by_name_only:-0})) && printf 'by-name-only\t%s\n' "$name"
     for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done

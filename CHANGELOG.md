@@ -73,8 +73,9 @@ names are gone; there are no aliases for removed names before 1.0.
   a resolver, `resolve.sh VERSION PLATFORM [BASE]`, that prints the binary's URL and
   SHA-256 from the vendor's own metadata. claude's checks the release manifest's GPG
   signature against Anthropic's key, pinned as `profiles/claude/release-key.asc`, and
-  pins 2.1.321. `_as_profile_facts` emits `install`, `version` and `pin` lines. Nothing
-  installs or launches differently yet.
+  pins 2.1.321. `_as_profile_facts` emits `install`, `version` and `pin` lines, reading
+  the table silently: its problems are said by the installer that comes next, and a bad
+  table never breaks a launch or `--check`. Nothing installs or launches differently yet.
 - **`profile_session_args`, a profile hook whose arguments every session carries** (#6),
   the briefing on or off, first on the line, with the sandbox's preset in scope; never
   for `--exec` or a verb.
