@@ -31,3 +31,28 @@ the first role's, is started from a plain terminal, not from the Supervisor's ow
 `asb --roles supervisor planner-1 implementer-1 reviewer-1 gate --resume`.
 A project `--init` wrote before the `[agent]` section existed adds it once:
 `asb --apply '[agent]' 'command = claude'`.
+
+**Another account.** A role runs on your own Claude login unless it names an account,
+another login logged in once on the host with `asb --account-login work claude`
+([recipes.md](../../docs/recipes.md#two-subscriptions-in-one-project)). The whole
+round, for one start or for every launch:
+
+    asb --roles supervisor planner-1 implementer-1 reviewer-1 gate --account work --resume
+    asb --apply '[agent]' 'account = work'
+
+One role -- say the one whose model hit its account's usage limit -- is ended and
+relaunched in its own pane; `--resume` keeps its conversation. It is yours to do, on the
+host:
+
+    asb --role planner-1 --shutdown                  # from any shell; its pane drops to a shell
+    asb --role planner-1 --account work --resume     # in that pane
+
+`--account planner-1=work` on the `--roles` line starts that one role on the account.
+For every launch, `asb --apply '[agent:planner-1]' 'account = work'`, then the same two
+lines without `--account`. The Supervisor watches `.agent-sandbox`, so it asks the role
+to finish its step and gives you that relaunch too; a role stopped at its limit cannot
+answer, so do not wait for it. Back to your own login: `--account -` for one launch, or
+`asb --apply '[agent:planner-1]' 'account = -'` (a section's later line wins). A running
+role keeps the account it started on: a launch that asks for another is refused, and a
+change to the file is taken by the first launch after the role has ended. `asb --list`
+names each role's account and says when its login is due.
