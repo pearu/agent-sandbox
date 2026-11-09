@@ -11,7 +11,8 @@ setup() {
   [ -r "$HOME/.local/share/agent-sandbox/seccomp/$(uname -m).bpf" ] \
     || skip "no compiled seccomp filter for $(uname -m); re-run install.sh"
   PROF="$(mktemp -d)"
-  cat >"$PROF/scprobe.sh" <<'P'
+  mkdir -p "$PROF/scprobe"
+  cat >"$PROF/scprobe/profile.sh" <<'P'
 profile_command=scprobe
 P
   cat >"$PROF/scprobe-bin.sh" <<'P'

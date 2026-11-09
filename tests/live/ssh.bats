@@ -16,7 +16,8 @@ setup() {
   ssh-keygen -F github.com >/dev/null 2>&1 || skip "github.com not in ~/.ssh/known_hosts"
   ls "$HOME"/.ssh/id_* >/dev/null 2>&1 || skip "no ssh key under ~/.ssh"
   PROF="$(mktemp -d)"
-  cat >"$PROF/sshprobe.sh" <<'P'
+  mkdir -p "$PROF/sshprobe"
+  cat >"$PROF/sshprobe/profile.sh" <<'P'
 profile_command=sshprobe
 P
   cat >"$PROF/sshprobe-bin.sh" <<'P'
