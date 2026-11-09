@@ -137,6 +137,10 @@ account-expiry = .credentials.json claudeAiOauth.refreshTokenExpiresAt
 # The base is your own login, not an account, so `asb --account-login` is not its renewal;
 # --list and --status say `run /login`, the briefing `the user renews it with /login`.
 login-renew = /login
+# How asb installs Claude Code (#6): one static binary, nothing beside it. Which file
+# and its SHA-256 come from resolve.sh (the vendor's signed manifest); which version from
+# the versions table beside this file.
+install = file
 
 # The environment: NAME forwards it when set in the launching shell, NAME = VALUE sets
 # it, -NAME refuses it whatever a project's file says.

@@ -52,7 +52,7 @@ contract_facts() {
     "$ENGINE" "$REPO_ROOT/profiles/$1/profile.sh" >"$H/facts"
   [ -s "$H/facts" ]
   [ -z "$(awk -F'\t' -v n="$1" '$2 != n' "$H/facts")" ]
-  run ! grep -vE '^(channel|key|resume|clear|base|account-paths|login|account-expiry|login-renew|env-set|command|by-name-only|loaded)'$'\t' "$H/facts"
+  run ! grep -vE '^(channel|key|resume|clear|base|account-paths|login|account-expiry|login-renew|install|version|pin|env-set|command|by-name-only|loaded)'$'\t' "$H/facts"
 }
 
 contract_keys() {
@@ -118,7 +118,7 @@ contract_declared() {
   # shellcheck disable=SC2016 # for the inner bash
   env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c 'source "$1"; _as_profile_facts "$2"' _ \
     "$ENGINE" "$REPO_ROOT/profiles/$1/profile.sh" >"$H/facts"
-  for key in resume clear login account-paths account-expiry login-renew; do
+  for key in resume clear login account-paths account-expiry login-renew install; do
     awk -v k="$key" '/^\[/ { s = ($0 == "[agent]") } s && $0 ~ "^[[:space:]]*" k "[[:space:]]*=" { f = 1 } END { exit !f }' \
       "$REPO_ROOT/profiles/$1/agent-sandbox" || continue
     awk -F'\t' -v k="$key" -v n="$1" '$1 == k && $2 == n { f = 1 } END { exit !f }' "$H/facts" || {
@@ -126,6 +126,27 @@ contract_declared() {
       false
     }
   done
+}
+
+contract_recipe() {
+  contract_setup "$1"
+  [[ -n "$(profile_facts "$1" install)" ]] || skip "the $1 profile has no [agent] install"
+  # an installable agent has a resolver, and a versions table with one pin among its
+  # versions, read without a word said
+  [ -x "$REPO_ROOT/profiles/$1/resolve.sh" ]
+  local -a versions=()
+  mapfile -t versions < <(profile_facts "$1" version)
+  ((${#versions[@]}))
+  [ "$(profile_facts "$1" pin | wc -l)" -eq 1 ]
+  [[ " ${versions[*]} " == *" $(profile_facts "$1" pin) "* ]]
+  # shellcheck disable=SC2016 # for the inner bash
+  run env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c 'source "$1"; profile=$2 _as_profile_versions "$3" 2>&1 >/dev/null' _ \
+    "$ENGINE" "$1" "$REPO_ROOT/profiles/$1/versions"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # the resolver takes the contract's arguments: nothing fetched for a version not exact
+  run "$REPO_ROOT/profiles/$1/resolve.sh" not-a-version x86_64-gnu "$H/nowhere"
+  [ "$status" -eq 2 ]
 }
 
 contract_login() {
@@ -156,5 +177,6 @@ for a in $(test_adapters); do
   bats_test_function --description "$a: --check on the agent's base layout lists nothing unclassified" -- contract_check "$a"
   bats_test_function --description "$a: --resume puts the profile's resume words after the agent's own arguments" -- contract_resume "$a"
   bats_test_function --description "$a: the resume, clear, login and account facts are emitted where the dot-file declares them" -- contract_declared "$a"
+  bats_test_function --description "$a: an installable agent has a resolver and a versions table with one pin" -- contract_recipe "$a"
   bats_test_function --description "$a: the adapter's fake login is the profile's login file, with the expiry where the profile reads it" -- contract_login "$a"
 done

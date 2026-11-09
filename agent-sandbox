@@ -6501,6 +6501,10 @@ _as_trust_show() {
 #   [agent] login-renew -- profile_login_renew: the text, as written, that renews the
 #                      base's login, said when it is due (#355; claude: /login); none:
 #                      nothing is said of how
+#   [agent] install -- profile_install: how asb installs the agent (#6), the kind of
+#                      file the profile's resolve.sh names: `file` (one binary) or
+#                      `tar PATH` (a tarball, the binary at the relative PATH inside);
+#                      none: the profile's agent is not one asb installs
 #   [agent] command -- profile_command
 #   [agent] base    -- profile_base: the agent's state directory, bound read-write
 #                      before anything else and created when absent (#175)
@@ -6557,6 +6561,15 @@ _as_profile_dotfile() {
           _as_msg "profile '$pname': $file: [agent] login-renew is one line of text, without a tab; ignoring"
         else
           profile_login_renew="$v"
+        fi
+        ;;
+      install)
+        if [[ "${words[*]-}" == file ]]; then
+          profile_install=(file)
+        elif ((${#words[@]} == 2)) && [[ "${words[0]}" == tar && "${words[1]}" =~ ^[A-Za-z0-9_+-][A-Za-z0-9._+-]*(/[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$ ]]; then
+          profile_install=(tar "${words[1]}")
+        else
+          _as_msg "profile '$pname': $file: [agent] install takes 'file', or 'tar PATH' with PATH the binary's relative path inside the tarball; ignoring"
         fi
         ;;
       hide) profile_hide+=(${words[@]+"${words[@]}"}) ;;
@@ -6803,6 +6816,43 @@ _as_slug_expand() {
   _slug_out="$s"
 }
 
+# _as_profile_versions FILE -- read a profile's versions table (#6),
+# profiles/<name>/versions, into profile_versions (each version listed, in the file's
+# order) and profile_version_pin (the one marked `pinned`). A line is `VERSION` or
+# `VERSION pinned`; `#` starts a comment, a blank line is skipped. A version is exact --
+# dot-separated numbers, then an optional -/+ suffix -- never a range. A line of another
+# shape and a version listed again are said and ignored; with more than one pinned, or
+# versions and none pinned, that is said and none is the pin. No file, no versions.
+# Uses the engine's profile.
+_as_profile_versions() {
+  local file="$1" line v n=0
+  local -a w=() pins=()
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    read -r -a w <<<"${line%%#*}"
+    ((${#w[@]})) || continue
+    v="${w[0]}"
+    if [[ ! "$v" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]] || ((${#w[@]} > 2)) || [[ "${w[1]:-pinned}" != pinned ]]; then
+      _as_msg "profile '${profile:-}': $file:$n: '${w[*]}' is not VERSION or VERSION pinned, with VERSION exact (1.2.3); ignoring"
+      continue
+    fi
+    if [[ " ${profile_versions[*]-} " == *" $v "* ]]; then
+      _as_msg "profile '${profile:-}': $file:$n: $v is listed again; ignoring"
+      continue
+    fi
+    profile_versions+=("$v")
+    ((${#w[@]} == 1)) || pins+=("$v")
+  done <"$file"
+  if ((${#pins[@]} == 1)); then
+    profile_version_pin="${pins[0]}"
+  elif ((${#pins[@]} > 1)); then
+    _as_msg "profile '${profile:-}': $file: more than one version is pinned (${pins[*]}); none is the pin"
+  elif ((${#profile_versions[@]})); then
+    _as_msg "profile '${profile:-}': $file: no version is pinned"
+  fi
+}
+
 # _as_profile_facts_dotfile NAME FILE -- for _as_profile_facts, in its subshell: read the
 # profile's dot-file as a launch does, since its channel table is there (#190), its
 # resume words (#355) and its clear keys (#355).
@@ -6814,7 +6864,7 @@ _as_profile_facts_dotfile() {
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=()
-  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login, profile_account_expiry, profile_login_renew
+  _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login, profile_account_expiry, profile_login_renew, profile_install
   # the caller's: the base, for the review's [connect] check (#355)
   _pf_base="$profile_base"
 }
@@ -6826,7 +6876,10 @@ _as_profile_facts_dotfile() {
 # `login<TAB>NAME[<TAB>WORD...]`, `account-expiry<TAB>NAME<TAB>FILE<TAB>KEYPATH` and
 # `login-renew<TAB>NAME<TAB>TEXT` lines (the last seven only for a profile with [agent]
 # resume, [agent] clear, [agent] account-paths, a base, [agent] login -- empty or not --
-# [agent] account-expiry and [agent] login-renew: #355); `command<TAB>NAME<TAB>CMD`, the
+# [agent] account-expiry and [agent] login-renew: #355); `install<TAB>NAME<TAB>KIND
+# [<TAB>PATH]` for a profile with [agent] install, `version<TAB>NAME<TAB>V` for each
+# version of its versions table and `pin<TAB>NAME<TAB>V` for the pinned one (#6);
+# `command<TAB>NAME<TAB>CMD`, the
 # command a launch looks up (profile_command, or the dot-file's [agent] command), and
 # `by-name-only<TAB>NAME` for a profile chosen by --profile alone; `loaded<TAB>NAME` once
 # its profile.sh has been sourced without failing (no line at all when it fails).
@@ -6838,7 +6891,8 @@ _as_profile_facts() {
     name="$(basename -- "$(dirname -- "$1")")"
     # shellcheck disable=SC2030 # the subshell's own copy, on purpose: the facts are printed
     local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=() profile_login=() profile_account_expiry=()
-    local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0 profile_login_renew=""
+    local -a profile_install=() profile_versions=()
+    local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0 profile_login_renew="" profile_version_pin=""
     # not the caller's (a launch has its own): unset, the launch's defaults apply below
     unset profile_command profile_by_name_only
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
@@ -6847,6 +6901,7 @@ _as_profile_facts() {
     source "$1" >/dev/null 2>&1 || exit 0
     printf 'loaded\t%s\n' "$name"
     _as_profile_facts_dotfile "$name" "${1%/*}/agent-sandbox"
+    _as_profile_versions "${1%/*}/versions"
     [[ -z "${profile_command-$name}" ]] || printf 'command\t%s\t%s\n' "$name" "${profile_command-$name}"
     ((${profile_by_name_only:-0})) && printf 'by-name-only\t%s\n' "$name"
     for l in ${profile_channels[@]+"${profile_channels[@]}"}; do printf 'channel\t%s\t%s\n' "$name" "$l"; done
@@ -6870,6 +6925,13 @@ _as_profile_facts() {
     fi
     ((${#profile_account_expiry[@]} != 2)) || printf 'account-expiry\t%s\t%s\t%s\n' "$name" "${profile_account_expiry[@]}"
     [[ -z "$profile_login_renew" ]] || printf 'login-renew\t%s\t%s\n' "$name" "$profile_login_renew"
+    if ((${#profile_install[@]})); then
+      printf 'install\t%s' "$name"
+      printf '\t%s' "${profile_install[@]}"
+      printf '\n'
+    fi
+    for l in ${profile_versions[@]+"${profile_versions[@]}"}; do printf 'version\t%s\t%s\n' "$name" "$l"; done
+    [[ -z "$profile_version_pin" ]] || printf 'pin\t%s\t%s\n' "$name" "$profile_version_pin"
     ((${profile_project_env_set:-0})) && printf 'env-set\t%s\n' "$name"
     true
   )
@@ -13763,6 +13825,8 @@ agent_sandbox() (
   local -a profile_account_expiry=()
   # What renews the base's login, said when it is due (#355; claude: /login): none, not said.
   local profile_login_renew=""
+  # How asb installs its agent, KIND [PATH] (#6): none, not one asb installs.
+  local -a profile_install=()
   # The profile's channel map: `channel<TAB>kind:path...` (profile contract 3).
   local -a profile_channels=()
   local -a profile_isolate_spec=()
