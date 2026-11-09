@@ -219,6 +219,11 @@
 #   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long a role's keeper waits once
 #                                       nothing is joined before it ends
 #                                       (default: 2; the test suites use 0)
+#   AGENT_SANDBOX_INSTALL_BASE=URL|DIR  for tests: --install gives it to the
+#                                       profile's resolve.sh as its BASE, the
+#                                       source read in place of the vendor's;
+#                                       the SHA-256 the resolver gives is still
+#                                       enforced
 #
 # ============================================================================
 # ENGINE FLAGS
@@ -350,6 +355,19 @@
 #                         with no login file, else 0. Refused for a bad NAME, an
 #                         AGENT naming no profile, a profile with no account-paths
 #                         or no login key, a symlink or a non-directory there.
+#   --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]
+#                         alone on the line, host only (#6): install AGENT's
+#                         VERSION (default: its profile's pin; an exact version,
+#                         one not in profiles/AGENT/versions said untested) into
+#                         <state>/AGENT/install/VERSION/ and point
+#                         <state>/AGENT/install/current at it. The profile's
+#                         resolve.sh names the file and its SHA-256; curl
+#                         downloads it (--from: FILE instead; with --sha256 SUM
+#                         the resolver is not run, offline), its size and
+#                         SHA-256 are checked, a tarball's members too, and one
+#                         rename puts it in place: a failure leaves nothing. A
+#                         version already there is not downloaded again. Exit 2
+#                         for a refusal, 1 for a failure.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
 #                         --serve runs (the profile's serve-new arguments, a fresh
@@ -565,6 +583,15 @@ Engine flags (before CMD):
                         from a scratch project with no dot-file, under
                         --preset isolated; then says whether the account has
                         its login file. Exit 1 when it has none
+  --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]
+                        install AGENT for asb, alone on the line, host only:
+                        VERSION (default: the profile's pinned one; one not in
+                        its table installs too, said untested) is downloaded
+                        -- or taken from FILE -- checked against the SHA-256
+                        its vendor states (with --sha256, against SUM, offline),
+                        and put in ~/.local/state/agent-sandbox/AGENT/install/VERSION/,
+                        then made AGENT's current version. One already there
+                        is not downloaded again
   --roles ROLE...       open one tmux session, named after the project
                         directory, with a pane per role, each running
                         `--role ROLE` with the line's engine words, five to a
@@ -672,6 +699,8 @@ Environment knobs:
   AGENT_SANDBOX_JOIN            the join helper (default: components/join.py)
   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long an idle role's keeper waits
                                 before it ends (default: 2)
+  AGENT_SANDBOX_INSTALL_BASE=URL|DIR  for tests: the source --install's resolver reads
+                                in place of the vendor's (the SHA-256 still enforced)
 USAGE
 }
 
@@ -6413,9 +6442,21 @@ _as_dotfile_trusted() {
 # the host can arrange: inside, the sandbox's pid namespace starts with it.
 _as_inside_sandbox() {
   [[ -n "${AGENT_SANDBOX:-}" ]] || return 1
+  _as_pid1_bwrap
+}
+
+# _as_pid1_bwrap -- is pid 1 bubblewrap, as it is in a sandbox's pid namespace?
+_as_pid1_bwrap() {
   local a0=""
   { IFS= read -r -d '' a0 </proc/1/cmdline; } 2>/dev/null || true
   [[ "$(basename -- "${a0:-/}")" == bwrap ]]
+}
+
+# _as_maybe_inside -- for what must run on the host only (--account-login, --install,
+# --setup-remote): either sign of a sandbox refuses, the AGENT_SANDBOX marker or pid 1
+# being bubblewrap, so unsetting the marker inside does not get past it.
+_as_maybe_inside() {
+  [[ -n "${AGENT_SANDBOX:-}" ]] || _as_pid1_bwrap
 }
 
 # _as_has_terminal -- can the user answer a question here? Decided by the terminal, not
@@ -6824,8 +6865,8 @@ _as_slug_expand() {
 # shape and a version listed again are said and ignored; with more than one pinned, or
 # versions and none pinned, that is said and none is the pin. No file, no versions.
 # Uses the engine's profile. Said only where the caller lets _as_msg speak: the facts
-# read it silently, so a bad table never breaks a launch or --check; the installer
-# (next) is where its problems are said.
+# read it silently, so a bad table never breaks a launch or --check; --install
+# (_as_agent_install) is where its problems are said.
 _as_profile_versions() {
   local file="$1" line v n=0
   local -a w=() pins=()
@@ -7334,7 +7375,7 @@ _as_account_login_clean() {
 _as_account_login() {
   local name="$1" agent="$2" p st d x scratch real slug self rc=0 login_set=0 cred
   local -a f=() apaths=() login=()
-  if [[ -n "${AGENT_SANDBOX:-}" ]] || _as_inside_sandbox; then
+  if _as_maybe_inside; then
     _as_msg "--account-login runs on the host: the login it makes is the account's, for every role on it in every project; a role proposes the line, you run it."
     return 2
   fi
@@ -7421,6 +7462,299 @@ _as_account_login() {
     ((rc)) || rc=1
   fi
   return "$rc"
+}
+
+# ---- asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): an agent, by asb ----
+# Host-side, never through the proxy: the profile's resolver (profiles/<name>/resolve.sh,
+# docs/profiles.md "The install recipe") names the file and its SHA-256; this downloads it
+# with curl (the host's own proxy settings apply), checks its size when stated and its
+# SHA-256, unpacks it per the profile's [agent] install, and renames it into place:
+#   <state>/<profile>/install/<VERSION>/   the version, complete or absent: a `file` is
+#                                          the binary, named as the profile's command
+#                                          (claude/install/2.1.321/claude), a `tar PATH`
+#                                          the unpacked tree with the binary at PATH
+#   <state>/<profile>/install/current      a symlink to the VERSION launches run, moved
+#                                          by every --install
+# All is made in a temporary directory beside the version's (.VERSION.XXXXXX), so one
+# rename puts it in place and any failure leaves nothing. No VERSION is the profile's pin;
+# an exact version not in its versions table installs too, said to be untested with asb.
+# A version already there is not downloaded again: current moves to it. --from FILE
+# --sha256 SUM checks FILE against SUM and runs no resolver: an offline install.
+# AGENT_SANDBOX_INSTALL_BASE, for tests, is passed to the resolver as its BASE (its source
+# in place of the vendor's); the SHA-256 the resolver gives is enforced all the same.
+
+# The most bytes a download may have when the resolver states no size: 4 GiB.
+_as_install_max=4294967296
+
+# _as_install_platform -- this host's ARCH-LIBC (docs/profiles.md): `uname -m`, then musl
+# when the host's C library is musl -- the vendor's own test (claude.ai/install.sh):
+# /lib/libc.musl-*, or ldd naming musl -- else gnu.
+_as_install_platform() {
+  local libc=gnu f out
+  for f in /lib/libc.musl-*; do
+    [[ -e "$f" ]] && libc=musl
+  done
+  if [[ "$libc" == gnu ]]; then
+    out="$(ldd /bin/ls 2>&1 || true)"
+    [[ "$out" == *musl* ]] && libc=musl
+  fi
+  printf '%s-%s' "$(uname -m)" "$libc"
+}
+
+# _as_install_unpack KIND PATH BIN DOWNLOAD TREE -- make TREE, the version's directory as
+# it will be: a `file` DOWNLOAD moved to TREE/BIN; a `tar` DOWNLOAD unpacked into TREE,
+# refused unless every member is relative with no `..` part (checked before tar writes
+# anything), nothing in it is other than a file, directory or symlink, no symlink
+# resolves outside TREE, and PATH is an executable file in it (checked after). Returns 1,
+# said, when refused; TREE is then the caller's to remove.
+_as_install_unpack() {
+  local kind="$1" path="$2" bin="$3" dl="$4" tree="$5" n rc=0 l t r top
+  local -a members=()
+  if [[ "$kind" == file ]]; then
+    mkdir -- "$tree" && mv -- "$dl" "$tree/$bin" && chmod 755 -- "$tree/$bin" || return 1
+    return 0
+  fi
+  # The members as tar lists them, escaped: a newline in a name is \n, one line each. A
+  # listing that fails (not a tarball, or a tar without --quoting-style) refuses: an
+  # empty list would pass the check below unchecked.
+  if ! l="$(tar -t --quoting-style=escape -f "$dl" 2>/dev/null)"; then
+    _as_msg "--install: tar cannot list the download's members (not a tarball, or not GNU tar); nothing installed"
+    return 1
+  fi
+  [[ -z "$l" ]] || mapfile -t members <<<"$l"
+  for n in ${members[@]+"${members[@]}"}; do
+    if [[ "$n" == /* || "/$n/" == */../* ]]; then
+      _as_msg "--install: the tarball has a member '$n', which is absolute or has a '..' part; nothing installed"
+      return 1
+    fi
+  done
+  mkdir -- "$tree" || return 1
+  tar -x --no-same-owner --no-same-permissions -f "$dl" -C "$tree" -- 2>/dev/null || rc=$?
+  if ((rc)); then
+    _as_msg "--install: tar could not unpack the download (exit $rc); nothing installed"
+    return 1
+  fi
+  top="$(readlink -f -- "$tree")"
+  while IFS= read -r -d '' l; do
+    if [[ ! -L "$l" ]]; then
+      _as_msg "--install: the tarball has '${l#"$tree"/}', which is not a file, a directory or a symlink; nothing installed"
+      return 1
+    fi
+    t="$(readlink -- "$l")"
+    r="$(realpath -m -- "$l" 2>/dev/null)" || r=""
+    if [[ "$t" == /* || -z "$r" || ("$r" != "$top" && "$r" != "$top"/*) ]]; then
+      _as_msg "--install: the tarball's symlink '${l#"$tree"/}' -> '$t' points outside it; nothing installed"
+      return 1
+    fi
+  done < <(find "$tree" -mindepth 1 \( -type l -o \( ! -type f ! -type d \) \) -print0)
+  r="$(realpath -e -- "$tree/$path" 2>/dev/null)" || r=""
+  if [[ -z "$r" || "$r" != "$top"/* || ! -f "$r" || ! -x "$r" ]]; then
+    _as_msg "--install: the tarball has no executable file at $path (the profile's [agent] install); nothing installed"
+    return 1
+  fi
+  return 0
+}
+
+# _as_install_fetch ROOT VER URL SUM SIZE FROM KIND PATH BIN -- in a subshell: the version
+# made in a temporary directory beside ROOT/VER (FROM, a local file, in place of the
+# download when given), checked, unpacked, and renamed to ROOT/VER. Returns 1, said, on
+# any failure; the temporary directory is removed whatever happens.
+_as_install_fetch() (
+  local root="$1" ver="$2" url="$3" sum="$4" size="$5" from="$6" kind="$7" path="$8" bin="$9"
+  local tmp got bytes rc=0 what src="its resolver gives"
+  [[ -n "$url" || -z "$from" ]] || src="given (--sha256)"
+  tmp="$(mktemp -d "$root/.$ver.XXXXXX")" || exit 1
+  trap 'chmod -R u+rwX -- "$tmp" 2>/dev/null; rm -rf -- "$tmp"' EXIT
+  trap 'exit 130' INT TERM HUP
+  if [[ -n "$from" ]]; then
+    what="$from"
+    cp -- "$from" "$tmp/download" || exit 1
+  else
+    what="$url"
+    curl -fsSL --proto '=https,file' --proto-redir '=https' --max-filesize "${size:-$_as_install_max}" \
+      -o "$tmp/download" -- "$url" || rc=$?
+    if ((rc)); then
+      _as_msg "--install: the download of $url failed (curl exit $rc); nothing installed"
+      exit 1
+    fi
+  fi
+  bytes="$(stat -c %s -- "$tmp/download")" || exit 1
+  if [[ -n "$size" && "$bytes" != "$size" ]]; then
+    _as_msg "--install: $what is $bytes bytes, not the $size its resolver states; nothing installed"
+    exit 1
+  fi
+  got="$(sha256sum -- "$tmp/download")" || exit 1
+  got="${got%% *}"
+  if [[ "$got" != "$sum" ]]; then
+    _as_msg "--install: the SHA-256 of $what is $got, not the $sum ${src}; nothing installed"
+    exit 1
+  fi
+  _as_install_unpack "$kind" "$path" "$bin" "$tmp/download" "$tmp/tree" || exit 1
+  if ! mv -T -- "$tmp/tree" "$root/$ver" 2>/dev/null; then
+    _as_msg "--install: could not rename the version into place at $root/$ver; nothing installed"
+    exit 1
+  fi
+)
+
+# _as_install_listed VERSION LISTED... -- is VERSION exact (the versions table's shape)
+# and one of LISTED, compared whole?
+_as_install_listed() {
+  local v="$1" l
+  shift
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]] || return 1
+  for l in "$@"; do
+    [[ "$l" == "$v" ]] && return 0
+  done
+  return 1
+}
+
+# _as_agent_install AGENT[@VERSION] [FILE [SUM]] -- `asb --install`: install the version
+# (no VERSION: the profile's pin) unless it is there, then make it the profile's current
+# version. VERSION must be exact; one not in the profile's versions table installs too,
+# said to be untested with asb. FILE, from --from, is used in place of the download,
+# checked against the SHA-256 the resolver gives (so the resolver, which reads the
+# vendor's metadata, still runs), or against SUM, from --sha256, without running the
+# resolver: fully offline. Refusals are 2, failures 1. Uses profile_dir and invoked by
+# dynamic scope.
+# shellcheck disable=SC2154
+_as_agent_install() {
+  local spec="$1" from="${2:-}" given="${3:-}" agent ver="" p st root dest x bin path="" kind="" cmd=""
+  local resolver plat base out rc=0 url sum size slot rpath shown host untested="" has_sum=0
+  local -a f=() w=() profile_versions=()
+  local profile_version_pin=""
+  if _as_maybe_inside; then
+    _as_msg "--install runs on the host: it downloads the agent there, for every sandbox to run; a role proposes the line, you run it."
+    return 2
+  fi
+  (($# < 3)) || has_sum=1
+  if ((has_sum)) && [[ ! "$given" =~ ^[0-9a-f]{64}$ ]]; then
+    _as_msg "--install: --sha256 '$given' is not a SHA-256: 64 lowercase hexadecimal digits"
+    return 2
+  fi
+  agent="${spec%%@*}"
+  [[ "$spec" == *@* ]] && ver="${spec#*@}"
+  if [[ "$spec" == *@ ]]; then
+    _as_msg "--install: '$spec' names no version after the @: ${invoked:-asb} --install AGENT[@VERSION]"
+    return 2
+  fi
+  if ! _as_names_profile "$agent"; then
+    _as_msg "--install: '$agent' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+    return 2
+  fi
+  p="$(basename -- "$agent")"
+  while IFS=$'\t' read -r -a f; do
+    case "${f[0]:-}" in
+      install) kind="${f[2]:-}" path="${f[3]:-}" ;;
+      command) cmd="${f[2]:-}" ;;
+    esac
+  done < <(_as_profile_facts "$profile_dir/$p/profile.sh")
+  if [[ -z "$kind" ]]; then
+    _as_msg "--install: profile '$p' has no install recipe ([agent] install in $profile_dir/$p/agent-sandbox), so asb does not install its agent"
+    return 2
+  fi
+  resolver="$profile_dir/$p/resolve.sh"
+  if [[ ! -f "$resolver" || ! -x "$resolver" ]]; then
+    _as_msg "--install: profile '$p' has no resolver, an executable $resolver"
+    return 2
+  fi
+  # The versions table, read here so that what it gets wrong is said (the facts are quiet).
+  local profile="$p"
+  _as_profile_versions "$profile_dir/$p/versions"
+  if ((${#profile_versions[@]} == 0)); then
+    _as_msg "--install: profile '$p' lists no versions in $profile_dir/$p/versions"
+    return 2
+  fi
+  if [[ -z "$ver" ]]; then
+    if [[ -z "$profile_version_pin" ]]; then
+      _as_msg "--install: profile '$p' has no pinned version; name one of its versions: ${invoked:-asb} --install $p@VERSION (listed: ${profile_versions[*]})"
+      return 2
+    fi
+    ver="$profile_version_pin"
+  elif [[ ! "$ver" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then
+    _as_msg "--install: '$ver' is not an exact version (1.2.3): ${invoked:-asb} --install $p@VERSION"
+    return 2
+  elif ! _as_install_listed "$ver" "${profile_versions[@]}"; then
+    untested=" (untested with asb)"
+  fi
+  # The binary's place in the version's directory.
+  if [[ "$kind" == file ]]; then
+    bin="$(basename -- "${cmd:-$p}")"
+  else
+    bin="$path"
+  fi
+  if [[ -n "$from" && (! -f "$from" || ! -r "$from") ]]; then
+    _as_msg "--install: --from $from is not a readable file"
+    return 2
+  fi
+  [[ -z "$untested" ]] || _as_msg "--install: $p $ver is not in profile '$p''s versions table: it has not been tested with asb"
+  # Where it goes: every level checked before anything is made, so nothing is made
+  # through a symlink; current is a symlink or nothing.
+  st="$(_as_state_dir)"
+  root="$st/$p/install"
+  dest="$root/$ver"
+  for x in "$st/$p" "$root" "$dest"; do
+    if [[ -L "$x" || (-e "$x" && ! -d "$x") ]]; then
+      _as_msg "--install: $x is a symlink or not a directory; refusing to install through it"
+      return 2
+    fi
+  done
+  if [[ -e "$root/current" && ! -L "$root/current" ]]; then
+    _as_msg "--install: $root/current is not a symlink; it names the version launches run. Remove it, then run this again"
+    return 2
+  fi
+  if [[ -d "$dest" ]]; then
+    if [[ ! -f "$dest/$bin" || ! -x "$dest/$bin" ]]; then
+      _as_msg "--install: $dest is there and has no executable $bin; remove it, then run this again"
+      return 2
+    fi
+    shown="installed already at $(_as_tilde "$dest/$bin") (no download)"
+    [[ -z "$from" ]] || shown="installed already at $(_as_tilde "$dest/$bin") ($from not used)"
+  elif ((has_sum)); then
+    # --from FILE --sha256 SUM: offline, the resolver not run.
+    mkdir -p -- "$root" || return 1
+    _as_msg "--install: $p $ver from $from, checked against the SHA-256 given (--sha256)"
+    _as_install_fetch "$root" "$ver" "" "$given" "" "$from" "$kind" "$path" "$bin" || return 1
+    shown="installed at $(_as_tilde "$dest/$bin")"
+  else
+    plat="$(_as_install_platform)"
+    base="${AGENT_SANDBOX_INSTALL_BASE:-}"
+    # gpg, which a resolver may need, from agent-sandbox's tools env (install.sh links it
+    # in engine-bin/, which no sandbox's PATH has), before the host's own.
+    rpath="$PATH"
+    slot="$(_as_tools_slot)"
+    [[ -n "$slot" && -d "$slot/engine-bin" ]] && rpath="$slot/engine-bin:$PATH"
+    out="$(PATH="$rpath" "$resolver" "$ver" "$plat" ${base:+"$base"})" || rc=$?
+    if ((rc)); then
+      _as_msg "--install: profile '$p''s resolver could not say which file is $p $ver for $plat (exit $rc); nothing installed"
+      return 1
+    fi
+    IFS=$'\t' read -r -a w <<<"$out" || true
+    url="${w[0]:-}" sum="${w[1]:-}" size="${w[2]:-}"
+    if [[ "$out" == *$'\n'* || ! "$url" =~ ^(https|file):// || ! "$sum" =~ ^[0-9a-f]{64}$ || ! "$size" =~ ^[0-9]*$ || ${#w[@]} -gt 3 ]]; then
+      _as_msg "--install: profile '$p''s resolver printed '$out', not URL<TAB>SHA256<TAB>SIZE; nothing installed"
+      return 1
+    fi
+    mkdir -p -- "$root" || return 1
+    if [[ -n "$from" ]]; then
+      _as_msg "--install: $p $ver for $plat from $from, checked against the SHA-256 its resolver gives"
+    else
+      host="$url"
+      [[ "$url" =~ ^https://([^/]+) ]] && host="${BASH_REMATCH[1]}"
+      if [[ -n "$size" ]]; then
+        _as_msg "--install: downloading $p $ver for $plat, $(((size + 500000) / 1000000)) MB, from $host"
+      else
+        _as_msg "--install: downloading $p $ver for $plat (size not stated) from $host"
+      fi
+    fi
+    _as_install_fetch "$root" "$ver" "$url" "$sum" "$size" "$from" "$kind" "$path" "$bin" || return 1
+    shown="installed at $(_as_tilde "$dest/$bin")"
+  fi
+  if ! { ln -sfn -- "$ver" "$root/current.new" && mv -T -- "$root/current.new" "$root/current"; }; then
+    _as_msg "--install: $p $ver is $shown, but $root/current could not be pointed at it"
+    return 1
+  fi
+  _as_msg "--install: $p $ver is $shown, and is now $p's current version$untested"
+  return 0
 }
 
 # _as_host_path_of INSIDE [DEPTH] -- the host path behind INSIDE, for a mount point bwrap
@@ -8967,7 +9301,7 @@ _as_remote_pkg() {
 _as_setup_remote() {
   local cwd="$1" word="$2" port="${3:-}" verb="${4:-}" file a
   file="$cwd/.agent-sandbox"
-  if [[ -n "${AGENT_SANDBOX:-}" ]] || _as_inside_sandbox; then
+  if _as_maybe_inside; then
     _as_msg "--setup-remote runs on the host: it holds your ssh access; a role proposes the line, you run it."
     return 2
   fi
@@ -12878,6 +13212,8 @@ agent_sandbox() (
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
   # --account-login NAME AGENT (#355): its two words.
   local -a _account_login=()
+  # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the agent word, the file, the sum.
+  local -a _install=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
   local _do_list="" _list_word=""
@@ -13082,6 +13418,25 @@ agent_sandbox() (
         fi
         _account_login=("$2" "$3")
         shift 3
+        ;;
+      --install)
+        # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the whole line, and nothing else.
+        if [[ $# -eq 2 && ${#_argv_given[@]} -eq 2 && -n "$2" && "$2" != -* ]]; then
+          _install=("$2")
+          shift 2
+        elif [[ $# -eq 4 && ${#_argv_given[@]} -eq 4 && -n "$2" && "$2" != -* && "$3" == --from && -n "$4" ]]; then
+          _install=("$2" "$4")
+          shift 4
+        elif [[ $# -eq 6 && ${#_argv_given[@]} -eq 6 && -n "$2" && "$2" != -* && "$3" == --from && -n "$4" && "$5" == --sha256 ]]; then
+          _install=("$2" "$4" "$6")
+          shift 6
+        elif [[ " $* " == *" --sha256 "* && " $* " != *" --from "* ]]; then
+          _as_msg "--install: --sha256 checks a local file, so it needs --from FILE: $invoked --install AGENT[@VERSION] --from FILE --sha256 SUM"
+          return 2
+        else
+          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: $invoked --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (e.g. $invoked --install claude)"
+          return 2
+        fi
         ;;
       --init)
         # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
@@ -13314,6 +13669,11 @@ agent_sandbox() (
   # Alone on the line (above), so nothing else of this invocation applies to it.
   if ((${#_account_login[@]})); then
     _as_account_login "${_account_login[@]}"
+    return $?
+  fi
+  # ---- --install AGENT[@VERSION] [--from FILE] (#6): an agent installed, then exit ----
+  if ((${#_install[@]})); then
+    _as_agent_install "${_install[@]}"
     return $?
   fi
   # ---- --summarize (#314): what it cannot be combined with ----
@@ -14443,7 +14803,9 @@ agent_sandbox() (
   # between `native` and `none` (which runs outside the sandbox).
   local _tools_slot=""
   _tools_slot="$(_as_tools_slot)"
-  if [[ -n "$_tools_slot" ]]; then
+  # An env with no tools of the user's (install.sh keeps it for its own engine-bin/) puts
+  # nothing on PATH.
+  if [[ -n "$_tools_slot" && -n "$(find "$_tools_slot/bin" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
     _inner_path="$(_as_path_tools "$_tools_slot/bin")"
     _as_info "tools env $_tools_slot on PATH before the system directories: $(cd -- "$_tools_slot/bin" && printf '%s ' * | sed 's/ $//')"
   fi

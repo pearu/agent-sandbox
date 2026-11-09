@@ -1406,7 +1406,10 @@ belong in no project's env.
 `~/.config/agent-sandbox/tools.txt` lists its packages, one conda package spec per line
 (`gh`, `gh >=2.60`, `conda-forge::ripgrep`); `#` starts a comment and blank lines are
 ignored. With no such file the list is `gh` and `tmux` (which `asb --roles` runs, when
-the host has none); a file listing none removes the environment at the next run. The file is yours and `install.sh` never writes it. Every
+the host has none); a file listing none leaves an environment with none of your tools. Beside
+the list, the environment always holds `gnupg`, whose `gpg` agent-sandbox itself runs on the
+host (an agent's resolver at `asb --install`, #6): it is linked in the slot's `engine-bin/`,
+which no sandbox has on its PATH, never in `bin/` unless you list it. The file is yours and `install.sh` never writes it. Every
 `install.sh` run rebuilds the environment from conda-forge, so a change to the list,
 and a newer release of a listed tool, takes effect at the next run.
 
