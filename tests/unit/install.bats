@@ -92,22 +92,36 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
   [ "$(readlink "$I/current")" = 1.1.0 ]
 }
 
-@test "--install: a version not in the table, a profile with no table, no pin, or no recipe is refused (2); nothing is made" {
-  release 9.9.9 "$(binary v999)"
+@test "--install AGENT@VERSION not in the table: installed with the resolver's checksum, said to be untested; current moves to it" {
+  release 9.9.9 "$(binary v999)" size
   install fake@9.9.9
-  [ "$status" -eq 2 ]
-  [ "$output" = "agent-sandbox: --install: fake 9.9.9 is not in profile 'fake''s versions table, $F/versions: asb installs only the versions tested with it (listed: 1.0.0 1.1.0)" ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "agent-sandbox: --install: fake 9.9.9 is not in profile 'fake''s versions table: it has not been tested with asb
+agent-sandbox: --install: downloading fake 9.9.9 for $(uname -m)-gnu, 0 MB, from file://$SRC/9.9.9/asset
+agent-sandbox: --install: fake 9.9.9 is installed at ~/.local/state/agent-sandbox/fake/install/9.9.9/fakeagent, and is now fake's current version (untested with asb)" ]
+  [ "$("$I/9.9.9/fakeagent")" = v999 ]
+  [ "$(readlink "$I/current")" = 9.9.9 ]
+  # the checksum still holds it
+  release 9.9.8 "$(binary v998)"
+  printf 'x' >>"$SRC/9.9.8/asset"
+  install fake@9.9.8
+  [ "$status" -eq 1 ]
+  [ ! -e "$I/9.9.8" ]
+  [ "$(readlink "$I/current")" = 9.9.9 ]
+}
+
+@test "--install: a version that is not exact, a profile with no table, no pin, or no recipe is refused (2); nothing is made" {
   install fake@
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --install: 'fake@' names no version after the @: asb --install AGENT[@VERSION]" ]
   install fake@'>=1.0'
   [ "$status" -eq 2 ]
-  [[ "$output" == "agent-sandbox: --install: fake >=1.0 is not in profile 'fake''s versions table"* ]]
-  # two listed versions as one word: compared whole, never as a part of the list
+  [ "$output" = "agent-sandbox: --install: '>=1.0' is not an exact version (1.2.3): asb --install fake@VERSION" ]
+  # two listed versions as one word: not a version, so never matched as a part of the list
   install 'fake@1.0.0 1.1.0'
   [ "$status" -eq 2 ]
-  [ "$output" = "agent-sandbox: --install: fake 1.0.0 1.1.0 is not in profile 'fake''s versions table, $F/versions: asb installs only the versions tested with it (listed: 1.0.0 1.1.0)" ]
-  install 'fake@0.0 1'
+  [ "$output" = "agent-sandbox: --install: '1.0.0 1.1.0' is not an exact version (1.2.3): asb --install fake@VERSION" ]
+  install 'fake@v1.0'
   [ "$status" -eq 2 ]
   [ ! -e "$ST" ]
   printf '1.0.0\n' >"$F/versions"
@@ -278,14 +292,49 @@ wrap() {
   [ "$output" = "agent-sandbox: --install runs on the host: it downloads the agent there, for every sandbox to run; a role proposes the line, you run it." ]
   local words
   for words in "--install" "--install fake extra" "--verbose --install fake" "--install fake --from" \
-    "--install --from x" "--install fake --to x" "--install fake --from x y"; do
+    "--install --from x" "--install fake --to x" "--install fake --from x y" \
+    "--install fake --sha256 s --from x" "--install fake --from x --sha256 s extra"; do
     # shellcheck disable=SC2086 # the words, split
     run_engine AGENT_SANDBOX_PROFILE_DIR="$P" -- asb $words
     [ "$status" -eq 2 ]
-    [ "$output" = "agent-sandbox: --install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE: asb --install AGENT[@VERSION] [--from FILE] (e.g. asb --install claude)" ]
+    [ "$output" = "agent-sandbox: --install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (e.g. asb --install claude)" ]
   done
+  # --sha256 without --from
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$P" -- asb --install fake --sha256 "$(cat "$SRC/1.1.0/sum")"
+  [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: --install: --sha256 checks a local file, so it needs --from FILE: asb --install AGENT[@VERSION] --from FILE --sha256 SUM" ]
   [ ! -e "$ST" ]
   [ ! -s "$H/argv" ]
+}
+
+@test "--install --from FILE --sha256 SUM: offline, the resolver never run; a wrong or malformed SUM installs nothing" {
+  # a resolver that must not run: it fails and leaves a mark
+  printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$H/resolver-ran" >"$F/resolve.sh"
+  binary v110 >/dev/null
+  binary v999 >/dev/null
+  local good bad
+  good="$(sha256sum "$H/bin-v110" | cut -d' ' -f1)"
+  bad="$(sha256sum "$H/bin-v999" | cut -d' ' -f1)"
+  install fake --from "$H/bin-v110" --sha256 "$bad"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: --install: the SHA-256 of $H/bin-v110 is $good, not the $bad given (--sha256); nothing installed" ]]
+  nothing_left
+  local sum
+  for sum in "${good^^}" "${good:1}" "${good}0" "not-a-sum" ""; do
+    install fake --from "$H/bin-v110" --sha256 "$sum"
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --install: --sha256 '$sum' is not a SHA-256: 64 lowercase hexadecimal digits" ]
+  done
+  install fake --from "$H/bin-v110" --sha256 "$good"
+  [ "$status" -eq 0 ]
+  [ "$output" = "agent-sandbox: --install: fake 1.1.0 from $H/bin-v110, checked against the SHA-256 given (--sha256)
+agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbox/fake/install/1.1.0/fakeagent, and is now fake's current version" ]
+  [ "$("$I/1.1.0/fakeagent")" = v110 ]
+  # a version outside the table, offline too
+  install fake@2.0.0 --from "$H/bin-v999" --sha256 "$bad"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "agent-sandbox: --install: fake 2.0.0 is not in profile 'fake''s versions table: it has not been tested with asb"*"and is now fake's current version (untested with asb)" ]]
+  [ ! -e "$H/resolver-ran" ]
 }
 
 @test "--install: the resolver runs with the tools env's engine-bin/ first on PATH (gpg)" {

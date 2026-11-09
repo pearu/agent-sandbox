@@ -67,9 +67,11 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
-- **`asb --install AGENT[@VERSION] [--from FILE]`** (#6), the host-side installer of the
-  install recipe: VERSION (default the pin; only versions in the profile's table) is
-  named by the profile's resolver, downloaded with curl (or taken from FILE), refused
+- **`asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]`** (#6), the host-side
+  installer of the install recipe: VERSION (default the pin; an exact version not in the
+  profile's table installs too, said to be untested with asb) is named by the profile's
+  resolver, downloaded with curl (or taken from FILE; with `--sha256 SUM` the resolver is
+  not run and FILE is checked against SUM, offline), refused
   unless its size and SHA-256 are the ones stated, a tarball's members checked (no
   absolute or `..` member, no symlink out of the tree, nothing but files, directories
   and symlinks, the binary at its PATH), and renamed into

@@ -196,16 +196,20 @@ variant of either. It needs `curl` and `gpg` on PATH; gpg runs in a scratch home
 no agent, so your keyring is never read. The vendor signs manifests "from 2.1.89
 onward" (its docs); a version without a signature is refused.
 
-### `asb --install AGENT[@VERSION] [--from FILE]`
+### `asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]`
 
 The installer, alone on the line, on the host only (refused inside a sandbox on
 either sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as
 `--account-login` and `--setup-remote` are). An explicit `--install` is your word: it asks nothing.
 
 1. It reads the profile's `versions` table itself, saying what the table gets wrong.
-   VERSION defaults to the pin; a version that is not exact, or not a line of the table
-   (compared whole), is refused (exit 2), so only live-tested versions install. A
-   `--from FILE` that is not a readable file is refused here too.
+   VERSION defaults to the pin. A version that is not exact (`1.2.3`, no range) is
+   refused (exit 2); an exact one that is not a line of the table installs all the
+   same, said first -- `claude 2.1.330 is not in profile 'claude''s versions table: it
+   has not been tested with asb` -- and on the last line, `(untested with asb)`; its
+   checksum is the vendor's, through the resolver, as for any version. A `--from FILE`
+   that is not a readable file, and a `--sha256 SUM` that is not 64 lowercase hex
+   digits, are refused here too.
 2. A version already installed is not fetched again: it only becomes current (step 6);
    a `--from FILE` is then said to be unused.
 3. It runs `resolve.sh VERSION PLATFORM` with PLATFORM this host's `ARCH-LIBC` (musl
@@ -217,6 +221,9 @@ either sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as
    most SIZE bytes when stated (4 GiB otherwise), then refuses the file unless its size
    is SIZE and its SHA-256 is SHA256. `--from FILE` takes FILE in place of the download,
    checked the same way: the resolver still runs, since the SHA-256 comes from it.
+   `--from FILE --sha256 SUM` is the offline install: the resolver is not run, and FILE
+   must have the SHA-256 SUM (no size check, since none is stated). `--sha256` without
+   `--from` is refused.
 5. It unpacks into a temporary directory beside the destination, `.VERSION.XXXXXX`: a
    `file` is the binary, named as the profile's command (claude: `claude`); a `tar
    PATH` is unpacked with `tar --no-same-owner --no-same-permissions`, refused before

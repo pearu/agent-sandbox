@@ -355,14 +355,15 @@
 #                         with no login file, else 0. Refused for a bad NAME, an
 #                         AGENT naming no profile, a profile with no account-paths
 #                         or no login key, a symlink or a non-directory there.
-#   --install AGENT[@VERSION] [--from FILE]
+#   --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]
 #                         alone on the line, host only (#6): install AGENT's
-#                         VERSION (default: its profile's pin; only a version
-#                         in profiles/AGENT/versions) into
+#                         VERSION (default: its profile's pin; an exact version,
+#                         one not in profiles/AGENT/versions said untested) into
 #                         <state>/AGENT/install/VERSION/ and point
 #                         <state>/AGENT/install/current at it. The profile's
 #                         resolve.sh names the file and its SHA-256; curl
-#                         downloads it (--from: FILE instead), its size and
+#                         downloads it (--from: FILE instead; with --sha256 SUM
+#                         the resolver is not run, offline), its size and
 #                         SHA-256 are checked, a tarball's members too, and one
 #                         rename puts it in place: a failure leaves nothing. A
 #                         version already there is not downloaded again. Exit 2
@@ -582,11 +583,12 @@ Engine flags (before CMD):
                         from a scratch project with no dot-file, under
                         --preset isolated; then says whether the account has
                         its login file. Exit 1 when it has none
-  --install AGENT[@VERSION] [--from FILE]
+  --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]
                         install AGENT for asb, alone on the line, host only:
-                        VERSION (default: the profile's pinned one; only the
-                        versions in its table) is downloaded -- or taken from
-                        FILE -- checked against the SHA-256 its vendor states,
+                        VERSION (default: the profile's pinned one; one not in
+                        its table installs too, said untested) is downloaded
+                        -- or taken from FILE -- checked against the SHA-256
+                        its vendor states (with --sha256, against SUM, offline),
                         and put in ~/.local/state/agent-sandbox/AGENT/install/VERSION/,
                         then made AGENT's current version. One already there
                         is not downloaded again
@@ -7462,7 +7464,7 @@ _as_account_login() {
   return "$rc"
 }
 
-# ---- asb --install AGENT[@VERSION] [--from FILE] (#6): an agent, installed by asb ------
+# ---- asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): an agent, by asb ----
 # Host-side, never through the proxy: the profile's resolver (profiles/<name>/resolve.sh,
 # docs/profiles.md "The install recipe") names the file and its SHA-256; this downloads it
 # with curl (the host's own proxy settings apply), checks its size when stated and its
@@ -7474,9 +7476,10 @@ _as_account_login() {
 #   <state>/<profile>/install/current      a symlink to the VERSION launches run, moved
 #                                          by every --install
 # All is made in a temporary directory beside the version's (.VERSION.XXXXXX), so one
-# rename puts it in place and any failure leaves nothing. Only versions in the profile's
-# versions table install (exact pins, no ranges); no VERSION is its pin. A version already
-# there is not downloaded again: current moves to it. AGENT_SANDBOX_INSTALL_BASE, for
+# rename puts it in place and any failure leaves nothing. No VERSION is the profile's pin;
+# an exact version not in its versions table installs too, said to be untested with asb.
+# A version already there is not downloaded again: current moves to it. --from FILE
+# --sha256 SUM checks FILE against SUM and runs no resolver: an offline install. AGENT_SANDBOX_INSTALL_BASE, for
 # tests, is passed to the resolver as its BASE (its source in place of the vendor's); the
 # SHA-256 the resolver gives is enforced all the same.
 
@@ -7558,7 +7561,8 @@ _as_install_unpack() {
 # any failure; the temporary directory is removed whatever happens.
 _as_install_fetch() (
   local root="$1" ver="$2" url="$3" sum="$4" size="$5" from="$6" kind="$7" path="$8" bin="$9"
-  local tmp got bytes rc=0 what
+  local tmp got bytes rc=0 what src="its resolver gives"
+  [[ -n "$url" || -z "$from" ]] || src="given (--sha256)"
   tmp="$(mktemp -d "$root/.$ver.XXXXXX")" || exit 1
   trap 'chmod -R u+rwX -- "$tmp" 2>/dev/null; rm -rf -- "$tmp"' EXIT
   trap 'exit 130' INT TERM HUP
@@ -7582,7 +7586,7 @@ _as_install_fetch() (
   got="$(sha256sum -- "$tmp/download")" || exit 1
   got="${got%% *}"
   if [[ "$got" != "$sum" ]]; then
-    _as_msg "--install: the SHA-256 of $what is $got, not the $sum its resolver gives; nothing installed"
+    _as_msg "--install: the SHA-256 of $what is $got, not the $sum ${src}; nothing installed"
     exit 1
   fi
   _as_install_unpack "$kind" "$path" "$bin" "$tmp/download" "$tmp/tree" || exit 1
@@ -7604,19 +7608,27 @@ _as_install_listed() {
   return 1
 }
 
-# _as_agent_install AGENT[@VERSION] [FILE] -- `asb --install`: install the version (no
-# VERSION: the profile's pin) unless it is there, then make it the profile's current
-# version. FILE, from --from, is used in place of the download, still checked against the
-# SHA-256 the resolver gives (so the resolver, which reads the vendor's metadata, still
-# runs). Refusals are 2, failures 1. Uses profile_dir and invoked by dynamic scope.
+# _as_agent_install AGENT[@VERSION] [FILE [SUM]] -- `asb --install`: install the version
+# (no VERSION: the profile's pin) unless it is there, then make it the profile's current
+# version. VERSION must be exact; one not in the profile's versions table installs too,
+# said to be untested with asb. FILE, from --from, is used in place of the download,
+# checked against the SHA-256 the resolver gives (so the resolver, which reads the
+# vendor's metadata, still runs), or against SUM, from --sha256, without running the
+# resolver: fully offline. Refusals are 2, failures 1. Uses profile_dir and invoked by
+# dynamic scope.
 # shellcheck disable=SC2154
 _as_agent_install() {
-  local spec="$1" from="${2:-}" agent ver="" p st root dest x bin path="" kind="" cmd=""
-  local resolver plat base out rc=0 url sum size slot rpath shown host
+  local spec="$1" from="${2:-}" given="${3:-}" agent ver="" p st root dest x bin path="" kind="" cmd=""
+  local resolver plat base out rc=0 url sum size slot rpath shown host untested="" has_sum=0
   local -a f=() w=() profile_versions=()
   local profile_version_pin=""
   if _as_maybe_inside; then
     _as_msg "--install runs on the host: it downloads the agent there, for every sandbox to run; a role proposes the line, you run it."
+    return 2
+  fi
+  (($# < 3)) || has_sum=1
+  if ((has_sum)) && [[ ! "$given" =~ ^[0-9a-f]{64}$ ]]; then
+    _as_msg "--install: --sha256 '$given' is not a SHA-256: 64 lowercase hexadecimal digits"
     return 2
   fi
   agent="${spec%%@*}"
@@ -7658,9 +7670,11 @@ _as_agent_install() {
       return 2
     fi
     ver="$profile_version_pin"
-  elif ! _as_install_listed "$ver" "${profile_versions[@]}"; then
-    _as_msg "--install: $p $ver is not in profile '$p''s versions table, $profile_dir/$p/versions: asb installs only the versions tested with it (listed: ${profile_versions[*]})"
+  elif [[ ! "$ver" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then
+    _as_msg "--install: '$ver' is not an exact version (1.2.3): ${invoked:-asb} --install $p@VERSION"
     return 2
+  elif ! _as_install_listed "$ver" "${profile_versions[@]}"; then
+    untested=" (untested with asb)"
   fi
   # The binary's place in the version's directory.
   if [[ "$kind" == file ]]; then
@@ -7672,6 +7686,7 @@ _as_agent_install() {
     _as_msg "--install: --from $from is not a readable file"
     return 2
   fi
+  [[ -z "$untested" ]] || _as_msg "--install: $p $ver is not in profile '$p''s versions table: it has not been tested with asb"
   # Where it goes: every level checked before anything is made, so nothing is made
   # through a symlink; current is a symlink or nothing.
   st="$(_as_state_dir)"
@@ -7694,6 +7709,12 @@ _as_agent_install() {
     fi
     shown="installed already at $(_as_tilde "$dest/$bin") (no download)"
     [[ -z "$from" ]] || shown="installed already at $(_as_tilde "$dest/$bin") ($from not used)"
+  elif ((has_sum)); then
+    # --from FILE --sha256 SUM: offline, the resolver not run.
+    mkdir -p -- "$root" || return 1
+    _as_msg "--install: $p $ver from $from, checked against the SHA-256 given (--sha256)"
+    _as_install_fetch "$root" "$ver" "" "$given" "" "$from" "$kind" "$path" "$bin" || return 1
+    shown="installed at $(_as_tilde "$dest/$bin")"
   else
     plat="$(_as_install_platform)"
     base="${AGENT_SANDBOX_INSTALL_BASE:-}"
@@ -7732,7 +7753,7 @@ _as_agent_install() {
     _as_msg "--install: $p $ver is $shown, but $root/current could not be pointed at it"
     return 1
   fi
-  _as_msg "--install: $p $ver is $shown, and is now $p's current version"
+  _as_msg "--install: $p $ver is $shown, and is now $p's current version$untested"
   return 0
 }
 
@@ -13191,7 +13212,7 @@ agent_sandbox() (
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
   # --account-login NAME AGENT (#355): its two words.
   local -a _account_login=()
-  # --install AGENT[@VERSION] [--from FILE] (#6): the agent word, and the file.
+  # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the agent word, the file, the sum.
   local -a _install=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
@@ -13399,15 +13420,21 @@ agent_sandbox() (
         shift 3
         ;;
       --install)
-        # --install AGENT[@VERSION] [--from FILE] (#6): the whole line, and nothing else.
+        # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the whole line, and nothing else.
         if [[ $# -eq 2 && ${#_argv_given[@]} -eq 2 && -n "$2" && "$2" != -* ]]; then
           _install=("$2")
           shift 2
         elif [[ $# -eq 4 && ${#_argv_given[@]} -eq 4 && -n "$2" && "$2" != -* && "$3" == --from && -n "$4" ]]; then
           _install=("$2" "$4")
           shift 4
+        elif [[ $# -eq 6 && ${#_argv_given[@]} -eq 6 && -n "$2" && "$2" != -* && "$3" == --from && -n "$4" && "$5" == --sha256 ]]; then
+          _install=("$2" "$4" "$6")
+          shift 6
+        elif [[ " $* " == *" --sha256 "* && " $* " != *" --from "* ]]; then
+          _as_msg "--install: --sha256 checks a local file, so it needs --from FILE: $invoked --install AGENT[@VERSION] --from FILE --sha256 SUM"
+          return 2
         else
-          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE: $invoked --install AGENT[@VERSION] [--from FILE] (e.g. $invoked --install claude)"
+          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: $invoked --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (e.g. $invoked --install claude)"
           return 2
         fi
         ;;

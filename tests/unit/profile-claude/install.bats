@@ -55,9 +55,12 @@ agent-sandbox: --install: claude 2.1.999 is installed at ~/.local/state/agent-sa
   [ -z "$(find "$I" -mindepth 1 2>/dev/null)" ]
 }
 
-@test "--install claude as shipped: a version not in its table is refused before any download" {
+@test "--install claude as shipped: a version not in its table is said untested, and still needs the vendor's signature" {
+  # the test manifest is signed by the test key, not Anthropic's: the shipped resolver refuses it
   run_engine AGENT_SANDBOX_INSTALL_BASE="$SRC" -- asb --install claude@2.1.999
-  [ "$status" -eq 2 ]
-  [[ "$output" == "agent-sandbox: --install: claude 2.1.999 is not in profile 'claude''s versions table, "*"/profiles/claude/versions: asb installs only the versions tested with it (listed: "*")" ]]
-  [ ! -e "$H/home/.local/state/agent-sandbox/claude" ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == "agent-sandbox: --install: claude 2.1.999 is not in profile 'claude''s versions table: it has not been tested with asb
+claude resolve.sh: file://$SRC/2.1.999/manifest.json: the signature is not a good one by the release key"* ]]
+  [[ "$output" == *"agent-sandbox: --install: profile 'claude''s resolver could not say which file is claude 2.1.999 for x86_64-gnu (exit 1); nothing installed" ]]
+  [ -z "$(find "$H/home/.local/state/agent-sandbox/claude/install" -mindepth 1 2>/dev/null)" ]
 }
