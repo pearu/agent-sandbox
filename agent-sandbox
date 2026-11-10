@@ -9394,7 +9394,8 @@ _as_ssh_user() {
   shift
   ef="$(mktemp)" || return 1
   g="$(ssh -G "$@" 2>"$ef")" || rc=$?
-  e="$(head -n1 -- "$ef")" || true
+  # its first line, printable text only: control characters never reach the terminal
+  e="$(head -n1 -- "$ef" | LC_ALL=C tr -d '\000-\010\013-\037\177')" || true
   rm -f -- "$ef"
   if ((rc)); then
     _as_msg "$pfx cannot resolve '${!#}' (ssh -G failed, exit $rc)${e:+: $e}"
@@ -13039,7 +13040,8 @@ _as_launch_pasta() {
   # record pasta-<host>.
   # The help is read whole, never piped into `grep -q`: a match in its first write would
   # let grep exit before the next, pasta die of SIGPIPE, and pipefail drop --hostname.
-  local -a hopts=() phelp
+  local -a hopts=()
+  local phelp
   phelp="$(pasta --help 2>&1 || true)"
   [[ "$phelp" != *--hostname* ]] || hopts=(--hostname "$(uname -n)")
   # shellcheck disable=SC2016
