@@ -34,6 +34,13 @@ if [[ "$1" == -G ]]; then
   fi
   [[ "$s" == *@* ]] && u="${s%@*}" s="${s#*@}"
   printf 'hostname %s.example.org\nuser %s\nport %s\nidentityfile ~/.ssh/id_rsa\nidentityfile ~/.ssh/id_ed25519\n' "$s" "$u" "$pt"
+  # SSH_G_MORE: the rest comes in a later write, as the real ssh's does (its output is
+  # over 4096 bytes, written in two): a reader that stops at the user line has gone by
+  # then, and the write dies of SIGPIPE -- under pipefail, the reader's pipeline fails.
+  if [[ -n "${SSH_G_MORE:-}" ]]; then
+    sleep 0.3
+    printf 'setenv %065536d\n' 0
+  fi
   exit 0
 fi
 orig=("$@")
@@ -948,9 +955,15 @@ apply_remote() {
   [[ "$output" != *"has account"* ]]
   [ ! -e "$H/ssh.argv" ]
   printf '[remote:tob-qgpu3]\nhost = qgpu3\nport = 2222\n' >"$PROJ/.agent-sandbox"
-  setup_remote tob@qgpu3
+  setup_remote SSH_G_MORE=1 tob@qgpu3
   [ "$status" -eq 2 ]
   [[ "$output" == *"$q [remote:tob-qgpu3] has account = tester, where tob@qgpu3 says tob"* ]]
+  # no account in the destination either: both from ssh -G, read to its end (SSH_G_MORE)
+  printf '[remote:tester-qgpu3]\nhost = qgpu3\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  setup_remote SSH_G_MORE=1 qgpu3 --port 2224
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"agent-sandbox: remote tester-qgpu3: [remote:tester-qgpu3] has port = 2222, where --port says 2224"* ]]
+  [[ "$output" != *"has account"* ]]
   printf '[remote:tob-qgpu3]\nhost = qgpu3\naccount = tob\nport = 2222\n' >"$PROJ/.agent-sandbox"
   setup_remote tob-qgpu3 --port 2224
   [ "$status" -eq 2 ]
@@ -1189,6 +1202,11 @@ this_machine() {
   [[ "$output" == *"$p cannot ask as tob (ssh exit 255): tob@qgpu3: Permission denied (publickey)."* ]]
   [[ "$output" == *"$p it needs ssh -l tob qgpu3 to work without a question: your public key in tob's ~/.ssh/authorized_keys"* ]]
   [ ! -e "$H/ssh.argv" ]
+  # no account line: your ssh login name for the host, ssh -G read to its end (SSH_G_MORE)
+  section
+  setup_remote SSH_G_MORE=1 ACCT_FAIL=1 r1 --status
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p cannot ask as tester (ssh exit 255)"* ]]
 }
 
 @test "--setup-remote: env TMPDIR under the scratch ('~' the account's home, or absolute) is made there, said once, before the login's line; the last TMPDIR line is the one; outside the scratch, through '..', or another variable: not made, nothing said (#344)" {

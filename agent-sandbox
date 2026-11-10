@@ -9449,7 +9449,10 @@ _as_setup_remote() {
   fi
   [[ -z "$sport" ]] || sport="$((10#$sport))"
   if [[ -z "$acct" ]]; then
-    acct="$(ssh -G "$host" 2>/dev/null | awk '$1 == "user" {print $2; exit}')"
+    # ssh -G's user line, read to the end of its output (here and below): ssh writes it in
+    # two writes, and an awk that exits at the line ends ssh by SIGPIPE before the second;
+    # pipefail makes that the substitution's status, and set -e ends the engine (on CI).
+    acct="$(ssh -G "$host" 2>/dev/null | awk '$1 == "user" && !n++ {print $2}')"
     from=" (your ssh login name for $host)"
   fi
   if [[ ! "$acct" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
@@ -9470,7 +9473,7 @@ _as_setup_remote() {
       _as_remote_eval "$alias"
       local -a diffs=()
       local sacct="$_rm_account"
-      [[ -n "$sacct" || -z "$_rm_host" ]] || sacct="$(ssh -G "$_rm_host" 2>/dev/null | awk '$1 == "user" {print $2; exit}')"
+      [[ -n "$sacct" || -z "$_rm_host" ]] || sacct="$(ssh -G "$_rm_host" 2>/dev/null | awk '$1 == "user" && !n++ {print $2}')"
       [[ "$_rm_host${_rm_sshport:+:$_rm_sshport}" == "$dest" ]] \
         || diffs+=("host = $_rm_host${_rm_sshport:+:$_rm_sshport}, where $word says $dest")
       [[ "$sacct" == "$acct" ]] || diffs+=("account = ${sacct:-?}, where $word says $acct")
@@ -9837,7 +9840,7 @@ _as_remote_verb() {
   local -a sp=() lines=()
   [[ -z "$_rm_sshport" ]] || sp=(-p "$_rm_sshport")
   acct="$_rm_account"
-  [[ -n "$acct" ]] || acct="$(ssh -G ${sp[@]+"${sp[@]}"} "$_rm_host" 2>/dev/null | awk '$1 == "user" {print $2; exit}')"
+  [[ -n "$acct" ]] || acct="$(ssh -G ${sp[@]+"${sp[@]}"} "$_rm_host" 2>/dev/null | awk '$1 == "user" && !n++ {print $2}')"
   dest="${_rm_host#*@}" scratch="${_rm_scratch:-~/$alias}"
   _as_msg "$p --$verb, over ssh as $acct to $dest (ssh $spo-l $acct $dest; BatchMode; never sudo): asb --profile sshd --role $alias --$verb in $scratch there"
   err="$(mktemp)" || return 1
