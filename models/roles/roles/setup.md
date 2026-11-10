@@ -24,8 +24,8 @@ the checkout first:
   nothing for you to build. Say so to the user and stop. You are left over from an
   earlier `asb --init roles` without an environment and can be removed: your sections
   in `.agent-sandbox` (every `[...:setup]` one) and `.asb/roles/setup.md`, then `asb
-  --trust`; `asb --delete --role setup` removes your stores. Do not ask for `--init
-  --env`.
+  --trust`; `asb --role setup --delete claude` removes your stores. Do not ask for
+  `--init --env`.
 - Otherwise the project declares no environment. Stop at once and ask the user,
   exactly, to run on the host `asb --init roles --env NAME` (NAME a conda environment
   name of their choice, not built yet: it completes the environment's lines in

@@ -464,7 +464,7 @@ init() {
   # the shared template's own lines were never written: said as lines the model has
   [[ "$output" == *"--apply '[connect:implementer-1]' '$ep/ = copy-on-write'"* ]]
   # the setup role the no-env --init wrote: said as left over, and left
-  [[ "$output" == *"--init: the setup role setup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([sandbox:setup] [connect:setup] "*"[net:setup] "*"[briefing:setup]) and its purpose file .asb/roles/setup.md, then agent-sandbox --trust; agent-sandbox --delete --role setup removes its stores, if it was ever launched"* ]]
+  [[ "$output" == *"--init: the setup role setup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([sandbox:setup] [connect:setup] "*"[net:setup] "*"[briefing:setup]) and its purpose file .asb/roles/setup.md, then agent-sandbox --trust; agent-sandbox --role setup --delete claude removes its stores, if it was ever launched"* ]]
   [[ "$output" == *"  - the left-over setup role setup above: yours to remove"* ]]
   grep -qx '\[connect:setup\]' "$df"
   # its purpose file, kept, tells it what it sees then: a shared environment, nothing to build
@@ -473,6 +473,7 @@ init() {
   grep -qF 'the project uses a shared environment, another project'"'"'s, built there, and there is' "$PROJ/.asb/roles/setup.md"
   # shellcheck disable=SC2016 # likewise
   grep -qF 'earlier `asb --init roles` without an environment and can be removed' "$PROJ/.asb/roles/setup.md"
+  grep -qF 'asb --role setup --delete claude' "$PROJ/.asb/roles/setup.md"
   run ! grep -qF '{' "$PROJ/.asb/roles/setup.md"
 }
 
@@ -483,14 +484,18 @@ init() {
   [ "$status" -eq 0 ]
   init MAMBA_ROOT_PREFIX="$H/conda" -- github --shared-env torch-dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: the setup role gh-setup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([connect:gh-setup] [net:gh-setup] [briefing:gh-setup]) and its purpose file .asb/roles/gh-setup.md, then agent-sandbox --trust; agent-sandbox --delete --role gh-setup removes its stores, if it was ever launched"* ]]
+  [[ "$output" == *"--init: the setup role gh-setup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([connect:gh-setup] [net:gh-setup] [briefing:gh-setup]) and its purpose file .asb/roles/gh-setup.md, then agent-sandbox --trust; agent-sandbox --role gh-setup --delete claude removes its stores, if it was ever launched"* ]]
   grep -qx '\[connect:gh-setup\]' "$df" # not removed
   [ -f "$PROJ/.asb/roles/gh-setup.md" ]
   grep -qx "prefix = $H/conda/envs/torch-dev .*" "$df" # what gh-setup reads
   # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
-  grep -qF -- '- Its `[conda:gh-*]` section active, with a `prefix = PATH` line: the project uses a' "$PROJ/.asb/roles/gh-setup.md"
+  grep -qF -- '- Its `[conda:gh-*]` section active, with a `prefix = PATH` line naming another path' "$PROJ/.asb/roles/gh-setup.md"
   # shellcheck disable=SC2016 # likewise
-  grep -qF '`.asb/roles/gh-setup.md`, then `asb --trust`; `asb --delete --role gh-setup` removes' "$PROJ/.asb/roles/gh-setup.md"
+  grep -qF '`.asb/roles/gh-setup.md`, then `asb --trust`; `asb --role gh-setup --delete claude`' "$PROJ/.asb/roles/gh-setup.md"
+  # shellcheck disable=SC2016 # likewise
+  grep -qF 'than the prefix above (which reads `ENVPATH`): the project uses a shared environment,' "$PROJ/.asb/roles/gh-setup.md"
+  # shellcheck disable=SC2016 # likewise
+  grep -qF -- '- Its `prefix = PATH` the same path as the prefix above, and that directory not there:' "$PROJ/.asb/roles/gh-setup.md"
   grep -qF -- '- Otherwise the project declares no environment. Stop at once and ask the user,' "$PROJ/.asb/roles/gh-setup.md"
   # a first --shared-env has no setup role to report
   rm -rf "$df" "$PROJ/.asb"

@@ -12638,7 +12638,7 @@ _as_init() {
     if [[ -n "$osetup" ]]; then
       osecs="$(grep -oE "^\[[a-z-]+:$osetup\]" "$df" | paste -sd' ' || true)"
       if [[ -n "$osecs" ]]; then
-        _as_msg "--init: the setup role $osetup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ($osecs)$([[ -e "$proj/.asb/roles/$osetup.md" ]] && printf ' and its purpose file .asb/roles/%s.md' "$osetup"), then $invoked --trust; $invoked --delete --role $osetup removes its stores, if it was ever launched"
+        _as_msg "--init: the setup role $osetup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ($osecs)$([[ -e "$proj/.asb/roles/$osetup.md" ]] && printf ' and its purpose file .asb/roles/%s.md' "$osetup"), then $invoked --trust; $invoked --role $osetup --delete claude removes its stores, if it was ever launched"
         setup_left="$osetup"
       fi
     fi
