@@ -1150,3 +1150,24 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 0 ]
   [[ "$output" == *$'\n'"  agent: claude -- named on the line, over any line below"$'\n'"  agent: [agent:r1] command = claude -exact"$'\n'* ]]
 }
+
+@test "_as_dotfile_read: a regular file's text; a symbolic link, to a file or dangling, refused with nothing read" {
+  source_engine
+  local d="$H/rd"
+  mkdir -p "$d"
+  printf 'a\nb' >"$d/.agent-sandbox"
+  run _as_dotfile_read "$d/.agent-sandbox"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'a\nb' ]
+  printf 'secret\n' >"$d/secret"
+  rm -f "$d/.agent-sandbox"
+  ln -s "$d/secret" "$d/.agent-sandbox"
+  run _as_dotfile_read "$d/.agent-sandbox"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  rm -f "$d/.agent-sandbox"
+  ln -s "$d/nowhere" "$d/.agent-sandbox"
+  run _as_dotfile_read "$d/.agent-sandbox"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}

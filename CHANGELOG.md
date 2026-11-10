@@ -105,6 +105,13 @@ names are gone; there are no aliases for removed names before 1.0.
   (`~/.local/state/agent-sandbox/<agent>/install/`) and keeps the rest of that directory
   -- role stores, transcripts and the accounts' logins, now named in its plan (they were
   kept before too, unsaid).
+- **The setup roles stop and ask when no environment is declared**: `gh-setup` and the
+  roles model's `setup`, launched on a file `--init` wrote without `--env` -- their
+  prefix reads `ENVPATH`, or is not there -- ask for `asb --init MODEL --env NAME`, then
+  `--trust` and their relaunch, instead of improvising `--apply` lines. Where the file
+  activates a shared environment (`--shared-env`) for the other roles, they say there is
+  nothing to build, that they are left over from the no-env `--init`, and how to remove
+  them, and stop.
 - **Agents asb installs are installed when first needed** (#6): `asb --agent AGENT
   --account NAME --login` installs the profile's pin first, unasked, before the account's directory is made
   (a failed download leaves nothing); a launch at a terminal with nothing installed asks
@@ -1008,6 +1015,31 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`--init` and `--apply` refuse a symbolically linked `.agent-sandbox`** (exit 2): a
+  sandbox with the project read-write can create the file as a link (to `~/.bashrc`, say)
+  where none existed, and the host-side command wrote through it. **`--init` writes
+  nothing under `.asb/` through a symbolic link** either -- purpose files, the migration
+  copy, `.asb/init.sums`, the coord index, inboxes, declared paths, `.asb/.gitignore`: a
+  path that is a link, or under one, is skipped and said, and a file is written to a
+  temporary one beside it and renamed into place.
+- **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`
+  completes the environment's lines it wrote commented out** -- the `[conda]` sections and
+  the lines naming the env's prefix, in the sections under its `# ---- written/added by
+  asb --init MODEL ----` marks -- exactly as a first `--init` with `--env` writes them,
+  and touches nothing else (`--shared-env` likewise); the file changed, so `--trust`
+  reviews it again. It used to make the env directory and tell you to uncomment the
+  sections yourself, after the no-env run had told you to run `--init` again with
+  `--env`. A line changed by hand since is left and said, with the model's line; an
+  active `prefix = ...` line naming another environment refuses the `--init` before
+  anything is written, and a path line naming one is left and said. A file without the
+  model's mark (or with CR LF lines) is not completed: its commented environment lines
+  are named, to complete by hand. A `--shared-env` run on a file whose setup role a
+  no-env `--init` wrote says that role is left over and how to remove it, and leaves it.
+  A re-run completes the numbered instances the model's sections in the file have
+  (`implementer-2` of an earlier `implementer=2`), their environment clones included,
+  and makes none the file lacks -- a count given adds above the highest present, as a
+  first `--init` does, and drops none; a section whose commented header was changed by
+  hand keeps all its lines, each named.
 - **Two roles on one base or one account no longer strip each other's files.** When
   the first of them exited, its cleanup removed the empty mount-point files bwrap had
   created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a

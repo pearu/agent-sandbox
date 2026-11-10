@@ -456,7 +456,12 @@ lines for you to fill: Test economy, section 4), and
 `.asb/.gitignore`
 (`.asb/` is never committed); it makes each Implementer's clone (with your git identity) and,
 with `--env`, its environment. Without counts you get one of each role; `reviewer=0`
-leaves one out. Without `--env` the `[conda]` sections are written commented out. It
+leaves one out. Without `--env` the `[conda]` sections are written commented out;
+`asb --init roles --env x-dev` run on that file later completes them, the lines naming
+the environment included, exactly as a first `--init` with it writes them, and changes
+nothing else: a line you changed is left and said; an active `prefix = ...` line naming
+another environment refuses the `--init`, while a path line (`PREFIX/ = ...`) naming one
+is left and said (`--init` never rewrites a prefix). It
 approves nothing -- `asb --trust` does, after you have read the file and the purpose
 files.
 
@@ -488,8 +493,9 @@ Run it again with more instances (`implementer=3`) and it adds what is missing -
 sections, purpose file, clone -- and changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.
 One you changed is kept, and said so. The changed files need `asb --trust` again.
-A section the file has is never changed, so a line the model gained since (a key that
-section lacks, a host or rule not in it) is reported at the end, loud, with one
+A section the file has is never changed (but for the environment's lines, above), so
+a line the model gained since (a key that section lacks, a host or rule not in it) is
+reported at the end, loud, with one
 `asb --apply '[SECTION]' LINE...` per section to add it; a line you commented out, or a
 key whose value you changed, is yours and is not. A common section (unsuffixed, such as
 `[agent]`) is written only with a new file, so one the file lacks is reported the same

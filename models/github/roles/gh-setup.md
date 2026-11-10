@@ -14,6 +14,31 @@ nothing else.
 - The web, GET only: documentation, sources, packages; the conda package cache.
 - `.asb/scratch/`, private to you and kept: notes, scripts, logs.
 
+**No environment declared.** When the prefix above reads `ENVPATH` -- the word `asb
+--init` writes when it was run without `--env` -- or that directory is not there in
+the sandbox, there is no environment for you to build into. Read `.agent-sandbox` in
+the checkout first:
+- Its `[conda:gh-*]` section active, with a `prefix = PATH` line naming another path
+  than the prefix above (which reads `ENVPATH`): the project uses a shared environment,
+  another project's, built there, and there is nothing for you to build. Say so to the
+  user and stop. You are left over from an earlier `asb --init github` without an
+  environment and can be removed: your sections in `.agent-sandbox`
+  (`[connect:gh-setup]`, `[net:gh-setup]`, `[briefing:gh-setup]`) and
+  `.asb/roles/gh-setup.md`, then `asb --trust`; `asb --role gh-setup --delete claude`
+  removes your stores. Do not ask for `--init --env`.
+- Its `prefix = PATH` the same path as the prefix above, and that directory not there:
+  the project's own environment is missing, not declared elsewhere, and you are not
+  left over. Stop and tell the user that `PATH` is missing on the host; ask them to run
+  there `asb --init github --env NAME` again with the environment's name (it makes the
+  directory again, empty), then `asb --role gh-setup --shutdown claude` and your launch
+  again.
+- Otherwise the project declares no environment. Stop at once and ask the user,
+  exactly, to run on the host `asb --init github --env NAME` (NAME a conda environment
+  name of their choice, not built yet: it completes the environment's lines in
+  `.agent-sandbox`), then `asb --trust`, then `asb --role gh-setup --shutdown claude`
+  and your launch again. Do not choose a name, write `asb --apply` lines, or create an
+  environment anywhere else.
+
 **What you build.** `main` as checked out, nothing else: you do not switch branches,
 pull, edit tracked files, commit or push. Submodules are in the checkout already; a
 missing one is under **What you cannot retrieve.**
