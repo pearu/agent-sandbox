@@ -87,6 +87,7 @@ trust() {
 }
 
 @test "AGENT_SANDBOX=1 on the host is not \"inside a sandbox\": the launch is sandboxed (#197)" {
+  require_host "AGENT_SANDBOX=1 with pid 1 not bubblewrap is the host's case; inside a sandbox pid 1 is bwrap"
   # The passthrough runs the agent unsandboxed, so it needs the marker AND pid 1 being
   # bubblewrap (_as_inside_sandbox); the marker alone is a variable any shell can set.
   # The real inside case is in tests/integration/exec.bats.

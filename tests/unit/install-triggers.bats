@@ -58,8 +58,22 @@ release() {
   stat -c %s "$SRC/$1/asset" >"$SRC/$1/size"
 }
 
-# asb_install WORDS... -- asb --install WORDS, from the fake source.
+# asb_install WORDS... -- asb --install WORDS, from the fake source. Inside a sandbox (a
+# role running this suite) --install is the host's, refused there; so there the version
+# is put where --install puts it -- install/VERSION/claude, current naming VERSION --
+# for the tests that need it installed and are about the launch. --install itself is
+# tested on the host (tests/unit/install.bats).
 asb_install() {
+  if inside_sandbox; then
+    local v="${1#claude}"
+    v="${v#@}"
+    v="${v:-2.1.321}"
+    mkdir -p "$I/$v"
+    cp "$SRC/$v/asset" "$I/$v/claude"
+    chmod +x "$I/$v/claude"
+    ln -sfn "$v" "$I/current"
+    return 0
+  fi
   run_engine "${KNOBS[@]}" -- asb --install "$@"
   [ "$status" -eq 0 ]
 }
@@ -67,6 +81,7 @@ asb_install() {
 # ---- --login installs first ----
 
 @test "--login on an agent not installed: its pin installed first, saying size and host, then the account made and logged in" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   run_engine "${KNOBS[@]}" -- asb --agent claude --account work --login
   # 1: the stub join logs nothing in, so the account has no login file afterwards
   [ "$status" -eq 1 ]
@@ -84,6 +99,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "--login: a failed download leaves nothing, no account directory, no install; the login does not run" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   printf '%064d\n' 0 >"$SRC/2.1.321/sum"
   run_engine "${KNOBS[@]}" -- asb --agent claude --account work --login
   [ "$status" -eq 1 ]
@@ -97,6 +113,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "--login on an installed agent downloads nothing; a broken current is not mended: refused (2) with nothing made" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   asb_install claude@2.1.300
   rm -r "$SRC"
   mkdir -p "$ACC/work"
@@ -119,6 +136,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 # ---- a launch with the agent not installed ----
 
 @test "a launch at a terminal, not installed: asked once with size and host; y installs the pin and launches it" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   run_engine_tty 'y\n' "${KNOBS[@]}" -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"agent-sandbox: claude is not installed for agent-sandbox; looking up claude 2.1.321, its pinned version..."* ]]
@@ -132,6 +150,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "a launch at a terminal, a version there but no current: asked to make it current; y links it and launches, no resolver run; n refuses" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   mkdir -p "$I/2.1.321"
   cp "$H/stub-agent" "$I/2.1.321/claude"
   run_engine_tty 'n
@@ -161,6 +180,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "the question comes after the launch's own checks: a dot-file review answered no asks nothing more and installs nothing" {
+  require_host "the dot-file review is the host's; inside a sandbox there is no gate"
   printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
   run_engine_tty 'n\ny\n' "${KNOBS[@]}" -- asb claude --version
   [ "$status" -ne 0 ]
@@ -198,6 +218,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "a launch at a terminal, not installed: n (or nothing) refuses with the line that installs it; nothing is made" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   local a
   for a in 'n\n' '\n' ''; do
     run_engine_tty "$a" "${KNOBS[@]}" -- asb claude --version
@@ -323,6 +344,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "at a terminal, a launch whose account is refused is refused for that first: no question, no not-installed line" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --account nosuch claude --version
   [ "$status" -eq 2 ]
   [[ "$output" == *"the account 'nosuch' (--account): there is no "*"log it in with asb --agent claude --account nosuch --login"* ]]
@@ -346,6 +368,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "--preset none at a terminal is asked even while the default role's keeper is live (none has no keeper)" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   asb_install claude@2.1.300
   engine_bg "${KNOBS[@]}" -- asb claude --version
   rm "$I/current"
@@ -357,6 +380,7 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
 }
 
 @test "--preset none at a terminal, not installed: asked once; y installs and runs it with no sandbox" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --preset none claude --version
   [ "$status" -eq 0 ]
   [ "$(grep -c 'install claude 2.1.321 (' <<<"$output")" -eq 1 ]

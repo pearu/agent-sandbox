@@ -115,6 +115,18 @@ number.
   to change for it, the adapter contract is missing something -- extend it (and the
   claude adapter) instead. The unit suites' many `asb claude` launches are not
   agent-only tests: they test the engine with claude as the vehicle, and stay.
+- **Inside a sandbox the suites run with host-only skips.** A role developing asb
+  (the `github` model's gh-setup, gh-review and gh-fix) runs `tests/run.sh` inside
+  its sandbox. A test of what only the host does -- `--login`, `--install`,
+  `--set-default-agent`, `--setup-remote`, the dot-file gate against a faked marker,
+  `probes/orphans.sh`, which inside would kill the role's own keeper -- calls
+  `require_host REASON` (`tests/helpers/common.bash`), which skips it with "runs only
+  on the host: REASON" when the engine's own test (`_as_maybe_inside`: the
+  `AGENT_SANDBOX` marker or pid 1 being bubblewrap) says the suite is inside one; on the
+  host it runs as ever. bats reports each skip (`ok N ... # skip REASON`, and the
+  count in its summary), so the number skipped is visible. Use it only for behaviour
+  that is the host's; a test that can run inside is adjusted instead. A change that
+  touches a host-only path still needs a run on the host, or CI (which runs there).
 - **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): every
   adapter plants the shared fake agent where a launch runs it from (claude: installed
   as `asb --install claude` installs it, #6) before `install.sh` runs,

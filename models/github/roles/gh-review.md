@@ -124,7 +124,8 @@ orders.
 4. Bring its changes onto the built tree, build, and run them, not just compile them:
    the reporter's exact reproducer, results against a reference and the obvious
    fallback, the whole affected test file -- show a failure is pre-existing before
-   calling it green.
+   calling it green. Inside the sandbox the project's suite may skip host-only tests;
+   each such skip says why.
 5. Review it with `/pr-review`; write the review to `.asb/scratch/review-N.md`.
 6. Show the user the draft -- its text in your reply, not a tool's output -- and stop.
    List what you left out, one line each, so the user can ask for any of it, and the

@@ -59,6 +59,7 @@ nothing_left() {
 }
 
 @test "--install AGENT: the pin, downloaded, checked, in <state>/AGENT/install/VERSION/, made current" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 1.1.0 "$(binary v110)" size
   install fake
   [ "$status" -eq 0 ]
@@ -74,6 +75,7 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
 }
 
 @test "--install AGENT@VERSION: a listed version beside the pin; current moves to it, and back" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 1.1.0 "$(binary v110)"
   release 1.0.0 "$(binary v100)"
   install fake
@@ -93,6 +95,7 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
 }
 
 @test "--install AGENT@VERSION not in the table: installed with the resolver's checksum, said to be untested; current moves to it" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 9.9.9 "$(binary v999)" size
   install fake@9.9.9
   [ "$status" -eq 0 ]
@@ -111,6 +114,7 @@ agent-sandbox: --install: fake 9.9.9 is installed at ~/.local/state/agent-sandbo
 }
 
 @test "--install: a version that is not exact, a profile with no table, no pin, or no recipe is refused (2); nothing is made" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   install fake@
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --install: 'fake@' names no version after the @: asb --install AGENT[@VERSION]" ]
@@ -151,6 +155,7 @@ agent-sandbox: --install: profile 'fake' has no pinned version; name one of its 
 }
 
 @test "--install: the versions table's problems are said here; two pins is no pin" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 1.1.0 "$(binary v110)"
   printf '1.0.0\n1.1.0 pinned\n1.2 latest\n1.0.0\n' >"$F/versions"
   install fake
@@ -166,6 +171,7 @@ agent-sandbox: --install: profile 'fake' has no pinned version; name one of its 
 }
 
 @test "--install: a checksum that does not match, or a truncated download, leaves nothing (1); current stays" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 1.0.0 "$(binary v100)"
   install fake@1.0.0
   [ "$status" -eq 0 ]
@@ -198,6 +204,7 @@ agent-sandbox: --install: profile 'fake' has no pinned version; name one of its 
 }
 
 @test "--install: a resolver that fails, or prints another shape, installs nothing (1)" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   install fake
   [ "$status" -eq 1 ]
   [ "$output" = "fake resolve.sh: no release 1.1.0
@@ -215,6 +222,7 @@ agent-sandbox: --install: profile 'fake''s resolver could not say which file is 
 }
 
 @test "--install --from FILE: the file, checked against the resolver's SHA-256; a wrong one leaves nothing" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 1.1.0 "$(binary v110)"
   cp "$H/bin-v110" "$H/local-copy"
   rm "$SRC/1.1.0/asset" # never downloaded
@@ -262,6 +270,7 @@ wrap() {
 }
 
 @test "--install: curl is held to https and file, redirects to https only; tar unpacks as the user, modes masked" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   wrap curl
   release 1.1.0 "$(binary v110)"
   install fake
@@ -282,6 +291,7 @@ wrap() {
 }
 
 @test "--install, tar PATH: a tar whose listing fails (no --quoting-style) refuses; nothing left" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   printf '[agent]\ninstall = tar pkg/bin/fakeagent\n' >"$F/agent-sandbox"
   release 1.1.0 "$(tarball good f:pkg/bin/fakeagent)"
   # a tar that does not know --quoting-style, as busybox's and bsdtar do not
@@ -318,6 +328,7 @@ wrap() {
 }
 
 @test "--install --from FILE --sha256 SUM: offline, the resolver never run; a wrong or malformed SUM installs nothing" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   # a resolver that must not run: it fails and leaves a mark
   printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$H/resolver-ran" >"$F/resolve.sh"
   binary v110 >/dev/null
@@ -348,6 +359,7 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
 }
 
 @test "--install: the resolver runs with the tools env's engine-bin/ first on PATH (gpg)" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   local slot="$H/home/.local/share/agent-sandbox/tools/a"
   mkdir -p "$slot/bin" "$slot/engine-bin"
   ln -s a "$H/home/.local/share/agent-sandbox/tools/current"
@@ -360,6 +372,7 @@ agent-sandbox: --install: fake 1.1.0 is installed at ~/.local/state/agent-sandbo
 }
 
 @test "--install: through a symlinked state level, or over a current that is not a symlink, is refused (2)" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   release 1.1.0 "$(binary v110)"
   mkdir -p "$ST" "$H/elsewhere"
   ln -s "$H/elsewhere" "$ST/fake"
@@ -403,6 +416,7 @@ with tarfile.open(sys.argv[1], "w:gz") as t:
 }
 
 @test "--install, tar PATH: the tree unpacked, the binary at PATH, its siblings and inside symlinks kept" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   printf '[agent]\ninstall = tar pkg/bin/fakeagent\n' >"$F/agent-sandbox"
   release 1.1.0 "$(tarball good d:pkg d:pkg/bin f:pkg/bin/fakeagent f:pkg/lib/helper l:pkg/bin/h:../lib/helper l:pkg/self:. h:pkg/bin/hard:pkg/lib/helper)"
   install fake
@@ -415,6 +429,7 @@ with tarfile.open(sys.argv[1], "w:gz") as t:
 }
 
 @test "--install, tar PATH: an absolute member, a '..' member, an escaping symlink, a fifo, or no binary at PATH is refused with nothing left" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   printf '[agent]\ninstall = tar pkg/bin/fakeagent\n' >"$F/agent-sandbox"
   # `chain`: e is inside the tree when read lexically (pkg/x/d/../../.. is the tree), and
   # outside when its symlink d is followed, as the kernel does (d is pkg/x itself).

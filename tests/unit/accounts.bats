@@ -818,6 +818,7 @@ codex_profile() {
 }
 
 @test "--login: refused with anything else on the line, a bad NAME, an AGENT naming no profile, a profile with no account-paths or no login key; nothing is made" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   rm -r "$ACC"
   local -a refused=(
     "--verbose --agent claude --account work --login"
@@ -877,6 +878,7 @@ codex_profile() {
 }
 
 @test "--login: the base is refused for now, bare or as --account -; NAME is required" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   local w
   for w in "--login" "--account - --login" "--account=- --login"; do
     # shellcheck disable=SC2086 # the words, split
@@ -897,6 +899,7 @@ codex_profile() {
 }
 
 @test "--login: a login has no role: the ROLE= and GLOB= forms of --agent and --account are refused" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   local w
   for w in r=claude 'r*=claude' '*=claude'; do
     run_engine -- asb --agent "$w" --account work --login
@@ -913,6 +916,7 @@ codex_profile() {
 }
 
 @test "--login: AGENT defaults to the default agent: the only one asb can run, else the one set; several and none set, or none at all, refused" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   # the only one asb can run (the harness's profiles: claude, and sshd chosen by --profile alone)
   run_engine -- asb --account work --login
   [ "$status" -eq 0 ]
@@ -951,6 +955,7 @@ codex_profile() {
 }
 
 @test "--login: the --agent=AGENT and --account=NAME forms, and --login first on the line, run the login" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   local w
   for w in "--agent=claude --account=work --login" "--login --agent claude --account work" "--login --account=work" "--account work --login --agent=claude"; do
     # shellcheck disable=SC2086 # the words, split
@@ -980,6 +985,7 @@ codex_profile() {
 }
 
 @test "--login: the account's directory is made with mode 700; a symlink or a file there, or a symlinked accounts, is refused; an existing directory is a re-login" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   run_engine -- asb --agent claude --account fresh --login
   [ -d "$ACC/fresh" ]
   [ ! -L "$ACC/fresh" ]
@@ -1017,6 +1023,7 @@ codex_profile() {
 }
 
 @test "--login: the login runs as role account-login of the scratch project, under --preset isolated, on the account, with the profile's login args" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   login_paths
   run_engine -- asb --agent claude --account fresh --login
   [ "$status" -eq 1 ] # the stub made no login file
@@ -1046,6 +1053,7 @@ codex_profile() {
 }
 
 @test "--login: the shell's AGENT_SANDBOX_CONNECT does not reach the login: the config is isolated's own store, never the native file" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   login_paths
   printf '{"oauthAccount":{"emailAddress":"native"}}\n' >"$H/home/.claude.json"
   run_engine AGENT_SANDBOX_CONNECT='config=read-write' -- asb --agent claude --account work --login
@@ -1060,6 +1068,7 @@ codex_profile() {
 }
 
 @test "--login: the shell's AGENT_SANDBOX_NET does not reach the login: it runs under the default network mode, the proxy" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   run_engine AGENT_SANDBOX_NET=none -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   argv_has --share-net
@@ -1071,6 +1080,7 @@ codex_profile() {
 }
 
 @test "--login: the login role's stores are removed afterwards, after a failing login too, and what a killed run left is removed first" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   login_paths
   run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
@@ -1105,6 +1115,7 @@ codex_profile() {
 }
 
 @test "--login: a login running already refuses a second one, and its stores stay until it ends" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   login_paths
   engine_bg -- asb --agent claude --account work --login
   [ -d "$LSB" ]
@@ -1119,6 +1130,7 @@ codex_profile() {
 }
 
 @test "--login: Ctrl-C at the login ends it, and the stores are still removed" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   login_paths
   # The join stands for the agent at the terminal: Ctrl-C is a SIGINT to the terminal's
   # foreground process group, which the engine is in; setsid gives the run its own.
@@ -1143,6 +1155,7 @@ codex_profile() {
 }
 
 @test "--login: a hint about the unechoed code is said just before the login runs, never on a refusal" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   local hint="--login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
   run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
@@ -1162,6 +1175,7 @@ codex_profile() {
 }
 
 @test "--login: says whether the account has its login file, by its path; the exit status follows" {
+  require_host "asb --login is the host's; the engine refuses it inside a sandbox"
   run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   [[ "$output" == *"--login: the account 'work' of claude has its login: ~/.local/state/agent-sandbox/claude/accounts/work/.credentials.json"* ]]

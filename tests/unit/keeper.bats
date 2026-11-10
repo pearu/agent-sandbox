@@ -432,8 +432,8 @@ STUB
 
 # The proxy CA's bind is one file, and a host that replaces that file by a rename (a
 # ca-certificates upgrade) detaches it under a running role (_as_ca_check). The stub
-# keeper runs on the host, where nothing is mounted at the bundle's path: what a role
-# whose bind was detached looks like from outside.
+# keeper runs where the suite runs, and a recorded bundle path nothing is mounted at is
+# what a role whose bind was detached looks like from outside.
 @test "a join into a role whose CA bind is gone says so, loud, with the --shutdown that fixes it, and joins" {
   make_fake_ca "$H/ca.pem"
   engine_bg AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
@@ -441,9 +441,15 @@ STUB
   bundle="$(cut -f1 "$SBOX/keeper/ca")" # the system bundle the bind is over
   [ "$(grep -A1 -x -- "$H/base/ca-bundle.crt" "$H/argv.bg" | tail -1)" = "$bundle" ]
   [ "$(cut -f2 "$SBOX/keeper/ca")" = "$(sha256sum "$bundle" | cut -d' ' -f1)" ]
+  # Inside a sandbox -- a role running this suite -- the bundle's path IS a mount, that
+  # sandbox's own CA bind, which the stub keeper shares. So the record is pointed at a
+  # copy of the bundle that no namespace mounts: the bind gone, wherever the suite runs.
+  local gone="$H/ca-certificates.crt"
+  cp -- "$bundle" "$gone"
+  printf '%s\t%s\n' "$gone" "$(cut -f2 "$SBOX/keeper/ca")" >"$SBOX/keeper/ca"
   run_engine AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"agent-sandbox: warning — role 'default': the host replaced $bundle (at "*") and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role default --shutdown claude"* ]]
+  [[ "$output" == *"agent-sandbox: warning — role 'default': the host replaced $gone (at "*") and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role default --shutdown claude"* ]]
   [ -s "$H/join" ] # joined all the same
   release_bg
 }

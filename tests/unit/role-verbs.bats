@@ -71,6 +71,7 @@ slugify() {
 }
 
 @test "the default profile (#6): the only one asb can run (an agent it installs, installed or not, or a command on PATH), else the one set with --set-default-agent" {
+  require_host "asb --set-default-agent is the host's; the engine refuses it inside a sandbox"
   local st="$H/home/.local/state/agent-sandbox" slug="${PROJ//[^A-Za-z0-9-]/-}" df="$H/home/.config/agent-sandbox/default-agent"
   mkdir -p "$H/profiles/other" "$H/profiles/byname" "$st/claude/$slug/r" "$st/other/$slug/r"
   ln -s "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
@@ -170,6 +171,7 @@ slugify() {
 }
 
 @test "a default-agent file written with CRLF line ends names the profile, not NAME plus a carriage return" {
+  require_host "asb --set-default-agent is the host's; the engine refuses it inside a sandbox"
   mkdir -p "$H/profiles" "$H/home/.config/agent-sandbox"
   ln -s "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
   cp -r "$REPO_ROOT/profiles/claude" "$H/profiles/other"
@@ -388,10 +390,18 @@ slugify() {
 @test "--status of a running role whose CA bind is gone says so, with the --shutdown that fixes it" {
   make_fake_ca "$H/ca.pem"
   engine_bg AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  # The stub keeper runs where the suite runs, and a recorded bundle path nothing is
+  # mounted at is a bind gone. Inside a sandbox -- a role running this suite -- the
+  # bundle's own path IS a mount, that sandbox's CA bind; so the record is pointed at a
+  # copy of the bundle that no namespace mounts, wherever the suite runs.
+  local bundle gone="$H/ca-certificates.crt"
+  bundle="$(cut -f1 "$SBOX/keeper/ca")"
+  [[ "$bundle" == /etc/* ]]
+  cp -- "$bundle" "$gone"
+  printf '%s\t%s\n' "$gone" "$(cut -f2 "$SBOX/keeper/ca")" >"$SBOX/keeper/ca"
   run_engine -- asb --status claude
   [ "$status" -eq 0 ]
-  # the stub keeper runs on the host, where nothing is mounted at the bundle's path
-  [[ "$output" == *"dot-file: none approved"*$'\n'"  warning — role 'default': the host replaced /etc/"*"and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role default --shutdown claude"$'\n'* ]]
+  [[ "$output" == *"dot-file: none approved"*$'\n'"  warning — role 'default': the host replaced $gone "*"and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role default --shutdown claude"$'\n'* ]]
   release_bg
   engine_bg -- asb claude --version # no proxy CA, so no bind to lose
   run_engine -- asb --status claude
