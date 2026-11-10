@@ -380,6 +380,60 @@ init() {
   [ "$(tail -3 "$df")" = $'# mine\n[allow:gh-*]\nexample.org' ]
 }
 
+@test "--env on a file written with it that lacks an environment's line: the --apply line, not 'left as you have it'" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox" ep="$H/base/envs/dev"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  sed -i "\\|^$ep/ = copy-on-write|d" "$df"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"not completed"* && "$output" != *"left above"* && "$output" != *"completed in"* ]]
+  [[ "$output" == *"--apply '[connect:gh-*]' '$ep/ = copy-on-write'"* ]]
+}
+
+@test "--env completing a no-env file keeps a symlinked .agent-sandbox a link, its mode, and no final newline it lacked" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  mv "$df" "$H/real"
+  ln -s "$H/real" "$df"
+  chmod 600 "$H/real"
+  truncate -s -1 "$H/real" # no final newline
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"completed in .agent-sandbox"* ]]
+  [ -L "$df" ] && [ "$(readlink "$df")" = "$H/real" ]
+  [ "$(stat -c %a "$H/real")" = 600 ]
+  [ -n "$(tail -c1 "$H/real")" ]
+  grep -qx "prefix = $H/base/envs/dev .*" "$H/real"
+}
+
+@test "--env on a no-env file without its --init mark, or with CR LF lines: not completed, the lines named for the user" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  sed -i '/^# ---- written by asb --init github ----$/d' "$df"
+  cp "$df" "$H/nomark"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: the environment's lines in .agent-sandbox could not be completed for --env dev: it has no '# ---- written by asb --init github ----' line to find model 'github''s sections by; complete these by hand:"* ]]
+  [[ "$output" == *"    line "*":# [conda:gh-*]"* && "$output" == *":# ENVPATH/ = read-write"* ]]
+  [[ "$output" == *"the environment's lines left above: yours to complete, by hand"* ]]
+  cmp "$df" "$H/nomark"
+  rm -rf "$df" "$PROJ/.asb"
+  init -- github
+  [ "$status" -eq 0 ]
+  sed -i 's/$/\r/' "$df"
+  cp "$df" "$H/crlf"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"line to find model 'github''s sections by (its lines end in CR LF); complete these by hand:"* ]]
+  cmp "$df" "$H/crlf"
+}
+
 @test "--env on a file whose environment's lines name another environment: refused, nothing written" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox"

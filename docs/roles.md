@@ -459,8 +459,9 @@ with `--env`, its environment. Without counts you get one of each role; `reviewe
 leaves one out. Without `--env` the `[conda]` sections are written commented out;
 `asb --init roles --env x-dev` run on that file later completes them, the lines naming
 the environment included, exactly as a first `--init` with it writes them, and changes
-nothing else: a line you changed is left and said, and a file that names another
-environment there is refused (`--init` never rewrites a prefix). It
+nothing else: a line you changed is left and said; an active `prefix = ...` line naming
+another environment refuses the `--init`, while a path line (`PREFIX/ = ...`) naming one
+is left and said (`--init` never rewrites a prefix). It
 approves nothing -- `asb --trust` does, after you have read the file and the purpose
 files.
 

@@ -18,8 +18,11 @@ A model directory holds:
   `[conda]` sections and lines naming `{envpath}` are written commented out; `--init`
   run again with `--env` (or `--shared-env`) completes them in the sections it wrote,
   as a first `--init` with it would have written them, and leaves a line changed by
-  hand as it is, saying so; a file whose environment lines already name another
-  environment is refused, never rewritten. A line
+  hand as it is, saying so. An active `KEY = PREFIX` line there (`prefix = ...`) naming
+  another environment refuses the `--init`, before anything is written; a line keyed by
+  the path (`PREFIX/ = copy-on-write`) naming another one is left and said. No prefix is
+  rewritten. A file with no `# ---- written by asb --init MODEL ----` line is not
+  completed: its commented environment lines are named, to complete by hand. A line
   `#@own LINE` is the template's only with an environment of the project's own (`--env`,
   or none), `#@shared LINE` only with one another project owns (`--shared-env`): the tag
   is stripped from the kept one and the other is dropped, in the dot-file template and
