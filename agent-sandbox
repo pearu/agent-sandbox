@@ -7966,15 +7966,20 @@ _as_install_deferred() {
   ! _as_maybe_inside || return 1
 }
 
-# _as_install_now WORD ROLE -- a deferred launch's install (_as_install_deferred): asked
-# (_as_install_offer) unless a keeper of the role is live (a join, which installs
-# nothing) or the launch's account is refused (the launch says why, below); then the
-# agent resolved as any launch's is (_as_resolve_bin), which refuses after a no.
+# _as_install_now WORD ROLE [none] -- a deferred launch's install (_as_install_deferred).
+# A launch whose account is refused (_as_account_check) is refused first, with that
+# refusal (2), before anything is asked. Then the install is asked (_as_install_offer)
+# unless a keeper of the role is live (a join, which installs nothing; never checked
+# under `none`, which has no keeper), and the agent is resolved as any launch's is
+# (_as_resolve_bin), which refuses (1) after a no.
 # shellcheck disable=SC2154
 _as_install_now() {
-  local sb
-  sb="$(_as_sandbox_dir)"
-  if ! _as_keeper_live "$sb" && (_as_account_check) >/dev/null 2>&1; then
+  local out
+  if ! out="$( (_as_account_check) 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    return 2
+  fi
+  if [[ "${3:-}" == none ]] || ! _as_keeper_live "$(_as_sandbox_dir)"; then
     _as_install_offer "$profile"
   fi
   _as_resolve_bin "$1" "$2"
@@ -14712,7 +14717,7 @@ agent_sandbox() (
       _as_msg "preset none: running '$1' with no sandbox"
       exec "$@"
     fi
-    ((! _install_pending)) || _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
+    ((! _install_pending)) || _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" none || return $?
     _as_msg "preset none: running $profile_command with no sandbox"
     exec "$profile_bin" "$@"
   fi
@@ -15481,7 +15486,7 @@ agent_sandbox() (
   # The install a launch at a terminal is offered (#6, D9), now that its own
   # preconditions hold: the dot-file reviewed and applied, the account resolved.
   if ((_install_pending)); then
-    _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
+    _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" || return $?
     [[ -z "${profile_bin_dir:-}" ]] || _agent_version="${profile_bin_dir##*/}"
   fi
   local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0 _ca_record="" _ca_note=""

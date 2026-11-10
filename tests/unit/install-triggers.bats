@@ -307,6 +307,55 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   release_bg
 }
 
+@test "a join whose keeper's version row is not a version says no version line, and joins" {
+  asb_install claude
+  engine_bg "${KNOBS[@]}" -- asb claude --version
+  local pol="$ST/claude/${PROJ//[^A-Za-z0-9-]/-}/default/keeper/policy"
+  # shellcheck disable=SC2016 # the row's text, literally
+  sed -i 's|^version\t[^\t]*\t|version\t../evil $(x)\t|' "$pol"
+  grep -q '^version	\.\./evil' "$pol"
+  run_engine "${KNOBS[@]}" -- asb claude -p again
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"agent: claude"* ]]
+  [[ "$output" != *evil* ]]
+  [ -s "$H/join" ]
+  release_bg
+}
+
+@test "at a terminal, a launch whose account is refused is refused for that first: no question, no not-installed line" {
+  run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --account nosuch claude --version
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"the account 'nosuch' (--account): there is no "*"log it in with asb --account-login nosuch claude"* ]]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" != *"is not installed"* ]]
+  [ ! -e "$SRC/2.1.321/resolved" ]
+  [ ! -e "$I" ]
+}
+
+@test "at a terminal, a launch that would join a live keeper asks nothing: the plain refusal" {
+  asb_install claude@2.1.300
+  engine_bg "${KNOBS[@]}" -- asb claude --version
+  rm "$I/current"
+  run_engine_tty 'y\n' "${KNOBS[@]}" -- asb claude -p again
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" == *"$REFUSAL"* ]]
+  [ ! -e "$SRC/2.1.321/resolved" ]
+  [ ! -e "$I/current" ]
+  release_bg
+}
+
+@test "--preset none at a terminal is asked even while the default role's keeper is live (none has no keeper)" {
+  asb_install claude@2.1.300
+  engine_bg "${KNOBS[@]}" -- asb claude --version
+  rm "$I/current"
+  run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --preset none claude --version
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'install claude 2.1.321 (' <<<"$output")" -eq 1 ]
+  [ "$(readlink "$I/current")" = 2.1.321 ]
+  release_bg
+}
+
 @test "--preset none at a terminal, not installed: asked once; y installs and runs it with no sandbox" {
   run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --preset none claude --version
   [ "$status" -eq 0 ]
