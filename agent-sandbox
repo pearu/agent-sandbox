@@ -7559,7 +7559,7 @@ _as_login() {
   # ~/.claude), not asb's, so asb does not log it in. This one check goes when the base
   # becomes engine-owned (#6, step 2), and NAME then defaults to the base.
   if [[ -z "$name" || "$name" == - ]]; then
-    _as_msg "--login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: $invoked --account NAME --login"
+    _as_msg "--login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: $invoked --agent ${agent:-AGENT} --account NAME --login"
     return 2
   fi
   if [[ -z "$agent" ]]; then

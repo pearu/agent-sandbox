@@ -826,6 +826,11 @@ codex_profile() {
     "--agent claude --agent claude --account work --login"
     "--account work --account work --login"
     "--account work --login --resume"
+    "--preset isolated --account work --login"
+    "--account work --login --list"
+    "--check --account work --login"
+    "--account work --role r --login"
+    "--login --account work --shutdown"
   )
   local w
   for w in "${refused[@]}"; do
@@ -873,11 +878,18 @@ codex_profile() {
 
 @test "--login: the base is refused for now, bare or as --account -; NAME is required" {
   local w
-  for w in "--login" "--account - --login" "--agent claude --login" "--agent claude --account - --login"; do
+  for w in "--login" "--account - --login" "--account=- --login"; do
     # shellcheck disable=SC2086 # the words, split
     run_engine -- asb $w
     [ "$status" -eq 2 ]
-    [ "$output" = "agent-sandbox: --login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: asb --account NAME --login" ]
+    [ "$output" = "agent-sandbox: --login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: asb --agent AGENT --account NAME --login" ]
+  done
+  # the agent typed is the agent named back
+  for w in "--agent claude --login" "--agent claude --account - --login" "--login --agent=claude"; do
+    # shellcheck disable=SC2086 # the words, split
+    run_engine -- asb $w
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: asb --agent claude --account NAME --login" ]
   done
   [ "$(cat "$C/.credentials.json")" = BASE-LOGIN ]
   [ ! -s "$H/argv" ]
@@ -936,6 +948,19 @@ codex_profile() {
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles3" -- asb --account work --login
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: --login: no agent named, and there is no agent asb can run here (installed: codex): install one, or name one, asb --agent AGENT --account work --login" ]
+}
+
+@test "--login: the --agent=AGENT and --account=NAME forms, and --login first on the line, run the login" {
+  local w
+  for w in "--agent=claude --account=work --login" "--login --agent claude --account work" "--login --account=work" "--account work --login --agent=claude"; do
+    # shellcheck disable=SC2086 # the words, split
+    run_engine -- asb $w
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"role: account-login (--role)"* ]]
+    [[ "$output" == *"--login: the account 'work' of claude has its login"* ]]
+    argv_has --bind "$ACC/work" "$C"
+    [ "${JOINV[*]:1}" = "auth login" ]
+  done
 }
 
 @test "--account-login is not a flag of asb any more: an unknown option, as any other" {
