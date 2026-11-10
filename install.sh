@@ -19,19 +19,23 @@
 #                             everything else runs against $HOME (CI uses this
 #                             with a throwaway HOME).
 #   ./install.sh --yes, -y    do not ask: --uninstall's confirmation (it keeps the
-#                             sandboxes' conda environments), and which conda
-#                             sandboxes use (the host's, when it has one)
+#                             sandboxes' conda environments), which conda
+#                             sandboxes use (the host's, when it has one), and
+#                             which agent is the default (none is set)
 #   ./install.sh --purge-config
 #                             with --uninstall, also remove
 #                             ~/.config/agent-sandbox (allowlist, trust store)
 #   ./install.sh --uninstall  undo an install: stop and remove the proxy unit,
-#                             remove `asb` and `agent-sandbox`, and remove
-#                             agent-sandbox's state. Shows the plan
-#                             and asks before touching anything (-y skips the
-#                             question, --dry-run only prints). Your allowlist
-#                             and trust approvals are KEPT unless
-#                             --purge-config. The AppArmor profiles and the
-#                             agent itself are never touched.
+#                             remove `asb` and `agent-sandbox`, agent-sandbox's
+#                             state, and the agents `asb --install` installed
+#                             (~/.local/state/agent-sandbox/<agent>/install/).
+#                             Shows the plan and asks before touching anything
+#                             (-y skips the question, --dry-run only prints).
+#                             Your allowlist and trust approvals are KEPT unless
+#                             --purge-config; the sandboxes' state and the
+#                             accounts' logins (~/.local/state/agent-sandbox)
+#                             are kept. The AppArmor profiles and an agent
+#                             installed any other way are never touched.
 #   ./install.sh --dev        point `asb` at THIS checkout (a symlink)
 #                             instead of installing a copy; for developing
 #                             agent-sandbox. Edits to the checked-out engine or
@@ -61,6 +65,12 @@
 # user unit so nothing else needs to be carried across hosts. The
 # allowlist is only written if it doesn't already exist (so re-runs
 # preserve your customizations).
+#
+# Agents: it reports what `asb AGENT` runs -- for an agent asb installs, the installed
+# version against the profile's pin -- and an install or a re-run never installs, updates
+# or removes one (`asb --install AGENT[@VERSION]` does; --uninstall removes asb's installs). At a terminal, with several agents asb can run
+# and no default set, it asks which is the default (`asb --set-default-agent AGENT`
+# changes it later).
 
 set -euo pipefail
 
@@ -157,12 +167,18 @@ CONFIG_DIR="$HOME/.config/agent-sandbox"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 STATE_DIR="${AGENT_SANDBOX_HOME:-$HOME/.local/share/agent-sandbox}" # proxy runtime lives here
 OS_RELEASE="${AGENT_SANDBOX_OS_RELEASE:-/etc/os-release}"           # the tests point it at a fake
+# The engine's state directory (_as_state_dir): the sandboxes' state, accounts, and the
+# agents asb installs, <profile>/install/<version>/ (#6).
+AGENT_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
 
 # ----- pretty output -----
-if [[ -t 1 ]] && command -v tput >/dev/null; then
-  C_BOLD=$(tput bold) C_DIM=$(tput dim) C_RED=$(tput setaf 1)
-  C_GREEN=$(tput setaf 2) C_YELLOW=$(tput setaf 3) C_BLUE=$(tput setaf 4)
-  C_RESET=$(tput sgr0)
+# Colours only where the terminal has them: with TERM unset, dumb or vt100, tput fails,
+# which under set -e would end the install; a capability one terminal lacks is empty.
+tp() { tput "$@" 2>/dev/null || :; }
+if [[ -t 1 ]] && command -v tput >/dev/null && tput setaf 1 >/dev/null 2>&1 && tput sgr0 >/dev/null 2>&1; then
+  C_BOLD=$(tp bold) C_DIM=$(tp dim) C_RED=$(tp setaf 1)
+  C_GREEN=$(tp setaf 2) C_YELLOW=$(tp setaf 3) C_BLUE=$(tp setaf 4)
+  C_RESET=$(tp sgr0)
 else
   C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_RESET=""
 fi
@@ -184,7 +200,8 @@ run_sys() {
 # Everything agent-specific lives in profiles/<name>/: its script, profile.sh (see
 # the contract in profiles/claude/profile.sh), and its dot-file, agent-sandbox. The
 # installer loads a profile the way the engine does, in a subshell, to ask it for its
-# command name; a dot-file's `[agent] command` wins, as in the engine.
+# command name; a dot-file's `[agent] command` wins, as in the engine. A profile.sh that
+# fails to load fails the query, printing nothing (the engine's `broken`, _as_profile_facts).
 profile_query() { # $1 = profile file, $2.. = variable names to print, one per line
   local f=$1
   shift
@@ -196,9 +213,9 @@ profile_query() { # $1 = profile file, $2.. = variable names to print, one per l
     AGENT_SANDBOX_ENGINE=$ENGINE AGENT_SANDBOX_PROFILE_DIR=$SCRIPT_DIR/profiles
     AGENT_SANDBOX_PROFILE=$(basename -- "$(dirname -- "$f")")
     # shellcheck disable=SC2034
-    profile_command=$AGENT_SANDBOX_PROFILE
+    profile_command=$AGENT_SANDBOX_PROFILE profile_by_name_only=0
     # shellcheck disable=SC1090
-    source "$f"
+    source "$f" >/dev/null 2>&1 || exit 1
     local c
     c=$(sed -n '/^\[agent\]/,/^\[/{s/^[[:space:]]*command[[:space:]]*=[[:space:]]*\([^#[:space:]]*\).*/\1/p}' "${f%/*}/agent-sandbox" 2>/dev/null | tail -1)
     # shellcheck disable=SC2034 # printed below by name
@@ -248,11 +265,163 @@ agent_on_path() {
   return 1
 }
 
+# ----- agents asb installs (#6) -----
+# An install or a re-run never installs, updates or removes an agent: `asb --install
+# AGENT[@VER]` does (on the host, from the profile's recipe), and --uninstall removes
+# asb's installs. The Agents section reads what is there, to report it.
+
+# profile_has_recipe PROFILE_FILE -- does the profile's dot-file have `[agent] install`?
+profile_has_recipe() {
+  sed -n '/^\[agent\]/,/^\[/p' "${1%/*}/agent-sandbox" 2>/dev/null | grep -qE '^[[:space:]]*install[[:space:]]*='
+}
+
+# profile_pin PROFILE_FILE -- the version its versions table marks `pinned`, as the
+# engine reads it (_as_profile_versions): nothing when there is no table, or none or
+# more than one is pinned.
+profile_pin() {
+  awk '{ sub(/#.*/, "") } NF == 2 && $2 == "pinned" && $1 ~ /^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$/ { n++; v = $1 } END { if (n == 1) print v }' \
+    "${1%/*}/versions" 2>/dev/null || true
+}
+
+# agent_current NAME -- the version asb's install of NAME runs, as the engine finds it:
+# install/current, a symlink to a version's directory beside it. Fails when there is none.
+agent_current() {
+  local root="$AGENT_STATE_DIR/$1/install" v
+  [[ -L "$root/current" ]] || return 1
+  v="$(readlink -- "$root/current")"
+  [[ -n "$v" && "$v" != */* && "$v" != . && "$v" != .. && -d "$root/$v" ]] || return 1
+  printf '%s' "$v"
+}
+
+# agents_report -- the Agents section: one line per profile, what `asb NAME` runs. For a
+# profile with an install recipe, asb's own install of its agent, its current version
+# against the pin; for any other, the first command on PATH that is not agent-sandbox
+# itself, resolved -- exactly as the engine looks it up. Sets AGENT_CANDIDATES: the
+# profiles a role verb with no command may default to, by the engine's rule
+# (_as_default_candidates): one with a recipe, installed or not, or one whose command is
+# there to run; never one chosen by --profile alone.
+AGENT_CANDIDATES=()
+agents_report() {
+  local f name cmd bno bin cur pin out
+  local -a q
+  AGENT_CANDIDATES=()
+  for f in "${profiles[@]}"; do
+    name=$(basename -- "$(dirname -- "$f")")
+    if ! out="$(profile_query "$f" profile_command profile_by_name_only)"; then
+      warn "$name: its profile failed to load ($f)"
+      continue
+    fi
+    mapfile -t q <<<"$out"
+    # an empty command is no command (the engine's `off`), never the profile's name
+    cmd="${q[0]:-}" bno="${q[1]:-0}"
+    if [[ "$cmd" == */* ]]; then
+      # a command the profile ships (sshd's agent, #335): nothing to find on PATH
+      ok "$name: its agent ships with the profile ($(basename -- "$cmd"))"
+      ((bno)) || [[ ! -x "$cmd" ]] || AGENT_CANDIDATES+=("$name")
+    elif profile_has_recipe "$f"; then
+      # an agent asb installs itself: `asb NAME` runs that install, never one on PATH
+      ((bno)) || AGENT_CANDIDATES+=("$name")
+      pin="$(profile_pin "$f")"
+      if ! cur="$(agent_current "$name")"; then
+        warn "$name: not installed; asb --install $name, or it is offered at the first launch"
+      elif [[ -z "$pin" ]]; then
+        ok "$name $cur"
+      elif [[ "$cur" == "$pin" ]]; then
+        ok "$name $cur, the pin"
+      else
+        warn "$name $cur, pinned $pin: asb --install $name moves to the pin"
+      fi
+    elif [[ -z "$cmd" ]]; then
+      info "$name: names no command; asb runs it by path only (asb --profile $name /path/to/it)"
+    elif bin="$(agent_on_path "$cmd")"; then
+      ok "$name: \`$cmd\` is $bin"
+      ((bno)) || AGENT_CANDIDATES+=("$name")
+    else
+      warn "$name: \`$cmd\` is not on PATH"
+      info "Install it, then re-run. asb runs it once \`$cmd\` is on PATH (or: asb --profile $name /path/to/it)."
+    fi
+  done
+}
+
+# ask_default_agent NAME... -- the question, until it is answered (on fd 3) with a number
+# or a name from the list; prints the name, or nothing for an empty answer; fails at the
+# end of the answers.
+ask_default_agent() {
+  local a i
+  while :; do
+    printf '\n    asb can run several agents here:' >&2
+    for ((i = 1; i <= $#; i++)); do printf ' %d) %s' "$i" "${!i}" >&2; done
+    # shellcheck disable=SC2016 # the backquotes are text
+    printf '\n    Which is the default, the one `asb --login` and a role verb run when none is named? [number or name; empty: none for now] ' >&2
+    read -r a <&3 || return 1
+    a="${a//[[:space:]]/}"
+    [[ -n "$a" ]] || return 0
+    if [[ "$a" =~ ^[0-9]+$ ]] && ((10#$a >= 1 && 10#$a <= $#)); then
+      a=$((10#$a))
+      printf '%s' "${!a}"
+      return 0
+    fi
+    for i in "$@"; do
+      [[ "$i" == "$a" ]] && printf '%s' "$i" && return 0
+    done
+  done
+}
+
+# choose_default_agent -- the default agent (#6): asked once, at a terminal, when asb can
+# run several (AGENT_CANDIDATES) and none is set; written by the installed engine,
+# `asb --set-default-agent NAME`, its one writer. One already set is reported, never asked
+# over; without a terminal, or with --yes, nothing is asked and none is set.
+choose_default_agent() {
+  local f="$CONFIG_DIR/default-agent" cur="" n out
+  local -a c=(${AGENT_CANDIDATES[@]+"${AGENT_CANDIDATES[@]}"})
+  [[ -f "$f" ]] && { IFS=$' \t\r' read -r cur _ <"$f" 2>/dev/null || :; }
+  if [[ -n "$cur" ]]; then
+    if [[ " ${c[*]} " == *" $cur "* ]]; then
+      ok "the default agent is $cur ($f); change it: asb --set-default-agent AGENT"
+    else
+      warn "the default agent '$cur' ($f) is not one asb can run here (${c[*]:-none}); set another: asb --set-default-agent AGENT"
+    fi
+    return 0
+  fi
+  if ((${#c[@]} == 1)); then
+    ok "the default agent is ${c[0]}, the only one asb can run here"
+    return 0
+  fi
+  ((${#c[@]} > 1)) || return 0
+  if ((DRY_RUN)); then
+    info "(dry-run) would ask which is the default agent: ${c[*]}"
+    return 0
+  fi
+  n=""
+  if ((! ASSUME_YES)) && { : <"$ANSWERS"; } 2>/dev/null && n="$(ask_default_agent "${c[@]}" 3<"$ANSWERS")" && [[ -n "$n" ]]; then
+    if out="$("$LAUNCH_TARGET" --set-default-agent "$n" 2>&1)"; then
+      ok "${out#agent-sandbox: --set-default-agent: }"
+    else
+      warn "$out"
+    fi
+    return 0
+  fi
+  info "asb can run several agents here (${c[*]}) and no default is set: set it, asb --set-default-agent AGENT"
+}
+
+# agent_versions DIR -- the versions in an agent's install directory, space-separated.
+agent_versions() {
+  local d
+  local -a v=()
+  for d in "$1"/*/; do
+    d="${d%/}"
+    [[ -d "$d" && ! -L "$d" ]] || continue # current, or the pattern itself (none)
+    v+=("${d##*/}")
+  done
+  printf '%s' "${v[*]:-none}"
+}
+
 # ----- uninstall -----
-# Reverses what this installer does, and nothing else.
+# Reverses what this installer does, and nothing else -- with one exception: the agents
+# asb installed (`asb --install`, <state>/<profile>/install/), which are asb's too.
 #
-# It never removes what it did not create: a command that is not the symlink to the
-# engine it recorded is left alone, an absent path is reported rather than forced.
+# Otherwise it never removes what it did not create: a command that is not the symlink
+# to the engine it recorded is left alone, an absent path is reported rather than forced.
 uninstall_plan_and_run() {
   local purge_config="${1:-0}" assume_yes="${2:-0}"
   section "Uninstall"
@@ -296,6 +465,23 @@ uninstall_plan_and_run() {
   local root="$STATE_DIR/conda" keep_root=0 answers="${AGENT_SANDBOX_TTY:-/dev/tty}"
   [[ -d "$root" ]] && keep_root=1
 
+  # The agents asb installed (#6), <profile>/install/ under the engine's state directory:
+  # asb's downloads, which `asb --install` makes again, so they go with the rest of asb.
+  # The rest of that directory is the sandboxes' state -- role stores, transcripts, and
+  # the accounts' logins (<profile>/accounts/NAME/) -- the user's: kept, and named.
+  # Only the profiles this installer knows, and never through a symlink: neither the
+  # profile's directory nor its install/ may be one, or what is removed is elsewhere.
+  local -a agent_installs=() accounts=()
+  local d f
+  for f in "${profiles[@]}"; do
+    d="$AGENT_STATE_DIR/$(basename -- "$(dirname -- "$f")")"
+    [[ ! -L "$AGENT_STATE_DIR" && -d "$d" && ! -L "$d" && -d "$d/install" && ! -L "$d/install" ]] \
+      && agent_installs+=("$d/install")
+  done
+  for d in "$AGENT_STATE_DIR"/*/accounts/*; do
+    [[ -d "$d" && ! -L "$d" ]] && accounts+=("${d#"$AGENT_STATE_DIR"/}")
+  done
+
   # ---- say what will happen, before anything happens ----
   ((unit_present)) && info "stop, disable and remove $unit"
   local p
@@ -303,7 +489,14 @@ uninstall_plan_and_run() {
   [[ -e "$STATE_DIR/micromamba" ]] && info "remove agent-sandbox's micromamba, $STATE_DIR/micromamba/bin/micromamba"
   [[ -e "$STATE_DIR/tools" ]] && info "remove the sandboxes' tools env, $STATE_DIR/tools"
   for p in "${to_remove[@]}"; do info "remove $p$( ((keep_root)) && [[ "$p" == "$STATE_DIR" ]] && printf ', all but %s (asked below)' "$root")"; done
+  for p in ${agent_installs[@]+"${agent_installs[@]}"}; do
+    info "remove the agent asb installed, $p ($(agent_versions "$p"); asb --install puts it back)"
+  done
   for p in "${leave_alone[@]}"; do warn "leave alone: $p"; done
+  if [[ -d "$AGENT_STATE_DIR" ]]; then
+    info "keep $AGENT_STATE_DIR (the sandboxes' state: role stores, transcripts; rm -rf it to remove)"
+    ((${#accounts[@]} == 0)) || info "  and the accounts' logins there: ${accounts[*]}"
+  fi
   ((purge_config)) || [[ -d "$CONFIG_DIR" ]] \
     && info "keep $CONFIG_DIR (your allowlist and trust approvals; --purge-config removes it)"
   [[ -d "$HOME/.mitmproxy" ]] \
@@ -353,6 +546,17 @@ uninstall_plan_and_run() {
     rm -f -- "$p"
     ok "removed $p"
   done
+  # A version unpacked from a tarball can hold a read-only directory (a 555 one): made
+  # writable first, as the engine's _as_install_fetch does, and a removal that still
+  # fails is said, naming what is left, never the end of the uninstall.
+  for p in ${agent_installs[@]+"${agent_installs[@]}"}; do
+    chmod -R u+rwX -- "$p" 2>/dev/null || :
+    if rm -rf -- "$p" 2>/dev/null && [[ ! -e "$p" ]]; then
+      ok "removed $p"
+    else
+      warn "could not remove all of $p; left: $(agent_versions "$p") (remove it by hand)"
+    fi
+  done
   for p in "${to_remove[@]}"; do
     if ((skipped)) && [[ "$p" == "$STATE_DIR" ]]; then
       # Keeping the manifest, which lives here: a later run needs it to know
@@ -370,7 +574,14 @@ uninstall_plan_and_run() {
     ok "removed $p"
   done
   section "Done"
-  info "agent-sandbox is gone; the agent itself was not touched."
+  info "agent-sandbox is gone; an agent installed any other way (on your PATH) was not touched."
+  if [[ -d "$AGENT_STATE_DIR" ]]; then
+    if ((${#accounts[@]})); then
+      info "$AGENT_STATE_DIR kept: the sandboxes' state and the accounts' logins."
+    else
+      info "$AGENT_STATE_DIR kept: the sandboxes' state."
+    fi
+  fi
   if ((skipped)); then
     warn "some paths were left alone because they had changed since the install (listed above)."
     warn "Nothing was guessed at: check them, remove by hand what you want gone."
@@ -1670,6 +1881,14 @@ JOIN_EOF
   LAUNCH_TARGET="$APP_DIR/agent-sandbox"
   ok "engine + profiles copied to $APP_DIR (agent-sandbox $(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo '?'), independent of $SCRIPT_DIR)"
 fi
+# The tests run the Agents section alone (its report and the default agent's question),
+# with the engine copied as above: AGENT_SANDBOX_INSTALL_STEP=agents.
+if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == agents ]]; then
+  section "Agents"
+  agents_report
+  choose_default_agent
+  exit 0
+fi
 
 # ----- 2. packages -----
 section "Packages"
@@ -1732,32 +1951,11 @@ else
 fi
 
 # ----- 3. the agents themselves, one per profile -----
-# What `asb <cmd>` will run: for a profile with an install recipe, asb's own install
-# of its agent (asb --install NAME); for any other, the first <cmd> on PATH that is not
-# agent-sandbox itself, resolved -- exactly as the engine looks it up.
+# What `asb <cmd>` will run (agents_report), and the default agent (choose_default_agent).
+# Nothing is installed, updated or removed here: `asb --install AGENT[@VER]` does that.
 section "Agents"
-for f in "${profiles[@]}"; do
-  name=$(basename -- "$(dirname -- "$f")")
-  cmd=$(profile_query "$f" profile_command)
-  if [[ "$cmd" == */* ]]; then
-    # a command the profile ships (sshd's agent, #335): nothing to find on PATH
-    ok "$name: its agent ships with the profile ($(basename -- "$cmd"))"
-  elif sed -n '/^\[agent\]/,/^\[/p' "${f%/*}/agent-sandbox" 2>/dev/null | grep -qE '^[[:space:]]*install[[:space:]]*='; then
-    # an agent asb installs itself (#6): `asb NAME` runs that install, never one on PATH
-    cur="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox/$name/install/current"
-    if [[ -L "$cur" ]]; then
-      ok "$name: asb runs its own install of it, version $(readlink -- "$cur")"
-    else
-      warn "$name: not installed for asb yet"
-      info "asb runs its own install of the agent, never one on PATH: asb --install $name (once)."
-    fi
-  elif bin="$(agent_on_path "$cmd")"; then
-    ok "$name: \`$cmd\` is $bin"
-  else
-    warn "$name: \`$cmd\` is not on PATH"
-    info "Install it, then re-run. asb runs it once \`$cmd\` is on PATH (or: asb --profile $name /path/to/it)."
-  fi
-done
+agents_report
+choose_default_agent
 
 # ----- 4. AppArmor profiles (Ubuntu 24.04+) -----
 section "AppArmor profiles for bwrap (and pasta)"
@@ -3715,14 +3913,14 @@ for name in agent-sandbox asb; do
   fi
 done
 for f in "${profiles[@]}"; do
-  cmd=$(profile_query "$f" profile_command)
-  [[ "$cmd" == */* ]] && continue # shipped with the profile (above)
+  cmd=$(profile_query "$f" profile_command) || continue # failed to load (above)
+  [[ -n "$cmd" && "$cmd" != */* ]] || continue          # no command, or shipped with the profile (above)
   existing="$(command -v "$cmd" 2>/dev/null || true)"
   if [[ -n "$existing" ]] && is_our_launcher "$existing"; then
     warn "\`$cmd\` on PATH is agent-sandbox, not the agent ($existing). Remove it: rm $existing"
   elif [[ -n "$existing" ]]; then
     ok "\`$cmd\` is the agent itself ($existing); a sandboxed launch is: asb $cmd"
-  else
+  elif ! profile_has_recipe "$f"; then # an agent asb installs is not looked for on PATH (Agents, above)
     info "\`$cmd\` is not on PATH; asb runs it once it is (or: asb --profile $cmd /path/to/it)"
   fi
 done
