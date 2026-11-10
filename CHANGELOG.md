@@ -1028,9 +1028,11 @@ names are gone; there are no aliases for removed names before 1.0.
   model's mark (or with CR LF lines) is not completed: its commented environment lines
   are named, to complete by hand. A `--shared-env` run on a file whose setup role a
   no-env `--init` wrote says that role is left over and how to remove it, and leaves it.
-  A re-run covers every numbered instance the file has (`implementer-2` of an earlier
-  `implementer=2`), whatever count it is given, its environment clone included; a section
-  whose commented header was changed by hand keeps all its lines.
+  A re-run completes the numbered instances the model's sections in the file have
+  (`implementer-2` of an earlier `implementer=2`), their environment clones included,
+  and makes none the file lacks -- a count given adds above the highest present, as a
+  first `--init` does, and drops none; a section whose commented header was changed by
+  hand keeps all its lines, each named.
 - **Two roles on one base or one account no longer strip each other's files.** When
   the first of them exited, its cleanup removed the empty mount-point files bwrap had
   created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a

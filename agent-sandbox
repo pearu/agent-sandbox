@@ -11858,7 +11858,7 @@ _as_init() {
     esac
   }
   local rn rk k setup
-  local -A kind=() count=() initial=() handled=() numbered=()
+  local -A kind=() count=() initial=() handled=() numbered=() cgiven=() insts_of=()
   setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' <<<"$tpltext" | head -1)"
   for i in "${!heads[@]}"; do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
@@ -11904,18 +11904,8 @@ _as_init() {
       _as_msg "--init: '$a' -- a count is a number$([[ "${kind[$rn]}" == single ]] && printf ', 0 or 1 for %s, which is a single role' "$rn")"
       return 1
     fi
-    count[$rn]="$v"
+    count[$rn]="$v" cgiven[$rn]=1
   done
-  # A numbered role's instances the file has already (an earlier --init's counts): run
-  # again, --init covers each of them -- its sections, purpose file and environment --
-  # whatever count is given now, as a re-run never removes one.
-  if [[ -f "$proj/.agent-sandbox" ]]; then
-    for rn in "${roles[@]}"; do
-      [[ -n "${numbered[$rn]:-}" ]] || continue
-      v="$(sed -n "s/^\(# \)\{0,1\}\[[a-z-]*:$rn-\([0-9][0-9]*\)\].*/\2/p" "$proj/.agent-sandbox" | sort -n | tail -1)"
-      [[ -n "$v" ]] && ((v > ${count[$rn]})) && count[$rn]="$v"
-    done
-  fi
 
   # The environment's prefix, for {envpath}: a path as given, a name under the conda base
   # that applies (_as_conda_mode: the host's base, or agent-sandbox's conda root).
@@ -12042,6 +12032,43 @@ _as_init() {
       ep_k+=("$k") ep_1[$k]="$r1" ep_s[$k]="$rs"
     done
   }
+  # A numbered role's instances: those this model's marked region of the file has -- a
+  # section header exactly as --init renders it for the instance, commented out or not --
+  # and, above the highest of them, those a count given now adds, as a first --init does;
+  # with no region of the model's, 1..count. None the region lacks is made (no gap is
+  # filled), and none it has is dropped, whatever the count.
+  local regtxt="" rq rn2 ns top
+  if [[ -f "$df" ]]; then
+    regtxt="$(awk -v m="$(basename -- "$model")" '
+      /^# ---- (written|added) by asb --init .* ----$/ {
+        s = $0; sub(/^# ---- (written|added) by asb --init /, "", s); sub(/ ----$/, "", s)
+        k = split(s, q, "/"); on = (q[k] == m); seen = seen || on; next
+      }
+      on
+      END { if (!seen) exit 1 }' "$df")" || regtxt=""
+  fi
+  for rn in "${roles[@]}"; do
+    [[ -n "${numbered[$rn]:-}" ]] || continue
+    ns="" top=0
+    if [[ -n "$regtxt" ]]; then
+      while IFS= read -r rq; do
+        [[ -n "$rq" ]] || continue
+        for i in "${!heads[@]}"; do
+          read -r rn2 k <<<"$(_init_role_of "${heads[i]}")"
+          [[ "${rn2:-}" == "$rn" && "${k:-}" == multi ]] || continue
+          hd="$(_init_render "${heads[i]}" "" "$rn-$rq" "$rq" "" | head -1)"
+          if grep -qxF -e "$hd" -e "# $hd" <<<"$regtxt"; then
+            ns+=" $rq" top=$rq
+            break
+          fi
+        done
+      done < <(sed -n "s/^\(# \)\{0,1\}\[[a-z-]*:$rn-\([0-9][0-9]*\)\].*/\2/p" <<<"$regtxt" | sort -nu)
+      [[ -n "${cgiven[$rn]:-}" ]] || count[$rn]=0
+    fi
+    for ((n = top + 1; n <= ${count[$rn]}; n++)); do ns+=" $n"; done
+    insts_of[$rn]="${ns# }"
+    count[$rn]="$(wc -w <<<"$ns")"
+  done
   # Models compose in one file (#267). The model's role patterns: `name-*` for a role with
   # numbered instances (or named at launch), `name` for a single one. Under `#@ scope =
   # roles` the common block goes to the broadest of those that have an instance.
@@ -12211,7 +12238,7 @@ _as_init() {
         [[ "${a:-}" == "$rn" && "${k:-}" == multi ]] || break
         ((j += 1))
       done
-      for ((n = 1; n <= ${count[$rn]}; n++)); do
+      for n in ${insts_of[$rn]}; do
         inst="$rn-$n" h="${rn:0:1}"
         h="${h^^}$n"
         insts+=("$inst"$'\t'"$h"$'\t'"$rn"$'\t'"$n")
@@ -12344,7 +12371,7 @@ _as_init() {
   done <<<"$marks"
   if ((${#ep_k[@]} && epmine)); then
     local reg=0 sec="" x k1 kk l ephold=0
-    local -A ep_act=() ep_has0=() ep_held=()
+    local -A ep_act=() ep_has0=()
     # ep_hl: per line, 1 in a section whose header is commented out and not as --init
     # wrote it (changed by hand): such a section keeps every line as it is.
     local -a ep_lines=() ep_hl=()
@@ -12355,7 +12382,7 @@ _as_init() {
       elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
         sec="${BASH_REMATCH[2]}" ephold=0
         if ((reg)) && [[ -n "${BASH_REMATCH[1]}" && -z "${ep_1["$sec"$'\t'"$l"]+x}" ]]; then
-          ephold=1 ep_held["$sec"]=1
+          ephold=1
         fi
       fi
       ep_lines+=("$l") ep_hl+=("$ephold")
@@ -12387,8 +12414,6 @@ _as_init() {
         fi
       fi
       ((${#ep_has0[@]})) || continue # written with an environment: _init_missing says it
-      # a line of a section whose header is left: the header says it, once
-      [[ -n "${ep_held["$sec"]:-}" && "$x" != "$sec" ]] && continue
       if [[ "$x" == "$sec" ]]; then ep_left+=("$sec"); else ep_left+=("$sec $x"); fi
       ep_skip["$sec"$'\t'"$x"]=1
     done

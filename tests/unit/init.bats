@@ -381,7 +381,7 @@ init() {
   [ "$(tail -3 "$df")" = $'# mine\n[allow:gh-*]\nexample.org' ]
 }
 
-@test "--env completing a no-env file: a section whose header was changed by hand keeps every line, said once (github, roles)" {
+@test "--env completing a no-env file: a section whose header was changed by hand keeps every line, each said (github, roles)" {
   mkdir -p "$H/base/envs" "$H/conda/envs/x-dev/conda-meta"
   local df="$PROJ/.agent-sandbox"
   init -- github
@@ -391,9 +391,9 @@ init() {
   init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
   [ "$status" -eq 0 ]
   grep -qx '# \[conda:gh-\*\]   # ours' "$df"
-  [[ "$output" == *"--init: 1 environment line not completed"*$'\n'"    [conda:gh-*]"$'\n'* ]]
-  [ "$(grep -c '^    \[conda:gh-\*\]' <<<"$output")" -eq 1 ]
-  grep -qx '# prefix = ENVPATH .*' "$df" # its line stays with it
+  [[ "$output" == *"--init: 2 environment lines not completed"*$'\n'"    [conda:gh-*]"$'\n'"    [conda:gh-*] prefix = $H/base/envs/dev"$'\n'* ]]
+  [ "$(grep -c '^    \[conda:gh-\*\]$' <<<"$output")" -eq 1 ] # the header once
+  grep -qx '# prefix = ENVPATH .*' "$df"                      # its line stays with it
   run ! grep -q "^prefix = " "$df"
   grep -q "^$H/base/envs/dev/ = copy-on-write" "$df" # the rest completed
   rm -rf "$df" "$PROJ/.asb"
@@ -403,7 +403,8 @@ init() {
   grep -qx '# \[conda:supervisor\]   # ours' "$df"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
   [ "$status" -eq 0 ]
-  [ "$(grep -c '^    \[conda:supervisor\]$' <<<"$output")" -eq 2 ] # the other copy completed, this one left
+  [ "$(grep -c '^    \[conda:supervisor\]$' <<<"$output")" -eq 2 ]  # the other copy completed, this one left
+  [[ "$output" == *$'\n'"    [conda:supervisor] write = 1"$'\n'* ]] # with its line
   grep -qx "prefix = $H/conda/envs/x-dev .*" "$df"
   grep -qx '# write = 1' "$df" # stays under its header, not under [connect:supervisor]
   run ! grep -qx 'write = 1' "$df"
@@ -426,6 +427,41 @@ init() {
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
   [ "$status" -eq 0 ]
   cmp "$df" "$H/rerun" # as a first --init implementer=2 --env writes it
+}
+
+@test "--env completing a no-env roles file makes no instance the file lacks: a comment naming one, a removed one" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles
+  [ "$status" -eq 0 ]
+  printf '# [connect:implementer-7]   # a note of mine\n' >>"$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$df")" -eq 1 ]
+  [ ! -e "$PROJ/.asb/impl/2" ]
+  [ ! -e "$PROJ/.asb/impl/7" ]
+  [ "$(cat "$H/conda.log")" = "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env" ]
+  # implementer-2 of three, removed by hand: not made again, not cloned for
+  rm -rf "$df" "$PROJ/.asb" "$H/conda.log"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles implementer=3
+  [ "$status" -eq 0 ]
+  sed -i '/^\[connect:implementer-2\]$/,/^\[connect:implementer-3\]$/{/^\[connect:implementer-3\]$/!d}' "$df"
+  run ! grep -q 'implementer-2\]' "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  run ! grep -q 'implementer-2\]' "$df"
+  grep -qx '\[conda:implementer-3\].*' "$df"
+  [ "$(sort "$H/conda.log" | paste -sd'|')" = "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env|create -q -y --clone x-dev -p $PROJ/.asb/impl/3/.env" ]
+  # a count given adds above the highest present, as a first --init does; never fills the gap
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=4 --env x-dev
+  [ "$status" -eq 0 ]
+  has_section '[connect:implementer-4]' "$df"
+  run ! grep -q 'implementer-2\]' "$df"
+  # and a count of 0 drops none
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles implementer=0 --env x-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already has every section for these roles; nothing added to it"* ]]
+  grep -qx '\[conda:implementer-4\].*' "$df"
 }
 
 @test "a first --init github --env in a file the roles model wrote without one: nothing said about the roles model's lines" {
