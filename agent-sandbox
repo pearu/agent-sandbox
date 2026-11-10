@@ -3238,6 +3238,10 @@ _as_keeper_policy() {
   # moves `claude` to a new binary, an idle keeper is replaced and a busy one refuses,
   # which is the rule for every other part of a running role's policy.
   if ((all || ! _do_exec)); then _kp agent "$profile_bin" "this launch's agent"; fi
+  # Its version, when it is asb's install of it (#6, D8), `-` when not: recorded, never
+  # compared (the binary is), for a join and --status to say, and for the refusal above
+  # to name both versions.
+  if ((all)); then _kp version "${_agent_version:--}" "this launch's agent"; fi
   unset -f _kp
   return 0
 }
@@ -3279,7 +3283,12 @@ _as_keeper_admit() {
     fi
     have="${kv[$key]-}"
     [[ "$have" == "$val" ]] && continue
-    [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running with ${key} = ${have:-(none)}, and $where asks for '$val'. A running role's policy cannot change: exit what is joined into it (or \`$(_as_self_cmd --role "${_role:-default}" --shutdown)\` from any terminal, when its own is out of reach), then launch again."
+    # The agent's binary: both versions named when both are asb's installs (#6).
+    local hv="" vv=""
+    if [[ "$key" == agent && -n "${kv[version]:-}" && "${kv[version]}" != - && -n "${_agent_version:-}" ]]; then
+      hv=" ($profile ${kv[version]})" vv=" ($profile $_agent_version)"
+    fi
+    [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running with ${key} = ${have:-(none)}$hv, and $where asks for '$val'$vv. A running role's policy cannot change: exit what is joined into it (or \`$(_as_self_cmd --role "${_role:-default}" --shutdown)\` from any terminal, when its own is out of reach), then launch again."
     return 1
   done < <(_as_keeper_policy set)
   [[ "$(cat "$kd/dotfile" 2>/dev/null)" == "$(_as_keeper_dotfile_hash)" ]] || _keeper_dotfile_changed=1
@@ -3648,6 +3657,9 @@ _as_keeper_start() {
   # (AGENT_SANDBOX_SERVE_TURN) leaves it as it is.
   if [[ -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
     printf '%s\t%s\n' "$profile" "${_acct_name:-}" >"$sb/account" || :
+    # Its agent's version (#6, D8): PROFILE<TAB>VERSION, the version of asb's install it
+    # was built on, VERSION empty for an agent named by path (--status, --list).
+    printf '%s\t%s\n' "$profile" "${_agent_version:-}" >"$sb/version" || :
   fi
   # The session's own summary line (#314), bound read-write when the briefing is on.
   mkdir -p -- "$sb/summary" || return 1
@@ -3970,6 +3982,7 @@ _as_role_status() {
       printf "role '%s' of %s: not running; its stores (%s) are at %s\n" "${_role:-default}" "$_proj" \
         "$(du -sh -- "$sb" 2>/dev/null | cut -f1)" "$sb"
       _as_agent_record "$sb"
+      _as_version_record "$sb" stopped
       _as_account_record "$sb" stopped
     else
       printf "role '%s' of %s: not running, and nothing stored\n" "${_role:-default}" "$_proj"
@@ -3982,6 +3995,7 @@ _as_role_status() {
   now="$(_as_keeper_dotfile_hash)"
   printf "role '%s' of %s: running since %s (supervisor pid %s)\n" "${_role:-default}" "$_proj" "$since" "$spid"
   _as_agent_record "$sb"
+  _as_version_record "$sb" running
   _as_account_record "$sb" running
   if [[ "$dot" == - ]]; then
     printf '  dot-file: none approved when it started'
@@ -4051,6 +4065,25 @@ _as_agent_record() {
     *) where="$from" ;;
   esac
   printf '  agent: %s -- %s\n' "$cmd" "$where"
+}
+
+# _as_version_record SB running|stopped -- --status's line for the version of the role's
+# agent (#6, D8), when it is asb's install of it: the running keeper's (its policy's
+# `version`), else the store's record (<sb>/version: PROFILE<TAB>VERSION), named as a
+# launch names it (_as_version_said). Nothing when there is none, or it is not this
+# profile's, or not a version. Uses the engine's profile.
+# shellcheck disable=SC2154
+_as_version_record() {
+  local sb="$1" p="" v="" _vs_line="" _vs_pin=""
+  if [[ "$2" == running ]]; then
+    p="$profile"
+    v="$(awk -F'\t' '$1 == "version" { print $2; exit }' "$sb/keeper/policy" 2>/dev/null)" || v=""
+  elif [[ -f "$sb/version" && ! -L "$sb/version" ]]; then
+    IFS=$'\t' read -r p v <"$sb/version" 2>/dev/null || :
+  fi
+  [[ "$p" == "$profile" && "$v" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]] || return 0
+  _as_version_said "$p" "$v" || :
+  printf '  version: %s\n' "$_vs_line"
 }
 
 # _as_account_record SB running|stopped -- --status's line for the role's account (#355):
@@ -4132,7 +4165,8 @@ _as_names_profile() {
 # NO_COLOR is set (no-color.org: to a non-empty value); nothing else is coloured. One
 # line at the end names the command that resumes a role.
 # THE AGENT AND ITS ACCOUNT (#355) end the role's line: `claude, account work` or
-# `claude, base`, from the store's account record (none: the base), and, within 7 days
+# `claude, base` -- `claude 2.1.321, base` when the store records the version of asb's
+# install it last ran (#6) --, from the store's account record (none: the base), and, within 7 days
 # of the login's expiry (D13), `, login due in N days`, or past it `, login expired: `
 # and what renews it. The expiry is read through the profile's [agent] account-expiry
 # (_as_login_expiry), from the account's directory or the base.
@@ -4141,9 +4175,9 @@ _as_role_list() {
   local scope="$1" word="${2:-}" state p sb st n f pid start only="" rc=0 color=0 skip
   [[ -t 1 && -z "${NO_COLOR:-}" ]] && color=1
   local _keeper_target="" _keeper_spid=""
-  local -a rows=() acct=() xpairs=() xrow=() xms=() fl=()
+  local -a rows=() acct=() xpairs=() xrow=() xms=() fl=() vers=()
   local -A pf_base=() pf_xfile=() pf_xkey=() pf_renew=()
-  local ff rp an i _due _due_date _due_days
+  local ff rp an vp vv i _due _due_date _due_days
   state="$(_as_state_dir)"
   # The resolved path, as a launch keys its stores: its $cwd, which _as_project_dir
   # reads, is `pwd -P`, and is not set yet here, where that helper would give $PWD.
@@ -4189,6 +4223,10 @@ _as_role_list() {
         rp=""
         [[ -f "$sb/account" && ! -L "$sb/account" ]] && IFS=$'\t' read -r rp an <"$sb/account" 2>/dev/null || :
       fi
+      # The version record (#6, D8): PROFILE<TAB>VERSION, shown after the profile's name.
+      vp="" vv=""
+      [[ -f "$sb/version" && ! -L "$sb/version" ]] && IFS=$'\t' read -r vp vv <"$sb/version" 2>/dev/null || :
+      [[ "$vp" == "$p" && "$vv" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]] || vv=""
       if [[ "$rp" != "$p" ]] || { [[ -n "$an" ]] && ! _as_role_name_ok "$an"; }; then
         acct+=("") xrow+=(-1)
       else
@@ -4206,7 +4244,7 @@ _as_role_list() {
           xrow+=(-1)
         fi
       fi
-      rows+=("$p" "$sb" "$st" "")
+      rows+=("$p" "$sb" "$st" "") vers+=("$vv")
     done
   done
   # Every expiry in one python3 run, then each role line's agent and account.
@@ -4215,8 +4253,8 @@ _as_role_list() {
     [[ -n "${acct[i]}" ]] || continue
     p="${rows[i * 4]}" an="${acct[i]}"
     [[ "$an" == - ]] && an=""
-    f="$p, account $an"
-    [[ -n "$an" ]] || f="$p, base"
+    f="$p${vers[i]:+ ${vers[i]}}, account $an"
+    [[ -n "$an" ]] || f="$p${vers[i]:+ ${vers[i]}}, base"
     _due=""
     ((xrow[i] < 0)) || _as_login_due "${xms[xrow[i]]:-}"
     case "$_due" in
@@ -7516,6 +7554,17 @@ _as_account_login() {
       return 2
     fi
   done
+  # THE AGENT FIRST (#6): a profile whose agent asb installs, with nothing installed (no
+  # install/current at all), gets its pin installed now, before anything of the account
+  # is made, so a failed download leaves nothing. The login is the user's word, so
+  # nothing is asked; the installer says the size and host. A current that is there but
+  # broken is not mended: the login's launch refuses it, naming it.
+  local _recipe_bin="" _recipe_cmd=""
+  _as_profile_recipe "$p"
+  if [[ -n "$_recipe_bin" && ! -e "$st/$p/install/current" && ! -L "$st/$p/install/current" ]]; then
+    _as_msg "--account-login: $p is not installed for agent-sandbox; installing its pinned version first"
+    _as_agent_install "$p" || return $?
+  fi
   mkdir -p -- "$st/$p/accounts" || return 1
   if [[ ! -e "$d" ]]; then
     mkdir -m 700 -- "$d" || return 1
@@ -7716,7 +7765,10 @@ _as_install_listed() {
 # checked against the SHA-256 the resolver gives (so the resolver, which reads the
 # vendor's metadata, still runs), or against SUM, from --sha256, without running the
 # resolver: fully offline. Refusals are 2, failures 1. Uses profile_dir and invoked by
-# dynamic scope.
+# dynamic scope. With the caller's _as_install_ask set (a launch at a terminal whose agent
+# is not installed, _as_install_offer), nothing is downloaded or moved before a y to one
+# question, which names the size and host the resolver gives (or, for a version there
+# already, its place); any other answer returns 3, with nothing made.
 # shellcheck disable=SC2154
 _as_agent_install() {
   local spec="$1" from="${2:-}" given="${3:-}" agent ver="" p st root dest x bin path="" kind="" cmd=""
@@ -7804,6 +7856,9 @@ _as_agent_install() {
       _as_msg "--install: $dest is there and has no executable $bin; remove it, then run this again"
       return 2
     fi
+    if ((${_as_install_ask:-0})); then
+      _as_install_yes "make $p $ver, installed already at $(_as_tilde "$dest") (no download), $p's current version?" || return 3
+    fi
     shown="installed already at $(_as_tilde "$dest/$bin") (no download)"
     [[ -z "$from" ]] || shown="installed already at $(_as_tilde "$dest/$bin") ($from not used)"
   elif ((has_sum)); then
@@ -7820,6 +7875,8 @@ _as_agent_install() {
     rpath="$PATH"
     slot="$(_as_tools_slot)"
     [[ -n "$slot" && -d "$slot/engine-bin" ]] && rpath="$slot/engine-bin:$PATH"
+    # Asked at a launch: the resolver reads the vendor's metadata, a network call.
+    ((! ${_as_install_ask:-0})) || _as_msg "$p is not installed for agent-sandbox; looking up $p $ver, its pinned version..."
     out="$(PATH="$rpath" "$resolver" "$ver" "$plat" ${base:+"$base"})" || rc=$?
     if ((rc)); then
       _as_msg "--install: profile '$p''s resolver could not say which file is $p $ver for $plat (exit $rc); nothing installed"
@@ -7831,12 +7888,19 @@ _as_agent_install() {
       _as_msg "--install: profile '$p''s resolver printed '$out', not URL<TAB>SHA256<TAB>SIZE; nothing installed"
       return 1
     fi
+    host="$url"
+    [[ "$url" =~ ^https://([^/]+) ]] && host="${BASH_REMATCH[1]}"
+    if ((${_as_install_ask:-0})); then
+      if [[ -n "$size" ]]; then
+        _as_install_yes "install $p $ver ($(((size + 500000) / 1000000)) MB from $host)?" || return 3
+      else
+        _as_install_yes "install $p $ver (size not stated, from $host)?" || return 3
+      fi
+    fi
     mkdir -p -- "$root" || return 1
     if [[ -n "$from" ]]; then
       _as_msg "--install: $p $ver for $plat from $from, checked against the SHA-256 its resolver gives"
-    else
-      host="$url"
-      [[ "$url" =~ ^https://([^/]+) ]] && host="${BASH_REMATCH[1]}"
+    elif ((! ${_as_install_ask:-0})); then
       if [[ -n "$size" ]]; then
         _as_msg "--install: downloading $p $ver for $plat, $(((size + 500000) / 1000000)) MB, from $host"
       else
@@ -7852,6 +7916,61 @@ _as_agent_install() {
   fi
   _as_msg "--install: $p $ver is $shown, and is now $p's current version$untested"
   return 0
+}
+
+# _as_install_yes QUESTION -- ask QUESTION at the terminal, `[y/N]`: 0 for a yes.
+_as_install_yes() {
+  local ans=""
+  printf 'agent-sandbox: %s [y/N] ' "$1" >&2
+  read -r ans || true
+  case "$ans" in
+    y | Y | yes | YES) return 0 ;;
+  esac
+  return 1
+}
+
+# _as_install_offer PROFILE -- a launch's agent asb installs and has not (#6, D9): at a
+# terminal, on the host, ask once to install the profile's pin, and on a yes install it
+# (_as_agent_install, asked). Only when there is no install/current at all: a current
+# that is there but broken is never mended here, and _as_installed_bin refuses it, naming
+# it. Without a terminal nothing is asked and nothing blocks: _as_installed_bin then
+# refuses with the line that installs it, as it does after a no. Always returns 0.
+_as_install_offer() {
+  local cur _as_install_ask=1
+  cur="$(_as_state_dir)/$1/install/current"
+  [[ ! -e "$cur" && ! -L "$cur" ]] || return 0
+  _as_has_terminal || return 0
+  ! _as_maybe_inside || return 0
+  _as_agent_install "$1" || :
+  return 0
+}
+
+# _as_version_said PROFILE VERSION -- set _vs_line to how VERSION of PROFILE's agent, an
+# asb install (#6, D8), is named, and _vs_pin to the profile's pin: `PROFILE VERSION`
+# when it is the pin, or the profile pins none; else `PROFILE, running VERSION, pinned
+# PIN`; `(untested with asb)` after VERSION when the versions table does not list it.
+# Returns 1 when VERSION is not the pin or is untested: a launch says that whatever the
+# verbosity. The table is read quietly (what it gets wrong is --install's to say). Uses
+# the engine's profile_dir.
+# shellcheck disable=SC2034,SC2030,SC2031 # in the subshell only
+_as_version_said() {
+  local p="$1" v="$2" u=""
+  local -a vs=()
+  mapfile -t vs < <(
+    _as_msg() { :; }
+    profile="$p" profile_version_pin="" profile_versions=()
+    _as_profile_versions "$profile_dir/$p/versions"
+    printf '%s\n' "${profile_version_pin:--}" ${profile_versions[@]+"${profile_versions[@]}"}
+  )
+  _vs_pin="${vs[0]:--}"
+  [[ "$_vs_pin" != - ]] || _vs_pin=""
+  _as_install_listed "$v" ${vs[@]+"${vs[@]:1}"} || u=" (untested with asb)"
+  if [[ -n "$_vs_pin" && "$v" != "$_vs_pin" ]]; then
+    _vs_line="$p, running $v$u, pinned $_vs_pin"
+    return 1
+  fi
+  _vs_line="$p $v$u"
+  [[ -z "$u" ]]
 }
 
 # _as_host_path_of INSIDE [DEPTH] -- the host path behind INSIDE, for a mount point bwrap
@@ -12782,7 +12901,7 @@ _as_recipe_note() {
 # _as_not_installed PROFILE [WHY] -- the refusal of a launch whose profile's agent asb
 # installs and has not (#6): the one line that installs it, after WHY (what is wrong
 # with the install, when there is one). Returns 1. The one place a launch's "not
-# installed" is said, and where a launch at a terminal could ask instead. Uses the
+# installed" is said; a launch at a terminal asks first (_as_install_offer). Uses the
 # engine's invoked.
 _as_not_installed() {
   _as_msg "$1 is not installed for agent-sandbox${2:+ ($2)}: install it, ${invoked:-asb} --install $1"
@@ -12846,6 +12965,8 @@ _as_installed_bin() {
 # THE ONE PLACE a word becomes the agent's binary: a launch, a join, a verb, --serve and
 # --summarize (which run the engine again), --account-login (a launch), --roles' check of
 # every role, and the default profile's candidates (_as_default_found) all come here.
+# Only a launch sets _as_offer_install: an agent asb installs and has not is then offered
+# at a terminal (_as_install_offer) before it is refused; everything else refuses.
 # Reads the caller's engine, invoked and profile by dynamic scope.
 # shellcheck disable=SC2154
 _as_resolve_bin() {
@@ -12865,6 +12986,8 @@ _as_resolve_bin() {
         _as_msg "'$w' is not profile $profile's command, and $profile runs the agent asb installs (${invoked:-asb} --install $profile), never one from PATH; run another binary by its path: ${invoked:-asb} --profile $profile /path/to/$w"
         return 1
       fi
+      # A launch at a terminal may install it first (the caller's _as_offer_install).
+      ((! ${_as_offer_install:-0})) || _as_install_offer "$profile"
       _as_installed_bin "$profile" "$_recipe_bin"
       return
     fi
@@ -14491,7 +14614,22 @@ agent_sandbox() (
   _as_recipe_note "$profile" "$profile_command" ${profile_install[@]+"${profile_install[@]}"}
   local _rb_role=""
   ((_cmd_typed)) || [[ -z "$_agent_cmd_from" ]] || _rb_role="${_ag_role:-}"
+  # A launch -- not --exec, a verb, --status, --shutdown, --delete, --reset, or an engine
+  # turn -- whose agent asb installs and has not asks to install it, at a terminal (#6,
+  # D9); everything else refuses with the line that installs it.
+  local _as_offer_install=0 _ov
+  if ((! _do_exec && ! _do_status && ! _do_shutdown && ! _do_delete)) && [[ -z "$_reset_connection" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
+    _as_offer_install=1
+    for _ov in ${profile_verbs[@]+"${profile_verbs[@]}"}; do
+      [[ "${1:-}" != "$_ov" ]] || _as_offer_install=0
+    done
+  fi
   ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
+  _as_offer_install=0
+  # The version of the agent asb installed that this launch runs (#6, D8): its version
+  # directory's name; empty for a path, or for a profile asb does not install for.
+  local _agent_version=""
+  [[ -z "${profile_bin_dir:-}" ]] || _agent_version="${profile_bin_dir##*/}"
   # ---- --resume (#355): the profile's resume words, after the agent's own ----
   # Here, past --roles (whose panes each take --resume themselves) and before anything
   # reads the agent's arguments: --preset none, the verbs, the briefing and its first
@@ -15397,6 +15535,16 @@ agent_sandbox() (
       elif [[ -n "$_kacct" ]]; then
         _as_info "account: the base, the running role's"
       fi
+      # The agent's version is the keeper's too (#6, D8): said as a launch says it.
+      local _kver _vs_line="" _vs_pin=""
+      _kver="$(awk -F'\t' '$1 == "version" { print $2; exit }' "$_keeper_sb/keeper/policy" 2>/dev/null)" || _kver=""
+      if [[ -n "$_kver" && "$_kver" != - ]] && ((! _do_exec && ! _do_verb)); then
+        if _as_version_said "$profile" "$_kver"; then
+          _as_info "agent: $_vs_line, the running role's"
+        else
+          _as_msg "agent: $_vs_line, the running role's"
+        fi
+      fi
       local _jrc=0
       ((_do_exec)) || ! declare -F profile_before_join >/dev/null || profile_before_join "$@"
       _as_keeper_join "$_keeper_sb" "${_run_argv[@]}" || _jrc=$?
@@ -15437,6 +15585,17 @@ agent_sandbox() (
       _as_keeper_unlock
       return 2
     }
+    # The agent's version (#6, D8): said with --verbose when it is the pin, always when not.
+    if [[ -n "$_agent_version" ]] && ((! _do_exec)); then
+      local _vs_line="" _vs_pin=""
+      if _as_version_said "$profile" "$_agent_version"; then
+        _as_info "agent: $_vs_line"
+      elif [[ -n "$_vs_pin" && "$_agent_version" != "$_vs_pin" ]]; then
+        _as_msg "agent: $_vs_line ($invoked --install $profile moves to the pin)"
+      else
+        _as_msg "agent: $_vs_line"
+      fi
+    fi
     # THE ACCOUNT THE ROLE'S STORES LAST RAN ON (#355): the record the previous launch
     # left, read before this one's replaces it (_as_keeper_start). A missing record is
     # the base. When it names another account than this launch's, the profile is told

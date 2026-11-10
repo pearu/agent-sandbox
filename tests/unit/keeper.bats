@@ -159,7 +159,7 @@ other_agent() { # a second claude, as an update or another install would give
   ln -sfn 2.1.301 "${STUB_AGENT_DIR%/*}/current"
   run_engine -- asb claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *"running with agent = $BIN, and this launch's agent asks for '$new/claude'"* ]]
+  [[ "$output" == *"running with agent = $BIN (claude 2.1.300), and this launch's agent asks for '$new/claude' (claude 2.1.301)"* ]]
   [ ! -s "$H/join" ]
   release_bg
 }

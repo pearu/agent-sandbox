@@ -19,11 +19,28 @@ launches run (`install/current`). A running role keeps the one it started with: 
 `asb --install` moves `current`, a launch of that role by name is refused while the
 role is busy (something is joined to it), naming the version it runs and the one asked
 for -- finish or `asb --role R --shutdown` it first -- and an idle role's sandbox is
-replaced by one running the new version. A new
-asb release may pin a newer version: run `asb --install claude` after updating asb.
+replaced by one running the new version.
+
+**Moving to a new pin.** An asb release may pin a newer version: `install.sh` never
+touches installed agents, so after it brings the new pin, run `asb --install claude`
+(no version: the pin) once. Until then launches go on running the version installed
+before, and every launch line says so, whatever the verbosity:
+
+```
+agent-sandbox: agent: claude, running 2.1.300, pinned 2.1.321 (asb --install claude moves to the pin)
+```
+
+(`(untested with asb)` follows the running version when the profile's table does not
+list it). With the pin installed the line is `agent: claude 2.1.321`, shown only with
+`--verbose`. `asb --status` names the version each role last ran.
+
+With nothing installed at all, `asb claude` at a terminal asks once to install the
+pin (`install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`); without a
+terminal it refuses with the line that installs it.
 
 **Upgrading from an asb before #6:** those ran whatever `claude` your PATH found. Now
-`asb claude` refuses until you run `asb --install claude` once, and says so. Your own
+`asb claude` asks to install it at a terminal, and otherwise refuses until you run
+`asb --install claude` once, saying so. Your own
 Claude Code is not touched, and `claude` at your shell is still it, updated the way
 its installer says (`claude update`). A binary of your own still runs in the sandbox
 by its path: `asb --profile claude /path/to/claude`.
