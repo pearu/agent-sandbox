@@ -356,7 +356,7 @@ no_tmux_path() {
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
   run_engine TMUX_DUMP="$TM" -- asb --roles a b --account b=nosuch
   [ "$status" -eq 2 ]
-  [[ "$output" == *"the account 'nosuch' (--account): there is no $acc/nosuch for the agent claude: log it in with asb --account-login nosuch claude"*"--roles: role 'b' cannot start; nothing was opened"* ]]
+  [[ "$output" == *"the account 'nosuch' (--account): there is no $acc/nosuch for the agent claude: log it in with asb --agent claude --account nosuch --login"*"--roles: role 'b' cannot start; nothing was opened"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
   agents '[agent]' 'command = claude' '[agent:b]' 'account = gone'
   run_engine TMUX_DUMP="$TM" -- asb --roles a b

@@ -241,7 +241,7 @@ takes the code you paste (not shown as you paste it); its login lasts about a mo
 and the same line logs it in again:
 
 ```
-asb --account-login work claude
+asb --agent claude --account work --login
 ```
 
 Then give the project a default and the heavy role the other one:

@@ -1221,8 +1221,8 @@ suffixed section an unsuffixed one's; it is never a directory's name. NAME is a 
 name's shape (a letter or digit, then letters, digits, `.`, `_` or `-`). It is resolved
 under the role's agent: `work` is `accounts/claude/work` for a claude role and
 `accounts/codex/work` for a codex role. `--exec` counts: its sandbox is the role's. A
-launch is refused when the directory is missing (it names `asb --account-login NAME
-AGENT`, which logs an account in), is a symlink or is not a directory; for a profile
+launch is refused when the directory is missing (it names `asb --agent AGENT --account
+NAME --login`, which logs an account in), is a symlink or is not a directory; for a profile
 with no `account-paths`; and under `--preset native` or `--preset none`, which bind no
 account's directory (`--account -` runs the role on the base there). Under `--preset
 none` only an approved file is read for this: an unapproved file is not policy, so an
@@ -1271,8 +1271,17 @@ account; one under a symlink made again, wherever its target is); empty files am
 them are removed after the launch, empty directories and the symlinks made again
 stay.
 
-**Logging an account in: `asb --account-login NAME AGENT`.** Alone on the line, at
-your own shell (refused inside a sandbox). For an agent asb installs
+**Logging an account in: `asb [--agent AGENT] --account NAME --login`.** At your own
+shell (refused inside a sandbox), with nothing else on the line: `--login` once, and at
+most one `--agent` and one `--account`, in their bare forms -- a login has no role, so
+`--agent ROLE=AGENT`, `--account ROLE=NAME` and their glob forms are refused, as is a
+command word (the agent is named with `--agent`). AGENT, when not named, is the default
+agent, as a role verb's: the only one asb can run, else the one `asb --set-default-agent
+AGENT` set; with several and none set, the login is refused, naming both ways to name
+one. NAME is required for now: a login to the base (no `--account`, or `--account -`)
+is refused, because the base is still the agent's own native directory (claude:
+`~/.claude`), your own login, which you renew with the agent itself (claude: `/login`
+inside a session). For an agent asb installs
 ([profiles.md](profiles.md#the-install-recipe)) with nothing installed yet, it first
 installs the profile's pinned version, as `asb --install AGENT` does and without
 asking (the login is your word), saying the size and the host; that happens before
@@ -1303,14 +1312,13 @@ project is never listed by `--list` or `--list-all`. Last it says whether the ac
 has its login file (the profile's first `account-paths` entry: claude's
 `.credentials.json`), naming its path, never reading it. The exit status is the
 login's when it failed, 1 when there is no login file, else 0. Refused for a bad NAME
-(an account name's shape; `-`, the base, logs in with `/login` inside a session), an
-AGENT that names no profile, and a profile with no `account-paths` or no `login` key.
+(an account name's shape), an AGENT that names no profile, and a profile with no `account-paths` or no `login` key.
 An account's login lasts about a month; run the same line again to renew it.
 
 **When a login is due.** `asb --list` ends each role's line with its agent and account,
 from the role's record (`claude, account work`, or `claude, base` -- also for a store
 from before the record), and adds, within 7 days of the login's expiry, `, login due in
-N days`, and past it `, login expired: asb --account-login work claude` (for the base,
+N days`, and past it `, login expired: asb --agent claude --account work --login` (for the base,
 `run` and the profile's `[agent] login-renew`, claude's `run /login`; a profile without
 that key names no renewal, the clause ends at `expired`); `--list-all` the same. `asb --role R --status` prints the account with its
 directory and the expiry date always: `account: work (~/.local/state/agent-sandbox/claude/accounts/work),
@@ -1319,7 +1327,7 @@ login valid until 2026-12-07` (or `login due DATE (in N days): ...`, `login expi
 record. The briefing tells the session which agent and account it runs as (`You run as
 claude on the account 'work'`, or `on the user's own login`), and within the same
 window when the login is due and the command that renews it, which is the user's to
-run (`asb --account-login work claude`; for the base the profile's `login-renew`,
+run (`asb --agent claude --account work --login`; for the base the profile's `login-renew`,
 claude's `/login`, and with none the sentence ends at the date). The expiry is read through the profile's `[agent] account-expiry` (claude: the
 refresh token's `claudeAiOauth.refreshTokenExpiresAt` in `.credentials.json`, the
 account's or the base's): that one number and nothing else of the file, never through

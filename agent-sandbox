@@ -341,9 +341,16 @@
 #                         when the directory is missing, a symlink or not one, for
 #                         a profile with no [agent] account-paths, and under
 #                         --preset native or none.
-#   --account-login NAME AGENT
-#                         alone on the line, host only (#355): make the account
-#                         NAME's directory for AGENT, <state>/AGENT/accounts/NAME/
+#   [--agent AGENT] --account NAME --login
+#                         with nothing else on the line, host only (#355): AGENT,
+#                         else the default agent (as a role verb's: the only one
+#                         asb can run, else --set-default-agent's; refused with
+#                         none), and NAME, the bare forms only (a login has no
+#                         role: ROLE= and GLOB= forms refused), each at most
+#                         once. The base (no --account, or --account -) is
+#                         refused while it is the agent's native directory.
+#                         Make the account NAME's directory for AGENT,
+#                         <state>/AGENT/accounts/NAME/
 #                         (mode 700; an existing one is a re-login), run AGENT's
 #                         login there -- the profile's [agent] login (claude: auth
 #                         login) -- in the foreground, as the role account-login
@@ -587,16 +594,21 @@ Engine flags (before CMD):
                         is the agent's state directory, bound where its base
                         is; NAME `-` is the base. The same forms, precedence
                         and refusals as --agent; --exec counts. Refused while
-                        the directory is missing (asb --account-login NAME
-                        AGENT), and under --preset native or none
-  --account-login NAME AGENT
-                        log the account NAME of AGENT in, alone on the line,
-                        host only: makes ~/.local/state/agent-sandbox/AGENT/accounts/NAME/
+                        the directory is missing (asb --agent AGENT --account
+                        NAME --login), and under --preset native or none
+  [--agent AGENT] --account NAME --login
+                        log the account NAME of AGENT in, host only, with
+                        nothing else on the line: makes
+                        ~/.local/state/agent-sandbox/AGENT/accounts/NAME/
                         (mode 700; again: a re-login) and runs the agent's own
                         login there (claude: claude auth login), sandboxed,
                         from a scratch project with no dot-file, under
                         --preset isolated; then says whether the account has
-                        its login file. Exit 1 when it has none
+                        its login file. Exit 1 when it has none. AGENT: the
+                        default agent (--set-default-agent) when not named.
+                        The base (no --account, or --account -) is refused
+                        for now: it is your agent's own native directory.
+                        No role: the ROLE= forms are refused
   --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]
                         install AGENT for asb, alone on the line, host only:
                         VERSION (default: the profile's pinned one; one not in
@@ -4182,8 +4194,8 @@ _as_role_list() {
   # The resolved path, as a launch keys its stores: its $cwd, which _as_project_dir
   # reads, is `pwd -P`, and is not set yet here, where that helper would give $PWD.
   [[ "$scope" == all ]] || only="$(_as_path_slug "$(pwd -P)")"
-  # --account-login's scratch project (#355) holds no session anyone resumes.
-  skip="$(_as_path_slug "$(realpath -m -- "$(_as_account_login_scratch)")")"
+  # --login's scratch project (#355) holds no session anyone resumes.
+  skip="$(_as_path_slug "$(realpath -m -- "$(_as_login_scratch)")")"
   for p in "$profile_dir"/*/profile.sh; do
     [[ -r "$p" ]] || continue
     p="$(basename -- "$(dirname -- "$p")")"
@@ -5183,7 +5195,7 @@ _as_no_proxy() { printf '127.0.0.1,localhost'; }
 # profile_session_args, when the profile has it, with the agent's argv and `_preset` set
 # to PRESET (the sandbox's: native, isolated, inherit or shared), for every launch and
 # join that runs the agent as a session -- the briefing on or off, a --serve or
-# --summarize turn and --account-login included; never for --exec (the caller's own
+# --summarize turn and --login included; never for --exec (the caller's own
 # command) or a verb (no session). The profile fills profile_session_argv, which the
 # caller declared and puts first, before the briefing's arguments and the agent's own.
 _as_session_args() {
@@ -5349,7 +5361,7 @@ _as_briefing_agent() {
   esac
   if [[ "$_due" == due || "$_due" == expired ]]; then
     if [[ -n "$n" ]]; then
-      s+="; the user renews it with asb --account-login $n $profile"
+      s+="; the user renews it with asb --agent $profile --account $n --login"
     elif [[ -n "${profile_login_renew:-}" ]]; then
       s+="; the user renews it with $profile_login_renew"
     fi
@@ -5932,10 +5944,11 @@ _as_default_pick() {
 # the one set is not among them, or name one, AGENT or --profile NAME. None: install it,
 # or name its binary by path (a path whose basename names the profile, else --profile
 # NAME before it). None installed that a command picks (only those chosen by --profile
-# alone, or none at all): --profile NAME.
+# alone, or none at all): --profile NAME. NAMED, when given, is how to name one instead
+# (--login's: asb --agent AGENT ...), and no binary is named by path.
 _as_default_refusal() {
   local -a runnable=() all=() broken=()
-  local n s lead="$2" bl="" c sd
+  local n s lead="$2" bl="" c sd named="${3:-$2 AGENT or --profile NAME}"
   while IFS=$'\t' read -r n s; do
     [[ -n "$n" ]] || continue
     case "$s" in
@@ -5949,12 +5962,14 @@ _as_default_refusal() {
   if ((${#runnable[@]} > 1)); then
     c="$(_as_default_configured)"
     if [[ -n "$c" ]]; then
-      printf "the default agent '%s' (%s) is not one asb can run here (%s%s): set another, %s, or name one, %s AGENT or --profile NAME" \
-        "$c" "$(_as_tilde "$(_as_default_agent_file)")" "${runnable[*]}" "$bl" "$sd" "$lead"
+      printf "the default agent '%s' (%s) is not one asb can run here (%s%s): set another, %s, or name one, %s" \
+        "$c" "$(_as_tilde "$(_as_default_agent_file)")" "${runnable[*]}" "$bl" "$sd" "$named"
     else
-      printf 'there are several agents asb can run (%s%s) and no default is set: set it, %s, or name one, %s AGENT or --profile NAME' \
-        "${runnable[*]}" "$bl" "$sd" "$lead"
+      printf 'there are several agents asb can run (%s%s) and no default is set: set it, %s, or name one, %s' \
+        "${runnable[*]}" "$bl" "$sd" "$named"
     fi
+  elif [[ -n "${3:-}" ]]; then
+    printf 'there is no agent asb can run here (installed: %s%s): install one, or name one, %s' "${all[*]:-none}" "$bl" "$3"
   elif ((${#all[@]})); then
     printf "none installed has an agent asb installs or its command on PATH (installed: %s%s): install the agent, or name its binary by path: %s /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)" \
       "${all[*]}" "$bl" "$lead"
@@ -6591,7 +6606,7 @@ _as_pid1_bwrap() {
   [[ "$(basename -- "${a0:-/}")" == bwrap ]]
 }
 
-# _as_maybe_inside -- for what must run on the host only (--account-login, --install,
+# _as_maybe_inside -- for what must run on the host only (--login, --install,
 # --setup-remote): either sign of a sandbox refuses, the AGENT_SANDBOX marker or pid 1
 # being bubblewrap, so unsetting the marker inside does not get past it.
 _as_maybe_inside() {
@@ -6671,8 +6686,8 @@ _as_trust_show() {
 #                      no accounts, and naming one refuses the launch
 #   [agent] login   -- profile_login (profile_login_set 1 when the key is there, empty or
 #                      not): the agent's arguments that start a login, which
-#                      `asb --account-login` runs on an account's directory (#355);
-#                      none: --account-login refuses
+#                      `asb --login` runs on an account's directory (#355);
+#                      none: --login refuses
 #   [agent] account-expiry -- profile_account_expiry: FILE KEYPATH, the file under the
 #                      state directory (the base or an account's) and the JSON key path
 #                      of the login's expiry in epoch milliseconds (#355): --list,
@@ -7361,7 +7376,7 @@ _as_account_dir() {
     _as_msg "$what: $d is a symlink; an account is a directory of its own, its login's one home. Refusing to follow it"
     return 1
   elif [[ ! -e "$d" ]]; then
-    _as_msg "$what: there is no $d for the agent $p: log it in with ${invoked:-asb} --account-login $n $p"
+    _as_msg "$what: there is no $d for the agent $p: log it in with ${invoked:-asb} --agent $p --account $n --login"
     return 1
   elif [[ ! -d "$d" ]]; then
     _as_msg "$what: $d is not a directory; an account is a directory of its own, its login's one home"
@@ -7431,12 +7446,12 @@ _as_login_due() {
 }
 
 # _as_login_renew PROFILE NAME TEXT -- what renews the login of account NAME of PROFILE
-# (#355): `asb --account-login NAME PROFILE`; for the base (NAME empty) `run TEXT`, TEXT
+# (#355): `asb --agent PROFILE --account NAME --login`; for the base (NAME empty) `run TEXT`, TEXT
 # the profile's [agent] login-renew (claude: /login, Claude Code's in-session command),
 # and nothing at all when the profile has none: no renewal is invented.
 _as_login_renew() {
   if [[ -n "$2" ]]; then
-    printf '%s --account-login %s %s' "${invoked:-asb}" "$2" "$1"
+    printf '%s --agent %s --account %s --login' "${invoked:-asb}" "$1" "$2"
   elif [[ -n "$3" ]]; then
     printf 'run %s' "$3"
   fi
@@ -7458,7 +7473,7 @@ _as_account_check() {
   return 0
 }
 
-# ---- asb --account-login NAME AGENT (#355): an account's login, sandboxed ----------
+# ---- asb [--agent AGENT] --account NAME --login (#355): an account's login, sandboxed ----
 # The account's directory is made here, and the agent's own login runs in it as a role
 # of a fixed scratch project with no dot-file, under `isolated` and the default network
 # mode, so that no project's policy (a strict or retrieve-only role) stands between the
@@ -7467,40 +7482,43 @@ _as_account_check() {
 # stores there are removed after every run, since under `isolated` the config channel is
 # the role's own copy and would carry one account's into the next login.
 
-# _as_account_login_scratch -- the scratch project a login runs from, as named (not made).
-_as_account_login_scratch() {
+# _as_login_scratch -- the scratch project a login runs from, as named (not made).
+_as_login_scratch() {
   printf '%s' "${XDG_CACHE_HOME:-$HOME/.cache}/agent-sandbox/account-login"
 }
 
-# _as_account_login_clean STATE PROFILE SLUG -- remove the login role's stores,
+# _as_login_clean STATE PROFILE SLUG -- remove the login role's stores,
 # STATE/PROFILE/SLUG/account-login, and SLUG's directory when that leaves it empty. THE
 # PATH GUARD: SLUG is one path segment that starts with `-` (a project's, _as_path_slug),
 # neither level is a symlink, and the directory resolves where it is named; anything
 # else removes nothing. An idle keeper (its grace) is ended first, as --delete does; one
 # with a launch joined in it fails here, and nothing is removed. Nothing there: success.
-_as_account_login_clean() {
+_as_login_clean() {
   local st="$1" p="$2" slug="$3" sb pd
   pd="$st/$p/$slug" sb="$st/$p/$slug/account-login"
   if [[ "$slug" != -* || "$slug" == */* || "$p" == */* || -z "$p" ]]; then
-    _as_msg "--account-login: not removing the login role's stores: '$st/$p/$slug' is not a project's directory"
+    _as_msg "--login: not removing the login role's stores: '$st/$p/$slug' is not a project's directory"
     return 1
   fi
   [[ -e "$sb" || -L "$sb" ]] || return 0
   if [[ -L "$pd" || -L "$sb" || ! -d "$sb" || "$(readlink -f -- "$sb")" != "$(readlink -f -- "$st")/$p/$slug/account-login" ]]; then
-    _as_msg "--account-login: not removing $sb: it is not the login role's own directory (a symlink, or not a directory)"
+    _as_msg "--login: not removing $sb: it is not the login role's own directory (a symlink, or not a directory)"
     return 1
   fi
   _as_keeper_stop_idle "$sb" || return 1
   chmod -R u+rwX -- "$sb" 2>/dev/null
   rm -rf --one-file-system -- "$sb" || {
-    _as_msg "--account-login: could not remove all of $sb"
+    _as_msg "--login: could not remove all of $sb"
     return 1
   }
   rmdir -- "$pd" 2>/dev/null || true
   return 0
 }
 
-# _as_account_login NAME AGENT -- `asb --account-login NAME AGENT`: make the account
+# _as_login -- `asb [--agent AGENT] --account NAME --login`: AGENT and NAME from the
+# line's one --agent and one --account (the engine's _agent_flag, _account_flag), their
+# bare forms only, since a login has no role; AGENT, when not named, the default agent
+# (_as_default_pick, as a role verb's). Make the account
 # NAME's directory for AGENT's profile, <state>/PROFILE/accounts/NAME/ (mode 700; an
 # existing one is a re-login), run the profile's [agent] login there as the role
 # `account-login` of the scratch project, in the foreground, then remove that role's
@@ -7508,22 +7526,52 @@ _as_account_login_clean() {
 # account-paths entry, by its path, never read. Returns the login's status when it
 # failed, else 1 when the login file is not there, else 0. Refusals are 2. Ctrl-C at the
 # login ends the login, not this: the stores are still removed; a run killed outright
-# leaves them, and the next run removes them first. Uses profile_dir and invoked by
-# dynamic scope.
+# leaves them, and the next run removes them first. Uses profile_dir, invoked,
+# _agent_flag and _account_flag by dynamic scope.
 # shellcheck disable=SC2154
-_as_account_login() {
-  local name="$1" agent="$2" p st d x scratch real slug self rc=0 login_set=0 cred
+_as_login() {
+  local name="" agent="" p st d x scratch real slug self rc=0 login_set=0 cred e cands
+  local _af_role _af_agent _af_acct
   local -a f=() apaths=() login=()
   if _as_maybe_inside; then
-    _as_msg "--account-login runs on the host: the login it makes is the account's, for every role on it in every project; a role proposes the line, you run it."
+    _as_msg "--login runs on the host: the login it makes is the account's, for every role on it in every project; a role proposes the line, you run it."
     return 2
   fi
-  if ! _as_role_name_ok "$name"; then
-    _as_msg "--account-login: '$name' is not an account name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters (the base, your own login, logs in with /login inside a session)"
+  # The forms were checked as they were parsed (_as_agent_flag_split, _as_account_flag_split:
+  # NAME an account name or `-`); a role's form is not a login's.
+  for e in ${_agent_flag[@]+"${_agent_flag[@]}"}; do
+    _as_agent_flag_split "$e" || return 2
+    if [[ -n "$_af_role" ]]; then
+      _as_msg "--login: --agent $e names a role's agent, and a login has no role: --agent AGENT"
+      return 2
+    fi
+    agent="$_af_agent"
+  done
+  for e in ${_account_flag[@]+"${_account_flag[@]}"}; do
+    _as_account_flag_split "$e" || return 2
+    if [[ -n "$_af_role" ]]; then
+      _as_msg "--login: --account $e names a role's account, and a login has no role: --account NAME"
+      return 2
+    fi
+    name="$_af_acct"
+  done
+  # THE BASE IS REFUSED FOR NOW: it is still the user's own native directory (claude:
+  # ~/.claude), not asb's, so asb does not log it in. This one check goes when the base
+  # becomes engine-owned (#6, step 2), and NAME then defaults to the base.
+  if [[ -z "$name" || "$name" == - ]]; then
+    _as_msg "--login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: $invoked --agent ${agent:-AGENT} --account NAME --login"
     return 2
+  fi
+  if [[ -z "$agent" ]]; then
+    cands="$(_as_default_candidates "$profile_dir")"
+    agent="$(_as_default_pick "$cands")"
+    if [[ -z "$agent" ]]; then
+      _as_msg "--login: no agent named, and $(_as_default_refusal "$cands" "$invoked --login" "$invoked --agent AGENT --account $name --login")"
+      return 2
+    fi
   fi
   if ! _as_names_profile "$agent"; then
-    _as_msg "--account-login: '$agent' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+    _as_msg "--login: '$agent' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
     return 2
   fi
   p="$(basename -- "$agent")"
@@ -7534,11 +7582,11 @@ _as_account_login() {
     esac
   done < <(_as_profile_facts "$profile_dir/$p/profile.sh")
   if ((${#apaths[@]} == 0)); then
-    _as_msg "--account-login: profile '$p' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts to log in"
+    _as_msg "--login: profile '$p' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts to log in"
     return 2
   fi
   if ((! login_set)); then
-    _as_msg "--account-login: profile '$p' does not say what starts its agent's login ([agent] login = ARGS, possibly empty)"
+    _as_msg "--login: profile '$p' does not say what starts its agent's login ([agent] login = ARGS, possibly empty)"
     return 2
   fi
   # The account's directory: every level checked before anything is made, so nothing is
@@ -7547,10 +7595,10 @@ _as_account_login() {
   d="$st/$p/accounts/$name"
   for x in "$st/$p" "$st/$p/accounts" "$d"; do
     if [[ -L "$x" ]]; then
-      _as_msg "--account-login: $x is a symlink; an account is a directory of its own, its login's one home. Refusing to follow it"
+      _as_msg "--login: $x is a symlink; an account is a directory of its own, its login's one home. Refusing to follow it"
       return 2
     elif [[ -e "$x" && ! -d "$x" ]]; then
-      _as_msg "--account-login: $x is not a directory; an account is a directory of its own, its login's one home"
+      _as_msg "--login: $x is not a directory; an account is a directory of its own, its login's one home"
       return 2
     fi
   done
@@ -7563,7 +7611,7 @@ _as_account_login() {
   _as_profile_recipe "$p"
   if [[ -n "$_recipe_bin" ]]; then
     if [[ ! -e "$st/$p/install/current" && ! -L "$st/$p/install/current" ]]; then
-      _as_msg "--account-login: $p is not installed for agent-sandbox; installing its pinned version first"
+      _as_msg "--login: $p is not installed for agent-sandbox; installing its pinned version first"
       _as_agent_install "$p" || return $?
     fi
     (_as_installed_bin "$p" "$_recipe_bin") || return 2
@@ -7571,22 +7619,22 @@ _as_account_login() {
   mkdir -p -- "$st/$p/accounts" || return 1
   if [[ ! -e "$d" ]]; then
     mkdir -m 700 -- "$d" || return 1
-    _as_msg "--account-login: made $(_as_tilde "$d"), the account '$name' of $p"
+    _as_msg "--login: made $(_as_tilde "$d"), the account '$name' of $p"
   fi
   # The scratch project: made when absent, never given a dot-file; one found there is
   # not this command's, and a login reads none.
-  scratch="$(_as_account_login_scratch)"
+  scratch="$(_as_login_scratch)"
   mkdir -p -- "$scratch" || return 1
   real="$(cd -- "$scratch" && pwd -P)" || return 1
   if [[ -e "$real/.agent-sandbox" || -L "$real/.agent-sandbox" ]]; then
-    _as_msg "--account-login: $real/.agent-sandbox is there; the scratch project a login runs from has no dot-file, so that no project's policy applies to it. Remove it, then run this again"
+    _as_msg "--login: $real/.agent-sandbox is there; the scratch project a login runs from has no dot-file, so that no project's policy applies to it. Remove it, then run this again"
     return 2
   fi
   slug="$(_as_path_slug "$real")"
   # What an earlier run killed outright left (Ctrl-C does not leave it, below); a login
   # still running there is not ended.
-  if ! _as_account_login_clean "$st" "$p" "$slug"; then
-    _as_msg "--account-login: a login is running already (the role account-login of $real); finish it, or end it with: cd $(printf '%q' "$real") && $invoked --role account-login --shutdown $p"
+  if ! _as_login_clean "$st" "$p" "$slug"; then
+    _as_msg "--login: a login is running already (the role account-login of $real); finish it, or end it with: cd $(printf '%q' "$real") && $invoked --role account-login --shutdown $p"
     return 2
   fi
   # (U1: a dead login file, an expired one, would be handled here, before the login.)
@@ -7600,18 +7648,18 @@ _as_account_login() {
   # 2026-11-08). Only these two are taken out; the plumbing variables cross as they do
   # into any launch.
   # An agent's login may read a pasted code without echoing it (claude auth login does).
-  _as_msg "--account-login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
+  _as_msg "--login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
   trap ':' INT
   (cd -- "$real" && exec env -u AGENT_SANDBOX_NET -u AGENT_SANDBOX_CONNECT "$self" --role account-login --preset isolated --account "$name" "$agent" ${login[@]+"${login[@]}"}) || rc=$?
   trap - INT
-  _as_account_login_clean "$st" "$p" "$slug" \
-    || _as_msg "--account-login: the login role's stores are still at $st/$p/$slug/account-login; the next run removes them"
-  ((rc == 0)) || _as_msg "--account-login: the login ended with status $rc"
+  _as_login_clean "$st" "$p" "$slug" \
+    || _as_msg "--login: the login role's stores are still at $st/$p/$slug/account-login; the next run removes them"
+  ((rc == 0)) || _as_msg "--login: the login ended with status $rc"
   cred="$d/${apaths[0]}"
   if [[ -e "$cred" || -L "$cred" ]]; then
-    _as_msg "--account-login: the account '$name' of $p has its login: $(_as_tilde "$cred")"
+    _as_msg "--login: the account '$name' of $p has its login: $(_as_tilde "$cred")"
   else
-    _as_msg "--account-login: the account '$name' of $p has no login: there is no $(_as_tilde "$cred")"
+    _as_msg "--login: the account '$name' of $p has no login: there is no $(_as_tilde "$cred")"
     ((rc)) || rc=1
   fi
   return "$rc"
@@ -8256,7 +8304,7 @@ _as_agent_notes() {
       if [[ "$v" == - ]]; then
         _as_msg ".agent-sandbox: $sect account = -: $n run on the agent's base, your own login, whatever a weaker line or the defaults say"
       else
-        _as_msg ".agent-sandbox: $sect account = $v: $n run on the account '$v' -- its directory $(_as_tilde "$(_as_state_dir)")/AGENT/accounts/$v/ is the agent's state directory, holding its login, shared read-write by every role on that account in every project; a launch is refused while it is missing (log it in with asb --account-login $v AGENT)"
+        _as_msg ".agent-sandbox: $sect account = $v: $n run on the account '$v' -- its directory $(_as_tilde "$(_as_state_dir)")/AGENT/accounts/$v/ is the agent's state directory, holding its login, shared read-write by every role on that account in every project; a launch is refused while it is missing (log it in with asb --agent AGENT --account $v --login)"
       fi
       continue
     fi
@@ -11048,9 +11096,9 @@ _as_check_plan() {
       printf "  account: %s -- %s; its directory %s is the state directory; the base's other entries bound one by one, never its login\n" "$_acct_name" \
         "$(_as_account_where "$_acct_from")" "$(_as_tilde "$_acct_dir")"
     elif [[ -n "${_acct_name:-}" ]]; then
-      printf '  account: %s -- %s; its directory %s is NOT USABLE (above), so a launch refuses: log it in with %s --account-login %s %s\n' \
+      printf '  account: %s -- %s; its directory %s is NOT USABLE (above), so a launch refuses: log it in with %s --agent %s --account %s --login\n' \
         "$_acct_name" "$(_as_account_where "$_acct_from")" "$(_as_tilde "$(_as_state_dir)/$profile/accounts/$_acct_name")" \
-        "$invoked" "$_acct_name" "$profile"
+        "$invoked" "$profile" "$_acct_name"
     elif [[ -n "${_acct_from:-}" ]]; then
       printf '  account: the base (-, %s)\n' "$(_as_account_where "$_acct_from")"
     fi
@@ -13003,7 +13051,7 @@ _as_installed_bin() {
 # WORD is that role's agent, resolved rather than typed (#355), so a missing one is
 # named where a role's agent is named, not by --profile.
 # THE ONE PLACE a word becomes the agent's binary: a launch, a join, a verb, --serve and
-# --summarize (which run the engine again), --account-login (a launch), --roles' check of
+# --summarize (which run the engine again), --login (a launch), --roles' check of
 # every role, and the default profile's candidates (_as_default_found) all come here.
 # A launch at a terminal whose agent asb installs and has not does not come here first:
 # it is offered the install once its own preconditions hold (_as_install_deferred,
@@ -13607,8 +13655,9 @@ agent_sandbox() (
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
   local -a _init_counts=() _apply_words=()
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
-  # --account-login NAME AGENT (#355): its two words.
-  local -a _account_login=()
+  # [--agent AGENT] --account NAME --login (#355): the verb; its agent and account are
+  # the --agent and --account forms (_agent_flag, _account_flag).
+  local _do_login=0
   # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the agent word, the file, the sum.
   local -a _install=()
   # --set-default-agent [AGENT] (#6): set (the AGENT word) or print (none).
@@ -13810,14 +13859,11 @@ agent_sandbox() (
           return 2
         fi
         ;;
-      --account-login)
-        # --account-login NAME AGENT (#355): the whole line, those two words and nothing else.
-        if [[ $# -ne 3 || ${#_argv_given[@]} -ne 3 ]]; then
-          _as_msg "--account-login takes an account's name and its agent, and nothing else on the line: $invoked --account-login NAME AGENT (e.g. $invoked --account-login work claude)"
-          return 2
-        fi
-        _account_login=("$2" "$3")
-        shift 3
+      --login)
+        # [--agent AGENT] --account NAME --login (#355): a pure verb; what else the line
+        # may hold is checked once it is parsed.
+        _do_login=$((_do_login + 1))
+        shift
         ;;
       --set-default-agent)
         # --set-default-agent [AGENT] (#6): the whole line, and nothing else.
@@ -14078,10 +14124,34 @@ agent_sandbox() (
       *) break ;;
     esac
   done
-  # ---- --account-login NAME AGENT (#355): an account's login, sandboxed, then exit ----
-  # Alone on the line (above), so nothing else of this invocation applies to it.
-  if ((${#_account_login[@]})); then
-    _as_account_login "${_account_login[@]}"
+  # ---- [--agent AGENT] --account NAME --login (#355): an account's login, sandboxed, then exit ----
+  # Nothing on the line but --login once and at most one --agent and one --account, so
+  # nothing else of this invocation applies to it.
+  if ((_do_login)); then
+    local _lw _lskip=0 _lbad=""
+    if (($#)); then
+      if [[ "$1" != -* ]]; then
+        _as_msg "--login takes no command: the agent is named with --agent, $invoked [--agent AGENT] --account NAME --login"
+        return 2
+      fi
+      _lbad="$1"
+    fi
+    for _lw in "${_argv_given[@]}"; do
+      if ((_lskip)); then
+        _lskip=0
+        continue
+      fi
+      case "$_lw" in
+        --login | --agent=* | --account=*) ;;
+        --agent | --account) _lskip=1 ;;
+        *) _lbad="${_lbad:-$_lw}" ;;
+      esac
+    done
+    if [[ -n "$_lbad" ]] || ((_do_login > 1 || ${#_agent_flag[@]} > 1 || ${#_account_flag[@]} > 1)); then
+      _as_msg "--login takes --agent AGENT and --account NAME, each at most once, and nothing else on the line: $invoked [--agent AGENT] --account NAME --login"
+      return 2
+    fi
+    _as_login
     return $?
   fi
   # ---- --set-default-agent [AGENT] (#6): the default agent set or printed, then exit ----
@@ -14599,7 +14669,7 @@ agent_sandbox() (
   local -a profile_resume=()
   # Its agent's files that are an account's, under its base (#355): none, no accounts.
   local -a profile_account_paths=()
-  # What starts its agent's login, for --account-login (#355); read here only so that the
+  # What starts its agent's login, for --login (#355); read here only so that the
   # profile's dot-file sets these and nothing global.
   local -a profile_login=()
   local profile_login_set=0

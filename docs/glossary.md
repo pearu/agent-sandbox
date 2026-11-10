@@ -36,7 +36,7 @@ project's roles can run different agents (#355). *shipped*
 agent's base (claude: `~/.claude`), so the login and what the agent derives from it are
 the account's while every channel stays as on the base. Named per role by `--account` or
 `[agent] account`; with none, or `-`, the role runs on the **base**, your own login.
-`asb --account-login NAME AGENT` logs one in. So two subscriptions can serve one project
+`asb [--agent AGENT] --account NAME --login` logs one in. So two subscriptions can serve one project
 ([config.md](config.md#accounts), #355). *shipped*
 
 **Profile.** `profiles/<name>/` (`profile.sh` and its dot-file, `agent-sandbox`): the agent-specific half of the engine — where the

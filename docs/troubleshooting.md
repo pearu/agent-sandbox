@@ -249,7 +249,7 @@ role's line within 7 days of it and `, login expired: ...` past it, `asb --role 
 --status` prints the date always, and the briefing tells the session in the same
 window, so it can tell you. What renews it, as they name it:
 
-- an account: `asb --account-login NAME claude`, from a shell on the host. On an
+- an account: `asb --agent claude --account NAME --login`, from a shell on the host. On an
   existing account directory it runs the agent's login there again;
 - the base: `/login` inside a session.
 

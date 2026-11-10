@@ -697,7 +697,7 @@ acct_role() {
     b
   c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account soon, login due in 3 days
     c
-  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --account-login old claude
+  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --agent claude --account old --login
     d
   e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, base
     e
@@ -719,7 +719,7 @@ To resume: asb --role ROLE --agent claude --resume"
   [ "${lines[0]}" = "$PROJ" ]
   [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired: run /login" ]
   [ "${lines[5]}" = "  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account soon, login due in 3 days" ]
-  [ "${lines[7]}" = "  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --account-login old claude" ]
+  [ "${lines[7]}" = "  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --agent claude --account old --login" ]
 }
 
 @test "--list says nothing of the login when its expiry is unknown: no file, no key, not a number, a link, not JSON (#355)" {
@@ -789,7 +789,7 @@ To resume: asb --role ROLE --agent claude --resume"
   login_file "$acc/work/.credentials.json" "$ms"
   printf 'claude\twork\n' >"$SBOX/account"
   run_engine TZ=UTC -- asb --status claude
-  [[ "$output" == *$'\n'"  account: work (~/.local/state/agent-sandbox/claude/accounts/work), login due $day (in 3 days): asb --account-login work claude"* ]]
+  [[ "$output" == *$'\n'"  account: work (~/.local/state/agent-sandbox/claude/accounts/work), login due $day (in 3 days): asb --agent claude --account work --login"* ]]
   # unknown: the account and its directory, nothing of the login
   rm "$acc/work/.credentials.json"
   run_engine TZ=UTC -- asb --status claude
@@ -854,7 +854,7 @@ To resume: asb --role ROLE --agent claude --resume"
   login_file "$H/home/.local/state/agent-sandbox/claude/accounts/old/.credentials.json" "$(expiry_ms -1)"
   printf 'claude\told\n' >"${SBOX%/default}/a/account"
   run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
-  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account old, login expired: asb --account-login old claude" <<<"$output"
+  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account old, login expired: asb --agent claude --account old --login" <<<"$output"
 }
 
 @test "the login file's other fields never reach any output: only the expiry is read (#355)" {

@@ -60,7 +60,7 @@ clear = /clear
 # session's first turn (measured, 2.1.300). `asb claude --resume ID` is Claude Code's own
 # flag, after the command, and the engine leaves it alone.
 resume = --continue
-# What `asb --account-login NAME claude` runs on the account's directory (#355): Claude
+# What `asb --agent claude --account NAME --login` runs on the account's directory (#355): Claude
 # Code 2.1.319 has `claude auth login`, a subscription login by default (also `auth
 # status --json` and `auth logout`); it prints the URL, and the pasted code ends it.
 login = auth login
@@ -134,7 +134,7 @@ account-paths = .credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner
 # days or has expired; the engine reads that one number and nothing else of the file.
 account-expiry = .credentials.json claudeAiOauth.refreshTokenExpiresAt
 # What renews the base's login when it is due (#355): Claude Code's in-session command.
-# The base is your own login, not an account, so `asb --account-login` is not its renewal;
+# The base is your own login, not an account, so `asb --login` is not its renewal;
 # --list and --status say `run /login`, the briefing `the user renews it with /login`.
 login-renew = /login
 # How asb installs Claude Code (#6): one static binary, nothing beside it. Which file
