@@ -101,11 +101,18 @@ teardown_file() {
   }
   local out
   out=$(cat "$E/install1.out")
-  # every adapter's agent found, at the binary its fake was planted as (setup_file)
+  # every adapter's agent found where its fake was planted (setup_file): asb's install of
+  # it, by version, for a profile with an install recipe (#6); else the binary its
+  # command on PATH resolves to
   local a launcher bin link
   for a in $(test_adapters); do
     { read -r launcher && read -r bin && read -r link; } <"$E/plant.$a"
-    [[ "$out" == *"$a: \`${launcher##*/}\` is $bin"* ]]
+    if [ -n "$(HOME="$H" profile_facts "$a" install)" ]; then
+      [[ "$out" == *"$a: asb runs its own install of it, version $(readlink "$H/.local/state/agent-sandbox/$a/install/current")"* ]]
+      [[ "$out" != *"$a: not installed for asb yet"* ]]
+    else
+      [[ "$out" == *"$a: \`${launcher##*/}\` is $bin"* ]]
+    fi
   done
   [[ "$out" == *"mitmdump 12."* ]]
   # agent-sandbox's own micromamba, fetched and checked against the pinned sum, and its root
