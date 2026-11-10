@@ -1040,6 +1040,14 @@ names are gone; there are no aliases for removed names before 1.0.
   and makes none the file lacks -- a count given adds above the highest present, as a
   first `--init` does, and drops none; a section whose commented header was changed by
   hand keeps all its lines, each named.
+- **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
+  sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
+  scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`
+  filters through `history.jsonl.asb-summarize` beside it; a role with that directory
+  read-write could point the name at any file you can write (`~/.bashrc`), and the next
+  host-side run overwrote it. Each temp is now a new file `mktemp` makes, removed on every
+  path. `--setup-remote` leaves a link at `.asb/remote/.gitignore`, a dangling one
+  included, alone.
 - **Two roles on one base or one account no longer strip each other's files.** When
   the first of them exited, its cleanup removed the empty mount-point files bwrap had
   created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a

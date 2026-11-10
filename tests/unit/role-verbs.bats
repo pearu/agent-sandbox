@@ -976,6 +976,25 @@ STUB
   [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"$'\n'* ]]
 }
 
+@test "--summarize's clean-up never writes the prompt history through a link a sandbox left beside it: the old fixed temp name history.jsonl.asb-summarize pointing outside is left as it is, its target unchanged (#314)" {
+  # A store the record names can be a directory the sandbox writes (transcripts
+  # read-write: the native path); the clean-up runs on the host.
+  local sb="$H/sb" d="$H/native" sid=0f0f0f0f-0000-4000-8000-000000000001
+  mkdir -p "$sb" "$d"
+  printf 'transcripts\tread-write\t%s\t%s\n' "$H/home/.claude/history.jsonl" "$d/history.jsonl" >"$sb/record.tsv"
+  printf '%s\n' '{"display":"mine","sessionId":"mine"}' "{\"display\":\"summarize\",\"sessionId\":\"$sid\"}" >"$d/history.jsonl"
+  printf 'KEEP\n' >"$H/outside"
+  ln -s "$H/outside" "$d/history.jsonl.asb-summarize"
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" bash -c 'source "$1" && _as_summarize_forget "$2" "$3"' \
+    _ "$ENGINE" "$sb" "$sid"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/outside")" = KEEP ]
+  [ -L "$d/history.jsonl.asb-summarize" ]
+  [ "$(cat "$d/history.jsonl")" = '{"display":"mine","sessionId":"mine"}' ]
+  [ -z "$(find "$d" -name '.asb-summarize.*')" ] # no temp left
+}
+
 @test "the role's agent record: only the user's launch writes it; --summarize's turn and --exec leave it, and --list stays plain (#355)" {
   printf '[agent]\ncommand = claude --model m\n' >"$PROJ/.agent-sandbox"
   engine_cmd

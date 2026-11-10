@@ -676,6 +676,35 @@ W
   run ! grep -q sudo "$H/acct.cmds"
 }
 
+@test "--setup-remote: the policy there is never written through a link its sandbox left in the scratch: the old fixed temp name .agent-sandbox.asb-new pointing outside is left as it is, its target unchanged (#344)" {
+  remote_host
+  full_section
+  local T="$R/home/tob"
+  mkdir -p "$T/bench"
+  printf 'KEEP\n' >"$T/outside"
+  ln -s "$T/outside" "$T/bench/.agent-sandbox.asb-new"
+  setup_remote
+  [ "$(cat "$T/outside")" = KEEP ]
+  [ "$status" -eq 0 ]
+  [ -L "$T/bench/.agent-sandbox.asb-new" ]
+  [ -f "$T/bench/.agent-sandbox" ] && [ ! -L "$T/bench/.agent-sandbox" ]
+  grep -qx '\[sshd\]' "$T/bench/.agent-sandbox"
+  [ "$(stat -c %a "$T/bench/.agent-sandbox")" = 644 ]
+  [ -z "$(find "$T/bench" -maxdepth 1 -name '.agent-sandbox.asb-new.*')" ] # no temp left
+}
+
+@test "--setup-remote: .asb/remote/.gitignore is never written through a link a sandbox left there, a dangling one included (#344)" {
+  remote_host bwrap=missing pasta=missing profiles=
+  section 'account = tob'
+  mkdir -p "$PROJ/.asb/remote"
+  ln -s "$H/created-outside" "$PROJ/.asb/remote/.gitignore"
+  setup_remote
+  [ "$status" -eq 1 ]
+  [ -f "$ADMIN" ]
+  [ ! -e "$H/created-outside" ]
+  [ -L "$PROJ/.asb/remote/.gitignore" ]
+}
+
 @test "--setup-remote: a port published at an address: HostName the host's own, no ProxyJump, the host key as [HostName]:PORT; a literal address is the HostName, and our line replaced (#344)" {
   require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host

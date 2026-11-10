@@ -4515,7 +4515,7 @@ PY
 # same, should a later version write one. ID is a fresh uuid, so nothing else has it.
 _as_summarize_forget() {
   python3 - "$1" "$2" <<'PY'
-import glob, json, os, shutil, sys
+import glob, json, os, shutil, sys, tempfile
 sb, sid = sys.argv[1], sys.argv[2]
 places = set()
 try:
@@ -4553,10 +4553,16 @@ for p in sorted(places):
                 if isinstance(r, dict) and r.get("sessionId") == sid:
                     continue
             keep.append(line)
-        tmp = p + ".asb-summarize"
-        with open(tmp, "wb") as fh:
-            fh.writelines(keep)
-        os.replace(tmp, p)
+        # A new file mkstemp makes beside it, never a fixed name: the directory can be
+        # one a sandbox writes (read-write), and a link left there would be followed.
+        fd, tmp = tempfile.mkstemp(prefix=".asb-summarize.", dir=os.path.dirname(p))
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.writelines(keep)
+            os.replace(tmp, p)
+        except BaseException:
+            os.unlink(tmp)
+            raise
 PY
 }
 
@@ -10018,7 +10024,8 @@ _as_setup_remote_alias() {
   fi
   local dir="$cwd/.asb/remote/$alias" tmp
   mkdir -p -- "$dir" || return 1
-  [[ -e "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
+  # A link there, dangling included, is left alone: a write would follow it out of the project.
+  [[ -e "$cwd/.asb/remote/.gitignore" || -L "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
   tmp="$(mktemp "$dir/.admin.sh.XXXXXX")" || return 1
   # The script goes to the ssh user's home there too, over the same ssh, so that one
   # line runs it: sudo with a password needs a terminal, so the script cannot ride on
@@ -10319,8 +10326,8 @@ if [ -n "$tmpdir" ] && [ ! -d "$tmpdir" ]; then
   say made "$tmpdir"
 fi
 if [ "$wpol" = 1 ]; then
-  { write_policy >"$p/.agent-sandbox.asb-new" && mv -f -- "$p/.agent-sandbox.asb-new" "$p/.agent-sandbox"; } \
-    || { say error "cannot write $p/.agent-sandbox"; exit 1; }
+  t="$(mktemp "$p/.agent-sandbox.asb-new.XXXXXX")" && { write_policy >"$t" && chmod 644 "$t" && mv -f -- "$t" "$p/.agent-sandbox"; } \
+    || { [ -z "${t:-}" ] || rm -f -- "$t"; say error "cannot write $p/.agent-sandbox"; exit 1; }
 fi
 k="$HOME/.config/agent-sandbox/asb-$alias-keys"
 (umask 077 && mkdir -p -- "${k%/*}" && printf '%s\n' "$pub" >"$k.new" && mv -f -- "$k.new" "$k") \

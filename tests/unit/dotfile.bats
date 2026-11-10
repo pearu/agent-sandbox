@@ -903,6 +903,32 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ ! -e "$PROJ/.agent-sandbox" ]
 }
 
+@test "--apply never writes through a link a sandbox left in the project: the old fixed temp name .agent-sandbox.apply.tmp pointing outside is left as it is, its target unchanged" {
+  # A role with the project read-write can leave any name there; --apply runs on the host.
+  printf '[allow]\npypi.org\n\n[deny]\nevil.example\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  printf 'KEEP\n' >"$H/outside"
+  ln -s "$H/outside" "$PROJ/.agent-sandbox.apply.tmp"
+  run_apply 'y\n' '[allow]' github.com
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/outside")" = KEEP ]
+  [ -L "$PROJ/.agent-sandbox.apply.tmp" ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org\ngithub.com\n\n[deny]\nevil.example' ]
+  [[ "$output" == *"approved."* ]]
+  # no temp of its own left behind
+  [ "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*' | wc -l)" -eq 1 ]
+}
+
+@test "--apply that cannot write the file fails and leaves no temp behind" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  chmod 555 "$PROJ" # the file is replaced by a rename: the directory is what refuses
+  run_apply - '[allow]' github.com
+  chmod 755 "$PROJ"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
+}
+
 @test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {
   # The bats temp paths have no dots, so the plain "/"-only rule passed for years
   # while being wrong. A project directory with characters Claude Code converts
