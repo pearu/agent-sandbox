@@ -556,7 +556,9 @@ Engine flags (before CMD):
                         clone; with --shared-env, NAME is another project's:
                         read-only, never cloned, a layer over it for the
                         roles that install. Run again, it adds what is
-                        missing. Models compose in one file, their role
+                        missing; with --env (or --shared-env), it completes
+                        the environment's lines it wrote commented out
+                        without one. Models compose in one file, their role
                         names apart.
                         Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
@@ -11754,7 +11756,9 @@ _as_trust_check() {
 # GITDIR BRANCH` (and an environment cloned from --env at its `prefix`), creates every
 # path the written file declares under .asb/, and keeps .asb/ out of git (a .gitignore of
 # its own). Run again, it adds what is missing and updates a purpose file it wrote that
-# nobody changed since; nothing else that exists is touched. It approves nothing.
+# nobody changed since, and, with an environment, completes the environment's lines an
+# --init without one wrote commented out; nothing else that exists is touched. It
+# approves nothing.
 # Models compose in one file (#267): a model's common block (`#@ scope = roles`) is
 # written per role pattern of the model, never unsuffixed, and a model whose role
 # patterns meet another's already in the file is refused.
@@ -11986,6 +11990,47 @@ _as_init() {
     hd="${hd#\# }"
     [[ -n "$existing" ]] && grep -qxF -- "$hd" <<<"$existing"
   }
+  # A re-run with an environment of a file an --init of the model wrote without one
+  # completes what that one wrote commented out. The pairs, per section the file has: a
+  # line as an --init with no environment renders it, and as this one does -- the [conda]
+  # sections' lines, and those naming {envpath} or {env}. Neither a `#@shared` line (an
+  # --init with no environment is the project's own, and never wrote it) nor an {editable}
+  # one (a line per source, none without an environment) is a pair. ep_s: the line with a
+  # placeholder for the prefix, to tell a line naming another environment.
+  local -a ep_k=()
+  local -A ep_1=() ep_s=()
+  local epshared=""
+  ((${_init_shared:-0})) && epshared="$(sed -n 's/^#@shared //p' -- "$tpl")"
+  _init_envpairs() { # HEADER BODY INSTANCE N HANDLE
+    [[ -n "$env" ]] || return 0
+    local hdr="$1" l r0 r1 rs sec k conda=0 idx
+    local -a ls=("$1")
+    [[ "$hdr" == "[conda]"* || "$hdr" == "[conda:"* ]] && conda=1
+    while IFS= read -r l; do ls+=("$l"); done <<<"${2%$'\n'}"
+    sec="$(_init_render "$hdr" "" "$3" "$4" "$5" | head -1)"
+    sec="${sec%%]*}]"
+    for idx in "${!ls[@]}"; do
+      l="${ls[idx]}"
+      [[ -n "${l//[[:space:]]/}" && "$l" != '#@'* && "$l" != *'{editable}'* ]] || continue
+      ((conda)) || [[ "$l" == *'{envpath}'* || "$l" == *'{env}'* ]] || continue
+      [[ -n "$epshared" ]] && grep -qxF -- "$l" <<<"$epshared" && continue
+      if ((idx == 0)); then
+        r0="$(env="" envpath="" _init_render "$hdr" "" "$3" "$4" "$5" | head -1)"
+        r1="$(_init_render "$hdr" "" "$3" "$4" "$5" | head -1)"
+        rs=""
+      else
+        r0="$(env="" envpath="" _init_render "$hdr" "$l" "$3" "$4" "$5" | sed -n 2p)"
+        r1="$(_init_render "$hdr" "$l" "$3" "$4" "$5" | sed -n 2p)"
+        rs=""
+        [[ -n "$envpath" && "$l" == *'{envpath}'* ]] \
+          && rs="$(envpath=@@ENVPATH@@ _init_render "$hdr" "$l" "$3" "$4" "$5" | sed -n 2p)"
+      fi
+      [[ "$r0" != "$r1" ]] || continue
+      k="$sec"$'\t'"$r0"
+      [[ -z "${ep_1[$k]+x}" ]] || continue
+      ep_k+=("$k") ep_1[$k]="$r1" ep_s[$k]="$rs"
+    done
+  }
   # Models compose in one file (#267). The model's role patterns: `name-*` for a role with
   # numbered instances (or named at launch), `name` for a single one. Under `#@ scope =
   # roles` the common block goes to the broadest of those that have an instance.
@@ -12087,6 +12132,11 @@ _as_init() {
       fi
     done
   done <<<"$sufs"
+  _init_norm() { # LINE -> as the parser reads it: no comment, no surrounding blanks
+    local x="${1%%#*}"
+    x="${x#"${x%%[![:space:]]*}"}"
+    printf '%s' "${x%"${x##*[![:space:]]}"}"
+  }
   _init_key() { # LINE -> its key, or nothing for a comment, a blank or a list line
     [[ "$1" =~ ^[[:space:]]*([^#[:space:]=][^=]*[^=[:space:]]|[^#[:space:]=])[[:space:]]*= ]] && printf '%s' "${BASH_REMATCH[1]}"
     return 0
@@ -12131,7 +12181,12 @@ _as_init() {
           done <<<"${bodies[k]%$'\n'}"
           grep -qE '^[[:space:]]*[^#[:space:]]' <<<"$body" || continue # nothing left
           a="$(_init_render "$hd" "$body" "" "" "" "$lead")"
-          if _init_has "$hd"; then chk_h+=("$hd") chk_a+=("$a"); else new+="$a"$'\n'; fi
+          if _init_has "$hd"; then
+            chk_h+=("$hd") chk_a+=("$a")
+            _init_envpairs "$hd" "$body" "" "" ""
+          else
+            new+="$a"$'\n'
+          fi
         done
         n=0
       done
@@ -12154,7 +12209,12 @@ _as_init() {
           ((n == 1)) && lead="${leads[k]}"
           a="$(_init_render "${heads[k]}" "${bodies[k]}" "$inst" "$n" "$h" "$lead")"
           hd="$(_init_render "${heads[k]}" "" "$inst" "$n" "$h" | head -1)"
-          if _init_has "$hd"; then chk_h+=("$hd") chk_a+=("$a"); else new+="$a"$'\n'; fi
+          if _init_has "$hd"; then
+            chk_h+=("$hd") chk_a+=("$a")
+            _init_envpairs "${heads[k]}" "${bodies[k]}" "$inst" "$n" "$h"
+          else
+            new+="$a"$'\n'
+          fi
           [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*clone[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
             && clones+=("$inst"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
           [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*inbox[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
@@ -12199,6 +12259,13 @@ _as_init() {
       if [[ -n "$existing" ]]; then
         chk_h+=("$hd") chk_a+=("$a")
         a=""
+      fi
+    fi
+    if _init_has "$hd"; then
+      if ((cmp)); then
+        _init_envpairs "${heads[i]}" "${bodies[i]}" "$rn" "" "$h"
+      else
+        _init_envpairs "${heads[i]}" "${bodies[i]}" "" "" ""
       fi
     fi
     if [[ -n "$a" ]] && _init_has "$hd"; then
@@ -12246,6 +12313,85 @@ _as_init() {
   insts=("${uniq[@]}")
 
   local wrote=0
+  # The environment's lines an --init of this model wrote commented out without an
+  # environment (_init_envpairs), completed in the file's sections under its `# ----
+  # written/added by asb --init MODEL ----` marks: a line exactly as that --init wrote it
+  # takes this one's rendering; nothing else is touched. A pair whose line the file has
+  # neither so nor active as this --init renders it was changed by hand: left, and said.
+  # An active line naming another environment where this one goes is refused, before
+  # anything is written: --init never rewrites a prefix.
+  local -a ep_did=() ep_left=()
+  local -A ep_skip=()
+  local epmine=0
+  while IFS= read -r q; do
+    [[ -n "$q" && "$(basename -- "$q")" == "$(basename -- "$model")" ]] && epmine=1
+  done <<<"$marks"
+  if ((${#ep_k[@]} && epmine)); then
+    local reg=0 sec="" x k1 kk l
+    local -A ep_act=() ep_has0=()
+    local -a ep_lines=()
+    while IFS= read -r l || [[ -n "$l" ]]; do
+      ep_lines+=("$l")
+      if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
+        reg=0
+        [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+        continue
+      elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
+        sec="${BASH_REMATCH[2]}"
+      fi
+      ((reg)) || continue
+      [[ -n "${ep_1["$sec"$'\t'"$l"]+x}" ]] && ep_has0["$sec"$'\t'"$l"]=1
+      x="$(_init_norm "$l")"
+      [[ -n "$x" ]] && ep_act["$sec"]+="$x"$'\n'
+    done <"$df"
+    local -A ep_do=()
+    for k in "${ep_k[@]}"; do
+      sec="${k%%$'\t'*}" x="$(_init_norm "${ep_1[$k]}")"
+      if [[ -n "$x" ]] && grep -qxF -- "$x" <<<"${ep_act["$sec"]:-}"; then
+        continue # active as this --init renders it already
+      elif [[ -n "${ep_has0[$k]:-}" ]]; then
+        ep_do[$k]=1
+        continue
+      fi
+      # Not there as written: a `KEY = VALUE` line whose value is the prefix, active with
+      # another value, names another environment.
+      if [[ -n "${ep_s[$k]}" ]]; then
+        k1="$(_init_key "$(_init_norm "${ep_s[$k]}")")"
+        if [[ -n "$k1" && "$k1" != *@@ENVPATH@@* ]]; then
+          while IFS= read -r kk; do
+            [[ -n "$kk" && "$(_init_key "$kk")" == "$k1" ]] || continue
+            _as_msg "--init: .agent-sandbox's $sec has '$kk', another environment than --env $env ($envpath): --init never rewrites an environment's prefix -- change the environment's lines yourself, or run --init with that environment"
+            return 1
+          done <<<"${ep_act["$sec"]:-}"
+        fi
+      fi
+      ep_left+=("$sec $x") ep_skip["$sec"$'\t'"$x"]=1
+    done
+    if ((${#ep_do[@]})); then
+      reg=0 sec=""
+      for l in "${ep_lines[@]}"; do
+        if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
+          reg=0
+          [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+        elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
+          sec="${BASH_REMATCH[2]}"
+        fi
+        if ((reg)) && [[ -n "${ep_do["$sec"$'\t'"$l"]:-}" ]]; then
+          l="${ep_1["$sec"$'\t'"$l"]}"
+          x="$(_init_norm "$l")"
+          [[ "$x" == "$sec" ]] && ep_did+=("$sec") || ep_did+=("$sec ${x:-$l}")
+        fi
+        printf '%s\n' "$l"
+      done >"$df.init-new" && mv -f -- "$df.init-new" "$df" || return 1
+      wrote=1
+      _as_msg "--init: completed in .agent-sandbox, for --env $env${envpath:+ ($envpath)}, the environment's line$( ((${#ep_did[@]} == 1)) || printf s) --init wrote commented out without an environment:"
+      printf '    %s\n' "${ep_did[@]}" >&2
+    fi
+    if ((${#ep_left[@]})); then
+      _as_msg "--init: ${#ep_left[@]} environment line$( ((${#ep_left[@]} == 1)) || printf s) not completed: your .agent-sandbox does not have $( ((${#ep_left[@]} == 1)) && printf it || printf them) as --init wrote $( ((${#ep_left[@]} == 1)) && printf it || printf them) without an environment (changed or removed since), so $( ((${#ep_left[@]} == 1)) && printf 'it is' || printf 'they are') left as you have $( ((${#ep_left[@]} == 1)) && printf it || printf them); model '$model''s line$( ((${#ep_left[@]} == 1)) || printf s) for --env $env:"
+      printf '    %s\n' "${ep_left[@]}" >&2
+    fi
+  fi
   if [[ -z "$existing" && ! -f "$df" ]]; then
     {
       printf '# ---- written by asb --init %s ----\n' "$model"
@@ -12482,16 +12628,11 @@ _as_init() {
     _as_msg "--init: environment $env is not built yet ($a at $envpath$([[ "$_conda_mode" == sandbox ]] && printf ", under agent-sandbox's conda root")): $invoked --role $setup claude builds it"
   fi
 
-  # --init never changes a section that exists, so a line the model gained since the file
-  # was written (a key whose KEY the file's section lacks, or a bare line -- a host, a rule
-  # -- it lacks verbatim) would be silently absent: said here, with the --apply line for
-  # each section. A line the file has commented out is the user's choice; a key's value
-  # is never compared.
-  _init_norm() { # LINE -> as the parser reads it: no comment, no surrounding blanks
-    local x="${1%%#*}"
-    x="${x#"${x%%[![:space:]]*}"}"
-    printf '%s' "${x%"${x##*[![:space:]]}"}"
-  }
+  # --init never changes a section that exists (but for the environment's lines, above),
+  # so a line the model gained since the file was written (a key whose KEY the file's
+  # section lacks, or a bare line -- a host, a rule -- it lacks verbatim) would be
+  # silently absent: said here, with the --apply line for each section. A line the file
+  # has commented out is the user's choice; a key's value is never compared.
   _init_missing() { # HEADER RENDERED -> the rendered lines the file's section HEADER lacks
     local want="${1%%]*}]" l x cur="" have="" keys="" on=0
     want="${want#\# }"
@@ -12533,6 +12674,11 @@ _as_init() {
     hd="${chk_h[i]%%]*}]"
     hd="${hd#\# }"
     miss="$(_init_missing "$hd" "${chk_a[i]}")"
+    if ((${#ep_skip[@]})); then # an environment's line said above, as left, is not said again
+      miss="$(while IFS= read -r l; do
+        if [[ -n "$l" && -z "${ep_skip["$hd"$'\t'"$l"]:-}" ]]; then printf '%s\n' "$l"; fi
+      done <<<"$miss")"
+    fi
     [[ -n "$miss" ]] || continue
     for j in ${mh[@]+"${!mh[@]}"}; do
       [[ "${mh[j]}" == "$hd" ]] && break
@@ -12567,12 +12713,11 @@ _as_init() {
     printf '    what a role does in this project in .asb/roles/<role>.addendum.md, not in its purpose file,\n'
     printf '    which --init keeps the model'"'"'s)\n'
     if [[ -z "$env" ]]; then
-      printf '  - no --env: the [conda] sections are commented out; for an environment per clone,\n'
-      printf '    run --init again with --env NAME, or: conda create --clone NAME -p <the prefix>\n'
-      printf '    (micromamba create, where the conda base is agent-sandbox'"'"'s: [conda] base = sandbox)\n'
-    elif grep -q '^# \[conda' "$df"; then
-      printf '  - the [conda] sections written without --env are still commented out: uncomment them,\n'
-      printf '    with your environment'"'"'s name for ENV\n'
+      printf '  - no --env: the environment'"'"'s lines (the [conda] sections, the lines naming ENVPATH) are\n'
+      printf '    commented out; %s --init %s --env NAME, run again, completes them with NAME'"'"'s prefix\n' "$invoked" "$model"
+      printf '    and changes nothing else\n'
+    elif ((${#ep_left[@]})); then
+      printf '  - the environment'"'"'s line%s left above: yours to complete, by hand\n' "$( ((${#ep_left[@]} == 1)) || printf s)"
     fi
     if grep -qE '^[[:space:]]*gh[[:space:]]*=[[:space:]]*read-(only|write)' "$df" && [[ ! -f "$HOME/.config/gh/hosts.yml" ]]; then
       printf '  - gh auth login            the roles read GitHub with your gh login, and you have none yet\n'

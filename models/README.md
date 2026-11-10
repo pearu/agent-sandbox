@@ -15,7 +15,11 @@ A model directory holds:
   `{envpath}` (that environment's prefix), `{editable}` (each source tree the
   environment's editable installs import from, outside the project and the
   environment: the line is written once per source, or not at all). Without `--env`,
-  `[conda]` sections and lines naming `{envpath}` are written commented out. A line
+  `[conda]` sections and lines naming `{envpath}` are written commented out; `--init`
+  run again with `--env` (or `--shared-env`) completes them in the sections it wrote,
+  as a first `--init` with it would have written them, and leaves a line changed by
+  hand as it is, saying so; a file whose environment lines already name another
+  environment is refused, never rewritten. A line
   `#@own LINE` is the template's only with an environment of the project's own (`--env`,
   or none), `#@shared LINE` only with one another project owns (`--shared-env`): the tag
   is stripped from the kept one and the other is dropped, in the dot-file template and

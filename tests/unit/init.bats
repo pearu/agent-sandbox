@@ -323,6 +323,92 @@ init() {
   [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
 }
 
+@test "--env on a file --init wrote without it: the environment's lines completed as a first --env writes them, nothing else changed" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox" ep="$H/base/envs/dev"
+  init -- github
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no --env: the environment's lines (the [conda] sections, the lines naming ENVPATH) are"* ]]
+  [[ "$output" == *"--init github --env NAME, run again, completes them with NAME's prefix"* ]]
+  # gh-setup, launched so, stops and asks for exactly that
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
+  grep -qF 'When the prefix above reads `ENVPATH`' "$PROJ/.asb/roles/gh-setup.md"
+  # shellcheck disable=SC2016 # likewise
+  grep -qF 'run on the host `asb --init github --env NAME` (NAME a' "$PROJ/.asb/roles/gh-setup.md"
+  cp "$df" "$H/noenv"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: completed in .agent-sandbox, for --env dev ($ep), the environment's lines --init wrote commented out without an environment:"* ]]
+  [[ "$output" == *"    [connect:gh-*] $ep/ = copy-on-write"* && "$output" == *"    [conda:gh-*] prefix = $ep"* ]]
+  [[ "$output" == *"--trust            the review, then the approval"* ]] # the file changed: a new review
+  [[ "$output" != *"still commented out"* && "$output" != *"--apply"* && "$output" != *"no --env"* ]]
+  # only the four environment lines changed, each from its commented-out form
+  diff "$H/noenv" "$df" >"$H/diff" || true
+  [ "$(grep -c '^<' "$H/diff")" -eq 4 ] && [ "$(grep -c '^>' "$H/diff")" -eq 4 ]
+  [ "$(grep '^<' "$H/diff" | sed 's/^< //' | sed 's/  *#.*//' | paste -sd'|')" = '# ENVPATH/ = copy-on-write|# [conda:gh-*]|# prefix = ENVPATH|# ENVPATH/ = read-write' ]
+  # the same file a first --init with --env writes
+  cp "$df" "$H/rerun"
+  rm -rf "$df" "$PROJ/.asb"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/rerun"
+  # and again: nothing left to complete, nothing changed
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"completed in .agent-sandbox"* ]]
+  cmp "$df" "$H/rerun"
+}
+
+@test "--env completing a no-env file: a line changed by hand is left and said; the user's lines unchanged" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox" ep="$H/base/envs/dev"
+  init -- github
+  [ "$status" -eq 0 ]
+  sed -i 's|^# ENVPATH/ = copy-on-write.*|/mine/env/ = copy-on-write|' "$df"
+  printf '# mine\n[allow:gh-*]\nexample.org\n' >>"$df"
+  cp "$df" "$H/edited"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: 1 environment line not completed: your .agent-sandbox does not have it as --init wrote it without an environment (changed or removed since), so it is left as you have it; model 'github''s line for --env dev:"$'\n'"    [connect:gh-*] $ep/ = copy-on-write"* ]]
+  [[ "$output" == *"the environment's line left above: yours to complete, by hand"* ]]
+  [[ "$output" != *"--apply"* ]] # said once, not again as a line the model gained
+  grep -qx '/mine/env/ = copy-on-write' "$df"
+  run ! grep -q "^$ep/ = copy-on-write" "$df"
+  grep -qx "prefix = $ep .*" "$df" # the others completed
+  diff "$H/edited" "$df" >"$H/diff" || true
+  [ "$(grep -c '^<' "$H/diff")" -eq 3 ] # [conda:gh-*], its prefix, gh-setup's prefix
+  [ "$(tail -3 "$df")" = $'# mine\n[allow:gh-*]\nexample.org' ]
+}
+
+@test "--env on a file whose environment's lines name another environment: refused, nothing written" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  cp "$df" "$H/dev"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env other
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: .agent-sandbox's [conda:gh-*] has 'prefix = $H/base/envs/dev', another environment than --env other ($H/base/envs/other): --init never rewrites an environment's prefix"* ]]
+  cmp "$df" "$H/dev"
+  [ ! -e "$H/base/envs/other" ]
+}
+
+@test "--shared-env on a file --init wrote without an environment: the shared lines completed, the own ones left commented out" {
+  shared_env torch-dev
+  local df="$PROJ/.agent-sandbox" ep="$H/conda/envs/torch-dev"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --shared-env torch-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: completed in .agent-sandbox, for --env torch-dev ($ep)"* ]]
+  [ "$(grep -c "^prefix = $ep " "$df")" -eq 5 ] # every role of the shared template activates it
+  grep -qx '# \[conda:implementer-1\].*' "$df"  # the own environment's clone: not this one
+  grep -qx '# write = 1' "$df"                  # nor the Supervisor's write into it
+  [ ! -e "$H/conda.log" ]                       # nothing cloned
+  # the shared template's own lines were never written: said as lines the model has
+  [[ "$output" == *"--apply '[connect:implementer-1]' '$ep/ = copy-on-write'"* ]]
+}
+
 @test "--init --env NAME under agent-sandbox's micromamba: the prefix is under its conda root, and the message says so" {
   local root="$H/home/.local/share/agent-sandbox/conda"
   # no conda on the host -- and a CI runner has conda on PATH, so these stubs find none:
@@ -679,6 +765,25 @@ approve() {
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env missing
   [ "$status" -eq 0 ]
   grep -qx "create -q -y --clone missing -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
+}
+
+@test "the roles model without --env: setup asks for --init roles --env NAME; that run completes the file as a first --env writes it, and clones" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown
+  grep -qF 'run on the host `asb --init roles --env NAME` (NAME a' "$PROJ/.asb/roles/setup.md"
+  grep -qF 'asb --role setup --shutdown' "$PROJ/.asb/roles/setup.md"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: completed in .agent-sandbox, for --env x-dev"* ]]
+  grep -qx "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
+  cp "$df" "$H/rerun"
+  rm -rf "$df" "$PROJ/.asb" "$H/conda.log"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/rerun"
 }
 
 # shared_env NAME -- a built env under $H/conda/envs/NAME whose editable installs import from

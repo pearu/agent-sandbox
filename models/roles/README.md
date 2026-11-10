@@ -17,7 +17,10 @@ project's test commands from `tests` as `.asb/tests` (an iterating round runs th
 affected tests, the Reviewer the whole suite once, at a zero-finding acceptance: fill in
 the two lines), and a clone per Implementer.
 `x-dev` need not exist yet: `asb --role setup claude` builds `main` into it, and
-`--init`, run again then, clones it for each Implementer.
+`--init`, run again then, clones it for each Implementer. A file written without
+`--env` has the environment's lines commented out; `asb --init roles --env x-dev` run on
+it completes them (and nothing else), and the setup role, launched without one, stops
+and asks for exactly that.
 Every "may not" of a role is a line of the dot-file template (enforced by the sandbox)
 or a sentence of its purpose file (told), and docs/roles.md section 3 says which.
 Every role's agent is the written file's `[agent] command = claude`; a role of another
