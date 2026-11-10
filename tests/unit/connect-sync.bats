@@ -379,16 +379,45 @@ tsync() { run timeout 10 "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S
   [ "$output" = "special $C/a.md" ]
 }
 
-@test "a FIFO at an upstream name never seeded is not written to, and a FIFO or file where a directory belongs is in the way too" {
+@test "a FIFO at an upstream name never seeded is not written to; a file where the source has a directory, and a directory where it has a file, are in the way, each named as what it is" {
   plant a.md ONE
   plant sub/b.md TWO
   mkdir -p "$C"
   mkfifo "$C/a.md"
   : >"$C/sub" # a file where the source has a directory
+  plant c.md THREE
+  mkdir -p "$C/c.md" # a directory where the source has a file, never seeded
   tsync
   [ "$status" -eq 0 ]
-  [ -p "$C/a.md" ] && [ -f "$C/sub" ] && [ ! -s "$C/sub" ]
-  [[ "$output" == *"special $C/a.md"* && "$output" == *"special $C/sub"* ]]
+  [ -p "$C/a.md" ] && [ -f "$C/sub" ] && [ ! -s "$C/sub" ] && [ -d "$C/c.md" ]
+  [[ "$output" == *"special $C/a.md"* && "$output" == *"file $C/sub"* && "$output" == *"dir $C/c.md"* ]]
+}
+
+@test "a file the source turns into a directory: the untouched copy goes and what is under it is seeded, on the first sync, silently" {
+  plant x ONE
+  sync
+  rm "$S/x"
+  plant x/SKILL.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(at_copy x/SKILL.md)" = TWO ]
+  sync
+  [ -z "$output" ]
+}
+
+@test "a directory the sandbox made at a tracked file's name, the file yours unchanged: the sandbox deleted it, silently, at every sync" {
+  plant x ONE
+  sync
+  rm "$C/x"
+  mkdir -p "$C/x"
+  printf 'MINE\n' >"$C/x/own.md"
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(at_copy x/own.md)" = MINE ]
+  sync
+  [ -z "$output" ]
 }
 
 @test "a file-shaped channel's copy is written in place, keeping its inode, with the source's mode and mtime" {

@@ -1297,15 +1297,21 @@ import sys
 #                           the sandbox's own file. Leave it alone.
 
 
-# What sha() says of a path that is there but is no regular file: a FIFO, a device, a
-# socket, a directory. Never opened -- a FIFO the sandbox made at a tracked name blocked
-# the open, and with it the launch, for ever (measured) -- and never equal to a hash.
+# What sha() says of a path that is there but is neither a regular file nor a directory:
+# a FIFO, a socket, a device. Never opened -- a FIFO the sandbox made at a tracked name
+# blocked the open, and with it the launch, for ever (measured) -- and never equal to a
+# hash. A directory is None, no file at all, as it always was: a file the source turned
+# into a directory is the source deleting the file (and seeding what is under it), and
+# a directory the sandbox made at a tracked file's name is the sandbox deleting it.
 SPECIAL = "special"
 
 
 def sha(path):
     try:
-        if not stat.S_ISREG(os.stat(path).st_mode):
+        m = os.stat(path).st_mode
+        if stat.S_ISDIR(m):
+            return None
+        if not stat.S_ISREG(m):
             return SPECIAL
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
@@ -1369,7 +1375,9 @@ def empty(path):
 
 class InWay(Exception):
     """Something at PATH in the copy store where the sync was to write or remove: KIND
-    `link`, a symlink, or `special`, neither a regular file nor (above it) a directory."""
+    `link`, a symlink; `special`, neither a regular file nor a directory; `file`, a
+    regular file where the source has a directory; `dir`, a directory where the source
+    has a file."""
 
     def __init__(self, path, kind="link"):
         super().__init__(path)
@@ -1392,8 +1400,13 @@ def _check(name, dir_fd, path, want):
         return
     if stat.S_ISLNK(m):
         raise InWay(path)
-    if not want(m):
-        raise InWay(path, "special")
+    if want(m):
+        return
+    if want is stat.S_ISDIR and stat.S_ISREG(m):
+        raise InWay(path, "file")
+    if want is stat.S_ISREG and stat.S_ISDIR(m):
+        raise InWay(path, "dir")
+    raise InWay(path, "special")
 
 
 def _split(copy, rel):
