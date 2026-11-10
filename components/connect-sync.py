@@ -78,14 +78,32 @@ import sys
 #                           the sandbox's own file. Leave it alone.
 
 
+# What sha() says of a path that is there but is no regular file: a FIFO, a device, a
+# socket, a directory. Never opened -- a FIFO the sandbox made at a tracked name blocked
+# the open, and with it the launch, for ever (measured) -- and never equal to a hash.
+SPECIAL = "special"
+
+
 def sha(path):
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return SPECIAL
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
     h = hashlib.sha256()
     try:
-        with open(path, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):  # changed since the stat
+            return SPECIAL
+        with os.fdopen(fd, "rb") as fh:
+            fd = None
             for chunk in iter(lambda: fh.read(65536), b""):
                 h.update(chunk)
     except OSError:
         return None
+    finally:
+        if fd is not None:
+            os.close(fd)
     return h.hexdigest()
 
 
@@ -130,19 +148,33 @@ def empty(path):
         return False
 
 
-class LinkInWay(Exception):
-    """A symlink at PATH in the copy store, where the sync was to write or remove."""
+class InWay(Exception):
+    """Something at PATH in the copy store where the sync was to write or remove: KIND
+    `link`, a symlink, or `special`, neither a regular file nor (above it) a directory."""
 
-    def __init__(self, path):
+    def __init__(self, path, kind="link"):
         super().__init__(path)
         self.path = path
+        self.kind = kind
 
 
-def _is_link(name, dir_fd):
+def _mode(name, dir_fd):
+    """NAME's own mode at DIR_FD (a link's, not its target's), or None if absent."""
     try:
-        return stat.S_ISLNK(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)
+        return os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode
     except FileNotFoundError:
-        return False
+        return None
+
+
+def _check(name, dir_fd, path, want):
+    """InWay unless NAME at DIR_FD is absent or of the type WANT tests for."""
+    m = _mode(name, dir_fd)
+    if m is None:
+        return
+    if stat.S_ISLNK(m):
+        raise InWay(path)
+    if not want(m):
+        raise InWay(path, "special")
 
 
 def _split(copy, rel):
@@ -156,7 +188,8 @@ def _split(copy, rel):
 
 def _open_parent(anchor, parts, create):
     """A descriptor of ANCHOR/PARTS..., each component opened without following a
-    link (made first when CREATE); LinkInWay names the first one that is a link.
+    link (made first when CREATE); InWay names the first one that is a link, or no
+    directory.
 
     THE COPY STORE IS THE SANDBOX'S: it can leave a symlink at any name in it, and a
     host-side write that follows one lands outside the store (a dangling one at an
@@ -172,8 +205,7 @@ def _open_parent(anchor, parts, create):
                     os.mkdir(part, 0o777, dir_fd=fd)
                 except FileExistsError:
                     pass
-            if _is_link(part, fd):
-                raise LinkInWay(path)
+            _check(part, fd, path, stat.S_ISDIR)
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = nfd
@@ -186,21 +218,25 @@ def _open_parent(anchor, parts, create):
 def copy_file(src, copy, rel):
     """SRC's content, mode and times to REL in the store COPY, in place: the file
     there keeps its inode (a running bind of a file channel sees the change), and
-    is opened with O_NOFOLLOW, so a link at its name is refused, never followed."""
+    is opened with O_NOFOLLOW, so a link at its name is refused, never followed; and
+    with O_NONBLOCK, so a FIFO there cannot hang it -- anything but a regular file is
+    refused before the open, and checked again after it."""
     anchor, parts, name = _split(copy, rel)
+    path = os.path.join(anchor, *parts, name)
     fd = _open_parent(anchor, parts, create=True)
     try:
-        if _is_link(name, fd):
-            raise LinkInWay(os.path.join(anchor, *parts, name))
+        _check(name, fd, path, stat.S_ISREG)
         st = os.stat(src)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+        flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
         try:
             out = os.open(name, flags, 0o600, dir_fd=fd)
         except OSError:
-            if _is_link(name, fd):  # made between the check and the open
-                raise LinkInWay(os.path.join(anchor, *parts, name))
+            _check(name, fd, path, stat.S_ISREG)  # changed between the check and the open
             raise
         try:
+            if not stat.S_ISREG(os.fstat(out).st_mode):
+                raise InWay(path, "special")
+            os.ftruncate(out, 0)
             with open(src, "rb") as fh:
                 for chunk in iter(lambda: fh.read(65536), b""):
                     os.write(out, chunk)
@@ -217,7 +253,7 @@ def copy_file(src, copy, rel):
 
 def remove(copy, rel):
     """Unlink REL in the store COPY -- never through a link at it or above it
-    (LinkInWay) -- and prune the directories it left empty, STRICTLY BELOW the store.
+    (InWay) -- and prune the directories it left empty, STRICTLY BELOW the store.
 
     The bound never used to be enforced -- the comment claimed it and the loop
     climbed until rmdir refused, which meant the channel's own copy directory
@@ -231,8 +267,9 @@ def remove(copy, rel):
     except FileNotFoundError:
         return
     try:
-        if _is_link(name, fd):
-            raise LinkInWay(os.path.join(anchor, *parts, name))
+        m = _mode(name, fd)
+        if m is not None and stat.S_ISLNK(m):
+            raise InWay(os.path.join(anchor, *parts, name))
         try:
             os.unlink(name, dir_fd=fd)
         except OSError:
@@ -252,7 +289,7 @@ def remove(copy, rel):
 
 
 def sync(kind, source, copy, base_path):
-    """The conflicts (relative paths) and the links in the way (store paths)."""
+    """The conflicts (relative paths), and what was in the way: (kind, store path)."""
     base = load_base(base_path)
     conflicts, links = [], []
     if kind == "dir":
@@ -264,6 +301,11 @@ def sync(kind, source, copy, base_path):
         c = sha(at(copy, rel))
         b = base.get(rel)
 
+        if c == SPECIAL:
+            links.append(("special", at(copy, rel)))  # never opened, never replaced
+            continue
+        if s == SPECIAL:
+            continue  # yours, and no file to copy
         if s is None and b is None:
             continue  # the sandbox's own file, or nothing at all
         if c is None and b is not None:
@@ -273,8 +315,8 @@ def sync(kind, source, copy, base_path):
             if c == b:
                 try:
                     remove(copy, rel)
-                except LinkInWay as e:
-                    links.append(e.path)  # the base entry goes all the same
+                except InWay as e:
+                    links.append((e.kind, e.path))  # the base entry goes all the same
             base.pop(rel, None)
             continue
         if b is None:
@@ -290,8 +332,8 @@ def sync(kind, source, copy, base_path):
                 try:
                     copy_file(at(source, rel), copy, rel)  # seed, or new upstream
                     base[rel] = s
-                except LinkInWay as e:
-                    links.append(e.path)  # not seeded: the next launch tries again
+                except InWay as e:
+                    links.append((e.kind, e.path))  # not seeded: the next launch tries again
             else:
                 conflicts.append(rel)  # both created it; keep the sandbox's
             continue
@@ -301,8 +343,8 @@ def sync(kind, source, copy, base_path):
             try:
                 copy_file(at(source, rel), copy, rel)  # refresh
                 base[rel] = s
-            except LinkInWay as e:
-                links.append(e.path)  # the base stays: said again next launch
+            except InWay as e:
+                links.append((e.kind, e.path))  # the base stays: said again next launch
         else:
             # Both moved. Keep the copy, say so, and LEAVE THE BASE where it is
             # so the next launch says so again.
@@ -413,10 +455,10 @@ def main(argv):
         # A file channel has one unnamed entry; name it after the source so the
         # warning reads as a path the user recognises.
         sys.stdout.write("conflict %s\n" % (rel or os.path.basename(base_name)))
-    for path in links:
-        # A symlink in the sandbox's copy where the sync was to write or remove: not
-        # followed, not replaced; the engine says so, naming it.
-        sys.stdout.write("link %s\n" % path)
+    for kind, path in links:
+        # A symlink, or no regular file, in the sandbox's copy where the sync was to
+        # write or remove: not followed, not opened, not replaced; the engine says so.
+        sys.stdout.write("%s %s\n" % (kind, path))
     return 0
 
 

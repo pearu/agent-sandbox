@@ -364,6 +364,33 @@ shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the 
   [[ "$output" == *"link $C/sub"* ]]
 }
 
+# tsync -- sync, given 10 s: a FIFO the sync opened would block it for ever.
+tsync() { run timeout 10 "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S" --copy "$C" --base "$B"; }
+
+@test "a FIFO at a tracked name in the copy is never opened: the sync does not hang, leaves it, and names it" {
+  plant a.md ONE
+  sync
+  rm "$C/a.md"
+  mkfifo "$C/a.md"
+  plant a.md TWO # a refresh would write it; the hash would read it
+  tsync
+  [ "$status" -eq 0 ]
+  [ -p "$C/a.md" ]
+  [ "$output" = "special $C/a.md" ]
+}
+
+@test "a FIFO at an upstream name never seeded is not written to, and a FIFO or file where a directory belongs is in the way too" {
+  plant a.md ONE
+  plant sub/b.md TWO
+  mkdir -p "$C"
+  mkfifo "$C/a.md"
+  : >"$C/sub" # a file where the source has a directory
+  tsync
+  [ "$status" -eq 0 ]
+  [ -p "$C/a.md" ] && [ -f "$C/sub" ] && [ ! -s "$C/sub" ]
+  [[ "$output" == *"special $C/a.md"* && "$output" == *"special $C/sub"* ]]
+}
+
 @test "a file-shaped channel's copy is written in place, keeping its inode, with the source's mode and mtime" {
   local f="$BATS_TEST_TMPDIR/one.json" c="$BATS_TEST_TMPDIR/copy.json" ino
   printf 'A\n' >"$f"

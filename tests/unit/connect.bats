@@ -1277,8 +1277,21 @@ DF
   run_engine -- asb --connect 'project = read-only' --connect './new.txt = own' claude --version
   [ ! -e "$H/created-outside" ]
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$PROJ/new.txt is a symlink that points nowhere; its mount point is not made through it"* ]]
+  [[ "$output" == *"$PROJ/new.txt is a symlink; the mount point for $PROJ/new.txt is not made through it"* ]]
   [ ! -s "$H/argv" ]
+}
+
+@test "under a read-only project, a link at a parent of a missing own path is refused: nothing is made in the directory it names (#220)" {
+  mkdir -p "$H/outdir"
+  ln -s "$H/outdir" "$PROJ/a"
+  local spec
+  for spec in './a/b/f.txt = own' './a/b/ = own'; do
+    run_engine -- asb --connect 'project = read-only' --connect "$spec" claude --version
+    [ -z "$(ls -A "$H/outdir")" ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$PROJ/a is a symlink; the mount point for $PROJ/a/b"*" is not made through it"* ]]
+    [ ! -s "$H/argv" ]
+  done
 }
 
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
@@ -1549,7 +1562,7 @@ both_sides() { # STORE -- change synced/ bookkeeping and a skill, in the store a
   run_engine -- asb --connect 'skills=copy native' claude --version
   [ "$status" -eq 0 ]
   [ ! -e "$H/created-outside" ]
-  [[ "$output" == *"connect: skills: '$st/new.md' in this sandbox's copy is a symlink; the sync did not write through it"* ]]
+  [[ "$output" == *"connect: skills: '$st/new.md' in this sandbox's copy is a symlink; the sync left it as it is"* ]]
 }
 
 @test "copy-on-write: a shadow warning names your file, not the agent's synced/ bookkeeping" {

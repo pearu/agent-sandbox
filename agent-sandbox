@@ -2808,12 +2808,19 @@ _as_connect_bind_path() {
   # removed again while it is empty.
   if [[ ! -e "$p" && "${_connect_project_mode:-read-write}" == read-only &&
     "$p" == "$(_as_project_dir)"/* ]] && [[ "$mode" == own || -e "$s" ]]; then
-    # A dangling link there (another role may have the project read-write) would carry
-    # the mount point made here out of the project.
-    if [[ -L "$p" ]]; then
-      _as_msg "connect: $what: $p is a symlink that points nowhere; its mount point is not made through it. Remove it. Refusing to launch"
-      return 1
-    fi
+    # A link at the path or at any directory between it and the project (another role
+    # may have the project read-write; the key is resolved lexically) would carry the
+    # mount point made here out of the project.
+    local _pd _c _rest
+    _pd="$(_as_project_dir)" _c="$_pd" _rest="${p#"$_pd"/}"
+    while [[ -n "$_rest" ]]; do
+      _c="$_c/${_rest%%/*}"
+      [[ "$_rest" == */* ]] && _rest="${_rest#*/}" || _rest=""
+      if [[ -L "$_c" ]]; then
+        _as_msg "connect: $what: $_c is a symlink; the mount point for $p is not made through it. Remove it. Refusing to launch"
+        return 1
+      fi
+    done
     if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
       mkdir -p -- "$p" || return 1
     else
@@ -2994,11 +3001,13 @@ _as_connect_sync() {
   # a month.
   local line f
   while IFS= read -r line; do
-    # A symlink in this sandbox's copy where the sync was to write or remove: the
-    # copy is the sandbox's to change, and a host-side write through a link would land
-    # outside it, so the sync neither follows nor replaces one.
-    if [[ "$line" == link\ * ]]; then
-      _as_msg "connect: $ch: '${line#link }' in this sandbox's copy is a symlink; the sync did not write through it, so your change there did not reach the sandbox. Remove it, or take yours: $(_as_self_cmd --reset "$ch")"
+    # A symlink, or no regular file (a FIFO would hang the launch), in this sandbox's
+    # copy where the sync was to write or remove: the copy is the sandbox's to change,
+    # and a host-side write through a link would land outside it, so the sync neither
+    # follows, opens nor replaces one.
+    if [[ "$line" == link\ * || "$line" == special\ * ]]; then
+      f="${line#* }"
+      _as_msg "connect: $ch: '$f' in this sandbox's copy is $([[ "$line" == link\ * ]] && printf 'a symlink' || printf 'not a regular file'); the sync left it as it is, so the sandbox's copy there does not follow yours. Remove it, or take yours: $(_as_self_cmd --reset "$ch")"
       continue
     fi
     [[ "$line" == conflict\ * ]] || continue
