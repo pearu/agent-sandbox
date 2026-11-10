@@ -500,23 +500,97 @@ init() {
   [[ "$output" == *"--apply '[connect:gh-*]' '$ep/ = copy-on-write'"* ]]
 }
 
-@test "--env completing a no-env file keeps a symlinked .agent-sandbox a link, its mode, and no final newline it lacked" {
+@test "--env completing a no-env file keeps its mode, and no final newline it lacked" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox"
   init -- github
   [ "$status" -eq 0 ]
-  mv "$df" "$H/real"
-  ln -s "$H/real" "$df"
-  chmod 600 "$H/real"
-  truncate -s -1 "$H/real" # no final newline
+  chmod 600 "$df"
+  truncate -s -1 "$df" # no final newline
   init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
   [ "$status" -eq 0 ]
   [[ "$output" == *"completed in .agent-sandbox"* ]]
-  [ -L "$df" ]
-  [ "$(readlink "$df")" = "$H/real" ]
-  [ "$(stat -c %a "$H/real")" = 600 ]
-  [ -n "$(tail -c1 "$H/real")" ]
-  grep -qx "prefix = $H/base/envs/dev .*" "$H/real"
+  [ "$(stat -c %a "$df")" = 600 ]
+  [ -n "$(tail -c1 "$df")" ]
+  grep -qx "prefix = $H/base/envs/dev .*" "$df"
+}
+
+@test "--init and --apply refuse a symbolically linked .agent-sandbox, dangling or not: nothing written through it" {
+  local df="$PROJ/.agent-sandbox"
+  # a link to a file outside, as a sandbox with the project read-write could leave
+  printf 'mine\n' >"$H/outside"
+  ln -s "$H/outside" "$df"
+  init -- github
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox is a symbolic link, and asb does not write through one: replace it with a regular file and run --init again"* ]]
+  [ "$(cat "$H/outside")" = mine ]
+  [ ! -e "$PROJ/.asb" ]
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --apply "[allow]" example.org 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--apply: .agent-sandbox is a symbolic link, and asb does not write through one"* ]]
+  [ "$(cat "$H/outside")" = mine ]
+  # a dangling one: its target is not made
+  rm -f "$df"
+  ln -s "$H/nowhere" "$df"
+  init -- github
+  [ "$status" -eq 2 ]
+  [ ! -e "$H/nowhere" ]
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --apply "[allow]" example.org 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 2 ]
+  [ ! -e "$H/nowhere" ]
+}
+
+@test "--init writes nothing under .asb/ through a symbolic link a role left there: purpose file, migration copy, sums, index, inbox, declared path, .gitignore" {
+  local df="$PROJ/.agent-sandbox" r="$PROJ/.asb/roles"
+  init -- roles
+  [ "$status" -eq 0 ]
+  printf 'outside\n' >"$H/out-file"
+  # each kind of path --init writes: a link to an existing file outside, or a dangling one
+  rm -f "$r/planner-1.md" "$PROJ/.asb/.gitignore" "$PROJ/.asb/coord/COORDINATION.md" "$PROJ/.asb/coord/to/reviewer-1.md" "$PROJ/.asb/init.sums"
+  ln -s "$H/out-file" "$r/planner-1.md"                     # purpose file, new
+  ln -s "$H/dangling-1" "$PROJ/.asb/.gitignore"             # .gitignore
+  ln -s "$H/out-file" "$PROJ/.asb/coord/COORDINATION.md"    # the index
+  ln -s "$H/dangling-2" "$PROJ/.asb/coord/to/reviewer-1.md" # an inbox
+  ln -s "$H/dangling-3" "$PROJ/.asb/init.sums"              # the sums
+  rm -rf "$PROJ/.asb/plan/planner-1"
+  ln -s "$H/dangling-4" "$PROJ/.asb/plan/planner-1" # a declared directory
+  init -- roles implementer=2                       # writes a new index row, a purpose file
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: not writing .asb/roles/planner-1.md: .asb/roles/planner-1.md is a symbolic link (a role with the project read-write can leave one); remove it and run --init again"* ]]
+  [[ "$output" == *"--init: not writing .asb/.gitignore: .asb/.gitignore is a symbolic link"* ]]
+  [[ "$output" == *"--init: not writing .asb/coord/COORDINATION.md: .asb/coord/COORDINATION.md is a symbolic link"* ]]
+  [[ "$output" == *"--init: not writing .asb/coord/to/reviewer-1.md: "* ]]
+  [[ "$output" == *"--init: not writing .asb/plan/planner-1/: .asb/plan/planner-1 is a symbolic link"* ]]
+  [[ "$output" == *"--init: not writing .asb/init.sums: "* ]]
+  [ "$(cat "$H/out-file")" = outside ]
+  for n in 1 2 3 4; do [ ! -e "$H/dangling-$n" ]; done
+  [ -f "$r/implementer-2.md" ] # the rest written
+  [ ! -L "$r/implementer-2.md" ]
+  # a purpose file the user changed: the model's text offered in .asb/migrate/, not through a link
+  printf 'mine\n' >>"$r/implementer-1.md"
+  mkdir -p "$PROJ/.asb/migrate"
+  ln -s "$H/dangling-5" "$PROJ/.asb/migrate/implementer-1.md"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: not writing .asb/migrate/implementer-1.md: "* ]]
+  [ ! -e "$H/dangling-5" ]
+  # a purpose file --init wrote, replaced by a link: not updated through it
+  ln -sf "$H/out-file" "$r/reviewer-1.md"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: not writing .asb/roles/reviewer-1.md: "* ]]
+  [ "$(cat "$H/out-file")" = outside ]
+  # a link to a directory on the way: nothing written beneath it
+  rm -f "$r/implementer-2.md"
+  mv "$r" "$H/roles-elsewhere"
+  ln -s "$H/roles-elsewhere" "$r"
+  rm -f "$H/roles-elsewhere/implementer-2.md"
+  init -- roles
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: not writing .asb/roles: .asb/roles is a symbolic link"* ]]
+  [ ! -e "$H/roles-elsewhere/implementer-2.md" ]
 }
 
 @test "--env on a no-env file without its --init mark, or with CR LF lines: not completed, the lines named for the user" {

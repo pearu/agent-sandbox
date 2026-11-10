@@ -11780,6 +11780,12 @@ _as_init() {
     _as_msg "--init runs on the host: it writes the policy a sandbox runs under."
     return 1
   fi
+  # A sandbox with the project read-write can make .agent-sandbox a link (to ~/.bashrc,
+  # say) where there was none: asb never writes the policy through one.
+  if [[ -L "$proj/.agent-sandbox" ]]; then
+    _as_msg "--init: .agent-sandbox is a symbolic link, and asb does not write through one: replace it with a regular file and run --init again"
+    return 2
+  fi
   case "$model" in
     */*) mdir="$model" ;;
     *) mdir="$(_as_models_dir)/$model" ;;
@@ -12480,7 +12486,40 @@ _as_init() {
   # ---- purpose files, clones, environments, the declared paths, the index ----
   local f tpath gdir br prefix v
   local -a globs=()
-  mkdir -p "$proj/.asb/roles" || return 1
+  # What --init writes under .asb/ goes through no symbolic link: a role with the project
+  # read-write can leave one there, dangling or not, and --init runs on the host. A path
+  # that is one, or under one, is not written, and said; a file is written to a temporary
+  # one beside it and renamed into place, which replaces a link planted since, never
+  # follows it.
+  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else says so
+    local rel="${1%/}" p="$proj" c
+    while [[ -n "$rel" ]]; do
+      c="${rel%%/*}" p+="/${rel%%/*}"
+      if [[ -L "$p" ]]; then
+        _as_msg "--init: not writing $1: ${p#"$proj"/} is a symbolic link (a role with the project read-write can leave one); remove it and run --init again"
+        return 1
+      fi
+      if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
+    done
+    [[ -n "$c" ]]
+  }
+  _init_put() { # REL < TEXT -- $proj/REL from stdin, through no link; 2: refused (said)
+    local d t
+    _init_nolink "$1" || return 2
+    d="$(dirname -- "$proj/$1")"
+    mkdir -p -- "$d" || return 1
+    t="$(mktemp -- "$d/.asb-init.XXXXXX")" || return 1
+    if cat >"$t" && chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
+      return 0
+    fi
+    rm -f -- "$t"
+    return 1
+  }
+  _init_mkdir() { # REL -- the directory $proj/REL, through no link; 2: refused (said)
+    _init_nolink "$1" || return 2
+    mkdir -p -- "$proj/$1"
+  }
+  _init_mkdir .asb/roles || return 1
   # A purpose file is the model's until the user changes it: .asb/init.sums records the
   # hash of what --init last wrote at each path, and a file that still has it is replaced
   # by the model's current text; one changed since (or older than the record) is kept.
@@ -12497,13 +12536,20 @@ _as_init() {
       return 1
     }
     sum="$(_as_sha256_file "$tmp")"
+    _init_nolink "$2" || {
+      rm -f -- "$tmp"
+      return 0
+    }
     if [[ -e "$proj/$2" ]]; then
       cur="$(_as_sha256_file "$proj/$2")"
       rec="$(awk -v p="$2" '$2 == p { s = $1 } END { print s }' "$sums" 2>/dev/null)"
       if [[ "$cur" == "$sum" ]]; then
         :
       elif [[ -n "$rec" && "$cur" == "$rec" ]]; then
-        cat -- "$tmp" >"$proj/$2" || return 1
+        _init_put "$2" <"$tmp" || {
+          rm -f -- "$tmp"
+          return 1
+        }
         wrote=1
         _as_msg "updated $2 from model '$model'"
       else
@@ -12511,8 +12557,11 @@ _as_init() {
           [[ -f "$proj/$(dirname -- "$2")/$a.addendum.md" ]] && has=1
         done
         if [[ -n "${6:-}" ]] && ! ((has)); then
-          mkdir -p -- "$(dirname -- "$mig")" && cat -- "$tmp" >"$mig" || return 1
-          migrate+=("$2"$'\t'"$6")
+          if _init_put "${mig#"$proj"/}" <"$tmp"; then
+            migrate+=("$2"$'\t'"$6")
+          else
+            (($? == 2)) || return 1
+          fi
           _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (to receive it, move your part into an addendum: below)"
         else
           _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (remove the file and run --init again for the model's)"
@@ -12521,16 +12570,19 @@ _as_init() {
         return 0
       fi
     else
-      mkdir -p "$proj/$(dirname -- "$2")" && cat -- "$tmp" >"$proj/$2" || return 1
+      _init_put "$2" <"$tmp" || {
+        rm -f -- "$tmp"
+        return 1
+      }
       _as_msg "wrote $2"
     fi
     rm -f -- "$tmp"
     [[ -n "${6:-}" ]] && rm -f -- "$mig"
+    _init_nolink .asb/init.sums || return 0
     {
       awk -v p="$2" '$2 != p' "$sums" 2>/dev/null
       printf '%s  %s\n' "$sum" "$2"
-    } >"$sums.new" \
-      && mv -f -- "$sums.new" "$sums"
+    } | _init_put .asb/init.sums || (($? == 2))
   }
   for a in "${insts[@]}"; do
     IFS=$'\t' read -r inst h rn n <<<"$a"
@@ -12631,22 +12683,23 @@ _as_init() {
   local key
   while IFS= read -r key; do
     case "$key" in
-      */) mkdir -p "$proj/$key" ;;
-      *) [[ -e "$proj/$key" ]] || { mkdir -p "$proj/$(dirname -- "$key")" && : >"$proj/$key"; } ;;
+      */) _init_mkdir "$key" || (($? == 2)) ;;
+      *) [[ -e "$proj/$key" && ! -L "$proj/$key" ]] || _init_put "$key" </dev/null || (($? == 2)) ;;
     esac || return 1
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' "$df" | sort -u)
   # A role's inbox (`#@ inbox = PATH`, #274): an empty file for its watcher to wait on,
   # where the instructions to it are appended. Never a declaration: a file bound into a
   # sandbox keeps the inode, and the Write tool renames a new one over it.
   for f in ${inboxes[@]+"${inboxes[@]}"}; do
-    [[ -e "$proj/$f" ]] || { mkdir -p "$proj/$(dirname -- "$f")" && : >"$proj/$f"; } || return 1
+    [[ -e "$proj/$f" && ! -L "$proj/$f" ]] || _init_put "$f" </dev/null || (($? == 2)) || return 1
   done
   # The model's scripts (`bin/`, #274), into .asb/bin/, executable: written and kept as
   # the purpose files are (.asb/init.sums), so one you changed stays yours.
   for f in "$mdir"/bin/*; do
     [[ -f "$f" ]] || continue
     _init_purpose "$f" ".asb/bin/$(basename -- "$f")" "" "" "" || return 1
-    [[ -x "$proj/.asb/bin/$(basename -- "$f")" ]] || chmod 755 -- "$proj/.asb/bin/$(basename -- "$f")" || return 1
+    [[ -L "$proj/.asb/bin/$(basename -- "$f")" || ! -f "$proj/.asb/bin/$(basename -- "$f")" || -x "$proj/.asb/bin/$(basename -- "$f")" ]] \
+      || chmod 755 -- "$proj/.asb/bin/$(basename -- "$f")" || return 1
   done
   # The project's test commands for the roles (`tests`, #301): written once with the
   # values empty, for the project to fill, and kept as the purpose files are.
@@ -12670,16 +12723,24 @@ _as_init() {
   done
   if [[ ! -s "$idx" && -f "$mdir/coord/COORDINATION.md" ]]; then
     a="$(_init_render "" "$(cat -- "$mdir/coord/COORDINATION.md")" "" "" "" | sed 1d)"
-    printf '%s\n' "${a//\{instances\}/${idxrows%$'\n'}}" >"$idx" || return 1
-    _as_msg "wrote .asb/coord/COORDINATION.md"
+    if printf '%s\n' "${a//\{instances\}/${idxrows%$'\n'}}" | _init_put .asb/coord/COORDINATION.md; then
+      _as_msg "wrote .asb/coord/COORDINATION.md"
+    else
+      (($? == 2)) || return 1
+    fi
   elif [[ -n "$idxrows" ]]; then
-    printf '%s' "$idxrows" >>"$idx" || return 1
+    if _init_nolink .asb/coord/COORDINATION.md; then
+      { cat -- "$idx" && printf '%s' "$idxrows"; } | _init_put .asb/coord/COORDINATION.md || (($? == 2)) || return 1
+    fi
   fi
   # .asb/ is the roles' working state, never the project's history: a .gitignore of its
   # own keeps it out of whatever repository the directory is in, or becomes part of.
-  if [[ ! -e "$proj/.asb/.gitignore" ]]; then
-    printf '*\n' >"$proj/.asb/.gitignore" || return 1
-    _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
+  if [[ ! -e "$proj/.asb/.gitignore" || -L "$proj/.asb/.gitignore" ]]; then
+    if printf '*\n' | _init_put .asb/.gitignore; then
+      _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
+    else
+      (($? == 2)) || return 1
+    fi
   fi
 
   if ((${_init_shared:-0})) && [[ -n "$envpath" ]]; then
@@ -12858,6 +12919,10 @@ _as_apply() {
   if _as_inside_sandbox; then
     _as_msg "--apply runs on the host: it changes the policy a sandbox runs under."
     return 1
+  fi
+  if [[ -L "$file" ]]; then
+    _as_msg "--apply: .agent-sandbox is a symbolic link, and asb does not write through one: replace it with a regular file and run --apply again"
+    return 2
   fi
   local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve remote agent) lines=() have=() add=()
   for f in "${profile_dir:-}"/*/profile.sh; do

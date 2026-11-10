@@ -1015,6 +1015,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`--init` and `--apply` refuse a symbolically linked `.agent-sandbox`** (exit 2): a
+  sandbox with the project read-write can create the file as a link (to `~/.bashrc`, say)
+  where none existed, and the host-side command wrote through it. **`--init` writes
+  nothing under `.asb/` through a symbolic link** either -- purpose files, the migration
+  copy, `.asb/init.sums`, the coord index, inboxes, declared paths, `.asb/.gitignore`: a
+  path that is a link, or under one, is skipped and said, and a file is written to a
+  temporary one beside it and renamed into place.
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`
   completes the environment's lines it wrote commented out** -- the `[conda]` sections and
   the lines naming the env's prefix, in the sections under its `# ---- written/added by
