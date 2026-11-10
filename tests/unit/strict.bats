@@ -22,6 +22,13 @@ set +x
 if [ "$1" = --help ]; then
   echo "Usage: pasta [OPTION]... [COMMAND] [ARGS]..."
   [ -n "${PASTA_HELP_HOSTNAME:-}" ] && echo "  -H, --hostname NAME 	Hostname to configure client with"
+  # PASTA_HELP_MORE: the rest of the help in a later write, as a long help goes out in
+  # more than one; a reader that stopped at the match has gone, and this write dies of
+  # SIGPIPE. The pause makes that race lost every time.
+  if [ -n "${PASTA_HELP_MORE:-}" ]; then
+    sleep 0.3
+    printf '%065536d\n' 0
+  fi
   exit 0
 fi
 if [ -n "${PASTA_DUMP:-}" ]; then
@@ -381,6 +388,15 @@ STUB
 
 @test "strict: a pasta that knows --hostname is told the host's name, so the namespace is not renamed pasta-<host> as a 2026 passt does by default" {
   run_engine PASTA_DUMP="$H/pasta_argv" PASTA_HELP_HOSTNAME=1 AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  [ "$status" -eq 0 ]
+  local -a P
+  mapfile -t P <"$H/pasta_argv"
+  local joined=" ${P[*]} "
+  [[ "$joined" == *" --hostname $(uname -n) -- "* ]]
+}
+
+@test "strict: --hostname early in a pasta help written in two writes is still seen: the help is read whole, not stopped at the match" {
+  run_engine PASTA_DUMP="$H/pasta_argv" PASTA_HELP_HOSTNAME=1 PASTA_HELP_MORE=1 AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
   [ "$status" -eq 0 ]
   local -a P
   mapfile -t P <"$H/pasta_argv"

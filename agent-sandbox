@@ -9384,6 +9384,25 @@ _as_remote_pkg() {
   esac
 }
 
+# _as_ssh_user PREFIX [ssh -G ARGS...] HOST -- your ssh login name for HOST, from
+# `ssh -G`, on stdout. Its output is captured whole, then matched: ssh writes it in two
+# writes, and a reader that stops at the user line would end ssh by SIGPIPE before the
+# second, which pipefail and set -e turn into a silent end of the engine. A failing
+# ssh -G (a broken ~/.ssh/config, say) is said, after PREFIX, with its error: 1.
+_as_ssh_user() {
+  local pfx="$1" g ef e rc=0
+  shift
+  ef="$(mktemp)" || return 1
+  g="$(ssh -G "$@" 2>"$ef")" || rc=$?
+  e="$(head -n1 -- "$ef")" || true
+  rm -f -- "$ef"
+  if ((rc)); then
+    _as_msg "$pfx cannot resolve '${!#}' (ssh -G failed, exit $rc)${e:+: $e}"
+    return 1
+  fi
+  awk '$1 == "user" {print $2; exit}' <<<"$g"
+}
+
 # _as_setup_remote CWD WORD [PORT [VERB]] -- `asb --setup-remote WORD [--port PORT]`, or
 # `asb --setup-remote WORD --status|--shutdown` (VERB). WORD naming
 # a [remote:WORD] section of CWD's .agent-sandbox is that section. Otherwise it is a
@@ -9449,10 +9468,7 @@ _as_setup_remote() {
   fi
   [[ -z "$sport" ]] || sport="$((10#$sport))"
   if [[ -z "$acct" ]]; then
-    # ssh -G's user line, read to the end of its output (here and below): ssh writes it in
-    # two writes, and an awk that exits at the line ends ssh by SIGPIPE before the second;
-    # pipefail makes that the substitution's status, and set -e ends the engine (on CI).
-    acct="$(ssh -G "$host" 2>/dev/null | awk '$1 == "user" && !n++ {print $2}')"
+    acct="$(_as_ssh_user --setup-remote: "$host")" || return 1
     from=" (your ssh login name for $host)"
   fi
   if [[ ! "$acct" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
@@ -9473,7 +9489,9 @@ _as_setup_remote() {
       _as_remote_eval "$alias"
       local -a diffs=()
       local sacct="$_rm_account"
-      [[ -n "$sacct" || -z "$_rm_host" ]] || sacct="$(ssh -G "$_rm_host" 2>/dev/null | awk '$1 == "user" && !n++ {print $2}')"
+      if [[ -z "$sacct" && -n "$_rm_host" ]]; then
+        sacct="$(_as_ssh_user "$p" "$_rm_host")" || return 1
+      fi
       [[ "$_rm_host${_rm_sshport:+:$_rm_sshport}" == "$dest" ]] \
         || diffs+=("host = $_rm_host${_rm_sshport:+:$_rm_sshport}, where $word says $dest")
       [[ "$sacct" == "$acct" ]] || diffs+=("account = ${sacct:-?}, where $word says $acct")
@@ -9840,7 +9858,9 @@ _as_remote_verb() {
   local -a sp=() lines=()
   [[ -z "$_rm_sshport" ]] || sp=(-p "$_rm_sshport")
   acct="$_rm_account"
-  [[ -n "$acct" ]] || acct="$(ssh -G ${sp[@]+"${sp[@]}"} "$_rm_host" 2>/dev/null | awk '$1 == "user" && !n++ {print $2}')"
+  if [[ -z "$acct" ]]; then
+    acct="$(_as_ssh_user "$p" ${sp[@]+"${sp[@]}"} "$_rm_host")" || return 1
+  fi
   dest="${_rm_host#*@}" scratch="${_rm_scratch:-~/$alias}"
   _as_msg "$p --$verb, over ssh as $acct to $dest (ssh $spo-l $acct $dest; BatchMode; never sudo): asb --profile sshd --role $alias --$verb in $scratch there"
   err="$(mktemp)" || return 1
@@ -13017,8 +13037,11 @@ _as_launch_pasta() {
   # the 2024 one (git20240220, 24.04) has no such option and leaves the name alone
   # (measured 2026-11-01). A tool inside that records the host's name would otherwise
   # record pasta-<host>.
-  local -a hopts=()
-  pasta --help 2>&1 | grep -q -- '--hostname' && hopts=(--hostname "$(uname -n)")
+  # The help is read whole, never piped into `grep -q`: a match in its first write would
+  # let grep exit before the next, pasta die of SIGPIPE, and pipefail drop --hostname.
+  local -a hopts=() phelp
+  phelp="$(pasta --help 2>&1 || true)"
+  [[ "$phelp" != *--hostname* ]] || hopts=(--hostname "$(uname -n)")
   # shellcheck disable=SC2016
   _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none "${topts[@]}" -u none ${hopts[@]+"${hopts[@]}"} -- bash -c '
     nftbin=$1 sshrules=$2 sd=$3 bpf=$4 pport=$5

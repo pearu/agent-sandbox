@@ -27,6 +27,11 @@ setup() {
 #!/usr/bin/env bash
 set +x
 if [[ "$1" == -G ]]; then
+  # SSH_G_FAIL: ssh -G fails, as it does on a broken ~/.ssh/config
+  if [[ -n "${SSH_G_FAIL:-}" ]]; then
+    echo "$HOME/.ssh/config line 3: Bad configuration option: bogus" >&2
+    exit 255
+  fi
   s="$2" u=tester pt=2223
   [[ "$s" == -p ]] && pt="$3" s="$4"
   if [[ -f "$HOME/.ssh/config" ]] && grep -qx "Host $s" "$HOME/.ssh/config"; then
@@ -37,6 +42,7 @@ if [[ "$1" == -G ]]; then
   # SSH_G_MORE: the rest comes in a later write, as the real ssh's does (its output is
   # over 4096 bytes, written in two): a reader that stops at the user line has gone by
   # then, and the write dies of SIGPIPE -- under pipefail, the reader's pipeline fails.
+  # The pause makes that race, which CI lost now and then, lost every time.
   if [[ -n "${SSH_G_MORE:-}" ]]; then
     sleep 0.3
     printf 'setenv %065536d\n' 0
@@ -964,6 +970,15 @@ apply_remote() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"agent-sandbox: remote tester-qgpu3: [remote:tester-qgpu3] has port = 2222, where --port says 2224"* ]]
   [[ "$output" != *"has account"* ]]
+  # a failing ssh -G is said, with its error, for the destination's account and the section's
+  setup_remote SSH_G_FAIL=1 qgpu3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: --setup-remote: cannot resolve 'qgpu3' (ssh -G failed, exit 255): $H/home/.ssh/config line 3: Bad configuration option: bogus"* ]]
+  printf '[remote:tob-qgpu3]\nhost = qgpu3\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  setup_remote SSH_G_FAIL=1 tob@qgpu3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$q cannot resolve 'qgpu3' (ssh -G failed, exit 255): $H/home/.ssh/config line 3: Bad configuration option: bogus"* ]]
+  [[ "$output" != *"says otherwise"* ]]
   printf '[remote:tob-qgpu3]\nhost = qgpu3\naccount = tob\nport = 2222\n' >"$PROJ/.agent-sandbox"
   setup_remote tob-qgpu3 --port 2224
   [ "$status" -eq 2 ]
@@ -1207,6 +1222,10 @@ this_machine() {
   setup_remote SSH_G_MORE=1 ACCT_FAIL=1 r1 --status
   [ "$status" -eq 1 ]
   [[ "$output" == *"$p cannot ask as tester (ssh exit 255)"* ]]
+  setup_remote SSH_G_FAIL=1 r1 --status
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$p cannot resolve 'qgpu3' (ssh -G failed, exit 255): $H/home/.ssh/config line 3: Bad configuration option: bogus"* ]]
+  [[ "$output" != *"over ssh as"* ]]
 }
 
 @test "--setup-remote: env TMPDIR under the scratch ('~' the account's home, or absolute) is made there, said once, before the login's line; the last TMPDIR line is the one; outside the scratch, through '..', or another variable: not made, nothing said (#344)" {
