@@ -677,6 +677,7 @@ W
 }
 
 @test "--setup-remote: the policy there is never written through a link its sandbox left in the scratch: the old fixed temp name .agent-sandbox.asb-new pointing outside is left as it is, its target unchanged (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   local T="$R/home/tob"
@@ -694,6 +695,7 @@ W
 }
 
 @test "--setup-remote: .asb/remote/.gitignore is never written through a link a sandbox left there, a dangling one included (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing pasta=missing profiles=
   section 'account = tob'
   mkdir -p "$PROJ/.asb/remote"
@@ -706,6 +708,7 @@ W
 }
 
 @test "--setup-remote: a link at .asb, .asb/remote or the remote's directory is refused: nothing is made through it (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing pasta=missing profiles=
   section 'account = tob'
   local l
