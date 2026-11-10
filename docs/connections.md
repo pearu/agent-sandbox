@@ -874,8 +874,9 @@ true and says so here.
 `--reset skills` re-seeds one channel, and `--reset ./scratch/` one declared path; `--status`,
 `--shutdown` and `--delete` are the role's own verbs (#126), and `--list` and `--list-all`
 show every role's (#314). They start no agent, so they -- and `--summarize`, which starts
-its own turn -- need no command when one installed profile has its command on PATH (`asb --role R --reset config`); with
-none or several, the command or `--profile` says whose stores.
+its own turn -- need no command when asb can run one agent, or the default is set
+(`asb --set-default-agent AGENT`; [profiles.md](profiles.md#the-default-agent)) (`asb
+--role R --reset config`); otherwise the command or `--profile` says whose stores.
 
 ## What the study measures under this model
 

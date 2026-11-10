@@ -23,9 +23,10 @@
 #
 # Prerequisites:
 #   - bubblewrap installed:   sudo apt install bubblewrap
-#   - the agent itself, on PATH or anywhere a path can name it. For `claude`:
-#     Claude Code from its native installer or a package; the engine runs
-#     whatever `claude` resolves to.
+#   - the agent: for a profile with an install recipe (claude), asb's own
+#     install of it, `asb --install claude`, which every launch of `claude`
+#     runs (never one on PATH); any other profile's agent on PATH. A path
+#     always works: asb --profile claude /path/to/claude.
 #
 # Install (pick one):
 #   1. ./install.sh -- per-host setup: egress proxy + allowlist, AppArmor
@@ -367,7 +368,19 @@
 #                         SHA-256 are checked, a tarball's members too, and one
 #                         rename puts it in place: a failure leaves nothing. A
 #                         version already there is not downloaded again. Exit 2
-#                         for a refusal, 1 for a failure.
+#                         for a refusal, 1 for a failure. A launch naming such a
+#                         profile's agent by name (CMD, --agent, [agent]
+#                         command) runs current's version under every preset,
+#                         its directory bound read-only, alone; PATH is not
+#                         read. Not installed: refused, naming this line.
+#   --set-default-agent [AGENT]
+#                         alone on the line, host only (#6): make AGENT the
+#                         default agent, ~/.config/agent-sandbox/default-agent,
+#                         that a role verb with no command acts on when asb can
+#                         run several (a profile with an install recipe,
+#                         installed or not, or another whose command is on
+#                         PATH); refused for any other. No AGENT: print the one
+#                         set.
 #   --summarize           with a stopped role R (#314): one headless turn of a new
 #                         session in R's sandbox, under R's policy, as a turn of
 #                         --serve runs (the profile's serve-new arguments, a fresh
@@ -541,7 +554,8 @@ Engine flags (before CMD):
                         Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
                         nothing, then the plan for CMD's profile, else for
-                        each available one (installed, its command on PATH);
+                        each available one (an agent asb installs, installed
+                        or not, or a command on PATH);
                         exits non-zero when a launch of any of them would
                         refuse the file (for an author, CI or a pre-commit hook)
   --verbose             also print the routine status lines (dot-file values
@@ -590,8 +604,14 @@ Engine flags (before CMD):
                         -- or taken from FILE -- checked against the SHA-256
                         its vendor states (with --sha256, against SUM, offline),
                         and put in ~/.local/state/agent-sandbox/AGENT/install/VERSION/,
-                        then made AGENT's current version. One already there
-                        is not downloaded again
+                        then made AGENT's current version, which `asb AGENT`
+                        runs (never one on PATH). One already there is not
+                        downloaded again
+  --set-default-agent [AGENT]
+                        alone on the line, host only: make AGENT the agent a
+                        role verb with no command acts on when asb can run
+                        several (~/.config/agent-sandbox/default-agent); no
+                        AGENT prints the one set
   --roles ROLE...       open one tmux session, named after the project
                         directory, with a pane per role, each running
                         `--role ROLE` with the line's engine words, five to a
@@ -640,8 +660,8 @@ Engine flags (before CMD):
   --reset CHANNEL|PATH  discard what this role holds at CHANNEL (or a declared
                         PATH) and take the source's again, then exit. What the
                         conflict warning points at. Like --status, --shutdown
-                        and --delete, it needs no CMD when one installed
-                        profile has its command on PATH
+                        and --delete, it needs no CMD when asb can run only
+                        one agent, or the default is set (--set-default-agent)
   --status              show this role's sandbox: the keeper, what runs in it,
                         the background daemon's sessions
   --list [WORD]         the role sessions of this project you can resume: per
@@ -3213,7 +3233,7 @@ _as_keeper_policy() {
   fi
   # THE AGENT ITSELF: the keeper binds the binary it launched with, so a join that runs
   # another one would find nothing at that path inside (measured: "No such file", exit
-  # 127). Every join names one -- CMD resolved, or the profile's command on PATH -- so it
+  # 127). Every join names one -- CMD resolved, or the profile's command (_as_resolve_bin) -- so it
   # is always compared, but for --exec, which runs a command of its own. After an update
   # moves `claude` to a new binary, an idle keeper is replaced and a busy one refuses,
   # which is the rule for every other part of a running role's policy.
@@ -5782,23 +5802,26 @@ _as_own_proxy_stop() {
 }
 
 # _as_default_candidates DIR -- the profiles installed in DIR that a verb or --check with
-# no command may fall back to, one `NAME<TAB>on|off|broken` line each: `on` when the
-# profile's command (profile_command, or its dot-file's [agent] command) is there to run,
-# looked up as a launch looks it up (_as_resolve_bin: PATH as the engine has it,
-# agent-sandbox itself passed over, a path as it is); `broken` when its profile.sh fails
-# to load, which is never a default. Those chosen by --profile alone
-# (profile_by_name_only) are left out; a profile that names no command is `off`.
+# no command may fall back to, one `NAME<TAB>on|off|broken` line each: `on` when asb can
+# run its agent -- a profile with an install recipe ([agent] install, #6) always, whether
+# asb has installed it yet or not (installable), any other when its command
+# (profile_command, or its dot-file's [agent] command) is there to run, looked up as a
+# launch looks it up (_as_resolve_bin: PATH as the engine has it, agent-sandbox itself
+# passed over, a path as it is); `broken` when its profile.sh fails to load, which is
+# never a default. Those chosen by --profile alone (profile_by_name_only) are left out; a
+# profile with no recipe that names no command is `off`.
 _as_default_candidates() {
-  local f n k a b cmd bno ok
+  local f n k a b cmd bno ok rec
   for f in "$1"/*/profile.sh; do
     [[ -r "$f" ]] || continue
-    n="$(basename -- "$(dirname -- "$f")")" cmd="" bno=0 ok=0
+    n="$(basename -- "$(dirname -- "$f")")" cmd="" bno=0 ok=0 rec=0
     while IFS=$'\t' read -r k a b; do
       [[ "$a" == "$n" ]] || continue
       case "$k" in
         loaded) ok=1 ;;
         command) cmd="$b" ;;
         by-name-only) bno=1 ;;
+        install) rec=1 ;;
       esac
     done < <(_as_profile_facts "$f")
     if ((! ok)); then
@@ -5806,7 +5829,7 @@ _as_default_candidates() {
       continue
     fi
     ((bno)) && continue
-    if [[ -n "$cmd" ]] && _as_default_found "$cmd" "$n"; then
+    if ((rec)) || { [[ -n "$cmd" ]] && _as_default_found "$cmd" "$n"; }; then
       printf '%s\ton\n' "$n"
     else
       printf '%s\toff\n' "$n"
@@ -5820,56 +5843,134 @@ _as_default_candidates() {
 # for, not a launch made.
 # shellcheck disable=SC2034 # read by _as_resolve_bin, by dynamic scope
 _as_default_found() {
-  local engine="${engine:-}" invoked="${invoked:-agent-sandbox}" profile="$2" profile_bin="" _role_flag_set=0 _roles_set=0
+  local engine="${engine:-}" invoked="${invoked:-agent-sandbox}" profile="$2" profile_bin="" profile_bin_dir="" _role_flag_set=0 _roles_set=0
   _as_resolve_bin "$1" 2>/dev/null
 }
 
-# _as_default_profile DIR -- the profile a verb or --check with no command acts on: the
-# only one installed in DIR whose command is on PATH (_as_default_candidates). Prints
-# nothing when there is none, or several; _as_default_refusal says which.
+# _as_default_agent_file -- where `asb --set-default-agent AGENT` keeps the default agent
+# (#6): one line, a profile's name, in agent-sandbox's user config beside tools.txt.
+_as_default_agent_file() { printf '%s/default-agent' "$(_as_config_dir)"; }
+
+# _as_default_configured -- the default agent set with --set-default-agent, or nothing.
+_as_default_configured() {
+  local f v=""
+  f="$(_as_default_agent_file)"
+  [[ -f "$f" ]] || return 0
+  IFS=$' \t\r' read -r v _ <"$f" 2>/dev/null || :
+  printf '%s' "$v"
+}
+
+# _as_default_profile DIR -- the profile a verb or --check with no command acts on
+# (_as_default_pick over _as_default_candidates). Prints nothing when there is none;
+# _as_default_refusal says why.
 _as_default_profile() {
   _as_default_pick "$(_as_default_candidates "$1")"
 }
 
 # _as_default_pick CANDIDATES -- _as_default_profile from _as_default_candidates' output,
-# for a caller that keeps it for _as_default_refusal: one pass over the profiles.
+# for a caller that keeps it for _as_default_refusal: one pass over the profiles. The
+# only one asb can run; with several, the configured one (_as_default_configured) when
+# it is one of them, else none.
 _as_default_pick() {
-  local -a on_path=()
-  local n s
+  local -a runnable=()
+  local n s c
   while IFS=$'\t' read -r n s; do
-    [[ "$s" == on ]] && on_path+=("$n")
+    [[ "$s" == on ]] && runnable+=("$n")
   done <<<"$1"
-  ((${#on_path[@]} == 1)) && printf '%s' "${on_path[0]}"
+  if ((${#runnable[@]} == 1)); then
+    printf '%s' "${runnable[0]}"
+  elif ((${#runnable[@]} > 1)); then
+    c="$(_as_default_configured)"
+    for n in "${runnable[@]}"; do
+      [[ "$n" == "$c" ]] && printf '%s' "$c"
+    done
+  fi
   return 0
 }
 
 # _as_default_refusal CANDIDATES LEAD -- what a refusal with no default profile says after
 # `..., and `: why, and how to name one, LEAD being the command line so far (`asb
-# --status`). Several on PATH: name one, AGENT or --profile NAME. None on PATH: install it,
+# --status`). Several asb can run: set the default (--set-default-agent), saying so when
+# the one set is not among them, or name one, AGENT or --profile NAME. None: install it,
 # or name its binary by path (a path whose basename names the profile, else --profile
 # NAME before it). None installed that a command picks (only those chosen by --profile
 # alone, or none at all): --profile NAME.
 _as_default_refusal() {
-  local -a on_path=() all=() broken=()
-  local n s lead="$2" bl=""
+  local -a runnable=() all=() broken=()
+  local n s lead="$2" bl="" c sd
   while IFS=$'\t' read -r n s; do
     [[ -n "$n" ]] || continue
     case "$s" in
       broken) broken+=("$n") ;;
-      on) all+=("$n") on_path+=("$n") ;;
+      on) all+=("$n") runnable+=("$n") ;;
       *) all+=("$n") ;;
     esac
   done <<<"$1"
   ((${#broken[@]} == 0)) || bl="; failed to load: ${broken[*]}"
-  if ((${#on_path[@]} > 1)); then
-    printf 'there are several with their command on PATH (%s%s): name it, %s AGENT or --profile NAME' \
-      "${on_path[*]}" "$bl" "$lead"
+  sd="${lead%% *} --set-default-agent AGENT"
+  if ((${#runnable[@]} > 1)); then
+    c="$(_as_default_configured)"
+    if [[ -n "$c" ]]; then
+      printf "the default agent '%s' (%s) is not one asb can run here (%s%s): set another, %s, or name one, %s AGENT or --profile NAME" \
+        "$c" "$(_as_tilde "$(_as_default_agent_file)")" "${runnable[*]}" "$bl" "$sd" "$lead"
+    else
+      printf 'there are several agents asb can run (%s%s) and no default is set: set it, %s, or name one, %s AGENT or --profile NAME' \
+        "${runnable[*]}" "$bl" "$sd" "$lead"
+    fi
   elif ((${#all[@]})); then
-    printf "none installed has its command on PATH (installed: %s%s): install the agent, or name its binary by path: %s /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)" \
+    printf "none installed has an agent asb installs or its command on PATH (installed: %s%s): install the agent, or name its binary by path: %s /path/to/AGENT (with --profile NAME before a path whose name is not a profile's)" \
       "${all[*]}" "$bl" "$lead"
   else
     printf 'none installed is picked by its command (only ones chosen by --profile alone, if any%s): name one, %s --profile NAME' "$bl" "$lead"
   fi
+}
+
+# _as_set_default_agent [AGENT] -- `asb --set-default-agent [AGENT]` (#6), host only: with
+# AGENT, make it the default agent (_as_default_agent_file) that a role verb with no
+# command acts on when asb can run several; refused unless AGENT is one of those
+# (_as_default_candidates: installed or installable). Without, print the one set (the
+# profile's name, on stdout), or say that none is, and what the default is then.
+# Refusals are 2. Uses profile_dir and invoked by dynamic scope.
+# shellcheck disable=SC2154
+_as_set_default_agent() {
+  local f cands n s c pick
+  local -a runnable=()
+  if _as_maybe_inside; then
+    _as_msg "--set-default-agent runs on the host: agent-sandbox's user config is not inside a sandbox."
+    return 2
+  fi
+  f="$(_as_default_agent_file)"
+  cands="$(_as_default_candidates "$profile_dir")"
+  while IFS=$'\t' read -r n s; do
+    [[ "$s" == on ]] && runnable+=("$n")
+  done <<<"$cands"
+  if (($# == 0)); then
+    c="$(_as_default_configured)"
+    if [[ -n "$c" ]]; then
+      printf '%s\n' "$c"
+      [[ " ${runnable[*]} " == *" $c "* ]] \
+        || _as_msg "--set-default-agent: '$c' ($(_as_tilde "$f")) is not one asb can run here (installed or installable: ${runnable[*]:-none}); set another, ${invoked:-asb} --set-default-agent AGENT"
+      return 0
+    fi
+    pick="$(_as_default_pick "$cands")"
+    if [[ -n "$pick" ]]; then
+      _as_msg "--set-default-agent: none is set ($(_as_tilde "$f")); the default is $pick, the only agent asb can run here"
+    else
+      _as_msg "--set-default-agent: none is set ($(_as_tilde "$f")); agents asb can run here: ${runnable[*]:-none}. Set one: ${invoked:-asb} --set-default-agent AGENT"
+    fi
+    return 0
+  fi
+  n="$1"
+  if [[ ! "$n" =~ ^[a-z][a-z0-9_-]*$ || " ${runnable[*]} " != *" $n "* ]]; then
+    _as_msg "--set-default-agent: '$1' is not an agent asb can run here; the ones it can (installed or installable): ${runnable[*]:-none}"
+    return 2
+  fi
+  if ! { mkdir -p -- "${f%/*}" && printf '%s\n' "$n" >"$f.tmp" && mv -f -- "$f.tmp" "$f"; }; then
+    _as_msg "--set-default-agent: cannot write $f"
+    return 1
+  fi
+  _as_msg "--set-default-agent: the default agent is now $n ($(_as_tilde "$f"))"
+  return 0
 }
 
 # Where install.sh puts the compiled seccomp filter for this machine.
@@ -7676,12 +7777,8 @@ _as_agent_install() {
   elif ! _as_install_listed "$ver" "${profile_versions[@]}"; then
     untested=" (untested with asb)"
   fi
-  # The binary's place in the version's directory.
-  if [[ "$kind" == file ]]; then
-    bin="$(basename -- "${cmd:-$p}")"
-  else
-    bin="$path"
-  fi
+  # The binary's place in the version's directory, where a launch looks for it.
+  bin="$(_as_install_binary "$kind" "$path" "$cmd" "$p")"
   if [[ -n "$from" && (! -f "$from" || ! -r "$from") ]]; then
     _as_msg "--install: --from $from is not a readable file"
     return 2
@@ -12614,8 +12711,106 @@ _as_strict_ssh_rules() {
   return 0
 }
 
+# _as_install_binary KIND PATH CMD PROFILE -- where the agent's binary is in a version's
+# directory of an asb install (#6), relative to it: a `file` is the binary named after the
+# command (CMD, else PROFILE), as --install puts it; a `tar PATH` is PATH in the tree.
+_as_install_binary() {
+  if [[ "$1" == file ]]; then
+    basename -- "${3:-$4}"
+  else
+    printf '%s' "$2"
+  fi
+}
+
+# _as_profile_recipe NAME -- set the caller's _recipe_bin to where profile NAME's agent is
+# in a version's directory (_as_install_binary), empty for a profile with no install
+# recipe ([agent] install), and _recipe_cmd to its command: from _as_profile_facts, once
+# per profile in a process (_as_recipe_memo; a launch fills it from the profile it has
+# loaded, _as_recipe_note). Uses the engine's profile_dir.
+# shellcheck disable=SC2154
+_as_profile_recipe() {
+  local key="$profile_dir/$1" k a b c kind="" path="" cmd="" bin=""
+  [[ -v _as_recipe_memo ]] || declare -gA _as_recipe_memo=()
+  if [[ -z "${_as_recipe_memo[$key]+x}" ]]; then
+    while IFS=$'\t' read -r k a b c; do
+      [[ "$a" == "$1" ]] || continue
+      case "$k" in
+        install) kind="$b" path="$c" ;;
+        command) cmd="$b" ;;
+      esac
+    done < <(_as_profile_facts "$profile_dir/$1/profile.sh")
+    [[ -z "$kind" ]] || bin="$(_as_install_binary "$kind" "$path" "$cmd" "$1")"
+    _as_recipe_memo[$key]="$bin"$'\t'"$cmd"
+  fi
+  _recipe_bin="${_as_recipe_memo[$key]%%$'\t'*}" _recipe_cmd="${_as_recipe_memo[$key]#*$'\t'}"
+}
+
+# _as_recipe_note NAME CMD [KIND [PATH]] -- what _as_profile_recipe would read for NAME,
+# from a launch that has the profile loaded already (its profile_command and
+# profile_install), so the launch does not source it again.
+_as_recipe_note() {
+  local bin=""
+  [[ -v _as_recipe_memo ]] || declare -gA _as_recipe_memo=()
+  (($# < 3)) || bin="$(_as_install_binary "$3" "${4:-}" "$2" "$1")"
+  _as_recipe_memo["$profile_dir/$1"]="$bin"$'\t'"$2"
+}
+
+# _as_not_installed PROFILE [WHY] -- the refusal of a launch whose profile's agent asb
+# installs and has not (#6): the one line that installs it, after WHY (what is wrong
+# with the install, when there is one). Returns 1. The one place a launch's "not
+# installed" is said, and where a launch at a terminal could ask instead. Uses the
+# engine's invoked.
+_as_not_installed() {
+  _as_msg "$1 is not installed for agent-sandbox${2:+ ($2)}: install it, ${invoked:-asb} --install $1"
+  return 1
+}
+
+# _as_installed_bin PROFILE BIN -- set profile_bin to the agent asb installed for PROFILE
+# (#6): BIN in the version's directory <state>/PROFILE/install/current names, and
+# profile_bin_dir to that directory, resolved: what a launch binds, read-only, whole and
+# alone. Refused (_as_not_installed) with no current, a current that is not a symlink or
+# names anything but a version directory beside it (one path component of the versions
+# table's shape, a real directory, not a symlink), or a version's directory without
+# the binary.
+_as_installed_bin() {
+  local cur dir ver
+  cur="$(_as_state_dir)/$1/install/current"
+  if [[ ! -L "$cur" ]]; then
+    if [[ -e "$cur" ]]; then
+      _as_not_installed "$1" "$(_as_tilde "$cur") is not a symlink"
+    else
+      _as_not_installed "$1"
+    fi
+    return 1
+  fi
+  # current names a version beside it: one path component of the versions table's
+  # shape, a real directory there -- never `..`, `.`, an absolute or longer path, or a
+  # symlink, any of which would have the launch bind (and, outside native, make a
+  # `current` beside) whatever it leads to.
+  ver="$(readlink -- "$cur" 2>/dev/null || true)"
+  if [[ ! "$ver" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then
+    _as_not_installed "$1" "$(_as_tilde "$cur") points at '$ver', which is not a version beside it"
+    return 1
+  fi
+  dir="${cur%/*}/$ver"
+  if [[ -L "$dir" || ! -d "$dir" ]]; then
+    _as_not_installed "$1" "$(_as_tilde "$cur") points at $ver, which is not there as a directory"
+    return 1
+  fi
+  dir="$(readlink -f -- "$dir")"
+  if [[ ! -f "$dir/$2" || ! -x "$dir/$2" ]]; then
+    _as_not_installed "$1" "$(_as_tilde "$dir") has no executable $2"
+    return 1
+  fi
+  profile_bin="$dir/$2" profile_bin_dir="$dir"
+}
+
 # _as_resolve_bin WORD [ROLE] -- set profile_bin to the agent WORD names (#151): a path
-# (`/path/to/2.1.284`, `./build/claude`), or a name looked up on PATH as a shell would.
+# (`/path/to/2.1.284`, `./build/claude`), or a name. A path always wins, as it is (its
+# file alone is bound). A name, for a profile whose agent asb installs ([agent] install,
+# #6), is the version asb made current (_as_installed_bin), under every preset, `native`
+# and `none` included, and PATH is not read: profile_bin_dir is then that version's
+# directory. A name for any other profile is looked up on PATH as a shell would.
 # Resolved through symlinks, because that is what is bound inside and executed there:
 # the native installer's ~/.local/bin/claude is a link into its versions/, and bwrap
 # refuses to bind over a symlink. A PATH entry that is agent-sandbox itself -- this
@@ -12624,11 +12819,14 @@ _as_strict_ssh_rules() {
 # the engine never runs itself as the agent; the agent is the next one on PATH. ROLE:
 # WORD is that role's agent, resolved rather than typed (#355), so a missing one is
 # named where a role's agent is named, not by --profile.
-# Reads the caller's engine and invoked by dynamic scope.
+# THE ONE PLACE a word becomes the agent's binary: a launch, a join, a verb, --serve and
+# --summarize (which run the engine again), --account-login (a launch), --roles' check of
+# every role, and the default profile's candidates (_as_default_found) all come here.
+# Reads the caller's engine, invoked and profile by dynamic scope.
 # shellcheck disable=SC2154
 _as_resolve_bin() {
-  local w=$1 role="${2:-}" d c r shadow=""
-  profile_bin=""
+  local w=$1 role="${2:-}" d c r shadow="" _recipe_bin="" _recipe_cmd=""
+  profile_bin="" profile_bin_dir=""
   if [[ "$w" == */* ]]; then
     if [[ -f "$w" && -x "$w" ]]; then
       profile_bin="$(readlink -f -- "$w")"
@@ -12637,6 +12835,15 @@ _as_resolve_bin() {
       return 1
     fi
   else
+    [[ -z "${profile:-}" ]] || _as_profile_recipe "$profile"
+    if [[ -n "$_recipe_bin" ]]; then
+      if [[ "$w" != "$profile" && "$w" != "$(basename -- "${_recipe_cmd:-$profile}")" ]]; then
+        _as_msg "'$w' is not profile $profile's command, and $profile runs the agent asb installs (${invoked:-asb} --install $profile), never one from PATH; run another binary by its path: ${invoked:-asb} --profile $profile /path/to/$w"
+        return 1
+      fi
+      _as_installed_bin "$profile" "$_recipe_bin"
+      return
+    fi
     local -a _dirs
     _as_split _dirs : "$PATH"
     for d in "${_dirs[@]}"; do
@@ -12964,7 +13171,7 @@ _as_roles_open() {
     lines=(${lines[@]+"${lines[@]:1}"})
   fi
   local -a _agent_cmd=()
-  local _agent_cmd_from="" profile profile_bin _acct_name _acct_from _acct_dir
+  local _agent_cmd_from="" profile profile_bin profile_bin_dir _acct_name _acct_from _acct_dir
   for r in "${_roles[@]}"; do
     mine=()
     for e in ${given[@]+"${given[@]}"}; do
@@ -13214,6 +13421,9 @@ agent_sandbox() (
   local -a _account_login=()
   # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the agent word, the file, the sum.
   local -a _install=()
+  # --set-default-agent [AGENT] (#6): set (the AGENT word) or print (none).
+  local _set_default=0
+  local -a _set_default_agent=()
   local _host_none=0 _agent_none=0 _do_exec=0 _do_verbose=0 _do_shutdown=0 _do_delete=0 _do_status=0
   # --list / --list-all [WORD] (#314): the scope (here or all), and the search word.
   local _do_list="" _list_word=""
@@ -13419,6 +13629,19 @@ agent_sandbox() (
         _account_login=("$2" "$3")
         shift 3
         ;;
+      --set-default-agent)
+        # --set-default-agent [AGENT] (#6): the whole line, and nothing else.
+        if [[ $# -eq 1 && ${#_argv_given[@]} -eq 1 ]]; then
+          _set_default=1
+          shift
+        elif [[ $# -eq 2 && ${#_argv_given[@]} -eq 2 && -n "$2" && "$2" != -* ]]; then
+          _set_default=1 _set_default_agent=("$2")
+          shift 2
+        else
+          _as_msg "--set-default-agent takes an agent, or nothing to print the one set, and nothing else on the line: $invoked --set-default-agent [AGENT]"
+          return 2
+        fi
+        ;;
       --install)
         # --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (#6): the whole line, and nothing else.
         if [[ $# -eq 2 && ${#_argv_given[@]} -eq 2 && -n "$2" && "$2" != -* ]]; then
@@ -13434,7 +13657,7 @@ agent_sandbox() (
           _as_msg "--install: --sha256 checks a local file, so it needs --from FILE: $invoked --install AGENT[@VERSION] --from FILE --sha256 SUM"
           return 2
         else
-          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: $invoked --install AGENT[@VERSION] [--from FILE [--sha256 SUM]] (e.g. $invoked --install claude)"
+          _as_msg "--install takes an agent, optionally @VERSION, and nothing else on the line but --from FILE, then optionally --sha256 SUM: $invoked --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]"
           return 2
         fi
         ;;
@@ -13669,6 +13892,11 @@ agent_sandbox() (
   # Alone on the line (above), so nothing else of this invocation applies to it.
   if ((${#_account_login[@]})); then
     _as_account_login "${_account_login[@]}"
+    return $?
+  fi
+  # ---- --set-default-agent [AGENT] (#6): the default agent set or printed, then exit ----
+  if ((_set_default)); then
+    _as_set_default_agent ${_set_default_agent[@]+"${_set_default_agent[@]}"}
     return $?
   fi
   # ---- --install AGENT[@VERSION] [--from FILE] (#6): an agent installed, then exit ----
@@ -14027,7 +14255,8 @@ agent_sandbox() (
   # (_as_check_plan), from the launch path itself, which stops before anything is
   # started. A profile named (CMD, --profile, the role's agent) is checked whether its
   # command is on PATH or not. With none named, every available profile -- installed,
-  # not chosen by --profile alone, its command on PATH (_as_default_candidates) -- is:
+  # not chosen by --profile alone, its agent one asb installs (installed or not) or its
+  # command on PATH (_as_default_candidates) -- is, the default agent set or not:
   # one, here; several, each by this function again with --profile in front, under a
   # heading of its name, the review and the remotes once; none, the review alone.
   # Exits non-zero when a launch of any checked profile refuses the file.
@@ -14079,9 +14308,10 @@ agent_sandbox() (
     _check_plan=1
   fi
   # The role verbs act on a profile's stores and start no agent (--summarize starts a
-  # turn of its own): with no command, the default profile, as for --check -- the only
-  # one installed whose command is on PATH, a profile chosen by --profile alone
-  # (profile_by_name_only, sshd) not counted.
+  # turn of its own): with no command, the default profile (_as_default_pick) -- the only
+  # one asb can run (an agent it installs, or a command on PATH), else the one set with
+  # --set-default-agent; a profile chosen by --profile alone (profile_by_name_only, sshd)
+  # not counted.
   local _verb=""
   ((_do_status)) && _verb=--status
   ((_do_shutdown)) && _verb=--shutdown
@@ -14145,7 +14375,7 @@ agent_sandbox() (
   # shellcheck disable=SC2034
   local AGENT_SANDBOX_ENGINE="$engine" AGENT_SANDBOX_PROFILE="$profile" AGENT_SANDBOX_PROFILE_DIR="$profile_dir"
   # shellcheck disable=SC2034
-  local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_version=""
+  local profile_command="$profile" profile_allowlist_seed="" profile_bin="" profile_bin_dir="" profile_version=""
   local -a profile_config_binds=() profile_env_pass=() profile_env_set=() profile_env_refuse=()
   # Read-only binds (#335), SRC<TAB>DEST as profile_config_binds; a self-contained profile
   # (a proxy of its own per launch, its sessions under the role's store); a project's
@@ -14228,7 +14458,9 @@ agent_sandbox() (
     exec "$@"
   fi
   # The agent is CMD, or -- for a verb, --exec, or `asb --profile NAME` alone -- the
-  # profile's command looked up on PATH.
+  # profile's command: asb's install of it for a profile with an install recipe, else
+  # looked up on PATH (_as_resolve_bin, which reads the recipe this profile has loaded).
+  _as_recipe_note "$profile" "$profile_command" ${profile_install[@]+"${profile_install[@]}"}
   local _rb_role=""
   ((_cmd_typed)) || [[ -z "$_agent_cmd_from" ]] || _rb_role="${_ag_role:-}"
   ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
@@ -15442,11 +15674,23 @@ agent_sandbox() (
     fi
     args+=(--ro-bind "$_src" "$_dst")
   done
-  # Under `native` the host's $HOME is bound whole, so a binary living in it is
-  # already inside; binding it again is a no-op that can still FAIL, because
-  # bwrap refuses to mount over a symlink and a versioned install may well be
-  # one. Measured. A binary outside $HOME still needs its bind.
-  if _as_preset_is_native && [[ "$profile_bin" == "$HOME"/* ]]; then
+  # THE AGENT. asb's install of it (#6, profile_bin_dir): the version's directory, read-only,
+  # at its own path -- that one version, never the install/ beside it, so the binary
+  # runs with whatever it ships next to it and nothing else of the state directory, a
+  # control path, is there; outside `native` the directories above it are empty mount
+  # points on the blank $HOME. Under every preset, `native` included: $HOME is bound
+  # read-write there, and the version must not be writable from inside under any. The
+  # path is resolved (_as_installed_bin), so no symlink is bound over. Outside `native`,
+  # `current` naming it, so an `asb` run inside resolves the same binary (#197), as the
+  # tools env's slot has (below); under `native` the real one is there.
+  if [[ -n "$profile_bin_dir" ]]; then
+    args+=(--ro-bind "$profile_bin_dir" "$profile_bin_dir")
+    _as_preset_is_native || args+=(--symlink "${profile_bin_dir##*/}" "${profile_bin_dir%/*}/current")
+  # A binary by path, or from PATH: its file. Under `native` the host's $HOME is bound
+  # whole, so a binary living in it is already inside; binding it again is a no-op that
+  # can still FAIL, because bwrap refuses to mount over a symlink and a versioned install
+  # may well be one. Measured. A binary outside $HOME still needs its bind.
+  elif _as_preset_is_native && [[ "$profile_bin" == "$HOME"/* ]]; then
     :
   else
     args+=(--ro-bind "$profile_bin" "$profile_bin")

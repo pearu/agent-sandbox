@@ -11,9 +11,11 @@ The engine is asked for by name, and the agent is its command:
 `asb [OPTIONS] CMD [AGENT OPTIONS]` (#151). The profile is CMD's basename
 (`asb codex` → `profiles/codex/`), or `--profile NAME` when the binary is
 called otherwise (`asb --profile claude /path/to/2.1.284`). The agent that runs
-is CMD itself — looked up on PATH, or the path given — resolved through its
-symlinks; the profile does not find it. Nothing is installed at the agent's own
-name, so the agent's command stays the agent.
+is CMD itself, resolved through its symlinks: the path given, or for a name, the
+version asb installed when the profile has an [install recipe](#the-install-recipe)
+(PATH is not read then), else the name looked up on PATH. The profile does not find
+it. Nothing is installed at the agent's own name, so the agent's command stays the
+agent.
 
 ## The contract
 
@@ -21,7 +23,7 @@ Variables a profile declares (all optional unless marked):
 
 | Variable | Meaning |
 |---|---|
-| `profile_command` | On-PATH name of the agent (default: the profile file's name): what the engine runs when no command is typed — a verb (`asb --profile NAME --status`) or `--exec`. With no command and no `--profile`, a verb acts on the default profile: the only installed one whose command is on PATH, looked up as a launch looks it up; with none or several, it says so and how to name one. A profile whose `profile.sh` fails to load is never the default, and the refusal names it (`failed to load: NAME`). `--check` then checks each such profile. |
+| `profile_command` | The agent's command (default: the profile file's name): what the engine runs when no command is typed — a verb (`asb --profile NAME --status`) or `--exec` -- looked up on PATH, or for a profile with an [install recipe](#the-install-recipe) the name of the binary asb installs (a `file`). With no command and no `--profile`, a verb acts on the [default agent](#the-default-agent). |
 | `profile_config_binds=(...)` | Host paths bound **read-write** into the sandbox, after the dot-file's `[agent] base`: the agent's state and config. They must exist when the sandbox is built; create them in `profile_prepare()`. An entry is a path bound at itself, or `SRC<TAB>DEST` to bind `SRC` at `DEST` inside; a `DEST` under an earlier entry layers on it, so order the entries parent first. |
 | `profile_env_pass=(...)` | Environment variable names forwarded into the sandbox **if set** in the caller's environment, on top of the engine's own list (locale, proxy, CA, CUDA). The dot-file's `[env]` names add to it. |
 | `profile_env_set=(...)` | `NAME=VALUE` pairs always set inside. The dot-file's `[env] NAME = VALUE` adds to it. |
@@ -29,7 +31,7 @@ Variables a profile declares (all optional unless marked):
 | `profile_ro_binds=(...)` | Host paths bound **read-only** into the sandbox (#335), in the grammar of `profile_config_binds` (a path bound at itself, or `SRC<TAB>DEST`), applied right after them, so after the system's `/etc` and the blank `$HOME`: a `DEST` there lands over them. `SRC` must exist; create it in `profile_prepare()`. sshd: the role's sshd directory at itself, and its `/etc/group` without the `tty` line over `/etc/group`. |
 | `profile_self_contained=1` | The profile needs nothing of the account but its install (#335). Every launch in the `proxy` or `strict` mode runs **a proxy of its own**, a child of the keeper's supervisor for the sandbox's lifetime: the installed mitmdump (`AGENT_SANDBOX_MITMDUMP`, else install.sh's `proxy-venv/` or `proxy-env/` under `~/.local/share/agent-sandbox`) with the installed addon and the unit's options, `--listen-host 127.0.0.1`, on the account's port (`~/.config/agent-sandbox/proxy-port`, `AGENT_SANDBOX_PROXY_PORT`) when nothing listens there, else on the next free port above it; that port is the proxy URL's and the strict chain's. The launch says `PROFILE: proxy of its own at 127.0.0.1:PORT` (and, on another port, why); the supervisor starts it before the sandbox, waits until it listens there (10 s at most), ends it when the keeper ends, and one that does not come up refuses the launch, naming the keeper's log, which has its output. And **the session directory lives in the role's store**, `<state>/<profile>/<slug>/<role>/sessions/`, not under `$XDG_RUNTIME_DIR`, which logind removes at the account's last logout (pam_systemd(8)); the proxy is told that base (`AGENT_SANDBOX_SESSION_BASE`), and an explicit `AGENT_SANDBOX_SESSION_BASE` still wins. A self-contained launch needs no user manager, linger or unit. |
 | `profile_project_env_set=1` | A project's `[env] NAME = VALUE` (and `[env:<role>]`'s) is set inside (#335), after everything forwarded; without it such a line is the profile's alone and ignored in a project's file. A name the profile pins (`profile_env_set`) or refuses, or one the engine pins (`HOME`, `USER`, `AGENT_SANDBOX`), is said and not set; the network mode's proxy and CA variables come later and win. The review says what each line sets, for which roles, and under which profiles it is ignored. |
-| `profile_by_name_only=1` | The profile is chosen by `--profile NAME` alone (#335): a verb or `--check` with no command never picks it, even with its command on PATH (see `profile_command`). sshd sets it. |
+| `profile_by_name_only=1` | The profile is chosen by `--profile NAME` alone (#335): a verb or `--check` with no command never picks it, even with its command on PATH (see [the default agent](#the-default-agent)). sshd sets it. |
 | `profile_verbs=(...)` | (Or `[agent] verbs` in the dot-file.) Agent verbs that observe or manage a background service. The engine joins them into the role's running launch, where the service is, and never starts a launch for one: with none running, a verb in `profile_verbs_observe` answers that the role is not running (exit 0) and any other is refused. They get no briefing arguments. |
 | `profile_verbs_observe=(...)` | (Or `[agent] verbs-observe`.) The subset of `profile_verbs` that only ask questions. |
 | `profile_daemon_argv=(...)` | (Or `[agent] daemon`.) Argv tokens, in order, that mark the agent's background daemon. A process inside the role's launch whose arguments contain them holds the launch as a join does, so the role does not end while it runs (#123). |
@@ -177,7 +179,35 @@ read yet: the launch says so.
 ## The install recipe
 
 An agent asb installs itself (#6) is described by three things in its profile
-directory. `asb --install` reads them (below); no launch does yet.
+directory. `asb --install` reads them (below), and a launch runs what it installed:
+for such a profile, a name -- `asb claude`, `--agent R=claude`, `[agent] command =
+claude` -- is the version `install/current` names, under every preset, `--preset
+native` and `none` included, and the `claude` on your PATH is never read. A path is
+still what it names (`asb --profile claude /path/to/claude`), the escape hatch for a
+binary of your own. The binary is the profile's command in the version's directory
+for a `file`, `PATH` in it for a `tar PATH`. With none installed a launch refuses,
+naming the line that installs it:
+
+```
+agent-sandbox: claude is not installed for agent-sandbox: install it, asb --install claude
+```
+
+(exit 1), and the same, with what is wrong in parentheses, for a `current` that is not
+a symlink, names a version that is not there, or a version's directory without the
+binary. A name that is not the profile's command (`asb --profile claude other`) is
+refused: PATH is not read for this profile, so name another binary by its path.
+
+The bind: the version's directory alone, read-only, at its own path
+(`~/.local/state/agent-sandbox/claude/install/2.1.321/`), never the `install/` that
+holds the other versions; outside `native` the directories above it are empty mount
+points on the blank `$HOME`, so nothing else of the state directory, a control path,
+is visible, and `current` is made beside it (bwrap's `--symlink`) so an `asb` run
+inside finds the same binary. Under `native` the version's directory is bound
+read-only too, over the read-write `$HOME`, so the agent cannot change itself under
+any preset; the rest of the state directory is the host's there, as all of `$HOME`
+is. A path keeps the single read-only file bind. A running role keeps the version it
+started with: after an `asb --install` moves `current`, an idle keeper is replaced
+and a busy one refuses a launch of the role by name (naming both binaries), as for any change of the agent's binary.
 
 | File | What it is |
 |---|---|
@@ -195,6 +225,34 @@ setup docs print it -- and the manifest names VERSION itself. The binary is
 variant of either. It needs `curl` and `gpg` on PATH; gpg runs in a scratch home with
 no agent, so your keyring is never read. The vendor signs manifests "from 2.1.89
 onward" (its docs); a version without a signature is refused.
+
+### The default agent
+
+A role verb (`--status`, `--shutdown`, `--delete`, `--reset`, `--summarize`) with no
+command, no `--profile` and no role agent acts on the default agent. The candidates are
+the profiles asb can run, those not chosen by `--profile` alone
+(`profile_by_name_only`): every profile with an install recipe, installed or not
+(installable), and every other whose command is on PATH, looked up as a launch looks
+it up. A profile whose `profile.sh` fails to load is never one, and the refusals name
+it (`failed to load: NAME`).
+
+- One candidate: that one.
+- Several: the one set with `asb --set-default-agent AGENT`, kept in
+  `~/.config/agent-sandbox/default-agent` (one line, the profile's name, beside
+  `tools.txt`). With none set: `there are several agents asb can run (claude codex) and
+  no default is set: set it, asb --set-default-agent AGENT, or name one, asb --status
+  AGENT or --profile NAME`; with one set that is not a candidate, the refusal names it
+  and the file.
+- None: `none installed has an agent asb installs or its command on PATH (installed:
+  NAMES): install the agent, or name its binary by path`.
+
+`asb --set-default-agent AGENT`, alone on the line, on the host only, sets it; AGENT
+must be a candidate (refused, exit 2, naming them, otherwise). `asb --set-default-agent`
+prints the one set, or says that none is and what the default is then.
+
+`--check` with no command checks every candidate, each under a heading of its name
+(one: no heading), the default set or not; a profile named (CMD, `--profile`, the
+role's agent) is checked whether its agent is installed or not.
 
 ### `asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]`
 
@@ -256,7 +314,8 @@ vendor's; the SHA-256 the resolver gives is enforced all the same.
    `asb <name>` then runs it.
    For an agent asb installs, add its [install recipe](#the-install-recipe):
    `[agent] install`, a `versions` table with the live-tested version pinned, and a
-   `resolve.sh` that checks the vendor's signature where there is one.
+   `resolve.sh` that checks the vendor's signature where there is one; `asb <name>`
+   then runs `asb --install <name>`'s install, never one on PATH.
 4. Add `profiles/<name>/test.bash`, the profile's test adapter (the contract is at the
    top of `profiles/claude/test.bash`): every shared test then runs for it. Its own
    tests, for what only this agent has, go under `tests/<layer>/profile-<name>/`. A new
@@ -267,8 +326,9 @@ vendor's; the SHA-256 the resolver gives is enforced all the same.
 
 ## The flagship: `claude`
 
-`profiles/claude/profile.sh` runs Claude Code — whatever `claude` is on your PATH, from
-the native installer or a package — binds `~/.claude` read-write and, inside
+`profiles/claude/profile.sh` runs Claude Code — asb's install of it, `asb --install
+claude` (#6), never the `claude` on your PATH; a binary of your own runs by its path,
+`asb --profile claude /path/to/claude` — binds `~/.claude` read-write and, inside
 it at `~/.claude/.claude.json`, the project's own copy of `~/.claude.json`
 (seeded and refreshed per launch, see [config.md](config.md)), with
 `CLAUDE_CONFIG_DIR` pointing Claude Code there (it writes the file through a

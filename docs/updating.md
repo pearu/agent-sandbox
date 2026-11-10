@@ -4,20 +4,33 @@ Inside the sandbox an agent cannot update itself: the egress allowlist blocks
 its download host, its install directory is not bound, and for Claude Code
 `DISABLE_AUTOUPDATER=1` is set so a session never tries on its own.
 
-Update it outside the sandbox, the way its own installer tells you to. For
-Claude Code that is simply
+For an agent asb installs (#6) -- Claude Code -- `asb claude` runs asb's own install,
+the version the profile pins, never the `claude` on your PATH. Install it once, and
+again to move to another version:
 
 ```
-claude update      # alias: upgrade
+asb --install claude            # the profile's pinned version
+asb --install claude@2.1.330    # another; one the profile was not tested with is said untested
 ```
 
-— `claude` is Claude Code itself, not agent-sandbox (#151), so this is its own
-updater, run as it would be without agent-sandbox installed. `asb claude` then
-runs whatever `claude` is next time.
+Each version is kept beside the others under
+`~/.local/state/agent-sandbox/claude/install/`, and the last one installed is the one
+launches run (`install/current`). A running role keeps the one it started with: after
+`asb --install` moves `current`, a launch of that role by name is refused while the
+role is busy (something is joined to it), naming the version it runs and the one asked
+for -- finish or `asb --role R --shutdown` it first -- and an idle role's sandbox is
+replaced by one running the new version. A new
+asb release may pin a newer version: run `asb --install claude` after updating asb.
+
+**Upgrading from an asb before #6:** those ran whatever `claude` your PATH found. Now
+`asb claude` refuses until you run `asb --install claude` once, and says so. Your own
+Claude Code is not touched, and `claude` at your shell is still it, updated the way
+its installer says (`claude update`). A binary of your own still runs in the sandbox
+by its path: `asb --profile claude /path/to/claude`.
 
 `asb claude update` is not special: it runs inside the sandbox like any other
-command, where the download is blocked and the versions directory is not bound,
-so it fails. Type `claude update` at your shell.
+command, where the download is blocked and the version's directory is read-only,
+so it fails. Use `asb --install claude`.
 
 Updating agent-sandbox itself: pull the repository and re-run `./install.sh`.
 It is idempotent, keeps your allowlist edits, and

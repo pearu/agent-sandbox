@@ -17,7 +17,7 @@ setup() {
   PROJ="$(cd "$H/proj" && pwd -P)"
   SBOX="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/default"
   CFG="$H/home/.config/agent-sandbox"
-  BIN="$H/home/.local/share/claude/versions/2.1.300/claude"
+  BIN="$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude"
 }
 
 teardown() {
@@ -150,16 +150,36 @@ other_agent() { # a second claude, as an update or another install would give
   release_bg
 }
 
+@test "a BUSY keeper refuses a launch by name after asb --install moved current (#6): it runs the version it started with" {
+  other_agent
+  engine_bg -- asb claude --version
+  local new="${STUB_AGENT_DIR%/*}/2.1.301"
+  mkdir -p "$new"
+  cp "$H/other/claude" "$new/claude"
+  ln -sfn 2.1.301 "${STUB_AGENT_DIR%/*}/current"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"running with agent = $BIN, and this launch's agent asks for '$new/claude'"* ]]
+  [ ! -s "$H/join" ]
+  release_bg
+}
+
 @test "an IDLE keeper is replaced by a launch with another agent binary: an update just works" {
   other_agent
   engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb claude --version
   release_bg
   local spid
   read -r spid _ <"$SBOX/keeper/id"
-  run_engine PATH="$H/other:$H/bin:/usr/bin:/bin" -- asb claude --version # `claude` moved
+  # `asb --install claude@2.1.301` moved current (#6)
+  local new="${STUB_AGENT_DIR%/*}/2.1.301"
+  mkdir -p "$new"
+  cp "$H/other/claude" "$new/claude"
+  ln -sfn 2.1.301 "${STUB_AGENT_DIR%/*}/current"
+  run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [ -s "$H/argv" ] # a launch of its own
-  argv_has --ro-bind "$H/other/claude" "$H/other/claude"
+  argv_has --ro-bind "$new" "$new"
+  [ "${JOINV[0]}" = "$new/claude" ]
   [ ! -d "/proc/$spid" ]
 }
 

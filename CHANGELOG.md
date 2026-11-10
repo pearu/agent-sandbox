@@ -11,6 +11,21 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Breaking
 
+- **`asb claude` runs asb's own install of Claude Code, never the `claude` on your PATH**
+  (#6), under every preset, `native` and `none` included: a name -- the command,
+  `--agent R=claude`, `[agent] command = claude` -- of a profile with an install recipe is
+  the version `asb --install` made current. **Migration: run `asb --install claude` once**;
+  until then a launch refuses with `claude is not installed for agent-sandbox: install it,
+  asb --install claude`. A binary of your own still runs by its path, `asb --profile
+  claude /path/to/claude`. The launch binds that version's directory alone, read-only (also
+  under `native`, over its read-write `$HOME`), where it bound the binary's file. A profile
+  without a recipe is looked up on PATH as before. `install.sh` reports such an agent as
+  installed for asb or not, and no longer asks for it on PATH.
+- **The default agent of a role verb with no command** (#6) is the only profile asb can
+  run -- one with an install recipe, installed or not, or one whose command is on PATH --
+  or, with several, the one set with the new `asb --set-default-agent AGENT`
+  (`~/.config/agent-sandbox/default-agent`; no AGENT prints it); with none set, the verb
+  refuses, naming that line. `--check` with no command checks every such profile.
 - **The proxy serves sandbox sessions only**: every proxied launch carries a token, and a
   request without a live session's token gets `407` with a Basic challenge, where it got
   the global allowlist. A session's `[deny]` and `retrieve-only` hang on that token, and
@@ -81,8 +96,9 @@ names are gone; there are no aliases for removed names before 1.0.
   a sandbox. The versions table's problems are said here. `install.sh` adds conda-forge's
   `gnupg` to the tools env for the resolvers, its `gpg` linked in the slot's new
   `engine-bin/`, which no sandbox has on its PATH; so a `tools.txt` listing nothing now
-  leaves an env with none of your tools instead of removing it. No launch runs an
-  installed agent yet. `AGENT_SANDBOX_INSTALL_BASE` (tests) is the resolver's source.
+  leaves an env with none of your tools instead of removing it. A launch runs what it
+  installed (above, under Breaking). `AGENT_SANDBOX_INSTALL_BASE` (tests) is the
+  resolver's source.
 - **The install recipe, as profile data** (#6), the first step to agents asb installs
   itself: `[agent] install = file | tar PATH` in a profile's dot-file, a `versions`
   table of the live-tested versions with one `pinned` (exact versions, no checksums), and

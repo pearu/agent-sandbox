@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # End to end: install.sh for real (no --dry-run) against a throwaway HOME, with
 # the shared fake agent (tests/helpers/fake-agent.sh) planted for every profile with a
-# test adapter, the way that agent's installer lays it out (profiles/<name>/test.bash,
-# test_plant; claude: a binary under versions/, linked from ~/.local/bin/claude), and
+# test adapter, where a launch runs it from (profiles/<name>/test.bash, test_plant;
+# claude: installed as `asb --install claude` installs it, #6), and
 # `systemctl --user` replaced by a shim that runs the unit's ExecStart itself; then the
 # installed `asb CMD` runs each fake agent through the installed proxy (#151).
 #
@@ -101,11 +101,18 @@ teardown_file() {
   }
   local out
   out=$(cat "$E/install1.out")
-  # every adapter's agent found, at the binary its fake was planted as (setup_file)
+  # every adapter's agent found where its fake was planted (setup_file): asb's install of
+  # it, by version, for a profile with an install recipe (#6); else the binary its
+  # command on PATH resolves to
   local a launcher bin link
   for a in $(test_adapters); do
     { read -r launcher && read -r bin && read -r link; } <"$E/plant.$a"
-    [[ "$out" == *"$a: \`${launcher##*/}\` is $bin"* ]]
+    if [ -n "$(HOME="$H" profile_facts "$a" install)" ]; then
+      [[ "$out" == *"$a: asb runs its own install of it, version $(readlink "$H/.local/state/agent-sandbox/$a/install/current")"* ]]
+      [[ "$out" != *"$a: not installed for asb yet"* ]]
+    else
+      [[ "$out" == *"$a: \`${launcher##*/}\` is $bin"* ]]
+    fi
   done
   [[ "$out" == *"mitmdump 12."* ]]
   # agent-sandbox's own micromamba, fetched and checked against the pinned sum, and its root
@@ -363,8 +370,8 @@ done
 # already clean, which is the re-run this test asks for anyway.
 agent_uninstall() {
   agent_setup "$1"
+  # what the command pointed at (nothing, for an agent asb installs: the binary itself)
   local native="$TEST_LINK"
-  [ -n "$native" ]
   [ "$(readlink "$TEST_LAUNCHER")" = "$native" ]
   run_install "$E/uninstall.$1.out" --uninstall --yes
   [ "$(cat "$E/uninstall.$1.out.rc")" -eq 0 ] || {

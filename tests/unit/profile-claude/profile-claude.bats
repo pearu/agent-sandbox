@@ -22,16 +22,27 @@ slug_vector() {
   printf '%s' "$p"
 }
 
-@test "a launch does not look in versions/: it runs what the command resolves to" {
-  rm -rf "${V:?}"/*
-  mkdir -p "$H/pkg/bin"
+@test "a launch runs the claude asb installed (#6): never one on PATH, nor the native installer's versions/" {
+  mkdir -p "$H/pkg/bin" "$V/2.1.200" "$H/home/.local/bin"
   printf '#!/bin/sh\n' >"$H/pkg/bin/claude"
   chmod +x "$H/pkg/bin/claude"
+  printf '#!/bin/sh\n' >"$V/2.1.200/claude"
+  chmod +x "$V/2.1.200/claude"
+  ln -s "$V/2.1.200/claude" "$H/home/.local/bin/claude"
   rm "$H/bin/claude"
-  run_engine PATH="$H/bin:$H/pkg/bin:/usr/bin:/bin" -- asb claude --version
+  local p
+  for p in isolated inherit shared native; do
+    run_engine PATH="$H/pkg/bin:$H/home/.local/bin:$H/bin:/usr/bin:/bin" -- asb --preset "$p" claude --version
+    [ "$status" -eq 0 ]
+    [ "${JOINV[0]}" = "$STUB_AGENT_DIR/claude" ]
+    argv_has --ro-bind "$STUB_AGENT_DIR" "$STUB_AGENT_DIR"
+    run ! grep -qxF -- "$H/pkg/bin/claude" "$H/argv"
+  done
+  # a path still runs what it names
+  run_engine -- asb "$H/pkg/bin/claude" --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$H/pkg/bin/claude" "$H/pkg/bin/claude"
   [ "${JOINV[0]}" = "$H/pkg/bin/claude" ]
+  argv_has --ro-bind "$H/pkg/bin/claude" "$H/pkg/bin/claude"
 }
 
 @test "a launch creates ~/.claude, and never an empty ~/.claude.json: Claude Code calls a 0-byte one corrupted" {

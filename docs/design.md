@@ -36,7 +36,8 @@ anyone auditing what the sandbox promises. To *use* agent-sandbox, start with th
 
 - **Engine** (`agent-sandbox`, alias `asb`): provider-agnostic bash, invoked by
   name -- `asb [OPTIONS] CMD [AGENT OPTIONS]` (#151). It parses its own flags,
-  takes the agent from CMD (a name on PATH, or a path, resolved), selects the
+  takes the agent from CMD (a path, or a name: asb's install of the agent for a
+  profile with an install recipe, #6, else looked up on PATH; resolved), selects the
   profile CMD's basename names, assembles the bwrap
   invocation, sets up per-session state (SSH agent, `--allow` file, CA bundle)
   and launches. Everything the agent can see or reach is decided here.
@@ -432,6 +433,17 @@ Stated plainly. These are what the adversary above can still do.
   declaration of its prefix) can reshape what other projects' sandboxes then run.
   The micromamba binary itself is a pinned release (a SHA-256 per architecture in
   `install.sh`), bound read-only.
+- **The agent asb installed is what every launch of it runs, and `native` can change
+  it** (#6). For a profile with an install recipe the agent is the version
+  `~/.local/state/agent-sandbox/<profile>/install/current` names, checked at `asb
+  --install` against the vendor's checksum (claude: a manifest signed by the pinned key)
+  and never again: whoever can write that directory on the host decides what the next
+  launch runs, under every preset. A sandbox gets that one version's directory,
+  read-only at its own path; outside `native` nothing else of the state directory, a
+  control path, is there. Under `native` `$HOME` is the host's, read-write, so although
+  the version's directory is bound read-only over it, a `native` session can write a
+  new version beside it and point `current` at it -- the same reach it has over a
+  native install in `~/.local/share/claude`, now over what sandboxed launches run too.
 - **The tools environment comes from conda-forge unpinned.** `install.sh` rebuilds it
   at every run with the newest builds of the packages in
   `~/.config/agent-sandbox/tools.txt` (`gh` and `tmux` by default), on the host, trusting

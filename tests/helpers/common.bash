@@ -62,12 +62,16 @@ source_engine() {
 }
 
 # A fake HOME with a stub Claude install, a stub agent binary, a project dir,
-# and a stub bwrap on PATH. `claude` on PATH is the stub agent, linked from its
-# versions/ directory as Claude Code's native installer links it; the engine is
-# `asb` and `agent-sandbox` (#151). Sets H.
+# and a stub bwrap on PATH. The stub agent is installed as `asb --install claude`
+# installs it (#6): <state>/claude/install/2.1.300/claude, `current` naming 2.1.300,
+# which is what `asb claude` runs; $H/bin/claude links to it, for the tests that name
+# the agent by path. The engine is `asb` and `agent-sandbox` (#151). Sets H, and
+# STUB_AGENT_DIR, the installed version's directory.
 make_harness() {
   H="$BATS_TEST_TMPDIR/h"
-  mkdir -p "$H/bin" "$H/home/.local/share/claude/versions/2.1.300" "$H/proj" "$H/base"
+  STUB_AGENT_DIR="$H/home/.local/state/agent-sandbox/claude/install/2.1.300"
+  mkdir -p "$H/bin" "$STUB_AGENT_DIR" "$H/proj" "$H/base"
+  ln -s 2.1.300 "${STUB_AGENT_DIR%/*}/current"
   cat >"$H/bin/bwrap" <<'STUB'
 #!/usr/bin/env bash
 . "${0%/*}/stub-env"
@@ -158,12 +162,31 @@ while hold and os.path.exists(hold):
     time.sleep(0.02)
 sys.exit(int(os.environ.get("JOIN_EXIT", "0")))
 STUB
-  printf '#!/usr/bin/env bash\necho "stub-agent argv: $*"\n' >"$H/home/.local/share/claude/versions/2.1.300/claude"
-  chmod +x "$H/home/.local/share/claude/versions/2.1.300/claude"
-  ln -s "$H/home/.local/share/claude/versions/2.1.300/claude" "$H/bin/claude"
+  printf '#!/usr/bin/env bash\necho "stub-agent argv: $*"\n' >"$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude"
+  chmod +x "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude"
+  ln -s "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" "$H/bin/claude"
   ln -s "$ENGINE" "$H/bin/asb"
   ln -s "$ENGINE" "$H/bin/agent-sandbox"
-  export H
+  export H STUB_AGENT_DIR
+}
+
+# install_stub_as NAME -- the harness's installed stub agent installed for profile NAME
+# too (a copy of claude's, whose command it shares): <state>/NAME/install/2.1.300/claude.
+install_stub_as() {
+  mkdir -p "$H/home/.local/state/agent-sandbox/$1"
+  cp -a "${STUB_AGENT_DIR%/*}" "$H/home/.local/state/agent-sandbox/$1/install"
+}
+
+# plain_profiles -- $H/profiles: the claude profile, and `plain`, a profile with no
+# install recipe, whose agent a name finds on PATH (#6): `plain` in $H/bin, a copy of
+# the stub agent, PLAIN_BIN. For the tests of PATH resolution, which claude, whose agent
+# asb installs, no longer does. Launch with AGENT_SANDBOX_PROFILE_DIR="$H/profiles".
+plain_profiles() {
+  mkdir -p "$H/profiles/plain"
+  ln -sfn "$REPO_ROOT/profiles/claude" "$H/profiles/claude"
+  printf 'profile_command=plain\n' >"$H/profiles/plain/profile.sh"
+  PLAIN_BIN="$H/bin/plain"
+  cp "$STUB_AGENT_DIR/claude" "$PLAIN_BIN"
 }
 
 # run_engine [VAR=value ...] -- CMD ARGS...

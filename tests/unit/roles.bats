@@ -396,5 +396,5 @@ STUB
   run_engine -- asb --role impl-1 --connect 'skills=own native' claude --bg 'do it'
   [ "$status" -eq 0 ]
   own_bind impl-1 skills "$C/skills"
-  join_has "$H/home/.local/share/claude/versions/2.1.300/claude" --bg 'do it'
+  join_has "$H/home/.local/state/agent-sandbox/claude/install/2.1.300/claude" --bg 'do it'
 }

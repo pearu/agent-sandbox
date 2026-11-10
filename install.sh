@@ -1732,8 +1732,9 @@ else
 fi
 
 # ----- 3. the agents themselves, one per profile -----
-# What `asb <cmd>` will run: the first <cmd> on PATH that is not agent-sandbox
-# itself, resolved -- exactly as the engine looks it up.
+# What `asb <cmd>` will run: for a profile with an install recipe, asb's own install
+# of its agent (asb --install NAME); for any other, the first <cmd> on PATH that is not
+# agent-sandbox itself, resolved -- exactly as the engine looks it up.
 section "Agents"
 for f in "${profiles[@]}"; do
   name=$(basename -- "$(dirname -- "$f")")
@@ -1741,6 +1742,15 @@ for f in "${profiles[@]}"; do
   if [[ "$cmd" == */* ]]; then
     # a command the profile ships (sshd's agent, #335): nothing to find on PATH
     ok "$name: its agent ships with the profile ($(basename -- "$cmd"))"
+  elif sed -n '/^\[agent\]/,/^\[/p' "${f%/*}/agent-sandbox" 2>/dev/null | grep -qE '^[[:space:]]*install[[:space:]]*='; then
+    # an agent asb installs itself (#6): `asb NAME` runs that install, never one on PATH
+    cur="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox/$name/install/current"
+    if [[ -L "$cur" ]]; then
+      ok "$name: asb runs its own install of it, version $(readlink -- "$cur")"
+    else
+      warn "$name: not installed for asb yet"
+      info "asb runs its own install of the agent, never one on PATH: asb --install $name (once)."
+    fi
   elif bin="$(agent_on_path "$cmd")"; then
     ok "$name: \`$cmd\` is $bin"
   else

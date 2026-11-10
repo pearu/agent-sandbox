@@ -35,8 +35,17 @@ contract_plant() {
   [ -x "$TEST_BIN" ]
   run_engine PATH="$LPATH" -- asb "$TEST_CMD" args one
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$TEST_BIN" "$TEST_BIN" # what the command resolves to is bound
-  [ "${JOINV[0]}" = "$TEST_BIN" ]            # and is what runs
+  [ "${JOINV[0]}" = "$TEST_BIN" ] # what the command resolves to is what runs
+  if [ -n "$(profile_facts "$1" install)" ]; then
+    # asb's install of it (#6): the version's directory is bound, read-only, not the file
+    local v
+    v="$(readlink -f "$H/home/.local/state/agent-sandbox/$1/install/current")"
+    [[ "$TEST_BIN" == "$v/"* ]]
+    argv_has --ro-bind "$v" "$v"
+    run ! argv_has --ro-bind "$TEST_BIN" "$TEST_BIN"
+  else
+    argv_has --ro-bind "$TEST_BIN" "$TEST_BIN" # and is bound
+  fi
 }
 
 contract_facts() {

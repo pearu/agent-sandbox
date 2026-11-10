@@ -87,10 +87,17 @@ so `asb --role reviewer claude -r`, not `asb claude --role reviewer -r` (there
 The profile is the command's basename. A binary named otherwise needs it said:
 `asb --profile claude /path/to/2.1.284`.
 
-**`no 'claude' on PATH to run`**
-`asb claude` runs whatever `claude` your PATH finds, and there is none. Install
-Claude Code (any way: the native installer, a package), or name its binary with
-`asb --profile claude /path/to/claude`.
+**`claude is not installed for agent-sandbox: install it, asb --install claude`**
+`asb claude` runs asb's own install of Claude Code (#6), never the `claude` on your
+PATH, and there is none yet (or `current` under
+`~/.local/state/agent-sandbox/claude/install/` names nothing, said in parentheses).
+Run `asb --install claude` once; or run a binary of your own by its path, `asb
+--profile claude /path/to/claude`.
+
+**`no 'AGENT' on PATH to run`**
+A profile with no install recipe runs whatever its command finds on your PATH, and
+there is none. Install the agent, or name its binary with `asb --profile NAME
+/path/to/AGENT`.
 
 **`bwrap: setting up uid map: Permission denied` / `No permissions to create new namespace`**
 Ubuntu 24.04+ restricts unprivileged user namespaces

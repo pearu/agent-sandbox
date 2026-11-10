@@ -9,8 +9,8 @@ profile's test adapter (`profiles/<name>/test.bash`, `test_live_ready`) checks -
 claude: the proxy on `127.0.0.1` at the port `install.sh` recorded in
 `~/.config/agent-sandbox/proxy-port` (8888 unless it chose another;
 `AGENT_SANDBOX_PROXY_PORT` overrides it, as for the engine) -- the
-`agent-sandbox-mitmproxy` service -- credentials in `~/.claude`, and a Claude binary
-under `~/.local/share/claude/versions`. The strict tests additionally need
+`agent-sandbox-mitmproxy` service -- credentials in `~/.claude`, and Claude Code
+installed for asb (`asb --install claude`, under `~/.local/state/agent-sandbox/claude/install/`). The strict tests additionally need
 `pasta`/`nft` and the ability to create a namespace here.
 
 - `proxy.bats` — the proxy allows/refuses hosts; leaf certs carry an AKI.
