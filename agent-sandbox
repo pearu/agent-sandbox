@@ -12326,6 +12326,7 @@ _as_init() {
   # commented environment lines are named, for the user to complete.
   local -a ep_did=() ep_left=()
   local -A ep_skip=()
+  local setup_left=""
   local epmine=0
   while IFS= read -r q; do
     [[ -n "$q" && "$(basename -- "$q")" == "$(basename -- "$model")" ]] && epmine=1
@@ -12630,6 +12631,17 @@ _as_init() {
 
   if ((${_init_shared:-0})) && [[ -n "$envpath" ]]; then
     _as_msg "--init: $env is another project's environment ($envpath): activated read-only, never cloned or built here; the roles that install get a layer of their own over it"
+    # The model's setup role (`#@own #@ setup = ROLE`), from an earlier --init without an
+    # environment: a shared environment has none, and --init leaves it to the user.
+    local osetup osecs
+    osetup="$(sed -n 's/^#@own #@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' -- "$tpl" | head -1)"
+    if [[ -n "$osetup" ]]; then
+      osecs="$(grep -oE "^\[[a-z-]+:$osetup\]" "$df" | paste -sd' ' || true)"
+      if [[ -n "$osecs" ]]; then
+        _as_msg "--init: the setup role $osetup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ($osecs)$([[ -e "$proj/.asb/roles/$osetup.md" ]] && printf ' and its purpose file .asb/roles/%s.md' "$osetup"), then $invoked --trust; $invoked --delete --role $osetup removes its stores, if it was ever launched"
+        setup_left="$osetup"
+      fi
+    fi
     if ((${#editable[@]})); then
       _as_msg "--init: it imports from $(for es in "${editable[@]}"; do printf '%s, ' "$(_as_tilde "$es")"; done | sed 's/, $//') (editable installs), declared read-only where the model asks for {editable}"
     fi
@@ -12731,6 +12743,7 @@ _as_init() {
     elif ((${#ep_left[@]})); then
       printf '  - the environment'"'"'s line%s left above: yours to complete, by hand\n' "$( ((${#ep_left[@]} == 1)) || printf s)"
     fi
+    [[ -n "$setup_left" ]] && printf '  - the left-over setup role %s above: yours to remove\n' "$setup_left"
     if grep -qE '^[[:space:]]*gh[[:space:]]*=[[:space:]]*read-(only|write)' "$df" && [[ ! -f "$HOME/.config/gh/hosts.yml" ]]; then
       printf '  - gh auth login            the roles read GitHub with your gh login, and you have none yet\n'
     fi

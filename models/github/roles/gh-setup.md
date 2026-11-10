@@ -16,12 +16,21 @@ nothing else.
 
 **No environment declared.** When the prefix above reads `ENVPATH` -- the word `asb
 --init` writes when it was run without `--env` -- or that directory is not there in
-the sandbox, this project declares no environment for you to build into. Stop at once
-and ask the user, exactly, to run on the host `asb --init github --env NAME` (NAME a
-conda environment name of their choice, not built yet: it completes the environment's
-lines in `.agent-sandbox`), then `asb --trust`, then `asb --role gh-setup --shutdown
-claude` and your launch again. Do not choose a name, write `asb --apply` lines, or
-create an environment anywhere else.
+the sandbox, there is no environment for you to build into. Read `.agent-sandbox` in
+the checkout first:
+- Its `[conda:gh-*]` section active, with a `prefix = PATH` line: the project uses a
+  shared environment, another project's, built there, and there is nothing for you to
+  build. Say so to the user and stop. You are left over from an earlier `asb --init
+  github` without an environment and can be removed: your sections in `.agent-sandbox`
+  (`[connect:gh-setup]`, `[net:gh-setup]`, `[briefing:gh-setup]`) and
+  `.asb/roles/gh-setup.md`, then `asb --trust`; `asb --delete --role gh-setup` removes
+  your stores. Do not ask for `--init --env`.
+- Otherwise the project declares no environment. Stop at once and ask the user,
+  exactly, to run on the host `asb --init github --env NAME` (NAME a conda environment
+  name of their choice, not built yet: it completes the environment's lines in
+  `.agent-sandbox`), then `asb --trust`, then `asb --role gh-setup --shutdown claude`
+  and your launch again. Do not choose a name, write `asb --apply` lines, or create an
+  environment anywhere else.
 
 **What you build.** `main` as checked out, nothing else: you do not switch branches,
 pull, edit tracked files, commit or push. Submodules are in the checkout already; a
