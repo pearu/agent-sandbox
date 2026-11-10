@@ -95,8 +95,9 @@ names are gone; there are no aliases for removed names before 1.0.
   says, for an agent asb installs, the installed version against the profile's pin
   (`claude 2.1.321, the pin`; `claude 2.1.300, pinned 2.1.321: asb --install claude moves
   to the pin`; `claude: not installed; asb --install claude, or it is offered at the first
-  launch`), and for any other the command on PATH, as before. It never installs, updates
-  or removes an agent, a re-run included, and downloads none. At a terminal, with several
+  launch`), and for any other the command on PATH, as before. An install or a re-run never
+  installs, updates or removes an agent, and downloads none (`--uninstall` removes asb's
+  installs, below). At a terminal, with several
   agents asb can run and no default set, it asks once which is the default (a number or a
   name; empty: none) and sets it through the installed engine, `asb --set-default-agent`;
   without a terminal, with `--yes` or with one set, it asks nothing and says how to set

@@ -67,8 +67,8 @@
 # preserve your customizations).
 #
 # Agents: it reports what `asb AGENT` runs -- for an agent asb installs, the installed
-# version against the profile's pin -- and never installs, updates or removes one itself
-# (`asb --install AGENT[@VERSION]` does). At a terminal, with several agents asb can run
+# version against the profile's pin -- and an install or a re-run never installs, updates
+# or removes one (`asb --install AGENT[@VERSION]` does; --uninstall removes asb's installs). At a terminal, with several agents asb can run
 # and no default set, it asks which is the default (`asb --set-default-agent AGENT`
 # changes it later).
 
@@ -172,10 +172,13 @@ OS_RELEASE="${AGENT_SANDBOX_OS_RELEASE:-/etc/os-release}"           # the tests 
 AGENT_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
 
 # ----- pretty output -----
-if [[ -t 1 ]] && command -v tput >/dev/null; then
-  C_BOLD=$(tput bold) C_DIM=$(tput dim) C_RED=$(tput setaf 1)
-  C_GREEN=$(tput setaf 2) C_YELLOW=$(tput setaf 3) C_BLUE=$(tput setaf 4)
-  C_RESET=$(tput sgr0)
+# Colours only where the terminal has them: with TERM unset, dumb or vt100, tput fails,
+# which under set -e would end the install; a capability one terminal lacks is empty.
+tp() { tput "$@" 2>/dev/null || :; }
+if [[ -t 1 ]] && command -v tput >/dev/null && tput setaf 1 >/dev/null 2>&1 && tput sgr0 >/dev/null 2>&1; then
+  C_BOLD=$(tp bold) C_DIM=$(tp dim) C_RED=$(tp setaf 1)
+  C_GREEN=$(tp setaf 2) C_YELLOW=$(tp setaf 3) C_BLUE=$(tp setaf 4)
+  C_RESET=$(tp sgr0)
 else
   C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_RESET=""
 fi
@@ -197,7 +200,8 @@ run_sys() {
 # Everything agent-specific lives in profiles/<name>/: its script, profile.sh (see
 # the contract in profiles/claude/profile.sh), and its dot-file, agent-sandbox. The
 # installer loads a profile the way the engine does, in a subshell, to ask it for its
-# command name; a dot-file's `[agent] command` wins, as in the engine.
+# command name; a dot-file's `[agent] command` wins, as in the engine. A profile.sh that
+# fails to load fails the query, printing nothing (the engine's `broken`, _as_profile_facts).
 profile_query() { # $1 = profile file, $2.. = variable names to print, one per line
   local f=$1
   shift
@@ -211,7 +215,7 @@ profile_query() { # $1 = profile file, $2.. = variable names to print, one per l
     # shellcheck disable=SC2034
     profile_command=$AGENT_SANDBOX_PROFILE profile_by_name_only=0
     # shellcheck disable=SC1090
-    source "$f"
+    source "$f" >/dev/null 2>&1 || exit 1
     local c
     c=$(sed -n '/^\[agent\]/,/^\[/{s/^[[:space:]]*command[[:space:]]*=[[:space:]]*\([^#[:space:]]*\).*/\1/p}' "${f%/*}/agent-sandbox" 2>/dev/null | tail -1)
     # shellcheck disable=SC2034 # printed below by name
@@ -262,8 +266,9 @@ agent_on_path() {
 }
 
 # ----- agents asb installs (#6) -----
-# install.sh never installs, updates or removes an agent: `asb --install AGENT[@VER]` does
-# (on the host, from the profile's recipe). It reads what is there, to report it.
+# An install or a re-run never installs, updates or removes an agent: `asb --install
+# AGENT[@VER]` does (on the host, from the profile's recipe), and --uninstall removes
+# asb's installs. The Agents section reads what is there, to report it.
 
 # profile_has_recipe PROFILE_FILE -- does the profile's dot-file have `[agent] install`?
 profile_has_recipe() {
@@ -274,7 +279,7 @@ profile_has_recipe() {
 # engine reads it (_as_profile_versions): nothing when there is no table, or none or
 # more than one is pinned.
 profile_pin() {
-  awk '{ sub(/#.*/, "") } NF == 2 && $2 == "pinned" { n++; v = $1 } END { if (n == 1) print v }' \
+  awk '{ sub(/#.*/, "") } NF == 2 && $2 == "pinned" && $1 ~ /^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$/ { n++; v = $1 } END { if (n == 1) print v }' \
     "${1%/*}/versions" 2>/dev/null || true
 }
 
@@ -297,13 +302,18 @@ agent_current() {
 # there to run; never one chosen by --profile alone.
 AGENT_CANDIDATES=()
 agents_report() {
-  local f name cmd bno bin cur pin
+  local f name cmd bno bin cur pin out
   local -a q
   AGENT_CANDIDATES=()
   for f in "${profiles[@]}"; do
     name=$(basename -- "$(dirname -- "$f")")
-    mapfile -t q < <(profile_query "$f" profile_command profile_by_name_only)
-    cmd="${q[0]:-$name}" bno="${q[1]:-0}"
+    if ! out="$(profile_query "$f" profile_command profile_by_name_only)"; then
+      warn "$name: its profile failed to load ($f)"
+      continue
+    fi
+    mapfile -t q <<<"$out"
+    # an empty command is no command (the engine's `off`), never the profile's name
+    cmd="${q[0]:-}" bno="${q[1]:-0}"
     if [[ "$cmd" == */* ]]; then
       # a command the profile ships (sshd's agent, #335): nothing to find on PATH
       ok "$name: its agent ships with the profile ($(basename -- "$cmd"))"
@@ -321,6 +331,8 @@ agents_report() {
       else
         warn "$name $cur, pinned $pin: asb --install $name moves to the pin"
       fi
+    elif [[ -z "$cmd" ]]; then
+      info "$name: names no command; asb runs it by path only (asb --profile $name /path/to/it)"
     elif bin="$(agent_on_path "$cmd")"; then
       ok "$name: \`$cmd\` is $bin"
       ((bno)) || AGENT_CANDIDATES+=("$name")
@@ -344,7 +356,8 @@ ask_default_agent() {
     read -r a <&3 || return 1
     a="${a//[[:space:]]/}"
     [[ -n "$a" ]] || return 0
-    if [[ "$a" =~ ^[0-9]+$ ]] && ((a >= 1 && a <= $#)); then
+    if [[ "$a" =~ ^[0-9]+$ ]] && ((10#$a >= 1 && 10#$a <= $#)); then
+      a=$((10#$a))
       printf '%s' "${!a}"
       return 0
     fi
@@ -397,17 +410,18 @@ agent_versions() {
   local -a v=()
   for d in "$1"/*/; do
     d="${d%/}"
-    [[ -L "$d" ]] && continue # current
+    [[ -d "$d" && ! -L "$d" ]] || continue # current, or the pattern itself (none)
     v+=("${d##*/}")
   done
   printf '%s' "${v[*]:-none}"
 }
 
 # ----- uninstall -----
-# Reverses what this installer does, and nothing else.
+# Reverses what this installer does, and nothing else -- with one exception: the agents
+# asb installed (`asb --install`, <state>/<profile>/install/), which are asb's too.
 #
-# It never removes what it did not create: a command that is not the symlink to the
-# engine it recorded is left alone, an absent path is reported rather than forced.
+# Otherwise it never removes what it did not create: a command that is not the symlink
+# to the engine it recorded is left alone, an absent path is reported rather than forced.
 uninstall_plan_and_run() {
   local purge_config="${1:-0}" assume_yes="${2:-0}"
   section "Uninstall"
@@ -455,10 +469,14 @@ uninstall_plan_and_run() {
   # asb's downloads, which `asb --install` makes again, so they go with the rest of asb.
   # The rest of that directory is the sandboxes' state -- role stores, transcripts, and
   # the accounts' logins (<profile>/accounts/NAME/) -- the user's: kept, and named.
+  # Only the profiles this installer knows, and never through a symlink: neither the
+  # profile's directory nor its install/ may be one, or what is removed is elsewhere.
   local -a agent_installs=() accounts=()
-  local d
-  for d in "$AGENT_STATE_DIR"/*/install; do
-    [[ -d "$d" && ! -L "$d" ]] && agent_installs+=("$d")
+  local d f
+  for f in "${profiles[@]}"; do
+    d="$AGENT_STATE_DIR/$(basename -- "$(dirname -- "$f")")"
+    [[ ! -L "$AGENT_STATE_DIR" && -d "$d" && ! -L "$d" && -d "$d/install" && ! -L "$d/install" ]] \
+      && agent_installs+=("$d/install")
   done
   for d in "$AGENT_STATE_DIR"/*/accounts/*; do
     [[ -d "$d" && ! -L "$d" ]] && accounts+=("${d#"$AGENT_STATE_DIR"/}")
@@ -528,9 +546,16 @@ uninstall_plan_and_run() {
     rm -f -- "$p"
     ok "removed $p"
   done
+  # A version unpacked from a tarball can hold a read-only directory (a 555 one): made
+  # writable first, as the engine's _as_install_fetch does, and a removal that still
+  # fails is said, naming what is left, never the end of the uninstall.
   for p in ${agent_installs[@]+"${agent_installs[@]}"}; do
-    rm -rf -- "$p"
-    ok "removed $p"
+    chmod -R u+rwX -- "$p" 2>/dev/null || :
+    if rm -rf -- "$p" 2>/dev/null && [[ ! -e "$p" ]]; then
+      ok "removed $p"
+    else
+      warn "could not remove all of $p; left: $(agent_versions "$p") (remove it by hand)"
+    fi
   done
   for p in "${to_remove[@]}"; do
     if ((skipped)) && [[ "$p" == "$STATE_DIR" ]]; then
@@ -3888,8 +3913,8 @@ for name in agent-sandbox asb; do
   fi
 done
 for f in "${profiles[@]}"; do
-  cmd=$(profile_query "$f" profile_command)
-  [[ "$cmd" == */* ]] && continue # shipped with the profile (above)
+  cmd=$(profile_query "$f" profile_command) || continue # failed to load (above)
+  [[ -n "$cmd" && "$cmd" != */* ]] || continue          # no command, or shipped with the profile (above)
   existing="$(command -v "$cmd" 2>/dev/null || true)"
   if [[ -n "$existing" ]] && is_our_launcher "$existing"; then
     warn "\`$cmd\` on PATH is agent-sandbox, not the agent ($existing). Remove it: rm $existing"

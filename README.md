@@ -231,8 +231,9 @@ its path: `asb --profile claude /path/to/claude`. With more than one agent asb c
 run, `asb --set-default-agent AGENT` picks the one a role verb with no command acts
 on ([profiles.md](docs/profiles.md#the-install-recipe)).
 
-`./install.sh` never installs, updates or removes an agent, a re-run included; its
-**Agents** section reports one line per agent: for one asb installs, the installed
+An install or a re-run of `./install.sh` never installs, updates or removes an agent
+(`--uninstall` removes the ones asb installed, below); its **Agents** section reports
+one line per agent: for one asb installs, the installed
 version against the profile's pin (`claude 2.1.321, the pin`; `claude 2.1.300, pinned
 2.1.321: asb --install claude moves to the pin`; `claude: not installed; asb --install
 claude, or it is offered at the first launch`), and for any other, the command on your

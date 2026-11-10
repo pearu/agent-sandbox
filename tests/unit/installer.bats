@@ -1276,7 +1276,7 @@ two_agents() {
   command -v script >/dev/null || skip "script(1) is needed for a pty"
   two_agents
   local df="$T/home/.config/agent-sandbox/default-agent"
-  printf 'cd %q && exec env -i HOME=%q PATH=%q TERM=xterm AGENT_SANDBOX_INSTALL_STEP=agents %q\n' \
+  printf 'cd %q && exec env -i HOME=%q PATH=%q AGENT_SANDBOX_INSTALL_STEP=agents %q\n' \
     "$T" "$T/home" "$T/bin:/usr/bin:/bin" "$SRC/install.sh" >"$T/tty.sh"
   run bash -c 'printf "2\n" | script -qec "bash $1" /dev/null' _ "$T/tty.sh"
   [ "$status" -eq 0 ]
@@ -1312,4 +1312,131 @@ two_agents() {
   uninst
   [ "$status" -eq 0 ]
   [ -d "$T/elsewhere/9.9.9" ] && [ -L "$as/claude/install" ]
+}
+
+@test "a terminal tput cannot colour (TERM unset, dumb, vt100) does not end the install" {
+  command -v script >/dev/null || skip "script(1) is needed for a pty"
+  local term
+  for term in unset dumb vt100; do
+    printf 'cd %q && exec env -i HOME=%q PATH=%q %s AGENT_SANDBOX_INSTALL_STEP=agents AGENT_SANDBOX_TTY=%q %q\n' \
+      "$T" "$T/home" "/usr/bin:/bin" "$([[ "$term" == unset ]] || printf 'TERM=%s' "$term")" \
+      "$T/no/such/tty" "$REPO_ROOT/install.sh" >"$T/tty.sh"
+    run bash -c 'script -qec "bash $1" /dev/null </dev/null' _ "$T/tty.sh"
+    [ "$status" -eq 0 ] || {
+      echo "TERM=$term: $output"
+      false
+    }
+    [[ "$output" == *"==> Agents"* ]]
+    [[ "$output" != *"tput:"* ]]
+  done
+}
+
+@test "the candidates follow the engine's rule: a profile that fails to load, one naming no command, and one chosen by --profile alone (a recipe's included) are none" {
+  two_agents
+  mkdir -p "$SRC/profiles/broken" "$SRC/profiles/nocmd"
+  printf 'return 1\n' >"$SRC/profiles/broken/profile.sh"
+  printf 'profile_command=\n' >"$SRC/profiles/nocmd/profile.sh"
+  cp -r "$SRC/profiles/claude" "$SRC/profiles/claude2"
+  printf '\nprofile_by_name_only=1\n' >>"$SRC/profiles/claude2/profile.sh"
+  printf '1\n' >"$T/answers"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] broken: its profile failed to load ($SRC/profiles/broken/profile.sh)"* ]]
+  [[ "$output" == *"nocmd: names no command; asb runs it by path only (asb --profile nocmd /path/to/it)"* ]]
+  [[ "$output" != *"nocmd\` is"* ]]
+  # claude2 is reported, and not offered
+  [[ "$output" == *"claude2: not installed; asb --install claude2"* ]]
+  [[ "$output" == *"asb can run several agents here: 1) claude 2) other"$'\n'* ]]
+  [ "$(cat "$T/home/.config/agent-sandbox/default-agent")" = claude ]
+}
+
+@test "XDG_STATE_HOME moves the agents' installs: the report and the uninstall read them there" {
+  local xs="$T/xdg/agent-sandbox" pin
+  pin="$(awk '$2 == "pinned" {print $1}' "$REPO_ROOT/profiles/claude/versions")"
+  mkdir -p "$xs/claude/install/$pin" "$xs/claude/accounts/work"
+  ln -s "$pin" "$xs/claude/install/current"
+  installed 2.1.300 # the default place: not what is read
+  agents_step XDG_STATE_HOME="$T/xdg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ok] claude $pin, the pin"* ]]
+  fake_install
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" XDG_STATE_HOME="$T/xdg" \
+    "$REPO_ROOT/install.sh" --uninstall --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"and the accounts' logins there: claude/accounts/work"* ]]
+  [ ! -e "$xs/claude/install" ] && [ -d "$xs/claude/accounts/work" ]
+  [ -d "$T/home/.local/state/agent-sandbox/claude/install/2.1.300" ]
+}
+
+@test "--uninstall removes only the install dirs of profiles it knows, never through a symlinked profile directory" {
+  local as="$T/home/.local/state/agent-sandbox"
+  # not a profile install.sh knows: kept
+  mkdir -p "$as/notaprofile/install/1.0"
+  # the profile's directory a symlink: what it points at is not removed
+  mkdir -p "$T/elsewhere/claude/install/9.9.9"
+  ln -s "$T/elsewhere/claude" "$as/claude"
+  fake_install
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"remove the agent asb installed"* ]]
+  [ -d "$as/notaprofile/install/1.0" ]
+  [ -d "$T/elsewhere/claude/install/9.9.9" ]
+}
+
+@test "--uninstall removes an agent's install with a read-only directory in it, and goes on to the rest" {
+  fake_install
+  local as="$T/home/.local/state/agent-sandbox"
+  installed 2.1.321
+  mkdir -p "$as/claude/install/2.1.321/pkg/ro"
+  : >"$as/claude/install/2.1.321/pkg/ro/file"
+  chmod 555 "$as/claude/install/2.1.321/pkg/ro"
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ok] removed $as/claude/install"* ]]
+  [ ! -e "$as/claude/install" ]
+  [ ! -d "$T/home/.local/share/agent-sandbox" ] # what follows it still ran
+  [[ "$output" == *"agent-sandbox is gone"* ]]
+}
+
+@test "--uninstall: an install it cannot remove is said, naming what is left, and the rest still goes" {
+  fake_install
+  local as="$T/home/.local/state/agent-sandbox"
+  installed 2.1.321
+  # chmod and rm that fail, as on a file system that refuses them
+  mkdir -p "$T/home/.local/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/chmod"
+  printf '#!/bin/sh\ncase "$*" in *install*) exit 1 ;; esac\nexec /bin/rm "$@"\n' >"$T/home/.local/bin/rm"
+  chmod +x "$T/home/.local/bin/chmod" "$T/home/.local/bin/rm"
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] could not remove all of $as/claude/install; left: 2.1.321 (remove it by hand)"* ]]
+  [ -d "$as/claude/install/2.1.321" ]
+  [ ! -d "$T/home/.local/share/agent-sandbox" ]
+}
+
+@test "the pin is read as the engine reads the versions table: a pinned line that is not an exact version is no pin" {
+  two_agents
+  printf 'latest pinned\n2.1.300\n' >"$SRC/profiles/claude/versions"
+  installed 2.1.300
+  agents_step AGENT_SANDBOX_TTY="$T/no/such/tty"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"pinned latest"* ]]
+  [[ "$output" == *"[ok] claude 2.1.300"$'\n'* ]]
+}
+
+@test "the default agent: an answer with a leading zero is a number (08 is not octal); an install dir with no version says none" {
+  two_agents
+  printf '08\n02\n' >"$T/answers"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"value too great"* ]]
+  [ "$(grep -c 'Which is the default' <<<"$output")" -eq 2 ] # 08 is out of range: asked again
+  [ "$(cat "$T/home/.config/agent-sandbox/default-agent")" = other ]
+  # an empty install dir in the uninstall's plan
+  fake_install
+  mkdir -p "$T/home/.local/state/agent-sandbox/claude/install"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
+    "$REPO_ROOT/install.sh" --uninstall --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"remove the agent asb installed, $T/home/.local/state/agent-sandbox/claude/install (none; asb --install puts it back)"* ]]
 }

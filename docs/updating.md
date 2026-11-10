@@ -22,7 +22,8 @@ for -- finish or `asb --role R --shutdown` it first -- and an idle role's sandbo
 replaced by one running the new version.
 
 **Moving to a new pin.** An asb release may pin a newer version: re-running
-`install.sh` never installs, updates or removes an agent -- it downloads none -- and
+`install.sh` never installs, updates or removes an agent -- it downloads none (only
+`--uninstall` removes the agents asb installed) -- and
 only reports, in its Agents section, the installed version against the pin:
 
 ```
