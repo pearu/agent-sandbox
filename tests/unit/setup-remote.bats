@@ -705,6 +705,21 @@ W
   [ -L "$PROJ/.asb/remote/.gitignore" ]
 }
 
+@test "--setup-remote: a link at .asb, .asb/remote or the remote's directory is refused: nothing is made through it (#344)" {
+  remote_host bwrap=missing pasta=missing profiles=
+  section 'account = tob'
+  local l
+  for l in .asb .asb/remote .asb/remote/r1; do
+    rm -rf "$PROJ/.asb" "$H/outdir"
+    mkdir -p "$H/outdir" "$PROJ/$(dirname "$l")"
+    ln -s "$H/outdir" "$PROJ/$l"
+    setup_remote
+    [ -z "$(ls -A "$H/outdir")" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$p $l is a symlink; the admin's script is not written through it"* ]]
+  done
+}
+
 @test "--setup-remote: a port published at an address: HostName the host's own, no ProxyJump, the host key as [HostName]:PORT; a literal address is the HostName, and our line replaced (#344)" {
   require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host

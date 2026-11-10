@@ -305,3 +305,76 @@ shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the 
   run "${PYTHON_CMD[@]}" "$SYNC" frobnicate --kind dir --source "$S" --copy "$C" --base "$B"
   [ "$status" -eq 2 ]
 }
+
+# ----- links in the copy store: the sandbox's to plant, never written through ---------
+# The copy store is bound read-write into the sandbox, and the sync runs on the host: a
+# write or removal that followed a link there would land outside the store. Each is
+# refused, the base left so the next sync tries again, and named on a `link` line.
+
+@test "a dangling link at an upstream file's name is not written through: nothing is created outside, the link stays, and it is named" {
+  O="$BATS_TEST_TMPDIR/outside"
+  plant a.md ONE
+  mkdir -p "$C"
+  ln -s "$O" "$C/a.md"
+  sync
+  [ "$status" -eq 0 ]
+  [ ! -e "$O" ]
+  [ -L "$C/a.md" ]
+  [ "$output" = "link $C/a.md" ]
+  sync # not seeded: said again
+  [ "$output" = "link $C/a.md" ]
+}
+
+@test "a link to an existing file at a refreshed name is not written through: its target is unchanged, and it is named" {
+  O="$BATS_TEST_TMPDIR/outside"
+  plant a.md ONE
+  sync
+  printf 'ONE\n' >"$O" # the content the base records, so the copy looks untouched
+  rm "$C/a.md"
+  ln -s "$O" "$C/a.md"
+  plant a.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(cat "$O")" = ONE ]
+  [ -L "$C/a.md" ]
+  [ "$output" = "link $C/a.md" ]
+}
+
+@test "a symlinked parent directory is not written, made or removed through: the outside directory is untouched, and the link is named" {
+  O="$BATS_TEST_TMPDIR/outdir"
+  mkdir -p "$O" "$C"
+  ln -s "$O" "$C/sub"
+  plant sub/a.md ONE
+  plant sub/deep/b.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$(ls -A "$O")" ]
+  [[ "$output" == *"link $C/sub"* ]]
+  # a removal: the source deletes a file the base has, and the copy holds it behind a link
+  rm "$C/sub"
+  sync
+  [ -f "$C/sub/a.md" ]
+  mv "$C/sub" "$BATS_TEST_TMPDIR/was"
+  printf 'ONE\n' >"$O/a.md"
+  ln -s "$O" "$C/sub"
+  rm "$S/sub/a.md"
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(cat "$O/a.md")" = ONE ]
+  [[ "$output" == *"link $C/sub"* ]]
+}
+
+@test "a file-shaped channel's copy is written in place, keeping its inode, with the source's mode and mtime" {
+  local f="$BATS_TEST_TMPDIR/one.json" c="$BATS_TEST_TMPDIR/copy.json" ino
+  printf 'A\n' >"$f"
+  chmod 640 "$f"
+  touch -d '2020-01-02 03:04:05' "$f"
+  : >"$c" # the mount point the engine makes
+  ino="$(stat -c %i "$c")"
+  fsync "$f" "$c"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$c")" = A ]
+  [ "$(stat -c %i "$c")" = "$ino" ]
+  [ "$(stat -c %a "$c")" = 640 ]
+  [ "$(stat -c %Y "$c")" = "$(stat -c %Y "$f")" ]
+}

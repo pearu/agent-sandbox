@@ -755,6 +755,26 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
+@test "--trust never appends through a link a sandbox left in the repository: .git/info/exclude or .git/info a symlink is said, and its target unchanged" {
+  git init -q "$PROJ"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  printf 'KEEP\n' >"$H/outside"
+  rm -f "$PROJ/.git/info/exclude"
+  ln -s "$H/outside" "$PROJ/.git/info/exclude"
+  run_trust 'y\ny'
+  [ "$(cat "$H/outside")" = KEEP ]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approved."* && "$output" == *"$PROJ/.git/info/exclude is a symlink; .agent-sandbox is not added to it"* ]]
+  # the directory a link: the same
+  rm -rf "$PROJ/.git/info" "$CFG/trust"
+  mkdir -p "$H/outdir"
+  ln -s "$H/outdir" "$PROJ/.git/info"
+  run_trust 'y\ny'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$PROJ/.git/info is a symlink"* ]]
+  [ ! -e "$H/outdir/exclude" ]
+}
+
 @test "--trust makes no git-ignore offer for a file the repository tracks" {
   git init -q "$PROJ"
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
@@ -920,6 +940,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 }
 
 @test "--apply that cannot write the file fails and leaves no temp behind" {
+  [ "$(id -u)" -ne 0 ] || skip "root writes in a directory of mode 555"
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   chmod 555 "$PROJ" # the file is replaced by a rename: the directory is what refuses
   run_apply - '[allow]' github.com

@@ -1048,6 +1048,14 @@ names are gone; there are no aliases for removed names before 1.0.
   host-side run overwrote it. Each temp is now a new file `mktemp` makes, removed on every
   path. `--setup-remote` leaves a link at `.asb/remote/.gitignore`, a dangling one
   included, alone.
+- **A `copy` channel's sync no longer writes through a link the sandbox left in its
+  copy.** The copy is the sandbox's to change; a dangling link at the name of one of your
+  files made the host-side sync create that file wherever the link pointed. A symlink at
+  the name or in a parent directory is now neither followed nor replaced, and the launch
+  names it. Likewise `--trust` does not append to a `.git/info/exclude` (or `.git/info`)
+  that is a symlink, `--setup-remote` refuses a symlink at `.asb`, `.asb/remote` or the
+  remote's directory, and a read-only project's mount point is not made through a
+  dangling link; each is said.
 - **Two roles on one base or one account no longer strip each other's files.** When
   the first of them exited, its cleanup removed the empty mount-point files bwrap had
   created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a

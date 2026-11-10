@@ -1272,6 +1272,15 @@ DF
   [ ! -e "$PROJ/new.txt" ]
 }
 
+@test "under a read-only project, a dangling link at a missing own path is refused: no mount point is made through it (#220)" {
+  ln -s "$H/created-outside" "$PROJ/new.txt"
+  run_engine -- asb --connect 'project = read-only' --connect './new.txt = own' claude --version
+  [ ! -e "$H/created-outside" ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$PROJ/new.txt is a symlink that points nowhere; its mount point is not made through it"* ]]
+  [ ! -s "$H/argv" ]
+}
+
 # shellcheck disable=SC2088 # a literal ~ is what a user writes; the engine expands it
 @test "secret stores are refused whatever the mode, own included" {
   mkdir -p "$H/home/.ssh"
@@ -1526,6 +1535,21 @@ both_sides() { # STORE -- change synced/ bookkeeping and a skill, in the store a
   [ "$status" -eq 0 ]
   [[ "$output" == *"kept this sandbox's 's.md'"* ]]
   [[ "$output" != *"synced/"* ]]
+}
+
+@test "copy: a link the sandbox left in its copy at one of your files is not written through, and the launch names it" {
+  mkdir -p "$C/commands" "$C/skills"
+  printf 'V1\n' >"$C/skills/s.md"
+  run_engine -- asb --connect 'skills=copy native' claude --version
+  [ "$status" -eq 0 ]
+  local st
+  st="$SBOX/skills/copy/$(slugify "$C/skills")"
+  printf 'NEW\n' >"$C/skills/new.md"
+  ln -s "$H/created-outside" "$st/new.md"
+  run_engine -- asb --connect 'skills=copy native' claude --version
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/created-outside" ]
+  [[ "$output" == *"connect: skills: '$st/new.md' in this sandbox's copy is a symlink; the sync did not write through it"* ]]
 }
 
 @test "copy-on-write: a shadow warning names your file, not the agent's synced/ bookkeeping" {

@@ -2808,6 +2808,12 @@ _as_connect_bind_path() {
   # removed again while it is empty.
   if [[ ! -e "$p" && "${_connect_project_mode:-read-write}" == read-only &&
     "$p" == "$(_as_project_dir)"/* ]] && [[ "$mode" == own || -e "$s" ]]; then
+    # A dangling link there (another role may have the project read-write) would carry
+    # the mount point made here out of the project.
+    if [[ -L "$p" ]]; then
+      _as_msg "connect: $what: $p is a symlink that points nowhere; its mount point is not made through it. Remove it. Refusing to launch"
+      return 1
+    fi
     if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
       mkdir -p -- "$p" || return 1
     else
@@ -2988,6 +2994,13 @@ _as_connect_sync() {
   # a month.
   local line f
   while IFS= read -r line; do
+    # A symlink in this sandbox's copy where the sync was to write or remove: the
+    # copy is the sandbox's to change, and a host-side write through a link would land
+    # outside it, so the sync neither follows nor replaces one.
+    if [[ "$line" == link\ * ]]; then
+      _as_msg "connect: $ch: '${line#link }' in this sandbox's copy is a symlink; the sync did not write through it, so your change there did not reach the sandbox. Remove it, or take yours: $(_as_self_cmd --reset "$ch")"
+      continue
+    fi
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
     _as_channel_vendor_file "$ch" "$f" && continue
@@ -10022,7 +10035,15 @@ _as_setup_remote_alias() {
       _as_msg "$p no public key of yours found (no .pub beside an IdentityFile of ssh -G $_rm_host, none in ssh-add -L): add one to $_rm_account's ~/.ssh/authorized_keys by hand"
     fi
   fi
-  local dir="$cwd/.asb/remote/$alias" tmp
+  local dir="$cwd/.asb/remote/$alias" tmp _ln
+  # .asb/ is the project's, which a sandbox may write: a link at .asb, .asb/remote or the
+  # remote's directory would carry the files made below out of the project.
+  for _ln in "$cwd/.asb" "$cwd/.asb/remote" "$dir"; do
+    if [[ -L "$_ln" ]]; then
+      _as_msg "$p ${_ln#"$cwd/"} is a symlink; the admin's script is not written through it. Remove it and run again"
+      return 1
+    fi
+  done
   mkdir -p -- "$dir" || return 1
   # A link there, dangling included, is left alone: a write would follow it out of the project.
   [[ -e "$cwd/.asb/remote/.gitignore" || -L "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
@@ -12916,6 +12937,12 @@ _as_trust_review() {
     && ! git -C "$cwd" check-ignore -q .agent-sandbox 2>/dev/null; then
     local _ex
     _ex="$(git -C "$cwd" rev-parse --absolute-git-dir)/info/exclude"
+    # The repository is the project's, which a sandbox may write: an append through a
+    # link there would land outside it.
+    if [[ -L "${_ex%/exclude}" || -L "$_ex" ]]; then
+      _as_msg "$([[ -L "${_ex%/exclude}" ]] && printf '%s' "${_ex%/exclude}" || printf '%s' "$_ex") is a symlink; .agent-sandbox is not added to it (add /.agent-sandbox to the repository's exclude file yourself)"
+      return 0
+    fi
     printf 'agent-sandbox: add .agent-sandbox to %s so it is not committed? [y/N] ' "$_ex" >&2
     read -r ans || true
     case "$ans" in

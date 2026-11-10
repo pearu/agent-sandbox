@@ -40,6 +40,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 
 # The eight states a file can be in, as (source, copy, base) presence and
@@ -129,15 +130,94 @@ def empty(path):
         return False
 
 
-def copy_file(src, dst):
-    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
-    # copy2 keeps mtime, which makes a seeded file look to the agent exactly as
-    # it does natively -- and a tool that caches on mtime behaves the same inside.
-    shutil.copy2(src, dst)
+class LinkInWay(Exception):
+    """A symlink at PATH in the copy store, where the sync was to write or remove."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.path = path
 
 
-def remove(path, root):
-    """Unlink PATH and prune the directories it left empty, STRICTLY BELOW root.
+def _is_link(name, dir_fd):
+    try:
+        return stat.S_ISLNK(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def _split(copy, rel):
+    """(anchor, parent components, name) of REL in the store COPY: the anchor is the
+    engine's own directory, every component below it the sandbox's to change."""
+    if rel == "":
+        return os.path.dirname(copy) or ".", [], os.path.basename(copy)
+    parts = rel.split(os.sep)
+    return copy, parts[:-1], parts[-1]
+
+
+def _open_parent(anchor, parts, create):
+    """A descriptor of ANCHOR/PARTS..., each component opened without following a
+    link (made first when CREATE); LinkInWay names the first one that is a link.
+
+    THE COPY STORE IS THE SANDBOX'S: it can leave a symlink at any name in it, and a
+    host-side write that follows one lands outside the store (a dangling one at an
+    upstream file's name made the old copy2 create the file wherever it pointed). So
+    no write and no removal here follows a link, at the name or above it."""
+    fd = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)
+    path = anchor
+    try:
+        for part in parts:
+            path = os.path.join(path, part)
+            if create:
+                try:
+                    os.mkdir(part, 0o777, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            if _is_link(part, fd):
+                raise LinkInWay(path)
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def copy_file(src, copy, rel):
+    """SRC's content, mode and times to REL in the store COPY, in place: the file
+    there keeps its inode (a running bind of a file channel sees the change), and
+    is opened with O_NOFOLLOW, so a link at its name is refused, never followed."""
+    anchor, parts, name = _split(copy, rel)
+    fd = _open_parent(anchor, parts, create=True)
+    try:
+        if _is_link(name, fd):
+            raise LinkInWay(os.path.join(anchor, *parts, name))
+        st = os.stat(src)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+        try:
+            out = os.open(name, flags, 0o600, dir_fd=fd)
+        except OSError:
+            if _is_link(name, fd):  # made between the check and the open
+                raise LinkInWay(os.path.join(anchor, *parts, name))
+            raise
+        try:
+            with open(src, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    os.write(out, chunk)
+            os.fchmod(out, stat.S_IMODE(st.st_mode))
+            # The source's mtime, as copy2 kept it: a seeded file looks to the agent
+            # exactly as it does natively, and a tool that caches on mtime behaves the
+            # same inside.
+            os.utime(out, ns=(st.st_atime_ns, st.st_mtime_ns))
+        finally:
+            os.close(out)
+    finally:
+        os.close(fd)
+
+
+def remove(copy, rel):
+    """Unlink REL in the store COPY -- never through a link at it or above it
+    (LinkInWay) -- and prune the directories it left empty, STRICTLY BELOW the store.
 
     The bound never used to be enforced -- the comment claimed it and the loop
     climbed until rmdir refused, which meant the channel's own copy directory
@@ -145,12 +225,24 @@ def remove(path, root):
     file-shaped channel it then could not even recreate the slot inside it: the
     launch died on a redirection into a directory that had just been pruned away.
     """
+    anchor, parts, name = _split(copy, rel)
     try:
-        os.unlink(path)
-    except OSError:
-        pass
-    root = os.path.abspath(root)
-    d = os.path.dirname(os.path.abspath(path))
+        fd = _open_parent(anchor, parts, create=False)
+    except FileNotFoundError:
+        return
+    try:
+        if _is_link(name, fd):
+            raise LinkInWay(os.path.join(anchor, *parts, name))
+        try:
+            os.unlink(name, dir_fd=fd)
+        except OSError:
+            pass
+    finally:
+        os.close(fd)
+    if rel == "":
+        return
+    root = os.path.abspath(copy)
+    d = os.path.dirname(os.path.abspath(at(copy, rel)))
     while d != root and d.startswith(root + os.sep):
         try:
             os.rmdir(d)
@@ -160,8 +252,9 @@ def remove(path, root):
 
 
 def sync(kind, source, copy, base_path):
+    """The conflicts (relative paths) and the links in the way (store paths)."""
     base = load_base(base_path)
-    conflicts = []
+    conflicts, links = [], []
     if kind == "dir":
         os.makedirs(copy, exist_ok=True)
 
@@ -178,7 +271,10 @@ def sync(kind, source, copy, base_path):
         if s is None:
             # the source deleted it
             if c == b:
-                remove(at(copy, rel), copy)
+                try:
+                    remove(copy, rel)
+                except LinkInWay as e:
+                    links.append(e.path)  # the base entry goes all the same
             base.pop(rel, None)
             continue
         if b is None:
@@ -191,23 +287,29 @@ def sync(kind, source, copy, base_path):
             # empties a file it already had is a real edit, and the conflict
             # rules below protect it.
             if c is None or empty(at(copy, rel)):
-                copy_file(at(source, rel), at(copy, rel))  # seed, or new upstream
-                base[rel] = s
+                try:
+                    copy_file(at(source, rel), copy, rel)  # seed, or new upstream
+                    base[rel] = s
+                except LinkInWay as e:
+                    links.append(e.path)  # not seeded: the next launch tries again
             else:
                 conflicts.append(rel)  # both created it; keep the sandbox's
             continue
         if s == b:
             continue  # the source has not moved; the copy is the sandbox's business
         if c == b:
-            copy_file(at(source, rel), at(copy, rel))  # refresh
-            base[rel] = s
+            try:
+                copy_file(at(source, rel), copy, rel)  # refresh
+                base[rel] = s
+            except LinkInWay as e:
+                links.append(e.path)  # the base stays: said again next launch
         else:
             # Both moved. Keep the copy, say so, and LEAVE THE BASE where it is
             # so the next launch says so again.
             conflicts.append(rel)
 
     save_base(base_path, base)
-    return conflicts
+    return conflicts, links
 
 
 def shadows(source, upper, seen_path):
@@ -299,17 +401,22 @@ def main(argv):
         sys.stderr.write("connect-sync.py: --kind is file or dir\n")
         return 2
 
+    links = []
     if cmd == "shadows":
         rels = shadows(opts["source"], opts["upper"], opts["seen"])
         base_name = opts["source"]
     else:
         fn = sync if cmd == "sync" else reset
-        rels = fn(opts["kind"], opts["source"], opts["copy"], opts["base"])
+        rels, links = fn(opts["kind"], opts["source"], opts["copy"], opts["base"])
         base_name = opts["source"]
     for rel in rels:
         # A file channel has one unnamed entry; name it after the source so the
         # warning reads as a path the user recognises.
         sys.stdout.write("conflict %s\n" % (rel or os.path.basename(base_name)))
+    for path in links:
+        # A symlink in the sandbox's copy where the sync was to write or remove: not
+        # followed, not replaced; the engine says so, naming it.
+        sys.stdout.write("link %s\n" % path)
     return 0
 
 
