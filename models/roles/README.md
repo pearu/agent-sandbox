@@ -33,7 +33,7 @@ A project `--init` wrote before the `[agent]` section existed adds it once:
 `asb --apply '[agent]' 'command = claude'`.
 
 **Another account.** A role runs on your own Claude login unless it names an account,
-another login logged in once on the host with `asb --account-login work claude`
+another login logged in once on the host with `asb --agent claude --account work --login`
 ([recipes.md](../../docs/recipes.md#two-subscriptions-in-one-project)). The whole
 round, for one start or for every launch:
 

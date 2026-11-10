@@ -1111,7 +1111,7 @@ login_file() {
   run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
   [ "$status" -eq 0 ]
   grep -qxF "You run as claude on the account 'work'." "$md"
-  run ! grep -q 'login is due\|login expired\|account-login' "$md"
+  run ! grep -q 'login is due\|login expired\|--login' "$md"
   # names only: no path of the account's directory or of the login
   run ! grep -qF -e "$acc" -e '.credentials.json' -e 'accounts/work' "$md"
   # an unknown expiry says nothing of it
@@ -1127,10 +1127,10 @@ login_file() {
   run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
   [ "$status" -eq 0 ]
   local md="$OUT/briefing.md"
-  grep -qxF "You run as claude on the account 'work'. Its login is due on $day; the user renews it with asb --account-login work claude." "$md"
+  grep -qxF "You run as claude on the account 'work'. Its login is due on $day; the user renews it with asb --agent claude --account work --login." "$md"
   day="$(login_file "$acc/work/.credentials.json" -3)"
   run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb --role r --account work claude --version
-  grep -qxF "You run as claude on the account 'work'. Its login expired on $day; the user renews it with asb --account-login work claude." "$md"
+  grep -qxF "You run as claude on the account 'work'. Its login expired on $day; the user renews it with asb --agent claude --account work --login." "$md"
   # the base's, from the base's own file
   day="$(login_file "$H/home/.claude/.credentials.json" 2)"
   run_engine BWRAP_COPY="$OUT" TZ=UTC -- asb claude --version

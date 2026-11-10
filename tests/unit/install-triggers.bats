@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # What installs an agent asb installs, besides `asb --install` (#6, D9, D10), and what a
 # launch says of the version it runs (D8):
-#   - `--account-login NAME AGENT` installs the pin first, before the account's directory
+#   - `--agent AGENT --account NAME --login` installs the pin first, before the account's directory
 #     is made, so a failed download leaves nothing; installed, it downloads nothing
 #   - a launch at a terminal with nothing installed asks once, y/N, naming the size and
 #     host the resolver gives; y installs and launches, anything else refuses with the
@@ -64,28 +64,28 @@ asb_install() {
   [ "$status" -eq 0 ]
 }
 
-# ---- --account-login installs first ----
+# ---- --login installs first ----
 
-@test "--account-login on an agent not installed: its pin installed first, saying size and host, then the account made and logged in" {
-  run_engine "${KNOBS[@]}" -- asb --account-login work claude
+@test "--login on an agent not installed: its pin installed first, saying size and host, then the account made and logged in" {
+  run_engine "${KNOBS[@]}" -- asb --agent claude --account work --login
   # 1: the stub join logs nothing in, so the account has no login file afterwards
   [ "$status" -eq 1 ]
-  [[ "$output" == *"--account-login: the account 'work' of claude has no login: there is no ~/.local/state/agent-sandbox/claude/accounts/work/.credentials.json" ]]
+  [[ "$output" == *"--login: the account 'work' of claude has no login: there is no ~/.local/state/agent-sandbox/claude/accounts/work/.credentials.json" ]]
   [ "$(readlink "$I/current")" = 2.1.321 ]
   [ -x "$I/2.1.321/claude" ]
   [ -f "$SRC/2.1.321/resolved" ]
   [ -d "$ACC/work" ]
-  [[ "$output" == *"agent-sandbox: --account-login: claude is not installed for agent-sandbox; installing its pinned version first
+  [[ "$output" == *"agent-sandbox: --login: claude is not installed for agent-sandbox; installing its pinned version first
 agent-sandbox: --install: downloading claude 2.1.321 for $(uname -m)-gnu, 0 MB, from file://$SRC/2.1.321/asset
 agent-sandbox: --install: claude 2.1.321 is installed at ~/.local/state/agent-sandbox/claude/install/2.1.321/claude, and is now claude's current version
-agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/accounts/work, the account 'work' of claude"* ]]
+agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, the account 'work' of claude"* ]]
   # the login ran the installed agent
   [ "${JOINV[0]}" = "$I/2.1.321/claude" ]
 }
 
-@test "--account-login: a failed download leaves nothing, no account directory, no install; the login does not run" {
+@test "--login: a failed download leaves nothing, no account directory, no install; the login does not run" {
   printf '%064d\n' 0 >"$SRC/2.1.321/sum"
-  run_engine "${KNOBS[@]}" -- asb --account-login work claude
+  run_engine "${KNOBS[@]}" -- asb --agent claude --account work --login
   [ "$status" -eq 1 ]
   [[ "$output" == *"--install: the SHA-256 of file://$SRC/2.1.321/asset is "*"; nothing installed"* ]]
   [[ "$output" != *"made "* ]]
@@ -96,19 +96,19 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   [ ! -s "$H/argv" ]
 }
 
-@test "--account-login on an installed agent downloads nothing; a broken current is not mended: refused (2) with nothing made" {
+@test "--login on an installed agent downloads nothing; a broken current is not mended: refused (2) with nothing made" {
   asb_install claude@2.1.300
   rm -r "$SRC"
   mkdir -p "$ACC/work"
   printf 'WORK-LOGIN\n' >"$ACC/work/.credentials.json" # a re-login, the stub logging nothing in
-  run_engine "${KNOBS[@]}" -- asb --account-login work claude
+  run_engine "${KNOBS[@]}" -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   [[ "$output" != *"installing"* ]]
   [[ "$output" != *"--install:"* ]]
   [ "$(readlink "$I/current")" = 2.1.300 ]
   [ "${JOINV[0]}" = "$I/2.1.300/claude" ]
   ln -sfn ../.. "$I/current"
-  run_engine "${KNOBS[@]}" -- asb --account-login other claude
+  run_engine "${KNOBS[@]}" -- asb --agent claude --account other --login
   [ "$status" -eq 2 ]
   [ "$output" = "agent-sandbox: claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at '../..', which is not a version beside it): install it, asb --install claude" ]
   [ "$(readlink "$I/current")" = ../.. ]
@@ -325,7 +325,7 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
 @test "at a terminal, a launch whose account is refused is refused for that first: no question, no not-installed line" {
   run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --account nosuch claude --version
   [ "$status" -eq 2 ]
-  [[ "$output" == *"the account 'nosuch' (--account): there is no "*"log it in with asb --account-login nosuch claude"* ]]
+  [[ "$output" == *"the account 'nosuch' (--account): there is no "*"log it in with asb --agent claude --account nosuch --login"* ]]
   [[ "$output" != *"[y/N]"* ]]
   [[ "$output" != *"is not installed"* ]]
   [ ! -e "$SRC/2.1.321/resolved" ]

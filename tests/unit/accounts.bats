@@ -210,12 +210,12 @@ base_is_only_channels() {
   rm -r "$ACC/work"
   run_engine -- asb --account work claude --version
   [ "$status" -eq 2 ]
-  [[ "$output" == *"the account 'work' (--account): there is no $ACC/work for the agent claude: log it in with asb --account-login work claude"* ]]
+  [[ "$output" == *"the account 'work' (--account): there is no $ACC/work for the agent claude: log it in with asb --agent claude --account work --login"* ]]
   [ ! -s "$H/argv" ]
   dotfile '[agent]' 'account = work'
   run_engine -- asb claude --version
   [ "$status" -eq 2 ]
-  [[ "$output" == *"the account 'work' (.agent-sandbox [agent] account): there is no $ACC/work"*"asb --account-login work claude"* ]]
+  [[ "$output" == *"the account 'work' (.agent-sandbox [agent] account): there is no $ACC/work"*"asb --agent claude --account work --login"* ]]
   # a symlink, even to a directory that is a fine account
   ln -s "$ACC/personal" "$ACC/work"
   run_engine -- asb claude --version
@@ -282,7 +282,7 @@ base_is_only_channels() {
   dotfile '[agent]' 'account = work' '[agent:c]' 'command = codex' '[agent:k]' 'command = claude'
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role c
   [ "$status" -eq 2 ]
-  [[ "$output" == *"there is no $ST/codex/accounts/work for the agent codex: log it in with asb --account-login work codex"* ]]
+  [[ "$output" == *"there is no $ST/codex/accounts/work for the agent codex: log it in with asb --agent codex --account work --login"* ]]
   mkdir -p "$ST/codex/accounts/work"
   run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --role c
   [ "$status" -eq 0 ]
@@ -385,7 +385,7 @@ STUB
 @test "the review says each [agent] account line; a bad name is said and ignored; --check shows the account and its directory" {
   printf '[agent]\naccount = work\n[agent:r]\naccount = -\n[agent:q]\naccount = a/b\n' >"$PROJ/.agent-sandbox"
   run_review
-  [[ "$output" == *".agent-sandbox: [agent] account = work: every role run on the account 'work'"*"log it in with asb --account-login work AGENT"* ]]
+  [[ "$output" == *".agent-sandbox: [agent] account = work: every role run on the account 'work'"*"log it in with asb --agent AGENT --account work --login"* ]]
   [[ "$output" == *".agent-sandbox: [agent:r] account = -: the roles r run on the agent's base, your own login"* ]]
   [[ "$output" == *"[agent] account = a/b: not an account name"*"ignoring"* ]]
   dotfile '[agent]' 'account = work' '[agent:r]' 'account = -' '[agent:q]' 'command = claude'
@@ -484,8 +484,8 @@ STUB
   dotfile '[agent]' 'account = gone'
   run_engine -- asb --check claude
   [ "$status" -eq 1 ]
-  [[ "$output" == *"there is no $ACC/gone for the agent claude: log it in with asb --account-login gone claude"* ]]
-  [[ "$output" == *"  account: gone -- .agent-sandbox [agent] account; its directory ~/.local/state/agent-sandbox/claude/accounts/gone is NOT USABLE (above), so a launch refuses: log it in with asb --account-login gone claude"* ]]
+  [[ "$output" == *"there is no $ACC/gone for the agent claude: log it in with asb --agent claude --account gone --login"* ]]
+  [[ "$output" == *"  account: gone -- .agent-sandbox [agent] account; its directory ~/.local/state/agent-sandbox/claude/accounts/gone is NOT USABLE (above), so a launch refuses: log it in with asb --agent claude --account gone --login"* ]]
   [[ "$output" == *"account gone: not usable, a launch refuses"* ]]
   [[ "$output" == *"check: a launch refuses this role: its account 'gone' cannot be its state directory (above)"* ]]
   [ ! -s "$H/argv" ]
@@ -795,7 +795,7 @@ argv_count() {
   run ! grep -qxF "$ACC/work/cache/changelog.md" "$H/home/.local/state/agent-sandbox/placeholders"
 }
 
-# ---- asb --account-login NAME AGENT (P9) ----
+# ---- asb [--agent AGENT] --account NAME --login (P9) ----
 # The login runs as the role account-login of a scratch project with no dot-file,
 # ~/.cache/agent-sandbox/account-login/, under --preset isolated; the stub join stands
 # for the agent, so no login really runs: JOIN_EXIT is its exit status.
@@ -817,92 +817,183 @@ codex_profile() {
   chmod +x "$H/bin/codex"
 }
 
-@test "--account-login: refused with anything else on the line, a bad NAME, an AGENT naming no profile, a profile with no account-paths or no login key; nothing is made" {
+@test "--login: refused with anything else on the line, a bad NAME, an AGENT naming no profile, a profile with no account-paths or no login key; nothing is made" {
   rm -r "$ACC"
   local -a refused=(
-    "--account-login work claude extra"
-    "--verbose --account-login work claude"
-    "--account-login work"
-    "--account-login"
-    "--account-login work claude --role r"
+    "--verbose --agent claude --account work --login"
+    "--agent claude --account work --login --role r"
+    "--account work --login --login"
+    "--agent claude --agent claude --account work --login"
+    "--account work --account work --login"
+    "--account work --login --resume"
   )
   local w
   for w in "${refused[@]}"; do
     # shellcheck disable=SC2086 # the words, split
     run_engine -- asb $w
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--account-login takes an account's name and its agent, and nothing else on the line: asb --account-login NAME AGENT"* ]]
+    [ "$output" = "agent-sandbox: --login takes --agent AGENT and --account NAME, each at most once, and nothing else on the line: asb [--agent AGENT] --account NAME --login" ]
   done
-  for w in a/b .hidden - -x; do
-    run_engine -- asb --account-login "$w" claude
+  for w in a/b .hidden; do
+    run_engine -- asb --agent claude --account "$w" --login
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--account-login: '$w' is not an account name"* ]]
+    [[ "$output" == *"--account '$w': '$w' is not an account name"* ]]
   done
-  run_engine -- asb --account-login work nosuch
+  run_engine -- asb --agent claude --account -x --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: 'nosuch' names no profile. Profiles available in"* ]]
+  [[ "$output" == *"--account needs an account"* ]]
+  run_engine -- asb --agent nosuch --account work --login
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--login: 'nosuch' names no profile. Profiles available in"* ]]
   codex_profile
-  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --account-login work codex
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --agent codex --account work --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: profile 'codex' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts to log in"* ]]
+  [[ "$output" == *"--login: profile 'codex' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts to log in"* ]]
   codex_profile 'account-paths = auth.json'
-  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --account-login work codex
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --agent codex --account work --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: profile 'codex' does not say what starts its agent's login ([agent] login = ARGS, possibly empty)"* ]]
+  [[ "$output" == *"--login: profile 'codex' does not say what starts its agent's login ([agent] login = ARGS, possibly empty)"* ]]
   [ ! -e "$ACC" ]
   [ ! -e "$ST/codex/accounts" ]
   [ ! -e "$H/home/.cache/agent-sandbox" ]
   [ ! -s "$H/argv" ]
 }
 
-@test "--account-login: refused inside a sandbox (AGENT_SANDBOX=1)" {
-  run_engine AGENT_SANDBOX=1 -- asb --account-login fresh claude
+@test "--login takes no command: the agent is named with --agent" {
+  local w
+  for w in "--account work --login claude" "--login work claude" "--agent claude --account work --login auth login"; do
+    # shellcheck disable=SC2086 # the words, split
+    run_engine -- asb $w
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --login takes no command: the agent is named with --agent, asb [--agent AGENT] --account NAME --login" ]
+  done
+  [ ! -s "$H/argv" ]
+  [ ! -e "$H/home/.cache/agent-sandbox" ]
+}
+
+@test "--login: the base is refused for now, bare or as --account -; NAME is required" {
+  local w
+  for w in "--login" "--account - --login" "--agent claude --login" "--agent claude --account - --login"; do
+    # shellcheck disable=SC2086 # the words, split
+    run_engine -- asb $w
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --login: the base is still the agent's own native directory, your own login, and asb does not log it in; log in an account: asb --account NAME --login" ]
+  done
+  [ "$(cat "$C/.credentials.json")" = BASE-LOGIN ]
+  [ ! -s "$H/argv" ]
+  [ ! -e "$H/home/.cache/agent-sandbox" ]
+}
+
+@test "--login: a login has no role: the ROLE= and GLOB= forms of --agent and --account are refused" {
+  local w
+  for w in r=claude 'r*=claude' '*=claude'; do
+    run_engine -- asb --agent "$w" --account work --login
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --login: --agent $w names a role's agent, and a login has no role: --agent AGENT" ]
+  done
+  for w in r=work 'r*=work' '*=-'; do
+    run_engine -- asb --agent claude --account "$w" --login
+    [ "$status" -eq 2 ]
+    [ "$output" = "agent-sandbox: --login: --account $w names a role's account, and a login has no role: --account NAME" ]
+  done
+  [ ! -s "$H/argv" ]
+  [ ! -e "$H/home/.cache/agent-sandbox" ]
+}
+
+@test "--login: AGENT defaults to the default agent: the only one asb can run, else the one set; several and none set, or none at all, refused" {
+  # the only one asb can run (the harness's profiles: claude, and sshd chosen by --profile alone)
+  run_engine -- asb --account work --login
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role: account-login (--role)"* ]]
+  [ "${JOINV[*]:1}" = "auth login" ]
+  argv_has --bind "$ACC/work" "$C"
+  # two asb can run, none set: refused, naming both ways to name one
+  codex_profile
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --account work --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login runs on the host"* ]]
+  [ "$output" = "agent-sandbox: --login: no agent named, and there are several agents asb can run (claude codex) and no default is set: set it, asb --set-default-agent AGENT, or name one, asb --agent AGENT --account work --login" ]
+  [ ! -s "$H/argv" ]
+  # the one set is not one asb can run
+  mkdir -p "$H/home/.config/agent-sandbox"
+  printf 'gone\n' >"$H/home/.config/agent-sandbox/default-agent"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --account work --login
+  [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: --login: no agent named, and the default agent 'gone' (~/.config/agent-sandbox/default-agent) is not one asb can run here (claude codex): set another, asb --set-default-agent AGENT, or name one, asb --agent AGENT --account work --login" ]
+  # the one set: codex, whose profile has no accounts, so its refusal is codex's
+  printf 'codex\n' >"$H/home/.config/agent-sandbox/default-agent"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --account work --login
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--login: profile 'codex' says nothing of which of its agent's files are an account's"* ]]
+  # ... and --agent beats it
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --agent claude --account work --login
+  [ "$status" -eq 0 ]
+  argv_has --bind "$ACC/work" "$C"
+  # none asb can run at all
+  rm "$H/home/.config/agent-sandbox/default-agent"
+  mkdir -p "$H/profiles3/codex"
+  cp "$H/profiles2/codex/profile.sh" "$H/profiles2/codex/agent-sandbox" "$H/profiles3/codex/"
+  rm "$H/bin/codex"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles3" -- asb --account work --login
+  [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: --login: no agent named, and there is no agent asb can run here (installed: codex): install one, or name one, asb --agent AGENT --account work --login" ]
+}
+
+@test "--account-login is not a flag of asb any more: an unknown option, as any other" {
+  run_engine -- asb --account-login work claude
+  [ "$status" -eq 2 ]
+  [[ "$output" == "agent-sandbox: '--account-login' is not an option of agent-sandbox. "* ]]
+  [ ! -s "$H/argv" ]
+  [ ! -e "$H/home/.cache/agent-sandbox" ]
+}
+
+@test "--login: refused inside a sandbox (AGENT_SANDBOX=1)" {
+  run_engine AGENT_SANDBOX=1 -- asb --agent claude --account fresh --login
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--login runs on the host"* ]]
   [ ! -e "$ACC/fresh" ]
   [ ! -s "$H/argv" ]
 }
 
-@test "--account-login: the account's directory is made with mode 700; a symlink or a file there, or a symlinked accounts, is refused; an existing directory is a re-login" {
-  run_engine -- asb --account-login fresh claude
+@test "--login: the account's directory is made with mode 700; a symlink or a file there, or a symlinked accounts, is refused; an existing directory is a re-login" {
+  run_engine -- asb --agent claude --account fresh --login
   [ -d "$ACC/fresh" ]
   [ ! -L "$ACC/fresh" ]
   [ "$(stat -c %a "$ACC/fresh")" = 700 ]
-  [[ "$output" == *"--account-login: made ~/.local/state/agent-sandbox/claude/accounts/fresh, the account 'fresh' of claude"* ]]
+  [[ "$output" == *"--login: made ~/.local/state/agent-sandbox/claude/accounts/fresh, the account 'fresh' of claude"* ]]
   # a symlink, even to a fine account directory
   ln -s "$ACC/personal" "$ACC/link"
-  run_engine -- asb --account-login link claude
+  run_engine -- asb --agent claude --account link --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: $ACC/link is a symlink"* ]]
+  [[ "$output" == *"--login: $ACC/link is a symlink"* ]]
   [ ! -s "$H/argv" ]
   : >"$ACC/file"
-  run_engine -- asb --account-login file claude
+  run_engine -- asb --agent claude --account file --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: $ACC/file is not a directory"* ]]
+  [[ "$output" == *"--login: $ACC/file is not a directory"* ]]
   [ ! -s "$H/argv" ]
   # an `accounts` that is a symlink: nothing is made through it
   mkdir -p "$H/elsewhere"
   mv "$ACC" "$ACC.real"
   ln -s "$H/elsewhere" "$ACC"
-  run_engine -- asb --account-login other claude
+  run_engine -- asb --agent claude --account other --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: $ACC is a symlink"* ]]
+  [[ "$output" == *"--login: $ACC is a symlink"* ]]
   [ ! -e "$H/elsewhere/other" ]
   [ ! -s "$H/argv" ]
   rm "$ACC"
   mv "$ACC.real" "$ACC"
   # an existing directory: the login runs in it, its mode left as it is
   chmod 750 "$ACC/work"
-  run_engine -- asb --account-login work claude
+  run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   [[ "$output" != *"made "* ]]
   [ "$(stat -c %a "$ACC/work")" = 750 ]
   argv_has --bind "$ACC/work" "$C"
 }
 
-@test "--account-login: the login runs as role account-login of the scratch project, under --preset isolated, on the account, with the profile's login args" {
+@test "--login: the login runs as role account-login of the scratch project, under --preset isolated, on the account, with the profile's login args" {
   login_paths
-  run_engine -- asb --account-login fresh claude
+  run_engine -- asb --agent claude --account fresh --login
   [ "$status" -eq 1 ] # the stub made no login file
   [[ "$output" == *"role: account-login (--role)"* ]]
   [[ "$output" == *"connect: preset isolated"* ]]
@@ -922,17 +1013,17 @@ codex_profile() {
   [ "${JOINV[*]:1}" = "auth login" ]
   # a profile's empty `login =` runs the agent with no arguments
   codex_profile 'account-paths = auth.json' 'login ='
-  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --account-login work codex
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- asb --agent codex --account work --login
   [ "$status" -eq 1 ]
   argv_has --bind "$ST/codex/accounts/work" "$H/home/.codex"
   [ "${JOINV[*]}" = "$H/bin/codex" ]
   [[ "$output" == *"the account 'work' of codex has no login: there is no ~/.local/state/agent-sandbox/codex/accounts/work/auth.json"* ]]
 }
 
-@test "--account-login: the shell's AGENT_SANDBOX_CONNECT does not reach the login: the config is isolated's own store, never the native file" {
+@test "--login: the shell's AGENT_SANDBOX_CONNECT does not reach the login: the config is isolated's own store, never the native file" {
   login_paths
   printf '{"oauthAccount":{"emailAddress":"native"}}\n' >"$H/home/.claude.json"
-  run_engine AGENT_SANDBOX_CONNECT='config=read-write' -- asb --account-login work claude
+  run_engine AGENT_SANDBOX_CONNECT='config=read-write' -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   local slot="${C//\//_}"
   argv_has --bind "$LSB/config/own/${slot#_}_.claude.json" "$C/.claude.json"
@@ -943,8 +1034,8 @@ codex_profile() {
   argv_has --bind "$H/home/.claude.json" "$C/.claude.json"
 }
 
-@test "--account-login: the shell's AGENT_SANDBOX_NET does not reach the login: it runs under the default network mode, the proxy" {
-  run_engine AGENT_SANDBOX_NET=none -- asb --account-login work claude
+@test "--login: the shell's AGENT_SANDBOX_NET does not reach the login: it runs under the default network mode, the proxy" {
+  run_engine AGENT_SANDBOX_NET=none -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   argv_has --share-net
   [[ "$(setenv_value HTTPS_PROXY)" == http://*@127.0.0.1:* ]]
@@ -954,16 +1045,16 @@ codex_profile() {
   run ! argv_has --share-net
 }
 
-@test "--account-login: the login role's stores are removed afterwards, after a failing login too, and what a killed run left is removed first" {
+@test "--login: the login role's stores are removed afterwards, after a failing login too, and what a killed run left is removed first" {
   login_paths
-  run_engine -- asb --account-login work claude
+  run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   grep -qF "$LSB/" "$H/argv" # it had stores
   [ ! -e "$LSB" ]
   [ ! -e "${LSB%/*}" ]
-  run_engine JOIN_EXIT=3 -- asb --account-login work claude
+  run_engine JOIN_EXIT=3 -- asb --agent claude --account work --login
   [ "$status" -eq 3 ]
-  [[ "$output" == *"--account-login: the login ended with status 3"* ]]
+  [[ "$output" == *"--login: the login ended with status 3"* ]]
   grep -qF "$LSB/" "$H/argv"
   [ ! -e "$LSB" ]
   # a store a killed run left: the previous account's config copy is not the next one's
@@ -978,7 +1069,7 @@ codex_profile() {
     'with open(os.environ["STALE_SEEN"], "w") as fh:' \
     '    fh.write("yes" if os.path.exists(os.environ["STALE"]) else "no")' \
     'sys.exit(3)' >"$H/bin/join-look.py"
-  run_engine AGENT_SANDBOX_JOIN="$H/bin/join-look.py" STALE="$LSB/stale" STALE_SEEN="$H/seen" -- asb --account-login work claude
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/join-look.py" STALE="$LSB/stale" STALE_SEEN="$H/seen" -- asb --agent claude --account work --login
   [ "$status" -eq 3 ]
   [ "$(cat "$H/seen")" = no ]
   [ ! -e "$LSB" ]
@@ -988,13 +1079,13 @@ codex_profile() {
   [ "$(cat "$C/.credentials.json")" = BASE-LOGIN ]
 }
 
-@test "--account-login: a login running already refuses a second one, and its stores stay until it ends" {
+@test "--login: a login running already refuses a second one, and its stores stay until it ends" {
   login_paths
-  engine_bg -- asb --account-login work claude
+  engine_bg -- asb --agent claude --account work --login
   [ -d "$LSB" ]
-  run_engine -- asb --account-login personal claude
+  run_engine -- asb --agent claude --account personal --login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--account-login: a login is running already (the role account-login of $LSCR); finish it, or end it with: cd $LSCR && asb --role account-login --shutdown claude"* ]]
+  [[ "$output" == *"--login: a login is running already (the role account-login of $LSCR); finish it, or end it with: cd $LSCR && asb --role account-login --shutdown claude"* ]]
   [ -d "$LSB" ]
   [ ! -s "$H/argv" ]
   release_bg
@@ -1002,7 +1093,7 @@ codex_profile() {
   [ ! -e "$LSB" ]
 }
 
-@test "--account-login: Ctrl-C at the login ends it, and the stores are still removed" {
+@test "--login: Ctrl-C at the login ends it, and the stores are still removed" {
   login_paths
   # The join stands for the agent at the terminal: Ctrl-C is a SIGINT to the terminal's
   # foreground process group, which the engine is in; setsid gives the run its own.
@@ -1016,47 +1107,47 @@ codex_profile() {
     'sys.exit(130)' >"$H/bin/join-int.py"
   printf '#!/bin/sh\nexec setsid -w %q "$@"\n' "$H/bin/asb" >"$H/bin/asb-own-group"
   chmod +x "$H/bin/asb-own-group"
-  run_engine AGENT_SANDBOX_JOIN="$H/bin/join-int.py" SIG_SEEN="$H/sig" -- "$H/bin/asb-own-group" --account-login work claude
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/join-int.py" SIG_SEEN="$H/sig" -- "$H/bin/asb-own-group" --agent claude --account work --login
   [ "$status" -eq 130 ]
   # the login gets Ctrl-C: it does not inherit an ignored SIGINT from the wait around it
   [ "$(cat "$H/sig")" = "not ignored" ]
   grep -qF "$LSB/" "$H/argv"
-  [[ "$output" == *"--account-login: the login ended with status 130"* ]]
-  [[ "$output" == *"--account-login: the account 'work' of claude has its login"* ]]
+  [[ "$output" == *"--login: the login ended with status 130"* ]]
+  [[ "$output" == *"--login: the account 'work' of claude has its login"* ]]
   [ ! -e "$LSB" ]
 }
 
-@test "--account-login: a hint about the unechoed code is said just before the login runs, never on a refusal" {
-  local hint="--account-login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
-  run_engine -- asb --account-login work claude
+@test "--login: a hint about the unechoed code is said just before the login runs, never on a refusal" {
+  local hint="--login: if it asks for a code, paste it and press Enter; the code is not shown as you paste it."
+  run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
   [[ "$output" == *"$hint"*"role: account-login (--role)"* ]]
   [[ "$output" != *"role: account-login (--role)"*"$hint"* ]]
   # refused: by the arguments, and by the last check before the login (one running)
-  run_engine -- asb --account-login work nosuch
+  run_engine -- asb --agent nosuch --account work --login
   [ "$status" -eq 2 ]
   [[ "$output" != *"paste it"* ]]
   login_paths
-  engine_bg -- asb --account-login work claude
-  run_engine -- asb --account-login personal claude
+  engine_bg -- asb --agent claude --account work --login
+  run_engine -- asb --agent claude --account personal --login
   [ "$status" -eq 2 ]
   [[ "$output" == *"a login is running already"* ]]
   [[ "$output" != *"paste it"* ]]
   release_bg
 }
 
-@test "--account-login: says whether the account has its login file, by its path; the exit status follows" {
-  run_engine -- asb --account-login work claude
+@test "--login: says whether the account has its login file, by its path; the exit status follows" {
+  run_engine -- asb --agent claude --account work --login
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--account-login: the account 'work' of claude has its login: ~/.local/state/agent-sandbox/claude/accounts/work/.credentials.json"* ]]
+  [[ "$output" == *"--login: the account 'work' of claude has its login: ~/.local/state/agent-sandbox/claude/accounts/work/.credentials.json"* ]]
   [[ "$output" != *"WORK-LOGIN"* ]]
-  run_engine -- asb --account-login fresh claude
+  run_engine -- asb --agent claude --account fresh --login
   [ "$status" -eq 1 ]
-  [[ "$output" == *"--account-login: the account 'fresh' of claude has no login: there is no ~/.local/state/agent-sandbox/claude/accounts/fresh/.credentials.json"* ]]
+  [[ "$output" == *"--login: the account 'fresh' of claude has no login: there is no ~/.local/state/agent-sandbox/claude/accounts/fresh/.credentials.json"* ]]
   [[ "$output" != *"the login ended with status"* ]]
 }
 
-@test "--account-login: the scratch project is left out of --list and --list-all" {
+@test "--login: the scratch project is left out of --list and --list-all" {
   login_paths
   mkdir -p "$LSB" "$SBOX" "$LSCR"
   printf '%s\n' "$LSCR" >"$LSB/project"
@@ -1070,24 +1161,24 @@ codex_profile() {
   [[ "$output" == *"no role"* ]]
 }
 
-@test "--account-login helper: the cleanup removes only the login role's own directory under a project's slug" {
+@test "--login helper: the cleanup removes only the login role's own directory under a project's slug" {
   source_engine
   local slug="-tmp-x"
   mkdir -p "$ST/claude/$slug/other" "$ST/claude/$slug/account-login/config"
-  run _as_account_login_clean "$ST" claude "$slug"
+  run _as_login_clean "$ST" claude "$slug"
   [ "$status" -eq 0 ]
   [ ! -e "$ST/claude/$slug/account-login" ]
   [ -d "$ST/claude/$slug/other" ] # the slug's other entries stay, and so does the slug
   # not a project's slug: nothing removed
   mkdir -p "$ST/claude/accounts/account-login"
-  run _as_account_login_clean "$ST" claude accounts
+  run _as_login_clean "$ST" claude accounts
   [ "$status" -eq 1 ]
   [ -d "$ST/claude/accounts/account-login" ]
   # a symlinked store: neither it nor its target removed
   mkdir -p "$H/target"
   : >"$H/target/keep"
   ln -s "$H/target" "$ST/claude/$slug/account-login"
-  run _as_account_login_clean "$ST" claude "$slug"
+  run _as_login_clean "$ST" claude "$slug"
   [ "$status" -eq 1 ]
   [ -f "$H/target/keep" ]
   [ -L "$ST/claude/$slug/account-login" ]
@@ -1096,7 +1187,7 @@ codex_profile() {
   mkdir -p "$H/slugt/account-login"
   : >"$H/slugt/account-login/keep"
   ln -s "$H/slugt" "$ST/claude/-tmp-y"
-  run _as_account_login_clean "$ST" claude -tmp-y
+  run _as_login_clean "$ST" claude -tmp-y
   [ "$status" -eq 1 ]
   [ -f "$H/slugt/account-login/keep" ]
   [ -L "$ST/claude/-tmp-y" ]
@@ -1104,7 +1195,7 @@ codex_profile() {
   mkdir -p "$H/proft/$slug/account-login"
   : >"$H/proft/$slug/account-login/keep"
   ln -s "$H/proft" "$ST/codex"
-  run _as_account_login_clean "$ST" codex "$slug"
+  run _as_login_clean "$ST" codex "$slug"
   [ "$status" -eq 1 ]
   [ -f "$H/proft/$slug/account-login/keep" ]
   [ -L "$ST/codex" ]

@@ -26,6 +26,15 @@ names are gone; there are no aliases for removed names before 1.0.
   or, with several, the one set with the new `asb --set-default-agent AGENT`
   (`~/.config/agent-sandbox/default-agent`; no AGENT prints it); with none set, the verb
   refuses, naming that line. `--check` with no command checks every such profile.
+- **An account is logged in with `asb [--agent AGENT] --account NAME --login`** (#6,
+  #355): `--login` is a verb, and `--agent` and `--account` are the launch flags, in
+  their bare forms only (a login has no role: the `ROLE=` and glob forms are refused),
+  with nothing else on the line and no command word. AGENT defaults to the default agent
+  (above; several and none set: refused, naming `asb --set-default-agent AGENT` and
+  `--agent AGENT`). NAME is required for now: a login to the base (no `--account`, or
+  `--account -`) is refused while the base is the agent's own native directory
+  (claude: `~/.claude`). Every message, `--list`/`--status` renewal and briefing line
+  that names the command says this form.
 - **The proxy serves sandbox sessions only**: every proxied launch carries a token, and a
   request without a live session's token gets `407` with a Basic challenge, where it got
   the global allowlist. A session's `[deny]` and `retrieve-only` hang on that token, and
@@ -82,15 +91,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
-- **Agents asb installs are installed when first needed** (#6): `asb --account-login NAME
-  AGENT` installs the profile's pin first, unasked, before the account's directory is made
+- **Agents asb installs are installed when first needed** (#6): `asb --agent AGENT
+  --account NAME --login` installs the profile's pin first, unasked, before the account's directory is made
   (a failed download leaves nothing); a launch at a terminal with nothing installed asks
   once, `install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`, and installs
   and launches on `y`, once the launch's own checks have passed. Without a terminal, and
   for `--exec`, the verbs, `--status`, `--shutdown`, `--serve`, `--summarize` and
   `--roles`, it refuses with the line that installs it, never asking (`--check` never
   looks the agent up). A broken `install/current` is refused, never mended, by
-  `--account-login` too, before anything is made.
+  `--login` too, before anything is made.
 - **The agent's version on the launch line** (#6): `agent: claude 2.1.321` with
   `--verbose`; always `agent: claude, running V, pinned W` when it is not the pin (and
   `(untested with asb)` for one the table does not list). Recorded per launch in the
@@ -158,7 +167,7 @@ names are gone; there are no aliases for removed names before 1.0.
   `CLAUDE_CONFIG_DIR` and every channel's store stay what they are (memory and
   transcripts carry across a switch). `--account` takes `--agent`'s forms, precedence
   and refusals and beats the file; `-` names the base anywhere. Refused when the
-  directory is missing (naming `asb --account-login NAME AGENT`), a symlink or not a
+  directory is missing (naming `asb --agent AGENT --account NAME --login`), a symlink or not a
   directory, for a profile with no `[agent] account-paths`, and under `--preset native`
   or `none`; `--exec` counts; `--roles` checks every role's up front and gives a pane
   `--account NAME` only for its own role; a join asking for another account is
@@ -186,8 +195,8 @@ names are gone; there are no aliases for removed names before 1.0.
   role's `.claude.json` store (never the native file under `config = read-write`), so
   `/status` names the account in force from the first turn, not the last one's
   organisation for up to a day (`profile.py forget-profile`).
-  `asb --account-login NAME AGENT`, alone on the line and host only, makes the account's
-  directory (mode 700; an existing one is a re-login; a symlink or a non-directory at any
+  `asb [--agent AGENT] --account NAME --login`, alone on the line and host only, makes
+  the account's directory (mode 700; an existing one is a re-login; a symlink or a non-directory at any
   level is refused) and runs the agent's own login in it in the foreground: the new
   profile key `[agent] login` (claude: `login = auth login`), sandboxed as the role
   `account-login` of the scratch project `~/.cache/agent-sandbox/account-login/` (no
@@ -201,7 +210,7 @@ names are gone; there are no aliases for removed names before 1.0.
   or without `account-paths`, refuses it.
   `asb --list` and `--list-all` end each role's line with its agent and account (`claude,
   account work`, `claude, base`), plus `, login due in N days` within 7 days of the
-  login's expiry and `, login expired: asb --account-login NAME AGENT` past it (for the
+  login's expiry and `, login expired: asb --agent AGENT --account NAME --login` past it (for the
   base, the profile's `login-renew`: claude's `run /login`); `--status` prints the account, its directory and the expiry
   date always; the briefing says which agent and account the session runs as, and when
   the login is due within the window, by names only. The new profile key `[agent]

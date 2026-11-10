@@ -72,7 +72,7 @@ is `micromamba` and whose environments are under
 `~/.local/share/agent-sandbox/conda/envs`.
 
 An instance runs on your own Claude login unless it names an **account**, another login
-logged in once on the host with `asb --account-login work claude`
+logged in once on the host with `asb --agent claude --account work --login`
 ([config.md](../../docs/config.md#accounts)). For one launch, `--account` goes before
 the command, and `--resume` goes on with the instance's conversation:
 

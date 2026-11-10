@@ -78,9 +78,9 @@
 # ROLE` with no command runs it; `--agent ROLE=AGENT` on the line replaces it (#355).
 # `account = NAME`: the role runs on that login of its agent, the directory
 # ~/.local/state/agent-sandbox/AGENT/accounts/NAME/ bound in place of the agent's
-# base (claude: ~/.claude); `-` is the base, your own login. `asb --account-login
-# NAME AGENT` logs one in; a launch refuses while it is missing. `--account
-# ROLE=NAME` on the line beats the file.
+# base (claude: ~/.claude); `-` is the base, your own login. `asb --agent AGENT
+# --account NAME --login` logs one in; a launch refuses while it is missing.
+# `--account ROLE=NAME` on the line beats the file.
 #[agent]
 #command = claude
 #account = work
