@@ -86,9 +86,11 @@ names are gone; there are no aliases for removed names before 1.0.
   AGENT` installs the profile's pin first, unasked, before the account's directory is made
   (a failed download leaves nothing); a launch at a terminal with nothing installed asks
   once, `install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`, and installs
-  and launches on `y`. Without a terminal, and for `--exec`, the verbs, `--status`,
-  `--shutdown` and `--check`, it refuses with the line that installs it, never asking. A
-  broken `install/current` is refused, never mended.
+  and launches on `y`, once the launch's own checks have passed. Without a terminal, and
+  for `--exec`, the verbs, `--status`, `--shutdown`, `--serve`, `--summarize` and
+  `--roles`, it refuses with the line that installs it, never asking (`--check` never
+  looks the agent up). A broken `install/current` is refused, never mended, by
+  `--account-login` too, before anything is made.
 - **The agent's version on the launch line** (#6): `agent: claude 2.1.321` with
   `--verbose`; always `agent: claude, running V, pinned W` when it is not the pin (and
   `(untested with asb)` for one the table does not list). Recorded per launch in the

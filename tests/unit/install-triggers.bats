@@ -96,7 +96,7 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   [ ! -s "$H/argv" ]
 }
 
-@test "--account-login on an installed agent downloads nothing; a broken current is not mended, the login's launch refuses it" {
+@test "--account-login on an installed agent downloads nothing; a broken current is not mended: refused (2) with nothing made" {
   asb_install claude@2.1.300
   rm -r "$SRC"
   mkdir -p "$ACC/work"
@@ -109,10 +109,11 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   [ "${JOINV[0]}" = "$I/2.1.300/claude" ]
   ln -sfn ../.. "$I/current"
   run_engine "${KNOBS[@]}" -- asb --account-login other claude
-  [ "$status" -ne 0 ]
-  [[ "$output" != *"installing"* ]]
-  [[ "$output" == *"claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at '../..', which is not a version beside it): install it, asb --install claude"* ]]
+  [ "$status" -eq 2 ]
+  [ "$output" = "agent-sandbox: claude is not installed for agent-sandbox (~/.local/state/agent-sandbox/claude/install/current points at '../..', which is not a version beside it): install it, asb --install claude" ]
   [ "$(readlink "$I/current")" = ../.. ]
+  [ ! -e "$ACC/other" ]
+  [ ! -s "$H/argv" ]
 }
 
 # ---- a launch with the agent not installed ----
@@ -123,9 +124,77 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   [[ "$output" == *"agent-sandbox: claude is not installed for agent-sandbox; looking up claude 2.1.321, its pinned version..."* ]]
   [[ "$output" == *"agent-sandbox: install claude 2.1.321 (0 MB from file://$SRC/2.1.321/asset)? [y/N] "* ]]
   [ "$(grep -c 'install claude 2.1.321 (' <<<"$output")" -eq 1 ]
-  [[ "$output" == *"--install: claude 2.1.321 is installed at ~/.local/state/agent-sandbox/claude/install/2.1.321/claude, and is now claude's current version"* ]]
+  # the launch's own messages, not --install's
+  [[ "$output" == *"agent-sandbox: claude 2.1.321 is installed at ~/.local/state/agent-sandbox/claude/install/2.1.321/claude, and is now claude's current version"* ]]
+  [[ "$output" != *"--install:"* ]]
   [ "$(readlink "$I/current")" = 2.1.321 ]
   argv_has --ro-bind "$I/2.1.321" "$I/2.1.321"
+}
+
+@test "a launch at a terminal, a version there but no current: asked to make it current; y links it and launches, no resolver run; n refuses" {
+  mkdir -p "$I/2.1.321"
+  cp "$H/stub-agent" "$I/2.1.321/claude"
+  run_engine_tty 'n
+' "${KNOBS[@]}" -- asb claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: make claude 2.1.321, installed already at ~/.local/state/agent-sandbox/claude/install/2.1.321 (no download), claude's current version? [y/N] "* ]]
+  [[ "$output" == *"$REFUSAL"* ]]
+  [ ! -e "$I/current" ]
+  [ ! -s "$H/argv" ]
+  run_engine_tty 'y
+' "${KNOBS[@]}" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude 2.1.321 is installed already at ~/.local/state/agent-sandbox/claude/install/2.1.321/claude (no download), and is now claude's current version"* ]]
+  [ "$(readlink "$I/current")" = 2.1.321 ]
+  [ ! -e "$SRC/2.1.321/resolved" ]
+  argv_has --ro-bind "$I/2.1.321" "$I/2.1.321"
+}
+
+@test "a launch at a terminal inside a sandbox (AGENT_SANDBOX=1): never asked, the plain refusal" {
+  run_engine_tty 'y
+' AGENT_SANDBOX=1 "${KNOBS[@]}" -- asb claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" == *"$REFUSAL"* ]]
+  [ ! -e "$SRC/2.1.321/resolved" ]
+  [ ! -e "$I" ]
+}
+
+@test "the question comes after the launch's own checks: a dot-file review answered no asks nothing more and installs nothing" {
+  printf '[allow]\nexample.org\n' >"$PROJ/.agent-sandbox"
+  run_engine_tty 'n\ny\n' "${KNOBS[@]}" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"approve this .agent-sandbox"* ]]
+  [[ "$output" != *"install claude"* ]]
+  [ ! -e "$SRC/2.1.321/resolved" ]
+  [ ! -e "$I" ]
+  [ ! -s "$H/argv" ]
+}
+
+@test "at a terminal, --summarize and --serve never ask: the plain refusal, not a download before their own refusal" {
+  local w
+  for w in "--summarize claude" "--role r --serve claude"; do
+    # shellcheck disable=SC2086 # the words, split
+    run_engine_tty 'y\n' "${KNOBS[@]}" -- asb $w
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"[y/N]"* ]]
+    [[ "$output" == *"$REFUSAL"* ]]
+    [ ! -e "$SRC/2.1.321/resolved" ]
+    [ ! -e "$I" ]
+  done
+}
+
+@test "at a terminal, --roles with an agent not installed refuses up front, never asking; nothing opens" {
+  # a tmux that must never be reached (and never the default socket)
+  printf '#!/bin/sh\necho "tmux called: $*" >>"%s/tmux.log"\nexit 1\n' "$H" >"$H/bin/tmux"
+  chmod +x "$H/bin/tmux"
+  run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --roles a b --agent claude
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" == *"$REFUSAL"* ]]
+  [[ "$output" == *"--roles: role 'a' cannot start; nothing was opened"* ]]
+  [ ! -e "$H/tmux.log" ]
+  [ ! -e "$I" ]
 }
 
 @test "a launch at a terminal, not installed: n (or nothing) refuses with the line that installs it; nothing is made" {
@@ -155,13 +224,13 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   for w in "--profile claude --exec true" "claude agents" "--status claude" "--shutdown claude"; do
     # shellcheck disable=SC2086 # the words, split
     run_engine_tty 'y\n' "${KNOBS[@]}" -- asb $w
+    [ "$status" -eq 1 ]
     [[ "$output" != *"[y/N]"* ]]
     [[ "$output" != *"looking up"* ]]
+    [[ "$output" == *"$REFUSAL"* ]]
     [ ! -e "$I/current" ]
+    [ ! -e "$SRC/2.1.321/resolved" ]
   done
-  run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --profile claude --exec true
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"$REFUSAL"* ]]
 }
 
 @test "at a terminal, a broken current is never mended by the question: refused, naming it" {
@@ -236,4 +305,12 @@ agent-sandbox: --account-login: made ~/.local/state/agent-sandbox/claude/account
   [[ "$output" == *"role 'default' is running with agent = $I/2.1.321/claude (claude 2.1.321), and this launch's agent asks for '$I/2.1.300/claude' (claude 2.1.300). A running role's policy cannot change"* ]]
   [ ! -s "$H/join" ]
   release_bg
+}
+
+@test "--preset none at a terminal, not installed: asked once; y installs and runs it with no sandbox" {
+  run_engine_tty 'y\n' "${KNOBS[@]}" -- asb --preset none claude --version
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'install claude 2.1.321 (' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"stub-agent argv: --version"* ]]
+  [ "$(readlink "$I/current")" = 2.1.321 ]
 }

@@ -188,9 +188,10 @@ binary of your own. The binary is the profile's command in the version's directo
 for a `file`, `PATH` in it for a `tar PATH`.
 
 With none installed (no `install/current` at all) a launch at a terminal -- stdin and
-stderr a terminal, on the host -- asks once, after running the profile's resolver for
-the pin (a network call, said first), and on `y` installs it as `asb --install` does,
-then goes on with the launch:
+stderr a terminal, on the host -- asks once, when its own checks have passed (the
+dot-file reviewed and applied, its account resolved; a join into a running role asks
+nothing), after running the profile's resolver for the pin (a network call, said
+first), and on `y` installs it as `asb --install` does, then goes on with the launch:
 
 ```
 agent-sandbox: claude is not installed for agent-sandbox; looking up claude 2.1.321, its pinned version...
@@ -205,8 +206,9 @@ agent-sandbox: claude is not installed for agent-sandbox: install it, asb --inst
 ```
 
 (exit 1). Only a launch asks: `--exec`, the agent's verbs, `--status`, `--shutdown`,
-`--delete`, `--reset`, `--check` and `--roles`' check of every role refuse with that
-line. `--account-login NAME AGENT` installs the pin first, unasked (see
+`--delete`, `--reset`, `--serve`, `--summarize` and `--roles`' check of every role
+refuse with that line. `--check` never looks the agent up, so it neither asks nor
+refuses for it. `--account-login NAME AGENT` installs the pin first, unasked (see
 [Accounts](config.md#accounts)). A `current` that is there but broken is never mended
 by the question: the same refusal, with what is wrong in parentheses, for a `current`
 that is not a symlink, names a version that is not there, or a version's directory

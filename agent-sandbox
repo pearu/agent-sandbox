@@ -7558,12 +7558,15 @@ _as_account_login() {
   # install/current at all), gets its pin installed now, before anything of the account
   # is made, so a failed download leaves nothing. The login is the user's word, so
   # nothing is asked; the installer says the size and host. A current that is there but
-  # broken is not mended: the login's launch refuses it, naming it.
+  # broken is not mended: it is refused here, naming it, with nothing made.
   local _recipe_bin="" _recipe_cmd=""
   _as_profile_recipe "$p"
-  if [[ -n "$_recipe_bin" && ! -e "$st/$p/install/current" && ! -L "$st/$p/install/current" ]]; then
-    _as_msg "--account-login: $p is not installed for agent-sandbox; installing its pinned version first"
-    _as_agent_install "$p" || return $?
+  if [[ -n "$_recipe_bin" ]]; then
+    if [[ ! -e "$st/$p/install/current" && ! -L "$st/$p/install/current" ]]; then
+      _as_msg "--account-login: $p is not installed for agent-sandbox; installing its pinned version first"
+      _as_agent_install "$p" || return $?
+    fi
+    (_as_installed_bin "$p" "$_recipe_bin") || return 2
   fi
   mkdir -p -- "$st/$p/accounts" || return 1
   if [[ ! -e "$d" ]]; then
@@ -7668,38 +7671,38 @@ _as_install_unpack() {
   # listing that fails (not a tarball, or a tar without --quoting-style) refuses: an
   # empty list would pass the check below unchecked.
   if ! l="$(tar -t --quoting-style=escape -f "$dl" 2>/dev/null)"; then
-    _as_msg "--install: tar cannot list the download's members (not a tarball, or not GNU tar); nothing installed"
+    _as_msg "${_as_ipfx---install: }tar cannot list the download's members (not a tarball, or not GNU tar); nothing installed"
     return 1
   fi
   [[ -z "$l" ]] || mapfile -t members <<<"$l"
   for n in ${members[@]+"${members[@]}"}; do
     if [[ "$n" == /* || "/$n/" == */../* ]]; then
-      _as_msg "--install: the tarball has a member '$n', which is absolute or has a '..' part; nothing installed"
+      _as_msg "${_as_ipfx---install: }the tarball has a member '$n', which is absolute or has a '..' part; nothing installed"
       return 1
     fi
   done
   mkdir -- "$tree" || return 1
   tar -x --no-same-owner --no-same-permissions -f "$dl" -C "$tree" -- 2>/dev/null || rc=$?
   if ((rc)); then
-    _as_msg "--install: tar could not unpack the download (exit $rc); nothing installed"
+    _as_msg "${_as_ipfx---install: }tar could not unpack the download (exit $rc); nothing installed"
     return 1
   fi
   top="$(readlink -f -- "$tree")"
   while IFS= read -r -d '' l; do
     if [[ ! -L "$l" ]]; then
-      _as_msg "--install: the tarball has '${l#"$tree"/}', which is not a file, a directory or a symlink; nothing installed"
+      _as_msg "${_as_ipfx---install: }the tarball has '${l#"$tree"/}', which is not a file, a directory or a symlink; nothing installed"
       return 1
     fi
     t="$(readlink -- "$l")"
     r="$(realpath -m -- "$l" 2>/dev/null)" || r=""
     if [[ "$t" == /* || -z "$r" || ("$r" != "$top" && "$r" != "$top"/*) ]]; then
-      _as_msg "--install: the tarball's symlink '${l#"$tree"/}' -> '$t' points outside it; nothing installed"
+      _as_msg "${_as_ipfx---install: }the tarball's symlink '${l#"$tree"/}' -> '$t' points outside it; nothing installed"
       return 1
     fi
   done < <(find "$tree" -mindepth 1 \( -type l -o \( ! -type f ! -type d \) \) -print0)
   r="$(realpath -e -- "$tree/$path" 2>/dev/null)" || r=""
   if [[ -z "$r" || "$r" != "$top"/* || ! -f "$r" || ! -x "$r" ]]; then
-    _as_msg "--install: the tarball has no executable file at $path (the profile's [agent] install); nothing installed"
+    _as_msg "${_as_ipfx---install: }the tarball has no executable file at $path (the profile's [agent] install); nothing installed"
     return 1
   fi
   return 0
@@ -7724,24 +7727,24 @@ _as_install_fetch() (
     curl -fsSL --proto '=https,file' --proto-redir '=https' --max-filesize "${size:-$_as_install_max}" \
       -o "$tmp/download" -- "$url" || rc=$?
     if ((rc)); then
-      _as_msg "--install: the download of $url failed (curl exit $rc); nothing installed"
+      _as_msg "${_as_ipfx---install: }the download of $url failed (curl exit $rc); nothing installed"
       exit 1
     fi
   fi
   bytes="$(stat -c %s -- "$tmp/download")" || exit 1
   if [[ -n "$size" && "$bytes" != "$size" ]]; then
-    _as_msg "--install: $what is $bytes bytes, not the $size its resolver states; nothing installed"
+    _as_msg "${_as_ipfx---install: }$what is $bytes bytes, not the $size its resolver states; nothing installed"
     exit 1
   fi
   got="$(sha256sum -- "$tmp/download")" || exit 1
   got="${got%% *}"
   if [[ "$got" != "$sum" ]]; then
-    _as_msg "--install: the SHA-256 of $what is $got, not the $sum ${src}; nothing installed"
+    _as_msg "${_as_ipfx---install: }the SHA-256 of $what is $got, not the $sum ${src}; nothing installed"
     exit 1
   fi
   _as_install_unpack "$kind" "$path" "$bin" "$tmp/download" "$tmp/tree" || exit 1
   if ! mv -T -- "$tmp/tree" "$root/$ver" 2>/dev/null; then
-    _as_msg "--install: could not rename the version into place at $root/$ver; nothing installed"
+    _as_msg "${_as_ipfx---install: }could not rename the version into place at $root/$ver; nothing installed"
     exit 1
   fi
 )
@@ -7781,17 +7784,17 @@ _as_agent_install() {
   fi
   (($# < 3)) || has_sum=1
   if ((has_sum)) && [[ ! "$given" =~ ^[0-9a-f]{64}$ ]]; then
-    _as_msg "--install: --sha256 '$given' is not a SHA-256: 64 lowercase hexadecimal digits"
+    _as_msg "${_as_ipfx---install: }--sha256 '$given' is not a SHA-256: 64 lowercase hexadecimal digits"
     return 2
   fi
   agent="${spec%%@*}"
   [[ "$spec" == *@* ]] && ver="${spec#*@}"
   if [[ "$spec" == *@ ]]; then
-    _as_msg "--install: '$spec' names no version after the @: ${invoked:-asb} --install AGENT[@VERSION]"
+    _as_msg "${_as_ipfx---install: }'$spec' names no version after the @: ${invoked:-asb} --install AGENT[@VERSION]"
     return 2
   fi
   if ! _as_names_profile "$agent"; then
-    _as_msg "--install: '$agent' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
+    _as_msg "${_as_ipfx---install: }'$agent' names no profile. Profiles available in $profile_dir: $(_as_list_profiles "$profile_dir")"
     return 2
   fi
   p="$(basename -- "$agent")"
@@ -7802,29 +7805,29 @@ _as_agent_install() {
     esac
   done < <(_as_profile_facts "$profile_dir/$p/profile.sh")
   if [[ -z "$kind" ]]; then
-    _as_msg "--install: profile '$p' has no install recipe ([agent] install in $profile_dir/$p/agent-sandbox), so asb does not install its agent"
+    _as_msg "${_as_ipfx---install: }profile '$p' has no install recipe ([agent] install in $profile_dir/$p/agent-sandbox), so asb does not install its agent"
     return 2
   fi
   resolver="$profile_dir/$p/resolve.sh"
   if [[ ! -f "$resolver" || ! -x "$resolver" ]]; then
-    _as_msg "--install: profile '$p' has no resolver, an executable $resolver"
+    _as_msg "${_as_ipfx---install: }profile '$p' has no resolver, an executable $resolver"
     return 2
   fi
   # The versions table, read here so that what it gets wrong is said (the facts are quiet).
   local profile="$p"
   _as_profile_versions "$profile_dir/$p/versions"
   if ((${#profile_versions[@]} == 0)); then
-    _as_msg "--install: profile '$p' lists no versions in $profile_dir/$p/versions"
+    _as_msg "${_as_ipfx---install: }profile '$p' lists no versions in $profile_dir/$p/versions"
     return 2
   fi
   if [[ -z "$ver" ]]; then
     if [[ -z "$profile_version_pin" ]]; then
-      _as_msg "--install: profile '$p' has no pinned version; name one of its versions: ${invoked:-asb} --install $p@VERSION (listed: ${profile_versions[*]})"
+      _as_msg "${_as_ipfx---install: }profile '$p' has no pinned version; name one of its versions: ${invoked:-asb} --install $p@VERSION (listed: ${profile_versions[*]})"
       return 2
     fi
     ver="$profile_version_pin"
   elif [[ ! "$ver" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then
-    _as_msg "--install: '$ver' is not an exact version (1.2.3): ${invoked:-asb} --install $p@VERSION"
+    _as_msg "${_as_ipfx---install: }'$ver' is not an exact version (1.2.3): ${invoked:-asb} --install $p@VERSION"
     return 2
   elif ! _as_install_listed "$ver" "${profile_versions[@]}"; then
     untested=" (untested with asb)"
@@ -7832,10 +7835,10 @@ _as_agent_install() {
   # The binary's place in the version's directory, where a launch looks for it.
   bin="$(_as_install_binary "$kind" "$path" "$cmd" "$p")"
   if [[ -n "$from" && (! -f "$from" || ! -r "$from") ]]; then
-    _as_msg "--install: --from $from is not a readable file"
+    _as_msg "${_as_ipfx---install: }--from $from is not a readable file"
     return 2
   fi
-  [[ -z "$untested" ]] || _as_msg "--install: $p $ver is not in profile '$p''s versions table: it has not been tested with asb"
+  [[ -z "$untested" ]] || _as_msg "${_as_ipfx---install: }$p $ver is not in profile '$p''s versions table: it has not been tested with asb"
   # Where it goes: every level checked before anything is made, so nothing is made
   # through a symlink; current is a symlink or nothing.
   st="$(_as_state_dir)"
@@ -7843,17 +7846,17 @@ _as_agent_install() {
   dest="$root/$ver"
   for x in "$st/$p" "$root" "$dest"; do
     if [[ -L "$x" || (-e "$x" && ! -d "$x") ]]; then
-      _as_msg "--install: $x is a symlink or not a directory; refusing to install through it"
+      _as_msg "${_as_ipfx---install: }$x is a symlink or not a directory; refusing to install through it"
       return 2
     fi
   done
   if [[ -e "$root/current" && ! -L "$root/current" ]]; then
-    _as_msg "--install: $root/current is not a symlink; it names the version launches run. Remove it, then run this again"
+    _as_msg "${_as_ipfx---install: }$root/current is not a symlink; it names the version launches run. Remove it, then run this again"
     return 2
   fi
   if [[ -d "$dest" ]]; then
     if [[ ! -f "$dest/$bin" || ! -x "$dest/$bin" ]]; then
-      _as_msg "--install: $dest is there and has no executable $bin; remove it, then run this again"
+      _as_msg "${_as_ipfx---install: }$dest is there and has no executable $bin; remove it, then run this again"
       return 2
     fi
     if ((${_as_install_ask:-0})); then
@@ -7864,7 +7867,7 @@ _as_agent_install() {
   elif ((has_sum)); then
     # --from FILE --sha256 SUM: offline, the resolver not run.
     mkdir -p -- "$root" || return 1
-    _as_msg "--install: $p $ver from $from, checked against the SHA-256 given (--sha256)"
+    _as_msg "${_as_ipfx---install: }$p $ver from $from, checked against the SHA-256 given (--sha256)"
     _as_install_fetch "$root" "$ver" "" "$given" "" "$from" "$kind" "$path" "$bin" || return 1
     shown="installed at $(_as_tilde "$dest/$bin")"
   else
@@ -7879,13 +7882,13 @@ _as_agent_install() {
     ((! ${_as_install_ask:-0})) || _as_msg "$p is not installed for agent-sandbox; looking up $p $ver, its pinned version..."
     out="$(PATH="$rpath" "$resolver" "$ver" "$plat" ${base:+"$base"})" || rc=$?
     if ((rc)); then
-      _as_msg "--install: profile '$p''s resolver could not say which file is $p $ver for $plat (exit $rc); nothing installed"
+      _as_msg "${_as_ipfx---install: }profile '$p''s resolver could not say which file is $p $ver for $plat (exit $rc); nothing installed"
       return 1
     fi
     IFS=$'\t' read -r -a w <<<"$out" || true
     url="${w[0]:-}" sum="${w[1]:-}" size="${w[2]:-}"
     if [[ "$out" == *$'\n'* || ! "$url" =~ ^(https|file):// || ! "$sum" =~ ^[0-9a-f]{64}$ || ! "$size" =~ ^[0-9]*$ || ${#w[@]} -gt 3 ]]; then
-      _as_msg "--install: profile '$p''s resolver printed '$out', not URL<TAB>SHA256<TAB>SIZE; nothing installed"
+      _as_msg "${_as_ipfx---install: }profile '$p''s resolver printed '$out', not URL<TAB>SHA256<TAB>SIZE; nothing installed"
       return 1
     fi
     host="$url"
@@ -7899,22 +7902,22 @@ _as_agent_install() {
     fi
     mkdir -p -- "$root" || return 1
     if [[ -n "$from" ]]; then
-      _as_msg "--install: $p $ver for $plat from $from, checked against the SHA-256 its resolver gives"
+      _as_msg "${_as_ipfx---install: }$p $ver for $plat from $from, checked against the SHA-256 its resolver gives"
     elif ((! ${_as_install_ask:-0})); then
       if [[ -n "$size" ]]; then
-        _as_msg "--install: downloading $p $ver for $plat, $(((size + 500000) / 1000000)) MB, from $host"
+        _as_msg "${_as_ipfx---install: }downloading $p $ver for $plat, $(((size + 500000) / 1000000)) MB, from $host"
       else
-        _as_msg "--install: downloading $p $ver for $plat (size not stated) from $host"
+        _as_msg "${_as_ipfx---install: }downloading $p $ver for $plat (size not stated) from $host"
       fi
     fi
     _as_install_fetch "$root" "$ver" "$url" "$sum" "$size" "$from" "$kind" "$path" "$bin" || return 1
     shown="installed at $(_as_tilde "$dest/$bin")"
   fi
   if ! { ln -sfn -- "$ver" "$root/current.new" && mv -T -- "$root/current.new" "$root/current"; }; then
-    _as_msg "--install: $p $ver is $shown, but $root/current could not be pointed at it"
+    _as_msg "${_as_ipfx---install: }$p $ver is $shown, but $root/current could not be pointed at it"
     return 1
   fi
-  _as_msg "--install: $p $ver is $shown, and is now $p's current version$untested"
+  _as_msg "${_as_ipfx---install: }$p $ver is $shown, and is now $p's current version$untested"
   return 0
 }
 
@@ -7936,13 +7939,45 @@ _as_install_yes() {
 # it. Without a terminal nothing is asked and nothing blocks: _as_installed_bin then
 # refuses with the line that installs it, as it does after a no. Always returns 0.
 _as_install_offer() {
-  local cur _as_install_ask=1
+  # _as_ipfx: the installer's messages without --install's prefix: they are this launch's.
+  local cur _as_install_ask=1 _as_ipfx=""
   cur="$(_as_state_dir)/$1/install/current"
   [[ ! -e "$cur" && ! -L "$cur" ]] || return 0
   _as_has_terminal || return 0
   ! _as_maybe_inside || return 0
   _as_agent_install "$1" || :
   return 0
+}
+
+# _as_install_deferred WORD -- is WORD the command of the engine's profile, an agent asb
+# installs (#6), with no install/current at all, at a terminal on the host? Then a launch
+# is offered the install (_as_install_now) instead of being refused now. A path, another
+# word, or a current that is there (broken or not) is resolved as ever.
+# shellcheck disable=SC2154
+_as_install_deferred() {
+  local _recipe_bin="" _recipe_cmd="" cur
+  [[ "$1" != */* ]] || return 1
+  _as_profile_recipe "$profile"
+  [[ -n "$_recipe_bin" ]] || return 1
+  [[ "$1" == "$profile" || "$1" == "$(basename -- "${_recipe_cmd:-$profile}")" ]] || return 1
+  cur="$(_as_state_dir)/$profile/install/current"
+  [[ ! -e "$cur" && ! -L "$cur" ]] || return 1
+  _as_has_terminal || return 1
+  ! _as_maybe_inside || return 1
+}
+
+# _as_install_now WORD ROLE -- a deferred launch's install (_as_install_deferred): asked
+# (_as_install_offer) unless a keeper of the role is live (a join, which installs
+# nothing) or the launch's account is refused (the launch says why, below); then the
+# agent resolved as any launch's is (_as_resolve_bin), which refuses after a no.
+# shellcheck disable=SC2154
+_as_install_now() {
+  local sb
+  sb="$(_as_sandbox_dir)"
+  if ! _as_keeper_live "$sb" && (_as_account_check) >/dev/null 2>&1; then
+    _as_install_offer "$profile"
+  fi
+  _as_resolve_bin "$1" "$2"
 }
 
 # _as_version_said PROFILE VERSION -- set _vs_line to how VERSION of PROFILE's agent, an
@@ -12965,8 +13000,9 @@ _as_installed_bin() {
 # THE ONE PLACE a word becomes the agent's binary: a launch, a join, a verb, --serve and
 # --summarize (which run the engine again), --account-login (a launch), --roles' check of
 # every role, and the default profile's candidates (_as_default_found) all come here.
-# Only a launch sets _as_offer_install: an agent asb installs and has not is then offered
-# at a terminal (_as_install_offer) before it is refused; everything else refuses.
+# A launch at a terminal whose agent asb installs and has not does not come here first:
+# it is offered the install once its own preconditions hold (_as_install_deferred,
+# _as_install_now), and comes here after; everything else refuses here.
 # Reads the caller's engine, invoked and profile by dynamic scope.
 # shellcheck disable=SC2154
 _as_resolve_bin() {
@@ -12986,8 +13022,6 @@ _as_resolve_bin() {
         _as_msg "'$w' is not profile $profile's command, and $profile runs the agent asb installs (${invoked:-asb} --install $profile), never one from PATH; run another binary by its path: ${invoked:-asb} --profile $profile /path/to/$w"
         return 1
       fi
-      # A launch at a terminal may install it first (the caller's _as_offer_install).
-      ((! ${_as_offer_install:-0})) || _as_install_offer "$profile"
       _as_installed_bin "$profile" "$_recipe_bin"
       return
     fi
@@ -14614,18 +14648,22 @@ agent_sandbox() (
   _as_recipe_note "$profile" "$profile_command" ${profile_install[@]+"${profile_install[@]}"}
   local _rb_role=""
   ((_cmd_typed)) || [[ -z "$_agent_cmd_from" ]] || _rb_role="${_ag_role:-}"
-  # A launch -- not --exec, a verb, --status, --shutdown, --delete, --reset, or an engine
-  # turn -- whose agent asb installs and has not asks to install it, at a terminal (#6,
-  # D9); everything else refuses with the line that installs it.
-  local _as_offer_install=0 _ov
-  if ((! _do_exec && ! _do_status && ! _do_shutdown && ! _do_delete)) && [[ -z "$_reset_connection" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
-    _as_offer_install=1
+  # A launch -- not --exec, a verb, --status, --shutdown, --delete, --reset, --serve,
+  # --summarize, --check, or an engine turn -- whose agent asb installs and has not, at a
+  # terminal on the host (_as_install_deferred), is not looked up yet: it is offered the
+  # install once the launch's own preconditions hold (_as_install_now, at --preset none's
+  # start and before the keeper), so a yes never downloads for a launch refused anyway
+  # (#6, D9). Everything else resolves here and refuses with the line that installs it.
+  local _install_pending=0 _ov
+  if ((! _check_plan && ! _do_exec && ! _do_status && ! _do_shutdown && ! _do_delete && ! _do_serve && ! _do_summarize)) \
+    && [[ -z "$_reset_connection" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]]; then
+    _install_pending=1
     for _ov in ${profile_verbs[@]+"${profile_verbs[@]}"}; do
-      [[ "${1:-}" != "$_ov" ]] || _as_offer_install=0
+      [[ "${1:-}" != "$_ov" ]] || _install_pending=0
     done
+    ((! _install_pending)) || _as_install_deferred "${_cmd_word:-$profile_command}" || _install_pending=0
   fi
-  ((_check_plan)) || _as_resolve_bin "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
-  _as_offer_install=0
+  ((_check_plan || _install_pending)) || _as_resolve_bin "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
   # The version of the agent asb installed that this launch runs (#6, D8): its version
   # directory's name; empty for a path, or for a profile asb does not install for.
   local _agent_version=""
@@ -14674,6 +14712,7 @@ agent_sandbox() (
       _as_msg "preset none: running '$1' with no sandbox"
       exec "$@"
     fi
+    ((! _install_pending)) || _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
     _as_msg "preset none: running $profile_command with no sandbox"
     exec "$profile_bin" "$@"
   fi
@@ -15439,6 +15478,12 @@ agent_sandbox() (
   # joined instead. The lock taken here is held until this invocation is on the
   # keeper's record -- through the whole build when there is no keeper -- so two
   # first launches of one role at once are one keeper, not two.
+  # The install a launch at a terminal is offered (#6, D9), now that its own
+  # preconditions hold: the dot-file reviewed and applied, the account resolved.
+  if ((_install_pending)); then
+    _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" || return 1
+    [[ -z "${profile_bin_dir:-}" ]] || _agent_version="${profile_bin_dir##*/}"
+  fi
   local _keeper_sb="" _keeper_target="" _keeper_spid="" _join_brief="" _keeper_dotfile_changed=0 _ca_record="" _ca_note=""
   local _acct_was="" _acct_switched=0
   if :; then
@@ -15538,7 +15583,7 @@ agent_sandbox() (
       # The agent's version is the keeper's too (#6, D8): said as a launch says it.
       local _kver _vs_line="" _vs_pin=""
       _kver="$(awk -F'\t' '$1 == "version" { print $2; exit }' "$_keeper_sb/keeper/policy" 2>/dev/null)" || _kver=""
-      if [[ -n "$_kver" && "$_kver" != - ]] && ((! _do_exec && ! _do_verb)); then
+      if [[ "$_kver" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]] && ((! _do_exec && ! _do_verb)); then
         if _as_version_said "$profile" "$_kver"; then
           _as_info "agent: $_vs_line, the running role's"
         else
