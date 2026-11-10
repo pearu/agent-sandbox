@@ -381,6 +381,77 @@ init() {
   [ "$(tail -3 "$df")" = $'# mine\n[allow:gh-*]\nexample.org' ]
 }
 
+@test "--env completing a no-env file: a section whose header was changed by hand keeps every line, said once (github, roles)" {
+  mkdir -p "$H/base/envs" "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  sed -i 's|^# \[conda:gh-\*\]$|# [conda:gh-*]   # ours|' "$df"
+  grep -qx '# \[conda:gh-\*\]   # ours' "$df"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  grep -qx '# \[conda:gh-\*\]   # ours' "$df"
+  [[ "$output" == *"--init: 1 environment line not completed"*$'\n'"    [conda:gh-*]"$'\n'* ]]
+  [ "$(grep -c '^    \[conda:gh-\*\]' <<<"$output")" -eq 1 ]
+  grep -qx '# prefix = ENVPATH .*' "$df" # its line stays with it
+  run ! grep -q "^prefix = " "$df"
+  grep -q "^$H/base/envs/dev/ = copy-on-write" "$df" # the rest completed
+  rm -rf "$df" "$PROJ/.asb"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  sed -i 's|^# \[conda:supervisor\]  *# main.*$|# [conda:supervisor]   # ours|' "$df"
+  grep -qx '# \[conda:supervisor\]   # ours' "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^    \[conda:supervisor\]$' <<<"$output")" -eq 2 ] # the other copy completed, this one left
+  grep -qx "prefix = $H/conda/envs/x-dev .*" "$df"
+  grep -qx '# write = 1' "$df" # stays under its header, not under [connect:supervisor]
+  run ! grep -qx 'write = 1' "$df"
+}
+
+@test "--env completing a no-env roles file: every Implementer the file has, with its environment, whatever the count now" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx '\[conda:implementer-1\].*' "$df"
+  grep -qx '\[conda:implementer-2\].*' "$df"
+  grep -qx 'prefix = \.asb/impl/2/\.env' "$df"
+  grep -qx "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
+  grep -qx "create -q -y --clone x-dev -p $PROJ/.asb/impl/2/.env" "$H/conda.log"
+  cp "$df" "$H/rerun"
+  rm -rf "$df" "$PROJ/.asb" "$H/conda.log"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/rerun" # as a first --init implementer=2 --env writes it
+}
+
+@test "a first --init github --env in a file the roles model wrote without one: nothing said about the roles model's lines" {
+  mkdir -p "$H/base/envs"
+  init MAMBA_ROOT_PREFIX="$H/base" -- roles
+  [ "$status" -eq 0 ]
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"could not be completed"* && "$output" != *"not completed"* ]]
+  grep -qx '# \[conda:planner-\*\].*' "$PROJ/.agent-sandbox" # not github's to complete
+}
+
+@test "--env completing a no-env file writes through no link a role left in the project" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  printf 'elsewhere\n' >"$H/target"
+  ln -s "$H/target" "$df.init-new"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"completed in .agent-sandbox"* ]]
+  [ "$(cat "$H/target")" = elsewhere ]
+  grep -qx "prefix = $H/base/envs/dev .*" "$df"
+}
+
 @test "--env on a file written with it that lacks an environment's line: the --apply line, not 'left as you have it'" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox" ep="$H/base/envs/dev"

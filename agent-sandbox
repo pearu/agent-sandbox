@@ -11858,7 +11858,7 @@ _as_init() {
     esac
   }
   local rn rk k setup
-  local -A kind=() count=() initial=() handled=()
+  local -A kind=() count=() initial=() handled=() numbered=()
   setup="$(sed -n 's/^#@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' <<<"$tpltext" | head -1)"
   for i in "${!heads[@]}"; do
     read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
@@ -11870,6 +11870,7 @@ _as_init() {
     # `[x:default]` keeps the unnamed role's policy once role sections exist: written like
     # any section, but no role of the model (no handle, purpose file or index row).
     [[ "$rn" == default ]] && continue
+    [[ "$rk" == multi ]] && numbered[$rn]=1
     [[ "$rk" == group ]] && rk=multi
     if [[ -n "${kind[$rn]:-}" && "${kind[$rn]}" != "$rk" ]]; then
       _as_msg "--init: model '$model' uses '$rn' both as a numbered role ({n}) and a single one"
@@ -11905,6 +11906,16 @@ _as_init() {
     fi
     count[$rn]="$v"
   done
+  # A numbered role's instances the file has already (an earlier --init's counts): run
+  # again, --init covers each of them -- its sections, purpose file and environment --
+  # whatever count is given now, as a re-run never removes one.
+  if [[ -f "$proj/.agent-sandbox" ]]; then
+    for rn in "${roles[@]}"; do
+      [[ -n "${numbered[$rn]:-}" ]] || continue
+      v="$(sed -n "s/^\(# \)\{0,1\}\[[a-z-]*:$rn-\([0-9][0-9]*\)\].*/\2/p" "$proj/.agent-sandbox" | sort -n | tail -1)"
+      [[ -n "$v" ]] && ((v > ${count[$rn]})) && count[$rn]="$v"
+    done
+  fi
 
   # The environment's prefix, for {envpath}: a path as given, a name under the conda base
   # that applies (_as_conda_mode: the host's base, or agent-sandbox's conda root).
@@ -12332,19 +12343,24 @@ _as_init() {
     [[ -n "$q" && "$(basename -- "$q")" == "$(basename -- "$model")" ]] && epmine=1
   done <<<"$marks"
   if ((${#ep_k[@]} && epmine)); then
-    local reg=0 sec="" x k1 kk l
-    local -A ep_act=() ep_has0=()
-    local -a ep_lines=()
+    local reg=0 sec="" x k1 kk l ephold=0
+    local -A ep_act=() ep_has0=() ep_held=()
+    # ep_hl: per line, 1 in a section whose header is commented out and not as --init
+    # wrote it (changed by hand): such a section keeps every line as it is.
+    local -a ep_lines=() ep_hl=()
     while IFS= read -r l || [[ -n "$l" ]]; do
-      ep_lines+=("$l")
       if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
-        reg=0
+        reg=0 ephold=0
         [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
-        continue
       elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
-        sec="${BASH_REMATCH[2]}"
+        sec="${BASH_REMATCH[2]}" ephold=0
+        if ((reg)) && [[ -n "${BASH_REMATCH[1]}" && -z "${ep_1["$sec"$'\t'"$l"]+x}" ]]; then
+          ephold=1 ep_held["$sec"]=1
+        fi
       fi
-      ((reg)) || continue
+      ep_lines+=("$l") ep_hl+=("$ephold")
+      ((reg && ! ephold)) || continue
+      [[ "$l" == '# ---- '* ]] && continue
       [[ -n "${ep_1["$sec"$'\t'"$l"]+x}" ]] && ep_has0["$sec"$'\t'"$l"]=1
       x="$(_init_norm "$l")"
       [[ -n "$x" ]] && ep_act["$sec"]+="$x"$'\n'
@@ -12371,11 +12387,15 @@ _as_init() {
         fi
       fi
       ((${#ep_has0[@]})) || continue # written with an environment: _init_missing says it
-      ep_left+=("$sec $x") ep_skip["$sec"$'\t'"$x"]=1
+      # a line of a section whose header is left: the header says it, once
+      [[ -n "${ep_held["$sec"]:-}" && "$x" != "$sec" ]] && continue
+      if [[ "$x" == "$sec" ]]; then ep_left+=("$sec"); else ep_left+=("$sec $x"); fi
+      ep_skip["$sec"$'\t'"$x"]=1
     done
     if ((${#ep_do[@]})); then
       reg=0 sec=""
-      local nl=1 li
+      local nl=1 li eptmp
+      eptmp="$(mktemp)" || return 1
       [[ -z "$(tail -c1 -- "$df")" ]] || nl=0 # a final newline the file lacks is not added
       for li in "${!ep_lines[@]}"; do
         l="${ep_lines[li]}"
@@ -12385,13 +12405,21 @@ _as_init() {
         elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
           sec="${BASH_REMATCH[2]}"
         fi
-        if ((reg)) && [[ -n "${ep_do["$sec"$'\t'"$l"]:-}" ]]; then
+        if ((reg)) && ! ((ep_hl[li])) && [[ -n "${ep_do["$sec"$'\t'"$l"]:-}" ]]; then
           l="${ep_1["$sec"$'\t'"$l"]}"
           x="$(_init_norm "$l")"
           [[ "$x" == "$sec" ]] && ep_did+=("$sec") || ep_did+=("$sec ${x:-$l}")
         fi
         if ((li + 1 < ${#ep_lines[@]} || nl)); then printf '%s\n' "$l"; else printf '%s' "$l"; fi
-      done >"$df.init-new" && cat -- "$df.init-new" >"$df" && rm -f -- "$df.init-new" || return 1
+      done >"$eptmp" || {
+        rm -f -- "$eptmp"
+        return 1
+      }
+      cat -- "$eptmp" >"$df" || {
+        rm -f -- "$eptmp"
+        return 1
+      }
+      rm -f -- "$eptmp"
       wrote=1
       _as_msg "--init: completed in .agent-sandbox, for --env $env${envpath:+ ($envpath)}, the environment's line$( ((${#ep_did[@]} == 1)) || printf s) --init wrote commented out without an environment:"
       printf '    %s\n' "${ep_did[@]}" >&2
@@ -12400,7 +12428,7 @@ _as_init() {
       _as_msg "--init: ${#ep_left[@]} environment line$( ((${#ep_left[@]} == 1)) || printf s) not completed: your .agent-sandbox does not have $( ((${#ep_left[@]} == 1)) && printf it || printf them) as --init wrote $( ((${#ep_left[@]} == 1)) && printf it || printf them) without an environment (changed or removed since), so $( ((${#ep_left[@]} == 1)) && printf 'it is' || printf 'they are') left as you have $( ((${#ep_left[@]} == 1)) && printf it || printf them); model '$model''s line$( ((${#ep_left[@]} == 1)) || printf s) for --env $env:"
       printf '    %s\n' "${ep_left[@]}" >&2
     fi
-  elif [[ -n "$env" && -f "$df" ]] && ((! epmine)) && grep -qE '^# \[conda|ENVPATH' "$df"; then
+  elif ((${#ep_k[@]} && ! epmine)) && grep -qE '^# \[conda|ENVPATH' "$df"; then
     mapfile -t ep_left < <(grep -nE '^# \[conda|ENVPATH' "$df" | tr -d '\r' | sed 's/^/line /')
     _as_msg "--init: the environment's lines in .agent-sandbox could not be completed for --env $env: it has no '# ---- written by asb --init $(basename -- "$model") ----' line to find model '$model''s sections by$(grep -q $'\r' "$df" && printf ' (its lines end in CR LF)'); complete these by hand:"
     printf '    %s\n' "${ep_left[@]}" >&2
