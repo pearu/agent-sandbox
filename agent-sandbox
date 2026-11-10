@@ -12446,7 +12446,7 @@ _as_init() {
         rm -f -- "$eptmp"
         return 1
       }
-      cat -- "$eptmp" >"$df" || {
+      _as_dotfile_write "$df" <"$eptmp" || {
         rm -f -- "$eptmp"
         return 1
       }
@@ -12469,14 +12469,19 @@ _as_init() {
       printf '# ---- written by asb --init %s ----\n' "$model"
       printf '%s\n' ${pre[@]+"${pre[@]}"}
       printf '%s' "$new"
-    } >"$df" || return 1
+    } | _as_dotfile_write "$df" || return 1
     wrote=1
     _as_msg "wrote .agent-sandbox from model '$model' ($(for a in "${insts[@]}"; do printf '%s ' "$(cut -f2 <<<"$a")"; done | sed 's/ $//'))"
   elif [[ -n "$new" ]]; then
+    [[ ! -L "$df" ]] || {
+      _as_msg "--init: .agent-sandbox became a symbolic link while --init ran; nothing added to it"
+      return 2
+    }
     {
+      cat -- "$df"
       printf '\n# ---- added by asb --init %s ----\n' "$model"
       printf '%s' "$new"
-    } >>"$df" || return 1
+    } | _as_dotfile_write "$df" || return 1
     wrote=1
     _as_msg "added to .agent-sandbox: $(printf '%s' "$new" | sed -n 's/^\(\[[^]]*\]\).*/\1/p' | paste -sd' ')"
   else
@@ -12491,11 +12496,14 @@ _as_init() {
   # that is one, or under one, is not written, and said; a file is written to a temporary
   # one beside it and renamed into place, which replaces a link planted since, never
   # follows it.
-  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else says so
+  local -A nolink_said=()
+  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else says so, once a link
     local rel="${1%/}" p="$proj" c
     while [[ -n "$rel" ]]; do
       c="${rel%%/*}" p+="/${rel%%/*}"
       if [[ -L "$p" ]]; then
+        [[ -n "${nolink_said[$p]:-}" ]] && return 1
+        nolink_said[$p]=1
         _as_msg "--init: not writing $1: ${p#"$proj"/} is a symbolic link (a role with the project read-write can leave one); remove it and run --init again"
         return 1
       fi
@@ -12640,7 +12648,10 @@ _as_init() {
   for a in ${clones[@]+"${clones[@]}"}; do
     inst="${a%%$'\t'*}"
     read -r tpath gdir br <<<"${a#*$'\t'}"
-    if [[ -e "$proj/${tpath%/}/.git" ]]; then
+    # every path the clone and its environment go to, through no link
+    _init_nolink "${tpath%/}/.git" || continue
+    _init_nolink "${gdir%/}/" || continue
+    if [[ -e "$proj/${tpath%/}/.git" || -L "$proj/${tpath%/}/.git" ]]; then
       :
     else
       mkdir -p "$proj/$(dirname -- "${gdir%/}")" || return 1
@@ -12661,9 +12672,10 @@ _as_init() {
     for k in ${prefixes[@]+"${prefixes[@]}"}; do
       [[ "${k%%$'\t'*}" == "$inst" ]] && prefix="${k#*$'\t'}"
     done
+    [[ -z "$prefix" ]] || _init_nolink "$prefix" || continue
     if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
       _as_msg "--init: no environment for $inst yet: $env is not built, so there is nothing to clone into $prefix; once $invoked --role $setup claude has built it, run --init again and it clones it"
-    elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" ]]; then
+    elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && ! -L "$proj/$prefix" ]]; then
       _as_msg "cloning conda env '$env' into $prefix (for $inst)"
       if [[ "$_conda_mode" == sandbox ]]; then
         "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$env" -p "$proj/$prefix" >/dev/null || {
@@ -12912,6 +12924,23 @@ _as_trust_review() {
 # not checked here beyond being there; the review shows the file and the parser's own
 # warnings. Uses the engine's profile_dir and invoked by dynamic scope.
 # shellcheck disable=SC2154
+# _as_dotfile_write FILE < TEXT -- FILE's new text (--init, --apply), written to a
+# temporary file beside it and renamed over it: a symbolic link planted at FILE since it
+# was checked is replaced, never followed. An existing file's mode is kept.
+_as_dotfile_write() {
+  local f="$1" t
+  t="$(mktemp -- "$(dirname -- "$f")/.agent-sandbox.XXXXXX")" || return 1
+  if cat >"$t"; then
+    if [[ -f "$f" && ! -L "$f" ]]; then
+      chmod --reference="$f" -- "$t"
+    else
+      chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t"
+    fi && mv -f -T -- "$t" "$f" && return 0
+  fi
+  rm -f -- "$t"
+  return 1
+}
+
 _as_apply() {
   local cwd="$1" head="$2" file name glob l n i at=-1 ins=-1 cur="" f d r p
   shift 2
@@ -13010,18 +13039,19 @@ _as_apply() {
   else
     ((first_role)) && _as_msg "warning — $head is this file's first role section: once there is one, a role name that matches no role section is refused, the default role's included (docs/config.md, Roles); [connect:*] keeps every name admitted."
     if [[ ! -f "$file" ]]; then
-      printf '%s\n' "$head" "${add[@]}" >"$file" || return 1
+      printf '%s\n' "$head" "${add[@]}" | _as_dotfile_write "$file" || return 1
       _as_msg "created $file"
     elif ((at < 0)); then
       {
+        cat -- "$file"
         if ((${#lines[@]})) && [[ -n "${lines[-1]//[[:space:]]/}" ]]; then printf '\n'; fi
         printf '%s\n' "$head" "${add[@]}"
-      } >>"$file" || return 1
+      } | _as_dotfile_write "$file" || return 1
     else
       {
         printf '%s\n' "${lines[@]:0:ins+1}" "${add[@]}"
         if ((ins + 1 < ${#lines[@]})); then printf '%s\n' "${lines[@]:ins+1}"; fi
-      } >"$file.apply.tmp" && cat -- "$file.apply.tmp" >"$file" && rm -f -- "$file.apply.tmp" || return 1
+      } | _as_dotfile_write "$file" || return 1
     fi
   fi
   _as_trust_review "$cwd" || return $?

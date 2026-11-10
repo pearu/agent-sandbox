@@ -542,6 +542,61 @@ init() {
   [ ! -e "$H/nowhere" ]
 }
 
+@test "--init clones nothing through a symbolic link a role left: .asb/impl, .asb/git, an Implementer's .env" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta" "$H/out-impl" "$H/out-git"
+  local df="$PROJ/.agent-sandbox"
+  # a linked .asb/impl: no clone into it, said once
+  mkdir -p "$PROJ/.asb"
+  ln -s "$H/out-impl" "$PROJ/.asb/impl"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: not writing .asb/impl/1/.git: .asb/impl is a symbolic link"* ]]
+  [[ "$output" != *"cloned for implementer-1"* ]]
+  [ "$(grep -c 'is a symbolic link' <<<"$output")" -eq 1 ] # said once for the link
+  [ -z "$(ls -A "$H/out-impl")" ]
+  [ ! -e "$H/conda.log" ]
+  # a linked .asb/git: no history written into it
+  rm -rf "$df" "$PROJ/.asb"
+  mkdir -p "$PROJ/.asb"
+  ln -s "$H/out-git" "$PROJ/.asb/git"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: not writing .asb/git/1/: .asb/git is a symbolic link"* ]]
+  [ -z "$(ls -A "$H/out-git")" ]
+  [ ! -e "$PROJ/.asb/impl/1/.git" ]
+  # a dangling link at an Implementer's .env: conda is not aimed at it
+  rm -rf "$df" "$PROJ/.asb"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles
+  [ "$status" -eq 0 ]
+  ln -s "$H/out-env" "$PROJ/.asb/impl/1/.env"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: not writing .asb/impl/1/.env: .asb/impl/1/.env is a symbolic link"* ]]
+  [ ! -e "$H/out-env" ]
+  [ ! -e "$H/conda.log" ]
+}
+
+@test "--init and --apply rewrite .agent-sandbox by renaming a new file over it, its mode kept" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox" ino
+  init -- github
+  [ "$status" -eq 0 ]
+  chmod 640 "$df"
+  ino="$(stat -c %i "$df")"
+  init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %i "$df")" != "$ino" ] # a rename: a link planted meanwhile is replaced, not followed
+  [ "$(stat -c %a "$df")" = 640 ]
+  ino="$(stat -c %i "$df")"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --apply "[allow]" example.org 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$(stat -c %i "$df")" != "$ino" ]
+  [ "$(stat -c %a "$df")" = 640 ]
+  grep -qx 'example.org' "$df"
+  ls -A "$PROJ" >"$H/ls"
+  run ! grep -q '^\.agent-sandbox\.' "$H/ls" # no temporary file left
+}
+
 @test "--init writes nothing under .asb/ through a symbolic link a role left there: purpose file, migration copy, sums, index, inbox, declared path, .gitignore" {
   local df="$PROJ/.agent-sandbox" r="$PROJ/.asb/roles"
   init -- roles
