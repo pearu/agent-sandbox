@@ -690,8 +690,23 @@ W
   [ -L "$T/bench/.agent-sandbox.asb-new" ]
   [ -f "$T/bench/.agent-sandbox" ] && [ ! -L "$T/bench/.agent-sandbox" ]
   grep -qx '\[sshd\]' "$T/bench/.agent-sandbox"
-  [ "$(stat -c %a "$T/bench/.agent-sandbox")" = 644 ]
+  # the account's umask (the stub account inherits this one), not mktemp's 600
+  [ "$(stat -c %a "$T/bench/.agent-sandbox")" = "$(printf '%o' $((0666 & ~0$(umask))))" ]
   [ -z "$(find "$T/bench" -maxdepth 1 -name '.agent-sandbox.asb-new.*')" ] # no temp left
+}
+
+@test "--setup-remote: a policy written over one there keeps that file's mode (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  remote_host
+  full_section
+  local T="$R/home/tob"
+  mkdir -p "$T/bench"
+  printf '# an older policy\n' >"$T/bench/.agent-sandbox"
+  chmod 640 "$T/bench/.agent-sandbox"
+  setup_remote
+  [ "$status" -eq 0 ]
+  grep -qx '\[sshd\]' "$T/bench/.agent-sandbox"
+  [ "$(stat -c %a "$T/bench/.agent-sandbox")" = 640 ]
 }
 
 @test "--setup-remote: .asb/remote/.gitignore is never written through a link a sandbox left there, a dangling one included (#344)" {

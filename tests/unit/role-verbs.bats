@@ -983,6 +983,7 @@ STUB
   mkdir -p "$sb" "$d"
   printf 'transcripts\tread-write\t%s\t%s\n' "$H/home/.claude/history.jsonl" "$d/history.jsonl" >"$sb/record.tsv"
   printf '%s\n' '{"display":"mine","sessionId":"mine"}' "{\"display\":\"summarize\",\"sessionId\":\"$sid\"}" >"$d/history.jsonl"
+  chmod 640 "$d/history.jsonl"
   printf 'KEEP\n' >"$H/outside"
   ln -s "$H/outside" "$d/history.jsonl.asb-summarize"
   # shellcheck disable=SC2016 # expanded by the inner bash
@@ -992,6 +993,7 @@ STUB
   [ "$(cat "$H/outside")" = KEEP ]
   [ -L "$d/history.jsonl.asb-summarize" ]
   [ "$(cat "$d/history.jsonl")" = '{"display":"mine","sessionId":"mine"}' ]
+  [ "$(stat -c %a "$d/history.jsonl")" = 640 ]   # its mode kept, not the temp's 600
   [ -z "$(find "$d" -name '.asb-summarize.*')" ] # no temp left
 }
 

@@ -361,7 +361,9 @@ shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the 
   sync
   [ "$status" -eq 0 ]
   [ "$(cat "$O/a.md")" = ONE ]
-  [[ "$output" == *"link $C/sub"* ]]
+  # never read through the link, the copy there is not the one synced: the sandbox's,
+  # kept as a changed copy is when the source deletes the file, and nothing to say
+  [ -z "$output" ]
 }
 
 # tsync -- sync, given 10 s: a FIFO the sync opened would block it for ever.
@@ -404,6 +406,60 @@ tsync() { run timeout 10 "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S
   [ "$(at_copy x/SKILL.md)" = TWO ]
   sync
   [ -z "$output" ]
+}
+
+@test "a directory the source turns into a file: the untouched copies go, the emptied directory is pruned, and the file is seeded, in one sync, silently" {
+  plant y/a.md ONE
+  plant y/deep/b.md TWO
+  sync
+  rm -r "$S/y"
+  plant y FILE
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(at_copy y)" = FILE ]
+  sync
+  [ -z "$output" ]
+}
+
+@test "a file the sandbox edited, which the source then turns into a directory, is in the way at every sync: named a file" {
+  plant x ONE
+  sync
+  inside x MINE
+  rm "$S/x"
+  plant x/a.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ "$output" = "file $C/x" ]
+  [ "$(at_copy x)" = MINE ]
+  sync
+  [ "$output" = "file $C/x" ]
+}
+
+@test "the copy is never read through a link: one to a FIFO outside at a tracked name does not hang the sync, and with the source unchanged nothing is said" {
+  plant a.md ONE
+  sync
+  mkfifo "$BATS_TEST_TMPDIR/fifo"
+  rm "$C/a.md"
+  ln -s "$BATS_TEST_TMPDIR/fifo" "$C/a.md"
+  tsync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -L "$C/a.md" ]
+}
+
+@test "a removal prunes the directories it emptied, strictly below the store, and none the sandbox still has files in" {
+  plant p/q/r.md ONE
+  plant p/keep.md TWO
+  sync
+  rm "$S/p/q/r.md"
+  sync
+  [ ! -e "$C/p/q" ]
+  [ -f "$C/p/keep.md" ]
+  rm "$S/p/keep.md"
+  sync
+  [ ! -e "$C/p" ]
+  [ -d "$C" ]
 }
 
 @test "a directory the sandbox made at a tracked file's name, the file yours unchanged: the sandbox deleted it, silently, at every sync" {

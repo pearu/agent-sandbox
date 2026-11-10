@@ -755,7 +755,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
-@test "--trust never appends through a link a sandbox left in the repository: .git/info/exclude or .git/info a symlink is said, and its target unchanged" {
+@test "--trust never appends through a link a sandbox left in the repository: .git/info/exclude, .git/info or .git a symlink is said, and its target unchanged" {
   git init -q "$PROJ"
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   printf 'KEEP\n' >"$H/outside"
@@ -764,7 +764,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   run_trust 'y\ny'
   [ "$(cat "$H/outside")" = KEEP ]
   [ "$status" -eq 0 ]
-  [[ "$output" == *"approved."* && "$output" == *"$PROJ/.git/info/exclude is a symlink; .agent-sandbox is not added to it"* ]]
+  [[ "$output" == *"approved."* && "$output" == *"$PROJ/.git/info/exclude is a symlink; .agent-sandbox is not added to "* ]]
   # the directory a link: the same
   rm -rf "$PROJ/.git/info" "$CFG/trust"
   mkdir -p "$H/outdir"
@@ -773,6 +773,15 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 0 ]
   [[ "$output" == *"$PROJ/.git/info is a symlink"* ]]
   [ ! -e "$H/outdir/exclude" ]
+  # .git itself a link, to a repository outside: the same
+  rm -rf "$PROJ/.git" "$CFG/trust"
+  git init -q "$H/outrepo"
+  printf 'KEEP\n' >"$H/outrepo/.git/info/exclude"
+  ln -s "$H/outrepo/.git" "$PROJ/.git"
+  run_trust 'y\ny'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$PROJ/.git is a symlink"* ]]
+  [ "$(cat "$H/outrepo/.git/info/exclude")" = KEEP ]
 }
 
 @test "--trust makes no git-ignore offer for a file the repository tracks" {

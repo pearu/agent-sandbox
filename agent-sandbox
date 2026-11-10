@@ -4588,6 +4588,7 @@ for p in sorted(places):
         # one a sandbox writes (read-write), and a link left there would be followed.
         fd, tmp = tempfile.mkstemp(prefix=".asb-summarize.", dir=os.path.dirname(p))
         try:
+            os.fchmod(fd, os.stat(p).st_mode & 0o7777)  # the file's mode, not mkstemp's 600
             with os.fdopen(fd, "wb") as fh:
                 fh.writelines(keep)
             os.replace(tmp, p)
@@ -10365,7 +10366,14 @@ if [ -n "$tmpdir" ] && [ ! -d "$tmpdir" ]; then
   say made "$tmpdir"
 fi
 if [ "$wpol" = 1 ]; then
-  t="$(mktemp "$p/.agent-sandbox.asb-new.XXXXXX")" && { write_policy >"$t" && chmod 644 "$t" && mv -f -- "$t" "$p/.agent-sandbox"; } \
+  # A new file mktemp makes (never a fixed name the scratch's sandbox could link), with
+  # the mode of the file it replaces, or the account's umask for a new one (mktemp's is 600).
+  if [ -f "$p/.agent-sandbox" ] && [ ! -L "$p/.agent-sandbox" ]; then
+    m="$(stat -c %a -- "$p/.agent-sandbox")"
+  else
+    m="$(printf '%o' $((0666 & ~0$(umask))))"
+  fi
+  t="$(mktemp "$p/.agent-sandbox.asb-new.XXXXXX")" && { write_policy >"$t" && chmod "$m" "$t" && mv -f -- "$t" "$p/.agent-sandbox"; } \
     || { [ -z "${t:-}" ] || rm -f -- "$t"; say error "cannot write $p/.agent-sandbox"; exit 1; }
 fi
 k="$HOME/.config/agent-sandbox/asb-$alias-keys"
@@ -12956,11 +12964,14 @@ _as_trust_review() {
     local _ex
     _ex="$(git -C "$cwd" rev-parse --absolute-git-dir)/info/exclude"
     # The repository is the project's, which a sandbox may write: an append through a
-    # link there would land outside it.
-    if [[ -L "${_ex%/exclude}" || -L "$_ex" ]]; then
-      _as_msg "$([[ -L "${_ex%/exclude}" ]] && printf '%s' "${_ex%/exclude}" || printf '%s' "$_ex") is a symlink; .agent-sandbox is not added to it (add /.agent-sandbox to the repository's exclude file yourself)"
-      return 0
-    fi
+    # link there -- .git, .git/info or the file -- would land outside it.
+    local _l
+    for _l in "$cwd/.git" "${_ex%/exclude}" "$_ex"; do
+      if [[ -L "$_l" ]]; then
+        _as_msg "$_l is a symlink; .agent-sandbox is not added to $_ex (add /.agent-sandbox to the repository's exclude file yourself)"
+        return 0
+      fi
+    done
     printf 'agent-sandbox: add .agent-sandbox to %s so it is not committed? [y/N] ' "$_ex" >&2
     read -r ans || true
     case "$ans" in

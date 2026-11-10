@@ -147,13 +147,6 @@ def at(root, rel):
     return root if rel == "" else os.path.join(root, rel)
 
 
-def empty(path):
-    try:
-        return os.path.getsize(path) == 0
-    except OSError:
-        return False
-
-
 class InWay(Exception):
     """Something at PATH in the copy store where the sync was to write or remove: KIND
     `link`, a symlink; `special`, neither a regular file nor a directory; `file`, a
@@ -199,33 +192,79 @@ def _split(copy, rel):
     return copy, parts[:-1], parts[-1]
 
 
-def _open_parent(anchor, parts, create):
-    """A descriptor of ANCHOR/PARTS..., each component opened without following a
-    link (made first when CREATE); InWay names the first one that is a link, or no
-    directory.
+def _open_chain(anchor, parts, create):
+    """Descriptors of ANCHOR and of ANCHOR/PARTS[:1], [:2], ..., each component opened
+    without following a link (made first when CREATE); InWay names the first one that
+    is a link, or no directory.
 
     THE COPY STORE IS THE SANDBOX'S: it can leave a symlink at any name in it, and a
     host-side write that follows one lands outside the store (a dangling one at an
     upstream file's name made the old copy2 create the file wherever it pointed). So
-    no write and no removal here follows a link, at the name or above it."""
-    fd = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)
+    nothing here -- a read, a write, a removal, a prune -- follows a link, at the name
+    or above it."""
+    fds = [os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)]
     path = anchor
     try:
         for part in parts:
             path = os.path.join(path, part)
             if create:
                 try:
-                    os.mkdir(part, 0o777, dir_fd=fd)
+                    os.mkdir(part, 0o777, dir_fd=fds[-1])
                 except FileExistsError:
                     pass
-            _check(part, fd, path, stat.S_ISDIR)
-            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            os.close(fd)
-            fd = nfd
+            _check(part, fds[-1], path, stat.S_ISDIR)
+            fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[-1]))
     except BaseException:
-        os.close(fd)
+        for fd in fds:
+            os.close(fd)
         raise
-    return fd
+    return fds
+
+
+def _open_parent(anchor, parts, create):
+    """The descriptor of ANCHOR/PARTS..., opened as _open_chain opens it."""
+    fds = _open_chain(anchor, parts, create)
+    for fd in fds[:-1]:
+        os.close(fd)
+    return fds[-1]
+
+
+def copy_state(copy, rel):
+    """(STATE, SIZE) of REL in the store COPY, read through no link: STATE is the hash
+    of a regular file there; None when there is none (nothing, a directory, or a file
+    above it where a directory would be); an InWay, never raised, for a link at it or
+    above it, or for what is neither a file nor a directory -- never read, so a link to
+    a huge file is not read either, and a FIFO cannot hang the launch."""
+    anchor, parts, name = _split(copy, rel)
+    path = os.path.join(anchor, *parts, name)
+    try:
+        fd = _open_parent(anchor, parts, create=False)
+    except InWay as e:
+        return (e if e.kind == "link" else None), 0
+    except OSError:
+        return None, 0
+    try:
+        m = _mode(name, fd)
+        if m is None or stat.S_ISDIR(m):
+            return None, 0
+        if stat.S_ISLNK(m):
+            return InWay(path), 0
+        if not stat.S_ISREG(m):
+            return InWay(path, "special"), 0
+        try:
+            f = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError:
+            return None, 0
+        h = hashlib.sha256()
+        with os.fdopen(f, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            if not stat.S_ISREG(st.st_mode):  # changed since the check
+                return InWay(path, "special"), 0
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest(), st.st_size
+    finally:
+        os.close(fd)
 
 
 def copy_file(src, copy, rel):
@@ -252,7 +291,9 @@ def copy_file(src, copy, rel):
             os.ftruncate(out, 0)
             with open(src, "rb") as fh:
                 for chunk in iter(lambda: fh.read(65536), b""):
-                    os.write(out, chunk)
+                    view = memoryview(chunk)
+                    while view:  # os.write may write less than it was given
+                        view = view[os.write(out, view):]
             os.fchmod(out, stat.S_IMODE(st.st_mode))
             # The source's mtime, as copy2 kept it: a seeded file looks to the agent
             # exactly as it does natively, and a tool that caches on mtime behaves the
@@ -273,32 +314,34 @@ def remove(copy, rel):
     went as soon as it was empty. The engine binds that directory, and for a
     file-shaped channel it then could not even recreate the slot inside it: the
     launch died on a redirection into a directory that had just been pruned away.
+
+    The prune goes up the descriptors the removal came down by, each directory removed
+    by name from its parent's (rmdir at a descriptor): a parent swapped for a link in
+    between cannot have a directory outside the store removed.
     """
     anchor, parts, name = _split(copy, rel)
     try:
-        fd = _open_parent(anchor, parts, create=False)
+        fds = _open_chain(anchor, parts, create=False)
     except FileNotFoundError:
         return
     try:
-        m = _mode(name, fd)
+        m = _mode(name, fds[-1])
         if m is not None and stat.S_ISLNK(m):
             raise InWay(os.path.join(anchor, *parts, name))
         try:
-            os.unlink(name, dir_fd=fd)
+            os.unlink(name, dir_fd=fds[-1])
         except OSError:
             pass
+        # parts[k] is a directory in fds[k]; for a file channel there are none, and the
+        # store itself (the anchor of a directory channel) is never among them.
+        for k in range(len(parts) - 1, -1, -1):
+            try:
+                os.rmdir(parts[k], dir_fd=fds[k])
+            except OSError:
+                break
     finally:
-        os.close(fd)
-    if rel == "":
-        return
-    root = os.path.abspath(copy)
-    d = os.path.dirname(os.path.abspath(at(copy, rel)))
-    while d != root and d.startswith(root + os.sep):
-        try:
-            os.rmdir(d)
-        except OSError:
-            return
-        d = os.path.dirname(d)
+        for fd in fds:
+            os.close(fd)
 
 
 def sync(kind, source, copy, base_path):
@@ -308,60 +351,70 @@ def sync(kind, source, copy, base_path):
     if kind == "dir":
         os.makedirs(copy, exist_ok=True)
 
-    rels = set(walk(source)) | set(walk(copy)) | set(base)
-    for rel in sorted(rels):
-        s = sha(at(source, rel))
-        c = sha(at(copy, rel))
-        b = base.get(rel)
+    rels = sorted(set(walk(source)) | set(walk(copy)) | set(base))
+    src = {rel: sha(at(source, rel)) for rel in rels}
+    # TWO PASSES: what the source deleted first, then what it has. A directory the source
+    # turned into a file (or the reverse) is then the old entries removed -- the emptied
+    # directory pruned -- before the new one is seeded, in one sync and silently; in one
+    # sorted pass the seed came first and found the old directory in its way.
+    for deletions in (True, False):
+        for rel in rels:
+            s = src[rel]
+            if (s is None) != deletions:
+                continue
+            if s == SPECIAL:
+                continue  # yours, and no file to copy
+            c, csize = copy_state(copy, rel)
+            b = base.get(rel)
+            inway = isinstance(c, InWay)
 
-        if c == SPECIAL:
-            links.append(("special", at(copy, rel)))  # never opened, never replaced
-            continue
-        if s == SPECIAL:
-            continue  # yours, and no file to copy
-        if s is None and b is None:
-            continue  # the sandbox's own file, or nothing at all
-        if c is None and b is not None:
-            continue  # the sandbox deleted it: stays deleted, base keeps the memory
-        if s is None:
-            # the source deleted it
+            if s is None and b is None:
+                continue  # the sandbox's own file, or nothing at all
+            if c is None and b is not None:
+                continue  # the sandbox deleted it: stays deleted, base keeps the memory
+            if s is None:
+                # the source deleted it
+                if c == b:
+                    try:
+                        remove(copy, rel)
+                    except InWay as e:
+                        links.append((e.kind, e.path))  # the base entry goes all the same
+                base.pop(rel, None)
+                continue
+            if b is None:
+                # Never synced. An EMPTY file here is not content: it is the mount
+                # point the engine had to create so a launch could bind the channel
+                # at a path the source did not have yet. Measured -- without this,
+                # a launch that happened before the source had the file poisoned
+                # every later seed, which came out as a conflict on the very first
+                # one. Scoped to this branch on purpose: a sandbox that deliberately
+                # empties a file it already had is a real edit, and the conflict
+                # rules below protect it.
+                if inway:
+                    links.append((c.kind, c.path))  # not seeded: said again next launch
+                elif c is None or csize == 0:
+                    try:
+                        copy_file(at(source, rel), copy, rel)  # seed, or new upstream
+                        base[rel] = s
+                    except InWay as e:
+                        links.append((e.kind, e.path))  # not seeded: the next launch tries again
+                else:
+                    conflicts.append(rel)  # both created it; keep the sandbox's
+                continue
+            if s == b:
+                continue  # the source has not moved; the copy is the sandbox's business
             if c == b:
                 try:
-                    remove(copy, rel)
-                except InWay as e:
-                    links.append((e.kind, e.path))  # the base entry goes all the same
-            base.pop(rel, None)
-            continue
-        if b is None:
-            # Never synced. An EMPTY file here is not content: it is the mount
-            # point the engine had to create so a launch could bind the channel
-            # at a path the source did not have yet. Measured -- without this,
-            # a launch that happened before the source had the file poisoned
-            # every later seed, which came out as a conflict on the very first
-            # one. Scoped to this branch on purpose: a sandbox that deliberately
-            # empties a file it already had is a real edit, and the conflict
-            # rules below protect it.
-            if c is None or empty(at(copy, rel)):
-                try:
-                    copy_file(at(source, rel), copy, rel)  # seed, or new upstream
+                    copy_file(at(source, rel), copy, rel)  # refresh
                     base[rel] = s
                 except InWay as e:
-                    links.append((e.kind, e.path))  # not seeded: the next launch tries again
+                    links.append((e.kind, e.path))  # the base stays: said again next launch
+            elif inway:
+                links.append((c.kind, c.path))  # the base stays: said again next launch
             else:
-                conflicts.append(rel)  # both created it; keep the sandbox's
-            continue
-        if s == b:
-            continue  # the source has not moved; the copy is the sandbox's business
-        if c == b:
-            try:
-                copy_file(at(source, rel), copy, rel)  # refresh
-                base[rel] = s
-            except InWay as e:
-                links.append((e.kind, e.path))  # the base stays: said again next launch
-        else:
-            # Both moved. Keep the copy, say so, and LEAVE THE BASE where it is
-            # so the next launch says so again.
-            conflicts.append(rel)
+                # Both moved. Keep the copy, say so, and LEAVE THE BASE where it is
+                # so the next launch says so again.
+                conflicts.append(rel)
 
     save_base(base_path, base)
     return conflicts, links
