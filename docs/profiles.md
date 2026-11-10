@@ -185,16 +185,50 @@ claude` -- is the version `install/current` names, under every preset, `--preset
 native` and `none` included, and the `claude` on your PATH is never read. A path is
 still what it names (`asb --profile claude /path/to/claude`), the escape hatch for a
 binary of your own. The binary is the profile's command in the version's directory
-for a `file`, `PATH` in it for a `tar PATH`. With none installed a launch refuses,
-naming the line that installs it:
+for a `file`, `PATH` in it for a `tar PATH`.
+
+With none installed (no `install/current` at all) a launch at a terminal -- stdin and
+stderr a terminal, on the host -- asks once, when its own checks have passed (the
+dot-file reviewed and applied, its account resolved; a join into a running role asks
+nothing), after running the profile's resolver for the pin (a network call, said
+first), and on `y` installs it as `asb --install` does, then goes on with the launch:
+
+```
+agent-sandbox: claude is not installed for agent-sandbox; looking up claude 2.1.321, its pinned version...
+agent-sandbox: install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]
+```
+
+Any other answer, and any launch with no terminal (a script's `-p`, CI, a pane nobody
+is at), refuses at once, never asking or blocking, naming the line that installs it:
 
 ```
 agent-sandbox: claude is not installed for agent-sandbox: install it, asb --install claude
 ```
 
-(exit 1), and the same, with what is wrong in parentheses, for a `current` that is not
-a symlink, names a version that is not there, or a version's directory without the
-binary. A name that is not the profile's command (`asb --profile claude other`) is
+(exit 1). Only a launch asks: `--exec`, the agent's verbs, `--status`, `--shutdown`,
+`--delete`, `--reset`, `--serve`, `--summarize` and `--roles`' check of every role
+refuse with that line. `--check` never looks the agent up, so it neither asks nor
+refuses for it. `--account-login NAME AGENT` installs the pin first, unasked (see
+[Accounts](config.md#accounts)). A `current` that is there but broken is never mended
+by the question: the same refusal, with what is wrong in parentheses, for a `current`
+that is not a symlink, names a version that is not there, or a version's directory
+without the binary.
+
+**The version a launch runs** is said on its launch line: `agent: claude 2.1.321`
+with `--verbose` when it is the pin, and always, whatever the verbosity, when it is
+not -- after an `asb --install claude@V`, or once an `install.sh` run has brought a
+new pin:
+
+```
+agent-sandbox: agent: claude, running 2.1.300, pinned 2.1.321 (asb --install claude moves to the pin)
+agent-sandbox: agent: claude, running 9.9.9 (untested with asb), pinned 2.1.321 (asb --install claude moves to the pin)
+```
+
+A join says the running role's (`agent: claude 2.1.321, the running role's`). Each
+launch records it in the role's store, `<store>/version` (`PROFILE<TAB>VERSION`, empty
+for an agent named by path), and in its keeper's policy (`version`): `--status` says
+it (`version: claude 2.1.321`, or `running V, pinned W`), and `--list` names it after
+the profile (`claude 2.1.321, base`). The briefing does not. A name that is not the profile's command (`asb --profile claude other`) is
 refused: PATH is not read for this profile, so name another binary by its path.
 
 The bind: the version's directory alone, read-only, at its own path
@@ -207,7 +241,10 @@ read-only too, over the read-write `$HOME`, so the agent cannot change itself un
 any preset; the rest of the state directory is the host's there, as all of `$HOME`
 is. A path keeps the single read-only file bind. A running role keeps the version it
 started with: after an `asb --install` moves `current`, an idle keeper is replaced
-and a busy one refuses a launch of the role by name (naming both binaries), as for any change of the agent's binary.
+and a busy one refuses a launch of the role by name, naming both binaries and both
+versions (`running with agent = .../2.1.321/claude (claude 2.1.321), and this
+launch's agent asks for '.../2.1.300/claude' (claude 2.1.300)`), as for any change of
+the agent's binary.
 
 | File | What it is |
 |---|---|

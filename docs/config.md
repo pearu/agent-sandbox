@@ -1272,7 +1272,13 @@ them are removed after the launch, empty directories and the symlinks made again
 stay.
 
 **Logging an account in: `asb --account-login NAME AGENT`.** Alone on the line, at
-your own shell (refused inside a sandbox). It makes the account's directory,
+your own shell (refused inside a sandbox). For an agent asb installs
+([profiles.md](profiles.md#the-install-recipe)) with nothing installed yet, it first
+installs the profile's pinned version, as `asb --install AGENT` does and without
+asking (the login is your word), saying the size and the host; that happens before
+anything of the account is made, so a failed download leaves nothing behind. An agent
+already installed is not downloaded again, whatever its version. Then it makes the
+account's directory,
 `~/.local/state/agent-sandbox/<agent>/accounts/NAME/`, with mode 700 (each level checked
 first: a symlink or a non-directory there is refused, nothing is made through one; an
 existing directory is a re-login), then runs the agent's own login in it, in the

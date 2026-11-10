@@ -82,6 +82,21 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **Agents asb installs are installed when first needed** (#6): `asb --account-login NAME
+  AGENT` installs the profile's pin first, unasked, before the account's directory is made
+  (a failed download leaves nothing); a launch at a terminal with nothing installed asks
+  once, `install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`, and installs
+  and launches on `y`, once the launch's own checks have passed. Without a terminal, and
+  for `--exec`, the verbs, `--status`, `--shutdown`, `--serve`, `--summarize` and
+  `--roles`, it refuses with the line that installs it, never asking (`--check` never
+  looks the agent up). A broken `install/current` is refused, never mended, by
+  `--account-login` too, before anything is made.
+- **The agent's version on the launch line** (#6): `agent: claude 2.1.321` with
+  `--verbose`; always `agent: claude, running V, pinned W` when it is not the pin (and
+  `(untested with asb)` for one the table does not list). Recorded per launch in the
+  role's store (`<store>/version`) and its keeper's policy: `--status` says it, `--list`
+  shows it (`claude 2.1.321, base`), a join says the running role's, and a busy role's
+  refusal after `asb --install` moved `current` names both versions.
 - **`asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]`** (#6), the host-side
   installer of the install recipe: VERSION (default the pin; an exact version not in the
   profile's table installs too, said to be untested with asb) is named by the profile's
