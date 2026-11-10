@@ -12473,12 +12473,13 @@ _as_init() {
     wrote=1
     _as_msg "wrote .agent-sandbox from model '$model' ($(for a in "${insts[@]}"; do printf '%s ' "$(cut -f2 <<<"$a")"; done | sed 's/ $//'))"
   elif [[ -n "$new" ]]; then
-    [[ ! -L "$df" ]] || {
+    a="$(_as_dotfile_read "$df" && printf x)"
+    [[ "$a" == *x ]] || {
       _as_msg "--init: .agent-sandbox became a symbolic link while --init ran; nothing added to it"
       return 2
     }
     {
-      cat -- "$df"
+      printf '%s' "${a%x}"
       printf '\n# ---- added by asb --init %s ----\n' "$model"
       printf '%s' "$new"
     } | _as_dotfile_write "$df" || return 1
@@ -12941,6 +12942,25 @@ _as_dotfile_write() {
   return 1
 }
 
+# _as_dotfile_read FILE -- FILE's text on stdout, read through a descriptor shown to be
+# FILE itself: 1, nothing read, when FILE is a symbolic link or became one between the
+# check and the open (its target -- a secret, say -- is never copied into the dot-file).
+_as_dotfile_read() {
+  local f="$1" fd a b rc
+  [[ ! -L "$f" ]] || return 1
+  exec {fd}<"$f" || return 1
+  a="$(stat -L -c '%d:%i' "/dev/fd/$fd" 2>/dev/null)"
+  b="$(stat -c '%d:%i' -- "$f" 2>/dev/null)"
+  if [[ -z "$a" || "$a" != "$b" || -L "$f" ]]; then
+    exec {fd}<&-
+    return 1
+  fi
+  cat <&"$fd"
+  rc=$?
+  exec {fd}<&-
+  return "$rc"
+}
+
 _as_apply() {
   local cwd="$1" head="$2" file name glob l n i at=-1 ins=-1 cur="" f d r p
   shift 2
@@ -13042,8 +13062,13 @@ _as_apply() {
       printf '%s\n' "$head" "${add[@]}" | _as_dotfile_write "$file" || return 1
       _as_msg "created $file"
     elif ((at < 0)); then
+      r="$(_as_dotfile_read "$file" && printf x)"
+      [[ "$r" == *x ]] || {
+        _as_msg "--apply: .agent-sandbox became a symbolic link while --apply ran; nothing added to it"
+        return 2
+      }
       {
-        cat -- "$file"
+        printf '%s' "${r%x}"
         if ((${#lines[@]})) && [[ -n "${lines[-1]//[[:space:]]/}" ]]; then printf '\n'; fi
         printf '%s\n' "$head" "${add[@]}"
       } | _as_dotfile_write "$file" || return 1
