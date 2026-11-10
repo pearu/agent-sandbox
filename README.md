@@ -231,6 +231,16 @@ its path: `asb --profile claude /path/to/claude`. With more than one agent asb c
 run, `asb --set-default-agent AGENT` picks the one a role verb with no command acts
 on ([profiles.md](docs/profiles.md#the-install-recipe)).
 
+`./install.sh` never installs, updates or removes an agent, a re-run included; its
+**Agents** section reports one line per agent: for one asb installs, the installed
+version against the profile's pin (`claude 2.1.321, the pin`; `claude 2.1.300, pinned
+2.1.321: asb --install claude moves to the pin`; `claude: not installed; asb --install
+claude, or it is offered at the first launch`), and for any other, the command on your
+PATH it runs. At a terminal, with several agents asb can run and no default set, it
+asks once which is the default (a number or a name; an empty answer leaves none set)
+and sets it with `asb --set-default-agent`; without a terminal, with `--yes`, or with
+one set already, it asks nothing and says how to set or change it.
+
 **Upgrading from an install before 0.4:** those put the engine at
 `~/.local/bin/claude` and moved Claude Code's own launcher aside. Running
 `./install.sh` again takes that back — your `claude` returns to where it was,
@@ -238,7 +248,9 @@ and says so — and from then on `claude` is native and `asb claude` is sandboxe
 Until you do, the old launcher refuses to run and says why.
 
 Undo it with `./install.sh --uninstall`: it removes `asb` and `agent-sandbox`
-and the rest ([troubleshooting.md](docs/troubleshooting.md)).
+and the rest, the agents `asb --install` installed included, and keeps the sandboxes'
+state and your accounts' logins under `~/.local/state/agent-sandbox`
+([troubleshooting.md](docs/troubleshooting.md#removing-agent-sandbox)).
 Working *on* agent-sandbox? `./install.sh --dev` points `asb` at the
 checkout instead, so your edits take effect at the next launch (see
 [docs/design.md](docs/design.md) for why that is dev-only). Standalone:

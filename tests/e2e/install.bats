@@ -104,12 +104,21 @@ teardown_file() {
   # every adapter's agent found where its fake was planted (setup_file): asb's install of
   # it, by version, for a profile with an install recipe (#6); else the binary its
   # command on PATH resolves to
-  local a launcher bin link
+  local a launcher bin link v pin
   for a in $(test_adapters); do
     { read -r launcher && read -r bin && read -r link; } <"$E/plant.$a"
     if [ -n "$(HOME="$H" profile_facts "$a" install)" ]; then
-      [[ "$out" == *"$a: asb runs its own install of it, version $(readlink "$H/.local/state/agent-sandbox/$a/install/current")"* ]]
-      [[ "$out" != *"$a: not installed for asb yet"* ]]
+      # its current version against the profile's pin, and nothing installed or moved
+      v="$(readlink "$H/.local/state/agent-sandbox/$a/install/current")"
+      pin="$(HOME="$H" profile_facts "$a" pin)"
+      if [ -z "$pin" ]; then
+        [[ "$out" == *"$a $v"$'\n'* ]]
+      elif [ "$v" = "$pin" ]; then
+        [[ "$out" == *"$a $v, the pin"* ]]
+      else
+        [[ "$out" == *"$a $v, pinned $pin: asb --install $a moves to the pin"* ]]
+      fi
+      [[ "$out" != *"$a: not installed"* ]]
     else
       [[ "$out" == *"$a: \`${launcher##*/}\` is $bin"* ]]
     fi
@@ -381,7 +390,14 @@ agent_uninstall() {
   # the machine is as it was before agent-sandbox: the agent's own command, no asb, our
   # state gone
   [ "$(readlink "$TEST_LAUNCHER")" = "$native" ]
-  [ -x "$TEST_BIN" ]
+  if [ -n "$(HOME="$H" profile_facts "$1" install)" ]; then
+    # an agent asb installed is asb's: removed with it (#6); the rest of the engine's
+    # state directory -- role stores, transcripts, accounts' logins -- is kept
+    [ ! -e "$H/.local/state/agent-sandbox/$1/install" ]
+    [ -d "$H/.local/state/agent-sandbox/$1" ]
+  else
+    [ -x "$TEST_BIN" ]
+  fi
   [ ! -e "$H/.local/bin/asb" ]
   [ ! -e "$H/.local/bin/agent-sandbox" ]
   # our state gone but the sandboxes' conda environments, which --yes keeps
@@ -400,5 +416,5 @@ agent_uninstall() {
 }
 
 for a in $(test_adapters); do
-  bats_test_function --description "$a: --uninstall removes asb, agent-sandbox and our state, leaves the agent alone, and is re-runnable" -- agent_uninstall "$a"
+  bats_test_function --description "$a: --uninstall removes asb, agent-sandbox, our state and the agents asb installed, leaves any other agent and the sandboxes' state alone, and is re-runnable" -- agent_uninstall "$a"
 done

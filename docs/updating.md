@@ -21,10 +21,17 @@ role is busy (something is joined to it), naming the version it runs and the one
 for -- finish or `asb --role R --shutdown` it first -- and an idle role's sandbox is
 replaced by one running the new version.
 
-**Moving to a new pin.** An asb release may pin a newer version: `install.sh` never
-touches installed agents, so after it brings the new pin, run `asb --install claude`
-(no version: the pin) once. Until then launches go on running the version installed
-before, and every launch line says so, whatever the verbosity:
+**Moving to a new pin.** An asb release may pin a newer version: re-running
+`install.sh` never installs, updates or removes an agent -- it downloads none -- and
+only reports, in its Agents section, the installed version against the pin:
+
+```
+    [warn] claude 2.1.300, pinned 2.1.321: asb --install claude moves to the pin
+```
+
+(`claude 2.1.321, the pin` once they agree). So after it brings the new pin, run
+`asb --install claude` (no version: the pin) once. Until then launches go on running
+the version installed before, and every launch line says so, whatever the verbosity:
 
 ```
 agent-sandbox: agent: claude, running 2.1.300, pinned 2.1.321 (asb --install claude moves to the pin)

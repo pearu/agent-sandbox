@@ -91,6 +91,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **install.sh reports agents and asks for the default agent** (#6): its Agents section
+  says, for an agent asb installs, the installed version against the profile's pin
+  (`claude 2.1.321, the pin`; `claude 2.1.300, pinned 2.1.321: asb --install claude moves
+  to the pin`; `claude: not installed; asb --install claude, or it is offered at the first
+  launch`), and for any other the command on PATH, as before. It never installs, updates
+  or removes an agent, a re-run included, and downloads none. At a terminal, with several
+  agents asb can run and no default set, it asks once which is the default (a number or a
+  name; empty: none) and sets it through the installed engine, `asb --set-default-agent`;
+  without a terminal, with `--yes` or with one set, it asks nothing and says how to set
+  or change it. `--uninstall` removes the agents asb installed
+  (`~/.local/state/agent-sandbox/<agent>/install/`) and keeps the rest of that directory
+  -- role stores, transcripts and the accounts' logins, now named in its plan (they were
+  kept before too, unsaid).
 - **Agents asb installs are installed when first needed** (#6): `asb --agent AGENT
   --account NAME --login` installs the profile's pin first, unasked, before the account's directory is made
   (a failed download leaves nothing); a launch at a terminal with nothing installed asks

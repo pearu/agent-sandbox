@@ -1122,3 +1122,194 @@ unit_port() { sed -n 's/^ *--listen-port \([^ ]*\) .*/\1/p' "$T/home/.config/sys
   [[ "$output" != *"sshd-agent.sh\` is not on PATH"* ]]
   [[ "$output" != *"/sshd-agent.sh is not on PATH"* ]]
 }
+
+# ---- the Agents section: what asb runs, and the default agent (#6) ----------------------
+# install.sh never installs, updates or removes an agent; it reports, and asks once for
+# the default agent at a terminal.
+
+# agents_step [ENV=VAL ...] [-- ARGS] -- install.sh's Agents section alone, for real, with
+# the engine copied in as a run copies it, from $SRC (the checkout, or a scratch copy with
+# more profiles: two_agents); $T/bin first on PATH; answers from $T/answers.
+agents_step() {
+  local -a envs=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    envs+=("$1")
+    shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  mkdir -p "$T/bin"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_INSTALL_STEP=agents AGENT_SANDBOX_TTY="$T/answers" "${envs[@]}" "${SRC:-$REPO_ROOT}/install.sh" "$@"
+}
+
+# installed VERSION... -- claude's install dir with those versions, current the last one
+installed() {
+  local root="$T/home/.local/state/agent-sandbox/claude/install" v
+  for v in "$@"; do mkdir -p "$root/$v"; done
+  ln -sfn "${!#}" "$root/current"
+}
+
+# two_agents -- SRC: a scratch checkout with the repo's profiles and `other`, a profile
+# with no install recipe whose command, otherbin, is on PATH ($T/bin): with claude, two
+# agents asb can run.
+two_agents() {
+  SRC="$T/src"
+  mkdir -p "$SRC/profiles/other" "$T/bin"
+  cp "$REPO_ROOT/install.sh" "$REPO_ROOT/agent-sandbox" "$REPO_ROOT/VERSION" "$SRC/"
+  cp -r "$REPO_ROOT/profiles/claude" "$REPO_ROOT/profiles/sshd" "$SRC/profiles/"
+  printf ':\n' >"$SRC/profiles/other/profile.sh"
+  printf '[agent]\ncommand = otherbin\n' >"$SRC/profiles/other/agent-sandbox"
+  printf '#!/bin/sh\n' >"$T/bin/otherbin"
+  chmod +x "$T/bin/otherbin"
+}
+
+@test "Agents: an agent asb installs is reported by its current version against the pin; never installed or updated here" {
+  local pin
+  pin="$(awk '$2 == "pinned" {print $1}' "$REPO_ROOT/profiles/claude/versions")"
+  [ -n "$pin" ]
+  # a curl that records a call: nothing is downloaded, whatever is installed
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\necho "curl $*" >>%q\nexit 1\n' "$T/called" >"$T/bin/curl"
+  chmod +x "$T/bin/curl"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] claude: not installed; asb --install claude, or it is offered at the first launch"* ]]
+  installed 2.1.300
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] claude 2.1.300, pinned $pin: asb --install claude moves to the pin"* ]]
+  [ "$(readlink "$T/home/.local/state/agent-sandbox/claude/install/current")" = 2.1.300 ] # not moved
+  installed 2.1.300 "$pin"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ok] claude $pin, the pin"* ]]
+  [ -d "$T/home/.local/state/agent-sandbox/claude/install/2.1.300" ] # not pruned
+  # current naming no version beside it: not installed, as the engine has it
+  ln -sfn ../.. "$T/home/.local/state/agent-sandbox/claude/install/current"
+  agents_step
+  [[ "$output" == *"[warn] claude: not installed; asb --install claude"* ]]
+  # a profile whose table pins none: the version alone
+  two_agents
+  printf '2.1.300\n' >"$SRC/profiles/claude/versions"
+  installed 2.1.300
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ok] claude 2.1.300"$'\n'* ]]
+  [ ! -e "$T/called" ]
+}
+
+@test "Agents: a profile with no install recipe is its command on PATH, as before; the sshd profile's ships with it" {
+  two_agents
+  agents_step AGENT_SANDBOX_TTY="$T/no/such/tty"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ok] other: \`otherbin\` is $T/bin/otherbin"* ]]
+  [[ "$output" == *"[ok] sshd: its agent ships with the profile (sshd-agent.sh)"* ]]
+  rm "$T/bin/otherbin"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] other: \`otherbin\` is not on PATH"* ]]
+  [[ "$output" == *"Install it, then re-run. asb runs it once \`otherbin\` is on PATH (or: asb --profile other /path/to/it)."* ]]
+  # one agent asb can run (sshd is chosen by --profile alone): the default, nothing asked
+  [[ "$output" == *"[ok] the default agent is claude, the only one asb can run here"* ]]
+  [[ "$output" != *"Which is the default"* ]]
+}
+
+@test "the default agent: asked at a terminal when asb can run several and none is set, written by the installed engine" {
+  two_agents
+  local df="$T/home/.config/agent-sandbox/default-agent"
+  # an answer that is neither a number in the list nor a name is asked again
+  printf '7\nnobody\nother\n' >"$T/answers"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"asb can run several agents here: 1) claude 2) other"* ]]
+  [[ "$output" == *"Which is the default, the one \`asb --login\` and a role verb run when none is named? [number or name; empty: none for now]"* ]]
+  [ "$(grep -c 'Which is the default' <<<"$output")" -eq 3 ]
+  [ "$(cat "$df")" = other ]
+  [[ "$output" == *"[ok] the default agent is now other (~/.config/agent-sandbox/default-agent)"* ]]
+  # set: reported, never asked over
+  : >"$T/answers"
+  agents_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Which is the default"* ]]
+  [[ "$output" == *"[ok] the default agent is other ($df); change it: asb --set-default-agent AGENT"* ]]
+  # one set that asb cannot run here: said, with how to change it
+  printf 'gone\n' >"$df"
+  agents_step
+  [[ "$output" == *"[warn] the default agent 'gone' ($df) is not one asb can run here (claude other); set another: asb --set-default-agent AGENT"* ]]
+  [ "$(cat "$df")" = gone ]
+  # by number
+  rm "$df"
+  printf '1\n' >"$T/answers"
+  agents_step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$df")" = claude ]
+  # an empty answer: none set, and how to set it later
+  rm "$df"
+  printf '\n' >"$T/answers"
+  agents_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$df" ]
+  [[ "$output" == *"asb can run several agents here (claude other) and no default is set: set it, asb --set-default-agent AGENT"* ]]
+}
+
+@test "the default agent: not asked with no terminal, with --yes, or in a dry run; none is set" {
+  two_agents
+  local df="$T/home/.config/agent-sandbox/default-agent"
+  agents_step AGENT_SANDBOX_TTY="$T/no/such/tty"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Which is the default"* ]]
+  [[ "$output" == *"asb can run several agents here (claude other) and no default is set: set it, asb --set-default-agent AGENT"* ]]
+  [ ! -e "$df" ]
+  printf 'other\n' >"$T/answers"
+  agents_step -- --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Which is the default"* ]]
+  [ ! -e "$df" ]
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_TTY="$T/answers" "$SRC/install.sh" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(dry-run) would ask which is the default agent: claude other"* ]]
+  [ ! -e "$df" ]
+}
+
+@test "the default agent: the question at a real terminal (a pty), answered there" {
+  command -v script >/dev/null || skip "script(1) is needed for a pty"
+  two_agents
+  local df="$T/home/.config/agent-sandbox/default-agent"
+  printf 'cd %q && exec env -i HOME=%q PATH=%q TERM=xterm AGENT_SANDBOX_INSTALL_STEP=agents %q\n' \
+    "$T" "$T/home" "$T/bin:/usr/bin:/bin" "$SRC/install.sh" >"$T/tty.sh"
+  run bash -c 'printf "2\n" | script -qec "bash $1" /dev/null' _ "$T/tty.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Which is the default"* ]]
+  [ "$(cat "$df")" = other ]
+  [[ "$output" == *"the default agent is now other"* ]]
+}
+
+@test "--uninstall removes the agents asb installed; the sandboxes' state and the accounts' logins are kept, and named" {
+  fake_install
+  local as="$T/home/.local/state/agent-sandbox"
+  installed 2.1.300 2.1.321
+  mkdir -p "$as/claude/accounts/work" "$as/claude/-proj/r/transcripts"
+  printf 'secret\n' >"$as/claude/accounts/work/.credentials.json"
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/home/.local/bin:/usr/bin:/bin" \
+    "$REPO_ROOT/install.sh" --uninstall --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"remove the agent asb installed, $as/claude/install (2.1.300 2.1.321; asb --install puts it back)"* ]]
+  [[ "$output" == *"keep $as (the sandboxes' state: role stores, transcripts; rm -rf it to remove)"* ]]
+  [[ "$output" == *"and the accounts' logins there: claude/accounts/work"* ]]
+  [ -d "$as/claude/install/2.1.321" ]
+  uninst
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ok] removed $as/claude/install"* ]]
+  [ ! -e "$as/claude/install" ]
+  [ "$(cat "$as/claude/accounts/work/.credentials.json")" = secret ]
+  [ -d "$as/claude/-proj/r/transcripts" ]
+  [[ "$output" == *"$as kept: the sandboxes' state and the accounts' logins."* ]]
+  # a symlink at install/ is not followed, nor removed
+  mkdir -p "$T/elsewhere/9.9.9"
+  ln -s "$T/elsewhere" "$as/claude/install"
+  fake_install
+  uninst
+  [ "$status" -eq 0 ]
+  [ -d "$T/elsewhere/9.9.9" ] && [ -L "$as/claude/install" ]
+}

@@ -25,9 +25,16 @@ being root is ordinary rather than a mistake.
 
 It stops and removes the proxy's systemd unit, deletes
 `~/.local/share/agent-sandbox` (engine copy, proxy runtime, compiled seccomp
-filter), and removes the `asb` and `agent-sandbox` commands it added, as
-recorded in `~/.local/share/agent-sandbox/install.manifest`. It never touched
-`claude`, so there is nothing to put back.
+filter), removes the `asb` and `agent-sandbox` commands it added, as
+recorded in `~/.local/share/agent-sandbox/install.manifest`, and removes the
+agents `asb --install` installed, `~/.local/state/agent-sandbox/<agent>/install/`
+(every version; the plan lists them, and `asb --install` puts one back after a
+reinstall). It never touched `claude`, so there is nothing to put back.
+
+The rest of `~/.local/state/agent-sandbox` is kept, and the plan says so: the
+sandboxes' state (role stores, transcripts) and the accounts' logins,
+`<agent>/accounts/NAME/`, which the plan names one by one. Remove it by hand
+(`rm -rf ~/.local/state/agent-sandbox`) when you want those gone too.
 
 An install from before 0.4 did put the engine at `~/.local/bin/claude` (#151).
 Running `./install.sh` again takes that back, and so does `--uninstall`,
@@ -48,7 +55,8 @@ already gone is reported as such, not treated as an error.
 
 Kept unless you say otherwise: `~/.config/agent-sandbox`, which holds your
 allowlist and your `--trust` approvals, so a later install picks up where you
-left off (`--purge-config` removes it). Never touched: the agent itself,
+left off (`--purge-config` removes it). Never touched: an agent installed any
+other way (your own `claude`),
 `~/.mitmproxy` (mitmproxy's own CA), and the AppArmor profiles for `bwrap` and
 `pasta` — they grant a permission Ubuntu 24.04+ withholds, they are harmless,
 and other tools may rely on them by now. The plan prints the command to remove
