@@ -32,6 +32,7 @@ install() {
 }
 
 @test "--install claude: the pin, from the signed manifest's checksum, installed as claude/install/VERSION/claude" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   install claude
   [ "$status" -eq 0 ]
   [ "$output" = "agent-sandbox: --install: downloading claude 2.1.999 for x86_64-gnu, 0 MB, from file://$SRC/2.1.999/linux-x64/claude
@@ -42,6 +43,7 @@ agent-sandbox: --install: claude 2.1.999 is installed at ~/.local/state/agent-sa
 }
 
 @test "--install claude: a binary that is not the manifest's, or a manifest not signed by the key, installs nothing" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   printf 'evil claude 2.1.999\n' >"$SRC/2.1.999/linux-x64/claude"
   install claude
   [ "$status" -eq 1 ]
@@ -57,6 +59,7 @@ agent-sandbox: --install: claude 2.1.999 is installed at ~/.local/state/agent-sa
 }
 
 @test "--install claude as shipped: a version not in its table is said untested, and still needs the vendor's signature" {
+  require_host "asb --install is the host's; the engine refuses it inside a sandbox"
   # the test manifest is signed by the test key, not Anthropic's: the shipped resolver refuses it
   run_engine AGENT_SANDBOX_INSTALL_BASE="$SRC" -- asb --install claude@2.1.999
   [ "$status" -eq 1 ]

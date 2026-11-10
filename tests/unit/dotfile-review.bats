@@ -140,6 +140,7 @@ approve() { # approve the project's dot-file the way --trust does, content kept
 }
 
 @test "AGENT_SANDBOX=1 on the host does not switch the gate off: only a real sandbox has no gate" {
+  require_host "AGENT_SANDBOX=1 with pid 1 not bubblewrap is the host's case; inside a sandbox pid 1 is bwrap"
   # A project's own shell setup (a direnv .envrc) could set the marker; the file that
   # project ships must still be reviewed.
   printf '[allow]\nevil.example\n' >"$PROJ/.agent-sandbox"

@@ -1215,6 +1215,7 @@ two_agents() {
 }
 
 @test "the default agent: asked at a terminal when asb can run several and none is set, written by the installed engine" {
+  require_host "asb --set-default-agent is the host's; the engine refuses it inside a sandbox"
   two_agents
   local df="$T/home/.config/agent-sandbox/default-agent"
   # an answer that is neither a number in the list nor a name is asked again
@@ -1273,6 +1274,7 @@ two_agents() {
 }
 
 @test "the default agent: the question at a real terminal (a pty), answered there" {
+  require_host "asb --set-default-agent is the host's; the engine refuses it inside a sandbox"
   command -v script >/dev/null || skip "script(1) is needed for a pty"
   two_agents
   local df="$T/home/.config/agent-sandbox/default-agent"
@@ -1332,6 +1334,7 @@ two_agents() {
 }
 
 @test "the candidates follow the engine's rule: a profile that fails to load, one naming no command, and one chosen by --profile alone (a recipe's included) are none" {
+  require_host "asb --set-default-agent is the host's; the engine refuses it inside a sandbox"
   two_agents
   mkdir -p "$SRC/profiles/broken" "$SRC/profiles/nocmd"
   printf 'return 1\n' >"$SRC/profiles/broken/profile.sh"
@@ -1425,6 +1428,7 @@ two_agents() {
 }
 
 @test "the default agent: an answer with a leading zero is a number (08 is not octal); an install dir with no version says none" {
+  require_host "asb --set-default-agent is the host's; the engine refuses it inside a sandbox"
   two_agents
   printf '08\n02\n' >"$T/answers"
   agents_step

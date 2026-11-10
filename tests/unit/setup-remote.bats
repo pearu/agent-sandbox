@@ -273,6 +273,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote DEST: a word that is no section is a destination; its section, [remote:ACCOUNT-HOST] with your ssh login name, is appended for review, and declined the file is as it was, or absent (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   setup_remote qgpu3
   [ "$status" -eq 1 ]
@@ -296,6 +297,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: refused for a section that is unusable as written (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   printf '[remote:r1]\nhost = qgpu3\n' >"$PROJ/.agent-sandbox"
   setup_remote
@@ -305,6 +307,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: refused while the file is not approved, with the --trust hint (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   NOAPPROVE=1 section 'account = tob'
   setup_remote
@@ -314,6 +317,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a host with everything present and working is ready: exit 0, no admin's script, one batch-mode ssh (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   section 'account = tob' 'gpu = /dev/nvidiactl /dev/nvidia1'
   setup_remote
@@ -345,6 +349,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: bwrap and pasta missing where the kernel restricts user namespaces: the admin's script installs those two and both profiles, exit 1, the run line (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing pasta=missing profiles=
   section 'account = tob'
   setup_remote
@@ -368,6 +373,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "drift: the profile texts the admin's script carries are install.sh's, byte for byte (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing pasta=missing profiles=
   section
   setup_remote
@@ -383,6 +389,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a named account that is absent gets adduser and your public key in the admin's script (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host accounts=
   mkdir -p "$H/home/.ssh"
   : >"$H/home/.ssh/id_ed25519"
@@ -409,6 +416,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a dnf host gets the dnf line, and useradd (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host pm=dnf os=fedora:42:"" bwrap=missing sshd=0 restrict=na profiles= accounts=
   section 'account = tob'
   setup_remote
@@ -420,6 +428,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: no restriction and user namespaces working: bwrap missing is the package alone, no profile (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing restrict=0 profiles= cand=unknown
   stub unshare 'exit 0'
   section
@@ -431,6 +440,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: bubblewrap 0.9.0 gets the rebuild, install.sh carried whole (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=0.9.0 cand=0.9.0
   section
   setup_remote
@@ -452,6 +462,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a user with no sudo on a host with everything present is ready (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host sudo=none
   section
   setup_remote
@@ -463,6 +474,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a gpu node the host lacks is said, and is no fault of the preflight (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   section 'gpu = /dev/nvidiactl /dev/nvidia3'
   setup_remote
@@ -475,6 +487,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: the run line follows sudo: without a password, none, and root (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host sudo=ok accounts=
   section 'account = tob'
   setup_remote
@@ -490,6 +503,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a copy of the admin's script that fails is said, with the scp to do it by hand, and the run line still (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing pasta=missing profiles=
   section 'account = tob'
   rm -f "$H/copied.sh"
@@ -501,6 +515,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: root as the ssh user with no account named is not ready, and no admin's script fixes it (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host sudo=root uid=0 user=root
   section
   setup_remote
@@ -511,6 +526,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: a preflight ssh cannot complete is said, exit 1 (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   section
   setup_remote PROBE_FAIL=1
@@ -521,6 +537,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: an installed engine takes the profiles from the checkout install.manifest records, else says by hand (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   local app="$H/app"
   mkdir -p "$app" "$H/home/.local/share/agent-sandbox"
   cp "$ENGINE" "$app/agent-sandbox"
@@ -544,6 +561,7 @@ p='agent-sandbox: remote r1:'
 }
 
 @test "--setup-remote: the order of a script that does everything: packages, profiles, the rebuild (its last step runs bwrap in a user namespace), the account (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing pasta=missing cand=0.9.0-1ubuntu0.3 profiles= accounts=
   section 'account = tob'
   setup_remote
@@ -570,6 +588,7 @@ user_ssh_config() {
 }
 
 @test "--setup-remote: the account's part for a full section: install.sh as the account, exactly the policy, the keys file, approved, launched, the host key back under [127.0.0.1]:PORT, the alias through ProxyJump, the checks (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   user_ssh_config
@@ -658,6 +677,7 @@ W
 }
 
 @test "--setup-remote: a port published at an address: HostName the host's own, no ProxyJump, the host key as [HostName]:PORT; a literal address is the HostName, and our line replaced (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   section
   setup_remote
@@ -682,6 +702,7 @@ W
 }
 
 @test "--setup-remote: a section whose host is its own name is a fault at the review, and refused by the command before any ssh (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   printf '[remote:qgpu3]\nhost = qgpu3\nport = 2222\n' >"$PROJ/.agent-sandbox"
   engine_cmd
@@ -697,6 +718,7 @@ W
 }
 
 @test "--setup-remote: a scratch that is /, the home, or has a '..' component is refused; one that is the home by its absolute path, once the account's side says so (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   local s
   # shellcheck disable=SC2088 # the section's own words, written as they are
@@ -716,6 +738,7 @@ W
 }
 
 @test "--setup-remote: run again unchanged: nothing carried or installed, no approval, no relaunch -- up to date; the checks again (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   user_ssh_config
@@ -743,6 +766,7 @@ W
 }
 
 @test "--setup-remote: a changed section: the diff of the two policies said, approved again, shut down and relaunched (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   setup_remote
@@ -761,6 +785,7 @@ W
 }
 
 @test "--setup-remote: not running (a reboot): launched again, without approval; the keys file, the host key and the alias block mended (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   setup_remote
@@ -783,6 +808,7 @@ W
 }
 
 @test "--setup-remote: a checkout at another commit than the account's install is carried and installed again, and the login relaunched (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   setup_remote
@@ -799,6 +825,7 @@ W
 }
 
 @test "--setup-remote: your micromamba is carried into the account's install, where install.sh looks for it (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   mkdir -p "$H/home/.local/share/agent-sandbox/micromamba/bin"
@@ -812,6 +839,7 @@ W
 }
 
 @test "--setup-remote: the account unreachable, install.sh failing, a check failing: each said, exit 1 (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   setup_remote ACCT_FAIL=1
@@ -830,6 +858,7 @@ W
 }
 
 @test "--setup-remote: a block of yours above the alias that sets its options first is said, exit 1 (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   mkdir -p "$H/home/.ssh"
@@ -840,6 +869,7 @@ W
 }
 
 @test "--setup-remote: an [ssh] line that names the remote: no --apply line to say (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   section 'account = tob' '[ssh:impl-1]' 'r1'
   setup_remote
@@ -876,6 +906,7 @@ apply_remote() {
 }
 
 @test "--setup-remote: a pasta whose build names no version is ok, said so; one without --hostname gets no note (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host pasta='unknown version'
   section
   setup_remote
@@ -889,6 +920,7 @@ apply_remote() {
 }
 
 @test "--setup-remote: host = HOST:SSHPORT -- that port for every ssh to the host: the preflight, the admin's copy and its run line, the account's part, and ProxyJump HOST:SSHPORT (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host bwrap=missing
   HOST=qgpu3:2224 PORT=2222 section 'account = tob'
   setup_remote
@@ -911,6 +943,7 @@ apply_remote() {
 }
 
 @test "--setup-remote: gpu = none is no GPU: said at the review, [gpu] mode = off in the policy, no GPU check (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   PORT=2222 section 'account = tob' 'gpu = none'
   [[ "$output" == *".agent-sandbox: [remote:r1] gpu = none: no GPU device node of that host is passed into the login's sandbox"* ]]
@@ -923,6 +956,7 @@ apply_remote() {
 }
 
 @test "--setup-remote DEST --port: the section appended exactly, approved through the review, then set up as [remote:ACCOUNT-HOST]: the ssh port, the login's port, the scratch (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   SR_ANSWER='y\n' setup_remote ALIAS_NAME=tob-qgpu3 tob@qgpu3:2223 --port 2224
   [ "$status" -eq 0 ]
@@ -947,6 +981,7 @@ apply_remote() {
 }
 
 @test "--setup-remote DEST: a section of that name that says otherwise is refused, each difference said; --port against an ALIAS's port too; a word that is neither is refused (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   printf '[remote:tob-qgpu3]\nhost = qgpu3\naccount = tob\nport = 2222\n' >"$PROJ/.agent-sandbox"
   engine_cmd
@@ -1009,6 +1044,7 @@ this_machine() {
 }
 
 @test "--setup-remote: a host that is this machine (machine-id and boot id): the alias at 127.0.0.1 with no ProxyJump, for a bare port and 0.0.0.0 alike; the host key as [127.0.0.1]:PORT; another boot id is another machine (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   [ -s /etc/machine-id ]
   remote_host
   this_machine
@@ -1037,6 +1073,7 @@ this_machine() {
 }
 
 @test "--setup-remote: on this machine the end names the roles' [net:ROLE] host-port line, for the roles [ssh] names it with, unless a host-port line gives the port; a login at one other address is said unreached (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   [ -s /etc/machine-id ]
   remote_host
   this_machine
@@ -1071,6 +1108,7 @@ this_machine() {
 }
 
 @test "--setup-remote: the egress check goes by the proxy's CONNECT: an allowed host's own 403 through the tunnel passes, a refusal at CONNECT or no answer fails; example.com must be refused at CONNECT (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   setup_remote ALLOWED_OUT='403 200'
@@ -1089,6 +1127,7 @@ this_machine() {
 }
 
 @test "--setup-remote: with no allow line the egress check takes the first host of the account's allowlist.txt; with none there, it says why it is not measured (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   PORT=2222 section 'account = tob'
   mkdir -p "$R/home/tob/.config/agent-sandbox"
@@ -1105,6 +1144,7 @@ this_machine() {
 }
 
 @test "--setup-remote: a new block in a ~/.ssh/config that has another remote's block is said appended, the rest byte for byte, no backup (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   mkdir -p "$H/home/.ssh"
@@ -1119,6 +1159,7 @@ this_machine() {
 }
 
 @test "--setup-remote ALIAS --status: over ssh as the account, its own asb --status in the scratch, its answer said and its exit status followed; no preflight, nothing written there or here (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   HOST=qgpu3:2224 full_section
   user_ssh_config
@@ -1158,6 +1199,7 @@ this_machine() {
 }
 
 @test "--setup-remote ALIAS --shutdown: the account's own asb --shutdown in the scratch; nothing removed there or here; how to start it again; --status then says not running (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
   user_ssh_config
@@ -1194,6 +1236,7 @@ this_machine() {
 }
 
 @test "--setup-remote --status/--shutdown: refused for a destination, with --port, in a sandbox, and while the file is not approved, before any ssh; an unreachable account is said (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   section 'account = tob'
   setup_remote tob@qgpu3 --status
@@ -1229,6 +1272,7 @@ this_machine() {
 }
 
 @test "--setup-remote: env TMPDIR under the scratch ('~' the account's home, or absolute) is made there, said once, before the login's line; the last TMPDIR line is the one; outside the scratch, through '..', or another variable: not made, nothing said (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   local T="$R/home/tob"
   PORT=2222 section 'account = tob' 'scratch = ~/bench' 'env = TMPDIR=~/bench/tmp/x/'

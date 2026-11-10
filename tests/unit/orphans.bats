@@ -4,7 +4,16 @@
 
 # Not in parallel within this file: `orphans.sh --kill` ends every orphaned keeper
 # payload on the machine, a sibling test's included (measured under bats --jobs 18).
-setup_file() { export BATS_NO_PARALLELIZE_WITHIN_FILE=true; }
+#
+# Host only, the whole file: `--kill` ends every keeper payload whose parent is pid 1,
+# and inside a sandbox the role's own keeper payload is one (its bwrap is pid 1 there):
+# a run inside a role killed the role, its agent with it (measured on ey). Skipped in
+# setup_file, before any test can start.
+setup_file() {
+  load "$BATS_TEST_DIRNAME/../helpers/common"
+  require_host "probes/orphans.sh acts on every process it can see, and inside a sandbox the role's own keeper is an orphan to it"
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+}
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"

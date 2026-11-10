@@ -61,6 +61,29 @@ source_engine() {
   source "$ENGINE"
 }
 
+# require_host REASON -- skip the test, saying "runs only on the host: REASON", when the
+# suite runs inside an agent-sandbox sandbox (a role developing asb runs its tests
+# there). For a test of what the engine does on the host only -- --login, --install,
+# --set-default-agent, the dot-file gate, a probe that acts on the whole machine -- which
+# inside a sandbox the engine refuses, or which would end the sandbox itself. The
+# detection is the engine's own, _as_maybe_inside (the AGENT_SANDBOX marker, or pid 1
+# being bubblewrap), from the checkout's engine -- never a mutated copy's -- sourced in a
+# subshell. It cannot be switched off from a test: neither sign is the test's to change.
+# In setup_file, it skips every test of the file. Such a test still runs on the host and
+# in CI, so a change to a host-only path needs a run there.
+require_host() {
+  if inside_sandbox; then
+    skip "runs only on the host: ${1:?require_host: a reason}"
+  fi
+}
+
+# inside_sandbox -- is the suite running inside an agent-sandbox sandbox? require_host's
+# test, for a harness step that has a host-only form (asb --install) and another inside.
+inside_sandbox() {
+  # shellcheck disable=SC1091
+  (source "$REPO_ROOT/agent-sandbox" && _as_maybe_inside)
+}
+
 # A fake HOME with a stub Claude install, a stub agent binary, a project dir,
 # and a stub bwrap on PATH. The stub agent is installed as `asb --install claude`
 # installs it (#6): <state>/claude/install/2.1.300/claude, `current` naming 2.1.300,

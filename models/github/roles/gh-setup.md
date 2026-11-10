@@ -80,6 +80,8 @@ user -- you say what they rest on.
   host, `nvidia-modprobe -u -c 0`, then the role's restart
   (`asb --role <role> --shutdown claude`, then its launch again), so that a role
   launched after a host reboot recognises it.
+- The project's test suite: inside the sandbox it may skip tests that run only on the
+  host, and each such skip says why -- a skip, not a failure.
 - Anything else you found the build needs that a role would trip on: a dependency's
   clone or a host the roles need too, an environment variable, a step after `main`
   moves.
