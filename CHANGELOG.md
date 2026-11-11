@@ -867,6 +867,10 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The Markdown prose is re-flowed to 88 columns**, with no wording change. The github
+  model's purpose files (gh-setup, gh-review, gh-fix) change in layout only, so a
+  project's next `asb --init github` rewrites its copies and asks for `--trust` once
+  (the review shows a whitespace-only diff).
 - **gh-review's stand-in marker is never posted** (#391): the lead paragraph of a
   comment it drafts in the user's voice is marked as a stand-in (`[Stand-in for you to
   rewrite]`) in the copy shown to the user only. On the user's approval the role removes
