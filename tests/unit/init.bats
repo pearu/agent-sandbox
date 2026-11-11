@@ -157,6 +157,19 @@ init() {
   [ "$(tail -1 "$PROJ/.asb/roles/gh-review.md")" = "NEW LINE" ]
 }
 
+@test "--init never writes its record through a link a sandbox left in .asb/: the old fixed temp name init.sums.new pointing outside is left as it is, its target unchanged" {
+  mkdir -p "$PROJ/.asb"
+  printf 'KEEP\n' >"$H/outside"
+  ln -s "$H/outside" "$PROJ/.asb/init.sums.new"
+  init -- github
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/outside")" = KEEP ]
+  [ -L "$PROJ/.asb/init.sums.new" ]
+  [ -f "$PROJ/.asb/init.sums" ] && [ ! -L "$PROJ/.asb/init.sums" ]
+  grep -q ' \.asb/roles/gh-review\.md$' "$PROJ/.asb/init.sums"
+  [ -z "$(find "$PROJ/.asb" -maxdepth 1 -name 'init.sums.?*' ! -name init.sums.new)" ] # no temp left
+}
+
 @test "run again: a changed purpose file with no addendum gets the migration offer -- the model's text in .asb/migrate/, the addenda named, the steps; --init never touches an addendum (#353)" {
   cp -r "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=0 reviewer=0

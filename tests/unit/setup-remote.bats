@@ -676,6 +676,68 @@ W
   run ! grep -q sudo "$H/acct.cmds"
 }
 
+@test "--setup-remote: the policy there is never written through a link its sandbox left in the scratch: the old fixed temp name .agent-sandbox.asb-new pointing outside is left as it is, its target unchanged (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  remote_host
+  full_section
+  local T="$R/home/tob"
+  mkdir -p "$T/bench"
+  printf 'KEEP\n' >"$T/outside"
+  ln -s "$T/outside" "$T/bench/.agent-sandbox.asb-new"
+  setup_remote
+  [ "$(cat "$T/outside")" = KEEP ]
+  [ "$status" -eq 0 ]
+  [ -L "$T/bench/.agent-sandbox.asb-new" ]
+  [ -f "$T/bench/.agent-sandbox" ] && [ ! -L "$T/bench/.agent-sandbox" ]
+  grep -qx '\[sshd\]' "$T/bench/.agent-sandbox"
+  # the account's umask (the stub account inherits this one), not mktemp's 600
+  [ "$(stat -c %a "$T/bench/.agent-sandbox")" = "$(printf '%o' $((0666 & ~0$(umask))))" ]
+  [ -z "$(find "$T/bench" -maxdepth 1 -name '.agent-sandbox.asb-new.*')" ] # no temp left
+}
+
+@test "--setup-remote: a policy written over one there keeps that file's mode (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  remote_host
+  full_section
+  local T="$R/home/tob"
+  mkdir -p "$T/bench"
+  printf '# an older policy\n' >"$T/bench/.agent-sandbox"
+  chmod 640 "$T/bench/.agent-sandbox"
+  setup_remote
+  [ "$status" -eq 0 ]
+  grep -qx '\[sshd\]' "$T/bench/.agent-sandbox"
+  [ "$(stat -c %a "$T/bench/.agent-sandbox")" = 640 ]
+}
+
+@test "--setup-remote: .asb/remote/.gitignore is never written through a link a sandbox left there, a dangling one included (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  remote_host bwrap=missing pasta=missing profiles=
+  section 'account = tob'
+  mkdir -p "$PROJ/.asb/remote"
+  ln -s "$H/created-outside" "$PROJ/.asb/remote/.gitignore"
+  setup_remote
+  [ "$status" -eq 1 ]
+  [ -f "$ADMIN" ]
+  [ ! -e "$H/created-outside" ]
+  [ -L "$PROJ/.asb/remote/.gitignore" ]
+}
+
+@test "--setup-remote: a link at .asb, .asb/remote or the remote's directory is refused: nothing is made through it (#344)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  remote_host bwrap=missing pasta=missing profiles=
+  section 'account = tob'
+  local l
+  for l in .asb .asb/remote .asb/remote/r1; do
+    rm -rf "$PROJ/.asb" "$H/outdir"
+    mkdir -p "$H/outdir" "$PROJ/$(dirname "$l")"
+    ln -s "$H/outdir" "$PROJ/$l"
+    setup_remote
+    [ -z "$(ls -A "$H/outdir")" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$p $l is a symlink; the admin's script is not written through it"* ]]
+  done
+}
+
 @test "--setup-remote: a port published at an address: HostName the host's own, no ProxyJump, the host key as [HostName]:PORT; a literal address is the HostName, and our line replaced (#344)" {
   require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host

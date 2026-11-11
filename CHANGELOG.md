@@ -1040,6 +1040,25 @@ names are gone; there are no aliases for removed names before 1.0.
   and makes none the file lacks -- a count given adds above the highest present, as a
   first `--init` does, and drops none; a section whose commented header was changed by
   hand keeps all its lines, each named.
+- **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
+  sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
+  scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`
+  filters through `history.jsonl.asb-summarize` beside it; a role with that directory
+  read-write could point the name at any file you can write (`~/.bashrc`), and the next
+  host-side run overwrote it. Each temp is now a new file `mktemp` makes, removed on every
+  path, and keeps the file's mode (the remote's policy follows the account's umask when
+  it is new). `--setup-remote` leaves a link at `.asb/remote/.gitignore`, a dangling one
+  included, alone.
+- **A `copy` channel's sync no longer writes through a link the sandbox left in its
+  copy.** The copy is the sandbox's to change; a dangling link at the name of one of your
+  files made the host-side sync create that file wherever the link pointed. The copy is
+  now read and written through no link: a symlink, a FIFO or another special file at the
+  name or in a parent directory is neither followed, read nor replaced, and where the sync
+  had something to write there the launch names it (a link at a file of yours that has not
+  changed is left, silently). Likewise `--trust` does not append to a `.git/info/exclude`
+  when it, `.git/info` or `.git` is a symlink, `--setup-remote` refuses a symlink at `.asb`, `.asb/remote` or the
+  remote's directory, and a read-only project's mount point is not made through a
+  dangling link; each is said.
 - **Two roles on one base or one account no longer strip each other's files.** When
   the first of them exited, its cleanup removed the empty mount-point files bwrap had
   created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a

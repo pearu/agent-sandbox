@@ -755,6 +755,35 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [[ "$output" == *"session allowlist: pypi.org"* ]]
 }
 
+@test "--trust never appends through a link a sandbox left in the repository: .git/info/exclude, .git/info or .git a symlink is said, and its target unchanged" {
+  git init -q "$PROJ"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  printf 'KEEP\n' >"$H/outside"
+  rm -f "$PROJ/.git/info/exclude"
+  ln -s "$H/outside" "$PROJ/.git/info/exclude"
+  run_trust 'y\ny'
+  [ "$(cat "$H/outside")" = KEEP ]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approved."* && "$output" == *"$PROJ/.git/info/exclude is a symlink; .agent-sandbox is not added to "* ]]
+  # the directory a link: the same
+  rm -rf "$PROJ/.git/info" "$CFG/trust"
+  mkdir -p "$H/outdir"
+  ln -s "$H/outdir" "$PROJ/.git/info"
+  run_trust 'y\ny'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$PROJ/.git/info is a symlink"* ]]
+  [ ! -e "$H/outdir/exclude" ]
+  # .git itself a link, to a repository outside: the same
+  rm -rf "$PROJ/.git" "$CFG/trust"
+  git init -q "$H/outrepo"
+  printf 'KEEP\n' >"$H/outrepo/.git/info/exclude"
+  ln -s "$H/outrepo/.git" "$PROJ/.git"
+  run_trust 'y\ny'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$PROJ/.git is a symlink"* ]]
+  [ "$(cat "$H/outrepo/.git/info/exclude")" = KEEP ]
+}
+
 @test "--trust makes no git-ignore offer for a file the repository tracks" {
   git init -q "$PROJ"
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
@@ -901,6 +930,33 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 1 ]
   [[ "$output" == *"--apply runs on the host"* ]]
   [ ! -e "$PROJ/.agent-sandbox" ]
+}
+
+@test "--apply never writes through a link a sandbox left in the project: the old fixed temp name .agent-sandbox.apply.tmp pointing outside is left as it is, its target unchanged" {
+  # A role with the project read-write can leave any name there; --apply runs on the host.
+  printf '[allow]\npypi.org\n\n[deny]\nevil.example\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  printf 'KEEP\n' >"$H/outside"
+  ln -s "$H/outside" "$PROJ/.agent-sandbox.apply.tmp"
+  run_apply 'y\n' '[allow]' github.com
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/outside")" = KEEP ]
+  [ -L "$PROJ/.agent-sandbox.apply.tmp" ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org\ngithub.com\n\n[deny]\nevil.example' ]
+  [[ "$output" == *"approved."* ]]
+  # no temp of its own left behind
+  [ "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*' | wc -l)" -eq 1 ]
+}
+
+@test "--apply that cannot write the file fails and leaves no temp behind" {
+  [ "$(id -u)" -ne 0 ] || skip "root writes in a directory of mode 555"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  chmod 555 "$PROJ" # the file is replaced by a rename: the directory is what refuses
+  run_apply - '[allow]' github.com
+  chmod 755 "$PROJ"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
 }
 
 @test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {

@@ -2808,6 +2808,19 @@ _as_connect_bind_path() {
   # removed again while it is empty.
   if [[ ! -e "$p" && "${_connect_project_mode:-read-write}" == read-only &&
     "$p" == "$(_as_project_dir)"/* ]] && [[ "$mode" == own || -e "$s" ]]; then
+    # A link at the path or at any directory between it and the project (another role
+    # may have the project read-write; the key is resolved lexically) would carry the
+    # mount point made here out of the project.
+    local _pd _c _rest
+    _pd="$(_as_project_dir)" _c="$_pd" _rest="${p#"$_pd"/}"
+    while [[ -n "$_rest" ]]; do
+      _c="$_c/${_rest%%/*}"
+      [[ "$_rest" == */* ]] && _rest="${_rest#*/}" || _rest=""
+      if [[ -L "$_c" ]]; then
+        _as_msg "connect: $what: $_c is a symlink; the mount point for $p is not made through it. Remove it. Refusing to launch"
+        return 1
+      fi
+    done
     if ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; then
       mkdir -p -- "$p" || return 1
     else
@@ -2988,6 +3001,24 @@ _as_connect_sync() {
   # a month.
   local line f
   while IFS= read -r line; do
+    # Something in this sandbox's copy where the sync was to write or remove: a link
+    # (a host-side write through it would land outside the copy), neither a file nor a
+    # directory (a FIFO would hang the launch), or a file where yours has a directory or
+    # the reverse. The copy is the sandbox's to change; the sync neither follows, opens
+    # nor replaces any of them.
+    local what
+    case "$line" in
+      link\ *) what="a symlink" ;;
+      special\ *) what="neither a regular file nor a directory (a FIFO, a socket or a device)" ;;
+      file\ *) what="a file where your copy has a directory" ;;
+      dir\ *) what="a directory where your copy has a file" ;;
+      *) what="" ;;
+    esac
+    if [[ -n "$what" ]]; then
+      f="${line#* }"
+      _as_msg "connect: $ch: '$f' in this sandbox's copy is $what; the sync left it as it is, so the sandbox's copy there does not follow yours. Remove it, or take yours: $(_as_self_cmd --reset "$ch")"
+      continue
+    fi
     [[ "$line" == conflict\ * ]] || continue
     f="${line#conflict }"
     _as_channel_vendor_file "$ch" "$f" && continue
@@ -4515,7 +4546,7 @@ PY
 # same, should a later version write one. ID is a fresh uuid, so nothing else has it.
 _as_summarize_forget() {
   python3 - "$1" "$2" <<'PY'
-import glob, json, os, shutil, sys
+import glob, json, os, shutil, sys, tempfile
 sb, sid = sys.argv[1], sys.argv[2]
 places = set()
 try:
@@ -4553,10 +4584,17 @@ for p in sorted(places):
                 if isinstance(r, dict) and r.get("sessionId") == sid:
                     continue
             keep.append(line)
-        tmp = p + ".asb-summarize"
-        with open(tmp, "wb") as fh:
-            fh.writelines(keep)
-        os.replace(tmp, p)
+        # A new file mkstemp makes beside it, never a fixed name: the directory can be
+        # one a sandbox writes (read-write), and a link left there would be followed.
+        fd, tmp = tempfile.mkstemp(prefix=".asb-summarize.", dir=os.path.dirname(p))
+        try:
+            os.fchmod(fd, os.stat(p).st_mode & 0o7777)  # the file's mode, not mkstemp's 600
+            with os.fdopen(fd, "wb") as fh:
+                fh.writelines(keep)
+            os.replace(tmp, p)
+        except BaseException:
+            os.unlink(tmp)
+            raise
 PY
 }
 
@@ -10016,9 +10054,18 @@ _as_setup_remote_alias() {
       _as_msg "$p no public key of yours found (no .pub beside an IdentityFile of ssh -G $_rm_host, none in ssh-add -L): add one to $_rm_account's ~/.ssh/authorized_keys by hand"
     fi
   fi
-  local dir="$cwd/.asb/remote/$alias" tmp
+  local dir="$cwd/.asb/remote/$alias" tmp _ln
+  # .asb/ is the project's, which a sandbox may write: a link at .asb, .asb/remote or the
+  # remote's directory would carry the files made below out of the project.
+  for _ln in "$cwd/.asb" "$cwd/.asb/remote" "$dir"; do
+    if [[ -L "$_ln" ]]; then
+      _as_msg "$p ${_ln#"$cwd/"} is a symlink; the admin's script is not written through it. Remove it and run again"
+      return 1
+    fi
+  done
   mkdir -p -- "$dir" || return 1
-  [[ -e "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
+  # A link there, dangling included, is left alone: a write would follow it out of the project.
+  [[ -e "$cwd/.asb/remote/.gitignore" || -L "$cwd/.asb/remote/.gitignore" ]] || printf '*\n' >"$cwd/.asb/remote/.gitignore"
   tmp="$(mktemp "$dir/.admin.sh.XXXXXX")" || return 1
   # The script goes to the ssh user's home there too, over the same ssh, so that one
   # line runs it: sudo with a password needs a terminal, so the script cannot ride on
@@ -10319,8 +10366,15 @@ if [ -n "$tmpdir" ] && [ ! -d "$tmpdir" ]; then
   say made "$tmpdir"
 fi
 if [ "$wpol" = 1 ]; then
-  { write_policy >"$p/.agent-sandbox.asb-new" && mv -f -- "$p/.agent-sandbox.asb-new" "$p/.agent-sandbox"; } \
-    || { say error "cannot write $p/.agent-sandbox"; exit 1; }
+  # A new file mktemp makes (never a fixed name the scratch's sandbox could link), with
+  # the mode of the file it replaces, or the account's umask for a new one (mktemp's is 600).
+  if [ -f "$p/.agent-sandbox" ] && [ ! -L "$p/.agent-sandbox" ]; then
+    m="$(stat -c %a -- "$p/.agent-sandbox")"
+  else
+    m="$(printf '%o' $((0666 & ~0$(umask))))"
+  fi
+  t="$(mktemp "$p/.agent-sandbox.asb-new.XXXXXX")" && { write_policy >"$t" && chmod "$m" "$t" && mv -f -- "$t" "$p/.agent-sandbox"; } \
+    || { [ -z "${t:-}" ] || rm -f -- "$t"; say error "cannot write $p/.agent-sandbox"; exit 1; }
 fi
 k="$HOME/.config/agent-sandbox/asb-$alias-keys"
 (umask 077 && mkdir -p -- "${k%/*}" && printf '%s\n' "$pub" >"$k.new" && mv -f -- "$k.new" "$k") \
@@ -12909,6 +12963,15 @@ _as_trust_review() {
     && ! git -C "$cwd" check-ignore -q .agent-sandbox 2>/dev/null; then
     local _ex
     _ex="$(git -C "$cwd" rev-parse --absolute-git-dir)/info/exclude"
+    # The repository is the project's, which a sandbox may write: an append through a
+    # link there -- .git, .git/info or the file -- would land outside it.
+    local _l
+    for _l in "$cwd/.git" "${_ex%/exclude}" "$_ex"; do
+      if [[ -L "$_l" ]]; then
+        _as_msg "$_l is a symlink; .agent-sandbox is not added to $_ex (add /.agent-sandbox to the repository's exclude file yourself)"
+        return 0
+      fi
+    done
     printf 'agent-sandbox: add .agent-sandbox to %s so it is not committed? [y/N] ' "$_ex" >&2
     read -r ans || true
     case "$ans" in

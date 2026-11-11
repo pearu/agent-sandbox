@@ -305,3 +305,188 @@ shadow() { # shadow REL CONTENT -- as if the sandbox had written it through the 
   run "${PYTHON_CMD[@]}" "$SYNC" frobnicate --kind dir --source "$S" --copy "$C" --base "$B"
   [ "$status" -eq 2 ]
 }
+
+# ----- links in the copy store: the sandbox's to plant, never written through ---------
+# The copy store is bound read-write into the sandbox, and the sync runs on the host: a
+# write or removal that followed a link there would land outside the store. Each is
+# refused, the base left so the next sync tries again, and named on a `link` line.
+
+@test "a dangling link at an upstream file's name is not written through: nothing is created outside, the link stays, and it is named" {
+  O="$BATS_TEST_TMPDIR/outside"
+  plant a.md ONE
+  mkdir -p "$C"
+  ln -s "$O" "$C/a.md"
+  sync
+  [ "$status" -eq 0 ]
+  [ ! -e "$O" ]
+  [ -L "$C/a.md" ]
+  [ "$output" = "link $C/a.md" ]
+  sync # not seeded: said again
+  [ "$output" = "link $C/a.md" ]
+}
+
+@test "a link to an existing file at a refreshed name is not written through: its target is unchanged, and it is named" {
+  O="$BATS_TEST_TMPDIR/outside"
+  plant a.md ONE
+  sync
+  printf 'ONE\n' >"$O" # the content the base records, so the copy looks untouched
+  rm "$C/a.md"
+  ln -s "$O" "$C/a.md"
+  plant a.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(cat "$O")" = ONE ]
+  [ -L "$C/a.md" ]
+  [ "$output" = "link $C/a.md" ]
+}
+
+@test "a symlinked parent directory is not written, made or removed through: the outside directory is untouched, and the link is named" {
+  O="$BATS_TEST_TMPDIR/outdir"
+  mkdir -p "$O" "$C"
+  ln -s "$O" "$C/sub"
+  plant sub/a.md ONE
+  plant sub/deep/b.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$(ls -A "$O")" ]
+  [[ "$output" == *"link $C/sub"* ]]
+  # a removal: the source deletes a file the base has, and the copy holds it behind a link
+  rm "$C/sub"
+  sync
+  [ -f "$C/sub/a.md" ]
+  mv "$C/sub" "$BATS_TEST_TMPDIR/was"
+  printf 'ONE\n' >"$O/a.md"
+  ln -s "$O" "$C/sub"
+  rm "$S/sub/a.md"
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(cat "$O/a.md")" = ONE ]
+  # never read through the link, the copy there is not the one synced: the sandbox's,
+  # kept as a changed copy is when the source deletes the file, and nothing to say
+  [ -z "$output" ]
+}
+
+# tsync -- sync, given 10 s: a FIFO the sync opened would block it for ever.
+tsync() { run timeout 10 "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S" --copy "$C" --base "$B"; }
+
+@test "a FIFO at a tracked name in the copy is never opened: the sync does not hang, leaves it, and names it" {
+  plant a.md ONE
+  sync
+  rm "$C/a.md"
+  mkfifo "$C/a.md"
+  plant a.md TWO # a refresh would write it; the hash would read it
+  tsync
+  [ "$status" -eq 0 ]
+  [ -p "$C/a.md" ]
+  [ "$output" = "special $C/a.md" ]
+}
+
+@test "a FIFO at an upstream name never seeded is not written to; a file where the source has a directory, and a directory where it has a file, are in the way, each named as what it is" {
+  plant a.md ONE
+  plant sub/b.md TWO
+  mkdir -p "$C"
+  mkfifo "$C/a.md"
+  : >"$C/sub" # a file where the source has a directory
+  plant c.md THREE
+  mkdir -p "$C/c.md" # a directory where the source has a file, never seeded
+  tsync
+  [ "$status" -eq 0 ]
+  [ -p "$C/a.md" ] && [ -f "$C/sub" ] && [ ! -s "$C/sub" ] && [ -d "$C/c.md" ]
+  [[ "$output" == *"special $C/a.md"* && "$output" == *"file $C/sub"* && "$output" == *"dir $C/c.md"* ]]
+}
+
+@test "a file the source turns into a directory: the untouched copy goes and what is under it is seeded, on the first sync, silently" {
+  plant x ONE
+  sync
+  rm "$S/x"
+  plant x/SKILL.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(at_copy x/SKILL.md)" = TWO ]
+  sync
+  [ -z "$output" ]
+}
+
+@test "a directory the source turns into a file: the untouched copies go, the emptied directory is pruned, and the file is seeded, in one sync, silently" {
+  plant y/a.md ONE
+  plant y/deep/b.md TWO
+  sync
+  rm -r "$S/y"
+  plant y FILE
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(at_copy y)" = FILE ]
+  sync
+  [ -z "$output" ]
+}
+
+@test "a file the sandbox edited, which the source then turns into a directory, is in the way at every sync: named a file" {
+  plant x ONE
+  sync
+  inside x MINE
+  rm "$S/x"
+  plant x/a.md TWO
+  sync
+  [ "$status" -eq 0 ]
+  [ "$output" = "file $C/x" ]
+  [ "$(at_copy x)" = MINE ]
+  sync
+  [ "$output" = "file $C/x" ]
+}
+
+@test "the copy is never read through a link: one to a FIFO outside at a tracked name does not hang the sync, and with the source unchanged nothing is said" {
+  plant a.md ONE
+  sync
+  mkfifo "$BATS_TEST_TMPDIR/fifo"
+  rm "$C/a.md"
+  ln -s "$BATS_TEST_TMPDIR/fifo" "$C/a.md"
+  tsync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -L "$C/a.md" ]
+}
+
+@test "a removal prunes the directories it emptied, strictly below the store, and none the sandbox still has files in" {
+  plant p/q/r.md ONE
+  plant p/keep.md TWO
+  sync
+  rm "$S/p/q/r.md"
+  sync
+  [ ! -e "$C/p/q" ]
+  [ -f "$C/p/keep.md" ]
+  rm "$S/p/keep.md"
+  sync
+  [ ! -e "$C/p" ]
+  [ -d "$C" ]
+}
+
+@test "a directory the sandbox made at a tracked file's name, the file yours unchanged: the sandbox deleted it, silently, at every sync" {
+  plant x ONE
+  sync
+  rm "$C/x"
+  mkdir -p "$C/x"
+  printf 'MINE\n' >"$C/x/own.md"
+  sync
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(at_copy x/own.md)" = MINE ]
+  sync
+  [ -z "$output" ]
+}
+
+@test "a file-shaped channel's copy is written in place, keeping its inode, with the source's mode and mtime" {
+  local f="$BATS_TEST_TMPDIR/one.json" c="$BATS_TEST_TMPDIR/copy.json" ino
+  printf 'A\n' >"$f"
+  chmod 640 "$f"
+  touch -d '2020-01-02 03:04:05' "$f"
+  : >"$c" # the mount point the engine makes
+  ino="$(stat -c %i "$c")"
+  fsync "$f" "$c"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$c")" = A ]
+  [ "$(stat -c %i "$c")" = "$ino" ]
+  [ "$(stat -c %a "$c")" = 640 ]
+  [ "$(stat -c %Y "$c")" = "$(stat -c %Y "$f")" ]
+}
