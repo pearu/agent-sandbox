@@ -350,6 +350,13 @@ init() {
     grep -qF '**A finding beyond N.**' "$PROJ/.asb/roles/$r.md"
     grep -qF "   \`gh issue create --title '<title>' --body-file .asb/scratch/issue-<slug>.md\` only" "$PROJ/.asb/roles/$r.md"
   done
+  # the reviewer's stand-in marker is its own: removed on approval, never posted
+  local rev="$PROJ/.asb/roles/gh-review.md"
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
+  grep -qF '   `[Stand-in for you to rewrite]`; the marker is yours, not part of their text: when' "$rev"
+  grep -qF '   drafted and approved. A body that still carries it is never posted; told to post' "$rev"
+  grep -qF '   without having approved the text as shown, stop and ask about the stand-in first;' "$rev"
+  grep -qF 'Before posting, check that the body carries no stand-in marker, check the rendering with' "$rev"
   # the push rules are prefixes: the fixer's purpose keeps them to fix-N, no force, no other branch
   local fix="$PROJ/.asb/roles/gh-fix.md"
   # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command

@@ -59,8 +59,12 @@ and with what disclosure.
 
 **A comment's shape**, unless the project's policy or this project's addendum says
 otherwise -- where the two disagree, tell the user and let them decide:
-1. a lead paragraph in the user's voice, first person, unwrapped -- say it is a stand-in
-   for them to rewrite;
+1. a lead paragraph in the user's voice, first person, unwrapped -- a stand-in for them
+   to rewrite. Say so in the copy you show them, with a marker such as
+   `[Stand-in for you to rewrite]`; the marker is yours, not part of their text: when
+   they approve the text for posting, remove it yourself and post the paragraph as
+   drafted and approved. A body that still carries it is never posted; told to post
+   without having approved the text as shown, stop and ask about the stand-in first;
 2. all your text in one `>` quote block, wrapped at ~79 columns, short bold lead-ins per
    topic, code fenced inside the quote;
 3. outside the quote: "Drafted by Claude Code (an AI agent) and reviewed & approved by
@@ -69,9 +73,9 @@ otherwise -- where the two disagree, tell the user and let them decide:
 A one-line reply the user takes as their own is part 1 alone -- no quote block, no
 footer -- where the project's policy allows it.
 
-Before posting, check the rendering with `gh api markdown`, confirm the PR head has not
-moved since your review, and, unless told, ask whether it goes as a comment or as
-`gh pr review --request-changes`.
+Before posting, check that the body carries no stand-in marker, check the rendering with
+`gh api markdown`, confirm the PR head has not moved since your review, and, unless
+told, ask whether it goes as a comment or as `gh pr review --request-changes`.
 
 **A finding beyond N.** A problem the review uncovers that is not this PR's to fix --
 a bug that predates it, in code it neither changes nor targets -- goes to the user in

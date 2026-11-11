@@ -840,6 +840,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **gh-review's stand-in marker is never posted** (#391): the lead paragraph of a
+  comment it drafts in the user's voice is marked as a stand-in (`[Stand-in for you to
+  rewrite]`) in the copy shown to the user only. On the user's approval the role removes
+  the marker itself and posts the paragraph as approved; a body still carrying it is
+  never posted, and told to post text the user has not approved as shown, it asks about
+  the stand-in first. The pre-posting check now includes "no stand-in marker in the
+  body". A role had posted a review with the marker still in it.
 - **The briefing says where a command handed to the user runs** (#391): every command a
   session hands the user says whether it runs in this session (typed at its prompt
   behind the agent's shell escape -- claude: `!` -- inside the sandbox, with inside
