@@ -838,6 +838,14 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The briefing says where a command handed to the user runs** (#391): every command a
+  session hands the user says whether it runs in this session (typed at its prompt
+  behind the agent's shell escape -- claude: `!` -- inside the sandbox, with inside
+  paths) or on the host (the user's shell, with the host paths the briefing lists), and
+  none names paths that exist only on the other side. A gh-review role had handed `! gh
+  pr review N --body-file .asb/scratch/review-N.md`, which fails pasted into a host
+  shell, where `.asb/scratch/` is the role's private store. In `briefing.md`'s handing
+  section and the short SessionStart briefing.
 - **`NO_PROXY` is `127.0.0.1,localhost` inside** (#6), in the `proxy` and `strict` modes,
   where it was empty: a client that honours the proxy variables dials loopback directly,
   since the proxy refuses it (codex's TUI's own MCP server failed its handshake with the

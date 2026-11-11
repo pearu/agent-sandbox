@@ -262,7 +262,11 @@ Sections:
   that what a session hands you to run is one line or a file -- the CLI prefixes
   every line of a reply, so a pasted heredoc or patch breaks -- and where its
   writable stores are on the host, a `copy-on-write` project's layer included, and that a
-  file it names for you to read or open is named by its host path. Every session
+  file it names for you to read or open is named by its host path, and that every
+  command it hands you says where it runs: in that session (typed at its prompt behind
+  the agent's shell escape -- claude: `!` -- inside the sandbox, with inside paths) or on
+  the host (your shell, host paths), never one whose paths exist only on the other side
+  (`.asb/scratch/...` is not on the host). Every session
   is also told to keep a one-line summary of itself current in
   `/run/agent-sandbox/summary/line`, the role store's `summary/` bound read-write
   (`<store>/summary/line` on the host), which `asb --list` shows; the claude profile's

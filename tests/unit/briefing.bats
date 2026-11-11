@@ -779,6 +779,12 @@ CHECK
   # shellcheck disable=SC2016 # the backticks are literal text in the briefing
   grep -qF '`git apply PATH`, `git commit -F PATH`, `bash PATH`. The whole command, path' "$md"
   grep -qF "never typed -- a single copied line's prefix is harmless to a shell." "$md"
+  # every handed command says where it runs: this session or the host
+  grep -qF 'Every command you hand the user says where it runs: in this session -- typed' "$md"
+  grep -qF "at your prompt behind this session's shell escape, it runs inside the" "$md"
+  grep -qF "sandbox, with the paths you see -- or on the host, in the user's own shell," "$md"
+  # shellcheck disable=SC2016 # the backticks are literal text in the briefing
+  grep -qF 'paths exist only on the other side: `.asb/scratch/x.md` in a command for the' "$md"
   # a file named to the user is named by its host path, not the inside one (#311)
   grep -qF 'A file you name for the user to read or open -- a draft, a report, a log --' "$md"
   grep -qF 'is named by its host path, from the list below: an inside path such as' "$md"
@@ -790,6 +796,7 @@ CHECK
   grep -qxF -- "- .asb/scratch/ (own) is, on the host, $slot" "$md"
   # the short form: one clause, pointing at the paths
   grep -qF 'What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md).' "$OUT/hook-SessionStart.json"
+  grep -qF "Each command you hand says where it runs -- this session (behind its shell escape, inside paths) or the host (the user's shell, host paths) -- never one whose paths exist only on the other side." "$OUT/hook-SessionStart.json"
   # a copy-on-write project: a file written into it is in the role's layer
   run_engine BWRAP_COPY="$OUT" -- asb --role rev-1 --connect 'project = copy-on-write' claude --version
   [ "$status" -eq 0 ]
