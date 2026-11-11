@@ -4,10 +4,10 @@ This file is the canonical guide for any AI agent (Claude Code, Codex, Gemini,
 ...) working on this repository. `CLAUDE.md` just points here. Humans are
 welcome to read it too; the human-facing docs live in `README.md` and `docs/`.
 
-agent-sandbox runs an AI coding agent inside a bubblewrap sandbox with a
-default-deny filesystem, an egress allowlist enforced by a host-side mitmproxy,
-and an opt-in SSH broker whose keys never enter the
-sandbox. It is a security tool. Treat every change to it as one.
+agent-sandbox runs an AI coding agent inside a bubblewrap sandbox with a default-deny
+filesystem, an egress allowlist enforced by a host-side mitmproxy, and an opt-in SSH
+broker whose keys never enter the sandbox. It is a security tool. Treat every change to
+it as one.
 
 ## Layout and what is source of truth
 
@@ -89,31 +89,31 @@ number.
   argv into `ARGV`, so tests assert on binds, order and `--setenv` pairs
   (`argv_has`, `setenv_value`, `argv_index`). Helper-level tests `source` the
   engine and call the `_as_*` functions directly.
-- **Integration suites use the real bwrap** through a test profile whose
-  "agent" is a probe script, the command `probe` on the harness's PATH (so a
-  launch reads `-- [ENGINE FLAGS] probe [ARGS]`, as a user's `asb … claude`
-  does), that writes key=value lines to `$PWD/report` from inside the sandbox. They `skip` when unprivileged
-  user namespaces are unavailable. SSH tests need a short session base because
-  of the unix-socket path limit; `make_short_base` provides one.
-- **Two kinds of tests: shared and agent-only.** A test that is the same for every
-  agent is written once and runs once per profile **test adapter**,
+- **Integration suites use the real bwrap** through a test profile whose "agent" is a
+  probe script, the command `probe` on the harness's PATH (so a launch reads
+  `-- [ENGINE FLAGS] probe [ARGS]`, as a user's `asb … claude` does), that writes
+  key=value lines to `$PWD/report` from inside the sandbox. They `skip` when
+  unprivileged user namespaces are unavailable. SSH tests need a short session base
+  because of the unix-socket path limit; `make_short_base` provides one.
+- **Two kinds of tests: shared and agent-only.** A test that is the same for every agent
+  is written once and runs once per profile **test adapter**,
   `profiles/<name>/test.bash` (its contract is at the top of
   `profiles/claude/test.bash`): `tests/<layer>/profile-contract.bats` in unit and
   integration, `tests/live/agent.bats`, and the agent block of `tests/e2e/install.bats`
-  register their tests per adapter with `bats_test_function --description "<agent>:
-  ..."` (`tests/helpers/adapters.bash`). The adapter says only what the profile does
-  not: where its binary is planted (asb's install of it for a profile with an install
-  recipe, `install_fake_agent`; else its installer's layout), its options that come before a
-  subcommand, its base's layout for `--check`, a fake login of its shape, and its live
-  turn. What the profile states -- base, hide list, resume, clear and login words,
-  account paths -- the tests read the engine's way (`_as_profile_facts`, the dot-file;
-  `profile_facts`, `profile_get`). The agent is the shared fake,
-  `tests/helpers/fake-agent.sh`, whose words (`--version`, `fetch URL`, `env`, `args`,
-  `sh`, `--bg`) are the tests' own. A test only one agent can have goes under
-  `tests/<layer>/profile-<name>/`. **A new profile adds its adapter and its
-  `profile-<name>/` directories, and changes no shared test**; if a shared test needs
-  to change for it, the adapter contract is missing something -- extend it (and the
-  claude adapter) instead. The unit suites' many `asb claude` launches are not
+  register their tests per adapter with
+  `bats_test_function --description "<agent>: ..."` (`tests/helpers/adapters.bash`). The
+  adapter says only what the profile does not: where its binary is planted (asb's
+  install of it for a profile with an install recipe, `install_fake_agent`; else its
+  installer's layout), its options that come before a subcommand, its base's layout for
+  `--check`, a fake login of its shape, and its live turn. What the profile states --
+  base, hide list, resume, clear and login words, account paths -- the tests read the
+  engine's way (`_as_profile_facts`, the dot-file; `profile_facts`, `profile_get`). The
+  agent is the shared fake, `tests/helpers/fake-agent.sh`, whose words (`--version`,
+  `fetch URL`, `env`, `args`, `sh`, `--bg`) are the tests' own. A test only one agent
+  can have goes under `tests/<layer>/profile-<name>/`. **A new profile adds its adapter
+  and its `profile-<name>/` directories, and changes no shared test**; if a shared test
+  needs to change for it, the adapter contract is missing something -- extend it (and
+  the claude adapter) instead. The unit suites' many `asb claude` launches are not
   agent-only tests: they test the engine with claude as the vehicle, and stay.
 - **Inside a sandbox the suites run with host-only skips.** A role developing asb
   (the `github` model's gh-setup, gh-review and gh-fix) runs `tests/run.sh` inside
@@ -128,29 +128,29 @@ number.
   that is the host's; a test that can run inside is adjusted instead. A change that
   touches a host-only path still needs a run on the host, or CI (which runs there).
 - **The installer is tested for real, end to end** (`AGENT_SANDBOX_E2E=1`): every
-  adapter plants the shared fake agent where a launch runs it from (claude: installed
-  as `asb --install claude` installs it, #6) before `install.sh` runs,
-  `systemctl --user` is a shim (`tests/helpers/systemctl-shim.sh`) that records
-  calls and runs the unit's ExecStart itself, and the installed `asb CMD`
-  then runs each fake agent through the installed proxy. The proxy-dependent tests use the port the
-  throwaway install recorded (8888, or the next free one on a machine that already runs the proxy);
+  adapter plants the shared fake agent where a launch runs it from (claude: installed as
+  `asb --install claude` installs it, #6) before `install.sh` runs, `systemctl --user`
+  is a shim (`tests/helpers/systemctl-shim.sh`) that records calls and runs the unit's
+  ExecStart itself, and the installed `asb CMD` then runs each fake agent through the
+  installed proxy. The proxy-dependent tests use the port the throwaway install recorded
+  (8888, or the next free one on a machine that already runs the proxy);
   `AGENT_SANDBOX_E2E_MITMDUMP=/path/to/mitmdump` skips building the proxy env.
 - **The addon is tested without mitmproxy**: `tests/helpers/mitmproxy_stub.py`
   stands in for `mitmproxy.http`, and `addon_driver.py` runs one scenario.
-- **Assert a negative with `run ! cmd`, never `! cmd`.** Bash suppresses
-  `errexit` -- and the `ERR` trap bats fails on -- for a negated command, so a
-  test body of `! true` followed by anything else is reported `ok`: the line
-  reads like a guarantee and enforces nothing. Fifty of them had accumulated
-  here before anyone noticed, two asserting the opposite of what the engine
-  does. `run !` (bats >= 1.5.0; the suites declare 1.11.0, for `bats_test_function`, in `tests/helpers/common.bash`) fails
-  the test when the command succeeds. It replaces `$status` and `$output`, so
-  check a message *before* the `run !` that follows it. `[ ! -s "$f" ]` is fine;
-  there the negation is the test operator's own. ShellCheck reports the bad
-  form as SC2314, and `scripts/check.sh` runs ShellCheck on the `.bats` files
-  -- that is the actual guard; the rule here is so you know why it fires. SC2314
-  does not see a function registered with `bats_test_function` (the shared
-  profile-contract, live and e2e agent tests) as a test, so `scripts/check.sh` also
-  greps every `.bats` file for a line starting with `! `, which is the guard there.
+- **Assert a negative with `run ! cmd`, never `! cmd`.** Bash suppresses `errexit` --
+  and the `ERR` trap bats fails on -- for a negated command, so a test body of `! true`
+  followed by anything else is reported `ok`: the line reads like a guarantee and
+  enforces nothing. Fifty of them had accumulated here before anyone noticed, two
+  asserting the opposite of what the engine does. `run !` (bats >= 1.5.0; the suites
+  declare 1.11.0, for `bats_test_function`, in `tests/helpers/common.bash`) fails the
+  test when the command succeeds. It replaces `$status` and `$output`, so check a
+  message *before* the `run !` that follows it. `[ ! -s "$f" ]` is fine; there the
+  negation is the test operator's own. ShellCheck reports the bad form as SC2314, and
+  `scripts/check.sh` runs ShellCheck on the `.bats` files -- that is the actual guard;
+  the rule here is so you know why it fires. SC2314 does not see a function registered
+  with `bats_test_function` (the shared profile-contract, live and e2e agent tests) as a
+  test, so `scripts/check.sh` also greps every `.bats` file for a line starting with
+  `! `, which is the guard there.
 - **GitHub's runners have conda on PATH.** A test that assumes no host conda must
   stub `conda` and `mamba` (exit 1, first on PATH) and clear `CONDA_*`/`MAMBA_*`
   from the environment it runs the engine or installer with. Under `env -i` on a
@@ -226,10 +226,10 @@ If you are an agent running inside this sandbox while maintaining it:
   generic `command` profile for arbitrary workers.
 - **Proxy runtime**: mitmproxy 12+ in a private conda-forge environment under
   `~/.local/share/agent-sandbox`, built with install.sh's own pinned micromamba as the
-  tools env is, never with the host's conda or python (#335); a working `proxy-venv`
-  an earlier install made is still used. Distro packages are too old (Ubuntu 24.04 and 26.04 ship 8.1.1, whose leaf
-  certificates lack an Authority Key Identifier and fail Python 3.13's strict
-  verification).
+  tools env is, never with the host's conda or python (#335); a working `proxy-venv` an
+  earlier install made is still used. Distro packages are too old (Ubuntu 24.04 and
+  26.04 ship 8.1.1, whose leaf certificates lack an Authority Key Identifier and fail
+  Python 3.13's strict verification).
 - **No standalone mitmproxy binary route.** `downloads.mitmproxy.org`
   serves `mitmproxy-<ver>-linux-<arch>.tar.gz` (~119 MB) but publishes no
   checksums or signatures, so a secure route must pin a SHA256 per version and

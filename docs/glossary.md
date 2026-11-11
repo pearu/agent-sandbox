@@ -10,99 +10,103 @@ Each entry carries a status:
 - **agreed** — decided, not built
 - **open** — under discussion; the entry records the question, not an answer
 
-Where a word has two meanings, [Words that collide](#words-that-collide) at the end lists
-them, and the entries say which one they mean.
+Where a word has two meanings, [Words that collide](#words-that-collide) at the end
+lists them, and the entries say which one they mean.
 
 ## The things involved
 
 **Host.** The machine and user account the engine runs on, outside every sandbox.
 *shipped*
 
-**Engine.** `agent-sandbox`, and its alias **`asb`**: the command that runs an agent in a
-sandbox, asked for by name — `asb [OPTIONS] CMD [AGENT OPTIONS]`. Its options come
+**Engine.** `agent-sandbox`, and its alias **`asb`**: the command that runs an agent in
+a sandbox, asked for by name — `asb [OPTIONS] CMD [AGENT OPTIONS]`. Its options come
 before CMD, the agent's after it; CMD is a name or a path (a name is asb's install of
 the agent for a profile with an install recipe, `asb --install claude`, #6; else looked
-up on PATH). `claude` alone is Claude
-Code itself: nothing shadows it, so it runs natively. *agreed* (#151); before it the
-installer put the engine at `~/.local/bin/claude`.
+up on PATH). `claude` alone is Claude Code itself: nothing shadows it, so it runs
+natively. *agreed* (#151); before it the installer put the engine at
+`~/.local/bin/claude`.
 
 **Agent.** The program being sandboxed: Claude Code for the `claude` profile. The engine
-itself is agent-agnostic; everything specific to one agent lives in its profile. A role's
-agent is named by the command, `--agent` or the dot-file's `[agent] command`, so one
-project's roles can run different agents (#355). *shipped*
+itself is agent-agnostic; everything specific to one agent lives in its profile. A
+role's agent is named by the command, `--agent` or the dot-file's `[agent] command`, so
+one project's roles can run different agents (#355). *shipped*
 
 **Account.** One login of an agent: the directory
 `~/.local/state/agent-sandbox/<agent>/accounts/<name>/`, bound in a role in place of the
 agent's base (claude: `~/.claude`), so the login and what the agent derives from it are
 the account's while every channel stays as on the base. Named per role by `--account` or
 `[agent] account`; with none, or `-`, the role runs on the **base**, your own login.
-`asb [--agent AGENT] --account NAME --login` logs one in. So two subscriptions can serve one project
-([config.md](config.md#accounts), #355). *shipped*
+`asb [--agent AGENT] --account NAME --login` logs one in. So two subscriptions can serve
+one project ([config.md](config.md#accounts), #355). *shipped*
 
-**Profile.** `profiles/<name>/` (`profile.sh` and its dot-file, `agent-sandbox`): the agent-specific half of the engine — where the
-agent keeps its state, which channels it has and which paths each maps to, how its argv is
-routed, which subcommands run on the host. Selected with `--profile` or by the command's
-basename (`asb claude` → `profiles/claude/profile.sh`). See [profiles.md](profiles.md). *shipped*
+**Profile.** `profiles/<name>/` (`profile.sh` and its dot-file, `agent-sandbox`): the
+agent-specific half of the engine — where the agent keeps its state, which channels it
+has and which paths each maps to, how its argv is routed, which subcommands run on the
+host. Selected with `--profile` or by the command's basename (`asb claude` →
+`profiles/claude/profile.sh`). See [profiles.md](profiles.md). *shipped*
 
-**Project.** The directory a launch is started from — the working tree — bound read-write
-into the sandbox at the same path. It is one half of the sandbox key, and the one
-connection every sandbox has by definition ([mandatory connections](#connections)). For a
-background worker it is the worker's project, not the daemon's directory. *shipped*
+**Project.** The directory a launch is started from — the working tree — bound
+read-write into the sandbox at the same path. It is one half of the sandbox key, and the
+one connection every sandbox has by definition ([mandatory connections](#connections)).
+For a background worker it is the worker's project, not the daemon's directory.
+*shipped*
 
 **Launch.** One run of the engine: it builds one bwrap sandbox, runs one command inside
 it, and cleans up when that command exits. Everything bound is decided at the start of
-the launch and fixed for its lifetime. A launch runs the agent by default, or any command
-with `--exec`. *shipped as behaviour* — the engine's code and older docs call this a
-**session** (`_as_session_begin`, `AGENT_SANDBOX_SESSION_BASE`, "per-session scratch").
-*agreed*: the user-facing word is **role**; a launch is a role's running instance, the
-[keeper](#mechanisms) and what is joined into it, and "launch" stays internal.
+the launch and fixed for its lifetime. A launch runs the agent by default, or any
+command with `--exec`. *shipped as behaviour* — the engine's code and older docs call
+this a **session** (`_as_session_begin`, `AGENT_SANDBOX_SESSION_BASE`, "per-session
+scratch"). *agreed*: the user-facing word is **role**; a launch is a role's running
+instance, the [keeper](#mechanisms) and what is joined into it, and "launch" stays
+internal.
 
 **Claude session.** A Claude Code conversation: what `claude -r <uuid-or-name>` resumes,
 identified by a UUID (`--session-id`) or a name. It is Claude Code's object, not the
-engine's. A launch can contain **no** Claude session (`asb --profile claude --exec
-pytest`), **one** (a plain `asb claude`), or **several** (`asb --profile claude --exec bash
--l`, then `claude` started natively inside it, twice) — and every Claude session inside one launch sees that launch's binds.
-So the engine cannot give a Claude session storage of its own; it gives it to the role.
-*agreed*: a Claude session id is derived from the role (the first session's), never the
-reverse; `asb --role foo claude -r` lists foo's sessions and a bare `claude -r` native ones
-only.
+engine's. A launch can contain **no** Claude session
+(`asb --profile claude --exec pytest`), **one** (a plain `asb claude`), or **several**
+(`asb --profile claude --exec bash -l`, then `claude` started natively inside it, twice)
+— and every Claude session inside one launch sees that launch's binds. So the engine
+cannot give a Claude session storage of its own; it gives it to the role. *agreed*: a
+Claude session id is derived from the role (the first session's), never the reverse;
+`asb --role foo claude -r` lists foo's sessions and a bare `claude -r` native ones only.
 
 **Sandbox.** An installation of one agent for one project and role: the policy that says
 what crosses its boundary, channel by channel, and the state kept for it under
 `~/.local/state/agent-sandbox/<profile>/<project slug>/<role>/`. That directory is a
-[control path](#safety-terms): never bound into any sandbox. *shipped*. The state belongs
-to the role; see [Instance storage](#instance-storage-decided).
+[control path](#safety-terms): never bound into any sandbox. *shipped*. The state
+belongs to the role; see [Instance storage](#instance-storage-decided).
 
 **Sandbox key.** What identifies a sandbox: `<project slug>/<role>` under the profile's
 state directory. *shipped*; `default` is the unnamed role. The `<scope>` segment once
 planned in #104 is withdrawn (#123): the key stays two segments.
 
-**Role.** A named, persistent instance of a project under a policy: `asb --role impl-1 claude`.
-The second half of the sandbox key, and the thing you come back to: its stores persist
-across runs, its policy is the variable part. Two roles on one project share the project
-directory and nothing else unless connected (a reviewer that must not see the implementer's
-accumulated memory is the motivating case,
-[#55](https://github.com/pearu/agent-sandbox/issues/55)). Policy is selected by matching the
-name against role-suffixed sections, `[sandbox:<glob>]`, `[connect:<glob>]` and (#221) the
-same on `[allow]`, `[deny]`, `[env]`, `[conda]` and `[net]`, applied after
-the unsuffixed ones, later overriding earlier, per key; a name matching no suffixed section is
-refused when suffixed sections exist. A role is not a security boundary beyond what
-its channels close. *shipped*: `--role`, `AGENT_SANDBOX_ROLE` and `[sandbox] role` name it,
-the role sections are built (#136), and so are the role verbs (#144, #145).
+**Role.** A named, persistent instance of a project under a policy:
+`asb --role impl-1 claude`. The second half of the sandbox key, and the thing you come
+back to: its stores persist across runs, its policy is the variable part. Two roles on
+one project share the project directory and nothing else unless connected (a reviewer
+that must not see the implementer's accumulated memory is the motivating case,
+[#55](https://github.com/pearu/agent-sandbox/issues/55)). Policy is selected by matching
+the name against role-suffixed sections, `[sandbox:<glob>]`, `[connect:<glob>]` and
+(#221) the same on `[allow]`, `[deny]`, `[env]`, `[conda]` and `[net]`, applied after
+the unsuffixed ones, later overriding earlier, per key; a name matching no suffixed
+section is refused when suffixed sections exist. A role is not a security boundary
+beyond what its channels close. *shipped*: `--role`, `AGENT_SANDBOX_ROLE` and
+`[sandbox] role` name it, the role sections are built (#136), and so are the role verbs
+(#144, #145).
 
 **Nesting.** Running the engine inside a sandbox, which creates a sandbox within it.
 Every source and check resolves in the namespace where that engine runs, so an inner
 engine can only bind what the outer shows it: nesting narrows, never widens. Persistence
-across relaunches is **not** enforced when nesting — the inner engine's state directory is
-under its `$HOME`, a tmpfs in the outer sandbox, so everything the inner sandbox keeps
-lasts as long as the outer launch. By default a profile routes a launch *inside* a sandbox
-to no sandbox (`none`), so nesting happens only when asked for. *shipped behaviour; the
-persistence limit is documented in [connections.md](connections.md), from the design, not
-measured.*
+across relaunches is **not** enforced when nesting — the inner engine's state directory
+is under its `$HOME`, a tmpfs in the outer sandbox, so everything the inner sandbox
+keeps lasts as long as the outer launch. By default a profile routes a launch *inside* a
+sandbox to no sandbox (`none`), so nesting happens only when asked for. *shipped
+behaviour; the persistence limit is documented in [connections.md](connections.md), from
+the design, not measured.*
 
 **Native.** The agent as installed on the host, run without the engine; and its state
-(`~/.claude` for Claude Code). As a **source**, `native` means that state. As a **preset**,
-see [Presets](#presets-and-principles). *shipped*
+(`~/.claude` for Claude Code). As a **source**, `native` means that state. As a
+**preset**, see [Presets](#presets-and-principles). *shipped*
 
 ## Connections
 
@@ -110,34 +114,36 @@ see [Presets](#presets-and-principles). *shipped*
 what it carries, never by a path. The profile maps each channel to the agent's paths.
 For the `claude` profile the channels the engine manages as connections are
 `instructions`, `settings`, `skills`, `agents`, `workflows`, `plugins`, `config`,
-`projects`, `memory`, `agent-memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` (*shipped*); `identity` and `project` are
-channels in the model with machinery of their own, not yet folded in. The table of what each carries is
-in [connections.md](connections.md#the-three-objects).
+`projects`, `memory`, `agent-memory`, `transcripts`, `logs`, `artefacts`, `policy` and
+`changelog` (*shipped*); `identity` and `project` are channels in the model with
+machinery of their own, not yet folded in. The table of what each carries is in
+[connections.md](connections.md#the-three-objects).
 
-**`config`** is Claude Code's config file, `~/.claude.json`, as one file (*shipped*, #119):
-seeded filtered at the seeding modes, then Claude Code's alone; the user-level MCP servers
-are part of it, so `tools` is no longer a channel of its own (#132).
+**`config`** is Claude Code's config file, `~/.claude.json`, as one file
+(*shipped*, #119): seeded filtered at the seeding modes, then Claude Code's alone; the
+user-level MCP servers are part of it, so `tools` is no longer a channel of its own
+(#132).
 
-The model also treats the **network** as a channel (`own` = no network, then
-`proxy`, then `open`), governed today by the network mode rather than by a connection. The
+The model also treats the **network** as a channel (`own` = no network, then `proxy`,
+then `open`), governed today by the network mode rather than by a connection. The
 channels that carry agent *behaviour* rather than data — `instructions`, `skills`,
 `agents`, `workflows`, `plugins`, `settings` (hooks) — have been called **capability
 channels** informally; it is not a separate category in the engine.
 
-**Storage.** Informally, the channels that are files on disk. In this glossary, *storage*
-means the **sandbox-side storage** of a channel: what the sandbox keeps at that channel
-instead of the source — an `own` slot, a `seed-only` or `copy` copy, a `copy-on-write`
-upper layer. `read-only` and `read-write` have none. Each store belongs to `(role, path,
-mode)`. *agreed*
+**Storage.** Informally, the channels that are files on disk. In this glossary,
+*storage* means the **sandbox-side storage** of a channel: what the sandbox keeps at
+that channel instead of the source — an `own` slot, a `seed-only` or `copy` copy, a
+`copy-on-write` upper layer. `read-only` and `read-write` have none. Each store belongs
+to `(role, path, mode)`. *agreed*
 
 **Source.** Where a connection reads from, and where a sandbox is created from.
-*shipped*: `native` for a channel, `outside:<path>` for a path declaration (the
-same path outside when none is written; #174), and `sandbox:[<project>][@<role>]` for
-both (#200): what that role's store has at the same path, found from its record of its
-last launch -- the native path if it never launched; an empty project is this one
-(`sandbox:@impl`), the role `default` when none is named. *agreed*: `clone:<source>` (a throwaway, discardable copy of a source, made per
-measurement or run and shared by every launch in it,
-[#106 comment](https://github.com/pearu/agent-sandbox/issues/106)).
+*shipped*: `native` for a channel, `outside:<path>` for a path declaration (the same
+path outside when none is written; #174), and `sandbox:[<project>][@<role>]` for both
+(#200): what that role's store has at the same path, found from its record of its last
+launch -- the native path if it never launched; an empty project is this one
+(`sandbox:@impl`), the role `default` when none is named. *agreed*: `clone:<source>` (a
+throwaway, discardable copy of a source, made per measurement or run and shared by every
+launch in it, [#106 comment](https://github.com/pearu/agent-sandbox/issues/106)).
 
 **Connection.** One channel, one mode, one source (and, when scopes land, one scope)
 for one sandbox: `instructions = copy-on-write native`. A channel with no connection is
@@ -150,20 +156,21 @@ meant to communicate), `read-write` unless `project = read-only` (#220). *shippe
 **Path declaration.** A `[connect]` key containing `/`, naming a path instead of a
 channel: `./scratch/ = own`. The key is the path inside the sandbox; relative keys are
 relative to the project; the source is the same path outside. The one way to expose a
-path outside the project: `[ro]`/`[rw]` and `AGENT_SANDBOX_RO`/`RW` were removed (#161). *shipped* (#130; `copy-on-write` on a
-directory, #150) — see [connections.md](connections.md#path-declarations).
+path outside the project: `[ro]`/`[rw]` and `AGENT_SANDBOX_RO`/`RW` were removed (#161).
+*shipped* (#130; `copy-on-write` on a directory, #150) — see
+[connections.md](connections.md#path-declarations).
 
 **Per-launch scratch** (the docs say *per-session scratch*). Parts of the agent's state
 that are replaced for every launch and closed to other launches — for Claude Code,
 `sessions/`, `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`,
-`daemon/` — declared by the profile's **isolate spec**, and discarded at exit. It belongs to
-no channel. *shipped*. What used to be merged back at exit (file history, plans, prompt
-history, hook logs) is the `transcripts` and `logs` channels since #120: nothing is merged
-back when a launch ends.
+`daemon/` — declared by the profile's **isolate spec**, and discarded at exit. It
+belongs to no channel. *shipped*. What used to be merged back at exit (file history,
+plans, prompt history, hook logs) is the `transcripts` and `logs` channels since #120:
+nothing is merged back when a launch ends.
 
 **Server-owned state.** What the agent writes from its service or as caches
-(`skills/synced/`, `plugins/synced/`, `cache/`, `telemetry/`, …). What it gets depends on
-where it lives: the two `synced/` directories are inside the `skills` and `plugins`
+(`skills/synced/`, `plugins/synced/`, `cache/`, `telemetry/`, …). What it gets depends
+on where it lives: the two `synced/` directories are inside the `skills` and `plugins`
 channels, so the role's own wherever those are; the rest is in no channel, so it is the
 native files, shared with every sandbox (see
 [connections.md](connections.md#the-three-objects)). *shipped*
@@ -182,25 +189,25 @@ higher, because it hands over the real file. *shipped*
 **Mode.** One position on the scale. Each in one line (full definitions in
 [connections.md](connections.md#the-scale)):
 
-- **`own`** — the sandbox's own, from nothing; nothing of yours reaches it, nothing of its
-  reaches you.
-- **`seed-only`** — copied from the source once, when the store is first created, then the
-  role's own; never refreshed, so never a conflict warning. Sits between `own` and `copy`.
-  *shipped*
-- **`copy`** — seeded from the source, refreshed at each launch for every file the sandbox
-  has not changed, never written back.
+- **`own`** — the sandbox's own, from nothing; nothing of yours reaches it, nothing of
+  its reaches you.
+- **`seed-only`** — copied from the source once, when the store is first created, then
+  the role's own; never refreshed, so never a conflict warning. Sits between `own` and
+  `copy`. *shipped*
+- **`copy`** — seeded from the source, refreshed at each launch for every file the
+  sandbox has not changed, never written back.
 - **`copy-on-write`** — the source reads through live until the sandbox writes a file,
-  which then becomes the sandbox's. From outside it means the same as `copy`; it is `copy`
-  implemented with an overlay, and falls back to `copy` where no overlay is available or
-  the path is a file.
+  which then becomes the sandbox's. From outside it means the same as `copy`; it is
+  `copy` implemented with an overlay, and falls back to `copy` where no overlay is
+  available or the path is a file.
 - **`read-only`** — the source, live; the sandbox cannot write there.
 - **`read-write`** — the source itself, both ways.
 
 The names changed in 0.3; the old ones (`none`, `cow`, `ro`, `live`) are refused.
 
 **Widening / narrowing.** A step up the scale is a widening: trust-gated when it comes
-from a dot-file, ungated from the flag or the environment. A step down is a narrowing and
-is always free. *shipped*
+from a dot-file, ungated from the flag or the environment. A step down is a narrowing
+and is always free. *shipped*
 
 ## Presets and principles
 
@@ -208,8 +215,8 @@ is always free. *shipped*
 `isolated < inherit < shared < native`, default `inherit`:
 
 - **`isolated`** — every managed channel `own`.
-- **`inherit`** — every managed channel `copy-on-write` from native: the sandbox reads your
-  configuration live and keeps its own writes to itself.
+- **`inherit`** — every managed channel `copy-on-write` from native: the sandbox reads
+  your configuration live and keeps its own writes to itself.
 - **`shared`** — every managed channel `read-write`: the engine before 0.3.
 - **`native`** — sandboxed, but isolating no state: must behave identically to `--preset
   none`, so any difference is a bug. Flag only, never from a file or the environment.
@@ -221,8 +228,9 @@ channels the profile declares, never a path declaration. *shipped*. **`none`**, 
 preset, incomparable with the rest, is no sandbox at all: the flag only, and acted on
 before any project machinery. *shipped* (#123), replacing `--sandbox none`.
 
-The axis the ladder measures is **boundary permeability**, and it is direction-dependent:
-`inherit` is the rung where reads pass in and writes do not pass out.
+The axis the ladder measures is **boundary permeability**, and it is
+direction-dependent: `inherit` is the rung where reads pass in and writes do not pass
+out.
 
 **Fidelity principle.** The sandbox reproduces the native experience faithfully, minus
 what the user explicitly asked to change. `inherit` expresses it for configuration;
@@ -234,13 +242,13 @@ documented*
 "Scope" was used for two axes. One is withdrawn; the other is decided.
 
 **Invocation scope** (#104): `foreground`/`background` as a policy axis and key segment.
-*Withdrawn* (#123): a background session runs inside its role's launch, so `x@background`
-is `x`. What survives from #104 is the `none` preset, the role-suffix grammar and keying
-trust on the project.
+*Withdrawn* (#123): a background session runs inside its role's launch, so
+`x@background` is `x`. What survives from #104 is the `none` preset, the role-suffix
+grammar and keying trust on the project.
 
-**Storage scope** (#125). Storage is keyed by the role, so the scope token of a connection
-(`channel = mode [source] [scope]`) names only a *shorter* lifetime. `run-scoped` and
-`join-scoped` (for `own`) are *shipped*:
+**Storage scope** (#125). Storage is keyed by the role, so the scope token of a
+connection (`channel = mode [source] [scope]`) names only a *shorter* lifetime.
+`run-scoped` and `join-scoped` (for `own`) are *shipped*:
 
 | written | lifetime |
 |---|---|
@@ -249,95 +257,101 @@ trust on the project.
 | `join-scoped` | one join: a joined command and everything it starts; renamed from `process-scoped` |
 
 `sandbox-scoped`, `project-scoped` and `session-scoped` are withdrawn: the first is the
-unnamed default, the second would be a `sandbox:<project>@<role>` source at `read-write` (refused), the
-third is a role per conversation. `read-write` with any scope stays refused. (PR #117
-parses the older set and is to be revised.)
+unnamed default, the second would be a `sandbox:<project>@<role>` source at `read-write`
+(refused), the third is a role per conversation. `read-write` with any scope stays
+refused. (PR #117 parses the older set and is to be revised.)
 
 ### Instance storage (decided)
 
 The question of 2026-09-23 — does a store belong to the sandbox or to each launch — is
-settled by the role: `own`, `seed-only`, `copy` and `copy-on-write` exist so the inside can
-write without modifying the outside, other instances are outside, and **the role is the
-instance**. It is one launch that every app joins (the [keeper](#mechanisms)), so there is
-never a second launch of a role to share a store with; sharing between roles goes through a
-source. Two Claude processes in one role on one conversation behave as they do natively:
-measured on 2.1.281, the second marks the first's in-flight tool call interrupted, the
-conversation forks, and the next resume follows the branch of the process that exited last.
+settled by the role: `own`, `seed-only`, `copy` and `copy-on-write` exist so the inside
+can write without modifying the outside, other instances are outside, and **the role is
+the instance**. It is one launch that every app joins (the [keeper](#mechanisms)), so
+there is never a second launch of a role to share a store with; sharing between roles
+goes through a source. Two Claude processes in one role on one conversation behave as
+they do natively: measured on 2.1.281, the second marks the first's in-flight tool call
+interrupted, the conversation forks, and the next resume follows the branch of the
+process that exited last.
 
 ## Mechanisms
 
 **Holder.** A long-lived bwrap process per sandbox that mounted the overlays for every
-directory-shaped channel path at staging paths, so that every launch of that sandbox joined
-one overlay instead of mounting its own. *removed* (#121): the keeper replaced it. An engine
-that finds one left running by an older engine stops it before starting a keeper.
+directory-shaped channel path at staging paths, so that every launch of that sandbox
+joined one overlay instead of mounting its own. *removed* (#121): the keeper replaced
+it. An engine that finds one left running by an older engine stops it before starting a
+keeper.
 
 **Keeper.** *shipped* (#121): a role's running instance — a process that holds every
 namespace of the sandbox and does nothing else. Every app, the first included, is joined
-into it; it exits when nothing is joined, after a grace of two seconds, under a lock. Its
-policy is fixed when it starts: a join may repeat it, not change it (a different value for
-a knob the join set is refused, naming it), and a join under a changed dot-file warns and
-joins, parsing the keeper's copy of the approved dot-file; an idle keeper, in its grace,
-is replaced instead. A file bound on its own shows it as of the keeper's start. It mounts the channel overlays at their real paths. Its host side, the supervisor,
-owns the launch's exit and writes `<sandbox>/keeper.log`.
+into it; it exits when nothing is joined, after a grace of two seconds, under a lock.
+Its policy is fixed when it starts: a join may repeat it, not change it (a different
+value for a knob the join set is refused, naming it), and a join under a changed
+dot-file warns and joins, parsing the keeper's copy of the approved dot-file; an idle
+keeper, in its grace, is replaced instead. A file bound on its own shows it as of the
+keeper's start. It mounts the channel overlays at their real paths. Its host side, the
+supervisor, owns the launch's exit and writes `<sandbox>/keeper.log`.
 
-**Join.** *shipped* (#121): running a command inside the keeper as its equal — same mounts,
-working directory, uid and gid, capabilities, `no_new_privs` and seccomp filter, and the
-keeper's environment but for the terminal's variables (`TERM`, the locale), which are the
-join's own. `components/join.py`, from the recipe measured in `probes/join-launch.py`: it is
-`setns` from `python3`, because bwrap nests a capability-less user namespace when given
-`--dev /dev` and `nsenter` cannot reach the namespace that owns the mounts. A foreground
-`claude` and `--exec` are joins; `--bg` and the management verbs will be (#123, #126).
+**Join.** *shipped* (#121): running a command inside the keeper as its equal — same
+mounts, working directory, uid and gid, capabilities, `no_new_privs` and seccomp filter,
+and the keeper's environment but for the terminal's variables (`TERM`, the locale),
+which are the join's own. `components/join.py`, from the recipe measured in
+`probes/join-launch.py`: it is `setns` from `python3`, because bwrap nests a
+capability-less user namespace when given `--dev /dev` and `nsenter` cannot reach the
+namespace that owns the mounts. A foreground `claude` and `--exec` are joins; `--bg` and
+the management verbs will be (#123, #126).
 
 **Overlay.** overlayfs: a merged view of a read-only lower layer (the source) and a
 writable upper layer (the sandbox's), which is how `copy-on-write` is implemented. Needs
 bubblewrap 0.11 or newer; cannot stack on a single file. *shipped*
 
-**Slot.** The directory or file under the sandbox's state that an `own` connection binds.
-*shipped*
+**Slot.** The directory or file under the sandbox's state that an `own` connection
+binds. *shipped*
 
 **Sync, manifest.** How `copy` refreshes: a three-way comparison of the source, the
 sandbox's copy and a recorded manifest of what was last seeded
 (`components/connect-sync.py`). *shipped*
 
-**Reset.** `--reset <channel|path>`: discard what the role holds at one channel or declared
-path, in whatever mode, and take the source's version again, then exit. Refused while
-anything is joined into the role's keeper; an idle keeper is ended first. *shipped* (#126);
-renamed from `--reset-connection`, which is refused with the new name.
+**Reset.** `--reset <channel|path>`: discard what the role holds at one channel or
+declared path, in whatever mode, and take the source's version again, then exit. Refused
+while anything is joined into the role's keeper; an idle keeper is ended first.
+*shipped* (#126); renamed from `--reset-connection`, which is refused with the new name.
 
 **Role verbs.** *shipped* (#123, #126): `--status` (the keeper, what runs in it, the
-daemon's sessions), `--shutdown` (ends the keeper and everything in it, the daemon with its
-pool), `--delete` (removes the role's stores; refused while anything runs in it, naming
-`--shutdown`), `--reset`; and across roles (#314), `--list` and `--list-all` (the role
-sessions you can resume, this project's or every project's, with a one-line summary each:
-the line the session keeps itself, else the conversation's title, else its first prompt),
-and `--summarize` (for a stopped role, one headless turn in its sandbox writes that line
-and a longer description, then its own transcript is deleted).
+daemon's sessions), `--shutdown` (ends the keeper and everything in it, the daemon with
+its pool), `--delete` (removes the role's stores; refused while anything runs in it,
+naming `--shutdown`), `--reset`; and across roles (#314), `--list` and `--list-all` (the
+role sessions you can resume, this project's or every project's, with a one-line summary
+each: the line the session keeps itself, else the conversation's title, else its first
+prompt), and `--summarize` (for a stopped role, one headless turn in its sandbox writes
+that line and a longer description, then its own transcript is deleted).
 
-**Several roles at once.** *shipped* (#317, #320, #355): `--roles ROLE... [ENGINE FLAGS]`
-opens one tmux session, named after the project directory, with a pane per role, five to
-a window, the first role of each on top and the others in a row below, each running
-`--role ROLE` with the line's engine words and its role's agent (`[agent:<glob>]` or
-`[agent]` command, or `--agent` on the line); it takes no command. The dot-file is
-reviewed once and every role's agent resolved before the panes open. It only builds the
-tmux command: every pane is a plain launch. Beside the session one host process takes
-the Supervisor's reset markers, typing the role's fresh start (its agent's profile's
-`[agent] clear`; claude: `/clear`) in that role's pane (#329).
+**Several roles at once.** *shipped* (#317, #320, #355):
+`--roles ROLE... [ENGINE FLAGS]` opens one tmux session, named after the project
+directory, with a pane per role, five to a window, the first role of each on top and the
+others in a row below, each running `--role ROLE` with the line's engine words and its
+role's agent (`[agent:<glob>]` or `[agent]` command, or `--agent` on the line); it takes
+no command. The dot-file is reviewed once and every role's agent resolved before the
+panes open. It only builds the tmux command: every pane is a plain launch. Beside the
+session one host process takes the Supervisor's reset markers, typing the role's fresh
+start (its agent's profile's `[agent] clear`; claude: `/clear`) in that role's pane
+(#329).
 
 **Briefing.** What the engine tells the agent about its sandbox: a document bound
 read-only, and a hook summary re-read on every launch, resume and compaction. *shipped*
 
-**Route.** The profile's decision, from the agent's argv, whether a launch is sandboxed or
-run as it is (an `asb claude` typed inside a sandbox runs there without a second one). *shipped*
+**Route.** The profile's decision, from the agent's argv, whether a launch is sandboxed
+or run as it is (an `asb claude` typed inside a sandbox runs there without a second
+one). *shipped*
 
 **`--exec`.** Run a command other than the agent in the sandbox the profile would have
-built: same binds, environment, network and state isolation. It is a join like any other,
-so beside a running agent of the role it runs in that agent's sandbox. *shipped*
+built: same binds, environment, network and state isolation. It is a join like any
+other, so beside a running agent of the role it runs in that agent's sandbox. *shipped*
 
-**Background session.** `asb claude --bg`, run inside its role's launch like any other join;
-the daemon it starts, the daemon's pooled workers and the management verbs are inside too,
-and the daemon holds the launch until `--shutdown`. *shipped* (#123). It replaced the
-**`--wrap`** machinery, which sandboxed each worker from a daemon on the host through
-Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER`; removed.
+**Background session.** `asb claude --bg`, run inside its role's launch like any other
+join; the daemon it starts, the daemon's pooled workers and the management verbs are
+inside too, and the daemon holds the launch until `--shutdown`. *shipped* (#123). It
+replaced the **`--wrap`** machinery, which sandboxed each worker from a daemon on the
+host through Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER`; removed.
 
 **Try-run.** Run a launch against cloned sources, then inspect or discard the result.
 *proposed* ([#115](https://github.com/pearu/agent-sandbox/issues/115)).
@@ -351,11 +365,11 @@ variable, which beats the file. *shipped*
 **Dot-file.** `.agent-sandbox` in the project: the project's knobs. Data only, never
 executed. *shipped*
 
-**Trust.** A dot-file is read only after the user approves its exact content; the hash and
-the content are recorded, so any edit needs approval again, shown as a diff. The review is
-part of the launch at a terminal, and `--trust` without one; a launch with no terminal
-refuses an unapproved file. Inside the sandbox the file is read-only, and an engine run
-inside a sandbox has no gate. *shipped* (#143)
+**Trust.** A dot-file is read only after the user approves its exact content; the hash
+and the content are recorded, so any edit needs approval again, shown as a diff. The
+review is part of the launch at a terminal, and `--trust` without one; a launch with no
+terminal refuses an unapproved file. Inside the sandbox the file is read-only, and an
+engine run inside a sandbox has no gate. *shipped* (#143)
 
 **State directory.** `~/.local/state/agent-sandbox/`: every sandbox's state. Persistent,
 host-only, a control path. Distinct from the **session base** (runtime, per launch) and
@@ -375,16 +389,17 @@ firewall rule allows only the proxy, and host ports only as named with `--host-p
 
 **Leak, channel (in the study's sense).** Anything by which one project's or launch's
 material reaches another's. **Inference** is material that steers another agent's
-behaviour; **disclosure** is content crossing without necessarily steering anything. Both
-count. See [cross-project-channels.md](cross-project-channels.md).
+behaviour; **disclosure** is content crossing without necessarily steering anything.
+Both count. See [cross-project-channels.md](cross-project-channels.md).
 
 **Secret store.** Paths holding credentials of services the sandbox keeps away from the
 agent (`~/.ssh`, `~/.gnupg`, `~/.aws`, …). Refused as a bind in every mode, including
 read-only. *shipped*
 
-**Control plane.** The engine's own machinery on the host — the trust store, the proxy CA,
-the runtime, the state directory, `~/.local/bin` where `asb` lives, user units. Refused as a bind, because
-writable from inside it would let the agent change its own sandbox; `~/.local/bin` alone may be bound read-only. *shipped*
+**Control plane.** The engine's own machinery on the host — the trust store, the proxy
+CA, the runtime, the state directory, `~/.local/bin` where `asb` lives, user units.
+Refused as a bind, because writable from inside it would let the agent change its own
+sandbox; `~/.local/bin` alone may be bound read-only. *shipped*
 
 ## Testing
 
@@ -396,8 +411,8 @@ writable from inside it would let the agent change its own sandbox; `~/.local/bi
 is the sandbox distorting the agent rather than failing outright. The tools environment
 on `native`'s PATH is the one intended difference.
 
-**Mutation check.** Breaking the thing a test is for, and confirming the test then fails.
-A test that passes either way is recorded as proving nothing.
+**Mutation check.** Breaking the thing a test is for, and confirming the test then
+fails. A test that passes either way is recorded as proving nothing.
 
 ## Words that collide
 

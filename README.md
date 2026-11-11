@@ -4,13 +4,12 @@
 [![codecov](https://codecov.io/gh/pearu/agent-sandbox/graph/badge.svg)](https://codecov.io/gh/pearu/agent-sandbox)
 
 Run an AI coding agent inside a [bubblewrap](https://github.com/containers/bubblewrap)
-sandbox: a default-deny filesystem, an egress allowlist the agent cannot
-bypass with its normal HTTP clients, and an opt-in
-SSH broker whose keys never enter the sandbox. One bash script and a
-per-agent profile; no image to build. The flagship profile runs
-[Claude Code](https://docs.anthropic.com/claude-code). You ask for the sandbox
-by name — `asb`, short for `agent-sandbox` — and `claude` alone stays Claude
-Code itself, however you installed it.
+sandbox: a default-deny filesystem, an egress allowlist the agent cannot bypass with its
+normal HTTP clients, and an opt-in SSH broker whose keys never enter the sandbox. One
+bash script and a per-agent profile; no image to build. The flagship profile runs
+[Claude Code](https://docs.anthropic.com/claude-code). You ask for the sandbox by name —
+`asb`, short for `agent-sandbox` — and `claude` alone stays Claude Code itself, however
+you installed it.
 
 ```
 cd ~/projects/thing
@@ -66,13 +65,12 @@ here, once, and then stop thinking about.
 
 ## What the agent gets
 
-- **Filesystem**: the system directories read-only; a fresh `/tmp`; an empty,
-  read-only `$HOME` in which only the agent's own state (`~/.claude`), the
-  current project directory (read-write unless `project = read-only`), the active conda env (read-only
-  unless asked), a session-private `~/.cache`, and paths you list are visible.
-  Secret stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.netrc`, ...) and the
-  sandbox's own configuration are refused, as CWD too, along with any directory
-  that contains them.
+- **Filesystem**: the system directories read-only; a fresh `/tmp`; an empty, read-only
+  `$HOME` in which only the agent's own state (`~/.claude`), the current project
+  directory (read-write unless `project = read-only`), the active conda env (read-only
+  unless asked), a session-private `~/.cache`, and paths you list are visible. Secret
+  stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.netrc`, ...) and the sandbox's own
+  configuration are refused, as CWD too, along with any directory that contains them.
 - **Network**: through a host-side mitmproxy with an allowlist you edit
   (`~/.config/agent-sandbox/allowlist.txt`). Blocked hosts are refused before
   any connection is made and logged. The proxy's CA is trusted inside the
@@ -98,14 +96,12 @@ agent-sandbox wraps a **local process**. If you launch an agent on your machine,
 it can run inside the sandbox; if the agent runs on someone else's machine,
 there is nothing here to put a boundary around.
 
-**Covered.** Any agent you start locally with `asb`: the engine is
-provider-agnostic and everything agent-specific lives in a profile, so a new
-agent needs a profile rather than engine changes
-([profiles.md](docs/profiles.md)). Two profiles ship: `claude`, and `sshd`, a
-sandboxed ssh login for other machines (`asb --profile sshd --role NAME`, #335;
-[sshd.md](docs/sshd.md)). MCP
-servers are covered automatically, since the agent spawns them inside the
-sandbox.
+**Covered.** Any agent you start locally with `asb`: the engine is provider-agnostic and
+everything agent-specific lives in a profile, so a new agent needs a profile rather than
+engine changes ([profiles.md](docs/profiles.md)). Two profiles ship: `claude`, and
+`sshd`, a sandboxed ssh login for other machines
+(`asb --profile sshd --role NAME`, #335; [sshd.md](docs/sshd.md)). MCP servers are
+covered automatically, since the agent spawns them inside the sandbox.
 
 **Not covered, and cannot be.** claude.ai in a browser, Claude Code on the web,
 and cloud or background sessions all run on Anthropic's servers. The risk there
@@ -142,15 +138,15 @@ system-wide mode; the installer refuses to run through `sudo`. See
 
 ## Install
 
-Requirements: Linux with unprivileged user namespaces, `bubblewrap` (0.12.0 or
-newer recommended: the installer warns below it, and
+Requirements: Linux with unprivileged user namespaces, `bubblewrap` (0.12.0 or newer
+recommended: the installer warns below it, and
 [troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604)
 has the recipe for Ubuntu 24.04 and 26.04), `curl`, `git`, `python3` on `PATH` when you
 launch (every session is joined into its role's running sandbox by a small
 standard-library helper). The proxy runtime needs neither conda nor `python3-venv`: the
-installer builds it with a micromamba it fetches itself. On Ubuntu 24.04+ the installer needs `sudo` once, to install an
-AppArmor profile allowing bwrap to use user namespaces (and, if you use the
-strict network mode, one for pasta); nothing else needs root.
+installer builds it with a micromamba it fetches itself. On Ubuntu 24.04+ the installer
+needs `sudo` once, to install an AppArmor profile allowing bwrap to use user namespaces
+(and, if you use the strict network mode, one for pasta); nothing else needs root.
 
 ```
 git clone https://github.com/pearu/agent-sandbox.git
@@ -168,17 +164,16 @@ in that account's `~/.config`, and `asb` goes on that account's PATH.
 There is no system-wide mode, and the installer refuses to run through `sudo` —
 it asks for sudo itself for the one step that needs it, the AppArmor profile.
 
-The installer is idempotent: it installs agent-sandbox's own
-**micromamba** (a pinned release, checked against its SHA-256, at
+The installer is idempotent: it installs agent-sandbox's own **micromamba** (a pinned
+release, checked against its SHA-256, at
 `~/.local/share/agent-sandbox/micromamba/bin/micromamba`, with an empty conda root for
 its environments at `~/.local/share/agent-sandbox/conda`), sets up the proxy with it
 (mitmproxy 12+ in a private conda-forge environment,
 `~/.local/share/agent-sandbox/proxy-env`; a working one an earlier run made is kept),
-generates the CA, writes
-the allowlist (keeping your edits on re-runs), installs the systemd user unit, and **copies the engine and profiles under
-`~/.local/share/agent-sandbox`**. Because the command runs from the copy, you
-can move or delete this clone afterward; re-run `./install.sh` after pulling to
-update.
+generates the CA, writes the allowlist (keeping your edits on re-runs), installs the
+systemd user unit, and **copies the engine and profiles under
+`~/.local/share/agent-sandbox`**. Because the command runs from the copy, you can move
+or delete this clone afterward; re-run `./install.sh` after pulling to update.
 
 Conda inside a sandbox is the sandbox's own concern: a host needs no conda, and a broken
 host install does not break a role. Where the host has conda, the installer asks once:
@@ -193,20 +188,20 @@ environments live (`--yes` keeps it).
 Inside a sandbox a tool like `gh` would be the host's `/usr/bin` one, which a
 distribution can leave far behind (Ubuntu ships gh 2.46, without `gh pr checks --json`).
 So the installer also builds a small **tools environment** from conda-forge with that
-micromamba, at `~/.local/share/agent-sandbox/tools`, and **rebuilds it at every run**, so
-re-running `./install.sh` is how the tools are updated. What it holds is yours to say:
-`~/.config/agent-sandbox/tools.txt`, one conda package spec per line (`#` comments), and
-`gh` and `tmux` when there is no such file. Beside them it always holds `gpg` (conda-forge's
-`gnupg`), which agent-sandbox itself runs on the host for `asb --install` and which no
-sandbox has on its PATH unless you list it; so a file listing none leaves an environment
-with none of your tools. Every
-sandbox gets it read-only, its commands on PATH after the conda env and your own
-directories and before `/usr/bin` and the other system directories: a project that has
-its own `gh` keeps it, and otherwise conda-forge's beats the distribution's. Only the
-listed packages' own commands are on PATH, not their dependencies' (a tool that pulls in
-Python does not put a `python3` ahead of the system one). A failed update warns and
-keeps the previous environment; until one has been built, sandboxes are unchanged.
-It applies under every preset, `--preset native` included.
+micromamba, at `~/.local/share/agent-sandbox/tools`, and **rebuilds it at every run**,
+so re-running `./install.sh` is how the tools are updated. What it holds is yours to
+say: `~/.config/agent-sandbox/tools.txt`, one conda package spec per line (`#`
+comments), and `gh` and `tmux` when there is no such file. Beside them it always holds
+`gpg` (conda-forge's `gnupg`), which agent-sandbox itself runs on the host for
+`asb --install` and which no sandbox has on its PATH unless you list it; so a file
+listing none leaves an environment with none of your tools. Every sandbox gets it
+read-only, its commands on PATH after the conda env and your own directories and before
+`/usr/bin` and the other system directories: a project that has its own `gh` keeps it,
+and otherwise conda-forge's beats the distribution's. Only the listed packages' own
+commands are on PATH, not their dependencies' (a tool that pulls in Python does not put
+a `python3` ahead of the system one). A failed update warns and keeps the previous
+environment; until one has been built, sandboxes are unchanged. It applies under every
+preset, `--preset native` included.
 
 It then puts two commands in `~/.local/bin`, both the engine: `agent-sandbox`
 and its short name `asb`. It puts nothing at `claude`, and leaves your own Claude
@@ -218,29 +213,31 @@ Code alone.
 asb --install claude
 ```
 
-`asb claude` runs asb's own install of Claude Code, the version the claude profile
-is tested with, under `~/.local/state/agent-sandbox/claude/install/` — never the
-`claude` on your PATH, under every preset, `--preset native` included (#6). Until it
-is installed, `asb claude` at a terminal asks once, `install claude 2.1.321 (342 MB
-from downloads.claude.ai)? [y/N]`, and installs it on `y`; any other answer, or no
-terminal (a script, CI), refuses with that line. `asb --agent claude --account NAME --login`
-installs it first, unasked. The launch line names the version when it is not the
-pin (`agent: claude, running 2.1.300, pinned 2.1.321`), and `--status` and `--list`
-show the one each role last ran. A binary of your own still runs by
-its path: `asb --profile claude /path/to/claude`. With more than one agent asb can
-run, `asb --set-default-agent AGENT` picks the one a role verb with no command acts
-on ([profiles.md](docs/profiles.md#the-install-recipe)).
+`asb claude` runs asb's own install of Claude Code, the version the claude profile is
+tested with, under `~/.local/state/agent-sandbox/claude/install/` — never the `claude`
+on your PATH, under every preset, `--preset native` included (#6). Until it is
+installed, `asb claude` at a terminal asks once,
+`install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`, and installs it on
+`y`; any other answer, or no terminal (a script, CI), refuses with that line.
+`asb --agent claude --account NAME --login` installs it first, unasked. The launch line
+names the version when it is not the pin
+(`agent: claude, running 2.1.300, pinned 2.1.321`), and `--status` and `--list` show the
+one each role last ran. A binary of your own still runs by its path:
+`asb --profile claude /path/to/claude`. With more than one agent asb can run,
+`asb --set-default-agent AGENT` picks the one a role verb with no command acts on
+([profiles.md](docs/profiles.md#the-install-recipe)).
 
 An install or a re-run of `./install.sh` never installs, updates or removes an agent
 (`--uninstall` removes the ones asb installed, below); its **Agents** section reports
-one line per agent: for one asb installs, the installed
-version against the profile's pin (`claude 2.1.321, the pin`; `claude 2.1.300, pinned
-2.1.321: asb --install claude moves to the pin`; `claude: not installed; asb --install
-claude, or it is offered at the first launch`), and for any other, the command on your
-PATH it runs. At a terminal, with several agents asb can run and no default set, it
-asks once which is the default (a number or a name; an empty answer leaves none set)
-and sets it with `asb --set-default-agent`; without a terminal, with `--yes`, or with
-one set already, it asks nothing and says how to set or change it.
+one line per agent: for one asb installs, the installed version against the profile's
+pin (`claude 2.1.321, the pin`;
+`claude 2.1.300, pinned 2.1.321: asb --install claude moves to the pin`;
+`claude: not installed; asb --install claude, or it is offered at the first launch`),
+and for any other, the command on your PATH it runs. At a terminal, with several agents
+asb can run and no default set, it asks once which is the default (a number or a name;
+an empty answer leaves none set) and sets it with `asb --set-default-agent`; without a
+terminal, with `--yes`, or with one set already, it asks nothing and says how to set or
+change it.
 
 **Upgrading from an install before 0.4:** those put the engine at
 `~/.local/bin/claude` and moved Claude Code's own launcher aside. Running
@@ -248,16 +245,16 @@ one set already, it asks nothing and says how to set or change it.
 and says so — and from then on `claude` is native and `asb claude` is sandboxed.
 Until you do, the old launcher refuses to run and says why.
 
-Undo it with `./install.sh --uninstall`: it removes `asb` and `agent-sandbox`
-and the rest, the agents `asb --install` installed included, and keeps the sandboxes'
-state and your accounts' logins under `~/.local/state/agent-sandbox`
-([troubleshooting.md](docs/troubleshooting.md#removing-agent-sandbox)).
-Working *on* agent-sandbox? `./install.sh --dev` points `asb` at the
-checkout instead, so your edits take effect at the next launch (see
-[docs/design.md](docs/design.md) for why that is dev-only). Standalone:
+Undo it with `./install.sh --uninstall`: it removes `asb` and `agent-sandbox` and the
+rest, the agents `asb --install` installed included, and keeps the sandboxes' state and
+your accounts' logins under `~/.local/state/agent-sandbox`
+([troubleshooting.md](docs/troubleshooting.md#removing-agent-sandbox)). Working *on*
+agent-sandbox? `./install.sh --dev` points `asb` at the checkout instead, so your edits
+take effect at the next launch (see [docs/design.md](docs/design.md) for why that is
+dev-only). Standalone:
 `curl -fsSL https://raw.githubusercontent.com/pearu/agent-sandbox/main/install.sh | bash`
-clones the repository under `~/.local/share/agent-sandbox/src` and installs
-the copy from there.
+clones the repository under `~/.local/share/agent-sandbox/src` and installs the copy
+from there.
 
 Then open a fresh shell, `cd` into a project, and run `asb claude`.
 
@@ -339,30 +336,28 @@ settings are **taken over** by the environment variable when it is set, and the
 engine says so. Nothing in a `.agent-sandbox` applies until you approve it — at
 the launch, which shows it and asks, or with `--trust`.
 
-Ten more variables name locations rather than behaviour and are rarely set by
-hand: `AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROXY_PORT` (the proxy's port on
-127.0.0.1; `install.sh` records its choice, 8888 or another account's next free
-one, in `~/.config/agent-sandbox/proxy-port`), `AGENT_SANDBOX_MITMDUMP` (the mitmdump
-a self-contained profile, `sshd`, runs as its proxy of its own; `install.sh`'s by
-default), `AGENT_SANDBOX_PROFILE_DIR`,
-`AGENT_SANDBOX_HOME` (where `install.sh` put micromamba and its conda root),
-`AGENT_SANDBOX_MODELS_DIR` (the development models `--init` reads),
-`AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,
-`AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper) and
-`AGENT_SANDBOX_JOIN` (the helper that joins an app into its role's running
-launch), the last three normally found beside the engine. One more is timing:
-`AGENT_SANDBOX_KEEPER_GRACE`, how many seconds a role's launch waits once nothing
-is joined into it before it ends (2), so that commands run one after another
-share it. `--engine-help` prints each with its default. And two are the test
-suite's: `AGENT_SANDBOX_TEST_PYTHON`, the command the engine runs those two
-helpers with instead of `python3`, which the coverage stages point at coverage.py, and
-`AGENT_SANDBOX_INSTALL_BASE`, the source `asb --install` has the profile's resolver read
-in place of the vendor's (the SHA-256 still enforced).
+Ten more variables name locations rather than behaviour and are rarely set by hand:
+`AGENT_SANDBOX_PROXY_CA`, `AGENT_SANDBOX_PROXY_PORT` (the proxy's port on 127.0.0.1;
+`install.sh` records its choice, 8888 or another account's next free one, in
+`~/.config/agent-sandbox/proxy-port`), `AGENT_SANDBOX_MITMDUMP` (the mitmdump a
+self-contained profile, `sshd`, runs as its proxy of its own; `install.sh`'s by
+default), `AGENT_SANDBOX_PROFILE_DIR`, `AGENT_SANDBOX_HOME` (where `install.sh` put
+micromamba and its conda root), `AGENT_SANDBOX_MODELS_DIR` (the development models
+`--init` reads), `AGENT_SANDBOX_SESSION_BASE`, `AGENT_SANDBOX_SECCOMP_DIR`,
+`AGENT_SANDBOX_CONNECT_SYNC` (the `copy` mode's sync helper) and `AGENT_SANDBOX_JOIN`
+(the helper that joins an app into its role's running launch), the last three normally
+found beside the engine. One more is timing: `AGENT_SANDBOX_KEEPER_GRACE`, how many
+seconds a role's launch waits once nothing is joined into it before it ends (2), so that
+commands run one after another share it. `--engine-help` prints each with its default.
+And two are the test suite's: `AGENT_SANDBOX_TEST_PYTHON`, the command the engine runs
+those two helpers with instead of `python3`, which the coverage stages point at
+coverage.py, and `AGENT_SANDBOX_INSTALL_BASE`, the source `asb --install` has the
+profile's resolver read in place of the vendor's (the SHA-256 still enforced).
 `AGENT_SANDBOX_TEST_PROBE_ROOT` and `AGENT_SANDBOX_TEST_PROBE_NET` are read by
 `--setup-remote`'s probe where it runs, on the remote host: a throwaway root for the
 paths it reads and the hosts it tries, which the unit tests set and nothing else does.
-`AGENT_SANDBOX_SERVE_TURN` is the `--serve` loop's own, set on each turn it runs, so
-the turn, which has its prompt, is not also given the role's `[briefing] start`.
+`AGENT_SANDBOX_SERVE_TURN` is the `--serve` loop's own, set on each turn it runs, so the
+turn, which has its prompt, is not also given the role's `[briefing] start`.
 
 Engine flags go before the agent's own arguments. `agent-sandbox --help` lists
 them; with a profile, `<agent> --engine-help` shows the same, and
@@ -387,16 +382,16 @@ commented template in
   instance, the roles' side.
 - [docs/remote.md](docs/remote.md): `asb --setup-remote`, that login set up on another
   host from one `[remote:ALIAS]` section, and how roles reach it.
-- [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git, `gh`,
-  package installs, ports, editors — and how to tell what is blocking you.
+- [docs/recipes.md](docs/recipes.md): ordinary tools from inside the sandbox — git,
+  `gh`, package installs, ports, editors — and how to tell what is blocking you.
 - [docs/profiles.md](docs/profiles.md): the profile contract; adding an agent.
-- [docs/connections.md](docs/connections.md): proposed — sandboxes as
-  installations, connections between them under an
-  `own < seed-only < copy < copy-on-write < read-only < read-write`
-  scale; the model for controlling what passes between projects, roles and agents,
-  with its experiments planned in
-  [docs/connections-study.md](docs/connections-study.md).
-- [docs/updating.md](docs/updating.md), [docs/troubleshooting.md](docs/troubleshooting.md),
+- [docs/connections.md](docs/connections.md): proposed — sandboxes as installations,
+  connections between them under an
+  `own < seed-only < copy < copy-on-write < read-only < read-write` scale; the model for
+  controlling what passes between projects, roles and agents, with its experiments
+  planned in [docs/connections-study.md](docs/connections-study.md).
+- [docs/updating.md](docs/updating.md),
+  [docs/troubleshooting.md](docs/troubleshooting.md),
   [docs/prior-art.md](docs/prior-art.md).
 - [AGENTS.md](AGENTS.md): rules for AI maintainers; [CONTRIBUTING.md](CONTRIBUTING.md);
   tests: `tests/run.sh` (bats, from `environment.yml`; `e2e` installs for real

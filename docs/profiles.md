@@ -90,66 +90,62 @@ hooks merged all the same.
 
 ### A dot-file section named after the profile
 
-A project's `.agent-sandbox` may carry a section named after the **active**
-profile — `[claude]` in a claude run. The engine checks its lines are `key = value`
-and reads `hide` there: paths under the
-profile's base blanked every launch, on top of the profile's own `[agent] hide`
-(relative paths only; `/` and `..` are ignored with a note). The claude profile reads
-`state-background` itself, in `profile_briefing_args`, from `_df_profile_kv`. A profile allows it by
-listing it in `profile_dotfile_keys`, which is also how the review knows to warn of
-any other key — a typo must not silently do nothing. A section naming a different
-profile is skipped at a launch; the dot-file's review reads every profile, and warns
-of a section that names none. The pairs count **only from an approved dot-file**, so
-an unreviewed file grants nothing; the trust gate is the engine's, not the profile's.
-`profiles/claude/profile.sh` lists `hide` and `state-background` ([config.md](config.md#the-file)).
+A project's `.agent-sandbox` may carry a section named after the **active** profile —
+`[claude]` in a claude run. The engine checks its lines are `key = value` and reads
+`hide` there: paths under the profile's base blanked every launch, on top of the
+profile's own `[agent] hide` (relative paths only; `/` and `..` are ignored with a
+note). The claude profile reads `state-background` itself, in `profile_briefing_args`,
+from `_df_profile_kv`. A profile allows it by listing it in `profile_dotfile_keys`,
+which is also how the review knows to warn of any other key — a typo must not silently
+do nothing. A section naming a different profile is skipped at a launch; the dot-file's
+review reads every profile, and warns of a section that names none. The pairs count
+**only from an approved dot-file**, so an unreviewed file grants nothing; the trust gate
+is the engine's, not the profile's. `profiles/claude/profile.sh` lists `hide` and
+`state-background` ([config.md](config.md#the-file)).
 
 **A profile may ship a helper beside its script** for what bash does badly, such as
-parsing the agent's own file formats. The claude profile's is `profile.py`, a
-subcommand each: the config file's seed view, the prompt history's, the `--bg`
-workspace trust, the `--settings` merge. Scripts the agent runs inside the sandbox
-are copied beside the briefing and named in the `--settings` from there:
-`refusal-hook.sh` (a refused host, after a Bash call that failed), `state-hook.sh` (what the
-session is doing, from `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
-`Notification`, and `PostToolUse`/`PostToolUseFailure` for any tool, into the sandbox's
-`/tmp`: `working`, `needs you`, and after a reply one of four -- `asks you` when the
-`Stop` input's `last_assistant_message` (the transcript's tail without it) ends one of
-its last three lines with `?` (blank lines, quotes -- `>`, `▎` -- and fenced code not
-counted), `running` when a background command of the role's own is running; it
-wakes when that ends (an entry of the `Stop` input's `background_tasks` whose command
-does not name `inbox-wait`; without that field, a Bash tool wrapper, `bash -c ... eval`,
-other than the watcher's among Claude Code's children), `waiting` when a process named
-`inbox-wait` runs under Claude Code (`CLAUDE_PID`), `idle` otherwise, and the same
-watcher test at `SessionStart`; with
-`[claude] state-background = on` also the terminal's background, reset by
-a `SessionEnd` hook; no hook fires on an Esc interrupt, so the state stays `working`
-until the next event; and, for a role whose `[serve:ROLE] watch` names its inbox, the
-watcher rule: its `Stop` command carries `AGENT_SANDBOX_WATCH=PATH`, and a turn that
-ends with no `inbox-wait` running under Claude Code is refused once -- the hook prints
-`{"decision":"block","reason":...}`, the reason saying the watcher on PATH is not
-running and to arm it in the background, and Claude Code goes on with that -- but not
-when the input's `stop_hook_active` is true, so never twice in a row; not in a print
+parsing the agent's own file formats. The claude profile's is `profile.py`, a subcommand
+each: the config file's seed view, the prompt history's, the `--bg` workspace trust, the
+`--settings` merge. Scripts the agent runs inside the sandbox are copied beside the
+briefing and named in the `--settings` from there: `refusal-hook.sh` (a refused host,
+after a Bash call that failed), `state-hook.sh` (what the session is doing, from
+`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, `Notification`, and
+`PostToolUse`/`PostToolUseFailure` for any tool, into the sandbox's `/tmp`: `working`,
+`needs you`, and after a reply one of four -- `asks you` when the `Stop` input's
+`last_assistant_message` (the transcript's tail without it) ends one of its last three
+lines with `?` (blank lines, quotes -- `>`, `▎` -- and fenced code not counted),
+`running` when a background command of the role's own is running; it wakes when that
+ends (an entry of the `Stop` input's `background_tasks` whose command does not name
+`inbox-wait`; without that field, a Bash tool wrapper, `bash -c ... eval`, other than
+the watcher's among Claude Code's children), `waiting` when a process named `inbox-wait`
+runs under Claude Code (`CLAUDE_PID`), `idle` otherwise, and the same watcher test at
+`SessionStart`; with `[claude] state-background = on` also the terminal's background,
+reset by a `SessionEnd` hook; no hook fires on an Esc interrupt, so the state stays
+`working` until the next event; and, for a role whose `[serve:ROLE] watch` names its
+inbox, the watcher rule: its `Stop` command carries `AGENT_SANDBOX_WATCH=PATH`, and a
+turn that ends with no `inbox-wait` running under Claude Code is refused once -- the
+hook prints `{"decision":"block","reason":...}`, the reason saying the watcher on PATH
+is not running and to arm it in the background, and Claude Code goes on with that -- but
+not when the input's `stop_hook_active` is true, so never twice in a row; not in a print
 run, nor on a turn of `--serve`, whose loop is the watcher; `--check` says it for the
-role; and, for every session where the engine bound the role's summary directory
-(the briefing on, #314), the summary rule: the `Stop` command carries
-`AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line`, and a turn that ends with
-that line missing or empty is refused once in the same way, the reason saying to
-write the one-line summary there -- not with `stop_hook_active`, not in a print run,
-`--serve`'s turns included; a `Stop` that fails both rules gets one refusal naming
-both; `--check` says it) and
-`statusline.sh`
-(the `statusLine`: a bar of the state's colour with the role and that state, padded to
-`COLUMNS` less 4, the most Claude Code shows of the line without cutting it,
-`refreshInterval` 1, the role written
-into its command since neither its stdin nor the sandbox's environment carries it;
-a `statusLine` in the user's `--settings` wins) (#287), and, for a role with a
-`[briefing] start`, the `/start` command (`.claude/commands/start.md`, the start text,
-the directory added with `--add-dir`). The contract is still the bash hooks, and the
-policy stays in them: the helper does one thing and exits nonzero when it cannot, and
-the hook decides what a launch then does. `python3` is always there -- the engine
-refuses a launch without it, since every command is joined by it -- so a hook needs no
-second, bash version of what the helper does. The engine
-gives the hook its directory as `profile_home` (what `{profile}` expands to), and the
-installer copies the profile's directory whole.
+role; and, for every session where the engine bound the role's summary directory (the
+briefing on, #314), the summary rule: the `Stop` command carries
+`AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line`, and a turn that ends with that
+line missing or empty is refused once in the same way, the reason saying to write the
+one-line summary there -- not with `stop_hook_active`, not in a print run, `--serve`'s
+turns included; a `Stop` that fails both rules gets one refusal naming both; `--check`
+says it) and `statusline.sh` (the `statusLine`: a bar of the state's colour with the
+role and that state, padded to `COLUMNS` less 4, the most Claude Code shows of the line
+without cutting it, `refreshInterval` 1, the role written into its command since neither
+its stdin nor the sandbox's environment carries it; a `statusLine` in the user's
+`--settings` wins) (#287), and, for a role with a `[briefing] start`, the `/start`
+command (`.claude/commands/start.md`, the start text, the directory added with
+`--add-dir`). The contract is still the bash hooks, and the policy stays in them: the
+helper does one thing and exits nonzero when it cannot, and the hook decides what a
+launch then does. `python3` is always there -- the engine refuses a launch without it,
+since every command is joined by it -- so a hook needs no second, bash version of what
+the helper does. The engine gives the hook its directory as `profile_home` (what
+`{profile}` expands to), and the installer copies the profile's directory whole.
 
 A profile must **not** touch the engine's bwrap argument list. The declarations
 above are the whole interface, so that the sandbox's isolation guarantees stay
@@ -240,10 +236,11 @@ agent-sandbox: agent: claude, running 9.9.9 (untested with asb), pinned 2.1.321 
 
 A join says the running role's (`agent: claude 2.1.321, the running role's`). Each
 launch records it in the role's store, `<store>/version` (`PROFILE<TAB>VERSION`, empty
-for an agent named by path), and in its keeper's policy (`version`): `--status` says
-it (`version: claude 2.1.321`, or `running V, pinned W`), and `--list` names it after
-the profile (`claude 2.1.321, base`). The briefing does not. A name that is not the profile's command (`asb --profile claude other`) is
-refused: PATH is not read for this profile, so name another binary by its path.
+for an agent named by path), and in its keeper's policy (`version`): `--status` says it
+(`version: claude 2.1.321`, or `running V, pinned W`), and `--list` names it after the
+profile (`claude 2.1.321, base`). The briefing does not. A name that is not the
+profile's command (`asb --profile claude other`) is refused: PATH is not read for this
+profile, so name another binary by its path.
 
 The bind: the version's directory alone, read-only, at its own path
 (`~/.local/state/agent-sandbox/claude/install/2.1.321/`), never the `install/` that
@@ -307,9 +304,9 @@ role's agent) is checked whether its agent is installed or not.
 
 ### `asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]`
 
-The installer, alone on the line, on the host only (refused inside a sandbox on
-either sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as
-`--login` and `--setup-remote` are). An explicit `--install` is your word: it asks nothing.
+The installer, alone on the line, on the host only (refused inside a sandbox on either
+sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as `--login` and
+`--setup-remote` are). An explicit `--install` is your word: it asks nothing.
 
 1. It reads the profile's `versions` table itself, saying what the table gets wrong.
    VERSION defaults to the pin. A version that is not exact (`1.2.3`, no range) is
@@ -350,9 +347,10 @@ either sign of one, the `AGENT_SANDBOX` marker or pid 1 being bubblewrap, as
    and that it is now current.
 
 Exit 0 when installed (or already there), 2 for a refusal, 1 for a failure (the
-resolver's, the download's, a size, checksum or tarball check). `AGENT_SANDBOX_INSTALL_BASE`
-is for tests: it is passed to the resolver as BASE, the source read in place of the
-vendor's; the SHA-256 the resolver gives is enforced all the same.
+resolver's, the download's, a size, checksum or tarball check).
+`AGENT_SANDBOX_INSTALL_BASE` is for tests: it is passed to the resolver as BASE, the
+source read in place of the vendor's; the SHA-256 the resolver gives is enforced all the
+same.
 
 ## Adding a profile
 
@@ -360,13 +358,12 @@ vendor's; the SHA-256 the resolver gives is enforced all the same.
    `profiles/claude/profile.sh` is the reference and has the contract in its header.
 2. Add `profiles/<name>/agent-sandbox`: the hosts the agent must reach under
    `[allow]`, and what else it can state as data (below).
-3. Run `scripts/check.sh`, then `install.sh` (or `install.sh --dry-run` first):
-   the installer reports the agent it finds on PATH.
-   `asb <name>` then runs it.
-   For an agent asb installs, add its [install recipe](#the-install-recipe):
-   `[agent] install`, a `versions` table with the live-tested version pinned, and a
-   `resolve.sh` that checks the vendor's signature where there is one; `asb <name>`
-   then runs `asb --install <name>`'s install, never one on PATH.
+3. Run `scripts/check.sh`, then `install.sh` (or `install.sh --dry-run` first): the
+   installer reports the agent it finds on PATH. `asb <name>` then runs it. For an agent
+   asb installs, add its [install recipe](#the-install-recipe): `[agent] install`, a
+   `versions` table with the live-tested version pinned, and a `resolve.sh` that checks
+   the vendor's signature where there is one; `asb <name>` then runs
+   `asb --install <name>`'s install, never one on PATH.
 4. Add `profiles/<name>/test.bash`, the profile's test adapter (the contract is at the
    top of `profiles/claude/test.bash`): every shared test then runs for it. Its own
    tests, for what only this agent has, go under `tests/<layer>/profile-<name>/`. A new
@@ -377,46 +374,45 @@ vendor's; the SHA-256 the resolver gives is enforced all the same.
 
 ## The flagship: `claude`
 
-`profiles/claude/profile.sh` runs Claude Code — asb's install of it, `asb --install
-claude` (#6), never the `claude` on your PATH; a binary of your own runs by its path,
-`asb --profile claude /path/to/claude` — binds `~/.claude` read-write and, inside
-it at `~/.claude/.claude.json`, the project's own copy of `~/.claude.json`
-(seeded and refreshed per launch, see [config.md](config.md)), with
-`CLAUDE_CONFIG_DIR` pointing Claude Code there (it writes the file through a
-lock directory and a temp file beside it, which the read-only `$HOME` refused;
-the writes were then silently lost), forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-`ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` and `ANTHROPIC_SMALL_FAST_MODEL`, sets
-`DISABLE_AUTOUPDATER=1`, refuses to forward `CLAUDE_CODE_PROJECT_DIR_NAME`, and
-routes `update`, `upgrade` and `install` to the host (see
-[updating.md](updating.md)).
+`profiles/claude/profile.sh` runs Claude Code — asb's install of it,
+`asb --install claude` (#6), never the `claude` on your PATH; a binary of your own runs
+by its path, `asb --profile claude /path/to/claude` — binds `~/.claude` read-write and,
+inside it at `~/.claude/.claude.json`, the project's own copy of `~/.claude.json`
+(seeded and refreshed per launch, see [config.md](config.md)), with `CLAUDE_CONFIG_DIR`
+pointing Claude Code there (it writes the file through a lock directory and a temp file
+beside it, which the read-only `$HOME` refused; the writes were then silently lost),
+forwards `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_MODEL` and `ANTHROPIC_SMALL_FAST_MODEL`, sets `DISABLE_AUTOUPDATER=1`,
+refuses to forward `CLAUDE_CODE_PROJECT_DIR_NAME`, and routes `update`, `upgrade` and
+`install` to the host (see [updating.md](updating.md)).
 
 ## `sshd`: a sandboxed ssh login
 
-`profiles/sshd/` (#335) runs an OpenSSH server as the agent: `asb --profile sshd --role
-NAME`, no command. Its `profile_command` is the path of `sshd-agent.sh` beside it, which the
-engine binds read-only at itself, so it runs whatever the account's PATH (sshd itself is
-in `/usr/sbin`, often off a user's PATH); inside the sandbox it writes one `SetEnv` line
--- every variable of its environment, the launch's, but `HOME`, `USER`, `LOGNAME`,
-`SHELL`, `MAIL`, `TERM`, `PWD`, `OLDPWD`, `SHLVL`, `_`, `SSH_*` and its own two -- into
-`/tmp`, before an `Include` of the configuration `profile_prepare()` wrote on the host,
-and execs `sshd -D -e -f` it. `profile_prepare()` refuses a launch that is not `strict`,
-that has not exactly one agent port, or whose `[sshd] authorized-keys` is missing,
-relative or unreadable; it keeps the role's host key (ed25519, made once), copies the
-keys file, writes `/etc/group` without the `tty` line (a pty's `chown` to gid 5 fails in
-the user namespace; without the group sshd uses the user's own) and the configuration:
-`Port` from the agent-port token and `ListenAddress 0.0.0.0`, every address of the
-namespace whatever the token's (a 2026 passt delivers a connection from the host's
-loopback to the namespace's own address, not to its `127.0.0.1`, measured on Ubuntu
-26.04; the namespace is private, so only the published port is reachable),
-`HostKey`, `AuthorizedKeysFile` (the copy), `PidFile none`, `UsePAM no`,
-`PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
-`PermitUserEnvironment no`, `PermitUserRC no`, `DisableForwarding yes`,
-`PermitTunnel no`, `StrictModes no`, `Subsystem sftp` (the host's sftp-server, else
-`internal-sftp`), `LogLevel VERBOSE`. sshd's log goes to the launch's stderr; the proxy's
-to the keeper's log. It declares `profile_self_contained`, `profile_project_env_set`,
-`profile_by_name_only`, `profile_ro_binds` and `profile_trust_notes`, refuses a
-command or arguments in `profile_route()`, and a second launch of a running role in
-`profile_before_join()`.
+`profiles/sshd/` (#335) runs an OpenSSH server as the agent:
+`asb --profile sshd --role NAME`, no command. Its `profile_command` is the path of
+`sshd-agent.sh` beside it, which the engine binds read-only at itself, so it runs
+whatever the account's PATH (sshd itself is in `/usr/sbin`, often off a user's PATH);
+inside the sandbox it writes one `SetEnv` line -- every variable of its environment, the
+launch's, but `HOME`, `USER`, `LOGNAME`, `SHELL`, `MAIL`, `TERM`, `PWD`, `OLDPWD`,
+`SHLVL`, `_`, `SSH_*` and its own two -- into `/tmp`, before an `Include` of the
+configuration `profile_prepare()` wrote on the host, and execs `sshd -D -e -f` it.
+`profile_prepare()` refuses a launch that is not `strict`, that has not exactly one
+agent port, or whose `[sshd] authorized-keys` is missing, relative or unreadable; it
+keeps the role's host key (ed25519, made once), copies the keys file, writes
+`/etc/group` without the `tty` line (a pty's `chown` to gid 5 fails in the user
+namespace; without the group sshd uses the user's own) and the configuration: `Port`
+from the agent-port token and `ListenAddress 0.0.0.0`, every address of the namespace
+whatever the token's (a 2026 passt delivers a connection from the host's loopback to the
+namespace's own address, not to its `127.0.0.1`, measured on Ubuntu 26.04; the namespace
+is private, so only the published port is reachable), `HostKey`, `AuthorizedKeysFile`
+(the copy), `PidFile none`, `UsePAM no`, `PasswordAuthentication no`,
+`KbdInteractiveAuthentication no`, `PermitUserEnvironment no`, `PermitUserRC no`,
+`DisableForwarding yes`, `PermitTunnel no`, `StrictModes no`, `Subsystem sftp` (the
+host's sftp-server, else `internal-sftp`), `LogLevel VERBOSE`. sshd's log goes to the
+launch's stderr; the proxy's to the keeper's log. It declares `profile_self_contained`,
+`profile_project_env_set`, `profile_by_name_only`, `profile_ro_binds` and
+`profile_trust_notes`, refuses a command or arguments in `profile_route()`, and a second
+launch of a running role in `profile_before_join()`.
 
 ## Roadmap profiles
 

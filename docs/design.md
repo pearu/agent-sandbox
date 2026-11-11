@@ -1,14 +1,14 @@
 # Design and threat model
 
-agent-sandbox runs an AI coding agent inside a [bubblewrap](https://github.com/containers/bubblewrap)
-sandbox with a default-deny filesystem, an egress allowlist enforced by a
-host-side proxy, and an opt-in SSH broker whose keys
-never enter the sandbox. This document is the trust surface: what is
-guaranteed, by which mechanism, how it is checked, and, just as plainly, what
-is not guaranteed.
+agent-sandbox runs an AI coding agent inside a
+[bubblewrap](https://github.com/containers/bubblewrap) sandbox with a default-deny
+filesystem, an egress allowlist enforced by a host-side proxy, and an opt-in SSH broker
+whose keys never enter the sandbox. This document is the trust surface: what is
+guaranteed, by which mechanism, how it is checked, and, just as plainly, what is not
+guaranteed.
 
-**This document is for developers** -- of the engine, of a profile, of a model -- and for
-anyone auditing what the sandbox promises. To *use* agent-sandbox, start with the
+**This document is for developers** -- of the engine, of a profile, of a model -- and
+for anyone auditing what the sandbox promises. To *use* agent-sandbox, start with the
 [README](../README.md); [recipes.md](recipes.md), [config.md](config.md) and
 [roles.md](roles.md) are the user's documents.
 
@@ -34,16 +34,15 @@ anyone auditing what the sandbox promises. To *use* agent-sandbox, start with th
 
 ¹ `PORT` is 8888 unless `install.sh` chose another ([network.md](network.md#its-port)).
 
-- **Engine** (`agent-sandbox`, alias `asb`): provider-agnostic bash, invoked by
-  name -- `asb [OPTIONS] CMD [AGENT OPTIONS]` (#151). It parses its own flags,
-  takes the agent from CMD (a path, or a name: asb's install of the agent for a
-  profile with an install recipe, #6, else looked up on PATH; resolved), selects the
-  profile CMD's basename names, assembles the bwrap
-  invocation, sets up per-session state (SSH agent, `--allow` file, CA bundle)
-  and launches. Everything the agent can see or reach is decided here.
-- **Profile** (`profiles/<name>/`: `profile.sh` and its dot-file): what is specific to one agent, behind a
-  small contract (see [profiles.md](profiles.md)). The `claude` profile is the
-  flagship.
+- **Engine** (`agent-sandbox`, alias `asb`): provider-agnostic bash, invoked by name --
+  `asb [OPTIONS] CMD [AGENT OPTIONS]` (#151). It parses its own flags, takes the agent
+  from CMD (a path, or a name: asb's install of the agent for a profile with an install
+  recipe, #6, else looked up on PATH; resolved), selects the profile CMD's basename
+  names, assembles the bwrap invocation, sets up per-session state (SSH agent, `--allow`
+  file, CA bundle) and launches. Everything the agent can see or reach is decided here.
+- **Profile** (`profiles/<name>/`: `profile.sh` and its dot-file): what is specific to
+  one agent, behind a small contract (see [profiles.md](profiles.md)). The `claude`
+  profile is the flagship.
 - **Egress proxy**: a mitmproxy 12+ instance run as a systemd user service from
   a private environment under `~/.local/share/agent-sandbox`, loading the
   allowlist addon. It terminates TLS with its own CA. See [network.md](network.md).
@@ -106,29 +105,29 @@ launch and runs one turn of R's session per change to the file `[serve:R] watch`
 the agent with the profile's turn arguments (claude: `-p --session-id ID` the first
 time, `-p --resume ID` after, `--permission-mode bypassPermissions`) and the text of
 `[serve:R] prompt`. **A served role is bounded by its policy alone**: with nobody to
-answer a prompt, Claude Code's permission prompts are off, which the threat model
-allows -- it treats the agent as compromised and enforces every limit outside it --
-and is why the Gate, whose policy can publish, is never served. `asb --role R
---summarize claude` (#314) runs one such turn too, in a stopped role's own launch, with
-the engine's prompt to read the role's conversations, memory and files and write its
-summary line and `summary/description.md`: it is bounded by R's policy alone in the
-same way, and what it reads and writes is what R's sessions could. A turn that exits
-non-zero is one line in the role's `messages.md`, written by a rename. It is the daemon-holds-the-launch pattern above with the engine as the daemon:
-the loop starts a *holder*, the engine again with the same words, which joins the launch
-with a command that only waits (`--status` lists it as `agent-sandbox-serve`); every
-turn is the engine again too, a join like any other, so it gets the keeper's policy and
-the briefing's `--settings` with the role's `[permissions]`. The holder knows itself by
-descending from the loop its record (`<sandbox>/serve`) names. The session's id goes to
-`.asb/coord/R/session`; a turn waits while any join that is not the loop's own is live
-(the keeper's `joined/` records, by process descent), since two resumes of one session
-fork it. A signal to the loop, or the loop losing its parent, ends the launch
-(`--shutdown`'s path); `--shutdown` from elsewhere ends the holder, and the loop with it.
-**Nothing of the project runs on the host**: the loop polls the watched file itself
-(modification time, inode, size -- the model's `inbox-wait`, which a sandbox with the
-project read-write could rewrite, is not run), touches `.asb/coord/R/alive` itself, reads
-the prompt through one open file whose real path must be in the project, and writes the
-session id by a rename in the role's directory, so a link planted there is replaced,
-never written through.
+answer a prompt, Claude Code's permission prompts are off, which the threat model allows
+-- it treats the agent as compromised and enforces every limit outside it -- and is why
+the Gate, whose policy can publish, is never served. `asb --role R --summarize claude`
+(#314) runs one such turn too, in a stopped role's own launch, with the engine's prompt
+to read the role's conversations, memory and files and write its summary line and
+`summary/description.md`: it is bounded by R's policy alone in the same way, and what it
+reads and writes is what R's sessions could. A turn that exits non-zero is one line in
+the role's `messages.md`, written by a rename. It is the daemon-holds-the-launch pattern
+above with the engine as the daemon: the loop starts a *holder*, the engine again with
+the same words, which joins the launch with a command that only waits (`--status` lists
+it as `agent-sandbox-serve`); every turn is the engine again too, a join like any other,
+so it gets the keeper's policy and the briefing's `--settings` with the role's
+`[permissions]`. The holder knows itself by descending from the loop its record
+(`<sandbox>/serve`) names. The session's id goes to `.asb/coord/R/session`; a turn waits
+while any join that is not the loop's own is live (the keeper's `joined/` records, by
+process descent), since two resumes of one session fork it. A signal to the loop, or the
+loop losing its parent, ends the launch (`--shutdown`'s path); `--shutdown` from
+elsewhere ends the holder, and the loop with it. **Nothing of the project runs on the
+host**: the loop polls the watched file itself (modification time, inode, size -- the
+model's `inbox-wait`, which a sandbox with the project read-write could rewrite, is not
+run), touches `.asb/coord/R/alive` itself, reads the prompt through one open file whose
+real path must be in the project, and writes the session id by a rename in the role's
+directory, so a link planted there is replaced, never written through.
 
 ## Threat model
 
@@ -176,24 +175,24 @@ that records the argv it receives; the argv is the contract.
 
 ### Running something other than the agent: `--exec`
 
-`--exec CMD [ARGS...]` runs CMD in place of the agent, in the sandbox the profile
-would have built for it. It is a deliberately small mechanism -- every launch is a
-keeper that the command is joined into, and `--exec` substitutes only the command
-joined -- which is what makes it **a simple but reliable way to run a command in an
-environment identical to a sandboxed agent session**. Identical is meant
-literally: the same binds, environment, PATH, network mode and allowlist,
-seccomp filter, state isolation and per-project `.agent-sandbox` policy, because
-they are computed by the same code before the command is chosen. A shell there is
-the agent's sandbox with a different entrypoint, which is why it needs no
-profile-composition machinery. Beside a running agent of the same role it is not
-even a copy: it is a process in that agent's own sandbox. That makes it the tool of choice for inspecting or
-reproducing what a session sees, and for hosting agent sessions inside one
-sandbox: the agent binary stays bound read-only, so an agent started from within
-runs natively there.
+`--exec CMD [ARGS...]` runs CMD in place of the agent, in the sandbox the profile would
+have built for it. It is a deliberately small mechanism -- every launch is a keeper that
+the command is joined into, and `--exec` substitutes only the command joined -- which is
+what makes it **a simple but reliable way to run a command in an environment identical
+to a sandboxed agent session**. Identical is meant literally: the same binds,
+environment, PATH, network mode and allowlist, seccomp filter, state isolation and
+per-project `.agent-sandbox` policy, because they are computed by the same code before
+the command is chosen. A shell there is the agent's sandbox with a different entrypoint,
+which is why it needs no profile-composition machinery. Beside a running agent of the
+same role it is not even a copy: it is a process in that agent's own sandbox. That makes
+it the tool of choice for inspecting or reproducing what a session sees, and for hosting
+agent sessions inside one sandbox: the agent binary stays bound read-only, so an agent
+started from within runs natively there.
 
-Two dispatches are bypassed under `--exec`, because each interprets the first
-argument: the management verbs (`agents`, `daemon`), and `profile_briefing_args`, whose `--settings` flags would corrupt an
-arbitrary command line. `briefing.md` is still bound read-only.
+Two dispatches are bypassed under `--exec`, because each interprets the first argument:
+the management verbs (`agents`, `daemon`), and `profile_briefing_args`, whose
+`--settings` flags would corrupt an arbitrary command line. `briefing.md` is still bound
+read-only.
 
 **Scope note.** A project's `.agent-sandbox`, once approved, grants its policy to
 whatever `--exec` runs there, not only to an agent session. This is not an
@@ -220,9 +219,9 @@ with `[gpu:<role>]`, replaces the default list, and `AGENT_SANDBOX_GPU_DEVICES` 
 launching shell wins over it. It is how two roles on one host get a card each: measured
 2026-10-31 on a host with two NVIDIA cards, binding only `/dev/nvidiactl`,
 `/dev/nvidia-uvm`, `/dev/nvidia-uvm-tools` and `/dev/nvidia1` shows that card alone to
-`nvidia-smi -L` and to PyTorch (one device, numbered 0, a CUDA computation runs); with no
-`/dev/nvidiaN` bound PyTorch counts none; `/dev/nvidia-modeset` and `/dev/nvidia-caps`
-are not needed for CUDA. The split is enforced by the nodes, not by
+`nvidia-smi -L` and to PyTorch (one device, numbered 0, a CUDA computation runs); with
+no `/dev/nvidiaN` bound PyTorch counts none; `/dev/nvidia-modeset` and
+`/dev/nvidia-caps` are not needed for CUDA. The split is enforced by the nodes, not by
 `CUDA_VISIBLE_DEVICES`, which a process inside can change. `/proc/driver/nvidia/gpus`
 still lists every card's bus (information, not access). A `--dev-bind` of any path is a
 widening, so an entry must be under `/dev/` and have no `..` component; the review says
@@ -236,15 +235,15 @@ role's sandbox. It is built from the mechanisms above, not beside them:
 
 - **sshd holds the keeper.** It is the agent joined into the role's launch, so the
   launch lives as long as the daemon, a job a session detaches survives its session, and
-  `--shutdown` ends the sandbox with every session and job. A login shell that joined per
-  session could not carry a detached job past the keeper's grace (measured).
+  `--shutdown` ends the sandbox with every session and job. A login shell that joined
+  per session could not carry a detached job past the keeper's grace (measured).
 - **A proxy of its own, and the session directory in the role's store.** logind removes
   `/run/user/UID` at the account's last logout and stops its user manager with the proxy
-  unit (pam_systemd(8)); such a launch outlives its owner's login, on an account that may
-  never log in. So every launch runs the installed mitmdump and addon as a child of the
-  keeper's supervisor, on the account's port or the next free one, and keeps its session
-  directory (the proxy token) under the role's store, which is never bound in. No
-  linger, unit or root.
+  unit (pam_systemd(8)); such a launch outlives its owner's login, on an account that
+  may never log in. So every launch runs the installed mitmdump and addon as a child of
+  the keeper's supervisor, on the account's port or the next free one, and keeps its
+  session directory (the proxy token) under the role's store, which is never bound in.
+  No linger, unit or root.
 - **The launch's environment is handed over per session.** sshd gives a session an
   environment of its own; the profile's agent writes the launch's (proxy URL with its
   token, CA variables, PATH, the policy's `[env]`) into one `SetEnv` line before
@@ -275,16 +274,16 @@ Stated plainly. These are what the adversary above can still do.
   checkout no session has open read-write.
 
 - **`asb --setup-remote` installs code from a checkout as the remote's account.** The
-  account's part (#344) carries a `git archive` of the checkout's HEAD to the account and
-  runs its `install.sh` there, and the login then runs that engine. A checkout a sandbox
-  can commit to is a path from that sandbox to the remote account at the next run. The
-  command names the checkout and the commit it carries; run it from a checkout no session
-  has open read-write, as for the admin's script above.
+  account's part (#344) carries a `git archive` of the checkout's HEAD to the account
+  and runs its `install.sh` there, and the login then runs that engine. A checkout a
+  sandbox can commit to is a path from that sandbox to the remote account at the next
+  run. The command names the checkout and the commit it carries; run it from a checkout
+  no session has open read-write, as for the admin's script above.
 - **`~/.ssh/asb-<alias>` is the roles' key for a remote login, without a passphrase.**
   The engine makes it once; any process of yours on the host can read it, and it logs in
-  to that login (only that: the account's sshd role takes it, inside its sandbox). A role
-  with `[ssh] <alias>` gets it through the broker, constrained to that host and port as
-  any `[ssh]` key.
+  to that login (only that: the account's sshd role takes it, inside its sandbox). A
+  role with `[ssh] <alias>` gets it through the broker, constrained to that host and
+  port as any `[ssh]` key.
 - **A bare-port remote is reached through your own ssh to its host.** The alias says
   `ProxyJump HOST`: the hop is your ssh, with your key, to the host's system sshd, and
   the login's host key is filed under `[127.0.0.1]:PORT`, a name it shares with any
@@ -294,23 +293,21 @@ Stated plainly. These are what the adversary above can still do.
   preflight's machine-id and boot id are this machine's, the host is taken to be this
   one and the block is `HostName 127.0.0.1` with no jump; those two values are what the
   host says over your ssh, so a host that reports this machine's gets that block, which
-  then reaches whatever listens on this machine's `127.0.0.1:PORT`, with the host key the
-  host sent filed for it.
+  then reaches whatever listens on this machine's `127.0.0.1:PORT`, with the host key
+  the host sent filed for it.
 
-- **Raw-socket egress is unfiltered in `proxy` mode.** The sandbox shares the
-  host network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its
-  own resolver) can reach anything the host can, including localhost services,
-  databases and the LAN. `AGENT_SANDBOX_NET=strict` closes this (pasta owns an
-  isolated netns; an nftables rule allows only the proxy; pasta's port
-  forwarding is off both ways, so host loopback services are not mirrored in
-  and sandbox listeners are not published on the host, except the TCP ports
-  you open with `--host-port`/`--agent-port`; a host port is a raw path to that
-  service, and if the service forwards traffic, egress control ends there; an agent
-  port with an address, `--agent-port 0.0.0.0:PORT`, is reachable from the network,
-  and whatever reaches it talks to the agent's listener, with the host's firewall the
-  only gate), at
-  the cost of a `passt` dependency. In the default `proxy` mode the
-  allowlist is a control on well-behaved clients, not a network boundary; the
+- **Raw-socket egress is unfiltered in `proxy` mode.** The sandbox shares the host
+  network namespace. A tool that ignores `HTTPS_PROXY` (raw sockets, its own resolver)
+  can reach anything the host can, including localhost services, databases and the LAN.
+  `AGENT_SANDBOX_NET=strict` closes this (pasta owns an isolated netns; an nftables rule
+  allows only the proxy; pasta's port forwarding is off both ways, so host loopback
+  services are not mirrored in and sandbox listeners are not published on the host,
+  except the TCP ports you open with `--host-port`/`--agent-port`; a host port is a raw
+  path to that service, and if the service forwards traffic, egress control ends there;
+  an agent port with an address, `--agent-port 0.0.0.0:PORT`, is reachable from the
+  network, and whatever reaches it talks to the agent's listener, with the host's
+  firewall the only gate), at the cost of a `passt` dependency. In the default `proxy`
+  mode the allowlist is a control on well-behaved clients, not a network boundary; the
   user chooses the mode and its residual risk. `NO_PROXY` is `127.0.0.1,localhost`
   inside (#6), so in `proxy` mode every proxy-honouring client (curl, git, pip, the
   agent's own HTTP client) also reaches the host's loopback services directly, as a raw
@@ -326,19 +323,17 @@ Stated plainly. These are what the adversary above can still do.
   the time-of-check/time-of-use race on an attacker-controlled zero-TTL record
   remains, and it still requires the name to be on the allowlist. `strict` mode
   narrows it further (the netns has no route but the proxy).
-- **The session's summary line is the agent's text, shown on the host.** Every
-  session has its role store's `summary/` read-write (#314), and `asb --list` prints
-  the first line of `summary/line` on the user's terminal. The agent chooses the text,
-  so a line can mislead about what the session did. `asb --list` drops control
-  characters from it, reads at most 4 KiB, and opens only a regular file, not
-  following a link, so the line cannot carry terminal escapes, name a host file to be
-  read, or block the listing with a FIFO. `--summarize` prints the line it wrote the
-  same way; `asb --list` prints the first 5
-  non-blank lines of `summary/description.md` the same way (a regular file only, its
-  first 64 KiB read, control characters dropped); `--list-all` and `--summarize` only
-  name its path. The directory holds nothing else of the
-  engine's, and its size is bounded only by the store's filesystem, as the other
-  writable stores are.
+- **The session's summary line is the agent's text, shown on the host.** Every session
+  has its role store's `summary/` read-write (#314), and `asb --list` prints the first
+  line of `summary/line` on the user's terminal. The agent chooses the text, so a line
+  can mislead about what the session did. `asb --list` drops control characters from it,
+  reads at most 4 KiB, and opens only a regular file, not following a link, so the line
+  cannot carry terminal escapes, name a host file to be read, or block the listing with
+  a FIFO. `--summarize` prints the line it wrote the same way; `asb --list` prints the
+  first 5 non-blank lines of `summary/description.md` the same way (a regular file only,
+  its first 64 KiB read, control characters dropped); `--list-all` and `--summarize`
+  only name its path. The directory holds nothing else of the engine's, and its size is
+  bounded only by the store's filesystem, as the other writable stores are.
 - **`--allow` is scoped per session.** The engine mints a per-session token,
   carries it in the sandbox's proxy URL, and the addon grants the global
   allowlist plus only the matching live session's `--allow`, so one session's
@@ -444,14 +439,14 @@ Stated plainly. These are what the adversary above can still do.
   the version's directory is bound read-only over it, a `native` session can write a
   new version beside it and point `current` at it -- the same reach it has over a
   native install in `~/.local/share/claude`, now over what sandboxed launches run too.
-- **The tools environment comes from conda-forge unpinned.** `install.sh` rebuilds it
-  at every run with the newest builds of the packages in
-  `~/.config/agent-sandbox/tools.txt` (`gh` and `tmux` by default), on the host, trusting
-  conda-forge as conda does; no checksum here pins them. What it builds runs only inside
-  sandboxes, from a read-only bind of one slot (not the package cache it is hardlinked
-  to), and its commands come before `/usr/bin` on the sandbox's PATH, so a package
-  listed there shadows the system's command of the same name in every sandbox. Only the
-  listed packages' own commands are linked onto PATH, not their dependencies'.
+- **The tools environment comes from conda-forge unpinned.** `install.sh` rebuilds it at
+  every run with the newest builds of the packages in
+  `~/.config/agent-sandbox/tools.txt` (`gh` and `tmux` by default), on the host,
+  trusting conda-forge as conda does; no checksum here pins them. What it builds runs
+  only inside sandboxes, from a read-only bind of one slot (not the package cache it is
+  hardlinked to), and its commands come before `/usr/bin` on the sandbox's PATH, so a
+  package listed there shadows the system's command of the same name in every sandbox.
+  Only the listed packages' own commands are linked onto PATH, not their dependencies'.
 - **The path refusals are a blocklist.** Secret stores and the sandbox's
   control plane are refused by name (the guarantees table has the list), and
   so is a directory containing one. A credential inside a directory you
@@ -467,10 +462,11 @@ Stated plainly. These are what the adversary above can still do.
   separate them. The scheme is Claude Code's, undocumented, and pinned by
   `probes/slug-probe.sh` plus a unit test; a release that moved it would break
   scoping, which is why the test exists.
-- **The `projects` channel covers `~/.claude/projects` only.** It isolates
-  per-project memory and transcripts; the rest of `~/.claude` is the other channels'
-  and the per-session scratch's, and what none of them names stays visible. And a `.agent-sandbox` grants exactly what you approved: `--trust`
-  shows the file before recording it, so review is where the security sits.
+- **The `projects` channel covers `~/.claude/projects` only.** It isolates per-project
+  memory and transcripts; the rest of `~/.claude` is the other channels' and the
+  per-session scratch's, and what none of them names stays visible. And a
+  `.agent-sandbox` grants exactly what you approved: `--trust` shows the file before
+  recording it, so review is where the security sits.
 - **All capabilities are dropped** (`--cap-drop ALL`), in every network mode.
   In `proxy`/`open`/`none` bwrap is unprivileged and the agent has none anyway;
   in `strict`, where bwrap runs inside pasta's root-owned user namespace, the
@@ -531,11 +527,10 @@ Stated plainly. These are what the adversary above can still do.
   `[agent] clear` (claude: `/clear`), per role, so a round of mixed agents types each
   its own; a role whose profile has none is not watched -- and Enter into the pane of a
   role whose `ROLE.reset` appears there, and nothing else: only the file's presence is
-  read, never its content. A sandbox that can
-  write that directory -- the Supervisor in the roles model, or a role with the project
-  read-write -- can make a role in a pane start a new session at the end of its current
-  turn; the old transcript stays on disk. The marker is removed from inside the
-  directory, a link never followed.
+  read, never its content. A sandbox that can write that directory -- the Supervisor in
+  the roles model, or a role with the project read-write -- can make a role in a pane
+  start a new session at the end of its current turn; the old transcript stays on disk.
+  The marker is removed from inside the directory, a link never followed.
 - **An escape from an `sshd` sandbox lands in the account that launched it** (#335).
   That account has the host's full network and loopback, its own home with the install,
   the trust store and the keys file, and every GPU node its permissions allow (NVIDIA's
@@ -683,19 +678,18 @@ directory, so the guard is a mount.
 ## The github model
 
 Three kinds over one boundary: `gh-review-<N>`, `gh-triage-<N>`, `gh-fix-<N>`, the
-template's sections written once under `[x:gh-*]` (a research host is added once for
-all three), with `[net:gh-fix-*] git = allow` the one difference in policy. GitHub
-numbers issues and pull requests in one sequence, so N needs no qualifier. A reviewer
-produces no code, so it owns no clone: `gh-review-<N>` sees the project
-as the user built it, through `project = copy-on-write` -- an overlay at the project's own
-path, so absolute paths into it (CMake's, an editable install's) stay valid -- and the
-environment the same way (`<env>/ = copy-on-write`). The PR's checkout, the incremental
-rebuild and any reinstall land in the instance's layers; `asb --delete` drops them.
-Instances need no names written anywhere: the template is glob sections only
-(`[x:gh-*]`), appended once, and a role name is an instance. The build they layer over
-is `gh-setup`'s, a single role: the checkout and `--env`'s prefix read-write,
-`retrieve-only`, no git transport, no gh login (`#@ setup`: `--init` takes that env
-unbuilt and makes its prefix empty).
+template's sections written once under `[x:gh-*]` (a research host is added once for all
+three), with `[net:gh-fix-*] git = allow` the one difference in policy. GitHub numbers
+issues and pull requests in one sequence, so N needs no qualifier. A reviewer produces
+no code, so it owns no clone: `gh-review-<N>` sees the project as the user built it,
+through `project = copy-on-write` -- an overlay at the project's own path, so absolute
+paths into it (CMake's, an editable install's) stay valid -- and the environment the
+same way (`<env>/ = copy-on-write`). The PR's checkout, the incremental rebuild and any
+reinstall land in the instance's layers; `asb --delete` drops them. Instances need no
+names written anywhere: the template is glob sections only (`[x:gh-*]`), appended once,
+and a role name is an instance. The build they layer over is `gh-setup`'s, a single
+role: the checkout and `--env`'s prefix read-write, `retrieve-only`, no git transport,
+no gh login (`#@ setup`: `--init` takes that env unbuilt and makes its prefix empty).
 
 **Never push, enforced.** Review and triage get `[net] git = fetch`: the proxy passes
 git's upload-pack and refuses receive-pack, and the model gives them no SSH host. An
@@ -748,21 +742,21 @@ refused by the proxy, HTTP 403, exit 128.
 Measured 2026-10-06 on a pytorch checkout built two days earlier and its environment
 (torch an editable scikit-build-core install: Python from the tree, 524 MB compiled in
 site-packages), with bubblewrap's overlay: a Python-only PR's diff applied on the built
-`main` was ready in ~2 s with no rebuild (a 4 MB layer); a one-file C++ PR rebuilt in
-11 ninja steps, 22 s, and `pip install -e .` then took 63 s -- ~1 GB of layers, the
+`main` was ready in ~2 s with no rebuild (a 4 MB layer); a one-file C++ PR rebuilt in 11
+ninja steps, 22 s, and `pip install -e .` then took 63 s -- ~1 GB of layers, the
 relinked libraries and the reinstalled package copied up whole. The build needs the
 user's build environment: the env activated and CUDA on `PATH`, else CMake reconfigures
 with other flags and queues ~700 steps. A PR's base is usually newer than the built
-`main`; applying the PR's own diff keeps the rebuild small (hunks against newer code
-may not apply), and the reviewer rebases only when the PR needs newer changes.
-Measured 2026-10-25 (0.3.0-131, a scratch repository, `project = copy-on-write`): after
-a fixer committed on its branch and exited, and `main` moved on the host, its next
-launch had the branch checked out with its commit, `main` at the host's new commit, and
-the host's changes showing through as changes it did not make (a modified file, an
-untracked file `main` tracks); `git reset --hard` to the branch, removing those
-untracked files, and `git rebase main` put the commit on the new `main`, the host's
-checkout untouched. When the host rewrote `main` instead (the branch's base D replaced
-by a D' changing the same file), `git rebase main` replayed D too and conflicted, while
+`main`; applying the PR's own diff keeps the rebuild small (hunks against newer code may
+not apply), and the reviewer rebases only when the PR needs newer changes. Measured
+2026-10-25 (0.3.0-131, a scratch repository, `project = copy-on-write`): after a fixer
+committed on its branch and exited, and `main` moved on the host, its next launch had
+the branch checked out with its commit, `main` at the host's new commit, and the host's
+changes showing through as changes it did not make (a modified file, an untracked file
+`main` tracks); `git reset --hard` to the branch, removing those untracked files, and
+`git rebase main` put the commit on the new `main`, the host's checkout untouched. When
+the host rewrote `main` instead (the branch's base D replaced by a D' changing the same
+file), `git rebase main` replayed D too and conflicted, while
 `git rebase --fork-point main` replayed only the fixer's commit onto D' (`main`'s reflog
 shows through from the host, so `git merge-base --fork-point` finds D); on a plain move
 it did what `git rebase main` did. The old base lives only in the host's repository: a
@@ -816,19 +810,20 @@ reasons attached in the repository history.
   interception keeps per-path logging and 403 bodies, and because a non-HTTP
   protocol could then be tunnelled to an allowed host's port 443. Revisit if
   the CA proves a burden.
-- **Strict network mode** (decided, shipped) is implemented with pasta (it owns the netns; bwrap
-  runs inside sharing it; an nftables rule allows only the proxy). slirp4netns
-  could not, because it cannot enter bwrap's unprivileged netns from outside.
+- **Strict network mode** (decided, shipped) is implemented with pasta (it owns the
+  netns; bwrap runs inside sharing it; an nftables rule allows only the proxy).
+  slirp4netns could not, because it cannot enter bwrap's unprivileged netns from
+  outside.
 - **A standalone mitmproxy binary route** was for hosts with neither
   `python3-venv` nor conda; since `install.sh` builds the proxy's environment with its
   own micromamba (#335), there are none. `downloads.mitmproxy.org` serves a 119 MB
   tarball but publishes no checksums or signatures, so it would need a SHA256 pinned per
   version and architecture in this repository. Not pursued.
-- **What passes between sandboxes** (issues #90, #55). The per-path
-  dispositions above default an unclassified path to *shared*, and the leak
-  study found six such paths. [connections.md](connections.md) proposes the
-  replacement: a sandbox is an installation keyed by project and role, and
-  what it shares is a set of explicit connections, each on a
-  `own < seed-only < copy < copy-on-write < read-only < read-write` scale, with identity and the project
-  directory the only mandatory ones. Proposed, not implemented; the config
-  file's per-project copy (0.2.1) is its first channel.
+- **What passes between sandboxes** (issues #90, #55). The per-path dispositions above
+  default an unclassified path to *shared*, and the leak study found six such paths.
+  [connections.md](connections.md) proposes the replacement: a sandbox is an
+  installation keyed by project and role, and what it shares is a set of explicit
+  connections, each on a
+  `own < seed-only < copy < copy-on-write < read-only < read-write` scale, with identity
+  and the project directory the only mandatory ones. Proposed, not implemented; the
+  config file's per-project copy (0.2.1) is its first channel.

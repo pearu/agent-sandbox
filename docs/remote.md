@@ -3,11 +3,11 @@
 ## What it makes
 
 A login on another host, as an account there, that your roles reach as an SSH host
-(#344). It is the [`sshd` profile](sshd.md) run by that account in its own install: every
-session (a command, a shell, sftp, scp, rsync) runs inside a `strict` sandbox whose one
-writable place is a project directory there, the scratch, with egress only through
-that account's allowlist proxy and only the GPUs the section names. Here it is an alias
-of your `~/.ssh/config`, `ssh ALIAS`, with a key of its own.
+(#344). It is the [`sshd` profile](sshd.md) run by that account in its own install:
+every session (a command, a shell, sftp, scp, rsync) runs inside a `strict` sandbox
+whose one writable place is a project directory there, the scratch, with egress only
+through that account's allowlist proxy and only the GPUs the section names. Here it is
+an alias of your `~/.ssh/config`, `ssh ALIAS`, with a key of its own.
 
 One command, run by you on this host in the roles' project, does it all from one
 section of the project's `.agent-sandbox`:
@@ -36,12 +36,12 @@ env = TMPDIR=/home/tob/tob-ex/tmp       # set inside (lines add up)
 ```
 
 `host` and `port` are required. A `TMPDIR` in an `env` line that is under the scratch
-(`~` the account's home) is made there, as the account, before the launch; another
-`env` value, or a `TMPDIR` outside the scratch, is set as written and nothing is made.
-`ALIAS` must be a role name (a letter or digit, then
-letters, digits, `.`, `_`, `-`) and not `host` itself, since `Host ALIAS` in your
-`~/.ssh/config` would shadow it. The review (`asb --trust`) says each line and what it
-means; every key is in [config.md](config.md) under `[remote:<alias>]`.
+(`~` the account's home) is made there, as the account, before the launch; another `env`
+value, or a `TMPDIR` outside the scratch, is set as written and nothing is made. `ALIAS`
+must be a role name (a letter or digit, then letters, digits, `.`, `_`, `-`) and not
+`host` itself, since `Host ALIAS` in your `~/.ssh/config` would shadow it. The review
+(`asb --trust`) says each line and what it means; every key is in [config.md](config.md)
+under `[remote:<alias>]`.
 
 `asb --setup-remote tob@ex --port 0.0.0.0:2222`, with no `[remote:tob-ex]` in the file,
 appends one through `--apply`'s review (the lines, the diff, `[y/N]`): `host = ex`,
@@ -169,15 +169,15 @@ The role's SSH broker then holds `~/.ssh/asb-ALIAS`, constrained to the alias's 
 port, and a `strict` role gets a pinhole to it, outside the proxy ([ssh.md](ssh.md)).
 
 A role that is running sees your `~/.ssh/config` and `~/.ssh/known_hosts` through
-read-only binds of those files as they were at its launch, file by file. `--setup-remote`
-writes both in place, and a running role sees that (measured: the alias block and the
-host key line written into bound files show inside). A file written as a new one
-since -- by an editor, `sed -i`, or `ssh-keygen -R`, which leaves `known_hosts.old` --
-or one that did not exist at the launch is not seen: the role keeps the old one, and
-gets `REMOTE HOST IDENTIFICATION HAS CHANGED` for a login whose key changed, or no
-alias. Relaunch such a role after `--setup-remote` (its broker, key and pinhole are
-also made at launch).
-What else it needs depends on where the login listens and where the role runs:
+read-only binds of those files as they were at its launch, file by file.
+`--setup-remote` writes both in place, and a running role sees that (measured: the alias
+block and the host key line written into bound files show inside). A file written as a
+new one since -- by an editor, `sed -i`, or `ssh-keygen -R`, which leaves
+`known_hosts.old` -- or one that did not exist at the launch is not seen: the role keeps
+the old one, and gets `REMOTE HOST IDENTIFICATION HAS CHANGED` for a login whose key
+changed, or no alias. Relaunch such a role after `--setup-remote` (its broker, key and
+pinhole are also made at launch). What else it needs depends on where the login listens
+and where the role runs:
 
 | `port` | the alias block, the host another machine | roles on another host | roles on the login's host |
 |---|---|---|---|
@@ -271,8 +271,8 @@ install `install.sh` makes (`~/.local/bin/asb`, `~/.local/share/agent-sandbox`,
 `~/.config/agent-sandbox`), `~/asb-install-ALIAS.log`; the scratch and its
 `.agent-sandbox`; `~/.config/agent-sandbox/asb-ALIAS-keys`; the login's store
 `~/.local/state/agent-sandbox/sshd/<slug>/ALIAS` (its host key); `~/asb-ALIAS-sshd.log`
-and `~/asb-ALIAS-trust.log`. In your own home there, `~/asb-admin-ALIAS.sh` when root was
-needed.
+and `~/asb-ALIAS-trust.log`. In your own home there, `~/asb-admin-ALIAS.sh` when root
+was needed.
 
 The install is the account's, shared by every login it runs: carrying a new commit for
 one alias re-installs asb for all of them, and another login picks it up at its next

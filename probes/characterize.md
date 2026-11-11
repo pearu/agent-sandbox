@@ -4,16 +4,14 @@ You are running inside some execution environment. Treat it as unknown: do not
 assume how you were launched or by what. Your job is to characterize the
 environment and report, not to change or escape it.
 
-Produce a written report with these sections. Investigate by reading and
-inspecting only. You MAY read files, list directories, and read kernel
-interfaces (/proc, /sys, mounts). Confirming that a directory is writable by
-creating and immediately deleting one throwaway temp file is allowed. You must
-NOT attempt to defeat, bypass, or weaken any restriction you find, NOT install
-anything, NOT open network connections beyond a single reachability check per
-target, and NOT modify any file that was already present.
-Files under the agent's own state directory (e.g. ~/.claude) may hold private
-data: you may list names, sizes and permissions there, but must not read their
-contents.
+Produce a written report with these sections. Investigate by reading and inspecting
+only. You MAY read files, list directories, and read kernel interfaces (/proc, /sys,
+mounts). Confirming that a directory is writable by creating and immediately deleting
+one throwaway temp file is allowed. You must NOT attempt to defeat, bypass, or weaken
+any restriction you find, NOT install anything, NOT open network connections beyond a
+single reachability check per target, and NOT modify any file that was already present.
+Files under the agent's own state directory (e.g. ~/.claude) may hold private data: you
+may list names, sizes and permissions there, but must not read their contents.
 
 ## 1. Filesystem: read-write vs read-only
 - From /proc/self/mountinfo (and /proc/mounts), list every mount, its target,

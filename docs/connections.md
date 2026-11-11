@@ -1,56 +1,62 @@
 # Sandboxes, sources and connections
 
-**Status: the scale, the presets, roles, the keeper, background sessions inside a role, the role verbs, the `run-scoped` and `join-scoped` storage scopes and the `config`, `transcripts` and `logs` channels are implemented and under test (see [Roles, the keeper and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes between agent
-sessions on one machine, written after the cross-project leak study
-([cross-project-channels.md](cross-project-channels.md)) had measured every channel it could
-find under `~/.claude` and the per-project copy of Claude Code's config file had shipped in
-0.2.1. It replaces "a disposition per path under the agent's state directory" with three
-objects and one scale, so that the default for a path nobody has classified is *private to the
-sandbox* rather than *shared*, and so that the same model serves two agents of the same kind,
-two roles on one project, and two agents of different kinds.
+**Status: the scale, the presets, roles, the keeper, background sessions inside a role,
+the role verbs, the `run-scoped` and `join-scoped` storage scopes and the `config`,
+`transcripts` and `logs` channels are implemented and under test (see [Roles, the keeper
+and storage](#roles-the-keeper-and-storage)).** A model for controlling what passes
+between agent sessions on one machine, written after the cross-project leak study
+([cross-project-channels.md](cross-project-channels.md)) had measured every channel it
+could find under `~/.claude` and the per-project copy of Claude Code's config file had
+shipped in 0.2.1. It replaces "a disposition per path under the agent's state directory"
+with three objects and one scale, so that the default for a path nobody has classified
+is *private to the sandbox* rather than *shared*, and so that the same model serves two
+agents of the same kind, two roles on one project, and two agents of different kinds.
 
-The goal it serves is the one the study states: **control of the inference between projects
-and sessions**. Inference here means one session's material steering another's behaviour;
-disclosure means content crossing without necessarily steering anything. Both are channels;
-the model treats them alike.
+The goal it serves is the one the study states: **control of the inference between
+projects and sessions**. Inference here means one session's material steering another's
+behaviour; disclosure means content crossing without necessarily steering anything. Both
+are channels; the model treats them alike.
 
 ## Why not paths
 
-The engine's isolation today is a list of paths under `~/.claude`, each with a disposition
-(`tmpfs`, `copyout`, `append`, `scoped`, and since 0.2.1 `copy` for the config file). The
-list is ours to maintain and lags what upstream adds; the study found six documented paths
-the list had never heard of, all shared. Its default for an unknown path is *shared*, which
-is the wrong direction for a sandbox, and every new path is a new decision. Undocumented
-behaviour can only be measured for its effects, and missing an effect is likely.
+The engine's isolation today is a list of paths under `~/.claude`, each with a
+disposition (`tmpfs`, `copyout`, `append`, `scoped`, and since 0.2.1 `copy` for the
+config file). The list is ours to maintain and lags what upstream adds; the study found
+six documented paths the list had never heard of, all shared. Its default for an unknown
+path is *shared*, which is the wrong direction for a sandbox, and every new path is a
+new decision. Undocumented behaviour can only be measured for its effects, and missing
+an effect is likely.
 
-Turned around: if a sandbox is an **installation** of the agent with its own state directory,
-then an unknown path is private by construction, and only what the user **connects** needs
-to be understood. The list of internals shrinks to the few paths a connection maps onto,
-and the study measures connections and escapes instead of an inventory.
+Turned around: if a sandbox is an **installation** of the agent with its own state
+directory, then an unknown path is private by construction, and only what the user
+**connects** needs to be understood. The list of internals shrinks to the few paths a
+connection maps onto, and the study measures connections and escapes instead of an
+inventory.
 
 ## The three objects
 
-**A sandbox** is an installation of one agent: its own configuration and state directory,
-created once from a source and then its own. Inside, it is bound where the agent expects
-its state (`~/.claude` for Claude Code, with `CLAUDE_CONFIG_DIR` pointing there). On the
-host it lives under the engine's state directory, `~/.local/state/agent-sandbox/<profile>/`,
-which is a control path: never bound into any sandbox, refused as a path declaration.
+**A sandbox** is an installation of one agent: its own configuration and state
+directory, created once from a source and then its own. Inside, it is bound where the
+agent expects its state (`~/.claude` for Claude Code, with `CLAUDE_CONFIG_DIR` pointing
+there). On the host it lives under the engine's state directory,
+`~/.local/state/agent-sandbox/<profile>/`, which is a control path: never bound into any
+sandbox, refused as a path declaration.
 
-A sandbox is keyed by **project and role**: `<project slug>/<role>`, with `default` as the
-role nobody names. Two roles on one project are two sandboxes that share the project
-directory and nothing else unless connected; that is issue #55, a reviewer that must not see
-the implementer's accumulated memory, as a special case of this model rather than a feature
-of its own. Sandboxes shared by several projects are not in this proposal; if they arrive,
-the key gains a name and nothing else changes.
+A sandbox is keyed by **project and role**: `<project slug>/<role>`, with `default` as
+the role nobody names. Two roles on one project are two sandboxes that share the project
+directory and nothing else unless connected; that is issue #55, a reviewer that must not
+see the implementer's accumulated memory, as a special case of this model rather than a
+feature of its own. Sandboxes shared by several projects are not in this proposal; if
+they arrive, the key gains a name and nothing else changes.
 
 **A source** is where a sandbox is created from, and where a connection reads from: the
-user's native installation (`~/.claude`), another sandbox (`<project>/<role>`), or a directory
-the user curates for the purpose.
+user's native installation (`~/.claude`), another sandbox (`<project>/<role>`), or a
+directory the user curates for the purpose.
 
-**A connection** opens one **channel** between a sandbox and a source, under a **mode** from
-the scale below. A channel is named by what it carries, never by a path; the mapping from a
-channel to the agent's internal path is the profile's business and appears nowhere else.
-No connection for a channel means `own`.
+**A connection** opens one **channel** between a sandbox and a source, under a **mode**
+from the scale below. A channel is named by what it carries, never by a path; the
+mapping from a channel to the agent's internal path is the profile's business and
+appears nowhere else. No connection for a channel means `own`.
 
 | channel | what it carries | Claude Code path (profile's mapping) |
 |---|---|---|
@@ -74,33 +80,34 @@ No connection for a channel means `own`.
 | changelog | the cached vendor changelog | `cache/changelog.md` (#109) |
 | gh | your gh login, where `gh auth login` keeps it | `~/.config/gh/` (#88) |
 
-Two things in the state directory belong to no channel. **Per-session scratch** (`sessions/`,
-`session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `daemon/`, and since
-#75 and #80 `backups/` and `feedback-bundles/`) stays what the isolate spec makes of it:
-replaced per launch, closed to other sessions, and discarded at exit. (File history, plans,
-prompt history and the hook logs used to be merged back at exit; since #120 they are the
-`transcripts` and `logs` channels.) **Server-owned state** is what Claude Code writes itself,
-from the service or as caches, and what it gets depends on where it lives:
+Two things in the state directory belong to no channel. **Per-session scratch**
+(`sessions/`, `session-env/`, `jobs/`, `shell-snapshots/`, `debug/`, `paste-cache/`,
+`daemon/`, and since #75 and #80 `backups/` and `feedback-bundles/`) stays what the
+isolate spec makes of it: replaced per launch, closed to other sessions, and discarded
+at exit. (File history, plans, prompt history and the hook logs used to be merged back
+at exit; since #120 they are the `transcripts` and `logs` channels.) **Server-owned
+state** is what Claude Code writes itself, from the service or as caches, and what it
+gets depends on where it lives:
 
-- `skills/synced/` and `plugins/synced/` sit inside the `skills` and `plugins` channels, so
-  they are the role's own wherever those are (`copy-on-write` under `inherit`). A sandbox
-  syncs its own server skills on first start, measured at 3.6 MB on this host.
+- `skills/synced/` and `plugins/synced/` sit inside the `skills` and `plugins` channels,
+  so they are the role's own wherever those are (`copy-on-write` under `inherit`). A
+  sandbox syncs its own server skills on first start, measured at 3.6 MB on this host.
 - The caches of managed settings and policy flags, and of the vendor changelog, are the
   `policy` and `changelog` channels (#109): `seed-only` and `copy` under `inherit`, so a
   sandbox's write to them stays its own.
-- The rest of `cache/`, `telemetry/` and `stats-cache.json` are in no channel: they are the
-  native files, readable and writable from every sandbox, as everything in `~/.claude`
-  outside a channel is. `stats-cache.json` is left so deliberately — aggregated token and
-  cost counts, nothing of any session's work (#81). The profile names all three as
-  `[agent] visible`, so `asb --check` does not list them as unclassified. (`usage-data/`
-  is in the `transcripts` channel since #79.)
+- The rest of `cache/`, `telemetry/` and `stats-cache.json` are in no channel: they are
+  the native files, readable and writable from every sandbox, as everything in
+  `~/.claude` outside a channel is. `stats-cache.json` is left so deliberately —
+  aggregated token and cost counts, nothing of any session's work (#81). The profile
+  names all three as `[agent] visible`, so `asb --check` does not list them as
+  unclassified. (`usage-data/` is in the `transcripts` channel since #79.)
 
 ## The scale
 
 > Why these names and not shorter ones: [Why these names](#why-these-names).
 
-Every connection has a mode. The modes are ordered by how much of the source A reaches the
-sandbox B, and whether anything of B reaches A:
+Every connection has a mode. The modes are ordered by how much of the source A reaches
+the sandbox B, and whether anything of B reaches A:
 
 ```
 own  <  seed-only  <  copy  <  copy-on-write  <  read-only  <  read-write
@@ -118,24 +125,24 @@ own  <  seed-only  <  copy  <  copy-on-write  <  read-only  <  read-write
 Definitions, so the sub-decisions stop multiplying:
 
 - **`seed-only`**: B's store is copied from A once, when it is first created, and is B's
-  from then on. A's later changes never arrive, so there is nothing to conflict and nothing
-  to warn about; a `reset` discards the store and the next launch seeds it again. It is
-  what `copy` amounts to on a file B writes at every launch, minus the warning `copy` would
-  then give at every launch.
+  from then on. A's later changes never arrive, so there is nothing to conflict and
+  nothing to warn about; a `reset` discards the store and the next launch seeds it
+  again. It is what `copy` amounts to on a file B writes at every launch, minus the
+  warning `copy` would then give at every launch.
 - **`copy`**: B's files are seeded once from A. At later launches A's changes arrive for
-  every file B has not touched; a file B changed stays B's; when both changed, B's stays and
-  the launch says so; a file A deleted goes from B if B never touched it; a file B deleted
-  stays deleted. Nothing is ever merged textually, nothing is ever written back to A, and
-  nothing of B's is overwritten without a word. A `reset` re-seeds a file, a channel or a
-  sandbox from A on request. This is the rule the config file's `mcpServers` refresh already
-  follows for one key, applied per file.
+  every file B has not touched; a file B changed stays B's; when both changed, B's stays
+  and the launch says so; a file A deleted goes from B if B never touched it; a file B
+  deleted stays deleted. Nothing is ever merged textually, nothing is ever written back
+  to A, and nothing of B's is overwritten without a word. A `reset` re-seeds a file, a
+  channel or a sandbox from A on request. This is the rule the config file's
+  `mcpServers` refresh already follows for one key, applied per file.
 - **`copy-on-write`**: B reads A's files through until it writes one; the write creates
-  B's private copy, which shadows A's file from then on. A's edits reach B live for every
-  unshadowed file, so it needs no refresh step at all; a shadowed file is B's until B
-  deletes its copy (which exposes A's again) or `reset`s it. The launch warns when a
-  shadowed file has since changed in A. Between `copy` and `read-only` on the scale: it
-  reads like `read-only`, writes like `copy`. A native edit to a shadowed file is the one thing it hides, and
-  it hides it loudly.
+  B's private copy, which shadows A's file from then on. A's edits reach B live for
+  every unshadowed file, so it needs no refresh step at all; a shadowed file is B's
+  until B deletes its copy (which exposes A's again) or `reset`s it. The launch warns
+  when a shadowed file has since changed in A. Between `copy` and `read-only` on the
+  scale: it reads like `read-only`, writes like `copy`. A native edit to a shadowed file
+  is the one thing it hides, and it hides it loudly.
 - **`read-only`**: A's files, live. B cannot author at that channel; for `settings` this
   breaks `/model` and permission saves, the cost of choosing it for that channel.
 - **`read-write`**: A and B steer each other with no delay. Races are the
@@ -144,42 +151,46 @@ Definitions, so the sub-decisions stop multiplying:
 
 Two connections are **mandatory** and fixed:
 
-- **identity** is `read-write` to native. Two agents of one user are one login; cloning a refresh
-  token multiplies a race (the study's harness notes it), so the token stays one file. This
-  is the floor of the scale: "completely independent" sandboxes of one user still share who
-  they are. Full independence needs two accounts, which is outside this tool. `hide` keeps
-  the tooling part (`ide/`) out of a sandbox that should not have it. A GitHub login is not
-  identity: it is the `gh` channel (#88), `own` unless a dot-file asks for it.
-- **project** is `read-write` to the working tree by default: it is where agents are meant to
-  communicate, including agents of different kinds, through files and a document convention
-  such as `AGENTS.md`. Roles on one project share it. `project = read-only` (#220) is the one
-  other mode, for a role that must not change the tree, with a read-write declaration inside
-  it for the part it may; exclusions inside it (a reviewer that must not read `.git`, issue
-  #55) are declarations too.
+- **identity** is `read-write` to native. Two agents of one user are one login; cloning
+  a refresh token multiplies a race (the study's harness notes it), so the token stays
+  one file. This is the floor of the scale: "completely independent" sandboxes of one
+  user still share who they are. Full independence needs two accounts, which is outside
+  this tool. `hide` keeps the tooling part (`ide/`) out of a sandbox that should not
+  have it. A GitHub login is not identity: it is the `gh` channel (#88), `own` unless a
+  dot-file asks for it.
+- **project** is `read-write` to the working tree by default: it is where agents are
+  meant to communicate, including agents of different kinds, through files and a
+  document convention such as `AGENTS.md`. Roles on one project share it.
+  `project = read-only` (#220) is the one other mode, for a role that must not change
+  the tree, with a read-write declaration inside it for the part it may; exclusions
+  inside it (a reviewer that must not read `.git`, issue #55) are declarations too.
 
 ## Invariants
 
-1. **A connection moves one channel along the scale and does nothing else.** No knob has a
-   side effect on another channel, so positions compose without interaction.
+1. **A connection moves one channel along the scale and does nothing else.** No knob has
+   a side effect on another channel, so positions compose without interaction.
 2. **The independent extreme is reachable for every channel the study lists.** A channel
    with no `own` is a gap. An unclassified path is private by construction, which is how
    this invariant holds for paths nobody has classified yet.
-3. **Every step up the scale from the default is a widening**: trust-gated in the dot-file,
-   ungated at launch. Every step down is free. This is the rule the existing knobs follow.
-4. **Agents communicate only through `read-write` connections and the project directory.** A
-   `read-write` connection's interface is the agent's own file format; the sandbox neither adds
-   nor promises arbitration. Network-mediated communication has no interface at all and is
-   governed by the network mode alone.
-5. **A mode is B's view of its source.** Two sandboxes at `read-write` see each other; one at
-   `copy` beside one at `read-write` receives the other's writes at its next launch and sends
-   nothing back. Asymmetric flows are predictable because each side's mode is its own.
+3. **Every step up the scale from the default is a widening**: trust-gated in the
+   dot-file, ungated at launch. Every step down is free. This is the rule the existing
+   knobs follow.
+4. **Agents communicate only through `read-write` connections and the project
+   directory.** A `read-write` connection's interface is the agent's own file format;
+   the sandbox neither adds nor promises arbitration. Network-mediated communication has
+   no interface at all and is governed by the network mode alone.
+5. **A mode is B's view of its source.** Two sandboxes at `read-write` see each other;
+   one at `copy` beside one at `read-write` receives the other's writes at its next
+   launch and sends nothing back. Asymmetric flows are predictable because each side's
+   mode is its own.
 
 ## What each channel carries
 
 The table below places each channel under each preset. This is the evidence for those
-placements, taken from Anthropic's documentation rather than from reading our own code --
-which matters, because two of these channels are consumed with **no user action at all**,
-and one is explicitly exempted from the trust prompt Claude Code shows for project files.
+placements, taken from Anthropic's documentation rather than from reading our own code
+-- which matters, because two of these channels are consumed with **no user action at
+all**, and one is explicitly exempted from the trust prompt Claude Code shows for
+project files.
 
 | channel | how it reaches the model | what the docs restrict or promise |
 |---|---|---|
@@ -190,11 +201,11 @@ and one is explicitly exempted from the trust prompt Claude Code shows for proje
 | **workflows** — `workflows/*.js` | "a JavaScript script that orchestrates many subagents... **Claude writes the script**" | `/deep-research` "runs only when you invoke it" -- and "Before v2.1.218, Claude could also start it on its own" ([workflows](https://code.claude.com/docs/en/workflows)) |
 | **plugins** — `plugins/` | auto-load rules per plugin kind | carries its own **workspace-trust requirement**, so the agent already gates this one ([plugins](https://code.claude.com/docs/en/plugins-reference)) |
 
-**This is why `inherit` is the default.** `instructions` and `agents` are consumed with no
-user action, and the first is explicitly exempt from the trust dialog. A sandbox able to
-write them does not merely leak across projects: it injects into channels Claude Code has
-decided not to question, in every project, for every later session. `copy-on-write` is what
-keeps the sandbox's writes its own.
+**This is why `inherit` is the default.** `instructions` and `agents` are consumed with
+no user action, and the first is explicitly exempt from the trust dialog. A sandbox able
+to write them does not merely leak across projects: it injects into channels Claude Code
+has decided not to question, in every project, for every later session. `copy-on-write`
+is what keeps the sandbox's writes its own.
 
 ### The channels are not independent
 
@@ -227,11 +238,11 @@ not fire on the intentional case.
 
 **Two things this model does not cover, and should say so.**
 
-- **A managed tier above the user's.** Instructions have a policy scope outside `~/.claude`
-  entirely: `/etc/claude-code/CLAUDE.md` on Linux and WSL, with OS equivalents elsewhere. It
-  is not a channel here. The engine binds `/etc` read-only, so an organisation's
-  instructions do reach a sandboxed session and cannot be rewritten from inside -- the right
-  outcome, arrived at incidentally rather than by design.
+- **A managed tier above the user's.** Instructions have a policy scope outside
+  `~/.claude` entirely: `/etc/claude-code/CLAUDE.md` on Linux and WSL, with OS
+  equivalents elsewhere. It is not a channel here. The engine binds `/etc` read-only, so
+  an organisation's instructions do reach a sandboxed session and cannot be rewritten
+  from inside -- the right outcome, arrived at incidentally rather than by design.
 - **`skills` and `commands` are not purely user-level.** They also load from the project
   tree, walking up to the repository root, so part of that channel arrives through the
   always-live project bind rather than through the channel at all.
@@ -239,8 +250,8 @@ not fire on the intentional case.
 ## Presets
 
 A preset is a position for every channel at once. Three are worth naming; everything in
-between is a preset plus overrides. Running without a sandbox is not one of them: that is
-`--preset none`, the flag only (see [Background sessions](#background-sessions-123)).
+between is a preset plus overrides. Running without a sandbox is not one of them: that
+is `--preset none`, the flag only (see [Background sessions](#background-sessions-123)).
 
 | channel | `isolated` | `inherit` | `shared` |
 |---|---|---|---|
@@ -257,28 +268,29 @@ between is a preset plus overrides. Running without a sandbox is not one of them
 | network | `own` | `proxy` | `proxy` or `open` |
 
 **This table is where the model is going, not what the engine does today.** The rows
-implemented are the channels the engine manages as connections — `instructions, settings,
-skills, agents, workflows, plugins`, `config`, `projects`, `memory`, `agent-memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` — and a preset moves
-them and nothing else. `transcripts` is `own` under `shared` as well: its prompt history
-holds every project's prompts, and `shared` is "the engine before 0.3", which filtered them;
-`projects` is `own` there for the same reason, since 0.2 scoped it. A share reads the other
-project's role store through the `sandbox:` source (#200), or its native memory if it never
-ran sandboxed.
-identity and project each still have machinery
-of their own and keep their own controls until they are folded in, one at a time, with the
-study to show it. `docs/config.md` documents the rows that are live, so a user reading it
-is never told a channel is positioned when it is not.
+implemented are the channels the engine manages as connections —
+`instructions, settings, skills, agents, workflows, plugins`, `config`, `projects`,
+`memory`, `agent-memory`, `transcripts`, `logs`, `artefacts`, `policy` and `changelog` —
+and a preset moves them and nothing else. `transcripts` is `own` under `shared` as well:
+its prompt history holds every project's prompts, and `shared` is "the engine before
+0.3", which filtered them; `projects` is `own` there for the same reason, since 0.2
+scoped it. A share reads the other project's role store through the `sandbox:` source
+(#200), or its native memory if it never ran sandboxed. identity and project each still
+have machinery of their own and keep their own controls until they are folded in, one at
+a time, with the study to show it. `docs/config.md` documents the rows that are live, so
+a user reading it is never told a channel is positioned when it is not.
 
 ### `native`, the fourth preset, and why the ladder needs both ends
 
 `shared` is the widest position that is *useful*, not the widest that exists. Native
-Claude Code additionally shares a good deal that nobody chose to share: the configuration
-file bound whole, the daemon control directory, session environments, shell snapshots, the
-paste cache, prompt history, plans, file history. Those are open because nothing closed
-them, and the leak study measured what each of them carries. `shared` deliberately leaves
-them shut.
+Claude Code additionally shares a good deal that nobody chose to share: the
+configuration file bound whole, the daemon control directory, session environments,
+shell snapshots, the paste cache, prompt history, plans, file history. Those are open
+because nothing closed them, and the leak study measured what each of them carries.
+`shared` deliberately leaves them shut.
 
-`native` is the preset that does not. Its contract is exact and is the reason to build it:
+`native` is the preset that does not. Its contract is exact and is the reason to build
+it:
 
 > **`--preset native` must behave identically to `--preset none`, while going through
 > every sandbox mechanism.** A difference between the two is a bug in agent-sandbox.
@@ -288,10 +300,10 @@ by default, [config.md](config.md)) is there under `native` as under every prese
 not under `none`, which runs outside the sandbox.
 
 That makes it a differential oracle, which is a test this repository does not otherwise
-have: it catches the sandbox quietly *distorting* the agent rather than failing outright.
-It also bisects a failure — something that breaks under `native` but works under
-`--preset none` is broken by a mechanism (binds, seccomp, the proxy) rather than by state
-isolation, because `native` holds state at "hide nothing".
+have: it catches the sandbox quietly *distorting* the agent rather than failing
+outright. It also bisects a failure — something that breaks under `native` but works
+under `--preset none` is broken by a mechanism (binds, seccomp, the proxy) rather than
+by state isolation, because `native` holds state at "hide nothing".
 
 And it makes the scale a workflow rather than a taxonomy. With both extremes genuinely
 reachable, a policy can be built from either end: start at `native` and close channels
@@ -304,12 +316,14 @@ Two requirements, both from what it reopens, and both as built:
 - **The `--preset` flag only.** The design said trust-gated from the environment; what
   shipped is stricter, because a trust gate answers "is this project allowed to" and the
   problem here is different — `AGENT_SANDBOX_PRESET=native` in a shell profile reopens
-  every measured channel for every project, silently and forever, and there is no project
-  to approve. Refusing the environment and the project file outright costs a user who
-  genuinely wants it one flag per launch, which is the right price. The refusal says why.
+  every measured channel for every project, silently and forever, and there is no
+  project to approve. Refusing the environment and the project file outright costs a
+  user who genuinely wants it one flag per launch, which is the right price. The refusal
+  says why.
 
-`native` means parity of STATE; the egress proxy, the syscall filter and the working-tree
-bind still apply, exactly as `[net] mode = open` means no allowlist rather than no sandbox.
+`native` means parity of STATE; the egress proxy, the syscall filter and the
+working-tree bind still apply, exactly as `[net] mode = open` means no allowlist rather
+than no sandbox.
 
 #### What parity actually cost
 
@@ -317,32 +331,34 @@ Every channel at `read-write` was the easy part and was not nearly enough. Writi
 differential test (`tests/integration/native-parity.bats`) found three divergences that
 the preset, believed finished, still had — each one invisible from inside a single run:
 
-- **`--clearenv` dropped the user's environment.** The engine re-exports a locale, network
-  and profile allowlist; everything else was gone. No allowlist can predict what an agent
-  reads — its own knobs, an `EDITOR`, some tool's token — and a variable that vanishes
-  changes behaviour without a message. `native` now forwards every exported name except
-  the five the engine pins (`HOME`, `USER`, `PATH`, `TERM`, `AGENT_SANDBOX`).
-- **`$HOME` was still a tmpfs.** Channels cover the state a profile declares; `~/.gitconfig`,
-  `~/.npmrc`, `~/.ssh/config` and everything else are exactly the state it does not, and
-  they simply did not exist inside. `native` binds the host's own `$HOME`, writable — which
-  also removes the read-only remount, and with it the `CLAUDE_CONFIG_DIR` relocation that
-  exists only because a lock and a rename beside a read-only config file are lost (#91).
-- **`/tmp` and `/var/tmp` were private.** Work left there by an earlier native run, or by
-  anything else on the host, was invisible.
+- **`--clearenv` dropped the user's environment.** The engine re-exports a locale,
+  network and profile allowlist; everything else was gone. No allowlist can predict what
+  an agent reads — its own knobs, an `EDITOR`, some tool's token — and a variable that
+  vanishes changes behaviour without a message. `native` now forwards every exported
+  name except the five the engine pins (`HOME`, `USER`, `PATH`, `TERM`,
+  `AGENT_SANDBOX`).
+- **`$HOME` was still a tmpfs.** Channels cover the state a profile declares;
+  `~/.gitconfig`, `~/.npmrc`, `~/.ssh/config` and everything else are exactly the state
+  it does not, and they simply did not exist inside. `native` binds the host's own
+  `$HOME`, writable — which also removes the read-only remount, and with it the
+  `CLAUDE_CONFIG_DIR` relocation that exists only because a lock and a rename beside a
+  read-only config file are lost (#91).
+- **`/tmp` and `/var/tmp` were private.** Work left there by an earlier native run, or
+  by anything else on the host, was invisible.
 
 One gap remains, knowingly: `/run` stays a tmpfs with only `$XDG_RUNTIME_DIR` bound
-through. It is root-owned, so binding it whole leaves nowhere to create the sandbox's own
-briefing, and the launch dies. The rest of `/run` is system sockets a user-level agent does
-not reach.
+through. It is root-owned, so binding it whole leaves nowhere to create the sandbox's
+own briefing, and the launch dies. The rest of `/run` is system sockets a user-level
+agent does not reach.
 
-The pattern in all three is the same and is the argument for the preset existing: they are
-not failures. Nothing crashed, nothing warned, and every other test passed. They are the
-sandbox quietly handing the agent a different world, which is the one class of bug this
-repository had no way to see.
+The pattern in all three is the same and is the argument for the preset existing: they
+are not failures. Nothing crashed, nothing warned, and every other test passed. They are
+the sandbox quietly handing the agent a different world, which is the one class of bug
+this repository had no way to see.
 
 `inherit` is the fidelity principle stated as connections: a sandbox created from native
-with these connections behaves like a native Claude Code whose configuration is the user's,
-read live, with its own writes kept to itself. `isolated` is the two mandatory
+with these connections behaves like a native Claude Code whose configuration is the
+user's, read live, with its own writes kept to itself. `isolated` is the two mandatory
 connections and nothing else. `shared` is the engine before 0.2.
 
 **`shared` deserves more warning than "the engine before 0.2" gives it.** At
@@ -355,9 +371,10 @@ restoring old behaviour deliberately, not for convenience.
 
 ## Why these names
 
-**Implemented in 0.3.** The names used everywhere in this document are the ones the engine
-uses. This section keeps the reasoning, which is the part that would otherwise be lost: a
-name that reads oddly gets renamed again by someone who cannot see why it was chosen.
+**Implemented in 0.3.** The names used everywhere in this document are the ones the
+engine uses. This section keeps the reasoning, which is the part that would otherwise be
+lost: a name that reads oddly gets renamed again by someone who cannot see why it was
+chosen.
 
 The scale never shipped under its old names -- v0.2.1 contains no `--preset`, no
 `AGENT_SANDBOX_PRESET` and no connections parser at all -- so the rename cost nobody a
@@ -409,30 +426,30 @@ built yet. With both in play, `preset = none` (no sandbox at all) and `skills = 
 (nothing of yours) would be the same word at opposite ends of one model, and the failure
 mode is someone writing `preset = none` for maximum isolation and getting none of it.
 
-The old spellings are refused rather than aliased, and each refusal names its replacement
-(`_as_mode_renamed`, `_as_preset_renamed`). That is a courtesy to anyone tracking `main`
-between 0.2.1 and 0.3.0, not a compatibility promise -- there is no released version to be
-compatible with.
+The old spellings are refused rather than aliased, and each refusal names its
+replacement (`_as_mode_renamed`, `_as_preset_renamed`). That is a courtesy to anyone
+tracking `main` between 0.2.1 and 0.3.0, not a compatibility promise -- there is no
+released version to be compatible with.
 
 **The order is how much of YOUR files reach the sandbox, not what the sandbox may do.**
-Spelled out, that reads oddly at one step -- a sandbox can write under `copy-on-write` but
-not under `read-only`, yet `read-only` is the higher rung -- because `read-only` hands it
-the real file while `copy-on-write` gives it only a shadow of one.
+Spelled out, that reads oddly at one step -- a sandbox can write under `copy-on-write`
+but not under `read-only`, yet `read-only` is the higher rung -- because `read-only`
+hands it the real file while `copy-on-write` gives it only a shadow of one.
 
 Two candidates were rejected. `blocked` already means *egress denied* here: there is a
-`~/.config/agent-sandbox/blocked.log`, the leak study uses it throughout for refused calls,
-and the agent's own briefing says "A blocked action is deliberate, so do not retry it". A
-channel at this mode denies nothing -- the sandbox gets a working, writable, persistent
-directory at that path; it simply is not yours. And `private` reads as *per session*, when
-this slot is per sandbox and persists across every session of it.
+`~/.config/agent-sandbox/blocked.log`, the leak study uses it throughout for refused
+calls, and the agent's own briefing says "A blocked action is deliberate, so do not
+retry it". A channel at this mode denies nothing -- the sandbox gets a working,
+writable, persistent directory at that path; it simply is not yours. And `private` reads
+as *per session*, when this slot is per sandbox and persists across every session of it.
 
 ### Why the transparency principle became the fidelity principle
 
 The word is needed for a preset, and the principle was under-placed anyway. It is not a
-property of one rung: the sandbox should reproduce the native experience faithfully, minus
-what the user explicitly asked to change. `inherit` expresses that for configuration and
-`native` asserts it absolutely, which is why a difference between `--preset native` and
-`--preset none` is a bug rather than a preference.
+property of one rung: the sandbox should reproduce the native experience faithfully,
+minus what the user explicitly asked to change. `inherit` expresses that for
+configuration and `native` asserts it absolutely, which is why a difference between
+`--preset native` and `--preset none` is a bug rather than a preference.
 
 ## Path declarations
 
@@ -448,31 +465,32 @@ instructions = copy-on-write native   # no slash: a channel name, exactly as bef
 ```
 
 **The lexical rule** is what keeps a typo safe. A key with no `/` is a channel name, so
-`instrutions = own` still refuses the launch instead of declaring something; `AGENT.md =
-own` is refused the same way and `./AGENT.md = own` is the path form. A trailing `/` says
-the path must be a directory. A mistyped *path* can still declare an unwanted one: the
-exposure any path grant carries.
+`instrutions = own` still refuses the launch instead of declaring something;
+`AGENT.md = own` is refused the same way and `./AGENT.md = own` is the path form. A
+trailing `/` says the path must be a directory. A mistyped *path* can still declare an
+unwanted one: the exposure any path grant carries.
 
 **The key is always a path inside the sandbox**, and with no source given the source is
 the same path outside. A relative key is relative to the project, whichever form it came
-from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only storage
-while `~/notes = read-only` puts your real one there; the dot-file's review
+from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only
+storage while `~/notes = read-only` puts your real one there; the dot-file's review
 (`--trust`, or the one a launch at a terminal runs) says which of the two a key under
-`$HOME`, outside the project, is. `outside:<path>` names another source outside
-(#174): the key is where it lands, the source is what the mode reads, seeds from and
-binds. The source is absolute or under `~` (outside there is no project to be relative
-to), is checked as a key is, takes no `own`, and a relocated path is not bound at all
-under `--preset native`, which relocates nothing.
+`$HOME`, outside the project, is. `outside:<path>` names another source outside (#174):
+the key is where it lands, the source is what the mode reads, seeds from and binds. The
+source is absolute or under `~` (outside there is no project to be relative to), is
+checked as a key is, takes no `own`, and a relocated path is not bound at all under
+`--preset native`, which relocates nothing.
 
 **Every mode is checked alike, `own` included**, although `own` exposes nothing — one
 rule is easier to state and to trust, and loosening it later breaks no one. The rule:
 not `/`, `$HOME` or a parent of it; nothing that is, is inside or contains a secret
-store or the sandbox's control plane, except `~/.local/bin` read-only, which puts
-your commands on the sandbox's PATH and whose harm is only a write; and **not the
-project or a parent of it**, because a declaration is bound after the project and would
-cover it -- the project's own mode is `project = read-only` (#220). Both the key and what it resolves to are checked, and the resolved path is
-checked again at bind time, so a symlink repointed in between cannot mount a refused
-target. The same path declared twice is an override, later wins, as for a channel.
+store or the sandbox's control plane, except `~/.local/bin` read-only, which puts your
+commands on the sandbox's PATH and whose harm is only a write; and **not the project or
+a parent of it**, because a declaration is bound after the project and would cover it --
+the project's own mode is `project = read-only` (#220). Both the key and what it
+resolves to are checked, and the resolved path is checked again at bind time, so a
+symlink repointed in between cannot mount a refused target. The same path declared twice
+is an override, later wins, as for a channel.
 
 **A path that does not exist is skipped**, with a notice, and takes effect at the first
 launch after it does — every mode but `own` promises something about the path outside,
@@ -486,38 +504,39 @@ effect a narrowed channel has; an empty file is removed again at the end while i
 still empty. Under `project = read-only` bwrap cannot make a mount point in the tree, so
 the engine makes it on the host before the launch, the same directory or file.
 
-**A file** is allowed, with two permanent limits said at the dot-file's review: it is a mount point, so
-it cannot be deleted or renamed from inside, and `copy-on-write` on a file is `copy`,
-since overlayfs cannot stack on one file.
+**A file** is allowed, with two permanent limits said at the dot-file's review: it is a
+mount point, so it cannot be deleted or renamed from inside, and `copy-on-write` on a
+file is `copy`, since overlayfs cannot stack on one file.
 
 **Paths nest, and are bound by depth, outer first** (#196): channel paths and
 declarations alike, whichever file they come from and in whatever order they are
 written, so the deeper line governs its subtree. At one depth a declaration comes after
-a channel, and the per-session scratch after both. So **inside a channel** a
-declaration wins there: `~/.claude/rules/team/ = own` under `instructions = read-only`
-gives the sandbox its own `team/` and leaves the rest of `rules/` read-only. **Over a
-channel**, the channel keeps its own mode inside it: `~/.claude/cache/ = read-only` makes
-the rest of `cache/` read-only and leaves the `changelog` channel's `cache/changelog.md`
-where its mode puts it — to move a channel, set its mode. Two declarations one inside the
+a channel, and the per-session scratch after both. So **inside a channel** a declaration
+wins there: `~/.claude/rules/team/ = own` under `instructions = read-only` gives the
+sandbox its own `team/` and leaves the rest of `rules/` read-only. **Over a channel**,
+the channel keeps its own mode inside it: `~/.claude/cache/ = read-only` makes the rest
+of `cache/` read-only and leaves the `changelog` channel's `cache/changelog.md` where
+its mode puts it — to move a channel, set its mode. Two declarations one inside the
 other nest the same way. The dot-file's review says which of these a declaration is. The
-state directory itself, a parent of it, and its login (the profile's `account-paths`) are
-never a declaration's path or source (#355): what a role sees of the base is the
+state directory itself, a parent of it, and its login (the profile's `account-paths`)
+are never a declaration's path or source (#355): what a role sees of the base is the
 channels and the hide list, and its login is the account's.
 
 **Presets never move a declaration.** A preset positions the channels the profile
 declares; a path has no position until someone writes one.
 
-Declarations are bound after the
-working tree, which would otherwise cover every declaration inside the project. That was
-measured the first time this ran under the real bwrap: bound earlier, `./data =
-read-only` was writable and `./scratch/ = own` showed the project's files.
+Declarations are bound after the working tree, which would otherwise cover every
+declaration inside the project. That was measured the first time this ran under the real
+bwrap: bound earlier, `./data = read-only` was writable and `./scratch/ = own` showed
+the project's files.
 
-A directory path at `copy-on-write` is an overlay the keeper mounts at the declared path,
-as it does a channel's: the project's files read through, live, and a write lands in the
-role's upper layer and shadows the source's file from then on. Where the overlay is off or
-this bubblewrap cannot mount one, it is `copy` with a message saying so. `--reset ./scratch/` takes a
-declaration back to its source, as `--reset <channel>` does a channel (#126). A per-role scratchpad is already what
-`./scratch/ = own` gives, since a role is the instance.
+A directory path at `copy-on-write` is an overlay the keeper mounts at the declared
+path, as it does a channel's: the project's files read through, live, and a write lands
+in the role's upper layer and shadows the source's file from then on. Where the overlay
+is off or this bubblewrap cannot mount one, it is `copy` with a message saying so.
+`--reset ./scratch/` takes a declaration back to its source, as `--reset <channel>` does
+a channel (#126). A per-role scratchpad is already what `./scratch/ = own` gives, since
+a role is the instance.
 
 ### Nested sandboxes: persistence is not enforced
 
@@ -525,11 +544,11 @@ Every source and check resolves in the namespace where the engine runs, so an en
 inside a sandbox applies these rules to the `/`, `$HOME` and project it sees, and can
 only bind what the outer sandbox shows it. Nesting only narrows.
 
-It also means **persistence across relaunches cannot be enforced when nesting.** The inner
-engine's state directory is under its `$HOME`, which in the outer sandbox is a tmpfs, and
-the outer never binds its own state directory in. So everything an inner sandbox keeps —
-`own` slots, `copy` copies, `copy-on-write` upper layers, for paths and channels alike —
-lasts as long as the outer session and no longer.
+It also means **persistence across relaunches cannot be enforced when nesting.** The
+inner engine's state directory is under its `$HOME`, which in the outer sandbox is a
+tmpfs, and the outer never binds its own state directory in. So everything an inner
+sandbox keeps — `own` slots, `copy` copies, `copy-on-write` upper layers, for paths and
+channels alike — lasts as long as the outer session and no longer.
 
 ## Another sandbox's store: `sandbox:`
 
@@ -554,19 +573,20 @@ the agent can read. `[share-memory] P` is that second line.
 
 **Where the store is found.** Every launch records, in its role's state directory, what
 it bound at each channel path: the slot of an `own`, `seed-only` or `copy` store, the
-native path at `read-write` and `read-only`. A `sandbox:` source looks the path up there:
+native path at `read-write` and `read-only`. A `sandbox:` source looks the path up
+there:
 
 - a role that **never launched** has its state natively, so the source is the native
   path -- what a share read before, and what it still reads for a project you only run
   natively;
-- a store that is **not one path** -- an overlay (`copy-on-write`), or a store per join --
-  is refused at the launch rather than read as something else;
+- a store that is **not one path** -- an overlay (`copy-on-write`), or a store per join
+  -- is refused at the launch rather than read as something else;
 - a path its last launch did not bind is skipped, with a notice.
 
 **Modes.** `read-only`, `seed-only` and `copy` read the store. `read-write` is refused:
 two writers in one role's store is what a role's single launch exists to prevent.
-`copy-on-write` is not built: the store may be an overlay itself, mounted while that role
-runs. `own` takes nothing from a source.
+`copy-on-write` is not built: the store may be an overlay itself, mounted while that
+role runs. `own` takes nothing from a source.
 
 **At the review.** A `sandbox:` source into a channel a session loads as your own
 configuration -- instructions, settings, skills, agents, workflows, plugins -- is said
@@ -575,9 +595,10 @@ yours.
 
 ## Roles, the keeper and storage
 
-**Built:** roles, the keeper, background sessions inside the role, the role verbs, `seed-only`,
-the config file, no merge-back and the storage scopes (`join-scoped` for `own`, #147). The section records the decisions of 2026-09-24 to 28, filed
-as [#119](https://github.com/pearu/agent-sandbox/issues/119),
+**Built:** roles, the keeper, background sessions inside the role, the role verbs,
+`seed-only`, the config file, no merge-back and the storage scopes (`join-scoped` for
+`own`, #147). The section records the decisions of 2026-09-24 to 28, filed as
+[#119](https://github.com/pearu/agent-sandbox/issues/119),
 [#120](https://github.com/pearu/agent-sandbox/issues/120),
 [#121](https://github.com/pearu/agent-sandbox/issues/121),
 [#123](https://github.com/pearu/agent-sandbox/issues/123),
@@ -588,66 +609,71 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 ### A role is one launch
 
-- A **role** is a named, persistent instance of a project under a policy: `asb --role
-  impl-1 claude`. The sandbox key stays `<project slug>/<role>`, and `default` is the unnamed role.
-  What the engine calls a launch is the role's running instance; "launch" stays internal.
-- **Policy is selected by glob and section order.** *Built* for `[sandbox]`, `[connect]`,
-  `[allow]`, `[deny]`, `[env]`, `[conda]` and `[net]` (#221):
-  any section may take a role suffix, `[<section>:<glob>]`, which is that section for the
-  role names the glob matches, applied after the unsuffixed one, later overriding earlier,
-  per key. That is all the inheritance there is: general sections first, specific ones last.
-  A name matching no suffixed section is refused, but only when suffixed sections exist;
-  `[connect:*]` accepts every name. `[sandbox] role` names the project's default role. There
-  is no `[role:…]` section: it would say nothing the suffix does not.
-- **The name is the identity; the policy is the variable part.** A role's policy may change
-  between runs. A store belongs to `(role, path, mode)`, so a channel that changes mode
-  switches to that mode's store; the previous store is kept, unbound, until `--reset` or
-  `--delete`. A snapshot before a policy change is what `clone:` is for (#115).
+- A **role** is a named, persistent instance of a project under a policy:
+  `asb --role impl-1 claude`. The sandbox key stays `<project slug>/<role>`, and
+  `default` is the unnamed role. What the engine calls a launch is the role's running
+  instance; "launch" stays internal.
+- **Policy is selected by glob and section order.** *Built* for `[sandbox]`,
+  `[connect]`, `[allow]`, `[deny]`, `[env]`, `[conda]` and `[net]` (#221): any section
+  may take a role suffix, `[<section>:<glob>]`, which is that section for the role names
+  the glob matches, applied after the unsuffixed one, later overriding earlier, per key.
+  That is all the inheritance there is: general sections first, specific ones last. A
+  name matching no suffixed section is refused, but only when suffixed sections exist;
+  `[connect:*]` accepts every name. `[sandbox] role` names the project's default role.
+  There is no `[role:…]` section: it would say nothing the suffix does not.
+- **The name is the identity; the policy is the variable part.** A role's policy may
+  change between runs. A store belongs to `(role, path, mode)`, so a channel that
+  changes mode switches to that mode's store; the previous store is kept, unbound, until
+  `--reset` or `--delete`. A snapshot before a policy change is what `clone:` is for
+  (#115).
 - **Claude is an app like any other.** A Claude session id is derived from the role (the
   first session's), never the reverse, and one role can hold several Claude sessions
   (`/clear`, `/branch`, `--fork-session`, `claude` started inside `--exec bash`).
-  `asb --role foo claude -r` lists foo's sessions; a bare `claude -r` lists native ones only.
+  `asb --role foo claude -r` lists foo's sessions; a bare `claude -r` lists native ones
+  only.
 
 ### The keeper: one running instance per role (#121)
 
 *Built.*
 
-- The running instance is a **keeper**: a process that holds every namespace of the sandbox
-  and does nothing else. Every app, the first included, is **joined** into it. The keeper
-  exits when nothing is joined, after a grace of two seconds (`AGENT_SANDBOX_KEEPER_GRACE`),
-  under a lock, so a join in progress is never cut off and commands run one after another
-  share one launch.
+- The running instance is a **keeper**: a process that holds every namespace of the
+  sandbox and does nothing else. Every app, the first included, is **joined** into it.
+  The keeper exits when nothing is joined, after a grace of two seconds
+  (`AGENT_SANDBOX_KEEPER_GRACE`), under a lock, so a join in progress is never cut off
+  and commands run one after another share one launch.
 - A joined app is the keeper's equal: the same mounts, working directory, uid and gid,
   capabilities, `no_new_privs` and seccomp filter. The join is `setns` from `python3`
   (`components/join.py`): bwrap nests a capability-less user namespace when it is given
   `--dev /dev`, so no process inside lives in the namespace that owns the mounts and
-  `nsenter` has nothing to target. `python3` is therefore needed on `PATH` to launch at all,
-  and the engine says so before it builds anything.
+  `nsenter` has nothing to target. `python3` is therefore needed on `PATH` to launch at
+  all, and the engine says so before it builds anything.
 - **The environment is the keeper's**, except what describes the terminal the join came
   from: `TERM` and the locale group (`LANG`, `LC_*`, `TZ`, `COLORTERM`, `NO_COLOR`,
-  `FORCE_COLOR`), set or unset as in the joining shell. Everything else — `HOME`, `PATH`,
-  the conda variables, the proxy and CA variables, the profile's own, the
-  `AGENT_SANDBOX_FORWARD` names — describes the sandbox. A join's environment is fixed when
-  it starts; a later join never changes an earlier one's. The working directory needs no
-  rule: the sandbox key is the invocation's directory, so a join from another directory is
-  another project's keeper.
-- **Policy is fixed when the keeper starts.** A join may *repeat* it, not change it: only the
-  knobs this invocation set, by flag or environment, are compared with the keeper's, and a
-  different value is refused, naming the knob; a listed grant (`--allow`, `--ssh`, ports,
-  declared paths) must be one the keeper has. A bare join always joins. A dot-file
-  changed since the keeper started warns and joins: it is standing policy and applies at
-  the next keeper by itself, whereas a flag is a request for this invocation, with no next
-  keeper to apply to. Both rules protect what is joined: a keeper in its grace, with nothing
-  joined, is ended and replaced by an invocation with another policy or under a changed
-  dot-file, so running commands one after another with different flags just works.
+  `FORCE_COLOR`), set or unset as in the joining shell. Everything else — `HOME`,
+  `PATH`, the conda variables, the proxy and CA variables, the profile's own, the
+  `AGENT_SANDBOX_FORWARD` names — describes the sandbox. A join's environment is fixed
+  when it starts; a later join never changes an earlier one's. The working directory
+  needs no rule: the sandbox key is the invocation's directory, so a join from another
+  directory is another project's keeper.
+- **Policy is fixed when the keeper starts.** A join may *repeat* it, not change it:
+  only the knobs this invocation set, by flag or environment, are compared with the
+  keeper's, and a different value is refused, naming the knob; a listed grant
+  (`--allow`, `--ssh`, ports, declared paths) must be one the keeper has. A bare join
+  always joins. A dot-file changed since the keeper started warns and joins: it is
+  standing policy and applies at the next keeper by itself, whereas a flag is a request
+  for this invocation, with no next keeper to apply to. Both rules protect what is
+  joined: a keeper in its grace, with nothing joined, is ended and replaced by an
+  invocation with another policy or under a changed dot-file, so running commands one
+  after another with different flags just works.
 - **A join reads the keeper's dot-file.** The keeper keeps a copy of the approved
   `.agent-sandbox` it started with, and a join parses that copy. So an edit to the live
   file that is not yet approved does not refuse a join: the trust gate exists because an
   ignored file would fall back to the defaults, and a join falls back to nothing — its
   policy is the keeper's. At a terminal the join still shows the change and asks (#143),
-  and the answer applies at the next keeper, where the live file is read again. The live file is still read to find the role when no `--role` or
-  `AGENT_SANDBOX_ROLE` names it, and then only an approved file is read, so there an
-  unapproved edit refuses the join as it refuses a launch.
+  and the answer applies at the next keeper, where the live file is read again. The live
+  file is still read to find the role when no `--role` or `AGENT_SANDBOX_ROLE` names it,
+  and then only an approved file is read, so there an unapproved edit refuses the join
+  as it refuses a launch.
 - **A file bound on its own shows the file as it was when the keeper started.** A bind
   holds the inode it was made on, and a native save by temp file and rename (how editors
   and Claude Code write) makes a new one, so `read-only` file paths (`CLAUDE.md`,
@@ -657,60 +683,64 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   own), are live. This was already true within one launch; with the keeper a later
   terminal is inside that launch too. Rebinding a replaced file from the keeper's host
   side is a follow-up.
-- **Per-launch state is per keeper**: the session directory, the proxy token, the `--allow`
-  include, the ssh agent and its `--ssh-timeout`, the briefing. A join's own hook settings
-  (when it passes `--settings`) get a file of their own beside the briefing.
-- `native` has a keeper too: it is a preset, and parity is about what the agent sees. The
-  bypass is `none`, which has no bwrap.
+- **Per-launch state is per keeper**: the session directory, the proxy token, the
+  `--allow` include, the ssh agent and its `--ssh-timeout`, the briefing. A join's own
+  hook settings (when it passes `--settings`) get a file of their own beside the
+  briefing.
+- `native` has a keeper too: it is a preset, and parity is about what the agent sees.
+  The bypass is `none`, which has no bwrap.
 - Two running instances of one role never exist, so `--exec` beside a running agent is a
   join, and the undefined case of two overlays over one upper directory has nowhere to
-  arise. Two Claude processes on one conversation behave as they do natively — measured: the
-  second marks the first's in-flight tool call interrupted, the conversation forks, and the
-  next resume follows the branch of the process that exited last — and the consequences
-  are the user's.
-- The keeper subsumes the holder: it mounts the channel overlays at their real paths, and
-  the overlays of directory paths declared `copy-on-write`.
+  arise. Two Claude processes on one conversation behave as they do natively — measured:
+  the second marks the first's in-flight tool call interrupted, the conversation forks,
+  and the next resume follows the branch of the process that exited last — and the
+  consequences are the user's.
+- The keeper subsumes the holder: it mounts the channel overlays at their real paths,
+  and the overlays of directory paths declared `copy-on-write`.
 - Ctrl-C at a join ends that join's command, not the launch: the keeper is in a session
   of its own, and ignores the terminal. The joined command keeps the terminal where the
   kernel blocks `TIOCSTI` (`/proc/sys/dev/tty/legacy_tiocsti` is 0), so a resize, Ctrl-Z
   and job control reach it as they would natively. Where the kernel does not block it,
   the command starts a session of its own, as bwrap's `--new-session` does, against
-  keystroke injection, and the join forwards Ctrl-C to it; there it has no job control and
-  no `SIGWINCH` (#165).
+  keystroke injection, and the join forwards Ctrl-C to it; there it has no job control
+  and no `SIGWINCH` (#165).
 - `--reset` is refused while anything is joined; an idle keeper is ended first.
-- Its host side is a supervisor, a background copy of the engine that started it: it owns
-  the launch's exit (the session directory, the ssh agent, the mount-point files) and writes
-  `<sandbox>/keeper.log`, which a launch that fails to start prints.
+- Its host side is a supervisor, a background copy of the engine that started it: it
+  owns the launch's exit (the session directory, the ssh agent, the mount-point files)
+  and writes `<sandbox>/keeper.log`, which a launch that fails to start prints.
 
 ### Background sessions (#123)
 
 *Built.*
 
-- `asb --role x claude --bg` is "ensure x's keeper, join it, run `claude --bg` there". The daemon,
-  its spare workers and pty hosts start inside (measured on 2.1.283), and `agents`, `attach`,
-  `logs`, `stop`, `rm` and `daemon` join too. Each role has its own daemon. A `--bg` is
-  sandboxed by default; `--preset none --bg` runs one natively.
-- **The daemon holds the keeper**, as a join does: the keeper ends when no join remains *and*
-  no daemon runs in its namespace (the profile says what one looks like). The daemon does not
-  exit on its own when idle (measured), so a role with one ends by `--shutdown`.
+- `asb --role x claude --bg` is "ensure x's keeper, join it, run `claude --bg` there".
+  The daemon, its spare workers and pty hosts start inside (measured on 2.1.283), and
+  `agents`, `attach`, `logs`, `stop`, `rm` and `daemon` join too. Each role has its own
+  daemon. A `--bg` is sandboxed by default; `--preset none --bg` runs one natively.
+- **The daemon holds the keeper**, as a join does: the keeper ends when no join remains
+  *and* no daemon runs in its namespace (the profile says what one looks like). The
+  daemon does not exit on its own when idle (measured), so a role with one ends by
+  `--shutdown`.
 - **A verb with no keeper starts none.** `agents` and `logs` answer that the role is not
-  running (exit 0); `attach`, `stop`, `rm` and `daemon` refuse. A verb needs the dot-file
-  only to find the role: when an unapproved edit keeps the file from being read and exactly
-  one role of the project is running, that one is meant; with several, `--role` is asked for.
-- **Workspace trust** is recorded in the role's own config file on `--bg`, when it is not
-  there: a `--bg` cannot answer the prompt, and the user running it in the folder is the
-  consent the prompt asks for.
-- The wrapper machinery went: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg` project
-  record and the pool clearing compensated for a daemon on the host. With it went `--sandbox`,
-  `AGENT_SANDBOX_CLAUDE_SANDBOX` and `[claude] sandbox` (each refused, naming `--preset none`),
-  the `@background` qualifier and the `<scope>` key segment: `x@background` is `x`. Native
-  foreground and background sessions are meant to find each other (`--continue` loads a
-  finished background session; `attach`; cross-session messaging), so they share the role.
+  running (exit 0); `attach`, `stop`, `rm` and `daemon` refuse. A verb needs the
+  dot-file only to find the role: when an unapproved edit keeps the file from being read
+  and exactly one role of the project is running, that one is meant; with several,
+  `--role` is asked for.
+- **Workspace trust** is recorded in the role's own config file on `--bg`, when it is
+  not there: a `--bg` cannot answer the prompt, and the user running it in the folder is
+  the consent the prompt asks for.
+- The wrapper machinery went: `--wrap`, `CLAUDE_CODE_PROCESS_WRAPPER`, the per-`--bg`
+  project record and the pool clearing compensated for a daemon on the host. With it
+  went `--sandbox`, `AGENT_SANDBOX_CLAUDE_SANDBOX` and `[claude] sandbox` (each refused,
+  naming `--preset none`), the `@background` qualifier and the `<scope>` key segment:
+  `x@background` is `x`. Native foreground and background sessions are meant to find
+  each other (`--continue` loads a finished background session; `attach`; cross-session
+  messaging), so they share the role.
 - **`none`** is the fifth preset: no sandbox at all, the flag only (it drops the network
-  policy and the syscall filter too, so no file or environment may set it), acted on before
-  any project machinery.
-- What survives from #104: the `none` preset, the glob grammar above, and keying the trust
-  record on the project rather than the daemon's directory.
+  policy and the syscall filter too, so no file or environment may set it), acted on
+  before any project machinery.
+- What survives from #104: the `none` preset, the glob grammar above, and keying the
+  trust record on the project rather than the daemon's directory.
 
 ### The role verbs (#126)
 
@@ -728,8 +758,8 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 
 ### Storage scope (#125)
 
-Storage is keyed by the role, so the scope token of a connection (`channel = mode [source]
-[scope]`) names only a *shorter* lifetime:
+Storage is keyed by the role, so the scope token of a connection
+(`channel = mode [source] [scope]`) names only a *shorter* lifetime:
 
 | written | lifetime |
 |---|---|
@@ -738,96 +768,101 @@ Storage is keyed by the role, so the scope token of a connection (`channel = mod
 | `join-scoped` | one join: a joined command and everything it starts. *Built* for `own` (#147); for `copy` and `seed-only`, each seeded from the source at the join (#153); and for `copy-on-write`, an overlay per join whose lower is the source, bound read-only for the joins, and whose upper is the join's own -- a file, or overlays switched off, gets a seeded copy per join instead, as the role's `copy-on-write` becomes `copy` (#153): the join gets a mount namespace of its own and binds its store over the path; the keeper shows an empty read-only mount point there. The stores reach the sandbox through a staging directory the keeper binds, and each moves out of it before its command starts, so no join can reach another's -- not even through the keeper payload's `/proc/<pid>/root`. Removed when the join ends, or at the supervisor's sweep for a join killed with `-9`. Renamed from `process-scoped`, which is refused with the new name |
 
 `sandbox-scoped` is not nameable (the default needs no word); `project-scoped` is a
-`sandbox:<project>@<role>` source at `read-write` (refused: two writers in one store), not a scope; `session-scoped` is a role per
-conversation. `read-write` with any scope stays refused: there is no store to scope.
+`sandbox:<project>@<role>` source at `read-write` (refused: two writers in one store),
+not a scope; `session-scoped` is a role per conversation. `read-write` with any scope
+stays refused: there is no store to scope.
 
 ### Modes and channels decided alongside
 
 - **`seed-only`** (#120) is built: see [The scale](#the-scale).
-- **No merge-back at exit** (#120) is built: `transcripts` (this project's conversations,
-  `file-history/`, `plans/`, `history.jsonl`) and `logs` (the hook logs) are channels, `own`
-  under every preset but `native`. A role starts with none of the native history;
-  `transcripts = seed-only` seeds it once, the prompt history filtered to this project's
-  records. The project's memory, inside the conversations' directory, is the `memory`
-  channel (#196), bound on top of the role's store by depth.
-  Undo and plans work wherever the conversation can be resumed, which is the role.
+- **No merge-back at exit** (#120) is built: `transcripts` (this project's
+  conversations, `file-history/`, `plans/`, `history.jsonl`) and `logs` (the hook logs)
+  are channels, `own` under every preset but `native`. A role starts with none of the
+  native history; `transcripts = seed-only` seeds it once, the prompt history filtered
+  to this project's records. The project's memory, inside the conversations' directory,
+  is the `memory` channel (#196), bound on top of the role's store by depth. Undo and
+  plans work wherever the conversation can be resumed, which is the role.
 - **The config file** (#119) is built: the `config` channel, see
-  [config.md](config.md#the-config-file-the-config-channel). `seed-only` under `inherit` and
-  `shared`, `own` under `isolated`; `user-mcp` is removed and `tools` is part of it (#132).
+  [config.md](config.md#the-config-file-the-config-channel). `seed-only` under `inherit`
+  and `shared`, `own` under `isolated`; `user-mcp` is removed and `tools` is part of it
+  (#132).
 
 ## Mechanisms
 
 What exists: read-write and read-only binds of a source path at an inside path
-(`profile_config_binds` with `SRC<TAB>DEST`, and channels and declarations bound by depth);
-`tmpfs` over a path for per-launch scratch; the engine's state
-directory and its control-path protection; a seeded, filtered, refreshed copy of one file
-(the config file, 0.2.1); the mount-point cleanup a file bind inside a read-write directory
-needs. Measured on this host: the whole user-owned configuration copies into the session
-tmpfs in under 0.1 s and under 20 MB, hashes in under 0.1 s, and a stat walk takes 20 ms.
+(`profile_config_binds` with `SRC<TAB>DEST`, and channels and declarations bound by
+depth); `tmpfs` over a path for per-launch scratch; the engine's state directory and its
+control-path protection; a seeded, filtered, refreshed copy of one file (the config
+file, 0.2.1); the mount-point cleanup a file bind inside a read-write directory needs.
+Measured on this host: the whole user-owned configuration copies into the session tmpfs
+in under 0.1 s and under 20 MB, hashes in under 0.1 s, and a stat walk takes 20 ms.
 
-What `copy-on-write` needs. bubblewrap gained `--overlay-src`, `--overlay`, `--tmp-overlay` and
-`--ro-overlay` in release 0.11.0. Ubuntu 24.04 ships 0.9.0, which rejects them (measured);
-26.04 ships 0.11.1. Measured on this host after a local no-change rebuild of Ubuntu's own
-0.12.0-1 source for 24.04 (kernel 6.8, the installer's AppArmor profile, the engine's own
-flags: `--unshare-all`, uid and gid mapping, `--cap-drop ALL`): an overlay mount inside
-bubblewrap's user namespace works. Reads fall through to the lower directory, a write lands
-in the upper directory and the lower file is untouched, `--tmp-overlay` discards the writes,
-and the engine's integration suite passes unchanged on 0.12.0. So `copy-on-write` has two
-implementations with one semantics:
+What `copy-on-write` needs. bubblewrap gained `--overlay-src`, `--overlay`,
+`--tmp-overlay` and `--ro-overlay` in release 0.11.0. Ubuntu 24.04 ships 0.9.0, which
+rejects them (measured); 26.04 ships 0.11.1. Measured on this host after a local
+no-change rebuild of Ubuntu's own 0.12.0-1 source for 24.04 (kernel 6.8, the installer's
+AppArmor profile, the engine's own flags: `--unshare-all`, uid and gid mapping,
+`--cap-drop ALL`): an overlay mount inside bubblewrap's user namespace works. Reads fall
+through to the lower directory, a write lands in the upper directory and the lower file
+is untouched, `--tmp-overlay` discards the writes, and the engine's integration suite
+passes unchanged on 0.12.0. So `copy-on-write` has two implementations with one
+semantics:
 
-- **real**: `--overlay-src <A> --overlay <upper> <work> <inside>` where bubblewrap allows it;
-  reads live, writes to the upper directory, which is the sandbox's persistent private layer;
+- **real**: `--overlay-src <A> --overlay <upper> <work> <inside>` where bubblewrap
+  allows it; reads live, writes to the upper directory, which is the sandbox's
+  persistent private layer;
 - **emulated**: a per-launch snapshot of A into the session tmpfs with the private layer
-  copied over it, bound read-write; at exit, files that differ from the snapshot go to the
-  layer. This is `copy` with a fresh seed every launch. It reads live only at launch, and
-  its exit step is a failure point (the janitor runs it for orphans at the next launch, but a
-  reboot first loses that session's changes). The measured costs above are its costs.
+  copied over it, bound read-write; at exit, files that differ from the snapshot go to
+  the layer. This is `copy` with a fresh seed every launch. It reads live only at
+  launch, and its exit step is a failure point (the janitor runs it for orphans at the
+  next launch, but a reboot first loses that session's changes). The measured costs
+  above are its costs.
 
-Claude Code on the real overlay, measured (2.1.274, bubblewrap 0.12.0, this host): a lower
-layer holding a seeded config file, an instruction file and an empty `skills/`; the
-credential file and `projects/` bound live over it; one `-p` turn. The turn succeeded and the
-reply carried the token the lower layer's `CLAUDE.md` asked for, so reads through the overlay
-reach the model. The config file was rewritten thirteen times by temp file and rename, all
-inside the overlay, none failing; `settings.json` was copied up on first touch; the
-server-synced skills and plugin markers, `backups/`, `sessions/` and the policy and
-remote-settings files all landed in the upper layer, which is the per-sandbox privacy the
-model wants for server-owned state (the engine does not lay one overlay over the whole state
-directory, so outside the channels that privacy is not what it gets: see
-[The three objects](#the-three-objects)); the lower layer was byte-identical afterwards; the
-transcript went through the live `projects/` bind. The only failing calls were the skill
-sync's unlink-then-rmdir on its staging directories, and the native trace shows the same
-sequence. One mechanical detail for the engine: bubblewrap creates the mount points for
-binds placed inside the overlay in the upper layer (an empty `.credentials.json`, a
-`projects/` directory), so the placeholder cleanup that exists for file binds applies to the
-upper directory as well.
+Claude Code on the real overlay, measured (2.1.274, bubblewrap 0.12.0, this host): a
+lower layer holding a seeded config file, an instruction file and an empty `skills/`;
+the credential file and `projects/` bound live over it; one `-p` turn. The turn
+succeeded and the reply carried the token the lower layer's `CLAUDE.md` asked for, so
+reads through the overlay reach the model. The config file was rewritten thirteen times
+by temp file and rename, all inside the overlay, none failing; `settings.json` was
+copied up on first touch; the server-synced skills and plugin markers, `backups/`,
+`sessions/` and the policy and remote-settings files all landed in the upper layer,
+which is the per-sandbox privacy the model wants for server-owned state (the engine does
+not lay one overlay over the whole state directory, so outside the channels that privacy
+is not what it gets: see [The three objects](#the-three-objects)); the lower layer was
+byte-identical afterwards; the transcript went through the live `projects/` bind. The
+only failing calls were the skill sync's unlink-then-rmdir on its staging directories,
+and the native trace shows the same sequence. One mechanical detail for the engine:
+bubblewrap creates the mount points for binds placed inside the overlay in the upper
+layer (an empty `.credentials.json`, a `projects/` directory), so the placeholder
+cleanup that exists for file binds applies to the upper directory as well.
 
 Built: the **keeper** replaced the holder (see above). It holds every namespace of the
 sandbox, not only the mounts, and apps are joined into it with `setns`
 (`components/join.py`, from the measured recipe in `probes/join-launch.py`: the
-user-namespace chain from the outermost down, each namespace right after entering its owner,
-then the capability bounding set emptied, `no_new_privs` and the same seccomp filter, then
-the keeper's environment and working directory).
+user-namespace chain from the outermost down, each namespace right after entering its
+owner, then the capability bounding set emptied, `no_new_privs` and the same seccomp
+filter, then the keeper's environment and working directory).
 
-`copy` needs the seed, a base manifest of what was last synced, and the three-way step at
-launch; it has no exit step, since B writes its persistent copy directly. `read-only` and `read-write` are
-binds. Every mode is per channel, and a channel that maps to several paths applies its mode to
-each.
+`copy` needs the seed, a base manifest of what was last synced, and the three-way step
+at launch; it has no exit step, since B writes its persistent copy directly. `read-only`
+and `read-write` are binds. Every mode is per channel, and a channel that maps to
+several paths applies its mode to each.
 
 ## The profile contract under this model
 
 A profile declares four things and no dispositions:
 
-1. where the agent keeps its state, and how to point the agent at the sandbox's copy of it
-   (Claude Code: `~/.claude`, `CLAUDE_CONFIG_DIR`);
-2. the **identity** paths, always connected `read-write` to native (Claude Code: `.credentials.json`;
-   `ide/` as hideable tooling);
+1. where the agent keeps its state, and how to point the agent at the sandbox's copy of
+   it (Claude Code: `~/.claude`, `CLAUDE_CONFIG_DIR`);
+2. the **identity** paths, always connected `read-write` to native (Claude Code:
+   `.credentials.json`; `ide/` as hideable tooling);
 3. the **channel → path** table above, including what is server-owned state;
-4. the **per-session scratch** the isolate spec replaces per launch (until #120 gives those
-   paths modes of their own).
+4. the **per-session scratch** the isolate spec replaces per launch (until #120 gives
+   those paths modes of their own).
 
-Everything else in today's profile, `[claude] hide`, becomes a connection statement or falls out of "private by
-construction". A second profile fills in the same four items; nothing about the engine's
-connection machinery is agent-specific.
+Everything else in today's profile, `[claude] hide`, becomes a connection statement or
+falls out of "private by construction". A second profile fills in the same four items;
+nothing about the engine's connection machinery is agent-specific.
 
 ## Knobs
 
@@ -856,124 +891,131 @@ artefacts = read-write native
 ./scratch/ = own                            # a path, not a channel
 ```
 
-Launch-time forms: `--connect 'memory=read-only sandbox:...'` repeated, `AGENT_SANDBOX_CONNECT` with
-the same syntax, `--role`, `--preset`, and `--overlay auto|off` with
-`AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as `AGENT_SANDBOX_SECCOMP` does.
+Launch-time forms: `--connect 'memory=read-only sandbox:...'` repeated,
+`AGENT_SANDBOX_CONNECT` with the same syntax, `--role`, `--preset`, and
+`--overlay auto|off` with `AGENT_SANDBOX_OVERLAY`, which wins if set in the shell as
+`AGENT_SANDBOX_SECCOMP` does.
 
 **What the trust gate does and does not cover here.** The dot-file is parsed only when
-approved, so `[connect]` grants nothing from an unreviewed file, and a step *up* the scale
-written there is a widening the `--trust` review exists to show. The flag and the
-environment variable are not gated and never have been, for any knob: they are the user's
-own shell, and a user who can set them can equally run the agent unsandboxed. That
-distinction costs nothing while every channel defaults to `read-write`, since no launch-time
-form can widen anything. It starts to matter the day the `inherit` preset lowers those
-defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can quietly put a
-channel back at `read-write` for every project. Whoever lands presets decides whether that stays
-true and says so here.
+approved, so `[connect]` grants nothing from an unreviewed file, and a step *up* the
+scale written there is a widening the `--trust` review exists to show. The flag and the
+environment variable are not gated and never have been, for any knob: they are the
+user's own shell, and a user who can set them can equally run the agent unsandboxed.
+That distinction costs nothing while every channel defaults to `read-write`, since no
+launch-time form can widen anything. It starts to matter the day the `inherit` preset
+lowers those defaults, because then `AGENT_SANDBOX_CONNECT` in a shell profile can
+quietly put a channel back at `read-write` for every project. Whoever lands presets
+decides whether that stays true and says so here.
 
-`--reset skills` re-seeds one channel, and `--reset ./scratch/` one declared path; `--status`,
-`--shutdown` and `--delete` are the role's own verbs (#126), and `--list` and `--list-all`
-show every role's (#314). They start no agent, so they -- and `--summarize`, which starts
-its own turn -- need no command when asb can run one agent, or the default is set
-(`asb --set-default-agent AGENT`; [profiles.md](profiles.md#the-default-agent)) (`asb
---role R --reset config`); otherwise the command or `--profile` says whose stores.
+`--reset skills` re-seeds one channel, and `--reset ./scratch/` one declared path;
+`--status`, `--shutdown` and `--delete` are the role's own verbs (#126), and `--list`
+and `--list-all` show every role's (#314). They start no agent, so they -- and
+`--summarize`, which starts its own turn -- need no command when asb can run one agent,
+or the default is set (`asb --set-default-agent AGENT`;
+[profiles.md](profiles.md#the-default-agent)) (`asb --role R --reset config`); otherwise
+the command or `--profile` says whose stores.
 
 ## What the study measures under this model
 
 The experiments are planned in [connections-study.md](connections-study.md), whose
-level-1 cells are this model's acceptance suite: one assertion per mode promise, scripted
-and free, failing until the engine implements the mode. In outline:
+level-1 cells are this model's acceptance suite: one assertion per mode promise,
+scripted and free, failing until the engine implements the mode. In outline:
 
-- **Connections**: for each channel and mode, does content flow as the mode says, in each
-  direction and at the stated time (launch or live)? The study's rows map directly: rows 5–9
-  and 19–22 measured instructions, settings, skills, agents, workflows and plugins at `read-write`
-  (T5 `obtained`, and T2/T6 `obtained` for the write half by construction); the same rows at
-  `copy` and `copy-on-write` are the post-fork arm. Rows 1–4 and 16 measured memory and transcripts at
-  `own` with memory's `read-only` share. Rows 10 and 11 measured tools and the config file, now at
-  `copy`.
-- **Escapes**: whatever reaches another sandbox outside any connection. Known: the daemon's
-  directory keyed by uid (row 15's neighbour, issue #45), the MCP logs under `~/.cache` (a
-  fresh tmpfs inside, so closed), the network (rows 13, 14a, 14b). New ones are the study's
-  job; the model does not make them go away, it makes them the only thing left to find.
+- **Connections**: for each channel and mode, does content flow as the mode says, in
+  each direction and at the stated time (launch or live)? The study's rows map directly:
+  rows 5–9 and 19–22 measured instructions, settings, skills, agents, workflows and
+  plugins at `read-write` (T5 `obtained`, and T2/T6 `obtained` for the write half by
+  construction); the same rows at `copy` and `copy-on-write` are the post-fork arm. Rows
+  1–4 and 16 measured memory and transcripts at `own` with memory's `read-only` share.
+  Rows 10 and 11 measured tools and the config file, now at `copy`.
+- **Escapes**: whatever reaches another sandbox outside any connection. Known: the
+  daemon's directory keyed by uid (row 15's neighbour, issue #45), the MCP logs under
+  `~/.cache` (a fresh tmpfs inside, so closed), the network (rows 13, 14a, 14b). New
+  ones are the study's job; the model does not make them go away, it makes them the only
+  thing left to find.
 
 Results stay versioned by Claude Code major.minor and engine release, one document per
 class, as decided for the study.
 
 ## Agents of different kinds
 
-A `codex` profile declares its own four items. Between kinds, `identity` is per agent (two
-logins), `project` is the shared channel and the only one with a common interface, the
-working tree and its documents. Content-level channels do not translate: Claude Code's
-auto memory and a `CLAUDE.md` have no counterpart another agent reads, so a connection from a
-`claude` sandbox to a `codex` one is limited to what can be projected onto a path the target
-reads, such as an instruction file bound where `AGENTS.md` is expected. That limit is stated
-here rather than designed around; the project directory is where different agents meet.
+A `codex` profile declares its own four items. Between kinds, `identity` is per agent
+(two logins), `project` is the shared channel and the only one with a common interface,
+the working tree and its documents. Content-level channels do not translate: Claude
+Code's auto memory and a `CLAUDE.md` have no counterpart another agent reads, so a
+connection from a `claude` sandbox to a `codex` one is limited to what can be projected
+onto a path the target reads, such as an instruction file bound where `AGENTS.md` is
+expected. That limit is stated here rather than designed around; the project directory
+is where different agents meet.
 
 ## Migration from 0.2.1
 
-- The per-project config file copy became the `config` channel's `seed-only` store of the
-  `default` role (#119), moved there at the first launch that finds it.
-- `[share-memory]` is sugar for read-only declarations of other projects' memory from their
-  default role, `{base}/projects/{slug:P}/memory/ = read-only sandbox:P` (#200), and `all`
-  for `projects = read-write` (#196). The global `memory_default` is removed (#196): `[share-memory]
-  all` says the same per project, and is reviewed. `[claude] hide` becomes `own` for identity's tooling
-  parts. `user-mcp` is removed and refused, naming `config = own` (#132).
+- The per-project config file copy became the `config` channel's `seed-only` store of
+  the `default` role (#119), moved there at the first launch that finds it.
+- `[share-memory]` is sugar for read-only declarations of other projects' memory from
+  their default role, `{base}/projects/{slug:P}/memory/ = read-only sandbox:P` (#200),
+  and `all` for `projects = read-write` (#196). The global `memory_default` is removed
+  (#196): `[share-memory] all` says the same per project, and is reviewed.
+  `[claude] hide` becomes `own` for identity's tooling parts. `user-mcp` is removed and
+  refused, naming `config = own` (#132).
 - The isolate spec keeps the per-session scratch and drops everything that "private by
   construction" now covers.
 - Existing measured results keep their meaning: they describe the `shared` preset.
 
 ## Settled while writing this
 
-- **Overlay availability per host.** Real `copy-on-write` needs bubblewrap 0.11 or later. Ubuntu
-  26.04 ships 0.11.1; 24.04 ships 0.9.0 and gets 0.12.0 through the rebuild recipe in
-  [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604), which
-  `install.sh` points at when it finds an older bubblewrap (0.12.0 also carries the fix for
-  CVE-2026-87766, a setup-time symlink escape through directories the sandboxed process
-  controls, which noble-security's 0.9.0-1ubuntu0.3 dropped again). Measured in CI:
-  26.04 has overlay support, 24.04 ships 0.9.0 and 22.04 ships 0.6.1, so two of the three
-  supported releases take the fallback unless their bubblewrap is upgraded. Nothing may
-  therefore be designed as if the overlay path were the usual one.
-- **Where there is no overlay, `copy-on-write` is `copy`** — not a separate emulation to write and
-  keep in step. Compare the two definitions above and they differ in exactly one place.
-  Across launches they are identical: a source change to an untouched file arrives, a
-  touched file stays the sandbox's, a delete inside persists while the source keeps its
-  copy, a conflict warns. The only divergence is *within* a running session, where an
-  overlay reads through live and a snapshot cannot. So the fallback costs a branch and a
-  notice rather than a subsystem, and the launch says which one it used. Nothing stops
-  working on an old host, which is why no channel needs widening to `read-write` to accommodate
-  one.
+- **Overlay availability per host.** Real `copy-on-write` needs bubblewrap 0.11 or
+  later. Ubuntu 26.04 ships 0.11.1; 24.04 ships 0.9.0 and gets 0.12.0 through the
+  rebuild recipe in
+  [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604),
+  which `install.sh` points at when it finds an older bubblewrap (0.12.0 also carries
+  the fix for CVE-2026-87766, a setup-time symlink escape through directories the
+  sandboxed process controls, which noble-security's 0.9.0-1ubuntu0.3 dropped again).
+  Measured in CI: 26.04 has overlay support, 24.04 ships 0.9.0 and 22.04 ships 0.6.1, so
+  two of the three supported releases take the fallback unless their bubblewrap is
+  upgraded. Nothing may therefore be designed as if the overlay path were the usual one.
+- **Where there is no overlay, `copy-on-write` is `copy`** — not a separate emulation to
+  write and keep in step. Compare the two definitions above and they differ in exactly
+  one place. Across launches they are identical: a source change to an untouched file
+  arrives, a touched file stays the sandbox's, a delete inside persists while the source
+  keeps its copy, a conflict warns. The only divergence is *within* a running session,
+  where an overlay reads through live and a snapshot cannot. So the fallback costs a
+  branch and a notice rather than a subsystem, and the launch says which one it used.
+  Nothing stops working on an old host, which is why no channel needs widening to
+  `read-write` to accommodate one.
 
-  Its cost is storage: `copy` duplicates the channel's files per sandbox where `copy-on-write`
-  stores only what was written. Measured on one developer machine, the channels a
-  connection covers came to 45 MB, dominated by `plugins/` at 7.4 MB and `skills/` at
-  4.3 MB; instructions and settings are kilobytes.
+  Its cost is storage: `copy` duplicates the channel's files per sandbox where
+  `copy-on-write` stores only what was written. Measured on one developer machine, the
+  channels a connection covers came to 45 MB, dominated by `plugins/` at 7.4 MB and
+  `skills/` at 4.3 MB; instructions and settings are kilobytes.
 
   **`[overlay] mode = off`** forces the fallback on a host that could use an overlay. It
   exists because overlayfs is not usable everywhere bubblewrap supports it — some
   filesystems, some container hosts — and because a path that only ever runs on old
-  machines is a path that rots. It can only move `copy-on-write` to `copy`, a step *down* the scale,
-  so it needs no trust gate. It is also what lets the study compare the two
-  implementations on one host, which is W8.
-- **`plugins/`**: `copy-on-write`, like the rest of its group. Not `read-only`: Claude Code writes into
-  `plugins/` at every start (the `synced/` markers and manifest, a rename onto
-  `installed_plugins_v2.json`, a lock beside `known_marketplaces_claudeai.json`), and under
-  `read-only` those fail silently at every launch, measured. Not `read-write`: a plugin bundles hooks and
-  skills, and row 9 measured a plugin's hook firing in another project's sandbox, so the
-  channel carries inference like `skills` does and `read-write` would keep T2 and T6 open for it.
-  If overlay use is to be minimised, `copy` is the alternative that keeps the channel closed:
-  plugins change rarely, so a refresh at launch loses nothing that matters.
+  machines is a path that rots. It can only move `copy-on-write` to `copy`, a step
+  *down* the scale, so it needs no trust gate. It is also what lets the study compare
+  the two implementations on one host, which is W8.
+- **`plugins/`**: `copy-on-write`, like the rest of its group. Not `read-only`: Claude
+  Code writes into `plugins/` at every start (the `synced/` markers and manifest, a
+  rename onto `installed_plugins_v2.json`, a lock beside
+  `known_marketplaces_claudeai.json`), and under `read-only` those fail silently at
+  every launch, measured. Not `read-write`: a plugin bundles hooks and skills, and row 9
+  measured a plugin's hook firing in another project's sandbox, so the channel carries
+  inference like `skills` does and `read-write` would keep T2 and T6 open for it. If
+  overlay use is to be minimised, `copy` is the alternative that keeps the channel
+  closed: plugins change rarely, so a refresh at launch loses nothing that matters.
 - **Two sessions of one sandbox at once, under `copy-on-write`: there is one launch.** A
-  sandbox is keyed by project and role, so two terminals on one project are two sessions of
-  one sandbox; that is the ordinary case, and refusing it or serialising behind an
-  interactive session would break a daily workflow to avoid a problem that can be dissolved
-  instead. What overlayfs documents as undefined is two *independent mounts* over one upper
-  directory, not many users of one mount. The first answer was the holder: mount a
-  sandbox's overlays once, at staging paths, and let each session's bwrap inherit them
-  (measured, and asserted on every platform CI covered, by a test now retired with it). The
-  keeper replaced it: the second session is a process joined into the first one's launch,
-  so it is in the same mount namespace and there is no second mount of anything —
-  `tests/integration/keeper.bats` asserts that one mount namespace and one superblock are
-  what both see.
+  sandbox is keyed by project and role, so two terminals on one project are two sessions
+  of one sandbox; that is the ordinary case, and refusing it or serialising behind an
+  interactive session would break a daily workflow to avoid a problem that can be
+  dissolved instead. What overlayfs documents as undefined is two *independent mounts*
+  over one upper directory, not many users of one mount. The first answer was the
+  holder: mount a sandbox's overlays once, at staging paths, and let each session's
+  bwrap inherit them (measured, and asserted on every platform CI covered, by a test now
+  retired with it). The keeper replaced it: the second session is a process joined into
+  the first one's launch, so it is in the same mount namespace and there is no second
+  mount of anything — `tests/integration/keeper.bats` asserts that one mount namespace
+  and one superblock are what both see.
 
   **Teardown must chmod before it deletes**: once anything has been written through an
   overlay, its workdir keeps a mode-000 directory that removal cannot enter even as its
@@ -981,17 +1023,17 @@ here rather than designed around; the project directory is where different agent
   refused, because it removes the very layers the keeper has mounted and the conflict
   warning actively invites the user to run it; an idle keeper is ended first.
 
-  Under `copy` the question does not arise, since two sessions write one persistent directory as
-  two native sessions do.
+  Under `copy` the question does not arise, since two sessions write one persistent
+  directory as two native sessions do.
 
-  Measured while implementing `copy-on-write`: an overlay mounts and reads through normally
-  under the `strict` network mode, where bubblewrap runs inside pasta's user
+  Measured while implementing `copy-on-write`: an overlay mounts and reads through
+  normally under the `strict` network mode, where bubblewrap runs inside pasta's user
   namespace. That was an open question and is not one.
 - **A channel path that names a FILE cannot be deleted from inside, and that is a
   limitation this model INTRODUCES.** Narrowing such a channel binds that one file, so
   the path inside is a mount point in a directory the sandbox does not own, and a mount
-  point cannot be unlinked from within. Measured on this host: under `read-write`, where the
-  whole state directory is bound, a sandboxed session deletes `CLAUDE.md`,
+  point cannot be unlinked from within. Measured on this host: under `read-write`, where
+  the whole state directory is bound, a sandboxed session deletes `CLAUDE.md`,
   `settings.json` and `rules/topic.md` without trouble; under `copy` the first two are
   refused with `EBUSY` while the third, being an ordinary file inside a bound directory,
   still goes. The config file has behaved this way since 0.2.1 for the same reason.
@@ -1013,16 +1055,17 @@ here rather than designed around; the project directory is where different agent
   the file is the sandbox's own and deletes like any other. That arrives with the preset
   cutover, which is when unconnected paths stop being visible anyway. Interposing a
   directory to bind instead would only move the mount point up one level, and treating
-  truncation as deletion would help nobody: the agent's own `rm` would still fail, so the
-  rule would exist only for whoever had been told about it.
+  truncation as deletion would help nobody: the agent's own `rm` would still fail, so
+  the rule would exist only for whoever had been told about it.
 
-  **The same two paths settle `copy-on-write`.** Overlayfs mounts a directory and cannot stack on a
-  single file, so `copy-on-write` on a file-shaped path is `copy` whatever bubblewrap supports —
-  not a fallback for old hosts but a permanent property of the mechanism.
-- **Warning granularity.** File names at launch, one line per shadowed or conflicting file,
-  and the differing lines on demand (`--connection-diff <channel>`). Warnings are always
-  printed, verbose or not, so a diff at every launch would be noise, and a warning is not
-  the place to print instruction content into a terminal log.
+  **The same two paths settle `copy-on-write`.** Overlayfs mounts a directory and cannot
+  stack on a single file, so `copy-on-write` on a file-shaped path is `copy` whatever
+  bubblewrap supports — not a fallback for old hosts but a permanent property of the
+  mechanism.
+- **Warning granularity.** File names at launch, one line per shadowed or conflicting
+  file, and the differing lines on demand (`--connection-diff <channel>`). Warnings are
+  always printed, verbose or not, so a diff at every launch would be noise, and a
+  warning is not the place to print instruction content into a terminal log.
 
 ## Open questions
 
