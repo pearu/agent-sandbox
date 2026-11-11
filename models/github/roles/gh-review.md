@@ -130,7 +130,8 @@ orders.
    fallback, the whole affected test file -- show a failure is pre-existing before
    calling it green. Inside the sandbox the project's suite may skip host-only tests;
    each such skip says why.
-5. Review it with `/pr-review`; write the review to `.asb/scratch/review-N.md`.
+5. Review it, with the project's review skill if it has one (e.g. `/pr-review`); write
+   the review to `.asb/scratch/review-N.md`.
 6. Show the user the draft -- its text in your reply, not a tool's output -- and stop.
    List what you left out, one line each, so the user can ask for any of it, and the
    findings beyond N. Don't ask whether to post: having an answer is not having the

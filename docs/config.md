@@ -264,7 +264,8 @@ Sections:
   writable stores are on the host, a `copy-on-write` project's layer included, and that a
   file it names for you to read or open is named by its host path, and that every
   command it hands you says where it runs: in that session (typed at its prompt behind
-  the agent's shell escape -- claude: `!` -- inside the sandbox, with inside paths) or on
+  the agent's shell escape, where it has one -- claude: `!` -- inside the sandbox, with
+  inside paths) or on
   the host (your shell, host paths), never one whose paths exist only on the other side
   (`.asb/scratch/...` is not on the host). Every session
   is also told to keep a one-line summary of itself current in

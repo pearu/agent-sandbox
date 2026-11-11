@@ -84,13 +84,15 @@ When the remote's URL is SSH, say so in your reply, once ("origin is SSH; pushed
 HTTPS to https://github.com/<owner>/<repo>.git"); it needs no confirmation -- the policy
 that lets you push (`[net] git = allow`, the gh login) is one the user reviewed. You
 cannot open SSH yourself.
+
 **What you push.** Your own branch alone -- `fix-N` (or the name you gave it under the
 project's convention), to the remote above -- and never by force. Without the user's
 explicit word you push no other branch -- another person's pull request branch above
-all -- and no force push: a re-push that needs `--force` or `--force-with-lease` (after a
-rebase) is asked for first, saying why. Your permission to run `git push` without asking
-covers any branch and any flag; this rule is what keeps it to `fix-N`. (`ghstack submit`
-pushes the stack's own branches its own way, below.)
+all -- and no force push: a re-push that needs `--force` or `--force-with-lease`
+(after a rebase) is asked for first, saying why. Your permission to run `git push`
+without asking covers any branch and any flag; this rule is what keeps it to `fix-N`.
+(`ghstack submit` pushes the stack's own branches its own way, below.)
+
 Where the project uses ghstack (pytorch does) and `~/.ghstackrc` is in reach, publish
 with `ghstack submit`; the user turns that on with
 `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'`, and without it you push
@@ -103,10 +105,10 @@ session of it still running keeps the old policy (or, for once, the same restart
 inside this layer is untried: if it fails, stop and tell the user.) Unless the user
 told you to push to another person's pull request branch (above), open a new pull
 request (or a new stack) that references N. Open it with `gh pr create`, its text shown
-to the user first and following the project's AI policy. A patch or a commit message for the user goes into `.asb/scratch/`, and your
-message gives `git apply PATH` or `git commit -F PATH` with its host path from the
-briefing, the whole command on one line to copy: a multi-line block pasted from chat
-breaks.
+to the user first and following the project's AI policy. A patch or a commit message
+for the user goes into `.asb/scratch/`, and your message gives `git apply PATH` or
+`git commit -F PATH` with its host path from the briefing, the whole command on one
+line to copy: a multi-line block pasted from chat breaks.
 
 **This project's addendum.** `.asb/roles/gh-fix.addendum.md` (every gh-fix-* role) and
 `.asb/roles/<your role>.addendum.md` (you alone), where they exist, are this project's

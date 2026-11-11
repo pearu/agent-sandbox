@@ -336,7 +336,7 @@ init() {
   [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
 }
 
-@test "the github model: each role's [permissions] section, its publishing commands exactly; run again, a missing section appended and a missing line said (#391)" {
+@test "the github model: each role's [permissions] section, its publishing commands exactly; run again on a file without them, exactly the block appended; a missing line said (#391)" {
   init -- github
   [ "$status" -eq 0 ]
   local df="$PROJ/.agent-sandbox"
@@ -345,28 +345,29 @@ init() {
   [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh issue create:*)' ]
   [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
   [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)"$'\n'"Bash(gh issue create:*)" ]
+  # the purpose files' prose, whitespace joined: a rewrap changes nothing below
+  local r flat
   # the fixer files a finding beyond N as the reviewer and the triager do: on the user's word
   for r in gh-review gh-triage gh-fix; do
-    grep -qF '**A finding beyond N.**' "$PROJ/.asb/roles/$r.md"
-    grep -qF "   \`gh issue create --title '<title>' --body-file .asb/scratch/issue-<slug>.md\` only" "$PROJ/.asb/roles/$r.md"
+    flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | tr -s ' ')"
+    [[ "$flat" == *'**A finding beyond N.**'* ]]
+    [[ "$flat" == *"\`gh issue create --title '<title>' --body-file .asb/scratch/issue-<slug>.md\` only when told"* ]]
   done
   # the reviewer's stand-in marker is its own: removed on approval, never posted
-  local rev="$PROJ/.asb/roles/gh-review.md"
-  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
-  grep -qF '   `[Stand-in for you to rewrite]`; the marker is yours, not part of their text: when' "$rev"
-  grep -qF '   drafted and approved. A body that still carries it is never posted; told to post' "$rev"
-  grep -qF '   without having approved the text as shown, stop and ask about the stand-in first;' "$rev"
-  grep -qF 'Before posting, check that the body carries no stand-in marker, check the rendering with' "$rev"
+  flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/gh-review.md" | tr -s ' ')"
+  # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
+  [[ "$flat" == *'`[Stand-in for you to rewrite]`; the marker is yours, not part of their text: when they approve the text for posting, remove it yourself'* ]]
+  [[ "$flat" == *'A body that still carries it is never posted; told to post without having approved the text as shown, stop and ask about the stand-in first;'* ]]
+  [[ "$flat" == *'Before posting, check that the body carries no stand-in marker,'* ]]
   # the push rules are prefixes: the fixer's purpose keeps them to fix-N, no force, no other branch
-  local fix="$PROJ/.asb/roles/gh-fix.md"
-  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
-  grep -qF '**What you push.** Your own branch alone -- `fix-N` (or the name you gave it under the' "$fix"
-  grep -qF "explicit word you push no other branch -- another person's pull request branch above" "$fix"
-  # shellcheck disable=SC2016 # likewise
-  grep -qF 'needs `--force` or `--force-with-lease` (after a' "$fix"
-  grep -qF 'rebase) is asked for first, saying why.' "$fix"
-  # shellcheck disable=SC2016 # likewise
-  grep -qF 'covers any branch and any flag; this rule is what keeps it to `fix-N`.' "$fix"
+  flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/gh-fix.md" | tr -s ' ')"
+  # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
+  [[ "$flat" == *'**What you push.** Your own branch alone -- `fix-N` (or the name you gave it under the project'"'"'s convention), to the remote above -- and never by force.'* ]]
+  [[ "$flat" == *"explicit word you push no other branch -- another person's pull request branch above all -- and no force push"* ]]
+  # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
+  [[ "$flat" == *'needs `--force` or `--force-with-lease` (after a rebase) is asked for first, saying why.'* ]]
+  # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
+  [[ "$flat" == *'covers any branch and any flag; this rule is what keeps it to `fix-N`.'* ]]
   run ! grep -q '^Bash(gh api' "$df"            # a rule for gh api would cover every API call
   run ! grep -q '^\[permissions:gh-setup' "$df" # it publishes nothing
   # --check lists a role's rules, its own and no other role's
@@ -377,17 +378,25 @@ init() {
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   grep -qF "  permission rules the agent gets without asking: Bash(git push:*) ([permissions:gh-fix-*]), Bash(git -c credential.helper='!gh auth git-credential' push:*) ([permissions:gh-fix-*]), Bash(ghstack submit:*)" <<<"$output"
-  # a file from before the rules: one section gone, a line gone from another
-  sed -i -e '/^\[permissions:gh-triage-\*\]/,/^\[permissions:gh-fix-\*\]/{/^\[permissions:gh-fix-\*\]/!d}' \
-    -e '/^\[permissions:gh-review-\*\]/,/^\[/{/^Bash(gh issue create:\*)$/d}' "$df"
-  run ! grep -q '^\[permissions:gh-triage-' "$df"
+  # a file from before the rules: --init github run again appends the block, exactly it
+  local block
+  block="$(sed -n '/^# ---- what each publishes with/,/^# ---- the setup role/p' "$df" | sed '$d')"
+  [ "$(grep -c '^\[permissions:' <<<"$block")" -eq 3 ]
+  sed -i '/^# ---- what each publishes with/,/^# ---- the setup role/{/^# ---- the setup role/!d}' "$df"
+  run ! grep -q '^\[permissions:\|^Bash(' "$df"
+  cp "$df" "$H/before"
   init -- github
   [ "$status" -eq 0 ]
-  [[ "$output" == *"added to .agent-sandbox: [permissions:gh-triage-*]"* ]]
-  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
+  [[ "$output" == *"added to .agent-sandbox: [permissions:gh-review-*] [permissions:gh-triage-*] [permissions:gh-fix-*]"* ]]
+  [[ "$output" == *"--trust            the review, then the approval"* ]]
+  cmp <(head -n "$(wc -l <"$H/before")" "$df") "$H/before" # nothing before it changed
+  [ "$(tail -n +"$(($(wc -l <"$H/before") + 1))" "$df")" = $'\n# ---- added by asb --init github ----\n'"$block" ]
+  # a line gone from a section the file has: said, with its --apply line
+  sed -i '/^\[permissions:gh-review-\*\]/,/^\[/{/^Bash(gh issue create:\*)$/d}' "$df"
+  init -- github
+  [ "$status" -eq 0 ]
   [[ "$output" == *"agent-sandbox: --init: 1 line model 'github' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add it with:"* ]]
   grep -qxF "    agent-sandbox --apply '[permissions:gh-review-*]' 'Bash(gh issue create:*)'" <<<"$output"
-  [[ "$output" == *"--trust            the review, then the approval"* ]]
 }
 
 @test "--env on a file --init wrote without it: the environment's lines completed as a first --env writes them, nothing else changed" {
