@@ -20,7 +20,10 @@ usually a few days old: bring changes onto it with their diff
 to the latest `main` only when the work needs newer code, since that costs a much
 larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
-`-c credential.helper='!gh auth git-credential'` for a private repository.
+`-c credential.helper='!gh auth git-credential'` for a private repository. The apply
+and the rebuild are two commands, never one chained with `&&`: the agent's permission
+check has refused the chain. A rebuild it refuses goes to the user; you try no other
+way. It rebuilds in your layer, never the user's build or another instance's.
 
 **What a review says.** Only what the author needs to act on the changeset; an area the
 PR neither changes nor targets (a device, a backend) is out of scope. What you
@@ -59,8 +62,12 @@ and with what disclosure.
 
 **A comment's shape**, unless the project's policy or this project's addendum says
 otherwise -- where the two disagree, tell the user and let them decide:
-1. a lead paragraph in the user's voice, first person, unwrapped -- say it is a stand-in
-   for them to rewrite;
+1. a lead paragraph in the user's voice, first person, unwrapped -- a stand-in for them
+   to rewrite. Say so in the copy you show them, with a marker such as
+   `[Stand-in for you to rewrite]`; the marker is yours, not part of their text: when
+   they approve the text for posting, remove it yourself and post the paragraph as
+   drafted and approved. A body that still carries it is never posted; told to post
+   without having approved the text as shown, stop and ask about the stand-in first;
 2. all your text in one `>` quote block, wrapped at ~79 columns, short bold lead-ins per
    topic, code fenced inside the quote;
 3. outside the quote: "Drafted by Claude Code (an AI agent) and reviewed & approved by
@@ -69,9 +76,10 @@ otherwise -- where the two disagree, tell the user and let them decide:
 A one-line reply the user takes as their own is part 1 alone -- no quote block, no
 footer -- where the project's policy allows it.
 
-Before posting, check the rendering with `gh api markdown`, confirm the PR head has not
-moved since your review, and, unless told, ask whether it goes as a comment or as
-`gh pr review --request-changes`.
+Before posting, check that the body carries no stand-in marker, check the rendering with
+`gh api markdown`, confirm the PR head has not moved since your review, and, unless
+told, ask whether it goes as a comment (`gh pr comment N`, or `gh pr review N --comment`)
+or as `gh pr review N --request-changes`.
 
 **A finding beyond N.** A problem the review uncovers that is not this PR's to fix --
 a bug that predates it, in code it neither changes nor targets -- goes to the user in
@@ -121,12 +129,15 @@ orders.
    alone. A small probe in `.asb/scratch/` beats guessing. Rewording an error for
    niceness alone is not a fix: when the backend can do it, even with restrictions, the
    fix is to implement it.
-4. Bring its changes onto the built tree, build, and run them, not just compile them:
+4. Bring its changes onto the built tree (`gh pr diff N | git apply`), then, as a
+   command of its own, rebuild (`.asb/build_env.sh rebuild`), and run them, not just
+   compile them:
    the reporter's exact reproducer, results against a reference and the obvious
    fallback, the whole affected test file -- show a failure is pre-existing before
    calling it green. Inside the sandbox the project's suite may skip host-only tests;
    each such skip says why.
-5. Review it with `/pr-review`; write the review to `.asb/scratch/review-N.md`.
+5. Review it, with the project's review skill if it has one (e.g. `/pr-review`); write
+   the review to `.asb/scratch/review-N.md`.
 6. Show the user the draft -- its text in your reply, not a tool's output -- and stop.
    List what you left out, one line each, so the user can ask for any of it, and the
    findings beyond N. Don't ask whether to post: having an answer is not having the

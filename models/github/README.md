@@ -34,8 +34,8 @@ number, each in a layer of its own over the project as the setup role built it:
   `--trust` and gh-setup's relaunch. `--init github --shared-env NAME` on such a file
   completes them too, and says gh-setup is left over (a shared environment needs none)
   and how to remove it; gh-setup, launched anyway, says so and stops.
-- **gh-review** builds and tests a pull request, reviews it with `/pr-review`, and posts
-  the review when you say so.
+- **gh-review** builds and tests a pull request, reviews it (with the project's review
+  skill if it has one, e.g. `/pr-review`), and posts the review when you say so.
 - **gh-triage** reproduces an issue on your build, measures its claims, finds
   duplicates, concludes (confirmed / not reproducible / needs information / duplicate),
   and posts the triage and labels when you say so.
@@ -48,6 +48,24 @@ number, each in a layer of its own over the project as the setup role built it:
   per project, `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'` and
   `asb --apply '[ssh:gh-fix-*]' github.com` (or `--ssh github.com` for one launch),
   reviewed and approved like any other line.
+
+What each may run without asking you, so Claude Code's auto mode does not block a post
+you asked for (`[permissions:gh-*-*]`, reviewed with the file): gh-review `gh pr review`,
+`gh pr comment` and `gh issue create`; gh-triage `gh issue comment`, `gh issue edit` and
+`gh issue create`; gh-fix `ghstack submit`, `gh pr create`, `gh pr comment`,
+`gh issue comment` and `gh issue create`. gh-fix has no push rule: Claude Code's auto mode decides
+each `git push` (by default it allows a push to the repository being worked in and
+blocks a force push or one to a third party's), and gh-fix's purpose file keeps it to
+its own branch `fix-N`; a push auto mode refuses comes to you, to push or approve. The
+rules are prefix rules: `gh pr review` covers `--approve`, any pull request and, with
+`-R`, another repository; `gh pr comment` any pull request, and `gh issue create`,
+`comment` and `edit` any issue, your login can write. The purpose files are what keep
+them to N. gh-setup gets none: it publishes nothing. The rules only stop the agent
+asking; the purpose files still post only when you say so, and the sandbox's policy is
+unchanged.
+`gh api` has no rule, since one would cover every API call: a role that needs it to
+post asks. A project initialised before these rules gets them from `asb
+--init github` run again, which appends the sections it lacks (then `asb --trust`).
 
 Each sees the project and its environment through overlays of its own
 (`project = copy-on-write`): its checkout, incremental rebuild, commits and installs stay

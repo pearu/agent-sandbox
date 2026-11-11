@@ -40,6 +40,22 @@ file = .asb/roles/gh-review.md
 file = .asb/roles/gh-triage.md
 [briefing:gh-fix-*]
 file = .asb/roles/gh-fix.md
+# ---- what each publishes with, run without asking so Claude Code's auto mode does not block
+#   it: the purpose files still publish only on your word; the sandbox's policy is unchanged
+[permissions:gh-review-*]         # its review or comment, and the issue it files on your word
+Bash(gh pr review:*)
+Bash(gh pr comment:*)
+Bash(gh issue create:*)
+[permissions:gh-triage-*]         # its triage comment and labels, and the issue it files on your word
+Bash(gh issue comment:*)
+Bash(gh issue edit:*)
+Bash(gh issue create:*)
+[permissions:gh-fix-*]            # ghstack's push, its pull request and comment, the issue it files on your word; a git push is auto mode's to judge
+Bash(ghstack submit:*)
+Bash(gh pr create:*)
+Bash(gh pr comment:*)
+Bash(gh issue comment:*)
+Bash(gh issue create:*)
 #@own # ---- the setup role builds the environment: once per project, again after main moves --
 #@own #   asb --role gh-setup claude
 #@own #   a dependency's clone goes under [connect:gh-*] as ~/git/<org>/<repo>/ = copy-on-write

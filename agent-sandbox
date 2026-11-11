@@ -5291,7 +5291,9 @@ _as_json_str() {
 
 # _as_briefing_handing -- briefing.md's section on what the session hands the user: one
 # line or a file, because the CLI prefixes every line of a reply and a pasted heredoc,
-# patch or commit message breaks; a file it names, by its host path (#311); and where
+# patch or commit message breaks; a file it names, by its host path (#311); every
+# command handed says where it runs, this session or the host, since a path exists on
+# one side only (an inside `.asb/scratch/` path in a command pasted on the host); and where
 # the user finds the session's files on the host -- a role knows its stores only by
 # their inside paths, and a copy-on-write project's writes are in the role's layer, not
 # the user's tree. The host paths are the ones this launch bound: the project's layer
@@ -5311,6 +5313,12 @@ _as_briefing_handing() {
     printf '`git apply PATH`, `git commit -F PATH`, `bash PATH`. The whole command, path\n'
     printf 'included, on one line: the host paths below are long, and the line is copied,\n'
     printf 'never typed -- a single copied line'"'"'s prefix is harmless to a shell.\n\n'
+    printf 'Every command you hand the user says where it runs: in this session -- typed\n'
+    printf 'at your prompt behind your shell escape, where this agent has one, it runs\n'
+    printf 'inside the sandbox, with the paths you see -- or on the host, in the user'"'"'s\n'
+    printf 'own shell, with the host paths below (`asb --apply ...` runs only there).\n'
+    printf 'Never one whose paths exist only on the other side: `.asb/scratch/x.md` in a\n'
+    printf 'command for the host is not there.\n\n'
     printf 'A file you name for the user to read or open -- a draft, a report, a log --\n'
     printf 'is named by its host path, from the list below: an inside path such as\n'
     printf '`.asb/scratch/x.md` alone is not one the user can open.\n\n'
@@ -5687,7 +5695,7 @@ _as_briefing_write() {
     fi
   fi
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user."
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). Each command you hand says where it runs -- this session (behind its shell escape, where this agent has one; inside paths) or the host (the user's shell, host paths) -- never one whose paths exist only on the other side. If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --
