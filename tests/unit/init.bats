@@ -336,6 +336,38 @@ init() {
   [ "$status" -eq 0 ] && [ -d "$H/base/envs/nosuch-env" ]
 }
 
+@test "the github model: each role's [permissions] section, its publishing commands exactly; run again, a missing section appended and a missing line said (#391)" {
+  init -- github
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox"
+  # section_body HEADER -- the rule lines under HEADER, comments dropped
+  section_body() { sed -n "/^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')/,/^\[/{/^\[/d;/^#/d;p}" "$df"; }
+  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh issue create:*)' ]
+  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
+  [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)" ]
+  run ! grep -q '^Bash(gh api' "$df"            # a rule for gh api would cover every API call
+  run ! grep -q '^\[permissions:gh-setup' "$df" # it publishes nothing
+  # --check lists a role's rules, its own and no other role's
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-review-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*])' <<<"$output"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  grep -qF "  permission rules the agent gets without asking: Bash(git push:*) ([permissions:gh-fix-*]), Bash(git -c credential.helper='!gh auth git-credential' push:*) ([permissions:gh-fix-*]), Bash(ghstack submit:*)" <<<"$output"
+  # a file from before the rules: one section gone, a line gone from another
+  sed -i -e '/^\[permissions:gh-triage-\*\]/,/^\[permissions:gh-fix-\*\]/{/^\[permissions:gh-fix-\*\]/!d}' \
+    -e '/^\[permissions:gh-review-\*\]/,/^\[/{/^Bash(gh issue create:\*)$/d}' "$df"
+  run ! grep -q '^\[permissions:gh-triage-' "$df"
+  init -- github
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [permissions:gh-triage-*]"* ]]
+  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
+  [[ "$output" == *"agent-sandbox: --init: 1 line model 'github' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add it with:"* ]]
+  grep -qxF "    agent-sandbox --apply '[permissions:gh-review-*]' 'Bash(gh issue create:*)'" <<<"$output"
+  [[ "$output" == *"--trust            the review, then the approval"* ]]
+}
+
 @test "--env on a file --init wrote without it: the environment's lines completed as a first --env writes them, nothing else changed" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox" ep="$H/base/envs/dev"

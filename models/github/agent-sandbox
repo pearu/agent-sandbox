@@ -34,6 +34,21 @@ git = allow                       # it pushes over HTTPS, as you, with your gh l
 [ssh:gh-fix-*]
 # github.com                      # SSH as you, for ghstack (it pushes through origin as it is, an SSH URL): off; for a ghstack project:
 #   asb --apply '[ssh:gh-fix-*]' github.com
+# ---- what each publishes with, run without asking so Claude Code's auto mode does not block
+#   it: the purpose files still publish only on your word; the sandbox's policy is unchanged
+[permissions:gh-review-*]         # its review, and the issue it files on your word
+Bash(gh pr review:*)
+Bash(gh issue create:*)
+[permissions:gh-triage-*]         # its triage comment and labels, and the issue it files on your word
+Bash(gh issue comment:*)
+Bash(gh issue edit:*)
+Bash(gh issue create:*)
+[permissions:gh-fix-*]            # its push (the purpose file's HTTPS form, and ghstack's), its pull request and comment
+Bash(git push:*)
+Bash(git -c credential.helper='!gh auth git-credential' push:*)
+Bash(ghstack submit:*)
+Bash(gh pr create:*)
+Bash(gh pr comment:*)
 [briefing:gh-review-*]
 file = .asb/roles/gh-review.md
 [briefing:gh-triage-*]

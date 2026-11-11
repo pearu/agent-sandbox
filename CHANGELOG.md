@@ -91,6 +91,17 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The `github` model grants each role the commands it publishes with** (#391), so
+  Claude Code's auto-mode classifier no longer blocks a post the user asked for (a
+  gh-review role's `gh pr review` was): `[permissions:gh-review-*]` `gh pr review` and
+  `gh issue create`; `[permissions:gh-triage-*]` `gh issue comment`, `gh issue edit` and
+  `gh issue create`; `[permissions:gh-fix-*]` `git push`, the purpose file's
+  `git -c credential.helper='!gh auth git-credential' push`, `ghstack submit`,
+  `gh pr create` and `gh pr comment`. The purpose files still post only on the user's
+  word, and the sandbox's policy is unchanged. `gh api` gets no rule: a rule for it would
+  cover every API call. An existing project gets the sections from `asb --init github`
+  run again (appended, then `--trust`); a section it already has reports the lines it
+  lacks as `--apply` lines.
 - **install.sh reports agents and asks for the default agent** (#6): its Agents section
   says, for an agent asb installs, the installed version against the profile's pin
   (`claude 2.1.321, the pin`; `claude 2.1.300, pinned 2.1.321: asb --install claude moves
