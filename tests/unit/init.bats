@@ -276,6 +276,15 @@ init() {
   [ "$(grep -c '^\[connect:gh-\*\]' "$df")" -eq 1 ]
   grep -qx 'project = copy-on-write.*' "$df"
   grep -qx "$H/envs/dev/ = copy-on-write.*" "$df"
+  # both under [connect:gh-*], and no review/triage/fix section widens either: a rebuild
+  # these roles run without asking (#391) lands in the instance's own layer
+  sed -n '/^\[connect:gh-\*\]/,/^\[/p' "$df" | grep -qx 'project = copy-on-write.*'
+  sed -n '/^\[connect:gh-\*\]/,/^\[/p' "$df" | grep -qx "$H/envs/dev/ = copy-on-write.*"
+  run ! grep -qE '^\[connect:gh-(review|triage)' "$df"
+  # shellcheck disable=SC2016 # $1 and $2 are the inner shell's
+  run ! bash -c 'sed -n "/^\[connect:gh-fix-\*\]/,/^\[/p" "$1" | grep -qE "^(project|$2/)[[:space:]]*="' _ "$df" "$H/envs/dev"
+  [ "$(grep -cE "^(project|$H/envs/dev/) = read-write" "$df")" -eq 2 ] # gh-setup's own, below
+  sed -n '/^\[connect:gh-setup\]/,/^\[/p' "$df" | grep -qx 'project = read-write.*'
   run ! grep -qE '\[[a-z]+:gh-[a-z]+-[0-9]' "$df" # no per-number section
   grep -qx '# ~/\.ghstackrc = read-only .*' "$df" # ghstack's login (a token) is opt-in
   run ! grep -qE '^[[:space:]]*~/\.ghstackrc' "$df"
@@ -342,9 +351,10 @@ init() {
   local df="$PROJ/.agent-sandbox"
   # section_body HEADER -- the rule lines under HEADER, comments dropped
   section_body() { sed -n "/^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')/,/^\[/{/^\[/d;/^#/d;p}" "$df"; }
-  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh pr comment:*)\nBash(gh issue create:*)' ]
-  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
-  [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)"$'\n'"Bash(gh issue comment:*)"$'\n'"Bash(gh issue create:*)" ]
+  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh pr comment:*)\nBash(gh issue create:*)\nBash(.asb/build_env.sh rebuild:*)' ]
+  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)\nBash(.asb/build_env.sh rebuild:*)' ]
+  [ "$(section_body '[permissions:gh-fix-*]')" = $'Bash(ghstack submit:*)\nBash(gh pr create:*)\nBash(gh pr comment:*)\nBash(gh issue comment:*)\nBash(gh issue create:*)\nBash(.asb/build_env.sh rebuild:*)' ]
+  run ! grep -q '^Bash(git' "$df" # no push rule: auto mode judges each push
   # the purpose files' prose, whitespace joined: a rewrap changes nothing below
   local r flat
   # the fixer files a finding beyond N as the reviewer and the triager do: on the user's word
@@ -370,18 +380,26 @@ init() {
   [[ "$flat" == *"explicit word you push no other branch -- another person's pull request branch above all -- and no force push"* ]]
   # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
   [[ "$flat" == *'needs `--force` or `--force-with-lease` (after a rebase) is asked for first, saying why.'* ]]
-  # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
-  [[ "$flat" == *'covers any branch and any flag; this rule is what keeps it to `fix-N`.'* ]]
+  [[ "$flat" == *"A push the agent's own permission check refuses goes to the user, who may push it themselves or approve it; you try no other way."* ]]
+  # the apply and the rebuild are two commands, the rebuild in the instance's own layer
+  for r in gh-review gh-triage gh-fix; do
+    flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | tr -s ' ')"
+    # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
+    [[ "$flat" == *'The apply and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh rebuild` runs without asking only on its own. It rebuilds in your layer, never the user'"'"'s build or another instance'"'"'s.'* ]]
+  done
+  flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/gh-review.md" | tr -s ' ')"
+  # shellcheck disable=SC2016 # likewise
+  [[ "$flat" == *'(`gh pr diff N | git apply`), then, as a command of its own, rebuild (`.asb/build_env.sh rebuild`)'* ]]
   run ! grep -q '^Bash(gh api' "$df"            # a rule for gh api would cover every API call
   run ! grep -q '^\[permissions:gh-setup' "$df" # it publishes nothing
   # --check lists a role's rules, its own and no other role's
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-review-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh pr comment:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*])' <<<"$output"
+  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh pr comment:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*]), Bash(.asb/build_env.sh rebuild:*) ([permissions:gh-review-*])' <<<"$output"
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  grep -qF "  permission rules the agent gets without asking: Bash(git push:*) ([permissions:gh-fix-*]), Bash(git -c credential.helper='!gh auth git-credential' push:*) ([permissions:gh-fix-*]), Bash(ghstack submit:*)" <<<"$output"
+  grep -qxF '  permission rules the agent gets without asking: Bash(ghstack submit:*) ([permissions:gh-fix-*]), Bash(gh pr create:*) ([permissions:gh-fix-*]), Bash(gh pr comment:*) ([permissions:gh-fix-*]), Bash(gh issue comment:*) ([permissions:gh-fix-*]), Bash(gh issue create:*) ([permissions:gh-fix-*]), Bash(.asb/build_env.sh rebuild:*) ([permissions:gh-fix-*])' <<<"$output"
   # a file from before the rules: --init github run again appends the block, exactly it
   local block
   block="$(sed -n '/^# ---- what each publishes with/,/^# ---- the setup role/p' "$df" | sed '$d')"

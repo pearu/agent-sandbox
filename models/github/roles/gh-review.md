@@ -20,7 +20,10 @@ usually a few days old: bring changes onto it with their diff
 to the latest `main` only when the work needs newer code, since that costs a much
 larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
-`-c credential.helper='!gh auth git-credential'` for a private repository.
+`-c credential.helper='!gh auth git-credential'` for a private repository. The apply
+and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh
+rebuild` runs without asking only on its own. It rebuilds in your layer, never the
+user's build or another instance's.
 
 **What a review says.** Only what the author needs to act on the changeset; an area the
 PR neither changes nor targets (a device, a backend) is out of scope. What you
@@ -126,7 +129,9 @@ orders.
    alone. A small probe in `.asb/scratch/` beats guessing. Rewording an error for
    niceness alone is not a fix: when the backend can do it, even with restrictions, the
    fix is to implement it.
-4. Bring its changes onto the built tree, build, and run them, not just compile them:
+4. Bring its changes onto the built tree (`gh pr diff N | git apply`), then, as a
+   command of its own, rebuild (`.asb/build_env.sh rebuild`), and run them, not just
+   compile them:
    the reporter's exact reproducer, results against a reference and the obvious
    fallback, the whole affected test file -- show a failure is pre-existing before
    calling it green. Inside the sandbox the project's suite may skip host-only tests;

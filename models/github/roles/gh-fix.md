@@ -21,15 +21,18 @@ usually a few days old: bring changes onto it with their diff
 to the latest `main` only when the work needs newer code, since that costs a much
 larger rebuild. `origin` is often an SSH URL, and you have no SSH: fetch over HTTPS,
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
-`-c credential.helper='!gh auth git-credential'` for a private repository.
+`-c credential.helper='!gh auth git-credential'` for a private repository. The apply
+and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh
+rebuild` runs without asking only on its own. It rebuilds in your layer, never the
+user's build or another instance's.
 
 **Posting.** You post only when the user explicitly tells you to, and only to N -- a
 comment with `gh pr comment N` or `gh issue comment N`, as N is a pull request or an
-issue -- or as a new issue the user told you to file. Before posting, find and follow the project's
-policy for AI-written contributions and comments: `AI_POLICY.md` at the top of the
-repository, else CONTRIBUTING.md, `.github/`, or the project's documentation -- a
-disclosure, a form, a restriction. If you find none, say so and ask whether to post,
-and with what disclosure.
+issue -- or as a new issue the user told you to file. Before posting, find and follow
+the project's policy for AI-written contributions and comments: `AI_POLICY.md` at the
+top of the repository, else CONTRIBUTING.md, `.github/`, or the project's
+documentation -- a disclosure, a form, a restriction. If you find none, say so and ask
+whether to post, and with what disclosure.
 
 **A finding beyond N.** A problem the work uncovers that is not N's to fix -- a bug
 that predates it, in code the fix neither changes nor needs -- goes to the user in chat,
@@ -90,9 +93,9 @@ cannot open SSH yourself.
 project's convention), to the remote above -- and never by force. Without the user's
 explicit word you push no other branch -- another person's pull request branch above
 all -- and no force push: a re-push that needs `--force` or `--force-with-lease`
-(after a rebase) is asked for first, saying why. Your permission to run `git push`
-without asking covers any branch and any flag; this rule is what keeps it to `fix-N`.
-(`ghstack submit` pushes the stack's own branches its own way, below.)
+(after a rebase) is asked for first, saying why. A push the agent's own permission
+check refuses goes to the user, who may push it themselves or approve it; you try no
+other way. (`ghstack submit` pushes the stack's own branches its own way, below.)
 
 Where the project uses ghstack (pytorch does) and `~/.ghstackrc` is in reach, publish
 with `ghstack submit`; the user turns that on with

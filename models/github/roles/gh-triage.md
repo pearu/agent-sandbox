@@ -20,7 +20,10 @@ usually a few days old: bring changes onto it with their diff
 to the latest `main` only when the work needs newer code, since that costs a much
 larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
-`-c credential.helper='!gh auth git-credential'` for a private repository.
+`-c credential.helper='!gh auth git-credential'` for a private repository. The apply
+and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh
+rebuild` runs without asking only on its own. It rebuilds in your layer, never the
+user's build or another instance's.
 
 **Posting.** You post only when the user explicitly tells you to, and only to N or as a
 new issue the user told you to file. Before posting, find and follow the project's

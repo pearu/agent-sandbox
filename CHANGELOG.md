@@ -95,14 +95,18 @@ names are gone; there are no aliases for removed names before 1.0.
   Claude Code's auto-mode classifier no longer blocks a post the user asked for (a
   gh-review role's `gh pr review` was): `[permissions:gh-review-*]` `gh pr review`,
   `gh pr comment` and `gh issue create`; `[permissions:gh-triage-*]` `gh issue comment`,
-  `gh issue edit` and `gh issue create`; `[permissions:gh-fix-*]` `git push`, the
-  purpose file's `git -c credential.helper='!gh auth git-credential' push`,
-  `ghstack submit`, `gh pr create`, `gh pr comment`, `gh issue comment` and
-  `gh issue create` (and gh-fix.md gains the reviewer's and triager's clause: a finding
-  beyond N becomes an issue, drafted, shown, and filed only when the user says so). The
-  purpose files name each comment's form (`gh pr comment N`, `gh pr review N --comment`,
-  `gh issue comment N`), still post only on the user's word, and the sandbox's policy is
-  unchanged. `gh api` gets no rule: a rule for it would cover every API call. An existing project gets the sections from `asb --init github`
+  `gh issue edit` and `gh issue create`; `[permissions:gh-fix-*]` `ghstack submit`,
+  `gh pr create`, `gh pr comment`, `gh issue comment` and `gh issue create`; and all
+  three `.asb/build_env.sh rebuild`, which lands in the instance's own copy-on-write
+  layer (the purpose files now run the apply and the rebuild as two commands, never
+  chained). gh-fix.md gains the reviewer's and triager's clause: a finding beyond N
+  becomes an issue, drafted, shown, and filed only when the user says so. There is no
+  push rule: Claude Code's auto mode judges each `git push` (by default it blocks a
+  force push and a push to a third party's repository), and a push it refuses goes to
+  the user. The purpose files name each comment's form (`gh pr comment N`,
+  `gh pr review N --comment`, `gh issue comment N`), still post only on the user's
+  word, and the sandbox's policy is unchanged. `gh api` gets no rule: a rule for it
+  would cover every API call. An existing project gets the sections from `asb --init github`
   run again (appended, then `--trust`); a section it already has reports the lines it
   lacks as `--apply` lines.
 - **install.sh reports agents and asks for the default agent** (#6): its Agents section
