@@ -146,15 +146,17 @@ def merge_settings(ours, user, out):
 
     There is nothing to resolve: our contribution is hook entries, appended per event
     after theirs -- hook entries merge across settings levels, so a per-event union is
-    what Claude Code itself does with two sources -- and, when the dot-file has
-    [permissions] rules and the engine's own two (reading the briefing directory,
-    writing the summary line), permissions.allow entries, appended after theirs the same way
+    what Claude Code itself does with two sources -- and the engine's own two
+    permission rules (reading the briefing directory, writing the summary line) and
+    the dot-file's [permissions] rules, permissions.allow entries, appended after theirs the same way
     (their deny and ask rules stand: Claude Code ranks them over allow) -- and our
     statusLine only when theirs has none: a status line of their own wins (#287).
-    Nothing else of theirs is read, rewritten or merged. A shape we do not recognise is refused rather than
-    coerced (list() of a dict would replace their data with its keys). Prints
-    `hooks-disabled` when their settings switch every hook off, so the hook can say
-    the briefing will not arrive."""
+    Nothing else of theirs is read, rewritten or merged. A hooks shape we do not recognise is refused rather than
+    coerced (list() of a dict would replace their data with its keys). A permissions
+    that is not an object, or an allow that is not an array, is left exactly as it is
+    and none of our rules is added: the hooks still go in, and `permissions-skipped` is
+    printed so the shell can say the agent will ask. Prints `hooks-disabled` when their
+    settings switch every hook off, so the hook can say the briefing will not arrive."""
     try:
         text = user.strip()
         if text.startswith("{"):
@@ -186,22 +188,24 @@ def merge_settings(ours, user, out):
     if "statusLine" in mine and "statusLine" not in theirs:
         merged["statusLine"] = mine["statusLine"]
     rules = mine.get("permissions", {}).get("allow", [])
+    skipped = False
     if rules:
         perms = theirs.get("permissions", {})
-        if not isinstance(perms, dict):
-            print("refusing to merge --settings, leaving yours untouched: permissions is not an object", file=sys.stderr)
-            return 1
-        allow = perms.get("allow", [])
+        allow = perms.get("allow", []) if isinstance(perms, dict) else None
         if not isinstance(allow, list):
-            print("refusing to merge --settings, leaving yours untouched: permissions.allow is not an array", file=sys.stderr)
-            return 1
-        perms = dict(perms)
-        perms["allow"] = allow + [r for r in rules if r not in allow]
-        merged["permissions"] = perms
+            # Not ours to coerce, and not worth the briefing: their value stays as it
+            # was, no rule of ours is added, and the shell says the agent will ask.
+            skipped = True
+        else:
+            perms = dict(perms)
+            perms["allow"] = allow + [r for r in rules if r not in allow]
+            merged["permissions"] = perms
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(merged, fh, indent=2)
     if merged.get("disableAllHooks"):
         print("hooks-disabled")
+    if skipped:
+        print("permissions-skipped")
     return 0
 
 

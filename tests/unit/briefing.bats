@@ -973,6 +973,49 @@ CHECK
   done
 }
 
+@test "the engine's own rules: a join into a keeper without the summary bind gets the Read rule and no Edit rule" {
+  engine_bg -- asb claude
+  local sess
+  for sess in "$H/base"/session.*; do :; done
+  [ -d "$sess/briefing/summary" ]
+  rmdir "$sess/briefing/summary" # a keeper started without the bind (an older engine's)
+  cat >"$H/bin/join-stub.py" <<'STUB'
+import glob, os, shutil, sys
+with open(os.environ["JOIN_DUMP"], "w") as fh:
+    for a in sys.argv[1:]:
+        fh.write(a + "\n")
+for f in glob.glob(os.path.join(os.environ["AGENT_SANDBOX_SESSION_BASE"], "*", "briefing", "join.*", "settings.json")):
+    shutil.copy(f, os.environ["SNAP"])
+STUB
+  run_engine SNAP="$H/snap.json" -- asb claude --continue
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role"* ]]
+  [ "$(perm_allow "$H/snap.json")" = "Read(//run/agent-sandbox/**)" ]
+  release_bg
+}
+
+@test "a user --settings whose permissions is not an object, or whose allow is not an array: the briefing's hooks still merged, theirs verbatim, no rule of ours, said" {
+  printf '[permissions]\nBash(git push:*)\n' >"$PROJ/.agent-sandbox"
+  trust
+  local u
+  for u in '{"permissions":["Read"]}' '{"permissions":{"allow":"Read","deny":["Bash(rm:*)"]}}'; do
+    rm -rf "$OUT"
+    run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$u" --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merged your --settings"* ]]
+    [[ "$output" == *"your --settings has a permissions value that is not an object (or allow that is not an array); the engine's and [permissions] rules were not added, so the agent will ask"* ]]
+    [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
+    [ "${JOINV[*]:1}" = --version ] # theirs is in the merged file, off the line
+    python3 - "$OUT/settings.json" "$u" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["permissions"] == json.loads(sys.argv[2])["permissions"], m
+assert "SessionStart" in m["hooks"] and "Stop" in m["hooks"], m
+assert "statusLine" in m, m
+CHECK
+  done
+}
+
 # start_project -- a planner briefed from its purpose file, whose first turn is
 # .asb/start/{role}.md; every other role from the unsuffixed [briefing]'s start file.
 start_project() {

@@ -83,7 +83,9 @@ Claude Code's `Read`/`Edit` rules (a single `/` is relative to the settings file
 `--add-dir`, which would allow edits anywhere in the directory, and the trust review and
 `--check` do not list them: no dot-file line asks for them, and they reach nothing the
 binds do not already give. A user's `--settings` rules come first, and their `deny` and
-`ask` rules still win.
+`ask` rules still win; a `permissions` of theirs that is not an object (or an `allow` that
+is not an array) is kept as it is and no rule is added, which the launch says, the hooks
+merged all the same.
 
 ### A dot-file section named after the profile
 

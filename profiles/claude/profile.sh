@@ -497,6 +497,8 @@ profile_briefing_args() {
     profile_agent_argv=(${kept[@]+"${kept[@]}"})
     [[ "$_merge_note" == *hooks-disabled* ]] \
       && _as_msg "briefing: your settings set disableAllHooks, so the briefing will NOT be injected into the session; $inside/briefing.md is bound read-only and can be read on request"
+    [[ "$_merge_note" == *permissions-skipped* ]] \
+      && _as_msg "briefing: your --settings has a permissions value that is not an object (or allow that is not an array); the engine's and [permissions] rules were not added, so the agent will ask"
   else
     printf '%s\n' "$ours" >"$host_file" || {
       _as_msg "briefing: cannot write $host_file; continuing without the session hooks"

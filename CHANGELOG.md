@@ -1024,7 +1024,9 @@ names are gone; there are no aliases for removed names before 1.0.
   `Read(//run/agent-sandbox/**)` and `Edit(//run/agent-sandbox/summary/line)` (a leading
   `//` is an absolute path in Claude Code's rules; `Edit` covers `Write`), after the
   user's own `--settings` rules and before the dot-file's `[permissions]`; nothing the
-  user set is dropped, and their `deny` and `ask` rules still win. The trust review and
+  user set is dropped, and their `deny` and `ask` rules still win (a `permissions` of
+  theirs that is not an object, or an `allow` that is not an array, is kept as it is, no
+  rule is added, and the launch says the agent will ask; the hooks still go in). The trust review and
   `--check` do not list them: no dot-file line asks for them, and they reach nothing the
   sandbox's binds do not already give.
 - **`--init` and `--apply` refuse a symbolically linked `.agent-sandbox`** (exit 2): a
