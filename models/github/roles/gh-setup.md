@@ -47,10 +47,10 @@ missing one is under **What you cannot retrieve.**
 or the project's CI config); CONTRIBUTING and the docs are the explanation. Use the
 Python version and compilers the project pins. Create the environment at `{envpath}`
 with the conda command the briefing names (`conda`, or `micromamba` for the sandbox's
-own) -- e.g. `micromamba create -p {envpath} ...` -- install the build requirements (conda first where
-the project says so, else pip), build in develop/editable mode, then smoke-test: the
-project imports from the checkout, not from site-packages, and one short test the
-project documents passes. This project's addendum may say how otherwise.
+own) -- e.g. `micromamba create -p {envpath} ...` -- install the build requirements
+(conda first where the project says so, else pip), build in develop/editable mode, then
+smoke-test: the project imports from the checkout, not from site-packages, and one short
+test the project documents passes. This project's addendum may say how otherwise.
 
 **Last, readiness.** After the build and the smoke test, check what the other roles
 will need, so that what would stop them is found now: fix what is within your reach,
@@ -65,14 +65,15 @@ user -- you say what they rest on.
   user's gh login (`[connect:gh-*] gh = read-only`): record `gh auth status` on the
   host, logged in with the `repo` scope, for a fixer's push and a private repository.
 - The fixers' push, from `git remote -v`: fork (`upstream` and `origin`) or direct
-  (`origin` alone), and the HTTPS URL a fixer pushes to, `https://github.com/<owner>/<repo>.git`
-  -- over HTTPS with the gh login, nothing to grant. Whether the project publishes with
-  ghstack (its CONTRIBUTING, docs or tooling; pytorch does): then record the two lines a
-  fixer needs, `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'` and, when
-  `origin` is an SSH URL, `asb --apply '[ssh:gh-fix-*]' github.com`, each before a
-  fixer's launch (a running one: `asb --role gh-fix-<N> --shutdown claude`, then its
-  launch again); and `ghstack` on the environment's PATH, which you install there if
-  the build did not. Otherwise record "HTTPS, nothing to grant".
+  (`origin` alone), and the HTTPS URL a fixer pushes to,
+  `https://github.com/<owner>/<repo>.git` -- over HTTPS with the gh login, nothing to
+  grant. Whether the project publishes with ghstack (its CONTRIBUTING, docs or tooling;
+  pytorch does): then record the two lines a fixer needs,
+  `asb --apply '[connect:gh-fix-*]' '~/.ghstackrc = read-only'` and, when `origin` is an
+  SSH URL, `asb --apply '[ssh:gh-fix-*]' github.com`, each before a fixer's launch (a
+  running one: `asb --role gh-fix-<N> --shutdown claude`, then its launch again); and
+  `ghstack` on the environment's PATH, which you install there if the build did not.
+  Otherwise record "HTTPS, nothing to grant".
 - The GPU, when the smoke test used CUDA: a sandbox binds the NVIDIA device nodes that
   exist on the host at its launch, and `/dev/nvidia-uvm` exists only once something on
   the host has used CUDA since boot. Record the symptom -- `nvidia-smi` lists the GPUs,

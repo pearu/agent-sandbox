@@ -12,33 +12,33 @@ writes this project's `.agent-sandbox` from `agent-sandbox`, a purpose file per 
 from `roles/`, the coord index from `coord/COORDINATION.md`, an inbox per role under
 `.asb/coord/to/`, the watcher `bin/inbox-wait` as `.asb/bin/inbox-wait`, the prompt a
 Planner, Implementer or Reviewer is told at each turn when it runs with no terminal
-(`asb --role NAME --serve`) from `serve/` as `.asb/serve/<instance>.md`, the
-project's test commands from `tests` as `.asb/tests` (an iterating round runs the
-affected tests, the Reviewer the whole suite once, at a zero-finding acceptance: fill in
-the two lines), and a clone per Implementer.
-`x-dev` need not exist yet: `asb --role setup claude` builds `main` into it, and
-`--init`, run again then, clones it for each Implementer. A file written without
-`--env` has the environment's lines commented out; `asb --init roles --env x-dev` run on
-it completes them (and nothing else), and the setup role, launched without one, stops
-and asks for exactly that.
-Every "may not" of a role is a line of the dot-file template (enforced by the sandbox)
-or a sentence of its purpose file (told), and docs/roles.md section 3 says which.
-Every role's agent is the written file's `[agent] command = claude`; a role of another
-agent is an `[agent:NAME] command = AGENT ARGS` section of yours.
-The Supervisor (`asb --role supervisor --resume`) prints at start every other role's
-launch line, `asb --role NAME --resume`, which starts a role's session or resumes it,
-and one line that opens them all, a tmux pane each:
-`asb --roles NAME NAME ... --resume` (docs/roles.md section 9). It leaves the
-Supervisor out, as it is running already; a round with the Supervisor in the top pane,
-the first role's, is started from a plain terminal, not from the Supervisor's own:
-`asb --roles supervisor planner-1 implementer-1 reviewer-1 gate --resume`.
-A project `--init` wrote before the `[agent]` section existed adds it once:
+(`asb --role NAME --serve`) from `serve/` as `.asb/serve/<instance>.md`, the project's
+test commands from `tests` as `.asb/tests` (an iterating round runs the affected tests,
+the Reviewer the whole suite once, at a zero-finding acceptance: fill in the two lines),
+and a clone per Implementer. `x-dev` need not exist yet: `asb --role setup claude`
+builds `main` into it, and `--init`, run again then, clones it for each Implementer. A
+file written without `--env` has the environment's lines commented out;
+`asb --init roles --env x-dev` run on it completes them (and nothing else), and the
+setup role, launched without one, stops and asks for exactly that. Every "may not" of a
+role is a line of the dot-file template (enforced by the sandbox) or a sentence of its
+purpose file (told), and docs/roles.md section 3 says which. Every role's agent is the
+written file's `[agent] command = claude`; a role of another agent is an
+`[agent:NAME] command = AGENT ARGS` section of yours. The Supervisor
+(`asb --role supervisor --resume`) prints at start every other role's launch line,
+`asb --role NAME --resume`, which starts a role's session or resumes it, and one line
+that opens them all, a tmux pane each: `asb --roles NAME NAME ... --resume`
+(docs/roles.md section 9). It leaves the Supervisor out, as it is running already; a
+round with the Supervisor in the top pane, the first role's, is started from a plain
+terminal, not from the Supervisor's own:
+`asb --roles supervisor planner-1 implementer-1 reviewer-1 gate --resume`. A project
+`--init` wrote before the `[agent]` section existed adds it once:
 `asb --apply '[agent]' 'command = claude'`.
 
 **Another account.** A role runs on your own Claude login unless it names an account,
-another login logged in once on the host with `asb --agent claude --account work --login`
-([recipes.md](../../docs/recipes.md#two-subscriptions-in-one-project)). The whole
-round, for one start or for every launch:
+another login logged in once on the host with
+`asb --agent claude --account work --login`
+([recipes.md](../../docs/recipes.md#two-subscriptions-in-one-project)). The whole round,
+for one start or for every launch:
 
     asb --roles supervisor planner-1 implementer-1 reviewer-1 gate --account work --resume
     asb --apply '[agent]' 'account = work'

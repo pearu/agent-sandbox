@@ -1,17 +1,17 @@
 # seccomp: default-deny syscall filter
 
-A seccomp filter is loaded into the sandbox by default (`AGENT_SANDBOX_SECCOMP=off` disables it): every
-syscall not on an allowlist fails with `EPERM`. On by default (issue #4): on a
-machine where `install.sh` installed the bwrap AppArmor profile it is not merely
-defence in depth, because that profile permits user namespaces to everything
+A seccomp filter is loaded into the sandbox by default (`AGENT_SANDBOX_SECCOMP=off`
+disables it): every syscall not on an allowlist fails with `EPERM`. On by default
+(issue #4): on a machine where `install.sh` installed the bwrap AppArmor profile it is
+not merely defence in depth, because that profile permits user namespaces to everything
 under bwrap, so the filter is what stops the agent creating one and regaining
 capabilities.
 
-- `moby-default.json` is Docker's default seccomp profile, vendored unmodified
-  from [moby/profiles](https://github.com/moby/profiles) (`seccomp/default.json`),
-  Apache License 2.0 (`LICENSE.moby`). The only local change is a trailing
-  newline, so the installer can embed it in a heredoc. It is the widely deployed baseline that
-  runs ordinary Node, Python and native toolchains.
+- `moby-default.json` is Docker's default seccomp profile, vendored unmodified from
+  [moby/profiles](https://github.com/moby/profiles) (`seccomp/default.json`), Apache
+  License 2.0 (`LICENSE.moby`). The only local change is a trailing newline, so the
+  installer can embed it in a heredoc. It is the widely deployed baseline that runs
+  ordinary Node, Python and native toolchains.
 - `gen-seccomp.py` compiles it for one architecture **as for a container with no
   capabilities** (agent-sandbox drops them all): rules that Docker grants only
   with a capability are skipped, so `unshare`, `setns`, `mount`, `pivot_root`,

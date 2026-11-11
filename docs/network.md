@@ -21,9 +21,9 @@ that honours the proxy variables dials a loopback service directly, since the pr
 refuses every non-public destination. An agent's own local server needs it (codex's TUI
 runs an MCP server on `127.0.0.1`, whose handshake failed with the proxy's 502 while
 `NO_PROXY` was empty). In `strict` the loopback is the namespace's own, and the host's
-stays unreachable; in `proxy` mode it is the host's, which such a client now reaches as a
-raw socket already could. See the residual
-risks in [design.md](design.md) and issue #1.
+stays unreachable; in `proxy` mode it is the host's, which such a client now reaches as
+a raw socket already could. See the residual risks in [design.md](design.md) and
+issue #1.
 
 ## Strict mode: opening ports
 
@@ -36,14 +36,13 @@ listens on appears on the host. Open exactly what a project needs:
 | host port | the sandbox reaches the host's `127.0.0.1:PORT` (a database, a local model server) | `--host-port PORT` | `AGENT_SANDBOX_HOST_PORTS="PORT PORT"` | `[net]` `host-port = PORT` |
 | agent port | a port the agent listens on is published at the host's `127.0.0.1:PORT` (a dev server you open in a browser), or with `ADDR:PORT` at that address of the host (a service other machines connect to) | `--agent-port [ADDR:]PORT` | `AGENT_SANDBOX_AGENT_PORTS="[ADDR:]PORT"` | `[net]` `agent-port = [ADDR:]PORT` |
 
-Rules: TCP only (UDP is not forwarded; open an issue if you need it). Ports
-1024–65535; the engine refuses a system port rather than let pasta fail to bind
-it. The three sources form a union; `none` in any
-of them closes that direction for the session, whatever the others list.
-A host port and a bare agent port are loopback on both sides, never the LAN. The
-engine prints what it opened at launch. In `proxy` and `open` modes the sandbox
-already shares the host's network, and `none` has no network, so the flags are noted
-and ignored there.
+Rules: TCP only (UDP is not forwarded; open an issue if you need it). Ports 1024–65535;
+the engine refuses a system port rather than let pasta fail to bind it. The three
+sources form a union; `none` in any of them closes that direction for the session,
+whatever the others list. A host port and a bare agent port are loopback on both sides,
+never the LAN. The engine prints what it opened at launch. In `proxy` and `open` modes
+the sandbox already shares the host's network, and `none` has no network, so the flags
+are noted and ignored there.
 
 An agent port with an address (#335) is published at that address instead of the
 loopback: `0.0.0.0:PORT` on every IPv4 address of the host, `192.0.2.10:PORT` on that
@@ -73,11 +72,11 @@ proxy, a tunnel), the sandbox's egress control ends there.
 ## The proxy
 
 `install.sh` puts mitmproxy 12 or newer into a private environment,
-`~/.local/share/agent-sandbox/proxy-env`, built from conda-forge with the installer's own
-micromamba, as the tools environment is, never with the host's conda or python (a
+`~/.local/share/agent-sandbox/proxy-env`, built from conda-forge with the installer's
+own micromamba, as the tools environment is, never with the host's conda or python (a
 working environment an earlier run made is kept, `proxy-venv` included; a broken one is
-recreated on the next `install.sh`) and runs it as the systemd user
-service `agent-sandbox-mitmproxy.service`:
+recreated on the next `install.sh`) and runs it as the systemd user service
+`agent-sandbox-mitmproxy.service`:
 
 ```
 mitmdump --listen-host 127.0.0.1 --listen-port 8888 --set block_global=false \
@@ -163,33 +162,32 @@ holds only refused destinations, no payloads.
 ## Refusals reach the session
 
 A 403 in the middle of a command reads to an agent like an outage to route around:
-another mirror, another channel, another tool. So the session is told, as it
-happens. With the briefing on, the engine creates an empty `refused.log` in the
-session directory and binds that one file read-only at
-`/run/agent-sandbox/refused.log`; the addon appends each refusal attributed to the
-session (by its proxy token) to it, as `timestamp  host  method  why`, where `why`
-is `allowlist`, `[deny]`, `retrieve-only`, `git refuse`, `git push` or `non-public`
-(the last for HTTPS only, through the tunnel's token). The claude profile's hook runs
-after every Bash call, on `PostToolUse` and `PostToolUseFailure` (a broken command
-usually exits nonzero), and takes the lines that are new since the previous call. It
-reports them only after a command that failed (#304): a refusal during a command that
-exited 0 did not affect the task, so on `PostToolUse` the hook counts those lines as
-seen, never to be reported later, and says nothing. The rule is the same for every
-reason. Every refusal is still in `refused.log` and `blocked.log`; only what the agent
-is told mid-command changes. After a failed command it reports each new line once,
-next to the command's result, as statements rather than instructions: the host was
-refused, going on with a mirror, another channel or another tool for the same thing
-is going on without it and is the user's decision, the user adds the host with
-`asb --apply '[allow]' HOST` (`[allow:ROLE]` where the dot-file has role sections),
-and the session continues without it only once the user has said so. A policy
-refusal (`[deny]`, `retrieve-only`, git, `non-public`) says instead that `--apply`
-does not lift it. Only the host, checked as a hostname, and a known reason reach
-that text. A refusal of a host the agent reaches on its own, not for the command
-(telemetry, error reports: the profile's `profile_telemetry_hosts`, which the engine
-writes to `/run/agent-sandbox/telemetry-hosts`), is left out of the note: it is still
-refused and still in `refused.log`, but it is no blocked action of the session's, and
-reported beside a command's result the model took it for one (#276). `--check` says so in
-one line under its network lines.
+another mirror, another channel, another tool. So the session is told, as it happens.
+With the briefing on, the engine creates an empty `refused.log` in the session directory
+and binds that one file read-only at `/run/agent-sandbox/refused.log`; the addon appends
+each refusal attributed to the session (by its proxy token) to it, as
+`timestamp  host  method  why`, where `why` is `allowlist`, `[deny]`, `retrieve-only`,
+`git refuse`, `git push` or `non-public` (the last for HTTPS only, through the tunnel's
+token). The claude profile's hook runs after every Bash call, on `PostToolUse` and
+`PostToolUseFailure` (a broken command usually exits nonzero), and takes the lines that
+are new since the previous call. It reports them only after a command that failed
+(#304): a refusal during a command that exited 0 did not affect the task, so on
+`PostToolUse` the hook counts those lines as seen, never to be reported later, and says
+nothing. The rule is the same for every reason. Every refusal is still in `refused.log`
+and `blocked.log`; only what the agent is told mid-command changes. After a failed
+command it reports each new line once, next to the command's result, as statements
+rather than instructions: the host was refused, going on with a mirror, another channel
+or another tool for the same thing is going on without it and is the user's decision,
+the user adds the host with `asb --apply '[allow]' HOST` (`[allow:ROLE]` where the
+dot-file has role sections), and the session continues without it only once the user has
+said so. A policy refusal (`[deny]`, `retrieve-only`, git, `non-public`) says instead
+that `--apply` does not lift it. Only the host, checked as a hostname, and a known
+reason reach that text. A refusal of a host the agent reaches on its own, not for the
+command (telemetry, error reports: the profile's `profile_telemetry_hosts`, which the
+engine writes to `/run/agent-sandbox/telemetry-hosts`), is left out of the note: it is
+still refused and still in `refused.log`, but it is no blocked action of the session's,
+and reported beside a command's result the model took it for one (#276). `--check` says
+so in one line under its network lines.
 
 The same holds for the tools the sandbox ships, in the tools environment
 ([config.md](config.md#the-tools-environment)) (#304). The engine keeps a table of
@@ -266,21 +264,21 @@ that would take a host the agent's profile needs is left out, and said.
 retrieve-only = on
 ```
 
-(#223) refuses, for that session, every request but GET and HEAD to every host but
-the agent profile's own -- the agent's API keeps working -- with two exceptions that
-read: a GraphQL query, and git's fetch where `[net] git` allows it. The engine writes the
+(#223) refuses, for that session, every request but GET and HEAD to every host but the
+agent profile's own -- the agent's API keeps working -- with two exceptions that read: a
+GraphQL query, and git's fetch where `[net] git` allows it. The engine writes the
 profile's hosts to the session's `retrieve-only.txt`; the addon applies it to that
 session's token, at each request inside a tunnel, so a refusal names the method and
 lands in `blocked.log`. GraphQL is the one exception it reads a body for: `gh` reads
 issues and pull requests through POSTs to `api.github.com/graphql`, so a request there
 passes when every operation in its document is a query, and is refused when one is a
-mutation or a subscription (strings and comments do not count). Git's smart-HTTP
-fetch is a POST too, to `git-upload-pack`, and it reads as a query does (#280): under
+mutation or a subscription (strings and comments do not count). Git's smart-HTTP fetch
+is a POST too, to `git-upload-pack`, and it reads as a query does (#280): under
 `git = fetch` or `git = allow` the upload-pack advertisement and endpoint pass, so the
 session can `git clone`, `git fetch` and `pip install git+https://...`; under
 `git = refuse` they are refused as git's transport. The `git-receive-pack` side is
-refused whatever `[net] git` says -- a retrieve-only session never pushes. A role
-that needs a repository gets `git = fetch` beside `retrieve-only = on`, not
+refused whatever `[net] git` says -- a retrieve-only session never pushes. A role that
+needs a repository gets `git = fetch` beside `retrieve-only = on`, not
 `retrieve-only = off`.
 
 What it does not stop: a secret carried out in a GET -- in a URL, to any allowed host.
@@ -333,28 +331,27 @@ What SSH may do on a host is the remote's rule, not the sandbox's
 
 ## The proxy CA
 
-mitmproxy writes its CA to `~/.mitmproxy/` on first start (`install.sh` does
-this). It is **not** installed into the host's trust store. In the `proxy` and
-`strict` modes the engine builds `(system bundle + proxy CA)` under the session
-base and bind-mounts it over `/etc/ssl/certs/ca-certificates.crt` inside the
-sandbox, so everything in there trusts the proxy and nothing on the host does.
-It also points the CA variables of tools that ship their own store at that
-path: `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
-`CONDA_SSL_VERIFY`, `MAMBA_SSL_VERIFY` (mamba 2.x and micromamba read only this one),
-`PIP_CERT`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, `NPM_CONFIG_CAFILE`,
-`CARGO_HTTP_CAINFO`, unless you set them yourself. A tool
-with yet another knob needs it forwarded via `AGENT_SANDBOX_FORWARD`.
-`AGENT_SANDBOX_PROXY_CA` overrides the CA's location; a missing CA is a warning
-at launch.
+mitmproxy writes its CA to `~/.mitmproxy/` on first start (`install.sh` does this). It
+is **not** installed into the host's trust store. In the `proxy` and `strict` modes the
+engine builds `(system bundle + proxy CA)` under the session base and bind-mounts it
+over `/etc/ssl/certs/ca-certificates.crt` inside the sandbox, so everything in there
+trusts the proxy and nothing on the host does. It also points the CA variables of tools
+that ship their own store at that path: `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+`REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `CONDA_SSL_VERIFY`, `MAMBA_SSL_VERIFY` (mamba
+2.x and micromamba read only this one), `PIP_CERT`, `GIT_SSL_CAINFO`,
+`NODE_EXTRA_CA_CERTS`, `NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, unless you set them
+yourself. A tool with yet another knob needs it forwarded via `AGENT_SANDBOX_FORWARD`.
+`AGENT_SANDBOX_PROXY_CA` overrides the CA's location; a missing CA is a warning at
+launch.
 
 The bind is over a single file, and the kernel attaches a file bind to that directory
 entry. When the host replaces `/etc/ssl/certs/ca-certificates.crt` by a rename -- a
-`ca-certificates` upgrade does, unattended-upgrades at 06:00 included -- the bind under a
-running role is detached: the sandbox sees the host's new bundle, without the proxy CA,
-and every HTTPS request fails (`x509: certificate signed by unknown authority`) until the
-role is restarted. A new launch binds again, so only a running role meets it. Each join
-into a running role, and `--status`, check the keeper's bind (its mount namespace's
-`mountinfo`, read on the host) and say, loud:
+`ca-certificates` upgrade does, unattended-upgrades at 06:00 included -- the bind under
+a running role is detached: the sandbox sees the host's new bundle, without the proxy
+CA, and every HTTPS request fails (`x509: certificate signed by unknown authority`)
+until the role is restarted. A new launch binds again, so only a running role meets it.
+Each join into a running role, and `--status`, check the keeper's bind (its mount
+namespace's `mountinfo`, read on the host) and say, loud:
 
 ```
 agent-sandbox: warning — role 'R': the host replaced /etc/ssl/certs/ca-certificates.crt (at 2026-10-21 06:00:12) and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role R --shutdown claude
@@ -385,8 +382,7 @@ curl -sI https://example.com          # CONNECT tunnel failed, response 403
 
 ## Per-project allow hosts
 
-Instead of passing `--allow` each time, a project can list hosts in an
-`[allow]` section of its `.agent-sandbox` file, one per line, which applies to
-every session run from that project once you approve the file with
-`asb --trust`. Same
-rules as `--allow`, same per-session lifetime. See [config.md](config.md).
+Instead of passing `--allow` each time, a project can list hosts in an `[allow]` section
+of its `.agent-sandbox` file, one per line, which applies to every session run from that
+project once you approve the file with `asb --trust`. Same rules as `--allow`, same
+per-session lifetime. See [config.md](config.md).

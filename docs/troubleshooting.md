@@ -53,14 +53,13 @@ was recorded and what is there now, and the state directory is kept so you can
 sort it out and run `--uninstall` again. Re-running is always safe: what is
 already gone is reported as such, not treated as an error.
 
-Kept unless you say otherwise: `~/.config/agent-sandbox`, which holds your
-allowlist and your `--trust` approvals, so a later install picks up where you
-left off (`--purge-config` removes it). Never touched: an agent installed any
-other way (your own `claude`),
-`~/.mitmproxy` (mitmproxy's own CA), and the AppArmor profiles for `bwrap` and
-`pasta` — they grant a permission Ubuntu 24.04+ withholds, they are harmless,
-and other tools may rely on them by now. The plan prints the command to remove
-those by hand.
+Kept unless you say otherwise: `~/.config/agent-sandbox`, which holds your allowlist and
+your `--trust` approvals, so a later install picks up where you left off
+(`--purge-config` removes it). Never touched: an agent installed any other way (your own
+`claude`), `~/.mitmproxy` (mitmproxy's own CA), and the AppArmor profiles for `bwrap`
+and `pasta` — they grant a permission Ubuntu 24.04+ withholds, they are harmless, and
+other tools may rely on them by now. The plan prints the command to remove those by
+hand.
 
 Anything the installer did not create is left alone and reported: an `asb` or
 a `claude` that is not a symlink to the engine, for instance, is never rewritten.
@@ -91,9 +90,8 @@ Name the agent after the sandbox's options: `asb [OPTIONS] CMD [AGENT OPTIONS]`,
 so `asb --role reviewer claude -r`, not `asb claude --role reviewer -r` (there
 `--role` is Claude's) nor `asb -r claude`. The message lists the profiles found.
 
-**`'.../2.1.284' names no profile`**
-The profile is the command's basename. A binary named otherwise needs it said:
-`asb --profile claude /path/to/2.1.284`.
+**`'.../2.1.284' names no profile`** The profile is the command's basename. A binary
+named otherwise needs it said: `asb --profile claude /path/to/2.1.284`.
 
 **`claude is not installed for agent-sandbox: install it, asb --install claude`**
 `asb claude` runs asb's own install of Claude Code (#6), never the `claude` on your
@@ -102,16 +100,15 @@ PATH, and there is none yet (or `current` under
 Run `asb --install claude` once; or run a binary of your own by its path, `asb
 --profile claude /path/to/claude`.
 
-**`no 'AGENT' on PATH to run`**
-A profile with no install recipe runs whatever its command finds on your PATH, and
-there is none. Install the agent, or name its binary with `asb --profile NAME
-/path/to/AGENT`.
+**`no 'AGENT' on PATH to run`** A profile with no install recipe runs whatever its
+command finds on your PATH, and there is none. Install the agent, or name its binary
+with `asb --profile NAME /path/to/AGENT`.
 
-**`bwrap: setting up uid map: Permission denied` / `No permissions to create new namespace`**
-Ubuntu 24.04+ restricts unprivileged user namespaces
-(`kernel.apparmor_restrict_unprivileged_userns = 1`) and ships no AppArmor
-profile for bwrap. `install.sh` installs one (this is the one step that needs
-sudo). Verify with:
+**`bwrap: setting up uid map: Permission denied` /
+`No permissions to create new namespace`** Ubuntu 24.04+ restricts unprivileged user
+namespaces (`kernel.apparmor_restrict_unprivileged_userns = 1`) and ships no AppArmor
+profile for bwrap. `install.sh` installs one (this is the one step that needs sudo).
+Verify with:
 
 ```
 bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true && echo OK
@@ -120,33 +117,32 @@ bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true && echo OK
 The coarser alternative is disabling the restriction system-wide:
 `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`.
 
-**`Can't bind mount ... on /newroot/usr/local`**
-`/usr/local` is a symlink whose target is not exposed. The engine handles the
-common case (a symlink off `/usr`, e.g. for CUDA). If you still hit it:
-`asb --connect '/path/to/real/local = read-only' claude`.
+**`Can't bind mount ... on /newroot/usr/local`** `/usr/local` is a symlink whose target
+is not exposed. The engine handles the common case (a symlink off `/usr`, e.g. for
+CUDA). If you still hit it: `asb --connect '/path/to/real/local = read-only' claude`.
 
-**API or DNS errors such as `FailedToOpenSocket`**
-Usually `/etc/resolv.conf` is a symlink into `/run` on systemd-resolved
-systems. The engine binds the resolved target automatically; verify with
-`readlink -f /etc/resolv.conf`.
+**API or DNS errors such as `FailedToOpenSocket`** Usually `/etc/resolv.conf` is a
+symlink into `/run` on systemd-resolved systems. The engine binds the resolved target
+automatically; verify with `readlink -f /etc/resolv.conf`.
 
-**Every HTTPS request fails with certificate errors**
-The proxy CA is not reaching the sandbox. The engine binds it over the system
-bundle when `~/.mitmproxy/mitmproxy-ca-cert.pem` exists (or the file named by
-`AGENT_SANDBOX_PROXY_CA`) and warns at launch if it does not; run `install.sh`
-to (re)generate the CA. Tools with a private CA store (conda/mamba, pip, a
-conda-provided git, node, npm, cargo) are covered by the CA variables the
-engine sets (see [network.md](network.md)); a tool with yet another knob needs
-it forwarded via `AGENT_SANDBOX_FORWARD`. If you changed the host's CA state
-while a session was running, relaunch.
+**Every HTTPS request fails with certificate errors** The proxy CA is not reaching the
+sandbox. The engine binds it over the system bundle when
+`~/.mitmproxy/mitmproxy-ca-cert.pem` exists (or the file named by
+`AGENT_SANDBOX_PROXY_CA`) and warns at launch if it does not; run `install.sh` to
+(re)generate the CA. Tools with a private CA store (conda/mamba, pip, a conda-provided
+git, node, npm, cargo) are covered by the CA variables the engine sets (see
+[network.md](network.md)); a tool with yet another knob needs it forwarded via
+`AGENT_SANDBOX_FORWARD`. If you changed the host's CA state while a session was running,
+relaunch.
 
-**`creating ~/.local/share/agent-sandbox/proxy-env with micromamba failed (...); the log is ...` (install.sh)**
-The installer builds the proxy's environment from conda-forge with its own micromamba,
-the one it fetched in the step before (`fetching ... micromamba-linux-64 failed` is that
-step's). The parenthesis is micromamba's last line and the log has the rest; the usual
-cause is that the host cannot reach `conda.anaconda.org`. The host's conda and python
-play no part, so installing one does not help. Fix the cause and re-run `./install.sh`;
-everything lands under `~/.local/share/agent-sandbox`, so nothing system-wide changes.
+**`creating ~/.local/share/agent-sandbox/proxy-env with micromamba failed (...); the log is ...`
+(install.sh)** The installer builds the proxy's environment from conda-forge with its
+own micromamba, the one it fetched in the step before
+(`fetching ... micromamba-linux-64 failed` is that step's). The parenthesis is
+micromamba's last line and the log has the rest; the usual cause is that the host cannot
+reach `conda.anaconda.org`. The host's conda and python play no part, so installing one
+does not help. Fix the cause and re-run `./install.sh`; everything lands under
+`~/.local/share/agent-sandbox`, so nothing system-wide changes.
 
 **`certificate verify failed: Missing Authority Key Identifier` (Python 3.13+)**
 The proxy is an old mitmproxy (8.x) whose leaf certificates lack that
@@ -192,19 +188,17 @@ policy with the defaults, which for memory scoping is wider. Restore the file,
 launch from a terminal to be asked, or run `asb --trust` from the project
 directory: with the file missing, either offers to forget the approval.
 
-**`asb: command not found` (or it runs an old version) after moving or pulling the repo**
-A normal install copies the engine and profiles under
-`~/.local/share/agent-sandbox` and `asb` points there, so moving the
-clone is fine but a `git pull` takes effect only after you re-run
-`./install.sh` (it re-copies). If you used `./install.sh --dev`, `asb`
-points at the checkout instead: moving or deleting it breaks the command
-(`~/.local/bin/asb` becomes a dangling symlink) — re-run `./install.sh`
-from the new location.
+**`asb: command not found` (or it runs an old version) after moving or pulling the
+repo** A normal install copies the engine and profiles under
+`~/.local/share/agent-sandbox` and `asb` points there, so moving the clone is fine but a
+`git pull` takes effect only after you re-run `./install.sh` (it re-copies). If you used
+`./install.sh --dev`, `asb` points at the checkout instead: moving or deleting it breaks
+the command (`~/.local/bin/asb` becomes a dangling symlink) — re-run `./install.sh` from
+the new location.
 
-**Processes left behind after a sandbox's parent was killed**
-A keeper whose supervisor was killed with `-9`, or the overlay holder of an engine before
-0.4, can outlive what started it, holding its namespaces and mounts. List them, then end
-them, with:
+**Processes left behind after a sandbox's parent was killed** A keeper whose supervisor
+was killed with `-9`, or the overlay holder of an engine before 0.4, can outlive what
+started it, holding its namespaces and mounts. List them, then end them, with:
 
 ```
 probes/orphans.sh           # lists what it finds; changes nothing
@@ -212,33 +206,35 @@ probes/orphans.sh --kill
 ```
 
 It matches by structure only -- a keeper payload, or a holder's `sleep infinity` in a
-mount namespace of its own, reparented to pid 1 -- so a running sandbox is never touched.
+mount namespace of its own, reparented to pid 1 -- so a running sandbox is never
+touched.
 
 **A tool inside cannot find an API token (`AWS_*`, `GH_TOKEN`, ...)**
 By design: only an explicit allowlist of variables is forwarded. Per session:
 `AGENT_SANDBOX_FORWARD="GH_TOKEN" asb claude`.
 
-**A tool inside cannot reach a file outside the project**
-Expose it: `asb --connect '/some/dir = read-only' claude` (or `= read-write`), or a path declaration under `[connect]`.
-Secret stores, the sandbox's own configuration (`~/.config/agent-sandbox`,
-`~/.mitmproxy`, `~/.local/share/agent-sandbox`, `~/.local/bin`,
-`~/.config/systemd`), any directory containing one of those (`~/.config`,
-`~/.local`), `/`, `$HOME` and its parents are refused; bind a specific
+**A tool inside cannot reach a file outside the project** Expose it:
+`asb --connect '/some/dir = read-only' claude` (or `= read-write`), or a path
+declaration under `[connect]`. Secret stores, the sandbox's own configuration
+(`~/.config/agent-sandbox`, `~/.mitmproxy`, `~/.local/share/agent-sandbox`,
+`~/.local/bin`, `~/.config/systemd`), any directory containing one of those
+(`~/.config`, `~/.local`), `/`, `$HOME` and its parents are refused; bind a specific
 subdirectory instead. The full list is in `docs/design.md`.
 
-**`refusing to bind '...' as CWD: it is|is inside|contains the secret store ...` / `... the sandbox's own control plane ...` / `refusing to bind '/' as CWD`**
-You ran the agent from a secret store, from the sandbox's own configuration,
-from a directory containing one of them, from `/`, or from a parent of your
-home. Run from a project directory.
+**`refusing to bind '...' as CWD: it is|is inside|contains the secret store ...` /
+`... the sandbox's own control plane ...` / `refusing to bind '/' as CWD`** You ran the
+agent from a secret store, from the sandbox's own configuration, from a directory
+containing one of them, from `/`, or from a parent of your home. Run from a project
+directory.
 
-**`mamba install` or `pip install` fails inside**
-Launch with `AGENT_SANDBOX_CONDA_WRITE=1`; by default the active env is
-read-only. The base install stays read-only either way.
+**`mamba install` or `pip install` fails inside** Launch with
+`AGENT_SANDBOX_CONDA_WRITE=1`; by default the active env is read-only. The base install
+stays read-only either way.
 
-**`no trusted host key for '<host>'` (with `--ssh`)**
-The host is not in `~/.ssh/known_hosts` on the host side. Connect once from a
-host shell (`ssh <host>`) to record it, then relaunch. Inside the sandbox
-`known_hosts` is read-only, so unknown hosts cannot be added from there.
+**`no trusted host key for '<host>'` (with `--ssh`)** The host is not in
+`~/.ssh/known_hosts` on the host side. Connect once from a host shell (`ssh <host>`) to
+record it, then relaunch. Inside the sandbox `known_hosts` is read-only, so unknown
+hosts cannot be added from there.
 
 **`Permission denied (publickey)` to host B while running with `--ssh A`**
 Working as designed: the agent only signs for hosts named in `--ssh`. Add
@@ -257,8 +253,8 @@ role's line within 7 days of it and `, login expired: ...` past it, `asb --role 
 --status` prints the date always, and the briefing tells the session in the same
 window, so it can tell you. What renews it, as they name it:
 
-- an account: `asb --agent claude --account NAME --login`, from a shell on the host. On an
-  existing account directory it runs the agent's login there again;
+- an account: `asb --agent claude --account NAME --login`, from a shell on the host. On
+  an existing account directory it runs the agent's login there again;
 - the base: `/login` inside a session.
 
 Nothing is said when the expiry cannot be read: no login file, or no expiry in it.
@@ -283,15 +279,15 @@ creating one and regaining capabilities.
 
 ## `install.sh` says the proxy environment "is broken ... recreating it"
 
-The proxy runtime (`~/.local/share/agent-sandbox/proxy-env` or `proxy-venv`) is
-probed with `mitmdump --version` on every run and rebuilt if it no longer works.
-The usual cause is a `proxy-venv` an earlier `install.sh` built from a conda env's
-interpreter that a later `mamba env update` swapped (for example to a free-threaded
-build, whose `lib/python3.Xt` layout hides the venv's packages). Nothing to do: the
-rebuild is automatic, and it is `proxy-env`, a conda-forge environment built with the
-installer's own micromamba, which does not have this failure mode. Note that the running proxy service keeps
-working until its next restart, so a broken environment is a latent outage; the
-rebuild (and the restart the installer performs) is what removes it.
+The proxy runtime (`~/.local/share/agent-sandbox/proxy-env` or `proxy-venv`) is probed
+with `mitmdump --version` on every run and rebuilt if it no longer works. The usual
+cause is a `proxy-venv` an earlier `install.sh` built from a conda env's interpreter
+that a later `mamba env update` swapped (for example to a free-threaded build, whose
+`lib/python3.Xt` layout hides the venv's packages). Nothing to do: the rebuild is
+automatic, and it is `proxy-env`, a conda-forge environment built with the installer's
+own micromamba, which does not have this failure mode. Note that the running proxy
+service keeps working until its next restart, so a broken environment is a latent
+outage; the rebuild (and the restart the installer performs) is what removes it.
 
 
 ## bubblewrap older than 0.12.0 (Ubuntu 24.04 and 26.04)
@@ -321,21 +317,19 @@ source, rebuilt locally. It takes a few minutes and needs root only for `apt`.
 ./install.sh --rebuild-bwrap
 ```
 
-It runs on Ubuntu only (elsewhere it refuses and points here). It does nothing
-when the installed `bwrap` is 0.12.0 or newer, and says `sudo apt install
-bubblewrap` instead when apt's candidate is. Otherwise it fetches Ubuntu's
-0.12.0-1 source package into `${TMPDIR:-/tmp}/agent-sandbox-bwrap-0.12.0-1`,
-checks it against SHA-256 sums pinned in the installer, holds the installed
-bubblewrap, builds the package as you with the local version
-`0.12.0-1~<codename>1`, installs it, releases the hold, and checks the installed
-`bwrap`. Two build messages are expected: dpkg-source cannot verify the `.dsc`
-signature without a Debian keyring (the pinned sums are the check), and
-dpkg-genchanges calls `0.12.0-1~<codename>1` earlier than `0.12.0-1` (the tilde
-version, by design). The `.deb` stays in that directory, so it can be reinstalled. If a step
-fails, the hold stays in place and the message says so; `sudo apt-mark unhold
-bubblewrap` releases it. `install.sh` itself names this option when it finds an
-older bubblewrap on Ubuntu, and `sudo apt install bubblewrap` when apt already
-has 0.12.0 or newer.
+It runs on Ubuntu only (elsewhere it refuses and points here). It does nothing when the
+installed `bwrap` is 0.12.0 or newer, and says `sudo apt install bubblewrap` instead
+when apt's candidate is. Otherwise it fetches Ubuntu's 0.12.0-1 source package into
+`${TMPDIR:-/tmp}/agent-sandbox-bwrap-0.12.0-1`, checks it against SHA-256 sums pinned in
+the installer, holds the installed bubblewrap, builds the package as you with the local
+version `0.12.0-1~<codename>1`, installs it, releases the hold, and checks the installed
+`bwrap`. Two build messages are expected: dpkg-source cannot verify the `.dsc` signature
+without a Debian keyring (the pinned sums are the check), and dpkg-genchanges calls
+`0.12.0-1~<codename>1` earlier than `0.12.0-1` (the tilde version, by design). The
+`.deb` stays in that directory, so it can be reinstalled. If a step fails, the hold
+stays in place and the message says so; `sudo apt-mark unhold bubblewrap` releases it.
+`install.sh` itself names this option when it finds an older bubblewrap on Ubuntu, and
+`sudo apt install bubblewrap` when apt already has 0.12.0 or newer.
 
 **By hand**, the same steps:
 
@@ -349,13 +343,13 @@ has 0.12.0 or newer.
    ```
 
 2. **Fetch Ubuntu's 0.12.0-1 source from Launchpad, verify it, and install its
-   Build-Depends**, which `apt-get build-dep` reads from the `.dsc` (no package
-   list to keep per release). The `.dsc`
-   lists SHA-256 sums for the two tarballs; the orig tarball is byte-identical to
-   upstream's release asset (verified 2026-09-18). The `.dsc` is signed by the
-   Debian maintainer's key `7A073AD1AE694FA25BFF62E5235C099D3EB33076`; with
-   `debian-keyring` installed, `gpg --verify --keyring
-   /usr/share/keyrings/debian-keyring.gpg bubblewrap_0.12.0-1.dsc` checks it.
+   Build-Depends**, which `apt-get build-dep` reads from the `.dsc` (no package list to
+   keep per release). The `.dsc` lists SHA-256 sums for the two tarballs; the orig
+   tarball is byte-identical to upstream's release asset (verified 2026-09-18). The
+   `.dsc` is signed by the Debian maintainer's key
+   `7A073AD1AE694FA25BFF62E5235C099D3EB33076`; with `debian-keyring` installed,
+   `gpg --verify --keyring /usr/share/keyrings/debian-keyring.gpg bubblewrap_0.12.0-1.dsc`
+   checks it.
 
    ```
    mkdir bwrap-0.12 && cd bwrap-0.12
@@ -372,12 +366,11 @@ has 0.12.0 or newer.
    dpkg-source -x bubblewrap_0.12.0-1.dsc src
    ```
 
-3. **Give it a local version that outranks anything the release will ship**
-   (and stays below a real 0.12.0-1), and build without the package's test
-   suite. The tests run the freshly built `bwrap`
-   from the build directory, which the AppArmor restriction on unprivileged user
-   namespaces refuses (only `/usr/bin/bwrap` has the installer's profile); the
-   installed binary is tested afterwards instead.
+3. **Give it a local version that outranks anything the release will ship** (and stays
+   below a real 0.12.0-1), and build without the package's test suite. The tests run the
+   freshly built `bwrap` from the build directory, which the AppArmor restriction on
+   unprivileged user namespaces refuses (only `/usr/bin/bwrap` has the installer's
+   profile); the installed binary is tested afterwards instead.
 
    ```
    cd src

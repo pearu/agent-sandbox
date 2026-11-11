@@ -78,8 +78,8 @@ footer -- where the project's policy allows it.
 
 Before posting, check that the body carries no stand-in marker, check the rendering with
 `gh api markdown`, confirm the PR head has not moved since your review, and, unless
-told, ask whether it goes as a comment (`gh pr comment N`, or `gh pr review N --comment`)
-or as `gh pr review N --request-changes`.
+told, ask whether it goes as a comment (`gh pr comment N`, or
+`gh pr review N --comment`) or as `gh pr review N --request-changes`.
 
 **A finding beyond N.** A problem the review uncovers that is not this PR's to fix --
 a bug that predates it, in code it neither changes nor targets -- goes to the user in
@@ -131,11 +131,10 @@ orders.
    fix is to implement it.
 4. Bring its changes onto the built tree (`gh pr diff N | git apply`), then, as a
    command of its own, rebuild (`.asb/build_env.sh rebuild`), and run them, not just
-   compile them:
-   the reporter's exact reproducer, results against a reference and the obvious
-   fallback, the whole affected test file -- show a failure is pre-existing before
-   calling it green. Inside the sandbox the project's suite may skip host-only tests;
-   each such skip says why.
+   compile them: the reporter's exact reproducer, results against a reference and the
+   obvious fallback, the whole affected test file -- show a failure is pre-existing
+   before calling it green. Inside the sandbox the project's suite may skip host-only
+   tests; each such skip says why.
 5. Review it, with the project's review skill if it has one (e.g. `/pr-review`); write
    the review to `.asb/scratch/review-N.md`.
 6. Show the user the draft -- its text in your reply, not a tool's output -- and stop.

@@ -14,33 +14,34 @@ number, each in a layer of its own over the project as the setup role built it:
 - **gh-setup**, one per project, builds `main` as checked out into the `--env`
   environment, from the project's CI and documentation, and records why in
   `.asb/setup.md` and how in `.asb/build_env.sh` (`setup`, the full build; `rebuild`,
-  the incremental one the other roles run after their change). Last, it checks what
-  the other roles will need -- a current `gh`, the fixers' push path, ghstack's lines,
-  the GPU's `/dev/nvidia-uvm` -- fixes what it can, and records the rest, with the
-  command you run on the host, under `## Readiness` in `.asb/setup.md`, which every
-  role reads at its start. It writes the checkout
-  and the environment, reads the web with GET only, and has no git transport and no gh
-  login. Submodules are yours: it cannot fetch, so `git submodule update --init
-  --recursive` on the host first -- or `asb --apply '[net:gh-setup]' 'git = fetch'`,
-  and it fetches them over HTTPS itself, a read; a push stays refused. Dependencies CI builds from git or fetches from a
-  refused host are yours to provide, as a clone under `~/git/<org>/<repo>` declared
+  the incremental one the other roles run after their change). Last, it checks what the
+  other roles will need -- a current `gh`, the fixers' push path, ghstack's lines, the
+  GPU's `/dev/nvidia-uvm` -- fixes what it can, and records the rest, with the command
+  you run on the host, under `## Readiness` in `.asb/setup.md`, which every role reads
+  at its start. It writes the checkout and the environment, reads the web with GET only,
+  and has no git transport and no gh login. Submodules are yours: it cannot fetch, so
+  `git submodule update --init --recursive` on the host first -- or
+  `asb --apply '[net:gh-setup]' 'git = fetch'`, and it fetches them over HTTPS itself, a
+  read; a push stays refused. Dependencies CI builds from git or fetches from a refused
+  host are yours to provide, as a clone under `~/git/<org>/<repo>` declared
   `copy-on-write` under `[connect:gh-*]` (or a host under `[allow:gh-setup]`), approved
   with `--trust`; gh-setup asks for exactly that and installs what it builds from them
   into the environment. `--init` takes an `--env` NAME not built yet (a conda env name,
-  made empty under the conda base that applies: the host's, or agent-sandbox's conda root).
-  `--init github` without `--env` writes the environment's lines commented out, and
-  gh-setup then has nothing to build into: it stops and asks for `asb --init github
-  --env NAME`, which, run on that file, completes those lines (and nothing else) for a
-  `--trust` and gh-setup's relaunch. `--init github --shared-env NAME` on such a file
-  completes them too, and says gh-setup is left over (a shared environment needs none)
-  and how to remove it; gh-setup, launched anyway, says so and stops.
+  made empty under the conda base that applies: the host's, or agent-sandbox's conda
+  root). `--init github` without `--env` writes the environment's lines commented out,
+  and gh-setup then has nothing to build into: it stops and asks for
+  `asb --init github --env NAME`, which, run on that file, completes those lines (and
+  nothing else) for a `--trust` and gh-setup's relaunch.
+  `--init github --shared-env NAME` on such a file completes them too, and says gh-setup
+  is left over (a shared environment needs none) and how to remove it; gh-setup,
+  launched anyway, says so and stops.
 - **gh-review** builds and tests a pull request, reviews it (with the project's review
   skill if it has one, e.g. `/pr-review`), and posts the review when you say so.
 - **gh-triage** reproduces an issue on your build, measures its claims, finds
   duplicates, concludes (confirmed / not reproducible / needs information / duplicate),
   and posts the triage and labels when you say so.
-- **gh-fix** implements an issue or a pull request on a branch, and publishes it when you
-  say so: over HTTPS, as you, with your gh login (`[net:gh-fix-*] git = allow` and
+- **gh-fix** implements an issue or a pull request on a branch, and publishes it when
+  you say so: over HTTPS, as you, with your gh login (`[net:gh-fix-*] git = allow` and
   `gh = read-only`, both in the file you approve), to your fork or directly as the
   checkout's remotes say -- to the remote's HTTPS URL whatever its scheme, saying so
   once when `origin` is SSH. SSH is for ghstack, which pushes through `origin` as it is:
@@ -50,33 +51,32 @@ number, each in a layer of its own over the project as the setup role built it:
   reviewed and approved like any other line.
 
 What each may run without asking you, so Claude Code's auto mode does not block a post
-you asked for (`[permissions:gh-*-*]`, reviewed with the file): gh-review `gh pr review`,
-`gh pr comment` and `gh issue create`; gh-triage `gh issue comment`, `gh issue edit` and
-`gh issue create`; gh-fix `ghstack submit`, `gh pr create`, `gh pr comment`,
-`gh issue comment` and `gh issue create`. gh-fix has no push rule: Claude Code's auto mode decides
-each `git push` (by default it allows a push to the repository being worked in and
-blocks a force push or one to a third party's), and gh-fix's purpose file keeps it to
-its own branch `fix-N`; a push auto mode refuses comes to you, to push or approve. The
-rules are prefix rules: `gh pr review` covers `--approve`, any pull request and, with
-`-R`, another repository; `gh pr comment` any pull request, and `gh issue create`,
-`comment` and `edit` any issue, your login can write. The purpose files are what keep
-them to N. gh-setup gets none: it publishes nothing. The rules only stop the agent
-asking; the purpose files still post only when you say so, and the sandbox's policy is
-unchanged.
-`gh api` has no rule, since one would cover every API call: a role that needs it to
-post asks. A project initialised before these rules gets them from `asb
---init github` run again, which appends the sections it lacks (then `asb --trust`).
+you asked for (`[permissions:gh-*-*]`, reviewed with the file): gh-review
+`gh pr review`, `gh pr comment` and `gh issue create`; gh-triage `gh issue comment`,
+`gh issue edit` and `gh issue create`; gh-fix `ghstack submit`, `gh pr create`,
+`gh pr comment`, `gh issue comment` and `gh issue create`. gh-fix has no push rule:
+Claude Code's auto mode decides each `git push` (by default it allows a push to the
+repository being worked in and blocks a force push or one to a third party's), and
+gh-fix's purpose file keeps it to its own branch `fix-N`; a push auto mode refuses comes
+to you, to push or approve. The rules are prefix rules: `gh pr review` covers
+`--approve`, any pull request and, with `-R`, another repository; `gh pr comment` any
+pull request, and `gh issue create`, `comment` and `edit` any issue, your login can
+write. The purpose files are what keep them to N. gh-setup gets none: it publishes
+nothing. The rules only stop the agent asking; the purpose files still post only when
+you say so, and the sandbox's policy is unchanged. `gh api` has no rule, since one would
+cover every API call: a role that needs it to post asks. A project initialised before
+these rules gets them from `asb --init github` run again, which appends the sections it
+lacks (then `asb --trust`).
 
 Each sees the project and its environment through overlays of its own
-(`project = copy-on-write`): its checkout, incremental rebuild, commits and installs stay
-in its layer, and no instance sees another's. Review and triage cannot push -- their
-`[net] git = fetch` refuses a push over HTTPS, and they get no SSH host (an `--ssh` you
-give one is honoured, push included: `[net] git` does not reach into SSH) -- and every
-post is on your word, after the project's policy on AI-written contributions. The
-sections are appended once to an
-existing `.agent-sandbox` (`[...:gh-*]`); add a `[...:gh-fix-1234]` section only for a
-number that needs something specific. Any `gh-<other>-N` name is admitted with the
-shared boundary and no purpose.
+(`project = copy-on-write`): its checkout, incremental rebuild, commits and installs
+stay in its layer, and no instance sees another's. Review and triage cannot push --
+their `[net] git = fetch` refuses a push over HTTPS, and they get no SSH host (an
+`--ssh` you give one is honoured, push included: `[net] git` does not reach into SSH) --
+and every post is on your word, after the project's policy on AI-written contributions.
+The sections are appended once to an existing `.agent-sandbox` (`[...:gh-*]`); add a
+`[...:gh-fix-1234]` section only for a number that needs something specific. Any
+`gh-<other>-N` name is admitted with the shared boundary and no purpose.
 
 Before deleting a fixer, publish its work: its commits live in its layer. After `main`
 moves (a pull on the host, then `asb --role gh-setup claude` again), an instance
@@ -110,8 +110,8 @@ For every launch, of every instance (gh-setup included) or of one:
 Of the `[agent:...]` sections that match an instance, the later in the file wins, not
 the narrower: add the one for a number after the `gh-*` one. `--apply` adds no line a
 section has already, wherever it is, so a switch to an account named there before is an
-edit of the file, approved with `asb --trust`, or `--account` for one launch. When an instance hits its
-account's usage limit, end it and relaunch it on the other:
+edit of the file, approved with `asb --trust`, or `--account` for one launch. When an
+instance hits its account's usage limit, end it and relaunch it on the other:
 
     asb --role gh-fix-1234 --shutdown claude
     asb --role gh-fix-1234 --account work --resume claude

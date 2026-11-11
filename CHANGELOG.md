@@ -11,19 +11,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Breaking
 
-- **`asb claude` runs asb's own install of Claude Code, never the `claude` on your PATH**
-  (#6), under every preset, `native` and `none` included: a name -- the command,
-  `--agent R=claude`, `[agent] command = claude` -- of a profile with an install recipe is
-  the version `asb --install` made current. **Migration: run `asb --install claude` once**;
-  until then a launch refuses with `claude is not installed for agent-sandbox: install it,
-  asb --install claude`. A binary of your own still runs by its path, `asb --profile
-  claude /path/to/claude`. The launch binds that version's directory alone, read-only (also
-  under `native`, over its read-write `$HOME`), where it bound the binary's file. A profile
-  without a recipe is looked up on PATH as before. `install.sh` reports such an agent as
-  installed for asb or not, and no longer asks for it on PATH.
+- **`asb claude` runs asb's own install of Claude Code, never the `claude` on your
+  PATH** (#6), under every preset, `native` and `none` included: a name -- the command,
+  `--agent R=claude`, `[agent] command = claude` -- of a profile with an install recipe
+  is the version `asb --install` made current. **Migration: run `asb --install claude`
+  once**; until then a launch refuses with
+  `claude is not installed for agent-sandbox: install it, asb --install claude`. A
+  binary of your own still runs by its path, `asb --profile claude /path/to/claude`. The
+  launch binds that version's directory alone, read-only (also under `native`, over its
+  read-write `$HOME`), where it bound the binary's file. A profile without a recipe is
+  looked up on PATH as before. `install.sh` reports such an agent as installed for asb
+  or not, and no longer asks for it on PATH.
 - **The default agent of a role verb with no command** (#6) is the only profile asb can
-  run -- one with an install recipe, installed or not, or one whose command is on PATH --
-  or, with several, the one set with the new `asb --set-default-agent AGENT`
+  run -- one with an install recipe, installed or not, or one whose command is on PATH
+  -- or, with several, the one set with the new `asb --set-default-agent AGENT`
   (`~/.config/agent-sandbox/default-agent`; no AGENT prints it); with none set, the verb
   refuses, naming that line. `--check` with no command checks every such profile.
 - **An account is logged in with `asb [--agent AGENT] --account NAME --login`** (#6,
@@ -35,18 +36,21 @@ names are gone; there are no aliases for removed names before 1.0.
   `--account -`) is refused while the base is the agent's own native directory
   (claude: `~/.claude`). Every message, `--list`/`--status` renewal and briefing line
   that names the command says this form.
-- **The proxy serves sandbox sessions only**: every proxied launch carries a token, and a
-  request without a live session's token gets `407` with a Basic challenge, where it got
-  the global allowlist. A session's `[deny]` and `retrieve-only` hang on that token, and
-  a client that did not send it -- git, until challenged -- or an agent that dropped it
-  from the proxy URL escaped both. A host tool pointed at the proxy by hand is refused.
+- **The proxy serves sandbox sessions only**: every proxied launch carries a token, and
+  a request without a live session's token gets `407` with a Basic challenge, where it
+  got the global allowlist. A session's `[deny]` and `retrieve-only` hang on that token,
+  and a client that did not send it -- git, until challenged -- or an agent that dropped
+  it from the proxy URL escaped both. A host tool pointed at the proxy by hand is
+  refused.
 - **A gh login in `~/.claude/gh` is no longer visible to every project** (#88): it is
   blanked. gh is the `gh` channel, at `~/.config/gh` where `gh auth login` keeps it: the
-  role's own (empty) under every preset but `native`, and `gh = read-only` in `[connect]`
-  hands your login to a sandbox, live. `gh = read-only outside:PATH` gives another one.
-- **The sandbox is invoked explicitly** (#151): `asb [OPTIONS] CMD [AGENT OPTIONS]`, with
-  `agent-sandbox` the canonical name. Nothing shadows `claude` any more: `claude` is
-  Claude Code itself, unsandboxed, everywhere. Engine options come before the command.
+  role's own (empty) under every preset but `native`, and `gh = read-only` in
+  `[connect]` hands your login to a sandbox, live. `gh = read-only outside:PATH` gives
+  another one.
+- **The sandbox is invoked explicitly** (#151): `asb [OPTIONS] CMD [AGENT OPTIONS]`,
+  with `agent-sandbox` the canonical name. Nothing shadows `claude` any more: `claude`
+  is Claude Code itself, unsandboxed, everywhere. Engine options come before the
+  command.
 - **Memory is the role's own under `inherit`** (#196). A sandboxed session no longer
   writes your native `~/.claude/projects/<slug>/memory/`, and starts with none of it;
   `memory = copy-on-write` (read yours live) or `seed-only` (carry it over once) under
@@ -55,8 +59,8 @@ names are gone; there are no aliases for removed names before 1.0.
   project, and is reviewed.
 - **`[forward]` is `[env]`** (#177): `NAME` forwards, `NAME = VALUE` sets (a profile's
   only), `-NAME` refuses.
-- **`[ro]`, `[rw]`, `AGENT_SANDBOX_RO` and `AGENT_SANDBOX_RW` are gone** (#161): a path is
-  declared under `[connect]`, `./data = read-only`, with every mode a channel has.
+- **`[ro]`, `[rw]`, `AGENT_SANDBOX_RO` and `AGENT_SANDBOX_RW` are gone** (#161): a path
+  is declared under `[connect]`, `./data = read-only`, with every mode a channel has.
 - **`--engine-version` is `--version`** before the command (#159); after it, `--version`
   is the agent's. **`--quiet` is gone**: quiet is the default, `--verbose` shows the
   routine status lines (#162).
@@ -65,29 +69,31 @@ names are gone; there are no aliases for removed names before 1.0.
 - **The claude profile is a directory**, `profiles/claude/`, with `profile.sh` and its
   dot-file `agent-sandbox` (#181); `profiles/claude.allowlist` is the dot-file's
   `[allow]`, opened per launch.
-- **A config or history view that cannot be made refuses the launch** (#207), rather than
-  seeding the whole native file.
-- **No empty `~/.claude.json` is created** (#204): Claude Code calls a 0-byte one corrupted.
+- **A config or history view that cannot be made refuses the launch** (#207), rather
+  than seeding the whole native file.
+- **No empty `~/.claude.json` is created** (#204): Claude Code calls a 0-byte one
+  corrupted.
 - **`asb --roles ROLE... [OPTIONS]` takes no command** (#355): each pane runs
   `asb --role ROLE` with the line's options and resolves its role's agent from
   `.agent-sandbox` (`[agent:<glob>]`, then `[agent]` command), so its record says where
   it was named. `--agent` on the line names agents for the round: a pane gets
-  `--agent AGENT` only when the line named its role's (`--agent b=codex` reaches b's pane
-  alone, a bare `--agent X` every pane), and a role or glob matching none of the listed
-  roles is refused. Every role's agent is resolved before tmux is called; a role with
-  none, or with an agent not installed, is refused by name and nothing opens. A word
-  among the roles that names a profile, a command or agent arguments after the options,
-  and `--profile` are refused. The reset watcher types each role's own fresh start, its
-  agent's profile's `[agent] clear`; a role whose profile has none is not watched, and
-  `--roles` names it. Its log is `~/.local/state/agent-sandbox/.roles-resets/<slug>.log`.
-  `asb --init roles` writes `[agent] command = claude`, and the Supervisor prints
-  `asb --role NAME --resume` and `asb --roles NAME ... --resume`. A project an earlier
-  `--init` wrote adds the section once: `asb --apply '[agent]' 'command = claude'`; the
-  no-agent refusals say it, and `asb --init roles` run again names it with that line.
-  `--init` on an existing file now reports any common (unsuffixed) section line it
-  lacks the same way, still without writing it. A missing agent binary is named as
-  `--agent ROLE=/path/to/W` or `[agent:ROLE] command = /path/to/W` when the agent was
-  resolved, not `--profile`. `--setup-remote` is refused with `--roles`.
+  `--agent AGENT` only when the line named its role's (`--agent b=codex` reaches b's
+  pane alone, a bare `--agent X` every pane), and a role or glob matching none of the
+  listed roles is refused. Every role's agent is resolved before tmux is called; a role
+  with none, or with an agent not installed, is refused by name and nothing opens. A
+  word among the roles that names a profile, a command or agent arguments after the
+  options, and `--profile` are refused. The reset watcher types each role's own fresh
+  start, its agent's profile's `[agent] clear`; a role whose profile has none is not
+  watched, and `--roles` names it. Its log is
+  `~/.local/state/agent-sandbox/.roles-resets/<slug>.log`. `asb --init roles` writes
+  `[agent] command = claude`, and the Supervisor prints `asb --role NAME --resume` and
+  `asb --roles NAME ... --resume`. A project an earlier `--init` wrote adds the section
+  once: `asb --apply '[agent]' 'command = claude'`; the no-agent refusals say it, and
+  `asb --init roles` run again names it with that line. `--init` on an existing file now
+  reports any common (unsuffixed) section line it lacks the same way, still without
+  writing it. A missing agent binary is named as `--agent ROLE=/path/to/W` or
+  `[agent:ROLE] command = /path/to/W` when the agent was resolved, not `--profile`.
+  `--setup-remote` is refused with `--roles`.
 
 ### Added
 
@@ -110,15 +116,16 @@ names are gone; there are no aliases for removed names before 1.0.
   `--apply` lines.
 - **install.sh reports agents and asks for the default agent** (#6): its Agents section
   says, for an agent asb installs, the installed version against the profile's pin
-  (`claude 2.1.321, the pin`; `claude 2.1.300, pinned 2.1.321: asb --install claude moves
-  to the pin`; `claude: not installed; asb --install claude, or it is offered at the first
-  launch`), and for any other the command on PATH, as before. An install or a re-run never
+  (`claude 2.1.321, the pin`;
+  `claude 2.1.300, pinned 2.1.321: asb --install claude moves to the pin`;
+  `claude: not installed; asb --install claude, or it is offered at the first launch`),
+  and for any other the command on PATH, as before. An install or a re-run never
   installs, updates or removes an agent, and downloads none (`--uninstall` removes asb's
-  installs, below). At a terminal, with several
-  agents asb can run and no default set, it asks once which is the default (a number or a
-  name; empty: none) and sets it through the installed engine, `asb --set-default-agent`;
-  without a terminal, with `--yes` or with one set, it asks nothing and says how to set
-  or change it. `--uninstall` removes the agents asb installed
+  installs, below). At a terminal, with several agents asb can run and no default set,
+  it asks once which is the default (a number or a name; empty: none) and sets it
+  through the installed engine, `asb --set-default-agent`; without a terminal, with
+  `--yes` or with one set, it asks nothing and says how to set or change it.
+  `--uninstall` removes the agents asb installed
   (`~/.local/state/agent-sandbox/<agent>/install/`) and keeps the rest of that directory
   -- role stores, transcripts and the accounts' logins, now named in its plan (they were
   kept before too, unsaid).
@@ -129,15 +136,16 @@ names are gone; there are no aliases for removed names before 1.0.
   activates a shared environment (`--shared-env`) for the other roles, they say there is
   nothing to build, that they are left over from the no-env `--init`, and how to remove
   them, and stop.
-- **Agents asb installs are installed when first needed** (#6): `asb --agent AGENT
-  --account NAME --login` installs the profile's pin first, unasked, before the account's directory is made
-  (a failed download leaves nothing); a launch at a terminal with nothing installed asks
-  once, `install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`, and installs
-  and launches on `y`, once the launch's own checks have passed. Without a terminal, and
-  for `--exec`, the verbs, `--status`, `--shutdown`, `--serve`, `--summarize` and
-  `--roles`, it refuses with the line that installs it, never asking (`--check` never
-  looks the agent up). A broken `install/current` is refused, never mended, by
-  `--login` too, before anything is made.
+- **Agents asb installs are installed when first needed** (#6):
+  `asb --agent AGENT --account NAME --login` installs the profile's pin first, unasked,
+  before the account's directory is made (a failed download leaves nothing); a launch at
+  a terminal with nothing installed asks once,
+  `install claude 2.1.321 (342 MB from downloads.claude.ai)? [y/N]`, and installs and
+  launches on `y`, once the launch's own checks have passed. Without a terminal, and for
+  `--exec`, the verbs, `--status`, `--shutdown`, `--serve`, `--summarize` and `--roles`,
+  it refuses with the line that installs it, never asking (`--check` never looks the
+  agent up). A broken `install/current` is refused, never mended, by `--login` too,
+  before anything is made.
 - **The agent's version on the launch line** (#6): `agent: claude 2.1.321` with
   `--verbose`; always `agent: claude, running V, pinned W` when it is not the pin (and
   `(untested with asb)` for one the table does not list). Recorded per launch in the
@@ -147,29 +155,30 @@ names are gone; there are no aliases for removed names before 1.0.
 - **`asb --install AGENT[@VERSION] [--from FILE [--sha256 SUM]]`** (#6), the host-side
   installer of the install recipe: VERSION (default the pin; an exact version not in the
   profile's table installs too, said to be untested with asb) is named by the profile's
-  resolver, downloaded with curl (or taken from FILE; with `--sha256 SUM` the resolver is
-  not run and FILE is checked against SUM, offline), refused
-  unless its size and SHA-256 are the ones stated, a tarball's members checked (no
-  absolute or `..` member, no symlink out of the tree, nothing but files, directories
-  and symlinks, the binary at its PATH), and renamed into
+  resolver, downloaded with curl (or taken from FILE; with `--sha256 SUM` the resolver
+  is not run and FILE is checked against SUM, offline), refused unless its size and
+  SHA-256 are the ones stated, a tarball's members checked (no absolute or `..` member,
+  no symlink out of the tree, nothing but files, directories and symlinks, the binary at
+  its PATH), and renamed into
   `~/.local/state/agent-sandbox/<profile>/install/<VERSION>/`; a failure leaves nothing.
   `install/current`, a symlink, names the version launches will run, and every
   `--install` moves it; a version already there is not downloaded again. Refused inside
-  a sandbox. The versions table's problems are said here. `install.sh` adds conda-forge's
-  `gnupg` to the tools env for the resolvers, its `gpg` linked in the slot's new
-  `engine-bin/`, which no sandbox has on its PATH; so a `tools.txt` listing nothing now
-  leaves an env with none of your tools instead of removing it. A launch runs what it
-  installed (above, under Breaking). `AGENT_SANDBOX_INSTALL_BASE` (tests) is the
-  resolver's source.
+  a sandbox. The versions table's problems are said here. `install.sh` adds
+  conda-forge's `gnupg` to the tools env for the resolvers, its `gpg` linked in the
+  slot's new `engine-bin/`, which no sandbox has on its PATH; so a `tools.txt` listing
+  nothing now leaves an env with none of your tools instead of removing it. A launch
+  runs what it installed (above, under Breaking). `AGENT_SANDBOX_INSTALL_BASE` (tests)
+  is the resolver's source.
 - **The install recipe, as profile data** (#6), the first step to agents asb installs
   itself: `[agent] install = file | tar PATH` in a profile's dot-file, a `versions`
-  table of the live-tested versions with one `pinned` (exact versions, no checksums), and
-  a resolver, `resolve.sh VERSION PLATFORM [BASE]`, that prints the binary's URL and
+  table of the live-tested versions with one `pinned` (exact versions, no checksums),
+  and a resolver, `resolve.sh VERSION PLATFORM [BASE]`, that prints the binary's URL and
   SHA-256 from the vendor's own metadata. claude's checks the release manifest's GPG
   signature against Anthropic's key, pinned as `profiles/claude/release-key.asc`, and
   pins 2.1.321. `_as_profile_facts` emits `install`, `version` and `pin` lines, reading
   the table silently: its problems are said by the installer that comes next, and a bad
-  table never breaks a launch or `--check`. Nothing installs or launches differently yet.
+  table never breaks a launch or `--check`. Nothing installs or launches differently
+  yet.
 - **`profile_session_args`, a profile hook whose arguments every session carries** (#6),
   the briefing on or off, first on the line, with the sandbox's preset in scope; never
   for `--exec` or a verb.
@@ -179,84 +188,86 @@ names are gone; there are no aliases for removed names before 1.0.
   other suffixed sections do. The review says each line, for which roles, whether AGENT
   names an installed profile (a note, not a refusal), the fixed arguments as written,
   and what `--permission-mode bypassPermissions` or `--dangerously-skip-permissions`
-  there means; `--check` lists the role's
-  lines and a key set twice in one section; `asb --apply '[agent:ROLE]' 'command = AGENT'`
-  writes it. A launch with no command runs it (below). The profile name `agent` is
-  reserved, since a profile of that name would take the section as its own.
-- **`--agent`, and a launch with no command runs the role's agent** (#355): `asb --role
-  R` runs what `--agent` on the line, else `[agent:<glob>] command`, else `[agent]
-  command` names for R, its fixed arguments first, as if typed: `[agent:r] command =
-  claude --model x` makes `asb --role r --resume` run `claude --model x --continue`.
-  `--agent AGENT` is every role's, `--agent ROLE=AGENT` and `--agent 'GLOB=AGENT'` one
-  role's; an exact name beats a glob, which beats a bare one; two that disagree, a role
-  or glob that matches no launched role, and `--agent` with a command are refused, and
-  so is a launch with no agent anywhere, naming both places. A line `--agent` replaces
-  the dot-file's whole command. A role verb or `--check` with no command acts on the
-  role's agent's profile; `--check` shows the agent that wins, and the review says when a
-  later `[agent:<glob>]` line takes a role an earlier section names exactly. The user's
-  launch records the agent and where it was named in the role's store (`agent`; not
-  `--summarize`'s turn, `--exec` or `--profile` alone); `--status` prints it, and
-  `--list` ends with `asb --role ROLE --resume`, adding `--agent WORD` only where the line
-  gave the agent, or the profile for a store from before the record.
+  there means; `--check` lists the role's lines and a key set twice in one section;
+  `asb --apply '[agent:ROLE]' 'command = AGENT'` writes it. A launch with no command
+  runs it (below). The profile name `agent` is reserved, since a profile of that name
+  would take the section as its own.
+- **`--agent`, and a launch with no command runs the role's agent** (#355):
+  `asb --role R` runs what `--agent` on the line, else `[agent:<glob>] command`, else
+  `[agent] command` names for R, its fixed arguments first, as if typed:
+  `[agent:r] command = claude --model x` makes `asb --role r --resume` run
+  `claude --model x --continue`. `--agent AGENT` is every role's, `--agent ROLE=AGENT`
+  and `--agent 'GLOB=AGENT'` one role's; an exact name beats a glob, which beats a bare
+  one; two that disagree, a role or glob that matches no launched role, and `--agent`
+  with a command are refused, and so is a launch with no agent anywhere, naming both
+  places. A line `--agent` replaces the dot-file's whole command. A role verb or
+  `--check` with no command acts on the role's agent's profile; `--check` shows the
+  agent that wins, and the review says when a later `[agent:<glob>]` line takes a role
+  an earlier section names exactly. The user's launch records the agent and where it was
+  named in the role's store (`agent`; not `--summarize`'s turn, `--exec` or `--profile`
+  alone); `--status` prints it, and `--list` ends with `asb --role ROLE --resume`,
+  adding `--agent WORD` only where the line gave the agent, or the profile for a store
+  from before the record.
 - **Accounts: `[agent] account`, `[agent:<glob>] account` and `--account`** (#355): an
-  account is a directory per agent and name, `~/.local/state/agent-sandbox/<agent>/accounts/NAME/`,
-  bound where the agent's base is (claude: `~/.claude`) in place of the base, so the
-  role runs on that account's login, refreshed in its one home, while `{base}`,
-  `CLAUDE_CONFIG_DIR` and every channel's store stay what they are (memory and
-  transcripts carry across a switch). `--account` takes `--agent`'s forms, precedence
-  and refusals and beats the file; `-` names the base anywhere. Refused when the
-  directory is missing (naming `asb --agent AGENT --account NAME --login`), a symlink or not a
-  directory, for a profile with no `[agent] account-paths`, and under `--preset native`
-  or `none`; `--exec` counts; `--roles` checks every role's up front and gives a pane
-  `--account NAME` only for its own role; a join asking for another account is
-  refused. The launch records `PROFILE<TAB>NAME` in the role's store (`account`); the
-  review says each line and `--check` shows the account and its directory. The claude
-  profile's new `[agent] account-paths` is `.credentials.json .oauth_refresh.lock
-  .oauth_refresh.lock.owner` (`.credentials.json` leaves `visible`). An account role
-  sees every other top-level entry of the base (hook scripts, `ide/`, `cache/`, ...),
-  bound one by one, read-write at its path, before the channels, as it is at launch:
-  not the channels' own paths, the `hide` list (blanked) or the `account-paths`, so
-  never the base's login; a symlink entry is made again with its target as written,
-  never followed (any symlink in the account's directory under a name the base has is
-  taken as one an earlier launch made, and replaced when stale; any other same-name
-  entry of another kind there refuses the launch, naming both paths). A `read-write`
-  file channel missing in the base is created there under an account, as a directory
-  channel's is (`{}` for a `.json` path, empty otherwise), unless the profile gives it
-  a `start:` file. A base that resolves to a protected
-  path is refused under an account too, as it is without one. A
-  `[connect]` key or `outside:` source that is the base, a parent of it, or one of the
-  profile's `account-paths` is refused, account or not. A join takes the running role's
-  account; `--check` reports an unusable account directory with the plan and exits 1.
-  A cold start on another account than the role's stores last ran on (the record; none
-  is the base), `--exec` included, calls the new profile hook `profile_account_switched`
-  once the stores are ready: the claude profile sets `oauthAccount.profileFetchedAt` to 0 in the
-  role's `.claude.json` store (never the native file under `config = read-write`), so
-  `/status` names the account in force from the first turn, not the last one's
-  organisation for up to a day (`profile.py forget-profile`).
-  `asb [--agent AGENT] --account NAME --login`, alone on the line and host only, makes
-  the account's directory (mode 700; an existing one is a re-login; a symlink or a non-directory at any
-  level is refused) and runs the agent's own login in it in the foreground: the new
-  profile key `[agent] login` (claude: `login = auth login`), sandboxed as the role
-  `account-login` of the scratch project `~/.cache/agent-sandbox/account-login/` (no
-  dot-file, so no project's policy applies) under `--preset isolated` and the default
-  network mode; the shell's `AGENT_SANDBOX_NET` and `AGENT_SANDBOX_CONNECT` are unset
-  for it. That role's stores are removed afterwards, after a failed or
-  interrupted login too (a killed run's by the next run), and the scratch project is
-  left out of `--list` and `--list-all`. It ends by saying whether the account has its
-  login file (the profile's first `account-paths` entry), by path; the exit status is
-  the login's when it failed, 1 with no login file, else 0. A profile without `login`,
-  or without `account-paths`, refuses it.
-  `asb --list` and `--list-all` end each role's line with its agent and account (`claude,
-  account work`, `claude, base`), plus `, login due in N days` within 7 days of the
-  login's expiry and `, login expired: asb --agent AGENT --account NAME --login` past it (for the
-  base, the profile's `login-renew`: claude's `run /login`); `--status` prints the account, its directory and the expiry
-  date always; the briefing says which agent and account the session runs as, and when
-  the login is due within the window, by names only. The new profile key `[agent]
-  account-expiry` (claude: `.credentials.json claudeAiOauth.refreshTokenExpiresAt`,
-  epoch milliseconds) says where the expiry is written; the engine reads that one
-  number and nothing else of the file, and says nothing when it is unknown. What renews
-  the base's login is the profile's, `[agent] login-renew` (claude: `login-renew =
-  /login`); a profile without it gets no renewal named for its base.
+  account is a directory per agent and name,
+  `~/.local/state/agent-sandbox/<agent>/accounts/NAME/`, bound where the agent's base is
+  (claude: `~/.claude`) in place of the base, so the role runs on that account's login,
+  refreshed in its one home, while `{base}`, `CLAUDE_CONFIG_DIR` and every channel's
+  store stay what they are (memory and transcripts carry across a switch). `--account`
+  takes `--agent`'s forms, precedence and refusals and beats the file; `-` names the
+  base anywhere. Refused when the directory is missing (naming
+  `asb --agent AGENT --account NAME --login`), a symlink or not a directory, for a
+  profile with no `[agent] account-paths`, and under `--preset native` or `none`;
+  `--exec` counts; `--roles` checks every role's up front and gives a pane
+  `--account NAME` only for its own role; a join asking for another account is refused.
+  The launch records `PROFILE<TAB>NAME` in the role's store (`account`); the review says
+  each line and `--check` shows the account and its directory. The claude profile's new
+  `[agent] account-paths` is
+  `.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner` (`.credentials.json`
+  leaves `visible`). An account role sees every other top-level entry of the base (hook
+  scripts, `ide/`, `cache/`, ...), bound one by one, read-write at its path, before the
+  channels, as it is at launch: not the channels' own paths, the `hide` list (blanked)
+  or the `account-paths`, so never the base's login; a symlink entry is made again with
+  its target as written, never followed (any symlink in the account's directory under a
+  name the base has is taken as one an earlier launch made, and replaced when stale; any
+  other same-name entry of another kind there refuses the launch, naming both paths). A
+  `read-write` file channel missing in the base is created there under an account, as a
+  directory channel's is (`{}` for a `.json` path, empty otherwise), unless the profile
+  gives it a `start:` file. A base that resolves to a protected path is refused under an
+  account too, as it is without one. A `[connect]` key or `outside:` source that is the
+  base, a parent of it, or one of the profile's `account-paths` is refused, account or
+  not. A join takes the running role's account; `--check` reports an unusable account
+  directory with the plan and exits 1. A cold start on another account than the role's
+  stores last ran on (the record; none is the base), `--exec` included, calls the new
+  profile hook `profile_account_switched` once the stores are ready: the claude profile
+  sets `oauthAccount.profileFetchedAt` to 0 in the role's `.claude.json` store (never
+  the native file under `config = read-write`), so `/status` names the account in force
+  from the first turn, not the last one's organisation for up to a day
+  (`profile.py forget-profile`). `asb [--agent AGENT] --account NAME --login`, alone on
+  the line and host only, makes the account's directory (mode 700; an existing one is a
+  re-login; a symlink or a non-directory at any level is refused) and runs the agent's
+  own login in it in the foreground: the new profile key `[agent] login` (claude:
+  `login = auth login`), sandboxed as the role `account-login` of the scratch project
+  `~/.cache/agent-sandbox/account-login/` (no dot-file, so no project's policy applies)
+  under `--preset isolated` and the default network mode; the shell's
+  `AGENT_SANDBOX_NET` and `AGENT_SANDBOX_CONNECT` are unset for it. That role's stores
+  are removed afterwards, after a failed or interrupted login too (a killed run's by the
+  next run), and the scratch project is left out of `--list` and `--list-all`. It ends
+  by saying whether the account has its login file (the profile's first `account-paths`
+  entry), by path; the exit status is the login's when it failed, 1 with no login file,
+  else 0. A profile without `login`, or without `account-paths`, refuses it.
+  `asb --list` and `--list-all` end each role's line with its agent and account
+  (`claude, account work`, `claude, base`), plus `, login due in N days` within 7 days
+  of the login's expiry and `, login expired: asb --agent AGENT --account NAME --login`
+  past it (for the base, the profile's `login-renew`: claude's `run /login`); `--status`
+  prints the account, its directory and the expiry date always; the briefing says which
+  agent and account the session runs as, and when the login is due within the window, by
+  names only. The new profile key `[agent] account-expiry` (claude:
+  `.credentials.json claudeAiOauth.refreshTokenExpiresAt`, epoch milliseconds) says
+  where the expiry is written; the engine reads that one number and nothing else of the
+  file, and says nothing when it is unknown. What renews the base's login is the
+  profile's, `[agent] login-renew` (claude: `login-renew = /login`); a profile without
+  it gets no renewal named for its base.
 - **`[remote:<alias>]` in a project's `.agent-sandbox`** (#344, step 1 of its plan): a
   sandboxed login on another host, described where the rest of the policy is. `host`
   (an ssh destination, required), `account` (a name as `adduser` takes it; absent, the
@@ -267,19 +278,20 @@ names are gone; there are no aliases for removed names before 1.0.
   `port` makes the section unusable, an unknown key is ignored, a name written twice
   makes the file unusable (`--trust` does not ask, `--check` exits 1). `--check` lists
   each remote after the role's plan. `asb --setup-remote <alias>` acts on it (below).
-- **`asb --setup-remote <alias>`, its first phase: the preflight and the admin's script**
-  (#344, step 2 of its plan). One read-only ssh session to the section's host, a probe
-  on stdin, a report line per item: packages (bubblewrap and apt's candidate, passt,
-  nftables, sshd), user namespaces as measured for an unconfined binary, bwrap and pasta,
-  AppArmor's restriction and profiles, sudo (reported, never used), the account, GPUs
-  and the section's nodes, egress to conda-forge and GitHub. Everything present and
-  working: "ready for the account's part", exit 0. Otherwise the admin's script goes to
-  `.asb/remote/<alias>/admin.sh` with only what was measured missing -- the packages,
-  install.sh's AppArmor profiles where the restriction blocks bwrap or pasta, Ubuntu's
-  bubblewrap rebuild below 0.12.0 (install.sh carried inside it), the named account with
-  your public key -- and the command copies it to `~/asb-admin-<alias>.sh` in your home
-  on the host, prints the one line that runs it (`ssh -t HOST sudo bash
-  asb-admin-<alias>.sh`) and exits 1; asb never runs it, nor sudo. Refused inside a sandbox, without the section, for an unusable section, and
+- **`asb --setup-remote <alias>`, its first phase: the preflight and the admin's
+  script** (#344, step 2 of its plan). One read-only ssh session to the section's host,
+  a probe on stdin, a report line per item: packages (bubblewrap and apt's candidate,
+  passt, nftables, sshd), user namespaces as measured for an unconfined binary, bwrap
+  and pasta, AppArmor's restriction and profiles, sudo (reported, never used), the
+  account, GPUs and the section's nodes, egress to conda-forge and GitHub. Everything
+  present and working: "ready for the account's part", exit 0. Otherwise the admin's
+  script goes to `.asb/remote/<alias>/admin.sh` with only what was measured missing --
+  the packages, install.sh's AppArmor profiles where the restriction blocks bwrap or
+  pasta, Ubuntu's bubblewrap rebuild below 0.12.0 (install.sh carried inside it), the
+  named account with your public key -- and the command copies it to
+  `~/asb-admin-<alias>.sh` in your home on the host, prints the one line that runs it
+  (`ssh -t HOST sudo bash asb-admin-<alias>.sh`) and exits 1; asb never runs it, nor
+  sudo. Refused inside a sandbox, without the section, for an unusable section, and
   while the file is not approved. `install.sh` records the checkout it ran from in
   `install.manifest`, where the command takes install.sh and the profile texts from.
 - **`asb --setup-remote <alias>`, the account's part and its update** (#344, step 3 of
@@ -317,53 +329,55 @@ names are gone; there are no aliases for removed names before 1.0.
   account's part) and in the alias block's `ProxyJump HOST:SSHPORT`. `[ssh]` is
   unchanged. **`gpu = none`** means no GPU, as an empty `gpu =` does.
 - **`[sshd] home = project`** (#344): the sessions' HOME is the project directory, and
-  every session -- a login shell, a command, sftp, scp, rsync -- starts there. Inside the
-  sandbox the account's `/etc/passwd` entry names the project (sshd takes HOME and the
-  directory it changes into from it; `SetEnv HOME` would leave sessions in the old one,
-  measured). Opt-in: without the line nothing changes. The review says it; another value
-  refuses the launch. `--setup-remote` writes it into every policy it generates, so the
-  next run relaunches an existing remote login once, as a policy change.
+  every session -- a login shell, a command, sftp, scp, rsync -- starts there. Inside
+  the sandbox the account's `/etc/passwd` entry names the project (sshd takes HOME and
+  the directory it changes into from it; `SetEnv HOME` would leave sessions in the old
+  one, measured). Opt-in: without the line nothing changes. The review says it; another
+  value refuses the launch. `--setup-remote` writes it into every policy it generates,
+  so the next run relaunches an existing remote login once, as a policy change.
 - **`--setup-remote` on the machine it runs on** (#344, step 4): when the preflight's
-  `/etc/machine-id` and boot id are this machine's, the alias block is `HostName
-  127.0.0.1` with the login's port and no `ProxyJump`, for a bare port and `0.0.0.0:PORT`
-  alike, and the host key is filed as `[127.0.0.1]:PORT`. The end adds the `asb --apply
-  '[net:ROLE]' 'host-port = PORT'` line for the roles `[ssh]` names it with: a strict
-  sandbox on that host has the host's own addresses (measured on Ubuntu 24.04 and 26.04),
-  so by the host's address a role there reaches itself, and the login only at
-  `127.0.0.1`. A login at one other address is said to be out of their reach.
-- **`asb --setup-remote ALIAS --status` and `--shutdown`** (#344): one ssh session as the
-  account (`ssh [-p SSHPORT] -l ACCOUNT HOST`, BatchMode, never sudo) runs the account's
-  own `asb --profile sshd --role ALIAS --status` (or `--shutdown`) in the scratch there;
-  its answer is said and its exit status is the command's. No preflight, nothing carried
-  or written, nothing changed here; a destination is refused with these flags.
-  `--shutdown` removes nothing, and `asb --setup-remote ALIAS` starts the login again.
-  docs/remote.md's retiring a login uses it.
+  `/etc/machine-id` and boot id are this machine's, the alias block is
+  `HostName 127.0.0.1` with the login's port and no `ProxyJump`, for a bare port and
+  `0.0.0.0:PORT` alike, and the host key is filed as `[127.0.0.1]:PORT`. The end adds
+  the `asb --apply '[net:ROLE]' 'host-port = PORT'` line for the roles `[ssh]` names it
+  with: a strict sandbox on that host has the host's own addresses (measured on Ubuntu
+  24.04 and 26.04), so by the host's address a role there reaches itself, and the login
+  only at `127.0.0.1`. A login at one other address is said to be out of their reach.
+- **`asb --setup-remote ALIAS --status` and `--shutdown`** (#344): one ssh session as
+  the account (`ssh [-p SSHPORT] -l ACCOUNT HOST`, BatchMode, never sudo) runs the
+  account's own `asb --profile sshd --role ALIAS --status` (or `--shutdown`) in the
+  scratch there; its answer is said and its exit status is the command's. No preflight,
+  nothing carried or written, nothing changed here; a destination is refused with these
+  flags. `--shutdown` removes nothing, and `asb --setup-remote ALIAS` starts the login
+  again. docs/remote.md's retiring a login uses it.
 - **`--setup-remote` makes the section's `TMPDIR`** (#344): an `env = TMPDIR=PATH` line
   whose PATH (`~` the account's home) is under the scratch has that directory made
   there, as the account, before the launch; said once, when it is made. Other `env`
   values, and a `TMPDIR` outside the scratch, are left as written.
 - **Role addenda** (#353): `.asb/roles/<role>.addendum.md` (every instance of a role,
   `implementer.addendum.md` for `implementer-1` and `-2`) and
-  `.asb/roles/<instance>.addendum.md`, beside the purpose file, are the project's part of
-  a role's purpose, so the model's purpose file stays the model's and `--init` keeps
+  `.asb/roles/<instance>.addendum.md`, beside the purpose file, are the project's part
+  of a role's purpose, so the model's purpose file stays the model's and `--init` keeps
   updating it. A role reads the purpose file, then the role's addendum, then the
   instance's, each after a line saying it extends the text above and wins where they
-  differ: the `SessionStart` hook, `briefing.md` and the change notice alike. Addenda are
-  part of the approval (`--trust` shows each, new or as a diff; a changed one refuses the
-  launch until approved, and the session is told its purpose changed), read-only inside,
-  named by `--check --role R`; an addendum no role reads is said in the review. `--init`
-  never writes one; a purpose file it keeps because you changed it, with no addendum,
-  gets the offer: the model's current text in `.asb/migrate/`, the addendum's name, and
-  the steps (write your part, remove the file and run `--init` again, `--trust`). The
-  shipped purpose files name their addenda, for a role that reads the file itself.
+  differ: the `SessionStart` hook, `briefing.md` and the change notice alike. Addenda
+  are part of the approval (`--trust` shows each, new or as a diff; a changed one
+  refuses the launch until approved, and the session is told its purpose changed),
+  read-only inside, named by `--check --role R`; an addendum no role reads is said in
+  the review. `--init` never writes one; a purpose file it keeps because you changed it,
+  with no addendum, gets the offer: the model's current text in `.asb/migrate/`, the
+  addendum's name, and the steps (write your part, remove the file and run `--init`
+  again, `--trust`). The shipped purpose files name their addenda, for a role that reads
+  the file itself.
 - **`asb --resume`, the profile's resume verb** (#355): an engine flag that resumes the
   agent's last session in the profile's own words, `[agent] resume` in its dot-file
   (claude: `resume = --continue`). The words go after the agent's own arguments and
   before a `[briefing] start` text: `asb --role R --resume claude --model x` runs
   `claude --model x --continue`, and `asb --roles A B --resume` gives every pane
-  `--resume`. After the command, `--resume` stays the agent's (`asb claude --resume ID`).
-  Refused under a profile without the key, naming `[agent] resume`, and with `--serve`,
-  `--exec`, a verb or a review. A command is still required on the line.
+  `--resume`. After the command, `--resume` stays the agent's
+  (`asb claude --resume ID`). Refused under a profile without the key, naming
+  `[agent] resume`, and with `--serve`, `--exec`, a verb or a review. A command is still
+  required on the line.
 - **`docs/remote.md`** (#344): the guide to `--setup-remote`, for you and for a
   Supervisor role proposing your commands: the two forms, prerequisites, root, what a
   run does, updates, how roles reach the login by port form, the files it touches here
@@ -378,36 +392,36 @@ names are gone; there are no aliases for removed names before 1.0.
   launch's, the host key is readable by sessions, and the proxy of its own is orphaned
   with the sandbox by a SIGKILL of the keeper's supervisor.
 - **The `sshd` profile: a sandboxed ssh login** (#335, step 4 of its plan).
-  `asb --profile sshd --role NAME`, run in a project directory, runs an OpenSSH server as
-  the role's agent, in the foreground (background it: nohup, tmux; `--shutdown` ends it
-  and every job in it), so another machine logs in to this account inside the role's
+  `asb --profile sshd --role NAME`, run in a project directory, runs an OpenSSH server
+  as the role's agent, in the foreground (background it: nohup, tmux; `--shutdown` ends
+  it and every job in it), so another machine logs in to this account inside the role's
   sandbox: commands, `bash -s`, sftp, rsync, detached jobs, pty sessions, egress only
   through the sandbox's proxy, the project's `.agent-sandbox` the policy. It needs the
   `strict` mode and exactly one agent port (`--agent-port [ADDR:]PORT` or its other
-  forms), which is where sshd listens, and `[sshd] authorized-keys = PATH`, the keys that
-  may log in, copied at each launch; the review warns when that file is inside the
+  forms), which is where sshd listens, and `[sshd] authorized-keys = PATH`, the keys
+  that may log in, copied at each launch; the review warns when that file is inside the
   project. Every session gets the launch's environment (the proxy URL with its token,
   the CA variables, the policy's `[env]`, PATH) but what sshd sets per session itself.
   The profile is self-contained: every launch runs a proxy of its own -- the installed
-  mitmdump and addon with the unit's options, on the account's port when nothing
-  listens there, else the next free one, said at launch -- a child of the role's keeper,
-  and keeps its session directory in the role's store instead of `$XDG_RUNTIME_DIR`,
-  which logind removes at the account's last logout; so no linger, unit or root is
-  needed, and the launch outlives the owner's login. A project's `[env] NAME = VALUE` is
-  set under this profile (the review says for which roles; still ignored under
-  `claude`). `install.sh` on an account with no user manager writes the unit, says so
-  and goes on. New profile-contract declarations: `profile_ro_binds`,
-  `profile_self_contained`, `profile_project_env_set`, `profile_by_name_only` and the
-  `profile_trust_notes` hook; `AGENT_SANDBOX_MITMDUMP` names the proxy's binary. See
-  `docs/profiles.md` and `docs/config.md`.
+  mitmdump and addon with the unit's options, on the account's port when nothing listens
+  there, else the next free one, said at launch -- a child of the role's keeper, and
+  keeps its session directory in the role's store instead of `$XDG_RUNTIME_DIR`, which
+  logind removes at the account's last logout; so no linger, unit or root is needed, and
+  the launch outlives the owner's login. A project's `[env] NAME = VALUE` is set under
+  this profile (the review says for which roles; still ignored under `claude`).
+  `install.sh` on an account with no user manager writes the unit, says so and goes on.
+  New profile-contract declarations: `profile_ro_binds`, `profile_self_contained`,
+  `profile_project_env_set`, `profile_by_name_only` and the `profile_trust_notes` hook;
+  `AGENT_SANDBOX_MITMDUMP` names the proxy's binary. See `docs/profiles.md` and
+  `docs/config.md`.
 - **`--agent-port ADDR:PORT` publishes an agent's port at an address of the host, not
   only its loopback** (#335, step 3 of its plan): `0.0.0.0` for every IPv4 address, or
-  one IPv4 literal; the same token in `AGENT_SANDBOX_AGENT_PORTS` and `[net] agent-port`.
-  A bare `PORT` is the host's `127.0.0.1` as before. A hostname, a CIDR and IPv6 are
-  refused, and so is one port named with two addresses. It is said loudly at launch,
-  in the review, `--check` and the briefing, and the keeper's policy carries the
-  address. In `strict` mode the nft chain lets out the replies on those ports
-  (`tcp sport { ... } ct state established accept`): a client that is not on the
+  one IPv4 literal; the same token in `AGENT_SANDBOX_AGENT_PORTS` and
+  `[net] agent-port`. A bare `PORT` is the host's `127.0.0.1` as before. A hostname, a
+  CIDR and IPv6 are refused, and so is one port named with two addresses. It is said
+  loudly at launch, in the review, `--check` and the briefing, and the keeper's policy
+  carries the address. In `strict` mode the nft chain lets out the replies on those
+  ports (`tcp sport { ... } ct state established accept`): a client that is not on the
   host's loopback was answered through the namespace's interface, which the chain
   dropped. See `docs/network.md`.
 - **`[gpu] devices = NODE ...` names a role's GPUs** (#335, step 2 of its plan), so the
@@ -425,8 +439,8 @@ names are gone; there are no aliases for removed names before 1.0.
   free port above it, or `--proxy-port N`; it records the port in
   `~/.config/agent-sandbox/proxy-port`, fills the unit's `--listen-port` from it, and a
   re-run keeps it. The engine reads the file at each launch, `AGENT_SANDBOX_PROXY_PORT`
-  overrides it, and the port goes into the proxy URL and, in `strict` mode, the nft rule;
-  `--status` names a port that is not `8888`. See `docs/network.md`.
+  overrides it, and the port goes into the proxy URL and, in `strict` mode, the nft
+  rule; `--status` names a port that is not `8888`. See `docs/network.md`.
 - **After the Gate's push the roles model's Supervisor proposes the Planner's next step
   in the same reply, and a Task already written for the waiting Implementer is asked
   about ahead and goes when the run is green** (#333). Only the Implementer's and the
@@ -521,32 +535,36 @@ names are gone; there are no aliases for removed names before 1.0.
   `NO_COLOR`).
 - **`asb --role R --summarize claude`: a stopped role's summary, from all its work**
   (#314): one headless turn of a new session in the role's sandbox, under its policy, as
-  a `--serve` turn runs (`-p`, a fresh `--session-id`, `--permission-mode
-  bypassPermissions`), reads the role's conversations, memory and files and writes its
-  summary line and a description, `<store>/summary/description.md`: what the sessions
-  worked on, what they found, what is left open, and the files they produced by their
-  host paths. It prints both, then deletes the turn's own transcript, so `--continue`
-  resumes the role's conversation and `--list` never sees the summarizer. One model
-  call; refused while the role runs, when it has no conversation, and under `--preset
-  native`. `asb --list` shows the description under the role's line, its first 5 non-blank lines and then `full description: PATH` when there is more; `asb --list-all` names it, `description: PATH`. Both print each project's line bold on a terminal (not with `NO_COLOR`).
+  a `--serve` turn runs (`-p`, a fresh `--session-id`,
+  `--permission-mode bypassPermissions`), reads the role's conversations, memory and
+  files and writes its summary line and a description, `<store>/summary/description.md`:
+  what the sessions worked on, what they found, what is left open, and the files they
+  produced by their host paths. It prints both, then deletes the turn's own transcript,
+  so `--continue` resumes the role's conversation and `--list` never sees the
+  summarizer. One model call; refused while the role runs, when it has no conversation,
+  and under `--preset native`. `asb --list` shows the description under the role's line,
+  its first 5 non-blank lines and then `full description: PATH` when there is more;
+  `asb --list-all` names it, `description: PATH`. Both print each project's line bold on
+  a terminal (not with `NO_COLOR`).
 - **A tools environment on every sandbox's PATH**: inside a sandbox `gh` was the host's
-  `/usr/bin/gh`, and Ubuntu ships 2.46 even in its newest series, without `gh pr checks
-  --json`. `install.sh` now builds a conda-forge environment with its own micromamba at
-  `~/.local/share/agent-sandbox/tools` and rebuilds it at every run, so it stays
-  current. Its packages are `~/.config/agent-sandbox/tools.txt`, one conda spec per line,
-  and `gh` without that file. A sandbox binds it read-only with its `bin/` after the
-  conda env and before the system directories, so a project's own `gh` still wins; only
-  the listed packages' commands are on PATH, not their dependencies'. A failed rebuild
-  warns and keeps the previous environment, and without one a sandbox is unchanged; it
-  applies under every preset, `--preset native` included. `--uninstall` removes it.
+  `/usr/bin/gh`, and Ubuntu ships 2.46 even in its newest series, without
+  `gh pr checks --json`. `install.sh` now builds a conda-forge environment with its own
+  micromamba at `~/.local/share/agent-sandbox/tools` and rebuilds it at every run, so it
+  stays current. Its packages are `~/.config/agent-sandbox/tools.txt`, one conda spec
+  per line, and `gh` without that file. A sandbox binds it read-only with its `bin/`
+  after the conda env and before the system directories, so a project's own `gh` still
+  wins; only the listed packages' commands are on PATH, not their dependencies'. A
+  failed rebuild warns and keeps the previous environment, and without one a sandbox is
+  unchanged; it applies under every preset, `--preset native` included. `--uninstall`
+  removes it.
 - **A test policy per project in the roles model** (#301). Nothing told the roles which
   tests a round runs, so the Implementer and the Reviewer each ran the whole suite on
   every revision -- eight full GPU runs across four rounds that changed one plotting
   module. Iterating rounds now run only the affected tests, and the Reviewer runs the
   whole suite once, when it would accept with zero findings; the Supervisor's merge rule
-  and CI are unchanged. The project supplies the two commands in `.asb/tests` (`iterate`,
-  `final`), which `--init roles` writes empty and keeps once filled; left empty, a role
-  runs what the Task says.
+  and CI are unchanged. The project supplies the two commands in `.asb/tests`
+  (`iterate`, `final`), which `--init roles` writes empty and keeps once filled; left
+  empty, a role runs what the Task says.
 - **`--init` run again says which lines the model gained that an existing section
   lacks**. It never changes a section the file has, so a key a model added later -- the
   `start = .asb/start/gate.md` of `[briefing:gate]` -- was silently absent after an
@@ -577,18 +595,18 @@ names are gone; there are no aliases for removed names before 1.0.
   memory before they report a Task done.
 - **A relaunched role runs a first turn without a keypress: `[briefing] start = PATH`**.
   After every role was launched, the Supervisor read them all as not running: a session
-  relaunched with `claude --continue` sits at its prompt until something gives it a turn,
-  so the purpose file's "at start, arm the watcher" never ran, no `alive` file was
+  relaunched with `claude --continue` sits at its prompt until something gives it a
+  turn, so the purpose file's "at start, arm the watcher" never ran, no `alive` file was
   touched, and the user typed "hi" in each terminal. `start = PATH`, in `[briefing]` or
   `[briefing:<glob>]`, names a file in the project (`{role}` its name) whose text the
   session runs as its first turn at every interactive start; the profile hands it over
-  (`profile_start_args`; claude: the prompt after its own arguments, behind a `--`, which
-  `--continue` and `--resume ID` take as the first turn -- measured with Claude Code
-  2.1.300 -- and a prompt you type wins). Not under `--serve`, `--exec`, a verb, `-p`,
-  `--bg` or `[briefing] mode = off`. Read on the host at launch; a missing file refuses
-  the launch; the review and `--check` name it. The roles model's `--init` writes one for
-  the Planners, Implementers, Reviewers and the Supervisor, `.asb/start/<role>.md`, from
-  the model's `start/`, kept as the purpose files are.
+  (`profile_start_args`; claude: the prompt after its own arguments, behind a `--`,
+  which `--continue` and `--resume ID` take as the first turn -- measured with Claude
+  Code 2.1.300 -- and a prompt you type wins). Not under `--serve`, `--exec`, a verb,
+  `-p`, `--bg` or `[briefing] mode = off`. Read on the host at launch; a missing file
+  refuses the launch; the review and `--check` name it. The roles model's `--init`
+  writes one for the Planners, Implementers, Reviewers and the Supervisor,
+  `.asb/start/<role>.md`, from the model's `start/`, kept as the purpose files are.
 - **A role's status line shows which role it is and what it is doing** (#287). Six role
   terminals looked alike, the one that needed you included. The claude profile now sets
   Claude Code's `statusLine` in the `--settings` it builds: the role (the project's name
@@ -604,31 +622,31 @@ names are gone; there are no aliases for removed names before 1.0.
   on an Esc interrupt, so an interrupted turn shows `working` until the next event.
 - **A session is told when its role's purpose file changed** since the role's previous
   launch. A relaunched role that resumed its conversation kept to the rules its earlier
-  turns followed, though the `SessionStart` hook carried the new text, until told by hand
-  to re-read it. The engine now keeps the purpose file's sha256 in the role's state
+  turns followed, though the `SessionStart` hook carried the new text, until told by
+  hand to re-read it. The engine now keeps the purpose file's sha256 in the role's state
   directory (`purpose.sha256`, beside `record.tsv`; never in the project) and, when it
   differs, adds one sentence after the purpose text in the hook and in `briefing.md`'s
   "Your role": the text is the current one and replaces what earlier turns followed.
   Nothing on a first launch or when unchanged; `--verbose` names it on the host too.
-- **A role with no terminal: `asb --role R --serve claude`** (#277). A host-side loop, in
-  the foreground, that holds the role's launch open and runs one turn of the role's
+- **A role with no terminal: `asb --role R --serve claude`** (#277). A host-side loop,
+  in the foreground, that holds the role's launch open and runs one turn of the role's
   session per change to a file: the agent with the profile's turn arguments (claude:
   `-p`, the session named by id -- `--session-id` the first time, `--resume` after --
   and `--permission-mode bypassPermissions`: with nobody to answer a prompt, Claude
   Code's prompts are off and the role is bounded by its sandbox's policy alone) and a
-  fixed prompt, joined into the launch like any other session. A new
-  `[serve]` / `[serve:ROLE]` section says what to wait on and what to say, `watch =
-  PATH` and `prompt = PATH`, both in the project; reviewed (as information), listed by
-  `--check`, accepted by `--apply`. The session id goes to `.asb/coord/R/session`, which
-  a later `--serve` resumes; a turn waits while a terminal is joined into the role; a
-  turn that fails is one line in the role's `.asb/coord/R/messages.md`;
-  `--status` shows the loop, and `--shutdown`, Ctrl-C or a TERM ends it with the launch.
-  Refused without `--role`, under `--preset native`, and for a role with no section.
-  The profile contract gains `[agent] serve-new` and `serve-resume`.
-  In the roles model, `--init` writes `[serve:...]` for every Planner, Implementer and
-  Reviewer (not the Supervisor, the Gate or setup), with the one-line prompt from the
-  model's `serve/` as `.asb/serve/<instance>.md`; the Supervisor's launch lines name
-  both forms, and how to open a terminal on a served role by its session id.
+  fixed prompt, joined into the launch like any other session. A new `[serve]` /
+  `[serve:ROLE]` section says what to wait on and what to say, `watch = PATH` and
+  `prompt = PATH`, both in the project; reviewed (as information), listed by `--check`,
+  accepted by `--apply`. The session id goes to `.asb/coord/R/session`, which a later
+  `--serve` resumes; a turn waits while a terminal is joined into the role; a turn that
+  fails is one line in the role's `.asb/coord/R/messages.md`; `--status` shows the loop,
+  and `--shutdown`, Ctrl-C or a TERM ends it with the launch. Refused without `--role`,
+  under `--preset native`, and for a role with no section. The profile contract gains
+  `[agent] serve-new` and `serve-resume`. In the roles model, `--init` writes
+  `[serve:...]` for every Planner, Implementer and Reviewer (not the Supervisor, the
+  Gate or setup), with the one-line prompt from the model's `serve/` as
+  `.asb/serve/<instance>.md`; the Supervisor's launch lines name both forms, and how to
+  open a terminal on a served role by its session id.
 - **The roles model's Supervisor coordinates, and a Gate publishes** (#274). You stay in
   the Supervisor's terminal: it sends each role its next step in the role's inbox,
   `.asb/coord/to/<role>.md` (a directory only it may write), each message shown to you
@@ -655,15 +673,15 @@ names are gone; there are no aliases for removed names before 1.0.
   environment another project owns -- a test harness against a PyTorch development
   environment. Every role activates NAME read-only; nothing clones or builds it (the
   roles model drops its setup role, the Implementers' environment clones and the
-  Supervisor's `write = 1`); the Implementers and the Supervisor get a copy-on-write layer
-  over it; the source trees of its editable installs are declared read-only. Templates
-  mark such lines `#@own` / `#@shared`, and `{editable}` names the sources. `asb --check`
-  names an active environment's editable source a role cannot read, with the
-  `asb --apply` line that declares it.
+  Supervisor's `write = 1`); the Implementers and the Supervisor get a copy-on-write
+  layer over it; the source trees of its editable installs are declared read-only.
+  Templates mark such lines `#@own` / `#@shared`, and `{editable}` names the sources.
+  `asb --check` names an active environment's editable source a role cannot read, with
+  the `asb --apply` line that declares it.
 
-- **Models compose in one `.agent-sandbox`** (#267): a template's `#@ scope = roles` line
-  makes its common block -- for `roles`, the `[sandbox]`, `[conda]`, `[connect]` and
-  `[net]` every role gets -- written once per role pattern of the model
+- **Models compose in one `.agent-sandbox`** (#267): a template's `#@ scope = roles`
+  line makes its common block -- for `roles`, the `[sandbox]`, `[conda]`, `[connect]`
+  and `[net]` every role gets -- written once per role pattern of the model
   (`[connect:planner-*]`, ..., `[connect:supervisor]`) instead of unsuffixed, where it
   reached every role of the file, a second model's included: `asb --init roles` in a
   checkout set up with `github` gave gh-review `retrieve-only` and hid its `.git`. Now
@@ -683,8 +701,8 @@ names are gone; there are no aliases for removed names before 1.0.
 - **Codecov reports per component** (`codecov.yml`): engine, proxy addon, Python
   components, claude profile, each its own number in the PR comment; every status is
   informational, so coverage movement never blocks a PR.
-- **agent-sandbox's own micromamba**: conda inside a sandbox is the sandbox's concern, so
-  a host needs no conda and a broken host install does not break a role. `install.sh`
+- **agent-sandbox's own micromamba**: conda inside a sandbox is the sandbox's concern,
+  so a host needs no conda and a broken host install does not break a role. `install.sh`
   installs a pinned micromamba (2.9.0-0, checked against SHA-256 sums pinned per
   architecture and the release's own `.sha256`) at
   `~/.local/share/agent-sandbox/micromamba/bin/micromamba`, and an empty conda root at
@@ -693,14 +711,15 @@ names are gone; there are no aliases for removed names before 1.0.
   (role-suffixable; `AGENT_SANDBOX_CONDA_BASE` wins) picks per project: under `sandbox`
   micromamba and the root are bound read-only, `MAMBA_ROOT_PREFIX` is the root, an env
   `name` resolves under its `envs/`, and nothing of the host's conda is bound. `--check`
-  and the briefing name the command (`micromamba` or the host's `conda`); `--init --env
-  NAME` makes the prefix under the base that applies. `--uninstall` asks before removing
-  the conda root (`--yes` keeps it).
+  and the briefing name the command (`micromamba` or the host's `conda`);
+  `--init --env NAME` makes the prefix under the base that applies. `--uninstall` asks
+  before removing the conda root (`--yes` keeps it).
 - **What a session hands you to run is one line or a file**: the CLI prefixes every line
   of a reply, so a heredoc, a patch or a commit message pasted from it breaks. The
   briefing says so, and names where the session's writable stores are on the host --
   `.asb/scratch/` under the role's state directory, a `copy-on-write` project's layer --
-  so the message can give `git apply PATH` or `git commit -F PATH` with a path that works.
+  so the message can give `git apply PATH` or `git commit -F PATH` with a path that
+  works.
 - **`[ssh]` and `[ssh:<role-glob>]` in `.agent-sandbox`**: SSH hosts for a project's
   sessions, per role, one per line in the forms `--ssh HOST` takes. Honoured only once
   approved; the review names each as a widening, and `--check` and the briefing name
@@ -723,8 +742,8 @@ names are gone; there are no aliases for removed names before 1.0.
   first role section. The briefing prints it, e.g. `asb --apply '[allow]' example.com`,
   where it asked the user to type lines into the file and re-run `asb --trust`.
 - **A refused host, path or project is the user's call**: the briefing tells the session
-  to stop and ask also when it could go on without it -- what it needs, what for, what it
-  would do without it, and the lines to add (`[allow:ROLE]` under a role) -- and to
+  to stop and ask also when it could go on without it -- what it needs, what for, what
+  it would do without it, and the lines to add (`[allow:ROLE]` under a role) -- and to
   continue without it only when the user says so. A session used to report the refusal
   and carry on with less.
 - **`./install.sh --rebuild-bwrap`** builds Ubuntu's own bubblewrap 0.12.0-1 source
@@ -744,20 +763,21 @@ names are gone; there are no aliases for removed names before 1.0.
   directory, a repository's subdirectory included, and `.asb/` keeps itself out of git
   with a `.gitignore` of its own (no longer a line in `.git/info/exclude`).
 - **Roles** (#136): `asb --role NAME`, a persistent instance of a project under a policy
-  of its own, selected by `[sandbox:<glob>]` and `[connect:<glob>]` sections. Each role's
-  stores are its own; two roles share the project directory and nothing else unless
-  connected.
-- **One launch per role -- the keeper** (#121, #139): the first command starts the role's
-  sandbox, and every later one joins it, with the same mounts, network and filter.
-  Background sessions run inside the role (#123), and `--shutdown` ends it. The role
-  verbs: `--status`, `--delete`, `--reset CHANNEL|PATH` (#126).
+  of its own, selected by `[sandbox:<glob>]` and `[connect:<glob>]` sections. Each
+  role's stores are its own; two roles share the project directory and nothing else
+  unless connected.
+- **One launch per role -- the keeper** (#121, #139): the first command starts the
+  role's sandbox, and every later one joins it, with the same mounts, network and
+  filter. Background sessions run inside the role (#123), and `--shutdown` ends it. The
+  role verbs: `--status`, `--delete`, `--reset CHANNEL|PATH` (#126).
 - **Path declarations** (#130, #106): a `[connect]` key with a `/` names a path, at any
-  mode, including `copy-on-write` on a directory (#150) and `own` on a file that does not
-  exist yet (#189). Declarations nest, bound by depth with channels (#196).
+  mode, including `copy-on-write` on a directory (#150) and `own` on a file that does
+  not exist yet (#189). Declarations nest, bound by depth with channels (#196).
 - **`seed-only`** (#131): seeded once, the role's own after that.
 - **Storage scopes** (#105, #125, #147): `run-scoped` (one run of the role's launch) and
-  `join-scoped` (one joined command, in a mount namespace of its own), for `own`, `copy`,
-  `seed-only` (#153), `copy-on-write` as an overlay per join (#153) and `read-only`.
+  `join-scoped` (one joined command, in a mount namespace of its own), for `own`,
+  `copy`, `seed-only` (#153), `copy-on-write` as an overlay per join (#153) and
+  `read-only`.
 - **More channels**: `config` (Claude Code's config file, filtered to this project's
   entry, #119), `transcripts` and `logs` (#120; nothing is merged back at exit),
   `artefacts` (downloads, uploads, tasks, #154), `policy` and `changelog` (#109),
@@ -769,9 +789,9 @@ names are gone; there are no aliases for removed names before 1.0.
   crosses the boundary ordered by how it reaches a session (`context`, `searched`,
   `pointed`, or `UNMEASURED`), what in `~/.claude` no channel, `hide` or `visible` line
   classifies (#82), lines with no effect, and the mount plan.
-- **The dot-file review is part of the launch** (#143): a new, changed or missing file is
-  shown (a changed one as a diff) and asked about at a terminal, and refused without one.
-  The file is read-only inside the sandbox.
+- **The dot-file review is part of the launch** (#143): a new, changed or missing file
+  is shown (a changed one as a diff) and asked about at a terminal, and refused without
+  one. The file is read-only inside the sandbox.
 - **The claude profile as data** (#173): `[agent]` (base, base-env, hide, verbs),
   `[env]`, `[allow]`, `[channel:<name>]` sections and `[preset:<name>]` rungs in its
   dot-file, with `{base}`, `{slug}`, `{slug:PATH}` and `{profile}`; Claude Code's file
@@ -785,7 +805,8 @@ names are gone; there are no aliases for removed names before 1.0.
   `gh-review-<N>`, `gh-triage-<N>` and `gh-fix-<N>` -- a reviewer, a triager and a fixer
   per pull request or issue, each seeing your built checkout and environment through a
   layer of its own. Review and triage never push; the fixer publishes over HTTPS with
-  your gh login, or with ghstack; every post is on your word, after the project's AI policy.
+  your gh login, or with ghstack; every post is on your word, after the project's AI
+  policy.
 - **`gh-setup` in the `github` model**: one per project, it builds `main` as checked out
   into the `--env` environment from the project's CI and documentation, records why in
   `.asb/setup.md` and how in `.asb/build_env.sh` -- `setup` for the full build,
@@ -798,22 +819,22 @@ names are gone; there are no aliases for removed names before 1.0.
 - **gh-review's briefing** says it once: what is on record for the PR is linked, not
   restated; a reply answers its question; what the draft leaves out is listed for the
   user to opt in; a one-line reply the user takes as their own carries no footer where
-  the project's policy allows. It files a new issue for a problem the review finds beyond
-  the PR, on your word: it looks for it on record first, shows you the draft, and runs
-  `gh issue create` when told.
+  the project's policy allows. It files a new issue for a problem the review finds
+  beyond the PR, on your word: it looks for it on record first, shows you the draft, and
+  runs `gh issue create` when told.
 - **gh-triage files a new issue for a problem the triage finds beyond the issue**, on
   your word, as gh-review does: it lists such findings with the triage, looks for each
   on record first, shows you the draft, and runs `gh issue create` when told. Labels,
   assignees and mentions only when you name them.
 - **`[net] git = fetch`**: git fetches over HTTPS, a push and `--ssh` are refused.
-- **`project = copy-on-write`**: an overlay at the project's own path, the role's writes in
-  its own layer, kept until `asb --delete`.
-- **`asb --init MODEL [ROLE=N ...] [--env NAME]`** (#225) and `models/roles/`: a project's
-  `.agent-sandbox`, `.asb/`, a purpose file per role instance, the coord index, and a
-  clone per Implementer (its tree under `.asb/impl/N/`, its history under `.asb/git/N/`)
-  written from a development model; run again with more instances, it adds what is
-  missing, and a purpose file it wrote that you have not changed since takes the
-  model's current text (one you changed is kept). It approves nothing.
+- **`project = copy-on-write`**: an overlay at the project's own path, the role's writes
+  in its own layer, kept until `asb --delete`.
+- **`asb --init MODEL [ROLE=N ...] [--env NAME]`** (#225) and `models/roles/`: a
+  project's `.agent-sandbox`, `.asb/`, a purpose file per role instance, the coord
+  index, and a clone per Implementer (its tree under `.asb/impl/N/`, its history under
+  `.asb/git/N/`) written from a development model; run again with more instances, it
+  adds what is missing, and a purpose file it wrote that you have not changed since
+  takes the model's current text (one you changed is kept). It approves nothing.
 - **`--check` says where a role can act as you** (#226): per outside service -- your
   agent's API, GitHub, SSH, forwarded credentials -- whether the role holds a credential
   there, and what its `[net]` lines leave it able to do with it.
@@ -822,25 +843,27 @@ names are gone; there are no aliases for removed names before 1.0.
 - **`[net] retrieve-only = on`** (#223), per role with `[net:<role>]`: every request but
   GET and HEAD is refused, but to the profile's own hosts -- a session that reads and
   publishes nothing. A GraphQL query to `api.github.com` passes, a mutation does not.
-- **A role's purpose** (#222): `[briefing:<glob>]` briefs those roles from a purpose file
-  (`.asb/roles/{role}.md`, or `file =`), injected after the engine's own lines at every
-  session start, read-only inside, and part of the approval -- an edit to it re-opens the
-  review.
-- **More role-suffixed sections** (#221): `[allow:<role>]`, `[env:<role>]`, `[conda:<role>]`
-  and `[net:<role>]`, as `[connect:<role>]` -- a key overrides the unsuffixed one, a list
-  adds to it. **`[deny]`**, also per role, takes hosts out of the global allowlist and the
-  session's grant, never the profile's own. **`[conda] prefix = PATH`** activates an env by
-  its path, such as a clone in a role's tree.
+- **A role's purpose** (#222): `[briefing:<glob>]` briefs those roles from a purpose
+  file (`.asb/roles/{role}.md`, or `file =`), injected after the engine's own lines at
+  every session start, read-only inside, and part of the approval -- an edit to it
+  re-opens the review.
+- **More role-suffixed sections** (#221): `[allow:<role>]`, `[env:<role>]`,
+  `[conda:<role>]` and `[net:<role>]`, as `[connect:<role>]` -- a key overrides the
+  unsuffixed one, a list adds to it. **`[deny]`**, also per role, takes hosts out of the
+  global allowlist and the session's grant, never the profile's own.
+  **`[conda] prefix = PATH`** activates an env by its path, such as a clone in a role's
+  tree.
 - **`project = read-only`** (#220): the working tree read-only for a role, with a
   read-write declaration inside it for the part it may change; `--check` shows the
   project's mode.
-- The sandbox-owned conda package cache is bound whenever a conda env is active, not only
-  in write mode (#219): an env written by path, `conda install -p`, keeps its downloads
-  across launches.
+- The sandbox-owned conda package cache is bound whenever a conda env is active, not
+  only in write mode (#219): an env written by path, `conda install -p`, keeps its
+  downloads across launches.
 - Coverage now measures the Python components: `components/join.py` and
   `components/connect-sync.py`, reported at 0%, are measured by coverage.py where they
   run -- in the engine's joins and copy syncs, and in their unit tests -- through
-  `AGENT_SANDBOX_TEST_PYTHON`, and uploaded to Codecov with the engine's and the addon's.
+  `AGENT_SANDBOX_TEST_PYTHON`, and uploaded to Codecov with the engine's and the
+  addon's.
 
 ### Changed
 
@@ -859,20 +882,21 @@ names are gone; there are no aliases for removed names before 1.0.
   role had handed `! gh pr review N --body-file .asb/scratch/review-N.md`, which fails
   pasted into a host shell, where `.asb/scratch/` is the role's private store. In
   `briefing.md`'s handing section and the short SessionStart briefing.
-- **`NO_PROXY` is `127.0.0.1,localhost` inside** (#6), in the `proxy` and `strict` modes,
-  where it was empty: a client that honours the proxy variables dials loopback directly,
-  since the proxy refuses it (codex's TUI's own MCP server failed its handshake with the
-  proxy's 502). In `proxy` mode those clients now reach the host's loopback services, as
-  a raw socket already could.
+- **`NO_PROXY` is `127.0.0.1,localhost` inside** (#6), in the `proxy` and `strict`
+  modes, where it was empty: a client that honours the proxy variables dials loopback
+  directly, since the proxy refuses it (codex's TUI's own MCP server failed its
+  handshake with the proxy's 502). In `proxy` mode those clients now reach the host's
+  loopback services, as a raw socket already could.
 
 - **The policy's signatures and sync time are in the policy channel** (#355):
   `policy-limits.json.signature.json`, `policy-limits.json.signature-iat.json`,
   `remote-settings.json.signature.json`, `remote-settings.json.signature-iat.json` and
-  `remote-settings.json.synced-at`, which Claude Code rewrites together with the bodies at
-  a refetch, are seeded with them under `inherit` and the role's own under `isolated`
+  `remote-settings.json.synced-at`, which Claude Code rewrites together with the bodies
+  at a refetch, are seeded with them under `inherit` and the role's own under `isolated`
   (starting empty; there is no template for a signature). Before, they were your native
   files in every sandbox, so a role's bodies sat beside your signatures and its refetch
-  wrote its signatures into your base. `asb --check` no longer lists them as unclassified.
+  wrote its signatures into your base. `asb --check` no longer lists them as
+  unclassified.
 - **install.sh builds the proxy's environment with its own micromamba**, from
   conda-forge, as it builds the tools env, and no longer with the host's conda or a venv
   from the host's python: a host needs neither conda nor `python3-venv`. Found at #335's
@@ -1003,14 +1027,15 @@ names are gone; there are no aliases for removed names before 1.0.
   for a served one), then the launch line with `--continue`. The new policy applies only
   to a launch that starts fresh, not to a join of one still running.
 - **The roles model's watchers are background waits, not Monitors** (#288): every role
-  runs `.asb/bin/inbox-wait` with the Bash tool in the background and runs it again after
-  each wake, so nothing expires -- a Supervisor with a Monitor per role got three expiry
-  notices and three re-arms every 30 minutes; an interactive session puts no time limit
-  on a background command (measured with Claude Code 2.1.300: 13.6 minutes idle with no
-  notice, the reply 5 s after the write). `inbox-wait [-t SECS] [-a ALIVE] FILE...` takes
-  several files and prints the one that changed, so the Supervisor runs one over every
-  role's `messages.md`; the old `FILE [SECS [ALIVE]]` form is refused. `Bash(tail:*)`
-  leaves the roles' `[permissions]`: no purpose file runs `tail` any more.
+  runs `.asb/bin/inbox-wait` with the Bash tool in the background and runs it again
+  after each wake, so nothing expires -- a Supervisor with a Monitor per role got three
+  expiry notices and three re-arms every 30 minutes; an interactive session puts no time
+  limit on a background command (measured with Claude Code 2.1.300: 13.6 minutes idle
+  with no notice, the reply 5 s after the write).
+  `inbox-wait [-t SECS] [-a ALIVE] FILE...` takes several files and prints the one that
+  changed, so the Supervisor runs one over every role's `messages.md`; the old
+  `FILE [SECS [ALIVE]]` form is refused. `Bash(tail:*)` leaves the roles'
+  `[permissions]`: no purpose file runs `tail` any more.
 - **The roles model's Planner and Supervisor are told when a Task is done and when a
   merge may be proposed**: the Reviewer accepted the Handoff, the Implementer resolved
   every finding, the Planner confirmed the step, the user accepted; not at the Planner's
@@ -1021,21 +1046,21 @@ names are gone; there are no aliases for removed names before 1.0.
   ready for merge while the review was in progress, and a Supervisor proposed the merge
   before the Planner's confirmation and the user's acceptance).
 - **`retrieve-only` admits git's fetch where `[net] git` permits one** (#280): the
-  `git-upload-pack` advertisement and endpoint pass under `git = fetch` or `git = allow`,
-  so a retrieve-only role can `git clone`, `git fetch` and `pip install git+https://...`;
-  `git-receive-pack` stays refused whatever `git` says, and `git = refuse` refuses both
-  as before. This widens what `retrieve-only` lets through, on purpose: a fetch reads, as
-  a GraphQL query does. The roles model keeps `git = refuse` in its common block; a role
-  that needs a repository gets `asb --apply '[net:ROLE]' 'git = fetch'` instead of
-  `retrieve-only = off`.
+  `git-upload-pack` advertisement and endpoint pass under `git = fetch` or
+  `git = allow`, so a retrieve-only role can `git clone`, `git fetch` and
+  `pip install git+https://...`; `git-receive-pack` stays refused whatever `git` says,
+  and `git = refuse` refuses both as before. This widens what `retrieve-only` lets
+  through, on purpose: a fetch reads, as a GraphQL query does. The roles model keeps
+  `git = refuse` in its common block; a role that needs a repository gets
+  `asb --apply '[net:ROLE]' 'git = fetch'` instead of `retrieve-only = off`.
 - **The roles model's Supervisor publishes nothing** (#274): its `[net:supervisor]` and
   `[ssh:supervisor]` sections are gone, so it runs under the common block's
   `retrieve-only = on` and `git = refuse` like every other role; it still merges into
   `main` and builds there. Publishing is the Gate's, and `[ssh:supervisor]`'s opt-in is
   `[ssh:gate]`'s. A file an earlier `--init` wrote keeps its sections: remove its
   `[net:supervisor]` sections and `[ssh:supervisor]`, and run `--init` again, which
-  writes the common block's `[net:supervisor]`, the inboxes and the Gate's sections;
-  the Supervisor's inbox directory is then
+  writes the common block's `[net:supervisor]`, the inboxes and the Gate's sections; the
+  Supervisor's inbox directory is then
   `asb --apply '[connect:supervisor]' '.asb/coord/to/ = read-write'`.
 - **CI has one gate job, `ci-ok`**, which needs every job that must pass (`check`, the
   unit shards, `integration`, `e2e`; not coverage, and not the allowed-to-fail
@@ -1063,49 +1088,49 @@ names are gone; there are no aliases for removed names before 1.0.
   list them: no dot-file line asks for them, and they reach nothing the sandbox's binds
   do not already give.
 - **`--init` and `--apply` refuse a symbolically linked `.agent-sandbox`** (exit 2): a
-  sandbox with the project read-write can create the file as a link (to `~/.bashrc`, say)
-  where none existed, and the host-side command wrote through it. **`--init` writes
+  sandbox with the project read-write can create the file as a link (to `~/.bashrc`,
+  say) where none existed, and the host-side command wrote through it. **`--init` writes
   nothing under `.asb/` through a symbolic link** either -- purpose files, the migration
   copy, `.asb/init.sums`, the coord index, inboxes, declared paths, `.asb/.gitignore`: a
   path that is a link, or under one, is skipped and said, and a file is written to a
   temporary one beside it and renamed into place.
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`
-  completes the environment's lines it wrote commented out** -- the `[conda]` sections and
-  the lines naming the env's prefix, in the sections under its `# ---- written/added by
-  asb --init MODEL ----` marks -- exactly as a first `--init` with `--env` writes them,
-  and touches nothing else (`--shared-env` likewise); the file changed, so `--trust`
-  reviews it again. It used to make the env directory and tell you to uncomment the
-  sections yourself, after the no-env run had told you to run `--init` again with
-  `--env`. A line changed by hand since is left and said, with the model's line; an
-  active `prefix = ...` line naming another environment refuses the `--init` before
-  anything is written, and a path line naming one is left and said. A file without the
-  model's mark (or with CR LF lines) is not completed: its commented environment lines
-  are named, to complete by hand. A `--shared-env` run on a file whose setup role a
-  no-env `--init` wrote says that role is left over and how to remove it, and leaves it.
-  A re-run completes the numbered instances the model's sections in the file have
-  (`implementer-2` of an earlier `implementer=2`), their environment clones included,
-  and makes none the file lacks -- a count given adds above the highest present, as a
-  first `--init` does, and drops none; a section whose commented header was changed by
-  hand keeps all its lines, each named.
+  completes the environment's lines it wrote commented out** -- the `[conda]` sections
+  and the lines naming the env's prefix, in the sections under its
+  `# ---- written/added by asb --init MODEL ----` marks -- exactly as a first `--init`
+  with `--env` writes them, and touches nothing else (`--shared-env` likewise); the file
+  changed, so `--trust` reviews it again. It used to make the env directory and tell you
+  to uncomment the sections yourself, after the no-env run had told you to run `--init`
+  again with `--env`. A line changed by hand since is left and said, with the model's
+  line; an active `prefix = ...` line naming another environment refuses the `--init`
+  before anything is written, and a path line naming one is left and said. A file
+  without the model's mark (or with CR LF lines) is not completed: its commented
+  environment lines are named, to complete by hand. A `--shared-env` run on a file whose
+  setup role a no-env `--init` wrote says that role is left over and how to remove it,
+  and leaves it. A re-run completes the numbered instances the model's sections in the
+  file have (`implementer-2` of an earlier `implementer=2`), their environment clones
+  included, and makes none the file lacks -- a count given adds above the highest
+  present, as a first `--init` does, and drops none; a section whose commented header
+  was changed by hand keeps all its lines, each named.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`
   filters through `history.jsonl.asb-summarize` beside it; a role with that directory
   read-write could point the name at any file you can write (`~/.bashrc`), and the next
-  host-side run overwrote it. Each temp is now a new file `mktemp` makes, removed on every
-  path, and keeps the file's mode (the remote's policy follows the account's umask when
-  it is new). `--setup-remote` leaves a link at `.asb/remote/.gitignore`, a dangling one
-  included, alone.
+  host-side run overwrote it. Each temp is now a new file `mktemp` makes, removed on
+  every path, and keeps the file's mode (the remote's policy follows the account's umask
+  when it is new). `--setup-remote` leaves a link at `.asb/remote/.gitignore`, a
+  dangling one included, alone.
 - **A `copy` channel's sync no longer writes through a link the sandbox left in its
-  copy.** The copy is the sandbox's to change; a dangling link at the name of one of your
-  files made the host-side sync create that file wherever the link pointed. The copy is
-  now read and written through no link: a symlink, a FIFO or another special file at the
-  name or in a parent directory is neither followed, read nor replaced, and where the sync
-  had something to write there the launch names it (a link at a file of yours that has not
-  changed is left, silently). Likewise `--trust` does not append to a `.git/info/exclude`
-  when it, `.git/info` or `.git` is a symlink, `--setup-remote` refuses a symlink at `.asb`, `.asb/remote` or the
-  remote's directory, and a read-only project's mount point is not made through a
-  dangling link; each is said.
+  copy.** The copy is the sandbox's to change; a dangling link at the name of one of
+  your files made the host-side sync create that file wherever the link pointed. The
+  copy is now read and written through no link: a symlink, a FIFO or another special
+  file at the name or in a parent directory is neither followed, read nor replaced, and
+  where the sync had something to write there the launch names it (a link at a file of
+  yours that has not changed is left, silently). Likewise `--trust` does not append to a
+  `.git/info/exclude` when it, `.git/info` or `.git` is a symlink, `--setup-remote`
+  refuses a symlink at `.asb`, `.asb/remote` or the remote's directory, and a read-only
+  project's mount point is not made through a dangling link; each is said.
 - **Two roles on one base or one account no longer strip each other's files.** When
   the first of them exited, its cleanup removed the empty mount-point files bwrap had
   created on the host (`.claude.json`, `history.jsonl`, the hook logs), expecting a
@@ -1144,10 +1169,9 @@ names are gone; there are no aliases for removed names before 1.0.
   `--preset native` gets `GH_TELEMETRY=false` and `DO_NOT_TRACK=1`, so gh does not send
   it; under `native` an opt-out is your state, so the values are your shell's, and the
   host is still refused. `--check` says so in one line; an `[allow]` line and a
-  forwarded `GH_TELEMETRY` opt in. And the hook now
-  reports refusals only after a command that failed: on `PostToolUse` it counts them as
-  seen and says nothing, for every reason. They are still in `refused.log` and
-  `blocked.log`.
+  forwarded `GH_TELEMETRY` opt in. And the hook now reports refusals only after a
+  command that failed: on `PostToolUse` it counts them as seen and says nothing, for
+  every reason. They are still in `refused.log` and `blocked.log`.
 - **A file a session named for you to read was named by its inside path** (#311): "the
   draft is ready in .asb/scratch/x.md", a path you cannot open on the host. The briefing
   now says a file named to the user is named by its host path, from the list of where
@@ -1158,25 +1182,26 @@ names are gone; there are no aliases for removed names before 1.0.
   06:00) replaced the host's file by a rename, which detached the bind in the role's
   long-lived keeper: no mount at that path in its `mountinfo`, the host's new bundle
   showing through, and `x509: certificate signed by unknown authority` for everything
-  until the role was restarted. Each join into a running role, and `--status`, now
-  check the keeper's bind and say so, loud, naming the fix
-  (`asb --role R --shutdown claude`); the join goes on. A bind still there over a host
-  bundle that changed since the launch is a one-line note, since HTTPS works. Silent
-  outside the proxy modes. See [network.md](docs/network.md#the-proxy-ca).
+  until the role was restarted. Each join into a running role, and `--status`, now check
+  the keeper's bind and say so, loud, naming the fix (`asb --role R --shutdown claude`);
+  the join goes on. A bind still there over a host bundle that changed since the launch
+  is a one-line note, since HTTPS works. Silent outside the proxy modes. See
+  [network.md](docs/network.md#the-proxy-ca).
 - **The refusal of a join that would change a running role's policy names
   `--shutdown`**: "exit what is joined into it (or `asb --role R --shutdown claude` from
-  any terminal, when its own is out of reach), then launch again" -- a role joined from a
-  terminal that is gone, or from `--serve`, has nothing to exit by hand. **So does every
-  message whose change reaches a running role only at its next keeper**: a role asked for
-  a host, the user ran `asb --apply '[allow:R]' HOST` and relaunched, but a morning session
-  of the role in another terminal was still joined, so the relaunch joined the old keeper
-  under the old policy, and the role went on being refused and recommending the same
-  `--apply`. The join's "`.agent-sandbox` has changed" line now counts the other sessions
-  still joined and ends "To apply it now, end the role from any terminal:
-  `asb --role R --shutdown claude`, then launch it again."; the briefing's "ask them to
-  relaunch" and its SSH line, the refusal hook's note on an allowlist refusal (from a new
-  `restart` file beside the briefing, checked against the engine's shape), and the Gate's
-  and `gh-fix`'s purpose files name that restart instead of "a relaunch".
+  any terminal, when its own is out of reach), then launch again" -- a role joined from
+  a terminal that is gone, or from `--serve`, has nothing to exit by hand. **So does
+  every message whose change reaches a running role only at its next keeper**: a role
+  asked for a host, the user ran `asb --apply '[allow:R]' HOST` and relaunched, but a
+  morning session of the role in another terminal was still joined, so the relaunch
+  joined the old keeper under the old policy, and the role went on being refused and
+  recommending the same `--apply`. The join's "`.agent-sandbox` has changed" line now
+  counts the other sessions still joined and ends "To apply it now, end the role from
+  any terminal: `asb --role R --shutdown claude`, then launch it again."; the briefing's
+  "ask them to relaunch" and its SSH line, the refusal hook's note on an allowlist
+  refusal (from a new `restart` file beside the briefing, checked against the engine's
+  shape), and the Gate's and `gh-fix`'s purpose files name that restart instead of "a
+  relaunch".
 - **An SSH host whose config says `IdentitiesOnly yes` refused the broker's key**: a
   `~/.ssh/config` stanza with `IdentityFile ~/.ssh/tob_ex` and `IdentitiesOnly yes`, the
   host named under `[ssh:implementer-1]`; the engine loaded `~/.ssh/tob_ex` into the
@@ -1211,16 +1236,17 @@ names are gone; there are no aliases for removed names before 1.0.
   it should be) and reported by the refusal hook next to the result, with an `--apply`
   line inviting the user to allow it; in a headless loop every reply ended with a
   sentence about the refused Datadog intake. The profile now names its agent's telemetry
-  hosts (`profile_telemetry_hosts`: `.datadoghq.com` and `browser-intake-us5-datadoghq.com`,
-  from Claude Code's network requirements), the engine writes them beside the briefing,
-  and the hook leaves a refusal of one out of its note. It is still refused and still in
-  `refused.log`; `--check` says so in one line, and the briefing in one sentence.
+  hosts (`profile_telemetry_hosts`: `.datadoghq.com` and
+  `browser-intake-us5-datadoghq.com`, from Claude Code's network requirements), the
+  engine writes them beside the briefing, and the hook leaves a refusal of one out of
+  its note. It is still refused and still in `refused.log`; `--check` says so in one
+  line, and the briefing in one sentence.
 
 - **A role's Write and Edit tools could not write its message file** in the `roles`
   model: the file was bound read-write inside the read-only `.asb/coord/`, and Claude
   Code's Write and Edit write a temp file beside the target (`NAME.tmp.PID.HEX`) and
-  rename it over the target, so the temp file failed with "read-only file system"; only a
-  shell redirect could write it (measured with Claude Code 2.1.300). Each role's
+  rename it over the target, so the temp file failed with "read-only file system"; only
+  a shell redirect could write it (measured with Claude Code 2.1.300). Each role's
   messages now live in a directory of its own, `.asb/coord/<role>/messages.md`, bound
   read-write inside the read-only `.asb/coord/`, where Write and Edit work and the other
   roles' directories stay read-only. The coord index is `--init`'s alone: it writes it
@@ -1271,15 +1297,15 @@ names are gone; there are no aliases for removed names before 1.0.
 - The overlay check could misread a racing `bwrap --help` as "no overlay", and a
   copy-on-write channel then read a fresh copy (#203).
 - `--preset native` with an active conda env under a symlinked `$HOME` path (#205).
-- A joined command keeps the terminal where the kernel blocks TIOCSTI (#166), and its exit
-  status is right on Python older than 3.9 (#164).
-- **No conda inside when no env was active in the launching shell**: a dot-file `[conda]`
-  env that is not there yet -- a role's empty `prefix`, for `gh-setup` to create -- got
-  no conda at all from a shell with `MAMBA_ROOT_PREFIX` set and nothing activated, and
-  the prefix was "ignoring"-ed. The conda base is now bound read-only whenever the file
-  names an env or prefix, active env or not, with its config, the package cache and
-  `<base>/condabin` on PATH, so the env can be created; a host with no conda base is
-  said. The briefing also shows that `asb --apply` takes any section, e.g.
+- A joined command keeps the terminal where the kernel blocks TIOCSTI (#166), and its
+  exit status is right on Python older than 3.9 (#164).
+- **No conda inside when no env was active in the launching shell**: a dot-file
+  `[conda]` env that is not there yet -- a role's empty `prefix`, for `gh-setup` to
+  create -- got no conda at all from a shell with `MAMBA_ROOT_PREFIX` set and nothing
+  activated, and the prefix was "ignoring"-ed. The conda base is now bound read-only
+  whenever the file names an env or prefix, active env or not, with its config, the
+  package cache and `<base>/condabin` on PATH, so the env can be created; a host with no
+  conda base is said. The briefing also shows that `asb --apply` takes any section, e.g.
   `asb --apply '[connect]' '~/data/ = read-only'`, where it showed `[allow]` only.
 - **`--trust` offered to git-ignore a tracked `.agent-sandbox`**: it asked whether the
   file was ignored, not whether it was tracked, and an exclude line does nothing for a
@@ -1301,22 +1327,21 @@ names are gone; there are no aliases for removed names before 1.0.
   measured on such a host, the engine's integration suite passes unchanged and
   overlay mounts work inside bubblewrap's user namespace.
 
-- **Connections**: what of your native Claude Code install reaches a project's
-  sandbox, per channel, under a mode from the scale
-  `own < copy < copy-on-write < read-only < read-write`. A **channel** is named
-  by what it carries (`instructions`, `settings`, `skills`, `agents`,
-  `workflows`, `plugins`); a **mode** says how much of the source reaches the
-  sandbox; the only **source** so far is `native`, your own `~/.claude`. The
-  order is how much of *your* files reach the sandbox, not what the sandbox may
-  do: it can write under `copy-on-write` but not under `read-only`, and
-  `read-only` is still the higher rung, because it hands over the real file
-  where `copy-on-write` gives only a shadow of one. Set with `[connect]` in an
+- **Connections**: what of your native Claude Code install reaches a project's sandbox,
+  per channel, under a mode from the scale
+  `own < copy < copy-on-write < read-only < read-write`. A **channel** is named by what
+  it carries (`instructions`, `settings`, `skills`, `agents`, `workflows`, `plugins`); a
+  **mode** says how much of the source reaches the sandbox; the only **source** so far
+  is `native`, your own `~/.claude`. The order is how much of *your* files reach the
+  sandbox, not what the sandbox may do: it can write under `copy-on-write` but not under
+  `read-only`, and `read-only` is still the higher rung, because it hands over the real
+  file where `copy-on-write` gives only a shadow of one. Set with `[connect]` in an
   approved `.agent-sandbox`, `--connect 'channel=mode [source]'`, or
-  `AGENT_SANDBOX_CONNECT` (`;`-separated), in that precedence. A channel name
-  the profile does not carry refuses the launch rather than being ignored,
-  because a typo that quietly left a channel open would read to you as a
-  channel you had closed. `--reset-connection CHANNEL` throws the sandbox's copy
-  away and re-seeds it from your files, which is the supported way back.
+  `AGENT_SANDBOX_CONNECT` (`;`-separated), in that precedence. A channel name the
+  profile does not carry refuses the launch rather than being ignored, because a typo
+  that quietly left a channel open would read to you as a channel you had closed.
+  `--reset-connection CHANNEL` throws the sandbox's copy away and re-seeds it from your
+  files, which is the supported way back.
 - **`copy` and `copy-on-write`**, the two modes that let a sandbox read your
   files without writing back. `copy` seeds from the source and refreshes
   anything the sandbox has not touched, comparing source, copy and a manifest of
@@ -1578,24 +1603,21 @@ names are gone; there are no aliases for removed names before 1.0.
   calls `id -u` rather than reading `$EUID`, because bash keeps `$EUID`
   readonly and always set, which would make the guard impossible to test
   without actually being root.
-- `install.sh --uninstall` (issue #22). It shows exactly what it will touch and
-  asks before touching it (`--dry-run` only prints, `--yes` skips the question).
-  It **repoints** `~/.local/bin/claude` at the agent's own binary rather than
-  deleting it -- the symlink is the engine, so removing it would leave no
-  `claude` on PATH, the dead end the previous entry exists for. It stops and
-  removes the proxy unit, deletes `~/.local/share/agent-sandbox`, keeps
-  `~/.config/agent-sandbox` (your allowlist and trust approvals) unless
-  `--purge-config`, and never touches the agent, `~/.mitmproxy`, or the
-  AppArmor profiles, printing the command for those instead. Anything it did
-  not create is left alone and reported, and if the agent's own binary is
-  missing it refuses to repoint into nothing and says the launcher is now
-  broken.
-  What it undoes is read from `~/.local/share/agent-sandbox/install.manifest`,
-  written at install time with a fingerprint per path (a symlink's target, a
-  file's sha256). An entry whose fingerprint no longer matches is **not acted
-  on**: it is listed with what was recorded and what is there now, and the
-  state directory is kept so a later run can finish the job. Re-running is
-  safe -- a path that is already gone is reported, not an error.
+- `install.sh --uninstall` (issue #22). It shows exactly what it will touch and asks
+  before touching it (`--dry-run` only prints, `--yes` skips the question). It
+  **repoints** `~/.local/bin/claude` at the agent's own binary rather than deleting it
+  -- the symlink is the engine, so removing it would leave no `claude` on PATH, the dead
+  end the previous entry exists for. It stops and removes the proxy unit, deletes
+  `~/.local/share/agent-sandbox`, keeps `~/.config/agent-sandbox` (your allowlist and
+  trust approvals) unless `--purge-config`, and never touches the agent, `~/.mitmproxy`,
+  or the AppArmor profiles, printing the command for those instead. Anything it did not
+  create is left alone and reported, and if the agent's own binary is missing it refuses
+  to repoint into nothing and says the launcher is now broken. What it undoes is read
+  from `~/.local/share/agent-sandbox/install.manifest`, written at install time with a
+  fingerprint per path (a symlink's target, a file's sha256). An entry whose fingerprint
+  no longer matches is **not acted on**: it is listed with what was recorded and what is
+  there now, and the state directory is kept so a later run can finish the job.
+  Re-running is safe -- a path that is already gone is reported, not an error.
 - **The launcher now actually wins on PATH.** Previously, if `claude` already
   existed at `~/.local/bin/claude` -- which is what Claude Code's own installer
   leaves -- `install.sh` declined with a warning and the agent ran
@@ -1634,30 +1656,27 @@ names are gone; there are no aliases for removed names before 1.0.
   next launch. `.claude.json` and `telemetry/` are deliberate gaps, recorded in
   `docs/design.md`: paths and an email rather than project content, and
   filtering the former risks breaking Claude Code.
-- The sandbox now tells the session what it allows (issue #15).
-  `AGENT_SANDBOX_BRIEFING` / `[briefing] mode`, **on by default**. Each launch
-  writes a briefing from the policy actually in force -- egress mode and
-  allowlist size, session `--allow` hosts, extra writable and read-only paths,
-  which projects' memory is readable, `--ssh` hosts, seccomp state -- and binds
-  it read-only at `/run/agent-sandbox/briefing.md`. The claude profile installs
-  `SessionStart` and `SubagentStart` hooks that inject a compact summary, so it
-  arrives on every launch, on `--continue`/`--resume` and again after
-  compaction: what a session is told can never be older than its launch.
-  It says both halves. A blocked action is deliberate, so retrying it or
-  routing around it only spends the budget; and what is open was opened on
-  purpose, so it should be used rather than worked around. It ends with the
-  escalation recipe, because a sandboxed agent cannot widen its own access:
-  state what you need, what for, and the exact `.agent-sandbox` lines, then ask
-  the user to run `--trust`. Names and paths only, never the contents of
-  anything shared. Turning it off grants and hides nothing; it only stops the
-  sandbox describing itself. A user-supplied `--settings` is merged rather than
-  clobbered -- specifically the last one, which is the value Claude Code would
-  have honoured, so a wrapper that overrides an earlier `--settings` behaves as
-  before. No setting of theirs is overridden, because the briefing's whole
-  contribution is a list of two hook entries: only `hooks` is written, and only
-  by appending, and an unrecognised `hooks` shape is refused rather than
-  coerced. `disableAllHooks` is respected,
-  with a note that the briefing will then not be injected.
+- The sandbox now tells the session what it allows (issue #15). `AGENT_SANDBOX_BRIEFING`
+  / `[briefing] mode`, **on by default**. Each launch writes a briefing from the policy
+  actually in force -- egress mode and allowlist size, session `--allow` hosts, extra
+  writable and read-only paths, which projects' memory is readable, `--ssh` hosts,
+  seccomp state -- and binds it read-only at `/run/agent-sandbox/briefing.md`. The
+  claude profile installs `SessionStart` and `SubagentStart` hooks that inject a compact
+  summary, so it arrives on every launch, on `--continue`/`--resume` and again after
+  compaction: what a session is told can never be older than its launch. It says both
+  halves. A blocked action is deliberate, so retrying it or routing around it only
+  spends the budget; and what is open was opened on purpose, so it should be used rather
+  than worked around. It ends with the escalation recipe, because a sandboxed agent
+  cannot widen its own access: state what you need, what for, and the exact
+  `.agent-sandbox` lines, then ask the user to run `--trust`. Names and paths only,
+  never the contents of anything shared. Turning it off grants and hides nothing; it
+  only stops the sandbox describing itself. A user-supplied `--settings` is merged
+  rather than clobbered -- specifically the last one, which is the value Claude Code
+  would have honoured, so a wrapper that overrides an earlier `--settings` behaves as
+  before. No setting of theirs is overridden, because the briefing's whole contribution
+  is a list of two hook entries: only `hooks` is written, and only by appending, and an
+  unrecognised `hooks` shape is refused rather than coerced. `disableAllHooks` is
+  respected, with a note that the briefing will then not be injected.
 - `.agent-sandbox` accepts a `[seccomp]` section with `mode = on|off`, so a
   project can ask for the syscall filter the way it already pins a network
   mode. An `AGENT_SANDBOX_SECCOMP` in your shell wins, as with `[net] mode`.
@@ -1692,22 +1711,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
-- **The seccomp filter is on by default** (issue #4). It was opt-in on the
-  understanding that it added depth to capability-dropping. A probe run showed
-  otherwise: the AppArmor profile `install.sh` installs for bwrap is
-  `flags=(unconfined)` with `userns,`, and AppArmor profiles are inherited by
-  children -- so every process under bwrap is exempt from
-  `kernel.apparmor_restrict_unprivileged_userns=1`, the restriction that would
-  otherwise stop a sandboxed agent creating a user namespace and regaining
-  capabilities in it. On an installed machine the filter is not depth, it is
-  the only control. `tests/live/seccomp.bats` had asserted the behaviour all
-  along ("without seccomp (control) ... a user namespace can be created");
-  what was missing was the cause.
-  If no filter is compiled for this architecture the engine warns at every
-  launch and runs without it, rather than refusing a tool the user never asked
-  to change -- `install.sh` only warns when it cannot build one. Asking for it
-  explicitly (`AGENT_SANDBOX_SECCOMP=on`) still refuses in that situation,
-  since what was requested cannot be delivered. `off` disables it.
+- **The seccomp filter is on by default** (issue #4). It was opt-in on the understanding
+  that it added depth to capability-dropping. A probe run showed otherwise: the AppArmor
+  profile `install.sh` installs for bwrap is `flags=(unconfined)` with `userns,`, and
+  AppArmor profiles are inherited by children -- so every process under bwrap is exempt
+  from `kernel.apparmor_restrict_unprivileged_userns=1`, the restriction that would
+  otherwise stop a sandboxed agent creating a user namespace and regaining capabilities
+  in it. On an installed machine the filter is not depth, it is the only control.
+  `tests/live/seccomp.bats` had asserted the behaviour all along ("without seccomp
+  (control) ... a user namespace can be created"); what was missing was the cause. If no
+  filter is compiled for this architecture the engine warns at every launch and runs
+  without it, rather than refusing a tool the user never asked to change -- `install.sh`
+  only warns when it cannot build one. Asking for it explicitly
+  (`AGENT_SANDBOX_SECCOMP=on`) still refuses in that situation, since what was requested
+  cannot be delivered. `off` disables it.
 - **Breaking:** memory scoping is now the default. Without any configuration,
   a session sees only the current project's directory under
   `~/.claude/projects/`; other projects' transcripts, todos and shell

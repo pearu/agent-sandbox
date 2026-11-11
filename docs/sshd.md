@@ -71,21 +71,21 @@ home = project
   project, the writable place. `CUDA_VISIBLE_DEVICES = 0` is optional: with one card
   bound it is device 0 anyway.
 - `[sshd] authorized-keys` is the file of public keys that may log in, in
-  `authorized_keys` form: an absolute path (or under `~`), outside the project, required.
-  It is copied into the role's store at every launch; sshd reads the copy. The review
-  says who may log in, and warns when the file is inside the project, which sessions
-  can write.
+  `authorized_keys` form: an absolute path (or under `~`), outside the project,
+  required. It is copied into the role's store at every launch; sshd reads the copy. The
+  review says who may log in, and warns when the file is inside the project, which
+  sessions can write.
 - `[sshd] home = project` (optional, #344) makes the project directory the sessions'
   HOME, and every session starts there: a login shell, `ssh HOST cmd`, sftp (its remote
   working directory), scp and rsync to a relative path. sshd takes a session's HOME, and
   the directory it changes into before running anything, from the account's passwd
   entry; so inside the sandbox `/etc/passwd` is the host's with that one entry's home
   field the project (the role's copy, read-only, as `/etc/group` is). The environment
-  the launch hands over cannot do it: `SetEnv HOME=...` sets HOME and leaves a session in
-  the passwd home (measured, OpenSSH 9.6). Dot-files a session's tools write (`~/.cache`,
-  `~/.bashrc` read by a login shell, ...) are then the project's. Without the line HOME
-  is as below, an empty read-only directory. Any other value refuses the launch. `asb
-  --setup-remote` writes the line into the policies it generates.
+  the launch hands over cannot do it: `SetEnv HOME=...` sets HOME and leaves a session
+  in the passwd home (measured, OpenSSH 9.6). Dot-files a session's tools write
+  (`~/.cache`, `~/.bashrc` read by a login shell, ...) are then the project's. Without
+  the line HOME is as below, an empty read-only directory. Any other value refuses the
+  launch. `asb --setup-remote` writes the line into the policies it generates.
 
 `tob`, `/home/tob/bench` and `2222` are examples: nothing in the feature names an
 account, a path or a port. The account is whoever launches, the role is `--role`, every
@@ -99,8 +99,8 @@ The owner has root; other people use the host. The login runs as a dedicated ord
 account, so whatever escapes the sandbox lands there and not in the owner's.
 
 1. Create the account: ordinary, no sudo, none of the owner's private keys or tokens,
-   not in the `video`, `render` or `gpu` groups (the sandbox binds the GPU nodes itself; NVIDIA's are
-   world-accessible, mode 0666, on the Ubuntu 24.04 host measured):
+   not in the `video`, `render` or `gpu` groups (the sandbox binds the GPU nodes itself;
+   NVIDIA's are world-accessible, mode 0666, on the Ubuntu 24.04 host measured):
 
    ```sh
    sudo adduser --disabled-password --gecos '' tob
@@ -118,13 +118,13 @@ account, so whatever escapes the sandbox lands there and not in the owner's.
    missing, run `install.sh` once in an account with sudo (the owner's own) first.
    Missing packages are named with the `apt` line to give them (`bubblewrap`, `curl`;
    `passt` and `nftables` for `strict`); the proxy's environment needs none, install.sh
-   builds it with the micromamba it fetches. The sshd binary is `openssh-server`'s. A bubblewrap below 0.12.0 is a
-   warning, and its rebuild (`install.sh --rebuild-bwrap`) is the owner's, host-wide.
-   An account that never logs in has no user manager: install.sh writes the proxy unit,
-   says `note: this account has no user manager ...`, and goes on. That is fine here:
-   the sshd profile runs a proxy of its own at every launch and needs no unit. The
-   proxy's port is the account's own (8888, or the next free one when another
-   account's proxy holds it; [network.md](network.md#its-port)).
+   builds it with the micromamba it fetches. The sshd binary is `openssh-server`'s. A
+   bubblewrap below 0.12.0 is a warning, and its rebuild (`install.sh --rebuild-bwrap`)
+   is the owner's, host-wide. An account that never logs in has no user manager:
+   install.sh writes the proxy unit, says `note: this account has no user manager ...`,
+   and goes on. That is fine here: the sshd profile runs a proxy of its own at every
+   launch and needs no unit. The proxy's port is the account's own (8888, or the next
+   free one when another account's proxy holds it; [network.md](network.md#its-port)).
 
 4. Make the project directory (the scratch), the policy in it, and the keys file outside
    it:
@@ -249,10 +249,11 @@ shape above:
   copy without the `tty` line;
 - HOME (the account's home path) an empty read-only tmpfs, the working directory a
   session starts in (with `[sshd] home = project`, HOME and that directory are the
-  project, and `/etc/passwd` is the role's copy naming it); `~/.cache` and `~/.conda` writable tmpfs, fresh at each launch;
-  under it, read-only, the tools environment on PATH and, when the launching shell had
-  one active, its conda install and `.condarc`; `~/.cache/agent-sandbox/conda-pkgs`, the
-  sandboxes' package cache, read-write; the role's sshd directory read-only;
+  project, and `/etc/passwd` is the role's copy naming it); `~/.cache` and `~/.conda`
+  writable tmpfs, fresh at each launch; under it, read-only, the tools environment on
+  PATH and, when the launching shell had one active, its conda install and `.condarc`;
+  `~/.cache/agent-sandbox/conda-pkgs`, the sandboxes' package cache, read-write; the
+  role's sshd directory read-only;
 - `/home` holding that tmpfs alone: the account's real home and other users' homes are
   not there, nor is `/root`;
 - the environment: the launch's PATH, `HTTPS_PROXY` and the other proxy variables
@@ -261,8 +262,9 @@ shape above:
   variables, `AGENT_SANDBOX=1`, the policy's `[env]`, and what sshd sets per session;
 - `nvidia-smi -L`: the one card bound, as GPU 0; `/dev` holding only the listed nodes;
 - uid the account's; `ss -ltn` inside shows sshd alone, on `0.0.0.0:PORT`;
-- `curl https://pypi.org/simple/` 200; `https://example.com/` refused by the proxy (403);
-  a direct connection (`--noproxy`) times out; the host's `127.0.0.1:8888` refused.
+- `curl https://pypi.org/simple/` 200; `https://example.com/` refused by the proxy
+  (403); a direct connection (`--noproxy`) times out; the host's `127.0.0.1:8888`
+  refused.
 
 Never in view: the account's `~/.ssh`, `~/.config` (the keys file, the trust store, the
 allowlist), its tokens and credentials, other users' homes, the host's loopback
@@ -281,7 +283,8 @@ the role's host key (see [design.md](design.md#residual-risks)).
   account's port, 8888, is in use)`). `--status` names it (`proxy: its own, at
   127.0.0.1:PORT`). One that does not come up refuses the launch, naming the keeper log.
 - **`--status`** shows the keeper, the proxy and the sshd listener with any jobs;
-  **`--shutdown`** ends the sandbox, every session and detached job in it, and the proxy.
+  **`--shutdown`** ends the sandbox, every session and detached job in it, and the
+  proxy.
 - **One launch per role.** A second launch of a running role refuses: `role 'bench' is
   running already, its sshd with it, and a second sshd cannot listen on its port. End it
   first: asb --profile sshd --role bench --shutdown`.
@@ -300,14 +303,14 @@ the role's host key (see [design.md](design.md#residual-risks)).
 - Sessions run as the account's uid, so they share it with everything else the account
   runs: a dedicated account is what keeps them apart from yours.
 - The keys file is read at launch; a change needs a relaunch.
-- `asb --list` offers an sshd role a resume line (`To resume: asb --role ROLE --agent
-  sshd --resume`, or `add --agent sshd for: ROLE` beside a claude role's), which does not
-  apply to it: the profile has no `[agent] resume`, so `--resume` is refused.
+- `asb --list` offers an sshd role a resume line
+  (`To resume: asb --role ROLE --agent sshd --resume`, or `add --agent sshd for: ROLE`
+  beside a claude role's), which does not apply to it: the profile has no
+  `[agent] resume`, so `--resume` is refused.
 - A SIGKILL of the keeper's supervisor (the process `--status` names) orphans the
   launch: measured (2026-11-01), the sandbox and its sshd keep serving logins, sessions
   stay confined but the proxy, which also keeps running, refuses their requests (407:
   the session's owner is gone), and `--status` and `--shutdown` call the role not
-  running.
-  End it by hand: `kill -KILL` the innermost `bwrap` under the role's `pasta` (`pstree
-  -p` of that pasta; it is the sandbox's pid 1), which takes sshd and its jobs along,
-  and `kill` the `mitmdump` listening on the proxy port the launch named.
+  running. End it by hand: `kill -KILL` the innermost `bwrap` under the role's `pasta`
+  (`pstree -p` of that pasta; it is the sandbox's pid 1), which takes sshd and its jobs
+  along, and `kill` the `mitmdump` listening on the proxy port the launch named.

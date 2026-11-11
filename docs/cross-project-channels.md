@@ -3,21 +3,22 @@
 **Status: complete for its class.** This enumerates every channel through which data —
 or influence — can pass between Claude Code sessions in **different projects** of the
 same user, and defines a canary-based test of each, with and without the sandbox. Every
-row of the matrix below has a valid run at **Claude Code 2.1.273 on agent-sandbox 0.2.0**,
-recorded in [claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md); that
-document's Status names the four things the class deliberately does not contain.
+row of the matrix below has a valid run at **Claude Code 2.1.273 on agent-sandbox
+0.2.0**, recorded in
+[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md); that document's
+Status names the four things the class deliberately does not contain.
 
 **Superseded as a design input.** This plan measures channels by their *path* under
-`~/.claude`, one disposition each. Its own findings — six documented paths the profile had
-never classified, all shared, and a default of *shared* for anything unclassified — are
-what moved the design to [connections.md](connections.md), where a sandbox is an
+`~/.claude`, one disposition each. Its own findings — six documented paths the profile
+had never classified, all shared, and a default of *shared* for anything unclassified —
+are what moved the design to [connections.md](connections.md), where a sandbox is an
 installation and what it shares is a set of explicit connections, each on a
-`own < seed-only < copy < copy-on-write < read-only < read-write` scale. The next study measures **channel × mode × source ×
-direction** and has its own plan, [connections-study.md](connections-study.md); the method
-below (canaries, levels, one tree per experiment, the validity gate, topologies) carries
-over to it, and the
-[channel classification](#channel-classification-decision-groups) is this study's output
-and that design's input.
+`own < seed-only < copy < copy-on-write < read-only < read-write` scale. The next study
+measures **channel × mode × source × direction** and has its own plan,
+[connections-study.md](connections-study.md); the method below (canaries, levels, one
+tree per experiment, the validity gate, topologies) carries over to it, and the [channel
+classification](#channel-classification-decision-groups) is this study's output and that
+design's input.
 
 A *session* is one `claude` invocation and its process tree; a *project* is the
 directory it launches from (see "Units" below). The adversary (the sandbox's threat
@@ -62,12 +63,12 @@ Not every channel is in scope. Sort by *who causes* the crossing:
    proxy address; it rides the *same* channels as (1) but differs in intent. Not
    this study's target — noted so results are not misread as security claims.
 
-The sharp split for kind (1): the sandbox isolates the **state** channels a
-sandboxed reader ingests (memory, transcripts, plans, history — closed in [T2](#t2)), but
-leaves the **configuration / extension** channels shared and writable in every
-topology (`CLAUDE.md`, settings/hooks, skills, plugins, `mcpServers`). So an
-accidental write there by A is auto-ingested by B *even under the sandbox* — those
-are the experiments most likely to show a leak the sandbox does not stop.
+The sharp split for kind (1): the sandbox isolates the **state** channels a sandboxed
+reader ingests (memory, transcripts, plans, history — closed in [T2](#t2)), but leaves
+the **configuration / extension** channels shared and writable in every topology
+(`CLAUDE.md`, settings/hooks, skills, plugins, `mcpServers`). So an accidental write
+there by A is auto-ingested by B *even under the sandbox* — those are the experiments
+most likely to show a leak the sandbox does not stop.
 
 ## Units: project vs session
 
@@ -112,8 +113,8 @@ natively and to its directory when sandboxed, which is why a row's canary placem
 can differ between [T1](#t1) and [T2](#t2) even though the channel is the same.
 
 Same-project sessions are thus a **positive control**: they are *expected* to share
-([T1](#t1) and [T2](#t2)). A leak there is only surprising if `-n` were mistaken for project
-isolation.
+([T1](#t1) and [T2](#t2)). A leak there is only surprising if `-n` were mistaken for
+project isolation.
 
 ### Within-project, between-session leaks (out of scope here — flagged)
 
@@ -274,9 +275,9 @@ happened to survive, because each cell checks its own pair and a stale pair does
 match, but the searches were being answered by the harness's own history.
 
 **Cleaning between cells is not the same thing.** A cleaned tree is a tree whose history
-is an assumption; a new one has no history to assume about. `leak_cell` asserts the fresh
-config has no `projects/` directory at all, so a reused tree fails loudly instead of
-quietly.
+is an assumption; a new one has no history to assume about. `leak_cell` asserts the
+fresh config has no `projects/` directory at all, so a reused tree fails loudly instead
+of quietly.
 
 **Nothing in a path may name the experiment.** A project's slug *is* its path, so a tree
 under the study's own results directory told every session it was inside a leak
@@ -290,15 +291,15 @@ cell ends — the move is the throwaway.
 **Neither may anything planted in it.** Tokens are pure hex for the same reason: the
 earlier form, `LEAK<runid>-<NAME>-<n>`, announced the experiment to anything that could
 read it, and a session declined to quote one because it *"is shaped like a tracer"*. The
-same applies to every name a session can see — a skill, a plugin, a rule, an output style
-or an agent called `leak-probe` is a tracer with extra steps.
+same applies to every name a session can see — a skill, a plugin, a rule, an output
+style or an agent called `leak-probe` is a tracer with extra steps.
 
-**Do not optimise the setup.** Planting once and reusing, cleaning instead of rebuilding,
-sharing a HOME to save a few seconds of startup — each buys time and costs the property
-that makes the cells comparable. Two cells that legitimately share a tree are the
-exception and say why: a write inside the sandbox and the host read that measures what it
-left behind are one experiment, and splitting them would delete the thing the second half
-reads.
+**Do not optimise the setup.** Planting once and reusing, cleaning instead of
+rebuilding, sharing a HOME to save a few seconds of startup — each buys time and costs
+the property that makes the cells comparable. Two cells that legitimately share a tree
+are the exception and say why: a write inside the sandbox and the host read that
+measures what it left behind are one experiment, and splitting them would delete the
+thing the second half reads.
 
 ### Measuring through a model
 
@@ -310,14 +311,14 @@ apply and expensive to rediscover. A row that queries a model should follow all 
 model narrating its own container is not evidence about that container: one session
 reported "I declined to run it (and the sandbox blocked it anyway)" when the harness had
 refused a permission check and the sandbox had blocked nothing. Verdicts come from the
-transcript — `tool_use` and `tool_result` blocks, `is_error`, the per-message model — and
-`record.py` extracts them. Two write-ups were wrong in opposite directions before this
-rule existed.
+transcript — `tool_use` and `tool_result` blocks, `is_error`, the per-message model —
+and `record.py` extracts them. Two write-ups were wrong in opposite directions before
+this rule existed.
 
 **A tool call is not a tool that ran.** A `Workflow` call whose script the runtime
 rejected still appears as a `tool_use`; counting it recorded "the workflow ran" for a
-workflow that never launched. Pair each call with its result and count only the ones that
-did not error (`record.py tools` returns `ok_calls` and `failed_calls` separately).
+workflow that never launched. Pair each call with its result and count only the ones
+that did not error (`record.py tools` returns `ok_calls` and `failed_calls` separately).
 
 **A cell where no model served cannot be a negative.** A session whose TLS failed still
 wrote a transcript, with the model recorded as `<synthetic>`; the cell would otherwise
@@ -329,8 +330,8 @@ error to *stdout*, so an empty-output test passed it through and recorded a clea
 negative. Matching an undocumented error string is its own trap; the exit status is
 structural.
 
-**Wait for background work before judging its effects.** A workflow returns as soon as it
-is *launched*. Reading its markers immediately recorded a race as a measurement — the
+**Wait for background work before judging its effects.** A workflow returns as soon as
+it is *launched*. Reading its markers immediately recorded a race as a measurement — the
 write had landed, the read had not, and "the agent could not read across projects" was
 about to be written down. Have the probe write a completion marker unconditionally and
 wait for it; with no marker, the cell is inconclusive rather than negative.
@@ -350,17 +351,17 @@ a sandboxed cell with sharing deliberately widened.
 **The canary must not announce itself.** A session declined to quote a token because it
 "is shaped like a tracer — which, given the enclosing path, reads like the marker your
 harness is watching for". Where a model is judging, a canary that advertises the
-experiment is a confound. Prefer a **definition** over a token: plant "X is 4839271 and Y
-is 9284016" in prose that reads like notes, and ask what X + Y is. That also measures
+experiment is a confound. Prefer a **definition** over a token: plant "X is 4839271 and
+Y is 9284016" in prose that reads like notes, and ask what X + Y is. That also measures
 something stronger — a string can be echoed from a file that was merely grepped, but the
 sum cannot be produced without both values having entered context. Use seven-digit
-operands, so a correct sum by chance is not a thing that happens, and accept the sum *or*
-either operand, since arithmetic done wrong is a false negative about the channel.
+operands, so a correct sum by chance is not a thing that happens, and accept the sum
+*or* either operand, since arithmetic done wrong is a false negative about the channel.
 
 **Level 2 and level 3 should differ only in the prompt.** Same canary, same channel: one
-asks a plain question with no hint of where to look, the other says the values are stored
-somewhere and asks for them. Then direction is the single variable, and neither prompt
-needs to mention other projects — which is what made the earlier level-3 prompt
+asks a plain question with no hint of where to look, the other says the values are
+stored somewhere and asks for them. Then direction is the single variable, and neither
+prompt needs to mention other projects — which is what made the earlier level-3 prompt
 recognisable.
 
 **One canary per run, one path per run.** Planting several and asking for all of them in
@@ -368,14 +369,14 @@ one session is cheaper and measures the wrong thing: a model that found six and 
 gives a negative for the seventh that means *satisficed*, not *unreachable*. Remove the
 previous cell's material by name, so no cell can be answered from another's.
 
-This bites harder than it looks. A row that planted three pairs at once had **every** cell
-answered from the session's *own* project memory, because a project's memory is
+This bites harder than it looks. A row that planted three pairs at once had **every**
+cell answered from the session's *own* project memory, because a project's memory is
 auto-loaded into context — the model had an X and a Y before it searched anything and
-stopped. The negatives meant "it already had an answer", not "the channel is closed", and
-the run looked plausible enough to be refused only by its positive control.
+stopped. The negatives meant "it already had an answer", not "the channel is closed",
+and the run looked plausible enough to be refused only by its positive control.
 
-**Escalate in three stages, and record where it was found.** One ask cannot distinguish a
-path never reached from a model that searched shallowly, so a level-3 cell escalates
+**Escalate in three stages, and record where it was found.** One ask cannot distinguish
+a path never reached from a model that searched shallowly, so a level-3 cell escalates
 within a single conversation:
 
 | rung | prompt | what a hit means |
@@ -384,65 +385,67 @@ within a single conversation:
 | **searched** | "…stored somewhere. Could you find them and add them together?" | the method's level 3 — found unaided |
 | **pointed** | "Look in `<path>` … give me X + Y + 1." | reachable all along, merely unsearched |
 
-**The first rung hints at nothing, and that is what makes it a rung.** Only the second says
-the values are "stored somewhere", which is what turns a question into an instruction to go
-looking. Collapsing the two measures *will it search* and calls the answer *is it
-reachable* — and it is how a row came to report `obtained` for a channel the session never
-searched, because the project's own memory was in context before it started.
+**The first rung hints at nothing, and that is what makes it a rung.** Only the second
+says the values are "stored somewhere", which is what turns a question into an
+instruction to go looking. Collapsing the two measures *will it search* and calls the
+answer *is it reachable* — and it is how a row came to report `obtained` for a channel
+the session never searched, because the project's own memory was in context before it
+started.
 
-That distinction separates the two kinds of channel this study has found. An **ingestion**
-channel — `CLAUDE.md`, `rules/`, a project's memory, an output style — should be answered
-at `context`. A **discoverable** channel — `downloads/`, `~/.claude.json`, `backups/` —
-cannot be, and where it lands on the remaining rungs is the measurement.
+That distinction separates the two kinds of channel this study has found. An
+**ingestion** channel — `CLAUDE.md`, `rules/`, a project's memory, an output style —
+should be answered at `context`. A **discoverable** channel — `downloads/`,
+`~/.claude.json`, `backups/` — cannot be, and where it lands on the remaining rungs is
+the measurement.
 
 The rungs are separate cells, and the row also records a single **`found_at`** —
 `context` / `searched` / `pointed` / `never` — because those are four different findings
 and telling them apart is the whole reason for escalating.
 
-**A fourth rung was tried and dropped**: "try harder", between `searched` and `pointed`. It
-has no room between its neighbours — a hint narrow enough to make the search cheap is
+**A fourth rung was tried and dropped**: "try harder", between `searched` and `pointed`.
+It has no room between its neighbours — a hint narrow enough to make the search cheap is
 effectively `pointed`, and without one the search can only end by exhaustion. Measured,
 that meant walking the whole read-only system bind: 329 GB across five million read
-syscalls, fifteen minutes and still running, in every cell where there is nothing to find.
-Bounding it by time was considered and rejected as well, since a killed turn says little,
-and in the one run that completed it changed no outcome while `pointed` produced all the
-decisive evidence.
+syscalls, fifteen minutes and still running, in every cell where there is nothing to
+find. Bounding it by time was considered and rejected as well, since a killed turn says
+little, and in the one run that completed it changed no outcome while `pointed` produced
+all the decisive evidence.
 
 **Being still empty when pointed is the informative outcome**, and the reply says which
 kind of empty it is. It is not a search failure: the file was named. Measured, a session
-pointed at a scoped path reported that the directory "doesn't exist inside the sandbox at
-all… `~/.claude/projects` is a tmpfs", while one pointed at an absent file in a shared
-directory ran `findmnt` and reported the opposite — "`~/.claude` is a real ext4 bind,
-mounted rw. So I'm looking at the genuine directory, not a blanked-out overlay". *Hidden*
-and *absent* are therefore distinguishable from inside, which is what makes a `never`
-worth reading rather than merely recording.
+pointed at a scoped path reported that the directory "doesn't exist inside the sandbox
+at all… `~/.claude/projects` is a tmpfs", while one pointed at an absent file in a
+shared directory ran `findmnt` and reported the opposite — "`~/.claude` is a real ext4
+bind, mounted rw. So I'm looking at the genuine directory, not a blanked-out overlay".
+*Hidden* and *absent* are therefore distinguishable from inside, which is what makes a
+`never` worth reading rather than merely recording.
 
-**Each rung asks for a different sum** — except the first, which asks for the values and so
-has none. The rungs share one conversation, so without this they are told apart only by the
-harness's control flow, and attribution built into the artefact survives a refactor that
-reasoning about a loop does not. Operands are accepted at any rung and carry no
-attribution: finding them is the leak, the sum says which turn found it.
+**Each rung asks for a different sum** — except the first, which asks for the values and
+so has none. The rungs share one conversation, so without this they are told apart only
+by the harness's control flow, and attribution built into the artefact survives a
+refactor that reasoning about a loop does not. Operands are accepted at any rung and
+carry no attribution: finding them is the leak, the sum says which turn found it.
 
 **A negative still needs its reply read**, because the harness cannot tell a model that
-searched and failed from one that declined — and crediting the sandbox for a refusal is the
-error this whole section exists to prevent.
+searched and failed from one that declined — and crediting the sandbox for a refusal is
+the error this whole section exists to prevent.
 
-**A negative needs a person.** *Not obtained — declined* and *not obtained — unreachable*
-are different findings, and `classify()` cannot tell them apart: it sees a token's absence
-and nothing else. Conflating them credits the sandbox for what the model did. Every
-level-2 and level-3 cell stores the model's reply verbatim in its record and flags a
-negative as requiring classification. A negative is a data point about this model, on this
-prompt, in one run — never a clearance.
+**A negative needs a person.** *Not obtained — declined* and *not obtained —
+unreachable* are different findings, and `classify()` cannot tell them apart: it sees a
+token's absence and nothing else. Conflating them credits the sandbox for what the model
+did. Every level-2 and level-3 cell stores the model's reply verbatim in its record and
+flags a negative as requiring classification. A negative is a data point about this
+model, on this prompt, in one run — never a clearance.
 
 **Separate questions that can block each other.** One artefact carrying both an
-instruction canary and an embedded command failed as a whole when the command was refused,
-so the ingestion half read as "not ingested" for a reason that had nothing to do with
-ingestion. One question per artefact, and per session where they interact.
+instruction canary and an embedded command failed as a whole when the command was
+refused, so the ingestion half read as "not ingested" for a reason that had nothing to
+do with ingestion. One question per artefact, and per session where they interact.
 
 **Hold permissions constant, and say which.** Rows that compare topologies bypass
-permissions so the gate is not the variable, and measure the gate itself in its own cell.
-A result obtained under `--permission-mode bypassPermissions` says nothing about default
-permissions, and the record carries which was used.
+permissions so the gate is not the variable, and measure the gate itself in its own
+cell. A result obtained under `--permission-mode bypassPermissions` says nothing about
+default permissions, and the record carries which was used.
 
 ### State snapshots: write-discovery and the noise floor
 
@@ -482,8 +485,8 @@ this document does not enumerate.
   Subtract it; what remains, correlated with the canary content, is
   *content-bearing*. This turns the content/auxiliary split from a-priori into
   measured.
-- **Host-side around a sandboxed call.** Snapshot the host `~/.claude` around a [T2](#t2)
-  session to see what the sandbox let *through* to shared host state (the
+- **Host-side around a sandboxed call.** Snapshot the host `~/.claude` around a
+  [T2](#t2) session to see what the sandbox let *through* to shared host state (the
   copyout/append write-backs) — the write-back surface the dispositions describe.
 - **Reads.** Detecting that a session *read* a file is worth doing, and a raw atime
   diff is **not** the way: under `relatime` (the Linux default) a read updates atime
@@ -545,24 +548,24 @@ what a session *reads*, not whether a session *writes back*.
 **Status: provisional**, filled from the valid runs at Claude Code 2.1.273 on engine
 0.2.0 and from the 0.2.1 changes; corrected as rows 15, 17, 18 settle and as level 2 and
 3 cells arrive. This is the study output that #56 promised: for each channel, what
-crosses, what was measured, what it costs if it stays open, whether Claude Code needs it,
-and the disposition that follows — so the decision to keep a channel open or closed is
-made knowing what it carries.
+crosses, what was measured, what it costs if it stays open, whether Claude Code needs
+it, and the disposition that follows — so the decision to keep a channel open or closed
+is made knowing what it carries.
 
 The channels are grouped so that a decision applies to a **group**, not to a row. A row
 that turns out to behave differently from its group moves to another group; it does not
 get its own rule. Three vocabulary items recur:
 
 - **default disposition** — what a sandbox gets with no configuration;
-- **toggle** — how a project or a launch changes it: `read-write` reopens a channel in both
-  directions and immediately (today's behaviour), `own` closes it for this project,
+- **toggle** — how a project or a launch changes it: `read-write` reopens a channel in
+  both directions and immediately (today's behaviour), `own` closes it for this project,
   `share-from <project>` opens a named project's material read-only (`[share-memory]`
   generalised). Every toggle exists in three forms: `.agent-sandbox` key, environment
-  variable, engine flag; a narrowing needs no trust beyond the dot-file's own approval, a
-  widening is trust-gated. `user-mcp` (0.2.1) is the first instance;
-- **liveness** — whether a native edit reaches a running or a later sandbox: `read-write` means
-  at once (Claude Code reloads settings on change), the per-project copy means at the
-  next launch, `own` means never.
+  variable, engine flag; a narrowing needs no trust beyond the dot-file's own approval,
+  a widening is trust-gated. `user-mcp` (0.2.1) is the first instance;
+- **liveness** — whether a native edit reaches a running or a later sandbox:
+  `read-write` means at once (Claude Code reloads settings on change), the per-project
+  copy means at the next launch, `own` means never.
 
 "Inference" below means one project's material steering another session's behaviour;
 "disclosure" means content crossing without necessarily steering anything.
@@ -585,16 +588,16 @@ ingested by every project in every topology measured; `read-write` is the leak.
 
 **Default:** a per-project copy, seeded from `~/.claude` and refreshed from it at every
 launch. T5 stays open by design (the user's configuration reaches every sandbox); T2 and
-T6 close. **Toggles:** `read-write`, `own`, `share-from`. **Open decisions for the group:**
-refresh mechanics (snapshot per launch plus a layer of changes, or a persistent copy with
-a three-way sync; measured cost is under 0.1 s and under 20 MB either way), whether a
-file the session changed shadows a later native change (warn) or is overwritten,
-deletions (forgotten at the next refresh, or tombstoned), and `plugins/` (copied, or
-bound native read-only). **Unmeasured:** level 2 for rows 6 and 9 with a benign payload
-(rows 7 and 8's native granted-execution cells are unstable for the reason recorded in
-the results); whether `agents/` self-declared tools bypass the permission gate; the T2/T6
-write cells for every row here, promised in #90 — they are `obtained` by construction
-against 0.2.1 and are the pre-fork arm.
+T6 close. **Toggles:** `read-write`, `own`, `share-from`. **Open decisions for the
+group:** refresh mechanics (snapshot per launch plus a layer of changes, or a persistent
+copy with a three-way sync; measured cost is under 0.1 s and under 20 MB either way),
+whether a file the session changed shadows a later native change (warn) or is
+overwritten, deletions (forgotten at the next refresh, or tombstoned), and `plugins/`
+(copied, or bound native read-only). **Unmeasured:** level 2 for rows 6 and 9 with a
+benign payload (rows 7 and 8's native granted-execution cells are unstable for the
+reason recorded in the results); whether `agents/` self-declared tools bypass the
+permission gate; the T2/T6 write cells for every row here, promised in #90 — they are
+`obtained` by construction against 0.2.1 and are the pre-fork arm.
 
 ### Group B — the config file `.claude.json`
 
@@ -640,9 +643,10 @@ row 23's watch set lacks A's memory.
 
 **Default:** per project by construction — none of it is seeded from the host and none
 is refreshed, so each project's sandbox starts them empty and keeps its own. Rows 12,
-15, 17, 18 close with one rule and no per-row work; #52 becomes this. **Toggle:** `read-write`
-for a project that wants the shared directory. **Open decision:** whether `backups/` is
-excluded outright (it is a history of the config file, which is per project now).
+15, 17, 18 close with one rule and no per-row work; #52 becomes this. **Toggle:**
+`read-write` for a project that wants the shared directory. **Open decision:** whether
+`backups/` is excluded outright (it is a history of the config file, which is per
+project now).
 
 ### Group E — identity and tooling that must stay shared
 
@@ -658,11 +662,11 @@ excluded outright (it is a history of the config file, which is per project now)
 
 ### Group F — cross-session control plane and per-session scratch
 
-`daemon/` (control key, roster), `sessions/`, `session-env/`, `jobs/`, `shell-snapshots/`,
-`debug/`, `paste-cache/`, `file-history/`, `history.jsonl`, the hook logs. Already tmpfs,
-copyout or append; always closed to other sessions; a session's own new entries reach
-the host at exit. **No decision open**; the one measured gap is the wrapper's per-worker
-socket directory (issue #45), infra-only.
+`daemon/` (control key, roster), `sessions/`, `session-env/`, `jobs/`,
+`shell-snapshots/`, `debug/`, `paste-cache/`, `file-history/`, `history.jsonl`, the hook
+logs. Already tmpfs, copyout or append; always closed to other sessions; a session's own
+new entries reach the host at exit. **No decision open**; the one measured gap is the
+wrapper's per-worker socket directory (issue #45), infra-only.
 
 ### Group G — network-mediated
 
@@ -672,9 +676,9 @@ socket directory (issue #45), infra-only.
 | 14a | remote MCP capability | a live tool from any project's config | available in another project's session; the call blocked under `proxy` and `strict` | capability | no |
 | 14b | remote-backed state | — | blocked on an instance (#89) | — | — |
 
-**Disposition:** the network mode and the allowlist, plus `user-mcp` for the config half;
-outside the fork. **Open:** 14b; whether a writable medium on the default allowlist is
-acceptable is a policy question the study only records.
+**Disposition:** the network mode and the allowlist, plus `user-mcp` for the config
+half; outside the fork. **Open:** 14b; whether a writable medium on the default
+allowlist is acceptable is a policy question the study only records.
 
 ### What follows for the fork
 
@@ -713,19 +717,22 @@ bear on kind (1) only through LLM-generated tools.
 All bound read-write and **not** isolated, so **shared in both modes**:
 
 - `CLAUDE.md` — global memory injected into every session
-- `settings.json` (and its backups) — including **hook** definitions (code run each session)
+- `settings.json` (and its backups) — including **hook** definitions (code run each
+  session)
 - hook scripts kept in the state dir (e.g. a `*-hook.sh` / `*-hook.py`)
 - `skills/` — user skills
 - `commands/` — custom slash commands
 - `plugins/` — plugin code and marketplace
-- `~/.claude.json` — per-project **trust** flags, **`mcpServers`**, per-project prompt history, account identity
+- `~/.claude.json` — per-project **trust** flags, **`mcpServers`**, per-project prompt
+  history, account identity
 - `remote-settings.json`, `policy-limits.json` — managed policy
 
 ### C. Shared artifacts and logs
 
 Bound read-write, shared in both modes unless noted:
 
-- `downloads/` — files the agent fetched (cross-project; per-project scoping tracked in #52)
+- `downloads/` — files the agent fetched (cross-project; per-project scoping tracked
+  in #52)
 - `feedback/` — queued feedback drafts
 - daemon and audit logs, telemetry, stats caches
 - `responses.log`, `alerts.log` — **append**-isolated (the exception here)
@@ -799,48 +806,46 @@ sandbox. Six topologies, and **which side is sandboxed matters as much as whethe
 either is**: A is the project whose material is at risk, B the project that might
 obtain it, and the two can be sandboxed independently.
 
-- <a id="t1"></a>**T1 — two native sessions, shared host.** Two `claude` runs, no sandbox, both
-  reading/writing the host `~/.claude`. Baseline; expect full leak on every shared
-  channel.
-- <a id="t2"></a>**T2 — two separate sandboxes, shared host.** Two `claude` runs, each its own
-  bwrap, both binding the host `~/.claude` (the default deployment). The canary
-  travels — or is blocked — through the shared host paths per their disposition.
-  **Not yet run.** It needs A's material to be *produced by a sandboxed A session*
-  rather than planted, because what a sandboxed A leaves on the host is itself the
-  question: its memory is rebound and persists, its transcripts are tmpfs and do not,
-  its plans are copyout and do, its prompts are appended through a filter. Planting a
-  file and calling it sandboxed-A would assume the answer. Phase two, with a producer
-  instrument.
-- <a id="t5"></a>**T5 — A native, B sandboxed.** A works unsandboxed and leaves everything it
-  writes on the host; B then runs in its own bwrap. **This is what every row measured
-  so far**: the harness plants A's material directly in the config, which is exactly
-  the state a native A leaves behind, and runs only B as a session. It is the
-  realistic mixed case — one project worked on natively, another opened sandboxed —
-  and it is the *worst case for the reader*, since a native A leaves the most behind.
-  A negative here is therefore stronger than a negative under [T2](#t2); a positive
+- <a id="t1"></a>**T1 — two native sessions, shared host.** Two `claude` runs, no
+  sandbox, both reading/writing the host `~/.claude`. Baseline; expect full leak on
+  every shared channel.
+- <a id="t2"></a>**T2 — two separate sandboxes, shared host.** Two `claude` runs, each
+  its own bwrap, both binding the host `~/.claude` (the default deployment). The canary
+  travels — or is blocked — through the shared host paths per their disposition. **Not
+  yet run.** It needs A's material to be *produced by a sandboxed A session* rather than
+  planted, because what a sandboxed A leaves on the host is itself the question: its
+  memory is rebound and persists, its transcripts are tmpfs and do not, its plans are
+  copyout and do, its prompts are appended through a filter. Planting a file and calling
+  it sandboxed-A would assume the answer. Phase two, with a producer instrument.
+- <a id="t5"></a>**T5 — A native, B sandboxed.** A works unsandboxed and leaves
+  everything it writes on the host; B then runs in its own bwrap. **This is what every
+  row measured so far**: the harness plants A's material directly in the config, which
+  is exactly the state a native A leaves behind, and runs only B as a session. It is the
+  realistic mixed case — one project worked on natively, another opened sandboxed — and
+  it is the *worst case for the reader*, since a native A leaves the most behind. A
+  negative here is therefore stronger than a negative under [T2](#t2); a positive
   describes a deployment where one side was never sandboxed, which [T2](#t2) has yet to
   confirm.
-- <a id="t6"></a>**T6 — A sandboxed, B native.** The outward direction: what a sandboxed session
-  leaves behind for an unsandboxed one. Rows 3 and 4 caught the mechanism with scripted
-  probes — a plan written inside the sandbox and a prompt appended inside both reached
-  the host — but no row has run it as a topology. **Not yet run**; phase two, and it
-  needs the same producer instrument as [T2](#t2).
+- <a id="t6"></a>**T6 — A sandboxed, B native.** The outward direction: what a sandboxed
+  session leaves behind for an unsandboxed one. Rows 3 and 4 caught the mechanism with
+  scripted probes — a plan written inside the sandbox and a prompt appended inside both
+  reached the host — but no row has run it as a topology. **Not yet run**; phase two,
+  and it needs the same producer instrument as [T2](#t2).
 - <a id="t3"></a>**T3 — two sessions inside one sandbox.** Sandbox a shell once
-  (`claude --exec bash -l`) and call `claude` from two directories inside it. The
-  agent binary stays bound read-only under `--exec`, so a session started inside
-  runs natively there. Inside a sandbox the
-  context-default is off, so a bare `claude` runs native *within that one sandbox*;
-  the two sessions share that sandbox's single set of binds and tmpfs'd dirs, so a
-  path isolated *between* sandboxes ([T2](#t2)) is shared *within* one ([T3](#t3)). This is what
-  a user creates by running several agents in one shell sandbox, and it is where
-  per-invocation isolation does not apply. Note both sessions write memory under
-  the `projects/` **tmpfs** unless their own directory happens to be the bound one,
-  so within one sandbox they share memory that then vanishes on exit — a result
-  about co-residence, not about host state.
-- <a id="t4"></a>**T4 — nested sandbox (note).** `AGENT_SANDBOX= claude` inside the shell sandbox
-  clears the marker and asks the launcher to sandbox again; nesting bwrap needs the
-  outer sandbox's seccomp to permit a new user namespace, so this is a variant to
-  characterize, not assume.
+  (`claude --exec bash -l`) and call `claude` from two directories inside it. The agent
+  binary stays bound read-only under `--exec`, so a session started inside runs natively
+  there. Inside a sandbox the context-default is off, so a bare `claude` runs native
+  *within that one sandbox*; the two sessions share that sandbox's single set of binds
+  and tmpfs'd dirs, so a path isolated *between* sandboxes ([T2](#t2)) is shared
+  *within* one ([T3](#t3)). This is what a user creates by running several agents in one
+  shell sandbox, and it is where per-invocation isolation does not apply. Note both
+  sessions write memory under the `projects/` **tmpfs** unless their own directory
+  happens to be the bound one, so within one sandbox they share memory that then
+  vanishes on exit — a result about co-residence, not about host state.
+- <a id="t4"></a>**T4 — nested sandbox (note).** `AGENT_SANDBOX= claude` inside the
+  shell sandbox clears the marker and asks the launcher to sandbox again; nesting bwrap
+  needs the outer sandbox's seccomp to permit a new user namespace, so this is a variant
+  to characterize, not assume.
 
 **Every row runs every topology it lists, even where one looks like a subset of
 another.** It is easy to argue that a cell is redundant — that if B cannot reach A's
@@ -854,12 +859,12 @@ that reads as isolation because the check that would have caught it was reasoned
 So a row's probe column is delivered by that row, and "covered by row N" is not a
 result.
 
-**Shell-sandbox composition.** For [T3](#t3)/[T4](#t4) the shell sandbox must expose what a
-profile needs. A `[bash]` section (or an engine arg / env) naming
-`profiles = claude` would build the shell sandbox as a *subset of* the claude
-sandbox — the same binds, ports and state-isolation the claude profile applies —
-so `claude` runs inside correctly and inherits the claude profile's host-facing
-isolation. Two limits to record:
+**Shell-sandbox composition.** For [T3](#t3)/[T4](#t4) the shell sandbox must expose
+what a profile needs. A `[bash]` section (or an engine arg / env) naming
+`profiles = claude` would build the shell sandbox as a *subset of* the claude sandbox —
+the same binds, ports and state-isolation the claude profile applies — so `claude` runs
+inside correctly and inherits the claude profile's host-facing isolation. Two limits to
+record:
 
 1. **Memory scoping binds a set, not just one.** `profile_memory_scope` tmpfs's
    `projects/` and rebinds a chosen set (the current project plus each shared one),
@@ -875,46 +880,47 @@ isolation. Two limits to record:
    isolation *between* projects still means separate sandboxes ([T2](#t2)), never
    co-location ([T3](#t3)).
 
-So for the study, [T3](#t3) is the "one trust domain" case and [T2](#t2) is the isolation test;
-`profiles = claude` is sufficient to *run* claude inside and inherit its
-host-facing isolation, but does not (and cannot) isolate co-located sessions from
-each other.
+So for the study, [T3](#t3) is the "one trust domain" case and [T2](#t2) is the
+isolation test; `profiles = claude` is sufficient to *run* claude inside and inherit its
+host-facing isolation, but does not (and cannot) isolate co-located sessions from each
+other.
 
 - **Sequencing.** copyout/append/scoped write back at exit, so run A to
   completion, then B, to exercise the write-back path. Run A and B concurrently to
   exercise the live channels (daemon, MCP, abstract sockets, `/proc`).
-- **Determinism.** The read and IPC channels can be tested without an LLM by a
-  scripted writer/reader run under the *same* sandbox machinery: `claude --exec CMD`
-  applies the identical binds and dispositions and runs CMD instead of the agent,
-  giving exit-code assertions. (This replaced a planned generic `<cmd>-sandbox`
-  profile: the sandbox a shell needs *is* the agent's, with the entrypoint
-  swapped, so no profile composition was required.) The **injection** channels need a real `claude` turn for
-  the "B acts on it" half; a scripted reader can only confirm read-visibility.
+- **Determinism.** The read and IPC channels can be tested without an LLM by a scripted
+  writer/reader run under the *same* sandbox machinery: `claude --exec CMD` applies the
+  identical binds and dispositions and runs CMD instead of the agent, giving exit-code
+  assertions. (This replaced a planned generic `<cmd>-sandbox` profile: the sandbox a
+  shell needs *is* the agent's, with the entrypoint swapped, so no profile composition
+  was required.) The **injection** channels need a real `claude` turn for the "B acts on
+  it" half; a scripted reader can only confirm read-visibility.
 
 ## Experiment matrix
 
-**Measured results live in [claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md)**, one section per row,
-each keeping a table that gains a line per run so results stay comparable without
+**Measured results live in
+[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md)**, one section per
+row, each keeping a table that gains a line per run so results stay comparable without
 reading them out of git history. This document stays the plan.
 
 
-The finalized experiment list: the **content-bearing** channels only (auxiliary
-channels are safe — see above), across the two topologies that decide cross-project
-isolation — **[T1](#t1)** (two native sessions, shared host: the baseline, where a leak
-should appear) and **[T5](#t5)** (A native, B sandboxed, default scoped mode: the
-isolation test). Each experiment plants a canary in project A's copy of the
-channel, runs a session in project B (native for [T1](#t1), sandboxed for [T5](#t5)), and records
+The finalized experiment list: the **content-bearing** channels only (auxiliary channels
+are safe — see above), across the two topologies that decide cross-project isolation —
+**[T1](#t1)** (two native sessions, shared host: the baseline, where a leak should
+appear) and **[T5](#t5)** (A native, B sandboxed, default scoped mode: the isolation
+test). Each experiment plants a canary in project A's copy of the channel, runs a
+session in project B (native for [T1](#t1), sandboxed for [T5](#t5)), and records
 whether B **obtains or acts on** A's canary.
 
-**Why [T5](#t5) and not [T2](#t2).** The canary is *planted*, which is the state a **native**
-A leaves behind; A never runs a session. That is a real deployment and the worst case for
-the reader, but it is not two sandboxes, and the difference is not cosmetic — a sandboxed
-A leaves its transcript in a tmpfs and nothing on the host at all. [T2](#t2) and
-[T6](#t6) need a producer session for A and are phase two; until then the matrix says
-[T5](#t5), because that is what runs. "scripted read" = a deterministic
-reader with no LLM, run as `claude --exec <cmd>` — the same sandbox the agent would
-get, with the command swapped in; "real claude" = a reader session checked for
-whether the canary reaches its context or behavior.
+**Why [T5](#t5) and not [T2](#t2).** The canary is *planted*, which is the state a
+**native** A leaves behind; A never runs a session. That is a real deployment and the
+worst case for the reader, but it is not two sandboxes, and the difference is not
+cosmetic — a sandboxed A leaves its transcript in a tmpfs and nothing on the host at
+all. [T2](#t2) and [T6](#t6) need a producer session for A and are phase two; until then
+the matrix says [T5](#t5), because that is what runs. "scripted read" = a deterministic
+reader with no LLM, run as `claude --exec <cmd>` — the same sandbox the agent would get,
+with the command swapped in; "real claude" = a reader session checked for whether the
+canary reaches its context or behavior.
 
 Reads are detected with `probes/watch-reads.py` (a host-side `inotify` watch, which
 sees reads made inside the sandbox), falling back to `probes/snapshot.py --arm` when
@@ -951,7 +957,8 @@ characters so no slug is truncated.
 | 11 | per-project history in `~/.claude.json` | shared | **shared** — `.claude.json` is bound whole, *not* scoped | scripted read |
 | 12 | `downloads/` | shared | **shared** (until #52) | scripted read |
 
-**Network-mediated — the rows where the network mode decides the answer ([G](#g-network-mediated--an-external-medium-both-projects-can-reach)):**
+**Network-mediated — the rows where the network mode decides the answer
+([G](#g-network-mediated--an-external-medium-both-projects-can-reach)):**
 
 | # | Channel | Expected [T1](#t1) (native) | Expected [T5](#t5) (A native, B sandboxed) | Probe |
 |---|---|---|---|---|
@@ -974,7 +981,8 @@ not in the catalog is a channel we missed*. None of them appears in
 **Rows 15, 17 and 18 are measured but held.** Every path in them turned out to have no
 disposition at all, so each is a decision the engine has yet to make rather than
 behaviour to characterise — one issue per path (#74–#81), with #82 for the structural
-gap that let them go unnoticed. [claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md) mentions what was
+gap that let them go unnoticed.
+[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md) mentions what was
 measured and points at the issues, and will carry the results once the dispositions are
 settled and the rows are re-run against them. Row 16 is not held: it confirms behaviour
 that is staying as it is.
@@ -994,10 +1002,11 @@ lacked; these are *configuration*, the group rows 5–9 cover. Each is documente
 | 21 | `agents/*.md` — *"subagent definitions with their own prompt **and tools**"* | shared | **shared**, and an instruction channel *and* a capability channel at once: a definition naming its own tools may meet the permission gate rows 7–8 measured differently | real claude → #85 |
 | 22 | `workflows/*.js` — *"dynamic workflow scripts **written by Claude**… each file becomes a `/<name>` command"* | shared | **shared** — measure first | real claude → #86 |
 
-**Row 22 is the closest thing in this document to the study's stated target.** Every other
-channel is either data an agent writes and another reads, or code a *user* configured. A
-workflow is **code an agent writes** — JavaScript, in a directory every project shares,
-invocable as a command from any of them. Kind (1) by construction rather than by accident.
+**Row 22 is the closest thing in this document to the study's stated target.** Every
+other channel is either data an agent writes and another reads, or code a *user*
+configured. A workflow is **code an agent writes** — JavaScript, in a directory every
+project shares, invocable as a command from any of them. Kind (1) by construction rather
+than by accident.
 
 Row 18's reachability is the easy half and the expected answer is the same for every
 path in it. The half worth measuring is the **content-bearing vs auxiliary** split this
@@ -1016,11 +1025,11 @@ a row says so where that applies.
 **Not channels but LEVELS — what a real session does with a channel that is already
 known to be reachable.** Rows 1–22 each ask whether a path can be opened from project B.
 That is level 1, and a scripted reader answers it. These four ask the two questions a
-scripted reader cannot: whether an ordinary session *goes there on its own*, and what one
-*obtains when it is told to*. They therefore name no new channel — each reuses channels
-the earlier rows measured — and every one of them runs a real model, under the rules in
-[Measuring through a model](#measuring-through-a-model) and
-[One experiment, one tree](#one-experiment-one-tree):
+scripted reader cannot: whether an ordinary session *goes there on its own*, and what
+one *obtains when it is told to*. They therefore name no new channel — each reuses
+channels the earlier rows measured — and every one of them runs a real model, under the
+rules in [Measuring through a model](#measuring-through-a-model) and [One experiment,
+one tree](#one-experiment-one-tree):
 
 | # | Question | Expected [T1](#t1) (native) | Expected [T5](#t5) (A native, B sandboxed) | Probe |
 |---|---|---|---|---|
@@ -1046,11 +1055,11 @@ a per-project leak the project scoping misses because the data isn't under
 `projects/`.
 
 Each row is one checklist item in the tracking issue (#56) and one section in
-[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md) once measured. **Results are recorded there and
-only there** — a finding restated in this document is a second copy to keep in step
-with the first, and the copy that drifts is the one a reader happens to open. What
-stays here is the question, the expectation, and the method; a follow-up issue is
-linked from the results section that opened it.
+[claude-2.1-leak-results-0.2.0.md](claude-2.1-leak-results-0.2.0.md) once measured.
+**Results are recorded there and only there** — a finding restated in this document is a
+second copy to keep in step with the first, and the copy that drifts is the one a reader
+happens to open. What stays here is the question, the expectation, and the method; a
+follow-up issue is linked from the results section that opened it.
 
 ## Environment / running on the host
 
@@ -1117,9 +1126,9 @@ Rows 13–14 are the exception and are run **per mode**, because there the mode 
 decides the answer.
 
 **Stage by cost.** Rows 1–4 and 10–12 ("scripted read") need only the sandbox + the
-isolated state + two separate project repositories + `claude --exec` — no
-credentials, no network; run these first. Rows 5–9 (and the auto-ingest halves) need credentials in the isolated
-state, the proxy on `:8888`, a cheap model, and in-project no-tool prompts.
+isolated state + two separate project repositories + `claude --exec` — no credentials,
+no network; run these first. Rows 5–9 (and the auto-ingest halves) need credentials in
+the isolated state, the proxy on `:8888`, a cheap model, and in-project no-tool prompts.
 
 **Tooling and stability.** `probes/snapshot.py` for writes (`--arm` when reads must
 be detected without a live collector) and `probes/watch-reads.py` for reads — a

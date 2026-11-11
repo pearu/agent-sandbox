@@ -6,18 +6,17 @@ Supervisor coordinates them, and a Gate publishes what you accept. You decide, f
 Supervisor's terminal, and every message between the roles passes your approval there:
 one by one, or, for the revisions between an Implementer and its Reviewer within a Task,
 once, when the Task opens; two notices to the Planner, the Reviewer's acceptance and a
-merged step's green CI run, go on their own (section 5).
-`asb --init roles` sets a project up for it; this page says what each role may do, how
-the work moves, and how to run a round. Why it is built this way is in
-[design.md](design.md#the-roles-model).
+merged step's green CI run, go on their own (section 5). `asb --init roles` sets a
+project up for it; this page says what each role may do, how the work moves, and how to
+run a round. Why it is built this way is in [design.md](design.md#the-roles-model).
 
 ## 1. What a role is
 
 One sandbox keeps a project apart from your other projects. Within a project, sessions
 share everything -- right for one person working alone, wrong once sessions have
-different jobs: an Implementer's memory and conversations hold its reasoning, tried paths
-included, and a Reviewer should judge the change against `main`, not against how the
-Implementer got there.
+different jobs: an Implementer's memory and conversations hold its reasoning, tried
+paths included, and a Reviewer should judge the change against `main`, not against how
+the Implementer got there.
 
 A **role** is a named, persistent instance of a project with a policy of its own
 (`asb --role NAME`): its own memory, its own transcripts, and the paths and network its
@@ -25,10 +24,10 @@ section of `.agent-sandbox` gives it. Three rules hold throughout:
 
 1. **A role is its inputs and its outputs.** It reads its inputs, writes its outputs,
    and has nothing else.
-2. **The boundary is enforced; the purpose is told.** What a role *cannot* do is a mount,
-   a refused request or a missing credential, held outside the agent. What a role is
-   *for* -- report, do not fix; ask before installing -- is in its purpose file, which
-   the agent is given at every start. This page says which is which, every time.
+2. **The boundary is enforced; the purpose is told.** What a role *cannot* do is a
+   mount, a refused request or a missing credential, held outside the agent. What a role
+   is *for* -- report, do not fix; ask before installing -- is in its purpose file,
+   which the agent is given at every start. This page says which is which, every time.
 3. **You are between every pair of roles.** A role that writes an artefact says where,
    and hands it to nobody; a role reads one when its inbox tells it to, and only the
    Supervisor writes the inboxes, each message after you approved it, or, within a Task
@@ -58,8 +57,8 @@ which is whose.
 | **Scratch** | each role | that role only | test scripts, probes, notes: `.asb/scratch/`, private to each role at the same path, kept across its launches |
 
 Every instance has a **handle** you and the roles address it by: `P1`, `P2`, `I1`, `I2`,
-`R1`, `S`, `G`. The dot-file keeps the names (`implementer-1`); the purpose file says "you are
-`implementer-1`, called I1". The handle is what makes your sentences short.
+`R1`, `S`, `G`. The dot-file keeps the names (`implementer-1`); the purpose file says
+"you are `implementer-1`, called I1". The handle is what makes your sentences short.
 
 ## 3. The roles
 
@@ -155,13 +154,12 @@ notifies a person, so the Gate posts it only after you approve it in the Gate's 
 terminal, where the Supervisor sends you. Its terminal stays open: it arms a watcher on
 its inbox at start, as every role does, and wakes on the Supervisor's message; its
 `[serve:gate]` has `watch` alone, so the watcher is enforced and the Gate is never
-served. The trade-off is yours: the role with the outward credentials is always
-running, no longer only while you sit at it.
-A push to an SSH `origin` needs its host in the file: `--init` writes `[ssh:gate]` with
-it commented out, and the Gate sends back the exact line, `asb --apply '[ssh:gate]'
-github.com` (the host of `origin`); with it on, a launch can add `--ssh-timeout 30m`.
-Mail needs a route the file grants (an allow line for the mail API host); out of the
-box, gh and ssh.
+served. The trade-off is yours: the role with the outward credentials is always running,
+no longer only while you sit at it. A push to an SSH `origin` needs its host in the
+file: `--init` writes `[ssh:gate]` with it commented out, and the Gate sends back the
+exact line, `asb --apply '[ssh:gate]' github.com` (the host of `origin`); with it on, a
+launch can add `--ssh-timeout 30m`. Mail needs a route the file grants (an allow line
+for the mail API host); out of the box, gh and ssh.
 
 | | |
 |---|---|
@@ -251,13 +249,13 @@ Every role launches from the repository itself:
   A Task the Planner has already written for that Implementer is asked about while the
   run is in, and on your yes it goes at green without another question; red lapses that
   yes.
-- **Environments.** The development environment is a conda environment you name
-  (`x-dev` here): `main`'s, the Supervisor installs into it, you activate it on the host.
-  Each Implementer gets a clone of it in its tree, `.asb/impl/N/.env`, and installs
-  there -- `conda install -p .asb/impl/1/.env ...`. A package a change needs goes into
-  the specification (`environment.yml`), so it travels in the diff; each role updates
-  its own environment from it (`conda env update -p ... -f environment.yml --prune`).
-  A Reviewer runs an Implementer's build with that environment, by path.
+- **Environments.** The development environment is a conda environment you name (`x-dev`
+  here): `main`'s, the Supervisor installs into it, you activate it on the host. Each
+  Implementer gets a clone of it in its tree, `.asb/impl/N/.env`, and installs there --
+  `conda install -p .asb/impl/1/.env ...`. A package a change needs goes into the
+  specification (`environment.yml`), so it travels in the diff; each role updates its
+  own environment from it (`conda env update -p ... -f environment.yml --prune`). A
+  Reviewer runs an Implementer's build with that environment, by path.
 - **An Implementer's build.** Its environment is a clone of `x-dev`, and a clone copies
   the editable install too: the project in it points at the parent checkout, not at
   `.asb/impl/N/`. A Python-only change is seen once the clone's environment imports from
@@ -448,22 +446,19 @@ On the host, at the top of the repository:
 purpose file per instance in `.asb/roles/`, the coord index, an empty inbox per role in
 `.asb/coord/to/`, the watcher `.asb/bin/inbox-wait`, the per-turn prompt of each
 Planner, Implementer and Reviewer in `.asb/serve/` (for `--serve`, below), the first
-turn of every start of each Planner, Implementer, Reviewer, the Supervisor and the
-Gate in
-`.asb/start/` (`[briefing] start`: a relaunched role arms its watcher and reads its
-inbox without a keypress), the project's test commands in `.asb/tests` (two empty
-lines for you to fill: Test economy, section 4), and
-`.asb/.gitignore`
-(`.asb/` is never committed); it makes each Implementer's clone (with your git identity) and,
-with `--env`, its environment. Without counts you get one of each role; `reviewer=0`
-leaves one out. Without `--env` the `[conda]` sections are written commented out;
+turn of every start of each Planner, Implementer, Reviewer, the Supervisor and the Gate
+in `.asb/start/` (`[briefing] start`: a relaunched role arms its watcher and reads its
+inbox without a keypress), the project's test commands in `.asb/tests` (two empty lines
+for you to fill: Test economy, section 4), and `.asb/.gitignore` (`.asb/` is never
+committed); it makes each Implementer's clone (with your git identity) and, with
+`--env`, its environment. Without counts you get one of each role; `reviewer=0` leaves
+one out. Without `--env` the `[conda]` sections are written commented out;
 `asb --init roles --env x-dev` run on that file later completes them, the lines naming
 the environment included, exactly as a first `--init` with it writes them, and changes
 nothing else: a line you changed is left and said; an active `prefix = ...` line naming
 another environment refuses the `--init`, while a path line (`PREFIX/ = ...`) naming one
-is left and said (`--init` never rewrites a prefix). It
-approves nothing -- `asb --trust` does, after you have read the file and the purpose
-files.
+is left and said (`--init` never rewrites a prefix). It approves nothing --
+`asb --trust` does, after you have read the file and the purpose files.
 
 `--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
 under the conda base that applies, and says to launch the setup role,
@@ -476,48 +471,47 @@ The model's common block -- what every role gets -- is written once per role pat
 hold another model too: `asb --init github` in the same checkout adds the `gh-*` roles,
 which keep the github model's policy. Two models whose role names overlap are refused.
 
-**Another project's environment.** A project with no build of its own -- a benchmark
-or a test harness -- often runs against an environment another checkout builds, a
-PyTorch development environment for example. `--shared-env NAME` in place of `--env NAME`
-says so: every role activates NAME read-only, nothing clones or builds it (no setup
-role, no Implementer environments, no `write = 1` for the Supervisor), and the
-Implementers and the Supervisor get `NAME/ = copy-on-write`, so what they install for
-this project lands in a layer of their own and reaches neither the other project nor
-each other. The source trees NAME's editable installs import from (its `direct_url.json`,
-`.egg-link` and `.pth` entries) are declared read-only for every role, so its imports work
-inside. NAME must be built; `--init` refuses one that is not. `asb --check` names an
-active environment's editable source a role cannot read, with the `asb --apply` line that
+**Another project's environment.** A project with no build of its own -- a benchmark or
+a test harness -- often runs against an environment another checkout builds, a PyTorch
+development environment for example. `--shared-env NAME` in place of `--env NAME` says
+so: every role activates NAME read-only, nothing clones or builds it (no setup role, no
+Implementer environments, no `write = 1` for the Supervisor), and the Implementers and
+the Supervisor get `NAME/ = copy-on-write`, so what they install for this project lands
+in a layer of their own and reaches neither the other project nor each other. The source
+trees NAME's editable installs import from (its `direct_url.json`, `.egg-link` and
+`.pth` entries) are declared read-only for every role, so its imports work inside. NAME
+must be built; `--init` refuses one that is not. `asb --check` names an active
+environment's editable source a role cannot read, with the `asb --apply` line that
 declares it, whichever way the file was written.
 
 Run it again with more instances (`implementer=3`) and it adds what is missing --
 sections, purpose file, clone -- and changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.
-One you changed is kept, and said so. The changed files need `asb --trust` again.
-A section the file has is never changed (but for the environment's lines, above), so
-a line the model gained since (a key that section lacks, a host or rule not in it) is
-reported at the end, loud, with one
-`asb --apply '[SECTION]' LINE...` per section to add it; a line you commented out, or a
-key whose value you changed, is yours and is not. A common section (unsuffixed, such as
-`[agent]`) is written only with a new file, so one the file lacks is reported the same
-way (`asb --apply '[agent]' 'command = claude'` for a file from before #355).
-A role relaunched after its purpose file changed is told so at session start: a resumed
-conversation would otherwise keep to the rules its earlier turns followed, so the
-briefing says the current text replaces them (the hash is kept in the role's state, not
-the project).
+One you changed is kept, and said so. The changed files need `asb --trust` again. A
+section the file has is never changed (but for the environment's lines, above), so a
+line the model gained since (a key that section lacks, a host or rule not in it) is
+reported at the end, loud, with one `asb --apply '[SECTION]' LINE...` per section to add
+it; a line you commented out, or a key whose value you changed, is yours and is not. A
+common section (unsuffixed, such as `[agent]`) is written only with a new file, so one
+the file lacks is reported the same way (`asb --apply '[agent]' 'command = claude'` for
+a file from before #355). A role relaunched after its purpose file changed is told so at
+session start: a resumed conversation would otherwise keep to the rules its earlier
+turns followed, so the briefing says the current text replaces them (the hash is kept in
+the role's state, not the project).
 
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:
-`.asb/roles/implementer.addendum.md` for every Implementer, `.asb/roles/implementer-1.addendum.md`
-for that one (`supervisor.addendum.md` for the one Supervisor). The purpose file is the
-model's: the role's general purpose and its relations to the other roles, which `--init`
-keeps updating; the addendum is free text, and extends it and overrides it where they
-differ -- it need not copy the model's structure, which would go stale. A role reads the
-purpose file, then the role's addendum, then the instance's, each after a line saying
-so, at every start; the purpose files say where their addenda are, for a role that reads
-the file itself. `--init` never writes or changes an addendum. An addendum is approved
-with `asb --trust` as a purpose file is, a changed one refuses the launch until it is,
-the session is told its purpose changed, and `asb --check --role NAME` names the addenda
-a role reads.
+`.asb/roles/implementer.addendum.md` for every Implementer,
+`.asb/roles/implementer-1.addendum.md` for that one (`supervisor.addendum.md` for the
+one Supervisor). The purpose file is the model's: the role's general purpose and its
+relations to the other roles, which `--init` keeps updating; the addendum is free text,
+and extends it and overrides it where they differ -- it need not copy the model's
+structure, which would go stale. A role reads the purpose file, then the role's
+addendum, then the instance's, each after a line saying so, at every start; the purpose
+files say where their addenda are, for a role that reads the file itself. `--init` never
+writes or changes an addendum. An addendum is approved with `asb --trust` as a purpose
+file is, a changed one refuses the launch until it is, the session is told its purpose
+changed, and `asb --check --role NAME` names the addenda a role reads.
 
 A purpose file you changed before addenda existed is kept by `--init`, which then
 offers the move: the model's current text in `.asb/migrate/<instance>.md`, the
@@ -542,19 +536,20 @@ inbox and, at each change, runs one turn of the role's session in its sandbox --
 file's inbox rule ...", under `--permission-mode bypassPermissions`. Nobody is there to
 answer a prompt, so Claude Code's prompts are off: **a served role is bounded by its
 policy alone** -- its mounts, its network, the syscall filter -- which the sandbox
-enforces outside the agent whatever the agent decides. The `[permissions]` lines are
-for the roles at a terminal, where a prompt has you to answer it. That is why the Gate,
-whose policy can publish, is never served. The purpose file's inbox rule does the work -- `ack N`, act, report,
-`done N` -- and the turn ends. What it waits on and what it says is the role's
-`[serve:implementer-1]` section, which `--init` writes (`watch =
-.asb/coord/to/implementer-1.md`, `prompt = .asb/serve/implementer-1.md`, the prompt
-file from the model's `serve/`); the loop touches `.asb/coord/<role>/alive` each second,
-as the watcher in a terminal does, so the Supervisor sees the role running.
+enforces outside the agent whatever the agent decides. The `[permissions]` lines are for
+the roles at a terminal, where a prompt has you to answer it. That is why the Gate,
+whose policy can publish, is never served. The purpose file's inbox rule does the work
+-- `ack N`, act, report, `done N` -- and the turn ends. What it waits on and what it
+says is the role's `[serve:implementer-1]` section, which `--init` writes
+(`watch = .asb/coord/to/implementer-1.md`, `prompt = .asb/serve/implementer-1.md`, the
+prompt file from the model's `serve/`); the loop touches `.asb/coord/<role>/alive` each
+second, as the watcher in a terminal does, so the Supervisor sees the role running.
 
 - **The session id.** The first turn makes the session with a fresh id and writes it to
   `.asb/coord/<role>/session`; every later turn, and the next `--serve`, resumes it, so
   the role remembers its earlier messages. To talk to it yourself, open that session in
-  a terminal: `asb --role implementer-1 claude --resume $(cat .asb/coord/implementer-1/session)`.
+  a terminal:
+  `asb --role implementer-1 claude --resume $(cat .asb/coord/implementer-1/session)`.
 - **A reset.** An empty `.asb/coord/to/<role>.reset` -- in the inboxes' directory,
   which only the Supervisor writes -- makes the next turn a new session: a fresh id,
   told the prompt as every turn is, written to `.asb/coord/<role>/session`, and the
@@ -585,10 +580,10 @@ say "watch only".
 ## 7. GitHub: reading for everyone, publishing for the Gate
 
 The roles read issues and pull requests with `gh`, using your gh login (`gh auth login`
-on the host); the model's dot-file gives it to every role with `gh = read-only`. What keeps every role but the Gate from
-writing with it is the network: `retrieve-only` lets `gh` read and refuses what writes
--- a GraphQL query passes, a mutation does not -- and `git = refuse` stops git's
-transport.
+on the host); the model's dot-file gives it to every role with `gh = read-only`. What
+keeps every role but the Gate from writing with it is the network: `retrieve-only` lets
+`gh` read and refuses what writes -- a GraphQL query passes, a mutation does not -- and
+`git = refuse` stops git's transport.
 
 **Recommended: a token that cannot write.** The network bounds what a role *does* with
 the token; it cannot stop the token itself from being sent out in a request to an
@@ -607,10 +602,10 @@ What `asb --init roles planner=2 implementer=2 reviewer=1` writes, verbatim. Wit
 `--env` the `[conda]` sections and the lines naming the environment are written
 commented out; with `--env x-dev` they name its prefix. A Planner's material is a
 read-only line you add in its own section -- `~/refs/parsing/ = read-only` under
-`[connect:planner-1]` -- so no other instance loads it. **Enforced, for a network
-line** (`retrieve-only`, `[deny]`, `git = refuse`) **means under `mode = strict`**, which
-this file sets for every role: there nothing but the proxy is routed. Under
-`proxy`, those lines bind only the tools that use the proxy.
+`[connect:planner-1]` -- so no other instance loads it. **Enforced, for a network line**
+(`retrieve-only`, `[deny]`, `git = refuse`) **means under `mode = strict`**, which this
+file sets for every role: there nothing but the proxy is routed. Under `proxy`, those
+lines bind only the tools that use the proxy.
 
 ```ini
 # ---- written by asb --init roles ----
@@ -829,11 +824,11 @@ the others report there, and you go to one only to talk to it. A role's purpose,
 and protocol are in its context at every start, so your sentences can be short. You
 read the artefacts on the host as files.
 
-**Terminal 1 -- the Supervisor.** `asb --role supervisor --resume`. It prints
-the launch line of every other role; open a terminal for each of P1, I1, I2, R1 and G and
-run its line there (a role arms its inbox watcher at start, and waits) -- or run
-`asb --role NAME --serve` in panes you need not watch, a turn per message
-(section 6). The last line it prints opens them all at once, in a second terminal:
+**Terminal 1 -- the Supervisor.** `asb --role supervisor --resume`. It prints the launch
+line of every other role; open a terminal for each of P1, I1, I2, R1 and G and run its
+line there (a role arms its inbox watcher at start, and waits) -- or run
+`asb --role NAME --serve` in panes you need not watch, a turn per message (section 6).
+The last line it prints opens them all at once, in a second terminal:
 
     asb --roles planner-1 implementer-1 implementer-2 reviewer-1 gate --resume
 
@@ -844,19 +839,19 @@ top and I1, I2, R1 and G are below it. A sixth role starts the next window, laid
 same way. A window is named by its first role, each pane's border shows its role, and
 the first window opens with its top pane active. Every pane starts in the project and
 runs `asb --role ROLE --resume`. The roles end at the first word that starts with `-`,
-and every engine flag around them reaches each pane (`asb --roles planner-1 reviewer-1
---serve` is two served roles). There is no command: each pane runs its role's agent,
-the `[agent:<glob>]` or `[agent]` command of `.agent-sandbox` (the roles model writes
-`[agent] command = claude`), and `--agent` on the line names one for this round
-(`--agent reviewer-1=codex` puts `--agent codex` in reviewer-1's pane alone; a bare
-`--agent claude` goes to every pane). A word after the roles that names an agent is
-refused, as is a command after the engine flags: native arguments go in `command =`.
-It reviews `.agent-sandbox` once, there, before the panes open -- launched together,
-every pane would ask -- and resolves every role's agent; a role with none, or one whose
-agent is not installed, is refused by name and nothing opens. Then it attaches; not at
-a terminal, it prints the attach command instead. A
-pane whose launch ends drops to a shell, so its last output stays readable. A session
-of that name already open is refused, naming `tmux attach -t NAME` to return to it and
+and every engine flag around them reaches each pane
+(`asb --roles planner-1 reviewer-1 --serve` is two served roles). There is no command:
+each pane runs its role's agent, the `[agent:<glob>]` or `[agent]` command of
+`.agent-sandbox` (the roles model writes `[agent] command = claude`), and `--agent` on
+the line names one for this round (`--agent reviewer-1=codex` puts `--agent codex` in
+reviewer-1's pane alone; a bare `--agent claude` goes to every pane). A word after the
+roles that names an agent is refused, as is a command after the engine flags: native
+arguments go in `command =`. It reviews `.agent-sandbox` once, there, before the panes
+open -- launched together, every pane would ask -- and resolves every role's agent; a
+role with none, or one whose agent is not installed, is refused by name and nothing
+opens. Then it attaches; not at a terminal, it prints the attach command instead. A pane
+whose launch ends drops to a shell, so its last output stays readable. A session of that
+name already open is refused, naming `tmux attach -t NAME` to return to it and
 `tmux kill-session -t NAME` to end it; ending it hangs up every launch in it, and each
 role's sandbox then ends after the keeper's grace, as when you close its terminal.
 Beside the session it starts one process on the host that takes the Supervisor's reset
@@ -869,10 +864,9 @@ nothing else, outlives the terminal you ran `--roles` in, ends when the session 
 and logs to `~/.local/state/agent-sandbox/.roles-resets/<project slug>.log`; the line
 `--roles` prints names it. It is not started for served roles, whose loop takes its own
 marker, nor in a project without `.asb/coord/to/`. tmux is the host's, else the tools
-env's, where `install.sh` installs it by default ([config.md](config.md)). `--resume`
-is claude's `--continue`, which in a directory with no conversation starts a new one
-(measured with Claude Code 2.1.311), so the one line both starts a round and resumes
-it.
+env's, where `install.sh` installs it by default ([config.md](config.md)). `--resume` is
+claude's `--continue`, which in a directory with no conversation starts a new one
+(measured with Claude Code 2.1.311), so the one line both starts a round and resumes it.
 
 The Supervisor's line leaves itself out, as it is already running in a terminal of its
 own. A round with the Supervisor on top is started from a plain terminal instead, not
