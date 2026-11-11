@@ -18,9 +18,8 @@ reference definitions, HTML blocks and comments (CommonMark's start conditions: 
 block-level tag anywhere, another tag only alone on its line), and a line whose overflow
 is one unbreakable word: a run with no space outside inline code spans (so a URL, a link
 target or a code span with its inner spaces), wider than the room after the line's text
-indent, with the text before it and the text after it each fitting in the width and the
-text before it not fitting on the paragraph's previous line, so no wrapping would make
-the line fit. Stdlib only.
+indent, with the text before it and the text after it each fitting in the width, so no
+wrapping would make the line fit. Stdlib only.
 """
 
 import re
@@ -108,12 +107,11 @@ def words(text):
     return out
 
 
-def one_token_overflow(line, prev=None):
+def one_token_overflow(line):
     """True if the line's overflow is one unbreakable word -- a run with no space
     outside code spans, so a URL, a link target or a code span is one too: the word is
-    wider than its room, the text before it and the text after it each fit in the
-    width, and the text before it would not fit on the previous line of the paragraph
-    (`prev`): wrapping cannot make the line fit any better."""
+    wider than its room, and the text before it and the text after it each fit in the
+    width: wrapping cannot make the line fit any better."""
     m = PREFIX.match(line)
     indent = len(m.group(0))
     room = WIDTH - indent
@@ -124,9 +122,6 @@ def one_token_overflow(line, prev=None):
         after = line[indent + end :].strip()
         if len(before) > WIDTH or (after and indent + len(after) > WIDTH):
             continue
-        lead = line[indent : indent + start].split()
-        if lead and prev is not None and len(prev.rstrip()) + 1 + len(lead[0]) <= WIDTH:
-            continue  # its first word would have gone on the line above
         return True
     return False
 
@@ -139,7 +134,6 @@ def prose_lines(lines):
     lists = []  # the text indents of the list items still open, innermost last
     prev_blank = True
     prev_code = False  # previous line was an indented code line
-    last = None  # (lineno, line) of the last prose line yielded
     for n, raw in enumerate(lines, 1):
         line = raw.rstrip("\n").rstrip("\r").expandtabs(TAB)
         q = QUOTE.match(line)
@@ -203,22 +197,17 @@ def prose_lines(lines):
         stripped = body.lstrip()
         if stripped.startswith("|") or HEADING.match(body) or LINK_DEF.match(body):
             continue
-        # the line above, if this one continues its paragraph
-        prev = last[1] if last and last[0] == n - 1 and not LIST_ITEM.match(body) else None
-        if prev is not None and (prev.endswith("  ") or prev.endswith("\\")):
-            prev = None  # a hard break: nothing moves up over it
-        last = (n, line)
-        yield n, line, prev
+        yield n, line
 
 
 def too_wide(path, lines, only=None):
     """Print and count the prose lines over WIDTH, restricted to the `only` set."""
     bad = 0
-    for n, line, prev in prose_lines(lines):
+    for n, line in prose_lines(lines):
         if only is not None and n not in only:
             continue
         cols = len(line)
-        if cols > WIDTH and not one_token_overflow(line, prev):
+        if cols > WIDTH and not one_token_overflow(line):
             print(f"{path}:{n}: {cols} columns")
             bad += 1
     return bad

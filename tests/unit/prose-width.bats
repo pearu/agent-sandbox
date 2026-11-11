@@ -207,20 +207,19 @@ pw_base() { run python3 "$PW" --base main; }
   [ "$output" = "new.md:1: 98 columns" ]
 }
 
-@test "a plain unbreakable word too wide for a line passes alone, not after prose that fits above" {
+@test "a plain unbreakable word too wide for a line passes on a line of its own" {
   hash="$(printf '0123456789abcdef%.0s' {1..6})"
-  hash="${hash:0:95}"
-  printf '\nA short line before it.\n%s\n' "$hash" >>doc.md
+  printf '\nA short line before it.\n%s\n' "${hash:0:95}" >>doc.md
   pw_base
   [ "$status" -eq 0 ]
-  git checkout -q doc.md
-  printf '\nA short line before it.\nthe hash %s\n' "$hash" >>doc.md
-  pw_base
-  [ "$status" -eq 1 ]
-  [ "$output" = "doc.md:$(wc -l <doc.md): 104 columns" ]
-  # first in its paragraph, the words before it have nowhere to go
-  git checkout -q doc.md
-  printf '\nthe hash %s\n' "$hash" >>doc.md
+  [ -z "$output" ]
+}
+
+@test "a long URL line passes after a short untouched line, whose words it never asks to move" {
+  # the base ends with the short line `The end.`; this line continues its paragraph
+  [ "$(tail -1 doc.md)" = "The end." ]
+  printf 'See https://example.com/%s now.\n' "$(printf 'segment/%.0s' {1..10})" >>doc.md
   pw_base
   [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
