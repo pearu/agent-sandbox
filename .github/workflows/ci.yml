@@ -27,6 +27,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the prose-width step diffs against the merge base with the PR's base branch
+          # (or, on a push to main, the previous commit): a shallow clone has neither
+          fetch-depth: 0
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml

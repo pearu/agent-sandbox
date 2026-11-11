@@ -178,6 +178,8 @@ number.
   and call them. Messages go through `_as_msg`. Keep `IFS` changes inside a
   helper (`_as_split`); a `local IFS` in the main function leaks to everything
   after it.
+- **Prose.** Markdown prose wraps at 88 columns; `scripts/check.sh` fails on a line a
+  branch adds past that (`scripts/prose-width.py`: code, tables, headings, HTML exempt).
 - **Commits.** Imperative subject, a body that says why and what was verified,
   one logical change per commit. An AI-authored commit ends with
   `Co-Authored-By: <model name> <noreply@anthropic.com>` (or the equivalent for

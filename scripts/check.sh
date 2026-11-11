@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Repository checks, the same ones CI runs: syntax, shellcheck, shfmt (settings
 # come from .editorconfig), the Python components compile, install.sh is in
-# sync with install.sh.in + components/, the installer's --dry-run works
-# against a throwaway HOME, and the bats suites (unit + integration) when
-# `bats` is on PATH (it comes from environment.yml). Run from anywhere:
+# sync with install.sh.in + components/, the Markdown prose a branch adds is at
+# most 88 columns wide, the installer's --dry-run works against a throwaway
+# HOME, and the bats suites (unit + integration) when `bats` is on PATH (it
+# comes from environment.yml). Run from anywhere:
 # scripts/check.sh
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
@@ -48,11 +49,29 @@ step "shfmt -d (tracked files, formatting per .editorconfig)"
 shfmt -d "${fmt_files[@]}"
 
 step "python components compile"
-python3 -m py_compile components/*.py profiles/*/*.py probes/*.py probes/*/*.py
-rm -rf components/__pycache__ profiles/*/__pycache__ probes/__pycache__ probes/*/__pycache__
+python3 -m py_compile components/*.py profiles/*/*.py probes/*.py probes/*/*.py scripts/*.py
+rm -rf components/__pycache__ profiles/*/__pycache__ probes/__pycache__ probes/*/__pycache__ scripts/__pycache__
 
 step "ruff (Python lint, rules pinned in ruff.toml)"
-ruff check --no-cache components/ profiles/ probes/
+ruff check --no-cache components/ profiles/ probes/ scripts/
+
+step "Markdown prose this branch adds keeps to 88 columns (scripts/prose-width.py)"
+# Judged against where the branch left main, so an old line is never blamed on a new
+# change: on a pull request the workflow's base branch (CI checks out the full history for
+# it), else origin/main, else main. When HEAD is the base itself -- CI's push to main, or a
+# local run on main -- a push compares against the previous commit and a local run against
+# HEAD, which leaves the uncommitted edits.
+pw_ref="${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF}"
+if [[ -z "$pw_ref" ]]; then
+  pw_ref=main
+  if git rev-parse -q --verify origin/main >/dev/null; then pw_ref=origin/main; fi
+fi
+pw_base="$(git merge-base HEAD "$pw_ref")"
+if [[ "$pw_base" == "$(git rev-parse HEAD)" && "${GITHUB_EVENT_NAME:-}" == push ]]; then
+  pw_base="$(git rev-parse HEAD~1)"
+fi
+echo "base: $pw_ref, merge base ${pw_base:0:12}"
+python3 scripts/prose-width.py --base "$pw_base"
 
 step "seccomp generator compiles a filter for x86_64 and aarch64 (pyseccomp)"
 if python3 -c 'import pyseccomp' 2>/dev/null; then
