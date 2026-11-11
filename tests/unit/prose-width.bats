@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2016 # the backticks are Markdown, not command substitution
 # scripts/prose-width.py, the check scripts/check.sh runs on the Markdown a branch adds:
 # a prose line over 88 columns fails as FILE:LINE: N columns; code, tables, headings,
 # link definitions, HTML and a one-token overflow (a URL or an inline code span too wide
@@ -11,7 +12,7 @@ setup() {
   PW="$REPO_ROOT/scripts/prose-width.py"
   R="$BATS_TEST_TMPDIR/repo"
   mkdir -p "$R"
-  cd "$R"
+  cd "$R" || return
   git init -q -b main
   git config user.name tester
   git config user.email tester@example.invalid
@@ -129,6 +130,97 @@ pw_base() { run python3 "$PW" --base main; }
 @test "only Markdown is judged" {
   printf '%s\n' "$LONG" >notes.txt
   git add notes.txt
+  pw_base
+  [ "$status" -eq 0 ]
+}
+
+@test "a URL with more prose on either side than fits does not exempt the line" {
+  url="https://example.com/$(printf 'segment/%.0s' {1..10})"
+  printf '\n%s %s %s\n' "$LONG" "$url" "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "doc.md:$(wc -l <doc.md): $((98 + 1 + ${#url} + 1 + 98)) columns" ]
+}
+
+@test "added content that looks like a diff header does not end the file's hunks" {
+  # the line `++ b/x.txt` shows in the diff as `+++ b/x.txt`; the long line is a later
+  # hunk of the same file
+  sed -i '1a ++ b/x.txt' doc.md
+  printf '\n%s\n' "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "doc.md:$(wc -l <doc.md): 98 columns" ]
+}
+
+@test "an inline tag leading a line is prose; a block tag, or a tag alone on its line, is HTML" {
+  printf '\n<kbd>K</kbd> %s\n' "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "doc.md:$(wc -l <doc.md): 111 columns" ]
+  git checkout -q doc.md
+  printf '\n<div class="x">\n%s\n</div>\n\n<span>\n%s\n</span>\n' "$LONG" "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 0 ]
+}
+
+@test "a path git quotes in the diff header is unquoted; a git error exits 2" {
+  printf '%s\n' "$LONG" >'q"x.md'
+  git add 'q"x.md'
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = 'q"x.md:1: 98 columns' ]
+  run python3 "$PW" --base no-such-ref
+  [ "$status" -eq 2 ]
+}
+
+@test "a tab advances to the next multiple of 4 columns" {
+  # `a`, a tab to column 4, then 84 characters: 88 columns
+  printf '\na\t%s\n' "$(printf 'x%.0s' {1..76}) abcdefg" >>doc.md
+  pw_base
+  [ "$status" -eq 0 ]
+  printf 'a\t%s\n' "$(printf 'x%.0s' {1..76}) abcdefgh" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "doc.md:$(wc -l <doc.md): 89 columns" ]
+}
+
+@test "a fence inside a blockquote is tracked" {
+  printf '\n> ```\n> %s\n> ```\n' "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 0 ]
+  printf '\n> %s\n' "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+}
+
+@test "continuation prose of an outer list item after a nested one is prose, not code" {
+  printf '\n- a\n  - b\n\n  para\n\n    %s\n' "$LONG" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "doc.md:$(wc -l <doc.md): 102 columns" ]
+}
+
+@test "an untracked Markdown file is judged whole" {
+  printf '%s\n' "$LONG" >new.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "new.md:1: 98 columns" ]
+}
+
+@test "a plain unbreakable word too wide for a line passes alone, not after prose that fits above" {
+  hash="$(printf '0123456789abcdef%.0s' {1..6})"
+  hash="${hash:0:95}"
+  printf '\nA short line before it.\n%s\n' "$hash" >>doc.md
+  pw_base
+  [ "$status" -eq 0 ]
+  git checkout -q doc.md
+  printf '\nA short line before it.\nthe hash %s\n' "$hash" >>doc.md
+  pw_base
+  [ "$status" -eq 1 ]
+  [ "$output" = "doc.md:$(wc -l <doc.md): 104 columns" ]
+  # first in its paragraph, the words before it have nowhere to go
+  git checkout -q doc.md
+  printf '\nthe hash %s\n' "$hash" >>doc.md
   pw_base
   [ "$status" -eq 0 ]
 }
