@@ -223,7 +223,8 @@ STUB
   python3 - "$H/settings.json" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
-assert m["permissions"]["allow"] == ["Bash(tail:*)", "Read"], m
+# the engine's own two first (the briefing directory, the summary line), then the role's
+assert m["permissions"]["allow"] == ["Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)", "Bash(tail:*)", "Read"], m
 assert "SessionStart" in m["hooks"], m
 CHECK
   release_bg

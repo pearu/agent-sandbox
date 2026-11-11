@@ -136,7 +136,7 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   [[ "$output" == *"cannot read --settings"* ]]
 }
 
-@test "merge-settings: our permission rules after theirs, each once; theirs unchanged otherwise; a bad shape refused" {
+@test "merge-settings: our permission rules after theirs, each once; theirs unchanged otherwise; a bad shape kept verbatim, the hooks merged, said" {
   local ours='{"hooks":{},"permissions":{"allow":["Read","Bash(git push:*)"]}}'
   run py merge-settings --ours "$ours" --user '{"permissions":{"allow":["Read"],"deny":["Bash(rm:*)"]}}' --out "$T/out.json"
   [ "$status" -eq 0 ]
@@ -144,12 +144,21 @@ OURS='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat b"}]}
   run py merge-settings --ours "$ours" --user '{"model":"m"}' --out "$T/out2.json"
   [ "$status" -eq 0 ]
   [ "$(pyget "$T/out2.json" 'd["permissions"], d["model"]')" = "({'allow': ['Read', 'Bash(git push:*)']}, 'm')" ]
+  # a permissions that is not an object, or an allow that is not an array: merged all the
+  # same -- the hooks in, their permissions exactly as it was, none of our rules -- and said
   local u
-  for u in '{"permissions":[]}' '{"permissions":{"allow":"Read"}}'; do
+  ours='{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"ours"}]}]},"permissions":{"allow":["Read","Bash(git push:*)"]}}'
+  for u in '{"permissions":[]}' '{"permissions":{"allow":"Read","deny":["Bash(rm:*)"]}}'; do
+    rm -f "$T/out3.json"
     run py merge-settings --ours "$ours" --user "$u" --out "$T/out3.json"
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"refusing to merge --settings, leaving yours untouched: permissions"* ]]
-    [ ! -e "$T/out3.json" ]
+    [ "$status" -eq 0 ]
+    [ "$output" = permissions-skipped ]
+    python3 -I - "$T/out3.json" "$u" <<'CHECK'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["permissions"] == json.loads(sys.argv[2])["permissions"], d
+assert d["hooks"]["Stop"][0]["hooks"][0]["command"] == "ours", d
+CHECK
   done
 }
 

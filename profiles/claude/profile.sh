@@ -342,6 +342,13 @@ profile_telemetry_hosts() {
 # user's --settings keeps its own rules; ours are added after theirs, and their deny
 # and ask rules still win, as Claude Code ranks deny and ask over allow.
 #
+# Before those, on every briefed launch and join, the engine's own two: Read of the
+# briefing directory (INSIDE_DIR/**) and Edit of the summary line (_summary_line, when
+# the engine bound it), so neither asks "outside the working directories". Narrower
+# than --add-dir, which would also allow edits anywhere there. Not shown by the trust
+# review or --check: no dot-file line asked for them, and they reach nothing the binds
+# do not already give (the directory is read-only inside, the line the session's own).
+#
 # A third pair, PostToolUse and PostToolUseFailure on Bash, runs refusal-hook.sh
 # (beside this file, copied next to the settings file so it is in view inside):
 # it reports a host the proxy refused during the command, as it happens. Both
@@ -437,16 +444,20 @@ profile_briefing_args() {
   done
   # shellcheck disable=SC2154 # _role: the engine's, by dynamic scope
   ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"bash $_brief_out_inside/statusline.sh ${_role:-default}\",\"refreshInterval\":1}"
+  # The engine's own two rules first: reading the briefing directory, and writing the
+  # summary line where the engine bound it. A leading // is an absolute path in a
+  # Read/Edit rule (a single / is relative to the settings file), and Edit covers
+  # Write, whose own path rules never match (code.claude.com/docs/en/permissions).
+  local -a allow=("Read(/$inside/**)")
+  [[ -n "${_summary_line:-}" ]] && allow+=("Edit(/$_summary_line)")
   # shellcheck disable=SC2154 # _permission_rules: the engine's, by dynamic scope
-  if [[ -n "${_permission_rules[*]+x}" ]] && ((${#_permission_rules[@]})); then
-    local r rules=""
-    for r in "${_permission_rules[@]}"; do
-      r="${r//\\/\\\\}" r="${r//\"/\\\"}" r="${r//$'\t'/\\t}" # a JSON string
-      rules+="${rules:+,}\"$r\""
-    done
-    ours+=",\"permissions\":{\"allow\":[$rules]}"
-  fi
-  ours+="}"
+  allow+=(${_permission_rules[@]+"${_permission_rules[@]}"})
+  local r rules=""
+  for r in "${allow[@]}"; do
+    r="${r//\\/\\\\}" r="${r//\"/\\\"}" r="${r//$'\t'/\\t}" # a JSON string
+    rules+="${rules:+,}\"$r\""
+  done
+  ours+=",\"permissions\":{\"allow\":[$rules]}}"
 
   # The LAST --settings, deliberately: Claude Code honours only the last one, so
   # that is the value the user's command line resolves to, and merging any
@@ -486,6 +497,8 @@ profile_briefing_args() {
     profile_agent_argv=(${kept[@]+"${kept[@]}"})
     [[ "$_merge_note" == *hooks-disabled* ]] \
       && _as_msg "briefing: your settings set disableAllHooks, so the briefing will NOT be injected into the session; $inside/briefing.md is bound read-only and can be read on request"
+    [[ "$_merge_note" == *permissions-skipped* ]] \
+      && _as_msg "briefing: your --settings has a permissions value that is not an object (or allow that is not an array); the engine's and [permissions] rules were not added, so the agent will ask"
   else
     printf '%s\n' "$ours" >"$host_file" || {
       _as_msg "briefing: cannot write $host_file; continuing without the session hooks"
