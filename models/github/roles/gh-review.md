@@ -75,7 +75,8 @@ footer -- where the project's policy allows it.
 
 Before posting, check that the body carries no stand-in marker, check the rendering with
 `gh api markdown`, confirm the PR head has not moved since your review, and, unless
-told, ask whether it goes as a comment or as `gh pr review --request-changes`.
+told, ask whether it goes as a comment (`gh pr comment N`, or `gh pr review N --comment`)
+or as `gh pr review N --request-changes`.
 
 **A finding beyond N.** A problem the review uncovers that is not this PR's to fix --
 a bug that predates it, in code it neither changes nor targets -- goes to the user in

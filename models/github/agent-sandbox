@@ -42,8 +42,9 @@ file = .asb/roles/gh-triage.md
 file = .asb/roles/gh-fix.md
 # ---- what each publishes with, run without asking so Claude Code's auto mode does not block
 #   it: the purpose files still publish only on your word; the sandbox's policy is unchanged
-[permissions:gh-review-*]         # its review, and the issue it files on your word
+[permissions:gh-review-*]         # its review or comment, and the issue it files on your word
 Bash(gh pr review:*)
+Bash(gh pr comment:*)
 Bash(gh issue create:*)
 [permissions:gh-triage-*]         # its triage comment and labels, and the issue it files on your word
 Bash(gh issue comment:*)
@@ -55,6 +56,7 @@ Bash(git -c credential.helper='!gh auth git-credential' push:*)
 Bash(ghstack submit:*)
 Bash(gh pr create:*)
 Bash(gh pr comment:*)
+Bash(gh issue comment:*)
 Bash(gh issue create:*)
 #@own # ---- the setup role builds the environment: once per project, again after main moves --
 #@own #   asb --role gh-setup claude

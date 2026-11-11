@@ -342,9 +342,9 @@ init() {
   local df="$PROJ/.agent-sandbox"
   # section_body HEADER -- the rule lines under HEADER, comments dropped
   section_body() { sed -n "/^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')/,/^\[/{/^\[/d;/^#/d;p}" "$df"; }
-  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh issue create:*)' ]
+  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh pr comment:*)\nBash(gh issue create:*)' ]
   [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
-  [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)"$'\n'"Bash(gh issue create:*)" ]
+  [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)"$'\n'"Bash(gh issue comment:*)"$'\n'"Bash(gh issue create:*)" ]
   # the purpose files' prose, whitespace joined: a rewrap changes nothing below
   local r flat
   # the fixer files a finding beyond N as the reviewer and the triager do: on the user's word
@@ -359,6 +359,10 @@ init() {
   [[ "$flat" == *'`[Stand-in for you to rewrite]`; the marker is yours, not part of their text: when they approve the text for posting, remove it yourself'* ]]
   [[ "$flat" == *'A body that still carries it is never posted; told to post without having approved the text as shown, stop and ask about the stand-in first;'* ]]
   [[ "$flat" == *'Before posting, check that the body carries no stand-in marker,'* ]]
+  # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
+  [[ "$flat" == *'ask whether it goes as a comment (`gh pr comment N`, or `gh pr review N --comment`) or as `gh pr review N --request-changes`.'* ]]
+  # shellcheck disable=SC2016 # likewise
+  [[ "$(tr '\n' ' ' <"$PROJ/.asb/roles/gh-fix.md" | tr -s ' ')" == *'only to N -- a comment with `gh pr comment N` or `gh issue comment N`, as N is a pull request or an issue --'* ]]
   # the push rules are prefixes: the fixer's purpose keeps them to fix-N, no force, no other branch
   flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/gh-fix.md" | tr -s ' ')"
   # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
@@ -374,7 +378,7 @@ init() {
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-review-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*])' <<<"$output"
+  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh pr comment:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*])' <<<"$output"
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   grep -qF "  permission rules the agent gets without asking: Bash(git push:*) ([permissions:gh-fix-*]), Bash(git -c credential.helper='!gh auth git-credential' push:*) ([permissions:gh-fix-*]), Bash(ghstack submit:*)" <<<"$output"

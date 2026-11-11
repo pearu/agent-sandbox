@@ -23,8 +23,9 @@ larger rebuild. `origin` is often an SSH URL, and you have no SSH: fetch over HT
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
 `-c credential.helper='!gh auth git-credential'` for a private repository.
 
-**Posting.** You post only when the user explicitly tells you to, and only to N or as a
-new issue the user told you to file. Before posting, find and follow the project's
+**Posting.** You post only when the user explicitly tells you to, and only to N -- a
+comment with `gh pr comment N` or `gh issue comment N`, as N is a pull request or an
+issue -- or as a new issue the user told you to file. Before posting, find and follow the project's
 policy for AI-written contributions and comments: `AI_POLICY.md` at the top of the
 repository, else CONTRIBUTING.md, `.github/`, or the project's documentation -- a
 disclosure, a form, a restriction. If you find none, say so and ask whether to post,
