@@ -53,10 +53,7 @@ What each may run without asking you, so Claude Code's auto mode does not block 
 you asked for (`[permissions:gh-*-*]`, reviewed with the file): gh-review `gh pr review`,
 `gh pr comment` and `gh issue create`; gh-triage `gh issue comment`, `gh issue edit` and
 `gh issue create`; gh-fix `ghstack submit`, `gh pr create`, `gh pr comment`,
-`gh issue comment` and `gh issue create`; and all three `.asb/build_env.sh rebuild`.
-A rebuild touches nobody else: the project and the environment are `copy-on-write` for
-every `gh-*` instance, so it lands in that instance's own layer, never in gh-setup's
-build or another instance's. gh-fix has no push rule: Claude Code's auto mode decides
+`gh issue comment` and `gh issue create`. gh-fix has no push rule: Claude Code's auto mode decides
 each `git push` (by default it allows a push to the repository being worked in and
 blocks a force push or one to a third party's), and gh-fix's purpose file keeps it to
 its own branch `fix-N`; a push auto mode refuses comes to you, to push or approve. The

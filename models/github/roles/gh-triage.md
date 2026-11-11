@@ -21,9 +21,9 @@ to the latest `main` only when the work needs newer code, since that costs a muc
 larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
 `-c credential.helper='!gh auth git-credential'` for a private repository. The apply
-and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh
-rebuild` runs without asking only on its own. It rebuilds in your layer, never the
-user's build or another instance's.
+and the rebuild are two commands, never one chained with `&&`: the agent's permission
+check has refused the chain. A rebuild it refuses goes to the user; you try no other
+way. It rebuilds in your layer, never the user's build or another instance's.
 
 **Posting.** You post only when the user explicitly tells you to, and only to N or as a
 new issue the user told you to file. Before posting, find and follow the project's

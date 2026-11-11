@@ -21,9 +21,9 @@ to the latest `main` only when the work needs newer code, since that costs a muc
 larger rebuild. `origin` is the user's SSH remote: fetch over HTTPS,
 `git fetch https://github.com/<owner>/<repo>.git <ref>`, adding
 `-c credential.helper='!gh auth git-credential'` for a private repository. The apply
-and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh
-rebuild` runs without asking only on its own. It rebuilds in your layer, never the
-user's build or another instance's.
+and the rebuild are two commands, never one chained with `&&`: the agent's permission
+check has refused the chain. A rebuild it refuses goes to the user; you try no other
+way. It rebuilds in your layer, never the user's build or another instance's.
 
 **What a review says.** Only what the author needs to act on the changeset; an area the
 PR neither changes nor targets (a device, a backend) is out of scope. What you

@@ -96,10 +96,9 @@ names are gone; there are no aliases for removed names before 1.0.
   gh-review role's `gh pr review` was): `[permissions:gh-review-*]` `gh pr review`,
   `gh pr comment` and `gh issue create`; `[permissions:gh-triage-*]` `gh issue comment`,
   `gh issue edit` and `gh issue create`; `[permissions:gh-fix-*]` `ghstack submit`,
-  `gh pr create`, `gh pr comment`, `gh issue comment` and `gh issue create`; and all
-  three `.asb/build_env.sh rebuild`, which lands in the instance's own copy-on-write
-  layer (the purpose files now run the apply and the rebuild as two commands, never
-  chained). gh-fix.md gains the reviewer's and triager's clause: a finding beyond N
+  `gh pr create`, `gh pr comment`, `gh issue comment` and `gh issue create` (the
+  purpose files now run the apply and the rebuild as two commands, never chained: the
+  classifier refused the chain). gh-fix.md gains the reviewer's and triager's clause: a finding beyond N
   becomes an issue, drafted, shown, and filed only when the user says so. There is no
   push rule: Claude Code's auto mode judges each `git push` (by default it blocks a
   force push and a push to a third party's repository), and a push it refuses goes to
@@ -855,8 +854,8 @@ names are gone; there are no aliases for removed names before 1.0.
 - **The briefing says where a command handed to the user runs** (#391): every command a
   session hands the user says whether it runs in this session (typed at its prompt
   behind the agent's shell escape, where it has one -- claude: `!` -- inside the
-  sandbox, with inside paths) or on the host (the user's shell, with the host paths the briefing lists), and
-  none names paths that exist only on the other side. A gh-review role had handed `! gh
+  sandbox, with inside paths) or on the host (the user's shell,
+  with the host paths the briefing lists), and none names paths that exist only on the other side. A gh-review role had handed `! gh
   pr review N --body-file .asb/scratch/review-N.md`, which fails pasted into a host
   shell, where `.asb/scratch/` is the role's private store. In `briefing.md`'s handing
   section and the short SessionStart briefing.

@@ -277,7 +277,7 @@ init() {
   grep -qx 'project = copy-on-write.*' "$df"
   grep -qx "$H/envs/dev/ = copy-on-write.*" "$df"
   # both under [connect:gh-*], and no review/triage/fix section widens either: a rebuild
-  # these roles run without asking (#391) lands in the instance's own layer
+  # in one of these roles lands in the instance's own layer, as the purpose files say
   sed -n '/^\[connect:gh-\*\]/,/^\[/p' "$df" | grep -qx 'project = copy-on-write.*'
   sed -n '/^\[connect:gh-\*\]/,/^\[/p' "$df" | grep -qx "$H/envs/dev/ = copy-on-write.*"
   run ! grep -qE '^\[connect:gh-(review|triage)' "$df"
@@ -351,9 +351,9 @@ init() {
   local df="$PROJ/.agent-sandbox"
   # section_body HEADER -- the rule lines under HEADER, comments dropped
   section_body() { sed -n "/^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')/,/^\[/{/^\[/d;/^#/d;p}" "$df"; }
-  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh pr comment:*)\nBash(gh issue create:*)\nBash(.asb/build_env.sh rebuild:*)' ]
-  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)\nBash(.asb/build_env.sh rebuild:*)' ]
-  [ "$(section_body '[permissions:gh-fix-*]')" = $'Bash(ghstack submit:*)\nBash(gh pr create:*)\nBash(gh pr comment:*)\nBash(gh issue comment:*)\nBash(gh issue create:*)\nBash(.asb/build_env.sh rebuild:*)' ]
+  [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh pr comment:*)\nBash(gh issue create:*)' ]
+  [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
+  [ "$(section_body '[permissions:gh-fix-*]')" = $'Bash(ghstack submit:*)\nBash(gh pr create:*)\nBash(gh pr comment:*)\nBash(gh issue comment:*)\nBash(gh issue create:*)' ]
   run ! grep -q '^Bash(git' "$df" # no push rule: auto mode judges each push
   # the purpose files' prose, whitespace joined: a rewrap changes nothing below
   local r flat
@@ -385,7 +385,7 @@ init() {
   for r in gh-review gh-triage gh-fix; do
     flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | tr -s ' ')"
     # shellcheck disable=SC2016 # the backticks are the text's markdown, not a command
-    [[ "$flat" == *'The apply and the rebuild are two commands, never one chained with `&&`: `.asb/build_env.sh rebuild` runs without asking only on its own. It rebuilds in your layer, never the user'"'"'s build or another instance'"'"'s.'* ]]
+    [[ "$flat" == *'The apply and the rebuild are two commands, never one chained with `&&`: the agent'"'"'s permission check has refused the chain. A rebuild it refuses goes to the user; you try no other way. It rebuilds in your layer, never the user'"'"'s build or another instance'"'"'s.'* ]]
   done
   flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/gh-review.md" | tr -s ' ')"
   # shellcheck disable=SC2016 # likewise
@@ -396,10 +396,10 @@ init() {
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-review-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh pr comment:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*]), Bash(.asb/build_env.sh rebuild:*) ([permissions:gh-review-*])' <<<"$output"
+  grep -qxF '  permission rules the agent gets without asking: Bash(gh pr review:*) ([permissions:gh-review-*]), Bash(gh pr comment:*) ([permissions:gh-review-*]), Bash(gh issue create:*) ([permissions:gh-review-*])' <<<"$output"
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --check --role gh-fix-7 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  grep -qxF '  permission rules the agent gets without asking: Bash(ghstack submit:*) ([permissions:gh-fix-*]), Bash(gh pr create:*) ([permissions:gh-fix-*]), Bash(gh pr comment:*) ([permissions:gh-fix-*]), Bash(gh issue comment:*) ([permissions:gh-fix-*]), Bash(gh issue create:*) ([permissions:gh-fix-*]), Bash(.asb/build_env.sh rebuild:*) ([permissions:gh-fix-*])' <<<"$output"
+  grep -qxF '  permission rules the agent gets without asking: Bash(ghstack submit:*) ([permissions:gh-fix-*]), Bash(gh pr create:*) ([permissions:gh-fix-*]), Bash(gh pr comment:*) ([permissions:gh-fix-*]), Bash(gh issue comment:*) ([permissions:gh-fix-*]), Bash(gh issue create:*) ([permissions:gh-fix-*])' <<<"$output"
   # a file from before the rules: --init github run again appends the block, exactly it
   local block
   block="$(sed -n '/^# ---- what each publishes with/,/^# ---- the setup role/p' "$df" | sed '$d')"
