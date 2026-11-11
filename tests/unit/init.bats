@@ -344,7 +344,12 @@ init() {
   section_body() { sed -n "/^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')/,/^\[/{/^\[/d;/^#/d;p}" "$df"; }
   [ "$(section_body '[permissions:gh-review-*]')" = $'Bash(gh pr review:*)\nBash(gh issue create:*)' ]
   [ "$(section_body '[permissions:gh-triage-*]')" = $'Bash(gh issue comment:*)\nBash(gh issue edit:*)\nBash(gh issue create:*)' ]
-  [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)" ]
+  [ "$(section_body '[permissions:gh-fix-*]')" = "Bash(git push:*)"$'\n'"Bash(git -c credential.helper='!gh auth git-credential' push:*)"$'\n'"Bash(ghstack submit:*)"$'\n'"Bash(gh pr create:*)"$'\n'"Bash(gh pr comment:*)"$'\n'"Bash(gh issue create:*)" ]
+  # the fixer files a finding beyond N as the reviewer and the triager do: on the user's word
+  for r in gh-review gh-triage gh-fix; do
+    grep -qF '**A finding beyond N.**' "$PROJ/.asb/roles/$r.md"
+    grep -qF "   \`gh issue create --title '<title>' --body-file .asb/scratch/issue-<slug>.md\` only" "$PROJ/.asb/roles/$r.md"
+  done
   run ! grep -q '^Bash(gh api' "$df"            # a rule for gh api would cover every API call
   run ! grep -q '^\[permissions:gh-setup' "$df" # it publishes nothing
   # --check lists a role's rules, its own and no other role's

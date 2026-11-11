@@ -43,12 +43,13 @@ Bash(gh issue create:*)
 Bash(gh issue comment:*)
 Bash(gh issue edit:*)
 Bash(gh issue create:*)
-[permissions:gh-fix-*]            # its push (the purpose file's HTTPS form, and ghstack's), its pull request and comment
+[permissions:gh-fix-*]            # its push (the purpose file's HTTPS form, and ghstack's), its pull request and comment, the issue it files on your word
 Bash(git push:*)
 Bash(git -c credential.helper='!gh auth git-credential' push:*)
 Bash(ghstack submit:*)
 Bash(gh pr create:*)
 Bash(gh pr comment:*)
+Bash(gh issue create:*)
 [briefing:gh-review-*]
 file = .asb/roles/gh-review.md
 [briefing:gh-triage-*]

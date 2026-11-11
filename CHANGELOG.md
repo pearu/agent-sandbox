@@ -97,8 +97,10 @@ names are gone; there are no aliases for removed names before 1.0.
   `gh issue create`; `[permissions:gh-triage-*]` `gh issue comment`, `gh issue edit` and
   `gh issue create`; `[permissions:gh-fix-*]` `git push`, the purpose file's
   `git -c credential.helper='!gh auth git-credential' push`, `ghstack submit`,
-  `gh pr create` and `gh pr comment`. The purpose files still post only on the user's
-  word, and the sandbox's policy is unchanged. `gh api` gets no rule: a rule for it would
+  `gh pr create`, `gh pr comment` and `gh issue create` (and gh-fix.md gains the
+  reviewer's and triager's clause: a finding beyond N becomes an issue, drafted, shown,
+  and filed only when the user says so). The purpose files still post only on the
+  user's word, and the sandbox's policy is unchanged. `gh api` gets no rule: a rule for it would
   cover every API call. An existing project gets the sections from `asb --init github`
   run again (appended, then `--trust`); a section it already has reports the lines it
   lacks as `--apply` lines.

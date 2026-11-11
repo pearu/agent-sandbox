@@ -53,10 +53,10 @@ What each may run without asking you, so Claude Code's auto mode does not block 
 you asked for (`[permissions:gh-*-*]`, reviewed with the file): gh-review `gh pr review`
 and `gh issue create`; gh-triage `gh issue comment`, `gh issue edit` and `gh issue
 create`; gh-fix `git push` (also in the purpose file's `git -c
-credential.helper='!gh auth git-credential' push` form), `ghstack submit`, `gh pr create`
-and `gh pr comment`. gh-setup gets none: it publishes nothing. The rules only stop the
-agent asking; the purpose files still post only when you say so, and the sandbox's policy
-is unchanged. `gh api` has no rule, since one would cover every API call: a role that
+credential.helper='!gh auth git-credential' push` form), `ghstack submit`, `gh pr
+create`, `gh pr comment` and `gh issue create`. gh-setup gets none: it publishes
+nothing. The rules only stop the agent asking; the purpose files still post only when
+you say so, and the sandbox's policy is unchanged. `gh api` has no rule, since one would cover every API call: a role that
 needs it to post asks. A project initialised before these rules gets them from `asb
 --init github` run again, which appends the sections it lacks (then `asb --trust`).
 
