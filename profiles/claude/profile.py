@@ -147,7 +147,8 @@ def merge_settings(ours, user, out):
     There is nothing to resolve: our contribution is hook entries, appended per event
     after theirs -- hook entries merge across settings levels, so a per-event union is
     what Claude Code itself does with two sources -- and, when the dot-file has
-    [permissions] rules, permissions.allow entries, appended after theirs the same way
+    [permissions] rules and the engine's own two (reading the briefing directory,
+    writing the summary line), permissions.allow entries, appended after theirs the same way
     (their deny and ask rules stand: Claude Code ranks them over allow) -- and our
     statusLine only when theirs has none: a status line of their own wins (#287).
     Nothing else of theirs is read, rewritten or merged. A shape we do not recognise is refused rather than

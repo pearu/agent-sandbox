@@ -232,7 +232,8 @@ trust() {
   python3 - "$OUT/settings.json" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
-assert m["permissions"] == {"defaultMode": "plan", "allow": ["Bash(git *)"]}, m
+# theirs first; the engine's own two rules appended (the briefing directory, the summary line)
+assert m["permissions"] == {"defaultMode": "plan", "allow": ["Bash(git *)", "Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)"]}, m
 assert m["env"] == {"FOO": "bar"}, m
 assert m["model"] == "opus", m
 assert len(m["hooks"]["PreCompact"]) == 1, m    # an event we do not use: untouched
@@ -864,10 +865,15 @@ perm_allow() {
   python3 -c 'import json,sys; [print(r) for r in json.load(open(sys.argv[1])).get("permissions", {}).get("allow", [])]' "$1"
 }
 
+# The engine's own allow rules, in every briefed launch's and join's settings: reading the
+# briefing directory, writing the summary line. A leading // is an absolute path in Claude
+# Code's Read/Edit rules (code.claude.com/docs/en/permissions).
+OWN_RULES="$(printf '%s\n' 'Read(//run/agent-sandbox/**)' 'Edit(//run/agent-sandbox/summary/line)')"
+
 @test "[permissions]: the role's rules, the file's and its own section's, reach the agent in the briefing's --settings; none without an approved file" {
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
   [ "$status" -eq 0 ]
-  run ! grep -q '"permissions"' "$OUT/settings.json"
+  [ "$(perm_allow "$OUT/settings.json")" = "$OWN_RULES" ] # the engine's own two only
   printf '[permissions]\nBash(git push:*)\n' >"$PROJ/.agent-sandbox"
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
@@ -881,13 +887,13 @@ perm_allow() {
   run_engine BWRAP_COPY="$OUT" -- asb --role gate claude --version
   [ "$status" -eq 0 ]
   # the union, in file order, each rule once; a line that is no rule is left out
-  [ "$(perm_allow "$OUT/settings.json")" = "$(printf '%s\n' 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' 'Bash(git push:*)' 'Bash(echo "a\b"	x)')" ]
+  [ "$(perm_allow "$OUT/settings.json")" = "$(printf '%s\n' "$OWN_RULES" 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' 'Bash(git push:*)' 'Bash(echo "a\b"	x)')" ]
   grep -q '"SessionStart"' "$OUT/settings.json" # the hooks are still there
   [ "${JOINB[*]}" = "--settings $IN/settings.json" ]
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
   [ "$status" -eq 0 ]
-  [ "$(perm_allow "$OUT/settings.json")" = "$(printf '%s\n' 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' 'Read')" ]
+  [ "$(perm_allow "$OUT/settings.json")" = "$(printf '%s\n' "$OWN_RULES" 'Bash(.asb/bin/inbox-wait:*)' 'Bash(tail:*)' 'Read')" ]
 }
 
 @test "[permissions] with a user --settings: their rules first, ours added once, their deny kept" {
@@ -900,7 +906,7 @@ perm_allow() {
   python3 - "$OUT/settings.json" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
-assert m["permissions"] == {"allow": ["Read", "Bash(git push:*)"], "deny": ["Bash(rm:*)"], "defaultMode": "plan"}, m
+assert m["permissions"] == {"allow": ["Read", "Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)", "Bash(git push:*)"], "deny": ["Bash(rm:*)"], "defaultMode": "plan"}, m
 assert "SessionStart" in m["hooks"], m
 CHECK
 }
@@ -912,6 +918,59 @@ CHECK
   [ "$status" -eq 0 ]
   [[ "$output" == *"[permissions]: not passed to the agent -- they travel with the briefing, which is off"* ]]
   run ! join_has --settings
+}
+
+@test "the engine's own rules -- read the briefing directory, write the summary line -- are in every briefed launch's and join's settings, with a start text or without, and the user's own rules survive" {
+  start_project # planner-1 has a start text (and --add-dir), other has none
+  local role
+  for role in planner-1 other; do
+    rm -rf "$OUT"
+    run_engine BWRAP_COPY="$OUT" -- asb --role "$role" claude --continue
+    [ "$status" -eq 0 ]
+    [ "$(perm_allow "$OUT/settings.json")" = "$OWN_RULES" ]
+  done
+  # a print run, which keeps the summary line current too (no Stop rule there)
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role other claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  [ "$(perm_allow "$OUT/settings.json")" = "$OWN_RULES" ]
+  # a join, which writes its own settings file in join.PID: the same rules, and the
+  # user's --settings rules kept first, their deny and ask untouched
+  local mine='{"permissions":{"allow":["Bash(make:*)"],"deny":["Bash(rm:*)"],"ask":["Edit(//run/agent-sandbox/summary/line)"]}}'
+  for role in planner-1 other; do
+    engine_bg -- asb --role "$role" claude
+    cat >"$H/bin/join-stub.py" <<'STUB'
+import glob, os, shutil, sys
+with open(os.environ["JOIN_DUMP"], "w") as fh:
+    for a in sys.argv[1:]:
+        fh.write(a + "\n")
+if "SNAP" in os.environ:
+    for f in glob.glob(os.path.join(os.environ["AGENT_SANDBOX_SESSION_BASE"], "*", "briefing", "join.*", "settings.json")):
+        shutil.copy(f, os.environ["SNAP"])
+hold = os.environ.get("JOIN_HOLD")  # the harness's own: engine_bg stays joined while it exists
+while hold and os.path.exists(hold):
+    import time
+    time.sleep(0.02)
+STUB
+    rm -f "$H/snap.json" "$H/snap-user.json"
+    run_engine SNAP="$H/snap.json" -- asb --role "$role" claude --continue
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"joining role '$role'"* ]]
+    [[ "${JOINB[1]}" == "$IN"/join.*/settings.json ]]
+    [ "$(perm_allow "$H/snap.json")" = "$OWN_RULES" ]
+    run_engine SNAP="$H/snap-user.json" -- asb --role "$role" claude --settings "$mine" --continue
+    [ "$status" -eq 0 ]
+    python3 - "$H/snap-user.json" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["permissions"] == {
+    "allow": ["Bash(make:*)", "Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)"],
+    "deny": ["Bash(rm:*)"],
+    "ask": ["Edit(//run/agent-sandbox/summary/line)"],
+}, m
+CHECK
+    release_bg
+  done
 }
 
 # start_project -- a planner briefed from its purpose file, whose first turn is
