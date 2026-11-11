@@ -350,6 +350,16 @@ init() {
     grep -qF '**A finding beyond N.**' "$PROJ/.asb/roles/$r.md"
     grep -qF "   \`gh issue create --title '<title>' --body-file .asb/scratch/issue-<slug>.md\` only" "$PROJ/.asb/roles/$r.md"
   done
+  # the push rules are prefixes: the fixer's purpose keeps them to fix-N, no force, no other branch
+  local fix="$PROJ/.asb/roles/gh-fix.md"
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
+  grep -qF '**What you push.** Your own branch alone -- `fix-N` (or the name you gave it under the' "$fix"
+  grep -qF "explicit word you push no other branch -- another person's pull request branch above" "$fix"
+  # shellcheck disable=SC2016 # likewise
+  grep -qF 'needs `--force` or `--force-with-lease` (after a' "$fix"
+  grep -qF 'rebase) is asked for first, saying why.' "$fix"
+  # shellcheck disable=SC2016 # likewise
+  grep -qF 'covers any branch and any flag; this rule is what keeps it to `fix-N`.' "$fix"
   run ! grep -q '^Bash(gh api' "$df"            # a rule for gh api would cover every API call
   run ! grep -q '^\[permissions:gh-setup' "$df" # it publishes nothing
   # --check lists a role's rules, its own and no other role's
