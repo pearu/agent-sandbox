@@ -72,20 +72,21 @@ normalized: `PORT`, or `ADDR:PORT` for an address other than `127.0.0.1`), `_rol
 `profile_briefing_args()`, the array `_permission_rules`: the trusted dot-file's
 `[permissions]` rules for this launch's role, each once, in the agent's own syntax, for
 the profile to hand to the agent (claude: `permissions.allow` in its `--settings`). A
-profile that reads none leaves them unapplied. Before them, claude's `--settings` carries
-two rules of the engine's own at every briefed launch and join, so that Claude Code does
-not ask "outside the working directories" for the engine's files: `Read(//run/agent-sandbox/**)`,
-the briefing directory, and `Edit(//run/agent-sandbox/summary/line)`, the session's summary
-line where the engine bound it (`_summary_line`). A leading `//` is an absolute path in
-Claude Code's `Read`/`Edit` rules (a single `/` is relative to the settings file), and an
-`Edit` rule covers `Write`, whose own path rules never match
+profile that reads none leaves them unapplied. Before them, claude's `--settings`
+carries two rules of the engine's own at every briefed launch and join, so that Claude
+Code does not ask "outside the working directories" for the engine's files:
+`Read(//run/agent-sandbox/**)`, the briefing directory, and
+`Edit(//run/agent-sandbox/summary/line)`, the session's summary line where the engine
+bound it (`_summary_line`). A leading `//` is an absolute path in Claude Code's
+`Read`/`Edit` rules (a single `/` is relative to the settings file), and an `Edit` rule
+covers `Write`, whose own path rules never match
 ([permissions](https://code.claude.com/docs/en/permissions)). They are narrower than
 `--add-dir`, which would allow edits anywhere in the directory, and the trust review and
 `--check` do not list them: no dot-file line asks for them, and they reach nothing the
 binds do not already give. A user's `--settings` rules come first, and their `deny` and
-`ask` rules still win; a `permissions` of theirs that is not an object (or an `allow` that
-is not an array) is kept as it is and no rule is added, which the launch says, the hooks
-merged all the same.
+`ask` rules still win; a `permissions` of theirs that is not an object (or an `allow`
+that is not an array) is kept as it is and no rule is added, which the launch says, the
+hooks merged all the same.
 
 ### A dot-file section named after the profile
 

@@ -148,15 +148,16 @@ def merge_settings(ours, user, out):
     after theirs -- hook entries merge across settings levels, so a per-event union is
     what Claude Code itself does with two sources -- and the engine's own two
     permission rules (reading the briefing directory, writing the summary line) and
-    the dot-file's [permissions] rules, permissions.allow entries, appended after theirs the same way
-    (their deny and ask rules stand: Claude Code ranks them over allow) -- and our
-    statusLine only when theirs has none: a status line of their own wins (#287).
-    Nothing else of theirs is read, rewritten or merged. A hooks shape we do not recognise is refused rather than
-    coerced (list() of a dict would replace their data with its keys). A permissions
-    that is not an object, or an allow that is not an array, is left exactly as it is
-    and none of our rules is added: the hooks still go in, and `permissions-skipped` is
-    printed so the shell can say the agent will ask. Prints `hooks-disabled` when their
-    settings switch every hook off, so the hook can say the briefing will not arrive."""
+    the dot-file's [permissions] rules, permissions.allow entries, appended after
+    theirs the same way (their deny and ask rules stand: Claude Code ranks them over
+    allow) -- and our statusLine only when theirs has none: a status line of their own
+    wins (#287). Nothing else of theirs is read, rewritten or merged. A hooks shape we
+    do not recognise is refused rather than coerced (list() of a dict would replace
+    their data with its keys). A permissions that is not an object, or an allow that
+    is not an array, is left exactly as it is and none of our rules is added: the
+    hooks still go in, and `permissions-skipped` is printed so the shell can say the
+    agent will ask. Prints `hooks-disabled` when their settings switch every hook
+    off, so the hook can say the briefing will not arrive."""
     try:
         text = user.strip()
         if text.startswith("{"):
