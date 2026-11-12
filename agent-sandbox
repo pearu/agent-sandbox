@@ -11877,16 +11877,19 @@ _as_init() {
     return 1
   fi
   # {envdir} (#389): the environment's directory in each clone, per instance. A line the
-  # template names {envdir} in as `KEY = VALUE{envdir}`, VALUE naming {n}, records it for
-  # instance N in the file: the first active one, else the first commented out; a re-run
-  # keeps each one's. --env-dir DIR names it for the new instances and the purpose files,
-  # and renames an instance's lines (commented out or not, and the template's comments
-  # naming it) where no environment is built at any name its lines have; one built there
-  # refuses the --init: --init never moves an environment. A shared environment has none
-  # in the clones, so --env-dir with --shared-env is refused.
-  local envdir=".env" edl edk edv edre edtext="" edrentext="" edl2 en edq
-  local -a edres=() edcres=()
-  local -A envdir_of=() edn=() edren=() edact=() edall=()
+  # template names {envdir} in as `KEY = VALUE{envdir}`, in a section of a numbered role
+  # (`[conda:implementer-{n}]`) with {n} in VALUE, records it for that instance in the
+  # file: the first active one, else the first commented out; a re-run keeps each one's.
+  # Its own texts (its sections, its purpose file) name it; a new instance's take
+  # --env-dir's, else the lowest instance's, else .env; every other text the name all of
+  # them share, or ENVDIR when they differ. --env-dir DIR renames an instance's lines
+  # (commented out or not, and the template's comments naming it) where no environment is
+  # built at any name its lines have; one built there refuses the --init: --init never
+  # moves an environment. A shared environment has none in the clones, so --env-dir with
+  # --shared-env is refused.
+  local envdir=".env" envcommon edl edk edv edtext="" edrentext="" edl2 en edq edrole="" edi
+  local -a edres=() edcres=() edres_role=() edcres_role=()
+  local -A envdir_of=() edn=() edren=() edact=() edall=() edroleset=()
   if ((${_init_envdir_set:-0})); then
     if [[ ! "$_init_envdir" =~ ^[A-Za-z0-9._-]+$ || "$_init_envdir" == . || "$_init_envdir" == .. || "$_init_envdir" == .git ]]; then
       _as_msg "--init: --env-dir '$_init_envdir': a directory name -- letters, digits, '.', '_' and '-', not '.', '..' or '.git'"
@@ -11899,8 +11902,23 @@ _as_init() {
   fi
   _init_ere() { printf '%s' "$1" | sed -e 's/[][\.^$*+?(){}|]/\\&/g'; } # TEXT -> a literal ERE
   while IFS= read -r edl; do
-    [[ "$edl" == *'{envdir}'* && "${edl%%\{envdir\}*}" != *'#'* ]] || continue
+    if [[ "$edl" =~ ^\[[a-z-]+:([a-z][a-z0-9-]*)-\{n\}\] ]]; then
+      edrole="${BASH_REMATCH[1]}"
+      continue
+    elif [[ "$edl" == '['* ]]; then
+      edrole=""
+      continue
+    fi
+    [[ -n "$edrole" && "$edl" == *'{envdir}'* ]] || continue
     edl="${edl%%\{envdir\}*}"
+    if [[ "$edl" == *'#'* ]]; then
+      # a comment naming it (`... # its clone's tree, with its {envdir}`): renamed with the lines
+      [[ "$edl" == *'{n}'* && "${edl#*\{n\}}" != *'{n}'* ]] || continue
+      edv="$(_init_ere "$edl")"
+      edv="${edv//\\\{n\\\}/([0-9]+)}" edv="${edv//\\\{role\\\}/[a-z0-9-]+}"
+      edcres+=("^((# )?($edv))([^/[:space:]#]+)(.*)\$") edcres_role+=("$edrole")
+      continue
+    fi
     [[ "$edl" == *=* ]] || continue
     edk="${edl%%=*}" edv="${edl#*=}"
     edk="${edk#"${edk%%[![:space:]]*}"}" edk="${edk%"${edk##*[![:space:]]}"}"
@@ -11908,16 +11926,8 @@ _as_init() {
     [[ "$edk" != *'{'* && "$edv" == *'{n}'* && "${edv#*\{n\}}" != *'{n}'* ]] || continue
     edv="$(_init_ere "$edv")"
     edv="${edv//\\\{n\\\}/([0-9]+)}" edv="${edv//\\\{role\\\}/[a-z0-9-]+}"
-    edres+=("^((# )?[[:space:]]*$(_init_ere "$edk")[[:space:]]*=[[:space:]]*($edv))([^/[:space:]#]+)(.*)\$")
-  done <<<"$tpltext"
-  # a comment naming it (`... # its clone's tree, with its {envdir}`): renamed with the lines
-  while IFS= read -r edl; do
-    [[ "$edl" == *'{envdir}'* && "${edl%%\{envdir\}*}" == *'#'* ]] || continue
-    edl="${edl%%\{envdir\}*}"
-    [[ "$edl" == *'{n}'* && "${edl#*\{n\}}" != *'{n}'* ]] || continue
-    edv="$(_init_ere "$edl")"
-    edv="${edv//\\\{n\\\}/([0-9]+)}" edv="${edv//\\\{role\\\}/[a-z0-9-]+}"
-    edcres+=("^((# )?($edv))([^/[:space:]#]+)(.*)\$")
+    edres+=("^((# )?[[:space:]]*$(_init_ere "$edk")[[:space:]]*=[[:space:]]*($edv))([^/[:space:]#]+)(.*)\$") edres_role+=("$edrole")
+    edroleset[$edrole]=1
   done <<<"$tpltext"
   if ((${#edres[@]})) && [[ -f "$proj/.agent-sandbox" ]]; then
     edtext="$(_as_dotfile_read "$proj/.agent-sandbox" && printf x)" || :
@@ -11927,9 +11937,9 @@ _as_init() {
     }
     edtext="${edtext%x}"
     while IFS= read -r edl2 || [[ -n "$edl2" ]]; do
-      for edre in "${edres[@]}"; do
-        [[ "$edl2" =~ $edre ]] || continue
-        en="${BASH_REMATCH[4]}"
+      for edi in "${!edres[@]}"; do
+        [[ "$edl2" =~ ${edres[edi]} ]] || continue
+        en="${edres_role[edi]}-${BASH_REMATCH[4]}"
         edall[$en]+="${BASH_REMATCH[3]}${BASH_REMATCH[5]}"$'\n'
         if [[ -z "${BASH_REMATCH[2]}" && -z "${edact[$en]:-}" ]]; then
           edn[$en]="${BASH_REMATCH[5]}" edact[$en]=1
@@ -11943,7 +11953,7 @@ _as_init() {
   if ((${_init_envdir_set:-0})); then
     envdir="$_init_envdir"
   elif ((${#edn[@]})); then
-    envdir="${edn[$(printf '%s\n' "${!edn[@]}" | sort -n | head -1)]}"
+    envdir="${edn[$(printf '%s\n' "${!edn[@]}" | awk -F- '{ print $NF "\t" $0 }' | sort -n | head -1 | cut -f2)]}"
   fi
   for en in "${!edn[@]}"; do
     envdir_of[$en]="${edn[$en]}"
@@ -11953,20 +11963,33 @@ _as_init() {
       edl="$edq"
       [[ "$edl" == /* ]] || edl="$proj/$edl"
       if [[ -d "$edl/conda-meta" ]]; then
-        _as_msg "--init: --env-dir $envdir: instance $en's environment is built at $edq, a name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"
+        _as_msg "--init: --env-dir $envdir: $en's environment is built at $edq, a name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"
         return 2
       fi
     done <<<"${edall[$en]}"
     envdir_of[$en]="$envdir" edren[$en]=1
   done
+  # every other role's text: the name the clones share, or ENVDIR, which is wrong for none
+  envcommon="$envdir"
+  for en in "${!envdir_of[@]}"; do
+    [[ "${envdir_of[$en]}" == "$envdir" ]] || envcommon="ENVDIR"
+  done
   # the file's text with the renamed instances' lines rewritten, written with the rest
   if ((${#edren[@]})); then
     while IFS= read -r edl2 || [[ -n "$edl2" ]]; do
-      for edre in "${edres[@]}" ${edcres[@]+"${edcres[@]}"}; do
-        if [[ "$edl2" =~ $edre && -n "${edren[${BASH_REMATCH[4]}]:-}" ]]; then
-          edl2="${BASH_REMATCH[1]}$envdir${BASH_REMATCH[6]}"
-          break
-        fi
+      edq=""
+      for edi in "${!edres[@]}"; do
+        [[ "$edl2" =~ ${edres[edi]} ]] || continue
+        en="${edres_role[edi]}-${BASH_REMATCH[4]}"
+        [[ -n "${edren[$en]:-}" ]] && edl2="${BASH_REMATCH[1]}$envdir${BASH_REMATCH[6]}" edq=1
+        break
+      done
+      for edi in ${edcres[@]+"${!edcres[@]}"}; do
+        [[ -z "$edq" ]] || break
+        [[ "$edl2" =~ ${edcres[edi]} ]] || continue
+        en="${edcres_role[edi]}-${BASH_REMATCH[4]}"
+        [[ -n "${edren[$en]:-}" ]] && edl2="${BASH_REMATCH[1]}$envdir${BASH_REMATCH[6]}"
+        break
       done
       edrentext+="$edl2"$'\n'
     done < <(printf '%s' "$edtext")
@@ -12117,8 +12140,14 @@ _as_init() {
     txt="${txt//\{handle\}/$5}"
     txt="${txt//\{project\}/$project}"
     txt="${txt//\{env\}/${env:-ENV}}"
-    local edk="${4:-}"
-    [[ -n "$edk" && -n "${envdir_of[$edk]:-}" ]] && edk="${envdir_of[$edk]}" || edk="$envdir"
+    local edk="${3:-}"
+    if [[ -n "$edk" && -n "${envdir_of[$edk]:-}" ]]; then
+      edk="${envdir_of[$edk]}" # an instance's own text: its clone's name
+    elif [[ "$edk" == *-[0-9]* && -n "${edroleset[${edk%-*}]:-}" ]]; then
+      edk="$envdir" # a new instance of the role
+    else
+      edk="$envcommon" # every other role's
+    fi
     txt="${txt//\{envdir\}/$edk}"
     txt="$(printf '%s' "$txt" | grep -v '^#@')"$'\n'
     if [[ -z "$env" && ("$h" == "[conda" || "$h" == "[conda:"*) ]]; then
@@ -12624,13 +12653,16 @@ _as_init() {
   # written: one that is a link, or is not what --init makes there (a file where it makes
   # a directory, say), refuses the --init, which writes nothing. A link the user made is
   # refused as well: asb cannot tell it from one a role left.
-  _init_static() { # d|f REL -- 0 when $proj/REL is, or can be made, what --init makes there
+  # A path the file declares (a) is what the write asks: no link on the way, and its kind
+  # the host's when it exists (--init makes one only where there is none).
+  _init_static() { # d|f|a REL -- 0 when $proj/REL is, or can be made, what --init makes there
     local rel="${2%/}" p="$proj" kind
     while [[ -n "$rel" ]]; do
       p+="/${rel%%/*}"
       if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
       kind=directory
       [[ -z "$rel" && "$1" == f ]] && kind="file"
+      [[ -z "$rel" && "$1" == a ]] && kind="declared path"
       if [[ -L "$p" ]]; then
         _as_msg "--init: ${p#"$proj"/} is a symbolic link, where --init makes a $kind: what --init makes under .asb/ stays as it made it, and is never written through a link (a role with the project read-write can leave one; one you made is refused too). Remove the link (rm removes the link, not what it points to) and run --init again, which makes the $kind anew; nothing was written"
         return 2
@@ -12703,7 +12735,7 @@ _as_init() {
     return 2
   fi
   while IFS= read -r sk; do
-    case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("f $sk") ;; esac
+    spaths+=("a $sk")
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
   for a in "${spaths[@]}"; do
     _init_static "${a%% *}" "${a#* }" || return 2
@@ -12712,7 +12744,7 @@ _as_init() {
   if ((${#edren[@]})); then
     printf '%s' "$edrentext" | _as_dotfile_write "$df" || return 1
     wrote=1
-    _as_msg "--init: renamed in .agent-sandbox the environment's directory of instance$( ((${#edren[@]} == 1)) || printf s) $(printf '%s\n' "${!edren[@]}" | sort -n | paste -sd' ') to $envdir (--env-dir; none was built at the old name)"
+    _as_msg "--init: renamed in .agent-sandbox the environment's directory of $(printf '%s\n' "${!edren[@]}" | sort -t- -k2 -n | paste -sd' ') to $envdir (--env-dir; none was built at the old name)"
   fi
   if ((${#ep_do[@]})); then
     reg=0 sec=""
