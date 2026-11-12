@@ -580,6 +580,16 @@ Stated plainly. These are what the adversary above can still do.
   leaves its empty files behind.
 - **Host-side subcommands run unsandboxed.** `asb claude update` runs the agent
   on the host with your full environment, as `claude update` does.
+- **`asb --init` and `--apply` write, on the host, into a project a sandbox can write.**
+  They follow no link a sandbox left there: both refuse a `.agent-sandbox` that is a
+  symbolic link, and read it through a descriptor shown to be the file; `--init` refuses,
+  before it writes anything, when a path it makes under `.asb/` is a link or not what it
+  makes there (#387, #389); every file is written to a temporary one beside it and
+  renamed into place, so a link planted later is replaced, never followed. What remains:
+  a sandbox with the project read-write can make either command refuse, by leaving a link
+  in place; and the coord index and `.asb/init.sums` are read by path just before
+  `--init` rewrites them, so a link swapped in after the last check and before that read
+  has its target's text copied into the project.
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.

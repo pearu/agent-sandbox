@@ -904,7 +904,11 @@ approved, the question, the record -- and a **no** leaves the edit in the file,
 unapproved, for you to look at. A section the format does not have is refused; the lines
 are not checked beyond that, since the review shows them with the parser's own warnings.
 The file's first role-suffixed section is warned of ([Roles](#roles)), not refused. It
-runs on the host only: inside a sandbox it is refused, as `--init` is. It is the command
+runs on the host only: inside a sandbox it is refused, as `--init` is. A `.agent-sandbox`
+that is a symbolic link, dangling or not, is refused by both (exit 2), with nothing
+written through it or read through it: a sandbox with the project read-write can make
+the file a link (to `~/.bashrc`, say) where there was none, and asb cannot tell one you
+made from it, so yours is refused too; replace it with a regular file. It is the command
 a blocked session prints for you to run
 ([recipes.md](recipes.md#when-you-need-something-that-is-blocked)); the change applies
 at the next launch of the roles it names, and a running role keeps its policy until it

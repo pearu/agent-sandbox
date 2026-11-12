@@ -460,6 +460,17 @@ another environment refuses the `--init`, while a path line (`PREFIX/ = ...`) na
 is left and said (`--init` never rewrites a prefix). It approves nothing --
 `asb --trust` does, after you have read the file and the purpose files.
 
+What `--init` makes under `.asb/` stays as it made it. A path it writes, or writes under
+-- `.asb/` itself, a directory the file names, a purpose file, an Implementer's clone
+(`.asb/impl/N/`, `.asb/git/N/`) and its `.env`, an inbox, `.asb/migrate/`, the index --
+that is a symbolic link, or is not what `--init` makes there (a file where it makes a
+directory, say), refuses the `--init` before it writes anything (exit 2), naming the
+path. A sandbox with the project read-write can leave such a link, and `--init` runs on
+the host; asb cannot tell a link you made (`.asb/impl/` on another disk, say) from one a
+role left, so yours is refused too. Remove the link (`rm` removes the link, not what it
+points to), or move the path away, and run `--init` again. A linked `.agent-sandbox` is
+refused the same way, by `--init` and `--apply` ([config.md](config.md)).
+
 `--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
 under the conda base that applies, and says to launch the setup role,
 `asb --role setup claude`, which builds `main` into it. The Implementers' environments

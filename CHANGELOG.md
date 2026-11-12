@@ -1093,11 +1093,18 @@ names are gone; there are no aliases for removed names before 1.0.
   do not already give.
 - **`--init` and `--apply` refuse a symbolically linked `.agent-sandbox`** (exit 2): a
   sandbox with the project read-write can create the file as a link (to `~/.bashrc`,
-  say) where none existed, and the host-side command wrote through it. **`--init` writes
-  nothing under `.asb/` through a symbolic link** either -- purpose files, the migration
-  copy, `.asb/init.sums`, the coord index, inboxes, declared paths, `.asb/.gitignore`: a
-  path that is a link, or under one, is skipped and said, and a file is written to a
-  temporary one beside it and renamed into place.
+  say) where none existed, and the host-side command wrote through it. Both read the file
+  through a descriptor shown to be it, so a link swapped in after the check does not
+  have its target copied into the new file (#389). **What `--init` makes under `.asb/` is
+  static** (#389): a path it writes, or writes under -- `.asb/` itself, purpose files,
+  the migration copy, `.asb/init.sums`, the coord index, inboxes, declared paths,
+  `.asb/.gitignore`, an Implementer's clone, its history and its `.env` -- that is a
+  symbolic link, or not what `--init` makes there (a file where it makes a directory),
+  refuses the `--init` with exit 2, naming it, before anything is written; it used to be
+  skipped and said, and the rest written, with exit 0 (a linked `.asb/migrate` had a
+  same-named file removed from its target). A link you made is refused too. A file is
+  written to a temporary one beside it and renamed into place, and a link that appears
+  while `--init` runs stops it there (exit 2).
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`
   completes the environment's lines it wrote commented out** -- the `[conda]` sections
   and the lines naming the env's prefix, in the sections under its
@@ -1109,9 +1116,9 @@ names are gone; there are no aliases for removed names before 1.0.
   line; an active `prefix = ...` line naming another environment refuses the `--init`
   before anything is written, and a path line naming one is left and said. A file
   without the model's mark (or with CR LF lines) is not completed: its commented
-  environment lines are named, to complete by hand. A `--shared-env` run on a file whose
-  setup role a no-env `--init` wrote says that role is left over and how to remove it,
-  and leaves it. A re-run completes the numbered instances the model's sections in the
+  environment lines are named, to complete by hand. A `--shared-env` run on a file that
+  has the model's setup role (an earlier `--init` wrote it, with `--env` or without) says
+  a shared environment needs none and how to remove it, and leaves it. A re-run completes the numbered instances the model's sections in the
   file have (`implementer-2` of an earlier `implementer=2`), their environment clones
   included, and makes none the file lacks -- a count given adds above the highest
   present, as a first `--init` does, and drops none; a section whose commented header
