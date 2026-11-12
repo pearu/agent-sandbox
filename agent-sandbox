@@ -12564,6 +12564,9 @@ _as_init() {
     spaths+=("d $tpath" "f ${tpath%/}/.git" "d $gdir")
   done
   for a in ${prefixes[@]+"${prefixes[@]}"}; do spaths+=("d ${a#*$'\t'}"); done
+  # the environment's prefix, made empty below when not built yet: checked when it is in
+  # the project (--env .asb/envs/x, say)
+  [[ -n "$envpath" && "$envpath" == "$proj"/* ]] && spaths+=("d ${envpath#"$proj"/}")
   for f in ${inboxes[@]+"${inboxes[@]}"}; do spaths+=("f $f"); done
   [[ -f "$mdir/coord/COORDINATION.md" || -e "$proj/.asb/coord/COORDINATION.md" || -L "$proj/.asb/coord/COORDINATION.md" ]] \
     && spaths+=("f .asb/coord/COORDINATION.md")
@@ -12915,6 +12918,7 @@ _as_init() {
   fi
   if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
     a="empty"
+    [[ "$envpath" != "$proj"/* ]] || _init_nolink "${envpath#"$proj"/}" || return 2
     [[ -d "$envpath" ]] || { mkdir -p -- "$envpath" && a="created empty"; } || return 1
     _as_msg "--init: environment $env is not built yet ($a at $envpath$([[ "$_conda_mode" == sandbox ]] && printf ", under agent-sandbox's conda root")): $invoked --role $setup claude builds it"
   fi

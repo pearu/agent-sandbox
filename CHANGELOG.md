@@ -1118,7 +1118,8 @@ names are gone; there are no aliases for removed names before 1.0.
   without the model's mark (or with CR LF lines) is not completed: its commented
   environment lines are named, to complete by hand. A `--shared-env` run on a file that
   has the model's setup role (an earlier `--init` wrote it, with `--env` or without) says
-  a shared environment needs none and how to remove it, and leaves it. A re-run completes the numbered instances the model's sections in the
+  a shared environment needs none and how to remove it, and leaves it. A re-run
+  completes the numbered instances the model's sections in the
   file have (`implementer-2` of an earlier `implementer=2`), their environment clones
   included, and makes none the file lacks -- a count given adds above the highest
   present, as a first `--init` does, and drops none; a section whose commented header

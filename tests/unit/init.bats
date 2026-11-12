@@ -679,6 +679,22 @@ init() {
   [ ! -e "$H/conda.log" ]
 }
 
+@test "--init --env PATH inside the project under .asb/: a link on the way refused, exit 2, nothing made through it (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  mkdir -p "$PROJ/.asb" "$H/out-envs"
+  ln -s "$H/out-envs" "$PROJ/.asb/envs"
+  init -- github --env .asb/envs/x
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/envs is a symbolic link, where --init makes a directory"*"; nothing was written"* ]]
+  [ -z "$(ls -A "$H/out-envs")" ]
+  [ ! -e "$df" ]
+  # without the link, the prefix is made there, empty, for gh-setup to build into
+  rm -f "$PROJ/.asb/envs"
+  init -- github --env .asb/envs/x
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/envs/x" ] && [ ! -L "$PROJ/.asb/envs" ]
+}
+
 @test "--init and --apply rewrite .agent-sandbox by renaming a new file over it, its mode kept" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox" ino
