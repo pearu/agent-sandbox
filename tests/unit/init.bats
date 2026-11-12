@@ -859,7 +859,7 @@ tree_of() {
   cp "$df" "$H/df"
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir other
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--init: --env-dir other: instance "?"'s environment is built at .asb/impl/"?"/_env, the name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"* ]]
+  [[ "$output" == *"--init: --env-dir other: instance "?"'s environment is built at .asb/impl/"?"/_env, a name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"* ]]
   cmp "$df" "$H/df"
 }
 
@@ -883,6 +883,8 @@ tree_of() {
   [[ "$output" == *"completed in .agent-sandbox"* ]]
   grep -qx 'prefix = \.asb/impl/1/_env' "$df"
   run ! grep -qF 'impl/1/.env' "$df"
+  grep -q "^\.asb/impl/1/ = read-write .*# its clone's tree, with its _env\$" "$df" # its comment too
+  run ! grep -qF "with its .env" "$df"
   [ -d "$PROJ/.asb/impl/1/_env/conda-meta" ]
   [ "$(cat "$PROJ/.asb/impl/1/.env")" = SECRET=1 ]
   grep -qF 'conda env update -p .asb/impl/1/_env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
@@ -910,8 +912,54 @@ tree_of() {
   cp "$df" "$H/df"
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir _env
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--init: --env-dir _env: instance "?"'s environment is built at .asb/impl/"*", the name .agent-sandbox has for it, and --init never moves an environment"* ]]
+  [[ "$output" == *"--init: --env-dir _env: instance "?"'s environment is built at .asb/impl/"*", a name .agent-sandbox has for it, and --init never moves an environment"* ]]
   cmp "$df" "$H/df"
+}
+
+@test "an instance with its old prefix line commented out and a new one active: the active one is its name; --env-dir refused while any of its names has an environment (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  # the user moves implementer-1's environment to venv: the old line commented out, a new one below
+  sed -i 's|^prefix = \.asb/impl/1/\.env\(.*\)$|# prefix = .asb/impl/1/.env\1\nprefix = .asb/impl/1/venv|' "$df"
+  mv "$PROJ/.asb/impl/1/.env" "$PROJ/.asb/impl/1/venv"
+  rm -f "$H/conda.log"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx '# prefix = \.asb/impl/1/\.env.*' "$df" # left commented out
+  grep -qx 'prefix = \.asb/impl/1/venv' "$df"
+  [ "$(grep -c '^prefix = \.asb/impl/1/' "$df")" -eq 1 ]
+  [ ! -e "$PROJ/.asb/impl/1/.env" ] # no second environment
+  [ ! -e "$H/conda.log" ]
+  grep -qF 'conda env update -p .asb/impl/1/venv -f' "$PROJ/.asb/roles/implementer-1.md"
+  # --env-dir: the active name has an environment -- refused
+  cp "$df" "$H/df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir _env: instance 1's environment is built at .asb/impl/1/venv, a name .agent-sandbox has for it"* ]]
+  cmp "$df" "$H/df"
+  # ...and so does the commented-out one, back where it was: refused, its active line kept
+  mv "$PROJ/.asb/impl/1/venv" "$PROJ/.asb/impl/1/.env"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir _env: instance 1's environment is built at .asb/impl/1/.env, a name .agent-sandbox has for it"* ]]
+  cmp "$df" "$H/df"
+}
+
+@test "the tracked-name refusal suggests a name the project does not track (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  mkdir -p "$PROJ/_env"
+  printf 'x\n' >"$PROJ/_env/file"
+  git -C "$PROJ" add .env _env
+  git -C "$PROJ" commit -q -m env
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"(e.g. --env-dir .env-asb); nothing was written"* ]]
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: the project tracks _env, where --init makes implementer-1's environment (.asb/impl/1/_env)"*"(e.g. --env-dir .env-asb)"* ]]
 }
 
 @test "--env-dir with --shared-env: refused, exit 2, nothing written (#389)" {
