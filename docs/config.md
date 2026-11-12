@@ -418,7 +418,9 @@ Sections:
   exist is skipped until it does, except under `own`, which creates the sandbox's own: a
   directory when the key ends in `/`, else a file (#189). Where the path exists, its
   kind is the host's, and a `/` on a file is refused. A key with no `/` is still a
-  channel name, so a typo still refuses the launch. See
+  channel name, so a typo still refuses the launch. `asb --init` makes the paths the file
+  declares under `.asb/`, and refuses one with a `..` in it (exit 2, naming the line),
+  which it would make outside `.asb/`; a launch reads such a key lexically, as any. See
   [connections.md](connections.md#path-declarations).
 
   One small side effect worth knowing rather than reporting: where a narrowed

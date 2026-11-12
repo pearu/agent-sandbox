@@ -1102,7 +1102,9 @@ names are gone; there are no aliases for removed names before 1.0.
   symbolic link, or not what `--init` makes there (a file where it makes a directory),
   refuses the `--init` with exit 2, naming it, before anything is written; it used to be
   skipped and said, and the rest written, with exit 0 (a linked `.asb/migrate` had a
-  same-named file removed from its target). A link you made is refused too. A file is
+  same-named file removed from its target). A link you made is refused too. So is a path
+  the file declares under `.asb/` with a `..` in it (`.asb/../../x/ = read-only`), which
+  `--init` made, empty, outside the project; the refusal names the line. A file is
   written to a temporary one beside it and renamed into place, and a link that appears
   while `--init` runs stops it there (exit 2).
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`

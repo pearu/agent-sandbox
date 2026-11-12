@@ -12570,14 +12570,22 @@ _as_init() {
   for f in ${inboxes[@]+"${inboxes[@]}"}; do spaths+=("f $f"); done
   [[ -f "$mdir/coord/COORDINATION.md" || -e "$proj/.asb/coord/COORDINATION.md" || -L "$proj/.asb/coord/COORDINATION.md" ]] \
     && spaths+=("f .asb/coord/COORDINATION.md")
-  # the paths the file declares under .asb/ once written, each made below
-  while IFS= read -r sk; do
-    case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("f $sk") ;; esac
-  done < <({
+  # the paths the file declares under .asb/ once written, each made below; one with a `..`
+  # in it would be made outside .asb/ (a launch reads it lexically, as any key)
+  local decls
+  decls="$({
     if [[ -f "$df" ]]; then cat -- "$df"; else printf '%s\n' ${pre[@]+"${pre[@]}"}; fi
     printf '%s\n' "$new"
     for k in "${!ep_do[@]}"; do printf '%s\n' "${ep_1[$k]}"; done
-  } | sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' | sort -u)
+  } | grep -E '^[[:space:]]*\.asb/[^=[:space:]]*[[:space:]]*=' || true)"
+  sk="$(grep -m1 -E '^[[:space:]]*\.asb/([^=[:space:]]*/)?\.\.(/[^=[:space:]]*)?[[:space:]]*=' <<<"$decls" || true)"
+  if [[ -n "$sk" ]]; then
+    _as_msg "--init: .agent-sandbox declares a path under .asb/ with '..' in it: '$(_init_norm "$sk")'. --init makes the paths the file declares under .asb/, and only there: remove the line, or write the path without '..', and run --init again; nothing was written"
+    return 2
+  fi
+  while IFS= read -r sk; do
+    case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("f $sk") ;; esac
+  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
   for a in "${spaths[@]}"; do
     _init_static "${a%% *}" "${a#* }" || return 2
   done

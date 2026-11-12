@@ -692,7 +692,8 @@ init() {
   rm -f "$PROJ/.asb/envs"
   init -- github --env .asb/envs/x
   [ "$status" -eq 0 ]
-  [ -d "$PROJ/.asb/envs/x" ] && [ ! -L "$PROJ/.asb/envs" ]
+  [ -d "$PROJ/.asb/envs/x" ]
+  [ ! -L "$PROJ/.asb/envs" ]
 }
 
 @test "--init and --apply rewrite .agent-sandbox by renaming a new file over it, its mode kept" {
@@ -799,6 +800,31 @@ tree_of() {
   [ "$status" -eq 2 ]
   [ "$(ls "$H/mig")" = $'implementer-1.md\nplanner-1.md' ]
   [ "$(cat "$H/mig/implementer-1.md")" = mine ]
+}
+
+@test "--init refuses a path declared under .asb/ with '..' in it, exit 2, the line named, nothing made outside (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  # as a sandbox with the project read-write can append them; ../.. from .asb/ is $H
+  printf '[connect:gh-*]\n.asb/../../escape-dir/ = read-only\n.asb/../../escape-file = read-only\n' >>"$df"
+  cp "$df" "$H/df"
+  tree_of "$PROJ" >"$H/before"
+  init -- github
+  [ ! -e "$H/escape-dir" ] # made by --init before #389
+  [ ! -e "$H/escape-file" ]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox declares a path under .asb/ with '..' in it: '.asb/../../escape-dir/ = read-only'. --init makes the paths the file declares under .asb/, and only there: remove the line, or write the path without '..', and run --init again; nothing was written"* ]]
+  cmp "$df" "$H/df"
+  tree_of "$PROJ" >"$H/after"
+  cmp "$H/before" "$H/after"
+  # a name with two dots in it is no '..': made, inside .asb/
+  cp "$H/df" "$df"
+  sed -i '/escape/d' "$df"
+  printf '.asb/x..y/ = read-only\n' >>"$df"
+  init -- github
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/x..y" ]
 }
 
 @test "--init stops with exit 2 at a symbolic link that appears while it runs, its target not written (#389)" {

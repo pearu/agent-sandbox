@@ -469,7 +469,9 @@ path. A sandbox with the project read-write can leave such a link, and `--init` 
 the host; asb cannot tell a link you made (`.asb/impl/` on another disk, say) from one a
 role left, so yours is refused too. Remove the link (`rm` removes the link, not what it
 points to), or move the path away, and run `--init` again. A linked `.agent-sandbox` is
-refused the same way, by `--init` and `--apply` ([config.md](config.md)).
+refused the same way, by `--init` and `--apply` ([config.md](config.md)). So is a path
+the file declares under `.asb/` with a `..` in it (`.asb/../x/ = read-only`), which
+`--init` would make outside `.asb/`: the refusal names the line.
 
 `--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
 under the conda base that applies, and says to launch the setup role,
