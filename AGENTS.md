@@ -178,6 +178,13 @@ number.
   and call them. Messages go through `_as_msg`. Keep `IFS` changes inside a
   helper (`_as_split`); a `local IFS` in the main function leaks to everything
   after it.
+- **Prose.** Markdown prose is wrapped at a comfortable width, about 80-90 columns;
+  there is no hard limit and no check. An edit changes only the lines it touches and
+  does not re-flow the paragraph, so the diff stays small; uneven line lengths that
+  follow are expected. Line width is not a review finding unless it hurts reading (a
+  prose line of several hundred columns, say) or a break changes how the text renders.
+  A line `asb --init` reads by its prefix (`#@own `, `#@shared `) keeps the prefix at its
+  start however it is wrapped, and a `#@ key = value` line stays one line.
 - **Commits.** Imperative subject, a body that says why and what was verified,
   one logical change per commit. An AI-authored commit ends with
   `Co-Authored-By: <model name> <noreply@anthropic.com>` (or the equivalent for
