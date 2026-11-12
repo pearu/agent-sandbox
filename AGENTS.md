@@ -183,7 +183,8 @@ number.
   does not re-flow the paragraph, so the diff stays small; uneven line lengths that
   follow are expected. Line width is not a review finding unless it hurts reading (a
   prose line of several hundred columns, say) or a break changes how the text renders.
-  Never re-wrap a `#@` marker line or a `{placeholder}` that `asb --init` reads.
+  A line `asb --init` reads by its prefix (`#@own `, `#@shared `) keeps the prefix at its
+  start however it is wrapped, and a `#@ key = value` line stays one line.
 - **Commits.** Imperative subject, a body that says why and what was verified,
   one logical change per commit. An AI-authored commit ends with
   `Co-Authored-By: <model name> <noreply@anthropic.com>` (or the equivalent for
