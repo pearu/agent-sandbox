@@ -1108,8 +1108,10 @@ names are gone; there are no aliases for removed names before 1.0.
   --env-dir DIR`** names the environment's directory in each Implementer's clone
   (`.asb/impl/N/DIR`, default `.env`), written into the prefix lines and the purpose
   files; a project that tracks a `.env` refuses `--init --env` (exit 2, nothing written)
-  until it is given another name, a re-run keeps the name the file has, and another
-  `--env-dir` on a re-run is refused (`--init` never rewrites a prefix). A file is
+  until it is given another name. A re-run keeps each clone's name, and `--env-dir` on a
+  re-run renames the clones' lines where no environment is built at the old name; one
+  built there refuses it (`--init` never moves an environment), as does `--env-dir` with
+  `--shared-env`. A file is
   written to a temporary one beside it and renamed into place, and a link that appears
   while `--init` runs stops it there (exit 2).
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`

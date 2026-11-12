@@ -836,7 +836,7 @@ tree_of() {
   tree_of "$PROJ" >"$H/before"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--init: the project tracks .env, where --init makes the environment in each clone (.asb/impl/1/.env, ...): run --init again with --env-dir OTHER, a name the project does not track (e.g. --env-dir _env); nothing was written"* ]]
+  [[ "$output" == *"--init: the project tracks .env, where --init makes implementer-1's environment (.asb/impl/1/.env): run --init again with --env-dir OTHER, a name the project does not track (e.g. --env-dir _env); nothing was written"* ]]
   tree_of "$PROJ" >"$H/after"
   cmp "$H/before" "$H/after"
   [ ! -e "$H/conda.log" ]
@@ -855,12 +855,84 @@ tree_of() {
   [ "$status" -eq 0 ]
   grep -qx 'prefix = \.asb/impl/2/_env' "$df"
   [ -d "$PROJ/.asb/impl/2/_env/conda-meta" ]
-  # one with another name is refused: --init never rewrites a prefix
+  # another name, where the environments are built at this one: refused, --init never moves one
   cp "$df" "$H/df"
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir other
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--init: --env-dir other: .agent-sandbox names the environment's directory in the clones _env, and --init never rewrites a prefix -- run it without --env-dir, or change those lines yourself first"* ]]
+  [[ "$output" == *"--init: --env-dir other: instance "?"'s environment is built at .asb/impl/"?"/_env, the name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"* ]]
   cmp "$df" "$H/df"
+}
+
+@test "a project that tracks .env, its file written without an environment: --env refused, --env-dir renames the clones' lines and takes it (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  git -C "$PROJ" add .env
+  git -C "$PROJ" commit -q -m env
+  # the file records .env, commented out: what main's --init writes too (the same bytes)
+  init -- roles
+  [ "$status" -eq 0 ]
+  grep -qx '# prefix = \.asb/impl/1/\.env' "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: the project tracks .env, where --init makes implementer-1's environment"* ]]
+  # nothing is built at .env (the project's file is there), so --env-dir renames it
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: renamed in .agent-sandbox the environment's directory of instance 1 to _env (--env-dir; none was built at the old name)"* ]]
+  [[ "$output" == *"completed in .agent-sandbox"* ]]
+  grep -qx 'prefix = \.asb/impl/1/_env' "$df"
+  run ! grep -qF 'impl/1/.env' "$df"
+  [ -d "$PROJ/.asb/impl/1/_env/conda-meta" ]
+  [ "$(cat "$PROJ/.asb/impl/1/.env")" = SECRET=1 ]
+  grep -qF 'conda env update -p .asb/impl/1/_env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
+  grep -qF '.asb/impl/N/_env/bin/...' "$PROJ/.asb/roles/reviewer-1.md"
+}
+
+@test "each clone keeps the environment directory its lines name: one changed by hand is no refusal, with --env or without (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  # the user moves implementer-2's environment to another name, its line with it
+  sed -i 's|^prefix = \.asb/impl/2/\.env|prefix = .asb/impl/2/venv|' "$df"
+  rm -rf "$PROJ/.asb/impl/2/.env"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  grep -qx 'prefix = \.asb/impl/1/\.env' "$df"
+  grep -qx 'prefix = \.asb/impl/2/venv' "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/impl/2/venv/conda-meta" ] # its environment made at its own name
+  grep -qF 'conda env update -p .asb/impl/2/venv -f' "$PROJ/.asb/roles/implementer-2.md"
+  grep -qF 'conda env update -p .asb/impl/1/.env -f' "$PROJ/.asb/roles/implementer-1.md"
+  # --env-dir over names with environments built at them: refused
+  cp "$df" "$H/df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir _env: instance "?"'s environment is built at .asb/impl/"*", the name .agent-sandbox has for it, and --init never moves an environment"* ]]
+  cmp "$df" "$H/df"
+}
+
+@test "--env-dir with --shared-env: refused, exit 2, nothing written (#389)" {
+  shared_env torch-dev
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --shared-env torch-dev --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir with --shared-env: a shared environment is not cloned, so the clones have no environment directory to name"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  [ ! -e "$PROJ/.asb" ]
+}
+
+@test "--env naming a built environment through a link of yours in the project: no refusal, outside .asb/ the static rule has nothing to say (#389)" {
+  mkdir -p "$H/bigdisk/env/conda-meta" "$H/bigdisk/envs/dev/conda-meta"
+  ln -s "$H/bigdisk/env" "$PROJ/venv"
+  init CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env ./venv
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  ln -s "$H/bigdisk/envs" "$PROJ/envs"
+  init -- github --env ./envs/dev
+  [ "$status" -eq 0 ]
+  grep -qF "$PROJ/envs/dev" "$PROJ/.agent-sandbox"
 }
 
 @test "a project that tracks .env, with no environment asked for: nothing made there, no refusal, a re-run too (#389)" {
@@ -913,8 +985,9 @@ STUB
 }
 
 # swap_run SECRET ARGS... -- the engine sourced, its _as_dotfile_read made to swap the file
-# it is given for a symbolic link to SECRET first (a link planted between the check and the
-# read), then run with ARGS from the project; y answers a question.
+# it is given for a symbolic link to SECRET at its SWAP_AT-th call (default the first: a
+# link planted between the check and the read), then run with ARGS from the project; n
+# answers a question.
 swap_run() {
   local secret="$1"
   shift
@@ -923,13 +996,17 @@ swap_run() {
 source "$ENGINE"
 eval "_as_dotfile_read_real() $(declare -f _as_dotfile_read | tail -n +2)"
 _as_dotfile_read() {
-  ln -sfn "$SECRET" "$1"
+  local c=0
+  [[ -f "$SWAP_COUNT" ]] && c="$(<"$SWAP_COUNT")"
+  printf '%s\n' $((c + 1)) >"$SWAP_COUNT"
+  ((c + 1 == SWAP_AT)) && ln -sfn "$SECRET" "$1"
   _as_dotfile_read_real "$@"
 }
 agent_sandbox "$@"
 EOF
-  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" ENGINE="$4" SECRET="$5" MAMBA_ROOT_PREFIX="$6" bash "$7" "${@:8}" 2>&1' \
-    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "$secret" "$H/base" "$H/swap.bash" "$@"
+  rm -f "$H/swap.count"
+  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" ENGINE="$4" SECRET="$5" MAMBA_ROOT_PREFIX="$6" SWAP_COUNT="$7" SWAP_AT="$8" bash "$9" "${@:10}" 2>&1' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "$secret" "$H/base" "$H/swap.count" "${SWAP_AT:-1}" "$H/swap.bash" "$@"
 }
 
 @test "--init reads .agent-sandbox through the checked read, completing the environment's lines and appending sections: a link swapped in is refused, exit 2 (#389)" {
@@ -949,10 +1026,18 @@ EOF
   cmp "$H/secret" "$H/secret.orig"
   [ -L "$df" ] # nothing renamed over the link
   run ! grep -rqF SECRET-TOKEN "$PROJ/.asb"
-  # the append of another model's sections reads it so too: refused with its message, exit 2
+  # the roles model reads it for its clones' environment directories (the first read)...
   rm -f "$df"
   cp "$H/df.github" "$df"
   swap_run "$H/secret" --init roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox became a symbolic link while --init ran; nothing written"* ]]
+  cmp "$H/secret" "$H/secret.orig"
+  [ -L "$df" ]
+  # ...and the append of its sections reads it so too (the second): refused, exit 2
+  rm -f "$df"
+  cp "$H/df.github" "$df"
+  SWAP_AT=2 swap_run "$H/secret" --init roles
   [ "$status" -eq 2 ]
   [[ "$output" == *"--init: .agent-sandbox became a symbolic link while --init ran; nothing added to it"* ]]
   cmp "$H/secret" "$H/secret.orig"
