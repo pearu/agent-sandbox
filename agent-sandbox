@@ -548,7 +548,7 @@ Engine flags (before CMD):
                         ask after that login there, or end it, as the account
                         (its own asb --status/--shutdown); --shutdown removes
                         nothing, and --setup-remote ALIAS starts it again
-  --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
+  --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] [--env-dir DIR]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
                         (models/, e.g. `roles`), with N instances of a role
@@ -559,7 +559,9 @@ Engine flags (before CMD):
                         missing; with --env (or --shared-env), it completes
                         the environment's lines it wrote commented out
                         without one. Models compose in one file, their role
-                        names apart.
+                        names apart. --env-dir names the environment's
+                        directory in each clone (default .env), for a
+                        project that tracks a .env of its own.
                         Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
                         nothing, then the plan for CMD's profile, else for
@@ -11874,6 +11876,37 @@ _as_init() {
     fi
     return 1
   fi
+  # {envdir} (#389): the environment's directory in each clone. --env-dir names it, a
+  # single path component; a re-run without it keeps the one the file records (a line the
+  # template names {envdir} in, before any comment, as written, commented out or not), and
+  # one with another name is refused: --init never rewrites a prefix. Else .env.
+  local envdir=".env" edl edre edrec=""
+  if ((${_init_envdir_set:-0})); then
+    if [[ ! "$_init_envdir" =~ ^[A-Za-z0-9._-]+$ || "$_init_envdir" == . || "$_init_envdir" == .. || "$_init_envdir" == .git ]]; then
+      _as_msg "--init: --env-dir '$_init_envdir': a directory name -- letters, digits, '.', '_' and '-', not '.', '..' or '.git'"
+      return 2
+    fi
+    envdir="$_init_envdir"
+  fi
+  if [[ -f "$proj/.agent-sandbox" ]]; then
+    while IFS= read -r edl; do
+      edl="${edl#\#@own }" edl="${edl#\#@shared }"
+      [[ "$edl" == *'{envdir}'* && "${edl%%\{envdir\}*}" != *'#'* ]] || continue
+      edl="${edl%%\{envdir\}*}"
+      edre="$(printf '%s' "$edl" | sed -e 's/[][\.^$*+?(){}|/]/\\&/g' -e 's/\\{n\\}/[0-9]+/g' -e 's/\\{role\\}/[a-z0-9-]+/g' -e 's/[[:space:]]*=[[:space:]]*/[[:space:]]*=[[:space:]]*/')"
+      edrec+="$(sed -nE "s/^(# )?[[:space:]]*$edre([^/[:space:]#]+).*/\2/p" -- "$proj/.agent-sandbox")"$'\n'
+    done <<<"$tpltext"
+    edrec="$(printf '%s' "$edrec" | sed '/^$/d' | sort -u)"
+  fi
+  if [[ "$edrec" == *$'\n'* ]]; then
+    _as_msg "--init: .agent-sandbox names more than one environment directory in the clones ($(paste -sd' ' <<<"$edrec")): make them one by hand, then run --init again"
+    return 2
+  elif [[ -n "$edrec" ]] && ((${_init_envdir_set:-0})) && [[ "$edrec" != "$envdir" ]]; then
+    _as_msg "--init: --env-dir $envdir: .agent-sandbox names the environment's directory in the clones $edrec, and --init never rewrites a prefix -- run it without --env-dir, or change those lines yourself first"
+    return 2
+  elif [[ -n "$edrec" ]]; then
+    envdir="$edrec"
+  fi
 
   # ---- the template's sections, and the roles they declare ----
   # `#@ scope = roles` (#267): the unsuffixed sections after the line are the model's
@@ -12019,6 +12052,7 @@ _as_init() {
     txt="${txt//\{handle\}/$5}"
     txt="${txt//\{project\}/$project}"
     txt="${txt//\{env\}/${env:-ENV}}"
+    txt="${txt//\{envdir\}/$envdir}"
     txt="$(printf '%s' "$txt" | grep -v '^#@')"$'\n'
     if [[ -z "$env" && ("$h" == "[conda" || "$h" == "[conda:"*) ]]; then
       txt="$(printf '%s' "$txt" | sed 's/^\(.\)/# \1/')"$'\n'
@@ -12563,7 +12597,18 @@ _as_init() {
     read -r tpath gdir br <<<"${a#*$'\t'}"
     spaths+=("d $tpath" "f ${tpath%/}/.git" "d $gdir")
   done
-  for a in ${prefixes[@]+"${prefixes[@]}"}; do spaths+=("d ${a#*$'\t'}"); done
+  # an environment prefix in a clone, only when this --init would make one there (--env):
+  # without one, nothing is made at it, and the project may track a file of that name
+  if [[ -n "$env" ]] && ! ((${_init_shared:-0})); then
+    for a in ${prefixes[@]+"${prefixes[@]}"}; do spaths+=("d ${a#*$'\t'}"); done
+    # a clone has what the project tracks: a file or directory {envdir} there is the
+    # project's, not the environment's
+    if ((${#prefixes[@]})) && grep -qF '{envdir}' <<<"$tpltext" \
+      && [[ -n "$(git -C "$proj" ls-files -- ":(literal)$envdir" 2>/dev/null | head -1)" ]]; then
+      _as_msg "--init: the project tracks $envdir, where --init makes the environment in each clone ($(cut -f2 <<<"${prefixes[0]}"), ...): run --init again with --env-dir OTHER, a name the project does not track (e.g. --env-dir _env); nothing was written"
+      return 2
+    fi
+  fi
   # the environment's prefix, made empty below when not built yet: checked when it is in
   # the project (--env .asb/envs/x, say)
   [[ -n "$envpath" && "$envpath" == "$proj"/* ]] && spaths+=("d ${envpath#"$proj"/}")
@@ -14162,7 +14207,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
-  local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
+  local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0 _init_envdir="" _init_envdir_set=0
   local -a _init_counts=() _apply_words=()
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
   # [--agent AGENT] --account NAME --login (#355): the verb; its agent and account are
@@ -14408,7 +14453,7 @@ agent_sandbox() (
         fi
         ;;
       --init)
-        # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
+        # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] [--env-dir DIR] (#225): the words after it are its own.
         _do_init=1
         shift
         [[ $# -gt 0 && "$1" != -* ]] || {
@@ -14450,6 +14495,21 @@ agent_sandbox() (
             --enable-gpu | --disable-gpu)
               _init_gpu="${1#--}" _init_gpu="${_init_gpu%-gpu}"
               shift
+              ;;
+            --env-dir | --env-dir=*)
+              # the environment's directory in each clone, {envdir} (#389): .env unless named
+              if [[ "$1" == --env-dir ]]; then
+                [[ $# -ge 2 ]] || {
+                  _as_msg "--init: --env-dir needs a directory name, e.g. --env-dir _env"
+                  return 2
+                }
+                _init_envdir="$2"
+                shift 2
+              else
+                _init_envdir="${1#--env-dir=}"
+                shift
+              fi
+              _init_envdir_set=1
               ;;
             [a-z]*=*)
               _init_counts+=("$1")

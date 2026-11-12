@@ -11,7 +11,7 @@ install -- rather than doing it.
   its branch and the diff against `main`. Neither history is here, on purpose: you
   judge the change, not how it was reached.
 - An Implementer's tree, with what its build left there: `.asb/impl/N/`, read-only.
-  Run its build with its environment by path, `.asb/impl/N/.env/bin/...`.
+  Run its build with its environment by path, `.asb/impl/N/{envdir}/bin/...`.
 - Your Reviews: `.asb/review/{role}/`.
 - Your messages: `.asb/coord/{role}/messages.md`; read the others' at
   `.asb/coord/<role>/messages.md`. The index, kept by `--init`:

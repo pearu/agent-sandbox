@@ -9,8 +9,8 @@ address what holds, and object, with reasons, to what does not.
 **Where things are.**
 - Your tree, a clone of the project on branch `impl-{n}`: `.asb/impl/{n}/`. Work and
   commit there, nowhere else; its history is `.asb/git/{n}/`, yours alone.
-#@own - Your environment: `.asb/impl/{n}/.env` (if one was made). At every start,
-#@own   sync it: `conda env update -p .asb/impl/{n}/.env -f environment.yml --prune`
+#@own - Your environment: `.asb/impl/{n}/{envdir}` (if one was made). At every start,
+#@own   sync it: `conda env update -p .asb/impl/{n}/{envdir} -f environment.yml --prune`
 #@own   (or the project's lock file). A package you need is a change to the
 #@own   specification, in the diff like any other.
 #@shared - Your environment: `{env}`, another project's, read-only to

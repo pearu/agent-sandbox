@@ -827,6 +827,71 @@ tree_of() {
   [ -d "$PROJ/.asb/x..y" ]
 }
 
+@test "a project that tracks .env: --env refused, exit 2, nothing written; --env-dir names the clones' environment directory, kept by a re-run (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  git -C "$PROJ" add .env
+  git -C "$PROJ" commit -q -m env
+  tree_of "$PROJ" >"$H/before"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: the project tracks .env, where --init makes the environment in each clone (.asb/impl/1/.env, ...): run --init again with --env-dir OTHER, a name the project does not track (e.g. --env-dir _env); nothing was written"* ]]
+  tree_of "$PROJ" >"$H/after"
+  cmp "$H/before" "$H/after"
+  [ ! -e "$H/conda.log" ]
+  # another name: the prefix lines, the clone's environment and the purpose files say it
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 0 ]
+  grep -qx 'prefix = \.asb/impl/1/_env' "$df"
+  run ! grep -qF 'impl/1/.env' "$df"
+  [ -d "$PROJ/.asb/impl/1/_env/conda-meta" ]
+  [ -f "$PROJ/.asb/impl/1/.env" ] # the project's own, untouched
+  grep -qF 'conda env update -p .asb/impl/1/_env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
+  grep -qF '.asb/impl/N/_env/bin/...' "$PROJ/.asb/roles/reviewer-1.md"
+  grep -qF "with its _env" "$df"
+  # a re-run without --env-dir keeps the name the file records
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx 'prefix = \.asb/impl/2/_env' "$df"
+  [ -d "$PROJ/.asb/impl/2/_env/conda-meta" ]
+  # one with another name is refused: --init never rewrites a prefix
+  cp "$df" "$H/df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir other
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir other: .agent-sandbox names the environment's directory in the clones _env, and --init never rewrites a prefix -- run it without --env-dir, or change those lines yourself first"* ]]
+  cmp "$df" "$H/df"
+}
+
+@test "a project that tracks .env, with no environment asked for: nothing made there, no refusal, a re-run too (#389)" {
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  git -C "$PROJ" add .env
+  git -C "$PROJ" commit -q -m env
+  init -- roles
+  [ "$status" -eq 0 ]
+  grep -qx '# prefix = \.asb/impl/1/\.env' "$PROJ/.agent-sandbox"
+  [ "$(cat "$PROJ/.asb/impl/1/.env")" = SECRET=1 ] # the clone has the project's file
+  init -- roles
+  [ "$status" -eq 0 ]
+}
+
+@test "--env-dir takes one directory name: a path, '.', '..', '.git' or nothing refused, exit 2, nothing written (#389)" {
+  local d
+  for d in a/b /abs . .. .git '' 'a b' 'x#y'; do
+    init -- roles --env-dir "$d"
+    [ "$status" -eq 2 ] || {
+      echo "'$d': $status $output"
+      return 1
+    }
+    [[ "$output" == *"--init: --env-dir '$d': a directory name -- letters, digits, '.', '_' and '-', not '.', '..' or '.git'"* ]]
+    [ ! -e "$PROJ/.agent-sandbox" ]
+    [ ! -e "$PROJ/.asb" ]
+  done
+  init -- roles --env-dir
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir needs a directory name"* ]]
+}
+
 @test "--init stops with exit 2 at a symbolic link that appears while it runs, its target not written (#389)" {
   init -- roles
   [ "$status" -eq 0 ]

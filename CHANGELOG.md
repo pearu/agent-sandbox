@@ -1104,7 +1104,12 @@ names are gone; there are no aliases for removed names before 1.0.
   skipped and said, and the rest written, with exit 0 (a linked `.asb/migrate` had a
   same-named file removed from its target). A link you made is refused too. So is a path
   the file declares under `.asb/` with a `..` in it (`.asb/../../x/ = read-only`), which
-  `--init` made, empty, outside the project; the refusal names the line. A file is
+  `--init` made, empty, outside the project; the refusal names the line. **`--init
+  --env-dir DIR`** names the environment's directory in each Implementer's clone
+  (`.asb/impl/N/DIR`, default `.env`), written into the prefix lines and the purpose
+  files; a project that tracks a `.env` refuses `--init --env` (exit 2, nothing written)
+  until it is given another name, a re-run keeps the name the file has, and another
+  `--env-dir` on a re-run is refused (`--init` never rewrites a prefix). A file is
   written to a temporary one beside it and renamed into place, and a link that appears
   while `--init` runs stops it there (exit 2).
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`

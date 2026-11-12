@@ -48,12 +48,12 @@ start = .asb/start/planner.md     # its first turn: arm the watcher, read the in
 #@ inbox = .asb/coord/to/{role}.md
 .asb/handoff/implementer-{n}/ = read-write
 .asb/coord/implementer-{n}/ = read-write   # its messages.md, in a directory: Write and Edit rename a temp file over it
-.asb/impl/{n}/ = read-write       # its clone's tree, with its .env
+.asb/impl/{n}/ = read-write       # its clone's tree, with its {envdir}
 .asb/git/{n}/ = read-write        # its clone's history
 ./.git/ = read-only               # the clone reads main's objects through it
 #@shared {envpath}/ = copy-on-write  # another project's env: what it installs lands in its layer
 #@own [conda:implementer-{n}]           # activation only; the clone is writable as its tree is
-#@own prefix = .asb/impl/{n}/.env
+#@own prefix = .asb/impl/{n}/{envdir}
 [serve:implementer-{n}]           # no terminal: asb --role {role} --serve
 watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md

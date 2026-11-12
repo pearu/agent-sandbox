@@ -479,6 +479,13 @@ under the conda base that applies, and says to launch the setup role,
 are clones of it, so until it is built there is nothing to clone: `--init` says so and
 skips them, and run again once setup is done, it makes them.
 
+An Implementer's environment is `.asb/impl/N/.env` in its clone. A project that tracks a
+`.env` of its own (a file of settings, say) has it in every clone, so `--init --env`
+refuses (exit 2, nothing written) and asks for another name: `--env-dir _env` puts the
+environments at `.asb/impl/N/_env`, and the purpose files say that name. A re-run keeps
+the name the file has; another `--env-dir` is refused, since `--init` never rewrites a
+prefix. Without `--env` nothing is made there, and a tracked `.env` is no matter.
+
 The model's common block -- what every role gets -- is written once per role pattern
 (`[connect:planner-*]`, `[connect:supervisor]`, ...), never unsuffixed, so the file can
 hold another model too: `asb --init github` in the same checkout adds the `gh-*` roles,
