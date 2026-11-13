@@ -1076,6 +1076,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A role can no longer move a read-only file or directory by renaming a parent.** A
+  read-only bind is a mount point the role cannot rename or remove, but in a directory
+  it has read-write from the host it could rename a parent (measured: the `roles`
+  model's Supervisor and setup role ran `mv .asb .asb.moved`, and the directory moved on
+  the host), put its own file at the old path, and have the next launch bind that one
+  read-only. Each directory between a read-write root and a read-only bind is now bound
+  onto itself at launch, so its rename or removal fails with EBUSY: in the shipped
+  models `.asb` and `.asb/roles` for the `roles` Supervisor and setup role and for the
+  `github` setup role; none for the roles with a read-only or copy-on-write project. A
+  pinned directory stays writable inside; a rename, hard link or `git mv` across its
+  boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the
+  briefing says. The bwrap arguments are unchanged where nothing is pinned.
 - **A claude session no longer asks to read its own briefing or to write its summary
   line.** Claude Code asked "Allow this read outside the working directories?" for
   `/run/agent-sandbox/briefing.md` in every role without a `[briefing] start` (only

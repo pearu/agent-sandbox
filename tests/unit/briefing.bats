@@ -1272,3 +1272,18 @@ login_file() {
   run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
   grep -qxF "You run as claude on the user's own login. Its login expired on $day; the user renews it with sign in again from the menu." "$md"
 }
+
+@test "the directories pinned above a read-only path are said, with what fails across them; nothing where nothing is pinned" {
+  mkdir -p "$PROJ/a/b"
+  touch "$PROJ/a/b/f.md" "$PROJ/top.md"
+  run_engine BWRAP_COPY="$OUT" -- asb --connect './a/b/f.md = read-only' claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- '- the directories above a read-only file or directory cannot be renamed or' "$OUT/briefing.md"
+  grep -qxF -- "  removed ($PROJ/a, $PROJ/a/b): they stay writable inside, but a rename, hard link or \`git mv\`" "$OUT/briefing.md"
+  # shellcheck disable=SC2016 # the briefing's backticks, literal
+  grep -qxF -- '  across their boundary fails with "Invalid cross-device link"; `mv` and `cp` work' "$OUT/briefing.md"
+  run_engine BWRAP_COPY="$OUT" -- asb --connect './top.md = read-only' claude --version
+  [ "$status" -eq 0 ]
+  grep -q -- "- extra read-only paths: $PROJ/top.md\$" "$OUT/briefing.md"
+  run ! grep -q 'cannot be renamed or' "$OUT/briefing.md"
+}

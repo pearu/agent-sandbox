@@ -5595,6 +5595,17 @@ _as_briefing_write() {
     printf '\n## Filesystem\n\n'
     printf -- '- writable: %s\n' "$rw_line"
     printf -- '- extra read-only paths: %s\n' "$ro_line"
+    # The directories this launch pins above a read-only file or directory (_as_ro_pins,
+    # on the binds made so far: what follows adds none inside the project).
+    local -a _bf_opts=() _bf_pins=()
+    _as_ro_pins args _bf_opts _bf_pins quiet
+    if ((${#_bf_pins[@]})); then
+      local _bf_p _bf_l=""
+      for _bf_p in "${_bf_pins[@]}"; do _bf_l+="${_bf_l:+, }$_bf_p"; done
+      printf -- '- the directories above a read-only file or directory cannot be renamed or\n'
+      printf '  removed (%s): they stay writable inside, but a rename, hard link or `git mv`\n' "$_bf_l"
+      printf '  across their boundary fails with "Invalid cross-device link"; `mv` and `cp` work\n'
+    fi
     if ((${#_gpu_nodes[@]})); then
       printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
     elif [[ -n "${_gpu_devices_from:-}" && "${_knob_gpu:-on}" != off && "${_knob_gpu:-on}" != 0 ]]; then
@@ -14201,6 +14212,213 @@ _as_fallback_hint() {
   _as_msg "See docs/troubleshooting.md, section 'The sandbox will not start'."
 }
 
+# READ-ONLY PARENTS ARE PINNED. A role cannot rename or remove a read-only bind (a mount
+# point: EBUSY), but where it has the directory around it read-write from the host it
+# could rename a PARENT: the read-only file or directory moves along, on the host too, the
+# role makes its own at the old path, and the next launch binds that one read-only
+# (measured: the supervisor's `mv .asb .asb.moved`). So every directory between such a
+# read-write root and a read-only bind is made a mount point of its own -- bound onto
+# itself, read-write, a "pin" -- which the kernel refuses to rename or remove (EBUSY).
+# Computed here, from the final bind list, so every kind of declaration is covered
+# without knowing about pins; measured first by the readonly-spike probes
+# (probes/readonly-pin*.py), whose compute_pins this ports.
+#
+# _as_ro_pins IN OUT PINNED [quiet] -- OUT := the bwrap options in the array IN with the
+# pins inserted; PINNED := the pinned directories (inside paths), parents first. OUT is IN
+# unchanged, element for element, when nothing is pinned. Under `native` nothing is. The
+# rule, on IN as the launch built it:
+#
+# - "read-write from the host": the DEST of a --bind/--bind-try/--dev-bind[-try] whose
+#   source is a directory now, with no later --remount-ro of that DEST. A directory from
+#   the role's own store counts; an overlay (copy-on-write), a tmpfs, /proc, /dev never do
+#   (nothing there reaches the host, and a pin cannot go on an overlay).
+# - read-only: --ro-bind[-try], or a read-write bind with a later --remount-ro of its DEST.
+#   A -try bind whose source is missing makes no mount, so it is ignored.
+# - for each read-only bind, every directory between its nearest mount above and it that
+#   is not already a mount point and whose nearest mount is read-write from the host is
+#   pinned: `--bind SRC DIR`, SRC being DIR's host path under that mount's source (the
+#   store's directory for a bind from a store). A directory inside a read-only mount is
+#   not pinned (it cannot be renamed there).
+# - each pin goes before the first option beneath it (after the mount it lies in), so the
+#   binds beneath it stay on top; pins at one place, parents first.
+#
+# Conservative where the probes did not go: a directory that is not there on the host, or
+# is a symbolic link, is not pinned (said, with _as_msg unless quiet) -- binding it could
+# fail the launch or bind elsewhere. An option this does not know leaves IN unchanged.
+_as_ro_pins() {
+  local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
+  local _rp_quiet="${4:-}"
+  _rp_out=("${_rp_in[@]}") _rp_pinned=()
+  _as_preset_is_native && return 0
+  local -A _nargs=() _remount=() _pin_at=() _pin_src=() _pin_c=()
+  local _o _k _i _n _j
+  for _o in --unshare-all --share-net --unshare-user --unshare-user-try --unshare-ipc \
+    --unshare-pid --unshare-net --unshare-uts --unshare-cgroup --unshare-cgroup-try \
+    --clearenv --new-session --die-with-parent --as-pid-1 --disable-userns \
+    --assert-userns-disabled; do _nargs[$_o]=0; done
+  for _o in --argv0 --userns --userns2 --pidns --uid --gid --hostname --chdir --unsetenv \
+    --lock-file --sync-fd --remount-ro --tmpfs --dev --proc --mqueue --dir --exec-label \
+    --file-label --seccomp --add-seccomp-fd --block-fd --userns-block-fd --info-fd \
+    --json-status-fd --cap-add --cap-drop --perms --size --overlay-src --tmp-overlay \
+    --ro-overlay --level-prefix; do _nargs[$_o]=1; done
+  for _o in --setenv --bind --bind-try --dev-bind --dev-bind-try --ro-bind --ro-bind-try \
+    --symlink --file --bind-data --ro-bind-data --chmod --bind-fd --ro-bind-fd; do
+    _nargs[$_o]=2
+  done
+  _nargs[--overlay]=3
+  # The options, as (name, first argument's index, DEST); DEST normalised (no trailing /).
+  local -a _on=() _oa=() _od=()
+  local _d
+  _i=0 _k=0
+  while ((_i < ${#_rp_in[@]})); do
+    _o="${_rp_in[_i]}"
+    [[ "$_o" == --* && "$_o" != -- ]] || break
+    if [[ -z "${_nargs[$_o]+x}" ]]; then
+      [[ -n "$_rp_quiet" ]] || _as_msg "bwrap option '$_o' unknown to the read-only pins: none made this launch"
+      return 0
+    fi
+    _n=${_nargs[$_o]}
+    _d=""
+    case "$_o" in
+      --bind | --bind-try | --dev-bind | --dev-bind-try | --ro-bind | --ro-bind-try | --symlink | --file | --bind-data | --ro-bind-data | --chmod | --bind-fd | --ro-bind-fd)
+        _d="${_rp_in[_i + 2]}"
+        ;;
+      --tmpfs | --dev | --proc | --mqueue | --tmp-overlay | --ro-overlay | --remount-ro | --dir)
+        _d="${_rp_in[_i + 1]}"
+        ;;
+      --overlay) _d="${_rp_in[_i + 3]}" ;;
+    esac
+    [[ "$_d" == / ]] || _d="${_d%/}"
+    _on[_k]="$_o" _oa[_k]=$((_i + 1)) _od[_k]="$_d"
+    [[ "$_o" == --remount-ro ]] && _remount[$_d]=$_k
+    _i=$((_i + 1 + _n)) _k=$((_k + 1))
+  done
+  # The mounts, in order: op index, DEST, kind (rw ro other), source.
+  local -a _mo=() _md=() _mk=() _ms=()
+  local _src _kind _m=0
+  for ((_k = 0; _k < ${#_on[@]}; _k++)); do
+    _o="${_on[_k]}" _d="${_od[_k]}"
+    case "$_o" in
+      --bind | --bind-try | --dev-bind | --dev-bind-try | --ro-bind | --ro-bind-try | --bind-fd | --ro-bind-fd | --ro-bind-data)
+        _src="${_rp_in[${_oa[_k]}]}"
+        [[ "$_o" == *-try && ! -e "$_src" ]] && continue
+        if [[ "$_o" == --ro-* ]] || { [[ -n "${_remount[$_d]+x}" ]] && ((${_remount[$_d]} > _k)); }; then
+          _kind=ro
+        elif [[ "$_o" == *-fd ]]; then
+          _kind=other
+        elif [[ -d "$_src" ]]; then
+          _kind=rw
+        else
+          _kind=rwfile # a read-write file: never a root
+        fi
+        [[ "$_o" == *-fd || "$_o" == *-data ]] && _src=""
+        ;;
+      --tmpfs | --dev | --proc | --mqueue | --overlay | --tmp-overlay | --ro-overlay | --bind-data)
+        _kind=other _src=""
+        ;;
+      *) continue ;;
+    esac
+    _mo[_m]=$_k _md[_m]="$_d" _mk[_m]=$_kind _ms[_m]="$_src"
+    _m=$((_m + 1))
+  done
+  local _rp_c _rp_mp
+  local _p _root _rd _x _any
+  for ((_m = 0; _m < ${#_mo[@]}; _m++)); do
+    [[ "${_mk[_m]}" == ro ]] || continue
+    _d="${_md[_m]}" _k=${_mo[_m]}
+    # Only a bind with a read-write mount above it can need a pin.
+    _any=0
+    for ((_x = 0; _x < _m; _x++)); do
+      [[ "${_mk[_x]}" == rw ]] || continue
+      [[ "${_md[_x]}" == / || "$_d" == "${_md[_x]}"/* ]] && _any=1 && break
+    done
+    ((_any)) || continue
+    _p="${_d%/*}"
+    [[ -n "$_p" ]] || _p=/
+    _as_ro_pins_cont "$_p" "$_k"
+    ((_rp_c >= 0)) || continue
+    _root="${_md[_rp_c]}"
+    while [[ "$_p" != "$_root" ]] && [[ "$_root" == / || "$_p" == "$_root"/* ]]; do
+      _as_ro_pins_cont "$_p" "$_k"
+      if ((! _rp_mp)) && [[ "${_mk[_rp_c]}" == rw ]]; then
+        _rd="${_md[_rp_c]}"
+        [[ "$_rd" == / ]] && _rd=""
+        if [[ -z "${_pin_at[$_p]+x}" ]]; then
+          _pin_at[$_p]=$_k _pin_src[$_p]="${_ms[_rp_c]}${_p#"$_rd"}"
+        fi
+      fi
+      _p="${_p%/*}"
+      [[ -n "$_p" ]] || _p=/
+    done
+  done
+  ((${#_pin_at[@]})) || return 0
+  # Where each pin goes: before its read-only bind, or before the first option beneath it
+  # made after the mount it lies in, whichever is first.
+  local _mi _best _q
+  for _p in "${!_pin_at[@]}"; do
+    _src="${_pin_src[$_p]}"
+    if [[ -L "$_src" || ! -d "$_src" ]]; then
+      [[ -n "$_rp_quiet" ]] || _as_msg "read-only pins: $_p is $([[ -L "$_src" ]] && echo 'a symbolic link' || echo 'not a directory') on the host ($_src), so it is not pinned: the role can rename it"
+      continue
+    fi
+    _mi=-1 _best=""
+    for ((_x = 0; _x < ${#_mo[@]}; _x++)); do
+      _q="${_md[_x]}"
+      [[ "$_q" != "$_p" ]] && [[ "$_q" == / || "$_p" == "$_q"/* ]] && ((${#_q} >= ${#_best})) && _mi=${_mo[_x]} _best="$_q"
+    done
+    _j=${_pin_at[$_p]}
+    for ((_k = _mi + 1; _k < _j; _k++)); do
+      _q="${_od[_k]}"
+      if [[ -n "$_q" ]] && [[ "$_q" == "$_p" || "$_q" == "$_p"/* ]]; then
+        _j=$_k
+        break
+      fi
+    done
+    _pin_c[$_p]=$_j
+  done
+  ((${#_pin_c[@]})) || return 0
+  # Insert, parents first at one place: sorted by (place, depth, path).
+  local -a _ord=()
+  local _line _slashes
+  while IFS= read -r -d '' _line; do _ord+=("${_line#*$'\t'*$'\t'}"); done < <(
+    for _p in "${!_pin_c[@]}"; do
+      _slashes="${_p//[!\/]/}"
+      printf '%08d\t%04d\t%s\0' "${_pin_c[$_p]}" "${#_slashes}" "$_p"
+    done | sort -z
+  )
+  _rp_out=() _rp_pinned=("${_ord[@]}")
+  local _next=0 _start _end
+  for ((_k = 0; _k < ${#_on[@]}; _k++)); do
+    while ((_next < ${#_ord[@]})) && ((${_pin_c[${_ord[_next]}]} == _k)); do
+      _rp_out+=(--bind "${_pin_src[${_ord[_next]}]}" "${_ord[_next]}")
+      _next=$((_next + 1))
+    done
+    _start=$((_oa[_k] - 1))
+    _n=${_nargs[${_on[_k]}]}
+    _rp_out+=("${_rp_in[@]:_start:_n+1}")
+  done
+  _end=$((${_oa[${#_on[@]} - 1]} + ${_nargs[${_on[${#_on[@]} - 1]}]}))
+  _rp_out+=("${_rp_in[@]:_end}")
+  return 0
+}
+
+# _as_ro_pins_cont P BEFORE -- for _as_ro_pins, whose mount arrays (_mo _md) it reads:
+# _rp_c := the last mount made before op BEFORE whose DEST is P or above it (-1: none);
+# _rp_mp := 1 when one of them is exactly at P.
+_as_ro_pins_cont() {
+  local _q _x _best=""
+  _rp_c=-1 _rp_mp=0
+  for ((_x = 0; _x < ${#_mo[@]} && _mo[_x] < $2; _x++)); do
+    _q="${_md[_x]}"
+    if [[ "$_q" == "$1" || "$_q" == / || "$1" == "$_q"/* ]]; then
+      [[ "$_q" == "$1" ]] && _rp_mp=1
+      if ((_rp_c < 0 || ${#_q} >= ${#_best})); then
+        _rp_c=$_x _best="$_q"
+      fi
+    fi
+  done
+}
+
 # _as_launch -- -- CMD... -- start the keeper that ${_launch[@]} names and join CMD
 # into it; return CMD's status. Every launch is a keeper (see the keeper section).
 # shellcheck disable=SC2154
@@ -14216,6 +14434,16 @@ _as_launch() {
   # and pasta, as the seccomp filter's does.
   _as_session_begin || return 1
   _as_placeholder_register
+  # The read-only binds' parents, pinned (_as_ro_pins): from the final list, here, so
+  # every launch shape gets them; the list is unchanged when nothing is pinned.
+  local -a _pinned_opts=() _pinned=()
+  _as_ro_pins _bwrap_opts _pinned_opts _pinned
+  if ((${#_pinned[@]})); then
+    _bwrap_opts=("${_pinned_opts[@]}")
+    local _pn _pl=""
+    for _pn in "${_pinned[@]}"; do _pl+="${_pl:+, }$(_as_check_name "$_pn")"; done
+    _as_info "read-only parents pinned (the role cannot rename or remove them): $_pl"
+  fi
   (umask 077 && printf '%s\0' "${_bwrap_opts[@]}" >"$_session_dir/bwrap.args") || return 1
   # The payload: `sleep` under the marker as its argv[0] (bwrap's --argv0 is newer
   # than the oldest bubblewrap this supports). The environment a join inherits is
