@@ -304,7 +304,9 @@ STUB
   chmod +x "$H/bin/date"
 }
 
-@test "an instance added again: its old clone with nothing the project lacks is removed, and a fresh clone made (#389)" {
+@test "an instance added again: its old clone, untouched or not, is moved to a backup, both halves, and said; a fresh clone made (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
   init -- roles implementer=2
   [ "$status" -eq 0 ]
   init -- roles implementer=1
@@ -312,65 +314,162 @@ STUB
   printf 'old\n' >"$PROJ/.asb/git/2/marker"
   init -- roles implementer=2
   [ "$status" -eq 0 ]
-  [[ "$output" == *"removed the clone implementer-2 had before it was removed (.asb/impl/2, its history .asb/git/2; nothing in it the project lacks): it is added again, with a fresh clone"* ]]
+  [[ "$output" == *"--init: implementer-2 is added again: the clone it had before it was removed is moved to $b/ -- tree/ its working tree, git/ its history; tree/.git points at git/. It may hold implementer-2's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); implementer-2 gets a fresh clone"* ]]
   [[ "$output" == *"cloned for implementer-2"* ]]
+  [ "$(cat "$PROJ/$b/tree/.git")" = "gitdir: $PROJ/$b/git" ]
+  [ "$(cat "$PROJ/$b/git/marker")" = old ]
   [ ! -e "$PROJ/.asb/git/2/marker" ]
-  [ ! -e "$PROJ/.asb/backup" ]
   [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
 }
 
-@test "an instance added again: its old clone with a commit the project lacks is moved to a backup that works, and said; nothing of the clone's runs (#389)" {
+@test "an instance added again over a hostile old clone: a FIFO for HEAD, config a link to /dev/zero, hooks -- moved without a hang, nothing of it read or run (#389)" {
   fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
   init -- roles implementer=2
   [ "$status" -eq 0 ]
   init -- roles implementer=1
   [ "$status" -eq 0 ]
-  printf 'x\n' >"$PROJ/.asb/impl/2/f"
-  git -C "$PROJ/.asb/impl/2" add f
-  git -C "$PROJ/.asb/impl/2" commit -q -m work
-  # what a role with the clone read-write can leave for git to run
+  local g="$PROJ/.asb/git/2"
   printf '#!/bin/sh\ntouch %s/ran\n' "$H" >"$H/evil"
   chmod +x "$H/evil"
-  git -C "$PROJ/.asb/impl/2" config core.fsmonitor "$H/evil"
-  git -C "$PROJ/.asb/impl/2" config filter.x.clean "$H/evil"
+  for h in pre-commit post-checkout reference-transaction fsmonitor-watchman; do cp "$H/evil" "$g/hooks/$h"; done
+  rm "$g/HEAD" "$g/config"
+  mkfifo "$g/HEAD"
+  ln -s /dev/zero "$g/config"
   printf '* filter=x\n' >"$PROJ/.asb/impl/2/.gitattributes"
-  for h in pre-commit post-checkout reference-transaction; do cp "$H/evil" "$PROJ/.asb/git/2/hooks/$h"; done
-  git -C "$PROJ/.asb/impl/2" add .gitattributes
-  rm -f "$H/ran"
-  git -C "$PROJ/.asb/impl/2" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c filter.x.clean=cat commit -q -m attrs
-  local b=.asb/backup/implementer-2-20260101T000000Z
-  init -- roles implementer=2
-  [ "$status" -eq 0 ]
+  engine_cmd
+  # shellcheck disable=SC2016 # the script's own arguments, expanded inside it
+  run timeout 60 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --init roles implementer=2 2>&1 </dev/null' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ] # 124: it hung
   [ ! -e "$H/ran" ]
-  [[ "$output" == *"--init: the clone implementer-2 had before it was removed might hold work (impl-2 has commits the project's repository does not): moved to $b/ -- tree/ its working tree, git/ its history, tree/.git pointing at it (git -C $b/tree log impl-2 shows its commits). What becomes of it is yours; implementer-2 is added again with a fresh clone"* ]]
-  [ "$(cat "$PROJ/$b/tree/.git")" = "gitdir: $PROJ/$b/git" ]
-  [ "$(git -C "$PROJ/$b/tree" -c core.fsmonitor=false log -1 --format=%s impl-2~1)" = work ]
-  [ -f "$PROJ/$b/tree/f" ]
-  # the fresh clone has none of it
+  [[ "$output" == *"moved to $b/ -- tree/ its working tree, git/ its history; tree/.git points at git/."* ]]
+  [ -p "$PROJ/$b/git/HEAD" ]
+  [ "$(readlink "$PROJ/$b/git/config")" = /dev/zero ]
   [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
-  [ ! -e "$PROJ/.asb/impl/2/f" ]
 }
 
-@test "an instance added again: its old clone with an untracked file or a change is backed up; a backup there is never overwritten (#389)" {
+@test "an instance added again: a backup there already is never overwritten (#389)" {
   fixed_date
-  init -- roles implementer=3
+  init -- roles implementer=2
   [ "$status" -eq 0 ]
   init -- roles implementer=1
   [ "$status" -eq 0 ]
   printf 'notes\n' >"$PROJ/.asb/impl/2/untracked"
-  printf 'y\n' >"$PROJ/.asb/impl/3/g"
-  git -C "$PROJ/.asb/impl/3" add g
-  git -C "$PROJ/.asb/impl/3" stash -q # a stash: work too, under refs/stash
   mkdir -p "$PROJ/.asb/backup/implementer-2-20260101T000000Z"
   printf 'earlier\n' >"$PROJ/.asb/backup/implementer-2-20260101T000000Z/keep"
-  init -- roles implementer=3
+  init -- roles implementer=2
   [ "$status" -eq 0 ]
-  [[ "$output" == *"implementer-2 had before it was removed might hold work (its tree has changes or files not committed): moved to .asb/backup/implementer-2-20260101T000000Z-2/"* ]]
-  [[ "$output" == *"implementer-3 had before it was removed might hold work ("*"has commits the project's repository does not): moved to .asb/backup/implementer-3-20260101T000000Z/"* ]]
+  [[ "$output" == *"moved to .asb/backup/implementer-2-20260101T000000Z-2/"* ]]
   [ "$(cat "$PROJ/.asb/backup/implementer-2-20260101T000000Z/keep")" = earlier ]
   [ ! -e "$PROJ/.asb/backup/implementer-2-20260101T000000Z/tree" ]
   [ "$(cat "$PROJ/.asb/backup/implementer-2-20260101T000000Z-2/tree/untracked")" = notes ]
   [ ! -e "$PROJ/.asb/impl/2/untracked" ]
+}
+
+@test "an instance added again over half a clone: a tree whose history is gone, or a history whose tree is gone, each backed up alone, no failure (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/impl/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- git/ its history (its working tree was gone). It may hold"* ]]
+  [ -d "$PROJ/$b/git" ]
+  [ ! -e "$PROJ/$b/tree" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  init -- roles implementer=2 # and the next run has nothing in its way
+  [ "$status" -eq 0 ]
+  # the history gone, the tree left: the tree's .git never points at the fresh clone's
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b-2/ -- tree/ its working tree (its history was gone); tree/.git points at git/. It may hold"* ]]
+  [ "$(cat "$PROJ/$b-2/tree/.git")" = "gitdir: $PROJ/$b-2/git" ]
+  [ ! -e "$PROJ/$b-2/git" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  [ -z "$(find "$PROJ/.asb/backup" -mindepth 1 -maxdepth 1 -empty)" ] # no empty backup
+}
+
+@test "a count is decimal: 08, 09, 010 and 00 on a re-run set the role to 8, 9, 10 and none; a single role's 01 is 1 (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=08
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"value too great"* ]]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$PROJ/.agent-sandbox")" -eq 8 ]
+  has_section '[connect:implementer-8]' "$PROJ/.agent-sandbox"
+  init -- roles implementer=010
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$PROJ/.agent-sandbox")" -eq 10 ]
+  init -- roles implementer=09
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$PROJ/.agent-sandbox")" -eq 9 ]
+  run ! grep -qF '[connect:implementer-10]' "$PROJ/.agent-sandbox"
+  init -- roles implementer=00
+  [ "$status" -eq 0 ]
+  run ! grep -q 'implementer-[0-9]*\]' "$PROJ/.agent-sandbox"
+  init -- roles supervisor=02
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"0 or 1 for supervisor"* ]]
+  init -- roles supervisor=01
+  [ "$status" -eq 0 ]
+}
+
+@test "a header is read as a launch reads it: a section of yours, indented, ends a removed one and is kept; a spaced instance header is removed and named (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  sed -i 's/^\[connect:implementer-3\]$/[ connect:implementer-3 ]/' "$PROJ/.agent-sandbox"
+  sed -i '/^\[ connect:implementer-3 \]$/i # my hosts\n  [allow]\n  example.org' "$PROJ/.agent-sandbox"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2] [connect:implementer-3] [conda:implementer-3] [serve:implementer-3]"* ]]
+  grep -qx '# my hosts' "$PROJ/.agent-sandbox"
+  grep -qx '  \[allow\]' "$PROJ/.agent-sandbox"
+  grep -qx '  example.org' "$PROJ/.agent-sandbox"
+  run ! grep -q 'implementer-[23]' "$PROJ/.agent-sandbox"
+}
+
+@test "an instance is known by its header alone: a comment added to or removed from it changes nothing on a re-run, and a count still removes it (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  sed -i 's/^\[connect:implementer-2\]$/[connect:implementer-2]   # mine/; s/^\(\[serve:implementer-2\]\) .*/\1/
+    s/^\(# \[conda:implementer-2\]\) .*/\1/' "$PROJ/.agent-sandbox"
+  grep -qx '\[serve:implementer-2\]' "$PROJ/.agent-sandbox"
+  grep -qx '# \[conda:implementer-2\]' "$PROJ/.agent-sandbox"
+  printf 'work\n' >"$PROJ/.asb/impl/2/notes"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"clone implementer-2 had"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ "$(cat "$PROJ/.asb/impl/2/notes")" = work ] # the live clone, where it was
+  [ ! -e "$PROJ/.asb/backup" ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2]"* ]]
+  run ! grep -q 'implementer-2' "$PROJ/.agent-sandbox"
+}
+
+@test "a section named as a removed instance's but outside the model's marked region is yours, and stays (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  {
+    printf '[connect:implementer-2]\n.asb/mine/ = read-only\n'
+    cat "$PROJ/.agent-sandbox"
+  } >"$H/df"
+  cat "$H/df" >"$PROJ/.agent-sandbox"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2]"* ]]
+  [ "$(head -2 "$PROJ/.agent-sandbox")" = $'[connect:implementer-2]\n.asb/mine/ = read-only' ]
+  [ "$(grep -c '^\[connect:implementer-2\]' "$PROJ/.agent-sandbox")" -eq 1 ]
+  run ! grep -qF '[serve:implementer-2]' "$PROJ/.agent-sandbox"
 }
 
 @test "run again: a purpose file --init wrote and nobody changed takes the model's text; a changed one is kept" {
@@ -799,7 +898,7 @@ STUB
   [ "$status" -eq 0 ]
   has_section '[connect:implementer-2]' "$df"
   has_section '[connect:implementer-4]' "$df"
-  [[ "$output" == *"removed the clone implementer-2 had before it was removed"* ]]
+  [[ "$output" == *"implementer-2 is added again: the clone it had before it was removed is moved to .asb/backup/implementer-2-"* ]]
   # and a count of 0 removes every one
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles implementer=0 --env x-dev
   [ "$status" -eq 0 ]

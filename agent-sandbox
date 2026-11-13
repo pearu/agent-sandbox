@@ -559,8 +559,8 @@ Engine flags (before CMD):
                         given no count stays as the file has it, and ROLE=N
                         sets it to instances 1..N: missing ones added, those
                         above N removed (clones and data left; a clone in
-                        the way of one added again is removed, or moved to
-                        .asb/backup/ when it might hold work); with --env
+                        the way of one added again is moved to
+                        .asb/backup/); with --env
                         (or --shared-env), it completes
                         the environment's lines it wrote commented out
                         without one. Models compose in one file, their role
@@ -11828,7 +11828,7 @@ _as_trust_check() {
 # and one given N is set to 1..N, as a first --init writes it: the missing ones added,
 # those above N removed -- sections, unchanged purpose files and prompts, records, index
 # rows; never a clone or a role's data, but a clone in the way of an instance added again
-# (removed, or moved to .asb/backup/ when it might hold work: _init_stale_clone). It adds
+# (moved to .asb/backup/, never read: _init_stale_clone). It adds
 # a missing single role, updates a purpose file it wrote that nobody changed since, and,
 # with an environment, completes the environment's lines an --init without one wrote
 # commented out; nothing else that exists is touched. It approves nothing.
@@ -12102,7 +12102,10 @@ _as_init() {
       _as_msg "--init: model '$model' has no role '$rn' (it has: ${roles[*]})"
       return 1
     fi
-    if [[ ! "$v" =~ ^[0-9]+$ ]] || { [[ "${kind[$rn]}" == single ]] && ((v > 1)); }; then
+    # a count is decimal: 08 is 8, never an octal error that reads as no count; one too
+    # long for the arithmetic is refused
+    [[ "$v" =~ ^[0-9]{1,6}$ ]] && v="$((10#$v))"
+    if [[ ! "$v" =~ ^[0-9]{1,6}$ ]] || { [[ "${kind[$rn]}" == single ]] && ((v > 1)); }; then
       _as_msg "--init: '$a' -- a count is a number$([[ "${kind[$rn]}" == single ]] && printf ', 0 or 1 for %s, which is a single role' "$rn")"
       return 1
     fi
@@ -12196,11 +12199,34 @@ _as_init() {
   local -a chk_h=() chk_a=()
   # A section the file has -- or has commented out, which is the user's to uncomment --
   # is never written again; compared by its header alone.
-  [[ -f "$df" ]] && existing="$(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' "$df")"
+  # A header is read as the launch parser reads it (_as_dotfile_parse): the comment and
+  # the blanks around it gone, `[...]` with no whitespace inside -- and, written
+  # commented out (`# [conda:...]`), the same after the `# `.
+  local _ih
+  _init_hdrv() { # LINE -> _ih: its header so, or empty
+    local x="$1"
+    _ih=""
+    [[ "$x" == '# '* ]] && x="${x#\# }"
+    x="${x%%#*}"
+    x="${x#"${x%%[![:space:]]*}"}"
+    x="${x%"${x##*[![:space:]]}"}"
+    [[ "$x" == '['*']' ]] && _ih="${x//[[:space:]]/}"
+    return 0
+  }
+  _init_hdrs() { # [active] < TEXT -> its headers, one per line (active: not commented out)
+    local x
+    while IFS= read -r x || [[ -n "$x" ]]; do
+      [[ "${1:-}" == active && "$x" == '#'* ]] && continue
+      _init_hdrv "$x"
+      [[ -z "$_ih" ]] || printf '%s\n' "$_ih"
+    done
+  }
+  [[ -f "$df" ]] && existing="$(_init_hdrs <"$df")"
   _init_has() {
-    local hd="${1%%]*}]"
-    hd="${hd#\# }"
-    [[ -n "$existing" ]] && grep -qxF -- "$hd" <<<"$existing"
+    local hd
+    _init_hdrv "$1"
+    hd="$_ih"
+    [[ -n "$existing" && -n "$hd" ]] && grep -qxF -- "$hd" <<<"$existing"
   }
   # A re-run with an environment of a file an --init of the model wrote without one
   # completes what that one wrote commented out. The pairs, per section the file has: a
@@ -12249,7 +12275,7 @@ _as_init() {
   # given no count keeps exactly those, and one given a count N is set to 1..N, as a first
   # --init with N writes it: every one missing is added (a gap filled), and every one
   # above N removed (rm_of; _init_drop and the removals below).
-  local regtxt="" rq rn2 ns top
+  local regtxt="" reghd="" rq rn2 ns top
   local -A rm_of=() readd=() rezero=()
   if [[ -f "$df" ]]; then
     regtxt="$(awk -v m="$(basename -- "$model")" '
@@ -12264,18 +12290,24 @@ _as_init() {
     [[ -n "${numbered[$rn]:-}" ]] || continue
     ns="" top=0
     if [[ -n "$regtxt" ]]; then
+      # an active header by header alone, as the parser reads it: a comment added or
+      # removed, or blanks inside the brackets, leave an instance what it is; one
+      # commented out only exactly as --init writes it (a comment naming a section is no
+      # instance); a number with a leading zero is no instance --init writes
+      [[ -n "$reghd" ]] || reghd="$(_init_hdrs active <<<"$regtxt")"
       while IFS= read -r rq; do
         [[ -n "$rq" ]] || continue
         for i in "${!heads[@]}"; do
           read -r rn2 k <<<"$(_init_role_of "${heads[i]}")"
           [[ "${rn2:-}" == "$rn" && "${k:-}" == multi ]] || continue
           hd="$(_init_render "${heads[i]}" "" "$rn-$rq" "$rq" "" | head -1)"
-          if grep -qxF -e "$hd" -e "# $hd" <<<"$regtxt"; then
+          _init_hdrv "$hd"
+          if grep -qxF -- "$_ih" <<<"$reghd" || grep -qxF -e "# $hd" -e "${hd#\# }" -e "# ${hd#\# }" <<<"$regtxt"; then
             ns+=" $rq" top=$rq
             break
           fi
         done
-      done < <(sed -n "s/^\(# \)\{0,1\}\[[a-z-]*:$rn-\([0-9][0-9]*\)\].*/\2/p" <<<"$regtxt" | sort -nu)
+      done < <(_init_hdrs <<<"$regtxt" | sed -n "s/^\[[a-z-]*:$rn-\([1-9][0-9]\{0,5\}\)\]$/\1/p" | sort -nu)
       if [[ -n "${cgiven[$rn]:-}" ]]; then
         a="$ns" ns=""
         for ((n = 1; n <= ${count[$rn]}; n++)); do
@@ -12412,10 +12444,8 @@ _as_init() {
   local -a drop_h=() drop_lead=() drop_body=() rminsts=() rmfiles=() rmleft=()
   _init_dropadd() { # RENDERED LEAD -- RENDERED = LEAD, the header line, the body
     local r="${1#"$2"}" hk
-    hk="${r%%$'\n'*}"
-    hk="${hk%%]*}]"
-    hk="${hk#\# }" # written commented out (a [conda:...] without --env)
-    drop_h+=("$hk") drop_lead+=("$2") drop_body+=("${r#*$'\n'}")
+    _init_hdrv "${r%%$'\n'*}" # written commented out too (a [conda:...] without --env)
+    drop_h+=("$_ih") drop_lead+=("$2") drop_body+=("${r#*$'\n'}")
     # the .asb/ paths it declared, left as they are: said
     while IFS= read -r hk; do
       [[ -n "$hk" && " ${rmleft[*]-} " != *" $hk "* ]] && rmleft+=("$hk")
@@ -12746,8 +12776,9 @@ _as_init() {
         reg=0
         [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
         H[i]="${BASH_REMATCH[1]}"$'\n'
-      elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
-        H[i]="${BASH_REMATCH[2]}"
+      else
+        _init_hdrv "$l" # as the parser reads it: a section of yours ends a removed one
+        H[i]="$_ih"
       fi
       R[i]=$reg
     done
@@ -12834,7 +12865,7 @@ _as_init() {
     IFS=$'\t' read -r inst h rn n <<<"$a"
     [[ -f "$mdir/roles/$rn.md" ]] && spaths+=("f .asb/roles/$inst.md" "f .asb/migrate/$inst.md")
   done
-  # a clone a re-added instance left goes to a backup there when it might hold work
+  # a clone a re-added instance's predecessor left goes to a backup there
   ((${#readd[@]})) && spaths+=("d .asb/backup")
   # the files a re-run's count removes, checked as those it writes: a removal never
   # follows a link either
@@ -12971,8 +13002,7 @@ _as_init() {
     if [[ "$v" != "$a" ]]; then
       printf '%s' "$v" | _as_dotfile_write "$df" || return 1
       wrote=1
-      _as_msg "removed from .agent-sandbox: $(diff <(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' <<<"$a") \
-        <(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' <<<"$v") | sed -n 's/^< //p' | paste -sd' ')"
+      _as_msg "removed from .agent-sandbox: $(diff <(_init_hdrs <<<"$a") <(_init_hdrs <<<"$v") | sed -n 's/^< //p' | paste -sd' ')"
     fi
   fi
   if [[ -z "$existing" && ! -f "$df" ]]; then
@@ -13182,114 +13212,53 @@ _as_init() {
     IFS=$'\x1f' read -r f sk inst n h v <<<"$a"
     _init_unpurpose "$f" "$sk" "$inst" "$n" "$h" "$v" || return $?
   done
-  # _init_clone_work TREE GITDIR [ENVDIR] -- 0 (and why, on stdout) when a clone left by a
-  # removed instance might hold work: a ref (a branch, a tag, a stash, a detached HEAD)
-  # at a commit no ref of the project's repository reaches, a change or an untracked file
-  # in its tree, or anything it cannot read. A role had that clone read-write, so nothing
-  # of it is run: its refs are read as files, never by git in its repository (whose
-  # config can name commands); the tree is compared by git through a repository of
-  # --init's own -- the clone's objects through an alternate, its index copied, no config
-  # of the clone's, the user's or the system's, no hooks, no fsmonitor, no submodule
-  # entered. ENVDIR, the environment --init clones into the tree, is no work of the role's.
-  _init_clone_work() {
-    local t="$proj/${1%/}" g="$proj/${2%/}" l sha ref head="" tmp out
-    local -A refs=()
-    [[ -d "$g" && ! -L "$g" && -f "$t/.git" && ! -L "$t/.git" ]] || {
-      echo "it is not a clone as --init makes one"
-      return 0
-    }
-    [[ -e "$g/reftable" ]] || grep -qiE '^[[:space:]]*(worktree|[a-z]*refstorage|objectformat)[[:space:]]*=' "$g/config" 2>/dev/null \
-      && {
-        echo "its repository is not one --init reads"
-        return 0
-      }
-    if [[ -f "$g/packed-refs" ]]; then
-      while IFS= read -r l; do
-        [[ "$l" == '#'* || "$l" == '^'* || -z "$l" ]] && continue
-        refs[${l#* }]="${l%% *}"
-      done <"$g/packed-refs"
-    fi
-    while IFS= read -r -d '' l; do
-      [[ -f "$l" && ! -L "$l" ]] || {
-        echo "its ref ${l#"$g"/} is not a file"
-        return 0
-      }
-      refs[${l#"$g"/}]="$(head -c 200 -- "$l")"
-    done < <(find "$g/refs" -mindepth 1 -not -type d -print0 2>/dev/null)
-    l="$(head -c 200 -- "$g/HEAD" 2>/dev/null)"
-    [[ "$l" == 'ref: '* ]] || refs[HEAD]="$l"
-    [[ "$l" == 'ref: '* ]] && head="${l#ref: }"
-    for ref in "${!refs[@]}"; do
-      [[ "$ref" == refs/remotes/* ]] && continue # the project's, as fetched
-      sha="${refs[$ref]}"
-      [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || {
-        echo "its ref $ref is not one --init reads"
-        return 0
-      }
-      if ! git -C "$proj" cat-file -e "$sha^{commit}" 2>/dev/null \
-        || [[ -z "$(git -C "$proj" for-each-ref --count=1 --contains "$sha" 2>/dev/null)" ]]; then
-        echo "${ref#refs/heads/} has commits the project's repository does not"
-        return 0
-      fi
-    done
-    sha="${refs[${head:-HEAD}]:-}"
-    [[ -n "$sha" ]] || {
-      echo "its HEAD is not one --init reads"
-      return 0
-    }
-    tmp="$(mktemp -d)" || {
-      echo "a temporary directory could not be made"
-      return 0
-    }
-    mkdir -p "$tmp/objects/info" "$tmp/refs" "$tmp/info"
-    printf '%s/objects\n' "$g" >"$tmp/objects/info/alternates"
-    printf '%s\n' "$sha" >"$tmp/HEAD"
-    printf '[core]\n\trepositoryformatversion = 0\n\tbare = false\n' >"$tmp/config"
-    [[ -f "$g/info/exclude" && ! -L "$g/info/exclude" ]] && cat -- "$g/info/exclude" >"$tmp/info/exclude"
-    [[ -n "${3:-}" ]] && printf '/%s/\n' "$3" >>"$tmp/info/exclude"
-    [[ -f "$g/index" && ! -L "$g/index" ]] && cp -- "$g/index" "$tmp/index"
-    if out="$(cd / && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_DIR="$tmp" GIT_WORK_TREE="$t" \
-      git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false \
-      --no-optional-locks status --porcelain --untracked-files=all --ignore-submodules=all 2>/dev/null)"; then
-      rm -rf -- "$tmp"
-      [[ -z "$out" ]] && return 1
-      echo "its tree has changes or files not committed"
-    else
-      rm -rf -- "$tmp"
-      echo "its tree could not be compared"
-    fi
-    return 0
-  }
   # A clone left by an instance removed earlier, where a count adds the instance again:
-  # out of the way, for a fresh clone. One with nothing to lose (_init_clone_work) is
-  # removed; one that might hold work is moved, tree and history, to a backup of its own
-  # under .asb/backup/ (never one there already), its tree's .git pointing at the moved
-  # history, for the user to decide on.
-  _init_stale_clone() { # INST TREE GITDIR BRANCH [ENVDIR] -- through no link (checked up front too)
-    local why b s=1 ts
+  # moved out of the way, whatever is in it, for a fresh clone. Its Implementer had it
+  # read-write, so the host reads nothing of it: what is there of the tree and of the
+  # history -- both, or either alone -- is moved to a backup of its own under .asb/backup/
+  # (never one there already), for the user to decide on. The tree's .git, a path --init
+  # made, is written anew to point at the moved history -- never at the fresh clone's,
+  # which takes the old one's place -- when it is a regular file; else it is left, and
+  # said.
+  _init_stale_clone() { # INST TREE GITDIR -- through no link (checked up front too)
+    local b s=1 ts what="" note=""
     _init_nolink "${2%/}/" || return 2
     _init_nolink "${3%/}/" || return 2
-    if ! why="$(_init_clone_work "$2" "$3" "${5:-}")"; then
-      rm -rf -- "${proj:?}/${2%/}" "${proj:?}/${3%/}" || return 1
-      _as_msg "removed the clone $1 had before it was removed (${2%/}, its history ${3%/}; nothing in it the project lacks): it is added again, with a fresh clone"
-      return 0
-    fi
     _init_nolink .asb/backup/ || return 2
     mkdir -p -- "$proj/.asb/backup" || return 1
     ts="$(date -u +%Y%m%dT%H%M%SZ)"
     b=".asb/backup/$1-$ts"
     until mkdir -- "$proj/$b" 2>/dev/null; do
-      [[ -L "$proj/.asb/backup" ]] && return 2
+      _init_nolink .asb/backup/ || return 2
       ((s += 1))
       ((s < 100)) || return 1
       b=".asb/backup/$1-$ts-$s"
     done
-    if ! mv -T -- "$proj/${2%/}" "$proj/$b/tree" || ! mv -T -- "$proj/${3%/}" "$proj/$b/git"; then
-      _as_msg "--init: moving $1's old clone to $b failed; what was moved is there"
-      return 1
+    if [[ -e "$proj/${2%/}" || -L "$proj/${2%/}" ]]; then
+      mv -T -- "$proj/${2%/}" "$proj/$b/tree" || {
+        rmdir -- "$proj/$b" 2>/dev/null
+        _as_msg "--init: moving $1's old clone to $b failed; nothing was moved"
+        return 1
+      }
+      what="tree/ its working tree"
     fi
-    printf 'gitdir: %s\n' "$proj/$b/git" | _init_put "$b/tree/.git" || return $?
-    _as_msg "--init: the clone $1 had before it was removed might hold work ($why): moved to $b/ -- tree/ its working tree, git/ its history, tree/.git pointing at it (git -C $b/tree log $4 shows its commits). What becomes of it is yours; $1 is added again with a fresh clone"
+    if [[ -e "$proj/${3%/}" || -L "$proj/${3%/}" ]]; then
+      mv -T -- "$proj/${3%/}" "$proj/$b/git" || {
+        rmdir -- "$proj/$b" 2>/dev/null
+        _as_msg "--init: moving $1's old history to $b failed${what:+; its tree is in $b/tree}"
+        return 1
+      }
+      what+="${what:+, }git/ its history"
+    fi
+    [[ -e "$proj/$b/git" ]] || [[ -z "$what" ]] || what+=" (its history was gone)"
+    [[ -e "$proj/$b/tree" ]] || what+=" (its working tree was gone)"
+    if [[ -f "$proj/$b/tree/.git" && ! -L "$proj/$b/tree/.git" ]]; then
+      printf 'gitdir: %s\n' "$proj/$b/git" | _init_put "$b/tree/.git" || return $?
+      note="; tree/.git points at git/"
+    elif [[ -e "$proj/$b/tree/.git" || -L "$proj/$b/tree/.git" ]]; then
+      note="; tree/.git is not a file --init wrote, and is left as it is"
+    fi
+    _as_msg "--init: $1 is added again: the clone it had before it was removed is moved to $b/ -- $what$note. It may hold $1's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); $1 gets a fresh clone"
   }
   for a in ${clones[@]+"${clones[@]}"}; do
     inst="${a%%$'\t'*}"
@@ -13297,14 +13266,9 @@ _as_init() {
     # every path the clone and its environment go to, through no link
     _init_nolink "${tpath%/}/.git" || return 2
     _init_nolink "${gdir%/}/" || return 2
-    if [[ -n "${readd[$inst]:-}" ]] && [[ -e "$proj/${tpath%/}/.git" || -L "$proj/${tpath%/}/.git" || -e "$proj/${gdir%/}" ]]; then
-      prefix=""
-      for k in ${prefixes[@]+"${prefixes[@]}"}; do
-        [[ "${k%%$'\t'*}" == "$inst" ]] && prefix="${k#*$'\t'}"
-      done
-      prefix="${prefix%/}"
-      if [[ "$prefix" == "${tpath%/}/"* ]]; then prefix="${prefix#"${tpath%/}/"}"; else prefix=""; fi
-      _init_stale_clone "$inst" "$tpath" "$gdir" "$br" "$prefix" || return $?
+    # an instance new to the file over anything of an old clone: backed up, every time
+    if [[ -n "${readd[$inst]:-}" ]] && [[ -e "$proj/${tpath%/}" || -L "$proj/${tpath%/}" || -e "$proj/${gdir%/}" || -L "$proj/${gdir%/}" ]]; then
+      _init_stale_clone "$inst" "$tpath" "$gdir" || return $?
     fi
     if [[ -e "$proj/${tpath%/}/.git" || -L "$proj/${tpath%/}/.git" ]]; then
       :

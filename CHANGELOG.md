@@ -1139,8 +1139,9 @@ names are gone; there are no aliases for removed names before 1.0.
   file and prompt (one you changed is kept, and said), their `.asb/init.sums` records
   and its index row; `ROLE=0` removes the role's glob sections and start file too. Its
   clone, history, inbox and data directories are left, and said. A count that adds a
-  removed instance again replaces the clone it left: removed when it holds nothing the
-  project lacks, else moved to `.asb/backup/INSTANCE-TIME/` (`tree/`, `git/`), and said.
+  removed instance again moves whatever is left of the clone it had to
+  `.asb/backup/INSTANCE-TIME/` (`tree/`, `git/`), never read and never over a backup
+  there, and says so; the instance gets a fresh clone.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

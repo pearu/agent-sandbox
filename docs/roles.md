@@ -452,7 +452,8 @@ inbox without a keypress), the project's test commands in `.asb/tests` (two empt
 for you to fill: Test economy, section 4), and `.asb/.gitignore` (`.asb/` is never
 committed); it makes each Implementer's clone (with your git identity) and, with
 `--env`, its environment. Without counts a first `--init` writes one of each role;
-`reviewer=0` leaves one out, and `implementer=3` writes instances 1 to 3. Without `--env` the `[conda]` sections are written commented out;
+`reviewer=0` leaves one out, and `implementer=3` writes instances 1 to 3. Without
+`--env` the `[conda]` sections are written commented out;
 `asb --init roles --env x-dev` run on that file later completes them, the lines naming
 the environment included, exactly as a first `--init` with it writes them, and changes
 nothing else: a line you changed is left and said; an active `prefix = ...` line naming
@@ -516,13 +517,13 @@ records in `.asb/init.sums` and its row in the index; `reviewer=0` removes the r
 `[...:reviewer-*]` sections and start file as well. Its clone and history
 (`.asb/impl/N/`, `.asb/git/N/`), inbox and directories (messages, handoff, review, plan)
 are left, and `--init` names them. When a later count adds that instance again, the old
-clone is in the way: one with nothing the project lacks is removed; one that might hold
-work -- a commit no branch of the project has, a change or an untracked file in its
-tree, or anything `--init` cannot read -- is moved to `.asb/backup/implementer-N-TIME/`
-(`tree/` with its `.git` pointing at `git/`, the history), never over a backup there,
-and said: what becomes of it is yours. Either way the instance gets a fresh clone. Single
-roles (the Supervisor, the Gate) are not counted so: a re-run adds one the file lacks
-unless given 0, and removes none.
+clone is in the way: whatever is left of it, tree or history or both, is moved to
+`.asb/backup/implementer-N-TIME/` (`tree/`, its `.git` pointing at `git/`, the history),
+never over a backup there, and said. `--init` reads nothing in it -- the role had it
+read-write -- so it may hold the instance's work, and what becomes of it is yours; its
+git config and hooks were the role's to write, so read them before you run git there.
+The instance gets a fresh clone. Single roles (the Supervisor, the Gate) are not counted
+so: a re-run adds one the file lacks unless given 0, and removes none.
 
 Beyond the counts, a re-run changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.
