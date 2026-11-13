@@ -916,22 +916,47 @@ tree_of() {
   cmp "$df" "$H/df"
 }
 
-@test "a path the file declares keeps the host's kind: a directory declared without '/' is no refusal; a '/' over a file fails as before (#389)" {
+@test "a path the file declares without '/' keeps the host's kind, no refusal; one with '/' over a file refuses, exit 2, nothing written (#389)" {
   local df="$PROJ/.agent-sandbox"
   init -- roles
   [ "$status" -eq 0 ]
   mkdir "$PROJ/.asb/notes"
+  printf 'mine\n' >"$PROJ/.asb/notes/keep"
   printf '.asb/notes = read-only\n' >>"$df"
   init -- roles
   [ "$status" -eq 0 ]
-  [ -d "$PROJ/.asb/notes" ]
-  # the mirror: a key with '/' where a file is -- the write's mkdir fails, exit 1, as on main
+  [ "$(cat "$PROJ/.asb/notes/keep")" = mine ] # the directory left as it is, its file in it
+  # the mirror: a key with '/' is a directory --init makes, and a file there refuses it
+  # before anything is written (on main, the write's mkdir failed late, exit 1)
   printf 'mine\n' >"$PROJ/.asb/x"
   printf '.asb/x/ = read-only\n' >>"$df"
+  cp "$df" "$H/df"
   init -- roles
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"File exists"* ]]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/x is not a directory, which --init makes there: what --init makes under .asb/ stays as it made it. Move it away and run --init again; nothing was written"* ]]
   [ "$(cat "$PROJ/.asb/x")" = mine ]
+  cmp "$df" "$H/df"
+  # a declared path without '/' replaced by a link: refused, said as the file's path
+  rm -rf "$PROJ/.asb/notes" "$PROJ/.asb/x"
+  sed -i '/^\.asb\/x\/ = read-only$/d' "$df"
+  ln -s "$H/elsewhere" "$PROJ/.asb/notes"
+  init -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/notes is a symbolic link, a path .agent-sandbox declares under .asb/, and --init never writes through a link there"*"; nothing was written"* ]]
+  [ ! -e "$H/elsewhere" ]
+}
+
+@test "a directory the model declares, replaced by a file: a re-run that would add an instance refuses, exit 2, the tree unchanged (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/plan/planner-1"
+  printf 'x\n' >"$PROJ/.asb/plan/planner-1"
+  tree_of "$PROJ" >"$H/before"
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/plan/planner-1 is not a directory, which --init makes there"*"; nothing was written"* ]]
+  tree_of "$PROJ" >"$H/after"
+  cmp "$H/before" "$H/after"
 }
 
 @test "every other role's text names the clones' environment directory only when they share it: ENVDIR when they differ (#389)" {

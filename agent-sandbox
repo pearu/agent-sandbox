@@ -12653,8 +12653,9 @@ _as_init() {
   # written: one that is a link, or is not what --init makes there (a file where it makes
   # a directory, say), refuses the --init, which writes nothing. A link the user made is
   # refused as well: asb cannot tell it from one a role left.
-  # A path the file declares (a) is what the write asks: no link on the way, and its kind
-  # the host's when it exists (--init makes one only where there is none).
+  # A path the file declares with a key ending in `/` is a directory (d: --init makes it
+  # with mkdir); one without (a) takes the kind the host has, and is made a file only
+  # where nothing is: what the write asks, no link on the way.
   _init_static() { # d|f|a REL -- 0 when $proj/REL is, or can be made, what --init makes there
     local rel="${2%/}" p="$proj" kind
     while [[ -n "$rel" ]]; do
@@ -12662,8 +12663,11 @@ _as_init() {
       if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
       kind=directory
       [[ -z "$rel" && "$1" == f ]] && kind="file"
-      [[ -z "$rel" && "$1" == a ]] && kind="declared path"
-      if [[ -L "$p" ]]; then
+      [[ -z "$rel" && "$1" == a ]] && kind="any"
+      if [[ -L "$p" && "$kind" == any ]]; then
+        _as_msg "--init: ${p#"$proj"/} is a symbolic link, a path .agent-sandbox declares under .asb/, and --init never writes through a link there (a role with the project read-write can leave one; one you made is refused too). Remove the link (rm removes the link, not what it points to), put what you want there -- or nothing, and --init makes an empty file -- and run --init again; nothing was written"
+        return 2
+      elif [[ -L "$p" ]]; then
         _as_msg "--init: ${p#"$proj"/} is a symbolic link, where --init makes a $kind: what --init makes under .asb/ stays as it made it, and is never written through a link (a role with the project read-write can leave one; one you made is refused too). Remove the link (rm removes the link, not what it points to) and run --init again, which makes the $kind anew; nothing was written"
         return 2
       fi
@@ -12735,7 +12739,7 @@ _as_init() {
     return 2
   fi
   while IFS= read -r sk; do
-    spaths+=("a $sk")
+    case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("a $sk") ;; esac
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
   for a in "${spaths[@]}"; do
     _init_static "${a%% *}" "${a#* }" || return 2
