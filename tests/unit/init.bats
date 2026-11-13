@@ -640,38 +640,60 @@ init() {
   [ ! -e "$H/nowhere" ]
 }
 
-@test "--init clones nothing through a symbolic link a role left: .asb/impl, .asb/git, an Implementer's .env" {
+@test "--init refuses a symbolic link a role left at a clone's path: .asb/impl, .asb/git, an Implementer's .env -- exit 2, nothing written (#389)" {
   mkdir -p "$H/conda/envs/x-dev/conda-meta" "$H/out-impl" "$H/out-git"
   local df="$PROJ/.agent-sandbox"
-  # a linked .asb/impl: no clone into it, said once
+  # a linked .asb/impl: no clone into it, and nothing else written either
   mkdir -p "$PROJ/.asb"
   ln -s "$H/out-impl" "$PROJ/.asb/impl"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: not writing .asb/impl/1/.git: .asb/impl is a symbolic link"* ]]
-  [[ "$output" != *"cloned for implementer-1"* ]]
-  [ "$(grep -c 'is a symbolic link' <<<"$output")" -eq 1 ] # said once for the link
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/impl is a symbolic link, where --init makes a directory: what --init makes under .asb/ stays as it made it, and is never written through a link (a role with the project read-write can leave one; one you made is refused too). Remove the link (rm removes the link, not what it points to) and run --init again, which makes the directory anew; nothing was written"* ]]
+  [ "$(grep -c 'is a symbolic link' <<<"$output")" -eq 1 ] # said once, and stopped
   [ -z "$(ls -A "$H/out-impl")" ]
   [ ! -e "$H/conda.log" ]
+  [ ! -e "$df" ]
+  [ "$(ls -A "$PROJ/.asb")" = impl ]
   # a linked .asb/git: no history written into it
-  rm -rf "$df" "$PROJ/.asb"
+  rm -rf "$PROJ/.asb"
   mkdir -p "$PROJ/.asb"
   ln -s "$H/out-git" "$PROJ/.asb/git"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: not writing .asb/git/1/: .asb/git is a symbolic link"* ]]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/git is a symbolic link, where --init makes a directory"* ]]
   [ -z "$(ls -A "$H/out-git")" ]
-  [ ! -e "$PROJ/.asb/impl/1/.git" ]
-  # a dangling link at an Implementer's .env: conda is not aimed at it
-  rm -rf "$df" "$PROJ/.asb"
+  [ ! -e "$df" ]
+  [ "$(ls -A "$PROJ/.asb")" = git ]
+  # a dangling link at an Implementer's .env: conda is not aimed at it, the file not changed
+  rm -rf "$PROJ/.asb"
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles
   [ "$status" -eq 0 ]
   ln -s "$H/out-env" "$PROJ/.asb/impl/1/.env"
+  cp "$df" "$H/df"
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: not writing .asb/impl/1/.env: .asb/impl/1/.env is a symbolic link"* ]]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/impl/1/.env is a symbolic link, where --init makes a directory"* ]]
+  [[ "$output" != *"completed in .agent-sandbox"* ]]
+  cmp "$df" "$H/df" # the environment's lines not completed: nothing was written
   [ ! -e "$H/out-env" ]
   [ ! -e "$H/conda.log" ]
+}
+
+@test "--init --env PATH inside the project under .asb/: a link on the way refused, exit 2, nothing made through it (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  mkdir -p "$PROJ/.asb" "$H/out-envs"
+  ln -s "$H/out-envs" "$PROJ/.asb/envs"
+  init -- github --env .asb/envs/x
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/envs is a symbolic link, where --init makes a directory"*"; nothing was written"* ]]
+  [ -z "$(ls -A "$H/out-envs")" ]
+  [ ! -e "$df" ]
+  # without the link, the prefix is made there, empty, for gh-setup to build into
+  rm -f "$PROJ/.asb/envs"
+  init -- github --env .asb/envs/x
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/envs/x" ]
+  [ ! -L "$PROJ/.asb/envs" ]
 }
 
 @test "--init and --apply rewrite .agent-sandbox by renaming a new file over it, its mode kept" {
@@ -695,55 +717,516 @@ init() {
   run ! grep -q '^\.agent-sandbox\.' "$H/ls" # no temporary file left
 }
 
-@test "--init writes nothing under .asb/ through a symbolic link a role left there: purpose file, migration copy, sums, index, inbox, declared path, .gitignore" {
+# tree_of DIR -- every path under DIR but .git/, with a link's target and a file's hash: two
+# runs compare equal when nothing under DIR was written.
+tree_of() {
+  (cd "$1" && find . -path ./.git -prune -o -print | LC_ALL=C sort | while IFS= read -r f; do
+    if [[ -L "$f" ]]; then
+      printf '%s -> %s\n' "$f" "$(readlink "$f")"
+    elif [[ -f "$f" ]]; then
+      printf '%s %s\n' "$f" "$(sha256sum <"$f" | cut -c1-16)"
+    else
+      printf '%s/\n' "$f"
+    fi
+  done)
+}
+
+@test "--init refuses, exit 2 and nothing written, a path it makes under .asb/ that is a symbolic link or not what it makes (#389)" {
+  local p kind c
+  init -- roles
+  [ "$status" -eq 0 ]
+  cp -a "$PROJ" "$H/snap"
+  printf 'outside\n' >"$H/out-file"
+  mkdir -p "$H/out-dir"
+  # PATH KIND: KIND is file (a link to a file outside), dangling, dir (a link to a
+  # directory outside) or plain (a regular file where --init makes a directory)
+  for c in \
+    '.asb dir' '.asb/roles dir' '.asb/roles/planner-1.md file' '.asb/roles/reviewer-1.md dangling' \
+    '.asb/.gitignore dangling' '.asb/init.sums dangling' '.asb/coord/COORDINATION.md file' \
+    '.asb/coord/to/reviewer-1.md dangling' '.asb/coord/to dir' '.asb/plan/planner-1 dangling' \
+    '.asb/serve/planner-1.md file' '.asb/start/planner.md dangling' '.asb/bin/inbox-wait file' \
+    '.asb/tests dangling' '.asb/impl/1/.git file' '.asb/impl/1 plain' '.asb/migrate dir'; do
+    p="${c% *}" kind="${c##* }"
+    rm -rf "$PROJ" "$H/out-dir" "$H/dangling"
+    cp -a "$H/snap" "$PROJ"
+    mkdir -p "$H/out-dir" "$(dirname -- "$PROJ/$p")"
+    rm -rf "${PROJ:?}/$p"
+    case "$kind" in
+      file) ln -s "$H/out-file" "$PROJ/$p" ;;
+      dangling) ln -s "$H/dangling" "$PROJ/$p" ;;
+      dir) ln -s "$H/out-dir" "$PROJ/$p" ;;
+      plain) printf 'x\n' >"$PROJ/$p" ;;
+    esac
+    tree_of "$PROJ" >"$H/before"
+    init -- roles implementer=2 # would add sections, a purpose file, a clone, an index row
+    [ "$status" -eq 2 ] || {
+      echo "$c: status $status: $output"
+      return 1
+    }
+    if [[ "$kind" == plain ]]; then
+      [[ "$output" == *"--init: $p is not a directory, which --init makes there: what --init makes under .asb/ stays as it made it. Move it away and run --init again; nothing was written"* ]]
+    else
+      [[ "$output" == *"--init: $p is a symbolic link, where --init makes a "*"; nothing was written"* ]] || {
+        echo "$c: $output"
+        return 1
+      }
+    fi
+    tree_of "$PROJ" >"$H/after"
+    cmp "$H/before" "$H/after"
+    [ "$(cat "$H/out-file")" = outside ]
+    [ -z "$(ls -A "$H/out-dir")" ]
+    [ ! -e "$H/dangling" ]
+  done
+}
+
+@test "--init with .asb/migrate linked to a directory outside: refused, the target's files survive (#389)" {
+  local r="$PROJ/.asb/roles"
+  init -- roles
+  [ "$status" -eq 0 ]
+  # the target has files named as --init's migration copies: planner-1.md, implementer-1.md
+  mkdir -p "$H/mig"
+  printf 'mine\n' >"$H/mig/planner-1.md"
+  printf 'mine\n' >"$H/mig/implementer-1.md"
+  rm -rf "$PROJ/.asb/migrate"
+  ln -s "$H/mig" "$PROJ/.asb/migrate"
+  init -- roles
+  [ "$(cat "$H/mig/planner-1.md")" = mine ] # removed through the link before #389
+  [ "$(cat "$H/mig/implementer-1.md")" = mine ]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/migrate is a symbolic link, where --init makes a directory"* ]]
+  # a purpose file the user changed, whose migration copy would go there: refused too
+  printf 'changed\n' >>"$r/implementer-1.md"
+  init -- roles
+  [ "$status" -eq 2 ]
+  [ "$(ls "$H/mig")" = $'implementer-1.md\nplanner-1.md' ]
+  [ "$(cat "$H/mig/implementer-1.md")" = mine ]
+}
+
+@test "--init refuses a path declared under .asb/ with '..' in it, exit 2, the line named, nothing made outside (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  init -- github
+  [ "$status" -eq 0 ]
+  # as a sandbox with the project read-write can append them; ../.. from .asb/ is $H
+  printf '[connect:gh-*]\n.asb/../../escape-dir/ = read-only\n.asb/../../escape-file = read-only\n' >>"$df"
+  cp "$df" "$H/df"
+  tree_of "$PROJ" >"$H/before"
+  init -- github
+  [ ! -e "$H/escape-dir" ] # made by --init before #389
+  [ ! -e "$H/escape-file" ]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox declares a path under .asb/ with '..' in it: '.asb/../../escape-dir/ = read-only'. --init makes the paths the file declares under .asb/, and only there: remove the line, or write the path without '..', and run --init again; nothing was written"* ]]
+  cmp "$df" "$H/df"
+  tree_of "$PROJ" >"$H/after"
+  cmp "$H/before" "$H/after"
+  # a name with two dots in it is no '..': made, inside .asb/
+  cp "$H/df" "$df"
+  sed -i '/escape/d' "$df"
+  printf '.asb/x..y/ = read-only\n' >>"$df"
+  init -- github
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/x..y" ]
+}
+
+@test "a project that tracks .env: --env refused, exit 2, nothing written; --env-dir names the clones' environment directory, kept by a re-run (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  git -C "$PROJ" add .env
+  git -C "$PROJ" commit -q -m env
+  tree_of "$PROJ" >"$H/before"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: the project tracks .env, where --init makes implementer-1's environment (.asb/impl/1/.env): run --init again with --env-dir OTHER, a name the project does not track (e.g. --env-dir _env); nothing was written"* ]]
+  tree_of "$PROJ" >"$H/after"
+  cmp "$H/before" "$H/after"
+  [ ! -e "$H/conda.log" ]
+  # another name: the prefix lines, the clone's environment and the purpose files say it
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 0 ]
+  grep -qx 'prefix = \.asb/impl/1/_env' "$df"
+  run ! grep -qF 'impl/1/.env' "$df"
+  [ -d "$PROJ/.asb/impl/1/_env/conda-meta" ]
+  [ -f "$PROJ/.asb/impl/1/.env" ] # the project's own, untouched
+  grep -qF 'conda env update -p .asb/impl/1/_env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
+  grep -qF '.asb/impl/N/_env/bin/...' "$PROJ/.asb/roles/reviewer-1.md"
+  grep -qF "with its _env" "$df"
+  # a re-run without --env-dir keeps the name the file records
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx 'prefix = \.asb/impl/2/_env' "$df"
+  [ -d "$PROJ/.asb/impl/2/_env/conda-meta" ]
+  # another name, where the environments are built at this one: refused, --init never moves one
+  cp "$df" "$H/df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir other
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir other: implementer-"?"'s environment is built at .asb/impl/"?"/_env, a name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"* ]]
+  cmp "$df" "$H/df"
+}
+
+@test "a project that tracks .env, its file written without an environment: --env refused, --env-dir renames the clones' lines and takes it (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  git -C "$PROJ" add .env
+  git -C "$PROJ" commit -q -m env
+  # the file records .env, commented out: what main's --init writes too (the same bytes)
+  init -- roles
+  [ "$status" -eq 0 ]
+  grep -qx '# prefix = \.asb/impl/1/\.env' "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: the project tracks .env, where --init makes implementer-1's environment"* ]]
+  # nothing is built at .env (the project's file is there), so --env-dir renames it
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: renamed in .agent-sandbox the environment's directory of implementer-1 to _env (--env-dir; none was built at the old name)"* ]]
+  [[ "$output" == *"completed in .agent-sandbox"* ]]
+  grep -qx 'prefix = \.asb/impl/1/_env' "$df"
+  run ! grep -qF 'impl/1/.env' "$df"
+  grep -q "^\.asb/impl/1/ = read-write .*# its clone's tree, with its _env\$" "$df" # its comment too
+  run ! grep -qF "with its .env" "$df"
+  [ -d "$PROJ/.asb/impl/1/_env/conda-meta" ]
+  [ "$(cat "$PROJ/.asb/impl/1/.env")" = SECRET=1 ]
+  grep -qF 'conda env update -p .asb/impl/1/_env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
+  grep -qF '.asb/impl/N/_env/bin/...' "$PROJ/.asb/roles/reviewer-1.md"
+}
+
+@test "each clone keeps the environment directory its lines name: one changed by hand is no refusal, with --env or without (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  # the user moves implementer-2's environment to another name, its line with it
+  sed -i 's|^prefix = \.asb/impl/2/\.env|prefix = .asb/impl/2/venv|' "$df"
+  rm -rf "$PROJ/.asb/impl/2/.env"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  grep -qx 'prefix = \.asb/impl/1/\.env' "$df"
+  grep -qx 'prefix = \.asb/impl/2/venv' "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/impl/2/venv/conda-meta" ] # its environment made at its own name
+  grep -qF 'conda env update -p .asb/impl/2/venv -f' "$PROJ/.asb/roles/implementer-2.md"
+  grep -qF 'conda env update -p .asb/impl/1/.env -f' "$PROJ/.asb/roles/implementer-1.md"
+  # --env-dir over names with environments built at them: refused
+  cp "$df" "$H/df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir _env: implementer-"?"'s environment is built at .asb/impl/"*", a name .agent-sandbox has for it, and --init never moves an environment"* ]]
+  cmp "$df" "$H/df"
+}
+
+@test "a path the file declares without '/' keeps the host's kind, no refusal; one with '/' over a file refuses, exit 2, nothing written (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  mkdir "$PROJ/.asb/notes"
+  printf 'mine\n' >"$PROJ/.asb/notes/keep"
+  printf '.asb/notes = read-only\n' >>"$df"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/.asb/notes/keep")" = mine ] # the directory left as it is, its file in it
+  # the mirror: a key with '/' is a directory --init makes, and a file there refuses it
+  # before anything is written (on main, the write's mkdir failed late, exit 1)
+  printf 'mine\n' >"$PROJ/.asb/x"
+  printf '.asb/x/ = read-only\n' >>"$df"
+  cp "$df" "$H/df"
+  init -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/x is not a directory, which --init makes there: what --init makes under .asb/ stays as it made it. Move it away and run --init again; nothing was written"* ]]
+  [ "$(cat "$PROJ/.asb/x")" = mine ]
+  cmp "$df" "$H/df"
+  # a declared path without '/' replaced by a link: refused, said as the file's path
+  rm -rf "$PROJ/.asb/notes" "$PROJ/.asb/x"
+  sed -i '/^\.asb\/x\/ = read-only$/d' "$df"
+  ln -s "$H/elsewhere" "$PROJ/.asb/notes"
+  init -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/notes is a symbolic link, a path .agent-sandbox declares under .asb/, and --init never writes through a link there"*"; nothing was written"* ]]
+  [ ! -e "$H/elsewhere" ]
+}
+
+@test "a directory the model declares, replaced by a file: a re-run that would add an instance refuses, exit 2, the tree unchanged (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/plan/planner-1"
+  printf 'x\n' >"$PROJ/.asb/plan/planner-1"
+  tree_of "$PROJ" >"$H/before"
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .asb/plan/planner-1 is not a directory, which --init makes there"*"; nothing was written"* ]]
+  tree_of "$PROJ" >"$H/after"
+  cmp "$H/before" "$H/after"
+}
+
+@test "every other role's text names the clones' environment directory only when they share it: ENVDIR when they differ (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
   local df="$PROJ/.agent-sandbox" r="$PROJ/.asb/roles"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=2 reviewer=2 --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qF '.asb/impl/N/.env/bin/...' "$r/reviewer-1.md"
+  grep -qF '.asb/impl/N/.env/bin/...' "$r/reviewer-2.md"
+  # implementer-2's environment moved to venv, its line with it
+  sed -i 's|^prefix = \.asb/impl/2/\.env|prefix = .asb/impl/2/venv|' "$df"
+  mv "$PROJ/.asb/impl/2/.env" "$PROJ/.asb/impl/2/venv"
+  init -- roles implementer=2 reviewer=2
+  [ "$status" -eq 0 ]
+  grep -qF 'conda env update -p .asb/impl/1/.env -f' "$r/implementer-1.md"
+  grep -qF 'conda env update -p .asb/impl/2/venv -f' "$r/implementer-2.md"
+  # a reviewer's text is about every clone: wrong for none
+  grep -qF '.asb/impl/N/ENVDIR/bin/...' "$r/reviewer-1.md"
+  grep -qF '.asb/impl/N/ENVDIR/bin/...' "$r/reviewer-2.md"
+  run ! grep -qF 'venv' "$r/reviewer-2.md"
+}
+
+@test "an instance with its old prefix line commented out and a new one active: the active one is its name; --env-dir refused while any of its names has an environment (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  # the user moves implementer-1's environment to venv: the old line commented out, a new one below
+  sed -i 's|^prefix = \.asb/impl/1/\.env\(.*\)$|# prefix = .asb/impl/1/.env\1\nprefix = .asb/impl/1/venv|' "$df"
+  mv "$PROJ/.asb/impl/1/.env" "$PROJ/.asb/impl/1/venv"
+  rm -f "$H/conda.log"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx '# prefix = \.asb/impl/1/\.env.*' "$df" # left commented out
+  grep -qx 'prefix = \.asb/impl/1/venv' "$df"
+  [ "$(grep -c '^prefix = \.asb/impl/1/' "$df")" -eq 1 ]
+  [ ! -e "$PROJ/.asb/impl/1/.env" ] # no second environment
+  [ ! -e "$H/conda.log" ]
+  grep -qF 'conda env update -p .asb/impl/1/venv -f' "$PROJ/.asb/roles/implementer-1.md"
+  # --env-dir: the active name has an environment -- refused
+  cp "$df" "$H/df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir _env: implementer-1's environment is built at .asb/impl/1/venv, a name .agent-sandbox has for it"* ]]
+  cmp "$df" "$H/df"
+  # ...and so does the commented-out one, back where it was: refused, its active line kept
+  mv "$PROJ/.asb/impl/1/venv" "$PROJ/.asb/impl/1/.env"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir _env: implementer-1's environment is built at .asb/impl/1/.env, a name .agent-sandbox has for it"* ]]
+  cmp "$df" "$H/df"
+}
+
+@test "the tracked-name refusal suggests a name the project does not track (#389)" {
+  mkdir -p "$H/conda/envs/x-dev/conda-meta"
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  mkdir -p "$PROJ/_env"
+  printf 'x\n' >"$PROJ/_env/file"
+  git -C "$PROJ" add .env _env
+  git -C "$PROJ" commit -q -m env
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"(e.g. --env-dir .env-asb); nothing was written"* ]]
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --env x-dev --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: the project tracks _env, where --init makes implementer-1's environment (.asb/impl/1/_env)"*"(e.g. --env-dir .env-asb)"* ]]
+}
+
+@test "--init makes the declared paths it checked: a .agent-sandbox swapped in while it runs has its '..' key made nowhere (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  # git, as --init clones implementer-2, appends a '..' key to the file
+  cat >"$H/bin/git" <<STUB
+#!/usr/bin/env bash
+/usr/bin/git "\$@" || exit
+[[ "\$*" == *" clone "* ]] && printf '.asb/../../escape-dir/ = read-only\\n' >>"$df"
+exit 0
+STUB
+  chmod +x "$H/bin/git"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cloned for implementer-2"* ]]
+  grep -qF '.asb/../../escape-dir/' "$df" # the swap happened
+  [ ! -e "$H/escape-dir" ]
+}
+
+@test "--env-dir for a model with no clone environments: refused, exit 2, nothing written (#389)" {
+  init -- github --env-dir foo
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir: model 'github' has no clone environments to name"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  [ ! -e "$PROJ/.asb" ]
+}
+
+@test "--env-dir with --shared-env: refused, exit 2, nothing written (#389)" {
+  shared_env torch-dev
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles --shared-env torch-dev --env-dir _env
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir with --shared-env: a shared environment is not cloned, so the clones have no environment directory to name"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  [ ! -e "$PROJ/.asb" ]
+}
+
+@test "--env naming a built environment through a link of yours in the project: no refusal, outside .asb/ the static rule has nothing to say (#389)" {
+  mkdir -p "$H/bigdisk/env/conda-meta" "$H/bigdisk/envs/dev/conda-meta"
+  ln -s "$H/bigdisk/env" "$PROJ/venv"
+  init CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles --env ./venv
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  ln -s "$H/bigdisk/envs" "$PROJ/envs"
+  init -- github --env ./envs/dev
+  [ "$status" -eq 0 ]
+  grep -qF "$PROJ/envs/dev" "$PROJ/.agent-sandbox"
+}
+
+@test "a project that tracks .env as a symbolic link, with no environment asked for: no refusal, every instance and path written, a re-run too (#389)" {
+  printf 'SECRET=1\n' >"$PROJ/.env.dev"
+  ln -s .env.dev "$PROJ/.env"
+  git -C "$PROJ" add .env .env.dev
+  git -C "$PROJ" commit -q -m env
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.asb/impl/1/.env" ] # the clones have the project's link
+  [ -L "$PROJ/.asb/impl/2/.env" ]
+  [ -f "$PROJ/.asb/.gitignore" ]
+  [ -f "$PROJ/.asb/coord/COORDINATION.md" ]
+  [ -f "$PROJ/.asb/coord/to/implementer-2.md" ]
+  [ -x "$PROJ/.asb/bin/inbox-wait" ]
+  [ -d "$PROJ/.asb/handoff/implementer-2" ]
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+}
+
+@test "a link of your own at a clone's environment path, with no environment asked for: no refusal, the link left (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  ln -s .env.example "$PROJ/.asb/impl/1/.env"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$PROJ/.asb/impl/1/.env")" = .env.example ]
+  [ -d "$PROJ/.asb/impl/2" ]
+}
+
+@test "a project that tracks .env, with no environment asked for: nothing made there, no refusal, a re-run too (#389)" {
+  printf 'SECRET=1\n' >"$PROJ/.env"
+  git -C "$PROJ" add .env
+  git -C "$PROJ" commit -q -m env
+  init -- roles
+  [ "$status" -eq 0 ]
+  grep -qx '# prefix = \.asb/impl/1/\.env' "$PROJ/.agent-sandbox"
+  [ "$(cat "$PROJ/.asb/impl/1/.env")" = SECRET=1 ] # the clone has the project's file
+  init -- roles
+  [ "$status" -eq 0 ]
+}
+
+@test "--env-dir takes one directory name: a path, '.', '..', '.git' or nothing refused, exit 2, nothing written (#389)" {
+  local d
+  for d in a/b /abs . .. .git '' 'a b' 'x#y'; do
+    init -- roles --env-dir "$d"
+    [ "$status" -eq 2 ] || {
+      echo "'$d': $status $output"
+      return 1
+    }
+    [[ "$output" == *"--init: --env-dir '$d': a directory name -- letters, digits, '.', '_' and '-', not '.', '..' or '.git'"* ]]
+    [ ! -e "$PROJ/.agent-sandbox" ]
+    [ ! -e "$PROJ/.asb" ]
+  done
+  init -- roles --env-dir
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir needs a directory name"* ]]
+}
+
+@test "--init stops with exit 2 at a symbolic link that appears while it runs, its target not written (#389)" {
   init -- roles
   [ "$status" -eq 0 ]
   printf 'outside\n' >"$H/out-file"
-  # each kind of path --init writes: a link to an existing file outside, or a dangling one
-  rm -f "$r/planner-1.md" "$PROJ/.asb/.gitignore" "$PROJ/.asb/coord/COORDINATION.md" "$PROJ/.asb/coord/to/reviewer-1.md" "$PROJ/.asb/init.sums"
-  ln -s "$H/out-file" "$r/planner-1.md"                     # purpose file, new
-  ln -s "$H/dangling-1" "$PROJ/.asb/.gitignore"             # .gitignore
-  ln -s "$H/out-file" "$PROJ/.asb/coord/COORDINATION.md"    # the index
-  ln -s "$H/dangling-2" "$PROJ/.asb/coord/to/reviewer-1.md" # an inbox
-  ln -s "$H/dangling-3" "$PROJ/.asb/init.sums"              # the sums
-  rm -rf "$PROJ/.asb/plan/planner-1"
-  ln -s "$H/dangling-4" "$PROJ/.asb/plan/planner-1" # a declared directory
-  init -- roles implementer=2                       # writes a new index row, a purpose file
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: not writing .asb/roles/planner-1.md: .asb/roles/planner-1.md is a symbolic link (a role with the project read-write can leave one); remove it and run --init again"* ]]
-  [[ "$output" == *"--init: not writing .asb/.gitignore: .asb/.gitignore is a symbolic link"* ]]
-  [[ "$output" == *"--init: not writing .asb/coord/COORDINATION.md: .asb/coord/COORDINATION.md is a symbolic link"* ]]
-  [[ "$output" == *"--init: not writing .asb/coord/to/reviewer-1.md: "* ]]
-  [[ "$output" == *"--init: not writing .asb/plan/planner-1/: .asb/plan/planner-1 is a symbolic link"* ]]
-  [[ "$output" == *"--init: not writing .asb/init.sums: "* ]]
+  # git, as --init clones implementer-2, plants a link at the index --init then adds a row to
+  cat >"$H/bin/git" <<STUB
+#!/usr/bin/env bash
+/usr/bin/git "\$@" || exit
+[[ "\$*" == *" clone "* ]] && ln -sfn "$H/out-file" "$PROJ/.asb/coord/COORDINATION.md"
+exit 0
+STUB
+  chmod +x "$H/bin/git"
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"cloned for implementer-2"* ]]
+  [[ "$output" == *"--init: .asb/coord/COORDINATION.md became a symbolic link while --init ran: stopped before writing .asb/coord/COORDINATION.md; remove the link and run --init again"* ]]
   [ "$(cat "$H/out-file")" = outside ]
-  for n in 1 2 3 4; do [ ! -e "$H/dangling-$n" ]; done
-  [ -f "$r/implementer-2.md" ] # the rest written
-  [ ! -L "$r/implementer-2.md" ]
-  # a purpose file the user changed: the model's text offered in .asb/migrate/, not through a link
-  printf 'mine\n' >>"$r/implementer-1.md"
-  mkdir -p "$PROJ/.asb/migrate"
-  ln -s "$H/dangling-5" "$PROJ/.asb/migrate/implementer-1.md"
-  init -- roles
+  [ -L "$PROJ/.asb/coord/COORDINATION.md" ]
+}
+
+# swap_run SECRET ARGS... -- the engine sourced, its _as_dotfile_read made to swap the file
+# it is given for a symbolic link to SECRET at its SWAP_AT-th call (default the first: a
+# link planted between the check and the read), then run with ARGS from the project; n
+# answers a question.
+swap_run() {
+  local secret="$1"
+  shift
+  cat >"$H/swap.bash" <<'EOF'
+# shellcheck disable=SC1090
+source "$ENGINE"
+eval "_as_dotfile_read_real() $(declare -f _as_dotfile_read | tail -n +2)"
+_as_dotfile_read() {
+  local c=0
+  [[ -f "$SWAP_COUNT" ]] && c="$(<"$SWAP_COUNT")"
+  printf '%s\n' $((c + 1)) >"$SWAP_COUNT"
+  ((c + 1 == SWAP_AT)) && ln -sfn "$SECRET" "$1"
+  _as_dotfile_read_real "$@"
+}
+agent_sandbox "$@"
+EOF
+  rm -f "$H/swap.count"
+  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" ENGINE="$4" SECRET="$5" MAMBA_ROOT_PREFIX="$6" SWAP_COUNT="$7" SWAP_AT="$8" bash "$9" "${@:10}" 2>&1' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$ENGINE" "$secret" "$H/base" "$H/swap.count" "${SWAP_AT:-1}" "$H/swap.bash" "$@"
+}
+
+@test "--init reads .agent-sandbox through the checked read, completing the environment's lines and appending sections: a link swapped in is refused, exit 2 (#389)" {
+  mkdir -p "$H/base/envs"
+  local df="$PROJ/.agent-sandbox"
+  init -- github
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: not writing .asb/migrate/implementer-1.md: "* ]]
-  [ ! -e "$H/dangling-5" ]
-  # a purpose file --init wrote, replaced by a link: not updated through it
-  ln -sf "$H/out-file" "$r/reviewer-1.md"
-  init -- roles
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: not writing .asb/roles/reviewer-1.md: "* ]]
-  [ "$(cat "$H/out-file")" = outside ]
-  # a link to a directory on the way: nothing written beneath it
-  rm -f "$r/implementer-2.md"
-  mv "$r" "$H/roles-elsewhere"
-  ln -s "$H/roles-elsewhere" "$r"
-  rm -f "$H/roles-elsewhere/implementer-2.md"
-  init -- roles
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--init: not writing .asb/roles: .asb/roles is a symbolic link"* ]]
-  [ ! -e "$H/roles-elsewhere/implementer-2.md" ]
+  cp "$df" "$H/df.github"
+  # the secret looks like the file, so a by-path read would copy it into the new one
+  sed 's/^/# /' "$df" >"$H/secret"
+  printf 'SECRET-TOKEN\n' >>"$H/secret"
+  cp "$H/secret" "$H/secret.orig"
+  swap_run "$H/secret" --init github --env dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox became a symbolic link while --init ran; nothing written"* ]]
+  [[ "$output" != *"completed in .agent-sandbox"* ]]
+  cmp "$H/secret" "$H/secret.orig"
+  [ -L "$df" ] # nothing renamed over the link
+  run ! grep -rqF SECRET-TOKEN "$PROJ/.asb"
+  # the roles model reads it for its clones' environment directories (the first read)...
+  rm -f "$df"
+  cp "$H/df.github" "$df"
+  swap_run "$H/secret" --init roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox became a symbolic link while --init ran; nothing written"* ]]
+  cmp "$H/secret" "$H/secret.orig"
+  [ -L "$df" ]
+  # ...and the append of its sections reads it so too (the second): refused, exit 2
+  rm -f "$df"
+  cp "$H/df.github" "$df"
+  SWAP_AT=2 swap_run "$H/secret" --init roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: .agent-sandbox became a symbolic link while --init ran; nothing added to it"* ]]
+  cmp "$H/secret" "$H/secret.orig"
+  [ -L "$df" ]
+}
+
+@test "--apply reads .agent-sandbox through the checked read: a link swapped in is refused, exit 2, nothing written (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  printf '[allow]\nexample.com\n' >"$df"
+  printf '[allow]\nSECRET-TOKEN\n' >"$H/secret"
+  cp "$H/secret" "$H/secret.orig"
+  # into the section that is there (the insert), and as a new section (the append)
+  swap_run "$H/secret" --profile claude --apply '[allow]' example.org
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--apply: .agent-sandbox became a symbolic link while --apply ran; nothing added to it"* ]]
+  cmp "$H/secret" "$H/secret.orig"
+  [ -L "$df" ]
+  rm -f "$df"
+  printf '[allow]\nexample.com\n' >"$df"
+  swap_run "$H/secret" --profile claude --apply '[deny]' example.net
+  [ "$status" -eq 2 ]
+  cmp "$H/secret" "$H/secret.orig"
+  [ -L "$df" ]
 }
 
 @test "--env on a no-env file without its --init mark, or with CR LF lines: not completed, the lines named for the user" {
@@ -797,8 +1280,8 @@ init() {
   [ ! -e "$H/conda.log" ]                       # nothing cloned
   # the shared template's own lines were never written: said as lines the model has
   [[ "$output" == *"--apply '[connect:implementer-1]' '$ep/ = copy-on-write'"* ]]
-  # the setup role the no-env --init wrote: said as left over, and left
-  [[ "$output" == *"--init: the setup role setup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([sandbox:setup] [connect:setup] "*"[net:setup] "*"[briefing:setup]) and its purpose file .asb/roles/setup.md, then agent-sandbox --trust; agent-sandbox --role setup --delete claude removes its stores, if it was ever launched"* ]]
+  # the setup role the no-env --init wrote: said, and left
+  [[ "$output" == *"--init: .agent-sandbox has the setup role setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([sandbox:setup] [connect:setup] "*"[net:setup] "*"[briefing:setup]) and its purpose file .asb/roles/setup.md, then agent-sandbox --trust; agent-sandbox --role setup --delete claude removes its stores, if it was ever launched"* ]]
   [[ "$output" == *"  - the left-over setup role setup above: yours to remove"* ]]
   grep -qx '\[connect:setup\]' "$df"
   # its purpose file, kept, tells it what it sees then: a shared environment, nothing to build
@@ -811,6 +1294,20 @@ init() {
   run ! grep -qF '{' "$PROJ/.asb/roles/setup.md"
 }
 
+@test "--shared-env on a file --init --env wrote: the setup role said without naming a no-env --init (#389)" {
+  shared_env torch-dev
+  local df="$PROJ/.agent-sandbox"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 implementer=1 reviewer=1 --env own
+  [ "$status" -eq 0 ]
+  # the user moves the project to the shared environment by hand: --init refuses to rewrite a prefix
+  sed -i "s|$H/conda/envs/own|$H/conda/envs/torch-dev|g" "$df"
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 implementer=1 reviewer=1 --shared-env torch-dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: .agent-sandbox has the setup role setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it"* ]]
+  [[ "$output" != *"without an environment: a shared"* ]]
+  grep -qx '\[connect:setup\]' "$df"
+}
+
 @test "--shared-env after a no-env --init github: gh-setup said as left over, its purpose file says what to tell the user" {
   shared_env torch-dev
   local df="$PROJ/.agent-sandbox"
@@ -818,7 +1315,7 @@ init() {
   [ "$status" -eq 0 ]
   init MAMBA_ROOT_PREFIX="$H/conda" -- github --shared-env torch-dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: the setup role gh-setup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([connect:gh-setup] [net:gh-setup] [briefing:gh-setup]) and its purpose file .asb/roles/gh-setup.md, then agent-sandbox --trust; agent-sandbox --role gh-setup --delete claude removes its stores, if it was ever launched"* ]]
+  [[ "$output" == *"--init: .agent-sandbox has the setup role gh-setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([connect:gh-setup] [net:gh-setup] [briefing:gh-setup]) and its purpose file .asb/roles/gh-setup.md, then agent-sandbox --trust; agent-sandbox --role gh-setup --delete claude removes its stores, if it was ever launched"* ]]
   grep -qx '\[connect:gh-setup\]' "$df" # not removed
   [ -f "$PROJ/.asb/roles/gh-setup.md" ]
   grep -qx "prefix = $H/conda/envs/torch-dev .*" "$df" # what gh-setup reads

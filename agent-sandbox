@@ -548,7 +548,7 @@ Engine flags (before CMD):
                         ask after that login there, or end it, as the account
                         (its own asb --status/--shutdown); --shutdown removes
                         nothing, and --setup-remote ALIAS starts it again
-  --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME]
+  --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] [--env-dir DIR]
                         write this project's .agent-sandbox, .asb/ and the
                         roles' purpose files from a development model
                         (models/, e.g. `roles`), with N instances of a role
@@ -559,7 +559,9 @@ Engine flags (before CMD):
                         missing; with --env (or --shared-env), it completes
                         the environment's lines it wrote commented out
                         without one. Models compose in one file, their role
-                        names apart.
+                        names apart. --env-dir names the environment's
+                        directory in each clone (default .env), for a
+                        project that tracks a .env of its own.
                         Approves nothing: run --trust after
   --check               the same review, asking nothing and recording
                         nothing, then the plan for CMD's profile, else for
@@ -11874,6 +11876,129 @@ _as_init() {
     fi
     return 1
   fi
+  # {envdir} (#389): the environment's directory in each clone, per instance. A line the
+  # template names {envdir} in as `KEY = VALUE{envdir}`, in a section of a numbered role
+  # (`[conda:implementer-{n}]`) with {n} in VALUE, records it for that instance in the
+  # file: the first active one, else the first commented out; a re-run keeps each one's.
+  # Its own texts (its sections, its purpose file) name it; a new instance's take
+  # --env-dir's, else the lowest instance's, else .env; every other text the name all of
+  # them share, or ENVDIR when they differ. --env-dir DIR renames an instance's lines
+  # (commented out or not, and the template's comments naming it) where no environment is
+  # built at any name its lines have; one built there refuses the --init: --init never
+  # moves an environment. A shared environment has none in the clones, so --env-dir with
+  # --shared-env is refused.
+  local envdir=".env" envcommon edl edk edv edtext="" edrentext="" edl2 en edq edrole="" edi
+  local -a edres=() edcres=() edres_role=() edcres_role=()
+  local -A envdir_of=() edn=() edren=() edact=() edall=() edroleset=()
+  if ((${_init_envdir_set:-0})); then
+    if [[ ! "$_init_envdir" =~ ^[A-Za-z0-9._-]+$ || "$_init_envdir" == . || "$_init_envdir" == .. || "$_init_envdir" == .git ]]; then
+      _as_msg "--init: --env-dir '$_init_envdir': a directory name -- letters, digits, '.', '_' and '-', not '.', '..' or '.git'"
+      return 2
+    fi
+    if ((${_init_shared:-0})); then
+      _as_msg "--init: --env-dir with --shared-env: a shared environment is not cloned, so the clones have no environment directory to name"
+      return 2
+    fi
+  fi
+  _init_ere() { printf '%s' "$1" | sed -e 's/[][\.^$*+?(){}|]/\\&/g'; } # TEXT -> a literal ERE
+  while IFS= read -r edl; do
+    if [[ "$edl" =~ ^\[[a-z-]+:([a-z][a-z0-9-]*)-\{n\}\] ]]; then
+      edrole="${BASH_REMATCH[1]}"
+      continue
+    elif [[ "$edl" == '['* ]]; then
+      edrole=""
+      continue
+    fi
+    [[ -n "$edrole" && "$edl" == *'{envdir}'* ]] || continue
+    edl="${edl%%\{envdir\}*}"
+    if [[ "$edl" == *'#'* ]]; then
+      # a comment naming it (`... # its clone's tree, with its {envdir}`): renamed with the lines
+      [[ "$edl" == *'{n}'* && "${edl#*\{n\}}" != *'{n}'* ]] || continue
+      edv="$(_init_ere "$edl")"
+      edv="${edv//\\\{n\\\}/([0-9]+)}" edv="${edv//\\\{role\\\}/[a-z0-9-]+}"
+      edcres+=("^((# )?($edv))([^/[:space:]#]+)(.*)\$") edcres_role+=("$edrole")
+      continue
+    fi
+    [[ "$edl" == *=* ]] || continue
+    edk="${edl%%=*}" edv="${edl#*=}"
+    edk="${edk#"${edk%%[![:space:]]*}"}" edk="${edk%"${edk##*[![:space:]]}"}"
+    edv="${edv#"${edv%%[![:space:]]*}"}"
+    [[ "$edk" != *'{'* && "$edv" == *'{n}'* && "${edv#*\{n\}}" != *'{n}'* ]] || continue
+    edv="$(_init_ere "$edv")"
+    edv="${edv//\\\{n\\\}/([0-9]+)}" edv="${edv//\\\{role\\\}/[a-z0-9-]+}"
+    edres+=("^((# )?[[:space:]]*$(_init_ere "$edk")[[:space:]]*=[[:space:]]*($edv))([^/[:space:]#]+)(.*)\$") edres_role+=("$edrole")
+    edroleset[$edrole]=1
+  done <<<"$tpltext"
+  if ((${_init_envdir_set:-0} && ${#edres[@]} == 0)); then
+    _as_msg "--init: --env-dir: model '$model' has no clone environments to name"
+    return 2
+  fi
+  if ((${#edres[@]})) && [[ -f "$proj/.agent-sandbox" ]]; then
+    edtext="$(_as_dotfile_read "$proj/.agent-sandbox" && printf x)" || :
+    [[ "$edtext" == *x ]] || {
+      _as_msg "--init: .agent-sandbox became a symbolic link while --init ran; nothing written"
+      return 2
+    }
+    edtext="${edtext%x}"
+    while IFS= read -r edl2 || [[ -n "$edl2" ]]; do
+      for edi in "${!edres[@]}"; do
+        [[ "$edl2" =~ ${edres[edi]} ]] || continue
+        en="${edres_role[edi]}-${BASH_REMATCH[4]}"
+        edall[$en]+="${BASH_REMATCH[3]}${BASH_REMATCH[5]}"$'\n'
+        if [[ -z "${BASH_REMATCH[2]}" && -z "${edact[$en]:-}" ]]; then
+          edn[$en]="${BASH_REMATCH[5]}" edact[$en]=1
+        elif [[ -z "${edn[$en]:-}" ]]; then
+          edn[$en]="${BASH_REMATCH[5]}"
+        fi
+        break
+      done
+    done < <(printf '%s' "$edtext")
+  fi
+  if ((${_init_envdir_set:-0})); then
+    envdir="$_init_envdir"
+  elif ((${#edn[@]})); then
+    envdir="${edn[$(printf '%s\n' "${!edn[@]}" | awk -F- '{ print $NF "\t" $0 }' | sort -n | head -1 | cut -f2)]}"
+  fi
+  for en in "${!edn[@]}"; do
+    envdir_of[$en]="${edn[$en]}"
+    ((${_init_envdir_set:-0})) && [[ "${edn[$en]}" != "$envdir" ]] || continue
+    while IFS= read -r edq; do
+      [[ -n "$edq" ]] || continue
+      edl="$edq"
+      [[ "$edl" == /* ]] || edl="$proj/$edl"
+      if [[ -d "$edl/conda-meta" ]]; then
+        _as_msg "--init: --env-dir $envdir: $en's environment is built at $edq, a name .agent-sandbox has for it, and --init never moves an environment -- run it without --env-dir (each clone keeps its name), or move that environment and its lines yourself first"
+        return 2
+      fi
+    done <<<"${edall[$en]}"
+    envdir_of[$en]="$envdir" edren[$en]=1
+  done
+  # every other role's text: the name the clones share, or ENVDIR, which is wrong for none
+  envcommon="$envdir"
+  for en in "${!envdir_of[@]}"; do
+    [[ "${envdir_of[$en]}" == "$envdir" ]] || envcommon="ENVDIR"
+  done
+  # the file's text with the renamed instances' lines rewritten, written with the rest
+  if ((${#edren[@]})); then
+    while IFS= read -r edl2 || [[ -n "$edl2" ]]; do
+      edq=""
+      for edi in "${!edres[@]}"; do
+        [[ "$edl2" =~ ${edres[edi]} ]] || continue
+        en="${edres_role[edi]}-${BASH_REMATCH[4]}"
+        [[ -n "${edren[$en]:-}" ]] && edl2="${BASH_REMATCH[1]}$envdir${BASH_REMATCH[6]}" edq=1
+        break
+      done
+      for edi in ${edcres[@]+"${!edcres[@]}"}; do
+        [[ -z "$edq" ]] || break
+        [[ "$edl2" =~ ${edcres[edi]} ]] || continue
+        en="${edcres_role[edi]}-${BASH_REMATCH[4]}"
+        [[ -n "${edren[$en]:-}" ]] && edl2="${BASH_REMATCH[1]}$envdir${BASH_REMATCH[6]}"
+        break
+      done
+      edrentext+="$edl2"$'\n'
+    done < <(printf '%s' "$edtext")
+    [[ -z "$edtext" || "$edtext" == *$'\n' ]] || edrentext="${edrentext%$'\n'}"
+  fi
 
   # ---- the template's sections, and the roles they declare ----
   # `#@ scope = roles` (#267): the unsuffixed sections after the line are the model's
@@ -12019,6 +12144,15 @@ _as_init() {
     txt="${txt//\{handle\}/$5}"
     txt="${txt//\{project\}/$project}"
     txt="${txt//\{env\}/${env:-ENV}}"
+    local edk="${3:-}"
+    if [[ -n "$edk" && -n "${envdir_of[$edk]:-}" ]]; then
+      edk="${envdir_of[$edk]}" # an instance's own text: its clone's name
+    elif [[ "$edk" == *-[0-9]* && -n "${edroleset[${edk%-*}]:-}" ]]; then
+      edk="$envdir" # a new instance of the role
+    else
+      edk="$envcommon" # every other role's
+    fi
+    txt="${txt//\{envdir\}/$edk}"
     txt="$(printf '%s' "$txt" | grep -v '^#@')"$'\n'
     if [[ -z "$env" && ("$h" == "[conda" || "$h" == "[conda:"*) ]]; then
       txt="$(printf '%s' "$txt" | sed 's/^\(.\)/# \1/')"$'\n'
@@ -12417,6 +12551,27 @@ _as_init() {
     uniq+=("$a")
   done
   insts=("${uniq[@]}")
+  # The first turn of each role's start (`[briefing:...] start = PATH`), from the model's
+  # start/<role>.md, for a role with an instance; and the one purpose file of a role with
+  # no numbered instances in the template (`[briefing:name-*]` with its own `file =
+  # PATH`, no {role} in it), from the model's roles/<name>.md: ROLE<tab>PATH each.
+  local gl
+  local -a starts=() gfiles=()
+  for i in "${!heads[@]}"; do
+    [[ "${heads[i]}" == "[briefing:"* ]] || continue
+    read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
+    [[ -n "${rn:-}" && "${count[$rn]:-0}" -gt 0 ]] || continue
+    gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*start[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
+    [[ -n "$gl" && -f "$mdir/start/$rn.md" ]] || continue
+    starts+=("$rn"$'\t'"$(_init_render "x" "$gl" "$rn" "" "" | sed -n 2p)")
+  done
+  for i in "${!heads[@]}"; do
+    [[ "${heads[i]}" =~ ^\[briefing:([a-z][a-z0-9-]*)-\*\] ]] || continue
+    rn="${BASH_REMATCH[1]}"
+    gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*file[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
+    [[ -n "$gl" && "$gl" != *'{role}'* && -f "$mdir/roles/$rn.md" ]] || continue
+    gfiles+=("$rn"$'\t'"$gl")
+  done
 
   local wrote=0
   # The environment's lines an --init of this model wrote commented out without an
@@ -12431,7 +12586,7 @@ _as_init() {
   # mark of this model (or one the marks are not read in: CRLF) is not completed: its
   # commented environment lines are named, for the user to complete.
   local -a ep_did=() ep_left=()
-  local -A ep_skip=()
+  local -A ep_skip=() ep_do=()
   local setup_left=""
   local epmine=0
   while IFS= read -r q; do
@@ -12443,6 +12598,15 @@ _as_init() {
     # ep_hl: per line, 1 in a section whose header is commented out and not as --init
     # wrote it (changed by hand): such a section keeps every line as it is.
     local -a ep_lines=() ep_hl=()
+    # Read through a descriptor shown to be the file: the lines go into its new text.
+    local eptext
+    eptext="$(_as_dotfile_read "$df" && printf x)" || :
+    [[ "$eptext" == *x ]] || {
+      _as_msg "--init: .agent-sandbox became a symbolic link while --init ran; nothing written"
+      return 2
+    }
+    eptext="${eptext%x}"
+    ((${#edren[@]})) && eptext="$edrentext" # with the environment directories renamed
     while IFS= read -r l || [[ -n "$l" ]]; do
       if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
         reg=0 ephold=0
@@ -12459,8 +12623,7 @@ _as_init() {
       [[ -n "${ep_1["$sec"$'\t'"$l"]+x}" ]] && ep_has0["$sec"$'\t'"$l"]=1
       x="$(_init_norm "$l")"
       [[ -n "$x" ]] && ep_act["$sec"]+="$x"$'\n'
-    done <"$df"
-    local -A ep_do=()
+    done < <(printf '%s' "$eptext")
     for k in "${ep_k[@]}"; do
       sec="${k%%$'\t'*}" x="$(_init_norm "${ep_1[$k]}")"
       if [[ -n "$x" ]] && grep -qxF -- "$x" <<<"${ep_act["$sec"]:-}"; then
@@ -12485,38 +12648,145 @@ _as_init() {
       if [[ "$x" == "$sec" ]]; then ep_left+=("$sec"); else ep_left+=("$sec $x"); fi
       ep_skip["$sec"$'\t'"$x"]=1
     done
-    if ((${#ep_do[@]})); then
-      reg=0 sec=""
-      local nl=1 li eptmp
-      eptmp="$(mktemp)" || return 1
-      [[ -z "$(tail -c1 -- "$df")" ]] || nl=0 # a final newline the file lacks is not added
-      for li in "${!ep_lines[@]}"; do
-        l="${ep_lines[li]}"
-        if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
-          reg=0
-          [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
-        elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
-          sec="${BASH_REMATCH[2]}"
-        fi
-        if ((reg)) && ! ((ep_hl[li])) && [[ -n "${ep_do["$sec"$'\t'"$l"]:-}" ]]; then
-          l="${ep_1["$sec"$'\t'"$l"]}"
-          x="$(_init_norm "$l")"
-          [[ "$x" == "$sec" ]] && ep_did+=("$sec") || ep_did+=("$sec ${x:-$l}")
-        fi
-        if ((li + 1 < ${#ep_lines[@]} || nl)); then printf '%s\n' "$l"; else printf '%s' "$l"; fi
-      done >"$eptmp" || {
-        rm -f -- "$eptmp"
-        return 1
-      }
-      _as_dotfile_write "$df" <"$eptmp" || {
-        rm -f -- "$eptmp"
-        return 1
-      }
-      rm -f -- "$eptmp"
-      wrote=1
-      _as_msg "--init: completed in .agent-sandbox, for --env $env${envpath:+ ($envpath)}, the environment's line$( ((${#ep_did[@]} == 1)) || printf s) --init wrote commented out without an environment:"
-      printf '    %s\n' "${ep_did[@]}" >&2
+  fi
+
+  # ---- what --init makes under .asb/ is static (#389) ----
+  # A role with the project read-write can replace a path --init makes there with a
+  # symbolic link (to a directory or a file outside, or dangling), and --init runs on the
+  # host. Every path it would write, or write under, is checked before anything is
+  # written: one that is a link, or is not what --init makes there (a file where it makes
+  # a directory, say), refuses the --init, which writes nothing. A link the user made is
+  # refused as well: asb cannot tell it from one a role left.
+  # A path the file declares with a key ending in `/` is a directory (d: --init makes it
+  # with mkdir); one without (a) takes the kind the host has, and is made a file only
+  # where nothing is: what the write asks, no link on the way.
+  _init_static() { # d|f|a REL -- 0 when $proj/REL is, or can be made, what --init makes there
+    local rel="${2%/}" p="$proj" kind
+    while [[ -n "$rel" ]]; do
+      p+="/${rel%%/*}"
+      if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
+      kind=directory
+      [[ -z "$rel" && "$1" == f ]] && kind="file"
+      [[ -z "$rel" && "$1" == a ]] && kind="any"
+      if [[ -L "$p" && "$kind" == any ]]; then
+        _as_msg "--init: ${p#"$proj"/} is a symbolic link, a path .agent-sandbox declares under .asb/, and --init never writes through a link there (a role with the project read-write can leave one; one you made is refused too). Remove the link (rm removes the link, not what it points to), put what you want there -- or nothing, and --init makes an empty file -- and run --init again; nothing was written"
+        return 2
+      elif [[ -L "$p" ]]; then
+        _as_msg "--init: ${p#"$proj"/} is a symbolic link, where --init makes a $kind: what --init makes under .asb/ stays as it made it, and is never written through a link (a role with the project read-write can leave one; one you made is refused too). Remove the link (rm removes the link, not what it points to) and run --init again, which makes the $kind anew; nothing was written"
+        return 2
+      fi
+      [[ -e "$p" ]] || return 0
+      if [[ "$kind" == directory && ! -d "$p" ]] || [[ "$kind" == file && ! -f "$p" ]]; then
+        _as_msg "--init: ${p#"$proj"/} is not a $kind, which --init makes there: what --init makes under .asb/ stays as it made it. Move it away and run --init again; nothing was written"
+        return 2
+      fi
+    done
+    return 0
+  }
+  local f tpath gdir br prefix v sk
+  local -a spaths=("d .asb" "d .asb/roles" "f .asb/init.sums" "f .asb/.gitignore")
+  for a in "${insts[@]}"; do
+    IFS=$'\t' read -r inst h rn n <<<"$a"
+    [[ -f "$mdir/roles/$rn.md" ]] && spaths+=("f .asb/roles/$inst.md" "f .asb/migrate/$inst.md")
+  done
+  for a in ${prompts[@]+"${prompts[@]}"}; do
+    IFS=$'\t' read -r inst h rn n sk <<<"$a"
+    [[ -f "$mdir/serve/$rn.md" && -n "$sk" ]] && spaths+=("f $sk")
+  done
+  for a in ${starts[@]+"${starts[@]}"}; do spaths+=("f ${a#*$'\t'}"); done
+  for a in ${gfiles[@]+"${gfiles[@]}"}; do
+    spaths+=("f ${a#*$'\t'}" "f .asb/migrate/$(basename -- "${a#*$'\t'}")")
+  done
+  for f in "$mdir"/bin/*; do
+    [[ -f "$f" ]] && spaths+=("f .asb/bin/$(basename -- "$f")")
+  done
+  [[ -f "$mdir/tests" ]] && spaths+=("f .asb/tests")
+  for a in ${clones[@]+"${clones[@]}"}; do
+    read -r tpath gdir br <<<"${a#*$'\t'}"
+    spaths+=("d $tpath" "f ${tpath%/}/.git" "d $gdir")
+  done
+  # an environment prefix in a clone, only when this --init would make one there (--env):
+  # without one, nothing is made at it, and the project may track a file of that name
+  if [[ -n "$env" ]] && ! ((${_init_shared:-0})); then
+    for a in ${prefixes[@]+"${prefixes[@]}"}; do spaths+=("d ${a#*$'\t'}"); done
+    # a clone has what the project tracks: a file or directory there named as a clone's
+    # environment directory is the project's, not the environment's
+    if grep -qF '{envdir}' <<<"$tpltext"; then
+      for a in ${prefixes[@]+"${prefixes[@]}"}; do
+        sk="${a#*$'\t'}" sk="${sk%/}" sk="${sk##*/}"
+        [[ -n "$(git -C "$proj" ls-files -- ":(literal)$sk" 2>/dev/null | head -1)" ]] || continue
+        for edq in _env .env-asb _conda-env _env2 _env3; do
+          [[ -z "$(git -C "$proj" ls-files -- ":(literal)$edq" 2>/dev/null | head -1)" ]] && break
+        done
+        _as_msg "--init: the project tracks $sk, where --init makes ${a%%$'\t'*}'s environment (${a#*$'\t'}): run --init again with --env-dir OTHER, a name the project does not track (e.g. --env-dir $edq); nothing was written"
+        return 2
+      done
     fi
+  fi
+  # the environment's prefix, made empty below when not built yet: checked when it is in
+  # the project (--env .asb/envs/x, say)
+  [[ -n "$envpath" && "$envpath" == "$proj"/.asb/* && ! -d "$envpath/conda-meta" ]] && spaths+=("d ${envpath#"$proj"/}")
+  for f in ${inboxes[@]+"${inboxes[@]}"}; do spaths+=("f $f"); done
+  [[ -f "$mdir/coord/COORDINATION.md" || -e "$proj/.asb/coord/COORDINATION.md" || -L "$proj/.asb/coord/COORDINATION.md" ]] \
+    && spaths+=("f .asb/coord/COORDINATION.md")
+  # the paths the file declares under .asb/ once written, each made below; one with a `..`
+  # in it would be made outside .asb/ (a launch reads it lexically, as any key)
+  local decls
+  decls="$({
+    if [[ -f "$df" ]]; then cat -- "$df"; else printf '%s\n' ${pre[@]+"${pre[@]}"}; fi
+    printf '%s\n' "$new"
+    for k in "${!ep_do[@]}"; do printf '%s\n' "${ep_1[$k]}"; done
+  } | grep -E '^[[:space:]]*\.asb/[^=[:space:]]*[[:space:]]*=' || true)"
+  sk="$(grep -m1 -E '^[[:space:]]*\.asb/([^=[:space:]]*/)?\.\.(/[^=[:space:]]*)?[[:space:]]*=' <<<"$decls" || true)"
+  if [[ -n "$sk" ]]; then
+    _as_msg "--init: .agent-sandbox declares a path under .asb/ with '..' in it: '$(_init_norm "$sk")'. --init makes the paths the file declares under .asb/, and only there: remove the line, or write the path without '..', and run --init again; nothing was written"
+    return 2
+  fi
+  while IFS= read -r sk; do
+    case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("a $sk") ;; esac
+  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
+  for a in "${spaths[@]}"; do
+    _init_static "${a%% *}" "${a#* }" || return 2
+  done
+
+  if ((${#edren[@]})); then
+    printf '%s' "$edrentext" | _as_dotfile_write "$df" || return 1
+    wrote=1
+    _as_msg "--init: renamed in .agent-sandbox the environment's directory of $(printf '%s\n' "${!edren[@]}" | sort -t- -k2 -n | paste -sd' ') to $envdir (--env-dir; none was built at the old name)"
+  fi
+  if ((${#ep_do[@]})); then
+    reg=0 sec=""
+    local nl=1 li eptmp
+    eptmp="$(mktemp)" || return 1
+    [[ -z "$eptext" || "$eptext" == *$'\n' ]] || nl=0 # a final newline the file lacks is not added
+    for li in "${!ep_lines[@]}"; do
+      l="${ep_lines[li]}"
+      if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
+        reg=0
+        [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+      elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
+        sec="${BASH_REMATCH[2]}"
+      fi
+      if ((reg)) && ! ((ep_hl[li])) && [[ -n "${ep_do["$sec"$'\t'"$l"]:-}" ]]; then
+        l="${ep_1["$sec"$'\t'"$l"]}"
+        x="$(_init_norm "$l")"
+        [[ "$x" == "$sec" ]] && ep_did+=("$sec") || ep_did+=("$sec ${x:-$l}")
+      fi
+      if ((li + 1 < ${#ep_lines[@]} || nl)); then printf '%s\n' "$l"; else printf '%s' "$l"; fi
+    done >"$eptmp" || {
+      rm -f -- "$eptmp"
+      return 1
+    }
+    _as_dotfile_write "$df" <"$eptmp" || {
+      rm -f -- "$eptmp"
+      return 1
+    }
+    rm -f -- "$eptmp"
+    wrote=1
+    _as_msg "--init: completed in .agent-sandbox, for --env $env${envpath:+ ($envpath)}, the environment's line$( ((${#ep_did[@]} == 1)) || printf s) --init wrote commented out without an environment:"
+    printf '    %s\n' "${ep_did[@]}" >&2
+  fi
+  if ((${#ep_k[@]} && epmine)); then
     if ((${#ep_left[@]})); then
       _as_msg "--init: ${#ep_left[@]} environment line$( ((${#ep_left[@]} == 1)) || printf s) not completed: your .agent-sandbox does not have $( ((${#ep_left[@]} == 1)) && printf it || printf them) as --init wrote $( ((${#ep_left[@]} == 1)) && printf it || printf them) without an environment (changed or removed since), so $( ((${#ep_left[@]} == 1)) && printf 'it is' || printf 'they are') left as you have $( ((${#ep_left[@]} == 1)) && printf it || printf them); model '$model''s line$( ((${#ep_left[@]} == 1)) || printf s) for --env $env:"
       printf '    %s\n' "${ep_left[@]}" >&2
@@ -12535,7 +12805,7 @@ _as_init() {
     wrote=1
     _as_msg "wrote .agent-sandbox from model '$model' ($(for a in "${insts[@]}"; do printf '%s ' "$(cut -f2 <<<"$a")"; done | sed 's/ $//'))"
   elif [[ -n "$new" ]]; then
-    a="$(_as_dotfile_read "$df" && printf x)"
+    a="$(_as_dotfile_read "$df" && printf x)" || :
     [[ "$a" == *x ]] || {
       _as_msg "--init: .agent-sandbox became a symbolic link while --init ran; nothing added to it"
       return 2
@@ -12552,27 +12822,22 @@ _as_init() {
   fi
 
   # ---- purpose files, clones, environments, the declared paths, the index ----
-  local f tpath gdir br prefix v
   local -a globs=()
-  # What --init writes under .asb/ goes through no symbolic link: a role with the project
-  # read-write can leave one there, dangling or not, and --init runs on the host. A path
-  # that is one, or under one, is not written, and said; a file is written to a temporary
-  # one beside it and renamed into place, which replaces a link planted since, never
-  # follows it.
-  local -A nolink_said=()
-  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else says so, once a link
-    local rel="${1%/}" p="$proj" c
+  # The paths were checked above (_init_static); each write checks again for a symbolic
+  # link planted since, which stops the --init there (2). A file is written to a
+  # temporary one beside it and renamed into place, which replaces a link planted since,
+  # never follows it.
+  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else 2, said
+    local rel="${1%/}" p="$proj"
     while [[ -n "$rel" ]]; do
-      c="${rel%%/*}" p+="/${rel%%/*}"
+      p+="/${rel%%/*}"
       if [[ -L "$p" ]]; then
-        [[ -n "${nolink_said[$p]:-}" ]] && return 1
-        nolink_said[$p]=1
-        _as_msg "--init: not writing $1: ${p#"$proj"/} is a symbolic link (a role with the project read-write can leave one); remove it and run --init again"
-        return 1
+        _as_msg "--init: ${p#"$proj"/} became a symbolic link while --init ran: stopped before writing ${1%/}; remove the link and run --init again"
+        return 2
       fi
       if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
     done
-    [[ -n "$c" ]]
+    return 0
   }
   _init_put() { # REL < TEXT -- $proj/REL from stdin, through no link; 2: refused (said)
     local d t
@@ -12590,7 +12855,7 @@ _as_init() {
     _init_nolink "$1" || return 2
     mkdir -p -- "$proj/$1"
   }
-  _init_mkdir .asb/roles || return 1
+  _init_mkdir .asb/roles || return $?
   # A purpose file is the model's until the user changes it: .asb/init.sums records the
   # hash of what --init last wrote at each path, and a file that still has it is replaced
   # by the model's current text; one changed since (or older than the record) is kept.
@@ -12599,7 +12864,7 @@ _as_init() {
   # ADDENDA, for a role's purpose file: the names its addenda may have (role, instance).
   local -a migrate=()
   _init_purpose() { # SRC REL ROLE N HANDLE [ADDENDA]
-    local tmp sum cur rec sums="$proj/.asb/init.sums" mig a has=0
+    local tmp sum cur rec sums="$proj/.asb/init.sums" mig a has=0 rc
     mig="$proj/.asb/migrate/$(basename -- "$2")"
     tmp="$(mktemp)" || return 1
     _init_render "" "$(sed -e "/^#@$envdrop /d" -e "s/^#@$envkeep //" -- "$1")" "$3" "$4" "$5" | sed 1d >"$tmp" || {
@@ -12609,7 +12874,7 @@ _as_init() {
     sum="$(_as_sha256_file "$tmp")"
     _init_nolink "$2" || {
       rm -f -- "$tmp"
-      return 0
+      return 2
     }
     if [[ -e "$proj/$2" ]]; then
       cur="$(_as_sha256_file "$proj/$2")"
@@ -12618,8 +12883,9 @@ _as_init() {
         :
       elif [[ -n "$rec" && "$cur" == "$rec" ]]; then
         _init_put "$2" <"$tmp" || {
+          rc=$?
           rm -f -- "$tmp"
-          return 1
+          return "$rc"
         }
         wrote=1
         _as_msg "updated $2 from model '$model'"
@@ -12628,11 +12894,12 @@ _as_init() {
           [[ -f "$proj/$(dirname -- "$2")/$a.addendum.md" ]] && has=1
         done
         if [[ -n "${6:-}" ]] && ! ((has)); then
-          if _init_put "${mig#"$proj"/}" <"$tmp"; then
-            migrate+=("$2"$'\t'"$6")
-          else
-            (($? == 2)) || return 1
-          fi
+          _init_put "${mig#"$proj"/}" <"$tmp" || {
+            rc=$?
+            rm -f -- "$tmp"
+            return "$rc"
+          }
+          migrate+=("$2"$'\t'"$6")
           _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (to receive it, move your part into an addendum: below)"
         else
           _as_msg "kept $2: changed since --init wrote it, and model '$model' has another text (remove the file and run --init again for the model's)"
@@ -12642,24 +12909,28 @@ _as_init() {
       fi
     else
       _init_put "$2" <"$tmp" || {
+        rc=$?
         rm -f -- "$tmp"
-        return 1
+        return "$rc"
       }
       _as_msg "wrote $2"
     fi
     rm -f -- "$tmp"
-    [[ -n "${6:-}" ]] && rm -f -- "$mig"
-    _init_nolink .asb/init.sums || return 0
+    if [[ -n "${6:-}" ]]; then
+      _init_nolink "${mig#"$proj"/}" || return 2
+      rm -f -- "$mig"
+    fi
+    _init_nolink .asb/init.sums || return 2
     {
       awk -v p="$2" '$2 != p' "$sums" 2>/dev/null
       printf '%s  %s\n' "$sum" "$2"
-    } | _init_put .asb/init.sums || (($? == 2))
+    } | _init_put .asb/init.sums
   }
   for a in "${insts[@]}"; do
     IFS=$'\t' read -r inst h rn n <<<"$a"
     f="$mdir/roles/$rn.md"
     [[ -f "$f" ]] || continue
-    _init_purpose "$f" ".asb/roles/$inst.md" "$inst" "$n" "$h" "$rn$([[ "$inst" == "$rn" ]] || printf ' %s' "$inst")" || return 1
+    _init_purpose "$f" ".asb/roles/$inst.md" "$inst" "$n" "$h" "$rn$([[ "$inst" == "$rn" ]] || printf ' %s' "$inst")" || return $?
   done
   # The per-turn prompts of --serve (#277), from the model's serve/<role>.md, kept as the
   # purpose files are.
@@ -12668,29 +12939,17 @@ _as_init() {
     IFS=$'\t' read -r inst h rn n ppath <<<"$a"
     f="$mdir/serve/$rn.md"
     [[ -f "$f" && -n "$ppath" ]] || continue
-    _init_purpose "$f" "$ppath" "$inst" "$n" "$h" || return 1
+    _init_purpose "$f" "$ppath" "$inst" "$n" "$h" || return $?
   done
-  local gl
-  # The first turn of each role's start (`[briefing:...] start = PATH`), from the model's
-  # start/<role>.md, for a role with an instance, kept as the purpose files are.
-  for i in "${!heads[@]}"; do
-    [[ "${heads[i]}" == "[briefing:"* ]] || continue
-    read -r rn rk <<<"$(_init_role_of "${heads[i]}")"
-    [[ -n "${rn:-}" && "${count[$rn]:-0}" -gt 0 ]] || continue
-    gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*start[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
-    [[ -n "$gl" && -f "$mdir/start/$rn.md" ]] || continue
-    gl="$(_init_render "x" "$gl" "$rn" "" "" | sed -n 2p)"
-    _init_purpose "$mdir/start/$rn.md" "$gl" "$rn" "" "" || return 1
+  # The roles' starts and one-file purpose files (starts, gfiles: above), kept as the
+  # purpose files are.
+  for a in ${starts[@]+"${starts[@]}"}; do
+    IFS=$'\t' read -r rn gl <<<"$a"
+    _init_purpose "$mdir/start/$rn.md" "$gl" "$rn" "" "" || return $?
   done
-  # A role with no numbered instances in the template (`[briefing:name-*]` with its own
-  # `file = PATH`, no {role} in it) is briefed from one file for every instance, from the
-  # model's roles/<name>.md and kept as above.
-  for i in "${!heads[@]}"; do
-    [[ "${heads[i]}" =~ ^\[briefing:([a-z][a-z0-9-]*)-\*\] ]] || continue
-    rn="${BASH_REMATCH[1]}"
-    gl="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*file[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
-    [[ -n "$gl" && "$gl" != *'{role}'* && -f "$mdir/roles/$rn.md" ]] || continue
-    _init_purpose "$mdir/roles/$rn.md" "$gl" "$rn" "" "" "$rn" || return 1
+  for a in ${gfiles[@]+"${gfiles[@]}"}; do
+    IFS=$'\t' read -r rn gl <<<"$a"
+    _init_purpose "$mdir/roles/$rn.md" "$gl" "$rn" "" "" "$rn" || return $?
     globs+=("$rn")
   done
   # The migration offer (#353): the steps, once, for every purpose file kept above.
@@ -12712,8 +12971,8 @@ _as_init() {
     inst="${a%%$'\t'*}"
     read -r tpath gdir br <<<"${a#*$'\t'}"
     # every path the clone and its environment go to, through no link
-    _init_nolink "${tpath%/}/.git" || continue
-    _init_nolink "${gdir%/}/" || continue
+    _init_nolink "${tpath%/}/.git" || return 2
+    _init_nolink "${gdir%/}/" || return 2
     if [[ -e "$proj/${tpath%/}/.git" || -L "$proj/${tpath%/}/.git" ]]; then
       :
     else
@@ -12735,7 +12994,11 @@ _as_init() {
     for k in ${prefixes[@]+"${prefixes[@]}"}; do
       [[ "${k%%$'\t'*}" == "$inst" ]] && prefix="${k#*$'\t'}"
     done
-    [[ -z "$prefix" ]] || _init_nolink "$prefix" || continue
+    # checked only where an environment is cloned (--env, not --shared-env), as above:
+    # without one nothing is made there, and the project may have a link of its own there
+    if [[ -n "$env" && -n "$prefix" ]] && ! ((${_init_shared:-0})); then
+      _init_nolink "$prefix" || return 2
+    fi
     if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
       _as_msg "--init: no environment for $inst yet: $env is not built, so there is nothing to clone into $prefix; once $invoked --role $setup claude has built it, run --init again and it clones it"
     elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && ! -L "$proj/$prefix" ]]; then
@@ -12754,32 +13017,33 @@ _as_init() {
     fi
   done
   # Every path the written file declares under .asb/ must exist: a missing read-only
-  # or read-write path is skipped at launch.
+  # or read-write path is skipped at launch. The keys are those checked up front (decls),
+  # never the file read again: one swapped in since is not made.
   local key
   while IFS= read -r key; do
     case "$key" in
-      */) _init_mkdir "$key" || (($? == 2)) ;;
-      *) [[ -e "$proj/$key" && ! -L "$proj/$key" ]] || _init_put "$key" </dev/null || (($? == 2)) ;;
-    esac || return 1
-  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' "$df" | sort -u)
+      */) _init_mkdir "$key" ;;
+      *) [[ -e "$proj/$key" && ! -L "$proj/$key" ]] || _init_put "$key" </dev/null ;;
+    esac || return $?
+  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
   # A role's inbox (`#@ inbox = PATH`, #274): an empty file for its watcher to wait on,
   # where the instructions to it are appended. Never a declaration: a file bound into a
   # sandbox keeps the inode, and the Write tool renames a new one over it.
   for f in ${inboxes[@]+"${inboxes[@]}"}; do
-    [[ -e "$proj/$f" && ! -L "$proj/$f" ]] || _init_put "$f" </dev/null || (($? == 2)) || return 1
+    [[ -e "$proj/$f" && ! -L "$proj/$f" ]] || _init_put "$f" </dev/null || return $?
   done
   # The model's scripts (`bin/`, #274), into .asb/bin/, executable: written and kept as
   # the purpose files are (.asb/init.sums), so one you changed stays yours.
   for f in "$mdir"/bin/*; do
     [[ -f "$f" ]] || continue
-    _init_purpose "$f" ".asb/bin/$(basename -- "$f")" "" "" "" || return 1
+    _init_purpose "$f" ".asb/bin/$(basename -- "$f")" "" "" "" || return $?
     [[ -L "$proj/.asb/bin/$(basename -- "$f")" || ! -f "$proj/.asb/bin/$(basename -- "$f")" || -x "$proj/.asb/bin/$(basename -- "$f")" ]] \
       || chmod 755 -- "$proj/.asb/bin/$(basename -- "$f")" || return 1
   done
   # The project's test commands for the roles (`tests`, #301): written once with the
   # values empty, for the project to fill, and kept as the purpose files are.
   if [[ -f "$mdir/tests" ]]; then
-    _init_purpose "$mdir/tests" ".asb/tests" "" "" "" || return 1
+    _init_purpose "$mdir/tests" ".asb/tests" "" "" "" || return $?
   fi
   # The coord index: a row per instance, added for the ones it does not list yet; a model
   # without one (github: its setup role is single) has none.
@@ -12798,36 +13062,30 @@ _as_init() {
   done
   if [[ ! -s "$idx" && -f "$mdir/coord/COORDINATION.md" ]]; then
     a="$(_init_render "" "$(cat -- "$mdir/coord/COORDINATION.md")" "" "" "" | sed 1d)"
-    if printf '%s\n' "${a//\{instances\}/${idxrows%$'\n'}}" | _init_put .asb/coord/COORDINATION.md; then
-      _as_msg "wrote .asb/coord/COORDINATION.md"
-    else
-      (($? == 2)) || return 1
-    fi
+    printf '%s\n' "${a//\{instances\}/${idxrows%$'\n'}}" | _init_put .asb/coord/COORDINATION.md || return $?
+    _as_msg "wrote .asb/coord/COORDINATION.md"
   elif [[ -n "$idxrows" ]]; then
-    if _init_nolink .asb/coord/COORDINATION.md; then
-      { cat -- "$idx" && printf '%s' "$idxrows"; } | _init_put .asb/coord/COORDINATION.md || (($? == 2)) || return 1
-    fi
+    _init_nolink .asb/coord/COORDINATION.md || return 2
+    { cat -- "$idx" && printf '%s' "$idxrows"; } | _init_put .asb/coord/COORDINATION.md || return $?
   fi
   # .asb/ is the roles' working state, never the project's history: a .gitignore of its
   # own keeps it out of whatever repository the directory is in, or becomes part of.
   if [[ ! -e "$proj/.asb/.gitignore" || -L "$proj/.asb/.gitignore" ]]; then
-    if printf '*\n' | _init_put .asb/.gitignore; then
-      _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
-    else
-      (($? == 2)) || return 1
-    fi
+    printf '*\n' | _init_put .asb/.gitignore || return $?
+    _as_msg "wrote .asb/.gitignore (.asb/ is never committed)"
   fi
 
   if ((${_init_shared:-0})) && [[ -n "$envpath" ]]; then
     _as_msg "--init: $env is another project's environment ($envpath): activated read-only, never cloned or built here; the roles that install get a layer of their own over it"
-    # The model's setup role (`#@own #@ setup = ROLE`), from an earlier --init without an
-    # environment: a shared environment has none, and --init leaves it to the user.
+    # The model's setup role (`#@own #@ setup = ROLE`), in the file from an earlier --init
+    # (with an environment of the project's own, or none): a shared environment has none,
+    # and --init leaves it to the user.
     local osetup osecs
     osetup="$(sed -n 's/^#@own #@[[:space:]]*setup[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' -- "$tpl" | head -1)"
     if [[ -n "$osetup" ]]; then
       osecs="$(grep -oE "^\[[a-z-]+:$osetup\]" "$df" | paste -sd' ' || true)"
       if [[ -n "$osecs" ]]; then
-        _as_msg "--init: the setup role $osetup is left over from an earlier --init without an environment: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ($osecs)$([[ -e "$proj/.asb/roles/$osetup.md" ]] && printf ' and its purpose file .asb/roles/%s.md' "$osetup"), then $invoked --trust; $invoked --role $osetup --delete claude removes its stores, if it was ever launched"
+        _as_msg "--init: .agent-sandbox has the setup role $osetup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ($osecs)$([[ -e "$proj/.asb/roles/$osetup.md" ]] && printf ' and its purpose file .asb/roles/%s.md' "$osetup"), then $invoked --trust; $invoked --role $osetup --delete claude removes its stores, if it was ever launched"
         setup_left="$osetup"
       fi
     fi
@@ -12837,6 +13095,7 @@ _as_init() {
   fi
   if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
     a="empty"
+    [[ "$envpath" != "$proj"/.asb/* ]] || _init_nolink "${envpath#"$proj"/}" || return 2
     [[ -d "$envpath" ]] || { mkdir -p -- "$envpath" && a="created empty"; } || return 1
     _as_msg "--init: environment $env is not built yet ($a at $envpath$([[ "$_conda_mode" == sandbox ]] && printf ", under agent-sandbox's conda root")): $invoked --role $setup claude builds it"
   fi
@@ -13085,7 +13344,18 @@ _as_apply() {
     n="${n#"${n%%[![:space:]]*}"}"
     n="${n%"${n##*[![:space:]]}"}"
   }
-  [[ -f "$file" ]] && mapfile -t lines <"$file"
+  # The file's text, read through a descriptor shown to be the file: what is read goes
+  # into its new text.
+  local text=""
+  if [[ -f "$file" ]]; then
+    text="$(_as_dotfile_read "$file" && printf x)" || :
+    [[ "$text" == *x ]] || {
+      _as_msg "--apply: .agent-sandbox became a symbolic link while --apply ran; nothing added to it"
+      return 2
+    }
+    text="${text%x}"
+    mapfile -t lines < <(printf '%s' "$text")
+  fi
   local first_role=0
   if [[ -n "$glob" && "$name" != remote ]]; then
     first_role=1
@@ -13133,13 +13403,8 @@ _as_apply() {
       printf '%s\n' "$head" "${add[@]}" | _as_dotfile_write "$file" || return 1
       _as_msg "created $file"
     elif ((at < 0)); then
-      r="$(_as_dotfile_read "$file" && printf x)"
-      [[ "$r" == *x ]] || {
-        _as_msg "--apply: .agent-sandbox became a symbolic link while --apply ran; nothing added to it"
-        return 2
-      }
       {
-        printf '%s' "${r%x}"
+        printf '%s' "$text"
         if ((${#lines[@]})) && [[ -n "${lines[-1]//[[:space:]]/}" ]]; then printf '\n'; fi
         printf '%s\n' "$head" "${add[@]}"
       } | _as_dotfile_write "$file" || return 1
@@ -14066,7 +14331,7 @@ agent_sandbox() (
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
   local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
-  local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0
+  local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0 _init_envdir="" _init_envdir_set=0
   local -a _init_counts=() _apply_words=()
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
   # [--agent AGENT] --account NAME --login (#355): the verb; its agent and account are
@@ -14312,7 +14577,7 @@ agent_sandbox() (
         fi
         ;;
       --init)
-        # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] (#225): the words after it are its own.
+        # --init MODEL [ROLE=N ...] [--env NAME | --shared-env NAME] [--env-dir DIR] (#225): the words after it are its own.
         _do_init=1
         shift
         [[ $# -gt 0 && "$1" != -* ]] || {
@@ -14354,6 +14619,21 @@ agent_sandbox() (
             --enable-gpu | --disable-gpu)
               _init_gpu="${1#--}" _init_gpu="${_init_gpu%-gpu}"
               shift
+              ;;
+            --env-dir | --env-dir=*)
+              # the environment's directory in each clone, {envdir} (#389): .env unless named
+              if [[ "$1" == --env-dir ]]; then
+                [[ $# -ge 2 ]] || {
+                  _as_msg "--init: --env-dir needs a directory name, e.g. --env-dir _env"
+                  return 2
+                }
+                _init_envdir="$2"
+                shift 2
+              else
+                _init_envdir="${1#--env-dir=}"
+                shift
+              fi
+              _init_envdir_set=1
               ;;
             [a-z]*=*)
               _init_counts+=("$1")

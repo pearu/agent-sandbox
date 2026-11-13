@@ -460,11 +460,34 @@ another environment refuses the `--init`, while a path line (`PREFIX/ = ...`) na
 is left and said (`--init` never rewrites a prefix). It approves nothing --
 `asb --trust` does, after you have read the file and the purpose files.
 
+What `--init` makes under `.asb/` stays as it made it. A path it writes, or writes under
+-- `.asb/` itself, a directory the file names, a purpose file, an Implementer's clone
+(`.asb/impl/N/`, `.asb/git/N/`) and its `.env`, an inbox, `.asb/migrate/`, the index --
+that is a symbolic link, or is not what `--init` makes there (a file where it makes a
+directory, say), refuses the `--init` before it writes anything (exit 2), naming the
+path. A sandbox with the project read-write can leave such a link, and `--init` runs on
+the host; asb cannot tell a link you made (`.asb/impl/` on another disk, say) from one a
+role left, so yours is refused too. Remove the link (`rm` removes the link, not what it
+points to), or move the path away, and run `--init` again. A linked `.agent-sandbox` is
+refused the same way, by `--init` and `--apply` ([config.md](config.md)). So is a path
+the file declares under `.asb/` with a `..` in it (`.asb/../x/ = read-only`), which
+`--init` would make outside `.asb/`: the refusal names the line.
+
 `--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
 under the conda base that applies, and says to launch the setup role,
 `asb --role setup claude`, which builds `main` into it. The Implementers' environments
 are clones of it, so until it is built there is nothing to clone: `--init` says so and
 skips them, and run again once setup is done, it makes them.
+
+An Implementer's environment is `.asb/impl/N/.env` in its clone. A project that tracks a
+`.env` of its own (a file of settings, say) has it in every clone, so `--init --env`
+refuses (exit 2, nothing written) and asks for another name: `--env-dir _env` puts the
+environments at `.asb/impl/N/_env`, and the purpose files say that name. A re-run keeps
+the name each clone's lines have (one you changed by hand included); `--env-dir` on a
+re-run renames a clone's lines, and re-renders its purpose file, where no environment is
+built at the old name, and is refused where one is: `--init` never moves an environment.
+Without `--env` nothing is made there, and a tracked `.env` is no matter. A shared
+environment is not cloned, so `--env-dir` with `--shared-env` is refused.
 
 The model's common block -- what every role gets -- is written once per role pattern
 (`[connect:planner-*]`, `[connect:supervisor]`, ...), never unsuffixed, so the file can

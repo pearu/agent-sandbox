@@ -12,7 +12,10 @@ A model directory holds:
   Placeholders, inside a role's own sections: `{role}` (`planner-1`), `{n}` (`1`),
   `{handle}` (`P1`; the role's initial, and `S` for a single role -- two roles with one
   initial are refused); anywhere: `{project}` (the directory's name), `{env}` (`--env`),
-  `{envpath}` (that environment's prefix), `{editable}` (each source tree the
+  `{envpath}` (that environment's prefix), `{envdir}` (the environment's directory in a
+  clone: `.env`, or `--env-dir`'s, or the one the file's lines name for that clone, in
+  that clone's own texts; in every other text the name the clones share, or `ENVDIR`),
+  `{editable}` (each source tree the
   environment's editable installs import from, outside the project and the environment:
   the line is written once per source, or not at all). Without `--env`, `[conda]`
   sections and lines naming `{envpath}` are written commented out; `--init` run again
