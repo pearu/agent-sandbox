@@ -12937,7 +12937,23 @@ _as_init() {
   while IFS= read -r sk; do
     case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("a $sk") ;; esac
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
+  # A re-added instance's old clone (tree, history, whatever they are now: a link, a
+  # FIFO, a .git that is a directory) is moved to a backup below, not made anew in
+  # place: a path at or under it is checked only for the directories above it.
+  local -a exroots=()
+  for a in ${clones[@]+"${clones[@]}"}; do
+    [[ -n "${readd[${a%%$'\t'*}]:-}" ]] || continue
+    read -r tpath gdir br <<<"${a#*$'\t'}"
+    exroots+=("${tpath%/}" "${gdir%/}")
+  done
   for a in "${spaths[@]}"; do
+    sk="${a#* }" sk="${sk%/}"
+    for f in ${exroots[@]+"${exroots[@]}"}; do
+      if [[ "$sk" == "$f" || "$sk" == "$f"/* ]]; then
+        a="d $(dirname -- "$f")"
+        break
+      fi
+    done
     _init_static "${a%% *}" "${a#* }" || return 2
   done
   # The paths were checked above (_init_static); each write checks again for a symbolic
@@ -12981,11 +12997,27 @@ _as_init() {
   # either alone -- is moved to a backup of its own under .asb/backup/ (never one there
   # already), for the user to decide on. The tree's .git, a path --init made, is written
   # anew to point at the moved history -- never at the fresh clone's, which takes the old
-  # one's place -- when it is a regular file; else it is left, and said.
-  _init_stale_clone() { # INST TREE GITDIR -- through no link (checked up front too)
-    local b s=1 ts what="" note=""
-    _init_nolink "${2%/}/" || return 2
-    _init_nolink "${3%/}/" || return 2
+  # one's place -- when it is a regular file; else it is left, and said. The tree or the
+  # history may be anything a role could leave -- a link, a FIFO, a file -- and is moved
+  # as it is, the entry itself (a link's target is never moved, read or followed); the
+  # directories above them are checked for links, as every path --init writes.
+  _init_kind() { # PATH -> a few words for what is there, never following a link
+    if [[ -L "$1" ]]; then
+      printf 'a symbolic link (moved as it is; what it points to is untouched)'
+    elif [[ -p "$1" ]]; then
+      printf 'a FIFO'
+    elif [[ -d "$1" ]]; then
+      printf 'a directory'
+    elif [[ -f "$1" ]]; then
+      printf 'a file'
+    else
+      printf 'neither a file nor a directory'
+    fi
+  }
+  _init_stale_clone() { # INST TREE GITDIR -- the directories above both through no link
+    local b s=1 ts what="" note="" tree=0 git=0
+    _init_nolink "$(dirname -- "${2%/}")" || return 2
+    _init_nolink "$(dirname -- "${3%/}")" || return 2
     _init_nolink .asb/backup/ || return 2
     mkdir -p -- "$proj/.asb/backup" || return 1
     ts="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -13020,17 +13052,29 @@ _as_init() {
       fi
       what+="${what:+, }git/ its history"
     fi
-    [[ -e "$proj/$b/git" ]] || [[ -z "$what" ]] || what+=" (its history was gone)"
-    [[ -e "$proj/$b/tree" ]] || what+=" (its working tree was gone)"
-    if [[ -f "$proj/$b/tree/.git" && ! -L "$proj/$b/tree/.git" ]]; then
+    # what was moved, said as it is: a plain tree and history, or what a role left there
+    if [[ -L "$proj/$b/tree" || (-e "$proj/$b/tree" && ! -d "$proj/$b/tree") ]]; then
+      what="${what/tree\/ its working tree/tree, where its working tree was, $(_init_kind "$proj/$b/tree")}"
+    elif [[ -d "$proj/$b/tree" ]]; then
+      tree=1
+    fi
+    if [[ -L "$proj/$b/git" || (-e "$proj/$b/git" && ! -d "$proj/$b/git") ]]; then
+      what="${what/git\/ its history/git, where its history was, $(_init_kind "$proj/$b/git")}"
+    elif [[ -d "$proj/$b/git" ]]; then
+      git=1
+    fi
+    [[ -e "$proj/$b/git" || -L "$proj/$b/git" ]] || [[ -z "$what" ]] || what+=" (its history was gone)"
+    [[ -e "$proj/$b/tree" || -L "$proj/$b/tree" ]] || what+=" (its working tree was gone)"
+    # the tree's .git, only in a tree that is a directory of its own (never through a link)
+    if ((tree)) && [[ -f "$proj/$b/tree/.git" && ! -L "$proj/$b/tree/.git" ]]; then
       printf 'gitdir: %s\n' "$proj/$b/git" | _init_put "$b/tree/.git" || return $?
-      if [[ -e "$proj/$b/git" ]]; then
+      if ((git)); then
         note="; tree/.git points at git/"
       else
         note="; tree/.git rewritten not to point at ${3%/}, the fresh clone's history"
       fi
-    elif [[ -e "$proj/$b/tree/.git" || -L "$proj/$b/tree/.git" ]]; then
-      note="; tree/.git is not a file --init wrote, and is left as it is"
+    elif ((tree)) && [[ -e "$proj/$b/tree/.git" || -L "$proj/$b/tree/.git" ]]; then
+      note="; tree/.git is $(_init_kind "$proj/$b/tree/.git"), not a file --init wrote, and is left as it is"
     fi
     _as_msg "--init: $1 is added again: the clone it had before it was removed is moved to $b/ -- $what$note. It may hold $1's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); $1 gets a fresh clone"
   }

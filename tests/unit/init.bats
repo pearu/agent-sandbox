@@ -401,6 +401,82 @@ STUB
   [ -z "$(find "$PROJ/.asb/backup" -mindepth 1 -maxdepth 1 -empty)" ] # no empty backup
 }
 
+@test "an instance added again over a link at its tree: the link is moved as it is, what it points to outside untouched (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir "$H/outside"
+  printf 'mine\n' >"$H/outside/keep"
+  rm -rf "$PROJ/.asb/impl/2"
+  ln -s "$H/outside" "$PROJ/.asb/impl/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- tree, where its working tree was, a symbolic link (moved as it is; what it points to is untouched), git/ its history. It may hold"* ]]
+  [[ "$output" != *"tree/.git points at"* ]]
+  [ -L "$PROJ/$b/tree" ]
+  [ "$(readlink "$PROJ/$b/tree")" = "$H/outside" ]
+  [ "$(ls -A "$H/outside")" = keep ]
+  [ "$(cat "$H/outside/keep")" = mine ]
+  [ -d "$PROJ/$b/git" ]
+  [ ! -L "$PROJ/.asb/impl/2" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again over a link at its history: moved as it is, its target untouched; the tree's .git pointed away from the fresh history (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir "$H/outside"
+  printf 'mine\n' >"$H/outside/keep"
+  rm -rf "$PROJ/.asb/git/2"
+  ln -s "$H/outside" "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- tree/ its working tree, git, where its history was, a symbolic link (moved as it is; what it points to is untouched); tree/.git rewritten not to point at .asb/git/2, the fresh clone's history. It may hold"* ]]
+  [ -L "$PROJ/$b/git" ]
+  [ "$(readlink "$PROJ/$b/git")" = "$H/outside" ]
+  [ "$(ls -A "$H/outside")" = keep ]
+  [ "$(cat "$PROJ/$b/tree/.git")" = "gitdir: $PROJ/$b/git" ]
+  [ -d "$PROJ/.asb/git/2" ]
+  [ ! -L "$PROJ/.asb/git/2" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again over a tree whose .git is a directory, or a tree that is a FIFO: backed up as they are, said (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm "$PROJ/.asb/impl/2/.git"
+  mkdir "$PROJ/.asb/impl/2/.git"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- tree/ its working tree, git/ its history; tree/.git is a directory, not a file --init wrote, and is left as it is. It may hold"* ]]
+  [ -d "$PROJ/$b/tree/.git" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  # a FIFO where the tree was
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/impl/2"
+  mkfifo "$PROJ/.asb/impl/2"
+  engine_cmd
+  # shellcheck disable=SC2016 # the script's own arguments, expanded inside it
+  run timeout 60 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --init roles implementer=2 2>&1 </dev/null' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ] # 124: it hung
+  [[ "$output" == *"moved to $b-2/ -- tree, where its working tree was, a FIFO, git/ its history. It may hold"* ]]
+  [ -p "$PROJ/$b-2/tree" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
 @test "an old clone that cannot be moved: nothing written, the run fails, and the next one tries again (a tree; a history, the tree put back) (#389)" {
   [ "$(id -u)" -ne 0 ] || skip "root ignores the permissions this takes away"
   fixed_date

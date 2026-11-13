@@ -1141,7 +1141,8 @@ names are gone; there are no aliases for removed names before 1.0.
   clone, history, inbox and data directories are left, and said. A count that adds a
   removed instance again moves whatever is left of the clone it had to
   `.asb/backup/INSTANCE-TIME/` (`tree/`, `git/`), never read and never over a backup
-  there, and says so; the instance gets a fresh clone.
+  there, and says so; the instance gets a fresh clone. A link, a FIFO or a `.git`
+  directory there is moved as it is, not refused; a link above it still refuses.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

@@ -466,7 +466,9 @@ What `--init` makes under `.asb/` stays as it made it. A path it writes, or writ
 (`.asb/impl/N/`, `.asb/git/N/`) and its `.env`, an inbox, `.asb/migrate/`, the index --
 that is a symbolic link, or is not what `--init` makes there (a file where it makes a
 directory, say), refuses the `--init` before it writes anything (exit 2), naming the
-path. A sandbox with the project read-write can leave such a link, and `--init` runs on
+path. (One exception: the clone a removed instance left, when a count adds the instance
+again, is backed up whatever it is, below.) A sandbox with the project read-write can
+leave such a link, and `--init` runs on
 the host; asb cannot tell a link you made (`.asb/impl/` on another disk, say) from one a
 role left, so yours is refused too. Remove the link (`rm` removes the link, not what it
 points to), or move the path away, and run `--init` again. A linked `.agent-sandbox` is
@@ -519,7 +521,10 @@ records in `.asb/init.sums` and its row in the index; `reviewer=0` removes the r
 are left, and `--init` names them. When a later count adds that instance again, the old
 clone is in the way: whatever is left of it, tree or history or both, is moved to
 `.asb/backup/implementer-N-TIME/` (`tree/`, its `.git` pointing at `git/`, the history),
-never over a backup there, and said. `--init` reads nothing in it -- the role had it
+never over a backup there, and said. Whatever they are -- a symbolic link, a FIFO, a
+`.git` that is a directory -- they are moved as they are (a link itself, never what it
+points to), and the message says what was moved; a link above them (`.asb/impl/`,
+`.asb/backup/`) still refuses the `--init`. `--init` reads nothing in it -- the role had it
 read-write -- so it may hold the instance's work, and what becomes of it is yours; its
 git config and hooks were the role's to write, so read them before you run git there.
 The instance gets a fresh clone. Single roles (the Supervisor, the Gate) are not counted
