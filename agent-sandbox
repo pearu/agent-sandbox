@@ -11929,6 +11929,10 @@ _as_init() {
     edres+=("^((# )?[[:space:]]*$(_init_ere "$edk")[[:space:]]*=[[:space:]]*($edv))([^/[:space:]#]+)(.*)\$") edres_role+=("$edrole")
     edroleset[$edrole]=1
   done <<<"$tpltext"
+  if ((${_init_envdir_set:-0} && ${#edres[@]} == 0)); then
+    _as_msg "--init: --env-dir: model '$model' has no clone environments to name"
+    return 2
+  fi
   if ((${#edres[@]})) && [[ -f "$proj/.agent-sandbox" ]]; then
     edtext="$(_as_dotfile_read "$proj/.agent-sandbox" && printf x)" || :
     [[ "$edtext" == *x ]] || {
@@ -12990,7 +12994,11 @@ _as_init() {
     for k in ${prefixes[@]+"${prefixes[@]}"}; do
       [[ "${k%%$'\t'*}" == "$inst" ]] && prefix="${k#*$'\t'}"
     done
-    [[ -z "$prefix" ]] || _init_nolink "$prefix" || return 2
+    # checked only where an environment is cloned (--env, not --shared-env), as above:
+    # without one nothing is made there, and the project may have a link of its own there
+    if [[ -n "$env" && -n "$prefix" ]] && ! ((${_init_shared:-0})); then
+      _init_nolink "$prefix" || return 2
+    fi
     if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
       _as_msg "--init: no environment for $inst yet: $env is not built, so there is nothing to clone into $prefix; once $invoked --role $setup claude has built it, run --init again and it clones it"
     elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && ! -L "$proj/$prefix" ]]; then
@@ -13009,14 +13017,15 @@ _as_init() {
     fi
   done
   # Every path the written file declares under .asb/ must exist: a missing read-only
-  # or read-write path is skipped at launch.
+  # or read-write path is skipped at launch. The keys are those checked up front (decls),
+  # never the file read again: one swapped in since is not made.
   local key
   while IFS= read -r key; do
     case "$key" in
       */) _init_mkdir "$key" ;;
       *) [[ -e "$proj/$key" && ! -L "$proj/$key" ]] || _init_put "$key" </dev/null ;;
     esac || return $?
-  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' "$df" | sort -u)
+  done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
   # A role's inbox (`#@ inbox = PATH`, #274): an empty file for its watcher to wait on,
   # where the instructions to it are appended. Never a declaration: a file bound into a
   # sandbox keeps the inode, and the Write tool renames a new one over it.

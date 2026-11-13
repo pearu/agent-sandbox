@@ -1025,6 +1025,33 @@ tree_of() {
   [[ "$output" == *"--init: the project tracks _env, where --init makes implementer-1's environment (.asb/impl/1/_env)"*"(e.g. --env-dir .env-asb)"* ]]
 }
 
+@test "--init makes the declared paths it checked: a .agent-sandbox swapped in while it runs has its '..' key made nowhere (#389)" {
+  local df="$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  # git, as --init clones implementer-2, appends a '..' key to the file
+  cat >"$H/bin/git" <<STUB
+#!/usr/bin/env bash
+/usr/bin/git "\$@" || exit
+[[ "\$*" == *" clone "* ]] && printf '.asb/../../escape-dir/ = read-only\\n' >>"$df"
+exit 0
+STUB
+  chmod +x "$H/bin/git"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cloned for implementer-2"* ]]
+  grep -qF '.asb/../../escape-dir/' "$df" # the swap happened
+  [ ! -e "$H/escape-dir" ]
+}
+
+@test "--env-dir for a model with no clone environments: refused, exit 2, nothing written (#389)" {
+  init -- github --env-dir foo
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env-dir: model 'github' has no clone environments to name"* ]]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  [ ! -e "$PROJ/.asb" ]
+}
+
 @test "--env-dir with --shared-env: refused, exit 2, nothing written (#389)" {
   shared_env torch-dev
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles --shared-env torch-dev --env-dir _env
@@ -1044,6 +1071,34 @@ tree_of() {
   init -- github --env ./envs/dev
   [ "$status" -eq 0 ]
   grep -qF "$PROJ/envs/dev" "$PROJ/.agent-sandbox"
+}
+
+@test "a project that tracks .env as a symbolic link, with no environment asked for: no refusal, every instance and path written, a re-run too (#389)" {
+  printf 'SECRET=1\n' >"$PROJ/.env.dev"
+  ln -s .env.dev "$PROJ/.env"
+  git -C "$PROJ" add .env .env.dev
+  git -C "$PROJ" commit -q -m env
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.asb/impl/1/.env" ] # the clones have the project's link
+  [ -L "$PROJ/.asb/impl/2/.env" ]
+  [ -f "$PROJ/.asb/.gitignore" ]
+  [ -f "$PROJ/.asb/coord/COORDINATION.md" ]
+  [ -f "$PROJ/.asb/coord/to/implementer-2.md" ]
+  [ -x "$PROJ/.asb/bin/inbox-wait" ]
+  [ -d "$PROJ/.asb/handoff/implementer-2" ]
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+}
+
+@test "a link of your own at a clone's environment path, with no environment asked for: no refusal, the link left (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  ln -s .env.example "$PROJ/.asb/impl/1/.env"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$PROJ/.asb/impl/1/.env")" = .env.example ]
+  [ -d "$PROJ/.asb/impl/2" ]
 }
 
 @test "a project that tracks .env, with no environment asked for: nothing made there, no refusal, a re-run too (#389)" {
