@@ -12940,6 +12940,108 @@ _as_init() {
   for a in "${spaths[@]}"; do
     _init_static "${a%% *}" "${a#* }" || return 2
   done
+  # The paths were checked above (_init_static); each write checks again for a symbolic
+  # link planted since, which stops the --init there (2). A file is written to a
+  # temporary one beside it and renamed into place, which replaces a link planted since,
+  # never follows it.
+  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else 2, said
+    local rel="${1%/}" p="$proj"
+    while [[ -n "$rel" ]]; do
+      p+="/${rel%%/*}"
+      if [[ -L "$p" ]]; then
+        _as_msg "--init: ${p#"$proj"/} became a symbolic link while --init ran: stopped before writing ${1%/}; remove the link and run --init again"
+        return 2
+      fi
+      if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
+    done
+    return 0
+  }
+  _init_put() { # REL < TEXT -- $proj/REL from stdin, through no link; 2: refused (said)
+    local d t
+    _init_nolink "$1" || return 2
+    d="$(dirname -- "$proj/$1")"
+    mkdir -p -- "$d" || return 1
+    t="$(mktemp -- "$d/.asb-init.XXXXXX")" || return 1
+    if cat >"$t" && chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
+      return 0
+    fi
+    rm -f -- "$t"
+    return 1
+  }
+  _init_mkdir() { # REL -- the directory $proj/REL, through no link; 2: refused (said)
+    _init_nolink "$1" || return 2
+    mkdir -p -- "$proj/$1"
+  }
+
+  # A clone left by an instance removed earlier, where a count adds the instance again:
+  # moved out of the way, whatever is in it, for a fresh clone -- first, before the file or
+  # anything else is written, so a move that fails leaves everything as it was and the
+  # next run, seeing the same file, tries again. Its Implementer had it read-write, so the
+  # host reads nothing of it: what is there of the tree and of the history -- both, or
+  # either alone -- is moved to a backup of its own under .asb/backup/ (never one there
+  # already), for the user to decide on. The tree's .git, a path --init made, is written
+  # anew to point at the moved history -- never at the fresh clone's, which takes the old
+  # one's place -- when it is a regular file; else it is left, and said.
+  _init_stale_clone() { # INST TREE GITDIR -- through no link (checked up front too)
+    local b s=1 ts what="" note=""
+    _init_nolink "${2%/}/" || return 2
+    _init_nolink "${3%/}/" || return 2
+    _init_nolink .asb/backup/ || return 2
+    mkdir -p -- "$proj/.asb/backup" || return 1
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    b=".asb/backup/$1-$ts"
+    until mkdir -- "$proj/$b" 2>/dev/null; do
+      _init_nolink .asb/backup/ || return 2
+      ((s += 1))
+      if ((s >= 100)); then
+        _as_msg "--init: no backup directory could be made for $1's old clone under .asb/backup/ ($b and 98 more names taken, or it is not writable); nothing was written -- make room there and run --init again"
+        return 1
+      fi
+      b=".asb/backup/$1-$ts-$s"
+    done
+    if [[ -e "$proj/${2%/}" || -L "$proj/${2%/}" ]]; then
+      mv -T -- "$proj/${2%/}" "$proj/$b/tree" || {
+        rmdir -- "$proj/$b" 2>/dev/null
+        _as_msg "--init: moving $1's old clone ${2%/} to $b/tree failed; nothing was written (.agent-sandbox unchanged): make it movable and run --init again"
+        return 1
+      }
+      what="tree/ its working tree"
+    fi
+    if [[ -e "$proj/${3%/}" || -L "$proj/${3%/}" ]]; then
+      if ! mv -T -- "$proj/${3%/}" "$proj/$b/git"; then
+        # put the tree back where it was: the run changes nothing
+        if [[ -n "$what" ]] && ! mv -T -- "$proj/$b/tree" "$proj/${2%/}"; then
+          _as_msg "--init: moving $1's old history ${3%/} to $b/git failed, and its tree could not be put back: it is in $b/tree; nothing else was written (.agent-sandbox unchanged)"
+          return 1
+        fi
+        rmdir -- "$proj/$b" 2>/dev/null
+        _as_msg "--init: moving $1's old history ${3%/} to $b/git failed; nothing was written (.agent-sandbox unchanged): make it movable and run --init again"
+        return 1
+      fi
+      what+="${what:+, }git/ its history"
+    fi
+    [[ -e "$proj/$b/git" ]] || [[ -z "$what" ]] || what+=" (its history was gone)"
+    [[ -e "$proj/$b/tree" ]] || what+=" (its working tree was gone)"
+    if [[ -f "$proj/$b/tree/.git" && ! -L "$proj/$b/tree/.git" ]]; then
+      printf 'gitdir: %s\n' "$proj/$b/git" | _init_put "$b/tree/.git" || return $?
+      if [[ -e "$proj/$b/git" ]]; then
+        note="; tree/.git points at git/"
+      else
+        note="; tree/.git rewritten not to point at ${3%/}, the fresh clone's history"
+      fi
+    elif [[ -e "$proj/$b/tree/.git" || -L "$proj/$b/tree/.git" ]]; then
+      note="; tree/.git is not a file --init wrote, and is left as it is"
+    fi
+    _as_msg "--init: $1 is added again: the clone it had before it was removed is moved to $b/ -- $what$note. It may hold $1's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); $1 gets a fresh clone"
+  }
+  # an instance new to the file over anything of an old clone: backed up, every time
+  for a in ${clones[@]+"${clones[@]}"}; do
+    inst="${a%%$'\t'*}"
+    read -r tpath gdir br <<<"${a#*$'\t'}"
+    if [[ -n "${readd[$inst]:-}" ]] && [[ -e "$proj/${tpath%/}" || -L "$proj/${tpath%/}" || -e "$proj/${gdir%/}" || -L "$proj/${gdir%/}" ]]; then
+      _init_stale_clone "$inst" "$tpath" "$gdir" || return $?
+    fi
+  done
 
   if ((${#edren[@]})); then
     printf '%s' "$edrentext" | _as_dotfile_write "$df" || return 1
@@ -13032,38 +13134,6 @@ _as_init() {
 
   # ---- purpose files, clones, environments, the declared paths, the index ----
   local -a globs=()
-  # The paths were checked above (_init_static); each write checks again for a symbolic
-  # link planted since, which stops the --init there (2). A file is written to a
-  # temporary one beside it and renamed into place, which replaces a link planted since,
-  # never follows it.
-  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else 2, said
-    local rel="${1%/}" p="$proj"
-    while [[ -n "$rel" ]]; do
-      p+="/${rel%%/*}"
-      if [[ -L "$p" ]]; then
-        _as_msg "--init: ${p#"$proj"/} became a symbolic link while --init ran: stopped before writing ${1%/}; remove the link and run --init again"
-        return 2
-      fi
-      if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
-    done
-    return 0
-  }
-  _init_put() { # REL < TEXT -- $proj/REL from stdin, through no link; 2: refused (said)
-    local d t
-    _init_nolink "$1" || return 2
-    d="$(dirname -- "$proj/$1")"
-    mkdir -p -- "$d" || return 1
-    t="$(mktemp -- "$d/.asb-init.XXXXXX")" || return 1
-    if cat >"$t" && chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
-      return 0
-    fi
-    rm -f -- "$t"
-    return 1
-  }
-  _init_mkdir() { # REL -- the directory $proj/REL, through no link; 2: refused (said)
-    _init_nolink "$1" || return 2
-    mkdir -p -- "$proj/$1"
-  }
   _init_mkdir .asb/roles || return $?
   # A purpose file is the model's until the user changes it: .asb/init.sums records the
   # hash of what --init last wrote at each path, and a file that still has it is replaced
@@ -13212,64 +13282,12 @@ _as_init() {
     IFS=$'\x1f' read -r f sk inst n h v <<<"$a"
     _init_unpurpose "$f" "$sk" "$inst" "$n" "$h" "$v" || return $?
   done
-  # A clone left by an instance removed earlier, where a count adds the instance again:
-  # moved out of the way, whatever is in it, for a fresh clone. Its Implementer had it
-  # read-write, so the host reads nothing of it: what is there of the tree and of the
-  # history -- both, or either alone -- is moved to a backup of its own under .asb/backup/
-  # (never one there already), for the user to decide on. The tree's .git, a path --init
-  # made, is written anew to point at the moved history -- never at the fresh clone's,
-  # which takes the old one's place -- when it is a regular file; else it is left, and
-  # said.
-  _init_stale_clone() { # INST TREE GITDIR -- through no link (checked up front too)
-    local b s=1 ts what="" note=""
-    _init_nolink "${2%/}/" || return 2
-    _init_nolink "${3%/}/" || return 2
-    _init_nolink .asb/backup/ || return 2
-    mkdir -p -- "$proj/.asb/backup" || return 1
-    ts="$(date -u +%Y%m%dT%H%M%SZ)"
-    b=".asb/backup/$1-$ts"
-    until mkdir -- "$proj/$b" 2>/dev/null; do
-      _init_nolink .asb/backup/ || return 2
-      ((s += 1))
-      ((s < 100)) || return 1
-      b=".asb/backup/$1-$ts-$s"
-    done
-    if [[ -e "$proj/${2%/}" || -L "$proj/${2%/}" ]]; then
-      mv -T -- "$proj/${2%/}" "$proj/$b/tree" || {
-        rmdir -- "$proj/$b" 2>/dev/null
-        _as_msg "--init: moving $1's old clone to $b failed; nothing was moved"
-        return 1
-      }
-      what="tree/ its working tree"
-    fi
-    if [[ -e "$proj/${3%/}" || -L "$proj/${3%/}" ]]; then
-      mv -T -- "$proj/${3%/}" "$proj/$b/git" || {
-        rmdir -- "$proj/$b" 2>/dev/null
-        _as_msg "--init: moving $1's old history to $b failed${what:+; its tree is in $b/tree}"
-        return 1
-      }
-      what+="${what:+, }git/ its history"
-    fi
-    [[ -e "$proj/$b/git" ]] || [[ -z "$what" ]] || what+=" (its history was gone)"
-    [[ -e "$proj/$b/tree" ]] || what+=" (its working tree was gone)"
-    if [[ -f "$proj/$b/tree/.git" && ! -L "$proj/$b/tree/.git" ]]; then
-      printf 'gitdir: %s\n' "$proj/$b/git" | _init_put "$b/tree/.git" || return $?
-      note="; tree/.git points at git/"
-    elif [[ -e "$proj/$b/tree/.git" || -L "$proj/$b/tree/.git" ]]; then
-      note="; tree/.git is not a file --init wrote, and is left as it is"
-    fi
-    _as_msg "--init: $1 is added again: the clone it had before it was removed is moved to $b/ -- $what$note. It may hold $1's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); $1 gets a fresh clone"
-  }
   for a in ${clones[@]+"${clones[@]}"}; do
     inst="${a%%$'\t'*}"
     read -r tpath gdir br <<<"${a#*$'\t'}"
     # every path the clone and its environment go to, through no link
     _init_nolink "${tpath%/}/.git" || return 2
     _init_nolink "${gdir%/}/" || return 2
-    # an instance new to the file over anything of an old clone: backed up, every time
-    if [[ -n "${readd[$inst]:-}" ]] && [[ -e "$proj/${tpath%/}" || -L "$proj/${tpath%/}" || -e "$proj/${gdir%/}" || -L "$proj/${gdir%/}" ]]; then
-      _init_stale_clone "$inst" "$tpath" "$gdir" || return $?
-    fi
     if [[ -e "$proj/${tpath%/}/.git" || -L "$proj/${tpath%/}/.git" ]]; then
       :
     else
@@ -13427,11 +13445,13 @@ _as_init() {
   # silently absent: said here, with the --apply line for each section. A line the file
   # has commented out is the user's choice; a key's value is never compared.
   _init_missing() { # HEADER RENDERED -> the rendered lines the file's section HEADER lacks
-    local want="${1%%]*}]" l x cur="" have="" keys="" on=0
-    want="${want#\# }"
+    local want l x cur="" have="" keys="" on=0
+    _init_hdrv "$1"
+    want="$_ih"
     while IFS= read -r l || [[ -n "$l" ]]; do
-      if [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
-        cur="${BASH_REMATCH[2]}"
+      _init_hdrv "$l" # a header as the parser reads it ([ connect:x ] included)
+      if [[ -n "$_ih" ]]; then
+        cur="$_ih"
         continue
       fi
       [[ "$cur" == "$want" ]] || continue

@@ -19,6 +19,11 @@ STUB
   chmod +x "$H/bin/conda-stub"
 }
 
+# a test that takes write permission away gives it back, so bats can clean up
+teardown() {
+  [[ -z "${H:-}" ]] || chmod -R u+w "$H" 2>/dev/null || true
+}
+
 # has_section HEADER FILE -- FILE has a line that starts with HEADER (a comment may follow).
 has_section() { grep -F -- "$1" "$2" | grep -q "^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')"; }
 
@@ -389,11 +394,62 @@ STUB
   rm -rf "$PROJ/.asb/git/2"
   init -- roles implementer=2
   [ "$status" -eq 0 ]
-  [[ "$output" == *"moved to $b-2/ -- tree/ its working tree (its history was gone); tree/.git points at git/. It may hold"* ]]
+  [[ "$output" == *"moved to $b-2/ -- tree/ its working tree (its history was gone); tree/.git rewritten not to point at .asb/git/2, the fresh clone's history. It may hold"* ]]
   [ "$(cat "$PROJ/$b-2/tree/.git")" = "gitdir: $PROJ/$b-2/git" ]
   [ ! -e "$PROJ/$b-2/git" ]
   [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
   [ -z "$(find "$PROJ/.asb/backup" -mindepth 1 -maxdepth 1 -empty)" ] # no empty backup
+}
+
+@test "an old clone that cannot be moved: nothing written, the run fails, and the next one tries again (a tree; a history, the tree put back) (#389)" {
+  [ "$(id -u)" -ne 0 ] || skip "root ignores the permissions this takes away"
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'old\n' >"$PROJ/.asb/impl/2/old.txt"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  chmod a-w "$PROJ/.asb/impl/2"
+  init -- roles implementer=2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"moving implementer-2's old clone .asb/impl/2 to $b/tree failed; nothing was written (.agent-sandbox unchanged)"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ ! -e "$PROJ/.asb/roles/implementer-2.md" ]
+  [ -z "$(find "$PROJ/.asb/backup" -mindepth 1)" ]
+  chmod u+w "$PROJ/.asb/impl/2"
+  init -- roles implementer=2 # the same state: it tries again
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/$b/tree/old.txt")" = old ]
+  # the history unmovable: the tree, moved first, is put back
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'old2\n' >"$PROJ/.asb/impl/2/old.txt"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  chmod a-w "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"moving implementer-2's old history .asb/git/2 to $b-2/git failed; nothing was written (.agent-sandbox unchanged)"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ "$(cat "$PROJ/.asb/impl/2/old.txt")" = old2 ]
+  [ ! -e "$PROJ/$b-2" ]
+  chmod u+w "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/$b-2/tree/old.txt")" = old2 ]
+  [ -d "$PROJ/$b-2/git" ]
+}
+
+@test "a spaced section header of yours is the section: a re-run reports no line of it missing (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  sed -i 's/^\[connect:implementer-2\]$/  [ connect:implementer-2 ]/' "$PROJ/.agent-sandbox"
+  grep -qx '  \[ connect:implementer-2 \]' "$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"that your .agent-sandbox lacks"* ]]
+  [[ "$output" == *"nothing added to it"* ]]
 }
 
 @test "a count is decimal: 08, 09, 010 and 00 on a re-run set the role to 8, 9, 10 and none; a single role's 01 is 1 (#389)" {
