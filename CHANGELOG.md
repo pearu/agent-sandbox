@@ -1130,9 +1130,17 @@ names are gone; there are no aliases for removed names before 1.0.
   a shared environment needs none and how to remove it, and leaves it. A re-run
   completes the numbered instances the model's sections in the
   file have (`implementer-2` of an earlier `implementer=2`), their environment clones
-  included, and makes none the file lacks -- a count given adds above the highest
-  present, as a first `--init` does, and drops none; a section whose commented header
-  was changed by hand keeps all its lines, each named.
+  included; a section whose commented header was changed by hand keeps all its lines,
+  each named. **On a re-run, a numbered role given no count is left exactly as the file
+  has it** (nothing added, nothing removed, a role the file has none of included), and
+  **`ROLE=N` sets the role to instances 1..N, as a first `--init` with `ROLE=N` writes
+  them** (#389): every missing one is added (over 1 and 3, `implementer=4` adds 2 and 4)
+  and every one above N removed -- its sections, whatever you edited in them, its purpose
+  file and prompt (one you changed is kept, and said), their `.asb/init.sums` records
+  and its index row; `ROLE=0` removes the role's glob sections and start file too. Its
+  clone, history, inbox and data directories are left, and said. A count that adds a
+  removed instance again replaces the clone it left: removed when it holds nothing the
+  project lacks, else moved to `.asb/backup/INSTANCE-TIME/` (`tree/`, `git/`), and said.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

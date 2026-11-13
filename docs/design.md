@@ -589,7 +589,14 @@ Stated plainly. These are what the adversary above can still do.
   a sandbox with the project read-write can make either command refuse, by leaving a link
   in place; and the coord index and `.asb/init.sums` are read by path just before
   `--init` rewrites them, so a link swapped in after the last check and before that read
-  has its target's text copied into the project.
+  has its target's text copied into the project. A re-run that adds an instance again
+  inspects the clone a removed one left, which its Implementer had read-write: its refs
+  are read as files, and its tree is compared by the host's `git status` through a
+  repository `--init` makes (the clone's objects through an alternate, its index copied,
+  no config of the clone's, the user's or the system's, no hooks, no submodule entered),
+  so nothing the clone names runs; what remains is git itself parsing a tree, an index
+  and objects a role wrote. Anything it cannot read counts as work, and is backed up,
+  not removed.
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.

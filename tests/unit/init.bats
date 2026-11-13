@@ -130,6 +130,249 @@ init() {
   [[ "$output" == *"nothing added to it"* ]]
 }
 
+# init_other ARGS -- `asb --init ARGS` in a second project named as $PROJ is ($H/other/proj),
+# for a first --init to compare a re-run's result with.
+init_other() {
+  local keep="$PROJ"
+  mkdir -p "$H/other/proj"
+  PROJ="$(cd "$H/other/proj" && pwd -P)"
+  if [[ ! -d "$PROJ/.git" ]]; then
+    git -C "$PROJ" init -q
+    git -C "$PROJ" -c user.name=tester -c user.email=tester@example.org commit -q --allow-empty -m init
+  fi
+  init -- "$@"
+  PROJ="$keep"
+}
+
+# drop_instance N -- implementer-N's sections out of .agent-sandbox, by hand (a gap)
+drop_instance() {
+  awk -v n="$1" '/^(# )?\[/ { on = ($0 ~ "^(# )?\\[[a-z]+:implementer-" n "\\]") } !on' \
+    "$PROJ/.agent-sandbox" >"$H/df.tmp"
+  cat "$H/df.tmp" >"$PROJ/.agent-sandbox"
+}
+
+@test "counts on a first --init: none given is one instance, 0 is none, N is instances 1..N (#389)" {
+  init -- roles planner=0 implementer=3
+  [ "$status" -eq 0 ]
+  run ! grep -q 'planner-[0-9]*\]' "$PROJ/.agent-sandbox"
+  for n in 1 2 3; do has_section "[connect:implementer-$n]" "$PROJ/.agent-sandbox"; done
+  run ! grep -qF '[connect:implementer-4]' "$PROJ/.agent-sandbox"
+  has_section '[connect:reviewer-1]' "$PROJ/.agent-sandbox"
+  run ! grep -qF '[connect:reviewer-2]' "$PROJ/.agent-sandbox"
+}
+
+@test "a re-run gives a numbered role with no count nothing and takes nothing: none, a gap, more than one -- the file byte for byte (#389)" {
+  init -- roles planner=3 implementer=3 reviewer=0
+  [ "$status" -eq 0 ]
+  drop_instance 2
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles
+  [ "$status" -eq 0 ]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [[ "$output" != *"removed"* ]]
+  [ -f "$PROJ/.asb/roles/implementer-2.md" ] # its purpose file, not touched
+  [ ! -e "$PROJ/.asb/roles/reviewer-1.md" ]
+  [ -f "$PROJ/.asb/roles/planner-3.md" ]
+}
+
+@test "a re-run with ROLE=N fills the gaps below N: implementer=4 over 1 and 3 adds 2 and 4 (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  drop_instance 2
+  rm -rf "$PROJ/.asb/impl/2" "$PROJ/.asb/git/2" "$PROJ/.asb/roles/implementer-2.md"
+  init -- roles implementer=4
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [connect:implementer-2] [serve:implementer-2] [connect:implementer-4] [serve:implementer-4]"* ]]
+  for n in 1 2 3 4; do
+    [ "$(grep -cxF "[connect:implementer-$n]" "$PROJ/.agent-sandbox")" -eq 1 ]
+    [ -f "$PROJ/.asb/roles/implementer-$n.md" ]
+    [ "$(git -C "$PROJ/.asb/impl/$n" branch --show-current)" = "impl-$n" ]
+    [ "$(grep -c "^| I$n |" "$PROJ/.asb/coord/COORDINATION.md")" -eq 1 ]
+  done
+}
+
+@test "a re-run with ROLE=N removes the instances above N: sections, purpose files, prompts, records, index rows; clones and data left -- as a first --init with N writes it (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2] [connect:implementer-3] [conda:implementer-3] [serve:implementer-3]"* ]]
+  [[ "$output" == *"removed .asb/roles/implementer-2.md"* ]]
+  [[ "$output" == *"removed .asb/serve/implementer-3.md"* ]]
+  [[ "$output" == *"removed from .asb/coord/COORDINATION.md: I2 I3"* ]]
+  [[ "$output" == *"--init: removed implementer-2, implementer-3; left as they are"*".asb/impl/2/ .asb/git/2/"*".asb/coord/to/implementer-3.md"* ]]
+  [[ "$output" == *"--trust"* ]]
+  run ! grep -q 'implementer-[23]' "$PROJ/.agent-sandbox"
+  for n in 2 3; do
+    [ ! -e "$PROJ/.asb/roles/implementer-$n.md" ]
+    [ ! -e "$PROJ/.asb/serve/implementer-$n.md" ]
+    run ! grep -q "implementer-$n" "$PROJ/.asb/init.sums"
+    run ! grep -q "^| I$n |" "$PROJ/.asb/coord/COORDINATION.md"
+    # left: the clone, its history, the inbox and the data directories
+    [ "$(git -C "$PROJ/.asb/impl/$n" branch --show-current)" = "impl-$n" ]
+    [ -d "$PROJ/.asb/git/$n" ]
+    [ -f "$PROJ/.asb/coord/to/implementer-$n.md" ]
+    [ -d "$PROJ/.asb/coord/implementer-$n" ]
+    [ -d "$PROJ/.asb/handoff/implementer-$n" ]
+  done
+  # equal to a first --init with implementer=1
+  init_other roles implementer=1
+  [ "$status" -eq 0 ]
+  cmp "$H/other/proj/.agent-sandbox" "$PROJ/.agent-sandbox"
+  diff -r "$H/other/proj/.asb/roles" "$PROJ/.asb/roles"
+  diff -r "$H/other/proj/.asb/serve" "$PROJ/.asb/serve"
+  cmp "$H/other/proj/.asb/coord/COORDINATION.md" "$PROJ/.asb/coord/COORDINATION.md"
+  [ "$(cut -d' ' -f3 "$H/other/proj/.asb/init.sums" | sort)" = "$(cut -d' ' -f3 "$PROJ/.asb/init.sums" | sort)" ]
+}
+
+@test "a re-run with reviewer=0 removes every reviewer and the role's glob sections and start file: the file a first --init with reviewer=0 writes (#389)" {
+  init -- roles reviewer=2
+  [ "$status" -eq 0 ]
+  init -- roles reviewer=0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [sandbox:reviewer-*] [conda:reviewer-*] [connect:reviewer-*] [net:reviewer-*] [permissions:reviewer-*] [connect:reviewer-1] [serve:reviewer-1] [connect:reviewer-2] [serve:reviewer-2] [briefing:reviewer-*]"* ]]
+  [[ "$output" == *"removed .asb/start/reviewer.md"* ]]
+  run ! grep -q 'reviewer' "$PROJ/.agent-sandbox"
+  [ ! -e "$PROJ/.asb/start/reviewer.md" ]
+  run ! grep -q 'reviewer' "$PROJ/.asb/init.sums"
+  [ -d "$PROJ/.asb/review/reviewer-2" ] # its data, left
+  init_other roles reviewer=0
+  [ "$status" -eq 0 ]
+  cmp "$H/other/proj/.agent-sandbox" "$PROJ/.agent-sandbox"
+  diff -r "$H/other/proj/.asb/roles" "$PROJ/.asb/roles"
+  diff -r "$H/other/proj/.asb/start" "$PROJ/.asb/start"
+  cmp "$H/other/proj/.asb/coord/COORDINATION.md" "$PROJ/.asb/coord/COORDINATION.md"
+  # and a re-run with no count leaves it at none
+  init -- roles
+  [ "$status" -eq 0 ]
+  cmp "$H/other/proj/.agent-sandbox" "$PROJ/.agent-sandbox"
+}
+
+@test "a removed instance's section goes whatever you edited in it; its purpose file you changed is kept, and said (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  sed -i 's|^\.asb/handoff/implementer-2/ = read-write$|.asb/handoff/implementer-2/ = read-only   # mine|' "$PROJ/.agent-sandbox"
+  sed -i '/^\[serve:implementer-2\]/a extra = line' "$PROJ/.agent-sandbox"
+  printf 'MINE\n' >>"$PROJ/.asb/roles/implementer-2.md"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2]"* ]]
+  [[ "$output" == *"kept .asb/roles/implementer-2.md: changed since --init wrote it, and implementer-2 is removed"* ]]
+  [[ "$output" == *"removed .asb/serve/implementer-2.md"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/implementer-2.md")" = MINE ]
+  run ! grep -qE 'implementer-2|extra = line|# mine' "$PROJ/.agent-sandbox"
+}
+
+@test "a removal never follows a link: one at a file to be removed, or at .asb/backup, refuses with exit 2 and nothing changed (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  printf 'SECRET\n' >"$H/outside"
+  rm "$PROJ/.asb/roles/implementer-3.md"
+  ln -s "$H/outside" "$PROJ/.asb/roles/implementer-3.md"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  cp "$PROJ/.asb/init.sums" "$H/sums"
+  init -- roles implementer=1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *".asb/roles/implementer-3.md is a symbolic link"*"nothing was written"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  cmp "$H/sums" "$PROJ/.asb/init.sums"
+  [ -L "$PROJ/.asb/roles/implementer-3.md" ]
+  [ "$(cat "$H/outside")" = SECRET ]
+  [ -f "$PROJ/.asb/roles/implementer-2.md" ]
+  # .asb/backup a link, where a clone in the way of an instance added again would go
+  rm "$PROJ/.asb/roles/implementer-3.md"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir "$H/elsewhere"
+  ln -s "$H/elsewhere" "$PROJ/.asb/backup"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *".asb/backup is a symbolic link"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ -z "$(ls -A "$H/elsewhere")" ]
+  [ -d "$PROJ/.asb/git/2" ]
+}
+
+# a date that says one time, for a backup's name
+fixed_date() {
+  cat >"$H/bin/date" <<'STUB'
+#!/usr/bin/env bash
+[[ "$*" == "-u +%Y%m%dT%H%M%SZ" ]] && { echo 20260101T000000Z; exit 0; }
+exec /usr/bin/date "$@"
+STUB
+  chmod +x "$H/bin/date"
+}
+
+@test "an instance added again: its old clone with nothing the project lacks is removed, and a fresh clone made (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'old\n' >"$PROJ/.asb/git/2/marker"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed the clone implementer-2 had before it was removed (.asb/impl/2, its history .asb/git/2; nothing in it the project lacks): it is added again, with a fresh clone"* ]]
+  [[ "$output" == *"cloned for implementer-2"* ]]
+  [ ! -e "$PROJ/.asb/git/2/marker" ]
+  [ ! -e "$PROJ/.asb/backup" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again: its old clone with a commit the project lacks is moved to a backup that works, and said; nothing of the clone's runs (#389)" {
+  fixed_date
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'x\n' >"$PROJ/.asb/impl/2/f"
+  git -C "$PROJ/.asb/impl/2" add f
+  git -C "$PROJ/.asb/impl/2" commit -q -m work
+  # what a role with the clone read-write can leave for git to run
+  printf '#!/bin/sh\ntouch %s/ran\n' "$H" >"$H/evil"
+  chmod +x "$H/evil"
+  git -C "$PROJ/.asb/impl/2" config core.fsmonitor "$H/evil"
+  git -C "$PROJ/.asb/impl/2" config filter.x.clean "$H/evil"
+  printf '* filter=x\n' >"$PROJ/.asb/impl/2/.gitattributes"
+  for h in pre-commit post-checkout reference-transaction; do cp "$H/evil" "$PROJ/.asb/git/2/hooks/$h"; done
+  git -C "$PROJ/.asb/impl/2" add .gitattributes
+  rm -f "$H/ran"
+  git -C "$PROJ/.asb/impl/2" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c filter.x.clean=cat commit -q -m attrs
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/ran" ]
+  [[ "$output" == *"--init: the clone implementer-2 had before it was removed might hold work (impl-2 has commits the project's repository does not): moved to $b/ -- tree/ its working tree, git/ its history, tree/.git pointing at it (git -C $b/tree log impl-2 shows its commits). What becomes of it is yours; implementer-2 is added again with a fresh clone"* ]]
+  [ "$(cat "$PROJ/$b/tree/.git")" = "gitdir: $PROJ/$b/git" ]
+  [ "$(git -C "$PROJ/$b/tree" -c core.fsmonitor=false log -1 --format=%s impl-2~1)" = work ]
+  [ -f "$PROJ/$b/tree/f" ]
+  # the fresh clone has none of it
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  [ ! -e "$PROJ/.asb/impl/2/f" ]
+}
+
+@test "an instance added again: its old clone with an untracked file or a change is backed up; a backup there is never overwritten (#389)" {
+  fixed_date
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'notes\n' >"$PROJ/.asb/impl/2/untracked"
+  printf 'y\n' >"$PROJ/.asb/impl/3/g"
+  git -C "$PROJ/.asb/impl/3" add g
+  git -C "$PROJ/.asb/impl/3" stash -q # a stash: work too, under refs/stash
+  mkdir -p "$PROJ/.asb/backup/implementer-2-20260101T000000Z"
+  printf 'earlier\n' >"$PROJ/.asb/backup/implementer-2-20260101T000000Z/keep"
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"implementer-2 had before it was removed might hold work (its tree has changes or files not committed): moved to .asb/backup/implementer-2-20260101T000000Z-2/"* ]]
+  [[ "$output" == *"implementer-3 had before it was removed might hold work ("*"has commits the project's repository does not): moved to .asb/backup/implementer-3-20260101T000000Z/"* ]]
+  [ "$(cat "$PROJ/.asb/backup/implementer-2-20260101T000000Z/keep")" = earlier ]
+  [ ! -e "$PROJ/.asb/backup/implementer-2-20260101T000000Z/tree" ]
+  [ "$(cat "$PROJ/.asb/backup/implementer-2-20260101T000000Z-2/tree/untracked")" = notes ]
+  [ ! -e "$PROJ/.asb/impl/2/untracked" ]
+}
+
 @test "run again: a purpose file --init wrote and nobody changed takes the model's text; a changed one is kept" {
   cp -r "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
@@ -550,16 +793,17 @@ init() {
   run ! grep -q 'implementer-2\]' "$df"
   grep -qx '\[conda:implementer-3\].*' "$df"
   [ "$(sort "$H/conda.log" | paste -sd'|')" = "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env|create -q -y --clone x-dev -p $PROJ/.asb/impl/3/.env" ]
-  # a count given adds above the highest present, as a first --init does; never fills the gap
+  # a count given sets the role to 1..N, as a first --init does: the gap filled, its old
+  # clone (nothing in it) out of the way (#389)
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=4 --env x-dev
   [ "$status" -eq 0 ]
+  has_section '[connect:implementer-2]' "$df"
   has_section '[connect:implementer-4]' "$df"
-  run ! grep -q 'implementer-2\]' "$df"
-  # and a count of 0 drops none
+  [[ "$output" == *"removed the clone implementer-2 had before it was removed"* ]]
+  # and a count of 0 removes every one
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles implementer=0 --env x-dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already has every section for these roles; nothing added to it"* ]]
-  grep -qx '\[conda:implementer-4\].*' "$df"
+  run ! grep -q 'implementer-[0-9]*\]' "$df"
 }
 
 @test "a first --init github --env in a file the roles model wrote without one: nothing said about the roles model's lines" {
