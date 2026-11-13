@@ -91,8 +91,11 @@ A model directory holds:
   `.asb/tests` and kept as the purpose files are.
 - `README.md` -- what the model is, and which of its "may not"s are enforced.
 
-Run again with more instances, `--init` adds what is missing and touches nothing else
-that exists, except a purpose file, a `bin/` script, a prompt or `.asb/tests` it wrote
+Run again, `--init` leaves a numbered role given no count as the file has it, and sets
+one given `ROLE=N` to instances 1..N, as a first `--init` writes them: the missing ones
+added, those above N removed (their sections, and the purpose files and prompts nobody
+changed; clones and data left; docs/roles.md). It touches nothing else that exists,
+except a purpose file, a `bin/` script, a prompt or `.asb/tests` it wrote
 and nobody changed since: that one takes the model's current text (`.asb/init.sums`
 records what it wrote). The changed `.agent-sandbox` or purpose file then needs
 `asb --trust` again. A purpose file kept because it changed, with no addendum, gets the

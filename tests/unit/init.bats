@@ -19,6 +19,11 @@ STUB
   chmod +x "$H/bin/conda-stub"
 }
 
+# a test that takes write permission away gives it back, so bats can clean up
+teardown() {
+  [[ -z "${H:-}" ]] || chmod -R u+w "$H" 2>/dev/null || true
+}
+
 # has_section HEADER FILE -- FILE has a line that starts with HEADER (a comment may follow).
 has_section() { grep -F -- "$1" "$2" | grep -q "^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')"; }
 
@@ -128,6 +133,475 @@ init() {
   init -- roles planner=1 implementer=2 reviewer=1
   [ "$status" -eq 0 ]
   [[ "$output" == *"nothing added to it"* ]]
+}
+
+# init_other ARGS -- `asb --init ARGS` in a second project named as $PROJ is ($H/other/proj),
+# for a first --init to compare a re-run's result with.
+init_other() {
+  local keep="$PROJ"
+  mkdir -p "$H/other/proj"
+  PROJ="$(cd "$H/other/proj" && pwd -P)"
+  if [[ ! -d "$PROJ/.git" ]]; then
+    git -C "$PROJ" init -q
+    git -C "$PROJ" -c user.name=tester -c user.email=tester@example.org commit -q --allow-empty -m init
+  fi
+  init -- "$@"
+  PROJ="$keep"
+}
+
+# drop_instance N -- implementer-N's sections out of .agent-sandbox, by hand (a gap)
+drop_instance() {
+  awk -v n="$1" '/^(# )?\[/ { on = ($0 ~ "^(# )?\\[[a-z]+:implementer-" n "\\]") } !on' \
+    "$PROJ/.agent-sandbox" >"$H/df.tmp"
+  cat "$H/df.tmp" >"$PROJ/.agent-sandbox"
+}
+
+@test "counts on a first --init: none given is one instance, 0 is none, N is instances 1..N (#389)" {
+  init -- roles planner=0 implementer=3
+  [ "$status" -eq 0 ]
+  run ! grep -q 'planner-[0-9]*\]' "$PROJ/.agent-sandbox"
+  for n in 1 2 3; do has_section "[connect:implementer-$n]" "$PROJ/.agent-sandbox"; done
+  run ! grep -qF '[connect:implementer-4]' "$PROJ/.agent-sandbox"
+  has_section '[connect:reviewer-1]' "$PROJ/.agent-sandbox"
+  run ! grep -qF '[connect:reviewer-2]' "$PROJ/.agent-sandbox"
+}
+
+@test "a re-run gives a numbered role with no count nothing and takes nothing: none, a gap, more than one -- the file byte for byte (#389)" {
+  init -- roles planner=3 implementer=3 reviewer=0
+  [ "$status" -eq 0 ]
+  drop_instance 2
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles
+  [ "$status" -eq 0 ]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [[ "$output" != *"removed"* ]]
+  [ -f "$PROJ/.asb/roles/implementer-2.md" ] # its purpose file, not touched
+  [ ! -e "$PROJ/.asb/roles/reviewer-1.md" ]
+  [ -f "$PROJ/.asb/roles/planner-3.md" ]
+}
+
+@test "a re-run with ROLE=N fills the gaps below N: implementer=4 over 1 and 3 adds 2 and 4 (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  drop_instance 2
+  rm -rf "$PROJ/.asb/impl/2" "$PROJ/.asb/git/2" "$PROJ/.asb/roles/implementer-2.md"
+  init -- roles implementer=4
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [connect:implementer-2] [serve:implementer-2] [connect:implementer-4] [serve:implementer-4]"* ]]
+  for n in 1 2 3 4; do
+    [ "$(grep -cxF "[connect:implementer-$n]" "$PROJ/.agent-sandbox")" -eq 1 ]
+    [ -f "$PROJ/.asb/roles/implementer-$n.md" ]
+    [ "$(git -C "$PROJ/.asb/impl/$n" branch --show-current)" = "impl-$n" ]
+    [ "$(grep -c "^| I$n |" "$PROJ/.asb/coord/COORDINATION.md")" -eq 1 ]
+  done
+}
+
+@test "a re-run with ROLE=N removes the instances above N: sections, purpose files, prompts, records, index rows; clones and data left -- as a first --init with N writes it (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2] [connect:implementer-3] [conda:implementer-3] [serve:implementer-3]"* ]]
+  [[ "$output" == *"removed .asb/roles/implementer-2.md"* ]]
+  [[ "$output" == *"removed .asb/serve/implementer-3.md"* ]]
+  [[ "$output" == *"removed from .asb/coord/COORDINATION.md: I2 I3"* ]]
+  [[ "$output" == *"--init: removed implementer-2, implementer-3; left as they are"*".asb/impl/2/ .asb/git/2/"*".asb/coord/to/implementer-3.md"* ]]
+  [[ "$output" == *"--trust"* ]]
+  run ! grep -q 'implementer-[23]' "$PROJ/.agent-sandbox"
+  for n in 2 3; do
+    [ ! -e "$PROJ/.asb/roles/implementer-$n.md" ]
+    [ ! -e "$PROJ/.asb/serve/implementer-$n.md" ]
+    run ! grep -q "implementer-$n" "$PROJ/.asb/init.sums"
+    run ! grep -q "^| I$n |" "$PROJ/.asb/coord/COORDINATION.md"
+    # left: the clone, its history, the inbox and the data directories
+    [ "$(git -C "$PROJ/.asb/impl/$n" branch --show-current)" = "impl-$n" ]
+    [ -d "$PROJ/.asb/git/$n" ]
+    [ -f "$PROJ/.asb/coord/to/implementer-$n.md" ]
+    [ -d "$PROJ/.asb/coord/implementer-$n" ]
+    [ -d "$PROJ/.asb/handoff/implementer-$n" ]
+  done
+  # equal to a first --init with implementer=1
+  init_other roles implementer=1
+  [ "$status" -eq 0 ]
+  cmp "$H/other/proj/.agent-sandbox" "$PROJ/.agent-sandbox"
+  diff -r "$H/other/proj/.asb/roles" "$PROJ/.asb/roles"
+  diff -r "$H/other/proj/.asb/serve" "$PROJ/.asb/serve"
+  cmp "$H/other/proj/.asb/coord/COORDINATION.md" "$PROJ/.asb/coord/COORDINATION.md"
+  [ "$(cut -d' ' -f3 "$H/other/proj/.asb/init.sums" | sort)" = "$(cut -d' ' -f3 "$PROJ/.asb/init.sums" | sort)" ]
+}
+
+@test "a re-run with reviewer=0 removes every reviewer and the role's glob sections and start file: the file a first --init with reviewer=0 writes (#389)" {
+  init -- roles reviewer=2
+  [ "$status" -eq 0 ]
+  init -- roles reviewer=0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [sandbox:reviewer-*] [conda:reviewer-*] [connect:reviewer-*] [net:reviewer-*] [permissions:reviewer-*] [connect:reviewer-1] [serve:reviewer-1] [connect:reviewer-2] [serve:reviewer-2] [briefing:reviewer-*]"* ]]
+  [[ "$output" == *"removed .asb/start/reviewer.md"* ]]
+  run ! grep -q 'reviewer' "$PROJ/.agent-sandbox"
+  [ ! -e "$PROJ/.asb/start/reviewer.md" ]
+  run ! grep -q 'reviewer' "$PROJ/.asb/init.sums"
+  [ -d "$PROJ/.asb/review/reviewer-2" ] # its data, left
+  init_other roles reviewer=0
+  [ "$status" -eq 0 ]
+  cmp "$H/other/proj/.agent-sandbox" "$PROJ/.agent-sandbox"
+  diff -r "$H/other/proj/.asb/roles" "$PROJ/.asb/roles"
+  diff -r "$H/other/proj/.asb/start" "$PROJ/.asb/start"
+  cmp "$H/other/proj/.asb/coord/COORDINATION.md" "$PROJ/.asb/coord/COORDINATION.md"
+  # and a re-run with no count leaves it at none
+  init -- roles
+  [ "$status" -eq 0 ]
+  cmp "$H/other/proj/.agent-sandbox" "$PROJ/.agent-sandbox"
+}
+
+@test "a removed instance's section goes whatever you edited in it; its purpose file you changed is kept, and said (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  sed -i 's|^\.asb/handoff/implementer-2/ = read-write$|.asb/handoff/implementer-2/ = read-only   # mine|' "$PROJ/.agent-sandbox"
+  sed -i '/^\[serve:implementer-2\]/a extra = line' "$PROJ/.agent-sandbox"
+  printf 'MINE\n' >>"$PROJ/.asb/roles/implementer-2.md"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2]"* ]]
+  [[ "$output" == *"kept .asb/roles/implementer-2.md: changed since --init wrote it, and implementer-2 is removed"* ]]
+  [[ "$output" == *"removed .asb/serve/implementer-2.md"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/implementer-2.md")" = MINE ]
+  run ! grep -qE 'implementer-2|extra = line|# mine' "$PROJ/.agent-sandbox"
+}
+
+@test "a removal never follows a link: one at a file to be removed, or at .asb/backup, refuses with exit 2 and nothing changed (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  printf 'SECRET\n' >"$H/outside"
+  rm "$PROJ/.asb/roles/implementer-3.md"
+  ln -s "$H/outside" "$PROJ/.asb/roles/implementer-3.md"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  cp "$PROJ/.asb/init.sums" "$H/sums"
+  init -- roles implementer=1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *".asb/roles/implementer-3.md is a symbolic link"*"nothing was written"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  cmp "$H/sums" "$PROJ/.asb/init.sums"
+  [ -L "$PROJ/.asb/roles/implementer-3.md" ]
+  [ "$(cat "$H/outside")" = SECRET ]
+  [ -f "$PROJ/.asb/roles/implementer-2.md" ]
+  # .asb/backup a link, where a clone in the way of an instance added again would go
+  rm "$PROJ/.asb/roles/implementer-3.md"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir "$H/elsewhere"
+  ln -s "$H/elsewhere" "$PROJ/.asb/backup"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *".asb/backup is a symbolic link"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ -z "$(ls -A "$H/elsewhere")" ]
+  [ -d "$PROJ/.asb/git/2" ]
+}
+
+# a date that says one time, for a backup's name
+fixed_date() {
+  cat >"$H/bin/date" <<'STUB'
+#!/usr/bin/env bash
+[[ "$*" == "-u +%Y%m%dT%H%M%SZ" ]] && { echo 20260101T000000Z; exit 0; }
+exec /usr/bin/date "$@"
+STUB
+  chmod +x "$H/bin/date"
+}
+
+@test "an instance added again: its old clone, untouched or not, is moved to a backup, both halves, and said; a fresh clone made (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'old\n' >"$PROJ/.asb/git/2/marker"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--init: implementer-2 is added again: the clone it had before it was removed is moved to $b/ -- tree/ its working tree, git/ its history; tree/.git points at git/. It may hold implementer-2's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); implementer-2 gets a fresh clone"* ]]
+  [[ "$output" == *"cloned for implementer-2"* ]]
+  [ "$(cat "$PROJ/$b/tree/.git")" = "gitdir: $PROJ/$b/git" ]
+  [ "$(cat "$PROJ/$b/git/marker")" = old ]
+  [ ! -e "$PROJ/.asb/git/2/marker" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again over a hostile old clone: a FIFO for HEAD, config a link to /dev/zero, hooks -- moved without a hang, nothing of it read or run (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  local g="$PROJ/.asb/git/2"
+  printf '#!/bin/sh\ntouch %s/ran\n' "$H" >"$H/evil"
+  chmod +x "$H/evil"
+  for h in pre-commit post-checkout reference-transaction fsmonitor-watchman; do cp "$H/evil" "$g/hooks/$h"; done
+  rm "$g/HEAD" "$g/config"
+  mkfifo "$g/HEAD"
+  ln -s /dev/zero "$g/config"
+  printf '* filter=x\n' >"$PROJ/.asb/impl/2/.gitattributes"
+  engine_cmd
+  # shellcheck disable=SC2016 # the script's own arguments, expanded inside it
+  run timeout 60 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --init roles implementer=2 2>&1 </dev/null' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ] # 124: it hung
+  [ ! -e "$H/ran" ]
+  [[ "$output" == *"moved to $b/ -- tree/ its working tree, git/ its history; tree/.git points at git/."* ]]
+  [ -p "$PROJ/$b/git/HEAD" ]
+  [ "$(readlink "$PROJ/$b/git/config")" = /dev/zero ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again: a backup there already is never overwritten (#389)" {
+  fixed_date
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'notes\n' >"$PROJ/.asb/impl/2/untracked"
+  mkdir -p "$PROJ/.asb/backup/implementer-2-20260101T000000Z"
+  printf 'earlier\n' >"$PROJ/.asb/backup/implementer-2-20260101T000000Z/keep"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to .asb/backup/implementer-2-20260101T000000Z-2/"* ]]
+  [ "$(cat "$PROJ/.asb/backup/implementer-2-20260101T000000Z/keep")" = earlier ]
+  [ ! -e "$PROJ/.asb/backup/implementer-2-20260101T000000Z/tree" ]
+  [ "$(cat "$PROJ/.asb/backup/implementer-2-20260101T000000Z-2/tree/untracked")" = notes ]
+  [ ! -e "$PROJ/.asb/impl/2/untracked" ]
+}
+
+@test "an instance added again over half a clone: a tree whose history is gone, or a history whose tree is gone, each backed up alone, no failure (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/impl/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- git/ its history (its working tree was gone). It may hold"* ]]
+  [ -d "$PROJ/$b/git" ]
+  [ ! -e "$PROJ/$b/tree" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  init -- roles implementer=2 # and the next run has nothing in its way
+  [ "$status" -eq 0 ]
+  # the history gone, the tree left: the tree's .git never points at the fresh clone's
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b-2/ -- tree/ its working tree (its history was gone); tree/.git rewritten not to point at .asb/git/2, the fresh clone's history. It may hold"* ]]
+  [ "$(cat "$PROJ/$b-2/tree/.git")" = "gitdir: $PROJ/$b-2/git" ]
+  [ ! -e "$PROJ/$b-2/git" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  [ -z "$(find "$PROJ/.asb/backup" -mindepth 1 -maxdepth 1 -empty)" ] # no empty backup
+}
+
+@test "an instance added again over a link at its tree: the link is moved as it is, what it points to outside untouched (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir "$H/outside"
+  printf 'mine\n' >"$H/outside/keep"
+  rm -rf "$PROJ/.asb/impl/2"
+  ln -s "$H/outside" "$PROJ/.asb/impl/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- tree, where its working tree was, a symbolic link (moved as it is; what it points to is untouched), git/ its history. It may hold"* ]]
+  [[ "$output" != *"tree/.git points at"* ]]
+  [ -L "$PROJ/$b/tree" ]
+  [ "$(readlink "$PROJ/$b/tree")" = "$H/outside" ]
+  [ "$(ls -A "$H/outside")" = keep ]
+  [ "$(cat "$H/outside/keep")" = mine ]
+  [ -d "$PROJ/$b/git" ]
+  [ ! -L "$PROJ/.asb/impl/2" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again over a link at its history: moved as it is, its target untouched; the tree's .git pointed away from the fresh history (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir "$H/outside"
+  printf 'mine\n' >"$H/outside/keep"
+  rm -rf "$PROJ/.asb/git/2"
+  ln -s "$H/outside" "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- tree/ its working tree, git, where its history was, a symbolic link (moved as it is; what it points to is untouched); tree/.git rewritten not to point at .asb/git/2, the fresh clone's history. It may hold"* ]]
+  [ -L "$PROJ/$b/git" ]
+  [ "$(readlink "$PROJ/$b/git")" = "$H/outside" ]
+  [ "$(ls -A "$H/outside")" = keep ]
+  [ "$(cat "$PROJ/$b/tree/.git")" = "gitdir: $PROJ/$b/git" ]
+  [ -d "$PROJ/.asb/git/2" ]
+  [ ! -L "$PROJ/.asb/git/2" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an instance added again over a tree whose .git is a directory, or a tree that is a FIFO: backed up as they are, said (#389)" {
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm "$PROJ/.asb/impl/2/.git"
+  mkdir "$PROJ/.asb/impl/2/.git"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"moved to $b/ -- tree/ its working tree, git/ its history; tree/.git is a directory, not a file --init wrote, and is left as it is. It may hold"* ]]
+  [ -d "$PROJ/$b/tree/.git" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+  # a FIFO where the tree was
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/impl/2"
+  mkfifo "$PROJ/.asb/impl/2"
+  engine_cmd
+  # shellcheck disable=SC2016 # the script's own arguments, expanded inside it
+  run timeout 60 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --init roles implementer=2 2>&1 </dev/null' \
+    _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ] # 124: it hung
+  [[ "$output" == *"moved to $b-2/ -- tree, where its working tree was, a FIFO, git/ its history. It may hold"* ]]
+  [ -p "$PROJ/$b-2/tree" ]
+  [ "$(git -C "$PROJ/.asb/impl/2" branch --show-current)" = impl-2 ]
+}
+
+@test "an old clone that cannot be moved: nothing written, the run fails, and the next one tries again (a tree; a history, the tree put back) (#389)" {
+  [ "$(id -u)" -ne 0 ] || skip "root ignores the permissions this takes away"
+  fixed_date
+  local b=.asb/backup/implementer-2-20260101T000000Z
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'old\n' >"$PROJ/.asb/impl/2/old.txt"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  chmod a-w "$PROJ/.asb/impl/2"
+  init -- roles implementer=2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"moving implementer-2's old clone .asb/impl/2 to $b/tree failed; nothing was written (.agent-sandbox unchanged)"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ ! -e "$PROJ/.asb/roles/implementer-2.md" ]
+  [ -z "$(find "$PROJ/.asb/backup" -mindepth 1)" ]
+  chmod u+w "$PROJ/.asb/impl/2"
+  init -- roles implementer=2 # the same state: it tries again
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/$b/tree/old.txt")" = old ]
+  # the history unmovable: the tree, moved first, is put back
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  printf 'old2\n' >"$PROJ/.asb/impl/2/old.txt"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  chmod a-w "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"moving implementer-2's old history .asb/git/2 to $b-2/git failed; nothing was written (.agent-sandbox unchanged)"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ "$(cat "$PROJ/.asb/impl/2/old.txt")" = old2 ]
+  [ ! -e "$PROJ/$b-2" ]
+  chmod u+w "$PROJ/.asb/git/2"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/$b-2/tree/old.txt")" = old2 ]
+  [ -d "$PROJ/$b-2/git" ]
+}
+
+@test "a spaced section header of yours is the section: a re-run reports no line of it missing (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  sed -i 's/^\[connect:implementer-2\]$/  [ connect:implementer-2 ]/' "$PROJ/.agent-sandbox"
+  grep -qx '  \[ connect:implementer-2 \]' "$PROJ/.agent-sandbox"
+  init -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"that your .agent-sandbox lacks"* ]]
+  [[ "$output" == *"nothing added to it"* ]]
+}
+
+@test "a count is decimal: 08, 09, 010 and 00 on a re-run set the role to 8, 9, 10 and none; a single role's 01 is 1 (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=08
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"value too great"* ]]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$PROJ/.agent-sandbox")" -eq 8 ]
+  has_section '[connect:implementer-8]' "$PROJ/.agent-sandbox"
+  init -- roles implementer=010
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$PROJ/.agent-sandbox")" -eq 10 ]
+  init -- roles implementer=09
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^\[connect:implementer-[0-9]*\]$' "$PROJ/.agent-sandbox")" -eq 9 ]
+  run ! grep -qF '[connect:implementer-10]' "$PROJ/.agent-sandbox"
+  init -- roles implementer=00
+  [ "$status" -eq 0 ]
+  run ! grep -q 'implementer-[0-9]*\]' "$PROJ/.agent-sandbox"
+  init -- roles supervisor=02
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"0 or 1 for supervisor"* ]]
+  init -- roles supervisor=01
+  [ "$status" -eq 0 ]
+}
+
+@test "a header is read as a launch reads it: a section of yours, indented, ends a removed one and is kept; a spaced instance header is removed and named (#389)" {
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  sed -i 's/^\[connect:implementer-3\]$/[ connect:implementer-3 ]/' "$PROJ/.agent-sandbox"
+  sed -i '/^\[ connect:implementer-3 \]$/i # my hosts\n  [allow]\n  example.org' "$PROJ/.agent-sandbox"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2] [connect:implementer-3] [conda:implementer-3] [serve:implementer-3]"* ]]
+  grep -qx '# my hosts' "$PROJ/.agent-sandbox"
+  grep -qx '  \[allow\]' "$PROJ/.agent-sandbox"
+  grep -qx '  example.org' "$PROJ/.agent-sandbox"
+  run ! grep -q 'implementer-[23]' "$PROJ/.agent-sandbox"
+}
+
+@test "an instance is known by its header alone: a comment added to or removed from it changes nothing on a re-run, and a count still removes it (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  sed -i 's/^\[connect:implementer-2\]$/[connect:implementer-2]   # mine/; s/^\(\[serve:implementer-2\]\) .*/\1/
+    s/^\(# \[conda:implementer-2\]\) .*/\1/' "$PROJ/.agent-sandbox"
+  grep -qx '\[serve:implementer-2\]' "$PROJ/.agent-sandbox"
+  grep -qx '# \[conda:implementer-2\]' "$PROJ/.agent-sandbox"
+  printf 'work\n' >"$PROJ/.asb/impl/2/notes"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"clone implementer-2 had"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+  [ "$(cat "$PROJ/.asb/impl/2/notes")" = work ] # the live clone, where it was
+  [ ! -e "$PROJ/.asb/backup" ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2]"* ]]
+  run ! grep -q 'implementer-2' "$PROJ/.agent-sandbox"
+}
+
+@test "a section named as a removed instance's but outside the model's marked region is yours, and stays (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  {
+    printf '[connect:implementer-2]\n.asb/mine/ = read-only\n'
+    cat "$PROJ/.agent-sandbox"
+  } >"$H/df"
+  cat "$H/df" >"$PROJ/.agent-sandbox"
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2] [conda:implementer-2] [serve:implementer-2]"* ]]
+  [ "$(head -2 "$PROJ/.agent-sandbox")" = $'[connect:implementer-2]\n.asb/mine/ = read-only' ]
+  [ "$(grep -c '^\[connect:implementer-2\]' "$PROJ/.agent-sandbox")" -eq 1 ]
+  run ! grep -qF '[serve:implementer-2]' "$PROJ/.agent-sandbox"
 }
 
 @test "run again: a purpose file --init wrote and nobody changed takes the model's text; a changed one is kept" {
@@ -550,16 +1024,17 @@ init() {
   run ! grep -q 'implementer-2\]' "$df"
   grep -qx '\[conda:implementer-3\].*' "$df"
   [ "$(sort "$H/conda.log" | paste -sd'|')" = "create -q -y --clone x-dev -p $PROJ/.asb/impl/1/.env|create -q -y --clone x-dev -p $PROJ/.asb/impl/3/.env" ]
-  # a count given adds above the highest present, as a first --init does; never fills the gap
+  # a count given sets the role to 1..N, as a first --init does: the gap filled, its old
+  # clone (nothing in it) out of the way (#389)
   init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles implementer=4 --env x-dev
   [ "$status" -eq 0 ]
+  has_section '[connect:implementer-2]' "$df"
   has_section '[connect:implementer-4]' "$df"
-  run ! grep -q 'implementer-2\]' "$df"
-  # and a count of 0 drops none
+  [[ "$output" == *"implementer-2 is added again: the clone it had before it was removed is moved to .asb/backup/implementer-2-"* ]]
+  # and a count of 0 removes every one
   init MAMBA_ROOT_PREFIX="$H/conda" -- roles implementer=0 --env x-dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already has every section for these roles; nothing added to it"* ]]
-  grep -qx '\[conda:implementer-4\].*' "$df"
+  run ! grep -q 'implementer-[0-9]*\]' "$df"
 }
 
 @test "a first --init github --env in a file the roles model wrote without one: nothing said about the roles model's lines" {

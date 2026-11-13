@@ -451,8 +451,9 @@ in `.asb/start/` (`[briefing] start`: a relaunched role arms its watcher and rea
 inbox without a keypress), the project's test commands in `.asb/tests` (two empty lines
 for you to fill: Test economy, section 4), and `.asb/.gitignore` (`.asb/` is never
 committed); it makes each Implementer's clone (with your git identity) and, with
-`--env`, its environment. Without counts you get one of each role; `reviewer=0` leaves
-one out. Without `--env` the `[conda]` sections are written commented out;
+`--env`, its environment. Without counts a first `--init` writes one of each role;
+`reviewer=0` leaves one out, and `implementer=3` writes instances 1 to 3. Without
+`--env` the `[conda]` sections are written commented out;
 `asb --init roles --env x-dev` run on that file later completes them, the lines naming
 the environment included, exactly as a first `--init` with it writes them, and changes
 nothing else: a line you changed is left and said; an active `prefix = ...` line naming
@@ -465,7 +466,9 @@ What `--init` makes under `.asb/` stays as it made it. A path it writes, or writ
 (`.asb/impl/N/`, `.asb/git/N/`) and its `.env`, an inbox, `.asb/migrate/`, the index --
 that is a symbolic link, or is not what `--init` makes there (a file where it makes a
 directory, say), refuses the `--init` before it writes anything (exit 2), naming the
-path. A sandbox with the project read-write can leave such a link, and `--init` runs on
+path. (One exception: the clone a removed instance left, when a count adds the instance
+again, is backed up whatever it is, below.) A sandbox with the project read-write can
+leave such a link, and `--init` runs on
 the host; asb cannot tell a link you made (`.asb/impl/` on another disk, say) from one a
 role left, so yours is refused too. Remove the link (`rm` removes the link, not what it
 points to), or move the path away, and run `--init` again. A linked `.agent-sandbox` is
@@ -507,8 +510,27 @@ must be built; `--init` refuses one that is not. `asb --check` names an active
 environment's editable source a role cannot read, with the `asb --apply` line that
 declares it, whichever way the file was written.
 
-Run it again with more instances (`implementer=3`) and it adds what is missing --
-sections, purpose file, clone -- and changes nothing else that exists, except a purpose
+Run it again and a numbered role given no count is left as the file has it, whatever
+instances that is (none included). A count sets the role to that many, as a first
+`--init` with it writes them: `implementer=3` adds every instance of 1 to 3 the file
+lacks -- sections, purpose file, clone -- and removes every one above 3: its sections
+(edited or not), purpose file and prompt (one you changed is kept, and said), their
+records in `.asb/init.sums` and its row in the index; `reviewer=0` removes the role's
+`[...:reviewer-*]` sections and start file as well. Its clone and history
+(`.asb/impl/N/`, `.asb/git/N/`), inbox and directories (messages, handoff, review, plan)
+are left, and `--init` names them. When a later count adds that instance again, the old
+clone is in the way: whatever is left of it, tree or history or both, is moved to
+`.asb/backup/implementer-N-TIME/` (`tree/`, its `.git` pointing at `git/`, the history),
+never over a backup there, and said. Whatever they are -- a symbolic link, a FIFO, a
+`.git` that is a directory -- they are moved as they are (a link itself, never what it
+points to), and the message says what was moved; a link above them (`.asb/impl/`,
+`.asb/backup/`) still refuses the `--init`. `--init` reads nothing in it -- the role had it
+read-write -- so it may hold the instance's work, and what becomes of it is yours; its
+git config and hooks were the role's to write, so read them before you run git there.
+The instance gets a fresh clone. Single roles (the Supervisor, the Gate) are not counted
+so: a re-run adds one the file lacks unless given 0, and removes none.
+
+Beyond the counts, a re-run changes nothing else that exists, except a purpose
 file it wrote that you have not changed since: that one takes the model's current text.
 One you changed is kept, and said so. The changed files need `asb --trust` again. A
 section the file has is never changed (but for the environment's lines, above), so a

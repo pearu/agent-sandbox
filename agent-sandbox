@@ -555,8 +555,13 @@ Engine flags (before CMD):
                         and, with --env, an environment cloned from NAME per
                         clone; with --shared-env, NAME is another project's:
                         read-only, never cloned, a layer over it for the
-                        roles that install. Run again, it adds what is
-                        missing; with --env (or --shared-env), it completes
+                        roles that install. Run again, a numbered role
+                        given no count stays as the file has it, and ROLE=N
+                        sets it to instances 1..N: missing ones added, those
+                        above N removed (clones and data left; a clone in
+                        the way of one added again is moved to
+                        .asb/backup/); with --env
+                        (or --shared-env), it completes
                         the environment's lines it wrote commented out
                         without one. Models compose in one file, their role
                         names apart. --env-dir names the environment's
@@ -11819,10 +11824,14 @@ _as_trust_check() {
 # each by default), makes a clone per instance whose section says `#@ clone = TREE
 # GITDIR BRANCH` (and an environment cloned from --env at its `prefix`), creates every
 # path the written file declares under .asb/, and keeps .asb/ out of git (a .gitignore of
-# its own). Run again, it adds what is missing and updates a purpose file it wrote that
-# nobody changed since, and, with an environment, completes the environment's lines an
-# --init without one wrote commented out; nothing else that exists is touched. It
-# approves nothing.
+# its own). Run again, a numbered role given no count keeps the instances the file has,
+# and one given N is set to 1..N, as a first --init writes it: the missing ones added,
+# those above N removed -- sections, unchanged purpose files and prompts, records, index
+# rows; never a clone or a role's data, but a clone in the way of an instance added again
+# (moved to .asb/backup/, never read: _init_stale_clone). It adds
+# a missing single role, updates a purpose file it wrote that nobody changed since, and,
+# with an environment, completes the environment's lines an --init without one wrote
+# commented out; nothing else that exists is touched. It approves nothing.
 # Models compose in one file (#267): a model's common block (`#@ scope = roles`) is
 # written per role pattern of the model, never unsuffixed, and a model whose role
 # patterns meet another's already in the file is refused.
@@ -12093,7 +12102,10 @@ _as_init() {
       _as_msg "--init: model '$model' has no role '$rn' (it has: ${roles[*]})"
       return 1
     fi
-    if [[ ! "$v" =~ ^[0-9]+$ ]] || { [[ "${kind[$rn]}" == single ]] && ((v > 1)); }; then
+    # a count is decimal: 08 is 8, never an octal error that reads as no count; one too
+    # long for the arithmetic is refused
+    [[ "$v" =~ ^[0-9]{1,6}$ ]] && v="$((10#$v))"
+    if [[ ! "$v" =~ ^[0-9]{1,6}$ ]] || { [[ "${kind[$rn]}" == single ]] && ((v > 1)); }; then
       _as_msg "--init: '$a' -- a count is a number$([[ "${kind[$rn]}" == single ]] && printf ', 0 or 1 for %s, which is a single role' "$rn")"
       return 1
     fi
@@ -12187,11 +12199,34 @@ _as_init() {
   local -a chk_h=() chk_a=()
   # A section the file has -- or has commented out, which is the user's to uncomment --
   # is never written again; compared by its header alone.
-  [[ -f "$df" ]] && existing="$(sed -n 's/^\(# \)\{0,1\}\(\[[^]]*\]\).*/\2/p' "$df")"
+  # A header is read as the launch parser reads it (_as_dotfile_parse): the comment and
+  # the blanks around it gone, `[...]` with no whitespace inside -- and, written
+  # commented out (`# [conda:...]`), the same after the `# `.
+  local _ih
+  _init_hdrv() { # LINE -> _ih: its header so, or empty
+    local x="$1"
+    _ih=""
+    [[ "$x" == '# '* ]] && x="${x#\# }"
+    x="${x%%#*}"
+    x="${x#"${x%%[![:space:]]*}"}"
+    x="${x%"${x##*[![:space:]]}"}"
+    [[ "$x" == '['*']' ]] && _ih="${x//[[:space:]]/}"
+    return 0
+  }
+  _init_hdrs() { # [active] < TEXT -> its headers, one per line (active: not commented out)
+    local x
+    while IFS= read -r x || [[ -n "$x" ]]; do
+      [[ "${1:-}" == active && "$x" == '#'* ]] && continue
+      _init_hdrv "$x"
+      [[ -z "$_ih" ]] || printf '%s\n' "$_ih"
+    done
+  }
+  [[ -f "$df" ]] && existing="$(_init_hdrs <"$df")"
   _init_has() {
-    local hd="${1%%]*}]"
-    hd="${hd#\# }"
-    [[ -n "$existing" ]] && grep -qxF -- "$hd" <<<"$existing"
+    local hd
+    _init_hdrv "$1"
+    hd="$_ih"
+    [[ -n "$existing" && -n "$hd" ]] && grep -qxF -- "$hd" <<<"$existing"
   }
   # A re-run with an environment of a file an --init of the model wrote without one
   # completes what that one wrote commented out. The pairs, per section the file has: a
@@ -12234,12 +12269,14 @@ _as_init() {
       ep_k+=("$k") ep_1[$k]="$r1" ep_s[$k]="$rs"
     done
   }
-  # A numbered role's instances: those this model's marked region of the file has -- a
-  # section header exactly as --init renders it for the instance, commented out or not --
-  # and, above the highest of them, those a count given now adds, as a first --init does;
-  # with no region of the model's, 1..count. None the region lacks is made (no gap is
-  # filled), and none it has is dropped, whatever the count.
-  local regtxt="" rq rn2 ns top
+  # A numbered role's instances: with no region of the model's in the file (a first
+  # --init), 1..count. A re-run reads those this model's marked region has -- a section
+  # header exactly as --init renders it for the instance, commented out or not: a role
+  # given no count keeps exactly those, and one given a count N is set to 1..N, as a first
+  # --init with N writes it: every one missing is added (a gap filled), and every one
+  # above N removed (rm_of; _init_drop and the removals below).
+  local regtxt="" reghd="" rq rn2 ns top
+  local -A rm_of=() readd=() rezero=()
   if [[ -f "$df" ]]; then
     regtxt="$(awk -v m="$(basename -- "$model")" '
       /^# ---- (written|added) by asb --init .* ----$/ {
@@ -12253,19 +12290,38 @@ _as_init() {
     [[ -n "${numbered[$rn]:-}" ]] || continue
     ns="" top=0
     if [[ -n "$regtxt" ]]; then
+      # an active header by header alone, as the parser reads it: a comment added or
+      # removed, or blanks inside the brackets, leave an instance what it is; one
+      # commented out only exactly as --init writes it (a comment naming a section is no
+      # instance); a number with a leading zero is no instance --init writes
+      [[ -n "$reghd" ]] || reghd="$(_init_hdrs active <<<"$regtxt")"
       while IFS= read -r rq; do
         [[ -n "$rq" ]] || continue
         for i in "${!heads[@]}"; do
           read -r rn2 k <<<"$(_init_role_of "${heads[i]}")"
           [[ "${rn2:-}" == "$rn" && "${k:-}" == multi ]] || continue
           hd="$(_init_render "${heads[i]}" "" "$rn-$rq" "$rq" "" | head -1)"
-          if grep -qxF -e "$hd" -e "# $hd" <<<"$regtxt"; then
+          _init_hdrv "$hd"
+          if grep -qxF -- "$_ih" <<<"$reghd" || grep -qxF -e "# $hd" -e "${hd#\# }" -e "# ${hd#\# }" <<<"$regtxt"; then
             ns+=" $rq" top=$rq
             break
           fi
         done
-      done < <(sed -n "s/^\(# \)\{0,1\}\[[a-z-]*:$rn-\([0-9][0-9]*\)\].*/\2/p" <<<"$regtxt" | sort -nu)
-      [[ -n "${cgiven[$rn]:-}" ]] || count[$rn]=0
+      done < <(_init_hdrs <<<"$regtxt" | sed -n "s/^\[[a-z-]*:$rn-\([1-9][0-9]\{0,5\}\)\]$/\1/p" | sort -nu)
+      if [[ -n "${cgiven[$rn]:-}" ]]; then
+        a="$ns" ns=""
+        for ((n = 1; n <= ${count[$rn]}; n++)); do
+          ns+=" $n"
+          [[ " $a " == *" $n "* ]] || readd["$rn-$n"]=1 # new to the file: a clone left there is stale
+        done
+        v=""
+        for rq in $a; do
+          ((rq <= ${count[$rn]})) || v+=" $rq"
+        done
+        [[ -z "$v" ]] || rm_of[$rn]="${v# }"
+        ((${count[$rn]})) || rezero[$rn]=1 # its glob sections and start go too
+      fi
+      count[$rn]=0 top=0
     fi
     for ((n = top + 1; n <= ${count[$rn]}; n++)); do ns+=" $n"; done
     insts_of[$rn]="${ns# }"
@@ -12381,6 +12437,21 @@ _as_init() {
     [[ "$1" =~ ^[[:space:]]*([^#[:space:]=][^=]*[^=[:space:]]|[^#[:space:]=])[[:space:]]*= ]] && printf '%s' "${BASH_REMATCH[1]}"
     return 0
   }
+  # The sections a re-run with a count removes (rm_of, rezero): each as the template
+  # renders it -- the header, the lead written before it (a role's first instance's
+  # comments, gone with it), and the body, by which _init_drop tells the section's own
+  # trailing comments (a commented-out [conda:...]'s lines) from the next one's lead.
+  local -a drop_h=() drop_lead=() drop_body=() rminsts=() rmfiles=() rmleft=()
+  _init_dropadd() { # RENDERED LEAD -- RENDERED = LEAD, the header line, the body
+    local r="${1#"$2"}" hk
+    _init_hdrv "${r%%$'\n'*}" # written commented out too (a [conda:...] without --env)
+    drop_h+=("$_ih") drop_lead+=("$2") drop_body+=("${r#*$'\n'}")
+    # the .asb/ paths it declared, left as they are: said
+    while IFS= read -r hk; do
+      [[ -n "$hk" && " ${rmleft[*]-} " != *" $hk "* ]] && rmleft+=("$hk")
+    done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"${r#*$'\n'}")
+    return 0
+  }
   # Walk the sections; a run of consecutive sections of one numbered role is written
   # per instance, so each instance's sections stay together.
   i=0
@@ -12430,6 +12501,14 @@ _as_init() {
         done
         n=0
       done
+      # a role set to 0 by a re-run: its copy goes, as a first --init with 0 has none (the
+      # lead stays with the block, before the next pattern's copy)
+      for rn2 in ${rezero[@]+"${!rezero[@]}"}; do
+        for ((k = i; k <= j; k++)); do
+          hd="${heads[k]%%]*}:$rn2-*]"
+          _init_dropadd "$(_init_render "$hd" "${bodies[k]}" "" "" "")" ""
+        done
+      done
       i=$((j + 1))
       continue
     fi
@@ -12468,6 +12547,23 @@ _as_init() {
             && prompts+=("$inst"$'\t'"$h"$'\t'"$rn"$'\t'"$n"$'\t'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
         done
       done
+      # the instances a re-run's count removes: their sections, inboxes (left: the
+      # instructions to it are data) and per-turn prompts (removed as purpose files are)
+      for n in ${rm_of[$rn]:-}; do
+        inst="$rn-$n" h="${rn:0:1}"
+        h="${h^^}$n"
+        rminsts+=("$inst"$'\t'"$h"$'\t'"$rn"$'\t'"$n")
+        for ((k = i; k <= j; k++)); do
+          lead=""
+          ((n == 1)) && lead="${leads[k]}"
+          _init_dropadd "$(_init_render "${heads[k]}" "${bodies[k]}" "$inst" "$n" "$h" "$lead")" "$lead"
+          [[ "${bodies[k]}" =~ (^|$'\n')#@[[:space:]]*inbox[[:space:]]*=[[:space:]]*([^$'\n']*) ]] \
+            && rmleft+=("$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)")
+          [[ "${heads[k]}" == "[serve:"* && -f "$mdir/serve/$rn.md" && "${bodies[k]}" =~ (^|$'\n')prompt[[:space:]]*=[[:space:]]*([^[:space:]#$'\n']+) ]] \
+            && rmfiles+=("$mdir/serve/$rn.md"$'\x1f'"$(_init_render "x" "${BASH_REMATCH[2]}" "$inst" "$n" "$h" | sed -n 2p)"$'\x1f'"$inst"$'\x1f'"$n"$'\x1f'"$h"$'\x1f')
+        done
+        [[ -f "$mdir/roles/$rn.md" ]] && rmfiles+=("$mdir/roles/$rn.md"$'\x1f'".asb/roles/$inst.md"$'\x1f'"$inst"$'\x1f'"$n"$'\x1f'"$h"$'\x1f'"$rn $inst")
+      done
       i=$((j + 1))
       continue
     fi
@@ -12477,6 +12573,14 @@ _as_init() {
       hd="$(_init_render "${heads[i]}" "" "" "" "" | head -1)"
     elif [[ -n "${rn:-}" ]]; then
       ((${count[$rn]} > 0)) || {
+        # a role set to 0 by a re-run: its glob sections ([briefing:reviewer-*]) and the
+        # start file one names go, as a first --init with 0 writes neither
+        if [[ -n "${rezero[$rn]:-}" ]]; then
+          _init_dropadd "$(_init_render "${heads[i]}" "${bodies[i]}" "$rn" "" "" "${leads[i]}")" "${leads[i]}"
+          v="$(printf '%s' "${bodies[i]}" | sed -n 's/^[[:space:]]*start[[:space:]]*=[[:space:]]*\([^ #]*\).*/\1/p' | head -1)"
+          [[ "${heads[i]}" == "[briefing:"* && -n "$v" && -f "$mdir/start/$rn.md" ]] \
+            && rmfiles+=("$mdir/start/$rn.md"$'\x1f'"$(_init_render "x" "$v" "$rn" "" "" | sed -n 2p)"$'\x1f'"$rn"$'\x1f\x1f\x1f')
+        fi
         ((i += 1))
         continue
       }
@@ -12650,6 +12754,78 @@ _as_init() {
     done
   fi
 
+  # _init_drop < TEXT -- the file's TEXT without the sections a re-run's count removes
+  # (drop_h), in the model's marked regions, commented out or not, the user's lines in
+  # them included. A section ends at the next header or mark, less the comments and blank
+  # lines that end it which are not its own (the next section's lead); its lead goes with
+  # it when the file has it exactly as written. An `added by` mark left with nothing under
+  # it goes too, with the blank line the append put before it.
+  _init_drop() {
+    local txt l i j e d nl=1 reg=0 out="" full nonempty dropped
+    local -a L=() keep=() H=() R=()
+    txt="$(
+      cat
+      printf x
+    )"
+    txt="${txt%x}"
+    [[ -z "$txt" || "$txt" == *$'\n' ]] || nl=0
+    mapfile -t L < <(printf '%s' "$txt")
+    for i in "${!L[@]}"; do
+      l="${L[i]}" keep[i]=1 H[i]=""
+      if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
+        reg=0
+        [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+        H[i]="${BASH_REMATCH[1]}"$'\n'
+      else
+        _init_hdrv "$l" # as the parser reads it: a section of yours ends a removed one
+        H[i]="$_ih"
+      fi
+      R[i]=$reg
+    done
+    for i in "${!L[@]}"; do
+      [[ "${R[i]}" == 1 && -n "${H[i]}" && "${H[i]}" != *$'\n' ]] || continue
+      for d in "${!drop_h[@]}"; do
+        [[ "${H[i]}" == "${drop_h[d]}" ]] || continue
+        j=$((i + 1))
+        while ((j < ${#L[@]})) && [[ -z "${H[j]}" ]]; do ((j += 1)); done
+        e=$((j - 1))
+        while ((e > i)); do
+          l="${L[e]}"
+          [[ -z "${l//[[:space:]]/}" || "$l" =~ ^[[:space:]]*# ]] || break
+          grep -qxF -- "$l" <<<"${drop_body[d]}" && break
+          ((e -= 1))
+        done
+        for ((j = i; j <= e; j++)); do keep[j]=0; done
+        if [[ -n "${drop_lead[d]}" ]]; then
+          e="$(printf '%s' "${drop_lead[d]}" | wc -l)"
+          full=""
+          for ((j = i - e; j >= 0 && j < i; j++)); do full+="${L[j]}"$'\n'; done
+          if ((i - e >= 0)) && [[ "$full" == "${drop_lead[d]}" ]]; then
+            for ((j = i - e; j < i; j++)); do keep[j]=0; done
+          fi
+        fi
+        break
+      done
+    done
+    for i in "${!L[@]}"; do
+      [[ "${R[i]}" == 1 && "${H[i]}" == $'added\n' ]] || continue
+      nonempty=0 dropped=0
+      for ((j = i + 1; j < ${#L[@]}; j++)); do
+        [[ "${H[j]}" == *$'\n' ]] && break
+        ((keep[j])) || dropped=1
+        ((keep[j])) && [[ -n "${L[j]//[[:space:]]/}" ]] && nonempty=1
+      done
+      ((dropped && ! nonempty)) || continue
+      for ((e = i; e < j; e++)); do keep[e]=0; done
+      ((i > 0 && keep[i - 1])) && [[ -z "${L[i - 1]}" ]] && keep[i - 1]=0
+    done
+    for i in "${!L[@]}"; do
+      ((keep[i])) && out+="${L[i]}"$'\n'
+    done
+    ((nl || ${#L[@]} == 0 || ! keep[${#L[@]} - 1])) || out="${out%$'\n'}"
+    printf '%s' "$out"
+  }
+
   # ---- what --init makes under .asb/ is static (#389) ----
   # A role with the project read-write can replace a path --init makes there with a
   # symbolic link (to a directory or a file outside, or dangling), and --init runs on the
@@ -12688,6 +12864,15 @@ _as_init() {
   for a in "${insts[@]}"; do
     IFS=$'\t' read -r inst h rn n <<<"$a"
     [[ -f "$mdir/roles/$rn.md" ]] && spaths+=("f .asb/roles/$inst.md" "f .asb/migrate/$inst.md")
+  done
+  # a clone a re-added instance's predecessor left goes to a backup there
+  ((${#readd[@]})) && spaths+=("d .asb/backup")
+  # the files a re-run's count removes, checked as those it writes: a removal never
+  # follows a link either
+  for a in ${rmfiles[@]+"${rmfiles[@]}"}; do
+    IFS=$'\x1f' read -r f sk inst n h v <<<"$a"
+    spaths+=("f $sk")
+    [[ -n "$v" ]] && spaths+=("f .asb/migrate/$(basename -- "$sk")")
   done
   for a in ${prompts[@]+"${prompts[@]}"}; do
     IFS=$'\t' read -r inst h rn n sk <<<"$a"
@@ -12733,7 +12918,14 @@ _as_init() {
   # in it would be made outside .asb/ (a launch reads it lexically, as any key)
   local decls
   decls="$({
-    if [[ -f "$df" ]]; then cat -- "$df"; else printf '%s\n' ${pre[@]+"${pre[@]}"}; fi
+    if [[ -f "$df" ]] && ((${#drop_h[@]})); then
+      _init_drop <"$df" # as it is once the removed instances' sections are gone
+      printf '\n'
+    elif [[ -f "$df" ]]; then
+      cat -- "$df"
+    else
+      printf '%s\n' ${pre[@]+"${pre[@]}"}
+    fi
     printf '%s\n' "$new"
     for k in "${!ep_do[@]}"; do printf '%s\n' "${ep_1[$k]}"; done
   } | grep -E '^[[:space:]]*\.asb/[^=[:space:]]*[[:space:]]*=' || true)"
@@ -12745,8 +12937,154 @@ _as_init() {
   while IFS= read -r sk; do
     case "$sk" in */) spaths+=("d $sk") ;; *) spaths+=("a $sk") ;; esac
   done < <(sed -n 's/^[[:space:]]*\(\.asb\/[^=[:space:]]*\)[[:space:]]*=.*/\1/p' <<<"$decls" | sort -u)
+  # A re-added instance's old clone (tree, history, whatever they are now: a link, a
+  # FIFO, a .git that is a directory) is moved to a backup below, not made anew in
+  # place: a path at or under it is checked only for the directories above it.
+  local -a exroots=()
+  for a in ${clones[@]+"${clones[@]}"}; do
+    [[ -n "${readd[${a%%$'\t'*}]:-}" ]] || continue
+    read -r tpath gdir br <<<"${a#*$'\t'}"
+    exroots+=("${tpath%/}" "${gdir%/}")
+  done
   for a in "${spaths[@]}"; do
+    sk="${a#* }" sk="${sk%/}"
+    for f in ${exroots[@]+"${exroots[@]}"}; do
+      if [[ "$sk" == "$f" || "$sk" == "$f"/* ]]; then
+        a="d $(dirname -- "$f")"
+        break
+      fi
+    done
     _init_static "${a%% *}" "${a#* }" || return 2
+  done
+  # The paths were checked above (_init_static); each write checks again for a symbolic
+  # link planted since, which stops the --init there (2). A file is written to a
+  # temporary one beside it and renamed into place, which replaces a link planted since,
+  # never follows it.
+  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else 2, said
+    local rel="${1%/}" p="$proj"
+    while [[ -n "$rel" ]]; do
+      p+="/${rel%%/*}"
+      if [[ -L "$p" ]]; then
+        _as_msg "--init: ${p#"$proj"/} became a symbolic link while --init ran: stopped before writing ${1%/}; remove the link and run --init again"
+        return 2
+      fi
+      if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
+    done
+    return 0
+  }
+  _init_put() { # REL < TEXT -- $proj/REL from stdin, through no link; 2: refused (said)
+    local d t
+    _init_nolink "$1" || return 2
+    d="$(dirname -- "$proj/$1")"
+    mkdir -p -- "$d" || return 1
+    t="$(mktemp -- "$d/.asb-init.XXXXXX")" || return 1
+    if cat >"$t" && chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
+      return 0
+    fi
+    rm -f -- "$t"
+    return 1
+  }
+  _init_mkdir() { # REL -- the directory $proj/REL, through no link; 2: refused (said)
+    _init_nolink "$1" || return 2
+    mkdir -p -- "$proj/$1"
+  }
+
+  # A clone left by an instance removed earlier, where a count adds the instance again:
+  # moved out of the way, whatever is in it, for a fresh clone -- first, before the file or
+  # anything else is written, so a move that fails leaves everything as it was and the
+  # next run, seeing the same file, tries again. Its Implementer had it read-write, so the
+  # host reads nothing of it: what is there of the tree and of the history -- both, or
+  # either alone -- is moved to a backup of its own under .asb/backup/ (never one there
+  # already), for the user to decide on. The tree's .git, a path --init made, is written
+  # anew to point at the moved history -- never at the fresh clone's, which takes the old
+  # one's place -- when it is a regular file; else it is left, and said. The tree or the
+  # history may be anything a role could leave -- a link, a FIFO, a file -- and is moved
+  # as it is, the entry itself (a link's target is never moved, read or followed); the
+  # directories above them are checked for links, as every path --init writes.
+  _init_kind() { # PATH -> a few words for what is there, never following a link
+    if [[ -L "$1" ]]; then
+      printf 'a symbolic link (moved as it is; what it points to is untouched)'
+    elif [[ -p "$1" ]]; then
+      printf 'a FIFO'
+    elif [[ -d "$1" ]]; then
+      printf 'a directory'
+    elif [[ -f "$1" ]]; then
+      printf 'a file'
+    else
+      printf 'neither a file nor a directory'
+    fi
+  }
+  _init_stale_clone() { # INST TREE GITDIR -- the directories above both through no link
+    local b s=1 ts what="" note="" tree=0 git=0
+    _init_nolink "$(dirname -- "${2%/}")" || return 2
+    _init_nolink "$(dirname -- "${3%/}")" || return 2
+    _init_nolink .asb/backup/ || return 2
+    mkdir -p -- "$proj/.asb/backup" || return 1
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    b=".asb/backup/$1-$ts"
+    until mkdir -- "$proj/$b" 2>/dev/null; do
+      _init_nolink .asb/backup/ || return 2
+      ((s += 1))
+      if ((s >= 100)); then
+        _as_msg "--init: no backup directory could be made for $1's old clone under .asb/backup/ ($b and 98 more names taken, or it is not writable); nothing was written -- make room there and run --init again"
+        return 1
+      fi
+      b=".asb/backup/$1-$ts-$s"
+    done
+    if [[ -e "$proj/${2%/}" || -L "$proj/${2%/}" ]]; then
+      mv -T -- "$proj/${2%/}" "$proj/$b/tree" || {
+        rmdir -- "$proj/$b" 2>/dev/null
+        _as_msg "--init: moving $1's old clone ${2%/} to $b/tree failed; nothing was written (.agent-sandbox unchanged): make it movable and run --init again"
+        return 1
+      }
+      what="tree/ its working tree"
+    fi
+    if [[ -e "$proj/${3%/}" || -L "$proj/${3%/}" ]]; then
+      if ! mv -T -- "$proj/${3%/}" "$proj/$b/git"; then
+        # put the tree back where it was: the run changes nothing
+        if [[ -n "$what" ]] && ! mv -T -- "$proj/$b/tree" "$proj/${2%/}"; then
+          _as_msg "--init: moving $1's old history ${3%/} to $b/git failed, and its tree could not be put back: it is in $b/tree; nothing else was written (.agent-sandbox unchanged)"
+          return 1
+        fi
+        rmdir -- "$proj/$b" 2>/dev/null
+        _as_msg "--init: moving $1's old history ${3%/} to $b/git failed; nothing was written (.agent-sandbox unchanged): make it movable and run --init again"
+        return 1
+      fi
+      what+="${what:+, }git/ its history"
+    fi
+    # what was moved, said as it is: a plain tree and history, or what a role left there
+    if [[ -L "$proj/$b/tree" || (-e "$proj/$b/tree" && ! -d "$proj/$b/tree") ]]; then
+      what="${what/tree\/ its working tree/tree, where its working tree was, $(_init_kind "$proj/$b/tree")}"
+    elif [[ -d "$proj/$b/tree" ]]; then
+      tree=1
+    fi
+    if [[ -L "$proj/$b/git" || (-e "$proj/$b/git" && ! -d "$proj/$b/git") ]]; then
+      what="${what/git\/ its history/git, where its history was, $(_init_kind "$proj/$b/git")}"
+    elif [[ -d "$proj/$b/git" ]]; then
+      git=1
+    fi
+    [[ -e "$proj/$b/git" || -L "$proj/$b/git" ]] || [[ -z "$what" ]] || what+=" (its history was gone)"
+    [[ -e "$proj/$b/tree" || -L "$proj/$b/tree" ]] || what+=" (its working tree was gone)"
+    # the tree's .git, only in a tree that is a directory of its own (never through a link)
+    if ((tree)) && [[ -f "$proj/$b/tree/.git" && ! -L "$proj/$b/tree/.git" ]]; then
+      printf 'gitdir: %s\n' "$proj/$b/git" | _init_put "$b/tree/.git" || return $?
+      if ((git)); then
+        note="; tree/.git points at git/"
+      else
+        note="; tree/.git rewritten not to point at ${3%/}, the fresh clone's history"
+      fi
+    elif ((tree)) && [[ -e "$proj/$b/tree/.git" || -L "$proj/$b/tree/.git" ]]; then
+      note="; tree/.git is $(_init_kind "$proj/$b/tree/.git"), not a file --init wrote, and is left as it is"
+    fi
+    _as_msg "--init: $1 is added again: the clone it had before it was removed is moved to $b/ -- $what$note. It may hold $1's work, and what becomes of it is yours (its git config and hooks were writable by the role: read them before you run git there); $1 gets a fresh clone"
+  }
+  # an instance new to the file over anything of an old clone: backed up, every time
+  for a in ${clones[@]+"${clones[@]}"}; do
+    inst="${a%%$'\t'*}"
+    read -r tpath gdir br <<<"${a#*$'\t'}"
+    if [[ -n "${readd[$inst]:-}" ]] && [[ -e "$proj/${tpath%/}" || -L "$proj/${tpath%/}" || -e "$proj/${gdir%/}" || -L "$proj/${gdir%/}" ]]; then
+      _init_stale_clone "$inst" "$tpath" "$gdir" || return $?
+    fi
   done
 
   if ((${#edren[@]})); then
@@ -12796,6 +13134,23 @@ _as_init() {
     _as_msg "--init: the environment's lines in .agent-sandbox could not be completed for --env $env: it has no '# ---- written by asb --init $(basename -- "$model") ----' line to find model '$model''s sections by$(grep -q $'\r' "$df" && printf ' (its lines end in CR LF)'); complete these by hand:"
     printf '    %s\n' "${ep_left[@]}" >&2
   fi
+  # The sections of the instances a re-run's count removes (_init_drop), in one rewrite
+  # of the file, which the trust review shows as any other change.
+  if ((${#drop_h[@]})); then
+    a="$(_as_dotfile_read "$df" && printf x)" || :
+    [[ "$a" == *x ]] || {
+      _as_msg "--init: .agent-sandbox became a symbolic link while --init ran; nothing removed from it"
+      return 2
+    }
+    a="${a%x}"
+    v="$(printf '%s' "$a" | _init_drop && printf x)"
+    v="${v%x}"
+    if [[ "$v" != "$a" ]]; then
+      printf '%s' "$v" | _as_dotfile_write "$df" || return 1
+      wrote=1
+      _as_msg "removed from .agent-sandbox: $(diff <(_init_hdrs <<<"$a") <(_init_hdrs <<<"$v") | sed -n 's/^< //p' | paste -sd' ')"
+    fi
+  fi
   if [[ -z "$existing" && ! -f "$df" ]]; then
     {
       printf '# ---- written by asb --init %s ----\n' "$model"
@@ -12823,38 +13178,6 @@ _as_init() {
 
   # ---- purpose files, clones, environments, the declared paths, the index ----
   local -a globs=()
-  # The paths were checked above (_init_static); each write checks again for a symbolic
-  # link planted since, which stops the --init there (2). A file is written to a
-  # temporary one beside it and renamed into place, which replaces a link planted since,
-  # never follows it.
-  _init_nolink() { # REL -- 0 when no component of $proj/REL is a symbolic link; else 2, said
-    local rel="${1%/}" p="$proj"
-    while [[ -n "$rel" ]]; do
-      p+="/${rel%%/*}"
-      if [[ -L "$p" ]]; then
-        _as_msg "--init: ${p#"$proj"/} became a symbolic link while --init ran: stopped before writing ${1%/}; remove the link and run --init again"
-        return 2
-      fi
-      if [[ "$rel" == */* ]]; then rel="${rel#*/}"; else rel=""; fi
-    done
-    return 0
-  }
-  _init_put() { # REL < TEXT -- $proj/REL from stdin, through no link; 2: refused (said)
-    local d t
-    _init_nolink "$1" || return 2
-    d="$(dirname -- "$proj/$1")"
-    mkdir -p -- "$d" || return 1
-    t="$(mktemp -- "$d/.asb-init.XXXXXX")" || return 1
-    if cat >"$t" && chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
-      return 0
-    fi
-    rm -f -- "$t"
-    return 1
-  }
-  _init_mkdir() { # REL -- the directory $proj/REL, through no link; 2: refused (said)
-    _init_nolink "$1" || return 2
-    mkdir -p -- "$proj/$1"
-  }
   _init_mkdir .asb/roles || return $?
   # A purpose file is the model's until the user changes it: .asb/init.sums records the
   # hash of what --init last wrote at each path, and a file that still has it is replaced
@@ -12967,6 +13290,42 @@ _as_init() {
     printf '  2. remove the purpose file and run this --init again: it takes the model'"'"'s text\n' >&2
     printf '  3. %s --trust: the review shows the addendum, new, and the purpose file'"'"'s change\n' "$invoked" >&2
   fi
+  # The files of the instances a re-run's count removes (rmfiles), each as a purpose file
+  # is kept: one --init wrote and nobody changed since (its record in .asb/init.sums, or
+  # the model's text now) is removed with its record, and a purpose file's .asb/migrate/
+  # copy; one changed since is kept, and said.
+  _init_unpurpose() { # SRC REL ROLE N HANDLE [ADDENDA]
+    local tmp sum cur rec sums="$proj/.asb/init.sums"
+    _init_nolink "$2" || return 2
+    [[ -f "$proj/$2" ]] || return 0
+    tmp="$(mktemp)" || return 1
+    _init_render "" "$(sed -e "/^#@$envdrop /d" -e "s/^#@$envkeep //" -- "$1")" "$3" "$4" "$5" | sed 1d >"$tmp" || {
+      rm -f -- "$tmp"
+      return 1
+    }
+    sum="$(_as_sha256_file "$tmp")"
+    rm -f -- "$tmp"
+    cur="$(_as_sha256_file "$proj/$2")"
+    rec="$(awk -v p="$2" '$2 == p { s = $1 } END { print s }' "$sums" 2>/dev/null)"
+    if [[ "$cur" != "$sum" && "$cur" != "$rec" ]]; then
+      _as_msg "kept $2: changed since --init wrote it, and ${3} is removed, so no role reads it now -- yours to remove (an instance added again later has it kept, as a changed purpose file is)"
+      return 0
+    fi
+    rm -f -- "$proj/$2" || return 1
+    wrote=1
+    _as_msg "removed $2"
+    if [[ -n "${6:-}" ]]; then
+      _init_nolink ".asb/migrate/$(basename -- "$2")" || return 2
+      rm -f -- "$proj/.asb/migrate/$(basename -- "$2")"
+    fi
+    [[ -f "$sums" ]] || return 0
+    _init_nolink .asb/init.sums || return 2
+    awk -v p="$2" '$2 != p' "$sums" | _init_put .asb/init.sums
+  }
+  for a in ${rmfiles[@]+"${rmfiles[@]}"}; do
+    IFS=$'\x1f' read -r f sk inst n h v <<<"$a"
+    _init_unpurpose "$f" "$sk" "$inst" "$n" "$h" "$v" || return $?
+  done
   for a in ${clones[@]+"${clones[@]}"}; do
     inst="${a%%$'\t'*}"
     read -r tpath gdir br <<<"${a#*$'\t'}"
@@ -13068,6 +13427,30 @@ _as_init() {
     _init_nolink .asb/coord/COORDINATION.md || return 2
     { cat -- "$idx" && printf '%s' "$idxrows"; } | _init_put .asb/coord/COORDINATION.md || return $?
   fi
+  # The removed instances: their rows out of the index, and what is left of them said --
+  # the clones and the data, which --init never removes.
+  if ((${#rminsts[@]})); then
+    if [[ -s "$idx" ]]; then
+      _init_nolink .asb/coord/COORDINATION.md || return 2
+      a="$(cat -- "$idx" && printf x)"
+      v="$a"
+      for k in "${rminsts[@]}"; do
+        IFS=$'\t' read -r inst h rn n <<<"$k"
+        v="$(printf '%s' "${v%x}" | { grep -v "^| $h | $inst |" || true; } && printf x)"
+      done
+      if [[ "$v" != "$a" ]]; then
+        printf '%s' "${v%x}" | _init_put .asb/coord/COORDINATION.md || return $?
+        _as_msg "removed from .asb/coord/COORDINATION.md: $(for k in "${rminsts[@]}"; do cut -f2 <<<"$k"; done | paste -sd' ')"
+      fi
+    fi
+    v=""
+    for f in ${rmleft[@]+"${rmleft[@]}"}; do
+      [[ -e "$proj/$f" || -L "$proj/$f" ]] || continue
+      grep -qE "^[[:space:]]*$(_init_ere "$f")[[:space:]]*=" "$df" && continue # another role's still
+      v+=" $f"
+    done
+    _as_msg "--init: removed $(for k in "${rminsts[@]}"; do cut -f1 <<<"$k"; done | paste -sd' ' | sed 's/ /, /g')${v:+; left as they are, theirs and never removed by --init:$v}"
+  fi
   # .asb/ is the roles' working state, never the project's history: a .gitignore of its
   # own keeps it out of whatever repository the directory is in, or becomes part of.
   if [[ ! -e "$proj/.asb/.gitignore" || -L "$proj/.asb/.gitignore" ]]; then
@@ -13106,11 +13489,13 @@ _as_init() {
   # silently absent: said here, with the --apply line for each section. A line the file
   # has commented out is the user's choice; a key's value is never compared.
   _init_missing() { # HEADER RENDERED -> the rendered lines the file's section HEADER lacks
-    local want="${1%%]*}]" l x cur="" have="" keys="" on=0
-    want="${want#\# }"
+    local want l x cur="" have="" keys="" on=0
+    _init_hdrv "$1"
+    want="$_ih"
     while IFS= read -r l || [[ -n "$l" ]]; do
-      if [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
-        cur="${BASH_REMATCH[2]}"
+      _init_hdrv "$l" # a header as the parser reads it ([ connect:x ] included)
+      if [[ -n "$_ih" ]]; then
+        cur="$_ih"
         continue
       fi
       [[ "$cur" == "$want" ]] || continue
