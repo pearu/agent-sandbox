@@ -695,18 +695,21 @@ W
   [ -z "$(find "$T/bench" -maxdepth 1 -name '.agent-sandbox.asb-new.*')" ] # no temp left
 }
 
-@test "--setup-remote: a policy written over one there keeps that file's mode (#344)" {
+@test "--setup-remote: a policy written over one there keeps that file's mode, and its inode: written in place, as --init writes it (#344, #389)" {
   require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
   remote_host
   full_section
-  local T="$R/home/tob"
+  local T="$R/home/tob" ino
   mkdir -p "$T/bench"
   printf '# an older policy\n' >"$T/bench/.agent-sandbox"
   chmod 640 "$T/bench/.agent-sandbox"
+  ino="$(stat -c %i "$T/bench/.agent-sandbox")"
   setup_remote
   [ "$status" -eq 0 ]
   grep -qx '\[sshd\]' "$T/bench/.agent-sandbox"
   [ "$(stat -c %a "$T/bench/.agent-sandbox")" = 640 ]
+  [ "$(stat -c %i "$T/bench/.agent-sandbox")" = "$ino" ]
+  [ -z "$(find "$T/bench" -maxdepth 1 -name '.agent-sandbox.?*')" ] # no temp left
 }
 
 @test "--setup-remote: .asb/remote/.gitignore is never written through a link a sandbox left there, a dangling one included (#344)" {

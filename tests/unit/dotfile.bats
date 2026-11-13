@@ -949,14 +949,59 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 }
 
 @test "--apply that cannot write the file fails and leaves no temp behind" {
-  [ "$(id -u)" -ne 0 ] || skip "root writes in a directory of mode 555"
+  [ "$(id -u)" -ne 0 ] || skip "root writes a file of mode 444"
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
-  chmod 555 "$PROJ" # the file is replaced by a rename: the directory is what refuses
+  chmod 444 "$PROJ/.agent-sandbox" # the file is written in place (#389): its mode is what refuses
   run_apply - '[allow]' github.com
-  chmod 755 "$PROJ"
+  chmod 644 "$PROJ/.agent-sandbox"
   [ "$status" -ne 0 ]
   [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
   [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
+  # a new file in a directory that refuses it: nothing made, no temp
+  rm "$PROJ/.agent-sandbox"
+  chmod 555 "$PROJ"
+  run_apply - '[allow]' github.com
+  chmod 755 "$PROJ"
+  [ "$status" -ne 0 ]
+  [ ! -e "$PROJ/.agent-sandbox" ]
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
+}
+
+@test "--apply writes an existing file in place: the same inode, its mode kept, so a running sandbox's read-only bind of it holds (#389)" {
+  printf '[allow]\npypi.org\n\n[deny]\nevil.example\n' >"$PROJ/.agent-sandbox"
+  chmod 640 "$PROJ/.agent-sandbox"
+  local ino
+  ino="$(stat -c %i "$PROJ/.agent-sandbox")"
+  run_apply 'y\n' '[allow]' github.com
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org\ngithub.com\n\n[deny]\nevil.example' ]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  [ "$(stat -c %a "$PROJ/.agent-sandbox")" = 640 ]
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ] # no temp beside it
+}
+
+@test "_as_dotfile_write: an existing file in place, cut to the new text; a new file made; a link replaced, its target untouched (#389)" {
+  source_engine
+  local d="$H/wr" ino
+  mkdir -p "$d"
+  printf 'a much longer old text\nwith two lines\n' >"$d/.agent-sandbox"
+  ino="$(stat -c %i "$d/.agent-sandbox")"
+  printf 'new\n' | _as_dotfile_write "$d/.agent-sandbox"
+  [ "$(stat -c %i "$d/.agent-sandbox")" = "$ino" ]
+  [ "$(od -An -c "$d/.agent-sandbox" | tr -d ' ')" = 'new\n' ] # no tail of the old text
+  printf 'grown to a longer text\n' | _as_dotfile_write "$d/.agent-sandbox"
+  [ "$(stat -c %i "$d/.agent-sandbox")" = "$ino" ]
+  [ "$(cat "$d/.agent-sandbox")" = 'grown to a longer text' ]
+  printf 'fresh\n' | _as_dotfile_write "$d/new"
+  [ "$(cat "$d/new")" = fresh ]
+  [ "$(stat -c %a "$d/new")" = "$(printf '%o' $((0666 & ~0$(umask))))" ]
+  printf 'KEEP\n' >"$d/target"
+  ln -s "$d/target" "$d/link"
+  printf 'policy\n' | _as_dotfile_write "$d/link"
+  [ "$(cat "$d/target")" = KEEP ]
+  [ ! -L "$d/link" ]
+  [ "$(cat "$d/link")" = policy ]
+  [ -z "$(find "$d" -name '.agent-sandbox.?*')" ]
 }
 
 @test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {

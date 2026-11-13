@@ -98,7 +98,11 @@ changed; clones and data left; docs/roles.md). It touches nothing else that exis
 except a purpose file, a `bin/` script, a prompt or `.asb/tests` it wrote
 and nobody changed since: that one takes the model's current text (`.asb/init.sums`
 records what it wrote). The changed `.agent-sandbox` or purpose file then needs
-`asb --trust` again. A purpose file kept because it changed, with no addendum, gets the
+`asb --trust` again. `.agent-sandbox` is written in place, so a running role keeps it
+read-only; a re-run that would replace a running role's read-only purpose file under a
+read-write project, or remove a file bound into a running role, is refused until that
+role is shut down (docs/roles.md).
+A purpose file kept because it changed, with no addendum, gets the
 offer to move the project's text into one (the model's current text in `.asb/migrate/`;
 docs/roles.md). A section that exists is never changed: a re-run reports the lines the
 model gained that such a section lacks (a key it does not set, a bare line not in it;

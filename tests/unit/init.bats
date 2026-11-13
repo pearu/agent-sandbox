@@ -19,9 +19,15 @@ STUB
   chmod +x "$H/bin/conda-stub"
 }
 
-# a test that takes write permission away gives it back, so bats can clean up
+# a test that takes write permission away gives it back, so bats can clean up; the
+# processes a faked running sandbox stood on (running, below) end
 teardown() {
   [[ -z "${H:-}" ]] || chmod -R u+w "$H" 2>/dev/null || true
+  local pid
+  if [[ -n "${H:-}" && -f "$H/sleeps" ]]; then
+    while read -r pid; do kill "$pid" 2>/dev/null || true; done <"$H/sleeps"
+  fi
+  return 0
 }
 
 # has_section HEADER FILE -- FILE has a line that starts with HEADER (a comment may follow).
@@ -1171,7 +1177,7 @@ STUB
   [ ! -L "$PROJ/.asb/envs" ]
 }
 
-@test "--init and --apply rewrite .agent-sandbox by renaming a new file over it, its mode kept" {
+@test "--init and --apply rewrite an existing .agent-sandbox in place, its inode and mode kept (#389)" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox" ino
   init -- github
@@ -1180,12 +1186,12 @@ STUB
   ino="$(stat -c %i "$df")"
   init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev
   [ "$status" -eq 0 ]
-  [ "$(stat -c %i "$df")" != "$ino" ] # a rename: a link planted meanwhile is replaced, not followed
+  [ "$(stat -c %i "$df")" = "$ino" ] # in place: a running sandbox's read-only bind of it holds
   [ "$(stat -c %a "$df")" = 640 ]
   ino="$(stat -c %i "$df")"
   engine_cmd
   run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "${@:4}" --profile claude --apply "[allow]" example.org 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
-  [ "$(stat -c %i "$df")" != "$ino" ]
+  [ "$(stat -c %i "$df")" = "$ino" ]
   [ "$(stat -c %a "$df")" = 640 ]
   grep -qx 'example.org' "$df"
   ls -A "$PROJ" >"$H/ls"
@@ -2751,4 +2757,234 @@ shared_env() {
   init -- github
   [ "$status" -eq 0 ]
   [ ! -e "$PROJ/.asb/tests" ]
+}
+
+# ---- a running sandbox of the project and a re-run (#389) ----
+
+# running ROLE [PROFILE] < RECORD -- a faked running sandbox of the project: its keeper's
+# id names a live process of this test's (a sleep, ended in teardown) as its supervisor
+# and its payload, as _as_keeper_live checks them, and RECORD is its keeper/binds,
+# `MODE<TAB>DIR<TAB>SOURCE` lines (_as_keeper_binds). With RUNNING_OLD=1 a keeper an
+# older asb started: no binds, RECORD is its keeper/policy, and the project's
+# .agent-sandbox as it is now its dotfile.copy. Sets RUN_PID.
+running() {
+  local sb="$H/home/.local/state/agent-sandbox/${2:-claude}/${PROJ//[^A-Za-z0-9-]/-}/$1" st
+  mkdir -p "$sb/keeper"
+  sleep 600 >/dev/null 2>&1 3>&- &
+  RUN_PID=$!
+  printf '%s\n' "$RUN_PID" >>"$H/sleeps"
+  st="$(awk '{ print $22 }' "/proc/$RUN_PID/stat")"
+  printf '%s %s %s %s %s %s\n' "$RUN_PID" "$st" "$RUN_PID" "$st" "$RUN_PID" "$st" >"$sb/keeper/id"
+  if [[ -n "${RUNNING_OLD:-}" ]]; then
+    cat >"$sb/keeper/policy"
+    cp "$PROJ/.agent-sandbox" "$sb/keeper/dotfile.copy"
+  else
+    cat >"$sb/keeper/binds"
+  fi
+}
+
+# stopped -- the last faked sandbox's process ends, as after --shutdown
+stopped() {
+  kill "$RUN_PID"
+  wait "$RUN_PID" 2>/dev/null || true
+}
+
+# snap NAME -- every file of .agent-sandbox and .asb/ but the clones, with its hash, and
+# the dot-file's inode: what a refused --init leaves as it was
+snap() {
+  (cd "$PROJ" && find .agent-sandbox .asb -path .asb/impl -prune -o -path .asb/git -prune -o -type f -print0 \
+    | sort -z | xargs -0 sha256sum && stat -c %i .agent-sandbox) >"$H/snap.$1"
+}
+
+@test "a re-run that changes .agent-sandbox writes it in place: the same inode and mode, so a running sandbox's read-only bind of it holds (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  [ -f "$PROJ/.agent-sandbox" ]
+  chmod 640 "$PROJ/.agent-sandbox"
+  local ino
+  ino="$(stat -c %i "$PROJ/.agent-sandbox")"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [connect:implementer-2]"* ]]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  [ "$(stat -c %a "$PROJ/.agent-sandbox")" = 640 ]
+  init -- roles implementer=1 # the removal is a rewrite too
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [connect:implementer-2]"* ]]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  run ! grep -qF '[connect:implementer-2]' "$PROJ/.agent-sandbox"
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ] # no temp beside it
+}
+
+@test "a launch records its single-file binds in its keeper: a role with the project read-write has them in a read-write directory, one with it read-only in a read-only one (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  local st="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
+  engine_bg AGENT_SANDBOX_NET=none -- asb --role supervisor claude
+  grep -qxF "ro"$'\t'"rw"$'\t'"$PROJ/.agent-sandbox" "$st/supervisor/keeper/binds"
+  grep -qxF "ro"$'\t'"rw"$'\t'"$PROJ/.asb/roles/supervisor.md" "$st/supervisor/keeper/binds"
+  release_bg
+  engine_bg AGENT_SANDBOX_NET=none -- asb --role implementer-1 claude
+  grep -qxF "ro"$'\t'"ro"$'\t'"$PROJ/.agent-sandbox" "$st/implementer-1/keeper/binds"
+  grep -qxF "ro"$'\t'"ro"$'\t'"$PROJ/.asb/roles/implementer-1.md" "$st/implementer-1/keeper/binds"
+  release_bg
+}
+
+@test "_as_keeper_binds: a bind hidden by a later mount is not listed; an overlay is cow; a later --remount-ro makes a mount ro; a bind of another directory is - (#389)" {
+  source_engine
+  local d="$BATS_TEST_TMPDIR/k"
+  mkdir -p "$d/p/sub" "$d/q"
+  printf 'x\n' >"$d/p/f"
+  printf 'x\n' >"$d/p/sub/g"
+  printf 'x\n' >"$d/q/h"
+  run _as_keeper_binds --setenv A --bind --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --ro-bind "$d/p/sub/g" "$d/p/sub/g" \
+    --tmpfs "$d/p/sub" --bind "$d/q/h" "$d/p/h2" --clearenv --overlay-src "$d/q" --overlay "$d/u" "$d/w" "$d/q" \
+    --ro-bind "$d/q/h" "$d/q/h"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "ro"$'\t'"rw"$'\t'"$d/p/f" ]
+  [ "${lines[1]}" = "rw"$'\t'"-"$'\t'"$d/q/h" ]
+  [ "${lines[2]}" = "ro"$'\t'"cow"$'\t'"$d/q/h" ]
+  [ "${#lines[@]}" -eq 3 ] # $d/p/sub/g: under the later tmpfs
+  run _as_keeper_binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --remount-ro "$d/p"
+  [ "$output" = "ro"$'\t'"ro"$'\t'"$d/p/f" ]
+  run _as_keeper_binds --ro-bind "$d/p" "$d/p" --bind "$d/p/f" "$d/p/f" --remount-ro "$d/p/f"
+  [ "$output" = "ro"$'\t'"ro"$'\t'"$d/p/f" ]
+}
+
+@test "a running role with the project read-write: a re-run that would replace its read-only purpose file is refused (2), nothing written, the role, file and command named; after it ends, the run goes ahead (#389)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  running supervisor < <(printf 'ro\trw\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
+  snap before
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: nothing was written: this run would replace or remove a file bound into a running sandbox of this project, which a host write breaks for it. End each role below, then run --init again:"* ]]
+  [[ "$output" == *$'\n'"  role 'supervisor': .asb/roles/supervisor.md would become writable for it -- first: "*" --role supervisor --shutdown claude"* ]]
+  [[ "$output" != *".agent-sandbox would"* ]] # the dot-file is never a reason
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+  [ ! -e "$PROJ/.asb/impl/2" ]
+  stopped
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/supervisor.md from model 'roles'"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/supervisor.md")" = "NEW LINE" ]
+}
+
+@test "a re-run that would remove a file bound into a running sandbox is refused (2): an instance above the count, a role set to 0; one line per role, its profile in the command (#389)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  running implementer-2 < <(printf 'ro\tro\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-2.md")
+  snap before
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'implementer-2': .asb/roles/implementer-2.md would disappear for it -- first: "*" --role implementer-2 --shutdown claude"* ]]
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+  # several at once: a role set to 0 under another profile, the Supervisor's purpose file
+  running reviewer-1 plain < <(printf 'ro\tro\t%s\n' "$PROJ/.asb/roles/reviewer-1.md")
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  running supervisor < <(printf 'ro\trw\t%s\n' "$PROJ/.asb/roles/supervisor.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1 reviewer=0
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'reviewer-1': .asb/roles/reviewer-1.md would disappear for it -- first: "*" --role reviewer-1 --shutdown plain"* ]]
+  [[ "$output" == *$'\n'"  role 'supervisor': .asb/roles/supervisor.md would become writable for it -- first: "*" --role supervisor --shutdown claude"* ]]
+  [ "$(grep -c "^  role '" <<<"$output")" -eq 3 ]
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+}
+
+@test "a re-run goes ahead: a role with the project read-only sees its purpose file change; other roles' files change or go from a project it only sees (#389)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/implementer.md"
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  running implementer-1 < <(printf 'ro\tro\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-1.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/implementer-1.md from model 'roles'"* ]]
+  [[ "$output" == *"updated .asb/roles/supervisor.md from model 'roles'"* ]]
+  [[ "$output" == *"removed .asb/roles/implementer-2.md"* ]]
+  [ "$(tail -1 "$PROJ/.asb/roles/implementer-1.md")" = "NEW LINE" ]
+}
+
+@test "a re-run goes ahead: the run changes nothing bound (the Supervisor running, only the dot-file changes); a sandbox no longer running; a running role's project copy-on-write (#389)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+  running supervisor < <(printf 'ro\trw\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
+  local ino
+  ino="$(stat -c %i "$PROJ/.agent-sandbox")"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [connect:implementer-2]"* ]]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  stopped
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles # stopped: the keeper's id names a process gone
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/supervisor.md from model 'roles'"* ]]
+  printf 'NEWER LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  running supervisor < <(printf 'ro\tcow\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+  [ "$(tail -1 "$PROJ/.asb/roles/supervisor.md")" = "NEWER LINE" ]
+  # removed under a copy-on-write project: the bind keeps the old file, nothing disappears
+  running implementer-2 < <(printf 'ro\tcow\t%s\n' "$PROJ/.asb/roles/implementer-2.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed .asb/roles/implementer-2.md"* ]]
+}
+
+@test "a sandbox an older asb started, with no record of its binds: its declared files taken as bound -- refused for a purpose file under a read-write project and for a removal; a read-only project goes ahead (#389)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/implementer.md"
+  RUNNING_OLD=1 running supervisor < <(printf 'connect:%s\tread-only\tbuilt in, #222\n' "$PROJ/.asb/roles/supervisor.md")
+  local sup="$RUN_PID"
+  RUNNING_OLD=1 running implementer-1 < <(printf 'connect:%s\tread-only\tbuilt in, #222\n' "$PROJ/.asb/roles/implementer-1.md")
+  snap before
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'supervisor': .asb/roles/supervisor.md would become writable for it (started by an older asb, which records no binds: its declared files taken as bound) -- first: "*" --role supervisor --shutdown claude"* ]]
+  [[ "$output" != *"role 'implementer-1'"* ]] # its project is read-only: it sees the change
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+  RUN_PID="$sup" stopped
+  RUNNING_OLD=1 running implementer-2 < <(printf 'connect:%s\tread-only\tbuilt in, #222\n' "$PROJ/.asb/roles/implementer-2.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'implementer-2': .asb/roles/implementer-2.md would disappear for it (started by an older asb"* ]]
+  stopped # implementer-2's
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [ "$(tail -1 "$PROJ/.asb/roles/implementer-1.md")" = "NEW LINE" ]
+}
+
+@test "the refusal comes before the backup of a re-added instance's old clone: nothing moved (#389)" {
+  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [ -d "$PROJ/.asb/git/2" ]
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  running supervisor < <(printf 'ro\trw\t%s\n' "$PROJ/.asb/roles/supervisor.md")
+  snap before
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'supervisor': .asb/roles/supervisor.md would become writable for it"* ]]
+  [[ "$output" != *"is added again"* ]]
+  [ ! -e "$PROJ/.asb/backup" ]
+  [ -d "$PROJ/.asb/git/2" ]
+  [ -d "$PROJ/.asb/impl/2" ]
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
 }

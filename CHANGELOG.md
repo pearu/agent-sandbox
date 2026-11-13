@@ -1111,7 +1111,7 @@ names are gone; there are no aliases for removed names before 1.0.
   until it is given another name. A re-run keeps each clone's name, and `--env-dir` on a
   re-run renames the clones' lines where no environment is built at the old name; one
   built there refuses it (`--init` never moves an environment), as does `--env-dir` with
-  `--shared-env`. A file is
+  `--shared-env`. A file but an existing `.agent-sandbox` (below) is
   written to a temporary one beside it and renamed into place, and a link that appears
   while `--init` runs stops it there (exit 2).
 - **`asb --init MODEL --env NAME` run on a file `--init MODEL` wrote without `--env`
@@ -1143,6 +1143,21 @@ names are gone; there are no aliases for removed names before 1.0.
   `.asb/backup/INSTANCE-TIME/` (`tree/`, `git/`), never read and never over a backup
   there, and says so; the instance gets a fresh clone. A link, a FIFO or a `.git`
   directory there is moved as it is, not refused; a link above it still refuses.
+- **`--init` and `--apply` no longer make the dot-file writable for a running role**
+  (#389). They wrote `.agent-sandbox` by renaming a new file over it, which detaches the
+  read-only bind a running sandbox has of it; in a role with the project read-write (the
+  roles model's Supervisor and setup) the path then led to the host's new file, writable
+  (measured). An existing `.agent-sandbox` is now written in place, the same inode and
+  mode (`--setup-remote`'s policy too): a running role sees the new text and still cannot
+  write it. One you made unwritable is no longer replaced; the write fails. `--init` also
+  refuses (exit 2), before it writes anything, a run that would replace a file bound
+  read-only into a running sandbox of the project in a directory the role has read-write
+  -- a running Supervisor's purpose file whose model text changed -- or remove one bound
+  into a running role (`implementer=1` while `implementer-2` runs, `reviewer=0` while a
+  Reviewer runs), naming each role, the file and the `asb --role ROLE --shutdown` to run
+  first. For this a launch records its single-file binds in its keeper directory
+  (`keeper/binds`); for a role an older asb started, its declared files are taken as
+  bound. A role with the project read-only keeps running and sees the new text.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

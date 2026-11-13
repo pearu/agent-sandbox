@@ -544,6 +544,20 @@ session start: a resumed conversation would otherwise keep to the rules its earl
 turns followed, so the briefing says the current text replaces them (the hash is kept in
 the role's state, not the project).
 
+**Re-running `--init` while roles run (#389).** A running role has `.agent-sandbox` and
+its purpose file bound read-only as single files. `--init` and `--apply` write
+`.agent-sandbox` in place, so every running role sees the new text and still cannot
+write it. A purpose file `--init` replaces is a new file, which detaches the bind of the
+old one in a running sandbox: a role with the project read-write (the Supervisor, setup)
+would then reach the new file through the project, writable. A file it removes is gone
+for a running role that has it bound. So, before writing anything, `--init` refuses a run
+that would replace the purpose file of a running role with the project read-write, or
+remove a file bound into any running role (an instance above a count, a role set to 0),
+naming each role and the `asb --role ROLE --shutdown` to run first; shut it down, run
+`--init` again, then launch it. Roles with the project read-only (Planners, Implementers,
+Reviewers, the Gate) keep running and see a new purpose file read-only; under a
+copy-on-write project (the `github` roles) a running role keeps the old one.
+
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:
 `.asb/roles/implementer.addendum.md` for every Implementer,
