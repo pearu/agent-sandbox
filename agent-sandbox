@@ -3683,6 +3683,85 @@ _as_run_scoped_clear() {
   rm -rf -- "$1/@run"
 }
 
+# _as_bwrap_options -- every option of bubblewrap 0.12's, one `NAME ARGS KIND` line each:
+# ARGS how many arguments follow it, KIND what it does at its last argument -- `bind` (a
+# host path bound there), `mount` (something else mounted there, which covers what is
+# under it), `remount` (--remount-ro), `-` (nothing mounted). _as_keeper_binds reads the
+# launch's options by it; tests/unit/init.bats checks it against `bwrap --help`, names
+# and argument counts both ways, so an option bwrap adds or the table misreads is caught.
+_as_bwrap_options() {
+  cat <<'OPTS'
+--help 0 -
+--version 0 -
+--args 1 -
+--argv0 1 -
+--level-prefix 0 -
+--unshare-all 0 -
+--share-net 0 -
+--unshare-user 0 -
+--unshare-user-try 0 -
+--unshare-ipc 0 -
+--unshare-pid 0 -
+--unshare-net 0 -
+--unshare-uts 0 -
+--unshare-cgroup 0 -
+--unshare-cgroup-try 0 -
+--userns 1 -
+--userns2 1 -
+--disable-userns 0 -
+--assert-userns-disabled 0 -
+--pidns 1 -
+--uid 1 -
+--gid 1 -
+--hostname 1 -
+--chdir 1 -
+--clearenv 0 -
+--setenv 2 -
+--unsetenv 1 -
+--lock-file 1 -
+--sync-fd 1 -
+--bind 2 bind
+--bind-try 2 bind
+--dev-bind 2 bind
+--dev-bind-try 2 bind
+--ro-bind 2 bind
+--ro-bind-try 2 bind
+--bind-fd 2 mount
+--ro-bind-fd 2 mount
+--remount-ro 1 remount
+--overlay-src 1 -
+--overlay 3 mount
+--tmp-overlay 1 mount
+--ro-overlay 1 mount
+--exec-label 1 -
+--file-label 1 -
+--proc 1 mount
+--dev 1 mount
+--tmpfs 1 mount
+--mqueue 1 mount
+--dir 1 -
+--file 2 -
+--bind-data 2 mount
+--ro-bind-data 2 mount
+--symlink 2 -
+--seccomp 1 -
+--add-seccomp-fd 1 -
+--block-fd 1 -
+--userns-block-fd 1 -
+--info-fd 1 -
+--json-status-fd 1 -
+--new-session 0 -
+--die-with-parent 0 -
+--as-pid-1 0 -
+--cap-add 1 -
+--cap-drop 1 -
+--perms 1 -
+--size 1 -
+--chmod 2 -
+--not-a-security-boundary 0 -
+OPTS
+}
+
 # _as_keeper_binds BWRAP-OPTION... -- the launch's single-file binds that sit on a file
 # of the host's, for --init (#389). A host rename or removal of the file a mount sits
 # on detaches that mount in the sandbox (measured), whatever the mount's source and
@@ -3702,31 +3781,24 @@ _as_run_scoped_clear() {
 # control path no sandbox sees.
 _as_keeper_binds() {
   local -a bop=() bsrc=() bdst=() rs=() rd=() v=("$@")
-  local i=0 n=$# a j k d p kind rel
+  local i=0 n=$# a j k d p kind rel o c
+  local -A oargs=() okind=()
+  while read -r o c kind; do oargs[$o]="$c" okind[$o]="$kind"; done < <(_as_bwrap_options)
   while ((i < n)); do
     a="${v[i]}"
-    case "$a" in
-      --bind | --bind-try | --dev-bind | --dev-bind-try | --ro-bind | --ro-bind-try)
-        bop+=("$a") bsrc+=("${v[i + 1]:-}") bdst+=("${v[i + 2]:-}")
-        i=$((i + 3))
-        ;;
-      --overlay)
-        bop+=("$a") bsrc+=("") bdst+=("${v[i + 3]:-}")
-        i=$((i + 4))
-        ;;
-      --tmpfs | --dir | --proc | --dev | --mqueue | --tmpfs-overlay | --ro-overlay | --remount-ro)
-        bop+=("$a") bsrc+=("") bdst+=("${v[i + 1]:-}")
-        i=$((i + 2))
-        ;;
-      --file | --bind-data | --ro-bind-data)
-        bop+=("$a") bsrc+=("") bdst+=("${v[i + 2]:-}")
-        i=$((i + 3))
-        ;;
-      --setenv | --symlink | --chmod) i=$((i + 3)) ;;
-      --clearenv | --unshare-* | --share-net | --die-with-parent | --new-session | --as-pid-1 | \
-        --disable-userns | --assert-userns-disabled | --level-prefix) i=$((i + 1)) ;;
-      *) i=$((i + 2)) ;; # every other option of bwrap's takes one argument
+    # An option the table does not know: where its arguments end cannot be told, and a
+    # record read past it could drop a mount. None is written (1, said), and --init then
+    # reads the launch's declarations instead, as for a launch an older asb started.
+    if [[ -z "${oargs[$a]+x}" ]]; then
+      _as_msg "bwrap option '$a' is not in the engine's table (_as_bwrap_options): this launch's single-file mounts are not recorded, and --init takes its declared files as mounted, as for a launch an older asb started"
+      return 1
+    fi
+    c="${oargs[$a]}"
+    case "${okind[$a]}" in
+      bind) bop+=("$a") bsrc+=("${v[i + 1]:-}") bdst+=("${v[i + 2]:-}") ;;
+      mount | remount) bop+=("$a") bsrc+=("") bdst+=("${v[i + c]:-}") ;;
     esac
+    i=$((i + 1 + c))
   done
   ((${#bop[@]})) || return 0
   # every path resolved at once (one realpath), an empty one as /
@@ -3737,8 +3809,7 @@ _as_keeper_binds() {
   mapfile -d '' -t rs < <(realpath -m -z -- "${rs[@]}")
   mapfile -d '' -t rd < <(realpath -m -z -- "${rd[@]}")
   for ((j = 0; j < ${#bop[@]}; j++)); do
-    case "${bop[j]}" in --bind* | --dev-bind* | --ro-bind*) ;; *) continue ;; esac
-    [[ -f "${bsrc[j]}" ]] || continue
+    [[ "${okind[${bop[j]}]}" == bind && -f "${bsrc[j]}" ]] || continue
     d="${rd[j]%/}"
     for ((k = j + 1; k < ${#bop[@]}; k++)); do
       [[ "${bop[k]}" != --remount-ro ]] || continue
@@ -3748,8 +3819,8 @@ _as_keeper_binds() {
     for ((k = j - 1; k >= 0; k--)); do
       [[ "${bop[k]}" != --remount-ro ]] || continue
       [[ "$p" == "${rd[k]%/}" || "$p" == "${rd[k]%/}"/* ]] || continue
-      case "${bop[k]}" in
-        --bind* | --dev-bind* | --ro-bind*)
+      case "${okind[${bop[k]}]}" in
+        bind)
           rel="${d#"${rd[k]%/}"}" kind=rw
           [[ "${bop[k]}" == --ro-bind* ]] && kind=ro
           for ((i = k + 1; i < ${#bop[@]}; i++)); do
@@ -3814,7 +3885,9 @@ _as_keeper_start() {
   # The join-scoped paths, for each join to make its own stores for.
   ((${#_join_scoped[@]})) && printf '%s\n' "${_join_scoped[@]}" >"$kd/join-scoped"
   # Its single-file binds, for --init to tell what a host write would do to it (#389).
-  _as_keeper_binds ${_bwrap_opts[@]+"${_bwrap_opts[@]}"} >"$kd/binds" || return 1
+  # None when it cannot be read (an option it does not know, said): --init then reads
+  # the launch's declarations, as for a keeper an older asb started.
+  _as_keeper_binds ${_bwrap_opts[@]+"${_bwrap_opts[@]}"} >"$kd/binds" || rm -f -- "$kd/binds"
   (_as_keeper_supervise "$sb" -- "$@") &
   local sup=$!
   for ((i = 0; i < 1500; i++)); do
@@ -13263,8 +13336,10 @@ _as_init() {
         _init_change "${path#"$proj"/}"
         if [[ "$_ic" == remove && "$dir" =~ ^(rw|ro|\?)$ ]]; then
           why+="${why:+, }${path#"$proj"/} would disappear for it"
-        elif [[ "$_ic" == replace && "$dir" =~ ^(rw|\?)$ ]]; then
+        elif [[ "$_ic" == replace && "$dir" == rw ]]; then
           why+="${why:+, }${path#"$proj"/} would become writable for it"
+        elif [[ "$_ic" == replace && "$dir" == "?" ]]; then
+          why+="${why:+, }${path#"$proj"/} may become writable for it"
         fi
       done
       [[ -z "$why" ]] || hits+=("  role '$role': $why$old -- first: $invoked --role $role --shutdown $prof")
@@ -14024,7 +14099,7 @@ _as_dotfile_write() {
       return 0
     fi
     exec {fd}<&-
-    _as_msg "$f could not be written in full, and may be half-written now. The text it was to have is kept in $t: put it in place with  cat $t >$f  (or restore the file), then review it with --trust"
+    _as_msg "$f could not be written in full, and may be half-written now. The text it was to have is kept in $t: put it in place with  cat $(printf '%q' "$t") >$(printf '%q' "$f")  (or restore the file), then review it with --trust"
     return 1
   fi
   t="$(mktemp -- "$(dirname -- "$f")/.agent-sandbox.XXXXXX")" || {

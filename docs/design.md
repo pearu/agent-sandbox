@@ -596,9 +596,18 @@ Stated plainly. These are what the adversary above can still do.
   coord index and `.asb/init.sums` are read by path just before `--init` rewrites them,
   so a link swapped in after the last check and before that read has its target's text
   copied into the project; a role launched after `--init` looked for running ones and
-  before it writes is not seen. A launch hashes the dot-file and later parses it again by
-  path, so a file rewritten between the two is applied, as before; written in place, the
-  text it reads in that window can be half-written. A failed in-place write can leave a
+  before it writes is not seen. A writer outside asb that puts a new file in place of
+  `.agent-sandbox` or a purpose file -- an editor's save by temporary file and rename,
+  `sed -i`, a `git checkout` that writes the file anew -- detaches a running sandbox's
+  read-only mount of it the same way (measured: `mv`, `sed -i`, remove and create): where
+  the role has the project read-write, the default and so a plain `asb claude` too, the
+  path then leads to the host's new file, writable for the role until it is shut down. A
+  writable dot-file makes this window reachable from inside: a launch hashes the dot-file
+  and later parses it again by path, so a file rewritten between the two is applied, as
+  before; written in place, the text it reads in that window can be half-written. Two
+  in-place writers at once (`--init` and `--apply` take no lock) can each write over the
+  file and each cut it, leaving a mix of the two texts where a rename left one whole. A
+  failed in-place write can leave a
   half-written file, which a launch refuses through the trust gate (its hash is not the
   approved one). A hard link to `.agent-sandbox` made while it was not bound keeps
   pointing at the live file after an in-place write, where a rename used to cut it. A

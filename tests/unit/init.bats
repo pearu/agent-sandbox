@@ -611,7 +611,7 @@ STUB
 }
 
 @test "run again: a purpose file --init wrote and nobody changed takes the model's text; a changed one is kept" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- github
   [ "$status" -eq 0 ]
   [ -f "$PROJ/.asb/init.sums" ]
@@ -651,7 +651,7 @@ STUB
 }
 
 @test "run again: a changed purpose file with no addendum gets the migration offer -- the model's text in .asb/migrate/, the addenda named, the steps; --init never touches an addendum (#353)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=0 reviewer=0
   [ "$status" -eq 0 ]
   printf 'MINE\n' >>"$PROJ/.asb/roles/implementer-1.md"
@@ -2868,8 +2868,37 @@ binds_of() {
   [ "$output" = "rw|$d/n"$'\n'"l/f" ]
 }
 
+@test "_as_bwrap_options is bwrap's own list: every option of the installed bwrap's --help with its argument count, and (for 0.12, which it was written from) no other (#389)" {
+  command -v bwrap >/dev/null || skip "bwrap not installed"
+  source_engine
+  local ver
+  bwrap --help 2>&1 | awk '$1 ~ /^--/ { n = 0; for (i = 2; i <= NF && $i ~ /^[A-Z][A-Z0-9_]*$/; i++) n++; print $1, n }' | sort >"$BATS_TEST_TMPDIR/help"
+  [ -s "$BATS_TEST_TMPDIR/help" ]
+  _as_bwrap_options | awk '{ print $1, $2 }' | sort >"$BATS_TEST_TMPDIR/table"
+  # every option bwrap has is in the table, with its count
+  [ -z "$(comm -23 "$BATS_TEST_TMPDIR/help" "$BATS_TEST_TMPDIR/table")" ]
+  ver="$(bwrap --version | awk '{ print $2 }')"
+  if [[ "$(printf '%s\n' 0.12.0 "$ver" | sort -V | head -1)" == 0.12.0 ]]; then
+    [ -z "$(comm -13 "$BATS_TEST_TMPDIR/help" "$BATS_TEST_TMPDIR/table")" ] # and nothing bwrap lacks
+  fi
+}
+
+@test "_as_keeper_binds reads by the table: --dir mounts nothing, --bind-fd takes two arguments, --tmp-overlay covers what is under it; an option it does not know writes no record and says so (#389)" {
+  source_engine
+  local d="$BATS_TEST_TMPDIR/t"
+  mkdir -p "$d/p"
+  printf 'x\n' >"$d/p/f"
+  [ "$(_as_keeper_binds --bind "$d/p" "$d/p" --dir "$d/p" --ro-bind "$d/p/f" "$d/p/f" --dir "$d/p/f" | tr '\0' '|')" = "rw|$d/p/f|" ]
+  [ "$(_as_keeper_binds --bind "$d/p" "$d/p" --bind-fd 7 /x --ro-bind "$d/p/f" "$d/p/f" | tr '\0' '|')" = "rw|$d/p/f|" ]
+  [ -z "$(_as_keeper_binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --tmp-overlay "$d/p" | tr '\0' '|')" ]
+  run _as_keeper_binds --bind "$d/p" "$d/p" --no-such-option --ro-bind "$d/p/f" "$d/p/f"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bwrap option '--no-such-option' is not in the engine's table (_as_bwrap_options): this launch's single-file mounts are not recorded"* ]]
+  [[ "$output" != *"$d/p/f"* ]]
+}
+
 @test "a running role with the project read-write: a re-run that would replace its read-only purpose file is refused (2), nothing written, the role, file and command named; after it ends, the run goes ahead (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
   [ "$status" -eq 0 ]
   printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
@@ -2891,7 +2920,7 @@ binds_of() {
 }
 
 @test "a re-run that would remove a file bound into a running sandbox is refused (2): an instance above the count, a role set to 0; one line per role, its profile in the command (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 0 ]
   running implementer-2 < <(printf 'ro\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-2.md")
@@ -2915,7 +2944,7 @@ binds_of() {
 }
 
 @test "a re-run goes ahead: a role with the project read-only sees its purpose file change; other roles' files change or go from a project it only sees (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 0 ]
   printf 'NEW LINE\n' >>"$H/models/roles/roles/implementer.md"
@@ -2930,7 +2959,7 @@ binds_of() {
 }
 
 @test "a re-run goes ahead: the run changes nothing bound (the Supervisor running, only the dot-file changes); a sandbox no longer running; a running role's project copy-on-write (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
   [ "$status" -eq 0 ]
   running supervisor < <(printf 'rw\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
@@ -2958,7 +2987,7 @@ binds_of() {
 }
 
 @test "a sandbox an older asb started, with no record of its binds: its declared files taken as bound in a directory that cannot be told -- a change or a removal refused, whatever its project (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 0 ]
   printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
@@ -2970,9 +2999,9 @@ binds_of() {
   snap before
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 2 ]
-  [[ "$output" == *$'\n'"  role 'supervisor': .asb/roles/supervisor.md would become writable for it (started by an older asb, which records no binds: its declared files taken as bound) -- first: "*" --role supervisor --shutdown claude"* ]]
+  [[ "$output" == *$'\n'"  role 'supervisor': .asb/roles/supervisor.md may become writable for it (started by an older asb, which records no binds: its declared files taken as bound) -- first: "*" --role supervisor --shutdown claude"* ]]
   # read-only from its file, but a --connect flag at its launch is in no record
-  [[ "$output" == *$'\n'"  role 'implementer-1': .asb/roles/implementer-1.md would become writable for it (started by an older asb"* ]]
+  [[ "$output" == *$'\n'"  role 'implementer-1': .asb/roles/implementer-1.md may become writable for it (started by an older asb"* ]]
   snap after
   cmp "$H/snap.before" "$H/snap.after"
   RUN_PID="$sup" stopped
@@ -2988,7 +3017,7 @@ binds_of() {
 }
 
 @test "the refusal comes before the backup of a re-added instance's old clone: nothing moved (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 0 ]
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
@@ -3020,7 +3049,7 @@ binds_of() {
 }
 
 @test "the bookkeeping files bound read-write: a re-run that leaves them as they are goes ahead; one that changes the coord index, .asb/init.sums or a migration copy is refused (#389)" {
-  cp -r "$(dirname "$ENGINE")/models" "$H/models"
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
   [ "$status" -eq 0 ]
   printf 'MINE\n' >>"$PROJ/.asb/roles/supervisor.md"

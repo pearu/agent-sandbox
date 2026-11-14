@@ -1009,7 +1009,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 
 @test "_as_dotfile_write: a write that fails once begun says the file may be half-written and keeps the intended text in a file it names; a file swapped for a link after the check is not written through (#389)" {
   source_engine
-  local d="$H/wf" t
+  local d="$H/w f" t # a space in the path: the recovery command quotes it
   mkdir -p "$d"
   printf 'old text\n' >"$d/.agent-sandbox"
   # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
@@ -1018,8 +1018,13 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   unset -f truncate
   [ "$status" -eq 1 ]
   [[ "$output" == *"agent-sandbox: $d/.agent-sandbox could not be written in full, and may be half-written now. The text it was to have is kept in "* ]]
-  t="${output#*is kept in }" t="${t%%:*}"
+  t="${output#*is kept in }" t="${t%%: put it*}"
   [ "$(cat "$t")" = new ]
+  # the command it prints, run as printed, puts the text in place
+  local cmd="${output#*put it in place with  }"
+  cmd="${cmd%%  (or restore*}"
+  bash -c "$cmd"
+  [ "$(cat "$d/.agent-sandbox")" = new ]
   rm -f "$t"
   # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
   dd() { return 1; } # the write itself fails
@@ -1027,7 +1032,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   unset -f dd
   [ "$status" -eq 1 ]
   [[ "$output" == *"may be half-written now"* ]]
-  t="${output#*is kept in }" t="${t%%:*}"
+  t="${output#*is kept in }" t="${t%%: put it*}"
   [ "$(cat "$t")" = other ]
   rm -f "$t"
   # a link put at the file between the check and the open: its target is never written

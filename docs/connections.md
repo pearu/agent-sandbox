@@ -674,13 +674,19 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   file is still read to find the role when no `--role` or `AGENT_SANDBOX_ROLE` names it,
   and then only an approved file is read, so there an unapproved edit refuses the join
   as it refuses a launch.
-- **A file bound on its own shows the file as it was when the keeper started.** A bind
+- **A file bound on its own shows the file as it was when the keeper started**, where
+  its mount point is not the host's file (a path under the sandbox's own `$HOME`, an
+  overlay, a store's copy). A bind
   holds the inode it was made on, and a native save by temp file and rename (how editors
   and Claude Code write) makes a new one, so `read-only` file paths (`CLAUDE.md`,
   `settings.json`) and the relocated `config = read-write` do not see such a save until
   the next keeper; a save in place is seen at once. Directories, and a `read-write` file
   that is its own source (served by the directory bind around it, with no bind of its
-  own), are live. This was already true within one launch; with the keeper a later
+  own), are live. A file bound over itself in a directory the sandbox has from the host
+  (the dot-file, a purpose file) is the other case: a save by rename detaches its bind,
+  and the path then shows the host's new file, writable where that directory is
+  read-write (measured, #389; docs/design.md).
+  This was already true within one launch; with the keeper a later
   terminal is inside that launch too. Rebinding a replaced file from the keeper's host
   side is a follow-up.
 - **Per-launch state is per keeper**: the session directory, the proxy token, the
