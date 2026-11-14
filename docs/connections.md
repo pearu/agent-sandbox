@@ -512,17 +512,22 @@ file is `copy`, since overlayfs cannot stack on one file.
 mount point the role cannot rename or remove, but where the role has the directory
 around it read-write from the host it could rename a parent: the read-only path moves
 with it, on the host too, and the role could put its own file at the old path for the
-next launch to bind read-only. So at launch each directory between such a read-write
-root and a read-only bind (`./.asb` and `./.asb/roles` above `./.asb/roles/x.md` in a
-read-write project) is bound onto itself, read-write: a mount point too, so the role's
-rename or removal of it fails with EBUSY. Every read-only bind is covered, the
-built-in dot-file and purpose files included, wherever declared; `own` and `read-write`
-binds get none for their own sake, and nothing is pinned under `--preset native`, under a
-`copy-on-write` project (nothing there reaches the host) or inside a read-only mount. A
+next launch to bind read-only. So at launch every directory above a read-only bind, up
+to the outermost one the role has read-write from the host, is bound onto itself,
+read-write, unless it is a mount point already (`./.asb` and `./.asb/roles` above
+`./.asb/roles/x.md` in a read-write project): a mount point too, so the role's rename or
+removal of it fails with EBUSY. The walk goes through the mounts on the way: under
+`./x/a/ = read-write`, `own`, `copy` or `copy-on-write`, `./x/a/b/f.md = read-only` pins
+`./x` too. Every read-only bind is covered, the built-in dot-file and purpose files
+included, wherever declared; `own` and `read-write` binds get none for their own sake,
+and nothing is pinned under `--preset native`, inside a `copy-on-write` mount, the
+project included (nothing there reaches the host), or inside a read-only mount. A
 pinned directory stays writable inside; a rename, hard link or `git mv` across its
 boundary fails with "Invalid cross-device link", while `mv`, `cp`, rsync and git's
-checkout, stash and rebase work (they copy). A directory that is not there on the host,
-or is a symbolic link, is not pinned, and the launch says so.
+checkout, stash and rebase work (they copy). A directory that is not there on the host
+is not pinned, and the launch says so (not for one in the role's own store, where only a
+mount point bwrap makes is at stake); a symbolic link is not pinned either, and the
+launch names it: the role can then rename the directory it points to.
 
 **Paths nest, and are bound by depth, outer first** (#196): channel paths and
 declarations alike, whichever file they come from and in whatever order they are

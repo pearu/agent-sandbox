@@ -61,7 +61,7 @@ ref_engine() {
   local d="$BATS_TEST_TMPDIR/ref"
   mkdir -p "$d"
   cp -r "$(dirname "$ENGINE")/components" "$d/"
-  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
+  sed 's/^  _as_ro_pins_reuse _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
   chmod +x "$d/agent-sandbox"
   [ "$(grep -c '^  : no pins$' "$d/agent-sandbox")" -eq 1 ]
   REF="$d/agent-sandbox"
@@ -85,6 +85,24 @@ roles_project() {
   [ "$status" -eq 0 ]
 }
 
+# b1 MODE -- ./x/a/ declared MODE between the read-write project and ./x/a/b/f.md read-only:
+# the role's `mv x` is refused, the host unchanged, the next launch reads the host's file.
+b1() {
+  mkdir -p "$W/x/a/b"
+  printf 'HOST\n' >"$W/x/a/b/f.md"
+  local -a decl=(--connect "./x/a/ = $1" --connect './x/a/b/f.md = read-only')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    python3 ops.py mv_x:rename:x:x.moved
+    mkdir -p x/a/b 2>/dev/null; echo ROLE >x/a/b/f.md 2>/dev/null; true'
+  [ "$status" -eq 0 ]
+  [ "$(report mv_x)" = EBUSY ]
+  [ ! -e "$W/x.moved" ]
+  [ "$(cat "$W/x/a/b/f.md")" = HOST ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen=$(cat x/a/b/f.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+}
+
 @test "the role's rename and removal of each pinned directory are refused (EBUSY), and the host is unchanged" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec python3 ops.py \
     mv_a:rename:a:a.moved mv_b:rename:a/b:a/b.moved rmdir_a:rmdir:a rmdir_b:rmdir:a/b
@@ -104,6 +122,37 @@ roles_project() {
   [ "$status" -eq 0 ]
   [ "$(report mv_a)" = ok ]
   [ -f "$W/a.moved/b/f.md" ]
+}
+
+@test "B1: a read-write declaration between the project and the read-only file does not stop the pins" {
+  b1 read-write
+}
+
+@test "B1: an own declaration between" {
+  b1 own
+}
+
+@test "B1: a copy declaration between" {
+  b1 copy
+}
+
+@test "B1: a copy-on-write declaration between" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  b1 copy-on-write
+}
+
+@test "B2: a pin beside a copy-on-write directory launches (never between --overlay-src and --overlay)" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  mkdir -p "$W/a/cow" "$W/a/z"
+  printf 'HOST\n' >"$W/a/z/f.md"
+  run_sandboxed "${BASE[@]}" -- --connect './a/cow/ = copy-on-write' --connect './a/z/f.md = read-only' \
+    --profile probe --exec python3 ops.py mv_a:rename:a:a.moved cow:write:a/cow/w:W
+  [ "$status" -eq 0 ]
+  [ "$(report mv_a)" = EBUSY ]
+  [ "$(report cow)" = ok ]
+  [ ! -e "$W/a/cow/w" ] # the overlay's, not the project's
 }
 
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {

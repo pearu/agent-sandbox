@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# The read-only binds' parents, pinned (_as_ro_pins): every directory between a
-# read-write root and a read-only bind is bound onto itself, so the role cannot rename or
-# remove it and move the read-only path away. The computation on fixed option lists (the
+# The read-only binds' parents, pinned (_as_ro_pins): every directory above a read-only
+# bind that the role has read-write from the host is bound onto itself, so the role cannot
+# rename or remove it and move the read-only path away. The computation on fixed option lists (the
 # cases of the measured prototype, readonly-spike's probes/readonly-pin-bwrap.py, and
 # more), then the engine's launches: unchanged where nothing is pinned, and the shipped
 # models' roles. The real mounts are tests/integration/ro-pins.bats'.
@@ -10,23 +10,26 @@ setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   P="$BATS_TEST_TMPDIR/p"
   ST="$BATS_TEST_TMPDIR/state"
-  mkdir -p "$P/sub" "$P/.asb/roles" "$P/.asb/coord/me" "$P/a/b/c" "$P/a/r" "$P/a/s" "$ST/x/d"
-  touch "$P/sub/f.md" "$P/.asb/roles/r.md" "$P/a/f.md" "$P/a/b/f.md" "$P/a/b/c/f.md" "$P/a/r/f.md" "$P/top.md" "$ST/f"
+  mkdir -p "$P/sub" "$P/.asb/roles" "$P/.asb/coord/me" "$P/a/b/c" "$P/a/r" "$P/a/s" "$ST/x/d" \
+    "$P/x/a/b" "$P/a/bc/d" "$P/a/cow" "$P/a/z" "$P/a/t"
+  touch "$P/sub/f.md" "$P/.asb/roles/r.md" "$P/a/f.md" "$P/a/b/f.md" "$P/a/b/c/f.md" "$P/a/r/f.md" "$P/top.md" "$ST/f" \
+    "$P/x/a/b/f.md" "$P/a/bc/d/f" "$P/a/z/f.md"
 }
 
 # pins [native] -- OPTS -- OUT and PIN from _as_ro_pins over the words after --, the engine
-# sourced in a subshell; MSG its messages.
+# sourced in a subshell; MSG its messages, RC its status.
 pins() {
   local preset=shared
   [[ "$1" == native ]] && preset=native && shift
   [[ "$1" == -- ]] && shift
   local -a _all=()
   mapfile -d '' _all < <(bash -c 'source "$1"; shift; _preset="$1"; shift; IN=("$@")
-    _as_ro_pins IN OUT PIN 2>"$BATS_TEST_TMPDIR/msg"
-    printf "%s\0" "${#OUT[@]}" "${OUT[@]}" ${PIN[@]+"${PIN[@]}"}' _ "$ENGINE" "$preset" "$@")
-  local n="${_all[0]}"
-  OUT=("${_all[@]:1:n}")
-  PIN=("${_all[@]:n+1}")
+    _as_ro_pins IN OUT PIN 2>"$BATS_TEST_TMPDIR/msg"; rc=$?
+    printf "%s\0" "$rc" "${#OUT[@]}" "${OUT[@]}" ${PIN[@]+"${PIN[@]}"}' _ "$ENGINE" "$preset" "$@")
+  RC="${_all[0]}"
+  local n="${_all[1]}"
+  OUT=("${_all[@]:2:n}")
+  PIN=("${_all[@]:n+2}")
   MSG="$(cat "$BATS_TEST_TMPDIR/msg")"
   IN=("$@")
 }
@@ -49,7 +52,7 @@ ref_engine() {
   mkdir -p "$d"
   cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$d/"
   cp "$(dirname "$ENGINE")/VERSION" "$d/" 2>/dev/null || true
-  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
+  sed 's/^  _as_ro_pins_reuse _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
   chmod +x "$d/agent-sandbox"
   [ "$(grep -c '^  : no pins$' "$d/agent-sandbox")" -eq 1 ]
   REF="$d/agent-sandbox"
@@ -141,10 +144,74 @@ pinned() {
   [ "${#PIN[@]}" -eq 0 ]
 }
 
-@test "a read-write directory from the role's store counts: the pin's source is under the store" {
+@test "a read-write directory from the role's store counts: the pin's source is under the store, and the walk goes on above it" {
   pins -- --bind "$P" "$P" --bind "$ST/x" "$P/.asb/s" --ro-bind "$ST/f" "$P/.asb/s/d/f"
-  same --bind "$P" "$P" --bind "$ST/x" "$P/.asb/s" --bind "$ST/x/d" "$P/.asb/s/d" --ro-bind "$ST/f" "$P/.asb/s/d/f"
-  [ "${PIN[*]}" = "$P/.asb/s/d" ]
+  same --bind "$P" "$P" --bind "$P/.asb" "$P/.asb" --bind "$ST/x" "$P/.asb/s" --bind "$ST/x/d" "$P/.asb/s/d" \
+    --ro-bind "$ST/f" "$P/.asb/s/d/f"
+  [ "${PIN[*]}" = "$P/.asb $P/.asb/s/d" ]
+}
+
+@test "B1: a read-write mount between the read-write root and the read-only bind does not stop the walk" {
+  pins -- --bind "$P" "$P" --bind "$P/x/a" "$P/x/a" --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
+  same --bind "$P" "$P" --bind "$P/x" "$P/x" --bind "$P/x/a" "$P/x/a" --bind "$P/x/a/b" "$P/x/a/b" \
+    --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
+  [ "${PIN[*]}" = "$P/x $P/x/a/b" ] # the mount point ./x/a is not pinned again
+}
+
+@test "B1: an own store between: ./x pinned above it" {
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/x/a" --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
+  [ "${PIN[*]}" = "$P/x" ] # $ST/x/b is not there: nothing to pin inside the store
+  [ -z "$MSG" ]            # and not said: only a mount point bwrap makes in the store
+}
+
+@test "B1: a copy-on-write overlay between: nothing inside it, ./x above it" {
+  pins -- --bind "$P" "$P" --overlay-src "$P/x/a" --overlay /up /wk "$P/x/a" --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
+  same --bind "$P" "$P" --bind "$P/x" "$P/x" --overlay-src "$P/x/a" --overlay /up /wk "$P/x/a" \
+    --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
+  [ "${PIN[*]}" = "$P/x" ]
+}
+
+@test "B2: a pin never goes between --overlay-src and its --overlay" {
+  pins -- --bind "$P" "$P" --overlay-src "$P/a/cow" --overlay /up /wk "$P/a/cow" --ro-bind "$P/a/z/f.md" "$P/a/z/f.md"
+  same --bind "$P" "$P" --bind "$P/a" "$P/a" --overlay-src "$P/a/cow" --overlay /up /wk "$P/a/cow" \
+    --bind "$P/a/z" "$P/a/z" --ro-bind "$P/a/z/f.md" "$P/a/z/f.md"
+}
+
+@test "B2: nor between --size or --perms and the option they qualify" {
+  pins -- --bind "$P" "$P" --size 1000 --perms 0700 --tmpfs "$P/a/t" --ro-bind "$P/a/r/f.md" "$P/a/r/f.md"
+  same --bind "$P" "$P" --bind "$P/a" "$P/a" --size 1000 --perms 0700 --tmpfs "$P/a/t" \
+    --bind "$P/a/r" "$P/a/r" --ro-bind "$P/a/r/f.md" "$P/a/r/f.md"
+}
+
+@test "what shows at a path is the latest mount at or above it: a read-only mount over an earlier read-write one hides it" {
+  pins -- --bind "$P/x" "$P/x" --ro-bind "$P" "$P" --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
+  same "${IN[@]}"
+  pins -- --bind "$P/x" "$P/x" --tmpfs "$P" --ro-bind "$ST/f" "$P/x/a/b/f.md"
+  same "${IN[@]}"
+}
+
+@test "a read-only file two levels inside a read-only directory in a read-write root: nothing inside the read-only mount" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/a" "$P/a" --ro-bind "$P/a/b/c/f.md" "$P/a/b/c/f.md"
+  same "${IN[@]}"
+}
+
+@test "containment is by path components: a mount at ./a/b says nothing about ./a/bc" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/b" "$P/a/b" --ro-bind "$P/a/bc/d/f" "$P/a/bc/d/f"
+  same --bind "$P" "$P" --bind "$P/a" "$P/a" --ro-bind "$P/a/b" "$P/a/b" --bind "$P/a/bc" "$P/a/bc" \
+    --bind "$P/a/bc/d" "$P/a/bc/d" --ro-bind "$P/a/bc/d/f" "$P/a/bc/d/f"
+}
+
+@test "a pin a later mount above it hid is made again for a read-only bind after that mount" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md" --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  same --bind "$P" "$P" --bind "$P/a" "$P/a" --ro-bind "$P/a/f.md" "$P/a/f.md" --bind "$P" "$P" \
+    --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  [ "${PIN[*]}" = "$P/a $P/a/b" ]
+}
+
+@test "a directory remounted read-only later is not pinned (the remount would take the pin), and said" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md" --remount-ro "$P/a"
+  same "${IN[@]}"
+  [[ "$MSG" == *"read-only pins: $P/a is remounted read-only later in the list, so it is not pinned"* ]]
 }
 
 @test "nested read-only binds: the parents of the outer one pinned, nothing inside the read-only mount" {
@@ -218,13 +285,69 @@ pinned() {
   ln -s a "$P/lnk"
   pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
   same --bind "$P" "$P" --bind "$P/lnk/b" "$P/lnk/b" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
-  [[ "$MSG" == *"read-only pins: $P/lnk is a symbolic link on the host ($P/lnk), so it is not pinned"* ]]
+  [[ "$MSG" == *"read-only pins: $P/lnk is a symbolic link on the host ($P/lnk), so it is not pinned: the role can rename the directory it points to"* ]]
 }
 
-@test "an option the computation does not know leaves the list unchanged, and is said" {
+@test "an option list the computation cannot read refuses: an unknown option, a word that is no option, missing arguments" {
   pins -- --bind "$P" "$P" --new-option x --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
-  same "${IN[@]}"
-  [[ "$MSG" == *"bwrap option '--new-option' unknown to the read-only pins: none made this launch"* ]]
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"the read-only pins cannot read the bwrap option '--new-option' (at 3): this is a bug in agent-sandbox, and the launch is refused rather than run without them"* ]]
+  pins -- --bind "$P" "$P" stray --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"cannot read the bwrap option 'stray' (at 3)"* ]]
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md"
+  [ "$RC" -eq 1 ]
+  pins -- --bind "$P" "$P" --level-prefix --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  [ "$RC" -eq 0 ] # takes no argument
+  [ "${PIN[*]}" = "$P/a $P/a/b" ]
+}
+
+@test "the option table is bubblewrap's: every option of the installed bwrap's --help, with its number of arguments" {
+  command -v bwrap >/dev/null || skip "bwrap not installed"
+  local -A want=() got=()
+  local o rest line
+  while IFS= read -r line; do
+    [[ "$line" =~ ^\ \ \ \ (--[a-z0-9-]+)((\ [A-Z0-9_]+)*)(\ |$) ]] || continue
+    o="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]}"
+    rest="${rest//[!\ ]/}"
+    want[$o]=${#rest}
+  done < <(bwrap --help 2>&1)
+  [ "${#want[@]}" -gt 60 ]
+  # shellcheck disable=SC1090
+  source "$ENGINE"
+  _as_bwrap_nargs got
+  for o in "${!want[@]}"; do
+    [ "${got[$o]-missing}" = "${want[$o]}" ] || {
+      echo "$o: table ${got[$o]-missing}, bwrap ${want[$o]}" >&2
+      return 1
+    }
+  done
+  for o in "${!got[@]}"; do
+    [ -n "${want[$o]+x}" ] || {
+      echo "$o: in the table, not in bwrap --help" >&2
+      return 1
+    }
+  done
+}
+
+@test "the briefing's pins are reused by the launch when only harmless options were added, else computed again" {
+  # shellcheck disable=SC1090
+  source "$ENGINE"
+  local _preset=shared _rp_cached=1
+  local -a _rp_cache_in=(--bind "$P" "$P") _rp_cache_out=(SENTINEL) _rp_cache_pins=() _rp_cache_rw=("$P") _rp_rw=()
+  local -a IN=(--bind "$P" "$P" --share-net --setenv A B --ro-bind "$ST/f" /etc/ssl/x) OUT=() PIN=()
+  _as_ro_pins_reuse IN OUT PIN
+  [ "${OUT[*]}" = "SENTINEL --share-net --setenv A B --ro-bind $ST/f /etc/ssl/x" ]
+  IN=(--bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md") # inside a read-write mount: computed
+  _as_ro_pins_reuse IN OUT PIN
+  [ "${PIN[*]}" = "$P/a" ]
+  IN=(--bind "$P" "$P" --bind "$ST/x" /elsewhere) # a read-write bind: computed
+  _as_ro_pins_reuse IN OUT PIN
+  [ "${OUT[*]}" = "${IN[*]}" ]
+  _rp_cache_in=(--bind "$P" "$P" --new) # another prefix: computed
+  IN=(--bind "$P" "$P" --share-net)
+  _as_ro_pins_reuse IN OUT PIN
+  [ "${OUT[*]}" = "${IN[*]}" ]
 }
 
 @test "odd characters in a path: a space, a newline and a glob character pass through intact" {
@@ -288,10 +411,17 @@ pinned() {
   pinned gate
 }
 
-@test "the github model: its setup role gets .asb and .asb/roles pinned; the copy-on-write roles none" {
+@test "the github model: its setup role gets .asb and .asb/roles pinned; the copy-on-write roles and the default none" {
   model github
   pinned gh-setup .asb .asb/roles
   pinned gh-review-1
   pinned gh-triage-1
   pinned gh-fix-1
+  pinned default
+}
+
+@test "the market model: its role gets .asb and .asb/roles pinned; the default none" {
+  model market
+  pinned market-1 .asb .asb/roles
+  pinned default
 }
