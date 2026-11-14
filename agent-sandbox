@@ -563,7 +563,12 @@ Engine flags (before CMD):
                         .asb/backup/); with --env
                         (or --shared-env), it completes
                         the environment's lines it wrote commented out
-                        without one. Models compose in one file, their role
+                        without one. A re-run that would replace a file
+                        mounted into a running role with the project
+                        read-write, or remove one mounted into a running
+                        role with the project read-write or read-only, is
+                        refused: --shutdown that role first.
+                        Models compose in one file, their role
                         names apart. --env-dir names the environment's
                         directory in each clone (default .env), for a
                         project that tracks a .env of its own.
@@ -3679,6 +3684,176 @@ _as_run_scoped_clear() {
   rm -rf -- "$1/@run"
 }
 
+# _as_bwrap_options -- every option of bubblewrap 0.12's, one `NAME ARGS KIND` line each:
+# ARGS how many arguments follow it, KIND what it does at its last argument -- `bind` (a
+# host path bound there), `mount` (something else mounted there, which covers what is
+# under it), `remount` (--remount-ro), `-` (nothing mounted). _as_keeper_binds reads the
+# launch's options by it; tests/unit/init.bats checks it against `bwrap --help`, names
+# and argument counts both ways, so an option bwrap adds or the table misreads is caught.
+_as_bwrap_options() {
+  cat <<'OPTS'
+--help 0 -
+--version 0 -
+--args 1 -
+--argv0 1 -
+--level-prefix 0 -
+--unshare-all 0 -
+--share-net 0 -
+--unshare-user 0 -
+--unshare-user-try 0 -
+--unshare-ipc 0 -
+--unshare-pid 0 -
+--unshare-net 0 -
+--unshare-uts 0 -
+--unshare-cgroup 0 -
+--unshare-cgroup-try 0 -
+--userns 1 -
+--userns2 1 -
+--disable-userns 0 -
+--assert-userns-disabled 0 -
+--pidns 1 -
+--uid 1 -
+--gid 1 -
+--hostname 1 -
+--chdir 1 -
+--clearenv 0 -
+--setenv 2 -
+--unsetenv 1 -
+--lock-file 1 -
+--sync-fd 1 -
+--bind 2 bind
+--bind-try 2 bind
+--dev-bind 2 bind
+--dev-bind-try 2 bind
+--ro-bind 2 bind
+--ro-bind-try 2 bind
+--bind-fd 2 mount
+--ro-bind-fd 2 mount
+--remount-ro 1 remount
+--overlay-src 1 -
+--overlay 3 mount
+--tmp-overlay 1 mount
+--ro-overlay 1 mount
+--exec-label 1 -
+--file-label 1 -
+--proc 1 mount
+--dev 1 mount
+--tmpfs 1 mount
+--mqueue 1 mount
+--dir 1 -
+--file 2 -
+--bind-data 2 mount
+--ro-bind-data 2 mount
+--symlink 2 -
+--seccomp 1 -
+--add-seccomp-fd 1 -
+--block-fd 1 -
+--userns-block-fd 1 -
+--info-fd 1 -
+--json-status-fd 1 -
+--new-session 0 -
+--die-with-parent 0 -
+--as-pid-1 0 -
+--cap-add 1 -
+--cap-drop 1 -
+--perms 1 -
+--size 1 -
+--chmod 2 -
+--not-a-security-boundary 0 -
+OPTS
+}
+
+# _as_keeper_binds BWRAP-OPTION... -- the launch's single-file binds that sit on a file
+# of the host's, for --init (#389). A host rename or removal of the file a mount sits
+# on detaches that mount in the sandbox (measured), whatever the mount's source and
+# mode: the path then leads to what the host has there now, through the directory the
+# sandbox sees it in. That is a break where the directory is a host bind: read-write,
+# the role can write the host's new file (it could write at most its own copy before);
+# either way, a file the host removes is gone for it. Under an overlay, a tmpfs or any
+# other mount the mount point is not the host's file, and a host write detaches nothing.
+#
+# THE RECORD: per such bind four NUL-terminated fields, `DIR MODE SELF PATH` -- DIR `rw`
+# or `ro`, the host bind the mount point's directory is seen through, or `-` for a
+# read-write bind of a host file over itself on anything else (below) (a later
+# --remount-ro of it makes it `ro`); MODE `rw` or `ro`, the bind's own (likewise); SELF
+# `y` when the bind's source is the mount point's own file (a declaration over itself),
+# `n` when it is another (a store's copy, a slot); PATH the mount point as the host sees
+# it: that bind's source with the rest of the destination after it, symbolic links
+# resolved. What a rename over PATH does follows from the three: the path then leads to
+# the host's new file through DIR. NUL-separated, so a path with a newline (a --connect
+# path, a project directory's name) stays one field. (Unreleased formats before this one
+# had fewer fields; none is read.)
+# Read from the options bwrap is handed, in order: a bind hidden by a later mount at or
+# above it is not listed. The keeper writes it at its start, in its own directory, a
+# control path no sandbox sees.
+_as_keeper_binds() {
+  local -a bop=() bsrc=() bdst=() rs=() rd=() v=("$@")
+  local i=0 n=$# a j k d p kind rel o c mode self
+  local -A oargs=() okind=()
+  while read -r o c kind; do oargs[$o]="$c" okind[$o]="$kind"; done < <(_as_bwrap_options)
+  while ((i < n)); do
+    a="${v[i]}"
+    # An option the table does not know: where its arguments end cannot be told, and a
+    # record read past it could drop a mount. None is written (1, said), and --init then
+    # reads the launch's declarations instead, as for a launch an older asb started.
+    if [[ -z "${oargs[$a]+x}" ]]; then
+      _as_msg "bwrap option '$a' is not in the engine's table (_as_bwrap_options): this launch's single-file mounts are not recorded, and --init takes its declared files as mounted"
+      return 1
+    fi
+    c="${oargs[$a]}"
+    case "${okind[$a]}" in
+      bind) bop+=("$a") bsrc+=("${v[i + 1]:-}") bdst+=("${v[i + 2]:-}") ;;
+      mount | remount) bop+=("$a") bsrc+=("") bdst+=("${v[i + c]:-}") ;;
+    esac
+    i=$((i + 1 + c))
+  done
+  ((${#bop[@]})) || return 0
+  # every path resolved at once (one realpath), an empty one as /
+  rs=() rd=()
+  for ((j = 0; j < ${#bop[@]}; j++)); do
+    rs+=("${bsrc[j]:-/}") rd+=("${bdst[j]:-/}")
+  done
+  mapfile -d '' -t rs < <(realpath -m -z -- "${rs[@]}")
+  mapfile -d '' -t rd < <(realpath -m -z -- "${rd[@]}")
+  for ((j = 0; j < ${#bop[@]}; j++)); do
+    [[ "${okind[${bop[j]}]}" == bind && -f "${bsrc[j]}" ]] || continue
+    d="${rd[j]%/}"
+    for ((k = j + 1; k < ${#bop[@]}; k++)); do
+      [[ "${bop[k]}" != --remount-ro ]] || continue
+      [[ "${rd[k]%/}" == "$d" || "$d" == "${rd[k]%/}"/* ]] && continue 2 # hidden
+    done
+    p="${d%/*}" mode=rw
+    [[ "${bop[j]}" == --ro-bind* ]] && mode=ro
+    for ((k = j + 1; k < ${#bop[@]}; k++)); do
+      [[ "${bop[k]}" == --remount-ro && "${rd[k]%/}" == "$d" ]] && mode=ro
+    done
+    for ((k = j - 1; k >= 0; k--)); do
+      [[ "${bop[k]}" != --remount-ro ]] || continue
+      [[ "$p" == "${rd[k]%/}" || "$p" == "${rd[k]%/}"/* ]] || continue
+      case "${okind[${bop[k]}]}" in
+        bind)
+          rel="${d#"${rd[k]%/}"}" kind=rw
+          [[ "${bop[k]}" == --ro-bind* ]] && kind=ro
+          for ((i = k + 1; i < ${#bop[@]}; i++)); do
+            [[ "${bop[i]}" == --remount-ro && "${rd[i]%/}" == "${rd[k]%/}" ]] && kind=ro
+          done
+          self=n
+          [[ "${rs[j]}" == "${rs[k]%/}$rel" ]] && self=y
+          printf '%s\0%s\0%s\0%s\0' "$kind" "$mode" "$self" "${rs[k]%/}$rel"
+          continue 2
+          ;;
+      esac
+      break
+    done
+    # Not on a host bind (an overlay, a tmpfs): the mount point is not the host's file, and
+    # a host write detaches nothing. But a read-write bind of a host file over itself there
+    # is the role's reach to that file, and a rename over it on the host leaves the role
+    # writing the old one, which the host no longer has: recorded with DIR `-`.
+    [[ "$mode" == rw && "${rs[j]}" == "${rd[j]}" ]] && printf '%s\0%s\0%s\0%s\0' - rw y "${rs[j]}"
+  done
+  return 0
+}
+
 # _as_keeper_start SANDBOXDIR LAUNCHER... -- start this role's keeper; the lock is held.
 # The launcher is the command line that runs the sandbox (bwrap, or pasta running
 # bwrap), ending in `--` and the payload.
@@ -3728,6 +3903,13 @@ _as_keeper_start() {
   [[ -z "${_ca_record:-}" ]] || printf '%s\n' "$_ca_record" >"$kd/ca"
   # The join-scoped paths, for each join to make its own stores for.
   ((${#_join_scoped[@]})) && printf '%s\n' "${_join_scoped[@]}" >"$kd/join-scoped"
+  # Its single-file binds, for --init to tell what a host write would do to it (#389).
+  # None when it cannot be read (an option it does not know, said), and binds.unread to say
+  # why: --init then reads the launch's declarations, as for a keeper an older asb started.
+  if ! _as_keeper_binds ${_bwrap_opts[@]+"${_bwrap_opts[@]}"} >"$kd/binds"; then
+    rm -f -- "$kd/binds"
+    : >"$kd/binds.unread"
+  fi
   (_as_keeper_supervise "$sb" -- "$@") &
   local sup=$!
   for ((i = 0; i < 1500; i++)); do
@@ -10368,7 +10550,7 @@ _as_remote_apply_script() {
   printf '# agent-sandbox --setup-remote: the account'"'"'s part of [remote:%s].\n' "$alias"
   printf 'alias=%q\np=%q\nwpol=%q\ntmpdir=%q\ndown=%q\nup=%q\npub=%q\nwait=%q\n' \
     "$alias" "$rscratch" "$wpol" "$tmpdir" "$down" "$up" "$pub" 60
-  declare -f _as_path_slug _as_sha256_str
+  declare -f _as_msg _as_path_slug _as_sha256_str _as_dotfile_write _as_dotfile_link_note
   printf 'write_policy() {\n  cat <<'"'"'ASB_POLICY_EOF'"'"'\n%s\nASB_POLICY_EOF\n}\n' "$policy"
   cat <<'APPLY'
 say() { printf '%s\t%s\n' "$1" "$2"; }
@@ -10381,15 +10563,19 @@ if [ -n "$tmpdir" ] && [ ! -d "$tmpdir" ]; then
   say made "$tmpdir"
 fi
 if [ "$wpol" = 1 ]; then
-  # A new file mktemp makes (never a fixed name the scratch's sandbox could link), with
-  # the mode of the file it replaces, or the account's umask for a new one (mktemp's is 600).
-  if [ -f "$p/.agent-sandbox" ] && [ ! -L "$p/.agent-sandbox" ]; then
-    m="$(stat -c %a -- "$p/.agent-sandbox")"
-  else
-    m="$(printf '%o' $((0666 & ~0$(umask))))"
-  fi
-  t="$(mktemp "$p/.agent-sandbox.asb-new.XXXXXX")" && { write_policy >"$t" && chmod "$m" "$t" && mv -f -- "$t" "$p/.agent-sandbox"; } \
-    || { [ -z "${t:-}" ] || rm -f -- "$t"; say error "cannot write $p/.agent-sandbox"; exit 1; }
+  # As --init and --apply write it (_as_dotfile_write, #389): an existing file in place,
+  # so the running login's read-only bind of it holds until it is relaunched below; a new
+  # one through a temporary file mktemp makes beside it (never a fixed name the scratch's
+  # sandbox could link) at the account's umask, renamed into place.
+  # what _as_dotfile_write says (a refusal, a half-written file and where its text is
+  # kept, a hard link) comes back as lines of ours: this side's stderr is not shown
+  wrc=0
+  wmsg="$({ write_policy | _as_dotfile_write "$p/.agent-sandbox"; } 2>&1)" || wrc=$?
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    if [ "$wrc" -eq 0 ]; then say warn "${l#agent-sandbox: }"; else say error "${l#agent-sandbox: }"; fi
+  done <<<"$wmsg"
+  [ "$wrc" -eq 0 ] || { say error "cannot write $p/.agent-sandbox"; exit 1; }
 fi
 k="$HOME/.config/agent-sandbox/asb-$alias-keys"
 (umask 077 && mkdir -p -- "${k%/*}" && printf '%s\n' "$pub" >"$k.new" && mv -f -- "$k.new" "$k") \
@@ -10711,6 +10897,7 @@ _as_remote_account() {
     v="${v//[[:cntrl:]]/?}"
     case "$k" in
       error) _as_msg "$p $v" ;;
+      warn) _as_msg "$p $v" ;;
       log) _as_msg "$p   $v" ;;
       hostkey) hostkey="$v" ;;
       made) _as_msg "$p made TMPDIR $v there, under the scratch (the section's env)" ;;
@@ -12956,6 +13143,301 @@ _as_init() {
     done
     _init_static "${a%% *}" "${a#* }" || return 2
   done
+  # ---- a running sandbox of this project is not broken by the run (#389) ----
+  # --init replaces a file by renaming a new one over it, and removes some. A running
+  # sandbox has some of the project's files under single-file mounts (a role's purpose
+  # file, read-only, or a copy of its own over it), and a host rename or removal of the
+  # file such a mount sits on detaches it in the sandbox (measured). Two outcomes break
+  # the role, and refuse the --init before anything is written (2): such a file replaced
+  # in a directory the role has read-write from the host -- the path then leads to the
+  # host's new file, writable for the role; and such a file removed in a directory the
+  # role sees from the host, read-write or read-only -- it is gone for the role (an
+  # instance removed, or a role set to 0, while it runs). What a role merely sees change
+  # is fine: a project it has read-only shows it the new file read-only; under a
+  # copy-on-write one the mount point is not the host's file, and the role keeps the old
+  # one, removed or not (measured). The dot-file is never a reason: _as_dotfile_write
+  # writes it in place, and the bind holds. What each running sandbox has so is its
+  # keeper's record (_as_keeper_binds); a keeper an older asb started has none, and its
+  # policy's file declarations are taken as so mounted, in a directory that cannot be
+  # told (the project's mode a --connect flag gave is in no record): replaced or
+  # removed, each refuses.
+  # _init_sum SRC ROLE N HANDLE -- the SHA-256 of the text _init_purpose writes from SRC
+  _init_sum() {
+    _init_render "" "$(sed -e "/^#@$envdrop /d" -e "s/^#@$envkeep //" -- "$1")" "$2" "$3" "$4" | sed 1d \
+      | sha256sum | cut -d' ' -f1
+  }
+  # The files _init_purpose writes, REL -> SRC ROLE N HANDLE ADDENDA, and their order:
+  # those before the removals (_init_unpurpose), then those after (scripts, tests).
+  local -A itgt=()
+  local -a iord1=() iord2=()
+  _init_targets() {
+    local a inst h rn n sk f
+    ((${#iord1[@]} + ${#iord2[@]})) && return 0
+    for a in "${insts[@]}"; do
+      IFS=$'\t' read -r inst h rn n <<<"$a"
+      [[ -f "$mdir/roles/$rn.md" ]] || continue
+      itgt[".asb/roles/$inst.md"]="$mdir/roles/$rn.md"$'\x1f'"$inst"$'\x1f'"$n"$'\x1f'"$h"$'\x1f'"$rn$([[ "$inst" == "$rn" ]] || printf ' %s' "$inst")"
+      iord1+=(".asb/roles/$inst.md")
+    done
+    for a in ${prompts[@]+"${prompts[@]}"}; do
+      IFS=$'\t' read -r inst h rn n sk <<<"$a"
+      [[ -f "$mdir/serve/$rn.md" && -n "$sk" ]] || continue
+      itgt[$sk]="$mdir/serve/$rn.md"$'\x1f'"$inst"$'\x1f'"$n"$'\x1f'"$h"$'\x1f'
+      iord1+=("$sk")
+    done
+    for a in ${starts[@]+"${starts[@]}"}; do
+      itgt[${a#*$'\t'}]="$mdir/start/${a%%$'\t'*}.md"$'\x1f'"${a%%$'\t'*}"$'\x1f\x1f\x1f'
+      iord1+=("${a#*$'\t'}")
+    done
+    for a in ${gfiles[@]+"${gfiles[@]}"}; do
+      itgt[${a#*$'\t'}]="$mdir/roles/${a%%$'\t'*}.md"$'\x1f'"${a%%$'\t'*}"$'\x1f\x1f\x1f'"${a%%$'\t'*}"
+      iord1+=("${a#*$'\t'}")
+    done
+    for f in "$mdir"/bin/*; do
+      [[ -f "$f" ]] || continue
+      itgt[".asb/bin/$(basename -- "$f")"]="$f"$'\x1f\x1f\x1f\x1f'
+      iord2+=(".asb/bin/$(basename -- "$f")")
+    done
+    if [[ -f "$mdir/tests" ]]; then
+      itgt[".asb/tests"]="$mdir/tests"$'\x1f\x1f\x1f\x1f'
+      iord2+=(".asb/tests")
+    fi
+    return 0
+  }
+  # _init_fate REL -- what _init_purpose does with the file REL: _if `new` (written),
+  # `same` (the model's text already), `update` (replaced), `kept` (changed by you),
+  # `keptmig` (kept, and the model's text written to its migration copy); _is the hash
+  # of the model's text, which .asb/init.sums records unless kept.
+  _init_fate() {
+    local f inst n h ad cur rec a has=0
+    IFS=$'\x1f' read -r f inst n h ad <<<"${itgt[$1]}"
+    _is="$(_init_sum "$f" "$inst" "$n" "$h")"
+    if [[ ! -e "$proj/$1" ]]; then
+      _if=new
+      return 0
+    fi
+    cur="$(_as_sha256_file "$proj/$1")"
+    rec="$(awk -v p="$1" '$2 == p { s = $1 } END { print s }' "$proj/.asb/init.sums" 2>/dev/null)"
+    if [[ "$cur" == "$_is" ]]; then
+      _if=same
+    elif [[ -n "$rec" && "$cur" == "$rec" ]]; then
+      _if=update
+    else
+      _if=kept
+      if [[ -n "$ad" ]]; then
+        for a in $ad; do [[ -f "$proj/$(dirname -- "$1")/$a.addendum.md" ]] && has=1; done
+        ((has)) || _if=keptmig
+      fi
+    fi
+  }
+  # _init_gone SK SRC INST N H -- does _init_unpurpose remove the file SK?
+  _init_gone() {
+    local cur rec
+    [[ -f "$proj/$1" && ! -L "$proj/$1" ]] || return 1
+    cur="$(_as_sha256_file "$proj/$1")"
+    rec="$(awk -v p="$1" '$2 == p { s = $1 } END { print s }' "$proj/.asb/init.sums" 2>/dev/null)"
+    [[ "$cur" == "$rec" || "$cur" == "$(_init_sum "$2" "$3" "$4" "$5")" ]]
+  }
+  # _init_change REL -- set _ic to what this run does to the existing file $proj/REL:
+  # `replace` (a rename over it of other text), `remove`, or empty. As the writes below
+  # do it: _init_purpose, _init_unpurpose, the migration copies, .asb/init.sums as they
+  # rewrite it, the coord index's rows, and a re-added instance's old clone moved to a
+  # backup (what is in it removed from its place). _init_put renames nothing over a file
+  # of the same text.
+  _init_change() {
+    local rel="$1" e f sk inst n h v t _if _is l p2 idx="$proj/.asb/coord/COORDINATION.md"
+    local -a sl=()
+    _ic=""
+    [[ -f "$proj/$rel" && ! -L "$proj/$rel" ]] || return 0
+    _init_targets
+    for e in ${rmfiles[@]+"${rmfiles[@]}"}; do
+      IFS=$'\x1f' read -r f sk inst n h v <<<"$e"
+      if [[ "$sk" == "$rel" || (-n "$v" && "$rel" == ".asb/migrate/$(basename -- "$sk")") ]]; then
+        _init_gone "$sk" "$f" "$inst" "$n" "$h" && _ic=remove
+        return 0
+      fi
+    done
+    for f in ${exroots[@]+"${exroots[@]}"}; do
+      [[ "$rel" == "$f"/* ]] && _ic=remove && return 0
+    done
+    if [[ -n "${itgt[$rel]:-}" ]]; then
+      _init_fate "$rel"
+      [[ "$_if" == update ]] && _ic=replace
+      return 0
+    fi
+    case "$rel" in
+      .asb/migrate/*)
+        for t in "${iord1[@]}"; do
+          [[ "$(basename -- "$t")" == "${rel##*/}" && -n "$(cut -d$'\x1f' -f5 <<<"${itgt[$t]}")" ]] || continue
+          _init_fate "$t"
+          case "$_if" in
+            new | same | update) _ic=remove ;;
+            keptmig) [[ "$(_as_sha256_file "$proj/$rel")" == "$_is" ]] || _ic=replace ;;
+          esac
+          return 0
+        done
+        ;;
+      .asb/init.sums)
+        # its lines as the writes below leave them: each file written or found the model's
+        # with its hash, in its place or appended; each removed one dropped. Each step only
+        # changes its own line, so the text ends as it was only if no step renamed over it
+        mapfile -t sl <"$proj/$rel"
+        _init_sim() { # put|drop PATH [HASH]
+          local -a o=()
+          local d=0
+          for l in ${sl[@]+"${sl[@]}"}; do
+            read -r _ p2 <<<"$l"
+            if [[ "$p2" != "$2" ]]; then
+              o+=("$l")
+            elif [[ "$1" == put ]] && ! ((d)); then
+              o+=("$3  $2") d=1
+            fi
+          done
+          [[ "$1" == drop ]] || ((d)) || o+=("$3  $2")
+          sl=(${o[@]+"${o[@]}"})
+        }
+        for t in "${iord1[@]}"; do
+          _init_fate "$t"
+          case "$_if" in new | same | update) _init_sim put "$t" "$_is" ;; esac
+        done
+        for e in ${rmfiles[@]+"${rmfiles[@]}"}; do
+          IFS=$'\x1f' read -r f sk inst n h v <<<"$e"
+          _init_gone "$sk" "$f" "$inst" "$n" "$h" && _init_sim drop "$sk"
+        done
+        for t in ${iord2[@]+"${iord2[@]}"}; do
+          _init_fate "$t"
+          case "$_if" in new | same | update) _init_sim put "$t" "$_is" ;; esac
+        done
+        if ((${#sl[@]})); then
+          cmp -s -- "$proj/$rel" <(printf '%s\n' "${sl[@]}") || _ic=replace
+        else
+          [[ ! -s "$proj/$rel" ]] || _ic=replace
+        fi
+        ;;
+      .asb/coord/COORDINATION.md)
+        # a row added for an instance it lacks, a removed instance's row taken out; an
+        # empty one written whole
+        if [[ ! -s "$idx" ]]; then
+          [[ -f "$mdir/coord/COORDINATION.md" ]] && _ic=replace
+          return 0
+        fi
+        for e in "${insts[@]}"; do
+          IFS=$'\t' read -r inst h t n <<<"$e"
+          [[ "$t" == "$setup" ]] && continue
+          grep -q "^| $h |" "$idx" || {
+            _ic=replace
+            return 0
+          }
+        done
+        for e in ${rminsts[@]+"${rminsts[@]}"}; do
+          IFS=$'\t' read -r inst h t n <<<"$e"
+          grep -q "^| $h | $inst |" "$idx" && _ic=replace && return 0
+        done
+        ;;
+    esac
+    return 0
+  }
+  _init_running() {
+    local sb role prof dir mode self path why key where old who cmd ptxt _ic _keeper_target="" _keeper_spid="" i a tpath gdir br
+    local -a hits=() dirs=() modes=() selfs=() paths=() readds=()
+    # the old clones a re-added instance's run moves: tree and history, as REL
+    for a in ${clones[@]+"${clones[@]}"}; do
+      [[ -n "${readd[${a%%$'\t'*}]:-}" ]] || continue
+      read -r tpath gdir br <<<"${a#*$'\t'}"
+      readds+=("${tpath%/}" "${gdir%/}")
+    done
+    local -A seen=()
+    # EVERY running sandbox of this user, this project's and every other project's: one of
+    # another project can have this one's directory, and a file of it, declared. A glob over
+    # the state directory and a liveness check (/proc) per role; only records naming a
+    # path in this project count.
+    for sb in "$(_as_state_dir)"/*/-*/*/; do
+      sb="${sb%/}" role="${sb##*/}"
+      [[ -d "$sb" && ! -L "$sb" && "$role" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+      _as_keeper_live "$sb" || continue
+      prof="${sb%/*}" prof="${prof%/*}" prof="${prof##*/}"
+      dirs=() modes=() selfs=() paths=() old=""
+      if [[ -f "$sb/keeper/binds" ]]; then
+        while IFS= read -r -d '' dir && IFS= read -r -d '' mode && IFS= read -r -d '' self && IFS= read -r -d '' path; do
+          dirs+=("$dir") modes+=("$mode") selfs+=("$self") paths+=("$path")
+        done <"$sb/keeper/binds"
+      else
+        # no record: an older asb's keeper, or a launch whose options could not be read
+        # (keeper/binds.unread): its file declarations, from its policy
+        if [[ -e "$sb/keeper/binds.unread" ]]; then
+          old=" (its mounts could not be recorded at its launch: its declared files taken as bound)"
+        else
+          old=" (started by an older asb, which records no binds: its declared files taken as bound)"
+        fi
+        while IFS=$'\t' read -r key mode where; do
+          [[ "$key" == connect:/* && -f "${key#connect:}" ]] || continue
+          dirs+=("?") modes+=("?") selfs+=("?") paths+=("${key#connect:}")
+        done <"$sb/keeper/policy"
+      fi
+      why=""
+      for i in ${paths[@]+"${!paths[@]}"}; do
+        dir="${dirs[i]}" mode="${modes[i]}" self="${selfs[i]}" path="${paths[i]}"
+        [[ "$path" == "$proj"/* && "$path" != "$proj/.agent-sandbox" && -z "${seen[$sb$'\t'$path]:-}" ]] || continue
+        seen[$sb$'\t'$path]=1
+        _init_change "${path#"$proj"/}"
+        ptxt="${path#"$proj"/}"
+        if [[ "$_ic" == remove ]]; then
+          [[ "$dir" =~ ^(rw|ro|\?)$ ]] && why+="${why:+, }$ptxt would disappear for it"
+          # its read-write reach to the file on a copy-on-write project: lost as by a replace
+          [[ "$dir:$self:$mode" == "-:y:rw" ]] && why+="${why:+, }its writes to $ptxt would stop reaching the project's file (its mount keeps the file the host removed)"
+        elif [[ "$_ic" == replace ]]; then
+          # what the path leads to once the mount on it is gone: the host's new file,
+          # through the directory as the role has it
+          case "$dir:$self:$mode" in
+            "?:"*) why+="${why:+, }$ptxt may become writable for it" ;;
+            rw:y:rw | ro:y:ro) ;; # writable before and after; read-only before and after
+            rw:y:ro) why+="${why:+, }$ptxt would become writable for it" ;;
+            rw:n:*) why+="${why:+, }its own copy over $ptxt would be replaced by the host's new file, writable for it" ;;
+            ro:y:rw) why+="${why:+, }its read-write mount of $ptxt would be replaced by the host's new file, read-only for it" ;;
+            ro:n:*) why+="${why:+, }its own copy over $ptxt would be replaced by the host's new file" ;;
+            -:y:rw) why+="${why:+, }its writes to $ptxt would stop reaching the project's file (its mount keeps the file the host replaced)" ;;
+          esac
+        fi
+      done
+      # A re-added instance's old clone is moved to a backup (_init_stale_clone): a live
+      # sandbox with a mount at or below it -- its keeper's declarations, keeper/policy --
+      # loses it from under that mount. Refused; a clone no live sandbox has moves.
+      # its project, read whole (a path may hold a newline): the file written at its start
+      a=""
+      [[ -f "$sb/project" ]] && a="$(cat -- "$sb/project" && printf x)" && a="${a%x}" && a="${a%$'\n'}"
+      for i in ${readds[@]+"${!readds[@]}"}; do
+        path="$proj/${readds[i]}"
+        [[ -e "$path" || -L "$path" ]] || continue
+        # a sandbox whose project is the old clone, or inside it, loses its project
+        if [[ -n "$a" && ("$a" == "$path" || "$a" == "$path"/*) ]]; then
+          why+="${why:+, }${readds[i]} would be moved from under it (its project; an instance added again, its old clone goes to .asb/backup/)"
+          continue
+        fi
+        while IFS=$'\t' read -r key _; do
+          [[ "$key" == "connect:$path" || "$key" == "connect:$path"/* ]] || continue
+          why+="${why:+, }${readds[i]} would be moved from under it (an instance added again; its old clone goes to .asb/backup/)"
+          break
+        done <"$sb/keeper/policy"
+      done
+      [[ -n "$why" ]] || continue
+      # a sandbox of another project: named with it, and shut down from there
+      who="role '$role'" cmd="$invoked --role $role --shutdown $prof"
+      if [[ "$(basename -- "$(dirname -- "$sb")")" != "$(_as_path_slug "$proj")" ]]; then
+        if [[ -n "$a" ]]; then
+          who+=" of the project $(printf '%q' "$a")"
+          cmd="cd $(printf '%q' "$a") && $cmd"
+        else
+          who+=" of the project $(basename -- "$(dirname -- "$sb")")"
+        fi
+      fi
+      hits+=("  $who: $why$old -- first: $cmd")
+    done
+    ((${#hits[@]})) || return 0
+    _as_msg "--init: nothing was written: this run would replace or remove a file bound into a running sandbox, which a host write breaks for it. End each role below, then run --init again:"
+    printf '%s\n' "${hits[@]}" >&2
+    return 2
+  }
+  _init_running || return 2
   # The paths were checked above (_init_static); each write checks again for a symbolic
   # link planted since, which stops the --init there (2). A file is written to a
   # temporary one beside it and renamed into place, which replaces a link planted since,
@@ -12978,7 +13460,17 @@ _as_init() {
     d="$(dirname -- "$proj/$1")"
     mkdir -p -- "$d" || return 1
     t="$(mktemp -- "$d/.asb-init.XXXXXX")" || return 1
-    if cat >"$t" && chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
+    # the same text renames nothing over the file: a running sandbox's mount on it holds
+    # (#389), and _init_change counts only a change as a replace
+    if ! cat >"$t"; then
+      rm -f -- "$t"
+      return 1
+    fi
+    if [[ -f "$proj/$1" && ! -L "$proj/$1" ]] && cmp -s -- "$t" "$proj/$1"; then
+      rm -f -- "$t"
+      return 0
+    fi
+    if chmod -- "$(printf '%o' $((0666 & ~0$(umask))))" "$t" && mv -f -T -- "$t" "$proj/$1"; then
       return 0
     fi
     rm -f -- "$t"
@@ -13244,10 +13736,13 @@ _as_init() {
       rm -f -- "$mig"
     fi
     _init_nolink .asb/init.sums || return 2
-    {
-      awk -v p="$2" '$2 != p' "$sums" 2>/dev/null
+    # its record replaced where it is, else appended: a record that did not change leaves
+    # the file's text as it was, and _init_put then writes nothing (#389)
+    if [[ -f "$sums" ]]; then
+      awk -v p="$2" -v s="$sum" '$2 == p { if (!d) print s "  " p; d = 1; next } { print } END { if (!d) print s "  " p }' "$sums"
+    else
       printf '%s  %s\n' "$sum" "$2"
-    } | _init_put .asb/init.sums
+    fi | _init_put .asb/init.sums
   }
   for a in "${insts[@]}"; do
     IFS=$'\t' read -r inst h rn n <<<"$a"
@@ -13640,12 +14135,67 @@ _as_trust_review() {
 # not checked here beyond being there; the review shows the file and the parser's own
 # warnings. Uses the engine's profile_dir and invoked by dynamic scope.
 # shellcheck disable=SC2154
-# _as_dotfile_write FILE < TEXT -- FILE's new text (--init, --apply), written to a
-# temporary file beside it and renamed over it: a symbolic link planted at FILE since it
-# was checked is replaced, never followed. An existing file's mode is kept.
+# _as_dotfile_write FILE < TEXT -- FILE's new text (--init, --apply, --setup-remote's
+# policy); on failure 1, said.
+#
+# AN EXISTING FILE IS WRITTEN IN PLACE (#389): same inode, never a rename over it. A
+# running sandbox has the dot-file bound read-only as a single file, and a rename over
+# a bound file detaches that bind: where the role has the project read-write, the path
+# then leads to the host's new file, writable (measured). Written in place, the bind
+# holds and the role sees the new text, still read-only. Atomicity is given up for it:
+# the text goes first to a private temporary file (the host's TMPDIR, which no sandbox
+# sees), then over the old text from offset 0 without truncating, then the file is cut
+# to the new length -- a reader at that moment sees the new text with, at worst, a tail
+# of the old one. Its mode stays as it is: a file that is not writable is refused before
+# anything is written. The file is opened read-only first (no create) and shown to be
+# FILE itself, as _as_dotfile_read does: a link or another file put there since the
+# check is never written through; the write reopens that same descriptor. A write that
+# fails once it has begun may leave the file half-written: the text it was to have is
+# then kept in the temporary file, and said, for the user to put in place.
+# A NEW FILE is written to a temporary file beside it and renamed into place: a link
+# planted there since it was checked is replaced, never followed.
 _as_dotfile_write() {
-  local f="$1" t
-  t="$(mktemp -- "$(dirname -- "$f")/.agent-sandbox.XXXXXX")" || return 1
+  local f="$1" t fd a b h
+  if [[ -f "$f" && ! -L "$f" ]]; then
+    if [[ ! -w "$f" ]]; then
+      _as_msg "$f could not be written: it is not writable (mode $(stat -c %a -- "$f" 2>/dev/null)); nothing was written"
+      return 1
+    fi
+    t="$(mktemp)" || {
+      _as_msg "$f could not be written: no temporary file for its new text; nothing was written"
+      return 1
+    }
+    if ! cat >"$t" || ! exec {fd}<"$f"; then
+      rm -f -- "$t"
+      _as_msg "$f could not be written; nothing was written"
+      return 1
+    fi
+    a="$(stat -L -c '%d:%i' "/dev/fd/$fd" 2>/dev/null)"
+    b="$(stat -c '%d:%i' -- "$f" 2>/dev/null)"
+    if [[ -z "$a" || "$a" != "$b" || -L "$f" ]]; then
+      exec {fd}<&-
+      rm -f -- "$t"
+      _as_msg "$f became a symbolic link or another file while it was written; nothing was written"
+      return 1
+    fi
+    # dd, not `1<>`: declare -f prints that as `<>`, stdin, and --setup-remote sends this
+    # function's declare -f to the account's side
+    if dd if="$t" of="/dev/fd/$fd" conv=notrunc status=none 2>/dev/null \
+      && truncate -s "$(stat -c %s -- "$t")" -- "/dev/fd/$fd" 2>/dev/null; then
+      h="$(stat -L -c %h "/dev/fd/$fd" 2>/dev/null)"
+      exec {fd}<&-
+      rm -f -- "$t"
+      [[ "${h:-1}" -le 1 ]] || _as_msg "$(_as_dotfile_link_note "$f" "$h")"
+      return 0
+    fi
+    exec {fd}<&-
+    _as_msg "$f could not be written in full, and may be half-written now. The text it was to have is kept in $t: put it in place with  cat $(printf '%q' "$t") >$(printf '%q' "$f")  (or restore the file), then review it with --trust"
+    return 1
+  fi
+  t="$(mktemp -- "$(dirname -- "$f")/.agent-sandbox.XXXXXX")" || {
+    _as_msg "$f could not be written: no temporary file beside it; nothing was written"
+    return 1
+  }
   if cat >"$t"; then
     if [[ -f "$f" && ! -L "$f" ]]; then
       chmod --reference="$f" -- "$t"
@@ -13654,7 +14204,24 @@ _as_dotfile_write() {
     fi && mv -f -T -- "$t" "$f" && return 0
   fi
   rm -f -- "$t"
+  _as_msg "$f could not be written; nothing was written"
   return 1
+}
+
+# _as_dotfile_link_note FILE LINKS -- the warning for a dot-file written in place that has
+# other names (a hard link, LINKS > 1, #389): they show the new text too, and whoever can
+# write one can change it. Not a refusal. The other names cannot be found from the file,
+# so the note gives the command that lists them: a search of the file's own filesystem,
+# from its mount point (a hard link never leaves it), both paths quoted for a shell.
+_as_dotfile_link_note() {
+  local m
+  printf 'warning — %s has %s other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are' \
+    "$1" "$(($2 - 1))"
+  if m="$(stat -c %m -- "$1" 2>/dev/null)" && [[ -n "$m" ]]; then
+    printf '; this lists them: find %q -xdev -samefile %q 2>/dev/null' "$m" "$1"
+  else
+    printf ' (the mount point of its filesystem, where a search for them would start, could not be read)'
+  fi
 }
 
 # _as_dotfile_read FILE -- FILE's text on stdout, read through a descriptor shown to be
@@ -13688,7 +14255,7 @@ _as_apply() {
     _as_msg "--apply: .agent-sandbox is a symbolic link, and asb does not write through one: replace it with a regular file and run --apply again"
     return 2
   fi
-  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve remote agent) lines=() have=() add=()
+  local -a names=(allow deny share-memory env conda net gpu ssh permissions seccomp overlay sandbox connect briefing serve remote agent) lines=() have=() add=() addn=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] && names+=("$(basename -- "$(dirname -- "$f")")")
   done
@@ -13773,7 +14340,7 @@ _as_apply() {
     else
       add+=("$l")
       have+=("$n")
-      _as_msg "added to $head: $n"
+      addn+=("$n")
     fi
   done
   if ((${#add[@]} == 0)); then
@@ -13799,6 +14366,8 @@ _as_apply() {
         if ((ins + 1 < ${#lines[@]})); then printf '%s\n' "${lines[@]:ins+1}"; fi
       } | _as_dotfile_write "$file" || return 1
     fi
+    # said once the file has them, never before a write that fails
+    for n in "${addn[@]}"; do _as_msg "added to $head: $n"; done
   fi
   _as_trust_review "$cwd" || return $?
   # --setup-remote DEST (#344) appends its section through this, and says what follows

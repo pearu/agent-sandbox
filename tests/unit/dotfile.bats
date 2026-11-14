@@ -949,14 +949,130 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 }
 
 @test "--apply that cannot write the file fails and leaves no temp behind" {
-  [ "$(id -u)" -ne 0 ] || skip "root writes in a directory of mode 555"
+  [ "$(id -u)" -ne 0 ] || skip "root writes a file of mode 444"
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
-  chmod 555 "$PROJ" # the file is replaced by a rename: the directory is what refuses
+  chmod 444 "$PROJ/.agent-sandbox" # the file is written in place (#389): its mode is what refuses
+  run_apply - '[allow]' github.com
+  chmod 644 "$PROJ/.agent-sandbox"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"agent-sandbox: $PROJ/.agent-sandbox could not be written: it is not writable (mode 444); nothing was written"* ]]
+  [[ "$output" != *"added to [allow]"* ]] # said only once the file has it
+  [[ "$output" != *"dd:"* ]]              # refused before any write
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
+  # a new file in a directory that refuses it: nothing made, no temp
+  rm "$PROJ/.agent-sandbox"
+  chmod 555 "$PROJ"
   run_apply - '[allow]' github.com
   chmod 755 "$PROJ"
   [ "$status" -ne 0 ]
-  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
+  [ ! -e "$PROJ/.agent-sandbox" ]
   [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
+}
+
+@test "--apply writes an existing file in place: the same inode, its mode kept, so a running sandbox's read-only bind of it holds (#389)" {
+  printf '[allow]\npypi.org\n\n[deny]\nevil.example\n' >"$PROJ/.agent-sandbox"
+  chmod 640 "$PROJ/.agent-sandbox"
+  local ino
+  ino="$(stat -c %i "$PROJ/.agent-sandbox")"
+  run_apply 'y\n' '[allow]' github.com
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org\ngithub.com\n\n[deny]\nevil.example' ]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  [ "$(stat -c %a "$PROJ/.agent-sandbox")" = 640 ]
+  [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ] # no temp beside it
+  [[ "$output" != *"hard link"* ]]
+  # another name for it: written in place still, and said
+  ln "$PROJ/.agent-sandbox" "$H/other-name"
+  run_apply 'y\n' '[allow]' example.org
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too"* ]]
+  [[ "$output" == *"this lists them: find $(printf '%q' "$(stat -c %m -- "$PROJ/.agent-sandbox")") -xdev -samefile $(printf '%q' "$PROJ/.agent-sandbox") 2>/dev/null"* ]]
+  grep -qx example.org "$H/other-name"
+}
+
+@test "_as_dotfile_write: an existing file in place, cut to the new text; a new file made; a link replaced, its target untouched (#389)" {
+  source_engine
+  local d="$H/wr" ino
+  mkdir -p "$d"
+  printf 'a much longer old text\nwith two lines\n' >"$d/.agent-sandbox"
+  ino="$(stat -c %i "$d/.agent-sandbox")"
+  printf 'new\n' | _as_dotfile_write "$d/.agent-sandbox"
+  [ "$(stat -c %i "$d/.agent-sandbox")" = "$ino" ]
+  [ "$(od -An -c "$d/.agent-sandbox" | tr -d ' ')" = 'new\n' ] # no tail of the old text
+  printf 'grown to a longer text\n' | _as_dotfile_write "$d/.agent-sandbox"
+  [ "$(stat -c %i "$d/.agent-sandbox")" = "$ino" ]
+  [ "$(cat "$d/.agent-sandbox")" = 'grown to a longer text' ]
+  printf 'fresh\n' | _as_dotfile_write "$d/new"
+  [ "$(cat "$d/new")" = fresh ]
+  [ "$(stat -c %a "$d/new")" = "$(printf '%o' $((0666 & ~0$(umask))))" ]
+  printf 'KEEP\n' >"$d/target"
+  ln -s "$d/target" "$d/link"
+  printf 'policy\n' | _as_dotfile_write "$d/link"
+  [ "$(cat "$d/target")" = KEEP ]
+  [ ! -L "$d/link" ]
+  [ "$(cat "$d/link")" = policy ]
+  [ -z "$(find "$d" -name '.agent-sandbox.?*')" ]
+}
+
+@test "_as_dotfile_write: a write that fails once begun says the file may be half-written and keeps the intended text in a file it names; a file swapped for a link after the check is not written through (#389)" {
+  source_engine
+  local d="$H/w f" t # a space in the path: the recovery command quotes it
+  mkdir -p "$d"
+  printf 'old text\n' >"$d/.agent-sandbox"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  truncate() { return 1; } # the cut fails after the text is written
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'new\n')
+  unset -f truncate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: $d/.agent-sandbox could not be written in full, and may be half-written now. The text it was to have is kept in "* ]]
+  t="${output#*is kept in }" t="${t%%: put it*}"
+  [ "$(cat "$t")" = new ]
+  # the command it prints, run as printed, puts the text in place
+  local cmd="${output#*put it in place with  }"
+  cmd="${cmd%%  (or restore*}"
+  bash -c "$cmd"
+  [ "$(cat "$d/.agent-sandbox")" = new ]
+  rm -f "$t"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  dd() { return 1; } # the write itself fails
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'other\n')
+  unset -f dd
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"may be half-written now"* ]]
+  t="${output#*is kept in }" t="${t%%: put it*}"
+  [ "$(cat "$t")" = other ]
+  rm -f "$t"
+  # a link put at the file between the check and the open: its target is never written
+  printf 'old\n' >"$d/.agent-sandbox"
+  printf 'KEEP\n' >"$d/target"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  mktemp() { rm -f "$d/.agent-sandbox" && ln -s "$d/target" "$d/.agent-sandbox" && command mktemp "$@"; }
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'evil\n')
+  unset -f mktemp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$d/.agent-sandbox became a symbolic link or another file while it was written; nothing was written"* ]]
+  [ "$(cat "$d/target")" = KEEP ]
+  # ...and one put back as a regular file right after the open, so the path is no link
+  # when it is looked at again: the descriptor is not the file's, and nothing is written
+  rm -f "$d/.agent-sandbox"
+  printf 'old\n' >"$d/.agent-sandbox"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  mktemp() { rm -f "$d/.agent-sandbox" && ln -s "$d/target" "$d/.agent-sandbox" && command mktemp "$@"; }
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  stat() {
+    local r
+    r="$(command stat "$@")"
+    if [[ -L "$d/.agent-sandbox" ]]; then rm -f "$d/.agent-sandbox" && printf 'back\n' >"$d/.agent-sandbox"; fi
+    printf '%s\n' "$r"
+  }
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'evil\n')
+  unset -f mktemp stat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"became a symbolic link or another file while it was written; nothing was written"* ]]
+  [ "$(cat "$d/target")" = KEEP ]
+  [ "$(cat "$d/.agent-sandbox")" = back ]
 }
 
 @test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {

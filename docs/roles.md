@@ -544,6 +544,37 @@ session start: a resumed conversation would otherwise keep to the rules its earl
 turns followed, so the briefing says the current text replaces them (the hash is kept in
 the role's state, not the project).
 
+**Re-running `--init` while roles run (#389).** A running role has `.agent-sandbox` and
+its purpose file bound read-only as single files. `--init` and `--apply` write
+`.agent-sandbox` in place, so every running role sees the new text and still cannot
+write it. A purpose file `--init` replaces is a new file, which detaches the bind of the
+old one in a running sandbox: a role with the project read-write (the Supervisor, setup)
+would then reach the new file through the project, writable -- also when the role has a
+copy of its own over the file. A file it removes is gone for a running role that has it
+bound. So, before writing anything, `--init` refuses a run that would replace a file
+mounted into a running role with the project read-write, or remove one mounted into a
+running role with the project read-write or read-only (an instance above a count, a role
+set to 0, while it runs), naming each role and the `asb --role ROLE --shutdown` to run
+first; shut it down, run `--init` again, then launch it. A removed instance's purpose
+file you changed is kept, not removed, so that run goes ahead and the instance keeps
+running with the policy it launched with until you shut it down, though the dot-file no
+longer declares it. A count that adds that instance again while its old sandbox still
+runs on its clone (declared, or as its project) is refused the same way: the old clone would be moved to
+`.asb/backup/` from under it. With no old clone left, or no running sandbox of it, the
+re-add goes ahead. Roles with the project read-only (Planners, Implementers, Reviewers, the Gate)
+keep running and see a new purpose file read-only; under a copy-on-write project (the
+`github` roles) a running role keeps the old one, also when `--init` removes it. The same
+holds for a write outside asb: an editor's save that renames a new file into place,
+`sed -i`, or a `git checkout` that writes `.agent-sandbox` or a purpose file anew, while a
+role with the project read-write runs, leaves that path writable for it until it is shut
+down -- edit those files by hand (step 6 above) with no such role running. So does a save
+on the host of a channel file a role has read-only in a directory bound from the host
+(`CLAUDE.md` under `--preset shared` with `instructions = read-only`). `--init` also refuses a
+replace that would take a role's own copy over a file from it (a `copy` declaration
+over a purpose file, a `read-write` one in a read-only project) or would leave its writes
+not reaching the file (a `read-write` one over the file in a copy-on-write project), and it looks at every
+running sandbox of yours, another project's too when it has this one's files mounted.
+
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:
 `.asb/roles/implementer.addendum.md` for every Implementer,
