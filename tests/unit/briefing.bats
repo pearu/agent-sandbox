@@ -1273,7 +1273,7 @@ login_file() {
   touch "$PROJ/a/b/f.md" "$PROJ/top.md"
   run_engine BWRAP_COPY="$OUT" -- asb --connect './a/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- '- the directories above a read-only path or one of your own (own, copy,' "$OUT/briefing.md"
+  grep -qxF -- '- the directories above a read-only, hidden or your own path (own, copy,' "$OUT/briefing.md"
   grep -qxF -- "  copy-on-write, seed-only) cannot be renamed or removed ($PROJ/a, $PROJ/a/b): they stay" "$OUT/briefing.md"
   # shellcheck disable=SC2016 # the briefing's backticks, literal
   grep -qxF -- '  writable inside, but a rename, hard link or `git mv` across their boundary fails' "$OUT/briefing.md"
@@ -1283,4 +1283,14 @@ login_file() {
   [ "$status" -eq 0 ]
   grep -q -- "- extra read-only paths: $PROJ/top.md\$" "$OUT/briefing.md"
   run ! grep -q 'cannot be renamed or' "$OUT/briefing.md"
+}
+
+@test "a read-only source that another mount shows read-write is said, made read-only there too" {
+  mkdir -p "$H/home/store" "$PROJ/cfg"
+  printf 'S\n' >"$H/home/store/x.md"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- "- read-only too where they also show, as the source of a read-only path: $H/home/store/x.md" "$OUT/briefing.md"
+  argv_has --ro-bind "$H/home/store/x.md" "$H/home/store/x.md"
 }

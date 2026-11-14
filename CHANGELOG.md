@@ -1121,11 +1121,15 @@ names are gone; there are no aliases for removed names before 1.0.
   `github` setup role and the `market` role, none for the roles with a read-only or
   copy-on-write project; and, under the claude profile where `~/.claude/cache/changelog.md`
   exists, `~/.claude/cache` for every role whose changelog channel is its own (every
-  preset but `shared` and `native`). A read-only path whose source resolves, link by link,
-  through a symbolic link the role can replace (an entry of a directory a read-write host
-  mount shows it, which it owns or can write) refuses the launch, naming that link and the
-  path to declare instead; a link it cannot replace, or one only on the destination side,
-  is not refused, and the directories above it and the real path are pinned. An option list the computation cannot read refuses the launch. A
+  preset but `shared` and `native`); and above a hide nested in a read-write directory. A
+  read-only path whose source resolves, link by link, through a symbolic link the role can
+  replace (an entry of a directory a read-write host mount shows it, which it owns or can
+  write) refuses the launch, naming that link and the path to declare instead; so does a
+  path whose destination goes through such a link where it covers a host object the role
+  sees (read-only with the source elsewhere, own, copy, copy-on-write, seed-only); a link
+  it cannot replace is not refused, and the directories above it and the real path are
+  pinned. A read-only path's source is bound read-only over itself wherever a read-write
+  host mount of the launch also shows it, so it is read-only wherever the role sees it. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the
   briefing says. The bwrap arguments are unchanged where nothing is pinned.

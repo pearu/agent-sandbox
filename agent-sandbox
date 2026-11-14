@@ -5809,15 +5809,20 @@ _as_briefing_write() {
     # on the binds made so far: what follows adds none inside the project).
     # Quiet: the launch computes them again on its final list (_as_launch) and says
     # there what is not pinned, once; a list it cannot read refuses the launch there.
-    local -a _bf_opts=() _bf_pins=()
-    _as_ro_pins args _bf_opts _bf_pins quiet 2>/dev/null || _bf_pins=()
+    local -a _bf_opts=() _bf_pins=() _rp_madero=()
+    _as_ro_pins args _bf_opts _bf_pins quiet 2>/dev/null || _bf_pins=() _rp_madero=()
     if ((${#_bf_pins[@]})); then
       local _bf_p _bf_l=""
       for _bf_p in "${_bf_pins[@]}"; do _bf_l+="${_bf_l:+, }$_bf_p"; done
-      printf -- '- the directories above a read-only path or one of your own (own, copy,\n'
+      printf -- '- the directories above a read-only, hidden or your own path (own, copy,\n'
       printf '  copy-on-write, seed-only) cannot be renamed or removed (%s): they stay\n' "$_bf_l"
       printf '  writable inside, but a rename, hard link or `git mv` across their boundary fails\n'
       printf '  with "Invalid cross-device link"; `mv` and `cp` work\n'
+    fi
+    if ((${#_rp_madero[@]})); then
+      local _bf_r _bf_m=""
+      for _bf_r in "${_rp_madero[@]}"; do _bf_m+="${_bf_m:+, }$_bf_r"; done
+      printf -- '- read-only too where they also show, as the source of a read-only path: %s\n' "$_bf_m"
     fi
     if ((${#_gpu_nodes[@]})); then
       printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
@@ -14815,7 +14820,7 @@ _as_fallback_hint() {
   _as_msg "See docs/troubleshooting.md, section 'The sandbox will not start'."
 }
 
-# THE PARENTS OF READ-ONLY AND OWN BINDS ARE PINNED. A role cannot rename or remove a
+# THE PARENTS OF READ-ONLY, HIDDEN AND OWN BINDS ARE PINNED. A role cannot rename or remove a
 # bind (a mount point: EBUSY), but where it has a directory above it read-write from the
 # host it could rename that directory. A read-only file or directory moves along, on the
 # host too, the role makes its own at the old path, and the next launch binds that one
@@ -14865,6 +14870,28 @@ _as_ro_pins_norm() {
   [[ -n "$_pn_v" ]] || _pn_v=/
 }
 
+# _as_ro_pins_shows_at DIR NAME -- for _as_ro_pins, on its locals: NAME := the host path
+# that shows at the sandbox directory DIR (through the mount that shows there, a bind of
+# a host path), or empty.
+_as_ro_pins_shows_at() {
+  local -n _sa_out="$2"
+  local _sa_t=-1 _sa_a="$1" _sa_c _sa_d
+  _sa_out="" _sa_m=-1
+  while :; do
+    _sa_c="${_vis[$_sa_a]:--1}"
+    ((_sa_c > _sa_t)) && _sa_t=$_sa_c
+    [[ "$_sa_a" == / ]] && break
+    _sa_a="${_sa_a%/*}"
+    [[ -n "$_sa_a" ]] || _sa_a=/
+  done
+  ((_sa_t >= 0)) && [[ -n "${_ms[$_sa_t]}" ]] || return 0
+  _sa_m=$_sa_t
+  _sa_d="${_od[_sa_t]}"
+  [[ "$_sa_d" == / ]] && _sa_d=""
+  _sa_out="${_ms[$_sa_t]}${1#"$_sa_d"}"
+  return 0
+}
+
 # _as_ro_pins_comps PATH NAME -- NAME := PATH's components split at `/`, any other
 # character kept (a newline included); a leading `/` gives an empty first one.
 _as_ro_pins_comps() {
@@ -14878,14 +14905,17 @@ _as_ro_pins_comps() {
   return 0
 }
 
-# _as_ro_pins_shows HOST NAME -- for _as_ro_pins, on its locals: NAME := every sandbox
-# path where the host path HOST shows to the role through a read-write host mount -- the
-# mount that shows at that path (the latest at or above it) is that one.
+# _as_ro_pins_shows HOST NAME [any] -- for _as_ro_pins, on its locals: NAME := every
+# sandbox path where the host path HOST shows to the role through a read-write host mount
+# (with `any`, through any bind of a host path, read-only too) -- the mount that shows at
+# that path (the latest at or above it) is that one -- and _sh_mnt := those mounts. A
+# path under a source made read-only there (_rosb) no longer shows read-write.
 _as_ro_pins_shows() {
   local -n _sh_out="$2"
-  local _sh_m _sh_s _sh_p _sh_a _sh_t _sh_c
-  _sh_out=()
-  for _sh_m in ${_rwm[@]+"${_rwm[@]}"}; do
+  local _sh_m _sh_s _sh_p _sh_a _sh_t _sh_c _sh_r
+  _sh_out=() _sh_mnt=()
+  for _sh_m in ${_hm[@]+"${_hm[@]}"}; do
+    [[ "${3:-}" == any || "${_mk[$_sh_m]}" == rw ]] || continue
     _sh_s="${_ms[$_sh_m]}"
     [[ "$_sh_s" == / ]] && _sh_s=""
     [[ "$1" == "$_sh_s" || "$1" == "$_sh_s"/* ]] || continue
@@ -14901,22 +14931,33 @@ _as_ro_pins_shows() {
       _sh_a="${_sh_a%/*}"
       [[ -n "$_sh_a" ]] || _sh_a=/
     done
-    [[ "$_sh_t" == "$_sh_m" ]] && _sh_out+=("$_sh_p")
+    [[ "$_sh_t" == "$_sh_m" ]] || continue
+    if [[ "${3:-}" != any ]]; then
+      for _sh_r in "${!_rosb[@]}"; do
+        [[ "$_sh_p" == "$_sh_r" || "$_sh_p" == "$_sh_r"/* ]] && continue 2
+      done
+    fi
+    _sh_out+=("$_sh_p") _sh_mnt+=("$_sh_m")
   done
   return 0
 }
 
-# _as_ro_pins_chain SOURCE BIND -- for _as_ro_pins, on its locals: resolve SOURCE (a host
-# path, as declared) link by link, as `readlink -f` does -- relative and absolute targets,
-# links inside link targets, `..` -- and for each link met: one the role can replace (an
-# entry of a directory a read-write host mount shows it, which it owns or can write)
-# refuses the launch, naming that link; any other is walked past, and the directories
-# above it, and above the real path at the end, are pinned wherever they show read-write.
-# At 40 links (a loop) the launch is refused: `readlink -f` gives up there too, and bwrap
-# could not bind the path.
+# _as_ro_pins_chain PATH BIND src|dest -- for _as_ro_pins, on its locals: resolve PATH (a
+# host path) link by link, as `readlink -f` does -- relative and absolute targets, links
+# inside link targets, `..` -- and for each link met decide whether the role can replace
+# it: an entry of a directory a read-write host mount shows it, which it owns or can
+# write. With `src`, PATH is a read-only bind's source as declared: such a link refuses the
+# launch, since the role could have the next launch bind its own file. With `dest`, PATH
+# is what a bind covers (its destination's host path): such a link refuses only where the
+# real path exists and shows to the role, since replacing the link would leave that host
+# object uncovered. Any other link is walked past; the directories above it and above the
+# real path are pinned where they show read-write. With `src`, the real path is also bound
+# read-only over itself wherever a read-write host mount shows it (_as_ro_pins_rosb). At
+# 40 links (a loop) the launch is refused: `readlink -f` gives up there, and bwrap could
+# not bind the path.
 _as_ro_pins_chain() {
-  local _ch_cur=/ _ch_c _ch_t _ch_n=0 _ch_l _ch_d _ch_q
-  local -a _ch_todo=() _ch_links=() _ch_pos=()
+  local _ch_cur=/ _ch_c _ch_t _ch_n=0 _ch_l _ch_d _ch_q _ch_i _ch_bad=""
+  local -a _ch_todo=() _ch_links=() _ch_pos=() _ch_more=() _sh_mnt=()
   _as_ro_pins_comps "$1" _ch_todo
   while ((${#_ch_todo[@]})); do
     _ch_c="${_ch_todo[0]}"
@@ -14936,26 +14977,35 @@ _as_ro_pins_chain() {
     fi
     _ch_n=$((_ch_n + 1))
     if ((_ch_n > 40)); then
-      _as_msg "connect: $2: its source $1 does not resolve (40 symbolic links: a loop?), so it cannot be bound read-only. Refusing to launch"
+      _as_msg "connect: $2: $1 does not resolve (40 symbolic links: a loop?), so it cannot be bound. Refusing to launch"
       return 1
     fi
-    # Can the role replace this link? Its directory shows read-write to it, and it owns
-    # that directory or can write it.
     _ch_d="${_ch_l%/*}"
     [[ -n "$_ch_d" ]] || _ch_d=/
     _as_ro_pins_shows "$_ch_d" _ch_pos
     if ((${#_ch_pos[@]})) && [[ -O "$_ch_d" || -w "$_ch_d" ]]; then
-      _ch_q="$(readlink -f -- "$1" 2>/dev/null || printf '%s' "$1")"
-      _as_msg "connect: $2: its source goes through $_ch_l, a symbolic link in a directory the role can write, so it is not bound read-only: the role could replace the link and have the next launch bind its own file. Declare the path it resolves to instead: $_ch_q. Refusing to launch"
-      return 1
+      if [[ "$3" == src ]]; then
+        _ch_q="$(readlink -f -- "$1" 2>/dev/null || printf '%s' "$1")"
+        _as_msg "connect: $2: its source goes through $_ch_l, a symbolic link in a directory the role can write, so it is not bound read-only: the role could replace the link and have the next launch bind its own file. Declare the path it resolves to instead: $_ch_q. Refusing to launch"
+        return 1
+      fi
+      [[ -n "$_ch_bad" ]] || _ch_bad="$_ch_l"
     fi
     _ch_links+=("$_ch_l")
     _ch_t="$(readlink -- "$_ch_l")"
     [[ "$_ch_t" == /* ]] && _ch_cur=/
-    local -a _ch_more=()
     _as_ro_pins_comps "$_ch_t" _ch_more
     _ch_todo=(${_ch_more[@]+"${_ch_more[@]}"} ${_ch_todo[@]+"${_ch_todo[@]}"})
   done
+  # What a bind covers, reached through a link the role can replace: refused only where
+  # the host object there exists and shows to the role.
+  if [[ -n "$_ch_bad" ]] && [[ -e "$_ch_cur" || -L "$_ch_cur" ]]; then
+    _as_ro_pins_shows "$_ch_cur" _ch_pos any
+    if ((${#_ch_pos[@]})); then
+      _as_msg "connect: $2 goes through $_ch_bad, a symbolic link in a directory the role can write, and covers $_ch_cur, which the role sees: the role could replace the link and have that uncovered at the next launch. Declare the path it resolves to instead: $_ch_cur. Refusing to launch"
+      return 1
+    fi
+  fi
   for _ch_l in ${_ch_links[@]+"${_ch_links[@]}"} "$_ch_cur"; do # the links met, then the real path
     _as_ro_pins_shows "$_ch_l" _ch_pos
     for _ch_q in ${_ch_pos[@]+"${_ch_pos[@]}"}; do
@@ -14963,7 +15013,48 @@ _as_ro_pins_chain() {
       _as_ro_pins_walk "$_ch_q" "$2" ro || return 1
     done
   done
+  # A read-only bind's source, read-only wherever else a read-write host mount shows it.
+  if [[ "$3" == src ]]; then
+    _as_ro_pins_shows "$_ch_cur" _ch_pos
+    local _ch_land=""
+    for ((_ch_i = 0; _ch_i < ${#_ch_pos[@]}; _ch_i++)); do
+      [[ "${_ch_pos[_ch_i]}" == "$2" ]] && continue
+      # where the bind itself lands -- its destination through a link, resolved on the
+      # host -- the source is read-only already
+      if [[ -n "$_hdest" ]]; then
+        [[ -n "$_ch_land" ]] || _ch_land="$(readlink -m -- "$_hdest" 2>/dev/null || printf '%s' "$_hdest")"
+        [[ "$_ch_land" == "${_ch_pos[_ch_i]}" ]] && continue
+      fi
+      _as_ro_pins_rosb "$_ch_cur" "${_ch_pos[_ch_i]}" "${_sh_mnt[_ch_i]}" || return 1
+    done
+  fi
   return 0
+}
+
+# _as_ro_pins_rosb SRC POS MOUNT -- for _as_ro_pins, on its locals: record a read-only
+# bind of the host path SRC over itself at POS, where the read-write host mount MOUNT shows
+# it: placed as a pin is (after MOUNT, before the first option at or beneath POS made after
+# it), after the pins at that place; the pins at or beneath POS are dropped (inside a
+# read-only mount nothing can be renamed), and later walks do not pin there (_rosb).
+_as_ro_pins_rosb() {
+  local _rb_c=$_k _rb_t _rb_j
+  [[ -z "${_rosb[$2]+x}" ]] || return 0
+  for _rb_t in ${_touch[$2]-}; do
+    ((_rb_t > $3)) && {
+      _rb_c=$_rb_t
+      break
+    }
+  done
+  _rb_c=${_og[_rb_c]}
+  ((_rb_c > $3)) || {
+    _as_msg "pins: $2 would go before the mount it lies in: this is a bug in agent-sandbox, and the launch is refused"
+    return 1
+  }
+  for ((_rb_j = 0; _rb_j < ${#_pn_p[@]}; _rb_j++)); do
+    [[ "${_pn_p[_rb_j]}" == "$2" || "${_pn_p[_rb_j]}" == "$2"/* ]] && _pn_x[_rb_j]=drop
+  done
+  _rosb[$2]=1
+  _pn_p+=("$2") _pn_c+=("$_rb_c") _pn_s+=("$1") _pn_m+=("$3") _pn_x+=(ro)
 }
 
 # _as_ro_pins_walk TARGET BIND ro|own -- for _as_ro_pins, on its locals: look at every
@@ -14989,22 +15080,16 @@ _as_ro_pins_walk() {
     ((_best >= 0)) || continue
     [[ "${_vis[$_p]:-x}" == "$_best" ]] && continue # a mount point: cannot be renamed
     [[ "${_mk[$_best]}" == rw ]] || continue        # nothing a host bind can pin
+    for _t in "${!_rosb[@]}"; do                    # made read-only over itself here
+      [[ "$_p" == "$_t" || "$_p" == "$_t"/* ]] && continue 2
+    done
     _bk="${_od[_best]}"
     [[ "$_bk" == / ]] && _bk=""
     _rd="${_ms[$_best]}${_p#"$_bk"}"
-    # A link on the way is not pinned. Under a read-only bind nothing beneath it is
-    # either: what the link can lead to is its source's chain's (_as_ro_pins_chain).
-    # Under the role's own binds the walk goes on through it, and it is said.
-    if [[ -L "$_rd" ]]; then
-      [[ "$3" == ro ]] && break
-      if [[ -z "${_pin_no[$_p]+x}" ]]; then
-        _pin_no[$_p]=1
-        _t=""
-        [[ "${1%/*}" == "$_p" ]] || _t=" (the directories beneath it are pinned, through the link)"
-        [[ -n "$_rp_quiet" ]] || _as_msg "pins: $_p is a symbolic link on the host ($_rd), so it is not pinned$_t: the role can rename the directory it points to"
-      fi
-      continue
-    fi
+    # A link on the way is not pinned, nor anything beneath it: where the link leads is
+    # the chain's (_as_ro_pins_chain), which refuses a link the role can replace where
+    # that matters and pins behind any other.
+    [[ -L "$_rd" ]] && break
     [[ -z "${_pin_no[$_p]+x}" ]] || continue
     # already pinned under the mount that shows there now
     [[ -n "${_pin_cur[$_p]+x}" && "${_pn_m[${_pin_cur[$_p]}]}" == "$_best" ]] && continue
@@ -15036,7 +15121,7 @@ _as_ro_pins_walk() {
       continue
     fi
     _pin_cur[$_p]=${#_pn_p[@]}
-    _pn_p+=("$_p") _pn_c+=("$_c") _pn_s+=("$_rd") _pn_m+=("$_best")
+    _pn_p+=("$_p") _pn_c+=("$_c") _pn_s+=("$_rd") _pn_m+=("$_best") _pn_x+=(pin)
   done
 }
 
@@ -15081,13 +15166,14 @@ _as_ro_pins_walk() {
 # not pinned. A missing directory is not said: the bind's source exists, so it cannot lie under a
 # directory that does not, and only the mount-point stub bwrap makes there moves if the
 # role renames it. A read-only bind's source is walked too, wherever a read-write host
-# mount shows it; but a source the role can reach read-write is writable there in place,
-# which no pin prevents (docs/design.md). The sources of the role's own binds are its
-# stores, or an overlay's lower, and are not walked.
+# mount shows it, and bound read-only over itself there (_as_ro_pins_rosb), so it is
+# read-only wherever the role sees it. The sources of the role's own binds are its
+# stores, or an overlay's lower, and are not walked; what such a bind covers is
+# (_as_ro_pins_chain dest).
 _as_ro_pins() {
   local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
   local _rp_quiet="${4:-}"
-  _rp_out=("${_rp_in[@]}") _rp_pinned=()
+  _rp_out=("${_rp_in[@]}") _rp_pinned=() _rp_madero=()
   _as_preset_is_native && return 0
   local -A _nargs=()
   _as_bwrap_nargs _nargs
@@ -15131,12 +15217,13 @@ _as_ro_pins() {
   # Replay in order. _vis[PATH] = the last option that mounted at PATH; the mount that
   # shows at a path is the latest of those at it and above it. _mk/_ms: per mounting
   # option, its kind (rw ro other) and its host source.
-  local -A _vis=() _mk=() _ms=() _mopt=() _mops=() _touch=() _pin_cur=() _pin_no=()
+  local -A _vis=() _mk=() _ms=() _mopt=() _mops=() _touch=() _pin_cur=() _pin_no=() _rosb=()
   # The pins, in the order found: directory, place, host source, the mount it lies in.
   # One directory can need two, when a later mount above it hid the first.
-  local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=()
-  local _src _kind _a _p _c _t _ok _walk _wk _sd _m _x
-  local -a _rwm=()
+  # _pn_x: pin, ro (a read-only bind of a source over itself) or drop.
+  local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=() _pn_x=()
+  local _src _kind _a _p _c _t _ok _walk _wk _sd _m _x _hdest _sa_m=-1
+  local -a _rwm=() _hm=()
   _sd="$(_as_state_dir)"
   _as_ro_pins_norm _sd
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
@@ -15160,12 +15247,13 @@ _as_ro_pins() {
         ;;
       --tmpfs | --dev | --proc | --mqueue | --overlay | --tmp-overlay | --ro-overlay) _kind=other _src="" ;;
     esac
-    # The walk is for a read-only bind, and for what is the role's own: a bind from a store
-    # (own, copy, seed-only, a file's copy-on-write: its source under the state directory,
-    # at another path) or an overlay (a directory's copy-on-write). Not for a read-write
-    # declaration, whose source is the path itself or a host path elsewhere.
+    # The walk is for a read-only bind, a hide (a tmpfs: renaming a directory above it
+    # would leave the hidden host content at the next launch), and what is the role's own:
+    # a bind from a store (own, copy, seed-only, a file's copy-on-write: its source under
+    # the state directory, at another path) or an overlay (a directory's copy-on-write).
+    # Not for a read-write declaration, whose source is the path itself or elsewhere.
     _walk=0
-    if [[ "$_kind" == ro || "$_o" == --overlay ]]; then
+    if [[ "$_kind" == ro || "$_o" == --overlay || "$_o" == --tmpfs ]]; then # --tmpfs: a hide
       _walk=1
     elif [[ -n "$_kind" && "$_o" == --bind* || -n "$_kind" && "$_o" == --dev-bind* ]] && [[ "$_src" == "$_sd"/* && "$_src" != "$_d" ]]; then
       _walk=1
@@ -15179,11 +15267,22 @@ _as_ro_pins() {
       # the role can replace refuses the launch; every other link, and the real path,
       # get the directories above them pinned wherever a read-write host mount shows
       # them to the role.
+      # The destination's host path, under the mount that shows its directory (_hdest);
+      # empty where no bind of a host path shows it.
+      _x="${_d%/*}"
+      _as_ro_pins_shows_at "${_x:-/}" _hdest
+      [[ -z "$_hdest" ]] || _hdest="${_hdest%/}/${_d##*/}"
       if [[ "$_kind" == ro && "$_src" == /?* ]]; then
         _x=""
         ! declare -p _ro_unres &>/dev/null || _x="${_ro_unres[$_d]-}"
         [[ -n "$_x" ]] || _x="$_src"
-        _as_ro_pins_chain "$_x" "$_d" || return 1
+        _as_ro_pins_chain "$_x" "$_d" src || return 1
+      fi
+      # What the bind covers: a link the role can replace on the destination's way, where
+      # a host object it sees is covered, refuses the launch (read-only, own, copy,
+      # copy-on-write, seed-only; not a hide, which covers on purpose and is pinned).
+      if [[ "$_o" != --tmpfs && -n "$_hdest" ]]; then
+        _as_ro_pins_chain "$_hdest" "$_d" dest || return 1
       fi
     fi
     if [[ -n "$_d" ]]; then
@@ -15198,6 +15297,7 @@ _as_ro_pins() {
     if [[ -n "$_kind" ]]; then
       _vis[$_d]=$_k _mk[$_k]=$_kind _ms[$_k]="$_src" _mopt[$_k]="$_o"
       [[ "$_kind" == rw ]] && _rwm+=("$_k")
+      [[ -n "$_src" && ("$_kind" == rw || "$_kind" == ro) ]] && _hm+=("$_k")
       _mops[$_d]+="$_k "
     fi
   done
@@ -15206,6 +15306,7 @@ _as_ro_pins() {
   # directory between its mount and its place (a pin would hide what came after it).
   local _j
   for ((_j = 0; _j < ${#_pn_p[@]}; _j++)); do
+    [[ "${_pn_x[_j]}" != drop ]] || continue
     _p="${_pn_p[_j]}" _a="${_pn_p[_j]}"
     while :; do
       for _t in ${_mops[$_a]-}; do
@@ -15219,18 +15320,24 @@ _as_ro_pins() {
       [[ -n "$_a" ]] || _a=/
     done
   done
-  # Insert, parents first at one place: sorted by (place, depth, path).
+  # Insert, parents first at one place, a read-only self-bind after the pins there:
+  # sorted by (place, kind, depth, path).
   local -a _ord=()
   local -A _said=()
   local _line _slashes
   while IFS= read -r -d '' _line; do _ord+=("${_line##*$'\t'}"); done < <(
     for ((_j = 0; _j < ${#_pn_p[@]}; _j++)); do
+      [[ "${_pn_x[_j]}" != drop ]] || continue
       _slashes="${_pn_p[_j]//[!\/]/}"
-      printf '%08d\t%04d\t%s\t%d\0' "${_pn_c[_j]}" "${#_slashes}" "${_pn_p[_j]}" "$_j"
+      printf '%08d\t%s\t%04d\t%s\t%d\0' "${_pn_c[_j]}" "${_pn_x[_j]}" "${#_slashes}" "${_pn_p[_j]}" "$_j"
     done | sort -z
   )
   _rp_out=() _rp_pinned=()
-  for _j in "${_ord[@]}"; do
+  for _j in ${_ord[@]+"${_ord[@]}"}; do
+    if [[ "${_pn_x[_j]}" == ro ]]; then
+      _rp_madero+=("${_pn_p[_j]}")
+      continue
+    fi
     [[ -n "${_said[${_pn_p[_j]}]+x}" ]] || _rp_pinned+=("${_pn_p[_j]}")
     _said[${_pn_p[_j]}]=1
   done
@@ -15239,6 +15346,7 @@ _as_ro_pins() {
     while ((_next < ${#_ord[@]})) && ((_pn_c[_ord[_next]] == _k)); do
       _o=--bind
       [[ "${_mopt[${_pn_m[_ord[_next]]}]}" == --dev-bind* ]] && _o=--dev-bind
+      [[ "${_pn_x[_ord[_next]]}" == ro ]] && _o=--ro-bind
       _rp_out+=("$_o" "${_pn_s[_ord[_next]]}" "${_pn_p[_ord[_next]]}")
       _next=$((_next + 1))
     done
@@ -15268,13 +15376,16 @@ _as_launch() {
   _as_placeholder_register
   # The pins (_as_ro_pins): from the final list, here, so
   # every launch shape gets them; the list is unchanged when nothing is pinned.
-  local -a _pinned_opts=() _pinned=()
+  local -a _pinned_opts=() _pinned=() _rp_madero=()
   _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1
-  if ((${#_pinned[@]})); then
+  if ((${#_pinned[@]} + ${#_rp_madero[@]})); then
     _bwrap_opts=("${_pinned_opts[@]}")
     local _pn _pl=""
-    for _pn in "${_pinned[@]}"; do _pl+="${_pl:+, }$(_as_check_name "$_pn")"; done
-    _as_info "pinned, above a read-only path or the role's own (the role cannot rename or remove them): $_pl"
+    for _pn in ${_pinned[@]+"${_pinned[@]}"}; do _pl+="${_pl:+, }$(_as_check_name "$_pn")"; done
+    [[ -z "$_pl" ]] || _as_info "pinned, above a read-only, hidden or own path (the role cannot rename or remove them): $_pl"
+    _pl=""
+    for _pn in ${_rp_madero[@]+"${_rp_madero[@]}"}; do _pl+="${_pl:+, }$(_as_check_name "$_pn")"; done
+    [[ -z "$_pl" ]] || _as_info "read-only where it also shows, as the source of a read-only path: $_pl"
   fi
   (umask 077 && printf '%s\0' "${_bwrap_opts[@]}" >"$_session_dir/bwrap.args") || return 1
   # The payload: `sleep` under the marker as its argv[0], set by the shell's `exec -a`, not

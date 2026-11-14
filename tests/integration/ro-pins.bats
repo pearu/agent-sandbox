@@ -299,6 +299,76 @@ behind_link() {
   [ "$(report mv)" = EACCES ]
 }
 
+@test "a hide nested in the read-write base: its parents pinned, the hidden host content not reachable at the next launch" {
+  printf '[agent]\nbase = ~/.probe\nhide = docs/a/hidden\n' >"$IPROFILES/probe/agent-sandbox"
+  mkdir -p "$IHOME/.probe/docs/a/hidden"
+  printf 'SECRET\n' >"$IHOME/.probe/docs/a/hidden/s.txt"
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec bash -c '
+    echo "hidden=$(cat ~/.probe/docs/a/hidden/s.txt 2>/dev/null)" >>report
+    python3 ops.py mv:rename:"$HOME/.probe/docs/a":"$HOME/.probe/docs/a.moved"'
+  [ "$status" -eq 0 ]
+  [ "$(report hidden)" = "" ]
+  [ "$(report mv)" = EBUSY ]
+  [ ! -e "$IHOME/.probe/docs/a.moved" ]
+  run_sandboxed "${BASE[@]}" -- --profile probe --exec bash -c 'echo "seen=$(cat ~/.probe/docs/a.moved/hidden/s.txt ~/.probe/docs/a/hidden/s.txt 2>/dev/null)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = "" ]
+}
+
+@test "the role's own paths through a link the role can replace, covering a host file it sees, are refused: own, copy, copy-on-write, seed-only" {
+  mkdir -p "$W/x/real/a"
+  printf 'HOST\n' >"$W/x/real/a/f"
+  ln -s real "$W/x/lnk"
+  local mode
+  for mode in own copy copy-on-write seed-only; do
+    run_sandboxed "${BASE[@]}" -- --connect "./x/lnk/a/f = $mode" --profile probe --exec bash -c 'echo ran=yes >>report'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$W/x/lnk/a/f goes through $W/x/lnk, a symbolic link in a directory the role can write, and covers $W/x/real/a/f, which the role sees"* ]]
+    [ -z "$(report ran)" ]
+  done
+  [ "$(cat "$W/x/real/a/f")" = HOST ]
+}
+
+@test "an own path through a link the role cannot replace (in a read-only directory): not refused, the real path pinned" {
+  mkdir -p "$W/ro" "$W/real/a"
+  printf 'HOST\n' >"$W/real/a/f"
+  ln -s ../real "$W/ro/lnk"
+  run_sandboxed "${BASE[@]}" -- --connect './ro/ = read-only' --connect './ro/lnk/a/f = own' --profile probe --exec \
+    python3 ops.py mv:rename:real:real.moved
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+  [ "$(cat "$W/real/a/f")" = HOST ]
+}
+
+@test "a destination-side link the role can replace: refused where the bind covers a host file the role sees, not where nothing is there" {
+  mkdir -p "$W/real/b" "$I/ext"
+  printf 'EXT\n' >"$I/ext/f.md"
+  printf 'PROJ\n' >"$W/real/b/f.md"
+  ln -s real "$W/lnk"
+  run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = read-only outside:$I/ext/f.md" --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$W/lnk/b/f.md goes through $W/lnk, a symbolic link in a directory the role can write, and covers $W/real/b/f.md, which the role sees"* ]]
+  run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/new.md = read-only outside:$I/ext/f.md" --profile probe --exec bash -c 'echo "seen=$(cat lnk/b/new.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = EXT ]
+}
+
+@test "a read-only source shown read-write by another mount is read-only there too; the rest of that directory stays writable" {
+  mkdir -p "$IHOME/store/roles" "$W/cfg"
+  printf 'HOST\n' >"$IHOME/store/roles/x.md"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/roles/x.md' \
+    --profile probe --exec python3 ops.py inplace:write:"$IHOME/store/roles/x.md":ROLE declared:write:cfg/x.md:ROLE \
+    beside:write:"$IHOME/store/roles/new":N other:write:"$IHOME/store/other":O
+  [ "$status" -eq 0 ]
+  [ "$(report inplace)" = EROFS ]
+  [ "$(report declared)" = EROFS ]
+  [ "$(report beside)" = ok ]
+  [ "$(report other)" = ok ]
+  [ "$(cat "$IHOME/store/roles/x.md")" = HOST ]
+  [[ "$output" == *"read-only where it also shows, as the source of a read-only path: ~/store/roles/x.md"* ]]
+}
+
 @test "a link in a read-only project is not refused; nor under --preset native" {
   mkdir -p "$W/real"
   printf 'HOST\n' >"$W/real/f.md"
@@ -419,7 +489,7 @@ behind_link() {
     w .asb/new asb_inside
     echo "busy=$(mv .asb .asb.moved 2>&1)" >>report'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"pinned, above a read-only path or the role's own (the role cannot rename or remove them): ./.asb, ./.asb/roles"* ]]
+  [[ "$output" == *"pinned, above a read-only, hidden or own path (the role cannot rename or remove them): ./.asb, ./.asb/roles"* ]]
   [ "$(report mv_asb)" = refused ]
   [ "$(report mv_roles)" = refused ]
   [[ "$(report busy)" == *"Device or resource busy"* ]]

@@ -508,7 +508,7 @@ the engine makes it on the host before the launch, the same directory or file.
 mount point, so it cannot be deleted or renamed from inside, and `copy-on-write` on a
 file is `copy`, since overlayfs cannot stack on one file.
 
-**The directories above a read-only path, and above the role's own, are pinned.** A
+**The directories above a read-only, hidden or own path are pinned.** A
 bound file or directory is a mount point the role cannot rename or remove, but where the
 role has the directory around it read-write from the host it could rename a parent. A
 read-only path moves with it, on the host too, and the role could put its own file at
@@ -521,7 +521,9 @@ already (`./.asb` and `./.asb/roles` above `./.asb/roles/x.md` in a read-write p
 a mount point too, so the role's rename or removal of it fails with EBUSY. The walk goes
 through the mounts on the way: under `./x/a/ = read-write`, `own`, `copy` or
 `copy-on-write`, `./x/a/b/f.md = read-only` pins `./x` too. Every read-only and own bind
-is covered, the built-in dot-file and purpose files included, wherever declared; a
+is covered, the built-in dot-file and purpose files included, wherever declared, and
+every hide (the profile's or `[claude] hide`) nested in a directory the role has
+read-write, whose hidden content would otherwise show at the next launch; a
 `read-write` declaration gets none for its own sake, and nothing is pinned under
 `--preset native`, inside a `copy-on-write` mount, the project included (nothing there
 reaches the host), or inside a read-only mount. A read-only path's source is walked too,
@@ -543,11 +545,25 @@ entry of a directory a read-write host mount shows to the role, which it owns or
 write; a link in a directory it cannot write (another user's) is not. A link it cannot
 replace -- in a read-only or copy-on-write mount, a read-only project, or such a
 directory -- is not refused, and the directories above it and above the real path are
-pinned wherever the role has them read-write. A link only on the destination side, the
-source elsewhere (`outside:`, `sandbox:`), is not refused: replacing it, the role gets the
-same source bound at a directory of its own. Under `--preset native` nothing is refused.
-At 40 links (a loop) the launch is refused. Under an `own`, `copy`, `copy-on-write` or
-`seed-only` path a link is not refused: it is not pinned, and the launch says so.
+pinned wherever the role has them read-write. Under `--preset native` nothing is
+refused. At 40 links (a loop) the launch is refused.
+
+**A path is not bound through a link the role can replace where that would uncover a host
+file.** A read-only path whose source is elsewhere, and an `own`, `copy`,
+`copy-on-write` or `seed-only` path, covers whatever is at its destination; through a
+link the role can replace, replacing it would leave that host object uncovered, readable
+and writable, at the next launch (measured, all modes). So such a link refuses the launch
+where the real path exists and shows to the role, naming the link and the path to
+declare instead; where nothing is there (bwrap makes an empty mount point, which the
+launch removes again) or the role does not see it, it is not refused. Behind a link the
+role cannot replace, the real path's directories are pinned.
+
+**A path declared read-only is read-only wherever the role sees it.** Where a read-write
+host mount of the launch also shows a read-only path's source -- `./cfg/x.md = read-only
+outside:~/store/x.md` under `~/store/ = read-write` -- the source is bound read-only over
+itself there too, so a write in place fails (EROFS) at every path; the rest of that
+directory stays writable, and what is declared beneath it later stays as declared. The
+launch says so with `--verbose`, and the briefing names those paths.
 
 **Under the claude profile, `~/.claude/cache` is pinned where the changelog channel's
 file, `~/.claude/cache/changelog.md`, exists** and the channel is the role's own (every
@@ -556,9 +572,6 @@ store. The role cannot rename or remove `~/.claude/cache`, and a rename or hard 
 across it fails with "Invalid cross-device link"; inside it everything works. The host
 is not restricted: a rename, hard link, `mv` or `rm` across or of the directory works on
 the host while the sandbox runs.
-
-What the pins do not do: a read-only path whose source (`outside:`) the role also has
-read-write somewhere else is writable there, in place.
 
 **Paths nest, and are bound by depth, outer first** (#196): channel paths and
 declarations alike, whichever file they come from and in whatever order they are
