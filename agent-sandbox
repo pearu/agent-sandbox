@@ -14923,11 +14923,14 @@ _as_ro_pins_comps() {
   return 0
 }
 
-# _as_ro_pins_shows HOST NAME [any] -- for _as_ro_pins, on its locals: NAME := every
-# sandbox path where the host path HOST shows to the role through a read-write host mount
-# (with `any`, through any bind of a host path, read-only too) -- the mount that shows at
-# that path in the final view (the latest at or above it) is that one -- and _sh_mnt :=
-# those mounts.
+# _as_ro_pins_shows HOST NAME [any|covered] -- for _as_ro_pins, on its locals: NAME :=
+# every sandbox path where the host path HOST shows to the role through a read-write host
+# mount (with `any`, through any bind of a host path, read-only too) -- the mount that
+# shows at that path in the final view (the latest at or above it) is that one -- and
+# _sh_mnt := those mounts. With `covered`, also each path where another mount sits
+# exactly on HOST while its directory still shows through that read-write mount: HOST is
+# covered there, but the directories above it are the host's and the role can rename
+# them (a read-only bind's source walk pins them).
 _as_ro_pins_shows() {
   local -n _sh_out="$2"
   local _sh_m _sh_s _sh_p _sh_a _sh_t _sh_c
@@ -14949,7 +14952,13 @@ _as_ro_pins_shows() {
       _sh_a="${_sh_a%/*}"
       [[ -n "$_sh_a" ]] || _sh_a=/
     done
-    [[ "$_sh_t" == "$_sh_m" ]] || continue
+    if [[ "$_sh_t" != "$_sh_m" ]]; then
+      # covered: by a mount exactly at the path, the directory above it still this mount's
+      [[ "${3:-}" == covered && "${_od[_sh_t]}" == "$_sh_p" && "$_sh_p" == /?* ]] || continue
+      _sh_a="${_sh_p%/*}"
+      _as_ro_pins_latest "${_sh_a:-/}" _sh_c
+      [[ "$_sh_c" == "$_sh_m" ]] || continue
+    fi
     _sh_out+=("$_sh_p") _sh_mnt+=("$_sh_m")
   done
   return 0
@@ -15075,7 +15084,7 @@ _as_ro_pins_chain() {
     fi
   fi
   for _ch_l in ${_ch_links[@]+"${_ch_links[@]}"} "$_ch_cur"; do # the links met, then the real path
-    _as_ro_pins_shows "$_ch_l" _ch_pos
+    _as_ro_pins_shows "$_ch_l" _ch_pos covered
     for _ch_q in ${_ch_pos[@]+"${_ch_pos[@]}"}; do
       [[ "$_ch_q" == "$2" ]] && continue # the destination's own walk did it
       _as_ro_pins_walk "$_ch_q" "$2" ro || return 1
@@ -15576,27 +15585,17 @@ _as_ro_pins() {
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
     _o="${_on[_k]}" _d="${_od[_k]}" _kind="${_okind[_k]}" _src="${_osrc[_k]}"
     # The walk is for a read-only bind, a hide (a tmpfs: renaming a directory above it
-    # would leave the hidden host content at the next launch), what is the role's own (a
-    # bind from a store -- own, copy, seed-only, a file's copy-on-write: its source under
-    # the state directory, at another path -- or an overlay, a directory's
-    # copy-on-write), and a read-write bind of another host path (`outside:`), which
-    # covers what is at its destination as an own bind does: renaming a directory above
-    # it would leave the covered host object to the next launch, or move a host path a
-    # read-only bind takes as its source (measured, both). Not for a read-write bind of
-    # the path itself (its source its destination's host path): it covers nothing, and
-    # costs nothing new.
+    # would leave the hidden host content at the next launch), and what is the role's own:
+    # a bind from a store (own, copy, seed-only, a file's copy-on-write: its source under
+    # the state directory, at another path) or an overlay (a directory's copy-on-write).
+    # Not for a read-write declaration, whose source is the path itself or elsewhere: what
+    # it shows at its path is what the user declared, and a host object it covers there
+    # is the project's (or the host's) to the role as the other declarations say.
     _walk=0
     if [[ "$_kind" == ro || "$_o" == --overlay || "$_o" == --tmpfs ]]; then # --tmpfs: a hide
       _walk=1
     elif [[ -n "$_kind" && "$_o" == --bind* || -n "$_kind" && "$_o" == --dev-bind* ]] && [[ "$_src" == "$_sd"/* && "$_src" != "$_d" ]]; then
       _walk=1
-    elif [[ ("$_kind" == rw || "$_kind" == rwfile) && "$_src" != "$_d" && "$_d" == /?* ]]; then
-      # walked only (2): what it covers is the walk's; the chains are the read-only and
-      # the role's own binds'
-      _x="${_d%/*}"
-      _as_ro_pins_shows_at "${_x:-/}" _hdest
-      [[ -z "$_hdest" ]] || _hdest="${_hdest%/}/${_d##*/}"
-      [[ -n "$_hdest" && "$_hdest" != "${_ms[$_k]}" && "$_hdest" != "$_src" ]] && _walk=2
     fi
     [[ "$_d" == /?* ]] || _walk=0
     # A bind a later mount at or above it hides is not in the final view: nothing to keep.
@@ -15608,7 +15607,6 @@ _as_ro_pins() {
     _wk=own
     [[ "$_kind" == ro ]] && _wk=ro
     _as_ro_pins_walk "$_d" "$_d" "$_wk" || return 1
-    ((_walk == 1)) || continue
     # The destination's host path, under the mount that shows its directory (_hdest);
     # empty where no bind of a host path shows it.
     _x="${_d%/*}"

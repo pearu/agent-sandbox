@@ -410,24 +410,36 @@ cache_pins() {
   [ "${#PIN[@]}" -eq 0 ]
 }
 
-@test "a read-write bind of the path itself gets no pins; one of a host path elsewhere (outside:) covers what is there: its parents pinned, as an own bind's" {
-  pins -- --bind "$P" "$P" --bind "$P/a/r" "$P/a/r"
+@test "read-write declarations get no pins for their own sake: the path itself, or a host path elsewhere" {
+  pins -- --bind "$P" "$P" --bind "$P/a/r" "$P/a/r" --bind "$BATS_TEST_TMPDIR/elsewhere" "$P/a/b/c"
   same "${IN[@]}"
-  mkdir -p "$BATS_TEST_TMPDIR/elsewhere"
-  pins -- --bind "$P" "$P" --bind "$BATS_TEST_TMPDIR/elsewhere" "$P/a/b/c"
-  same --bind "$P" "$P" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --bind "$BATS_TEST_TMPDIR/elsewhere" "$P/a/b/c"
 }
 
-@test "ey shape 1: ./a/data/ = read-write outside:~/big pins ./a, as own and read-only outside: do" {
+@test "ey shape 1: ./a/data/ = read-write outside:~/big pins nothing (what it covers is the project's, as its own declaration says); own and read-only outside: pin ./a" {
   local big="$BATS_TEST_TMPDIR/home/big"
   mkdir -p "$big" "$P/a/data"
   pins -- --bind "$P" "$P" --bind "$big" "$big" --bind "$big" "$P/a/data"
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/a" ]
+  same "${IN[@]}"
   pins -- --bind "$P" "$P" --bind "$ST/x" "$P/a/data"
   [ "${PIN[*]}" = "$P/a" ]
   pins -- --bind "$P" "$P" --ro-bind "$big" "$P/a/data"
   [ "${PIN[*]}" = "$P/a" ]
+}
+
+@test "a read-only source covered exactly by a read-write file bind, several levels down: every directory above it pinned; a directory bind over its parent pins nothing new (a mount point already)" {
+  local h="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$h/store/a/b" "$h/e" "$P/cfg"
+  printf 'HOST\n' >"$h/store/a/b/x.md"
+  printf 'OTHER\n' >"$h/other.md"
+  pins -- --bind "$h/store" "$h/store" --bind "$h/other.md" "$h/store/a/b/x.md" --bind "$P" "$P" \
+    --ro-bind "$h/store/a/b/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 0 ]
+  [ "${PIN[*]}" = "$h/store/a $h/store/a/b $P/cfg" ]
+  # the cover a directory bind over the source's parent: that parent is a mount point
+  pins -- --bind "$h/store" "$h/store" --bind "$h/e" "$h/store/a/b" --bind "$P" "$P" \
+    --ro-bind "$h/store/a/b/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 0 ]
+  [ "${PIN[*]}" = "$P/cfg" ]
 }
 
 @test "ey shape 2: a read-write file bind over a read-only source's host path pins the directory it lies in, so the source cannot be moved away" {
@@ -628,7 +640,8 @@ cache_pins() {
   touch "$h/roles/x.md"
   pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/sub/x.md" --ro-bind "$h/roles/x.md" "$h/roles/x.md"
   [ "$RC" -eq 0 ] # declared read-only at its own path too: both kept
-  [ "${PIN[*]}" = "$P/cfg $P/cfg/sub $h/roles" ]
+  # (in any order: $h/roles is found by the source walk too, the source covered exactly there)
+  [ "$(printf '%s\n' "${PIN[@]}" | sort | paste -sd' ')" = "$(printf '%s\n' "$P/cfg" "$P/cfg/sub" "$h/roles" | sort | paste -sd' ')" ]
   pins -- --bind "$P" "$P" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # not shown read-write: nothing for it
   same --bind "$P" "$P" --bind "$P/cfg" "$P/cfg" --ro-bind "$h/roles/x.md" "$P/cfg/x.md"
 }

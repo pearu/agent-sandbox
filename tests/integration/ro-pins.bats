@@ -607,7 +607,7 @@ part_in_place() {
   [ "$(report seen)" = HOST ]
 }
 
-@test "a read-write outside: directory bind covering a project directory: the directory above it pinned, the covered host content not uncovered at the next launch" {
+@test "a read-write outside: directory bind over a project directory pins nothing: the role's rename of the directory above it works, as the project's declaration allows" {
   mkdir -p "$W/a/data" "$IHOME/big"
   printf 'HOST\n' >"$W/a/data/f"
   printf 'BIG\n' >"$IHOME/big/f"
@@ -616,10 +616,10 @@ part_in_place() {
     echo "seen=$(cat a/data/f)" >>report
     python3 ops.py mv:rename:a:a.moved'
   [ "$status" -eq 0 ]
+  [[ "$output" != *"pinned, above"* ]]
   [ "$(report seen)" = BIG ]
-  [ "$(report mv)" = EBUSY ]
-  [ ! -e "$W/a.moved" ]
-  [ "$(cat "$W/a/data/f")" = HOST ]
+  [ "$(report mv)" = ok ]
+  [ "$(cat "$W/a.moved/data/f")" = HOST ]
 }
 
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {
