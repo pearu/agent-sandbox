@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
-# The read-only binds' parents, pinned (_as_ro_pins): every directory above a read-only
-# bind that the role has read-write from the host is bound onto itself, so the role cannot
-# rename or remove it and move the read-only path away. The computation on fixed option lists (the
+# The parents of read-only and own binds, pinned (_as_ro_pins): every directory above a
+# read-only bind, or one that is the role's own (own, copy, copy-on-write, seed-only), that
+# the role has read-write from the host is bound onto itself, so the role cannot rename or
+# remove it and move what is bound beneath it away. The computation on fixed option lists (the
 # cases of the measured prototype, readonly-spike's probes/readonly-pin-bwrap.py, and
 # more), then the engine's launches: unchanged where nothing is pinned, and the shipped
 # models' roles. The real mounts are tests/integration/ro-pins.bats'.
@@ -9,7 +10,8 @@
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   P="$BATS_TEST_TMPDIR/p"
-  ST="$BATS_TEST_TMPDIR/state"
+  # a store: under the state directory, $XDG_STATE_HOME/agent-sandbox (pins sets it)
+  ST="$BATS_TEST_TMPDIR/xdg/agent-sandbox/st"
   mkdir -p "$P/sub" "$P/.asb/roles" "$P/.asb/coord/me" "$P/a/b/c" "$P/a/r" "$P/a/s" "$ST/x/d" \
     "$P/x/a/b" "$P/a/bc/d" "$P/a/cow" "$P/a/z" "$P/a/t"
   touch "$P/sub/f.md" "$P/.asb/roles/r.md" "$P/a/f.md" "$P/a/b/f.md" "$P/a/b/c/f.md" "$P/a/r/f.md" "$P/top.md" "$ST/f" \
@@ -23,7 +25,7 @@ pins() {
   [[ "$1" == native ]] && preset=native && shift
   [[ "$1" == -- ]] && shift
   local -a _all=()
-  mapfile -d '' _all < <(bash -c 'source "$1"; shift; _preset="$1"; shift; IN=("$@")
+  mapfile -d '' _all < <(XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" bash -c 'source "$1"; shift; _preset="$1"; shift; IN=("$@")
     _as_ro_pins IN OUT PIN 2>"$BATS_TEST_TMPDIR/msg"; rc=$?
     printf "%s\0" "$rc" "${#OUT[@]}" "${OUT[@]}" ${PIN[@]+"${PIN[@]}"}' _ "$ENGINE" "$preset" "$@")
   RC="${_all[0]}"
@@ -52,7 +54,7 @@ ref_engine() {
   mkdir -p "$d"
   cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$d/"
   cp "$(dirname "$ENGINE")/VERSION" "$d/" 2>/dev/null || true
-  sed 's/^  _as_ro_pins_reuse _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
+  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
   chmod +x "$d/agent-sandbox"
   [ "$(grep -c '^  : no pins$' "$d/agent-sandbox")" -eq 1 ]
   REF="$d/agent-sandbox"
@@ -95,13 +97,13 @@ pinned() {
     want+="${want:+, }./$d"
   done
   if (($#)); then
-    printf '%s\n' "$output" | grep -qxF "agent-sandbox: read-only parents pinned (the role cannot rename or remove them): $want" \
+    printf '%s\n' "$output" | grep -qxF "agent-sandbox: pinned, above a read-only path or the role's own (the role cannot rename or remove them): $want" \
       || {
         printf '%s\n' "$output" | grep -F 'pinned' >&2
         return 1
       }
   else
-    [[ "$output" != *"read-only parents pinned"* ]]
+    [[ "$output" != *"pinned, above"* ]]
     run ! argv_has --bind "$PROJ/.asb" "$PROJ/.asb"
   fi
 }
@@ -211,7 +213,7 @@ pinned() {
 @test "a directory remounted read-only later is not pinned (the remount would take the pin), and said" {
   pins -- --bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md" --remount-ro "$P/a"
   same "${IN[@]}"
-  [[ "$MSG" == *"read-only pins: $P/a is remounted read-only later in the list, so it is not pinned"* ]]
+  [[ "$MSG" == *"pins: $P/a is remounted read-only later in the list, so it is not pinned"* ]]
 }
 
 @test "nested read-only binds: the parents of the outer one pinned, nothing inside the read-only mount" {
@@ -252,8 +254,31 @@ pinned() {
   [ "${#PIN[@]}" -eq 0 ]
 }
 
-@test "own and read-write binds get no pins for their own sake" {
-  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/a/b/c" --bind "$P/a/r" "$P/a/r" --tmpfs "$P/a/s"
+@test "read-write declarations and tmpfs get no pins for their own sake: the path itself, or a host path elsewhere" {
+  pins -- --bind "$P" "$P" --bind "$P/a/r" "$P/a/r" --bind "$BATS_TEST_TMPDIR/elsewhere" "$P/a/b/c" --tmpfs "$P/a/s"
+  same "${IN[@]}"
+}
+
+@test "an own, copy or seed-only directory (a store's, at another path) gets its parents pinned" {
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/a/b/c"
+  same --bind "$P" "$P" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --bind "$ST/x" "$P/a/b/c"
+  [ "${PIN[*]}" = "$P/a $P/a/b" ]
+}
+
+@test "an own or copy FILE (a store's) gets its parents pinned" {
+  pins -- --bind "$P" "$P" --bind "$ST/f" "$P/x/a/f"
+  same --bind "$P" "$P" --bind "$P/x" "$P/x" --bind "$P/x/a" "$P/x/a" --bind "$ST/f" "$P/x/a/f"
+}
+
+@test "a copy-on-write directory (an overlay) gets its parents pinned" {
+  pins -- --bind "$P" "$P" --overlay-src "$P/x/a/b" --overlay /up /wk "$P/x/a/b"
+  same --bind "$P" "$P" --bind "$P/x" "$P/x" --bind "$P/x/a" "$P/x/a" --overlay-src "$P/x/a/b" --overlay /up /wk "$P/x/a/b"
+}
+
+@test "the role's own binds: nothing under native, nothing where no read-write host mount shows above them" {
+  pins native -- --bind "$P" "$P" --bind "$ST/x" "$P/a/b/c"
+  same "${IN[@]}"
+  pins -- --tmpfs "$P" --bind "$ST/x" "$P/a/b/c"
   same "${IN[@]}"
 }
 
@@ -275,23 +300,76 @@ pinned() {
   [ "${#PIN[@]}" -eq 0 ]
 }
 
-@test "a directory not there on the host is not pinned, and said: the launch does not fail on it" {
-  pins -- --bind "$P" "$P" --ro-bind "$P/top.md" "$P/nodir/f.md"
+@test "a directory not there on the host is not pinned, and not said (only bwrap's mount-point stub is there): the launch does not fail on it" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/top.md" "$P/nodir/sub/f.md" # an outside: source's shape
   same "${IN[@]}"
-  [[ "$MSG" == *"read-only pins: $P/nodir is not a directory on the host ($P/nodir), so it is not pinned: the role can rename it"* ]]
+  [ -z "$MSG" ]
 }
 
-@test "a symbolic link in the chain is not pinned, and said; the real directories still are" {
+@test "a read-only bind through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
   ln -s a "$P/lnk"
   pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
-  same --bind "$P" "$P" --bind "$P/lnk/b" "$P/lnk/b" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
-  [[ "$MSG" == *"read-only pins: $P/lnk is a symbolic link on the host ($P/lnk), so it is not pinned: the role can rename the directory it points to"* ]]
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"connect: $P/lnk/b/f.md: $P/lnk is a symbolic link in a directory the role can write, so a read-only path is not bound through it: the role could replace the link and have the next launch bind its own file. Declare the path it resolves to instead: $P/a/b/f.md. Refusing to launch"* ]]
+  ln -s ../a "$P/x/lnk2" # deeper: a link inside a plain directory of the project
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/x/lnk2/b/f.md"
+  [ "$RC" -eq 1 ]
+}
+
+@test "a link the role cannot replace is not refused: in a read-only mount, the real path behind it pinned where it shows read-write" {
+  mkdir -p "$P/ro"
+  ln -s ../a "$P/ro/lnk"
+  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/a/b/f.md" "$P/ro/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  same --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" \
+    --ro-bind "$P/a/b/f.md" "$P/ro/lnk/b/f.md"
+}
+
+@test "a link the role cannot replace is not refused: under copy-on-write; nor in a read-only project; nor under native" {
+  mkdir -p "$P/c"
+  ln -s ../a "$P/c/lnk"
+  pins -- --bind "$P" "$P" --overlay-src "$P/c" --overlay /up /wk "$P/c" --ro-bind "$P/a/b/f.md" "$P/c/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  [ "${PIN[*]}" = "$P/a $P/a/b" ] # the real path's, in the read-write project
+  ln -s a "$P/lnk"
+  pins -- --ro-bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  same "${IN[@]}"
+  pins native -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  same "${IN[@]}"
+}
+
+@test "under the role's own binds a link is not refused: not pinned, and said" {
+  ln -s a "$P/lnk"
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/b"
+  [ "$RC" -eq 0 ]
+  same "${IN[@]}"
+  [[ "$MSG" == *"pins: $P/lnk is a symbolic link on the host ($P/lnk), so it is not pinned (the directories beneath it are, through the link): the role can rename the directory it points to"* ]]
+}
+
+@test "a read-only bind's source is walked where a read-write host mount shows it: at its own path, and at another" {
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/roles" "$P/cfg/sub"
+  touch "$h/roles/x.md"
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/sub/x.md"
+  # three pins at one place: by depth, then by path
+  same --bind "$P" "$P" --bind "$h" "$h" --bind "$P/cfg" "$P/cfg" --bind "$h/roles" "$h/roles" \
+    --bind "$P/cfg/sub" "$P/cfg/sub" --ro-bind "$h/roles/x.md" "$P/cfg/sub/x.md"
+  pins -- --bind "$P" "$P" --bind "$h" "$P/mnt" --ro-bind "$h/roles/x.md" "$P/cfg/x.md"
+  [ "${PIN[*]}" = "$P/cfg $P/mnt/roles" ]
+  [[ " ${OUT[*]} " == *" --bind $h/roles $P/mnt/roles "* ]]
+  pins -- --bind "$P" "$P" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # not shown read-write: nothing for it
+  [ "${PIN[*]}" = "$P/cfg" ]
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles" "$P/cfg/roles" # a directory
+  # ~/store is a mount point; the source directory itself is not pinned (writable in place)
+  [ "${PIN[*]}" = "$P/cfg" ]
 }
 
 @test "an option list the computation cannot read refuses: an unknown option, a word that is no option, missing arguments" {
   pins -- --bind "$P" "$P" --new-option x --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
   [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"the read-only pins cannot read the bwrap option '--new-option' (at 3): this is a bug in agent-sandbox, and the launch is refused rather than run without them"* ]]
+  [[ "$MSG" == *"the pins cannot read the bwrap option '--new-option' (at 3): this is a bug in agent-sandbox, and the launch is refused rather than run without them"* ]]
   pins -- --bind "$P" "$P" stray --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"cannot read the bwrap option 'stray' (at 3)"* ]]
@@ -330,24 +408,21 @@ pinned() {
   done
 }
 
-@test "the briefing's pins are reused by the launch when only harmless options were added, else computed again" {
-  # shellcheck disable=SC1090
-  source "$ENGINE"
-  local _preset=shared _rp_cached=1
-  local -a _rp_cache_in=(--bind "$P" "$P") _rp_cache_out=(SENTINEL) _rp_cache_pins=() _rp_cache_rw=("$P") _rp_rw=()
-  local -a IN=(--bind "$P" "$P" --share-net --setenv A B --ro-bind "$ST/f" /etc/ssl/x) OUT=() PIN=()
-  _as_ro_pins_reuse IN OUT PIN
-  [ "${OUT[*]}" = "SENTINEL --share-net --setenv A B --ro-bind $ST/f /etc/ssl/x" ]
-  IN=(--bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md") # inside a read-write mount: computed
-  _as_ro_pins_reuse IN OUT PIN
-  [ "${PIN[*]}" = "$P/a" ]
-  IN=(--bind "$P" "$P" --bind "$ST/x" /elsewhere) # a read-write bind: computed
-  _as_ro_pins_reuse IN OUT PIN
-  [ "${OUT[*]}" = "${IN[*]}" ]
-  _rp_cache_in=(--bind "$P" "$P" --new) # another prefix: computed
-  IN=(--bind "$P" "$P" --share-net)
-  _as_ro_pins_reuse IN OUT PIN
-  [ "${OUT[*]}" = "${IN[*]}" ]
+@test "a destination that is not normalised is pinned once per directory: // and /./" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/a//b/f.md"
+  same --bind "$P" "$P" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --ro-bind "$P/a/b/f.md" "$P/a//b/f.md"
+  [ "${PIN[*]}" = "$P/a $P/a/b" ]
+  pins -- --bind "$P/" "$P/" --ro-bind "$P/a/b/f.md" "$P/a/./b/f.md"
+  same --bind "$P/" "$P/" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --ro-bind "$P/a/b/f.md" "$P/a/./b/f.md"
+  [ "${PIN[*]}" = "$P/a $P/a/b" ]
+}
+
+@test "a pin is bound as the mount it lies in: under a --dev-bind it is a --dev-bind" {
+  pins -- --dev-bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  same --dev-bind "$P" "$P" --dev-bind "$P/a" "$P/a" --dev-bind "$P/a/b" "$P/a/b" --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  pins -- --dev-bind "$P" "$P" --bind "$ST/x" "$P/a/s" --ro-bind "$ST/f" "$P/a/s/d/f"
+  same --dev-bind "$P" "$P" --dev-bind "$P/a" "$P/a" --bind "$ST/x" "$P/a/s" --bind "$ST/x/d" "$P/a/s/d" \
+    --ro-bind "$ST/f" "$P/a/s/d/f"
 }
 
 @test "odd characters in a path: a space, a newline and a glob character pass through intact" {
@@ -374,10 +449,38 @@ pinned() {
   [ "$A" = "$B" ]
   both --connect 'project = copy-on-write' --connect './a/b/f.md = read-only' claude --version
   [ "$A" = "$B" ]
-  both --connect './a/b/ = own' --connect './d/ = read-write' claude --version
+  both --connect './b/ = own' --connect './d/ = read-write' claude --version # own in the root: nothing above
   [ "$A" = "$B" ]
   TEST_PRESET='' both --preset native --connect './a/b/f.md = read-only' claude --version
   [ "$A" = "$B" ]
+}
+
+@test "a launch says what is not pinned once, though the briefing computes the pins too" {
+  make_harness
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  mkdir -p "$proj/real/b"
+  touch "$proj/real/b/f.md"
+  ln -s real "$proj/lnk"
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/ = own' claude --version
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c "pins: $proj/lnk is a symbolic link on the host")" -eq 1 ]
+}
+
+@test "a launch refuses a read-only declaration through a link the role can replace, saying it once, bwrap never run" {
+  make_harness
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  mkdir -p "$proj/real/b"
+  touch "$proj/real/b/f.md"
+  ln -s real "$proj/lnk"
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
+  [ "$status" -ne 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c "$proj/lnk is a symbolic link in a directory the role can write")" -eq 1 ]
+  [[ "$output" == *"Declare the path it resolves to instead: $proj/real/b/f.md. Refusing to launch"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './real/b/f.md = read-only' claude --version # the resolved path
+  [ "$status" -eq 0 ]
 }
 
 @test "a read-only file two levels down in a read-write project: exactly the two pins added, before it" {
@@ -394,7 +497,7 @@ pinned() {
   [ "$(printf '%s\n' "$A" | sed -n "$((i - 7)),$((i - 1))p" | paste -sd' ')" = "--bind $proj/a $proj/a --bind $proj/a/b $proj/a/b --ro-bind" ]
   # without the six words, the reference
   [ "$(printf '%s\n' "$A" | sed "$((i - 7)),$((i - 2))d")" = "$B" ]
-  [[ "$AOUT" == *"read-only parents pinned (the role cannot rename or remove them): ./a, ./a/b"* ]]
+  [[ "$AOUT" == *"pinned, above a read-only path or the role's own (the role cannot rename or remove them): ./a, ./a/b"* ]]
 }
 
 @test "the roles model: the Supervisor and the setup role get .asb and .asb/roles pinned; the read-only-project roles none" {

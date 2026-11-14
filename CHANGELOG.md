@@ -1106,17 +1106,23 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
-- **A role can no longer move a read-only file or directory by renaming a parent.** A
-  read-only bind is a mount point the role cannot rename or remove, but in a directory
+- **A role can no longer move a read-only file or directory, or an own one, by renaming a
+  parent.** A bind is a mount point the role cannot rename or remove, but in a directory
   it has read-write from the host it could rename a parent (measured: the `roles`
   model's Supervisor and setup role ran `mv .asb .asb.moved`, and the directory moved on
   the host), put its own file at the old path, and have the next launch bind that one
-  read-only. Each directory above a read-only bind that the role has read-write from the
-  host -- through any read-write, `own`, `copy` or copy-on-write mount on the way -- is
-  now bound onto itself at launch, so its rename or removal fails with EBUSY: in the
+  read-only; above an `own`, `copy`, `copy-on-write` or `seed-only` path the next launch
+  showed the host's original to the role, readable and writable (measured). Each
+  directory above such a bind that the role has read-write from the host -- through any
+  read-write, `own`, `copy` or copy-on-write mount on the way -- and above a read-only
+  bind's source where a read-write host mount shows it, is now bound onto itself at
+  launch, so its rename or removal fails with EBUSY: in the
   shipped models `.asb` and `.asb/roles` for the `roles` Supervisor and setup role, the
   `github` setup role and the `market` role; none for the roles with a read-only or
-  copy-on-write project. An option list the computation cannot read refuses the launch. A
+  copy-on-write project. A read-only path declared through a symbolic link the role can
+  replace (an entry of a directory it has read-write) refuses the launch, naming the link
+  and the path to declare instead; a link it cannot replace is not refused, and the real
+  path behind it is pinned. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the
   briefing says. The bwrap arguments are unchanged where nothing is pinned.

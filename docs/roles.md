@@ -477,7 +477,7 @@ the file declares under `.asb/` with a `..` in it (`.asb/../x/ = read-only`), wh
 `--init` would make outside `.asb/`: the refusal names the line.
 
 Nor can a role with the project read-write move `.asb/` or `.asb/roles/` out of the way:
-the directories above a read-only file or directory are pinned at launch, so the
+the directories above a read-only file or directory, or one of the role's own, are pinned at launch, so the
 Supervisor's and the setup role's `mv .asb .asb.moved` fails with "Device or resource
 busy" ([connections.md](connections.md), paths). They stay writable inside; a rename,
 hard link or `git mv` across their boundary fails with "Invalid cross-device link".

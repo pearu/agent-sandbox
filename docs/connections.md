@@ -508,26 +508,43 @@ the engine makes it on the host before the launch, the same directory or file.
 mount point, so it cannot be deleted or renamed from inside, and `copy-on-write` on a
 file is `copy`, since overlayfs cannot stack on one file.
 
-**The directories above a read-only path are pinned.** A read-only file or directory is a
-mount point the role cannot rename or remove, but where the role has the directory
-around it read-write from the host it could rename a parent: the read-only path moves
-with it, on the host too, and the role could put its own file at the old path for the
-next launch to bind read-only. So at launch every directory above a read-only bind, up
-to the outermost one the role has read-write from the host, is bound onto itself,
-read-write, unless it is a mount point already (`./.asb` and `./.asb/roles` above
-`./.asb/roles/x.md` in a read-write project): a mount point too, so the role's rename or
-removal of it fails with EBUSY. The walk goes through the mounts on the way: under
-`./x/a/ = read-write`, `own`, `copy` or `copy-on-write`, `./x/a/b/f.md = read-only` pins
-`./x` too. Every read-only bind is covered, the built-in dot-file and purpose files
-included, wherever declared; `own` and `read-write` binds get none for their own sake,
-and nothing is pinned under `--preset native`, inside a `copy-on-write` mount, the
-project included (nothing there reaches the host), or inside a read-only mount. A
-pinned directory stays writable inside; a rename, hard link or `git mv` across its
-boundary fails with "Invalid cross-device link", while `mv`, `cp`, rsync and git's
-checkout, stash and rebase work (they copy). A directory that is not there on the host
-is not pinned, and the launch says so (not for one in the role's own store, where only a
-mount point bwrap makes is at stake); a symbolic link is not pinned either, and the
-launch names it: the role can then rename the directory it points to.
+**The directories above a read-only path, and above the role's own, are pinned.** A
+bound file or directory is a mount point the role cannot rename or remove, but where the
+role has the directory around it read-write from the host it could rename a parent. A
+read-only path moves with it, on the host too, and the role could put its own file at
+the old path for the next launch to bind read-only. Above an `own`, `copy`,
+`copy-on-write` or `seed-only` path the host's original moves out from under the
+declaration, and the next launch shows it to the role, readable and writable. So at
+launch every directory above such a bind, up to the outermost one the role has
+read-write from the host, is bound onto itself, read-write, unless it is a mount point
+already (`./.asb` and `./.asb/roles` above `./.asb/roles/x.md` in a read-write project):
+a mount point too, so the role's rename or removal of it fails with EBUSY. The walk goes
+through the mounts on the way: under `./x/a/ = read-write`, `own`, `copy` or
+`copy-on-write`, `./x/a/b/f.md = read-only` pins `./x` too. Every read-only and own bind
+is covered, the built-in dot-file and purpose files included, wherever declared; a
+`read-write` declaration gets none for its own sake, and nothing is pinned under
+`--preset native`, inside a `copy-on-write` mount, the project included (nothing there
+reaches the host), or inside a read-only mount. A read-only path's source is walked too,
+wherever a read-write host mount shows it: an `outside:` source, or the real path behind
+a link. A pinned directory stays writable inside; a rename, hard link or `git mv` across
+its boundary fails with "Invalid cross-device link", while `mv`, `cp`, rsync and git's
+checkout, stash and rebase work (they copy); the pinned directory itself cannot be
+renamed or removed (EBUSY). A directory that is not there on the host is not pinned: the
+bind's source exists elsewhere, so only the mount point bwrap makes there would move.
+
+**A read-only path is not declared through a link the role can replace.** A symbolic
+link on the way that is an entry of a directory the role has read-write from the host
+refuses the launch, naming the link and the path it resolves to, which is what to
+declare instead: the role could remove the link and make a directory of its own there,
+and the next launch, resolving the declaration on the host, would bind the role's file
+read-only (measured). A link the role cannot replace -- in a read-only or copy-on-write
+mount, or in a read-only project -- is not refused: the real path behind it is pinned
+wherever the role has it read-write. Under `--preset native` nothing is refused. Under
+an `own`, `copy`, `copy-on-write` or `seed-only` path a link is not refused: it is not
+pinned, and the launch says so.
+
+What the pins do not do: a read-only path whose source (`outside:`) the role also has
+read-write somewhere else is writable there, in place.
 
 **Paths nest, and are bound by depth, outer first** (#196): channel paths and
 declarations alike, whichever file they come from and in whatever order they are

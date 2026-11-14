@@ -1273,10 +1273,12 @@ login_file() {
   touch "$PROJ/a/b/f.md" "$PROJ/top.md"
   run_engine BWRAP_COPY="$OUT" -- asb --connect './a/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- '- the directories above a read-only file or directory cannot be renamed or' "$OUT/briefing.md"
-  grep -qxF -- "  removed ($PROJ/a, $PROJ/a/b): they stay writable inside, but a rename, hard link or \`git mv\`" "$OUT/briefing.md"
+  grep -qxF -- '- the directories above a read-only path or one of your own (own, copy,' "$OUT/briefing.md"
+  grep -qxF -- "  copy-on-write, seed-only) cannot be renamed or removed ($PROJ/a, $PROJ/a/b): they stay" "$OUT/briefing.md"
   # shellcheck disable=SC2016 # the briefing's backticks, literal
-  grep -qxF -- '  across their boundary fails with "Invalid cross-device link"; `mv` and `cp` work' "$OUT/briefing.md"
+  grep -qxF -- '  writable inside, but a rename, hard link or `git mv` across their boundary fails' "$OUT/briefing.md"
+  # shellcheck disable=SC2016 # the briefing's backticks, literal
+  grep -qxF -- '  with "Invalid cross-device link"; `mv` and `cp` work' "$OUT/briefing.md"
   run_engine BWRAP_COPY="$OUT" -- asb --connect './top.md = read-only' claude --version
   [ "$status" -eq 0 ]
   grep -q -- "- extra read-only paths: $PROJ/top.md\$" "$OUT/briefing.md"

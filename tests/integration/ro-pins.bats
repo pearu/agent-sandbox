@@ -61,7 +61,7 @@ ref_engine() {
   local d="$BATS_TEST_TMPDIR/ref"
   mkdir -p "$d"
   cp -r "$(dirname "$ENGINE")/components" "$d/"
-  sed 's/^  _as_ro_pins_reuse _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
+  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
   chmod +x "$d/agent-sandbox"
   [ "$(grep -c '^  : no pins$' "$d/agent-sandbox")" -eq 1 ]
   REF="$d/agent-sandbox"
@@ -103,6 +103,48 @@ b1() {
   [ "$(report seen)" = HOST ]
 }
 
+# own_case MODE file|dir -- ./x/a/f (or ./x/a/d/) declared MODE, nothing read-only beneath
+# ./x: the role's renames of x and x/a are refused, the host's original keeps its inode and
+# text, and the next launch shows the role no host original at x.moved.
+own_case() {
+  local f decl ino
+  if [[ "$2" == file ]]; then
+    mkdir -p "$W/x/a"
+    f=x/a/f decl="./x/a/f = $1"
+  else
+    mkdir -p "$W/x/a/d"
+    f=x/a/d/g decl="./x/a/d/ = $1"
+  fi
+  printf 'HOST\n' >"$W/$f"
+  ino="$(stat -c %i "$W/$f")"
+  run_sandboxed "${BASE[@]}" -- --connect "$decl" --profile probe --exec bash -c '
+    python3 ops.py mv_x:rename:x:x.moved mv_a:rename:x/a:x/a.moved
+    echo ROLE >'"$f"' 2>/dev/null; true'
+  [ "$status" -eq 0 ]
+  [ "$(report mv_x)" = EBUSY ]
+  [ "$(report mv_a)" = EBUSY ]
+  [ ! -e "$W/x.moved" ]
+  [ "$(cat "$W/$f")" = HOST ]
+  [ "$(stat -c %i "$W/$f")" = "$ino" ]
+  run_sandboxed "${BASE[@]}" -- --connect "$decl" --profile probe --exec bash -c '
+    echo "moved=$([ -e x.moved ] && echo yes || echo no)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report moved)" = no ]
+  [ "$(cat "$W/$f")" = HOST ]
+}
+
+# behind_link DECL... -- ro/lnk or c/lnk -> ../real, real/f.md HOST in the read-write project:
+# the launch is not refused, the role's rename of real is EBUSY, the next launch reads HOST.
+behind_link() {
+  run_sandboxed "${BASE[@]}" -- "$@" --profile probe --exec bash -c '
+    python3 ops.py mv:rename:real:real.moved
+    mkdir -p real 2>/dev/null; echo ROLE >real/f.md 2>/dev/null; true'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+  [ "$(cat "$W/real/f.md")" = HOST ]
+  [ ! -e "$W/real.moved" ]
+}
+
 @test "the role's rename and removal of each pinned directory are refused (EBUSY), and the host is unchanged" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec python3 ops.py \
     mv_a:rename:a:a.moved mv_b:rename:a/b:a/b.moved rmdir_a:rmdir:a rmdir_b:rmdir:a/b
@@ -140,6 +182,98 @@ b1() {
   command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
     || skip "bubblewrap has no --overlay (needs >= 0.11)"
   b1 copy-on-write
+}
+
+@test "the role's own: an own file's parents are pinned, the host's original stays out of reach" {
+  own_case own file
+}
+
+@test "the role's own: an own directory" {
+  own_case own dir
+}
+
+@test "the role's own: a copy file" {
+  own_case copy file
+}
+
+@test "the role's own: a copy directory" {
+  own_case copy dir
+}
+
+@test "the role's own: a copy-on-write file (a copy)" {
+  own_case copy-on-write file
+}
+
+@test "the role's own: a copy-on-write directory (an overlay)" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  own_case copy-on-write dir
+}
+
+@test "the role's own: a seed-only file" {
+  own_case seed-only file
+}
+
+@test "the role's own: a seed-only directory" {
+  own_case seed-only dir
+}
+
+@test "a read-only declaration through a link the role can replace is refused before anything runs; the resolved path launches" {
+  mkdir -p "$W/x/real"
+  printf 'HOST\n' >"$W/x/real/f.md"
+  ln -s real "$W/x/lnk"
+  run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$W/x/lnk is a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"Declare the path it resolves to instead: $W/x/real/f.md. Refusing to launch"* ]]
+  [ -z "$(report ran)" ]
+  run_sandboxed "${BASE[@]}" -- --connect './x/real/f.md = read-only' --profile probe --exec python3 ops.py mv:rename:x/real:x/real.moved
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+}
+
+@test "a link in a read-only directory, its target read-write: not refused, the real path pinned" {
+  mkdir -p "$W/ro" "$W/real"
+  printf 'HOST\n' >"$W/real/f.md"
+  ln -s ../real "$W/ro/lnk"
+  behind_link --connect './ro/ = read-only' --connect './ro/lnk/f.md = read-only'
+  run_sandboxed "${BASE[@]}" -- --connect './ro/ = read-only' --connect './ro/lnk/f.md = read-only' \
+    --profile probe --exec bash -c 'echo "seen=$(cat ro/lnk/f.md)" >>report'
+  [ "$(report seen)" = HOST ]
+}
+
+@test "a link under copy-on-write, its target read-write: not refused, the real path pinned" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  mkdir -p "$W/c" "$W/real"
+  printf 'HOST\n' >"$W/real/f.md"
+  ln -s ../real "$W/c/lnk"
+  behind_link --connect './c/ = copy-on-write' --connect './c/lnk/f.md = read-only'
+}
+
+@test "a link in a read-only project is not refused; nor under --preset native" {
+  mkdir -p "$W/real"
+  printf 'HOST\n' >"$W/real/f.md"
+  ln -s real "$W/lnk"
+  run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './lnk/f.md = read-only' \
+    --profile probe --exec bash -c 'echo "seen=$(cat lnk/f.md)" >&2' # the project is read-only: no report
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"seen=HOST"* ]]
+  TEST_PRESET='' run_sandboxed "${BASE[@]}" -- --preset native --connect './lnk/f.md = read-only' \
+    --profile probe --exec bash -c 'echo "seen=$(cat lnk/f.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+}
+
+@test "an outside: source in a directory the role has read-write: its directories are pinned (a write in place is not prevented)" {
+  mkdir -p "$IHOME/store/roles" "$W/cfg/sub"
+  printf 'HOST\n' >"$IHOME/store/roles/x.md"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/sub/x.md = read-only outside:~/store/roles/x.md' \
+    --profile probe --exec bash -c 'python3 ops.py mv:rename:"$HOME/store/roles":"$HOME/store/roles.moved"'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+  [ ! -e "$IHOME/store/roles.moved" ]
 }
 
 @test "B2: a pin beside a copy-on-write directory launches (never between --overlay-src and --overlay)" {
@@ -215,7 +349,7 @@ b1() {
     python3 ops.py mv_a:rename:a:a.moved mv_b:rename:a/b:a/b.moved
     echo "ns=$(readlink /proc/self/ns/mnt)" >>report'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"read-only parents pinned"* ]] # a join builds nothing
+  [[ "$output" != *"pinned, above"* ]] # a join builds nothing
   [ "$(report mv_a)" = EBUSY ]
   [ "$(report mv_b)" = EBUSY ]
   [ ! -e "$W/a.moved" ]
@@ -237,7 +371,7 @@ b1() {
     w .asb/new asb_inside
     echo "busy=$(mv .asb .asb.moved 2>&1)" >>report'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"read-only parents pinned (the role cannot rename or remove them): ./.asb, ./.asb/roles"* ]]
+  [[ "$output" == *"pinned, above a read-only path or the role's own (the role cannot rename or remove them): ./.asb, ./.asb/roles"* ]]
   [ "$(report mv_asb)" = refused ]
   [ "$(report mv_roles)" = refused ]
   [[ "$(report busy)" == *"Device or resource busy"* ]]
@@ -260,7 +394,7 @@ b1() {
   run_sandboxed "${BASE[@]}" -- --role implementer-1 --profile probe --exec bash -c '
     echo "mv=$(mv .asb .asb.moved 2>&1)" >.asb/coord/implementer-1/seen # its own directory: the project is read-only to it'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"read-only parents pinned"* ]]
+  [[ "$output" != *"pinned, above"* ]]
   [[ "$(cat "$W/.asb/coord/implementer-1/seen")" == *"Read-only file system"* ]]
   [ ! -e "$W/.asb.moved" ]
 }
