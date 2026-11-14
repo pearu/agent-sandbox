@@ -589,19 +589,24 @@ Stated plainly. These are what the adversary above can still do.
   existing `.agent-sandbox`, written in place through a descriptor shown to be the file,
   so a running sandbox's read-only bind of it holds (#389). `--init` refuses, before it
   writes anything, a run that would rename over or remove the file a single-file mount of
-  a running sandbox of the project sits on where that breaks it: in a directory the role
-  has read-write from the host (it would reach the host's new file, writable), or one it
-  would lose in a directory it sees from the host (#389). What remains: a sandbox with
+  any running sandbox of the user's (this project's or another's) sits on where that
+  breaks it: in a directory the role has read-write from the host, unless the mount was
+  the file itself read-write (it would reach the host's new file, writable); its own copy
+  or read-write mount in a read-only one (it would lose it); a removal in a directory it
+  sees from the host (#389). What remains: a sandbox with
   the project read-write can make either command refuse, by leaving a link in place; the
   coord index and `.asb/init.sums` are read by path just before `--init` rewrites them,
   so a link swapped in after the last check and before that read has its target's text
   copied into the project; a role launched after `--init` looked for running ones and
   before it writes is not seen. A writer outside asb that puts a new file in place of
-  `.agent-sandbox` or a purpose file -- an editor's save by temporary file and rename,
-  `sed -i`, a `git checkout` that writes the file anew -- detaches a running sandbox's
-  read-only mount of it the same way (measured: `mv`, `sed -i`, remove and create): where
-  the role has the project read-write, the default and so a plain `asb claude` too, the
-  path then leads to the host's new file, writable for the role until it is shut down. A
+  `.agent-sandbox`, a purpose file, or a read-only channel file in a directory bound from
+  the host (`CLAUDE.md` under `shared` with `instructions = read-only`) -- an editor's save
+  by temporary file and rename, `sed -i`, a `git checkout` that writes the file anew,
+  Claude Code's own save on the host -- detaches a running sandbox's read-only mount of it
+  the same way (measured: `mv`, `sed -i`, remove and create; `CLAUDE.md` with `mv`):
+  where that directory is read-write for the role -- the project by default, so a plain
+  `asb claude` too -- the path then leads to the host's new file, writable for the role
+  until it is shut down. A
   writable dot-file makes this window reachable from inside: a launch hashes the dot-file
   and later parses it again by path, so a file rewritten between the two is applied, as
   before; written in place, the text it reads in that window can be half-written. Two

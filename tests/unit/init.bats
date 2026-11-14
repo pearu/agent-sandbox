@@ -2764,7 +2764,7 @@ shared_env() {
 # running ROLE [PROFILE] < RECORD -- a faked running sandbox of the project: its keeper's
 # id names a live process of this test's (a sleep, ended in teardown) as its supervisor
 # and its payload, as _as_keeper_live checks them, and RECORD is its keeper/binds, as
-# `DIR<TAB>PATH` lines (written NUL-separated, as _as_keeper_binds does). With RUNNING_OLD=1 a keeper an
+# `DIR<TAB>MODE<TAB>SELF<TAB>PATH` lines (written NUL-separated, as _as_keeper_binds does). With RUNNING_OLD=1 a keeper an
 # older asb started: no binds, RECORD is its keeper/policy, and the project's
 # .agent-sandbox as it is now its dotfile.copy. Sets RUN_PID, and RUN_SB, its directory
 # (keeper/policy there: its declarations, for a test to write).
@@ -2820,8 +2820,10 @@ snap() {
 
 # binds_of FILE -- a keeper/binds record as `DIR<TAB>PATH` lines
 binds_of() {
-  local dir path
-  while IFS= read -r -d '' dir && IFS= read -r -d '' path; do printf '%s\t%s\n' "$dir" "$path"; done <"$1"
+  local dir mode self path
+  while IFS= read -r -d '' dir && IFS= read -r -d '' mode && IFS= read -r -d '' self && IFS= read -r -d '' path; do
+    printf '%s\t%s\t%s\t%s\n' "$dir" "$mode" "$self" "$path"
+  done <"$1"
 }
 
 @test "a launch records the single-file mounts that sit on a host file: in a read-write project for one role, a read-only one for another (#389)" {
@@ -2831,13 +2833,13 @@ binds_of() {
   local st="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}"
   engine_bg AGENT_SANDBOX_NET=none -- asb --role supervisor claude
   binds_of "$st/supervisor/keeper/binds" >"$H/b.sup"
-  grep -qxF "rw"$'\t'"$PROJ/.agent-sandbox" "$H/b.sup"
-  grep -qxF "rw"$'\t'"$PROJ/.asb/roles/supervisor.md" "$H/b.sup"
+  grep -qxF "rw"$'\t'"ro"$'\t'"y"$'\t'"$PROJ/.agent-sandbox" "$H/b.sup"
+  grep -qxF "rw"$'\t'"ro"$'\t'"y"$'\t'"$PROJ/.asb/roles/supervisor.md" "$H/b.sup"
   release_bg
   engine_bg AGENT_SANDBOX_NET=none -- asb --role implementer-1 claude
   binds_of "$st/implementer-1/keeper/binds" >"$H/b.impl"
-  grep -qxF "ro"$'\t'"$PROJ/.agent-sandbox" "$H/b.impl"
-  grep -qxF "ro"$'\t'"$PROJ/.asb/roles/implementer-1.md" "$H/b.impl"
+  grep -qxF "ro"$'\t'"ro"$'\t'"y"$'\t'"$PROJ/.agent-sandbox" "$H/b.impl"
+  grep -qxF "ro"$'\t'"ro"$'\t'"y"$'\t'"$PROJ/.asb/roles/implementer-1.md" "$H/b.impl"
   release_bg
 }
 
@@ -2850,24 +2852,26 @@ binds_of() {
   printf 'x\n' >"$d/q/h"
   printf 'x\n' >"$d/n"$'\n'"l/f"
   ln -s p "$d/plink"
-  binds() { _as_keeper_binds "$@" | while IFS= read -r -d '' a && IFS= read -r -d '' b; do printf '%s|%s\n' "$a" "$b"; done; }
+  binds() { _as_keeper_binds "$@" | while IFS= read -r -d '' a && IFS= read -r -d '' b && IFS= read -r -d '' c && IFS= read -r -d '' e; do printf '%s|%s|%s|%s\n' "$a" "$b" "$c" "$e"; done; }
   run binds --setenv A --bind --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --ro-bind "$d/p/sub/g" "$d/p/sub/g" \
     --tmpfs "$d/p/sub" --bind "$d/q/h" "$d/p/h2" --clearenv --overlay-src "$d/q" --overlay "$d/u" "$d/w" "$d/q" \
     --ro-bind "$d/q/h" "$d/q/h"
   [ "$status" -eq 0 ]
-  [ "${lines[0]}" = "rw|$d/p/f" ]
-  [ "${lines[1]}" = "rw|$d/p/h2" ] # another file's copy over p/h2: the mount sits on p/h2
-  [ "${#lines[@]}" -eq 2 ]         # p/sub/g under the later tmpfs; q/h on the overlay
+  [ "${lines[0]}" = "rw|ro|y|$d/p/f" ]
+  [ "${lines[1]}" = "rw|rw|n|$d/p/h2" ] # another file's copy over p/h2: the mount sits on p/h2
+  [ "${#lines[@]}" -eq 2 ]              # p/sub/g under the later tmpfs; q/h on the overlay
   run binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f2"
-  [ "$output" = "rw|$d/p/f2" ] # another name: its mount point, not its source
+  [ "$output" = "rw|ro|n|$d/p/f2" ] # another name: its mount point, not its source
   run binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --remount-ro "$d/p"
-  [ "$output" = "ro|$d/p/f" ]
+  [ "$output" = "ro|ro|y|$d/p/f" ]
+  run binds --ro-bind "$d/p" "$d/p" --bind "$d/p/f" "$d/p/f"
+  [ "$output" = "ro|rw|y|$d/p/f" ]
   run binds --ro-bind "$d/p" "$d/p" --bind "$d/p/f" "$d/p/f" --remount-ro "$d/p/f"
-  [ "$output" = "ro|$d/p/f" ]
+  [ "$output" = "ro|ro|y|$d/p/f" ]
   run binds --bind "$d/plink" "$d/plink" --ro-bind "$d/plink/f" "$d/plink/f"
-  [ "$output" = "rw|$d/p/f" ] # spelled through a link: the host's own path
+  [ "$output" = "rw|ro|y|$d/p/f" ] # spelled through a link: the host's own path
   run binds --bind "$d" "$d" --ro-bind "$d/n"$'\n'"l/f" "$d/n"$'\n'"l/f"
-  [ "$output" = "rw|$d/n"$'\n'"l/f" ]
+  [ "$output" = "rw|ro|y|$d/n"$'\n'"l/f" ]
 }
 
 @test "_as_bwrap_options is bwrap's own list: every option of the installed bwrap's --help with its argument count, and (for 0.12, which it was written from) no other (#389)" {
@@ -2890,8 +2894,8 @@ binds_of() {
   local d="$BATS_TEST_TMPDIR/t"
   mkdir -p "$d/p"
   printf 'x\n' >"$d/p/f"
-  [ "$(_as_keeper_binds --bind "$d/p" "$d/p" --dir "$d/p" --ro-bind "$d/p/f" "$d/p/f" --dir "$d/p/f" | tr '\0' '|')" = "rw|$d/p/f|" ]
-  [ "$(_as_keeper_binds --bind "$d/p" "$d/p" --bind-fd 7 /x --ro-bind "$d/p/f" "$d/p/f" | tr '\0' '|')" = "rw|$d/p/f|" ]
+  [ "$(_as_keeper_binds --bind "$d/p" "$d/p" --dir "$d/p" --ro-bind "$d/p/f" "$d/p/f" --dir "$d/p/f" | tr '\0' '|')" = "rw|ro|y|$d/p/f|" ]
+  [ "$(_as_keeper_binds --bind "$d/p" "$d/p" --bind-fd 7 /x --ro-bind "$d/p/f" "$d/p/f" | tr '\0' '|')" = "rw|ro|y|$d/p/f|" ]
   [ -z "$(_as_keeper_binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --tmp-overlay "$d/p" | tr '\0' '|')" ]
   run _as_keeper_binds --bind "$d/p" "$d/p" --no-such-option --ro-bind "$d/p/f" "$d/p/f"
   [ "$status" -eq 1 ]
@@ -2904,11 +2908,11 @@ binds_of() {
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
   [ "$status" -eq 0 ]
   printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
-  running supervisor < <(printf 'rw\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
   snap before
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--init: nothing was written: this run would replace or remove a file bound into a running sandbox of this project, which a host write breaks for it. End each role below, then run --init again:"* ]]
+  [[ "$output" == *"--init: nothing was written: this run would replace or remove a file bound into a running sandbox, which a host write breaks for it. End each role below, then run --init again:"* ]]
   [[ "$output" == *$'\n'"  role 'supervisor': .asb/roles/supervisor.md would become writable for it -- first: "*" --role supervisor --shutdown claude"* ]]
   [[ "$output" != *".agent-sandbox would"* ]] # the dot-file is never a reason
   snap after
@@ -2925,7 +2929,7 @@ binds_of() {
   cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 0 ]
-  running implementer-2 < <(printf 'ro\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-2.md")
+  running implementer-2 < <(printf 'ro\tro\ty\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-2.md")
   snap before
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
   [ "$status" -eq 2 ]
@@ -2933,9 +2937,9 @@ binds_of() {
   snap after
   cmp "$H/snap.before" "$H/snap.after"
   # several at once: a role set to 0 under another profile, the Supervisor's purpose file
-  running reviewer-1 plain < <(printf 'ro\t%s\n' "$PROJ/.asb/roles/reviewer-1.md")
+  running reviewer-1 plain < <(printf 'ro\tro\ty\t%s\n' "$PROJ/.asb/roles/reviewer-1.md")
   printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
-  running supervisor < <(printf 'rw\t%s\n' "$PROJ/.asb/roles/supervisor.md")
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.asb/roles/supervisor.md")
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1 reviewer=0
   [ "$status" -eq 2 ]
   [[ "$output" == *$'\n'"  role 'reviewer-1': .asb/roles/reviewer-1.md would disappear for it -- first: "*" --role reviewer-1 --shutdown plain"* ]]
@@ -2951,7 +2955,7 @@ binds_of() {
   [ "$status" -eq 0 ]
   printf 'NEW LINE\n' >>"$H/models/roles/roles/implementer.md"
   printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
-  running implementer-1 < <(printf 'ro\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-1.md")
+  running implementer-1 < <(printf 'ro\tro\ty\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/implementer-1.md")
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1
   [ "$status" -eq 0 ]
   [[ "$output" == *"updated .asb/roles/implementer-1.md from model 'roles'"* ]]
@@ -2964,7 +2968,7 @@ binds_of() {
   cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
   [ "$status" -eq 0 ]
-  running supervisor < <(printf 'rw\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.agent-sandbox" "$PROJ/.asb/roles/supervisor.md")
   local ino
   ino="$(stat -c %i "$PROJ/.agent-sandbox")"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
@@ -3026,7 +3030,7 @@ binds_of() {
   [ "$status" -eq 0 ]
   [ -d "$PROJ/.asb/git/2" ]
   printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
-  running supervisor < <(printf 'rw\t%s\n' "$PROJ/.asb/roles/supervisor.md")
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.asb/roles/supervisor.md")
   snap before
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
   [ "$status" -eq 2 ]
@@ -3043,7 +3047,7 @@ binds_of() {
   init -- roles implementer=2
   [ "$status" -eq 0 ]
   printf 'MINE\n' >>"$PROJ/.asb/roles/implementer-2.md"
-  running implementer-2 < <(printf 'ro\t%s\n' "$PROJ/.asb/roles/implementer-2.md")
+  running implementer-2 < <(printf 'ro\tro\ty\t%s\n' "$PROJ/.asb/roles/implementer-2.md")
   init -- roles implementer=1
   [ "$status" -eq 0 ]
   [[ "$output" == *"kept .asb/roles/implementer-2.md: changed since --init wrote it, and implementer-2 is removed"* ]]
@@ -3059,7 +3063,7 @@ binds_of() {
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles # the migration copy written
   [ "$status" -eq 0 ]
   [ -f "$PROJ/.asb/migrate/supervisor.md" ]
-  running supervisor < <(printf 'rw\t%s\n' "$PROJ/.asb/coord/COORDINATION.md" "$PROJ/.asb/init.sums" "$PROJ/.asb/migrate/supervisor.md")
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.asb/coord/COORDINATION.md" "$PROJ/.asb/init.sums" "$PROJ/.asb/migrate/supervisor.md")
   local ino
   ino="$(stat -c %i "$PROJ/.asb/init.sums")"
   init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles # nothing changes
@@ -3083,7 +3087,7 @@ binds_of() {
   init -- roles implementer=1
   [ "$status" -eq 0 ]
   printf 'work\n' >"$PROJ/.asb/impl/2/notes.md"
-  running reviewer-1 < <(printf 'ro\t%s\n' "$PROJ/.asb/impl/2/notes.md")
+  running reviewer-1 < <(printf 'ro\tro\ty\t%s\n' "$PROJ/.asb/impl/2/notes.md")
   init -- roles implementer=2
   [ "$status" -eq 2 ]
   [[ "$output" == *"role 'reviewer-1': .asb/impl/2/notes.md would disappear for it -- first:"* ]]
@@ -3159,4 +3163,86 @@ binds_of() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find / -xdev -samefile $PROJ/.agent-sandbox"* ]]
   grep -qF '[connect:implementer-3]' "$H/other-name"
+}
+
+@test "a replace by what the mount over the file was: a read-write declaration over itself in a read-write project goes ahead; in a read-only one, or a copy of the role's own over the file, refused with what it loses (#389)" {
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+  printf 'NEW LINE\n' >>"$H/models/roles/tests"
+  running supervisor < <(printf 'rw\trw\ty\t%s\n' "$PROJ/.asb/tests")
+  local sup="$RUN_PID"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles # it writes the file before and after
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/tests from model 'roles'"* ]]
+  RUN_PID="$sup" stopped
+  printf 'NEWER LINE\n' >>"$H/models/roles/tests"
+  running implementer-1 < <(printf 'ro\trw\ty\t%s\n' "$PROJ/.asb/tests")
+  local impl="$RUN_PID"
+  running reviewer-1 < <(printf 'ro\tro\tn\t%s\n' "$PROJ/.asb/tests")
+  local rev="$RUN_PID"
+  running planner-1 < <(printf 'rw\trw\tn\t%s\n' "$PROJ/.asb/tests")
+  snap before
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'implementer-1': its read-write mount of .asb/tests would be replaced by the host's new file, read-only for it -- first: "* ]]
+  [[ "$output" == *$'\n'"  role 'reviewer-1': its own copy over .asb/tests would be replaced by the host's new file -- first: "* ]]
+  [[ "$output" == *$'\n'"  role 'planner-1': its own copy over .asb/tests would be replaced by the host's new file, writable for it -- first: "* ]]
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+  RUN_PID="$impl" stopped
+  RUN_PID="$rev" stopped
+  stopped
+  # a read-only declaration over itself in a read-only project: the role sees the new text
+  running implementer-1 < <(printf 'ro\tro\ty\t%s\n' "$PROJ/.asb/tests")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+}
+
+@test "the coord index losing a removed instance's row, and a migration copy removed, under a read-write mount: refused (#389)" {
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 0 ]
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.asb/coord/COORDINATION.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=1 # only a row goes from it
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'supervisor': .asb/coord/COORDINATION.md would become writable for it -- first:"* ]]
+  stopped
+  printf 'MINE\n' >>"$PROJ/.asb/roles/supervisor.md"
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2 # the migration copy written
+  [ "$status" -eq 0 ]
+  [ -f "$PROJ/.asb/migrate/supervisor.md" ]
+  rm "$PROJ/.asb/roles/supervisor.md" # step 2 of the offer: the next run takes the model's text and drops the copy
+  running supervisor < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.asb/migrate/supervisor.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'supervisor': .asb/migrate/supervisor.md would disappear for it -- first:"* ]]
+  [ -f "$PROJ/.asb/migrate/supervisor.md" ]
+}
+
+@test "a launch whose bwrap options the table does not know: said, no record but binds.unread, and --init says why it takes the declarations (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  # the engine with a table that lacks an option it uses
+  cat >"$H/bin/asb-short-table" <<EOF
+#!/usr/bin/env bash
+source "$ENGINE"
+eval "_as_bwrap_options_real() \$(declare -f _as_bwrap_options | tail -n +2)"
+_as_bwrap_options() { _as_bwrap_options_real | grep -v '^--unshare-all '; }
+agent_sandbox "\$@"
+EOF
+  chmod +x "$H/bin/asb-short-table"
+  local kd="$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/supervisor/keeper"
+  engine_bg AGENT_SANDBOX_NET=none -- "$H/bin/asb-short-table" --role supervisor claude
+  grep -qF "bwrap option '--unshare-all' is not in the engine's table (_as_bwrap_options): this launch's single-file mounts are not recorded" "$H/bg.out"
+  [ ! -e "$kd/binds" ]
+  [ -e "$kd/binds.unread" ]
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'supervisor': .asb/roles/supervisor.md may become writable for it (its mounts could not be recorded at its launch: its declared files taken as bound) -- first:"* ]]
+  release_bg
 }

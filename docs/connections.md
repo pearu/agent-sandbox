@@ -675,17 +675,21 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
   and then only an approved file is read, so there an unapproved edit refuses the join
   as it refuses a launch.
 - **A file bound on its own shows the file as it was when the keeper started**, where
-  its mount point is not the host's file (a path under the sandbox's own `$HOME`, an
-  overlay, a store's copy). A bind
+  its mount point is not a file of the host's: the directory around it is a tmpfs or an
+  overlay, not a bind from the host. A bind
   holds the inode it was made on, and a native save by temp file and rename (how editors
-  and Claude Code write) makes a new one, so `read-only` file paths (`CLAUDE.md`,
-  `settings.json`) and the relocated `config = read-write` do not see such a save until
+  and Claude Code write) makes a new one, so such a `read-only` file path and the
+  relocated `config = read-write` do not see the save until
   the next keeper; a save in place is seen at once. Directories, and a `read-write` file
   that is its own source (served by the directory bind around it, with no bind of its
-  own), are live. A file bound over itself in a directory the sandbox has from the host
-  (the dot-file, a purpose file) is the other case: a save by rename detaches its bind,
-  and the path then shows the host's new file, writable where that directory is
-  read-write (measured, #389; docs/design.md).
+  own), are live. Where the directory around the file IS bound from the host -- the
+  project, or `~/.claude` under `shared` -- its mount point is the host's file, whatever
+  the bind's source (the file itself, or a store's copy): a save by rename detaches the
+  bind, and the path then shows the host's new file, writable where that directory is
+  read-write (measured, #389: the dot-file and a purpose file in a read-write project; a
+  role's own copy over a purpose file; `CLAUDE.md` under `shared` with
+  `instructions = read-only`, the role's text then reaching the host's file;
+  docs/design.md).
   This was already true within one launch; with the keeper a later
   terminal is inside that launch too. Rebinding a replaced file from the keeper's host
   side is a follow-up.

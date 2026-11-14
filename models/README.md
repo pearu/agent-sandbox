@@ -100,7 +100,8 @@ and nobody changed since: that one takes the model's current text (`.asb/init.su
 records what it wrote). The changed `.agent-sandbox` or purpose file then needs
 `asb --trust` again. `.agent-sandbox` is written in place, so a running role keeps it
 read-only; a re-run that would replace a file mounted into a running role with the
-project read-write, or remove one mounted into a running role, is refused until that
+project read-write, or remove one mounted into a running role with the project read-write
+or read-only, is refused until that
 role is shut down (docs/roles.md).
 A purpose file kept because it changed, with no addendum, gets the
 offer to move the project's text into one (the model's current text in `.asb/migrate/`;

@@ -170,7 +170,7 @@ inside() {
   printf 'Now also this.\n' >>"$M/roles/writer.md"
   asb_host --init tiny
   [ "$status" -eq 2 ]
-  [[ "$output" == *"role 'writer': .asb/roles/writer.md would become writable for it -- first: "*" --role writer --shutdown probe"* ]]
+  [[ "$output" == *"role 'writer': its own copy over .asb/roles/writer.md would be replaced by the host's new file, writable for it -- first: "*" --role writer --shutdown probe"* ]]
   [ "$(cat "$IWORK/.asb/roles/writer.md")" = "You are the writer." ]
   inside writer .asb/roles/writer.md
   [[ "$output" == *"MOUNT=1"* ]] # its copy still over the file
@@ -215,4 +215,78 @@ MODEL
   [ "$status" -eq 0 ]
   [[ "$output" == *"worker-2 is added again"* ]]
   [ -d "$IWORK/.asb/backup" ]
+}
+
+@test "a role's read-write declaration over a file, the project read-write: an --init that replaces the file goes ahead, the role writes it before and after" {
+  printf 'iterate =\n' >"$M/tests"
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  sed -i '/^\[connect:writer\]$/a .asb/tests = read-write' "$IWORK/.agent-sandbox"
+  approve
+  start writer
+  inside writer .asb/tests
+  [[ "$output" == *"WRITE=yes"* ]]
+  printf 'final =\n' >>"$M/tests"
+  sed -i '$d' "$IWORK/.asb/tests" # what inside appended: the file is --init's again
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/tests from model 'tiny'"* ]]
+  inside writer .asb/tests
+  [[ "$output" == *"final ="* ]]
+  [[ "$output" == *"WRITE=yes"* ]] # as before: nothing more open, nothing lost
+}
+
+@test "a role with the project read-only and a read-write declaration over a file, or a copy of its own over one: an --init that replaces the file is refused, the role keeping its own; after --shutdown it goes ahead" {
+  printf 'iterate =\n' >"$M/tests"
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  sed -i '/^\[connect:reader\]$/a .asb/tests = read-write\n.asb/roles/reader.md = copy' "$IWORK/.agent-sandbox"
+  approve
+  start reader
+  run_sandboxed "${BASE[@]}" -- --role reader --profile probe --exec sh -c 'echo MY-NOTE >>.asb/roles/reader.md && echo MINE >>.asb/tests && echo WROTE'
+  [[ "$output" == *"WROTE"* ]]
+  sed -i '$d' "$IWORK/.asb/tests"
+  printf 'final =\n' >>"$M/tests"
+  printf 'Now also this.\n' >>"$M/roles/reader.md"
+  asb_host --init tiny
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'reader': its read-write mount of .asb/tests would be replaced by the host's new file, read-only for it, its own copy over .asb/roles/reader.md would be replaced by the host's new file -- first: "*" --role reader --shutdown probe"* ]]
+  inside reader .asb/roles/reader.md
+  [[ "$output" == *"MY-NOTE"* ]] # its copy, still there for it
+  asb_host --role reader --shutdown probe
+  [ "$status" -eq 0 ]
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+}
+
+@test "a sandbox of another project with this project read-write and a file of it bound read-only: an --init here that would replace that file is refused, naming that project; after its --shutdown it goes ahead" {
+  local B="$I/projb" a
+  a="$(cd "$IWORK" && pwd -P)"
+  mkdir -p "$B"
+  printf '[connect]\n%s/ = read-write\n%s/.asb/roles/writer.md = read-only\n' "$a" "$a" >"$B/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PROFILE_DIR="$4" "${@:5}" --trust 2>&1' \
+    _ "$B" "$IHOME" "$I/bin:/usr/bin:/bin" "$IPROFILES" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  (cd "$B" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+    AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE=0 \
+    AGENT_SANDBOX_PRESET=shared "${BASE[@]}" "${ENGINE_CMD[@]}" --profile probe --exec sh -c \
+    "touch held; until [ -e $a/out/release.all ]; do sleep 0.05; done") </dev/null >"$I/b.out" 2>&1 3>&- &
+  BGS+=($!)
+  local i
+  for ((i = 0; i < 300; i++)); do
+    [[ -e "$B/held" ]] && break
+    sleep 0.05
+  done
+  [ -e "$B/held" ]
+  printf 'Now also this.\n' >>"$M/roles/writer.md"
+  asb_host --init tiny
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'default' of the project $(cd "$B" && pwd -P): .asb/roles/writer.md would become writable for it -- first: cd $(cd "$B" && pwd -P) && "*" --role default --shutdown probe"* ]]
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PROFILE_DIR="$4" XDG_STATE_HOME="$2/.local/state" "${@:5}" --shutdown probe 2>&1' \
+    _ "$B" "$IHOME" "$I/bin:/usr/bin:/bin" "$IPROFILES" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
 }

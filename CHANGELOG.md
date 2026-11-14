@@ -1167,7 +1167,12 @@ names are gone; there are no aliases for removed names before 1.0.
   clone declared is refused too (its clone would be moved to `.asb/backup/` from under
   it). A dot-file with another name (a hard link) is still written in place, with a
   warning that the other name shows the new text, and the `find -samefile` line that
-  lists it.
+  lists it. The record says what each mount was (its directory's mode, its own mode,
+  whether its source is the file itself), so a role's `read-write` declaration over a file
+  in a read-write project is no reason to refuse, while a role's own copy over a file, or
+  a `read-write` declaration in a read-only project, refuses (the role would lose it). A
+  running sandbox of another project with this one's files mounted is looked at too, and
+  named with its project. `--setup-remote` brings back what the policy write said there.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

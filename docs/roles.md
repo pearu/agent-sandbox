@@ -567,7 +567,12 @@ keep running and see a new purpose file read-only; under a copy-on-write project
 holds for a write outside asb: an editor's save that renames a new file into place,
 `sed -i`, or a `git checkout` that writes `.agent-sandbox` or a purpose file anew, while a
 role with the project read-write runs, leaves that path writable for it until it is shut
-down -- edit those files by hand (step 6 above) with no such role running.
+down -- edit those files by hand (step 6 above) with no such role running. So does a save
+on the host of a channel file a role has read-only in a directory bound from the host
+(`CLAUDE.md` under `--preset shared` with `instructions = read-only`). `--init` also refuses a
+replace that would take a role's own copy over a file from it (a `copy` declaration
+over a purpose file, a `read-write` one in a read-only project), and it looks at every
+running sandbox of yours, another project's too when it has this one's files mounted.
 
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:

@@ -1392,3 +1392,26 @@ this_machine() {
   [ "$status" -eq 0 ]
   [ ! -e "$T/bench2" ]
 }
+
+@test "--setup-remote: what the policy write there says comes back -- a policy it cannot write (mode 440), a policy left half-written with where its text is kept (#389)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  [ "$(id -u)" -ne 0 ] || skip "root writes a file of mode 440"
+  remote_host
+  full_section
+  local T="$R/home/tob"
+  mkdir -p "$T/bench"
+  printf '# an older policy\n' >"$T/bench/.agent-sandbox"
+  chmod 440 "$T/bench/.agent-sandbox"
+  setup_remote
+  chmod 640 "$T/bench/.agent-sandbox"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$T/bench/.agent-sandbox could not be written: it is not writable (mode 440); nothing was written"* ]]
+  [[ "$output" == *"cannot write $T/bench/.agent-sandbox"* ]]
+  # the cut fails after the text is written there
+  printf '#!/bin/sh\nexit 1\n' >"$H/acct-bin/truncate"
+  chmod +x "$H/acct-bin/truncate"
+  setup_remote
+  rm -f "$H/acct-bin/truncate"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$T/bench/.agent-sandbox could not be written in full, and may be half-written now. The text it was to have is kept in "* ]]
+}
