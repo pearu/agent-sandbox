@@ -367,28 +367,32 @@ part_in_place() {
   [ "$(cat "$W/real/a/f")" = HOST ]
 }
 
-@test "a destination-side link the role can replace: refused where the bind covers a host file the role sees, not where nothing is there" {
+@test "a destination-side link the role can replace, the source elsewhere: not refused -- the declaration promises nothing about the host file it covers" {
   mkdir -p "$W/real/b" "$I/ext"
   printf 'EXT\n' >"$I/ext/f.md"
   printf 'PROJ\n' >"$W/real/b/f.md"
   ln -s real "$W/lnk"
-  run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = read-only outside:$I/ext/f.md" --profile probe --exec true
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"$W/lnk/b/f.md goes through $W/lnk, a symbolic link in a directory the role can write, and covers $W/real/b/f.md, which the role sees"* ]]
-  run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/new.md = read-only outside:$I/ext/f.md" --profile probe --exec bash -c 'echo "seen=$(cat lnk/b/new.md)" >>report'
+  run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = read-only outside:$I/ext/f.md" --profile probe --exec bash -c 'echo "seen=$(cat lnk/b/f.md)" >>report'
   [ "$status" -eq 0 ]
+  [[ "$output" != *"pinned, above"* ]]
   [ "$(report seen)" = EXT ]
 }
 
-@test "a read-only source another declaration shows read-write is a contradiction: refused; declared read-only at its own path too, it launches and the write fails at both paths" {
+@test "a read-only source another declaration shows read-write launches: each path its own access, the write through the read-write path as declared; declared read-only at its own path too, that path is pinned (P2)" {
   mkdir -p "$IHOME/store/roles" "$W/cfg"
   printf 'HOST\n' >"$IHOME/store/roles/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   local -a decl=(--connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/roles/x.md')
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'./cfg/x.md = read-only' binds $IHOME/store/roles/x.md read-only at $W/cfg/x.md, and '~/store/ = read-write' shows it read-write at $IHOME/store/roles/x.md: the two contradict"* ]]
-  [ -z "$(report ran)" ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    python3 ops.py rw:write:"$HOME/store/roles/x.md":ROLE ro:write:cfg/x.md:R
+    echo "seen=$(cat cfg/x.md)" >>report'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *contradict* ]]
+  [[ "$output" != *"pinned, above"* ]]
+  [ "$(report rw)" = ok ]
+  [ "$(report ro)" = EROFS ]
+  [ "$(report seen)" = ROLE ]
+  printf 'HOST\n' >"$IHOME/store/roles/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- "${decl[@]}" --connect '~/store/roles/x.md = read-only' --profile probe --exec \
     python3 ops.py inplace:write:"$IHOME/store/roles/x.md":ROLE declared:write:cfg/x.md:ROLE \
@@ -401,7 +405,7 @@ part_in_place() {
   [ "$(cat "$IHOME/store/roles/x.md")" = HOST ]
 }
 
-@test "final view: a read-write mount bound AFTER the read-only path (deeper) that shows its source is a contradiction (B1); with a link there, the link refuses" {
+@test "final view: a read-write mount bound AFTER the read-only path (deeper) that shows its source launches; with a link there the role can replace, the link refuses" {
   mkdir -p "$IHOME/a/b/c/store/sub" "$IHOME/a/b/c/store/realdir"
   printf 'HOST\n' >"$IHOME/a/b/c/store/sub/x.md"
   printf 'HOST\n' >"$IHOME/a/b/c/store/realdir/x.md"
@@ -409,8 +413,7 @@ part_in_place() {
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/a/b/c/store/ = read-write' --connect './x.md = read-only outside:~/a/b/c/store/sub/x.md' \
     --profile probe --exec true
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"shows it read-write at $IHOME/a/b/c/store/sub/x.md: the two contradict"* ]]
+  [ "$status" -eq 0 ]
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/a/b/c/store/ = read-write' --connect './x.md = read-only outside:~/a/b/c/store/l/x.md' \
     --profile probe --exec true
@@ -460,36 +463,6 @@ part_in_place() {
   [ ! -e "$W/a/cow/w" ] # the overlay's, not the project's
 }
 
-@test "round 6, B1: a read-write FILE declaration of the read-only source, or of a file inside a read-only directory source, is a contradiction: refused" {
-  mkdir -p "$IHOME/store/d" "$W/cfg"
-  printf 'HOST\n' >"$IHOME/store/x.md"
-  printf 'HOST\n' >"$IHOME/store/d/y.md"
-  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/store/x.md = read-write' --connect './cfg/x.md = read-only outside:~/store/x.md' \
-    --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'./cfg/x.md = read-only' binds $IHOME/store/x.md read-only at $W/cfg/x.md, and '~/store/x.md = read-write' shows it read-write at $IHOME/store/x.md: the two contradict"* ]]
-  [ -z "$(report ran)" ]
-  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/store/d/y.md = read-write' --connect './cfg/ = read-only outside:~/store/d/' \
-    --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"shows $IHOME/store/d/y.md, inside it, read-write at $IHOME/store/d/y.md"* ]]
-  [ -z "$(report ran)" ]
-  [ "$(cat "$IHOME/store/x.md")" = HOST ]
-}
-
-@test "round 6, B2: under a linked \$HOME the read-write channel's source is compared resolved: a read-only source in it is a contradiction" {
-  ln -s home "$I/hlink"
-  printf 'HOST\n' >"$IHOME/.probe/extra/n.md"
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" HOME="$I/hlink" -- --connect './cfg/n.md = read-only outside:~/.probe/extra/n.md' \
-    --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"binds $IHOME/.probe/extra/n.md read-only at $W/cfg/n.md"*"the two contradict"* ]]
-  [ -z "$(report ran)" ]
-}
-
 @test "round 6, B2: under a linked \$HOME a replaceable link in a read-write channel is refused" {
   ln -s home "$I/hlink"
   mkdir -p "$IHOME/.probe/extra/realdir"
@@ -503,7 +476,7 @@ part_in_place() {
   [ -z "$(report ran)" ]
 }
 
-@test "round 6, B3: a part read-write at its own place, shown read-write at a second path too, launches: project = read-only with ./out/ and an alias of it" {
+@test "a read-only project with ./out/ read-write and ~/out-alias/ read-write from the same directory launches, and without ./out/ declared too" {
   mkdir -p "$W/out" "$IHOME/out-alias"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './out/ = read-write' \
@@ -513,31 +486,24 @@ part_in_place() {
   [[ "$output" == *"wrote=yes"* ]]
   [ "$(cat "$W/out/a")" = A ]
   [ "$(cat "$W/out/b")" = B ]
-  # without ./out/ read-write in place it is one, and the project is named as declared
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' \
-    --connect "~/out-alias/ = read-write outside:$W/out/" --profile probe --exec true
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"'project = read-only' binds $W read-only at $W, and '~/out-alias/ = read-write' shows $W/out, inside it, read-write at $IHOME/out-alias: the two contradict"* ]]
+    --connect "~/out-alias/ = read-write outside:$W/out/" --profile probe --exec bash -c 'echo C >"$HOME/out-alias/c" && echo "wrote=yes" >&2'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"wrote=yes"* ]]
+  [ "$(cat "$W/out/c")" = C ]
 }
 
-@test "round 6, B3: a read-only source whose build/ is read-write in place and at ./build/ launches; without it in place it is refused" {
+@test "a read-only source whose build/ is read-write at ./build/ launches, with or without build/ read-write in place too" {
   mkdir -p "$IHOME/src/libfoo/build" "$W/ref"
   printf 'SRC\n' >"$IHOME/src/libfoo/a.c"
   # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
   local -a decl=(--connect './ref/ = read-only outside:~/src/libfoo/' --connect './build/ = read-write outside:~/src/libfoo/build/')
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --connect './ref/build/ = read-write outside:~/src/libfoo/build/' \
-    --profile probe --exec python3 ops.py src:write:ref/a.c:R b1:write:ref/build/o1:1 b2:write:build/o2:2
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec python3 ops.py src:write:ref/a.c:R b2:write:build/o2:2
   [ "$status" -eq 0 ]
   [ "$(report src)" = EROFS ]
-  [ "$(report b1)" = ok ]
   [ "$(report b2)" = ok ]
   [ "$(cat "$IHOME/src/libfoo/a.c")" = SRC ]
-  [ -e "$IHOME/src/libfoo/build/o1" ]
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"shows $IHOME/src/libfoo/build, inside it, read-write at $W/build: the two contradict"* ]]
 }
 
 @test "hard links: another name of the read-only file in a read-write directory launches: the role writes it there, as declared, and the read-only name shows it" {
@@ -586,7 +552,7 @@ part_in_place() {
   part_in_place copy-on-write
 }
 
-@test "a read-write file bind over a read-only source's host path: the directory it lies in pinned, the role cannot move the source away and plant its own for the next launch" {
+@test "ey shape 2 launches: the read-only source's host directory is not pinned (another path, its own declarations), and the role's rename there works" {
   mkdir -p "$IHOME/store/roles" "$W/cfg/sub"
   printf 'HOST\n' >"$IHOME/store/roles/x.md"
   printf 'OTHER\n' >"$IHOME/other.md"
@@ -594,17 +560,10 @@ part_in_place() {
   local -a decl=(--connect '~/store/ = read-write' --connect '~/store/roles/x.md = read-write outside:~/other.md'
     --connect './cfg/sub/x.md = read-only outside:~/store/roles/x.md')
   run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
-    python3 ops.py mv:rename:"$HOME/store/roles":"$HOME/store/r2"
-    mkdir -p "$HOME/store/r3" && echo ROLE >"$HOME/store/r3/x.md"
-    python3 ops.py swap:rename:"$HOME/store/r3":"$HOME/store/roles"'
+    python3 ops.py mv:rename:"$HOME/store/roles":"$HOME/store/r2"'
   [ "$status" -eq 0 ]
-  [ "$(report mv)" = EBUSY ]
-  [ "$(report swap)" != ok ]
-  [ ! -e "$IHOME/store/r2" ]
-  [ "$(cat "$IHOME/store/roles/x.md")" = HOST ]
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen=$(cat cfg/sub/x.md)" >>report'
-  [ "$status" -eq 0 ]
-  [ "$(report seen)" = HOST ]
+  [[ "$output" != *"pinned, above"* ]]
+  [ "$(report mv)" = ok ]
 }
 
 @test "a read-write outside: directory bind over a project directory pins nothing: the role's rename of the directory above it works, as the project's declaration allows" {
@@ -620,6 +579,29 @@ part_in_place() {
   [ "$(report seen)" = BIG ]
   [ "$(report mv)" = ok ]
   [ "$(cat "$W/a.moved/data/f")" = HOST ]
+}
+
+@test "a read-only outside: directory over a project directory pins nothing: the role's rename above it works, the next launch shows the source there again, what it planted covered" {
+  mkdir -p "$W/a/data" "$IHOME/big"
+  printf 'HOST\n' >"$W/a/data/f"
+  printf 'BIG\n' >"$IHOME/big/f"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  local -a decl=(--connect './a/data/ = read-only outside:~/big/')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    python3 ops.py mv:rename:a:a.moved
+    mkdir -p a/data && echo ROLE >a/data/planted'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"pinned, above"* ]]
+  [ "$(report mv)" = ok ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen=$(cat a/data/f)" >>report
+    echo "planted=$([ -e a/data/planted ] && echo yes || echo no)" >>report
+    python3 ops.py w:write:a/data/f:X'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = BIG ]
+  [ "$(report planted)" = no ]
+  [ "$(report w)" = EROFS ]
+  [ "$(cat "$IHOME/big/f")" = BIG ]
 }
 
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {

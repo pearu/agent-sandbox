@@ -283,21 +283,6 @@ cache_pins() {
   [ "${PIN[*]}" = "$P/a $P/a/b" ]
 }
 
-@test "final view: a read-write mount AFTER the read-only bind that shows its source is a contradiction; declared read-only at its own path too, it is pinned there, after that mount" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/sub"
-  touch "$h/sub/x.md"
-  pins -- --bind "$P" "$P" --ro-bind "$h/sub/x.md" "$P/x.md" --bind "$h" "$h"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it read-write at $h/sub/x.md: the two contradict"* ]]
-  pins -- --bind "$P" "$P" --ro-bind "$h/sub/x.md" "$P/x.md" --bind "$h" "$h" --ro-bind "$h/sub/x.md" "$h/sub/x.md"
-  [ "$RC" -eq 0 ]
-  # ~/store/sub: pinned once, after ~/store, before the read-only bind at its own path
-  [ "${PIN[*]}" = "$h/sub" ]
-  same --bind "$P" "$P" --ro-bind "$h/sub/x.md" "$P/x.md" --bind "$h" "$h" --bind "$h/sub" "$h/sub" \
-    --ro-bind "$h/sub/x.md" "$h/sub/x.md"
-}
-
 @test "final view: a link whose directory a LATER read-write mount shows is replaceable (refused); a later read-only mount over it makes it safe" {
   local h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$h/realdir" "$h/p/links"
@@ -311,31 +296,6 @@ cache_pins() {
   [ "$RC" -eq 0 ]
 }
 
-@test "final view: a covered host object shown by a LATER read-write mount refuses; hidden by a later tmpfs it does not" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/real/b"
-  touch "$h/real/b/f.md"
-  ln -s real "$h/lnk"
-  pins -- --bind "$h" "$h" --ro-bind "$ST/f" "$h/lnk/b/f.md" --bind "$h/real" "$h/real"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"goes through $h/lnk, a symbolic link in a directory the role can write, and covers $h/real/b/f.md, which the role sees"* ]]
-  pins -- --bind "$h" "$h" --ro-bind "$ST/f" "$h/lnk/b/f.md" --tmpfs "$h/real"
-  [ "$RC" -eq 0 ]
-}
-
-@test "the covered object must be seen: one that exists but no mount shows is not a refusal; one only a read-only mount shows is" {
-  local o="$BATS_TEST_TMPDIR/out"
-  mkdir -p "$o/b" "$P/ro/real/b"
-  touch "$o/b/f.md" "$P/ro/real/b/f.md"
-  ln -s "$o" "$P/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/lnk/b/f.md" # $o is not in the sandbox
-  [ "$RC" -eq 0 ]
-  ln -s ro/real "$P/lnk2"
-  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$ST/f" "$P/lnk2/b/f.md" # seen, read-only
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"covers $P/ro/real/b/f.md, which the role sees"* ]]
-}
-
 @test "a chain of three links resolves; the walk stops beneath a destination link" {
   mkdir -p "$P/ro" "$P/real/b"
   touch "$P/real/b/f.md"
@@ -344,7 +304,7 @@ cache_pins() {
   ln -s ../real "$P/ro/l3"
   pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/ro/l1/b/f.md" "$P/ro/l1/b/f.md"
   [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/real $P/real/b" ]
+  [ "${PIN[*]}" = "$P/real $P/real/b" ] # at its own host path through the links: the real path's (P2)
   ln -s a "$P/lnk"
   pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/lnk/b/new.md" # nothing covered: not refused
   [ "$RC" -eq 0 ]
@@ -426,35 +386,68 @@ cache_pins() {
   [ "${PIN[*]}" = "$P/a" ]
 }
 
-@test "a read-only source covered exactly by a read-write file bind, several levels down: every directory above it pinned; a directory bind over its parent pins nothing new (a mount point already)" {
-  local h="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$h/store/a/b" "$h/e" "$P/cfg"
-  printf 'HOST\n' >"$h/store/a/b/x.md"
-  printf 'OTHER\n' >"$h/other.md"
-  pins -- --bind "$h/store" "$h/store" --bind "$h/other.md" "$h/store/a/b/x.md" --bind "$P" "$P" \
-    --ro-bind "$h/store/a/b/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$h/store/a $h/store/a/b $P/cfg" ]
-  # the cover a directory bind over the source's parent: that parent is a mount point
-  pins -- --bind "$h/store" "$h/store" --bind "$h/e" "$h/store/a/b" --bind "$P" "$P" \
-    --ro-bind "$h/store/a/b/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/cfg" ]
-}
-
-@test "ey shape 2: a read-write file bind over a read-only source's host path pins the directory it lies in, so the source cannot be moved away" {
+@test "ey shape 2 is valid (a declaration is about a path): ~/store/roles/x.md read-write elsewhere, read-only at ./cfg/sub/x.md from its host path -- nothing pinned for the source, nothing refused" {
   local h="$BATS_TEST_TMPDIR/home"
   mkdir -p "$h/store/roles" "$P/cfg/sub"
   printf 'HOST\n' >"$h/store/roles/x.md"
   printf 'OTHER\n' >"$h/other.md"
-  pins -- --bind "$h/store" "$h/store" --bind "$h/other.md" "$h/store/roles/x.md" --bind "$P" "$P" \
+  # the read-only declaration's source elsewhere (outside:): no pin for its destination either
+  PINS_PRE="declare -A _pin_elsewhere=([$P/cfg/sub/x.md]=1)" \
+    pins -- --bind "$h/store" "$h/store" --bind "$h/other.md" "$h/store/roles/x.md" --bind "$P" "$P" \
     --ro-bind "$h/store/roles/x.md" "$P/cfg/sub/x.md"
+  same "${IN[@]}"
+}
+
+@test "a read-only source shown read-write at another path by another declaration is valid: no refusal, no pin for the source (the object, a directory containing it, a part of it, a read-write file declaration of it)" {
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/sub/deep" "$P/cfg"
+  touch "$h/sub/x.md" "$P/cfg/own.md"
+  # the read-only declarations' sources are elsewhere (outside:): nothing pinned for them
+  local pre="declare -A _pin_elsewhere=([$P/cfg/x.md]=1 [$P/cfg]=1)"
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/sub/x.md" "$P/cfg/x.md"
+  same "${IN[@]}"
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/alt"
+  same "${IN[@]}"
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --bind "$h/sub/x.md" "$P/alt.md" --ro-bind "$h/sub/x.md" "$P/cfg/x.md"
+  same "${IN[@]}"
+  [[ "$MSG" != *contradict* ]]
+  # and one at its own host path beside them: pinned for itself (P2)
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/sub/x.md" "$P/cfg/x.md" --ro-bind "$P/cfg/own.md" "$P/cfg/own.md"
+  same --bind "$P" "$P" --bind "$h" "$h" --bind "$P/cfg" "$P/cfg" --ro-bind "$h/sub/x.md" "$P/cfg/x.md" --ro-bind "$P/cfg/own.md" "$P/cfg/own.md"
+}
+
+@test "a declaration with its source elsewhere (outside:) promises nothing about a host object at its path: no pin for its destination, any mode" {
+  local big="$BATS_TEST_TMPDIR/home/big"
+  mkdir -p "$big" "$P/a/data" "$ST/u" "$ST/w" "$ST/x"
+  local pre="declare -A _pin_elsewhere=([$P/a/data]=1)"
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --ro-bind "$big" "$P/a/data"
+  same "${IN[@]}"
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --bind "$ST/x" "$P/a/data" # copy or seed-only from ~/big: a store
+  same "${IN[@]}"
+  PINS_PRE="$pre" pins -- --bind "$P" "$P" --overlay-src "$big" --overlay "$ST/u" "$ST/w" "$P/a/data"
+  same "${IN[@]}"
+  # at its own host path: pinned
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/data" "$P/a/data"
+  [ "${PIN[*]}" = "$P/a" ]
+}
+
+@test "the role's own path at its own host path through a replaceable link: refused where it covers a host object the role sees (P2: retargeting would uncover it, no pin can stop that); behind a link it cannot replace, the real path pinned; with its source elsewhere, neither" {
+  ln -s a "$P/lnk"
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/b" # an own directory over ./a/b
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"connect: $P/lnk/b goes through $P/lnk, a symbolic link in a directory the role can write, and covers $P/a/b, which the role sees"* ]]
+  pins -- --bind "$P" "$P" --bind "$ST/f" "$P/lnk/b/f.md" # an own file over ./a/b/f.md
+  [ "$RC" -eq 1 ]
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/new" # nothing there to cover
   [ "$RC" -eq 0 ]
-  [[ " ${PIN[*]} " == *" $h/store/roles "* ]]
-  [[ " ${PIN[*]} " == *" $P/cfg "* ]]
-  [[ " ${PIN[*]} " == *" $P/cfg/sub "* ]]
-  same --bind "$h/store" "$h/store" --bind "$h/store/roles" "$h/store/roles" --bind "$h/other.md" "$h/store/roles/x.md" \
-    --bind "$P" "$P" --bind "$P/cfg" "$P/cfg" --bind "$P/cfg/sub" "$P/cfg/sub" --ro-bind "$h/store/roles/x.md" "$P/cfg/sub/x.md"
+  mkdir -p "$P/ro"
+  ln -s ../a "$P/ro/lnk"
+  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --bind "$ST/f" "$P/ro/lnk/b/f.md"
+  [ "$RC" -eq 0 ] # the link is in a read-only mount
+  [ "${PIN[*]}" = "$P/a $P/a/b" ]
+  # copy, copy-on-write or seed-only from a source elsewhere: a store too, but nothing for what it covers
+  PINS_PRE="declare -A _pin_elsewhere=([$P/lnk/b]=1)" pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/b"
+  same "${IN[@]}"
 }
 
 @test "a hide (a tmpfs) in a read-write host directory gets its parents pinned; one directly in the root none" {
@@ -518,7 +511,7 @@ cache_pins() {
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 1 ]
   # not a declaration here (no recorded declared source): what a channel's user can do
-  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write, so it is not bound read-only: the role could replace the link and have the next launch bind its own file. Make $P/lnk the directory it points to, or bind from the resolved path ($P/a/b/f.md; for a channel, its mode with outside:$P/a/b/f.md). Refusing to launch"* ]]
+  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write, so it is not bound read-only: the role could replace the link and have the next launch bind another host path there, one no declaration gives it. Make $P/lnk the directory it points to, or bind from the resolved path ($P/a/b/f.md; for a channel, its mode with outside:$P/a/b/f.md). Refusing to launch"* ]]
   ln -s ../a "$P/x/lnk2" # deeper: a link inside a plain directory of the project
   pins -- --bind "$P" "$P" --ro-bind "$P/x/lnk2/b/f.md" "$P/x/lnk2/b/f.md"
   [ "$RC" -eq 1 ]
@@ -552,7 +545,7 @@ cache_pins() {
   ln -s ../../real "$P/ro/in/up" # relative, with ..
   pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/ro/l1/b/f.md" "$P/ro/l1/b/f.md"
   [ "$RC" -eq 0 ]                       # both links in the read-only mount: not replaceable
-  [ "${PIN[*]}" = "$P/real $P/real/b" ] # the real path's directories, in the read-write project
+  [ "${PIN[*]}" = "$P/real $P/real/b" ] # the real path's directories, in the read-write project (P2)
   ln -s loop2 "$P/ro/loop1"
   ln -s loop1 "$P/ro/loop2"
   pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/ro/loop1/f" "$P/x/f"
@@ -560,47 +553,17 @@ cache_pins() {
   [[ "$MSG" == *"$P/ro/loop1/f does not resolve (40 symbolic links: a loop?), so it cannot be bound. Refusing to launch"* ]]
 }
 
-@test "a replaceable link on the DESTINATION side, the source elsewhere: refused where it covers a host file the role sees, not where nothing is there" {
-  ln -s a "$P/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/lnk/b/f.md" # covers ./a/b/f.md
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"connect: $P/lnk/b/f.md goes through $P/lnk, a symbolic link in a directory the role can write, and covers $P/a/b/f.md, which the role sees: the role could replace the link and have that uncovered at the next launch. Declare the path it resolves to instead: $P/a/b/f.md. Refusing to launch"* ]]
-  pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/lnk/b/new.md" # nothing there to cover
-  [ "$RC" -eq 0 ]
-  [ -z "$MSG" ]
-}
-
-@test "the source shows only where its host directory does: under a store's copy of the directory nothing is pinned for it, nor refused" {
-  mkdir -p "$P/s/real/b" "$ST/x/real/b" # the store has its own copy of the directories
-  touch "$P/s/real/b/f.md"
-  ln -s real "$P/s/lnk"
-  # ./s/ = copy: the store at ./s hides the host's ./s; the declaration's source is the host's
-  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/s" --ro-bind "$P/s/lnk/b/f.md" "$P/s/lnk/b/f.md"
-  [ "$RC" -eq 0 ]
-  [ -z "${PIN[*]}" ]
-  # as the engine binds it: the source resolved, ./s/real/b/f.md, which the store hides
-  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/s" --ro-bind "$P/s/real/b/f.md" "$P/s/lnk/b/f.md"
-  [ "$RC" -eq 0 ]
-  [ -z "${PIN[*]}" ] # not the store's own ./s/real, ./s/real/b
-}
-
-@test "a read-write mount hidden by a later read-only one shows nothing: no pin for a source under it" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/roles" "$P/cfg"
-  touch "$h/roles/x.md"
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/cfg" ]
-}
-
-@test "a link the role cannot replace is not refused: in a read-only mount, the real path behind it pinned where it shows read-write" {
+@test "a link the role cannot replace is not refused: in a read-only mount, the real path behind it pinned where it shows read-write (the declaration at its own host path, P2)" {
   mkdir -p "$P/ro"
   ln -s ../a "$P/ro/lnk"
   pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/a/b/f.md" "$P/ro/lnk/b/f.md"
   [ "$RC" -eq 0 ]
-  # (where the bind lands through the link, on its source, nothing more is made read-only)
   same --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" \
     --ro-bind "$P/a/b/f.md" "$P/ro/lnk/b/f.md"
+  # with its source elsewhere (outside:), nothing for the path behind the link
+  PINS_PRE="declare -A _pin_elsewhere=([$P/ro/lnk/b/f.md]=1)" \
+    pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/a/b/f.md" "$P/ro/lnk/b/f.md"
+  same "${IN[@]}"
 }
 
 @test "a link the role cannot replace is not refused: under copy-on-write; nor in a read-only project; nor under native" {
@@ -608,7 +571,7 @@ cache_pins() {
   ln -s ../a "$P/c/lnk"
   pins -- --bind "$P" "$P" --overlay-src "$P/c" --overlay /up /wk "$P/c" --ro-bind "$P/a/b/f.md" "$P/c/lnk/b/f.md"
   [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/a $P/a/b" ] # the real path's, in the read-write project
+  [ "${PIN[*]}" = "$P/a $P/a/b" ] # the real path's, in the read-write project (P2)
   ln -s a "$P/lnk"
   pins -- --ro-bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 0 ]
@@ -616,129 +579,6 @@ cache_pins() {
   pins native -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 0 ]
   same "${IN[@]}"
-}
-
-@test "the role's own path through a replaceable link: refused where it covers a host object the role sees; behind a link it cannot replace, the real path pinned" {
-  ln -s a "$P/lnk"
-  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/b" # an own directory over ./a/b
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"connect: $P/lnk/b goes through $P/lnk, a symbolic link in a directory the role can write, and covers $P/a/b, which the role sees"* ]]
-  pins -- --bind "$P" "$P" --bind "$ST/f" "$P/lnk/b/f.md" # an own file over ./a/b/f.md
-  [ "$RC" -eq 1 ]
-  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/new" # nothing there to cover
-  [ "$RC" -eq 0 ]
-  mkdir -p "$P/ro"
-  ln -s ../a "$P/ro/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --bind "$ST/f" "$P/ro/lnk/b/f.md"
-  [ "$RC" -eq 0 ] # the link is in a read-only mount
-  [ "${PIN[*]}" = "$P/a $P/a/b" ]
-}
-
-@test "a read-only bind's source is walked where a read-write host mount shows it, and a contradiction refused there; read-only or not shown, pinned only" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/roles" "$P/cfg/sub"
-  touch "$h/roles/x.md"
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/sub/x.md" --ro-bind "$h/roles/x.md" "$h/roles/x.md"
-  [ "$RC" -eq 0 ] # declared read-only at its own path too: both kept
-  # (in any order: $h/roles is found by the source walk too, the source covered exactly there)
-  [ "$(printf '%s\n' "${PIN[@]}" | sort | paste -sd' ')" = "$(printf '%s\n' "$P/cfg" "$P/cfg/sub" "$h/roles" | sort | paste -sd' ')" ]
-  pins -- --bind "$P" "$P" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # not shown read-write: nothing for it
-  same --bind "$P" "$P" --bind "$P/cfg" "$P/cfg" --ro-bind "$h/roles/x.md" "$P/cfg/x.md"
-}
-
-@test "a contradiction refuses: the object bound read-only also shown read-write at another path (itself, a containing directory, at two paths, through a mount at another path)" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/roles" "$P/cfg"
-  touch "$h/roles/x.md"
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # a containing directory
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"binds $h/roles/x.md read-only at $P/cfg/x.md, and $h shows it read-write at $h/roles/x.md: the two contradict, so the launch is refused. Make one of them read-only too -- declaring $h/roles/x.md read-only at its own path ($h/roles/x.md = read-only) keeps both -- or remove one."* ]]
-  pins -- --bind "$P" "$P" --bind "$h/roles" "$P/mnt" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # through a mount at another path
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it read-write at $P/mnt/x.md"* ]]
-  pins -- --bind "$P" "$P" --bind "$h/roles" "$P/m1" --bind "$h/roles" "$P/m2" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # at two paths
-  [ "$RC" -eq 1 ]
-  pins -- --bind "$P" "$P" --bind "$h/roles" "$P/m1" --ro-bind "$h/roles" "$P/cfg/roles" # the object itself, a directory
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it read-write at $P/m1"* ]]
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h" "$P/cfg" # a read-write declaration that is itself the source
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it read-write at $h: the two contradict, so the launch is refused. Make one of them read-only too or remove one."* ]]
-}
-
-@test "a contradiction refuses: a part of a read-only directory source shown read-write elsewhere" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/sub/deep" "$P/cfg"
-  pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/alt"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"binds $h/sub read-only at $P/cfg, and $P/alt shows $h/sub/deep, inside it, read-write at $P/alt"* ]]
-  # the same part at its own place inside the read-only tree: ordinary nesting
-  pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/cfg/deep"
-  [ "$RC" -eq 0 ]
-}
-
-@test "B1: a read-write FILE declaration of the same object, or of a file inside a read-only directory source, is a contradiction" {
-  local e="$BATS_TEST_TMPDIR/ext"
-  mkdir -p "$e/d"
-  touch "$e/x.md" "$e/d/x.md"
-  pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$e/x.md" "$P/alt.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"binds $e/x.md read-only at $P/cfg/x.md, and $P/alt.md shows it read-write at $P/alt.md"* ]]
-  pins -- --bind "$P" "$P" --ro-bind "$e/d" "$P/cfg" --bind "$e/d/x.md" "$P/alt.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows $e/d/x.md, inside it, read-write at $P/alt.md"* ]]
-}
-
-@test "B2: host paths compared resolved: a read-write mount given through a link shows the resolved source (contradiction, replaceable link, source pins)" {
-  local real="$BATS_TEST_TMPDIR/home" hl="$BATS_TEST_TMPDIR/hlink"
-  mkdir -p "$real/store/roles" "$real/store/realdir" "$P/cfg"
-  touch "$real/store/roles/x.md" "$real/store/realdir/y.md"
-  ln -s home "$hl"
-  ln -s realdir "$real/store/l"
-  pins -- --bind "$P" "$P" --bind "$hl" "$hl" --ro-bind "$real/store/roles/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it read-write at $hl/store/roles/x.md"* ]]
-  pins -- --bind "$P" "$P" --bind "$hl" "$hl" --ro-bind "$real/store/l/y.md" "$P/cfg/y.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $real/store/l, a symbolic link in a directory the role can write"* ]]
-  # an object the role cannot write: no contradiction, the directories above it pinned
-  # where the linked mount shows them
-  chmod 444 "$real/store/roles/x.md"
-  PINS_PRE='_as_ro_pins_uid() { printf 0; }; _as_ro_pins_find_writable() { :; }' \
-    pins -- --bind "$P" "$P" --bind "$hl" "$hl" --ro-bind "$real/store/roles/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 0 ]
-  [[ " ${PIN[*]} " == *" $hl/store "* ]]
-  [[ " ${PIN[*]} " == *" $hl/store/roles "* ]]
-  chmod 644 "$real/store/roles/x.md"
-}
-
-@test "B3: a part already read-write at its own place, shown read-write at a second path too, is not a contradiction" {
-  mkdir -p "$P/out" "$BATS_TEST_TMPDIR/home/out-alias"
-  # project = read-only, ./out/ = read-write, ~/out-alias/ = read-write outside:./out/
-  pins -- --ro-bind "$P" "$P" --bind "$P/out" "$P/out" --bind "$P/out" "$BATS_TEST_TMPDIR/home/out-alias"
-  [ "$RC" -eq 0 ]
-  local s="$BATS_TEST_TMPDIR/src/libfoo"
-  mkdir -p "$s/build" "$P/ref" "$P/build"
-  # ./ref/ = read-only outside:~/src/libfoo/, ./ref/build/ and ./build/ read-write outside:~/src/libfoo/build/
-  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$s/build" "$P/ref/build" --bind "$s/build" "$P/build"
-  [ "$RC" -eq 0 ]
-  # without the part read-write in place it is one
-  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$s/build" "$P/build"
-  [ "$RC" -eq 1 ]
-}
-
-@test "B4: a directory the role neither owns nor can write, holding a file it can write, is writable to it: a contradiction" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/foreign" "$P/cfg"
-  touch "$h/foreign/f"
-  chmod 666 "$h/foreign/f"
-  chmod 555 "$h/foreign"
-  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/foreign" "$P/cfg"
-  [ "$RC" -eq 1 ]
-  PINS_PRE='_as_ro_pins_uid() { printf 0; }; _as_ro_pins_find_writable() { :; }' \
-    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/foreign" "$P/cfg"
-  [ "$RC" -eq 0 ] # nothing in it the role can write
-  chmod 755 "$h/foreign"
 }
 
 @test "hard links: another name of a read-only file in a directory shown read-write is not a contradiction, and nothing searches for it" {
@@ -753,16 +593,21 @@ cache_pins() {
   [[ "$MSG" != *"hard link"* ]] # a directory would need a search: no warning
 }
 
-@test "mutants: a hidden read-only bind gets no pins; a hidden read-write part is no contradiction; the part's own could-write test counts" {
+@test "final view and the end of the list: a read-only path at its own host path behind a link the role cannot replace, its real path shown by a LATER read-write mount: the pin goes after that mount, at the end" {
+  local h="$BATS_TEST_TMPDIR/home/store" o="$BATS_TEST_TMPDIR/out"
+  mkdir -p "$h/d" "$o"
+  touch "$o/f.md"
+  ln -s "$o" "$h/d/l"
+  chmod 555 "$h/d"
+  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" -- cmd
+  [ "$RC" -eq 0 ]
+  same --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" --bind "$h/d" "$h/d" -- cmd
+  chmod 755 "$h/d"
+}
+
+@test "mutants: a hidden read-only bind gets no pins" {
   pins -- --bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md" --bind "$P" "$P"
   same "${IN[@]}"
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/sub/deep" "$P/cfg" "$P/alt"
-  pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/alt" --ro-bind "$ST/x" "$P/alt"
-  [ "$RC" -eq 0 ] # the read-write view at ./alt is hidden by the later read-only bind
-  # shellcheck disable=SC2016 # the stand-in's own expansions
-  PINS_PRE='_as_ro_pins_writable() { [[ "$1" != */deep ]]; }' pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/alt"
-  [ "$RC" -eq 0 ] # the part is not writable to the role
 }
 
 @test "mutants: a link in a directory the role owns but has made unwritable is replaceable (it can chmod it)" {
@@ -775,18 +620,6 @@ cache_pins() {
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"its source goes through $P/own/l, a symbolic link in a directory the role can write"* ]]
   chmod 755 "$P/own"
-}
-
-@test "final view and the end of the list: a pin above a link in a directory a LATER read-write mount shows goes after that mount, at the end" {
-  local h="$BATS_TEST_TMPDIR/home/store" o="$BATS_TEST_TMPDIR/out"
-  mkdir -p "$h/d" "$o"
-  touch "$o/f.md"
-  ln -s "$o" "$h/d/l"
-  chmod 555 "$h/d"
-  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" -- cmd
-  [ "$RC" -eq 0 ]
-  same --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" --bind "$h/d" "$h/d" -- cmd
-  chmod 755 "$h/d"
 }
 
 @test "hard links: another name of a read-only file shown through a read-write FILE mount launches with one warning naming both; a different file, or a covered mount, none" {
@@ -810,45 +643,7 @@ cache_pins() {
   [[ "$MSG" != *"hard link"* ]]
 }
 
-@test "round 7, smaller 1: a part own, copy or copy-on-write in place inside a read-only directory, read-write elsewhere, is not a contradiction" {
-  local s="$BATS_TEST_TMPDIR/src/libfoo"
-  mkdir -p "$s/build" "$P/ref" "$P/build" "$ST/o" "$ST/u" "$ST/w"
-  # own (an empty store) and copy (a store holding a copy): a store's bind at ./ref/build/
-  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$ST/o" "$P/ref/build" --bind "$s/build" "$P/build"
-  [ "$RC" -eq 0 ]
-  # copy-on-write: an overlay with the host directory its lower
-  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --overlay-src "$s/build" --overlay "$ST/u" "$ST/w" "$P/ref/build" \
-    --bind "$s/build" "$P/build"
-  [ "$RC" -eq 0 ]
-  # the mirror: own in place, not read-write elsewhere
-  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$ST/o" "$P/ref/build"
-  [ "$RC" -eq 0 ]
-  # the store over a DEEPER part only: the part itself is still shown read-only
-  mkdir -p "$s/build/sub"
-  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$ST/o" "$P/ref/build/sub" --bind "$s/build" "$P/build"
-  [ "$RC" -eq 1 ]
-}
-
-@test "round 7, smaller 2: the could-write search follows a filesystem mounted beneath the directory (a bind is recursive)" {
-  need_bwrap
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/top/m" "$P/cfg"
-  chmod 555 "$h/top"
-  # a 0555 tmpfs at top/m, a writable directory in it; the role's uid not the owner's
-  PINS_WRAP="bwrap --dev-bind / / --perms 0555 --tmpfs $h/top/m --dir $h/top/m/w" \
-    PINS_PRE='_as_ro_pins_euid=4242; _as_ro_pins_uid() { printf 0; }' \
-    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/top" "$P/cfg"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"binds $h/top read-only at $P/cfg"*"the two contradict"* ]]
-  # nothing writable in the mount: not one
-  PINS_WRAP="bwrap --dev-bind / / --perms 0555 --tmpfs $h/top/m" \
-    PINS_PRE='_as_ro_pins_euid=4242; _as_ro_pins_uid() { printf 0; }' \
-    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/top" "$P/cfg"
-  [ "$RC" -eq 0 ]
-  chmod 755 "$h/top"
-}
-
-@test "the shortcut past a source's chain: not through a link loop (the link test), not through a .. (resolved differs from declared)" {
+@test "the shortcut past a source's chain: not through a link loop (the link test)" {
   # a loop: realpath -m gives the path back as it is, so only the link test sees it
   mkdir -p "$BATS_TEST_TMPDIR/lp"
   ln -s l2 "$BATS_TEST_TMPDIR/lp/l1"
@@ -856,44 +651,41 @@ cache_pins() {
   pins -- --bind "$P" "$P" --ro-bind "$BATS_TEST_TMPDIR/lp/l1/x" "$P/cfg/x"
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"does not resolve (40 symbolic links: a loop?)"* ]]
-  # a .. that leads into the read-write project: the source shown read-write there
-  pins -- --bind "$P" "$P" --ro-bind "$BATS_TEST_TMPDIR/ext/../p/a/f.md" "$BATS_TEST_TMPDIR/q/f.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"binds $P/a/f.md read-only at $BATS_TEST_TMPDIR/q/f.md"*"the two contradict"* ]]
 }
 
-@test "round 7, B1: the shortcut past the destination's chain is not taken through a link: the real path behind it is pinned where it shows read-write" {
-  local e="$BATS_TEST_TMPDIR/ext"
-  mkdir -p "$e/ro" "$P/real"
-  touch "$P/real/f.md" "$e/f.md"
-  ln -s "$P/real" "$e/ro/l"
-  # ./ro is read-only (a bind of ext/ro), its l a link to the project's real/
-  pins -- --bind "$P" "$P" --ro-bind "$e/ro" "$P/ro" --ro-bind "$e/f.md" "$P/ro/l/f.md"
-  [ "$RC" -eq 0 ]
-  [[ " ${PIN[*]} " == *" $P/real "* ]]
-}
-
-@test "round 7, smaller 4: a symbolic link to a writable file inside a directory the role cannot write does not make it writable" {
-  local h="$BATS_TEST_TMPDIR/home/store" o="$BATS_TEST_TMPDIR/open"
-  mkdir -p "$h/foreign" "$o" "$P/cfg"
-  printf 'w\n' >"$o/w"
-  chmod 666 "$o/w"
-  ln -s "$o/w" "$h/foreign/l"
-  chmod 555 "$h/foreign"
-  # the role's uid not the owner's: only -writable can match, and the link's target is
-  PINS_PRE='_as_ro_pins_euid=4242; _as_ro_pins_uid() { printf 0; }' \
-    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/foreign" "$P/cfg"
-  [ "$RC" -eq 0 ]
-  chmod 755 "$h/foreign"
-}
-
-@test "round 7, B1: no find where no read-write view of a read-only object exists elsewhere (system binds, a read-only file in the project)" {
+@test "no find, no owner lookup: system binds, a read-only file in the project, and a read-only source shown read-write elsewhere" {
   mkdir -p "$P/cfg"
   PINS_PRE="$COUNT" pins -- --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind-try /opt /opt --bind "$P" "$P" \
-    --ro-bind "$P/a/f.md" "$P/a/f.md" -- cmd
+    --ro-bind "$P/a/f.md" "$P/a/f.md" --bind "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR/alias" --ro-bind "$P/top.md" "$P/cfg/top.md" -- cmd
   [ "$RC" -eq 0 ]
   [ "$(forks find)" -eq 0 ]
   [ "$(forks uid)" -eq 0 ]
+}
+
+@test "launches through the engine: an outside: declaration's destination pins nothing (read-only, copy, copy-on-write); at its own path it does" {
+  make_harness
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  mkdir -p "$proj/a/data" "$H/home/big"
+  printf 'HOST\n' >"$proj/a/data/f"
+  printf 'BIG\n' >"$H/home/big/f"
+  local m
+  for m in read-only copy copy-on-write; do
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect "./a/data/ = $m outside:~/big/" claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"pinned, above"* ]] || {
+      echo "$m: $output" >&2
+      return 1
+    }
+  done
+  for m in read-only own copy; do
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect "./a/data/ = $m" claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pinned, above a read-only, hidden or own path (the role cannot rename or remove them): ./a"* ]] || {
+      echo "$m: $output" >&2
+      return 1
+    }
+  done
 }
 
 @test "round 7, B1: a plain launch's and the Supervisor's option lists: no find, a bounded number of processes" {
@@ -917,37 +709,6 @@ cache_pins() {
   echo "supervisor: $(sort "$BATS_TEST_TMPDIR/forks" 2>/dev/null | uniq -c | paste -sd" ")" >&2
   [ "$(forks find)" -eq 0 ]
   [ "$(forks all)" -le 4 ]
-}
-
-@test "not a contradiction: an object the role cannot write anyway (another user's, not writable)" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/roles" "$P/cfg"
-  touch "$h/roles/x.md"
-  chmod 444 "$h/roles/x.md"
-  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 0 ]
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" # the role's own: it can chmod it
-  [ "$RC" -eq 1 ]
-  chmod 644 "$h/roles/x.md"
-}
-
-@test "not a contradiction: nesting at the same path, and a read-write view covered in the final view (read-only, hide, store, overlay)" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/sub" "$h/roles" "$P/cfg"
-  touch "$h/sub/x.md" "$h/roles/x.md"
-  pins -- --bind "$h" "$h" --ro-bind "$h/sub/x.md" "$h/sub/x.md" # ~/store rw, ~/store/sub/x.md read-only
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$h/sub" ]
-  local cover
-  for cover in "--ro-bind $h/roles/x.md $h/roles/x.md" "--tmpfs $h/roles" "--bind $ST/x $h/roles" \
-    "--overlay-src $h/roles --overlay /up /wk $h/roles"; do
-    # shellcheck disable=SC2086 # the cover's words
-    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/x.md" $cover
-    [ "$RC" -eq 0 ] || {
-      echo "refused with $cover: $MSG" >&2
-      return 1
-    }
-  done
 }
 
 @test "an option list the computation cannot read refuses: an unknown option, a word that is no option, missing arguments" {

@@ -470,6 +470,14 @@ instructions = copy-on-write native   # no slash: a channel name, exactly as bef
 trailing `/` says the path must be a directory. A mistyped *path* can still declare an
 unwanted one: the exposure any path grant carries.
 
+**A declaration is about a path:** at this path the role gets this source with this
+access. A bind whose source is elsewhere (`outside:`, `sandbox:`) promises nothing about
+a host object at its path: that object, if there is one, is the business of the
+declaration that covers its own path. One source may be shown at several paths with
+different access, and each path gets its own: `~/store/ = read-write` with
+`./cfg/x.md = read-only outside:~/store/x.md` is valid, and the role writing
+`~/store/x.md` (which `./cfg/x.md` then shows) is what the two declarations say.
+
 **The key is always a path inside the sandbox**, and with no source given the source is
 the same path outside. A relative key is relative to the project, whichever form it came
 from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only
@@ -508,96 +516,72 @@ the engine makes it on the host before the launch, the same directory or file.
 mount point, so it cannot be deleted or renamed from inside, and `copy-on-write` on a
 file is `copy`, since overlayfs cannot stack on one file.
 
-**The directories above a read-only, hidden or own path are pinned.** A
-bound file or directory is a mount point the role cannot rename or remove, but where the
+**The directories above a read-only, hidden or own path at its own host path are
+pinned.** A deeper declaration wins at its path over the directory above it, and a
+bound file or directory is a mount point the role cannot rename or remove; but where the
 role has the directory around it read-write from the host it could rename a parent. A
-read-only path moves with it, on the host too, and the role could put its own file at
-the old path for the next launch to bind read-only. Above an `own`, `copy`,
-`copy-on-write` or `seed-only` path the host's original moves out from under the
-declaration, and the next launch shows it to the role, readable and writable. So at
-launch every directory above such a bind, up to the outermost one the role has
+read-only path moves with it, on the host too, to where the role can write it (measured:
+the Supervisor's `mv .asb .asb.moved`, then its purpose files edited there); above an
+`own`, `copy`, `copy-on-write` or `seed-only` path the host's original moves out from
+under the declaration, and the next launch shows it to the role, readable and writable.
+So at launch every directory above such a bind, up to the outermost one the role has
 read-write from the host, is bound onto itself, read-write, unless it is a mount point
 already (`./.asb` and `./.asb/roles` above `./.asb/roles/x.md` in a read-write project):
 a mount point too, so the role's rename or removal of it fails with EBUSY. The walk goes
 through the mounts on the way: under `./x/a/ = read-write`, `own`, `copy` or
 `copy-on-write`, `./x/a/b/f.md = read-only` pins `./x` too. Every read-only and own bind
-is covered, the built-in dot-file and purpose files included, wherever declared, and
-every hide (the profile's or `[claude] hide`) nested in a directory the role has
-read-write, whose hidden content would otherwise show at the next launch; a
-`read-write` declaration gets none for its own sake, with its source elsewhere or not
-(what it covers at its path is the project's, or the host's, to the role as the other
-declarations say), and nothing is pinned under
-`--preset native`, inside a `copy-on-write` mount, the project included (nothing there
-reaches the host), or inside a read-only mount. A read-only path's source is walked too,
-wherever a read-write host mount shows it: an `outside:` source, or the real path behind
-a link -- also where another mount sits exactly on the source itself while its
-directory still shows read-write (`~/store/ = read-write`, `~/store/roles/x.md =
-read-write outside:~/other.md`, `./cfg/x.md = read-only outside:~/store/roles/x.md`):
-the directories above it are pinned there, or the role could move `~/store/roles` away
-and plant its own `x.md` for the next launch to bind read-only (measured). A pinned directory stays writable inside; a rename, hard link or `git mv` across
-its boundary fails with "Invalid cross-device link", while `mv`, `cp`, rsync and git's
-checkout, stash and rebase work (they copy); the pinned directory itself cannot be
-renamed or removed (EBUSY). A directory that is not there on the host is not pinned: the
-bind's source exists elsewhere, so only the mount point bwrap makes there would move.
+at its own host path is covered, the built-in dot-file and purpose files included,
+wherever declared, and every hide (the profile's or `[claude] hide`) nested in a
+directory the role has read-write, whose hidden content would otherwise show at the next
+launch. Where such a path goes through a link the role cannot replace, the directories
+above the real path are pinned too, in the same way. A declaration with its source
+elsewhere (`outside:`, `sandbox:`) gets none: renaming the directory above it leaves the
+role nothing that another declaration does not give it (measured: `./a/data/ =
+read-only outside:~/big/`, `mv a a.moved`, and the next launch shows `~/big` read-only
+at `./a/data` again). A `read-write` declaration gets none either, and nothing is pinned
+under `--preset native`, inside a `copy-on-write` mount, the project included (nothing
+there reaches the host), or inside a read-only mount. A pinned directory stays writable
+inside; a rename, hard link or `git mv` across its boundary fails with "Invalid
+cross-device link", while `mv`, `cp`, rsync and git's checkout, stash and rebase work
+(they copy); the pinned directory itself cannot be renamed or removed (EBUSY). A
+directory that is not there on the host is not pinned: the bind's source exists
+elsewhere, so only the mount point bwrap makes there would move.
 
 **A read-only path's source is not resolved through a link the role can replace.** The
 engine resolves a read-only declaration's source on the host, so the launch follows it
 link by link -- links inside link targets, relative and absolute targets, `..` -- and a
 link the role could replace refuses the launch, naming that link and the path the
-source resolves to, which is what to declare instead: the role could remove the link
-and make a directory of its own there, and the next launch would bind the role's file
-read-only (measured, also for a link in the middle of the chain). Replaceable means an
-entry of a directory a read-write host mount shows to the role, which it owns or can
-write; a link in a directory it cannot write (another user's) is not, nor one in a sticky
-directory that neither it nor the link is the role's. A link it cannot
-replace -- in a read-only or copy-on-write mount, a read-only project, or such a
-directory -- is not refused, and the directories above it and above the real path are
-pinned wherever the role has them read-write. Under `--preset native` nothing is
-refused. At 40 links (a loop) the launch is refused.
+source resolves to, which is what to declare instead: by retargeting the link the role
+would choose which host path the next launch binds there, one no declaration gives it
+(measured: an undeclared `~/secret` bound at the next launch; also when the role replaced
+a plain source file or directory with a link, which the next launch then refuses).
+Replaceable means an entry of a directory a read-write host mount shows to the role,
+which it owns or can write; a link in a directory it cannot write (another user's) is
+not, nor one in a sticky directory that neither it nor the link is the role's. A link it
+cannot replace -- in a read-only or copy-on-write mount, a read-only project, or such a
+directory -- is not refused. Under `--preset native` nothing is refused. At 40 links (a
+loop) the launch is refused. The same retargeting reaches a `read-write`, `copy` or
+`copy-on-write` declaration's source (measured), which this refusal does not cover yet.
 
-**A path is not bound through a link the role can replace where that would uncover a host
-file.** A read-only path whose source is elsewhere, and an `own`, `copy`,
-`copy-on-write` or `seed-only` path, covers whatever is at its destination; through a
-link the role can replace, replacing it would leave that host object uncovered, readable
-and writable, at the next launch (measured, all modes). So such a link refuses the launch
-where the real path exists and shows to the role, naming the link and the path to
-declare instead; where nothing is there (bwrap makes an empty mount point, which the
-launch removes again) or the role does not see it, it is not refused. Behind a link the
-role cannot replace, the real path's directories are pinned.
+**An own, copy, copy-on-write or seed-only path at its own host path is not bound through
+a link the role can replace where that would uncover a host file.** Such a path covers
+the host object at its path; through a link the role can replace, retargeting it would
+leave that object uncovered, readable and writable, at the next launch (measured), and
+no pin can stop a link from being replaced. So such a link refuses the launch where the
+real path exists and shows to the role, naming the link and the path to declare instead;
+where nothing is there, or the role does not see it, it is not refused. With its source
+elsewhere the path covers nothing it promises anything about, and is not refused.
 
-**A path declared read-only is not also shown read-write.** Where a read-write host mount
-of the launch (a directory or a single file) shows a read-only path's source at another
-path -- the object itself, a directory containing it, or, for a directory source, a
-directory or file inside it -- the two declarations contradict, and the launch is
-refused, naming both and the host path: `./cfg/x.md = read-only outside:~/store/x.md`
-under `~/store/ = read-write`, or beside `~/store/x.md = read-write`, is refused. Host
-paths are compared resolved, so a mount given through a link (a `$HOME` that is a
-symbolic link) counts too. A bind protects a name, not a file with several names (hard
-links): another name of a read-only file that a declaration shows read-write is writable
-there, as declared, and the read-only name shows what is written. Where that is cheap to
-see -- the other name declared read-write as a single file -- the launch says so in one
-warning line and goes on; another name inside a read-write directory is not looked for.
-Declaring the source
-read-only at its own path too (`~/store/x.md = read-only`) keeps both: then the role sees
-it read-only at both paths. Not a contradiction: the object inside a read-write mount at
-its own path (`~/store/ = read-write` with `~/store/sub/x.md = read-only`), a read-write
-view of it that something covers (a deeper read-only declaration, a hide, a store, an
-overlay), a part of a read-only directory that the directory does not show read-only at
-its place -- read-write there as well as elsewhere (`project = read-only`, `./out/ =
-read-write` and `~/out-alias/ = read-write outside:~/proj/out/` for a project at
-`~/proj`), or `own`, `copy` or `copy-on-write` there, where the role sees its own store
-or layer instead -- and an object the role cannot write: another user's, not writable to
-it, and, for a directory, with nothing inside it that the role owns or can write
-(filesystems mounted beneath it included: a bind shows them). Whether the role could write it is asked only of such a
-candidate, but then it walks the tree: a read-write mount over a large tree the role does
-not own that contains the read-only source (`./ref/ = read-only outside:/usr/share/` with
-`./alt/ = read-write outside:/usr/`) adds half a second to two seconds to the launch
-(measured).
+**A bind protects a name, not a file with several names (hard links):** another name of a
+read-only file that a declaration shows read-write is writable there, as declared, and
+the read-only name shows what is written. Where that is cheap to see -- the other name
+declared read-write as a single file -- the launch says so in one warning line and goes
+on; another name inside a read-write directory is not looked for.
 
 **Every one of these decisions is made on the final view** -- what shows at each path once
 every bind is made -- not on the binds made so far: declarations are bound by depth, so the
 mount that makes a directory read-write, or read-only, can come later in the list than
-the read-only path it concerns. A link in a sticky directory, neither it nor the link the
+the path it concerns. A link in a sticky directory, neither it nor the link the
 role's, is not replaceable (the kernel lets only their owners remove it). A refusal for a
 channel or a built-in path, which has no declaration to rewrite, says to make the link
 the directory it points to or to bind from the resolved path.

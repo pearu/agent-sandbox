@@ -1372,16 +1372,13 @@ login_file() {
   run ! grep -q 'cannot be renamed or' "$OUT/briefing.md"
 }
 
-@test "a read-only source that another declaration shows read-write refuses the launch, naming both as written" {
+@test "a read-only source that another declaration shows read-write launches: each path gets its own access, nothing pinned for the source, nothing refused" {
   mkdir -p "$H/home/store" "$PROJ/cfg"
   printf 'S\n' >"$H/home/store/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: './cfg/x.md = read-only' binds $H/home/store/x.md read-only at $PROJ/cfg/x.md, and '~/store/ = read-write' shows it read-write at $H/home/store/x.md: the two contradict"* ]]
-  [ ! -s "$H/argv" ]
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect '~/store/x.md = read-only' \
-    --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
   [ "$status" -eq 0 ]
+  [[ "$output" != *contradict* ]]
+  [[ "$output" != *"pinned, above"* ]] # its source is elsewhere: nothing for its destination either
+  argv_has --ro-bind "$H/home/store/x.md" "$PROJ/cfg/x.md"
 }

@@ -1106,47 +1106,41 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
-- **A role can no longer move a read-only file or directory, or an own one, by renaming a
-  parent.** A bind is a mount point the role cannot rename or remove, but in a directory
+- **A role can no longer get around a read-only, hidden or own path by renaming a parent.**
+  A declaration is about a path, and a deeper one wins at its path over the directory
+  above it. A bind is a mount point the role cannot rename or remove, but in a directory
   it has read-write from the host it could rename a parent (measured: the `roles`
   model's Supervisor and setup role ran `mv .asb .asb.moved`, and the directory moved on
-  the host), put its own file at the old path, and have the next launch bind that one
-  read-only; above an `own`, `copy`, `copy-on-write` or `seed-only` path the next launch
-  showed the host's original to the role, readable and writable (measured). Each
-  directory above such a bind that the role has read-write from the host -- through any
-  read-write, `own`, `copy` or copy-on-write mount on the way -- and above a read-only
-  bind's source where a read-write host mount shows it (or shows its directory, another
-  mount sitting exactly on the source itself), is now bound onto itself at
-  launch, so its rename or removal fails with EBUSY: in the
-  shipped models `.asb` and `.asb/roles` for the `roles` Supervisor and setup role, the
-  `github` setup role and the `market` role, none for the roles with a read-only or
-  copy-on-write project; and, under the claude profile where `~/.claude/cache/changelog.md`
-  exists, `~/.claude/cache` for every role whose changelog channel is its own (every
-  preset but `shared` and `native`); and above a hide nested in a read-write directory. A
-  read-only path whose source resolves, link by link, through a symbolic link the role can
-  replace (an entry of a directory a read-write host mount shows it, which it owns or can
-  write) refuses the launch, naming that link and the path to declare instead; so does a
-  path whose destination goes through such a link where it covers a host object the role
-  sees (read-only with the source elsewhere, own, copy, copy-on-write, seed-only); a link
-  it cannot replace is not refused, and the directories above it and the real path are
-  pinned. A read-only path whose source a read-write host mount of the launch also shows
-  at another path (the object, a directory containing it, or a part of a directory source),
-  where the role could write it, refuses the launch as a contradiction, naming both
-  declarations; declaring the source read-only at its own path too keeps both. A
-  read-write single-file declaration counts, host paths are compared resolved (a linked
-  `$HOME`), and a directory the role neither owns nor can write is writable to it where it
-  holds a file or directory the role owns or can write (filesystems mounted beneath it
-  included); a part the read-only directory does not show at its place (read-write, own,
-  copy or copy-on-write there) is not a contradiction. Whether the role could write it is
-  asked only once a read-write view of it is found, and the computation runs once per
-  launch, on its final list, the briefing's line written from it. A bind protects a name:
-  another name of a read-only file (a hard link) that a declaration shows read-write is
-  writable there, as declared; where it is cheap to see (a read-write single-file mount of
-  the same file) the launch warns once and goes on. Every
-  decision is made on the final view of the binds, not on those made so far. An option list the computation cannot read refuses the launch. A
-  pinned directory stays writable inside; a rename, hard link or `git mv` across its
-  boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the
-  briefing says. The bwrap arguments are unchanged where nothing is pinned.
+  the host, its purpose files writable there); above an `own`, `copy`, `copy-on-write` or
+  `seed-only` path the next launch showed the host's original to the role, readable and
+  writable (measured). Each directory above such a bind at its own host path that the
+  role has read-write from the host -- through any read-write, `own`, `copy` or
+  copy-on-write mount on the way, and above the real path where the path goes through a
+  link the role cannot replace -- is now bound onto itself at launch, so its rename or
+  removal fails with EBUSY: in the shipped models `.asb` and `.asb/roles` for the
+  `roles` Supervisor and setup role, the `github` setup role and the `market` role, none
+  for the roles with a read-only or copy-on-write project; and, under the claude profile
+  where `~/.claude/cache/changelog.md` exists, `~/.claude/cache` for every role whose
+  changelog channel is its own (every preset but `shared` and `native`); and above a hide
+  nested in a read-write directory. A declaration with its source elsewhere (`outside:`,
+  `sandbox:`) promises nothing about a host object at its path and gets none; a
+  `read-write` declaration gets none. A read-only path whose source resolves, link by
+  link, through a symbolic link the role can replace (an entry of a directory a
+  read-write host mount shows it, which it owns or can write) refuses the launch, naming
+  that link and the path to declare instead: retargeting it, the role would choose which
+  host path the next launch binds there (measured). An `own`, `copy`, `copy-on-write` or
+  `seed-only` path at its own host path through such a link refuses where it covers a
+  host object the role sees. One source shown at two paths with different access is
+  valid, each path getting its own; a bind protects a name, so another name of a
+  read-only file (a hard link) that a declaration shows read-write is writable there, as
+  declared, and where that is cheap to see (a read-write single-file mount of the same
+  file) the launch warns once and goes on. The pins are computed once per launch, on its
+  final list, every decision on the final view of the binds; the briefing's line is
+  written from that result. An option list the computation cannot read refuses the
+  launch. A pinned directory stays writable inside; a rename, hard link or `git mv`
+  across its boundary fails with "Invalid cross-device link" (`mv` and `cp` copy
+  instead), which the briefing says. The bwrap arguments are unchanged where nothing is
+  pinned.
 - **A claude session no longer asks to read its own briefing or to write its summary
   line.** Claude Code asked "Allow this read outside the working directories?" for
   `/run/agent-sandbox/briefing.md` in every role without a `[briefing] start` (only
