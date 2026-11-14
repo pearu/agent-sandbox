@@ -145,6 +145,33 @@ behind_link() {
   [ ! -e "$W/real.moved" ]
 }
 
+# part_in_place MODE -- ./ref/ read-only from ~/src/libfoo/, ./ref/build/ MODE in place, and
+# ./build/ read-write from ~/src/libfoo/build/: it launches; what the role writes in
+# ref/build stays its own, what it writes in build reaches the host.
+part_in_place() {
+  mkdir -p "$IHOME/src/libfoo/build" "$W/ref"
+  printf 'SRC\n' >"$IHOME/src/libfoo/a.c"
+  printf 'OBJ\n' >"$IHOME/src/libfoo/build/o"
+  local m="$1"
+  [[ "$m" == own ]] || m="$m outside:~/src/libfoo/build/"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './ref/ = read-only outside:~/src/libfoo/' --connect "./ref/build/ = $m" \
+    --connect './build/ = read-write outside:~/src/libfoo/build/' --profile probe --exec \
+    python3 ops.py src:write:ref/a.c:R mine:write:ref/build/mine:M host:write:build/host:H
+  [ "$status" -eq 0 ]
+  [ "$(report src)" = EROFS ]
+  [ "$(report mine)" = ok ]
+  [ "$(report host)" = ok ]
+  [ ! -e "$IHOME/src/libfoo/build/mine" ]
+  [ -e "$IHOME/src/libfoo/build/host" ]
+  [ "$(cat "$IHOME/src/libfoo/build/o")" = OBJ ]
+  # the mirror: in place, not read-write elsewhere
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './ref/ = read-only outside:~/src/libfoo/' --connect "./ref/build/ = $m" \
+    --profile probe --exec true
+  [ "$status" -eq 0 ]
+}
+
 @test "the role's rename and removal of each pinned directory are refused (EBUSY), and the host is unchanged" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec python3 ops.py \
     mv_a:rename:a:a.moved mv_b:rename:a/b:a/b.moved rmdir_a:rmdir:a rmdir_b:rmdir:a/b
@@ -529,6 +556,33 @@ behind_link() {
     --profile probe --exec bash -c 'echo "seen=$(cat cfg/x.md)" >>report'
   [ "$status" -eq 0 ]
   [ "$(report seen)" = HOST ]
+}
+
+@test "round 7, B2: another name of the read-only file declared read-write as a single file is a contradiction: refused, naming it" {
+  mkdir -p "$I/ext" "$IHOME/store" "$W/cfg"
+  printf 'HOST\n' >"$I/ext/x.md"
+  ln "$I/ext/x.md" "$IHOME/store/alias.md"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect "./cfg/x.md = read-only outside:$I/ext/x.md" \
+    --connect './alt.md = read-write outside:~/store/alias.md' --profile probe --exec bash -c 'echo ran=yes >>report'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"shows it, as $IHOME/store/alias.md (another name of the same file), read-write at $W/alt.md"* ]]
+  [ -z "$(report ran)" ]
+  [ "$(cat "$I/ext/x.md")" = HOST ]
+}
+
+@test "round 7, smaller 1: a part own in place inside a read-only directory, read-write elsewhere, launches" {
+  part_in_place own
+}
+
+@test "round 7, smaller 1: a part copy in place" {
+  part_in_place copy
+}
+
+@test "round 7, smaller 1: a part copy-on-write in place (its overlay's lower the host directory: the role's writes stay in its layer)" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  part_in_place copy-on-write
 }
 
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {

@@ -567,18 +567,21 @@ refused, naming both and the host path: `./cfg/x.md = read-only outside:~/store/
 under `~/store/ = read-write`, or beside `~/store/x.md = read-write`, is refused. Host
 paths are compared resolved, so a mount given through a link (a `$HOME` that is a
 symbolic link) counts too. A read-only file with more than one name (a hard link) is
-refused the same way where another of its names is in a directory shown read-write
-(searched on its filesystem only when its link count is above one); the message names
-that other name. Declaring the source read-only at its own path too
-(`~/store/x.md = read-only`) keeps both: then the role sees it read-only at both paths.
-Not a contradiction: the object inside a read-write mount at its own path
-(`~/store/ = read-write` with `~/store/sub/x.md = read-only`), a read-write view of it
-that something covers (a deeper read-only declaration, a hide, a store, an overlay), a
-part of a read-only directory that is read-write at its own place inside it as well as
-elsewhere (`project = read-only`, `./out/ = read-write` and `~/out-alias/ = read-write
-outside:./out/`), and an object the role cannot write: another user's, not writable to
-it, and, for a directory, with nothing inside it (on its filesystem) that the role owns
-or can write.
+refused the same way where another of its names is shown read-write: declared read-write
+as a single file, or in a directory shown read-write (searched only when its link count
+is above one, from each read-write directory on the file's filesystem and each such
+filesystem mounted beneath one); the message names that other name. Declaring the source
+read-only at its own path too (`~/store/x.md = read-only`) keeps both: then the role sees
+it read-only at both paths. Not a contradiction: the object inside a read-write mount at
+its own path (`~/store/ = read-write` with `~/store/sub/x.md = read-only`), a read-write
+view of it that something covers (a deeper read-only declaration, a hide, a store, an
+overlay), a part of a read-only directory that the directory does not show read-only at
+its place -- read-write there as well as elsewhere (`project = read-only`, `./out/ =
+read-write` and `~/out-alias/ = read-write outside:~/proj/out/` for a project at
+`~/proj`), or `own`, `copy` or `copy-on-write` there, where the role sees its own store
+or layer instead -- and an object the role cannot write: another user's, not writable to
+it, and, for a directory, with nothing inside it that the role owns or can write
+(filesystems mounted beneath it included: a bind shows them).
 
 **Every one of these decisions is made on the final view** -- what shows at each path once
 every bind is made -- not on the binds made so far: declarations are bound by depth, so the

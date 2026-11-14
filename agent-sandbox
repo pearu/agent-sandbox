@@ -5782,6 +5782,19 @@ _as_briefing_write() {
   # (profile_briefing_args) must appear inside after the mounts are made.
   local bdir="$_session_dir/briefing"
   mkdir -p -- "$bdir" || return 1
+  # The proxy's per-session refusals: created here, empty, so the addon (which runs
+  # as this user) only ever appends to a file the engine made; bound read-only over
+  # a placeholder in the briefing directory, which is itself bound read-only.
+  : >"$_session_dir/refused.log" || return 1
+  : >"$bdir/refused.log" || return 1
+  # The summary directory's placeholder: bwrap cannot make a mount point inside the
+  # read-only bind (measured, 0.12.0), so it is made here, before.
+  mkdir -p -- "$bdir/summary" || return 1
+  # The briefing's own binds, added to the launch's list at the end; the pins below are
+  # computed on the list with them, the launch's list, so the launch reuses the result.
+  # The role's summary directory, read-write, over its placeholder (made at keeper start).
+  local -a _bf_tail=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log"
+    --bind "$_keeper_sb/summary" "$(_as_summary_inside)")
   local md="$bdir/briefing.md"
   # The text below is literal: `$HOME` and the backticks name things for the
   # reader, they are not expansions.
@@ -5806,11 +5819,12 @@ _as_briefing_write() {
     printf -- '- writable: %s\n' "$rw_line"
     printf -- '- extra read-only paths: %s\n' "$ro_line"
     # The directories this launch pins above a read-only file or directory (_as_ro_pins,
-    # on the binds made so far: what follows adds none inside the project).
-    # Quiet: the launch computes them again on its final list (_as_launch) and says
-    # there what is not pinned, once; a list it cannot read refuses the launch there.
-    local -a _bf_opts=() _bf_pins=()
-    _as_ro_pins args _bf_opts _bf_pins quiet 2>/dev/null || _bf_pins=()
+    # on the binds made so far and the briefing's own: what follows adds none inside the
+    # project). Quiet: the launch reuses the result where its final list is this one word
+    # for word (AGENT_SANDBOX_NET=none), else computes again (_as_launch), and says there
+    # what is not pinned, once; a list it cannot read refuses the launch there.
+    local -a _bf_opts=() _bf_pins=() _bf_in=("${args[@]}" "${_bf_tail[@]}")
+    _as_ro_pins _bf_in _bf_opts _bf_pins quiet 2>/dev/null || _bf_pins=()
     if ((${#_bf_pins[@]})); then
       local _bf_p _bf_l=""
       for _bf_p in "${_bf_pins[@]}"; do _bf_l+="${_bf_l:+, }$_bf_p"; done
@@ -5907,15 +5921,6 @@ _as_briefing_write() {
   fi
   # and the tools env's (#304), the engine's own table
   _as_tools_telemetry | cut -f2 >>"$bdir/telemetry-hosts" || return 1
-  # The proxy's per-session refusals: created here, empty, so the addon (which runs
-  # as this user) only ever appends to a file the engine made; bound read-only over
-  # a placeholder in the briefing directory, which is itself bound read-only.
-  : >"$_session_dir/refused.log" || return 1
-  : >"$bdir/refused.log" || return 1
-  # The summary directory's placeholder: bwrap cannot make a mount point inside the
-  # read-only bind (measured, 0.12.0), so it is made here, before.
-  mkdir -p -- "$bdir/summary" || return 1
-
   local short _lnshort conda_short=""
   # a few words for conda: the command, and where its environments are
   if [[ -n "${_conda_brief:-}" ]]; then
@@ -5947,9 +5952,7 @@ _as_briefing_write() {
       "$ev" "$(_as_json_str "$ctx")" >"$bdir/hook-$ev.json" || return 1
   done
 
-  args+=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log")
-  # The role's summary directory, read-write, over its placeholder (made at keeper start).
-  args+=(--bind "$_keeper_sb/summary" "$(_as_summary_inside)")
+  args+=("${_bf_tail[@]}")
   return 0
 }
 
@@ -14924,9 +14927,9 @@ _as_ro_pins_comps() {
 _as_ro_pins_shows() {
   local -n _sh_out="$2"
   local _sh_m _sh_s _sh_p _sh_a _sh_t _sh_c
+  if [[ "${3:-}" == any ]]; then local -n _sh_list=_hm; else local -n _sh_list=_rhm; fi
   _sh_out=() _sh_mnt=()
-  for _sh_m in ${_hm[@]+"${_hm[@]}"}; do
-    [[ "${3:-}" == any || "${_mk[$_sh_m]}" == rw || "${_mk[$_sh_m]}" == rwfile ]] || continue
+  for _sh_m in ${_sh_list[@]+"${_sh_list[@]}"}; do
     _sh_s="${_ms[$_sh_m]}"
     [[ "$_sh_s" == / ]] && _sh_s=""
     [[ "$1" == "$_sh_s" || "$1" == "$_sh_s"/* ]] || continue
@@ -14948,6 +14951,54 @@ _as_ro_pins_shows() {
   return 0
 }
 
+# _as_ro_pins_resolve PATH NAME -- for _as_ro_pins, on its locals: NAME := PATH resolved as
+# `realpath -m` does (every link followed, `..` after it, a missing part kept), reading
+# links from the cache (_rlc) only; returns 1 at a link not in it, or at 40 links.
+_as_ro_pins_resolve() {
+  local -n _rv_out="$2"
+  local _rv_cur=/ _rv_c _rv_l _rv_n=0
+  local -a _rv_todo=() _rv_more=()
+  _as_ro_pins_comps "$1" _rv_todo
+  local _rv_ti=0 # the next component (the list is replaced at a link)
+  while ((_rv_ti < ${#_rv_todo[@]})); do
+    _rv_c="${_rv_todo[_rv_ti]}"
+    _rv_ti=$((_rv_ti + 1))
+    case "$_rv_c" in
+      "" | .) continue ;;
+      ..)
+        _rv_cur="${_rv_cur%/*}"
+        [[ -n "$_rv_cur" ]] || _rv_cur=/
+        continue
+        ;;
+    esac
+    _rv_l="${_rv_cur%/}/$_rv_c"
+    if [[ ! -L "$_rv_l" ]]; then
+      _rv_cur="$_rv_l"
+      continue
+    fi
+    [[ -n "${_rlc[$_rv_l]+x}" ]] || return 1
+    _rv_n=$((_rv_n + 1))
+    ((_rv_n <= 40)) || return 1
+    [[ "${_rlc[$_rv_l]}" == /* ]] && _rv_cur=/
+    _as_ro_pins_comps "${_rlc[$_rv_l]}" _rv_more
+    _rv_todo=(${_rv_more[@]+"${_rv_more[@]}"} "${_rv_todo[@]:_rv_ti}")
+    _rv_ti=0
+  done
+  _rv_out="$_rv_cur"
+}
+
+# _as_ro_pins_readlink LINK NAME -- for _as_ro_pins, on its locals: NAME := LINK's target,
+# from the cache (_rlc), else read (and cached).
+_as_ro_pins_readlink() {
+  local -n _rk_out="$2"
+  if [[ -n "${_rlc[$1]+x}" ]]; then
+    _rk_out="${_rlc[$1]}"
+    return 0
+  fi
+  _rk_out="$(readlink -- "$1")"
+  _rlc[$1]="$_rk_out"
+}
+
 # _as_ro_pins_chain PATH BIND src|dest -- for _as_ro_pins, on its locals: resolve PATH (a
 # host path) link by link, as `readlink -f` does -- relative and absolute targets, links
 # inside link targets, `..` -- and for each link met decide whether the role can replace
@@ -14965,9 +15016,10 @@ _as_ro_pins_chain() {
   local _ch_cur=/ _ch_c _ch_t _ch_n=0 _ch_l _ch_d _ch_q _ch_i _ch_bad=""
   local -a _ch_todo=() _ch_links=() _ch_pos=() _ch_more=() _sh_mnt=()
   _as_ro_pins_comps "$1" _ch_todo
-  while ((${#_ch_todo[@]})); do
-    _ch_c="${_ch_todo[0]}"
-    _ch_todo=(${_ch_todo[@]+"${_ch_todo[@]:1}"})
+  local _ch_ti=0 # the next component (the list is replaced at a link)
+  while ((_ch_ti < ${#_ch_todo[@]})); do
+    _ch_c="${_ch_todo[_ch_ti]}"
+    _ch_ti=$((_ch_ti + 1))
     case "$_ch_c" in
       "" | .) continue ;;
       ..)
@@ -15003,10 +15055,11 @@ _as_ro_pins_chain() {
       [[ -n "$_ch_bad" ]] || _ch_bad="$_ch_l"
     fi
     _ch_links+=("$_ch_l")
-    _ch_t="$(readlink -- "$_ch_l")"
+    _as_ro_pins_readlink "$_ch_l" _ch_t
     [[ "$_ch_t" == /* ]] && _ch_cur=/
     _as_ro_pins_comps "$_ch_t" _ch_more
-    _ch_todo=(${_ch_more[@]+"${_ch_more[@]}"} ${_ch_todo[@]+"${_ch_todo[@]}"})
+    _ch_todo=(${_ch_more[@]+"${_ch_more[@]}"} "${_ch_todo[@]:_ch_ti}")
+    _ch_ti=0
   done
   # What a bind covers, reached through a link the role can replace: refused only where
   # the host object there exists and shows to the role.
@@ -15030,56 +15083,117 @@ _as_ro_pins_chain() {
   return 0
 }
 
+# _as_ro_pins_apart PATH [K] -- for _as_ro_pins, on its locals: is PATH -- the read-only
+# bind K's source as declared, or (no K) what a bind covers -- apart from everything its
+# chain looks at, so the chain has nothing to find? No symbolic link on its way, no `..`,
+# no read-write host mount whose source is it, contains it or lies inside it, and (a
+# source) not a file with more than one link. Most system binds (/usr, /etc) are: no
+# process, a few tests.
+_as_ro_pins_apart() {
+  local _ap_x="$1" _ap_m _ap_s
+  [[ "$_ap_x" != *..* ]] || return 1
+  while [[ -n "$_ap_x" && "$_ap_x" != / ]]; do
+    if [[ -n "${2:-}" ]]; then # a source: pass 1 tested every component
+      [[ -z "${_rs_l[$_ap_x]+x}" ]] || return 1
+    else
+      [[ ! -L "$_ap_x" ]] || return 1
+    fi
+    _ap_x="${_ap_x%/*}"
+  done
+  if [[ -n "${2:-}" ]]; then
+    [[ "${_ms[$2]}" == "$1" ]] || return 1
+    ((${_nlink[$1]:-1} > 1)) && return 1
+  fi
+  for _ap_m in ${_rhm[@]+"${_rhm[@]}"}; do
+    _ap_s="${_ms[$_ap_m]}"
+    [[ "$_ap_s" == / || "$_ap_s" == "$1" || "$1" == "$_ap_s"/* || "$_ap_s" == "$1"/* ]] && return 1
+  done
+  return 0
+}
+
 # _as_ro_pins_contra SRC BIND -- for _as_ro_pins, on its locals (_hdest): a host object
 # bound read-only (SRC, the real path of the read-only bind at BIND) that the final view
 # also shows read-write -- the object itself or a directory containing it, at another path
-# (_as_ro_pins_shows), or a part of it, a read-write host mount from inside it, at another
-# place than its own in the bind's tree -- contradicts the read-only declaration: the role
-# could write it there. The launch is refused, naming both. Not a contradiction: the
+# (_as_ro_pins_shows), another name of it (a hard link: through a read-write file mount, or
+# in a directory shown read-write), or a part of it, a read-write host mount from inside it,
+# where the bind shows that part read-only -- contradicts the read-only declaration: the
+# role could write it there. The launch is refused, naming both. Not a contradiction: the
 # object inside a read-write mount at its own path (the read-only bind covers it there),
-# or the read-write view of it covered (read-only, a hide, a store, an overlay) in the
-# final view; where the bind lands through a link, on its source, it is that bind; an
-# object the role cannot write anyway (not its own, not writable to it: root's, say).
+# a read-write view of it covered (read-only, a hide, a store, an overlay) in the final
+# view, a part the bind does not show (read-write at its own place in the bind's tree too,
+# or covered there by a store or an overlay: the role sees something else there); where
+# the bind lands through a link, on its source, it is that bind; an object the role cannot
+# write (not its own, not writable to it, and for a directory nothing in it the role owns
+# or can write: root's, say). Every candidate is found on the final view first; whether
+# the role could write it (_as_ro_pins_writable, which may walk a tree) is asked last, of
+# a candidate only.
 _as_ro_pins_contra() {
-  local _ct_land="" _ct_i _ct_m _ct_s _ct_r _ct_t
+  local _ct_land="" _ct_landed=0 _ct_i _ct_m _ct_s _ct_r _ct_t _ct_b _ct_o _ct_id
   local -a _ct_pos=() _sh_mnt=()
-  if [[ -n "$_hdest" ]]; then
-    _ct_land="$(readlink -m -- "$_hdest" 2>/dev/null || printf '%s' "$_hdest")"
-  fi
-  _as_ro_pins_writable "$1" || return 0
+  # the object itself, or a directory containing it, shown read-write at another path
   _as_ro_pins_shows "$1" _ct_pos
   for ((_ct_i = 0; _ct_i < ${#_ct_pos[@]}; _ct_i++)); do
-    [[ "${_ct_pos[_ct_i]}" == "$2" || "${_ct_pos[_ct_i]}" == "$_ct_land" ]] && continue
+    [[ "${_ct_pos[_ct_i]}" == "$2" ]] && continue
+    _as_ro_pins_land
+    [[ "${_ct_pos[_ct_i]}" == "$_ct_land" ]] && continue
+    _as_ro_pins_writable "$1" || return 0
     _as_ro_pins_contra_say "$1" "$2" "${_sh_mnt[_ct_i]}" "$1" "${_ct_pos[_ct_i]}"
     return 1
   done
-  # another name of the same file (a hard link) shown read-write
-  if [[ -f "$1" ]] && ((${_nlink[$1]:-1} > 1)); then
-    local _ct_o
+  # another name of the same file (a hard link): only a file with more than one link has one
+  if [[ -f "$1" && ! -L "$1" ]] && ((${_nlink[$1]:-1} > 1)); then
+    _ct_id="${_ino[$1]-}"
+    # through a read-write file mount of the final view (its source's identity, pass 1)
+    for _ct_m in ${_rwm[@]+"${_rwm[@]}"}; do
+      [[ "${_mk[$_ct_m]}" == rwfile && -n "$_ct_id" ]] || continue
+      _ct_o="${_ms[$_ct_m]}"
+      [[ "$_ct_o" != "$1" && "${_ino[$_ct_o]-}" == "$_ct_id" ]] || continue
+      _as_ro_pins_latest "${_od[_ct_m]}" _ct_t
+      [[ "$_ct_t" == "$_ct_m" ]] || continue # hidden in the final view
+      _as_ro_pins_writable "$1" || return 0
+      _as_ro_pins_contra_say "$1" "$2" "$_ct_m" "$_ct_o" "${_od[_ct_m]}" link
+      return 1
+    done
+    # in a directory shown read-write: searched where one is on the file's filesystem
     while IFS= read -r -d '' _ct_o; do
       [[ "$_ct_o" != "$1" ]] || continue
       _as_ro_pins_shows "$_ct_o" _ct_pos
       ((${#_ct_pos[@]})) || continue
+      _as_ro_pins_writable "$1" || return 0
       _as_ro_pins_contra_say "$1" "$2" "${_sh_mnt[0]}" "$_ct_o" "${_ct_pos[0]}" link
       return 1
     done < <(_as_ro_pins_samefile "$1")
   fi
   [[ -d "$1" && ! -L "$1" ]] || return 0
+  # a part, a read-write host mount from inside it, where the bind shows that part
+  _as_ro_pins_latest "$2" _ct_b
   for _ct_m in ${_rwm[@]+"${_rwm[@]}"}; do
     _ct_s="${_ms[$_ct_m]}"
     [[ "$_ct_s" == "$1"/* ]] || continue
     _as_ro_pins_latest "${_od[_ct_m]}" _ct_t
     [[ "$_ct_t" == "$_ct_m" ]] || continue # hidden in the final view
     _ct_r="${_ct_s#"$1"}"
-    [[ "${_od[_ct_m]}" == "$2$_ct_r" || "${_od[_ct_m]}" == "$_ct_land$_ct_r" ]] && continue # nesting, in place
-    # the part already read-write at its place in the bind's tree: not read-only there
-    _as_ro_pins_rw_at "$2$_ct_r" "$_ct_s" && continue
+    # the part's place in the bind's tree: does the bind show it there? Not where a later
+    # mount at or beneath it does: the part read-write in place (nesting, or a second
+    # view), or a store, an overlay, another read-only bind over it
+    _as_ro_pins_latest "$2$_ct_r" _ct_t
+    [[ "$_ct_t" == "$_ct_b" ]] || continue
+    _as_ro_pins_land
     [[ -z "$_ct_land" ]] || ! _as_ro_pins_rw_at "$_ct_land$_ct_r" "$_ct_s" || continue
     _as_ro_pins_writable "$_ct_s" || continue
     _as_ro_pins_contra_say "$1" "$2" "$_ct_m" "$_ct_s" "${_od[_ct_m]}"
     return 1
   done
   return 0
+}
+
+# _as_ro_pins_land -- for _as_ro_pins_contra, on its locals: _ct_land := where the bind
+# lands on the host (_hdest, resolved), once, when first asked.
+_as_ro_pins_land() {
+  ((_ct_landed)) && return 0
+  _ct_landed=1
+  [[ -n "$_hdest" ]] || return 0
+  _ct_land="$(readlink -m -- "$_hdest" 2>/dev/null || printf '%s' "$_hdest")"
 }
 
 # _as_ro_pins_rw_at POS HOST -- for _as_ro_pins, on its locals: does the final view show the
@@ -15096,15 +15210,35 @@ _as_ro_pins_rw_at() {
 }
 
 # _as_ro_pins_samefile FILE -- every other name of FILE (its inode) in the host directories
-# the final view shows read-write to the role, NUL-separated; on FILE's filesystem only.
+# the final view shows read-write to the role, NUL-separated. A bind shows what is mounted
+# beneath its source too (bwrap binds recursively), and a name of FILE is on FILE's
+# filesystem: so the search starts at each read-write directory on that filesystem and at
+# each mount point beneath one that is, and stays on it (-xdev); with none, no search.
 _as_ro_pins_samefile() {
-  local _sf_m _sf_t
-  local -a _sf_roots=()
+  local _sf_m _sf_t _sf_r _sf_dev="${_fdev[$1]-}" _sf_l _sf_mp
+  local -a _sf_roots=() _sf_all=() _sf_f=()
+  [[ -n "$_sf_dev" ]] || return 0
   for _sf_m in ${_rwm[@]+"${_rwm[@]}"}; do
     [[ "${_mk[$_sf_m]}" == rw ]] || continue
     _as_ro_pins_latest "${_od[_sf_m]}" _sf_t
-    [[ "$_sf_t" == "$_sf_m" ]] && _sf_roots+=("${_ms[$_sf_m]}")
+    [[ "$_sf_t" == "$_sf_m" ]] || continue
+    _sf_r="${_ms[$_sf_m]}"
+    _sf_all+=("$_sf_r")
+    [[ "${_fdev[$_sf_r]-}" == "$_sf_dev" ]] && _sf_roots+=("$_sf_r")
   done
+  ((${#_sf_all[@]})) || return 0
+  # mount points beneath a read-write directory, on the file's filesystem
+  # (/proc/self/mountinfo: field 3 the device, field 5 the mount point, octal-escaped)
+  if [[ -r /proc/self/mountinfo ]]; then
+    while IFS= read -r _sf_l; do
+      read -r -a _sf_f <<<"$_sf_l"
+      [[ "${_sf_f[2]}" == "$_sf_dev" ]] || continue
+      printf -v _sf_mp '%b' "${_sf_f[4]}"
+      for _sf_r in "${_sf_all[@]}"; do
+        [[ "$_sf_mp" == "$_sf_r"/* ]] && _sf_roots+=("$_sf_mp") && break
+      done
+    done </proc/self/mountinfo
+  fi
   ((${#_sf_roots[@]})) || return 0
   find "${_sf_roots[@]}" -xdev -samefile "$1" -print0 2>/dev/null
 }
@@ -15162,27 +15296,30 @@ _as_ro_pins_decl() {
 _as_ro_pins_replaceable() {
   local _rl_d="${1%/*}"
   [[ -n "$_rl_d" ]] || _rl_d=/
-  [[ "$(_as_ro_pins_uid "$_rl_d")" == "$EUID" ]] && return 0
+  [[ "$(_as_ro_pins_uid "$_rl_d")" == "$_as_ro_pins_euid" ]] && return 0
   [[ -w "$_rl_d" ]] || return 1
   [[ -k "$_rl_d" ]] || return 0
-  [[ "$(_as_ro_pins_uid "$1")" == "$EUID" ]]
+  [[ "$(_as_ro_pins_uid "$1")" == "$_as_ro_pins_euid" ]]
 }
 
 # _as_ro_pins_writable PATH -- could the role write PATH, where a read-write mount shows it?
 # It is the role's own (it can make it writable), or writable to it.
 _as_ro_pins_writable() {
-  [[ -w "$1" ]] || [[ "$(_as_ro_pins_uid "$1")" == "$EUID" ]] && return 0
+  [[ -w "$1" ]] || [[ "$(_as_ro_pins_uid "$1")" == "$_as_ro_pins_euid" ]] && return 0
   # a directory: anything in it the role owns or can write
   [[ -d "$1" && ! -L "$1" ]] && [[ -n "$(_as_ro_pins_find_writable "$1")" ]]
 }
 
-# _as_ro_pins_find_writable DIR -- the first file or directory under DIR (one filesystem)
-# the role owns or can write, or nothing. Not a symbolic link (-writable follows it: a link
-# to /dev/null is "writable"), a device, a pipe or a socket: writing one changes nothing in
-# DIR.
+# _as_ro_pins_find_writable DIR -- the first file or directory under DIR the role owns or
+# can write, or nothing. Every filesystem mounted beneath DIR too: a bind is recursive, so
+# the role sees them. Not a symbolic link (-writable follows it: a link to /dev/null is
+# "writable"), a device, a pipe or a socket: writing one changes nothing in DIR.
 _as_ro_pins_find_writable() {
-  find "$1" -xdev \( -type f -o -type d \) \( -user "$EUID" -o -writable \) -print -quit 2>/dev/null
+  find "$1" \( -type f -o -type d \) \( -user "$_as_ro_pins_euid" -o -writable \) -print -quit 2>/dev/null
 }
+
+# The role's uid, as _as_ro_pins compares owners with it (a test sets another).
+_as_ro_pins_euid="$EUID"
 
 # _as_ro_pins_uid PATH -- the owner of PATH itself (a link: the link's), as a number.
 _as_ro_pins_uid() { stat -c %u -- "$1" 2>/dev/null || printf -- '-1'; }
@@ -15246,7 +15383,8 @@ _as_ro_pins_walk() {
     _t="${_remount[$_p]:--1}"
     if ((_t >= _c)); then
       _pin_no[$_p]=1
-      [[ -n "$_rp_quiet" ]] || _as_msg "pins: $_p is remounted read-only later in the list, so it is not pinned"
+      _ro_pins_said+=("pins: $_p is remounted read-only later in the list, so it is not pinned")
+      [[ -n "$_rp_quiet" ]] || _as_msg "${_ro_pins_said[-1]}"
       continue
     fi
     _pin_cur[$_p]=${#_pn_p[@]}
@@ -15300,6 +15438,35 @@ _as_ro_pins_walk() {
 # stores, or an overlay's lower, and are not walked; what such a bind covers is
 # (_as_ro_pins_chain dest).
 _as_ro_pins() {
+  local -n _rm_in="$1" _rm_out="$2" _rm_pinned="$3"
+  local _rm_i _rm_rc
+  # The same list as the previous call's -- the briefing's, word for word -- has its
+  # result: one computation per launch. Any other list is computed.
+  if declare -p _ro_pins_memo_in &>/dev/null && ((${#_ro_pins_memo_in[@]} == ${#_rm_in[@]})); then
+    for ((_rm_i = 0; _rm_i < ${#_rm_in[@]}; _rm_i++)); do
+      [[ "${_rm_in[_rm_i]}" == "${_ro_pins_memo_in[_rm_i]}" ]] || break
+    done
+    if ((_rm_i == ${#_rm_in[@]})); then
+      _rm_out=("${_ro_pins_memo_out[@]}")
+      _rm_pinned=(${_ro_pins_memo_pinned[@]+"${_ro_pins_memo_pinned[@]}"})
+      if [[ -z "${4:-}" ]]; then
+        for _rm_i in ${_ro_pins_memo_said[@]+"${_ro_pins_memo_said[@]}"}; do _as_msg "$_rm_i"; done
+      fi
+      return 0
+    fi
+  fi
+  declare -ga _ro_pins_said=()
+  _as_ro_pins_compute "$@"
+  _rm_rc=$?
+  if ((_rm_rc == 0)); then
+    declare -ga _ro_pins_memo_in=("${_rm_in[@]}") _ro_pins_memo_out=("${_rm_out[@]}")
+    declare -ga _ro_pins_memo_pinned=(${_rm_pinned[@]+"${_rm_pinned[@]}"}) _ro_pins_memo_said=(${_ro_pins_said[@]+"${_ro_pins_said[@]}"})
+  fi
+  return $_rm_rc
+}
+
+# _as_ro_pins_compute IN OUT PINNED [quiet] -- _as_ro_pins' computation.
+_as_ro_pins_compute() {
   local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
   local _rp_quiet="${4:-}"
   _rp_out=("${_rp_in[@]}") _rp_pinned=()
@@ -15355,8 +15522,8 @@ _as_ro_pins() {
   # The pins, in the order found: directory, place, host source, the mount it lies in.
   local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=()
   local _src _kind _a _p _c _t _ok _walk _wk _sd _m _x _hdest _sa_m=-1
-  local -a _rwm=() _hm=() _okind=() _osrc=()
-  _sd="$(_as_state_dir)"
+  local -a _rwm=() _hm=() _rhm=() _okind=() _osrc=()
+  _sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox" # _as_state_dir, without a subshell
   _as_ro_pins_norm _sd
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
     _o="${_on[_k]}" _d="${_od[_k]}" _kind="" _src=""
@@ -15398,30 +15565,86 @@ _as_ro_pins() {
       _vis[$_d]=$_k _mk[$_k]=$_kind _ms[$_k]="$_src" _mopt[$_k]="$_o"
       [[ "$_kind" == rw || "$_kind" == rwfile ]] && _rwm+=("$_k")
       [[ -n "$_src" && "$_kind" != other ]] && _hm+=("$_k")
+      [[ -n "$_src" && ("$_kind" == rw || "$_kind" == rwfile) ]] && _rhm+=("$_k")
       _mops[$_d]+="$_k "
     fi
   done
   # Every host path of the final view resolved (symbolic links followed, as the read-only
-  # sources are by their chain): one realpath for them all. And each read-only file's link
-  # count, for its other names (_as_ro_pins_samefile).
-  local -a _rs_k=() _rs_p=() _rs_o=()
-  local -A _nlink=()
+  # sources are by their chain): one realpath for them all, where any has a link or a
+  # `..` on its way (a test per component, no process). Then, in one stat, each read-only
+  # file's link count and identity, each read-write file mount's identity, and each
+  # read-only file's and read-write directory's filesystem, for a file's other names
+  # (_as_ro_pins_contra, _as_ro_pins_samefile).
+  local -a _rs_k=() _rs_p=() _rs_o=() _rs_u=()
+  local -A _nlink=() _ino=() _fdev=() _rlc=() _rs_l=() _rs_seen=()
+  local _rs_need=0 _rs_x
+  # (the read-only declarations' sources as declared too, for the links their chains meet)
+  ! declare -p _ro_unres &>/dev/null || _rs_u=(${_ro_unres[@]+"${_ro_unres[@]}"})
   for _k in "${!_ms[@]}"; do
     [[ -n "${_ms[$_k]}" ]] && _rs_k+=("$_k") _rs_p+=("${_ms[$_k]}")
   done
-  if ((${#_rs_p[@]})); then
-    mapfile -d '' _rs_o < <(realpath -m -z -- "${_rs_p[@]}" 2>/dev/null)
+  for _rs_x in ${_rs_p[@]+"${_rs_p[@]}"} ${_rs_u[@]+"${_rs_u[@]}"}; do
+    [[ "$_rs_x" == *..* ]] && _rs_need=1
+    while [[ -n "$_rs_x" && "$_rs_x" != / ]]; do
+      [[ -z "${_rs_seen[$_rs_x]+x}" ]] || break # it and every directory above it tested
+      _rs_seen[$_rs_x]=1
+      [[ -L "$_rs_x" ]] && _rs_l[$_rs_x]=1 _rs_need=1
+      _rs_x="${_rs_x%/*}"
+    done
+  done
+  # the links met, read in one `readlink` (_as_ro_pins_readlink reads any other alone)
+  if ((${#_rs_l[@]})); then
+    _rs_u=("${!_rs_l[@]}")
+    mapfile -d '' _rs_o < <(readlink -z -- "${_rs_u[@]}" 2>/dev/null)
+    if ((${#_rs_o[@]} == ${#_rs_u[@]})); then
+      for ((_k = 0; _k < ${#_rs_u[@]}; _k++)); do _rlc[${_rs_u[_k]}]="${_rs_o[_k]}"; done
+    fi
+  fi
+  if ((_rs_need)); then
+    # in bash, through the links just read; a link they lead to that was not read: realpath
+    _rs_o=()
+    for _rs_x in "${_rs_p[@]}"; do
+      _a="$_rs_x"
+      if [[ "$_a" != *..* ]]; then # no link on its way: itself
+        while [[ -n "$_a" && "$_a" != / && -z "${_rs_l[$_a]+x}" ]]; do _a="${_a%/*}"; done
+      fi
+      if [[ -z "$_a" || "$_a" == / ]]; then
+        _a="$_rs_x"
+      else
+        _as_ro_pins_resolve "$_rs_x" _a || break
+      fi
+      _rs_o+=("$_a")
+    done
+    ((${#_rs_o[@]} == ${#_rs_p[@]})) || mapfile -d '' _rs_o < <(realpath -m -z -- "${_rs_p[@]}" 2>/dev/null)
     if ((${#_rs_o[@]} == ${#_rs_p[@]})); then
       for ((_k = 0; _k < ${#_rs_k[@]}; _k++)); do _ms[${_rs_k[_k]}]="${_rs_o[_k]}"; done
     fi
-    _rs_k=() _rs_p=()
-    for _k in "${!_mk[@]}"; do
-      [[ "${_mk[$_k]}" == ro && -f "${_ms[$_k]}" ]] && _rs_k+=("$_k") _rs_p+=("${_ms[$_k]}")
-    done
-    if ((${#_rs_p[@]})); then
-      mapfile -d '' _rs_o < <(stat -L --printf '%h\0' -- "${_rs_p[@]}" 2>/dev/null)
-      for ((_k = 0; _k < ${#_rs_k[@]} && _k < ${#_rs_o[@]}; _k++)); do _nlink[${_rs_p[_k]}]="${_rs_o[_k]}"; done
+  fi
+  _rs_k=() _rs_p=()
+  for _k in "${!_mk[@]}"; do
+    _rs_x="${_ms[$_k]}"
+    case "${_mk[$_k]}" in
+      ro) [[ -f "$_rs_x" ]] || continue ;;
+      rwfile | rw) [[ -e "$_rs_x" ]] || continue ;;
+      *) continue ;;
+    esac
+    [[ -n "${_nlink[$_rs_x]+x}" ]] && continue
+    _nlink[$_rs_x]=1
+    _rs_p+=("$_rs_x")
+  done
+  if ((${#_rs_p[@]})); then
+    mapfile -d '' _rs_o < <(stat -L --printf '%Hd:%Ld %i %h\0' -- "${_rs_p[@]}" 2>/dev/null)
+    # one went away between the test and the stat: each alone, so the rest still align
+    if ((${#_rs_o[@]} != ${#_rs_p[@]})); then
+      _rs_o=()
+      for _rs_x in "${_rs_p[@]}"; do _rs_o+=("$(stat -L --printf '%Hd:%Ld %i %h' -- "$_rs_x" 2>/dev/null)"); done
     fi
+    for ((_k = 0; _k < ${#_rs_p[@]}; _k++)); do
+      _rs_x="${_rs_o[_k]}" # DEV INODE LINKS
+      [[ "$_rs_x" == *' '*' '* ]] || continue
+      _a="${_rs_x%% *}" _t="${_rs_x##* }" _x="${_rs_x#* }"
+      _fdev[${_rs_p[_k]}]="$_a" _ino[${_rs_p[_k]}]="$_a:${_x% *}" _nlink[${_rs_p[_k]}]="$_t"
+    done
   fi
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
     _o="${_on[_k]}" _d="${_od[_k]}" _kind="${_okind[_k]}" _src="${_osrc[_k]}"
@@ -15459,13 +15682,13 @@ _as_ro_pins() {
       _x=""
       ! declare -p _ro_unres &>/dev/null || _x="${_ro_unres[$_d]-}"
       [[ -n "$_x" ]] || _x="$_src"
-      _as_ro_pins_chain "$_x" "$_d" src || return 1
+      _as_ro_pins_apart "$_x" "$_k" || _as_ro_pins_chain "$_x" "$_d" src || return 1
     fi
     # What the bind covers: a link the role can replace on the destination's way, where
     # a host object it sees is covered, refuses the launch (read-only, own, copy,
     # copy-on-write, seed-only; not a hide, which covers on purpose and is pinned).
     if [[ "$_o" != --tmpfs && -n "$_hdest" ]]; then
-      _as_ro_pins_chain "$_hdest" "$_d" dest || return 1
+      _as_ro_pins_apart "$_hdest" || _as_ro_pins_chain "$_hdest" "$_d" dest || return 1
     fi
   done
   ((${#_pn_p[@]})) || return 0
@@ -15501,26 +15724,21 @@ _as_ro_pins() {
     [[ -n "${_said[${_pn_p[_j]}]+x}" ]] || _rp_pinned+=("${_pn_p[_j]}")
     _said[${_pn_p[_j]}]=1
   done
-  local _next=0 _start
-  for ((_k = 0; _k < ${#_on[@]}; _k++)); do
-    while ((_next < ${#_ord[@]})) && ((_pn_c[_ord[_next]] == _k)); do
-      _o=--bind
-      [[ "${_mopt[${_pn_m[_ord[_next]]}]}" == --dev-bind* ]] && _o=--dev-bind
-      _rp_out+=("$_o" "${_pn_s[_ord[_next]]}" "${_pn_p[_ord[_next]]}")
-      _next=$((_next + 1))
-    done
-    # word by word: a slice of a bash array walks it from the start
-    _start=$((_oa[_k] - 1))
-    _n=${_nargs[${_on[_k]}]}
-    for ((_i = _start; _i <= _start + _n; _i++)); do _rp_out+=("${_rp_in[_i]}"); done
-  done
-  while ((_next < ${#_ord[@]})); do # at the end of the options
+  # The words up to each pin's place in one slice, the pin, and the rest after the last
+  # (a place past the last option: at the end of the options, before any `--`).
+  local _next=0 _from=0 _start
+  while ((_next < ${#_ord[@]})); do
+    _c=${_pn_c[_ord[_next]]}
+    _start=$_end
+    ((_c < ${#_on[@]})) && _start=$((_oa[_c] - 1))
+    ((_start > _from)) && _rp_out+=("${_rp_in[@]:_from:_start-_from}")
+    _from=$_start
     _o=--bind
     [[ "${_mopt[${_pn_m[_ord[_next]]}]}" == --dev-bind* ]] && _o=--dev-bind
     _rp_out+=("$_o" "${_pn_s[_ord[_next]]}" "${_pn_p[_ord[_next]]}")
     _next=$((_next + 1))
   done
-  for ((_i = _end; _i < ${#_rp_in[@]}; _i++)); do _rp_out+=("${_rp_in[_i]}"); done
+  _rp_out+=("${_rp_in[@]:_from}")
   return 0
 }
 

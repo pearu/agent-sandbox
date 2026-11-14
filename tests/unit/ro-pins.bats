@@ -29,9 +29,13 @@ pins() {
   local preset=shared
   [[ "$1" == native ]] && preset=native && shift
   [[ "$1" == -- ]] && shift
-  local -a _all=()
+  local -a _all=() _wrap=()
+  # PINS_WRAP: a command the computation runs under (words, no quoting): a bwrap that
+  # mounts something first, say
+  [[ -z "${PINS_WRAP:-}" ]] || read -r -a _wrap <<<"$PINS_WRAP"
   # PINS_PRE: code run after the engine is sourced (a test's stand-in for a helper)
-  mapfile -d '' _all < <(XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" PINS_PRE="${PINS_PRE:-}" bash -c 'source "$1"; eval "$PINS_PRE"; shift; _preset="$1"; shift; IN=("$@")
+  # shellcheck disable=SC2016 # the script's own expansions
+  mapfile -d '' _all < <(XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" PINS_PRE="${PINS_PRE:-}" ${_wrap[@]+"${_wrap[@]}"} bash -c 'source "$1"; eval "$PINS_PRE"; shift; _preset="$1"; shift; IN=("$@")
     _as_ro_pins IN OUT PIN 2>"$BATS_TEST_TMPDIR/msg"; rc=$?
     printf "%s\0" "$rc" "${#OUT[@]}" "${OUT[@]}" ${PIN[@]+"${PIN[@]}"}' _ "$ENGINE" "$preset" "$@")
   RC="${_all[0]}"
@@ -40,6 +44,28 @@ pins() {
   PIN=("${_all[@]:n+2}")
   MSG="$(cat "$BATS_TEST_TMPDIR/msg")"
   IN=("$@")
+}
+
+# need_bwrap -- skip where bwrap cannot run here (a nested mount needs it).
+need_bwrap() {
+  command -v bwrap >/dev/null || skip "bwrap not installed"
+  bwrap --dev-bind / / true 2>/dev/null || skip "bwrap cannot run here"
+}
+
+# COUNT: PINS_PRE code that records each find, realpath, stat and readlink the computation
+# runs, and each owner lookup (a subshell), one line per call in $BATS_TEST_TMPDIR/forks.
+# shellcheck disable=SC2016 # code for the computation's shell to run
+COUNT='for _c in find realpath stat readlink; do eval "$_c() { echo $_c >>\"\$BATS_TEST_TMPDIR/forks\"; command $_c \"\$@\"; }"; done
+eval "$(declare -f _as_ro_pins_uid | sed "1s/_as_ro_pins_uid/_orig_uid/")"
+_as_ro_pins_uid() { echo uid >>"$BATS_TEST_TMPDIR/forks"; _orig_uid "$@"; }'
+
+# forks WHAT -- how many WHAT lines $BATS_TEST_TMPDIR/forks has (all: every line).
+forks() {
+  if [[ "$1" == all ]]; then
+    cat "$BATS_TEST_TMPDIR/forks" 2>/dev/null | wc -l
+  else
+    grep -cx "$1" "$BATS_TEST_TMPDIR/forks" 2>/dev/null || true
+  fi
 }
 
 # same LIST... -- the computation did not refuse, and OUT is exactly the words given.
@@ -720,6 +746,192 @@ cache_pins() {
   [ "$RC" -eq 0 ]
   same --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" --bind "$h/d" "$h/d" -- cmd
   chmod 755 "$h/d"
+}
+
+@test "round 7, B2: another name of the read-only file shown through a read-write FILE mount is a contradiction; a different file there is not" {
+  local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$e" "$h" "$P/cfg"
+  printf 'x\n' >"$e/x.md"
+  ln "$e/x.md" "$h/alias.md"
+  printf 'o\n' >"$h/other.md"
+  pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/alias.md" "$P/alt.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"shows it, as $h/alias.md (another name of the same file), read-write at $P/alt.md"* ]]
+  pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/other.md" "$P/alt.md"
+  [ "$RC" -eq 0 ]
+  # the read-write file mount covered by a later read-only bind: not shown, not one
+  pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/alias.md" "$P/alt.md" --ro-bind "$e/x.md" "$P/alt.md"
+  [ "$RC" -eq 0 ]
+}
+
+@test "round 7, smaller 1: a part own, copy or copy-on-write in place inside a read-only directory, read-write elsewhere, is not a contradiction" {
+  local s="$BATS_TEST_TMPDIR/src/libfoo"
+  mkdir -p "$s/build" "$P/ref" "$P/build" "$ST/o" "$ST/u" "$ST/w"
+  # own (an empty store) and copy (a store holding a copy): a store's bind at ./ref/build/
+  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$ST/o" "$P/ref/build" --bind "$s/build" "$P/build"
+  [ "$RC" -eq 0 ]
+  # copy-on-write: an overlay with the host directory its lower
+  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --overlay-src "$s/build" --overlay "$ST/u" "$ST/w" "$P/ref/build" \
+    --bind "$s/build" "$P/build"
+  [ "$RC" -eq 0 ]
+  # the mirror: own in place, not read-write elsewhere
+  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$ST/o" "$P/ref/build"
+  [ "$RC" -eq 0 ]
+  # the store over a DEEPER part only: the part itself is still shown read-only
+  mkdir -p "$s/build/sub"
+  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$ST/o" "$P/ref/build/sub" --bind "$s/build" "$P/build"
+  [ "$RC" -eq 1 ]
+}
+
+@test "round 7, smaller 2: the could-write search follows a filesystem mounted beneath the directory (a bind is recursive)" {
+  need_bwrap
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/top/m" "$P/cfg"
+  chmod 555 "$h/top"
+  # a 0555 tmpfs at top/m, a writable directory in it; the role's uid not the owner's
+  PINS_WRAP="bwrap --dev-bind / / --perms 0555 --tmpfs $h/top/m --dir $h/top/m/w" \
+    PINS_PRE='_as_ro_pins_euid=4242; _as_ro_pins_uid() { printf 0; }' \
+    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/top" "$P/cfg"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"binds $h/top read-only at $P/cfg"*"the two contradict"* ]]
+  # nothing writable in the mount: not one
+  PINS_WRAP="bwrap --dev-bind / / --perms 0555 --tmpfs $h/top/m" \
+    PINS_PRE='_as_ro_pins_euid=4242; _as_ro_pins_uid() { printf 0; }' \
+    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/top" "$P/cfg"
+  [ "$RC" -eq 0 ]
+  chmod 755 "$h/top"
+}
+
+@test "round 7, smaller 2: another name of the file on a filesystem mounted beneath a read-write directory (not its own) is found" {
+  need_bwrap
+  local h="$BATS_TEST_TMPDIR/home/store" r="$BATS_TEST_TMPDIR/real"
+  mkdir -p "$h" "$r/sub" "$P/cfg"
+  printf 'x\n' >"$r/x.md"
+  ln "$r/x.md" "$r/sub/alias.md"
+  # the read-write directory a tmpfs (another filesystem than the file's), with real/sub,
+  # on the file's, bound beneath it at store/inner
+  PINS_WRAP="bwrap --dev-bind / / --tmpfs $h --dir $h/inner --bind $r/sub $h/inner" \
+    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$r/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"shows it, as $h/inner/alias.md (another name of the same file)"* ]]
+}
+
+@test "round 7, smaller 4: another name of the file in a read-write directory but hidden there is not a contradiction" {
+  local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$e" "$h/hid" "$P/cfg"
+  printf 'x\n' >"$e/x.md"
+  ln "$e/x.md" "$h/hid/alias.md"
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --tmpfs "$h/hid" --ro-bind "$e/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 0 ]
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 1 ]
+}
+
+@test "round 7, B1: the shortcut past the destination's chain is not taken through a link: the real path behind it is pinned where it shows read-write" {
+  local e="$BATS_TEST_TMPDIR/ext"
+  mkdir -p "$e/ro" "$P/real"
+  touch "$P/real/f.md" "$e/f.md"
+  ln -s "$P/real" "$e/ro/l"
+  # ./ro is read-only (a bind of ext/ro), its l a link to the project's real/
+  pins -- --bind "$P" "$P" --ro-bind "$e/ro" "$P/ro" --ro-bind "$e/f.md" "$P/ro/l/f.md"
+  [ "$RC" -eq 0 ]
+  [[ " ${PIN[*]} " == *" $P/real "* ]]
+}
+
+@test "round 7, smaller 4: a symbolic link to a writable file inside a directory the role cannot write does not make it writable" {
+  local h="$BATS_TEST_TMPDIR/home/store" o="$BATS_TEST_TMPDIR/open"
+  mkdir -p "$h/foreign" "$o" "$P/cfg"
+  printf 'w\n' >"$o/w"
+  chmod 666 "$o/w"
+  ln -s "$o/w" "$h/foreign/l"
+  chmod 555 "$h/foreign"
+  # the role's uid not the owner's: only -writable can match, and the link's target is
+  PINS_PRE='_as_ro_pins_euid=4242; _as_ro_pins_uid() { printf 0; }' \
+    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/foreign" "$P/cfg"
+  [ "$RC" -eq 0 ]
+  chmod 755 "$h/foreign"
+}
+
+@test "round 7, B1: no find where no read-write view of a read-only object exists elsewhere (system binds, a read-only file in the project)" {
+  mkdir -p "$P/cfg"
+  PINS_PRE="$COUNT" pins -- --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind-try /opt /opt --bind "$P" "$P" \
+    --ro-bind "$P/a/f.md" "$P/a/f.md" -- cmd
+  [ "$RC" -eq 0 ]
+  [ "$(forks find)" -eq 0 ]
+  [ "$(forks uid)" -eq 0 ]
+}
+
+@test "round 7, B1: a plain launch's and the Supervisor's option lists: no find, a bounded number of processes" {
+  model roles
+  mkdir -p "$H/plain"
+  RUN_CWD="$H/plain" run_engine AGENT_SANDBOX_NET=none -- asb claude --version
+  [ "$status" -eq 0 ]
+  local -a plain=("${ARGV[@]}")
+  run_engine AGENT_SANDBOX_NET=none -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  local -a sup=("${ARGV[@]}")
+  rm -f "$BATS_TEST_TMPDIR/forks"
+  PINS_PRE="$COUNT" pins -- "${plain[@]}"
+  [ "$RC" -eq 0 ]
+  echo "plain: $(sort "$BATS_TEST_TMPDIR/forks" 2>/dev/null | uniq -c | paste -sd" ")" >&2
+  [ "$(forks find)" -eq 0 ]
+  [ "$(forks all)" -le 3 ]
+  rm -f "$BATS_TEST_TMPDIR/forks"
+  PINS_PRE="$COUNT" pins -- "${sup[@]}"
+  [ "$RC" -eq 0 ]
+  echo "supervisor: $(sort "$BATS_TEST_TMPDIR/forks" 2>/dev/null | uniq -c | paste -sd" ")" >&2
+  [ "$(forks find)" -eq 0 ]
+  [ "$(forks all)" -le 4 ]
+}
+
+@test "round 7, B1: the briefing's computation is reused for the same list, word for word, and a list that differs is computed again" {
+  local out
+  out="$(XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" bash -c '
+    source "$1"; _preset=shared
+    n=0
+    eval "$(declare -f _as_ro_pins_compute | sed "1s/_as_ro_pins_compute/_orig_compute/")"
+    _as_ro_pins_compute() { n=$((n + 1)); _orig_compute "$@"; }
+    A=(--bind "$2" "$2" --ro-bind "$2/sub/f.md" "$2/sub/f.md" --remount-ro "$2/sub")
+    _as_ro_pins A O1 P1 quiet 2>/dev/null
+    echo "after the quiet call: $n"
+    _as_ro_pins A O2 P2 2>&1
+    echo "after the same list: $n"
+    [[ "${O1[*]}" == "${O2[*]}" ]] && echo same-out
+    B=("${A[@]}" --tmpfs /x)
+    _as_ro_pins B O3 P3 2>/dev/null
+    echo "after another list: $n"
+  ' _ "$ENGINE" "$P")"
+  [[ "$out" == *"after the quiet call: 1"* ]]
+  [[ "$out" == *"after the same list: 1"* ]]
+  [[ "$out" == *same-out* ]]
+  [[ "$out" == *"after another list: 2"* ]]
+  # what the quiet call kept to itself is said by the call that reuses it, once
+  [ "$(grep -c 'is remounted read-only later in the list' <<<"$out")" -eq 1 ]
+}
+
+@test "round 7, B1: a launch's bwrap list is the same with the briefing's result reused, recomputed (briefing off), and computed without the reuse" {
+  model roles
+  local nomemo="$BATS_TEST_TMPDIR/nomemo"
+  mkdir -p "$nomemo"
+  cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$nomemo/"
+  cp "$(dirname "$ENGINE")/VERSION" "$nomemo/" 2>/dev/null || true
+  sed 's/^  if declare -p _ro_pins_memo_in &>\/dev\/null \&\& /  if false \&\& /' "$ENGINE" >"$nomemo/agent-sandbox"
+  chmod +x "$nomemo/agent-sandbox"
+  # shellcheck disable=SC2016 # the engine's text, literally
+  [ "$(grep -c '^  if false && ((${#_ro_pins_memo_in' "$nomemo/agent-sandbox")" -eq 1 ]
+  local role a b
+  for role in supervisor implementer-1; do
+    run_engine AGENT_SANDBOX_NET=none -- asb --role "$role" claude --version
+    [ "$status" -eq 0 ]
+    a="$(printf '%s\n' "${ARGV[@]}" | sed 's|/session\.[^/]*|/session.X|g')"
+    run_engine AGENT_SANDBOX_NET=none -- "$nomemo/agent-sandbox" --role "$role" claude --version
+    [ "$status" -eq 0 ]
+    b="$(printf '%s\n' "${ARGV[@]}" | sed 's|/session\.[^/]*|/session.X|g')"
+    [ "$a" = "$b" ]
+    run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_BRIEFING=off -- asb --role "$role" claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pinned, above"* ]] || [ "$role" = implementer-1 ]
+  done
 }
 
 @test "not a contradiction: an object the role cannot write anyway (another user's, not writable)" {
