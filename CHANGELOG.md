@@ -1139,7 +1139,7 @@ names are gone; there are no aliases for removed names before 1.0.
   included); a part the read-only directory does not show at its place (read-write, own,
   copy or copy-on-write there) is not a contradiction. Whether the role could write it is
   asked only once a read-write view of it is found, and the computation runs once per
-  launch where the briefing saw the same list. Every
+  launch, on its final list, the briefing's line written from it. Every
   decision is made on the final view of the binds, not on those made so far. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the

@@ -5796,6 +5796,7 @@ _as_briefing_write() {
   local -a _bf_tail=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log"
     --bind "$_keeper_sb/summary" "$(_as_summary_inside)")
   local md="$bdir/briefing.md"
+  _briefing_md="$md" # for the pins line (_as_briefing_pins)
   # The text below is literal: `$HOME` and the backticks name things for the
   # reader, they are not expansions.
   # shellcheck disable=SC2016
@@ -5818,21 +5819,10 @@ _as_briefing_write() {
     printf '\n## Filesystem\n\n'
     printf -- '- writable: %s\n' "$rw_line"
     printf -- '- extra read-only paths: %s\n' "$ro_line"
-    # The directories this launch pins above a read-only file or directory (_as_ro_pins,
-    # on the binds made so far and the briefing's own: what follows adds none inside the
-    # project). Quiet: the launch reuses the result where its final list is this one word
-    # for word (AGENT_SANDBOX_NET=none), else computes again (_as_launch), and says there
-    # what is not pinned, once; a list it cannot read refuses the launch there.
-    local -a _bf_opts=() _bf_pins=() _bf_in=("${args[@]}" "${_bf_tail[@]}")
-    _as_ro_pins _bf_in _bf_opts _bf_pins quiet 2>/dev/null || _bf_pins=()
-    if ((${#_bf_pins[@]})); then
-      local _bf_p _bf_l=""
-      for _bf_p in "${_bf_pins[@]}"; do _bf_l+="${_bf_l:+, }$_bf_p"; done
-      printf -- '- the directories above a read-only, hidden or your own path (own, copy,\n'
-      printf '  copy-on-write, seed-only) cannot be renamed or removed (%s): they stay\n' "$_bf_l"
-      printf '  writable inside, but a rename, hard link or `git mv` across their boundary fails\n'
-      printf '  with "Invalid cross-device link"; `mv` and `cp` work\n'
-    fi
+    # The directories this launch pins above a read-only file or directory: computed
+    # once, by the launch on its final list (_as_launch), which puts the line here, in
+    # place of this marker, before bwrap starts (_as_briefing_pins).
+    printf '%s\n' "$_as_briefing_pins_mark"
     if ((${#_gpu_nodes[@]})); then
       printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
     elif [[ -n "${_gpu_devices_from:-}" && "${_knob_gpu:-on}" != off && "${_knob_gpu:-on}" != 0 ]]; then
@@ -5954,6 +5944,34 @@ _as_briefing_write() {
 
   args+=("${_bf_tail[@]}")
   return 0
+}
+
+# The line of briefing.md the launch replaces with the pins (_as_briefing_pins).
+_as_briefing_pins_mark='<!-- agent-sandbox: the pinned directories -->'
+
+# _as_briefing_pins DIR... -- put the pinned directories in this launch's briefing.md
+# (_briefing_md), in place of its marker line; no line where nothing is pinned. Nothing
+# where no briefing was written.
+_as_briefing_pins() {
+  [[ -n "${_briefing_md:-}" && -f "$_briefing_md" ]] || return 0
+  local _bp_m="$_as_briefing_pins_mark" _bp_line _bp_l="" _bp_p
+  local -a _bp_text=()
+  for _bp_p in "$@"; do _bp_l+="${_bp_l:+, }$_bp_p"; done
+  mapfile -t _bp_text <"$_briefing_md" || return 1
+  {
+    for _bp_line in ${_bp_text[@]+"${_bp_text[@]}"}; do
+      if [[ "$_bp_line" != "$_bp_m" ]]; then
+        printf '%s\n' "$_bp_line"
+      elif (($#)); then
+        printf -- '- the directories above a read-only, hidden or your own path (own, copy,\n'
+        printf '  copy-on-write, seed-only) cannot be renamed or removed (%s): they stay\n' "$_bp_l"
+        # shellcheck disable=SC2016 # the backticks name a command for the reader
+        printf '  writable inside, but a rename, hard link or `git mv` across their boundary fails\n'
+        # shellcheck disable=SC2016
+        printf '  with "Invalid cross-device link"; `mv` and `cp` work\n'
+      fi
+    done
+  } >"$_briefing_md.new" && mv -f -- "$_briefing_md.new" "$_briefing_md"
 }
 
 # ----- per-project config (.agent-sandbox) and its trust store -----
@@ -15383,8 +15401,7 @@ _as_ro_pins_walk() {
     _t="${_remount[$_p]:--1}"
     if ((_t >= _c)); then
       _pin_no[$_p]=1
-      _ro_pins_said+=("pins: $_p is remounted read-only later in the list, so it is not pinned")
-      [[ -n "$_rp_quiet" ]] || _as_msg "${_ro_pins_said[-1]}"
+      [[ -n "$_rp_quiet" ]] || _as_msg "pins: $_p is remounted read-only later in the list, so it is not pinned"
       continue
     fi
     _pin_cur[$_p]=${#_pn_p[@]}
@@ -15438,35 +15455,6 @@ _as_ro_pins_walk() {
 # stores, or an overlay's lower, and are not walked; what such a bind covers is
 # (_as_ro_pins_chain dest).
 _as_ro_pins() {
-  local -n _rm_in="$1" _rm_out="$2" _rm_pinned="$3"
-  local _rm_i _rm_rc
-  # The same list as the previous call's -- the briefing's, word for word -- has its
-  # result: one computation per launch. Any other list is computed.
-  if declare -p _ro_pins_memo_in &>/dev/null && ((${#_ro_pins_memo_in[@]} == ${#_rm_in[@]})); then
-    for ((_rm_i = 0; _rm_i < ${#_rm_in[@]}; _rm_i++)); do
-      [[ "${_rm_in[_rm_i]}" == "${_ro_pins_memo_in[_rm_i]}" ]] || break
-    done
-    if ((_rm_i == ${#_rm_in[@]})); then
-      _rm_out=("${_ro_pins_memo_out[@]}")
-      _rm_pinned=(${_ro_pins_memo_pinned[@]+"${_ro_pins_memo_pinned[@]}"})
-      if [[ -z "${4:-}" ]]; then
-        for _rm_i in ${_ro_pins_memo_said[@]+"${_ro_pins_memo_said[@]}"}; do _as_msg "$_rm_i"; done
-      fi
-      return 0
-    fi
-  fi
-  declare -ga _ro_pins_said=()
-  _as_ro_pins_compute "$@"
-  _rm_rc=$?
-  if ((_rm_rc == 0)); then
-    declare -ga _ro_pins_memo_in=("${_rm_in[@]}") _ro_pins_memo_out=("${_rm_out[@]}")
-    declare -ga _ro_pins_memo_pinned=(${_rm_pinned[@]+"${_rm_pinned[@]}"}) _ro_pins_memo_said=(${_ro_pins_said[@]+"${_ro_pins_said[@]}"})
-  fi
-  return $_rm_rc
-}
-
-# _as_ro_pins_compute IN OUT PINNED [quiet] -- _as_ro_pins' computation.
-_as_ro_pins_compute() {
   local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
   local _rp_quiet="${4:-}"
   _rp_out=("${_rp_in[@]}") _rp_pinned=()
@@ -15757,10 +15745,12 @@ _as_launch() {
   # and pasta, as the seccomp filter's does.
   _as_session_begin || return 1
   _as_placeholder_register
-  # The pins (_as_ro_pins): from the final list, here, so
-  # every launch shape gets them; the list is unchanged when nothing is pinned.
+  # The pins (_as_ro_pins): computed once, from the final list, here, so every launch
+  # shape and network mode gets them; the list is unchanged when nothing is pinned. The
+  # briefing's line comes from this result (a join reads the keeper's briefing).
   local -a _pinned_opts=() _pinned=()
   _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1
+  _as_briefing_pins ${_pinned[@]+"${_pinned[@]}"} || return 1
   if ((${#_pinned[@]})); then
     _bwrap_opts=("${_pinned_opts[@]}")
     local _pn _pl=""

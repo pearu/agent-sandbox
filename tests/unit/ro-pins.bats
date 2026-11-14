@@ -884,56 +884,6 @@ cache_pins() {
   [ "$(forks all)" -le 4 ]
 }
 
-@test "round 7, B1: the briefing's computation is reused for the same list, word for word, and a list that differs is computed again" {
-  local out
-  out="$(XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" bash -c '
-    source "$1"; _preset=shared
-    n=0
-    eval "$(declare -f _as_ro_pins_compute | sed "1s/_as_ro_pins_compute/_orig_compute/")"
-    _as_ro_pins_compute() { n=$((n + 1)); _orig_compute "$@"; }
-    A=(--bind "$2" "$2" --ro-bind "$2/sub/f.md" "$2/sub/f.md" --remount-ro "$2/sub")
-    _as_ro_pins A O1 P1 quiet 2>/dev/null
-    echo "after the quiet call: $n"
-    _as_ro_pins A O2 P2 2>&1
-    echo "after the same list: $n"
-    [[ "${O1[*]}" == "${O2[*]}" ]] && echo same-out
-    B=("${A[@]}" --tmpfs /x)
-    _as_ro_pins B O3 P3 2>/dev/null
-    echo "after another list: $n"
-  ' _ "$ENGINE" "$P")"
-  [[ "$out" == *"after the quiet call: 1"* ]]
-  [[ "$out" == *"after the same list: 1"* ]]
-  [[ "$out" == *same-out* ]]
-  [[ "$out" == *"after another list: 2"* ]]
-  # what the quiet call kept to itself is said by the call that reuses it, once
-  [ "$(grep -c 'is remounted read-only later in the list' <<<"$out")" -eq 1 ]
-}
-
-@test "round 7, B1: a launch's bwrap list is the same with the briefing's result reused, recomputed (briefing off), and computed without the reuse" {
-  model roles
-  local nomemo="$BATS_TEST_TMPDIR/nomemo"
-  mkdir -p "$nomemo"
-  cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$nomemo/"
-  cp "$(dirname "$ENGINE")/VERSION" "$nomemo/" 2>/dev/null || true
-  sed 's/^  if declare -p _ro_pins_memo_in &>\/dev\/null \&\& /  if false \&\& /' "$ENGINE" >"$nomemo/agent-sandbox"
-  chmod +x "$nomemo/agent-sandbox"
-  # shellcheck disable=SC2016 # the engine's text, literally
-  [ "$(grep -c '^  if false && ((${#_ro_pins_memo_in' "$nomemo/agent-sandbox")" -eq 1 ]
-  local role a b
-  for role in supervisor implementer-1; do
-    run_engine AGENT_SANDBOX_NET=none -- asb --role "$role" claude --version
-    [ "$status" -eq 0 ]
-    a="$(printf '%s\n' "${ARGV[@]}" | sed 's|/session\.[^/]*|/session.X|g')"
-    run_engine AGENT_SANDBOX_NET=none -- "$nomemo/agent-sandbox" --role "$role" claude --version
-    [ "$status" -eq 0 ]
-    b="$(printf '%s\n' "${ARGV[@]}" | sed 's|/session\.[^/]*|/session.X|g')"
-    [ "$a" = "$b" ]
-    run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_BRIEFING=off -- asb --role "$role" claude --version
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"pinned, above"* ]] || [ "$role" = implementer-1 ]
-  done
-}
-
 @test "not a contradiction: an object the role cannot write anyway (another user's, not writable)" {
   local h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$h/roles" "$P/cfg"

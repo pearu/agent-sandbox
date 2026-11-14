@@ -1268,6 +1268,56 @@ login_file() {
   grep -qxF "You run as claude on the user's own login. Its login expired on $day; the user renews it with sign in again from the menu." "$md"
 }
 
+# shellcheck disable=SC2016 # stub scripts and engine text, literal
+@test "the pins are computed once per launch, on its final list, in every network mode, and the briefing names them" {
+  # an engine that counts its pin computations (beside copies of what it reads)
+  local e="$BATS_TEST_TMPDIR/counting" mode n
+  mkdir -p "$e"
+  cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$e/"
+  cp "$(dirname "$ENGINE")/VERSION" "$e/" 2>/dev/null || true
+  sed 's/^_as_ro_pins() {$/&\n  echo pins >>"${PINS_COUNT:?}"/' "$ENGINE" >"$e/agent-sandbox"
+  chmod +x "$e/agent-sandbox"
+  [ "$(grep -c '^  echo pins >>"${PINS_COUNT:?}"$' "$e/agent-sandbox")" -eq 1 ]
+  # strict's tools, stubbed as tests/unit/strict.bats does: pasta runs its command
+  printf '#!/usr/bin/env bash\n[ "$1" = --help ] && exit 0\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n' >"$H/bin/pasta"
+  printf '#!/usr/bin/env bash\n[ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"\nexit 0\n' >"$H/bin/ip"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/nft"
+  chmod +x "$H/bin/pasta" "$H/bin/ip" "$H/bin/nft"
+  make_fake_ca "$H/ca.pem"
+  mkdir -p "$PROJ/a/b"
+  touch "$PROJ/a/b/f.md"
+  for mode in none open proxy strict; do
+    rm -rf "$OUT" "$BATS_TEST_TMPDIR/count"
+    run_engine BWRAP_COPY="$OUT" PINS_COUNT="$BATS_TEST_TMPDIR/count" AGENT_SANDBOX_NET="$mode" AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+      -- "$e/agent-sandbox" --connect './a/b/f.md = read-only' claude --version
+    [ "$status" -eq 0 ] || {
+      echo "$mode: $output" >&2
+      return 1
+    }
+    n="$(wc -l <"$BATS_TEST_TMPDIR/count")"
+    [ "$n" -eq 1 ] || {
+      echo "$mode: $n computations" >&2
+      return 1
+    }
+    [ "$(grep -c 'pinned, above a read-only, hidden or own path' <<<"$output")" -eq 1 ]
+    grep -qxF -- "  copy-on-write, seed-only) cannot be renamed or removed ($PROJ/a, $PROJ/a/b): they stay" "$OUT/briefing.md"
+    run ! grep -q 'agent-sandbox: the pinned directories' "$OUT/briefing.md"
+  done
+}
+
+@test "a pin refusal comes before bwrap and leaves no session directory behind" {
+  local real="$BATS_TEST_TMPDIR/real"
+  mkdir -p "$real" "$PROJ/w"
+  touch "$real/f.md"
+  ln -s "$real" "$PROJ/w/l"
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './w/l/f.md = read-only' claude --version
+  [ "$status" -ne 0 ]
+  [ "$(grep -c 'a symbolic link in a directory the role can write' <<<"$output")" -eq 1 ]
+  [ ! -s "$H/argv" ] # bwrap never ran
+  # no session directory left behind
+  [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]
+}
+
 @test "the directories pinned above a read-only path are said, with what fails across them; nothing where nothing is pinned" {
   mkdir -p "$PROJ/a/b"
   touch "$PROJ/a/b/f.md" "$PROJ/top.md"

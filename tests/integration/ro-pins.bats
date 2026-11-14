@@ -643,9 +643,13 @@ part_in_place() {
   [ -e "$W/a.in" ]
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec bash -c '
     python3 ops.py mv_a:rename:a:a.moved mv_b:rename:a/b:a/b.moved
-    echo "ns=$(readlink /proc/self/ns/mnt)" >>report'
+    echo "ns=$(readlink /proc/self/ns/mnt)" >>report
+    grep -q "cannot be renamed or removed ($PWD/a, $PWD/a/b)" /run/agent-sandbox/briefing.md && echo brief=pins >>report
+    grep -q "agent-sandbox: the pinned directories" /run/agent-sandbox/briefing.md || echo marker=gone >>report'
   [ "$status" -eq 0 ]
   [[ "$output" != *"pinned, above"* ]] # a join builds nothing
+  [ "$(report brief)" = pins ] # the keeper's briefing, which the launch filled in
+  [ "$(report marker)" = gone ]
   [ "$(report mv_a)" = EBUSY ]
   [ "$(report mv_b)" = EBUSY ]
   [ ! -e "$W/a.moved" ]
