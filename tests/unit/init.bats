@@ -24,6 +24,9 @@ STUB
 teardown() {
   [[ -z "${H:-}" ]] || chmod -R u+w "$H" 2>/dev/null || true
   local pid
+  if [[ -n "${H:-}" && -f "$H/shm" ]]; then
+    rm -rf -- "$(cat "$H/shm")"
+  fi
   if [[ -n "${H:-}" && -f "$H/sleeps" ]]; then
     while read -r pid; do kill "$pid" 2>/dev/null || true; done <"$H/sleeps"
   fi
@@ -2767,10 +2770,13 @@ shared_env() {
 # `DIR<TAB>MODE<TAB>SELF<TAB>PATH` lines (written NUL-separated, as _as_keeper_binds does). With RUNNING_OLD=1 a keeper an
 # older asb started: no binds, RECORD is its keeper/policy, and the project's
 # .agent-sandbox as it is now its dotfile.copy. Sets RUN_PID, and RUN_SB, its directory
-# (keeper/policy there: its declarations, for a test to write).
+# (keeper/policy there: its declarations, for a test to write). RUN_PROJ: the sandbox's
+# project, when it is not this one.
 running() {
-  local sb="$H/home/.local/state/agent-sandbox/${2:-claude}/${PROJ//[^A-Za-z0-9-]/-}/$1" st
+  local p="${RUN_PROJ:-$PROJ}" sb st
+  sb="$H/home/.local/state/agent-sandbox/${2:-claude}/$(source_engine && _as_path_slug "$p")/$1"
   mkdir -p "$sb/keeper"
+  printf '%s\n' "$p" >"$sb/project" # as a keeper's start writes it
   sleep 600 >/dev/null 2>&1 3>&- &
   RUN_PID=$!
   RUN_SB="$sb"
@@ -2860,6 +2866,10 @@ binds_of() {
   [ "${lines[0]}" = "rw|ro|y|$d/p/f" ]
   [ "${lines[1]}" = "rw|rw|n|$d/p/h2" ] # another file's copy over p/h2: the mount sits on p/h2
   [ "${#lines[@]}" -eq 2 ]              # p/sub/g under the later tmpfs; q/h on the overlay
+  # an overlay project: a read-write bind of a host file over itself is recorded (`-`),
+  # a read-only one, or a copy, is not
+  run binds --overlay-src "$d/p" --overlay "$d/u" "$d/w" "$d/p" --bind "$d/p/f" "$d/p/f" --ro-bind "$d/p/sub/g" "$d/p/sub/g" --bind "$d/q/h" "$d/p/h3"
+  [ "$output" = "-|rw|y|$d/p/f" ]
   run binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f2"
   [ "$output" = "rw|ro|n|$d/p/f2" ] # another name: its mount point, not its source
   run binds --bind "$d/p" "$d/p" --ro-bind "$d/p/f" "$d/p/f" --remount-ro "$d/p"
@@ -3152,6 +3162,24 @@ binds_of() {
   [[ "$output" == *"cloned for implementer-2"* ]]
 }
 
+@test "the hard-link warning's line searches the file's own filesystem from its mount point: on a filesystem that is not /'s it lists the other name, where a search of / did not (#389)" {
+  [[ -d /dev/shm && -w /dev/shm && "$(stat -c %m /dev/shm 2>/dev/null)" == /dev/shm ]] || skip "no writable /dev/shm of its own"
+  source_engine
+  local d cmd
+  d="$(mktemp -d /dev/shm/asb-389.XXXXXX)"
+  printf '%s\n' "$d" >"$H/shm" # removed in teardown, whatever happens here
+  mkdir "$d/a dir"
+  printf 'x\n' >"$d/a dir/.agent-sandbox"
+  ln "$d/a dir/.agent-sandbox" "$d/other name"
+  run _as_dotfile_link_note "$d/a dir/.agent-sandbox" 2
+  cmd="${output#*this lists them: }"
+  [ "$cmd" = "find /dev/shm -xdev -samefile $(printf '%q' "$d/a dir/.agent-sandbox") 2>/dev/null" ]
+  run bash -c "$cmd"
+  [[ "$output" == *"$d/other name"* ]]
+  run bash -c "find / -xdev -samefile $(printf '%q' "$d/a dir/.agent-sandbox") 2>/dev/null"
+  [[ "$output" != *"$d/other name"* ]] # what the line said before: / alone, which this is not on
+}
+
 @test "a re-run that writes .agent-sandbox in place warns when it has another name (a hard link), which shows the new text; none with one name (#389)" {
   init -- roles
   [ "$status" -eq 0 ]
@@ -3161,8 +3189,14 @@ binds_of() {
   ln "$PROJ/.agent-sandbox" "$H/other-name"
   init -- roles implementer=3
   [ "$status" -eq 0 ]
-  [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find / -xdev -samefile $PROJ/.agent-sandbox"* ]]
+  [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find $(printf '%q' "$(stat -c %m -- "$PROJ/.agent-sandbox")") -xdev -samefile $(printf '%q' "$PROJ/.agent-sandbox") 2>/dev/null"* ]]
   grep -qF '[connect:implementer-3]' "$H/other-name"
+  # the line as printed, run: it lists the other name (from the file's mount point, which
+  # here may be / -- a search of the whole filesystem, so it is given time)
+  local cmd="${output#*this lists them: }"
+  cmd="${cmd%%$'\n'*}"
+  run timeout 600 bash -c "$cmd"
+  [[ "$output" == *"$H/other-name"* ]]
 }
 
 @test "a replace by what the mount over the file was: a read-write declaration over itself in a read-write project goes ahead; in a read-only one, or a copy of the role's own over the file, refused with what it loses (#389)" {
@@ -3245,4 +3279,57 @@ EOF
   [ "$status" -eq 2 ]
   [[ "$output" == *"role 'supervisor': .asb/roles/supervisor.md may become writable for it (its mounts could not be recorded at its launch: its declared files taken as bound) -- first:"* ]]
   release_bg
+}
+
+@test "a copy-on-write project with a read-write declaration over a file: a replace is refused, its writes would stop reaching the file (#389)" {
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+  printf 'NEW LINE\n' >>"$H/models/roles/tests"
+  running gate < <(printf -- '-\trw\ty\t%s\n' "$PROJ/.asb/tests")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'gate': its writes to .asb/tests would stop reaching the project's file (its mount keeps the file the host replaced) -- first: "* ]]
+}
+
+@test "re-adding an instance whose old clone is a running sandbox's PROJECT: refused; a sibling's project (.asb/impl/20) goes ahead (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  mkdir -p "$PROJ/.asb/impl/20"
+  RUN_PROJ="$PROJ/.asb/impl/20" running default </dev/null
+  local sib="$RUN_PID"
+  RUN_PROJ="$PROJ/.asb/impl/2" running default </dev/null
+  snap before
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"  role 'default' of the project $PROJ/.asb/impl/2: .asb/impl/2 would be moved from under it (its project; an instance added again, its old clone goes to .asb/backup/) -- first: cd $PROJ/.asb/impl/2 && "*" --role default --shutdown claude"* ]]
+  [[ "$output" != *"impl/20"* ]]
+  [ ! -e "$PROJ/.asb/backup" ]
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+  stopped
+  init -- roles implementer=2 # the sibling's sandbox alone: nothing of it moves
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"implementer-2 is added again"* ]]
+  RUN_PID="$sib" stopped
+}
+
+@test "another project's path with a newline, a space, a quote and a dollar: named and given to cd quoted, whole (#389)" {
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 0 ]
+  printf 'NEW LINE\n' >>"$H/models/roles/roles/supervisor.md"
+  local other="$H/odd"$'\n'"name it's \$HOME"
+  mkdir -p "$other"
+  RUN_PROJ="$other" running default < <(printf 'rw\tro\ty\t%s\n' "$PROJ/.asb/roles/supervisor.md")
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"  role 'default' of the project $(printf '%q' "$other"): .asb/roles/supervisor.md would become writable for it -- first: cd $(printf '%q' "$other") && "*" --role default --shutdown claude"* ]]
+  # the cd, as printed, reaches that directory
+  local cmd="${output#*-- first: cd }"
+  cmd="${cmd%% && *}"
+  run bash -c "cd $cmd && pwd"
+  [ "$output" = "$other" ]
 }

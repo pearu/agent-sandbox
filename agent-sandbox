@@ -3773,7 +3773,8 @@ OPTS
 # other mount the mount point is not the host's file, and a host write detaches nothing.
 #
 # THE RECORD: per such bind four NUL-terminated fields, `DIR MODE SELF PATH` -- DIR `rw`
-# or `ro`, the host bind the mount point's directory is seen through (a later
+# or `ro`, the host bind the mount point's directory is seen through, or `-` for a
+# read-write bind of a host file over itself on anything else (below) (a later
 # --remount-ro of it makes it `ro`); MODE `rw` or `ro`, the bind's own (likewise); SELF
 # `y` when the bind's source is the mount point's own file (a declaration over itself),
 # `n` when it is another (a store's copy, a slot); PATH the mount point as the host sees
@@ -3839,10 +3840,16 @@ _as_keeper_binds() {
           self=n
           [[ "${rs[j]}" == "${rs[k]%/}$rel" ]] && self=y
           printf '%s\0%s\0%s\0%s\0' "$kind" "$mode" "$self" "${rs[k]%/}$rel"
+          continue 2
           ;;
       esac
       break
     done
+    # Not on a host bind (an overlay, a tmpfs): the mount point is not the host's file, and
+    # a host write detaches nothing. But a read-write bind of a host file over itself there
+    # is the role's reach to that file, and a rename over it on the host leaves the role
+    # writing the old one, which the host no longer has: recorded with DIR `-`.
+    [[ "$mode" == rw && "${rs[j]}" == "${rd[j]}" ]] && printf '%s\0%s\0%s\0%s\0' - rw y "${rs[j]}"
   done
   return 0
 }
@@ -13386,15 +13393,24 @@ _as_init() {
             rw:n:*) why+="${why:+, }its own copy over $ptxt would be replaced by the host's new file, writable for it" ;;
             ro:y:rw) why+="${why:+, }its read-write mount of $ptxt would be replaced by the host's new file, read-only for it" ;;
             ro:n:*) why+="${why:+, }its own copy over $ptxt would be replaced by the host's new file" ;;
+            -:y:rw) why+="${why:+, }its writes to $ptxt would stop reaching the project's file (its mount keeps the file the host replaced)" ;;
           esac
         fi
       done
       # A re-added instance's old clone is moved to a backup (_init_stale_clone): a live
       # sandbox with a mount at or below it -- its keeper's declarations, keeper/policy --
       # loses it from under that mount. Refused; a clone no live sandbox has moves.
+      # its project, read whole (a path may hold a newline): the file written at its start
+      a=""
+      [[ -f "$sb/project" ]] && a="$(cat -- "$sb/project" && printf x)" && a="${a%x}" && a="${a%$'\n'}"
       for i in ${readds[@]+"${!readds[@]}"}; do
         path="$proj/${readds[i]}"
         [[ -e "$path" || -L "$path" ]] || continue
+        # a sandbox whose project is the old clone, or inside it, loses its project
+        if [[ -n "$a" && ("$a" == "$path" || "$a" == "$path"/*) ]]; then
+          why+="${why:+, }${readds[i]} would be moved from under it (its project; an instance added again, its old clone goes to .asb/backup/)"
+          continue
+        fi
         while IFS=$'\t' read -r key _; do
           [[ "$key" == "connect:$path" || "$key" == "connect:$path"/* ]] || continue
           why+="${why:+, }${readds[i]} would be moved from under it (an instance added again; its old clone goes to .asb/backup/)"
@@ -13405,10 +13421,12 @@ _as_init() {
       # a sandbox of another project: named with it, and shut down from there
       who="role '$role'" cmd="$invoked --role $role --shutdown $prof"
       if [[ "$(basename -- "$(dirname -- "$sb")")" != "$(_as_path_slug "$proj")" ]]; then
-        a=""
-        [[ -f "$sb/project" ]] && IFS= read -r a <"$sb/project"
-        who+=" of the project ${a:-$(basename -- "$(dirname -- "$sb")")}"
-        [[ -n "$a" ]] && cmd="cd $(printf '%q' "$a") && $cmd"
+        if [[ -n "$a" ]]; then
+          who+=" of the project $(printf '%q' "$a")"
+          cmd="cd $(printf '%q' "$a") && $cmd"
+        else
+          who+=" of the project $(basename -- "$(dirname -- "$sb")")"
+        fi
       fi
       hits+=("  $who: $why$old -- first: $cmd")
     done
@@ -14191,10 +14209,17 @@ _as_dotfile_write() {
 # _as_dotfile_link_note FILE LINKS -- the warning for a dot-file written in place that has
 # other names (a hard link, LINKS > 1, #389): they show the new text too, and whoever can
 # write one can change it. Not a refusal. The other names cannot be found from the file,
-# so the note gives the command that lists them.
+# so the note gives the command that lists them: a search of the file's own filesystem,
+# from its mount point (a hard link never leaves it), both paths quoted for a shell.
 _as_dotfile_link_note() {
-  printf 'warning — %s has %s other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find / -xdev -samefile %q 2>/dev/null' \
-    "$1" "$(($2 - 1))" "$1"
+  local m
+  printf 'warning — %s has %s other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are' \
+    "$1" "$(($2 - 1))"
+  if m="$(stat -c %m -- "$1" 2>/dev/null)" && [[ -n "$m" ]]; then
+    printf '; this lists them: find %q -xdev -samefile %q 2>/dev/null' "$m" "$1"
+  else
+    printf ' (the mount point of its filesystem, where a search for them would start, could not be read)'
+  fi
 }
 
 # _as_dotfile_read FILE -- FILE's text on stdout, read through a descriptor shown to be

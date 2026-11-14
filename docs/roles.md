@@ -559,7 +559,7 @@ first; shut it down, run `--init` again, then launch it. A removed instance's pu
 file you changed is kept, not removed, so that run goes ahead and the instance keeps
 running with the policy it launched with until you shut it down, though the dot-file no
 longer declares it. A count that adds that instance again while its old sandbox still
-runs on its clone is refused the same way: the old clone would be moved to
+runs on its clone (declared, or as its project) is refused the same way: the old clone would be moved to
 `.asb/backup/` from under it. With no old clone left, or no running sandbox of it, the
 re-add goes ahead. Roles with the project read-only (Planners, Implementers, Reviewers, the Gate)
 keep running and see a new purpose file read-only; under a copy-on-write project (the
@@ -571,7 +571,8 @@ down -- edit those files by hand (step 6 above) with no such role running. So do
 on the host of a channel file a role has read-only in a directory bound from the host
 (`CLAUDE.md` under `--preset shared` with `instructions = read-only`). `--init` also refuses a
 replace that would take a role's own copy over a file from it (a `copy` declaration
-over a purpose file, a `read-write` one in a read-only project), and it looks at every
+over a purpose file, a `read-write` one in a read-only project) or would leave its writes
+not reaching the file (a `read-write` one over the file in a copy-on-write project), and it looks at every
 running sandbox of yours, another project's too when it has this one's files mounted.
 
 **This project's part: addenda (#353).** Write what a role does in this project -- its

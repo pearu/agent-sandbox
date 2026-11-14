@@ -29,6 +29,9 @@ project = read-write
 project = read-only
 ./out/ = read-write
 [briefing:reader]
+[connect:cower]
+project = copy-on-write
+./out/ = read-write
 MODEL
   printf 'You are the writer.\n' >"$M/roles/writer.md"
   printf 'You are the reader.\n' >"$M/roles/reader.md"
@@ -289,4 +292,31 @@ MODEL
   [ "$status" -eq 0 ]
   asb_host --init tiny
   [ "$status" -eq 0 ]
+}
+
+@test "a copy-on-write project with a read-write declaration over a file: an --init that replaces the file is refused (its writes would stop reaching it); a read-only one there goes ahead, the role keeping the old text" {
+  printf 'iterate =\n' >"$M/tests"
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  sed -i '/^\[connect:cower\]$/a .asb/tests = read-write' "$IWORK/.agent-sandbox"
+  approve
+  start cower
+  run_sandboxed "${BASE[@]}" -- --role cower --profile probe --exec sh -c 'echo BEFORE >>.asb/tests && echo WROTE'
+  [[ "$output" == *"WROTE"* ]]
+  grep -qx BEFORE "$IWORK/.asb/tests" # its writes reach the project's file
+  sed -i '$d' "$IWORK/.asb/tests"
+  printf 'final =\n' >>"$M/tests"
+  asb_host --init tiny
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'cower': its writes to .asb/tests would stop reaching the project's file (its mount keeps the file the host replaced) -- first: "*" --role cower --shutdown probe"* ]]
+  asb_host --role cower --shutdown probe
+  [ "$status" -eq 0 ]
+  # read-only there: the mount keeps the old text, nothing of the role's is lost
+  sed -i 's|^\.asb/tests = read-write$|.asb/tests = read-only|' "$IWORK/.agent-sandbox"
+  approve
+  rm -f "$IWORK/out/cower.in"
+  start cower
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/tests from model 'tiny'"* ]]
 }

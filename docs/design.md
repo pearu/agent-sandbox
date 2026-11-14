@@ -592,8 +592,10 @@ Stated plainly. These are what the adversary above can still do.
   any running sandbox of the user's (this project's or another's) sits on where that
   breaks it: in a directory the role has read-write from the host, unless the mount was
   the file itself read-write (it would reach the host's new file, writable); its own copy
-  or read-write mount in a read-only one (it would lose it); a removal in a directory it
-  sees from the host (#389). What remains: a sandbox with
+  or read-write mount in a read-only one (it would lose it); a read-write mount of a file
+  over itself on a copy-on-write project (its writes would stop reaching the file); a
+  removal in a directory it sees from the host; and a re-added instance's old clone that
+  a running sandbox has declared, or has as its project (#389). What remains: a sandbox with
   the project read-write can make either command refuse, by leaving a link in place; the
   coord index and `.asb/init.sums` are read by path just before `--init` rewrites them,
   so a link swapped in after the last check and before that read has its target's text
@@ -606,7 +608,11 @@ Stated plainly. These are what the adversary above can still do.
   the same way (measured: `mv`, `sed -i`, remove and create; `CLAUDE.md` with `mv`):
   where that directory is read-write for the role -- the project by default, so a plain
   `asb claude` too -- the path then leads to the host's new file, writable for the role
-  until it is shut down. A
+  until it is shut down. So does a host save over a file a role has its own copy of
+  mounted in such a directory: under `--preset shared` the state directory is the host's,
+  and the role's copies of `~/.claude/.claude.json`, `history.jsonl`, `responses.log` and
+  `alerts.log` sit on the host's files -- after a host rename over one, the role's copy is
+  swapped for the host's real file, and its writes land in it (measured). A
   writable dot-file makes this window reachable from inside: a launch hashes the dot-file
   and later parses it again by path, so a file rewritten between the two is applied, as
   before; written in place, the text it reads in that window can be half-written. Two

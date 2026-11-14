@@ -724,6 +724,7 @@ W
   setup_remote
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning — $T/bench/.agent-sandbox has 1 other name(s) (a hard link)"* ]]
+  [[ "$output" == *"this lists them: find $(printf '%q' "$(stat -c %m -- "$T/bench/.agent-sandbox")") -xdev -samefile $(printf '%q' "$T/bench/.agent-sandbox") 2>/dev/null"* ]]
   grep -qx '\[sshd\]' "$T/other-name"
 }
 

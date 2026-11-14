@@ -1172,7 +1172,11 @@ names are gone; there are no aliases for removed names before 1.0.
   in a read-write project is no reason to refuse, while a role's own copy over a file, or
   a `read-write` declaration in a read-only project, refuses (the role would lose it). A
   running sandbox of another project with this one's files mounted is looked at too, and
-  named with its project. `--setup-remote` brings back what the policy write said there.
+  named with its project. A `read-write` declaration over a file in a copy-on-write
+  project refuses a replace too (its writes would stop reaching the file), and a re-add
+  refuses when a running sandbox has the old clone as its project. `--setup-remote` brings
+  back what the policy write said there. The hard-link warning's `find` line starts at
+  the file's mount point.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

@@ -988,6 +988,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 0 ]
   [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
   [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too"* ]]
+  [[ "$output" == *"this lists them: find $(printf '%q' "$(stat -c %m -- "$PROJ/.agent-sandbox")") -xdev -samefile $(printf '%q' "$PROJ/.agent-sandbox") 2>/dev/null"* ]]
   grep -qx example.org "$H/other-name"
 }
 
