@@ -3715,12 +3715,13 @@ _as_run_scoped_clear() {
 # _as_bwrap_options -- every option of bubblewrap 0.12's, one `NAME ARGS KIND` line each:
 # ARGS how many arguments follow it, KIND what it does at its last argument -- `bind` (a
 # host path bound there), `mount` (something else mounted there, which covers what is
-# under it), `remount` (--remount-ro), `-` (nothing mounted). _as_keeper_binds reads the
-# launch's options by it; tests/unit/init.bats checks it against `bwrap --help`, names
-# and argument counts both ways, so an option bwrap adds or the table misreads is caught.
-_as_bwrap_options() {
-  cat <<'OPTS'
---help 0 -
+# under it), `remount` (--remount-ro), `qualify` (nothing; it applies to the option after
+# it, which bwrap reads with it as one: --overlay-src, --perms, --size), `-` (nothing
+# mounted). The one table of the engine's: _as_keeper_binds reads the launch's options
+# by it, and _as_ro_pins (through _as_bwrap_nargs, from the variable without a process);
+# tests/unit/init.bats checks it against `bwrap --help`, names and argument counts, so an
+# option bwrap adds or the table misreads is caught.
+_as_bwrap_table='--help 0 -
 --version 0 -
 --args 1 -
 --argv0 1 -
@@ -3758,7 +3759,7 @@ _as_bwrap_options() {
 --bind-fd 2 mount
 --ro-bind-fd 2 mount
 --remount-ro 1 remount
---overlay-src 1 -
+--overlay-src 1 qualify
 --overlay 3 mount
 --tmp-overlay 1 mount
 --ro-overlay 1 mount
@@ -3784,12 +3785,11 @@ _as_bwrap_options() {
 --as-pid-1 0 -
 --cap-add 1 -
 --cap-drop 1 -
---perms 1 -
---size 1 -
+--perms 1 qualify
+--size 1 qualify
 --chmod 2 -
---not-a-security-boundary 0 -
-OPTS
-}
+--not-a-security-boundary 0 -'
+_as_bwrap_options() { printf '%s\n' "$_as_bwrap_table"; }
 
 # _as_keeper_binds BWRAP-OPTION... -- the launch's single-file binds that sit on a file
 # of the host's, for --init (#389). A host rename or removal of the file a mount sits
@@ -14850,29 +14850,17 @@ _as_fallback_hint() {
 # so every kind of declaration is covered without knowing about pins; first measured by
 # the readonly-spike branch's probes, whose compute_pins this started from.
 #
-# _as_bwrap_nargs NAME -- fill the associative array NAME with every option of bubblewrap
-# 0.12 (its --help) and how many arguments it takes.
+# _as_bwrap_nargs NAME QUAL -- fill the associative array NAME with every option of
+# bubblewrap's (the engine's one table, _as_bwrap_options) and how many arguments it
+# takes, and QUAL with the options that qualify the next one (a group bwrap reads as one).
 _as_bwrap_nargs() {
-  local -n _bn="$1"
-  local _o
-  for _o in --help --version --level-prefix --unshare-all --share-net --unshare-user \
-    --unshare-user-try --unshare-ipc --unshare-pid --unshare-net --unshare-uts \
-    --unshare-cgroup --unshare-cgroup-try --disable-userns --assert-userns-disabled \
-    --clearenv --new-session --die-with-parent --as-pid-1 --not-a-security-boundary; do
-    _bn["$_o"]=0
-  done
-  for _o in --args --argv0 --userns --userns2 --pidns --uid --gid --hostname --chdir \
-    --unsetenv --lock-file --sync-fd --remount-ro --overlay-src --tmp-overlay --ro-overlay \
-    --exec-label --file-label --proc --dev --tmpfs --mqueue --dir --seccomp --add-seccomp-fd \
-    --block-fd --userns-block-fd --info-fd --json-status-fd --cap-add --cap-drop --perms \
-    --size; do
-    _bn["$_o"]=1
-  done
-  for _o in --setenv --bind --bind-try --dev-bind --dev-bind-try --ro-bind --ro-bind-try \
-    --bind-fd --ro-bind-fd --file --bind-data --ro-bind-data --symlink --chmod; do
-    _bn["$_o"]=2
-  done
-  _bn[--overlay]=3
+  local -n _bn="$1" _bq="$2"
+  local _o _c _k
+  while read -r _o _c _k; do
+    _bn["$_o"]=$_c
+    [[ "$_k" == qualify ]] && _bq["$_o"]=1
+  done <<<"$_as_bwrap_table"
+  return 0
 }
 
 # _as_ro_pins_norm NAME -- normalise the path in variable NAME: no `//`, no `/./`, no
@@ -15413,8 +15401,8 @@ _as_ro_pins() {
   local _rp_quiet="${4:-}"
   _rp_out=("${_rp_in[@]}") _rp_pinned=()
   _as_preset_is_native && return 0
-  local -A _nargs=()
-  _as_bwrap_nargs _nargs
+  local -A _nargs=() _qual=()
+  _as_bwrap_nargs _nargs _qual
   # Parse: per option its name, first argument's index, DEST (no trailing /), and the
   # option its group starts at.
   local -a _on=() _oa=() _od=() _og=()
@@ -15445,10 +15433,7 @@ _as_ro_pins() {
     [[ -z "$_d" ]] || _as_ro_pins_norm _d
     ((_g >= 0)) || _g=$_k
     _on[_k]="$_o" _oa[_k]=$((_i + 1)) _od[_k]="$_d" _og[_k]=$_g
-    case "$_o" in
-      --overlay-src | --perms | --size) ;; # a group goes on to the option it qualifies
-      *) _g=-1 ;;
-    esac
+    [[ -n "${_qual[$_o]+x}" ]] || _g=-1 # a group goes on to the option it qualifies
     [[ "$_o" == --remount-ro ]] && _remount[$_d]=$_k
     _i=$((_i + 1 + _n)) _k=$((_k + 1))
   done

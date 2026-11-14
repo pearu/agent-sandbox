@@ -907,32 +907,17 @@ cache_pins() {
   [ "${PIN[*]}" = "$P/a $P/a/b" ]
 }
 
-@test "the option table is bubblewrap's: every option of the installed bwrap's --help, with its number of arguments" {
-  command -v bwrap >/dev/null || skip "bwrap not installed"
-  local -A want=() got=()
-  local o rest line
-  while IFS= read -r line; do
-    [[ "$line" =~ ^\ \ \ \ (--[a-z0-9-]+)((\ [A-Z0-9_]+)*)(\ |$) ]] || continue
-    o="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]}"
-    rest="${rest//[!\ ]/}"
-    want[$o]=${#rest}
-  done < <(bwrap --help 2>&1)
-  [ "${#want[@]}" -gt 60 ]
-  # shellcheck disable=SC1090
-  source "$ENGINE"
-  _as_bwrap_nargs got
-  for o in "${!want[@]}"; do
-    [ "${got[$o]-missing}" = "${want[$o]}" ] || {
-      echo "$o: table ${got[$o]-missing}, bwrap ${want[$o]}" >&2
-      return 1
-    }
-  done
-  for o in "${!got[@]}"; do
-    [ -n "${want[$o]+x}" ] || {
-      echo "$o: in the table, not in bwrap --help" >&2
-      return 1
-    }
-  done
+@test "the pins read the engine's one bwrap table (_as_bwrap_options, checked against bwrap --help in tests/unit/init.bats): an option it lacks refuses, its qualify rows are the groups" {
+  # an option taken out of the table: the pins cannot read the list, and refuse
+  # shellcheck disable=SC2016 # code for the computation's shell
+  PINS_PRE='_as_bwrap_table="$(grep -v "^--level-prefix " <<<"$_as_bwrap_table")"' \
+    pins -- --bind "$P" "$P" --level-prefix --ro-bind "$P/a/b/f.md" "$P/a/b/f.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"the pins cannot read the bwrap option '--level-prefix'"* ]]
+  # the groups: what the table marks qualify, exactly
+  local out
+  out="$(bash -c 'source "$1"; declare -A n q; _as_bwrap_nargs n q; printf "%s\n" "${!q[@]}" | sort | paste -sd" "' _ "$ENGINE")"
+  [ "$out" = "--overlay-src --perms --size" ]
 }
 
 @test "a destination that is not normalised is pinned once per directory: // and /./" {
@@ -1013,6 +998,22 @@ cache_pins() {
   # without the six words, the reference
   [ "$(printf '%s\n' "$A" | sed "$((i - 7)),$((i - 2))d")" = "$B" ]
   [[ "$AOUT" == *"pinned, above a read-only, hidden or own path (the role cannot rename or remove them): ./a, ./a/b"* ]]
+}
+
+@test "the keeper's record of single-file mounts reads a pinned directory as read-write: the Supervisor's purpose file, on its real option list (#389)" {
+  model roles
+  run_engine AGENT_SANDBOX_NET=none -- asb --role supervisor claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$PROJ/.asb/roles" "$PROJ/.asb/roles" # the pin sits between
+  local -a opts=()
+  local w
+  for w in "${ARGV[@]}"; do
+    [[ "$w" == -- ]] && break
+    opts+=("$w")
+  done
+  local rec
+  rec="$(bash -c 'source "$1"; shift; _as_keeper_binds "$@" | tr "\0" "|"' _ "$ENGINE" "${opts[@]}")"
+  [[ "$rec" == *"rw|ro|y|$PROJ/.asb/roles/supervisor.md|"* ]]
 }
 
 @test "the roles model: the Supervisor and the setup role get .asb and .asb/roles pinned; the read-only-project roles none" {

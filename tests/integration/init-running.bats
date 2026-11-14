@@ -95,6 +95,13 @@ inside() {
      awk -v m="$PWD/$1" '"'"'$5 == m { n++ } END { print "MOUNT=" n + 0 }'"'"' /proc/self/mountinfo' _ "$2"
 }
 
+# pinned ROLE -- a join into the running ROLE: PINS=n, how many of .asb and .asb/roles are
+# mount points of their own there (the pins above its purpose file)
+pinned() {
+  run_sandboxed "${BASE[@]}" -- --role "$1" --profile probe --exec sh -c \
+    'awk -v a="$PWD/.asb" -v r="$PWD/.asb/roles" '"'"'$5 == a || $5 == r { n++ } END { print "PINS=" n + 0 }'"'"' /proc/self/mountinfo'
+}
+
 @test "a role with the project read-write keeps the dot-file read-only through --apply and an --init that changes only the dot-file: the new text, the mount, no write" {
   start writer
   inside writer .agent-sandbox
@@ -128,6 +135,9 @@ inside() {
 
 @test "an --init that would change a running read-write role's purpose file is refused, nothing written; after --shutdown it goes ahead" {
   start writer
+  pinned writer # the directories above its purpose file are pinned: the record still reads them read-write
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PINS=2"* ]]
   printf 'Now also this.\n' >>"$M/roles/writer.md"
   cp "$IWORK/.asb/roles/writer.md" "$I/writer.before"
   asb_host --init tiny
@@ -144,6 +154,28 @@ inside() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"updated .asb/roles/writer.md from model 'tiny'"* ]]
   [ "$(tail -1 "$IWORK/.asb/roles/writer.md")" = "Now also this." ]
+}
+
+@test "with a pinned read-write role running, an --init that changes only a read-only-project role's purpose file goes ahead; the pinned role runs on" {
+  start writer
+  start reader
+  pinned writer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PINS=2"* ]]
+  printf 'Now also this.\n' >>"$M/roles/reader.md"
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/reader.md from model 'tiny'"* ]]
+  approve
+  inside reader .asb/roles/reader.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Now also this."* ]]
+  inside writer .asb/roles/writer.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WRITE=no"* ]]
+  [[ "$output" == *"MOUNT=1"* ]]
+  pinned writer
+  [[ "$output" == *"PINS=2"* ]]
 }
 
 @test "a role with the project read-only keeps running through an --init that changes its purpose file, and sees the new text, read-only" {
