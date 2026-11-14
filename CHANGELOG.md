@@ -11,6 +11,16 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Breaking
 
+- **bubblewrap 0.12.0 or newer is required.** A launch that would start a sandbox
+  refuses on an older `bwrap`, or one whose `--version` names no version, naming the
+  version found and the way to 0.12.0 (`./install.sh --rebuild-bwrap` on Ubuntu,
+  `docs/troubleshooting.md` elsewhere); a join into a running role, `--check`, the
+  engine's help and `--preset none` run no bwrap and are not refused. `install.sh`
+  stops there too (exit 1) where it warned, naming the route that applies; `--dry-run`
+  reports it and goes on; `--rebuild-bwrap` is a run of its own and works from the old
+  bubblewrap. Ubuntu 22.04, 24.04 and 26.04 ship less and need the rebuild. The engine
+  no longer asks `bwrap --help` whether it can mount an overlay: `copy-on-write` falls
+  back to `copy` only with `[overlay] mode = off` and on a single file.
 - **`asb claude` runs asb's own install of Claude Code, never the `claude` on your
   PATH** (#6), under every preset, `native` and `none` included: a name -- the command,
   `--agent R=claude`, `[agent] command = claude` -- of a profile with an install recipe

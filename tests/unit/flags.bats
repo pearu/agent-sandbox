@@ -59,6 +59,75 @@ STUB
   [[ "$output" == *"troubleshooting.md"* ]]
 }
 
+@test "a bubblewrap below 0.12.0 refuses the launch, naming its version and --rebuild-bwrap; nothing is started" {
+  local v
+  for v in 0.11.1 0.9.0 0.11.99; do
+    rm -f "$H/argv.env"
+    run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION="$v" -- asb claude --version
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"bubblewrap $v ($H/bin/bwrap) is below 0.12.0, which agent-sandbox needs (it fixes CVE-2026-87766); refusing to launch."* ]]
+    [[ "$output" == *"./install.sh --rebuild-bwrap"*"docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"* ]]
+    [ ! -s "$H/argv" ]     # bwrap was never run to launch
+    [ ! -e "$H/argv.env" ] # (the stub writes this at every launch, never for --version)
+    [ ! -s "$H/join" ]     # nothing joined
+    [[ "$output" != *"the sandbox did not start"* ]]
+  done
+  # the same for --exec, which builds the same sandbox
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --profile claude --exec true
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "a bwrap whose --version names no version is refused as below 0.12.0: nothing vouches for it" {
+  local v
+  for v in '' unknown 0.12.0-rc1 v0.12.0; do
+    run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION="$v" -- asb claude --version
+    [ "$status" -eq 1 ]
+    if [[ -z "$v" ]]; then
+      [[ "$output" == *"bwrap --version ($H/bin/bwrap) names no version; agent-sandbox needs bubblewrap 0.12.0 or newer"* ]]
+    else
+      [[ "$output" == *"bubblewrap $v ($H/bin/bwrap) is below 0.12.0"* ]]
+    fi
+    [[ "$output" == *"./install.sh --rebuild-bwrap"* ]]
+    [ ! -s "$H/argv" ]
+  done
+}
+
+@test "bubblewrap 0.12.0 and newer launch" {
+  local v
+  for v in 0.12.0 0.12.1 0.13.0 1.0 1.0.0 2; do
+    run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION="$v" -- asb claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"below 0.12.0"* ]]
+    [ -s "$H/argv" ]
+  done
+}
+
+@test "what never runs bwrap is not refused on an old bubblewrap: engine help, --check, --preset none, a verb with no role running" {
+  local old=AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1
+  run_engine "$old" -- agent-sandbox --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == usage:* ]]
+  run_engine "$old" -- asb --engine-help
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"below 0.12.0"* ]]
+  run_engine "$old" -- asb --check claude
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"below 0.12.0"* ]]
+  [ ! -s "$H/argv" ]
+  run_engine "$old" -- asb --preset none claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stub-agent argv: --version"* ]]
+  [[ "$output" != *"below 0.12.0"* ]]
+  run_engine "$old" -- asb --status claude
+  [[ "$output" != *"below 0.12.0"* ]]
+  run_engine "$old" -- asb claude agents
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is not running, so it has no background sessions"* ]]
+  [[ "$output" != *"below 0.12.0"* ]]
+}
+
 @test "a normal non-zero exit from the agent is NOT mistaken for a broken sandbox" {
   # Only 126/127 from the launch mean bwrap could not run; anything else is the
   # agent's own status -- the joined command's -- and suggesting the emergency exit

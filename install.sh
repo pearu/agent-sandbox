@@ -47,7 +47,9 @@
 #                             SHA-256 sums) and install it, when the installed
 #                             bwrap and apt's candidate are older than 0.12.0
 #                             (CVE-2026-87766). Asks for sudo for apt; with
-#                             --dry-run it only prints the plan.
+#                             --dry-run it only prints the plan. bubblewrap
+#                             0.12.0 or newer is required: a plain install
+#                             stops on an older one, and asb refuses to launch.
 #   ./install.sh --proxy-port N
 #                             the proxy listens on 127.0.0.1:N (1024-65535).
 #                             Without it: the port recorded by an earlier run,
@@ -2128,26 +2130,31 @@ if ((${#missing[@]} > 0)); then
 fi
 if command -v bwrap >/dev/null; then
   bwrap_ver="$(bwrap --version 2>/dev/null | awk '{print $2}')"
-  ok "bwrap installed:    bubblewrap ${bwrap_ver:-unknown}"
-  # 0.12.0 fixes CVE-2026-87766: during sandbox setup, a symlink in a directory the
-  # sandboxed process controls could redirect the files and directories bwrap creates
-  # as mount points onto the host. agent-sandbox creates mount points inside the
-  # agent's writable state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0 and
-  # 26.04 0.11.1, and both security updates (0.9.0-1ubuntu0.3, 0.11.1-1ubuntu0.3)
-  # dropped Canonical's backport of the fix again (a Flatpak regression), so the
-  # version alone is what can be checked here.
-  if [[ -n "$bwrap_ver" ]] && ! bwrap_fixed "$bwrap_ver"; then
-    warn "bubblewrap $bwrap_ver is older than 0.12.0, which fixes CVE-2026-87766 (a sandbox escape during"
-    warn "  setup through symlinks in a directory the sandboxed process controls; this sandbox creates mount"
-    warn "  points inside the agent's writable state directory, so it is exposed). The security updates of"
-    warn "  Ubuntu 24.04 (0.9.0-1ubuntu0.3) and 26.04 (0.11.1-1ubuntu0.3) dropped the fix."
+  # 0.12.0 or newer is REQUIRED; the engine refuses to launch on anything older. It
+  # fixes CVE-2026-87766: during sandbox setup, a symlink in a directory the sandboxed
+  # process controls could redirect the files and directories bwrap creates as mount
+  # points onto the host. agent-sandbox creates mount points inside the agent's writable
+  # state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0 and 26.04 0.11.1, and
+  # both security updates (0.9.0-1ubuntu0.3, 0.11.1-1ubuntu0.3) dropped Canonical's
+  # backport of the fix again (a Flatpak regression), so the version alone is what can
+  # be checked here. A version that is not dotted numbers is not one this can vouch for,
+  # as the engine treats it. A dry run reports it and goes on, as for a missing package.
+  if [[ "$bwrap_ver" =~ ^[0-9]+(\.[0-9]+)*$ ]] && bwrap_fixed "$bwrap_ver"; then
+    ok "bwrap installed:    bubblewrap $bwrap_ver"
+  else
     bwrap_cand="$(apt_bwrap_candidate)"
     if [[ -n "$bwrap_cand" ]] && bwrap_fixed "$bwrap_cand"; then
-      warn "  apt offers bubblewrap $bwrap_cand: sudo apt install bubblewrap"
+      bwrap_how="apt offers bubblewrap $bwrap_cand: sudo apt install bubblewrap"
     elif is_ubuntu; then
-      warn "  run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source, rebuilt locally; see docs/troubleshooting.md)"
+      bwrap_how="run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source, rebuilt locally; see docs/troubleshooting.md)"
     else
-      warn "  see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'."
+      bwrap_how="see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"
+    fi
+    bwrap_why="bubblewrap ${bwrap_ver:-of unknown version} ($(command -v bwrap)) is below 0.12.0, which agent-sandbox requires: it fixes CVE-2026-87766 (a sandbox escape during setup through symlinks in a directory the sandboxed process controls, the shape of the agent's writable state directory). To get 0.12.0, $bwrap_how"
+    if ((DRY_RUN)); then
+      warn "(dry-run) a real run stops here: $bwrap_why"
+    else
+      err "$bwrap_why"
     fi
   fi
 fi
@@ -2163,6 +2170,10 @@ if [[ -n "$nftbin" ]]; then
   ok "nft (nftables) installed (the strict-mode egress firewall)"
 else
   info "nftables not installed; needed only for AGENT_SANDBOX_NET=strict (sudo apt install nftables)"
+fi
+# The tests run the Packages section alone: AGENT_SANDBOX_INSTALL_STEP=packages.
+if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == packages ]]; then
+  exit 0
 fi
 
 # ----- 3. the agents themselves, one per profile -----

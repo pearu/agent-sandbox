@@ -386,7 +386,7 @@ Sections:
   **`project = copy-on-write`** mounts an overlay at the project's own path: the role
   reads the tree as it is -- built -- and its writes stay in a layer of its own, kept
   across its launches until `asb --delete` (a PR reviewer's checkout and rebuild). It
-  needs an overlay (bubblewrap 0.11) and is refused under `native`; there is no copy
+  needs an overlay (refused with `[overlay] mode = off`) and is refused under `native`; there is no copy
   fallback. Nothing else is accepted -- no other mode, no source, no scope. A read-write
   part of a read-only project is a declaration inside it, bound after it by depth:
 
@@ -499,8 +499,8 @@ Sections:
 
   `copy-on-write` means reads fall through to your files until the sandbox
   writes one, and the write goes to a private layer that shadows it from then on.
-  Where an overlay is unavailable — bubblewrap older than 0.11, `[overlay] mode =
-  off`, or a channel path naming a single **file**, which overlayfs cannot stack
+  Where an overlay is not used — `[overlay] mode = off`, or a channel path naming a
+  single **file**, which overlayfs cannot stack
   on — it behaves as `copy`: seeded from your files and refreshed at each launch
   for anything the sandbox has not touched. The two differ only *within* a
   running session.
@@ -554,9 +554,8 @@ Sections:
 
 - **`[overlay]`** — key/value lines. `mode = auto|off` (default auto) says what
   `copy-on-write` is implemented with, not whether anything is shared. `auto` uses a
-  real copy-on-write overlay where bubblewrap supports one (0.11 or newer) and falls
-  back to `copy` where it does not, saying so at launch; `off` takes the fallback
-  everywhere, which is worth doing if overlayfs is unhappy on your filesystem. It can
+  real copy-on-write overlay on every directory (a file is always `copy`); `off` takes
+  the fallback everywhere, saying so at launch, which is worth doing if overlayfs is unhappy on your filesystem. It can
   only move `copy-on-write` to `copy`, so it is never a widening. The two are identical
   across launches and differ only *within* a running session, where an overlay picks up
   an edit you make to your own copy and a snapshot does not. A channel path naming a
@@ -806,7 +805,7 @@ wins there; under `$HOME`, outside the project, `own` is sandbox-only storage an
 other mode shows your real one; a file is bound over, so it cannot be deleted or
 renamed inside. It reads every profile, so `asb --trust` checks `[claude]` without a
 profile named. What depends on the host or the moment -- a path that does not exist
-yet, an overlay this bubblewrap cannot mount, a conflict -- is still said at launch.
+yet, a conflict -- is still said at launch.
 
 **`asb --check`** is the same review, asking nothing and recording nothing: the file (as
 a diff when it changed since you approved it), the notes, and whether it is approved.

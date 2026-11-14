@@ -680,8 +680,8 @@ Engine flags (before CMD):
                         engine's flag; after CMD, --resume is the agent's
                         (asb claude --resume ID). Refused with --serve,
                         --exec, a verb or a review
-  --overlay auto|off    what `copy-on-write` uses: an overlay where
-                        bubblewrap supports one (auto), or the copy fallback
+  --overlay auto|off    what `copy-on-write` uses: an overlay on every
+                        directory (auto), or the copy fallback
                         everywhere (off). Only moves `copy-on-write` to `copy`
   --reset CHANNEL|PATH  discard what this role holds at CHANNEL (or a declared
                         PATH) and take the source's again, then exit. What the
@@ -2466,18 +2466,16 @@ _as_connect_bind_all() {
     if ((${#args[@]} > _nargs)); then _bound+=("$path"); fi
   done
   _as_sandbox_record_write "$rolebase" ${_record[@]+"${_record[@]}"} || return 1
-  # ONE line, not one per channel: on a host without overlay support every `copy-on-write`
-  # channel falls back, and six identical lines a launch is how a notice becomes
-  # something people filter out. Said with _as_msg, never suppressed, because the
-  # session loses within-session liveness and that is a behaviour change.
+  # ONE line, not one per channel: with the overlay off every `copy-on-write` channel
+  # falls back, and six identical lines a launch is how a notice becomes something
+  # people filter out. Said with _as_msg, never suppressed, because the session loses
+  # within-session liveness and that is a behaviour change.
   #
   # The file-shaped fallback is deliberately NOT announced: it is inherent to
   # overlayfs rather than a property of this host, nothing the user can act on,
   # and it is written down in docs/connections.md.
   if ((${#_cow_fellback[@]})); then
-    local why="this bubblewrap cannot mount an overlay (needs 0.11 or newer)"
-    [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
-    _as_msg "connect: ${_cow_fellback[*]}: copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
+    _as_msg "connect: ${_cow_fellback[*]}: copy-on-write is using copy here -- the overlay is turned off. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
   fi
   return 0
 }
@@ -2664,16 +2662,14 @@ _as_connect_bind_channel() {
       # No refresh step at all, which is what makes it the better default --
       # nothing to run and nothing to go stale.
       #
-      # THREE REASONS IT BECOMES `copy` INSTEAD, and only the first two are
-      # about this host:
+      # TWO REASONS IT BECOMES `copy` INSTEAD:
       #   - the knob says off
-      #   - bubblewrap is older than 0.11 and cannot mount an overlay
       #   - THE PATH NAMES A FILE. overlayfs mounts a directory and cannot
       #     stack on a single file, so this one is permanent and no newer
       #     bubblewrap fixes it.
       # Across launches `copy` and `copy-on-write` are indistinguishable; they
       # differ only WITHIN a session, where an overlay reads through live.
-      if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
+      if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]]; then
         [[ "$kind" == file ]] || _cow_fellback+=("$ch")
         slot="$(_as_channel_store "$ch" "$path" copy)"
         manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
@@ -2923,7 +2919,7 @@ _as_connect_bind_path() {
       ;;
     copy | copy-on-write)
       if [[ "$mode" == copy-on-write && "$kind" == dir ]]; then
-        if [[ "$_overlay_mode" != off ]] && _as_overlay_ok; then
+        if [[ "$_overlay_mode" != off ]]; then
           # An overlay at the declared path, mounted by the keeper as a channel's is:
           # the source reads through, a write lands in the role's upper layer and
           # shadows it from then on. The lower is the path itself, which exists
@@ -2940,9 +2936,7 @@ _as_connect_bind_path() {
           _connect_host[$p]="layer:$upper"
           return 0
         fi
-        local why="this bubblewrap cannot mount an overlay (it needs 0.11)"
-        [[ "$_overlay_mode" == off ]] && why="the overlay is turned off"
-        _as_msg "connect: '$key': copy-on-write is using copy here -- $why. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
+        _as_msg "connect: '$key': copy-on-write is using copy here -- the overlay is turned off. Across launches the two behave the same; a source edit reaches a file this sandbox has not written at the NEXT launch rather than during a running one."
       fi
       slot="$base/copy/$(_as_iso_slug "$p")"
       manifest="$base/base/$(_as_iso_slug "$p").json"
@@ -2963,26 +2957,42 @@ _as_connect_bind_path() {
   return 0
 }
 
-# _as_overlay_ok -- can this bubblewrap mount an overlay? (>= 0.11). Asked once
-# and cached: it is a fork per call otherwise, and the answer cannot change
-# mid-launch.
-#
-# THE HELP IS READ WHOLE, never piped into `grep -q`. bwrap writes it in two writes
-# (4096 bytes, then the rest; measured on 0.12.0) and the match is in the first, so
-# `grep -q` could exit between them, bwrap die of SIGPIPE, and pipefail make that "no
-# overlay": measured, 1 launch in 32000 under load, and on CI a `copy-on-write` channel
-# whose next launch read a fresh copy instead of the sandbox's own layer.
-_as_overlay_ok() {
-  if [[ -z "${_overlay_supported:-}" ]]; then
-    local _help
-    _help="$(bwrap --help 2>&1 || true)"
-    if [[ "$_help" == *"--overlay "* ]]; then
-      _overlay_supported=yes
-    else
-      _overlay_supported=no
-    fi
+# _as_bwrap_fixed VERSION -- is VERSION 0.12.0 or newer? The one comparison, for a
+# launch (_as_bwrap_check) and for a remote host's preflight. 0.12.0 is the floor: it
+# fixes CVE-2026-87766 (the sandbox makes mount points inside the agent's writable
+# state directory, the shape that CVE describes), and the engine has one code path,
+# for it. VERSION is dotted numbers (`0.12.0`); anything else -- empty, a word, a
+# suffix -- is not a version this can vouch for, so it is not new enough. No fork: a
+# launch asks it.
+_as_bwrap_fixed() {
+  local vre='^[0-9]+(\.[0-9]+)*$' major minor
+  [[ "$1" =~ $vre ]] || return 1
+  major="${1%%.*}" minor=0
+  [[ "$1" != *.* ]] || minor="${1#*.}"
+  minor="${minor%%.*}"
+  ((10#$major > 0 || 10#$minor >= 12))
+}
+
+# _as_bwrap_check -- refuse a launch whose bubblewrap is below 0.12.0 (_as_bwrap_fixed),
+# naming the version found and the way to 0.12.0. Asked where a launch starts its
+# keeper, the one place bwrap runs: a join, a verb, --check and --preset none never get
+# there. A missing bwrap passes, for the launch to say so (_as_keeper_exec) with the way
+# back to the agent itself. The output is read whole, never piped (see _as_launch_pasta).
+_as_bwrap_check() {
+  local v bin
+  command -v bwrap >/dev/null || return 0
+  v="$(bwrap --version 2>/dev/null </dev/null || true)"
+  v="${v%%$'\n'*}"
+  v="${v##* }"
+  _as_bwrap_fixed "$v" && return 0
+  bin="$(command -v bwrap)"
+  if [[ -n "$v" ]]; then
+    _as_msg "bubblewrap $v ($bin) is below 0.12.0, which agent-sandbox needs (it fixes CVE-2026-87766); refusing to launch."
+  else
+    _as_msg "bwrap --version ($bin) names no version; agent-sandbox needs bubblewrap 0.12.0 or newer (it fixes CVE-2026-87766); refusing to launch."
   fi
-  [[ "$_overlay_supported" == yes ]]
+  _as_msg "  On Ubuntu: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source, rebuilt locally); elsewhere see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'."
+  return 1
 }
 
 # _as_connect_sync VERB CHANNEL KIND SOURCE COPY MANIFEST -- run the three-way
@@ -3619,10 +3629,10 @@ _as_join_stage_inside() { printf '/run/agent-sandbox-stage'; }
 _as_join_lower_inside() { printf '/run/agent-sandbox-lower'; }
 
 # _as_join_scoped_overlay_ok KIND -- is a `copy-on-write join-scoped` path an overlay per
-# join? A directory, with overlays not switched off and a bubblewrap that mounts them;
-# otherwise a seeded copy per join, as `copy-on-write` for the role becomes `copy`.
+# join? A directory, with overlays not switched off; otherwise a seeded copy per join,
+# as `copy-on-write` for the role becomes `copy`.
 _as_join_scoped_overlay_ok() {
-  [[ "$1" == dir && "${_overlay_mode:-auto}" != off ]] && _as_overlay_ok
+  [[ "$1" == dir && "${_overlay_mode:-auto}" != off ]]
 }
 
 # _as_join_scoped_bind KIND PATH [SEED [LOWER]] -- the launch's side of one join-scoped
@@ -10106,13 +10116,13 @@ _as_setup_remote_alias() {
   cv="${cand#*:}" cv="${cv%%[-+~]*}"
   if [[ "$bv" == missing ]]; then
     pkgs+=("$(_as_remote_pkg "$pm" bwrap)")
-    if [[ "$cv" =~ $vre ]] && ! printf '%s\n' 0.12.0 "$cv" | sort -V -C; then
+    if [[ "$cv" =~ $vre ]] && ! _as_bwrap_fixed "$cv"; then
       rebuild=1
       _as_msg "$p bwrap missing (package bubblewrap; apt offers $cand, below 0.12.0, so a rebuild follows it)"
     else
       _as_msg "$p bwrap missing (package bubblewrap)"
     fi
-  elif [[ "$bv" =~ $vre ]] && printf '%s\n' 0.12.0 "$bv" | sort -V -C; then
+  elif _as_bwrap_fixed "$bv"; then
     _as_msg "$p bwrap $bv ok"
   else
     rebuild=1
@@ -11923,7 +11933,7 @@ _as_check_binds() {
                 ;;
               read-only) seen="native, read-only" ;;
               copy-on-write)
-                if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
+                if [[ "$kind" == file ]] || [[ "$_overlay_mode" == off ]]; then
                   seen="this role's copy of native (copy-on-write as copy)"
                 else
                   seen="an overlay: native read through, writes in this role"
@@ -17348,7 +17358,12 @@ agent_sandbox() (
     fi
     # A COLD START: no keeper is live, the lock is held, and this invocation builds the
     # next launch. Its account's directory is checked now (#355), before anything is
-    # made. What a run-scoped store held belongs to a run that is over.
+    # made. What a run-scoped store held belongs to a run that is over. The bubblewrap
+    # that will run it is checked first: below 0.12.0 nothing starts (_as_bwrap_check).
+    _as_bwrap_check || {
+      _as_keeper_unlock
+      return 1
+    }
     _as_account_check || {
       _as_keeper_unlock
       return 2
@@ -17854,8 +17869,8 @@ agent_sandbox() (
           _as_msg "connect (${_connect_project_where}): 'project = copy-on-write' is refused under --preset native, which layers nothing."
           return 1
         fi
-        if [[ "$_overlay_mode" == off ]] || ! _as_overlay_ok; then
-          _as_msg "connect (${_connect_project_where}): 'project = copy-on-write' needs an overlay, and $([[ "$_overlay_mode" == off ]] && printf 'the overlay is turned off' || printf 'this bubblewrap cannot mount one (it needs 0.11)'); refusing rather than copying the whole project."
+        if [[ "$_overlay_mode" == off ]]; then
+          _as_msg "connect (${_connect_project_where}): 'project = copy-on-write' needs an overlay, and the overlay is turned off; refusing rather than copying the whole project."
           return 1
         fi
         local _pup _pwk

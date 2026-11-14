@@ -289,53 +289,70 @@ fake_os_release() {
   printf 'ID=%s\nID_LIKE="%s"\nVERSION_CODENAME=%s\n' "$1" "$2" "$3" >"$T/os-release"
 }
 
-@test "--dry-run warns when bubblewrap is older than 0.12.0 (CVE-2026-87766), and not at 0.12.0 or newer" {
+# packages_step -- a real (not dry) run of the Packages section alone
+# (AGENT_SANDBOX_INSTALL_STEP=packages), with $T/bin first on PATH and the fake os-release
+packages_step() {
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_OS_RELEASE="$T/os-release" AGENT_SANDBOX_INSTALL_STEP=packages "$REPO_ROOT/install.sh"
+}
+
+@test "a bubblewrap below 0.12.0 (CVE-2026-87766), or of no version, stops the install; 0.12.0 or newer passes" {
   mkdir -p "$T/bin"
   stub_apt_cache '(none)'
   fake_os_release fedora '' ''
   local v
-  for v in 0.9.0 0.11.1; do
+  for v in 0.9.0 0.11.1 0.11.99 ''; do
     stub_bwrap "$v"
-    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
-      AGENT_SANDBOX_OS_RELEASE="$T/os-release" "$REPO_ROOT/install.sh" --dry-run
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"bwrap installed:    bubblewrap $v"* ]]
-    [[ "$output" == *"bubblewrap $v is older than 0.12.0"*"CVE-2026-87766"* ]]
+    packages_step
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[err] bubblewrap ${v:-of unknown version} ($T/bin/bwrap) is below 0.12.0, which agent-sandbox requires"*"CVE-2026-87766"* ]]
     [[ "$output" == *"docs/troubleshooting.md"* ]]
+    [[ "$output" != *"bwrap installed:"* ]]
   done
-  for v in 0.12.0 0.12.1 1.0.0; do
+  for v in 0.12.0 0.12.1 0.13.0 1.0.0; do
     stub_bwrap "$v"
-    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" "$REPO_ROOT/install.sh" --dry-run
+    packages_step
     [ "$status" -eq 0 ]
     [[ "$output" == *"bwrap installed:    bubblewrap $v"* ]]
-    [[ "$output" != *"older than 0.12.0"* ]]
+    [[ "$output" != *"below 0.12.0"* ]]
   done
 }
 
-@test "the old-bubblewrap warning names the route that applies: apt, --rebuild-bwrap on Ubuntu, the docs elsewhere" {
+@test "--dry-run reports a bubblewrap below 0.12.0 as what stops a real run, and goes on" {
+  mkdir -p "$T/bin"
+  stub_apt_cache '(none)'
+  fake_os_release fedora '' ''
+  stub_bwrap 0.11.1
+  run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
+    AGENT_SANDBOX_OS_RELEASE="$T/os-release" "$REPO_ROOT/install.sh" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn] (dry-run) a real run stops here: bubblewrap 0.11.1 ($T/bin/bwrap) is below 0.12.0"* ]]
+  [[ "$output" == *"==> Agents"* ]] # it went on
+}
+
+@test "the old-bubblewrap error names the route that applies: apt, --rebuild-bwrap on Ubuntu, the docs elsewhere" {
   mkdir -p "$T/bin"
   stub_bwrap 0.11.1
-  warned() { # warned CANDIDATE ID ID_LIKE
+  refused() { # refused CANDIDATE ID ID_LIKE
     stub_apt_cache "$1"
     fake_os_release "$2" "$3" resolute
-    run env -i ${BASH_ENV:+BASH_ENV="$BASH_ENV"} HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" \
-      AGENT_SANDBOX_OS_RELEASE="$T/os-release" "$REPO_ROOT/install.sh" --dry-run
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"bubblewrap 0.11.1 is older than 0.12.0"*"CVE-2026-87766"* ]]
+    packages_step
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[err] bubblewrap 0.11.1 ($T/bin/bwrap) is below 0.12.0"*"CVE-2026-87766"* ]]
   }
   # apt already has a fixed one: install it, no rebuild
-  warned 0.12.0-1 ubuntu debian
-  [[ "$output" == *"apt offers bubblewrap 0.12.0-1: sudo apt install bubblewrap"* ]]
+  refused 0.12.0-1 ubuntu debian
+  [[ "$output" == *"To get 0.12.0, apt offers bubblewrap 0.12.0-1: sudo apt install bubblewrap"* ]]
   [[ "$output" != *"--rebuild-bwrap"* ]]
   # Ubuntu (by ID or ID_LIKE) whose apt has none: the option
-  warned 0.11.1-1ubuntu0.3 ubuntu debian
-  [[ "$output" == *"run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source"* ]]
+  refused 0.11.1-1ubuntu0.3 ubuntu debian
+  [[ "$output" == *"To get 0.12.0, run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source"* ]]
   [[ "$output" != *"sudo apt install bubblewrap"* ]]
-  warned 0.11.1-1ubuntu0.3 pop "ubuntu debian"
+  refused 0.11.1-1ubuntu0.3 pop "ubuntu debian"
   [[ "$output" == *"run: ./install.sh --rebuild-bwrap"* ]]
   # not Ubuntu: the docs, never the option
-  warned '(none)' fedora ''
-  [[ "$output" == *"see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"* ]]
+  refused '(none)' fedora ''
+  [[ "$output" == *"To get 0.12.0, see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"* ]]
   [[ "$output" != *"--rebuild-bwrap"* ]]
 }
 

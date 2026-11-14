@@ -138,8 +138,8 @@ system-wide mode; the installer refuses to run through `sudo`. See
 
 ## Install
 
-Requirements: Linux with unprivileged user namespaces, `bubblewrap` (0.12.0 or newer
-recommended: the installer warns below it, and
+Requirements: Linux with unprivileged user namespaces, `bubblewrap` 0.12.0 or newer
+(required: the installer stops and `asb` refuses to launch below it;
 [troubleshooting.md](docs/troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604)
 has the recipe for Ubuntu 24.04 and 26.04), `curl`, `git`, `python3` on `PATH` when you
 launch (every session is joined into its role's running sandbox by a small

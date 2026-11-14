@@ -197,15 +197,6 @@ EOF
     "$SBOX/instructions/work/$(slugify "$C/rules")" "$C/rules"
 }
 
-@test "the overlay check reads bwrap's help whole: one that goes on writing after the match is still an overlay" {
-  # Piped into `grep -q`, the rest of the help hit a closed pipe, bwrap died of SIGPIPE,
-  # and pipefail made it "no overlay" -- rarely, at random, on CI.
-  run_engine AGENT_SANDBOX_TEST_HELP_MORE=1 -- asb --connect 'instructions=copy-on-write native' claude --version
-  [ "$status" -eq 0 ]
-  argv_has --overlay-src "$C/rules" --overlay
-  [[ "$output" != *"cannot mount an overlay"* ]]
-}
-
 @test "cow on a FILE-shaped path is copy, permanently: overlayfs cannot stack on a file" {
   printf 'YOURS\n' >"$C/CLAUDE.md"
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy-on-write native' -- asb claude --version
@@ -1438,14 +1429,6 @@ DF
   [[ "$output" == *"'./data/': copy-on-write is using copy here -- the overlay is turned off"* ]]
   argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/data")" "$PROJ/data"
   run ! argv_has --overlay-src "$PROJ/data"
-}
-
-@test "on a bubblewrap too old for overlays, a copy-on-write path is copy, and the launch says so" {
-  mkdir -p "$PROJ/data"
-  run_engine AGENT_SANDBOX_TEST_NO_OVERLAY=1 -- asb --connect './data/ = copy-on-write' claude --version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"copy-on-write is using copy here -- this bubblewrap cannot mount an overlay"* ]]
-  argv_has --bind "$SBOX/@paths/copy/$(slugify "$PROJ/data")" "$PROJ/data"
 }
 
 @test "a run-scoped copy-on-write path keeps its layers under @run" {

@@ -301,8 +301,8 @@ namespace that owns the mounts. A foreground `claude` and `--exec` are joins; `-
 the management verbs will be (#123, #126).
 
 **Overlay.** overlayfs: a merged view of a read-only lower layer (the source) and a
-writable upper layer (the sandbox's), which is how `copy-on-write` is implemented. Needs
-bubblewrap 0.11 or newer; cannot stack on a single file. *shipped*
+writable upper layer (the sandbox's), which is how `copy-on-write` is implemented.
+Cannot stack on a single file. *shipped*
 
 **Slot.** The directory or file under the sandbox's state that an `own` connection
 binds. *shipped*

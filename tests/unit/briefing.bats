@@ -17,11 +17,6 @@ setup() {
 #!/usr/bin/env bash
 . "${0%/*}/stub-env"
 set +x
-# a bubblewrap that can mount an overlay, as the harness's own stub says it can
-if [ "${1:-}" = --help ]; then
-  printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'
-  exit 0
-fi
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 if [ -n "${BWRAP_COPY:-}" ]; then
