@@ -710,6 +710,21 @@ W
   [ "$(stat -c %a "$T/bench/.agent-sandbox")" = 640 ]
   [ "$(stat -c %i "$T/bench/.agent-sandbox")" = "$ino" ]
   [ -z "$(find "$T/bench" -maxdepth 1 -name '.agent-sandbox.?*')" ] # no temp left
+  [[ "$output" != *"hard link"* ]]
+}
+
+@test "--setup-remote: a policy there with another name (a hard link) is written in place, and the warning comes back (#389)" {
+  require_host "asb --setup-remote is the host's; the engine refuses it inside a sandbox"
+  remote_host
+  full_section
+  local T="$R/home/tob"
+  mkdir -p "$T/bench"
+  printf '# an older policy\n' >"$T/bench/.agent-sandbox"
+  ln "$T/bench/.agent-sandbox" "$T/other-name"
+  setup_remote
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning — $T/bench/.agent-sandbox has 1 other name(s) (a hard link)"* ]]
+  grep -qx '\[sshd\]' "$T/other-name"
 }
 
 @test "--setup-remote: .asb/remote/.gitignore is never written through a link a sandbox left there, a dangling one included (#344)" {

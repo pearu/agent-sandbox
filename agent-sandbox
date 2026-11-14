@@ -10528,7 +10528,7 @@ _as_remote_apply_script() {
   printf '# agent-sandbox --setup-remote: the account'"'"'s part of [remote:%s].\n' "$alias"
   printf 'alias=%q\np=%q\nwpol=%q\ntmpdir=%q\ndown=%q\nup=%q\npub=%q\nwait=%q\n' \
     "$alias" "$rscratch" "$wpol" "$tmpdir" "$down" "$up" "$pub" 60
-  declare -f _as_msg _as_path_slug _as_sha256_str _as_dotfile_write
+  declare -f _as_msg _as_path_slug _as_sha256_str _as_dotfile_write _as_dotfile_link_note
   printf 'write_policy() {\n  cat <<'"'"'ASB_POLICY_EOF'"'"'\n%s\nASB_POLICY_EOF\n}\n' "$policy"
   cat <<'APPLY'
 say() { printf '%s\t%s\n' "$1" "$2"; }
@@ -10545,7 +10545,9 @@ if [ "$wpol" = 1 ]; then
   # so the running login's read-only bind of it holds until it is relaunched below; a new
   # one through a temporary file mktemp makes beside it (never a fixed name the scratch's
   # sandbox could link) at the account's umask, renamed into place.
-  write_policy | _as_dotfile_write "$p/.agent-sandbox" || { say error "cannot write $p/.agent-sandbox"; exit 1; }
+  write_policy | _as_dotfile_write "$p/.agent-sandbox" 2>/dev/null || { say error "cannot write $p/.agent-sandbox"; exit 1; }
+  hl="$(stat -c %h -- "$p/.agent-sandbox" 2>/dev/null)"
+  [ "${hl:-1}" -le 1 ] || say warn "$(_as_dotfile_link_note "$p/.agent-sandbox" "$hl")"
 fi
 k="$HOME/.config/agent-sandbox/asb-$alias-keys"
 (umask 077 && mkdir -p -- "${k%/*}" && printf '%s\n' "$pub" >"$k.new" && mv -f -- "$k.new" "$k") \
@@ -10867,6 +10869,7 @@ _as_remote_account() {
     v="${v//[[:cntrl:]]/?}"
     case "$k" in
       error) _as_msg "$p $v" ;;
+      warn) _as_msg "$p $v" ;;
       log) _as_msg "$p   $v" ;;
       hostkey) hostkey="$v" ;;
       made) _as_msg "$p made TMPDIR $v there, under the scratch (the section's env)" ;;
@@ -13307,8 +13310,14 @@ _as_init() {
     return 0
   }
   _init_running() {
-    local sb role prof dir path why key mode where old _ic _keeper_target="" _keeper_spid="" i
-    local -a hits=() dirs=() paths=()
+    local sb role prof dir path why key mode where old _ic _keeper_target="" _keeper_spid="" i a tpath gdir br
+    local -a hits=() dirs=() paths=() readds=()
+    # the old clones a re-added instance's run moves: tree and history, as REL
+    for a in ${clones[@]+"${clones[@]}"}; do
+      [[ -n "${readd[${a%%$'\t'*}]:-}" ]] || continue
+      read -r tpath gdir br <<<"${a#*$'\t'}"
+      readds+=("${tpath%/}" "${gdir%/}")
+    done
     local -A seen=()
     for sb in "$(_as_state_dir)"/*/"$(_as_path_slug "$proj")"/*/; do
       sb="${sb%/}" role="${sb##*/}"
@@ -13341,6 +13350,18 @@ _as_init() {
         elif [[ "$_ic" == replace && "$dir" == "?" ]]; then
           why+="${why:+, }${path#"$proj"/} may become writable for it"
         fi
+      done
+      # A re-added instance's old clone is moved to a backup (_init_stale_clone): a live
+      # sandbox with a mount at or below it -- its keeper's declarations, keeper/policy --
+      # loses it from under that mount. Refused; a clone no live sandbox has moves.
+      for i in ${readds[@]+"${!readds[@]}"}; do
+        path="$proj/${readds[i]}"
+        [[ -e "$path" || -L "$path" ]] || continue
+        while IFS=$'\t' read -r key _; do
+          [[ "$key" == "connect:$path" || "$key" == "connect:$path"/* ]] || continue
+          why+="${why:+, }${readds[i]} would be moved from under it (an instance added again; its old clone goes to .asb/backup/)"
+          break
+        done <"$sb/keeper/policy"
       done
       [[ -z "$why" ]] || hits+=("  role '$role': $why$old -- first: $invoked --role $role --shutdown $prof")
     done
@@ -14067,7 +14088,7 @@ _as_trust_review() {
 # A NEW FILE is written to a temporary file beside it and renamed into place: a link
 # planted there since it was checked is replaced, never followed.
 _as_dotfile_write() {
-  local f="$1" t fd a b
+  local f="$1" t fd a b h
   if [[ -f "$f" && ! -L "$f" ]]; then
     if [[ ! -w "$f" ]]; then
       _as_msg "$f could not be written: it is not writable (mode $(stat -c %a -- "$f" 2>/dev/null)); nothing was written"
@@ -14094,8 +14115,10 @@ _as_dotfile_write() {
     # function's declare -f to the account's side
     if dd if="$t" of="/dev/fd/$fd" conv=notrunc status=none 2>/dev/null \
       && truncate -s "$(stat -c %s -- "$t")" -- "/dev/fd/$fd" 2>/dev/null; then
+      h="$(stat -L -c %h "/dev/fd/$fd" 2>/dev/null)"
       exec {fd}<&-
       rm -f -- "$t"
+      [[ "${h:-1}" -le 1 ]] || _as_msg "$(_as_dotfile_link_note "$f" "$h")"
       return 0
     fi
     exec {fd}<&-
@@ -14116,6 +14139,15 @@ _as_dotfile_write() {
   rm -f -- "$t"
   _as_msg "$f could not be written; nothing was written"
   return 1
+}
+
+# _as_dotfile_link_note FILE LINKS -- the warning for a dot-file written in place that has
+# other names (a hard link, LINKS > 1, #389): they show the new text too, and whoever can
+# write one can change it. Not a refusal. The other names cannot be found from the file,
+# so the note gives the command that lists them.
+_as_dotfile_link_note() {
+  printf 'warning — %s has %s other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find / -xdev -samefile %q 2>/dev/null' \
+    "$1" "$(($2 - 1))" "$1"
 }
 
 # _as_dotfile_read FILE -- FILE's text on stdout, read through a descriptor shown to be

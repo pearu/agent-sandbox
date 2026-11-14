@@ -610,10 +610,13 @@ Stated plainly. These are what the adversary above can still do.
   failed in-place write can leave a
   half-written file, which a launch refuses through the trust gate (its hash is not the
   approved one). A hard link to `.agent-sandbox` made while it was not bound keeps
-  pointing at the live file after an in-place write, where a rename used to cut it. A
-  re-added instance whose old sandbox still runs keeps that sandbox: its working-tree path
-  then shows the fresh clone read-only, and it can still write the moved backup tree and
-  its old history.
+  pointing at the live file after an in-place write, where a rename used to cut it: the
+  write warns when the file has another name, and gives the `find -samefile` line to list
+  it. An instance a count removes while its sandbox runs, with no file of it bound going
+  (its purpose file changed by you, and kept), is not refused: that sandbox keeps running
+  with the policy it launched with until it is shut down, though the dot-file no longer
+  declares it. (Re-adding an instance whose old sandbox still has its clone declared is
+  refused: the clone would be moved from under it.)
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.

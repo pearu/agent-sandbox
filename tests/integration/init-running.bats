@@ -64,18 +64,19 @@ approve() {
   [[ "$output" == *"approved."* ]]
 }
 
-# start ROLE -- the role launched in the background, a command held in it until the
-# teardown (or stop); returns once it is inside
+# start ROLE [DIR] -- the role launched in the background, a command held in it until the
+# teardown (or stop), its marker in DIR (default out/, a directory the role can write);
+# returns once it is inside
 start() {
-  local i
+  local i m="${2:-out}"
   engine_cmd
   (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
     AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_PRESET=shared "${BASE[@]}" "${ENGINE_CMD[@]}" --role "$1" --profile probe --exec sh -c \
-    "touch out/$1.in; until [ -e out/release.all ]; do sleep 0.05; done") </dev/null >"$I/$1.out" 2>&1 3>&- &
+    "touch $m/$1.in; until [ -e out/release.all ]; do sleep 0.05; done") </dev/null >"$I/$1.out" 2>&1 3>&- &
   BGS+=($!)
   for ((i = 0; i < 300; i++)); do
-    [[ -e "$IWORK/out/$1.in" ]] && return 0
+    [[ -e "$IWORK/$m/$1.in" ]] && return 0
     sleep 0.05
   done
   echo "start $1: did not join:" >&2
@@ -178,4 +179,40 @@ inside() {
   asb_host --init tiny
   [ "$status" -eq 0 ]
   [[ "$output" == *"updated .asb/roles/writer.md from model 'tiny'"* ]]
+}
+
+@test "re-adding an instance while its old sandbox runs on its clone is refused, the clone still there for it; after --shutdown it goes ahead" {
+  # a model with numbered workers, each with a clone of the project, read-write
+  git -C "$IWORK" init -q
+  git -C "$IWORK" -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m init
+  M2="$I/models/clones"
+  mkdir -p "$M2"
+  cat >"$M2/agent-sandbox" <<'MODEL'
+[connect:worker-{n}]
+#@ clone = .asb/impl/{n}/ .asb/git/{n}/ impl-{n}
+project = read-only
+.asb/impl/{n}/ = read-write
+.asb/git/{n}/ = read-write
+MODEL
+  rm -f "$IWORK/.agent-sandbox"
+  asb_host --init clones worker=2
+  [ "$status" -eq 0 ]
+  approve
+  start worker-2 .asb/impl/2
+  asb_host --init clones worker=1 # removed while it runs: no file of it goes (#389 ii)
+  [ "$status" -eq 0 ]
+  [ -d "$IWORK/.asb/impl/2" ]
+  asb_host --init clones worker=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'worker-2': .asb/impl/2 would be moved from under it"*" --role worker-2 --shutdown probe"* ]]
+  [ ! -e "$IWORK/.asb/backup" ]
+  run_sandboxed "${BASE[@]}" -- --role worker-2 --profile probe --exec sh -c 'ls .asb/impl/2/worker-2.in && touch .asb/impl/2/still-mine && echo WROTE'
+  [[ "$output" == *"WROTE"* ]]
+  [ -e "$IWORK/.asb/impl/2/still-mine" ] # its clone is where it was, and still its
+  asb_host --role worker-2 --shutdown probe
+  [ "$status" -eq 0 ]
+  asb_host --init clones worker=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"worker-2 is added again"* ]]
+  [ -d "$IWORK/.asb/backup" ]
 }

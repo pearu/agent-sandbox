@@ -1163,7 +1163,11 @@ names are gone; there are no aliases for removed names before 1.0.
   removal of one refuses. A role with the project read-only keeps running and sees the
   new text. `--init` no longer renames a file over one of the same text (`.asb/init.sums`
   keeps each record in its place), and `--apply` says what it added only once it is
-  written.
+  written. A count that adds an instance again while its old sandbox still runs with its
+  clone declared is refused too (its clone would be moved to `.asb/backup/` from under
+  it). A dot-file with another name (a hard link) is still written in place, with a
+  warning that the other name shows the new text, and the `find -samefile` line that
+  lists it.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`

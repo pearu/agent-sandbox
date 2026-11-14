@@ -2766,12 +2766,14 @@ shared_env() {
 # and its payload, as _as_keeper_live checks them, and RECORD is its keeper/binds, as
 # `DIR<TAB>PATH` lines (written NUL-separated, as _as_keeper_binds does). With RUNNING_OLD=1 a keeper an
 # older asb started: no binds, RECORD is its keeper/policy, and the project's
-# .agent-sandbox as it is now its dotfile.copy. Sets RUN_PID.
+# .agent-sandbox as it is now its dotfile.copy. Sets RUN_PID, and RUN_SB, its directory
+# (keeper/policy there: its declarations, for a test to write).
 running() {
   local sb="$H/home/.local/state/agent-sandbox/${2:-claude}/${PROJ//[^A-Za-z0-9-]/-}/$1" st
   mkdir -p "$sb/keeper"
   sleep 600 >/dev/null 2>&1 3>&- &
   RUN_PID=$!
+  RUN_SB="$sb"
   printf '%s\n' "$RUN_PID" >>"$H/sleeps"
   st="$(awk '{ print $22 }' "/proc/$RUN_PID/stat")"
   printf '%s %s %s %s %s %s\n' "$RUN_PID" "$st" "$RUN_PID" "$st" "$RUN_PID" "$st" >"$sb/keeper/id"
@@ -3099,4 +3101,62 @@ binds_of() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"agent-sandbox: $PROJ/.agent-sandbox could not be written: it is not writable (mode 444); nothing was written"* ]]
   cmp "$H/before" "$PROJ/.agent-sandbox"
+}
+
+@test "re-adding an instance whose old sandbox still runs with its clone declared: refused (2), the clone where it was, no backup, nothing written; after it ends, the run goes ahead (#389)" {
+  fixed_date
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1 # removed while nothing runs; its clone left
+  [ "$status" -eq 0 ]
+  running implementer-2 </dev/null
+  printf 'connect:%s\tread-write\t.agent-sandbox [connect:implementer-2]\n' "$PROJ/.asb/impl/2" "$PROJ/.asb/git/2" >"$RUN_SB/keeper/policy"
+  snap before
+  init -- roles implementer=2
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'implementer-2': .asb/impl/2 would be moved from under it (an instance added again; its old clone goes to .asb/backup/), .asb/git/2 would be moved from under it (an instance added again; its old clone goes to .asb/backup/) -- first: "*" --role implementer-2 --shutdown claude"* ]]
+  [[ "$output" != *"is added again"* ]]
+  [ ! -e "$PROJ/.asb/backup" ]
+  [ -f "$PROJ/.asb/impl/2/.git" ]
+  [ -d "$PROJ/.asb/git/2" ]
+  snap after
+  cmp "$H/snap.before" "$H/snap.after"
+  stopped
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"implementer-2 is added again"* ]]
+  [ -d "$PROJ/.asb/backup/implementer-2-20260101T000000Z" ]
+}
+
+@test "re-adding an instance goes ahead with nothing to move, or when no live sandbox has its old clone (the Supervisor has .asb/impl/ around it) (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  running supervisor </dev/null
+  printf 'connect:%s\tread-only\t.agent-sandbox [connect:supervisor]\n' "$PROJ/.asb/impl" "$PROJ/.asb/git" >"$RUN_SB/keeper/policy"
+  init -- roles implementer=2 # the clone moves inside the Supervisor's mount of .asb/impl/
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"implementer-2 is added again"* ]]
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  rm -rf "$PROJ/.asb/impl/2" "$PROJ/.asb/git/2" # nothing left to move
+  running implementer-2 </dev/null
+  printf 'connect:%s\tread-write\t.agent-sandbox [connect:implementer-2]\n' "$PROJ/.asb/impl/2" "$PROJ/.asb/git/2" >"$RUN_SB/keeper/policy"
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cloned for implementer-2"* ]]
+}
+
+@test "a re-run that writes .agent-sandbox in place warns when it has another name (a hard link), which shows the new text; none with one name (#389)" {
+  init -- roles
+  [ "$status" -eq 0 ]
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"hard link"* ]]
+  ln "$PROJ/.agent-sandbox" "$H/other-name"
+  init -- roles implementer=3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find / -xdev -samefile $PROJ/.agent-sandbox"* ]]
+  grep -qF '[connect:implementer-3]' "$H/other-name"
 }

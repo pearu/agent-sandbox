@@ -557,7 +557,11 @@ running role with the project read-write or read-only (an instance above a count
 set to 0, while it runs), naming each role and the `asb --role ROLE --shutdown` to run
 first; shut it down, run `--init` again, then launch it. A removed instance's purpose
 file you changed is kept, not removed, so that run goes ahead and the instance keeps
-running. Roles with the project read-only (Planners, Implementers, Reviewers, the Gate)
+running with the policy it launched with until you shut it down, though the dot-file no
+longer declares it. A count that adds that instance again while its old sandbox still
+runs on its clone is refused the same way: the old clone would be moved to
+`.asb/backup/` from under it. With no old clone left, or no running sandbox of it, the
+re-add goes ahead. Roles with the project read-only (Planners, Implementers, Reviewers, the Gate)
 keep running and see a new purpose file read-only; under a copy-on-write project (the
 `github` roles) a running role keeps the old one, also when `--init` removes it. The same
 holds for a write outside asb: an editor's save that renames a new file into place,

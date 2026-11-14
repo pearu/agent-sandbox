@@ -981,6 +981,14 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
   [ "$(stat -c %a "$PROJ/.agent-sandbox")" = 640 ]
   [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ] # no temp beside it
+  [[ "$output" != *"hard link"* ]]
+  # another name for it: written in place still, and said
+  ln "$PROJ/.agent-sandbox" "$H/other-name"
+  run_apply 'y\n' '[allow]' example.org
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %i "$PROJ/.agent-sandbox")" = "$ino" ]
+  [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too"* ]]
+  grep -qx example.org "$H/other-name"
 }
 
 @test "_as_dotfile_write: an existing file in place, cut to the new text; a new file made; a link replaced, its target untouched (#389)" {
