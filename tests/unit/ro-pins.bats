@@ -18,6 +18,11 @@ setup() {
     "$P/x/a/b/f.md" "$P/a/bc/d/f" "$P/a/z/f.md"
 }
 
+# a test that made a directory unwritable and failed before restoring it: bats can remove it
+teardown() {
+  chmod -R u+w "$BATS_TEST_TMPDIR" 2>/dev/null || true
+}
+
 # pins [native] -- OPTS -- OUT and PIN from _as_ro_pins over the words after --, the engine
 # sourced in a subshell; MSG its messages, RC its status.
 pins() {
@@ -115,21 +120,32 @@ pinned() {
 
 # cache_pins MODEL ROLE=PINS... -- with ~/.claude/cache/changelog.md in the home (the
 # changelog channel's file), each ROLE's launch under the model's own preset pins exactly
-# PINS (comma-separated, any order) and ~/.claude/cache.
+# PINS (comma-separated, any order) and ~/.claude/cache. Without the file (NOCACHE=1)
+# exactly PINS; with HOME a symbolic link to the home (HLINK=1), the same.
 cache_pins() {
   model "$1"
   shift
-  mkdir -p "$H/home/.claude/cache"
-  printf 'log\n' >"$H/home/.claude/cache/changelog.md"
+  local -a envs=(AGENT_SANDBOX_NET=none)
+  if [[ "${HLINK:-0}" == 1 ]]; then
+    ln -s home "$H/hlink"
+    envs+=(HOME="$H/hlink")
+  fi
+  if [[ "${NOCACHE:-0}" != 1 ]]; then
+    mkdir -p "$H/home/.claude/cache"
+    printf 'log\n' >"$H/home/.claude/cache/changelog.md"
+  fi
   local rp role want got
   for rp in "$@"; do
     role="${rp%%=*}" want="${rp#*=}"
-    TEST_PRESET='' run_engine AGENT_SANDBOX_NET=none -- asb --role "$role" claude --version
-    [ "$status" -eq 0 ]
+    TEST_PRESET='' run_engine "${envs[@]}" -- asb --role "$role" claude --version
+    [ "$status" -eq 0 ] || {
+      echo "$role: refused: $output" >&2
+      return 1
+    }
     # shellcheck disable=SC2088 # the message's own ~
     want="$({
       tr ',' '\n' <<<"$want"
-      echo '~/.claude/cache'
+      [[ "${NOCACHE:-0}" == 1 ]] || echo '~/.claude/cache'
     } | grep . | sort | paste -sd' ')"
     got="$(printf '%s\n' "$output" | sed -n "s/^agent-sandbox: pinned, above a read-only, hidden or own path (the role cannot rename or remove them): //p" | tr ',' '\n' | sed 's/^ *//' | sort | paste -sd' ')"
     [ "$got" = "$want" ] || {
@@ -592,6 +608,120 @@ cache_pins() {
   [ "$RC" -eq 0 ]
 }
 
+@test "B1: a read-write FILE declaration of the same object, or of a file inside a read-only directory source, is a contradiction" {
+  local e="$BATS_TEST_TMPDIR/ext"
+  mkdir -p "$e/d"
+  touch "$e/x.md" "$e/d/x.md"
+  pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$e/x.md" "$P/alt.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"binds $e/x.md read-only at $P/cfg/x.md, and $P/alt.md shows it read-write at $P/alt.md"* ]]
+  pins -- --bind "$P" "$P" --ro-bind "$e/d" "$P/cfg" --bind "$e/d/x.md" "$P/alt.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"shows $e/d/x.md, inside it, read-write at $P/alt.md"* ]]
+}
+
+@test "B2: host paths compared resolved: a read-write mount given through a link shows the resolved source (contradiction, replaceable link, source pins)" {
+  local real="$BATS_TEST_TMPDIR/home" hl="$BATS_TEST_TMPDIR/hlink"
+  mkdir -p "$real/store/roles" "$real/store/realdir" "$P/cfg"
+  touch "$real/store/roles/x.md" "$real/store/realdir/y.md"
+  ln -s home "$hl"
+  ln -s realdir "$real/store/l"
+  pins -- --bind "$P" "$P" --bind "$hl" "$hl" --ro-bind "$real/store/roles/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"shows it read-write at $hl/store/roles/x.md"* ]]
+  pins -- --bind "$P" "$P" --bind "$hl" "$hl" --ro-bind "$real/store/l/y.md" "$P/cfg/y.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its source goes through $real/store/l, a symbolic link in a directory the role can write"* ]]
+  # an object the role cannot write: no contradiction, the directories above it pinned
+  # where the linked mount shows them
+  chmod 444 "$real/store/roles/x.md"
+  PINS_PRE='_as_ro_pins_uid() { printf 0; }; _as_ro_pins_find_writable() { :; }' \
+    pins -- --bind "$P" "$P" --bind "$hl" "$hl" --ro-bind "$real/store/roles/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 0 ]
+  [[ " ${PIN[*]} " == *" $hl/store "* ]]
+  [[ " ${PIN[*]} " == *" $hl/store/roles "* ]]
+  chmod 644 "$real/store/roles/x.md"
+}
+
+@test "B3: a part already read-write at its own place, shown read-write at a second path too, is not a contradiction" {
+  mkdir -p "$P/out" "$BATS_TEST_TMPDIR/home/out-alias"
+  # project = read-only, ./out/ = read-write, ~/out-alias/ = read-write outside:./out/
+  pins -- --ro-bind "$P" "$P" --bind "$P/out" "$P/out" --bind "$P/out" "$BATS_TEST_TMPDIR/home/out-alias"
+  [ "$RC" -eq 0 ]
+  local s="$BATS_TEST_TMPDIR/src/libfoo"
+  mkdir -p "$s/build" "$P/ref" "$P/build"
+  # ./ref/ = read-only outside:~/src/libfoo/, ./ref/build/ and ./build/ read-write outside:~/src/libfoo/build/
+  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$s/build" "$P/ref/build" --bind "$s/build" "$P/build"
+  [ "$RC" -eq 0 ]
+  # without the part read-write in place it is one
+  pins -- --bind "$P" "$P" --ro-bind "$s" "$P/ref" --bind "$s/build" "$P/build"
+  [ "$RC" -eq 1 ]
+}
+
+@test "B4: a directory the role neither owns nor can write, holding a file it can write, is writable to it: a contradiction" {
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/foreign" "$P/cfg"
+  touch "$h/foreign/f"
+  chmod 666 "$h/foreign/f"
+  chmod 555 "$h/foreign"
+  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/foreign" "$P/cfg"
+  [ "$RC" -eq 1 ]
+  PINS_PRE='_as_ro_pins_uid() { printf 0; }; _as_ro_pins_find_writable() { :; }' \
+    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/foreign" "$P/cfg"
+  [ "$RC" -eq 0 ] # nothing in it the role can write
+  chmod 755 "$h/foreign"
+}
+
+@test "B5: another name of a read-only file (a hard link) in a directory shown read-write is a contradiction; a file with one link is not searched" {
+  local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$e" "$h" "$P/cfg"
+  printf 'x\n' >"$e/x.md"
+  printf 'y\n' >"$e/y.md"
+  ln "$e/x.md" "$h/alias.md"
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"shows it, as $h/alias.md (another name of the same file), read-write at $h/alias.md"* ]]
+  PINS_PRE='_as_ro_pins_samefile() { echo searched >&2; }' pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/y.md" "$P/cfg/y.md"
+  [ "$RC" -eq 0 ]
+  [[ "$MSG" != *searched* ]]
+}
+
+@test "mutants: a hidden read-only bind gets no pins; a hidden read-write part is no contradiction; the part's own could-write test counts" {
+  pins -- --bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md" --bind "$P" "$P"
+  same "${IN[@]}"
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/sub/deep" "$P/cfg" "$P/alt"
+  pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/alt" --ro-bind "$ST/x" "$P/alt"
+  [ "$RC" -eq 0 ] # the read-write view at ./alt is hidden by the later read-only bind
+  # shellcheck disable=SC2016 # the stand-in's own expansions
+  PINS_PRE='_as_ro_pins_writable() { [[ "$1" != */deep ]]; }' pins -- --bind "$P" "$P" --ro-bind "$h/sub" "$P/cfg" --bind "$h/sub/deep" "$P/alt"
+  [ "$RC" -eq 0 ] # the part is not writable to the role
+}
+
+@test "mutants: a link in a directory the role owns but has made unwritable is replaceable (it can chmod it)" {
+  local e="$BATS_TEST_TMPDIR/ext" # the target: not shown to the role, no contradiction
+  mkdir -p "$P/own" "$e/b"
+  touch "$e/b/f.md"
+  ln -s "$e" "$P/own/l"
+  chmod 555 "$P/own"
+  pins -- --bind "$P" "$P" --ro-bind "$P/own/l/b/f.md" "$P/x.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its source goes through $P/own/l, a symbolic link in a directory the role can write"* ]]
+  chmod 755 "$P/own"
+}
+
+@test "final view and the end of the list: a pin above a link in a directory a LATER read-write mount shows goes after that mount, at the end" {
+  local h="$BATS_TEST_TMPDIR/home/store" o="$BATS_TEST_TMPDIR/out"
+  mkdir -p "$h/d" "$o"
+  touch "$o/f.md"
+  ln -s "$o" "$h/d/l"
+  chmod 555 "$h/d"
+  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" -- cmd
+  [ "$RC" -eq 0 ]
+  same --bind "$P" "$P" --ro-bind "$h/d/l/f.md" "$P/x.md" --bind "$h" "$h" --bind "$h/d" "$h/d" -- cmd
+  chmod 755 "$h/d"
+}
+
 @test "not a contradiction: an object the role cannot write anyway (another user's, not writable)" {
   local h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$h/roles" "$P/cfg"
@@ -784,4 +914,40 @@ cache_pins() {
 
 @test "where ~/.claude/cache/changelog.md exists, the market role gets ~/.claude/cache pinned too" {
   cache_pins market market-1=./.asb,./.asb/roles default=
+}
+
+@test "the roles model under its own preset, without ~/.claude/cache/changelog.md: each role's pins exact, nothing refused" {
+  NOCACHE=1 cache_pins roles supervisor=./.asb,./.asb/roles setup=./.asb,./.asb/roles implementer-1= reviewer-1= planner-1= gate=
+}
+
+@test "the roles model under its own preset, under a linked \$HOME (a symbolic link to the home), with the changelog: each role's pins exact, nothing refused" {
+  HLINK=1 cache_pins roles supervisor=./.asb,./.asb/roles setup=./.asb,./.asb/roles implementer-1= reviewer-1= planner-1= gate=
+}
+
+@test "the roles model under its own preset, under a linked \$HOME, without the changelog: each role's pins exact, nothing refused" {
+  HLINK=1 NOCACHE=1 cache_pins roles supervisor=./.asb,./.asb/roles setup=./.asb,./.asb/roles implementer-1= reviewer-1= planner-1= gate=
+}
+
+@test "the github model under its own preset, without ~/.claude/cache/changelog.md: each role's pins exact, nothing refused" {
+  NOCACHE=1 cache_pins github gh-setup=./.asb,./.asb/roles gh-review-1= gh-triage-1= gh-fix-1= default=
+}
+
+@test "the github model under its own preset, under a linked \$HOME (a symbolic link to the home), with the changelog: each role's pins exact, nothing refused" {
+  HLINK=1 cache_pins github gh-setup=./.asb,./.asb/roles gh-review-1= gh-triage-1= gh-fix-1= default=
+}
+
+@test "the github model under its own preset, under a linked \$HOME, without the changelog: each role's pins exact, nothing refused" {
+  HLINK=1 NOCACHE=1 cache_pins github gh-setup=./.asb,./.asb/roles gh-review-1= gh-triage-1= gh-fix-1= default=
+}
+
+@test "the market model under its own preset, without ~/.claude/cache/changelog.md: each role's pins exact, nothing refused" {
+  NOCACHE=1 cache_pins market market-1=./.asb,./.asb/roles default=
+}
+
+@test "the market model under its own preset, under a linked \$HOME (a symbolic link to the home), with the changelog: each role's pins exact, nothing refused" {
+  HLINK=1 cache_pins market market-1=./.asb,./.asb/roles default=
+}
+
+@test "the market model under its own preset, under a linked \$HOME, without the changelog: each role's pins exact, nothing refused" {
+  HLINK=1 NOCACHE=1 cache_pins market market-1=./.asb,./.asb/roles default=
 }

@@ -1131,7 +1131,12 @@ names are gone; there are no aliases for removed names before 1.0.
   pinned. A read-only path whose source a read-write host mount of the launch also shows
   at another path (the object, a directory containing it, or a part of a directory source),
   where the role could write it, refuses the launch as a contradiction, naming both
-  declarations; declaring the source read-only at its own path too keeps both. Every
+  declarations; declaring the source read-only at its own path too keeps both. A
+  read-write single-file declaration counts, host paths are compared resolved (a linked
+  `$HOME`), a read-only file's other name (a hard link) in a directory shown read-write
+  counts, and a directory the role neither owns nor can write is writable to it where it
+  holds a file or directory the role owns or can write; a part read-write at its own place
+  inside the read-only directory and at a second path too is not a contradiction. Every
   decision is made on the final view of the binds, not on those made so far. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the

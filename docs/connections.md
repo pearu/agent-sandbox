@@ -560,17 +560,25 @@ launch removes again) or the role does not see it, it is not refused. Behind a l
 role cannot replace, the real path's directories are pinned.
 
 **A path declared read-only is not also shown read-write.** Where a read-write host mount
-of the launch shows a read-only path's source at another path -- the object itself, a
-directory containing it, or, for a directory source, a directory inside it -- the two
-declarations contradict, and the launch is refused, naming both and the host path:
-`./cfg/x.md = read-only outside:~/store/x.md` under `~/store/ = read-write` is refused.
-Declaring the source read-only at its own path too (`~/store/x.md = read-only`) keeps
-both: then the role sees it read-only at both paths. Not a contradiction: the object
-inside a read-write mount at its own path (`~/store/ = read-write` with
-`~/store/sub/x.md = read-only`), a read-write view of it that something covers (a deeper
-read-only declaration, a hide, a store, an overlay), a part of a read-only directory
-declared read-write at its own place inside it, and an object the role cannot write
-anyway (another user's, not writable to it).
+of the launch (a directory or a single file) shows a read-only path's source at another
+path -- the object itself, a directory containing it, or, for a directory source, a
+directory or file inside it -- the two declarations contradict, and the launch is
+refused, naming both and the host path: `./cfg/x.md = read-only outside:~/store/x.md`
+under `~/store/ = read-write`, or beside `~/store/x.md = read-write`, is refused. Host
+paths are compared resolved, so a mount given through a link (a `$HOME` that is a
+symbolic link) counts too. A read-only file with more than one name (a hard link) is
+refused the same way where another of its names is in a directory shown read-write
+(searched on its filesystem only when its link count is above one); the message names
+that other name. Declaring the source read-only at its own path too
+(`~/store/x.md = read-only`) keeps both: then the role sees it read-only at both paths.
+Not a contradiction: the object inside a read-write mount at its own path
+(`~/store/ = read-write` with `~/store/sub/x.md = read-only`), a read-write view of it
+that something covers (a deeper read-only declaration, a hide, a store, an overlay), a
+part of a read-only directory that is read-write at its own place inside it as well as
+elsewhere (`project = read-only`, `./out/ = read-write` and `~/out-alias/ = read-write
+outside:./out/`), and an object the role cannot write: another user's, not writable to
+it, and, for a directory, with nothing inside it (on its filesystem) that the role owns
+or can write.
 
 **Every one of these decisions is made on the final view** -- what shows at each path once
 every bind is made -- not on the binds made so far: declarations are bound by depth, so the
