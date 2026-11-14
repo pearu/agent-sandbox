@@ -1118,11 +1118,14 @@ names are gone; there are no aliases for removed names before 1.0.
   bind's source where a read-write host mount shows it, is now bound onto itself at
   launch, so its rename or removal fails with EBUSY: in the
   shipped models `.asb` and `.asb/roles` for the `roles` Supervisor and setup role, the
-  `github` setup role and the `market` role; none for the roles with a read-only or
-  copy-on-write project. A read-only path declared through a symbolic link the role can
-  replace (an entry of a directory it has read-write) refuses the launch, naming the link
-  and the path to declare instead; a link it cannot replace is not refused, and the real
-  path behind it is pinned. An option list the computation cannot read refuses the launch. A
+  `github` setup role and the `market` role, none for the roles with a read-only or
+  copy-on-write project; and, under the claude profile where `~/.claude/cache/changelog.md`
+  exists, `~/.claude/cache` for every role whose changelog channel is its own (every
+  preset but `shared` and `native`). A read-only path whose source resolves, link by link,
+  through a symbolic link the role can replace (an entry of a directory a read-write host
+  mount shows it, which it owns or can write) refuses the launch, naming that link and the
+  path to declare instead; a link it cannot replace, or one only on the destination side,
+  is not refused, and the directories above it and the real path are pinned. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the
   briefing says. The bwrap arguments are unchanged where nothing is pinned.

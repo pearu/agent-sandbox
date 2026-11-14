@@ -532,16 +532,30 @@ checkout, stash and rebase work (they copy); the pinned directory itself cannot 
 renamed or removed (EBUSY). A directory that is not there on the host is not pinned: the
 bind's source exists elsewhere, so only the mount point bwrap makes there would move.
 
-**A read-only path is not declared through a link the role can replace.** A symbolic
-link on the way that is an entry of a directory the role has read-write from the host
-refuses the launch, naming the link and the path it resolves to, which is what to
-declare instead: the role could remove the link and make a directory of its own there,
-and the next launch, resolving the declaration on the host, would bind the role's file
-read-only (measured). A link the role cannot replace -- in a read-only or copy-on-write
-mount, or in a read-only project -- is not refused: the real path behind it is pinned
-wherever the role has it read-write. Under `--preset native` nothing is refused. Under
-an `own`, `copy`, `copy-on-write` or `seed-only` path a link is not refused: it is not
-pinned, and the launch says so.
+**A read-only path's source is not resolved through a link the role can replace.** The
+engine resolves a read-only declaration's source on the host, so the launch follows it
+link by link -- links inside link targets, relative and absolute targets, `..` -- and a
+link the role could replace refuses the launch, naming that link and the path the
+source resolves to, which is what to declare instead: the role could remove the link
+and make a directory of its own there, and the next launch would bind the role's file
+read-only (measured, also for a link in the middle of the chain). Replaceable means an
+entry of a directory a read-write host mount shows to the role, which it owns or can
+write; a link in a directory it cannot write (another user's) is not. A link it cannot
+replace -- in a read-only or copy-on-write mount, a read-only project, or such a
+directory -- is not refused, and the directories above it and above the real path are
+pinned wherever the role has them read-write. A link only on the destination side, the
+source elsewhere (`outside:`, `sandbox:`), is not refused: replacing it, the role gets the
+same source bound at a directory of its own. Under `--preset native` nothing is refused.
+At 40 links (a loop) the launch is refused. Under an `own`, `copy`, `copy-on-write` or
+`seed-only` path a link is not refused: it is not pinned, and the launch says so.
+
+**Under the claude profile, `~/.claude/cache` is pinned where the changelog channel's
+file, `~/.claude/cache/changelog.md`, exists** and the channel is the role's own (every
+preset but `shared` and `native`): it is a directory of the read-write base above that
+store. The role cannot rename or remove `~/.claude/cache`, and a rename or hard link
+across it fails with "Invalid cross-device link"; inside it everything works. The host
+is not restricted: a rename, hard link, `mv` or `rm` across or of the directory works on
+the host while the sandbox runs.
 
 What the pins do not do: a read-only path whose source (`outside:`) the role also has
 read-write somewhere else is writable there, in place.

@@ -224,7 +224,7 @@ behind_link() {
   ln -s real "$W/x/lnk"
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$W/x/lnk is a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"its source goes through $W/x/lnk, a symbolic link in a directory the role can write"* ]]
   [[ "$output" == *"Declare the path it resolves to instead: $W/x/real/f.md. Refusing to launch"* ]]
   [ -z "$(report ran)" ]
   run_sandboxed "${BASE[@]}" -- --connect './x/real/f.md = read-only' --profile probe --exec python3 ops.py mv:rename:x/real:x/real.moved
@@ -249,6 +249,54 @@ behind_link() {
   printf 'HOST\n' >"$W/real/f.md"
   ln -s ../real "$W/c/lnk"
   behind_link --connect './c/ = copy-on-write' --connect './c/lnk/f.md = read-only'
+}
+
+@test "B1: a replaceable link in the middle of the source's resolution is refused, naming it (read-only project, ./rw/ read-write)" {
+  mkdir -p "$W/rw" "$W/real/b"
+  printf 'HOST\n' >"$W/real/b/f.md"
+  ln -s rw/l2 "$W/lnk"
+  ln -s ../real "$W/rw/l2"
+  run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './rw/ = read-write' \
+    --connect './lnk/b/f.md = read-only' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $W/rw/l2, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"Declare the path it resolves to instead: $W/real/b/f.md. Refusing to launch"* ]]
+}
+
+@test "B1: an outside: source through a replaceable link in a read-write store is refused" {
+  mkdir -p "$IHOME/store/realdir" "$W/cfg"
+  printf 'HOST\n' >"$IHOME/store/realdir/x.md"
+  ln -s realdir "$IHOME/store/l"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/l/x.md' \
+    --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/store/l, a symbolic link in a directory the role can write"* ]]
+}
+
+@test "B2: a link on the destination side only, the source elsewhere, is not refused; replacing it binds the same source at the role's directory" {
+  mkdir -p "$W/real/b" "$I/ext"
+  printf 'EXT\n' >"$I/ext/f.md"
+  ln -s real "$W/lnk"
+  local -a decl=(--connect "./lnk/b/f.md = read-only outside:$I/ext/f.md")
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen1=$(cat lnk/b/f.md)" >>report
+    rm lnk && mkdir -p lnk/b && (echo ROLE >lnk/b/f.md) 2>/dev/null; true'
+  [ "$status" -eq 0 ]
+  [ "$(report seen1)" = EXT ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen2=$(cat lnk/b/f.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen2)" = EXT ]
+}
+
+@test "a link in a read-write host directory the role cannot write (root's) is not refused" {
+  [[ -L /usr/share/groff/current && -f /usr/share/groff/current/tmac/an.tmac ]] || skip "no /usr/share/groff/current on this host"
+  [[ -O /usr/share/groff || -w /usr/share/groff ]] && skip "/usr/share/groff is writable here"
+  run_sandboxed "${BASE[@]}" -- --connect '/usr/share/groff/ = read-write' \
+    --connect './an.tmac = read-only outside:/usr/share/groff/current/tmac/an.tmac' --profile probe --exec bash -c '
+    python3 ops.py mv:rename:/usr/share/groff/current:/usr/share/groff/x'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EACCES ]
 }
 
 @test "a link in a read-only project is not refused; nor under --preset native" {

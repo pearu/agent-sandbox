@@ -36,8 +36,12 @@ pins() {
   IN=("$@")
 }
 
-# same LIST... -- OUT is exactly the words given.
+# same LIST... -- the computation did not refuse, and OUT is exactly the words given.
 same() {
+  [ "${RC:-0}" -eq 0 ] || {
+    echo "refused (RC=$RC): $MSG" >&2
+    return 1
+  }
   local want got
   want="$(printf '%s\0' "$@" | od -c)"
   got="$(printf '%s\0' "${OUT[@]}" | od -c)"
@@ -106,6 +110,32 @@ pinned() {
     [[ "$output" != *"pinned, above"* ]]
     run ! argv_has --bind "$PROJ/.asb" "$PROJ/.asb"
   fi
+}
+
+# cache_pins MODEL ROLE=PINS... -- with ~/.claude/cache/changelog.md in the home (the
+# changelog channel's file), each ROLE's launch under the model's own preset pins exactly
+# PINS (comma-separated, any order) and ~/.claude/cache.
+cache_pins() {
+  model "$1"
+  shift
+  mkdir -p "$H/home/.claude/cache"
+  printf 'log\n' >"$H/home/.claude/cache/changelog.md"
+  local rp role want got
+  for rp in "$@"; do
+    role="${rp%%=*}" want="${rp#*=}"
+    TEST_PRESET='' run_engine AGENT_SANDBOX_NET=none -- asb --role "$role" claude --version
+    [ "$status" -eq 0 ]
+    # shellcheck disable=SC2088 # the message's own ~
+    want="$({
+      tr ',' '\n' <<<"$want"
+      echo '~/.claude/cache'
+    } | grep . | sort | paste -sd' ')"
+    got="$(printf '%s\n' "$output" | sed -n "s/^agent-sandbox: pinned, above a read-only path or the role's own (the role cannot rename or remove them): //p" | tr ',' '\n' | sed 's/^ *//' | sort | paste -sd' ')"
+    [ "$got" = "$want" ] || {
+      echo "$role: pinned [$got], expected [$want]" >&2
+      return 1
+    }
+  done
 }
 
 @test "a file in a read-write project, one level down: its directory pinned, before it" {
@@ -306,14 +336,80 @@ pinned() {
   [ -z "$MSG" ]
 }
 
-@test "a read-only bind through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
+@test "a read-only bind whose source goes through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
   ln -s a "$P/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/lnk/b/f.md"
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"connect: $P/lnk/b/f.md: $P/lnk is a symbolic link in a directory the role can write, so a read-only path is not bound through it: the role could replace the link and have the next launch bind its own file. Declare the path it resolves to instead: $P/a/b/f.md. Refusing to launch"* ]]
+  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write, so it is not bound read-only: the role could replace the link and have the next launch bind its own file. Declare the path it resolves to instead: $P/a/b/f.md. Refusing to launch"* ]]
   ln -s ../a "$P/x/lnk2" # deeper: a link inside a plain directory of the project
-  pins -- --bind "$P" "$P" --ro-bind "$P/a/b/f.md" "$P/x/lnk2/b/f.md"
+  pins -- --bind "$P" "$P" --ro-bind "$P/x/lnk2/b/f.md" "$P/x/lnk2/b/f.md"
   [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its source goes through $P/x/lnk2,"* ]]
+}
+
+@test "B1: a replaceable link in the MIDDLE of the source's resolution is refused, naming that link" {
+  # shape 1: a read-only project, ./rw/ read-write, lnk -> rw/l2 -> real
+  mkdir -p "$P/rw" "$P/real/b"
+  touch "$P/real/b/f.md"
+  ln -s rw/l2 "$P/lnk"
+  ln -s ../real "$P/rw/l2"
+  pins -- --ro-bind "$P" "$P" --bind "$P/rw" "$P/rw" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its source goes through $P/rw/l2, a symbolic link in a directory the role can write"* ]]
+  [[ "$MSG" == *"Declare the path it resolves to instead: $P/real/b/f.md."* ]]
+  # shape 2: ~/store read-write, the source through ~/store/l -> realdir
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/realdir"
+  touch "$h/realdir/x.md"
+  ln -s realdir "$h/l"
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/l/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its source goes through $h/l, a symbolic link"* ]]
+}
+
+@test "the resolution follows links inside link targets, absolute targets and .., and is bounded" {
+  mkdir -p "$P/ro/in" "$P/real/b"
+  touch "$P/real/b/f.md"
+  ln -s "$P/ro/in/up" "$P/ro/l1" # absolute
+  ln -s ../../real "$P/ro/in/up" # relative, with ..
+  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/ro/l1/b/f.md" "$P/ro/l1/b/f.md"
+  [ "$RC" -eq 0 ]                       # both links in the read-only mount: not replaceable
+  [ "${PIN[*]}" = "$P/real $P/real/b" ] # the real path's directories, in the read-write project
+  ln -s loop2 "$P/ro/loop1"
+  ln -s loop1 "$P/ro/loop2"
+  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/ro/loop1/f" "$P/x/f"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its source $P/ro/loop1/f does not resolve (40 symbolic links: a loop?)"* ]]
+}
+
+@test "B2: a link on the DESTINATION side only, the source elsewhere, is not refused: nothing of the role's can be bound there" {
+  ln -s a "$P/lnk"
+  pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  [ -z "$MSG" ]
+}
+
+@test "the source shows only where its host directory does: under a store's copy of the directory nothing is pinned for it, nor refused" {
+  mkdir -p "$P/s/real/b" "$ST/x/real/b" # the store has its own copy of the directories
+  touch "$P/s/real/b/f.md"
+  ln -s real "$P/s/lnk"
+  # ./s/ = copy: the store at ./s hides the host's ./s; the declaration's source is the host's
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/s" --ro-bind "$P/s/lnk/b/f.md" "$P/s/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  [ -z "${PIN[*]}" ]
+  # as the engine binds it: the source resolved, ./s/real/b/f.md, which the store hides
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/s" --ro-bind "$P/s/real/b/f.md" "$P/s/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  [ -z "${PIN[*]}" ] # not the store's own ./s/real, ./s/real/b
+}
+
+@test "a read-write mount hidden by a later read-only one shows nothing: no pin for a source under it" {
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/roles" "$P/cfg"
+  touch "$h/roles/x.md"
+  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h" "$h" --ro-bind "$h/roles/x.md" "$P/cfg/x.md"
+  [ "$RC" -eq 0 ]
+  [ "${PIN[*]}" = "$P/cfg" ]
 }
 
 @test "a link the role cannot replace is not refused: in a read-only mount, the real path behind it pinned where it shows read-write" {
@@ -345,7 +441,9 @@ pinned() {
   pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/b"
   [ "$RC" -eq 0 ]
   same "${IN[@]}"
-  [[ "$MSG" == *"pins: $P/lnk is a symbolic link on the host ($P/lnk), so it is not pinned (the directories beneath it are, through the link): the role can rename the directory it points to"* ]]
+  [[ "$MSG" == *"pins: $P/lnk is a symbolic link on the host ($P/lnk), so it is not pinned: the role can rename the directory it points to"* ]]
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/b/c" # directories beneath the link: said so
+  [[ "$MSG" == *"so it is not pinned (the directories beneath it are pinned, through the link): the role can rename"* ]]
 }
 
 @test "a read-only bind's source is walked where a read-write host mount shows it: at its own path, and at another" {
@@ -476,7 +574,7 @@ pinned() {
   ln -s real "$proj/lnk"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -ne 0 ]
-  [ "$(printf '%s\n' "$output" | grep -c "$proj/lnk is a symbolic link in a directory the role can write")" -eq 1 ]
+  [ "$(printf '%s\n' "$output" | grep -c "its source goes through $proj/lnk, a symbolic link in a directory the role can write")" -eq 1 ]
   [[ "$output" == *"Declare the path it resolves to instead: $proj/real/b/f.md. Refusing to launch"* ]]
   [ ! -s "$H/argv" ]
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './real/b/f.md = read-only' claude --version # the resolved path
@@ -527,4 +625,16 @@ pinned() {
   model market
   pinned market-1 .asb .asb/roles
   pinned default
+}
+
+@test "where ~/.claude/cache/changelog.md exists, every role of the roles model gets ~/.claude/cache pinned too (its changelog channel's store inside the read-write base)" {
+  cache_pins roles supervisor=./.asb,./.asb/roles setup=./.asb,./.asb/roles implementer-1= reviewer-1= planner-1= gate=
+}
+
+@test "where ~/.claude/cache/changelog.md exists, the github roles get ~/.claude/cache pinned too" {
+  cache_pins github gh-setup=./.asb,./.asb/roles gh-review-1= gh-triage-1= gh-fix-1= default=
+}
+
+@test "where ~/.claude/cache/changelog.md exists, the market role gets ~/.claude/cache pinned too" {
+  cache_pins market market-1=./.asb,./.asb/roles default=
 }
