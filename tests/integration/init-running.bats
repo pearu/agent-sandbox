@@ -320,3 +320,38 @@ MODEL
   [ "$status" -eq 0 ]
   [[ "$output" == *"updated .asb/tests from model 'tiny'"* ]]
 }
+
+@test "a copy-on-write project with a read-write declaration over a file --init would remove (an instance above the count): refused, its writes would stop reaching it" {
+  git -C "$IWORK" init -q
+  git -C "$IWORK" -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m init
+  M3="$I/models/cows"
+  mkdir -p "$M3/serve"
+  cat >"$M3/agent-sandbox" <<'MODEL'
+[connect:cw-{n}]
+project = copy-on-write
+./out/ = read-write
+.asb/serve/{role}.md = read-write
+[serve:cw-{n}]
+prompt = .asb/serve/{role}.md
+MODEL
+  printf 'Do the next thing.\n' >"$M3/serve/cw.md"
+  rm -f "$IWORK/.agent-sandbox"
+  asb_host --init cows cw=2
+  [ "$status" -eq 0 ]
+  [ -f "$IWORK/.asb/serve/cw-2.md" ]
+  approve
+  start cw-2
+  run_sandboxed "${BASE[@]}" -- --role cw-2 --profile probe --exec sh -c 'echo MINE >>.asb/serve/cw-2.md && echo WROTE'
+  [[ "$output" == *"WROTE"* ]]
+  grep -qx MINE "$IWORK/.asb/serve/cw-2.md" # its writes reach the project's file
+  sed -i '$d' "$IWORK/.asb/serve/cw-2.md"
+  asb_host --init cows cw=1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'cw-2': its writes to .asb/serve/cw-2.md would stop reaching the project's file (its mount keeps the file the host removed) -- first: "*" --role cw-2 --shutdown probe"* ]]
+  [ -f "$IWORK/.asb/serve/cw-2.md" ]
+  asb_host --role cw-2 --shutdown probe
+  [ "$status" -eq 0 ]
+  asb_host --init cows cw=1
+  [ "$status" -eq 0 ]
+  [ ! -e "$IWORK/.asb/serve/cw-2.md" ]
+}

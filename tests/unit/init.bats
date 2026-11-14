@@ -3163,7 +3163,8 @@ binds_of() {
 }
 
 @test "the hard-link warning's line searches the file's own filesystem from its mount point: on a filesystem that is not /'s it lists the other name, where a search of / did not (#389)" {
-  [[ -d /dev/shm && -w /dev/shm && "$(stat -c %m /dev/shm 2>/dev/null)" == /dev/shm ]] || skip "no writable /dev/shm of its own"
+  [[ -d /dev/shm && -w /dev/shm && "$(stat -c %m /dev/shm 2>/dev/null)" == /dev/shm ]] \
+    || skip "/dev/shm is not a separate, writable filesystem here: the printed line is run only there, never over /"
   source_engine
   local d cmd
   d="$(mktemp -d /dev/shm/asb-389.XXXXXX)"
@@ -3191,12 +3192,8 @@ binds_of() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"agent-sandbox: warning — $PROJ/.agent-sandbox has 1 other name(s) (a hard link): written in place, each shows the new text too, and anyone who can write one of them can change this file. asb cannot tell where they are; this lists them: find $(printf '%q' "$(stat -c %m -- "$PROJ/.agent-sandbox")") -xdev -samefile $(printf '%q' "$PROJ/.agent-sandbox") 2>/dev/null"* ]]
   grep -qF '[connect:implementer-3]' "$H/other-name"
-  # the line as printed, run: it lists the other name (from the file's mount point, which
-  # here may be / -- a search of the whole filesystem, so it is given time)
-  local cmd="${output#*this lists them: }"
-  cmd="${cmd%%$'\n'*}"
-  run timeout 600 bash -c "$cmd"
-  [[ "$output" == *"$H/other-name"* ]]
+  # the printed line is run only on /dev/shm (the test above): here the mount point may be
+  # /, and no test walks the whole root filesystem
 }
 
 @test "a replace by what the mount over the file was: a read-write declaration over itself in a read-write project goes ahead; in a read-only one, or a copy of the role's own over the file, refused with what it loses (#389)" {
@@ -3332,4 +3329,19 @@ EOF
   cmd="${cmd%% && *}"
   run bash -c "cd $cmd && pwd"
   [ "$output" = "$other" ]
+}
+
+@test "a copy-on-write project with a read-write declaration over a file: its removal is refused too; a read-only or copied file there is removed (#389)" {
+  init -- roles implementer=2
+  [ "$status" -eq 0 ]
+  running implementer-2 < <(printf -- '-\trw\ty\t%s\n' "$PROJ/.asb/roles/implementer-2.md")
+  init -- roles implementer=1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'\n'"  role 'implementer-2': its writes to .asb/roles/implementer-2.md would stop reaching the project's file (its mount keeps the file the host removed) -- first: "* ]]
+  [ -f "$PROJ/.asb/roles/implementer-2.md" ]
+  stopped
+  running implementer-2 </dev/null # read-only or a copy there: nothing recorded
+  init -- roles implementer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed .asb/roles/implementer-2.md"* ]]
 }

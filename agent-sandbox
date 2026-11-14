@@ -13383,6 +13383,8 @@ _as_init() {
         ptxt="${path#"$proj"/}"
         if [[ "$_ic" == remove ]]; then
           [[ "$dir" =~ ^(rw|ro|\?)$ ]] && why+="${why:+, }$ptxt would disappear for it"
+          # its read-write reach to the file on a copy-on-write project: lost as by a replace
+          [[ "$dir:$self:$mode" == "-:y:rw" ]] && why+="${why:+, }its writes to $ptxt would stop reaching the project's file (its mount keeps the file the host removed)"
         elif [[ "$_ic" == replace ]]; then
           # what the path leads to once the mount on it is gone: the host's new file,
           # through the directory as the role has it
