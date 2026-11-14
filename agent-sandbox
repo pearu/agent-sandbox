@@ -2974,17 +2974,29 @@ _as_bwrap_fixed() {
 }
 
 # _as_bwrap_check -- refuse a launch whose bubblewrap is below 0.12.0 (_as_bwrap_fixed),
-# naming the version found and the way to 0.12.0. Asked where a launch starts its
-# keeper, the one place bwrap runs: a join, a verb, --check and --preset none never get
-# there. A missing bwrap passes, for the launch to say so (_as_keeper_exec) with the way
-# back to the agent itself. The output is read whole, never piped (see _as_launch_pasta).
+# naming the version found and the way to 0.12.0. Asked by what can only start a keeper
+# -- the one place bwrap runs -- BEFORE it changes or asks anything: a launch with no
+# live keeper to join (before its install offer, its lock, its role store), one that
+# would replace an idle keeper (before stopping it), --login, --serve and --summarize
+# with no live keeper, --roles with a listed role not running. A join, a verb, --check
+# and --preset none never ask. Asked once per invocation (the answer is kept in
+# _as_bwrap_verdict), so a launch runs `bwrap --version` at most once, and a join into a
+# busy keeper never. A missing bwrap passes, for the launch to say so (_as_keeper_exec)
+# with the way back to the agent itself. The output is read whole, never piped (see
+# _as_launch_pasta).
 _as_bwrap_check() {
   local v bin
-  command -v bwrap >/dev/null || return 0
-  v="$(bwrap --version 2>/dev/null </dev/null || true)"
-  v="${v%%$'\n'*}"
-  v="${v##* }"
-  _as_bwrap_fixed "$v" && return 0
+  if [[ -z "${_as_bwrap_verdict:-}" ]]; then
+    _as_bwrap_verdict=ok _as_bwrap_found=""
+    if command -v bwrap >/dev/null; then
+      v="$(bwrap --version 2>/dev/null </dev/null || true)"
+      v="${v%%$'\n'*}"
+      v="${v##* }"
+      _as_bwrap_fixed "$v" || _as_bwrap_verdict=old _as_bwrap_found="$v"
+    fi
+  fi
+  [[ "$_as_bwrap_verdict" == old ]] || return 0
+  v="$_as_bwrap_found"
   bin="$(command -v bwrap)"
   if [[ -n "$v" ]]; then
     _as_msg "bubblewrap $v ($bin) is below 0.12.0, which agent-sandbox needs (it fixes CVE-2026-87766); refusing to launch."
@@ -7849,6 +7861,9 @@ _as_login() {
       return 2
     fi
   done
+  # The login is a launch of its own role, which starts a keeper: on a bubblewrap below
+  # 0.12.0 it is refused here, before anything is installed or made (_as_bwrap_check).
+  _as_bwrap_check || return 1
   # THE AGENT FIRST (#6): a profile whose agent asb installs, with nothing installed (no
   # install/current at all), gets its pin installed now, before anything of the account
   # is made, so a failed download leaves nothing. The login is the user's word, so
@@ -14796,8 +14811,8 @@ _as_launch() {
   _as_session_begin || return 1
   _as_placeholder_register
   (umask 077 && printf '%s\0' "${_bwrap_opts[@]}" >"$_session_dir/bwrap.args") || return 1
-  # The payload: `sleep` under the marker as its argv[0] (bwrap's --argv0 is newer
-  # than the oldest bubblewrap this supports). The environment a join inherits is
+  # The payload: `sleep` under the marker as its argv[0], set by the shell's `exec -a`, not
+  # bwrap's --argv0, which would change what a join reads. The environment a join inherits is
   # read from it, so the shell that sets argv[0] takes back what it added: PWD and
   # OLDPWD here, and SHLVL, which `exec` sets anyway, is dropped by every join.
   # shellcheck disable=SC2016 # $0 is the payload shell's own, inside the sandbox
@@ -15122,6 +15137,18 @@ _as_roles_open() {
       acct_word[$r]="${_acct_name:--}"
     fi
   done
+  # A role with no live keeper is a pane that starts one, which runs bwrap: on a
+  # bubblewrap below 0.12.0 nothing is opened (_as_bwrap_check); roles that are all
+  # running are only joined, and open.
+  local -a cold=()
+  for r in "${_roles[@]}"; do
+    profile="${agent_prof[$r]}"
+    _as_keeper_live "$(_role="$r" cwd="$dir" _as_sandbox_dir)" || cold+=("$r")
+  done
+  if ((${#cold[@]})) && ! _as_bwrap_check; then
+    _as_msg "--roles: ${cold[*]} would start a sandbox; nothing was opened"
+    return 1
+  fi
   name="$(basename -- "$dir")"
   name="${name//[.:]/_}" # tmux refuses both in a session name
   if "$tmux" has-session -t "=$name" 2>/dev/null; then
@@ -17118,6 +17145,8 @@ agent_sandbox() (
 
   # ---- --summarize: one headless turn in the stopped role's sandbox, then exit (#314) ----
   if ((_do_summarize)); then
+    # Its turn is a launch of the stopped role (a running one is refused there).
+    _as_keeper_live "$(_as_sandbox_dir)" || _as_bwrap_check || return 1
     _as_role_summarize "$@"
     return $?
   fi
@@ -17127,6 +17156,9 @@ agent_sandbox() (
   if ((_do_serve)); then
     _as_serve_check "${1:-}" || return $?
     if ((! _serve_holder)); then
+      # With no live keeper its holder starts one: refused here, before the loop writes
+      # anything, on a bubblewrap below 0.12.0 (_as_bwrap_check).
+      _as_keeper_live "$(_as_sandbox_dir)" || _as_bwrap_check || return 1
       _as_serve "$@"
       return $?
     fi
@@ -17211,6 +17243,13 @@ agent_sandbox() (
   # joined instead. The lock taken here is held until this invocation is on the
   # keeper's record -- through the whole build when there is no keeper -- so two
   # first launches of one role at once are one keeper, not two.
+  # NO LIVE KEEPER TO JOIN: this invocation can only start one, which runs bwrap, so a
+  # bubblewrap below 0.12.0 refuses it here -- before the install offer, the lock and the
+  # role store, so a refused launch asks nothing and leaves nothing (_as_bwrap_check). A
+  # verb with no keeper starts none, and says so below.
+  if ((! _do_verb)) && ! _as_keeper_live "$(_as_sandbox_dir)"; then
+    _as_bwrap_check || return 1
+  fi
   # The install a launch at a terminal is offered (#6, D9), now that its own
   # preconditions hold: the dot-file reviewed and applied, the account resolved.
   if ((_install_pending)); then
@@ -17247,6 +17286,12 @@ agent_sandbox() (
           _as_msg "role '${_role:-default}': its launch ended while this one was joining it; run it again"
           return 1
         fi
+        # The next keeper is this invocation's to start: refused before this one is
+        # stopped, on a bubblewrap below 0.12.0.
+        _as_bwrap_check || {
+          _as_keeper_unlock
+          return 1
+        }
         : >"$_keeper_sb/keeper/stop"
         kill -USR1 "$_keeper_spid" 2>/dev/null
         _as_keeper_unlock

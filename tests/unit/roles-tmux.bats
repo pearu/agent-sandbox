@@ -160,6 +160,25 @@ no_tmux_path() {
   [ ! -s "$H/argv" ] # nothing launched from here
 }
 
+@test "--roles on a bubblewrap below 0.12.0: nothing is opened while a listed role would start a sandbox; roles all running are only joined, and open" {
+  run_engine TMUX_DUMP="$TM" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --roles a b
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"*"--roles: a b would start a sandbox; nothing was opened"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  # role a running: only b is cold, and still nothing opens
+  engine_bg -- asb --role a claude --version
+  run_engine TMUX_DUMP="$TM" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --roles a b
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--roles: b would start a sandbox; nothing was opened"* ]]
+  [ ! -e "$TM" ]
+  # every listed role running: the panes join, so it opens
+  run_engine TMUX_DUMP="$TM" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --roles a
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"below 0.12.0"* ]]
+  [ -s "$TM" ]
+  release_bg
+}
+
 @test "--roles, two roles: the first on top, the second split below it and laid out main-horizontal" {
   run_engine TMUX_DUMP="$TM" -- asb --verbose --roles planner-1 rev.2 --allow pypi.org
   [ "$status" -eq 0 ]

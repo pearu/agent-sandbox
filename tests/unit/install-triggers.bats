@@ -149,6 +149,28 @@ agent-sandbox: --login: made ~/.local/state/agent-sandbox/claude/accounts/work, 
   argv_has --ro-bind "$I/2.1.321" "$I/2.1.321"
 }
 
+@test "a bubblewrap below 0.12.0: a launch at a terminal is refused before it is asked to install; --login before it installs or makes the account" {
+  require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
+  local before
+  before="$(cd "$H/home" && find . | sort)"
+  run_engine_tty 'y\n' "${KNOBS[@]}" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" != *"looking up claude"* ]]
+  [ ! -e "$I" ]
+  [ ! -e "$SRC/2.1.321/resolved" ]
+  [ "$(cd "$H/home" && find . | sort)" = "$before" ]
+  run_engine "${KNOBS[@]}" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --account other --login
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [[ "$output" != *"--login: made"* ]]
+  [[ "$output" != *"installing its pinned version"* ]]
+  [ ! -e "$ACC/other" ]
+  [ ! -e "$I" ]
+  [ "$(cd "$H/home" && find . | sort)" = "$before" ]
+}
+
 @test "a launch at a terminal, a version there but no current: asked to make it current; y links it and launches, no resolver run; n refuses" {
   require_host "a launch asks to install a missing agent only on the host; inside a sandbox it refuses"
   mkdir -p "$I/2.1.321"

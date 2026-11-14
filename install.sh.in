@@ -608,7 +608,32 @@ BWRAP_SRC_SUMS="e81987f8d90b30b581299870592affaa8d9a17caf05112d303916312b7afd60a
 
 # Every reader below takes its input to the end: one that exits early (head, awk's
 # exit) can kill the writer with SIGPIPE, and under pipefail that kills the installer.
-bwrap_fixed() { printf '%s\n' 0.12.0 "$1" | sort -V -C; } # VER >= 0.12.0
+# bwrap_fixed VER -- VER >= 0.12.0, by the engine's rule (_as_bwrap_fixed, written again
+# here since install.sh cannot source the engine; tests/unit/installer.bats feeds both
+# one table): VER is dotted numbers, else it is not new enough.
+bwrap_fixed() {
+  local major minor=0
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+  major="${1%%.*}"
+  [[ "$1" != *.* ]] || minor="${1#*.}"
+  minor="${minor%%.*}"
+  ((10#$major > 0 || 10#$minor >= 12))
+}
+# bwrap_version -- the installed bwrap's version as the engine reads it (_as_bwrap_check):
+# the last word of the first line of `bwrap --version`, empty when it says nothing or
+# fails. Read whole, never piped.
+bwrap_version() {
+  local v
+  v="$(bwrap --version 2>/dev/null </dev/null || true)"
+  v="${v%%$'\n'*}"
+  printf '%s' "${v##* }"
+}
+# bwrap_cand_fixed DEBVER -- apt's candidate, [EPOCH:]UPSTREAM[-REVISION], compared by
+# its upstream part, as the engine's remote preflight compares it
+bwrap_cand_fixed() {
+  local up="${1#*:}"
+  bwrap_fixed "${up%%[-+~]*}"
+}
 os_release_value() { sed -n "/^$1=/{s///p;q}" "$OS_RELEASE" 2>/dev/null | tr -d "\"'"; }
 is_ubuntu() {
   [[ " $(os_release_value ID) $(os_release_value ID_LIKE) " == *" ubuntu "* ]] \
@@ -624,13 +649,13 @@ rebuild_bwrap() {
   section "Rebuild bubblewrap $BWRAP_SRC_VERSION from Ubuntu's source"
   is_ubuntu || err "--rebuild-bwrap rebuilds Ubuntu's own package, so it needs Ubuntu with apt-get and dpkg; elsewhere see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"
   local have="" cand
-  command -v bwrap >/dev/null && have="$(bwrap --version 2>/dev/null | awk '{print $2}')"
-  if [[ -n "$have" ]] && bwrap_fixed "$have"; then
+  command -v bwrap >/dev/null && have="$(bwrap_version)"
+  if bwrap_fixed "$have"; then
     ok "bubblewrap $have is installed, 0.12.0 or newer: nothing to rebuild"
     return 0
   fi
   cand="$(apt_bwrap_candidate)"
-  if [[ -n "$cand" ]] && bwrap_fixed "$cand"; then
+  if [[ -n "$cand" ]] && bwrap_cand_fixed "$cand"; then
     ok "apt offers bubblewrap $cand, 0.12.0 or newer: run  sudo apt install bubblewrap  instead"
     return 0
   fi
@@ -712,8 +737,8 @@ rebuild_bwrap() {
     ok "(dry-run) nothing was fetched, built or installed"
     return 0
   fi
-  have="$(bwrap --version 2>/dev/null | awk '{print $2}')"
-  if [[ -z "$have" ]] || ! bwrap_fixed "$have"; then
+  have="$(bwrap_version)"
+  if ! bwrap_fixed "$have"; then
     err "bwrap --version reports '${have:-nothing}' after the install, not 0.12.0"
   fi
   bwrap --ro-bind / / --unshare-user --unshare-pid -- /bin/true \
@@ -1129,9 +1154,95 @@ install_proxy() {
   return 0
 }
 
+# ----- packages: what a real run needs, checked before anything is written -----
+# Missing packages and a bubblewrap below 0.12.0 stop a real run here, before the
+# sanity step (which may clone) and the engine copy, so a refused install changes
+# nothing; a dry run reports them and goes on. Not for --uninstall, which needs neither,
+# nor for the test steps of other sections (AGENT_SANDBOX_INSTALL_STEP).
+packages_section() {
+  section "Packages"
+  missing=()
+  command -v bwrap >/dev/null || missing+=(bubblewrap)
+  # curl fetches micromamba; where it is here already, as `asb --setup-remote` carries it
+  # to a remote host's account (#344), nothing is fetched and curl is not needed.
+  if ! command -v curl >/dev/null; then
+    mm_asset="$(micromamba_asset)" || mm_asset=""
+    if [[ -n "$mm_asset" ]] && micromamba_ok "$MICROMAMBA" "$mm_asset"; then
+      info "no curl: micromamba $MICROMAMBA_VERSION is here already ($MICROMAMBA), so nothing is fetched with it"
+    else
+      missing+=(curl)
+    fi
+  fi
+  if ((${#missing[@]} > 0)); then
+    if ((DRY_RUN)); then
+      warn "(dry-run) missing packages a real run needs: ${missing[*]} (sudo apt install ${missing[*]})"
+    else
+      err "Missing required packages: ${missing[*]}. Run: sudo apt install ${missing[*]}"
+    fi
+  fi
+  if command -v bwrap >/dev/null; then
+    bwrap_ver="$(bwrap_version)"
+    # 0.12.0 or newer is REQUIRED; the engine refuses to launch on anything older. It
+    # fixes CVE-2026-87766: during sandbox setup, a symlink in a directory the sandboxed
+    # process controls could redirect the files and directories bwrap creates as mount
+    # points onto the host. agent-sandbox creates mount points inside the agent's writable
+    # state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0 and 26.04 0.11.1, and
+    # both security updates (0.9.0-1ubuntu0.3, 0.11.1-1ubuntu0.3) dropped Canonical's
+    # backport of the fix again (a Flatpak regression), so the version alone is what can
+    # be checked here. The version is read and compared by the engine's rule
+    # (bwrap_version, bwrap_fixed), so the two agree on every bwrap. A dry run reports it
+    # and goes on, as for a missing package.
+    if bwrap_fixed "$bwrap_ver"; then
+      ok "bwrap installed:    bubblewrap $bwrap_ver"
+    else
+      bwrap_cand="$(apt_bwrap_candidate)"
+      if [[ -n "$bwrap_cand" ]] && bwrap_cand_fixed "$bwrap_cand"; then
+        bwrap_how="apt offers bubblewrap $bwrap_cand: sudo apt install bubblewrap"
+      elif is_ubuntu; then
+        bwrap_how="run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source, rebuilt locally; see docs/troubleshooting.md)"
+      else
+        bwrap_how="see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"
+      fi
+      if [[ -n "$bwrap_ver" ]]; then
+        bwrap_why="bubblewrap $bwrap_ver ($(command -v bwrap)) is below 0.12.0"
+      else
+        bwrap_why="bwrap --version ($(command -v bwrap)) names no version, so it is not bubblewrap 0.12.0 or newer"
+      fi
+      bwrap_why+=", which agent-sandbox requires: it fixes CVE-2026-87766 (a sandbox escape during setup through symlinks in a directory the sandboxed process controls, the shape of the agent's writable state directory). Nothing was installed. To get 0.12.0, $bwrap_how; then run ./install.sh again."
+      if ((DRY_RUN)); then
+        warn "(dry-run) a real run stops here: $bwrap_why"
+      else
+        err "$bwrap_why"
+      fi
+    fi
+  fi
+  if command -v pasta >/dev/null; then
+    ok "passt/pasta installed (enables AGENT_SANDBOX_NET=strict)"
+  else
+    info "passt not installed; needed only for AGENT_SANDBOX_NET=strict (sudo apt install passt)"
+  fi
+  # nft lives in /usr/sbin, often off a stripped PATH; look there too (the engine does).
+  nftbin="$(command -v nft 2>/dev/null || true)"
+  [[ -n "$nftbin" ]] || for c in /usr/sbin/nft /sbin/nft; do [[ -x "$c" ]] && nftbin="$c" && break; done
+  if [[ -n "$nftbin" ]]; then
+    ok "nft (nftables) installed (the strict-mode egress firewall)"
+  else
+    info "nftables not installed; needed only for AGENT_SANDBOX_NET=strict (sudo apt install nftables)"
+  fi
+}
+
 # --rebuild-bwrap is the whole run: it needs neither the engine nor a checkout.
 if ((REBUILD_BWRAP)); then
   rebuild_bwrap
+  exit 0
+fi
+
+case "${AGENT_SANDBOX_INSTALL_STEP:-}" in
+  micromamba | tools | proxy | agents) ;;
+  *) ((UNINSTALL)) || packages_section ;;
+esac
+# The tests run the Packages section alone: AGENT_SANDBOX_INSTALL_STEP=packages.
+if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == packages ]]; then
   exit 0
 fi
 
@@ -1243,75 +1354,6 @@ if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == agents ]]; then
   section "Agents"
   agents_report
   choose_default_agent
-  exit 0
-fi
-
-# ----- 2. packages -----
-section "Packages"
-missing=()
-command -v bwrap >/dev/null || missing+=(bubblewrap)
-# curl fetches micromamba; where it is here already, as `asb --setup-remote` carries it
-# to a remote host's account (#344), nothing is fetched and curl is not needed.
-if ! command -v curl >/dev/null; then
-  mm_asset="$(micromamba_asset)" || mm_asset=""
-  if [[ -n "$mm_asset" ]] && micromamba_ok "$MICROMAMBA" "$mm_asset"; then
-    info "no curl: micromamba $MICROMAMBA_VERSION is here already ($MICROMAMBA), so nothing is fetched with it"
-  else
-    missing+=(curl)
-  fi
-fi
-if ((${#missing[@]} > 0)); then
-  if ((DRY_RUN)); then
-    warn "(dry-run) missing packages a real run needs: ${missing[*]} (sudo apt install ${missing[*]})"
-  else
-    err "Missing required packages: ${missing[*]}. Run: sudo apt install ${missing[*]}"
-  fi
-fi
-if command -v bwrap >/dev/null; then
-  bwrap_ver="$(bwrap --version 2>/dev/null | awk '{print $2}')"
-  # 0.12.0 or newer is REQUIRED; the engine refuses to launch on anything older. It
-  # fixes CVE-2026-87766: during sandbox setup, a symlink in a directory the sandboxed
-  # process controls could redirect the files and directories bwrap creates as mount
-  # points onto the host. agent-sandbox creates mount points inside the agent's writable
-  # state directory, so it is exposed. Ubuntu 24.04 ships 0.9.0 and 26.04 0.11.1, and
-  # both security updates (0.9.0-1ubuntu0.3, 0.11.1-1ubuntu0.3) dropped Canonical's
-  # backport of the fix again (a Flatpak regression), so the version alone is what can
-  # be checked here. A version that is not dotted numbers is not one this can vouch for,
-  # as the engine treats it. A dry run reports it and goes on, as for a missing package.
-  if [[ "$bwrap_ver" =~ ^[0-9]+(\.[0-9]+)*$ ]] && bwrap_fixed "$bwrap_ver"; then
-    ok "bwrap installed:    bubblewrap $bwrap_ver"
-  else
-    bwrap_cand="$(apt_bwrap_candidate)"
-    if [[ -n "$bwrap_cand" ]] && bwrap_fixed "$bwrap_cand"; then
-      bwrap_how="apt offers bubblewrap $bwrap_cand: sudo apt install bubblewrap"
-    elif is_ubuntu; then
-      bwrap_how="run: ./install.sh --rebuild-bwrap (Ubuntu's own 0.12.0-1 source, rebuilt locally; see docs/troubleshooting.md)"
-    else
-      bwrap_how="see docs/troubleshooting.md, 'bubblewrap older than 0.12.0'"
-    fi
-    bwrap_why="bubblewrap ${bwrap_ver:-of unknown version} ($(command -v bwrap)) is below 0.12.0, which agent-sandbox requires: it fixes CVE-2026-87766 (a sandbox escape during setup through symlinks in a directory the sandboxed process controls, the shape of the agent's writable state directory). To get 0.12.0, $bwrap_how"
-    if ((DRY_RUN)); then
-      warn "(dry-run) a real run stops here: $bwrap_why"
-    else
-      err "$bwrap_why"
-    fi
-  fi
-fi
-if command -v pasta >/dev/null; then
-  ok "passt/pasta installed (enables AGENT_SANDBOX_NET=strict)"
-else
-  info "passt not installed; needed only for AGENT_SANDBOX_NET=strict (sudo apt install passt)"
-fi
-# nft lives in /usr/sbin, often off a stripped PATH; look there too (the engine does).
-nftbin="$(command -v nft 2>/dev/null || true)"
-[[ -n "$nftbin" ]] || for c in /usr/sbin/nft /sbin/nft; do [[ -x "$c" ]] && nftbin="$c" && break; done
-if [[ -n "$nftbin" ]]; then
-  ok "nft (nftables) installed (the strict-mode egress firewall)"
-else
-  info "nftables not installed; needed only for AGENT_SANDBOX_NET=strict (sudo apt install nftables)"
-fi
-# The tests run the Packages section alone: AGENT_SANDBOX_INSTALL_STEP=packages.
-if [[ "${AGENT_SANDBOX_INSTALL_STEP:-}" == packages ]]; then
   exit 0
 fi
 

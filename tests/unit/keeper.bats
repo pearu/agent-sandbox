@@ -146,6 +146,21 @@ trust() {
   [ ! -d "/proc/$spid" ] # the idle one was ended
 }
 
+@test "an idle keeper of another policy is not stopped for a launch a bubblewrap below 0.12.0 refuses" {
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb --preset isolated claude --version
+  release_bg
+  local spid
+  read -r spid _ <"$SBOX/keeper/id" # still there, in its grace
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --preset inherit claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [ ! -s "$H/argv" ]
+  [ -d "/proc/$spid" ] # the idle one runs on
+  [ ! -e "$SBOX/keeper/stop" ]
+  run_engine -- asb --shutdown claude
+  [ "$status" -eq 0 ]
+}
+
 # The agent binary is part of a running role's policy: the keeper binds the one it
 # launched with, and another does not exist inside (measured by tests/live/seccomp.bats:
 # a join found nothing at its binary's path, exit 127).

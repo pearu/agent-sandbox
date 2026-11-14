@@ -79,6 +79,18 @@ STUB
   [ ! -s "$H/argv" ]
 }
 
+@test "a launch refused on a bubblewrap below 0.12.0 leaves no role store behind (--list shows no role)" {
+  local st="$H/home/.local/state/agent-sandbox" before
+  before="$(cd "$H/home" && find . | sort)"
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --role r9 claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is below 0.12.0"* ]]
+  [ "$(cd "$H/home" && find . | sort)" = "$before" ]
+  run ! compgen -G "$st/claude/*/r9"
+  run_engine -- asb --list
+  [[ "$output" != *r9* ]]
+}
+
 @test "a bwrap whose --version names no version is refused as below 0.12.0: nothing vouches for it" {
   local v
   for v in '' unknown 0.12.0-rc1 v0.12.0; do

@@ -14,10 +14,14 @@ names are gone; there are no aliases for removed names before 1.0.
 - **bubblewrap 0.12.0 or newer is required.** A launch that would start a sandbox
   refuses on an older `bwrap`, or one whose `--version` names no version, naming the
   version found and the way to 0.12.0 (`./install.sh --rebuild-bwrap` on Ubuntu,
-  `docs/troubleshooting.md` elsewhere); a join into a running role, `--check`, the
-  engine's help and `--preset none` run no bwrap and are not refused. `install.sh`
-  stops there too (exit 1) where it warned, naming the route that applies; `--dry-run`
-  reports it and goes on; `--rebuild-bwrap` is a run of its own and works from the old
+  `docs/troubleshooting.md` elsewhere). The refusal comes before the launch asks or
+  changes anything: before the install offer, the role's store, stopping an idle keeper;
+  `--login` before it installs or makes the account, `--serve` before it writes to the
+  project, `--roles` before it opens the tmux session (when a listed role is not
+  running). A join into a running role, `--check`, the engine's help and `--preset none`
+  run no bwrap and are not refused. `install.sh` stops there too (exit 1) where it
+  warned, before it writes anything, naming the route that applies; `--dry-run` reports
+  it and goes on; `--rebuild-bwrap` is a run of its own and works from the old
   bubblewrap. Ubuntu 22.04, 24.04 and 26.04 ship less and need the rebuild. The engine
   no longer asks `bwrap --help` whether it can mount an overlay: `copy-on-write` falls
   back to `copy` only with `[overlay] mode = off` and on a single file.
