@@ -1123,7 +1123,8 @@ names are gone; there are no aliases for removed names before 1.0.
   where `~/.claude/cache/changelog.md` exists, `~/.claude/cache` for every role whose
   changelog channel is its own (every preset but `shared` and `native`); and above a hide
   nested in a read-write directory. A declaration with its source elsewhere (`outside:`,
-  `sandbox:`) promises nothing about a host object at its path and gets none; a
+  `sandbox:`; one resolving to another host path than its key) promises nothing about a
+  host object at its path and gets none; a
   `read-write` declaration gets none. A read-only path whose source resolves, link by
   link, through a symbolic link the role can replace (an entry of a directory a
   read-write host mount shows it, which it owns or can write) refuses the launch, naming

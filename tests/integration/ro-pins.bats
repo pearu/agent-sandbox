@@ -604,6 +604,23 @@ part_in_place() {
   [ "$(cat "$IHOME/big/f")" = BIG ]
 }
 
+@test "an outside: naming the declaration's own host path through a link is a declaration at its own path: ./a pinned, the next launch reads the host's file" {
+  mkdir -p "$W/a/b"
+  printf 'HOST\n' >"$W/a/b/f.md"
+  ln -s "$W" "$IHOME/wl"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  local -a decl=(--connect './a/b/f.md = read-only outside:~/wl/a/b/f.md')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    python3 ops.py mv:rename:a:a.m
+    mkdir -p a/b 2>/dev/null; echo ROLE >a/b/f.md 2>/dev/null; true'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+  [ ! -e "$W/a.m" ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/b/f.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+}
+
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec bash -c '
     python3 ops.py mv_b:rename:a/b:a/b2 write:write:a/b/f.md:ROLE unlink:unlink:a/b/f.md \

@@ -662,6 +662,31 @@ cache_pins() {
   [ "$(forks uid)" -eq 0 ]
 }
 
+@test "launches through the engine: an outside: naming the declaration's own host path, directly or through a link, is a declaration at its own path: pinned as without outside:" {
+  make_harness
+  local proj
+  proj="$(cd "$H/proj" && pwd -P)"
+  mkdir -p "$proj/a/b"
+  printf 'HOST\n' >"$proj/a/b/f.md"
+  ln -s "$proj" "$H/home/wl"
+  local src
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  for src in "$proj" "~/wl"; do
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect "./a/b/f.md = read-only outside:$src/a/b/f.md" claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pinned, above a read-only, hidden or own path (the role cannot rename or remove them): ./a, ./a/b"* ]] || {
+      echo "read-only outside:$src: $output" >&2
+      return 1
+    }
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect "./a/b/ = copy outside:$src/a/b/" claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pinned, above a read-only, hidden or own path (the role cannot rename or remove them): ./a"* ]] || {
+      echo "copy outside:$src: $output" >&2
+      return 1
+    }
+  done
+}
+
 @test "launches through the engine: an outside: declaration's destination pins nothing (read-only, copy, copy-on-write); at its own path it does" {
   make_harness
   local proj

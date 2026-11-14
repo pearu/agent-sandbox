@@ -2598,11 +2598,7 @@ _as_connect_bind_channel() {
   # `outside:PATH` on the [connect] line: another source for this channel's one path.
   [[ -n "${_connect_src[$ch]:-}" ]] && src="${_connect_src[$ch]}"
   # its source elsewhere (`outside:`, `sandbox:`): nothing pinned for it (_as_ro_pins)
-  if [[ -n "${_connect_src[$ch]:-}" || -n "${_connect_sandbox[$ch]:-}" ]] && declare -p _pin_elsewhere &>/dev/null; then
-    local _pe_k="$path"
-    _as_ro_pins_norm _pe_k
-    _pin_elsewhere[$_pe_k]=1
-  fi
+  _as_pin_elsewhere "$path" "${_connect_src[$ch]:-${_connect_sandbox[$ch]:+-}}"
   # Another sandbox's store (#200): resolved now, from that role's last launch.
   if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
     _as_sandbox_store "${_connect_sandbox[$ch]}" "$path" "$ch" || return 1
@@ -2776,6 +2772,24 @@ _as_connect_bind_channel() {
   return 0
 }
 
+# _as_pin_elsewhere DEST SOURCE -- record (_pin_elsewhere, for _as_ro_pins) that the
+# declaration at DEST has its source elsewhere: SOURCE (an `outside:` path; `-` for
+# another sandbox's store, always elsewhere) resolved is not DEST resolved. An `outside:`
+# naming the path itself, directly or through a link, is a declaration at its own host
+# path, and is not recorded: the deeper declaration wins there (its pins, its link
+# rules). No SOURCE: nothing. One realpath, for a declaration with `outside:` only.
+_as_pin_elsewhere() {
+  [[ -n "$2" ]] && declare -p _pin_elsewhere &>/dev/null || return 0
+  local _pe_k="$1"
+  local -a _pe_r=()
+  if [[ "$2" != - ]]; then
+    mapfile -d '' _pe_r < <(realpath -m -z -- "$2" "$1" 2>/dev/null)
+    ((${#_pe_r[@]} == 2)) && [[ "${_pe_r[0]}" == "${_pe_r[1]}" ]] && return 0
+  fi
+  _as_ro_pins_norm _pe_k
+  _pin_elsewhere[$_pe_k]=1
+}
+
 # _as_connect_bind_path P -- add one path declaration's binds to $args, for
 # _as_connect_bind_all. Presets never reach this: a path has no position until
 # someone declares one.
@@ -2807,12 +2821,8 @@ _as_connect_bind_path() {
   what="'$key'"
   [[ -n "$s" ]] && what="'$key' (outside:$s)"
   # its source elsewhere: the declaration promises nothing about a host object at its
-  # path, so nothing is pinned for it (_as_ro_pins)
-  if [[ -n "$s" || -n "${_connect_sandbox[$p]:-}" ]] && declare -p _pin_elsewhere &>/dev/null; then
-    local _pe_k="$p"
-    _as_ro_pins_norm _pe_k
-    _pin_elsewhere[$_pe_k]=1
-  fi
+  # path, so nothing is pinned for it (_as_ro_pins); another sandbox's store always is
+  _as_pin_elsewhere "$p" "${s:-${_connect_sandbox[$p]:+-}}"
   s="${s:-$p}"
   # Another sandbox's store at this path (#200), resolved now from that role's record.
   if [[ -n "${_connect_sandbox[$p]:-}" ]]; then

@@ -538,7 +538,10 @@ above the real path are pinned too, in the same way. A declaration with its sour
 elsewhere (`outside:`, `sandbox:`) gets none: renaming the directory above it leaves the
 role nothing that another declaration does not give it (measured: `./a/data/ =
 read-only outside:~/big/`, `mv a a.moved`, and the next launch shows `~/big` read-only
-at `./a/data` again). A `read-write` declaration gets none either, and nothing is pinned
+at `./a/data` again). Elsewhere means the source resolves to another host path than the
+key: an `outside:` naming the key's own host path, directly or through a link, is a
+declaration at its own path, pinned as one without `outside:`. A `read-write`
+declaration gets none either, and nothing is pinned
 under `--preset native`, inside a `copy-on-write` mount, the project included (nothing
 there reaches the host), or inside a read-only mount. A pinned directory stays writable
 inside; a rename, hard link or `git mv` across its boundary fails with "Invalid
