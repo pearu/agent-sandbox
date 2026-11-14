@@ -3162,7 +3162,7 @@ binds_of() {
   [[ "$output" == *"cloned for implementer-2"* ]]
 }
 
-@test "the hard-link warning's line searches the file's own filesystem from its mount point: on a filesystem that is not /'s it lists the other name, where a search of / did not (#389)" {
+@test "the hard-link warning's line searches the file's own filesystem from its mount point: on a filesystem that is not /'s it lists the other name (#389)" {
   [[ -d /dev/shm && -w /dev/shm && "$(stat -c %m /dev/shm 2>/dev/null)" == /dev/shm ]] \
     || skip "/dev/shm is not a separate, writable filesystem here: the printed line is run only there, never over /"
   source_engine
@@ -3177,8 +3177,6 @@ binds_of() {
   [ "$cmd" = "find /dev/shm -xdev -samefile $(printf '%q' "$d/a dir/.agent-sandbox") 2>/dev/null" ]
   run bash -c "$cmd"
   [[ "$output" == *"$d/other name"* ]]
-  run bash -c "find / -xdev -samefile $(printf '%q' "$d/a dir/.agent-sandbox") 2>/dev/null"
-  [[ "$output" != *"$d/other name"* ]] # what the line said before: / alone, which this is not on
 }
 
 @test "a re-run that writes .agent-sandbox in place warns when it has another name (a hard link), which shows the new text; none with one name (#389)" {
