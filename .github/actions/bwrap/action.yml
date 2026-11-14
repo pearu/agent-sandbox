@@ -15,8 +15,10 @@ description: >-
 # one release that miss at once each build; the first to finish saves, the others'
 # save only warns. A hit whose package does not install, is not this release's
 # 0.12.0 build, or cannot run a sandbox is built over in the same job (an entry is
-# never overwritten: the job names the `gh cache delete` that drops it). A malicious
-# entry is out of scope: GitHub's cache scoping is the control.
+# never overwritten: the job names the `gh cache delete` that drops it; nor does it
+# age out, as each restore is an access, so every bwrap job of that release builds on
+# every run until it is deleted). A malicious entry is out of scope: GitHub's cache
+# scoping is the control.
 runs:
   using: composite
   steps:
