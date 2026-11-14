@@ -57,10 +57,13 @@ jobs:
         run: micromamba run -n agent-sandbox tests/run.sh unit
 
   # The real bwrap: what the agent sees, the CA bundle, conda passthrough, the
-  # SSH broker, on Ubuntu 22.04, 24.04 and 26.04. GitHub's kernels restrict unprivileged user namespaces on 24.04+;
-  # relax that so bwrap works (the installer does the same with an AppArmor
-  # profile), then prove it works so a missing namespace fails the job instead
-  # of silently skipping the suites.
+  # SSH broker, on Ubuntu 22.04, 24.04 and 26.04. Every job that runs bwrap gets
+  # bubblewrap 0.12.0 from .github/actions/bwrap: ./install.sh --rebuild-bwrap's package,
+  # kept in the Actions cache per release, so a job builds it (about a minute) only when
+  # the cache has none. The action also relaxes GitHub's restriction of unprivileged user
+  # namespaces on 24.04+ (the installer does the same with an AppArmor profile) and
+  # proves a sandbox runs, so a missing namespace fails the job instead of silently
+  # skipping the suites.
   integration:
     strategy:
       fail-fast: false
@@ -69,20 +72,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install bubblewrap and enable user namespaces
+      - name: Install nftables, openssh-server, rsync, passt
         run: |
           sudo apt-get update
           # openssh-server and rsync for the sshd profile's test (#335); installing the
           # server starts the runner's own sshd on port 22, which the test does not use.
-          sudo apt-get install -y bubblewrap nftables openssh-server rsync
+          sudo apt-get install -y nftables openssh-server rsync
           # passt is not packaged for Ubuntu 22.04; best-effort so that leg
           # installs the rest and the strict test skips there.
           sudo apt-get install -y passt || echo 'passt unavailable on this runner; strict test will skip'
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
-          echo "user namespaces work on ${{ matrix.os }}"
+      - uses: ./.github/actions/bwrap
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
@@ -107,26 +106,24 @@ jobs:
       AGENT_SANDBOX_E2E: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: Install bubblewrap and enable user namespaces
+      # On the distribution's bubblewrap (older than 0.12.0 on every leg today) the dry
+      # run prints the rebuild's plan, or says nothing is to rebuild where the release
+      # ships 0.12.0 or newer; once the action has run it must say nothing is to rebuild.
+      - name: Install the distribution's bubblewrap
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      - name: --rebuild-bwrap --dry-run on the distribution's bubblewrap
+        run: .github/actions/bwrap/bwrap.sh dry-run
+      - uses: ./.github/actions/bwrap
+      - name: --rebuild-bwrap --dry-run has nothing to rebuild after the action
+        run: .github/actions/bwrap/bwrap.sh dry-run after
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
           cache-environment: true
       - name: End-to-end installer test (shim for systemd)
         run: micromamba run -n agent-sandbox tests/run.sh e2e
-      - name: --rebuild-bwrap --dry-run prints the plan (dry run only; no build in CI)
-        run: |
-          set -euo pipefail
-          out=$(./install.sh --rebuild-bwrap --dry-run)
-          printf '%s\n' "$out"
-          grep -q 'would run: sudo apt-get build-dep -y ./bubblewrap_0.12.0-1.dsc' <<<"$out"
 
   # Experiment, allowed to fail: can a GitHub runner provide a real user systemd
   # instance, so install.sh's actual `systemctl --user` path works end to end?
@@ -139,14 +136,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Install bubblewrap and enable user namespaces
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+      - uses: ./.github/actions/bwrap
       - name: Bring up a user systemd instance
         run: |
           sudo loginctl enable-linger "$USER"
@@ -255,15 +245,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install bubblewrap, nftables, passt; enable user namespaces
+      - name: Install nftables, passt
         if: matrix.stage == 'engine-integration'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap nftables passt
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+          sudo apt-get install -y nftables passt
+      - uses: ./.github/actions/bwrap
+        if: matrix.stage == 'engine-integration'
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml

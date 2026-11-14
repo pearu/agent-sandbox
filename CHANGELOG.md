@@ -1073,6 +1073,22 @@ names are gone; there are no aliases for removed names before 1.0.
   require that one check, so renaming a job or adding a matrix entry no longer leaves a
   PR waiting for a check that never runs. A new job goes in `ci-ok`'s `needs`;
   `tests/unit/ci-workflow.bats` fails when one is missing. Coverage stays informational.
+- **CI runs every bwrap job on bubblewrap 0.12.0** (`integration` and `e2e` on 22.04,
+  24.04 and 26.04, `e2e-real-systemd`, coverage's integration shards), where it ran each
+  release's own (0.6.1, 0.9.0, 0.11.1). A composite action, `.github/actions/bwrap`,
+  installs the package `./install.sh --rebuild-bwrap` builds from Ubuntu's 0.12.0-1
+  source, kept in the Actions cache per release and architecture under a key of the
+  pinned source (version, sums) and install.sh's `rebuild_bwrap` function: a job installs
+  it in seconds, and builds it (about a minute) when its key has no entry -- a change's
+  first run, `main`'s first run after a merge (a PR's entries are visible to that PR
+  alone), a change to the pins or the recipe, or after GitHub evicts the entry (7 days
+  unused, or the 10 GB limit). A cached package that does not install, is not this
+  release's build, or cannot run a sandbox is built over in the same job, which names
+  the `gh cache delete` that drops the entry. Where a release's apt offers 0.12.0 or
+  newer, the action installs that instead. The tests that skip where bwrap has no
+  `--overlay` now run on 22.04 and 24.04 too. The `e2e` job checks the dry run of
+  `--rebuild-bwrap` on the distribution's bubblewrap (the plan, or apt's package where it
+  is new enough) and again after the action (nothing to rebuild).
 
 ### Fixed
 

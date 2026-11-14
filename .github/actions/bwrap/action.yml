@@ -1,0 +1,58 @@
+name: bubblewrap 0.12.0
+description: >-
+  Install bubblewrap 0.12.0 as ./install.sh --rebuild-bwrap builds it (Ubuntu's 0.12.0-1
+  source, pinned SHA-256 sums), from the Actions cache when this Ubuntu release has a
+  built package there and by building it otherwise (about a minute), or from apt where
+  the release offers 0.12.0 or newer; enable unprivileged user namespaces; prove both
+  work. Needs the checkout. The steps are bwrap.sh's.
+
+# The cache key is the source version, the release, the architecture and a hash of
+# install.sh's BWRAP_SRC_* block and its rebuild_bwrap function; nothing else in the
+# installer rebuilds. A job builds when its key has no entry: this change's first run,
+# main's first run after it merges (an entry a PR saves is visible to that PR alone,
+# main's to every PR), a PR that changes the pins or the recipe, and after GitHub
+# evicts the entry (7 days without access, or the repository's 10 GB limit). Jobs of
+# one release that miss at once each build; the first to finish saves, the others'
+# save only warns. A hit whose package does not install, is not this release's
+# 0.12.0 build, or cannot run a sandbox is built over in the same job (an entry is
+# never overwritten: the job names the `gh cache delete` that drops it; nor does it
+# age out, as each restore is an access, so every bwrap job of that release builds on
+# every run until it is deleted). A malicious entry is out of scope: GitHub's cache
+# scoping is the control.
+runs:
+  using: composite
+  steps:
+    # Before anything that runs bwrap: --rebuild-bwrap's last step runs a user-namespace
+    # sandbox, which GitHub's 24.04+ kernels refuse until this is relaxed (the installer
+    # does the same with an AppArmor profile).
+    - name: Enable user namespaces; the cache key from install.sh
+      id: key
+      shell: bash
+      run: |
+        if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        fi
+        "$GITHUB_ACTION_PATH/bwrap.sh" key
+
+    - name: Restore the built package
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/agent-sandbox-bwrap-deb
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Install bubblewrap 0.12.0 (apt, the cache, or ./install.sh --rebuild-bwrap)
+      id: install
+      shell: bash
+      env:
+        HIT: ${{ steps.restore.outputs.cache-hit == 'true' }}
+        KEY: ${{ steps.key.outputs.key }}
+        VER: ${{ steps.key.outputs.version }}
+      run: '"$GITHUB_ACTION_PATH/bwrap.sh" install "$HIT" "$KEY" "$VER"'
+
+    - name: Save the built package
+      if: steps.install.outputs.save == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/agent-sandbox-bwrap-deb
+        key: ${{ steps.key.outputs.key }}
