@@ -588,16 +588,23 @@ Stated plainly. These are what the adversary above can still do.
   renamed into place, so a link planted later is replaced, never followed -- but an
   existing `.agent-sandbox`, written in place through a descriptor shown to be the file,
   so a running sandbox's read-only bind of it holds (#389). `--init` refuses, before it
-  writes anything, a run that would rename over or remove a file bound into a running
-  sandbox of the project where that breaks it: one bound read-only in a directory the
-  role has read-write (it would reach the new file, writable), or one it would lose
-  (#389). What remains: a sandbox with the project read-write can make either command
-  refuse, by leaving a link in place; the coord index and `.asb/init.sums` are read by
-  path just before `--init` rewrites them, so a link swapped in after the last check and
-  before that read has its target's text copied into the project; a role launched after
-  `--init` looked for running ones and before it writes is not seen; and a reader of the
-  dot-file while it is written in place can see it half-written (not the approved file,
-  so a launch does not apply it).
+  writes anything, a run that would rename over or remove the file a single-file mount of
+  a running sandbox of the project sits on where that breaks it: in a directory the role
+  has read-write from the host (it would reach the host's new file, writable), or one it
+  would lose in a directory it sees from the host (#389). What remains: a sandbox with
+  the project read-write can make either command refuse, by leaving a link in place; the
+  coord index and `.asb/init.sums` are read by path just before `--init` rewrites them,
+  so a link swapped in after the last check and before that read has its target's text
+  copied into the project; a role launched after `--init` looked for running ones and
+  before it writes is not seen. A launch hashes the dot-file and later parses it again by
+  path, so a file rewritten between the two is applied, as before; written in place, the
+  text it reads in that window can be half-written. A failed in-place write can leave a
+  half-written file, which a launch refuses through the trust gate (its hash is not the
+  approved one). A hard link to `.agent-sandbox` made while it was not bound keeps
+  pointing at the live file after an in-place write, where a rename used to cut it. A
+  re-added instance whose old sandbox still runs keeps that sandbox: its working-tree path
+  then shows the fresh clone read-only, and it can still write the moved backup tree and
+  its old history.
 - **The proxy is a host process that sees all traffic.** Its CA's private key
   lives in `~/.mitmproxy` on the host (not visible inside). Compromise of the
   proxy or that key is compromise of every sandbox's TLS.

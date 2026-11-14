@@ -549,14 +549,17 @@ its purpose file bound read-only as single files. `--init` and `--apply` write
 `.agent-sandbox` in place, so every running role sees the new text and still cannot
 write it. A purpose file `--init` replaces is a new file, which detaches the bind of the
 old one in a running sandbox: a role with the project read-write (the Supervisor, setup)
-would then reach the new file through the project, writable. A file it removes is gone
-for a running role that has it bound. So, before writing anything, `--init` refuses a run
-that would replace the purpose file of a running role with the project read-write, or
-remove a file bound into any running role (an instance above a count, a role set to 0),
-naming each role and the `asb --role ROLE --shutdown` to run first; shut it down, run
-`--init` again, then launch it. Roles with the project read-only (Planners, Implementers,
-Reviewers, the Gate) keep running and see a new purpose file read-only; under a
-copy-on-write project (the `github` roles) a running role keeps the old one.
+would then reach the new file through the project, writable -- also when the role has a
+copy of its own over the file. A file it removes is gone for a running role that has it
+bound. So, before writing anything, `--init` refuses a run that would replace a file
+mounted into a running role with the project read-write, or remove one mounted into a
+running role with the project read-write or read-only (an instance above a count, a role
+set to 0, while it runs), naming each role and the `asb --role ROLE --shutdown` to run
+first; shut it down, run `--init` again, then launch it. A removed instance's purpose
+file you changed is kept, not removed, so that run goes ahead and the instance keeps
+running. Roles with the project read-only (Planners, Implementers, Reviewers, the Gate)
+keep running and see a new purpose file read-only; under a copy-on-write project (the
+`github` roles) a running role keeps the old one, also when `--init` removes it.
 
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:

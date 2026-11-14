@@ -955,6 +955,9 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   run_apply - '[allow]' github.com
   chmod 644 "$PROJ/.agent-sandbox"
   [ "$status" -ne 0 ]
+  [[ "$output" == *"agent-sandbox: $PROJ/.agent-sandbox could not be written: it is not writable (mode 444); nothing was written"* ]]
+  [[ "$output" != *"added to [allow]"* ]] # said only once the file has it
+  [[ "$output" != *"dd:"* ]]              # refused before any write
   [ "$(cat "$PROJ/.agent-sandbox")" = $'[allow]\npypi.org' ]
   [ -z "$(find "$PROJ" -maxdepth 1 -name '.agent-sandbox.?*')" ]
   # a new file in a directory that refuses it: nothing made, no temp
@@ -1002,6 +1005,60 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ ! -L "$d/link" ]
   [ "$(cat "$d/link")" = policy ]
   [ -z "$(find "$d" -name '.agent-sandbox.?*')" ]
+}
+
+@test "_as_dotfile_write: a write that fails once begun says the file may be half-written and keeps the intended text in a file it names; a file swapped for a link after the check is not written through (#389)" {
+  source_engine
+  local d="$H/wf" t
+  mkdir -p "$d"
+  printf 'old text\n' >"$d/.agent-sandbox"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  truncate() { return 1; } # the cut fails after the text is written
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'new\n')
+  unset -f truncate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: $d/.agent-sandbox could not be written in full, and may be half-written now. The text it was to have is kept in "* ]]
+  t="${output#*is kept in }" t="${t%%:*}"
+  [ "$(cat "$t")" = new ]
+  rm -f "$t"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  dd() { return 1; } # the write itself fails
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'other\n')
+  unset -f dd
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"may be half-written now"* ]]
+  t="${output#*is kept in }" t="${t%%:*}"
+  [ "$(cat "$t")" = other ]
+  rm -f "$t"
+  # a link put at the file between the check and the open: its target is never written
+  printf 'old\n' >"$d/.agent-sandbox"
+  printf 'KEEP\n' >"$d/target"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  mktemp() { rm -f "$d/.agent-sandbox" && ln -s "$d/target" "$d/.agent-sandbox" && command mktemp "$@"; }
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'evil\n')
+  unset -f mktemp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$d/.agent-sandbox became a symbolic link or another file while it was written; nothing was written"* ]]
+  [ "$(cat "$d/target")" = KEEP ]
+  # ...and one put back as a regular file right after the open, so the path is no link
+  # when it is looked at again: the descriptor is not the file's, and nothing is written
+  rm -f "$d/.agent-sandbox"
+  printf 'old\n' >"$d/.agent-sandbox"
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  mktemp() { rm -f "$d/.agent-sandbox" && ln -s "$d/target" "$d/.agent-sandbox" && command mktemp "$@"; }
+  # shellcheck disable=SC2329 # called by _as_dotfile_write, not here
+  stat() {
+    local r
+    r="$(command stat "$@")"
+    if [[ -L "$d/.agent-sandbox" ]]; then rm -f "$d/.agent-sandbox" && printf 'back\n' >"$d/.agent-sandbox"; fi
+    printf '%s\n' "$r"
+  }
+  run _as_dotfile_write "$d/.agent-sandbox" < <(printf 'evil\n')
+  unset -f mktemp stat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"became a symbolic link or another file while it was written; nothing was written"* ]]
+  [ "$(cat "$d/target")" = KEEP ]
+  [ "$(cat "$d/.agent-sandbox")" = back ]
 }
 
 @test "memory scoping uses Claude Code's slug scheme, so a project path with a dot still finds its own state" {

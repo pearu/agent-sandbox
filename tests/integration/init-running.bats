@@ -156,3 +156,26 @@ inside() {
   [ -e "$IWORK/out/reader.in" ]
   [ "$(tail -1 "$IWORK/.asb/roles/reader.md")" = "Now also this." ]
 }
+
+@test "a role with a copy of its own over its purpose file, the project read-write: an --init that would replace the file under the copy is refused, nothing written; after --shutdown it goes ahead" {
+  sed -i '/^\[connect:writer\]$/a .asb/roles/writer.md = copy' "$IWORK/.agent-sandbox"
+  approve
+  start writer
+  inside writer .asb/roles/writer.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WRITE=yes"* ]] # its own copy
+  [[ "$output" == *"MOUNT=1"* ]]
+  [ "$(cat "$IWORK/.asb/roles/writer.md")" = "You are the writer." ] # the project's file untouched
+  printf 'Now also this.\n' >>"$M/roles/writer.md"
+  asb_host --init tiny
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'writer': .asb/roles/writer.md would become writable for it -- first: "*" --role writer --shutdown probe"* ]]
+  [ "$(cat "$IWORK/.asb/roles/writer.md")" = "You are the writer." ]
+  inside writer .asb/roles/writer.md
+  [[ "$output" == *"MOUNT=1"* ]] # its copy still over the file
+  asb_host --role writer --shutdown probe
+  [ "$status" -eq 0 ]
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/writer.md from model 'tiny'"* ]]
+}

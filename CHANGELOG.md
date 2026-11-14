@@ -1149,15 +1149,21 @@ names are gone; there are no aliases for removed names before 1.0.
   roles model's Supervisor and setup) the path then led to the host's new file, writable
   (measured). An existing `.agent-sandbox` is now written in place, the same inode and
   mode (`--setup-remote`'s policy too): a running role sees the new text and still cannot
-  write it. One you made unwritable is no longer replaced; the write fails. `--init` also
-  refuses (exit 2), before it writes anything, a run that would replace a file bound
-  read-only into a running sandbox of the project in a directory the role has read-write
-  -- a running Supervisor's purpose file whose model text changed -- or remove one bound
-  into a running role (`implementer=1` while `implementer-2` runs, `reviewer=0` while a
-  Reviewer runs), naming each role, the file and the `asb --role ROLE --shutdown` to run
-  first. For this a launch records its single-file binds in its keeper directory
-  (`keeper/binds`); for a role an older asb started, its declared files are taken as
-  bound. A role with the project read-only keeps running and sees the new text.
+  write it. One you made unwritable is no longer replaced: the write is refused before
+  anything is written, and said; a write that fails midway says the file may be
+  half-written and keeps the intended text in a file it names. `--init` also refuses
+  (exit 2), before it writes anything, a run that would replace a file a single-file mount
+  of a running sandbox of the project sits on, in a directory the role has read-write --
+  a running Supervisor's purpose file whose model text changed, or one it has a copy of
+  its own over -- or remove one mounted into a running role with the project read-write
+  or read-only (`implementer=1` while `implementer-2` runs, `reviewer=0` while a Reviewer
+  runs), naming each role, the file and the `asb --role ROLE --shutdown` to run first.
+  For this a launch records those mounts in its keeper directory (`keeper/binds`); for a
+  role an older asb started, its declared files are taken as mounted, and a change or a
+  removal of one refuses. A role with the project read-only keeps running and sees the
+  new text. `--init` no longer renames a file over one of the same text (`.asb/init.sums`
+  keeps each record in its place), and `--apply` says what it added only once it is
+  written.
 - **`--setup-remote` and `--summarize` no longer write through a fixed temp name a
   sandbox can leave a link at.** The policy `--setup-remote` writes in the remote's
   scratch went through `.agent-sandbox.asb-new`, and the prompt history `--summarize`
