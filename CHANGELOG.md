@@ -1111,8 +1111,9 @@ names are gone; there are no aliases for removed names before 1.0.
   it has read-write from the host it could rename a parent (measured: the `roles`
   model's Supervisor and setup role ran `mv .asb .asb.moved`, and the directory moved on
   the host), put its own file at the old path, and have the next launch bind that one
-  read-only; above an `own`, `copy`, `copy-on-write` or `seed-only` path the next launch
-  showed the host's original to the role, readable and writable (measured). Each
+  read-only; above an `own`, `copy`, `copy-on-write` or `seed-only` path, or a
+  `read-write` one with its source elsewhere (`outside:`), the next launch showed the
+  host's original to the role, readable and writable (measured). Each
   directory above such a bind that the role has read-write from the host -- through any
   read-write, `own`, `copy` or copy-on-write mount on the way -- and above a read-only
   bind's source where a read-write host mount shows it, is now bound onto itself at

@@ -523,8 +523,12 @@ through the mounts on the way: under `./x/a/ = read-write`, `own`, `copy` or
 `copy-on-write`, `./x/a/b/f.md = read-only` pins `./x` too. Every read-only and own bind
 is covered, the built-in dot-file and purpose files included, wherever declared, and
 every hide (the profile's or `[claude] hide`) nested in a directory the role has
-read-write, whose hidden content would otherwise show at the next launch; a
-`read-write` declaration gets none for its own sake, and nothing is pinned under
+read-write, whose hidden content would otherwise show at the next launch, and every
+`read-write` declaration with its source elsewhere (`./a/data/ = read-write
+outside:~/big/`), which covers what is at its path as an own bind does (measured: `mv a
+a.moved` left the host's `a.moved/data` to the next launch; a read-write file bind over
+a read-only source's host path let the role move that source away and plant its own). A
+`read-write` declaration of the path itself gets none, and nothing is pinned under
 `--preset native`, inside a `copy-on-write` mount, the project included (nothing there
 reaches the host), or inside a read-only mount. A read-only path's source is walked too,
 wherever a read-write host mount shows it: an `outside:` source, or the real path behind

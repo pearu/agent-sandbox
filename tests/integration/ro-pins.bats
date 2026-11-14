@@ -586,6 +586,42 @@ part_in_place() {
   part_in_place copy-on-write
 }
 
+@test "a read-write file bind over a read-only source's host path: the directory it lies in pinned, the role cannot move the source away and plant its own for the next launch" {
+  mkdir -p "$IHOME/store/roles" "$W/cfg/sub"
+  printf 'HOST\n' >"$IHOME/store/roles/x.md"
+  printf 'OTHER\n' >"$IHOME/other.md"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  local -a decl=(--connect '~/store/ = read-write' --connect '~/store/roles/x.md = read-write outside:~/other.md'
+    --connect './cfg/sub/x.md = read-only outside:~/store/roles/x.md')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    python3 ops.py mv:rename:"$HOME/store/roles":"$HOME/store/r2"
+    mkdir -p "$HOME/store/r3" && echo ROLE >"$HOME/store/r3/x.md"
+    python3 ops.py swap:rename:"$HOME/store/r3":"$HOME/store/roles"'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+  [ "$(report swap)" != ok ]
+  [ ! -e "$IHOME/store/r2" ]
+  [ "$(cat "$IHOME/store/roles/x.md")" = HOST ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen=$(cat cfg/sub/x.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+}
+
+@test "a read-write outside: directory bind covering a project directory: the directory above it pinned, the covered host content not uncovered at the next launch" {
+  mkdir -p "$W/a/data" "$IHOME/big"
+  printf 'HOST\n' >"$W/a/data/f"
+  printf 'BIG\n' >"$IHOME/big/f"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './a/data/ = read-write outside:~/big/' --profile probe --exec bash -c '
+    echo "seen=$(cat a/data/f)" >>report
+    python3 ops.py mv:rename:a:a.moved'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = BIG ]
+  [ "$(report mv)" = EBUSY ]
+  [ ! -e "$W/a.moved" ]
+  [ "$(cat "$W/a/data/f")" = HOST ]
+}
+
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec bash -c '
     python3 ops.py mv_b:rename:a/b:a/b2 write:write:a/b/f.md:ROLE unlink:unlink:a/b/f.md \
