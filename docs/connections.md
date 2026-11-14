@@ -582,7 +582,11 @@ read-write` and `~/out-alias/ = read-write outside:~/proj/out/` for a project at
 `~/proj`), or `own`, `copy` or `copy-on-write` there, where the role sees its own store
 or layer instead -- and an object the role cannot write: another user's, not writable to
 it, and, for a directory, with nothing inside it that the role owns or can write
-(filesystems mounted beneath it included: a bind shows them).
+(filesystems mounted beneath it included: a bind shows them). Whether the role could write it is asked only of such a
+candidate, but then it walks the tree: a read-write mount over a large tree the role does
+not own that contains the read-only source (`./ref/ = read-only outside:/usr/share/` with
+`./alt/ = read-write outside:/usr/`) adds half a second to two seconds to the launch
+(measured).
 
 **Every one of these decisions is made on the final view** -- what shows at each path once
 every bind is made -- not on the binds made so far: declarations are bound by depth, so the

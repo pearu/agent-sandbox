@@ -5797,6 +5797,10 @@ _as_briefing_write() {
     --bind "$_keeper_sb/summary" "$(_as_summary_inside)")
   local md="$bdir/briefing.md"
   _briefing_md="$md" # for the pins line (_as_briefing_pins)
+  # Its marker: a token this launch makes up, so no text the briefing carries (a purpose
+  # file, an addendum) can be or contain it; bash's own random numbers, no process.
+  printf -v _briefing_mark '<!-- agent-sandbox: the pinned directories, %010u%010u%010u -->' \
+    "${SRANDOM:-$RANDOM$RANDOM}" "${SRANDOM:-$RANDOM$RANDOM}" "${SRANDOM:-$RANDOM$RANDOM}"
   # The text below is literal: `$HOME` and the backticks name things for the
   # reader, they are not expansions.
   # shellcheck disable=SC2016
@@ -5822,7 +5826,7 @@ _as_briefing_write() {
     # The directories this launch pins above a read-only file or directory: computed
     # once, by the launch on its final list (_as_launch), which puts the line here, in
     # place of this marker, before bwrap starts (_as_briefing_pins).
-    printf '%s\n' "$_as_briefing_pins_mark"
+    printf '%s\n' "$_briefing_mark"
     if ((${#_gpu_nodes[@]})); then
       printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
     elif [[ -n "${_gpu_devices_from:-}" && "${_knob_gpu:-on}" != off && "${_knob_gpu:-on}" != 0 ]]; then
@@ -5946,32 +5950,26 @@ _as_briefing_write() {
   return 0
 }
 
-# The line of briefing.md the launch replaces with the pins (_as_briefing_pins).
-_as_briefing_pins_mark='<!-- agent-sandbox: the pinned directories -->'
-
 # _as_briefing_pins DIR... -- put the pinned directories in this launch's briefing.md
-# (_briefing_md), in place of its marker line; no line where nothing is pinned. Nothing
+# (_briefing_md) in place of its marker line (_briefing_mark, this launch's own token),
+# that line only, every other byte as it was; no line where nothing is pinned. Nothing
 # where no briefing was written.
 _as_briefing_pins() {
-  [[ -n "${_briefing_md:-}" && -f "$_briefing_md" ]] || return 0
-  local _bp_m="$_as_briefing_pins_mark" _bp_line _bp_l="" _bp_p
-  local -a _bp_text=()
-  for _bp_p in "$@"; do _bp_l+="${_bp_l:+, }$_bp_p"; done
-  mapfile -t _bp_text <"$_briefing_md" || return 1
-  {
-    for _bp_line in ${_bp_text[@]+"${_bp_text[@]}"}; do
-      if [[ "$_bp_line" != "$_bp_m" ]]; then
-        printf '%s\n' "$_bp_line"
-      elif (($#)); then
-        printf -- '- the directories above a read-only, hidden or your own path (own, copy,\n'
-        printf '  copy-on-write, seed-only) cannot be renamed or removed (%s): they stay\n' "$_bp_l"
-        # shellcheck disable=SC2016 # the backticks name a command for the reader
-        printf '  writable inside, but a rename, hard link or `git mv` across their boundary fails\n'
-        # shellcheck disable=SC2016
-        printf '  with "Invalid cross-device link"; `mv` and `cp` work\n'
-      fi
-    done
-  } >"$_briefing_md.new" && mv -f -- "$_briefing_md.new" "$_briefing_md"
+  [[ -n "${_briefing_md:-}" && -n "${_briefing_mark:-}" && -f "$_briefing_md" ]] || return 0
+  local _bp_text="" _bp_l="" _bp_p _bp_line=""
+  IFS= read -r -d '' _bp_text <"$_briefing_md" || [[ -n "$_bp_text" ]] || return 1
+  if (($#)); then
+    for _bp_p in "$@"; do _bp_l+="${_bp_l:+, }$_bp_p"; done
+    # shellcheck disable=SC2016 # the backticks name commands for the reader
+    printf -v _bp_line '%s\n%s\n%s\n%s\n' \
+      '- the directories above a read-only, hidden or your own path (own, copy,' \
+      "  copy-on-write, seed-only) cannot be renamed or removed ($_bp_l): they stay" \
+      '  writable inside, but a rename, hard link or `git mv` across their boundary fails' \
+      '  with "Invalid cross-device link"; `mv` and `cp` work'
+  fi
+  [[ "$_bp_text" == *$'\n'"$_briefing_mark"$'\n'* ]] || return 1
+  _bp_text="${_bp_text/$'\n'"$_briefing_mark"$'\n'/$'\n'"$_bp_line"}"
+  printf '%s' "$_bp_text" >"$_briefing_md.new" && mv -f -- "$_briefing_md.new" "$_briefing_md"
 }
 
 # ----- per-project config (.agent-sandbox) and its trust store -----
@@ -15097,7 +15095,10 @@ _as_ro_pins_chain() {
 # process, a few tests.
 _as_ro_pins_apart() {
   local _ap_x="$1" _ap_m _ap_s
-  [[ "$_ap_x" != *..* ]] || return 1
+  # A source: its resolved path equal to it (below) rules out a `..` (realpath -m always
+  # resolves one), but not a link loop (realpath -m gives such a path back as it is):
+  # the link test is for that. What a bind covers: no resolved form, so both tests here.
+  [[ -n "${2:-}" || "$_ap_x" != *..* ]] || return 1
   while [[ -n "$_ap_x" && "$_ap_x" != / ]]; do
     if [[ -n "${2:-}" ]]; then # a source: pass 1 tested every component
       [[ -z "${_rs_l[$_ap_x]+x}" ]] || return 1

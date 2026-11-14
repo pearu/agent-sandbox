@@ -805,6 +805,20 @@ cache_pins() {
   chmod 755 "$h/top"
 }
 
+@test "the shortcut past a source's chain: not through a link loop (the link test), not through a .. (resolved differs from declared)" {
+  # a loop: realpath -m gives the path back as it is, so only the link test sees it
+  mkdir -p "$BATS_TEST_TMPDIR/lp"
+  ln -s l2 "$BATS_TEST_TMPDIR/lp/l1"
+  ln -s l1 "$BATS_TEST_TMPDIR/lp/l2"
+  pins -- --bind "$P" "$P" --ro-bind "$BATS_TEST_TMPDIR/lp/l1/x" "$P/cfg/x"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"does not resolve (40 symbolic links: a loop?)"* ]]
+  # a .. that leads into the read-write project: the source shown read-write there
+  pins -- --bind "$P" "$P" --ro-bind "$BATS_TEST_TMPDIR/ext/../p/a/f.md" "$BATS_TEST_TMPDIR/q/f.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"binds $P/a/f.md read-only at $BATS_TEST_TMPDIR/q/f.md"*"the two contradict"* ]]
+}
+
 @test "round 7, B1: the shortcut past the destination's chain is not taken through a link: the real path behind it is pinned where it shows read-write" {
   local e="$BATS_TEST_TMPDIR/ext"
   mkdir -p "$e/ro" "$P/real"

@@ -1305,6 +1305,43 @@ login_file() {
   done
 }
 
+@test "the pins line goes where the engine put its own marker only: a purpose file carrying marker-like lines stays as it is; exactly one pins line, or none and no marker" {
+  mkdir -p "$PROJ/.asb/roles"
+  # the marker text of before, and a line like this launch's own token
+  printf 'Report, do not fix.\n<!-- agent-sandbox: the pinned directories -->\n<!-- agent-sandbox: the pinned directories, 1234567890 -->\nEnd.\n' \
+    >"$PROJ/.asb/roles/reviewer-1.md"
+  local purpose f
+  purpose="$(cat "$PROJ/.asb/roles/reviewer-1.md")"
+  # the project read-write: .asb and .asb/roles pinned
+  printf '[briefing:reviewer-*]\n[connect:supervisor]\n' >"$PROJ/.agent-sandbox"
+  approve
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$OUT/briefing.md")" == *"$purpose"* ]]
+  [ "$(grep -c 'cannot be renamed or removed' "$OUT/briefing.md")" -eq 1 ]
+  grep -qF "cannot be renamed or removed ($PROJ/.asb, $PROJ/.asb/roles)" "$OUT/briefing.md"
+  [ "$(grep -cxF '<!-- agent-sandbox: the pinned directories -->' "$OUT/briefing.md")" -eq 1 ]
+  [ "$(grep -cxF '<!-- agent-sandbox: the pinned directories, 1234567890 -->' "$OUT/briefing.md")" -eq 1 ]
+  [ "$(grep -c 'agent-sandbox: the pinned directories' "$OUT/briefing.md")" -eq 2 ] # the purpose's two, no other
+  # the hook carries the purpose verbatim, and no marker of the engine's
+  grep -qF 'Report, do not fix.\n<!-- agent-sandbox: the pinned directories -->\n<!-- agent-sandbox: the pinned directories, 1234567890 -->\nEnd.' "$OUT/hook-SessionStart.json"
+  for f in "$OUT"/*.json; do
+    [ "$(grep -o 'agent-sandbox: the pinned directories' "$f" | wc -l)" -le 2 ]
+  done
+  # the project read-only: nothing pinned, no pins line, no marker left
+  printf '[briefing:reviewer-*]\n[connect:reviewer-*]\nproject = read-only\n' >"$PROJ/.agent-sandbox"
+  approve
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"pinned, above"* ]]
+  [[ "$(cat "$OUT/briefing.md")" == *"$purpose"* ]]
+  run ! grep -q 'cannot be renamed or removed' "$OUT/briefing.md"
+  [ "$(grep -c 'agent-sandbox: the pinned directories' "$OUT/briefing.md")" -eq 2 ] # the purpose's two only
+  run ! grep -rqE 'agent-sandbox: the pinned directories, [0-9]{30}' "$OUT"
+}
+
 @test "a pin refusal comes before bwrap and leaves no session directory behind" {
   local real="$BATS_TEST_TMPDIR/real"
   mkdir -p "$real" "$PROJ/w"
