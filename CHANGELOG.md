@@ -1133,13 +1133,15 @@ names are gone; there are no aliases for removed names before 1.0.
   where the role could write it, refuses the launch as a contradiction, naming both
   declarations; declaring the source read-only at its own path too keeps both. A
   read-write single-file declaration counts, host paths are compared resolved (a linked
-  `$HOME`), a read-only file's other name (a hard link) declared read-write as a file or
-  in a directory shown read-write counts, and a directory the role neither owns nor can write is writable to it where it
+  `$HOME`), and a directory the role neither owns nor can write is writable to it where it
   holds a file or directory the role owns or can write (filesystems mounted beneath it
   included); a part the read-only directory does not show at its place (read-write, own,
   copy or copy-on-write there) is not a contradiction. Whether the role could write it is
   asked only once a read-write view of it is found, and the computation runs once per
-  launch, on its final list, the briefing's line written from it. Every
+  launch, on its final list, the briefing's line written from it. A bind protects a name:
+  another name of a read-only file (a hard link) that a declaration shows read-write is
+  writable there, as declared; where it is cheap to see (a read-write single-file mount of
+  the same file) the launch warns once and goes on. Every
   decision is made on the final view of the binds, not on those made so far. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the

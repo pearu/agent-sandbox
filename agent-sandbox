@@ -15132,9 +15132,8 @@ _as_ro_pins_apart() {
 # _as_ro_pins_contra SRC BIND -- for _as_ro_pins, on its locals (_hdest): a host object
 # bound read-only (SRC, the real path of the read-only bind at BIND) that the final view
 # also shows read-write -- the object itself or a directory containing it, at another path
-# (_as_ro_pins_shows), another name of it (a hard link: through a read-write file mount, or
-# in a directory shown read-write), or a part of it, a read-write host mount from inside it,
-# where the bind shows that part read-only -- contradicts the read-only declaration: the
+# (_as_ro_pins_shows), or a part of it, a read-write host mount from inside it, where the
+# bind shows that part read-only -- contradicts the read-only declaration: the
 # role could write it there. The launch is refused, naming both. Not a contradiction: the
 # object inside a read-write mount at its own path (the read-only bind covers it there),
 # a read-write view of it covered (read-only, a hide, a store, an overlay) in the final
@@ -15146,7 +15145,7 @@ _as_ro_pins_apart() {
 # the role could write it (_as_ro_pins_writable, which may walk a tree) is asked last, of
 # a candidate only.
 _as_ro_pins_contra() {
-  local _ct_land="" _ct_landed=0 _ct_i _ct_m _ct_s _ct_r _ct_t _ct_b _ct_o _ct_id
+  local _ct_land="" _ct_landed=0 _ct_i _ct_m _ct_s _ct_r _ct_t _ct_b _ct_o
   local -a _ct_pos=() _sh_mnt=()
   # the object itself, or a directory containing it, shown read-write at another path
   _as_ro_pins_shows "$1" _ct_pos
@@ -15158,29 +15157,19 @@ _as_ro_pins_contra() {
     _as_ro_pins_contra_say "$1" "$2" "${_sh_mnt[_ct_i]}" "$1" "${_ct_pos[_ct_i]}"
     return 1
   done
-  # another name of the same file (a hard link): only a file with more than one link has one
-  if [[ -f "$1" && ! -L "$1" ]] && ((${_nlink[$1]:-1} > 1)); then
-    _ct_id="${_ino[$1]-}"
-    # through a read-write file mount of the final view (its source's identity, pass 1)
+  # Another name of the same file (a hard link) is not a contradiction: a bind protects a
+  # name, and what the user declares read-write is writable under that name. Said where
+  # it is cheap to see: a read-write file mount of the final view with the same identity
+  # (pass 1's one stat), not a search of read-write directories.
+  if [[ -f "$1" && ! -L "$1" ]] && ((${_nlink[$1]:-1} > 1)) && [[ -n "${_ino[$1]-}" ]]; then
     for _ct_m in ${_rwm[@]+"${_rwm[@]}"}; do
-      [[ "${_mk[$_ct_m]}" == rwfile && -n "$_ct_id" ]] || continue
+      [[ "${_mk[$_ct_m]}" == rwfile ]] || continue
       _ct_o="${_ms[$_ct_m]}"
-      [[ "$_ct_o" != "$1" && "${_ino[$_ct_o]-}" == "$_ct_id" ]] || continue
+      [[ "$_ct_o" != "$1" && "${_ino[$_ct_o]-}" == "${_ino[$1]}" ]] || continue
       _as_ro_pins_latest "${_od[_ct_m]}" _ct_t
       [[ "$_ct_t" == "$_ct_m" ]] || continue # hidden in the final view
-      _as_ro_pins_writable "$1" || return 0
-      _as_ro_pins_contra_say "$1" "$2" "$_ct_m" "$_ct_o" "${_od[_ct_m]}" link
-      return 1
+      _as_msg "connect: warning: $1 (read-only at $2) is another name (a hard link) of $_ct_o, which this launch shows read-write at ${_od[_ct_m]}: writing one changes the other"
     done
-    # in a directory shown read-write: searched where one is on the file's filesystem
-    while IFS= read -r -d '' _ct_o; do
-      [[ "$_ct_o" != "$1" ]] || continue
-      _as_ro_pins_shows "$_ct_o" _ct_pos
-      ((${#_ct_pos[@]})) || continue
-      _as_ro_pins_writable "$1" || return 0
-      _as_ro_pins_contra_say "$1" "$2" "${_sh_mnt[0]}" "$_ct_o" "${_ct_pos[0]}" link
-      return 1
-    done < <(_as_ro_pins_samefile "$1")
   fi
   [[ -d "$1" && ! -L "$1" ]] || return 0
   # a part, a read-write host mount from inside it, where the bind shows that part
@@ -15227,40 +15216,6 @@ _as_ro_pins_rw_at() {
   [[ "${_ms[$_ra_t]}${1#"$_ra_d"}" == "$2" ]]
 }
 
-# _as_ro_pins_samefile FILE -- every other name of FILE (its inode) in the host directories
-# the final view shows read-write to the role, NUL-separated. A bind shows what is mounted
-# beneath its source too (bwrap binds recursively), and a name of FILE is on FILE's
-# filesystem: so the search starts at each read-write directory on that filesystem and at
-# each mount point beneath one that is, and stays on it (-xdev); with none, no search.
-_as_ro_pins_samefile() {
-  local _sf_m _sf_t _sf_r _sf_dev="${_fdev[$1]-}" _sf_l _sf_mp
-  local -a _sf_roots=() _sf_all=() _sf_f=()
-  [[ -n "$_sf_dev" ]] || return 0
-  for _sf_m in ${_rwm[@]+"${_rwm[@]}"}; do
-    [[ "${_mk[$_sf_m]}" == rw ]] || continue
-    _as_ro_pins_latest "${_od[_sf_m]}" _sf_t
-    [[ "$_sf_t" == "$_sf_m" ]] || continue
-    _sf_r="${_ms[$_sf_m]}"
-    _sf_all+=("$_sf_r")
-    [[ "${_fdev[$_sf_r]-}" == "$_sf_dev" ]] && _sf_roots+=("$_sf_r")
-  done
-  ((${#_sf_all[@]})) || return 0
-  # mount points beneath a read-write directory, on the file's filesystem
-  # (/proc/self/mountinfo: field 3 the device, field 5 the mount point, octal-escaped)
-  if [[ -r /proc/self/mountinfo ]]; then
-    while IFS= read -r _sf_l; do
-      read -r -a _sf_f <<<"$_sf_l"
-      [[ "${_sf_f[2]}" == "$_sf_dev" ]] || continue
-      printf -v _sf_mp '%b' "${_sf_f[4]}"
-      for _sf_r in "${_sf_all[@]}"; do
-        [[ "$_sf_mp" == "$_sf_r"/* ]] && _sf_roots+=("$_sf_mp") && break
-      done
-    done </proc/self/mountinfo
-  fi
-  ((${#_sf_roots[@]})) || return 0
-  find "${_sf_roots[@]}" -xdev -samefile "$1" -print0 2>/dev/null
-}
-
 # _as_ro_pins_contra_say SRC BIND MOUNT OBJECT POS -- the contradiction's refusal: the
 # read-only bind at BIND of SRC, and the read-write MOUNT showing OBJECT at POS, each named
 # as the user wrote it where the engine knows that (_as_ro_pins_decl).
@@ -15270,7 +15225,6 @@ _as_ro_pins_contra_say() {
   _cs_b="$(_as_ro_pins_decl "${_od[$3]}")"
   local _cs_keep=" -- declaring $4 read-only at its own path ($4 = read-only) keeps both --"
   [[ "$4" == "$1" ]] || _cs_what="$4, inside it,"
-  [[ "${6:-}" != link ]] || _cs_what="it, as $4 (another name of the same file),"
   # the read-write mount is the object itself (its source): nothing to add between them
   [[ "${_ms[$3]}" == "$4" ]] && _cs_keep=""
   _as_msg "connect: $_cs_a binds $1 read-only at $2, and $_cs_b shows $_cs_what read-write at $5: the two contradict, so the launch is refused. Make one of them read-only too$_cs_keep or remove one."
@@ -15560,11 +15514,10 @@ _as_ro_pins() {
   # Every host path of the final view resolved (symbolic links followed, as the read-only
   # sources are by their chain): one realpath for them all, where any has a link or a
   # `..` on its way (a test per component, no process). Then, in one stat, each read-only
-  # file's link count and identity, each read-write file mount's identity, and each
-  # read-only file's and read-write directory's filesystem, for a file's other names
-  # (_as_ro_pins_contra, _as_ro_pins_samefile).
+  # file's link count and identity and each read-write file mount's identity, for the
+  # hard-link warning (_as_ro_pins_contra).
   local -a _rs_k=() _rs_p=() _rs_o=() _rs_u=()
-  local -A _nlink=() _ino=() _fdev=() _rlc=() _rs_l=() _rs_seen=()
+  local -A _nlink=() _ino=() _rlc=() _rs_l=() _rs_seen=()
   local _rs_need=0 _rs_x
   # (the read-only declarations' sources as declared too, for the links their chains meet)
   ! declare -p _ro_unres &>/dev/null || _rs_u=(${_ro_unres[@]+"${_ro_unres[@]}"})
@@ -15613,7 +15566,7 @@ _as_ro_pins() {
     _rs_x="${_ms[$_k]}"
     case "${_mk[$_k]}" in
       ro) [[ -f "$_rs_x" ]] || continue ;;
-      rwfile | rw) [[ -e "$_rs_x" ]] || continue ;;
+      rwfile) [[ -e "$_rs_x" ]] || continue ;;
       *) continue ;;
     esac
     [[ -n "${_nlink[$_rs_x]+x}" ]] && continue
@@ -15631,7 +15584,7 @@ _as_ro_pins() {
       _rs_x="${_rs_o[_k]}" # DEV INODE LINKS
       [[ "$_rs_x" == *' '*' '* ]] || continue
       _a="${_rs_x%% *}" _t="${_rs_x##* }" _x="${_rs_x#* }"
-      _fdev[${_rs_p[_k]}]="$_a" _ino[${_rs_p[_k]}]="$_a:${_x% *}" _nlink[${_rs_p[_k]}]="$_t"
+      _ino[${_rs_p[_k]}]="$_a:${_x% *}" _nlink[${_rs_p[_k]}]="$_t"
     done
   fi
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do

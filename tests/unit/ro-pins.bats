@@ -698,18 +698,16 @@ cache_pins() {
   chmod 755 "$h/foreign"
 }
 
-@test "B5: another name of a read-only file (a hard link) in a directory shown read-write is a contradiction; a file with one link is not searched" {
+@test "hard links: another name of a read-only file in a directory shown read-write is not a contradiction, and nothing searches for it" {
   local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$e" "$h" "$P/cfg"
   printf 'x\n' >"$e/x.md"
-  printf 'y\n' >"$e/y.md"
   ln "$e/x.md" "$h/alias.md"
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it, as $h/alias.md (another name of the same file), read-write at $h/alias.md"* ]]
-  PINS_PRE='_as_ro_pins_samefile() { echo searched >&2; }' pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/y.md" "$P/cfg/y.md"
+  rm -f "$BATS_TEST_TMPDIR/forks"
+  PINS_PRE="$COUNT" pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/x.md" "$P/cfg/x.md"
   [ "$RC" -eq 0 ]
-  [[ "$MSG" != *searched* ]]
+  [ "$(forks find)" -eq 0 ]
+  [[ "$MSG" != *"hard link"* ]] # a directory would need a search: no warning
 }
 
 @test "mutants: a hidden read-only bind gets no pins; a hidden read-write part is no contradiction; the part's own could-write test counts" {
@@ -748,20 +746,25 @@ cache_pins() {
   chmod 755 "$h/d"
 }
 
-@test "round 7, B2: another name of the read-only file shown through a read-write FILE mount is a contradiction; a different file there is not" {
+@test "hard links: another name of a read-only file shown through a read-write FILE mount launches with one warning naming both; a different file, or a covered mount, none" {
   local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$e" "$h" "$P/cfg"
   printf 'x\n' >"$e/x.md"
   ln "$e/x.md" "$h/alias.md"
   printf 'o\n' >"$h/other.md"
-  pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/alias.md" "$P/alt.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it, as $h/alias.md (another name of the same file), read-write at $P/alt.md"* ]]
+  rm -f "$BATS_TEST_TMPDIR/forks"
+  PINS_PRE="$COUNT" pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/alias.md" "$P/alt.md"
+  [ "$RC" -eq 0 ]
+  [ "$(grep -c 'hard link' <<<"$MSG")" -eq 1 ]
+  [[ "$MSG" == *"connect: warning: $e/x.md (read-only at $P/cfg/x.md) is another name (a hard link) of $h/alias.md, which this launch shows read-write at $P/alt.md: writing one changes the other"* ]]
+  [ "$(forks find)" -eq 0 ]
+  [ "$(forks stat)" -eq 1 ] # the computation's one stat, no other
   pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/other.md" "$P/alt.md"
   [ "$RC" -eq 0 ]
-  # the read-write file mount covered by a later read-only bind: not shown, not one
+  [[ "$MSG" != *"hard link"* ]]
   pins -- --bind "$P" "$P" --ro-bind "$e/x.md" "$P/cfg/x.md" --bind "$h/alias.md" "$P/alt.md" --ro-bind "$e/x.md" "$P/alt.md"
   [ "$RC" -eq 0 ]
+  [[ "$MSG" != *"hard link"* ]]
 }
 
 @test "round 7, smaller 1: a part own, copy or copy-on-write in place inside a read-only directory, read-write elsewhere, is not a contradiction" {
@@ -800,31 +803,6 @@ cache_pins() {
     pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/top" "$P/cfg"
   [ "$RC" -eq 0 ]
   chmod 755 "$h/top"
-}
-
-@test "round 7, smaller 2: another name of the file on a filesystem mounted beneath a read-write directory (not its own) is found" {
-  need_bwrap
-  local h="$BATS_TEST_TMPDIR/home/store" r="$BATS_TEST_TMPDIR/real"
-  mkdir -p "$h" "$r/sub" "$P/cfg"
-  printf 'x\n' >"$r/x.md"
-  ln "$r/x.md" "$r/sub/alias.md"
-  # the read-write directory a tmpfs (another filesystem than the file's), with real/sub,
-  # on the file's, bound beneath it at store/inner
-  PINS_WRAP="bwrap --dev-bind / / --tmpfs $h --dir $h/inner --bind $r/sub $h/inner" \
-    pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$r/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"shows it, as $h/inner/alias.md (another name of the same file)"* ]]
-}
-
-@test "round 7, smaller 4: another name of the file in a read-write directory but hidden there is not a contradiction" {
-  local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$e" "$h/hid" "$P/cfg"
-  printf 'x\n' >"$e/x.md"
-  ln "$e/x.md" "$h/hid/alias.md"
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --tmpfs "$h/hid" --ro-bind "$e/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 0 ]
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$e/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 1 ]
 }
 
 @test "round 7, B1: the shortcut past the destination's chain is not taken through a link: the real path behind it is pinned where it shows read-write" {

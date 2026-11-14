@@ -566,11 +566,12 @@ directory or file inside it -- the two declarations contradict, and the launch i
 refused, naming both and the host path: `./cfg/x.md = read-only outside:~/store/x.md`
 under `~/store/ = read-write`, or beside `~/store/x.md = read-write`, is refused. Host
 paths are compared resolved, so a mount given through a link (a `$HOME` that is a
-symbolic link) counts too. A read-only file with more than one name (a hard link) is
-refused the same way where another of its names is shown read-write: declared read-write
-as a single file, or in a directory shown read-write (searched only when its link count
-is above one, from each read-write directory on the file's filesystem and each such
-filesystem mounted beneath one); the message names that other name. Declaring the source
+symbolic link) counts too. A bind protects a name, not a file with several names (hard
+links): another name of a read-only file that a declaration shows read-write is writable
+there, as declared, and the read-only name shows what is written. Where that is cheap to
+see -- the other name declared read-write as a single file -- the launch says so in one
+warning line and goes on; another name inside a read-write directory is not looked for.
+Declaring the source
 read-only at its own path too (`~/store/x.md = read-only`) keeps both: then the role sees
 it read-only at both paths. Not a contradiction: the object inside a read-write mount at
 its own path (`~/store/ = read-write` with `~/store/sub/x.md = read-only`), a read-write

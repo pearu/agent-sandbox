@@ -540,35 +540,36 @@ part_in_place() {
   [[ "$output" == *"shows $IHOME/src/libfoo/build, inside it, read-write at $W/build: the two contradict"* ]]
 }
 
-@test "round 6, B5: another name of the read-only file (a hard link) in a read-write directory is a contradiction: refused, naming it" {
+@test "hard links: another name of the read-only file in a read-write directory launches: the role writes it there, as declared, and the read-only name shows it" {
   mkdir -p "$I/ext" "$IHOME/store" "$W/cfg"
   printf 'HOST\n' >"$I/ext/x.md"
   ln "$I/ext/x.md" "$IHOME/store/alias.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect "./cfg/x.md = read-only outside:$I/ext/x.md" \
-    --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"shows it, as $IHOME/store/alias.md (another name of the same file), read-write at $IHOME/store/alias.md"* ]]
-  [ -z "$(report ran)" ]
-  rm "$IHOME/store/alias.md" # one name again: it launches
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect "./cfg/x.md = read-only outside:$I/ext/x.md" \
-    --profile probe --exec bash -c 'echo "seen=$(cat cfg/x.md)" >>report'
+    --profile probe --exec bash -c 'python3 ops.py ro:write:cfg/x.md:R alias:write:"$HOME/store/alias.md":ROLE
+      echo "seen=$(cat cfg/x.md)" >>report'
   [ "$status" -eq 0 ]
-  [ "$(report seen)" = HOST ]
+  [[ "$output" != *"hard link"* ]]
+  [ "$(report ro)" = EROFS ]
+  [ "$(report alias)" = ok ]
+  [ "$(report seen)" = ROLE ]
 }
 
-@test "round 7, B2: another name of the read-only file declared read-write as a single file is a contradiction: refused, naming it" {
+@test "hard links: another name of the read-only file declared read-write as a single file launches with one warning; the write through it lands, the read-only name shows it" {
   mkdir -p "$I/ext" "$IHOME/store" "$W/cfg"
   printf 'HOST\n' >"$I/ext/x.md"
   ln "$I/ext/x.md" "$IHOME/store/alias.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect "./cfg/x.md = read-only outside:$I/ext/x.md" \
-    --connect './alt.md = read-write outside:~/store/alias.md' --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"shows it, as $IHOME/store/alias.md (another name of the same file), read-write at $W/alt.md"* ]]
-  [ -z "$(report ran)" ]
-  [ "$(cat "$I/ext/x.md")" = HOST ]
+    --connect './alt.md = read-write outside:~/store/alias.md' --profile probe --exec bash -c '
+      python3 ops.py ro:write:cfg/x.md:R alt:write:alt.md:ROLE
+      echo "seen=$(cat cfg/x.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'is another name (a hard link) of' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"$I/ext/x.md (read-only at $W/cfg/x.md) is another name (a hard link) of $IHOME/store/alias.md, which this launch shows read-write at $W/alt.md: writing one changes the other"* ]]
+  [ "$(report ro)" = EROFS ]
+  [ "$(report alt)" = ok ]
+  [ "$(report seen)" = ROLE ]
 }
 
 @test "round 7, smaller 1: a part own in place inside a read-only directory, read-write elsewhere, launches" {
@@ -648,7 +649,7 @@ part_in_place() {
     grep -q "agent-sandbox: the pinned directories" /run/agent-sandbox/briefing.md || echo marker=gone >>report'
   [ "$status" -eq 0 ]
   [[ "$output" != *"pinned, above"* ]] # a join builds nothing
-  [ "$(report brief)" = pins ] # the keeper's briefing, which the launch filled in
+  [ "$(report brief)" = pins ]         # the keeper's briefing, which the launch filled in
   [ "$(report marker)" = gone ]
   [ "$(report mv_a)" = EBUSY ]
   [ "$(report mv_b)" = EBUSY ]
