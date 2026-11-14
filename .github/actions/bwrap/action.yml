@@ -1,0 +1,89 @@
+name: bubblewrap 0.12.0
+description: >-
+  Install bubblewrap 0.12.0 as ./install.sh --rebuild-bwrap builds it (Ubuntu's 0.12.0-1
+  source, pinned SHA-256 sums), from the Actions cache when this Ubuntu release has a
+  built package there and by building it otherwise (about a minute); enable
+  unprivileged user namespaces; prove both work. The cache key is the source version,
+  the release, the architecture and a hash of the pinned version and sums read from
+  install.sh, so an unrelated installer change does not rebuild. Needs the checkout.
+
+runs:
+  using: composite
+  steps:
+    # Before anything that runs bwrap: --rebuild-bwrap's last step runs a user-namespace
+    # sandbox, which GitHub's 24.04+ kernels refuse until this is relaxed (the installer
+    # does the same with an AppArmor profile).
+    - name: Enable user namespaces; the cache key from install.sh's pins
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        fi
+        ver=$(sed -n 's/^BWRAP_SRC_VERSION=//p' install.sh)
+        sums=$(grep -oE '[0-9a-f]{64}  bubblewrap_[^"]+' install.sh)
+        if [[ -z "$ver" || $(wc -l <<<"$sums") -ne 3 ]]; then
+          echo "::error::install.sh: BWRAP_SRC_VERSION or the three pinned sums not found" >&2
+          exit 1
+        fi
+        codename=$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release)
+        arch=$(dpkg --print-architecture)
+        hash=$(printf '%s\n%s\n' "$ver" "$sums" | sha256sum | cut -c1-16)
+        {
+          echo "key=bwrap-$ver-$codename-$arch-$hash"
+          echo "work=${TMPDIR:-/tmp}/agent-sandbox-bwrap-$ver"
+          echo "deb=bubblewrap_$ver~${codename}1_$arch.deb"
+        } >>"$GITHUB_OUTPUT"
+
+    - name: Restore the built package
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/agent-sandbox-bwrap-deb
+        key: ${{ steps.key.outputs.key }}
+
+    # A runner already has the package's dependencies (libc6, libcap2, libselinux1), so
+    # apt needs no index for them; it is fetched only when the first try fails.
+    - name: Install bubblewrap from the cache
+      if: steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        DEB: /tmp/agent-sandbox-bwrap-deb/${{ steps.key.outputs.deb }}
+      run: |
+        set -euo pipefail
+        sudo apt-get install -y "$DEB" \
+          || { sudo apt-get update && sudo apt-get install -y "$DEB"; }
+
+    - name: Build bubblewrap (./install.sh --rebuild-bwrap)
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        WORK: ${{ steps.key.outputs.work }}
+        DEB: ${{ steps.key.outputs.deb }}
+      run: |
+        set -euo pipefail
+        ./install.sh --rebuild-bwrap
+        if [[ ! -f "$WORK/$DEB" ]]; then
+          echo "::error::--rebuild-bwrap left no $WORK/$DEB (is bubblewrap 0.12.0 already installed, or offered by apt?)" >&2
+          exit 1
+        fi
+        mkdir -p /tmp/agent-sandbox-bwrap-deb
+        cp "$WORK/$DEB" /tmp/agent-sandbox-bwrap-deb/
+
+    - name: bwrap is 0.12.0 and runs a user-namespace sandbox
+      shell: bash
+      run: |
+        set -euo pipefail
+        bwrap --version
+        [[ "$(bwrap --version)" == "bubblewrap 0.12.0" ]]
+        bwrap --ro-bind / / --unshare-user --unshare-pid -- true
+
+    # Only after a build that passed the check above. Jobs of one release that miss at
+    # once each build; the first to finish saves, the others' save only warns.
+    - name: Save the built package
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/agent-sandbox-bwrap-deb
+        key: ${{ steps.key.outputs.key }}

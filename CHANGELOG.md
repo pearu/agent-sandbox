@@ -1073,6 +1073,16 @@ names are gone; there are no aliases for removed names before 1.0.
   require that one check, so renaming a job or adding a matrix entry no longer leaves a
   PR waiting for a check that never runs. A new job goes in `ci-ok`'s `needs`;
   `tests/unit/ci-workflow.bats` fails when one is missing. Coverage stays informational.
+- **CI runs every bwrap job on bubblewrap 0.12.0** (`integration` and `e2e` on 22.04,
+  24.04 and 26.04, `e2e-real-systemd`, coverage's integration shards), where it ran each
+  release's own (0.6.1, 0.9.0, 0.11.1). A composite action, `.github/actions/bwrap`,
+  installs the package `./install.sh --rebuild-bwrap` builds from Ubuntu's 0.12.0-1
+  source, kept in the Actions cache per release and architecture under a key of the
+  pinned source version and SHA-256 sums: a job builds it (about a minute) only when the
+  cache has none, and otherwise installs it in seconds. The tests that skip where bwrap
+  has no `--overlay` now run on 22.04 and 24.04 too. The `e2e` job checks the dry run of
+  `--rebuild-bwrap` on the distribution's bubblewrap (the plan) and again on 0.12.0
+  (nothing to rebuild).
 
 ### Fixed
 
