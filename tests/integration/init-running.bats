@@ -295,6 +295,7 @@ MODEL
 }
 
 @test "a copy-on-write project with a read-write declaration over a file: an --init that replaces the file is refused (its writes would stop reaching it); a read-only one there goes ahead, the role keeping the old text" {
+  [[ "$(bwrap --help 2>&1)" == *"--overlay "* ]] || skip "this bubblewrap cannot mount an overlay (project = copy-on-write needs >= 0.11; this host: $(bwrap --version 2>&1))"
   printf 'iterate =\n' >"$M/tests"
   asb_host --init tiny
   [ "$status" -eq 0 ]
@@ -322,6 +323,7 @@ MODEL
 }
 
 @test "a copy-on-write project with a read-write declaration over a file --init would remove (an instance above the count): refused, its writes would stop reaching it" {
+  [[ "$(bwrap --help 2>&1)" == *"--overlay "* ]] || skip "this bubblewrap cannot mount an overlay (project = copy-on-write needs >= 0.11; this host: $(bwrap --version 2>&1))"
   git -C "$IWORK" init -q
   git -C "$IWORK" -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m init
   M3="$I/models/cows"
