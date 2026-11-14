@@ -1285,12 +1285,16 @@ login_file() {
   run ! grep -q 'cannot be renamed or' "$OUT/briefing.md"
 }
 
-@test "a read-only source that another mount shows read-write is said, made read-only there too" {
+@test "a read-only source that another declaration shows read-write refuses the launch, naming both as written" {
   mkdir -p "$H/home/store" "$PROJ/cfg"
   printf 'S\n' >"$H/home/store/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: './cfg/x.md = read-only' binds $H/home/store/x.md read-only at $PROJ/cfg/x.md, and '~/store/ = read-write' shows it read-write at $H/home/store/x.md: the two contradict"* ]]
+  [ ! -s "$H/argv" ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect '~/store/x.md = read-only' \
+    --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- "- read-only too where they also show, as the source of a read-only path: $H/home/store/x.md" "$OUT/briefing.md"
-  argv_has --ro-bind "$H/home/store/x.md" "$H/home/store/x.md"
 }

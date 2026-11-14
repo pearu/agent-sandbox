@@ -1128,8 +1128,11 @@ names are gone; there are no aliases for removed names before 1.0.
   path whose destination goes through such a link where it covers a host object the role
   sees (read-only with the source elsewhere, own, copy, copy-on-write, seed-only); a link
   it cannot replace is not refused, and the directories above it and the real path are
-  pinned. A read-only path's source is bound read-only over itself wherever a read-write
-  host mount of the launch also shows it, so it is read-only wherever the role sees it. An option list the computation cannot read refuses the launch. A
+  pinned. A read-only path whose source a read-write host mount of the launch also shows
+  at another path (the object, a directory containing it, or a part of a directory source),
+  where the role could write it, refuses the launch as a contradiction, naming both
+  declarations; declaring the source read-only at its own path too keeps both. Every
+  decision is made on the final view of the binds, not on those made so far. An option list the computation cannot read refuses the launch. A
   pinned directory stays writable inside; a rename, hard link or `git mv` across its
   boundary fails with "Invalid cross-device link" (`mv` and `cp` copy instead), which the
   briefing says. The bwrap arguments are unchanged where nothing is pinned.

@@ -353,20 +353,57 @@ behind_link() {
   [ "$(report seen)" = EXT ]
 }
 
-@test "a read-only source shown read-write by another mount is read-only there too; the rest of that directory stays writable" {
+@test "a read-only source another declaration shows read-write is a contradiction: refused; declared read-only at its own path too, it launches and the write fails at both paths" {
   mkdir -p "$IHOME/store/roles" "$W/cfg"
   printf 'HOST\n' >"$IHOME/store/roles/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/roles/x.md' \
-    --profile probe --exec python3 ops.py inplace:write:"$IHOME/store/roles/x.md":ROLE declared:write:cfg/x.md:ROLE \
-    beside:write:"$IHOME/store/roles/new":N other:write:"$IHOME/store/other":O
+  local -a decl=(--connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/roles/x.md')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo ran=yes >>report'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'./cfg/x.md = read-only' binds $IHOME/store/roles/x.md read-only at $W/cfg/x.md, and '~/store/ = read-write' shows it read-write at $IHOME/store/roles/x.md: the two contradict"* ]]
+  [ -z "$(report ran)" ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --connect '~/store/roles/x.md = read-only' --profile probe --exec \
+    python3 ops.py inplace:write:"$IHOME/store/roles/x.md":ROLE declared:write:cfg/x.md:ROLE \
+    beside:write:"$IHOME/store/roles/new":N mv:rename:"$IHOME/store/roles":"$IHOME/store/roles.moved"
   [ "$status" -eq 0 ]
   [ "$(report inplace)" = EROFS ]
   [ "$(report declared)" = EROFS ]
   [ "$(report beside)" = ok ]
-  [ "$(report other)" = ok ]
+  [ "$(report mv)" = EBUSY ]
   [ "$(cat "$IHOME/store/roles/x.md")" = HOST ]
-  [[ "$output" == *"read-only where it also shows, as the source of a read-only path: ~/store/roles/x.md"* ]]
+}
+
+@test "final view: a read-write mount bound AFTER the read-only path (deeper) that shows its source is a contradiction (B1); with a link there, the link refuses" {
+  mkdir -p "$IHOME/a/b/c/store/sub" "$IHOME/a/b/c/store/realdir"
+  printf 'HOST\n' >"$IHOME/a/b/c/store/sub/x.md"
+  printf 'HOST\n' >"$IHOME/a/b/c/store/realdir/x.md"
+  ln -s realdir "$IHOME/a/b/c/store/l"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/a/b/c/store/ = read-write' --connect './x.md = read-only outside:~/a/b/c/store/sub/x.md' \
+    --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"shows it read-write at $IHOME/a/b/c/store/sub/x.md: the two contradict"* ]]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/a/b/c/store/ = read-write' --connect './x.md = read-only outside:~/a/b/c/store/l/x.md' \
+    --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/a/b/c/store/l, a symbolic link in a directory the role can write"* ]]
+}
+
+@test "final view: a deeper read-only declaration bound AFTER makes the link's directory read-only: not refused (B2)" {
+  mkdir -p "$IHOME/store/p/q/r/links" "$IHOME/store/realdir" "$W/a/b"
+  printf 'HOST\n' >"$IHOME/store/realdir/x.md"
+  ln -s ../../../../realdir "$IHOME/store/p/q/r/links/l"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect '~/store/p/q/r/links/ = read-only' \
+    --connect '~/store/realdir/ = read-only' --connect './a/b/x.md = read-only outside:~/store/p/q/r/links/l/x.md' \
+    --profile probe --exec bash -c 'echo "seen=$(cat a/b/x.md)" >>report
+      python3 ops.py mvlinks:rename:"$HOME/store/p/q/r/links":"$HOME/store/p/q/r/links.x" rmlink:unlink:"$HOME/store/p/q/r/links/l"'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+  [ "$(report mvlinks)" = EBUSY ]
+  [ "$(report rmlink)" = EROFS ]
 }
 
 @test "a link in a read-only project is not refused; nor under --preset native" {
@@ -381,17 +418,6 @@ behind_link() {
     --profile probe --exec bash -c 'echo "seen=$(cat lnk/f.md)" >>report'
   [ "$status" -eq 0 ]
   [ "$(report seen)" = HOST ]
-}
-
-@test "an outside: source in a directory the role has read-write: its directories are pinned (a write in place is not prevented)" {
-  mkdir -p "$IHOME/store/roles" "$W/cfg/sub"
-  printf 'HOST\n' >"$IHOME/store/roles/x.md"
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/sub/x.md = read-only outside:~/store/roles/x.md' \
-    --profile probe --exec bash -c 'python3 ops.py mv:rename:"$HOME/store/roles":"$HOME/store/roles.moved"'
-  [ "$status" -eq 0 ]
-  [ "$(report mv)" = EBUSY ]
-  [ ! -e "$IHOME/store/roles.moved" ]
 }
 
 @test "B2: a pin beside a copy-on-write directory launches (never between --overlay-src and --overlay)" {

@@ -542,7 +542,8 @@ source resolves to, which is what to declare instead: the role could remove the 
 and make a directory of its own there, and the next launch would bind the role's file
 read-only (measured, also for a link in the middle of the chain). Replaceable means an
 entry of a directory a read-write host mount shows to the role, which it owns or can
-write; a link in a directory it cannot write (another user's) is not. A link it cannot
+write; a link in a directory it cannot write (another user's) is not, nor one in a sticky
+directory that neither it nor the link is the role's. A link it cannot
 replace -- in a read-only or copy-on-write mount, a read-only project, or such a
 directory -- is not refused, and the directories above it and above the real path are
 pinned wherever the role has them read-write. Under `--preset native` nothing is
@@ -558,12 +559,26 @@ declare instead; where nothing is there (bwrap makes an empty mount point, which
 launch removes again) or the role does not see it, it is not refused. Behind a link the
 role cannot replace, the real path's directories are pinned.
 
-**A path declared read-only is read-only wherever the role sees it.** Where a read-write
-host mount of the launch also shows a read-only path's source -- `./cfg/x.md = read-only
-outside:~/store/x.md` under `~/store/ = read-write` -- the source is bound read-only over
-itself there too, so a write in place fails (EROFS) at every path; the rest of that
-directory stays writable, and what is declared beneath it later stays as declared. The
-launch says so with `--verbose`, and the briefing names those paths.
+**A path declared read-only is not also shown read-write.** Where a read-write host mount
+of the launch shows a read-only path's source at another path -- the object itself, a
+directory containing it, or, for a directory source, a directory inside it -- the two
+declarations contradict, and the launch is refused, naming both and the host path:
+`./cfg/x.md = read-only outside:~/store/x.md` under `~/store/ = read-write` is refused.
+Declaring the source read-only at its own path too (`~/store/x.md = read-only`) keeps
+both: then the role sees it read-only at both paths. Not a contradiction: the object
+inside a read-write mount at its own path (`~/store/ = read-write` with
+`~/store/sub/x.md = read-only`), a read-write view of it that something covers (a deeper
+read-only declaration, a hide, a store, an overlay), a part of a read-only directory
+declared read-write at its own place inside it, and an object the role cannot write
+anyway (another user's, not writable to it).
+
+**Every one of these decisions is made on the final view** -- what shows at each path once
+every bind is made -- not on the binds made so far: declarations are bound by depth, so the
+mount that makes a directory read-write, or read-only, can come later in the list than
+the read-only path it concerns. A link in a sticky directory, neither it nor the link the
+role's, is not replaceable (the kernel lets only their owners remove it). A refusal for a
+channel or a built-in path, which has no declaration to rewrite, says to make the link
+the directory it points to or to bind from the resolved path.
 
 **Under the claude profile, `~/.claude/cache` is pinned where the changelog channel's
 file, `~/.claude/cache/changelog.md`, exists** and the channel is the role's own (every
