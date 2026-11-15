@@ -208,8 +208,6 @@ part_in_place() {
 }
 
 @test "B1: a copy-on-write declaration between" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   b1 copy-on-write
 }
 
@@ -234,8 +232,6 @@ part_in_place() {
 }
 
 @test "the role's own: a copy-on-write directory (an overlay)" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   own_case copy-on-write dir
 }
 
@@ -272,8 +268,6 @@ part_in_place() {
 }
 
 @test "a link under copy-on-write, its target read-write: not refused, the real path pinned" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   mkdir -p "$W/c" "$W/real"
   printf 'HOST\n' >"$W/real/f.md"
   ln -s ../real "$W/c/lnk"
@@ -459,8 +453,6 @@ part_in_place() {
 }
 
 @test "B2: a pin beside a copy-on-write directory launches (never between --overlay-src and --overlay)" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   mkdir -p "$W/a/cow" "$W/a/z"
   printf 'HOST\n' >"$W/a/z/f.md"
   run_sandboxed "${BASE[@]}" -- --connect './a/cow/ = copy-on-write' --connect './a/z/f.md = read-only' \
@@ -555,8 +547,6 @@ part_in_place() {
 }
 
 @test "round 7, smaller 1: a part copy-on-write in place (its overlay's lower the host directory: the role's writes stay in its layer)" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   part_in_place copy-on-write
 }
 
@@ -596,9 +586,6 @@ part_in_place() {
 @test "R1, the source side (the measured leak): a read-write, copy or copy-on-write source in a read-write store cannot be replaced by a link; the next launch binds the declared source" {
   local m
   for m in read-write copy copy-on-write; do
-    if [[ "$m" == copy-on-write ]]; then
-      command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' || continue
-    fi
     rm -rf "$IHOME/store" "$IHOME/secret" "$W/x"
     mkdir -p "$IHOME/store/real" "$IHOME/secret" "$W/x"
     printf 'REAL\n' >"$IHOME/store/real/f"
@@ -975,8 +962,6 @@ layer_link() {
 }
 
 @test "a key through a link the role made in its own copy-on-write layer is refused (a relative link)" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   layer_link a.role
   run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/f)"'
   [ "$status" -ne 0 ]
@@ -985,8 +970,6 @@ layer_link() {
 }
 
 @test "a key through a link the role made in its own copy-on-write layer is refused (an absolute link)" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   layer_link "$W/a.role"
   run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/f)"'
   [ "$status" -ne 0 ]
@@ -995,8 +978,6 @@ layer_link() {
 }
 
 @test "in a copy-on-write project, directories on the way to a read-only key that only the role's layer has are pinned: no rename, and the key stays read-only" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11)"
   mkdir -p "$IHOME/x"
   printf 'HOSTF\n' >"$IHOME/x/f"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
