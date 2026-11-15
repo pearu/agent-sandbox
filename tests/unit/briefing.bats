@@ -1275,9 +1275,11 @@ login_file() {
   mkdir -p "$e"
   cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$e/"
   cp "$(dirname "$ENGINE")/VERSION" "$e/" 2>/dev/null || true
-  sed 's/^_as_ro_pins() {$/&\n  echo pins >>"${PINS_COUNT:?}"/' "$ENGINE" >"$e/agent-sandbox"
+  # (the refusals-only check before a source is read -- _as_ro_pins' 4th argument -- is
+  # not a computation of the pins)
+  sed 's/^_as_ro_pins() {$/&\n  [ -n "${4:-}" ] || echo pins >>"${PINS_COUNT:?}"/' "$ENGINE" >"$e/agent-sandbox"
   chmod +x "$e/agent-sandbox"
-  [ "$(grep -c '^  echo pins >>"${PINS_COUNT:?}"$' "$e/agent-sandbox")" -eq 1 ]
+  [ "$(grep -cF '  [ -n "${4:-}" ] || echo pins >>"${PINS_COUNT:?}"' "$e/agent-sandbox")" -eq 1 ]
   # strict's tools, stubbed as tests/unit/strict.bats does: pasta runs its command
   printf '#!/usr/bin/env bash\n[ "$1" = --help ] && exit 0\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n' >"$H/bin/pasta"
   printf '#!/usr/bin/env bash\n[ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"\nexit 0\n' >"$H/bin/ip"
@@ -1387,4 +1389,17 @@ login_file() {
   [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./cfg, ~/store/x.md"* ]]
   argv_has --ro-bind "$H/home/store/x.md" "$PROJ/cfg/x.md"
   argv_has --bind "$H/home/store/x.md" "$H/home/store/x.md"
+}
+
+@test "the briefing's marker gone: the pins line refuses the launch, saying it is a bug, never silently" {
+  source_engine
+  local _briefing_md="$BATS_TEST_TMPDIR/briefing.md" _briefing_mark='<!-- mark -->'
+  printf '# briefing\nno marker here\n' >"$_briefing_md"
+  run _as_briefing_pins 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pins: the briefing has no line for what is fixed for the role (its marker is gone): this is a bug in agent-sandbox, and the launch is refused"* ]]
+  printf '# briefing\n%s\nmore\n' "$_briefing_mark" >"$_briefing_md"
+  run _as_briefing_pins 1
+  [ "$status" -eq 0 ]
+  grep -qxF -- '- declared paths are fixed for you: a declared path cannot be renamed, removed or' "$_briefing_md"
 }

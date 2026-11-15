@@ -656,14 +656,17 @@ part_in_place() {
   done
 }
 
-@test "a channel's relocated source that does not exist: nothing made on the host on the way to it and nothing pinned (copy, own); the launch that finds it there resolves it again" {
+@test "a channel's relocated source that does not exist: nothing made on the host on the way to it and nothing pinned (copy, own, copy-on-write); the launch that finds it there resolves it again" {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/deep/er/extra")' >>"$IPROFILES/probe/profile.sh"
   mkdir -p "$IHOME/alt" "$IHOME/secret"
   local m
-  for m in copy own; do
+  for m in copy own copy-on-write; do
+    rm -f "$W/report"
     # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-    run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect "extra = $m" --profile probe --exec true
+    run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect "extra = $m" --profile probe --exec bash -c '
+      echo "seen=$(ls -A "$HOME/.probe/extra" | tr "\n" " ")" >>report; echo W >"$HOME/.probe/extra/w" && echo wrote=yes >>report'
     [ "$status" -eq 0 ]
+    [ "$(report wrote)" = yes ] # the role's own, an empty start in every mode
     [ -z "$(ls -A "$IHOME/alt")" ] || {
       echo "$m: made $(ls -A "$IHOME/alt")" >&2
       return 1
@@ -679,6 +682,62 @@ part_in_place() {
   run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' --profile probe --exec true
   [ "$status" -ne 0 ]
   [[ "$output" == *"goes through $IHOME/alt/deep/er/extra, a symbolic link in a directory the role can write"* ]]
+}
+
+@test "a join-scoped path declaration's source is fixed (copy, seed-only, copy-on-write): the role cannot move it away and put a link there; a link the role can replace there is refused" {
+  local m
+  for m in copy seed-only copy-on-write; do
+    rm -rf "$IHOME/store" "$IHOME/secret" "$W/x" "$W/report"
+    mkdir -p "$IHOME/store/real" "$IHOME/secret"
+    printf 'R\n' >"$IHOME/store/real/r"
+    printf 'SECRET\n' >"$IHOME/secret/s"
+    # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+    local -a decl=(--connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/real/")
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+      python3 ops.py mv:rename:"$HOME/store/real":"$HOME/store/real.old"'
+    [ "$status" -eq 0 ]
+    [ "$(report mv)" = EBUSY ] || {
+      echo "$m: rename $(report mv)" >&2
+      return 1
+    }
+    [ -d "$IHOME/store/real" ]
+    # a link the role can replace on the way: refused, nothing of ~/secret seeded
+    mv "$IHOME/store/real" "$IHOME/store/realdir"
+    ln -s realdir "$IHOME/store/real"
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its source goes through $IHOME/store/real, a symbolic link in a directory the role can write"* ]]
+  done
+}
+
+@test "a launch the link check refuses has read nothing through the link: no seed-only store from ~/secret, and the launch after the user's repair shows none (seed-only); a copy store holds nothing of it (copy)" {
+  local m
+  for m in seed-only copy; do
+    rm -rf "$IHOME/store" "$IHOME/secret" "$W/x" "$IHOME/.local/state" "$W/report"
+    mkdir -p "$IHOME/store" "$IHOME/secret"
+    printf 'SECRET\n' >"$IHOME/secret/s"
+    # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+    local -a decl=(--connect '~/store/ = read-write' --connect "./x/d/ = $m outside:~/store/real/")
+    # launch 1: the source is missing (skipped); the role puts a link there
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'ln -s ../secret "$HOME/store/real"'
+    [ "$status" -eq 0 ]
+    # launch 2: refused, and nothing was read through the link
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its source goes through $IHOME/store/real, a symbolic link in a directory the role can write"* ]]
+    run ! grep -rqs SECRET "$IHOME/.local/state"
+    # launch 3, after the user's repair: the role sees the real source, never ~/secret
+    rm "$IHOME/store/real"
+    mkdir "$IHOME/store/real"
+    printf 'MINE\n' >"$IHOME/store/real/m"
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+      echo "seen=$(cat x/d/* 2>/dev/null | tr "\n" " ")" >>report'
+    [ "$status" -eq 0 ]
+    [ "$(report seen)" = "MINE " ] || {
+      echo "$m: saw [$(report seen)]" >&2
+      return 1
+    }
+  done
 }
 
 @test "an own channel does not read its relocated source: a link there launches, and a directory there is the role's to rename as ~/alt/ = read-write grants" {

@@ -551,6 +551,42 @@ cache_pins() {
   [ "${PIN[*]}" = "$P/d" ]
 }
 
+@test "a refusal's hint for a link whose target does not exist names the directory or file it should be" {
+  ln -s nowhere "$P/lnk"
+  pins -- --bind "$P" "$P" --tmpfs "$P/lnk/x"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"its path goes through $P/lnk, a symbolic link in a directory the role can write"* ]]
+  [[ "$MSG" == *"Make $P/lnk the directory or file it should be (it points to $P/nowhere, which does not exist). Refusing to launch"* ]]
+}
+
+@test "a join-scoped path declaration's source is a declared source: fixed where a read-write mount shows it, refused through a link the role can replace (copy, seed-only, copy-on-write)" {
+  make_harness
+  mkdir -p "$H/home/store/real"
+  printf 'R\n' >"$H/home/store/real/r"
+  local m
+  for m in copy seed-only copy-on-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/real/" claude --version
+    [ "$status" -eq 0 ]
+    # shellcheck disable=SC2088 # the message's own ~
+    [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): "*"~/store/real"* ]] || {
+      echo "$m: $output" >&2
+      return 1
+    }
+  done
+  mv "$H/home/store/real" "$H/home/store/realdir"
+  ln -s realdir "$H/home/store/real"
+  for m in copy seed-only copy-on-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/real/" claude --version
+    [ "$status" -ne 0 ] || {
+      echo "$m launched: $output" >&2
+      return 1
+    }
+    [[ "$output" == *"its source goes through $H/home/store/real, a symbolic link in a directory the role can write"* ]]
+  done
+}
+
 @test "a read-only bind whose source goes through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
   ln -s a "$P/lnk"
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
