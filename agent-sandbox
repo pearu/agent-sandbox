@@ -15088,8 +15088,8 @@ _as_ro_pins_chain() {
         declare -p _connect_key &>/dev/null && [[ -n "${_connect_key[$2]+x}${_connect_key[$_ch_k2]+x}" ]] && _ch_decl=1
       fi
       if ((! _ch_decl)); then
-        _ch_hint="Make $_ch_l the directory it points to, or bind from the resolved path ($_ch_q; for a channel, its mode with outside:$_ch_q)"
-        [[ "$3" == dest ]] && _ch_hint="Make $_ch_l the directory it points to ($_ch_q)"
+        _ch_hint="Make $_ch_l $(_as_ro_pins_link_what "$_ch_l"), or bind from the resolved path ($_ch_q; for a channel, its mode with outside:$_ch_q)"
+        [[ "$3" == dest ]] && _ch_hint="Make $_ch_l $(_as_ro_pins_link_what "$_ch_l")"
       fi
       # A link the engine made again in an account's directory for a linked top-level
       # entry of the base (_as_base_entry_binds): the next launch makes it again from
@@ -15099,7 +15099,7 @@ _as_ro_pins_chain() {
       if [[ -n "${_acct_dir:-}" && -n "${_as_base_real:-}" && "$_ch_l" == "$_acct_dir/$_ch_be" && "$_ch_be" != */* ]] \
         && [[ -L "$_as_base_real/$_ch_be" && "$(readlink -- "$_as_base_real/$_ch_be")" == "$(readlink -- "$_ch_l")" ]]; then
         _ch_be="$_as_base_real/$_ch_be"
-        _ch_hint="Make the base's $_ch_be the directory it points to ($(readlink -f -- "$_ch_be" 2>/dev/null || printf '%s' "$_ch_be")): the link in the account's directory is made again from it at every launch"
+        _ch_hint="Make the base's $_ch_be $(_as_ro_pins_link_what "$_ch_be"): the link in the account's directory is made again from it at every launch"
       fi
       _as_msg "connect: $2: $_ch_side $_ch_l, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $_ch_hint. Refusing to launch"
       return 1
@@ -15181,6 +15181,21 @@ _as_ro_pins_hardlink() {
     _as_msg "connect: warning: $1 (read-only at $2) is another name (a hard link) of $_hl_o, which this launch shows read-write at ${_od[_hl_m]}: writing one changes the other"
   done
   return 0
+}
+
+# _as_ro_pins_link_what LINK -- for a refusal's hint, what LINK is to be made instead:
+# "the directory it points to (TARGET)", "the file it points to (TARGET)", or, for a
+# target that does not exist, the directory or file it should be.
+_as_ro_pins_link_what() {
+  local t
+  t="$(readlink -f -- "$1" 2>/dev/null || readlink -m -- "$1" 2>/dev/null || printf '%s' "$1")"
+  if [[ -d "$t" ]]; then
+    printf 'the directory it points to (%s)' "$t"
+  elif [[ -e "$t" ]]; then
+    printf 'the file it points to (%s)' "$t"
+  else
+    printf 'the directory or file it should be (it points to %s, which does not exist)' "$t"
+  fi
 }
 
 # _as_ro_pins_replaceable LINK -- can the role replace LINK? Its directory is read-write to

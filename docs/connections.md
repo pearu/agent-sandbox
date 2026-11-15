@@ -585,7 +585,7 @@ mount that makes a directory read-write, or read-only, can come later in the lis
 the path it concerns. A link in a sticky directory, neither it nor the link the
 role's, is not replaceable (the kernel lets only their owners remove it). A refusal for a
 channel or a built-in path, which has no declaration to rewrite, says to make the link
-the directory it points to or to bind from the resolved path.
+the directory or file it points to or to bind from the resolved path.
 
 **Under the claude profile, `~/.claude/cache` is pinned where the changelog channel,
 `~/.claude/cache/changelog.md`, is bound** (every preset but `native`; under `shared`,

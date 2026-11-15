@@ -242,6 +242,27 @@ run_role() {
   [ ! -e "$IHOME/.claude/cache/changelog.md" ] # its mount point removed after the launch
 }
 
+@test "a linked cache without an account, the default preset: the changelog channel's path goes through the link in the base, which the role can replace, so the launch is refused (R3); the hint names the directory the link points to" {
+  mkdir -p "$IHOME/.claude/cache.real"
+  ln -s cache.real "$IHOME/.claude/cache"
+  TEST_PRESET='' run_claude
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its path goes through $IHOME/.claude/cache, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"Make $IHOME/.claude/cache the directory it points to ($IHOME/.claude/cache.real). Refusing to launch"* ]]
+  [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
+}
+
+@test "a link to a file on a channel's path: the hint names the file it points to" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/g"
+  ln -s ../secret/g "$IHOME/.claude/CLAUDE.md"
+  run_claude
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/.claude/CLAUDE.md, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"Make $IHOME/.claude/CLAUDE.md the file it points to ($IHOME/secret/g), or bind from the resolved path"* ]]
+  [[ "$output" != *"the directory it points to"* ]]
+}
+
 # Two roles at once on one state directory share its mount-point files: the first
 # launch creates them on the host, the second binds over the same ones. Removing one
 # does not fail while the other still has it mounted -- the unlink succeeds and
