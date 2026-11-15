@@ -1108,45 +1108,53 @@ names are gone; there are no aliases for removed names before 1.0.
 
 - **Declared paths are fixed for the role.** A declaration's access governs what is
   inside its path, not the path: in every mode, `read-write` included, the role can no
-  longer rename, remove or replace a declared path, the directories on the way to it that
-  it has read-write from the host, its source, or the directories on the way to the
-  source wherever a read-write host mount shows them, so it cannot choose which host path
-  a later launch binds. Measured before: the `roles` model's Supervisor and setup role ran
-  `mv .asb .asb.moved` and their purpose files were writable there; a rename above an
-  `own` path uncovered the host's original; a `read-write`, `copy` or `copy-on-write`
-  source in a read-write store, replaced by a link, had the next launch bind an undeclared
-  `~/secret`; a channel whose source the profile relocates was no different. A source
-  is one the mode reads or binds, fixed from the first launch that finds it there. Each
-  such directory, and a source file, is bound onto itself at launch (a pin), so its
-  rename or removal fails with EBUSY: in the shipped models `.asb` and `.asb/roles` for the `roles`
-  Supervisor and setup role, the `github` setup role and the `market` role, none for the
-  roles with a read-only or copy-on-write project; and, under the claude profile,
-  `~/.claude/cache` for every role whose changelog channel is bound -- its own store, or
-  under `shared` the base's file once it is there (a directory on the way that the host
-  does not have yet is made where bwrap would make it, and pinned at the first launch
-  already). A `read-write` channel at its own path, which the state directory's bind
-  already shows (claude's `CLAUDE.md`, `settings.json`, `skills/` under `shared`), is
-  bound onto itself, so it is fixed too: measured before, a role under `shared` renamed
-  `~/.claude/CLAUDE.md` away and put a link to `~/secret/g` there, which the next launch
-  on an account bound, read and wrote. A declared path or source through a symbolic
-  link the role can replace refuses the launch, in every mode, naming the link and the
-  resolved path. One source shown at two paths with different access is valid, each
-  path its own; a hard link of a read-only file that a read-write single-file mount
-  shows is warned of. The briefing names the fixed paths
-  and the way out: ask the user to rename, move or remove on the host and, where needed,
-  update the dot-file and relaunch. A pinned directory stays writable inside as
-  declared; a rename, hard link or `git mv` across its boundary fails with "Invalid
-  cross-device link" (`mv` and `cp` copy instead), and a single-file source reached
-  through a read-write directory view is written in place, not replaced by a temp-file
-  rename. Nothing changes under `--preset native`. The pins are computed once per launch
-  on its final list, every decision on the final view, with no `find`; an option list
-  the computation cannot read refuses the launch. The bwrap arguments are unchanged
-  where nothing is pinned.
+  longer rename, remove or replace a declared path, the directories on the way to it
+  that it has read-write from the host, its source, or the directories on the way to the
+  source wherever a read-write host mount shows them, so it cannot choose which host
+  path a later launch binds. Measured before: the `roles` model's Supervisor and setup
+  role ran `mv .asb .asb.moved` and their purpose files were writable there; a rename
+  above an `own` path uncovered the host's original; a `read-write`, `copy` or
+  `copy-on-write` source in a read-write store, replaced by a link, had the next launch
+  bind an undeclared `~/secret`; a channel whose source the profile relocates was no
+  different. A source is one the mode reads or binds, fixed from the first launch that
+  finds it there. Each such directory, and a source file, is bound onto itself at launch
+  (a pin), so its rename or removal fails with EBUSY: in the shipped models `.asb` and
+  `.asb/roles` for the `roles` Supervisor and setup role, the `github` setup role and
+  the `market` role, none for the roles with a read-only or copy-on-write project; and,
+  under the claude profile, `~/.claude/cache` for every role whose changelog channel is
+  bound -- its own store, or under `shared` the base's file once it is there (a
+  directory on the way that the host does not have yet is made where bwrap would make
+  it, and pinned at the first launch already). A `read-write` channel at its own path,
+  which the state directory's bind already shows (claude's `CLAUDE.md`, `settings.json`,
+  `skills/` under `shared`), is bound onto itself, so it is fixed too: measured before,
+  a role under `shared` renamed `~/.claude/CLAUDE.md` away and put a link to
+  `~/secret/g` there, which the next launch on an account bound, read and wrote. A
+  declared path or source through a symbolic link the role can replace refuses the
+  launch, in every mode, naming the link and the resolved path. So do a linked
+  `~/.claude/cache` (the changelog channel's directory), with an account and without;
+  under an account, a channel's path in the base that is or goes through a symbolic
+  link; a hide (the profile's or a project's) through a link the role can replace; and,
+  under `shared` without an account, a channel file in the base that is such a link. A
+  `join-scoped` path declaration's source is fixed like any other. A launch that refuses
+  has read nothing through the link: a source is seeded or copied only once its links
+  are checked. One source shown at two paths with different access is valid, each path
+  its own; a hard link of a read-only file that a read-write single-file mount shows is
+  warned of. The briefing names the fixed paths and the way out: ask the user to rename,
+  move or remove on the host and, where needed, update the dot-file and relaunch. A
+  pinned directory stays writable inside as declared; a rename, hard link or `git mv`
+  across its boundary fails with "Invalid cross-device link" (`mv` and `cp` copy
+  instead), and a single-file source reached through a read-write directory view is
+  written in place, not replaced by a temp-file rename. Nothing changes under `--preset
+  native`. The pins are computed once per launch on its final list, every decision on
+  the final view, with no `find`; an option list the computation cannot read refuses the
+  launch. The bwrap arguments are unchanged where nothing is pinned.
 - **A `copy-on-write` channel reads its relocated source.** With a source elsewhere --
   the profile's relocation, or `outside:` on the `[connect]` line -- the channel's
   overlay read through the channel's own path instead, so it showed other content than
   `copy` for the same line; its lower is now the source, as a path declaration's overlay
-  and a join's already were. A write still lands in the role's layer.
+  and a join's already were. A write still lands in the role's layer. A relocated source
+  that is missing is not made on the host: the overlay starts from an empty stand-in, as
+  `copy` starts empty.
 - **A claude session no longer asks to read its own briefing or to write its summary
   line.** Claude Code asked "Allow this read outside the working directories?" for
   `/run/agent-sandbox/briefing.md` in every role without a `[briefing] start` (only

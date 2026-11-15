@@ -551,25 +551,11 @@ and git's checkout, stash and rebase copy and work); a single-file source a read
 directory view shows can be written in place but not replaced by a temp-file rename (an
 editor's or `sed -i`'s save fails with "Device or resource busy" there). Nothing is pinned
 under `--preset native`, the exception, whose claim is parity with no sandbox; nor inside
-a `copy-on-write` mount, the project included, or a read-only mount (nothing there can be
-renamed from inside). A directory on the way that the host does not have yet is made
-there just before the launch, exactly where and as bwrap would make it to mount the
-bind beneath it (inside a read-write host mount, mode 0700), and only once every check
-has passed, so it is pinned at the first launch too.
-
-**A declared path or source through a link the role can replace is refused**, in every
-mode and on both sides. A symbolic link cannot be fixed by a mount point, and by
-retargeting it the role would choose which host path a later launch binds (measured for
-a source: an undeclared `~/secret` bound read-write). The engine follows the source as
-declared, and the host path the key lands on, link by link -- links inside link
-targets, relative and absolute targets, `..` -- and a link the role could replace refuses
-the launch, naming that link and the resolved path, which is what to declare instead.
-Replaceable means an entry of a directory a read-write host mount shows to the role,
-which it owns or can write; a link in a directory it cannot write (another user's) is
-not, nor one in a sticky directory that neither it nor the link is the role's. A link it
-cannot replace -- in a read-only or copy-on-write mount, a read-only project, or such a
-directory -- is not refused, and the path behind it is fixed as above. Under `--preset
-native` nothing is refused. At 40 links (a loop) the launch is refused.
+a `copy-on-write` mount, the project included, or a read-only mount. A directory on the
+way that the host does not have yet is made there just before the launch, exactly where
+and as bwrap would make it to mount the bind beneath it (inside a read-write host mount,
+mode 0700), and only once every check has passed, so it is pinned at the first launch
+too.
 
 **A bind protects a name, not a file with several names (hard links):** another name of a
 read-only file that a declaration shows read-write is writable there, as declared, and
@@ -580,10 +566,7 @@ on; another name inside a read-write directory is not looked for.
 **Every one of these decisions is made on the final view** -- what shows at each path once
 every bind is made -- not on the binds made so far: declarations are bound by depth, so the
 mount that makes a directory read-write, or read-only, can come later in the list than
-the path it concerns. A link in a sticky directory, neither it nor the link the
-role's, is not replaceable (the kernel lets only their owners remove it). A refusal for a
-channel or a built-in path, which has no declaration to rewrite, says to make the link
-the directory or file it points to or to bind from the resolved path.
+the path it concerns.
 
 **Under the claude profile, `~/.claude/cache` is pinned where the changelog channel,
 `~/.claude/cache/changelog.md`, is bound** (every preset but `native`; under `shared`,
