@@ -8378,36 +8378,27 @@ _as_version_said() {
   [[ -z "$u" ]]
 }
 
-# _as_host_path_of INSIDE [DEPTH] -- the host path behind INSIDE, for a mount point bwrap
+# _as_host_path_of INSIDE -- the host path behind INSIDE, for a mount point bwrap
 # creates there (#355): with an account in force (_acct_dir) the base's inside path is
 # the account's directory, so `{base}/X` is created at ACCOUNT/X on the host -- except
 # under an entry of the base bound there from the base (_as_base_entry_binds):
-# `{base}/E/Y` is created at BASE/E/Y, as it is with no account. Under an entry made
-# again as a symlink, `{base}/L/Y`, bwrap follows the link inside the sandbox, so the
-# path is mapped again through the link's target (a relative one is under {base}); any
-# other path is the same on both sides. A placeholder's record must name the host path
-# bwrap creates, or the cleanup would test, and remove, an empty file of that name
-# where bwrap did not make it, and leave the one it did.
+# `{base}/E/Y` is created at BASE/E/Y, as it is with no account. Any other path is the
+# same on both sides. No mount point is ever made under an entry made again as a
+# symlink: a declared path through that link refuses the launch (_as_ro_pins_chain). A
+# placeholder's record must name the host path bwrap creates, or the cleanup would
+# test, and remove, an empty file of that name where bwrap did not make it, and leave
+# the one it did.
 # shellcheck disable=SC2154
 _as_host_path_of() {
-  local depth="${2:-0}"
   if [[ -n "${_acct_dir:-}" && -n "${profile_base:-}" ]]; then
     if [[ "$1" == "$profile_base" ]]; then
       printf '%s' "$_acct_dir"
       return 0
     elif [[ "$1" == "$profile_base"/* ]]; then
-      local rel="${1#"$profile_base"/}" e t
+      local rel="${1#"$profile_base"/}" e
       for e in ${_as_base_entries[@]+"${_as_base_entries[@]}"}; do
         if [[ "$rel" == "$e"/* && -n "${_as_base_real:-}" ]]; then
           printf '%s/%s' "$_as_base_real" "$rel"
-          return 0
-        fi
-      done
-      for e in ${_as_base_links[@]+"${_as_base_links[@]}"}; do
-        t="${e#*$'\t'}" e="${e%%$'\t'*}"
-        if [[ "$rel" == "$e"/* ]] && ((depth < 16)); then
-          [[ "$t" == /* ]] || t="$profile_base/$t"
-          _as_host_path_of "$(realpath -m -s -- "$t/${rel#"$e"/}")" $((depth + 1))
           return 0
         fi
       done
@@ -8516,12 +8507,15 @@ _as_base_rw_sources() {
 # on a symlink already at the destination even when it is the same (its
 # SETUP_MAKE_SYMLINK takes EEXIST as an error until 0.9.0, which accepts an identical
 # one), and the account's directory keeps the one an earlier or a running launch made.
+# Such an entry is supported only with nothing declared under it: the role can replace
+# the link, so a declared path through it -- a channel's too, the claude profile's
+# `{base}/cache/changelog.md` under a linked `cache` -- refuses the launch
+# (_as_ro_pins_chain); the way out is to make the entry the directory it points to.
 # Entries created in the base after the launch are not seen by it. Bwrap makes each
 # mount point in the account's directory; an empty file among them is removed by the
 # cleanup (as a placeholder), a directory or a symlink stays. Sets _as_base_real and
 # _as_base_entries (the names bound from the base), so _as_host_path_of places a mount
-# point under one of them in the base, where bwrap makes it, and _as_base_links
-# (NAME<TAB>TARGET of the symlinks made again), so it maps a path under one through it.
+# point under one of them in the base, where bwrap makes it.
 #
 # A NAME THE ACCOUNT'S DIRECTORY HAS TOO: the base's is bound over it when both are of
 # a kind bwrap can mount over (a directory over a directory, a file over a file). Any
@@ -8539,7 +8533,7 @@ _as_base_entry_binds() {
   local real="$1" e name dest line entry ap skip a ka ke t
   local GLOBIGNORE=""
   local -a fields=() skip_paths=() todo=()
-  _as_base_real="$real" _as_base_entries=() _as_base_links=()
+  _as_base_real="$real" _as_base_entries=()
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     for entry in "${fields[@]:1}"; do
@@ -8593,7 +8587,6 @@ _as_base_entry_binds() {
         _as_msg "the account '${_acct_name:-}': cannot make '$a' a symlink to '$t', as the base's '$e' is. Nothing was started"
         return 1
       fi
-      _as_base_links+=("$name"$'\t'"$t")
     else
       [[ -d "$e" ]] || _as_connect_placeholder "$dest"
       args+=(--bind "$e" "$dest")
@@ -17154,7 +17147,7 @@ agent_sandbox() (
   local -a _as_placeholder_files=() _as_placeholder_maybe=()
   # Under an account (#355): the resolved base and the names of its entries bound from
   # it one by one (_as_base_entry_binds), for _as_host_path_of.
-  local -a _as_base_entries=() _as_base_links=()
+  local -a _as_base_entries=()
   local _as_base_real=""
   # Declared HERE, not down with the launch locals: state isolation opens the
   # session dir well before that point, and a later `local _session_dir=""`

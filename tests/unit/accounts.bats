@@ -650,7 +650,6 @@ argv_count() {
   _as_base_bind
   [ "$(_as_host_path_of "$C/cache/changelog.md")" = "$C/cache/changelog.md" ]
   [ "$(_as_host_path_of "$C/CLAUDE.md")" = "$ACC/work/CLAUDE.md" ]
-  [ "$(_as_host_path_of "$C/link/x")" = "$ACC/work/somewhere/x" ] # through a symlink made again: its target
   [ "$(_as_host_path_of "$C")" = "$ACC/work" ]
   # the response hook's own mount point: recorded at the account, removed while empty
   [[ " ${_as_placeholder_files[*]} " == *" $ACC/work/response-hook.py "* ]]
@@ -734,7 +733,7 @@ argv_count() {
   # shellcheck disable=SC2034 # read by _as_base_bind by dynamic scope
   local profile=claude profile_base="$C" _acct_name=work _acct_dir="$ACC/work" _as_base_real=""
   # shellcheck disable=SC2034
-  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=() _as_base_entries=() _as_base_links=()
+  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=() _as_base_entries=()
   # shellcheck disable=SC2034
   local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
   GLOBIGNORE='*:.*:*/*'
@@ -742,31 +741,6 @@ argv_count() {
   unset GLOBIGNORE
   [[ " ${args[*]} " == *" --bind $C/response-hook.py $C/response-hook.py "* ]]
   [ "$(readlink "$ACC/work/link")" = somewhere ]
-}
-
-@test "P7 helper: a mount point under a symlink made again is mapped through its target, to where bwrap makes it" {
-  source_engine
-  HOME="$H/home"
-  # shellcheck disable=SC2034 # read by the helpers by dynamic scope
-  local profile=claude profile_base="$C" _acct_name=work _acct_dir="$ACC/work" _as_base_real=""
-  # shellcheck disable=SC2034
-  local -a args=() profile_channels=() profile_isolate_spec=() _as_placeholder_files=() _as_base_entries=() _as_base_links=()
-  # shellcheck disable=SC2034
-  local -a profile_account_paths=(.credentials.json .oauth_refresh.lock .oauth_refresh.lock.owner)
-  ln -s cache "$C/clink"    # into an entry bound from the base
-  ln -s "$H/abs" "$C/alink" # outside the base
-  ln -s ./clink "$C/chain"  # through another link
-  _as_base_bind
-  [ "$(_as_host_path_of "$C/clink/changelog.md")" = "$C/cache/changelog.md" ]
-  [ "$(_as_host_path_of "$C/chain/changelog.md")" = "$C/cache/changelog.md" ]
-  [ "$(_as_host_path_of "$C/link/x")" = "$ACC/work/somewhere/x" ] # nothing there: the account's
-  [ "$(_as_host_path_of "$C/alink/x")" = "$H/abs/x" ]
-  # a loop ends
-  ln -s loop "$C/loop"
-  args=()
-  _as_base_bind
-  run _as_host_path_of "$C/loop/x"
-  [ "$status" -eq 0 ]
 }
 
 @test "the review's base/login note is for the profile --profile names when it names one, else for each profile with a base" {

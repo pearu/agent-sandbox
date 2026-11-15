@@ -1242,10 +1242,14 @@ by one over the account's directory, and then the channels the profile declares 
 project's `[claude] hide`), and the profile's `account-paths` -- **the base's login and
 its refresh lock are never in an account role**; that is the point. An entry that is a
 symlink is made again in the account's directory with its target as written, never
-followed on the host. Where the account's directory has an entry of the same name and
-kind, the base's covers it. Any symlink there, under a name the base has, is taken to be
-one an earlier launch made again (the engine does not tell its own from yours), and is
-removed and made afresh when the base's entry is no longer a symlink to the same target.
+followed on the host -- supported only with nothing declared under it: the role can
+replace that link, so a path declared through it, a channel's included (the profile's
+own case: a linked `cache`, which holds the channel `cache/changelog.md`), refuses the
+launch; make the base's entry the directory it points to. Where the account's directory
+has an entry of the same name and kind, the base's covers it. Any symlink there, under a
+name the base has, is taken to be one an earlier launch made again (the engine does not
+tell its own from yours), and is removed and made afresh when the base's entry is no
+longer a symlink to the same target.
 Any other mismatch (a file in the account's directory where the base has a directory, a
 directory where it has a file, a file or directory where it has a symlink) refuses the
 launch before anything starts, naming both paths: remove the account's to see the base's
@@ -1260,9 +1264,8 @@ file (claude: the policy bodies): that is not what it starts as, so it is not bo
 what the agent writes there lands in the account's directory. Mount points bwrap creates
 for the channels and the entries are made in the account's directory, as they are in the
 base (one under an entry bound from the base, `cache/changelog.md`, in the base's entry,
-as with no account; one under a symlink made again, wherever its target is); empty files
-among them are removed after the launch, empty directories and the symlinks made again
-stay.
+as with no account); empty files among them are removed after the launch, empty
+directories and the symlinks made again stay.
 
 **Logging an account in: `asb [--agent AGENT] --account NAME --login`.** At your own
 shell (refused inside a sandbox), with nothing else on the line: `--login` once, and at
