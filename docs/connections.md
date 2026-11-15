@@ -537,11 +537,16 @@ modes that read or bind them: not under `own`, which never reads one) -- and the
 goes through the mounts on the way (under `./x/a/ = read-write`,
 `./x/a/b/f.md = read-only` pins `./x` too). A source that does not exist yet is neither
 pinned nor made on the host (bwrap makes a mount's destination, never its source); the
-launch that finds it there resolves it. Measured: without the pins a rename
-of `.asb` moved the Supervisor's purpose files to where it could write them (#389), a
-rename above an own path uncovered the host's original, and a source in a read-write
-store, replaced by a link, had the next launch bind an undeclared `~/secret` read-write
--- `read-write`, `copy` and `copy-on-write` alike. What it costs the role: a pinned
+launch that finds it there resolves it. A `read-write` channel at its own path, which
+the state directory's bind already shows (claude's `CLAUDE.md`, `settings.json`,
+`skills/` under `shared`), is bound onto itself all the same in every preset but
+`native`, so it is a mount point like every other declared path. Measured: without the
+pins a rename of `.asb` moved the Supervisor's purpose files to where it could write
+them (#389), a rename above an own path uncovered the host's original, a source in a
+read-write store, replaced by a link, had the next launch bind an undeclared `~/secret`
+read-write -- `read-write`, `copy` and `copy-on-write` alike -- and a role under
+`shared` renamed `~/.claude/CLAUDE.md` away and put a link to `~/secret/g` there, which
+the next launch on an account bound, read and wrote. What it costs the role: a pinned
 directory stays as writable inside as its declaration says, but a rename, hard link or
 `git mv` across its boundary fails with "Invalid cross-device link" (`mv`, `cp`, rsync
 and git's checkout, stash and rebase copy and work); a single-file source a read-write
@@ -552,7 +557,7 @@ a `copy-on-write` mount, the project included, or a read-only mount (nothing the
 renamed from inside). A directory on the way that the host does not have yet is made
 there just before the launch, exactly where and as bwrap would make it to mount the
 bind beneath it (inside a read-write host mount, mode 0700), and only once every check
-has passed, so it is pinned at the first launch too and a refused launch leaves nothing.
+has passed, so it is pinned at the first launch too.
 
 **A declared path or source through a link the role can replace is refused**, in every
 mode and on both sides. A symbolic link cannot be fixed by a mount point, and by
@@ -583,10 +588,12 @@ channel or a built-in path, which has no declaration to rewrite, says to make th
 the directory it points to or to bind from the resolved path.
 
 **Under the claude profile, `~/.claude/cache` is pinned where the changelog channel,
-`~/.claude/cache/changelog.md`, is the role's own** (every preset but `shared` and
-`native`): it is a directory of the read-write base above that store, made there first
-when the base does not have it yet, as bwrap would make it. The role cannot rename or remove `~/.claude/cache`, and a rename or hard link
-across it fails with "Invalid cross-device link"; inside it everything works. The host
+`~/.claude/cache/changelog.md`, is bound** (every preset but `native`; under `shared`,
+where it is read-write at its own path, once the file is there): it is a directory of
+the read-write base above that mount, made there first when the base does not have it
+yet, as bwrap would make it. The role cannot rename or remove `~/.claude/cache`, and a
+rename or hard link across it fails with "Invalid cross-device link"; inside it
+everything works. The host
 is not restricted: a rename, hard link, `mv` or `rm` across or of the directory works on
 the host while the sandbox runs.
 

@@ -19,6 +19,13 @@ setup() {
   cat >"$IHOME/.local/share/claude/versions/9.9.9/claude" <<'PROBE'
 #!/usr/bin/env bash
 c="${CLAUDE_CONFIG_DIR:-unset}"
+# `... @@ CMD...`: run CMD as the role (run_role)
+for ((i = 1; i <= $#; i++)); do
+  if [ "${!i}" = @@ ]; then
+    shift "$i"
+    exec "$@"
+  fi
+done
 # `... hold NAME` (last on the line; the profile adds its own arguments first): report,
 # wait for go-NAME, report again
 if [ "$#" -ge 2 ] && [ "${@: -2:1}" = hold ]; then
@@ -117,6 +124,39 @@ run_claude() {
   declare -gA M=()
   local k v
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
+}
+
+# run_role [ENGINE ARGS...] -- CMD... -- run CMD as the role, through the stub's `@@`.
+run_role() {
+  local -a ea=()
+  while [[ $# -gt 0 && "$1" != -- ]]; do
+    ea+=("$1")
+    shift
+  done
+  shift
+  engine_cmd
+  # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
+  run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
+    AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
+    AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
+    bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" ${ea[@]+"${ea[@]}"} \
+    "$IHOME/.local/share/claude/versions/9.9.9/claude" @@ "$@"
+}
+
+@test "a read-write channel at its own path is fixed for the role under shared (R1): a role cannot rename ~/.claude/CLAUDE.md away and plant a link there, so the next launch on an account does not bind a path no declaration grants" {
+  printf 'INSTR\n' >"$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/g"
+  run_role -- bash -c 'cd ~/.claude && mv CLAUDE.md CLAUDE.md.old && ln -s ../secret/g CLAUDE.md'
+  [[ "$output" == *"Device or resource busy"* ]]
+  [ ! -L "$IHOME/.claude/CLAUDE.md" ]
+  [ "$(cat "$IHOME/.claude/CLAUDE.md")" = INSTR ]
+  [ ! -e "$IHOME/.claude/CLAUDE.md.old" ]
+  run_role --account work -- bash -c 'cat ~/.claude/CLAUDE.md; echo PWNED >>~/.claude/CLAUDE.md'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *INSTR* ]]
+  [[ "$output" != *SECRET* ]]
+  [ "$(cat "$IHOME/secret/g")" = SECRET ]
 }
 
 @test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel and the base's other entries still from the base; a write lands in the account" {

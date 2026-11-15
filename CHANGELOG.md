@@ -1122,17 +1122,18 @@ names are gone; there are no aliases for removed names before 1.0.
   fails with EBUSY: in the shipped models `.asb` and `.asb/roles` for the `roles`
   Supervisor and setup role, the `github` setup role and the `market` role, none for the
   roles with a read-only or copy-on-write project; and, under the claude profile,
-  `~/.claude/cache` for every role whose changelog channel is its own (a directory on
-  the way that the host does not have yet is made where bwrap would make it, and pinned
-  at the first launch already). A declared path or source through a symbolic link the
-  role can replace refuses the launch, in every mode, naming the link and the resolved
-  path; under an account that includes a channel under a top-level
-  entry of the base that is a symlink (made again in the account's directory): a linked
-  `~/.claude/cache`, which holds the changelog channel, is not supported and refuses the
-  launch (make it the directory it points to), while a linked entry with nothing
-  declared under it is made again as before. One source shown at two paths with
-  different access is valid, each path its own; a hard link of a read-only file that a
-  read-write single-file mount shows is warned of. The briefing names the fixed paths
+  `~/.claude/cache` for every role whose changelog channel is bound -- its own store, or
+  under `shared` the base's file once it is there (a directory on the way that the host
+  does not have yet is made where bwrap would make it, and pinned at the first launch
+  already). A `read-write` channel at its own path, which the state directory's bind
+  already shows (claude's `CLAUDE.md`, `settings.json`, `skills/` under `shared`), is
+  bound onto itself, so it is fixed too: measured before, a role under `shared` renamed
+  `~/.claude/CLAUDE.md` away and put a link to `~/secret/g` there, which the next launch
+  on an account bound, read and wrote. A declared path or source through a symbolic
+  link the role can replace refuses the launch, in every mode, naming the link and the
+  resolved path. One source shown at two paths with different access is valid, each
+  path its own; a hard link of a read-only file that a read-write single-file mount
+  shows is warned of. The briefing names the fixed paths
   and the way out: ask the user to rename, move or remove on the host and, where needed,
   update the dot-file and relaunch. A pinned directory stays writable inside as
   declared; a rename, hard link or `git mv` across its boundary fails with "Invalid

@@ -2629,9 +2629,21 @@ _as_connect_bind_channel() {
     # state bind covers -- unless something outer is bound over it (memory under an own
     # `projects`), and then it is bound back, a missing directory created first. A
     # relocated one is bound across.
+    #
+    # AT ITS OWN PATH, NOT COVERED, IT IS STILL BOUND ONTO ITSELF (every preset but
+    # native): a declared path is fixed for the role, and only a mount point is -- left
+    # to the state bind, the role could rename the channel's file away and put a link
+    # there, which the next launch that binds the path (an account's, or one whose
+    # outer bind covers it) followed to a host path no declaration grants (measured:
+    # ~/.claude/CLAUDE.md -> ../secret/g, read and written by the next role). Bound,
+    # it is a mount point (EBUSY) and _as_ro_pins fixes its way and refuses a link the
+    # role can replace on it. A missing one is not made: there is nothing to fix, and
+    # what the role puts there is resolved by the launch that binds it.
     if [[ "$src" != "$path" && -e "$src" ]]; then
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
       args+=(--bind "$src" "$path")
+    elif [[ "$src" == "$path" ]] && ((! _bind_covered)) && ! _as_preset_is_native; then
+      [[ -e "$src" ]] && args+=(--bind "$src" "$path")
     elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
       if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
       # (Under an account a missing file was made in the base already, before the base's

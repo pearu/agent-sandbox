@@ -725,6 +725,19 @@ part_in_place() {
   done
 }
 
+@test "R1, a read-write channel at its own path, under a state bind that already shows it: the role cannot rename it away (it is a mount point)" {
+  mkdir -p "$IHOME/.probe/docs"
+  printf 'D\n' >"$IHOME/.probe/docs/d"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --connect 'docs = read-write' --profile probe --exec bash -c '
+    python3 ops.py mv:rename:"$HOME/.probe/docs":"$HOME/.probe/docs.m" in:write:"$HOME/.probe/docs/n":N'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
+  [ "$(report in)" = ok ] # writable inside, as declared
+  [ -d "$IHOME/.probe/docs" ]
+  [ ! -e "$IHOME/.probe/docs.m" ]
+  [ "$(cat "$IHOME/.probe/docs/n")" = N ]
+}
+
 @test "R1 at the first launch: directories on the way to a key that the host does not have yet are made where bwrap would make them, and pinned already" {
   mkdir -p "$IHOME/big"
   printf 'BIG\n' >"$IHOME/big/f"

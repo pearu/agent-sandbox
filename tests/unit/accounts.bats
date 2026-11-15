@@ -130,7 +130,9 @@ base_is_only_channels() {
   [ "$status" -eq 0 ]
   argv_has --bind "$C" "$C"
   run ! grep -qF "$ACC" "$H/argv"
-  run ! argv_has --bind "$C/skills" "$C/skills" # the base covers it
+  # a read-write channel at its own path: bound onto itself over the base, so it is a
+  # mount point the role cannot rename away (R1)
+  argv_has --bind "$C/skills" "$C/skills"
   [ "$(cat "$SBOX/account")" = "claude"$'\t' ]
 }
 
@@ -556,13 +558,14 @@ argv_count() {
   argv_has --bind "$C/ide" "$C/ide"
 }
 
-@test "P7: no account, no per-entry binds: the base is bound at itself and its entries are not named" {
+@test "P7: no account, no per-entry binds: the base is bound at itself and its entries are not named (cache/ only as the pin on the way to its channel)" {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   argv_has --bind "$C" "$C"
   run ! grep -qxF "$C/response-hook.py" "$H/argv"
   run ! grep -qxF "$C/ide" "$H/argv"
-  run ! grep -qxF "$C/cache" "$H/argv"
+  [ "$(grep -cxF "$C/cache" "$H/argv")" -eq 2 ] # --bind C/cache C/cache: the pin, once
+  argv_has --bind "$C/cache/changelog.md" "$C/cache/changelog.md"
   run ! grep -qxF "$C/link" "$H/argv"
   run ! argv_has --symlink somewhere "$C/link"
 }
