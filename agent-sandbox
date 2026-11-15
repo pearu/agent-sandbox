@@ -15434,7 +15434,7 @@ _as_ro_pins_replaceable() {
   [[ "$(_as_ro_pins_uid "$1")" == "$_as_ro_pins_euid" ]]
 }
 
-# The role's uid, as _as_ro_pins compares owners with it (a test sets another).
+# The role's uid, as _as_ro_pins compares owners with it.
 _as_ro_pins_euid="$EUID"
 
 # _as_ro_pins_uid PATH -- the owner of PATH itself (a link: the link's), as a number.

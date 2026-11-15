@@ -860,6 +860,16 @@ plant_docs() {
   [ -z "$(report seen)" ]
 }
 
+@test "a join-scoped copy-on-write declaration whose source is missing makes nothing on the host: each join reads an empty stand-in" {
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './x/d/ = copy-on-write join-scoped outside:~/nowhere/deep/' --profile probe --exec bash -c '
+    echo "seen=$(ls -A x/d | tr "\n" " ")" >>report; echo W >x/d/w && echo wrote=yes >>report'
+  [ "$status" -eq 0 ]
+  [ ! -e "$IHOME/nowhere" ]
+  [ -z "$(report seen)" ]
+  [ "$(report wrote)" = yes ]
+}
+
 # relo_link TARGET -- the probe's extra channel relocated to ~/alt/extra, a link to TARGET
 relo_link() {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
