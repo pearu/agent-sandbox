@@ -1116,10 +1116,9 @@ names are gone; there are no aliases for removed names before 1.0.
   `own` path uncovered the host's original; a `read-write`, `copy` or `copy-on-write`
   source in a read-write store, replaced by a link, had the next launch bind an undeclared
   `~/secret`; a channel whose source the profile relocates was no different. A source
-  is one the mode reads or binds (an `own` channel's relocated source is none), and one
-  that does not exist yet is neither pinned nor made on the host. Each such directory,
-  and a source file, is bound onto itself at launch (a pin), so its rename or removal
-  fails with EBUSY: in the shipped models `.asb` and `.asb/roles` for the `roles`
+  is one the mode reads or binds, fixed from the first launch that finds it there. Each
+  such directory, and a source file, is bound onto itself at launch (a pin), so its
+  rename or removal fails with EBUSY: in the shipped models `.asb` and `.asb/roles` for the `roles`
   Supervisor and setup role, the `github` setup role and the `market` role, none for the
   roles with a read-only or copy-on-write project; and, under the claude profile,
   `~/.claude/cache` for every role whose changelog channel is bound -- its own store, or

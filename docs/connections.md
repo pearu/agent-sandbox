@@ -533,11 +533,9 @@ file too), wherever a read-write host mount shows them, is bound onto itself (a 
 Every mode is covered -- `read-only`, `read-write`, `own`, `copy`, `copy-on-write`,
 `seed-only`, a hide (the profile's or `[claude] hide`), the built-in dot-file and purpose
 files, channels (their sources too, relocated by the profile or by `outside:`, in the
-modes that read or bind them: not under `own`, which never reads one) -- and the walk
-goes through the mounts on the way (under `./x/a/ = read-write`,
-`./x/a/b/f.md = read-only` pins `./x` too). A source that does not exist yet is neither
-pinned nor made on the host (bwrap makes a mount's destination, never its source); the
-launch that finds it there resolves it. A `read-write` channel at its own path, which
+modes that read or bind them) -- and the walk goes through the mounts on the way (under
+`./x/a/ = read-write`, `./x/a/b/f.md = read-only` pins `./x` too). A source is fixed
+from the first launch that finds it there. A `read-write` channel at its own path, which
 the state directory's bind already shows (claude's `CLAUDE.md`, `settings.json`,
 `skills/` under `shared`), is bound onto itself all the same in every preset but
 `native`, so it is a mount point like every other declared path. Measured: without the
