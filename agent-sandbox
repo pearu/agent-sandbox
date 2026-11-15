@@ -2741,7 +2741,8 @@ _as_sandbox_store() {
   # here, refused when it leaves the store.
   local _sbx_st _sbx_real _sbx_root
   _sbx_st="$(_as_state_dir)"
-  if [[ "$bestst" == "$_sbx_st"/* ]]; then
+  # (not under native, which is unchanged: parity with no sandbox)
+  if [[ "$bestst" == "$_sbx_st"/* ]] && ! _as_preset_is_native; then
     _sbx_root="$(readlink -f -- "$bestst" 2>/dev/null || printf '%s' "$bestst")"
     _sbx_real="$(readlink -m -- "$_sbx_src" 2>/dev/null || printf '%s' "$_sbx_src")"
     if [[ "$_sbx_real" != "$_sbx_root" && "$_sbx_real" != "$_sbx_root"/* ]]; then
@@ -3282,8 +3283,12 @@ _as_connect_sync() {
     _as_msg "connect: cannot find the sync helper at $connect_sync (re-run install.sh, or set AGENT_SANDBOX_CONNECT_SYNC)"
     return 1
   }
+  # under native (parity with no sandbox) the source is read as it always was, every
+  # link followed; elsewhere connect-sync follows no link inside the source
+  local -a follow=()
+  _as_preset_is_native && follow=(--follow-links yes)
   out="$(_as_python "$connect_sync" "$verb" --kind "$kind" --source "$src" \
-    --copy "$copy" --base "$manifest" 2>&1)" || rc=$?
+    --copy "$copy" --base "$manifest" ${follow[@]+"${follow[@]}"} 2>&1)" || rc=$?
   ((rc == 0)) || {
     _as_msg "connect: syncing '$ch' failed (exit $rc): $out"
     return 1
@@ -3293,7 +3298,14 @@ _as_connect_sync() {
   # has since changed, and saying so once quietly is how that goes unnoticed for
   # a month.
   local line f
+  local -a relinked=()
   while IFS= read -r line; do
+    # A file the copy held as the content of a link in the source (as the sync before
+    # copied links), now the link itself: said once, below.
+    if [[ "$line" == relinked\ * ]]; then
+      relinked+=("${line#relinked }")
+      continue
+    fi
     # Something in this sandbox's copy where the sync was to write or remove: a link
     # (a host-side write through it would land outside the copy), neither a file nor a
     # directory (a FIFO would hang the launch), or a file where yours has a directory or
@@ -3317,6 +3329,11 @@ _as_connect_sync() {
     _as_channel_vendor_file "$ch" "$f" && continue
     _as_msg "connect: $ch: kept this sandbox's '$f'; your own copy of it has changed since. To take yours instead: $(_as_self_cmd --reset "$ch")"
   done <<<"$out"
+  if ((${#relinked[@]})); then
+    local _rl_names="${relinked[*]:0:3}"
+    ((${#relinked[@]} > 3)) && _rl_names+=" ..."
+    _as_msg "connect: $ch: ${#relinked[@]} file(s) this sandbox's copy held as the content of a symbolic link in yours now hold the link itself ($_rl_names): a copy keeps a link as a link, and a target outside your copy is not there for the sandbox unless it is declared"
+  fi
   return 0
 }
 
@@ -3330,8 +3347,10 @@ _as_connect_shadows() {
   local ch="$1" src="$2" upper="$3" seen="$4" out rc=0
   command -v python3 >/dev/null 2>&1 || return 0 # nothing to warn WITH; the mount still works
   [[ -r "$connect_sync" ]] || return 0
+  local -a follow=()
+  _as_preset_is_native && follow=(--follow-links yes)
   out="$(_as_python "$connect_sync" shadows --source "$src" --upper "$upper" \
-    --seen "$seen" 2>&1)" || rc=$?
+    --seen "$seen" ${follow[@]+"${follow[@]}"} 2>&1)" || rc=$?
   ((rc == 0)) || {
     _as_msg "connect: could not check '$ch' for shadowed files (exit $rc): $out"
     return 0 # a failed CHECK must not stop a launch the mount itself can serve
@@ -12321,8 +12340,9 @@ _as_check_binds() {
           seen="declared"
           if [[ -n "${_connect_sandbox[$path]:-}" ]]; then
             local _sbx_src=""
+            _as_sandbox_store "${_connect_sandbox[$path]}" "$path" 2>&1 | sed 's/^agent-sandbox: /  note: /'
             _as_sandbox_store "${_connect_sandbox[$path]}" "$path" 2>/dev/null || true
-            seen="declared, ${_connect_sandbox[$path]##*$'\t'}: $([[ -n "$_sbx_src" ]] && _as_tilde "$_sbx_src" || echo 'nothing there; skipped')"
+            seen="declared, ${_connect_sandbox[$path]##*$'\t'}:$([[ -n "$_sbx_src" ]] && _as_tilde "$_sbx_src" || echo 'nothing there; skipped')"
           else
             s="${_connect_src[$path]:-$path}"
             [[ -n "${_connect_src[$path]:-}" ]] && seen="declared, outside:$(_as_tilde "$s")"

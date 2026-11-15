@@ -1352,4 +1352,32 @@ hide_link() {
     [ -z "$(report seen)" ]
   done
   run ! grep -rqs SECRET "$IHOME/.local/state"
+  # --check says so, as for a channel
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- --role a --connect '~/.probe/docs/sub/ = read-only sandbox:@b' \
+    --profile probe --check
+  [[ "$output" == *"note: connect: "*"that role's store has a symbolic link there that leaves the store"* ]]
+}
+
+@test "a sandbox: copy of a directory in another role's store: a directory under it that role replaced by a link is not read through" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/f"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- --role b --profile probe --exec bash -c '
+    mkdir -p "$HOME/.probe/docs/real/deep" && echo REAL >"$HOME/.probe/docs/real/deep/f"'
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  local -a decl=(--role a --connect '~/.probe/docs/real/ = copy sandbox:@b')
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen=$(cat "$HOME/.probe/docs/real/deep/f" 2>/dev/null)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = REAL ]
+  rm -f "$W/report"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- --role b --profile probe --exec bash -c '
+    rm -r "$HOME/.probe/docs/real/deep" && ln -s "$HOME/secret" "$HOME/.probe/docs/real/deep"'
+  [ "$status" -eq 0 ]
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen=$(cat "$HOME/.probe/docs/real/deep/f" 2>/dev/null)" >>report'
+  [ "$status" -eq 0 ]
+  [[ "$(report seen)" != *SECRET* ]]
+  run ! grep -rqs SECRET "$IHOME/.local/state"
 }

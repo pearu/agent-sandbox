@@ -1106,11 +1106,17 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
-- **`copy` keeps a symbolic link inside its source as a link.** It read through a link
-  at a file's name in a directory source: a link the role made in a source it may write
-  (`~/store/real/leak -> ~/secret/s`) brought the secret into the copy at the next
-  launch. A link inside the source is now copied as the same link, never read through,
-  as `seed-only` keeps it; the copy-on-write shadow check records a link by its target.
+- **`copy` keeps a symbolic link inside its source as a link, and reads nothing through
+  one.** It read through a link inside a directory source, at a file's name or at a
+  directory on the way: a link the role made in a source it may write
+  (`~/store/real/leak -> ~/secret/s`, or `~/store/real/sub -> ~/secret`) brought the
+  secret into the copy at the next launch. A link inside the source is now copied as the
+  same link, never read through, as `seed-only` keeps it, and nothing under a link
+  inside the source is read; the copy-on-write shadow check records a link by its
+  target. A link inside a copied source used to be copied as its target's content: an
+  existing copy is updated at its next launch (the launch says which files now hold the
+  link), and a link to a path outside the source is then unreadable in the sandbox
+  unless that path is declared. Under `--preset native` nothing changes.
 - **A `sandbox:` source inside another role's store stays in that store.** A key inside
   the other role's store, through a symbolic link that role had left there, bound (or
   copied, or seeded from) what the link named: `~/.probe/docs/sub/ = read-only

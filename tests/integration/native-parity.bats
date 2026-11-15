@@ -149,6 +149,27 @@ capture() { # capture NAME engine-args...
   [ "$(cat "$IWORK/view")" = "v=YOURS HOST ONE" ]
 }
 
+@test "under native, copy reads its source as with no sandbox: a link inside it is copied as the content it names" {
+  mkdir -p "$IWORK/src" "$IHOME/shared"
+  printf 'SHARED\n' >"$IHOME/shared/f"
+  ln -s "$IHOME/shared/f" "$IWORK/src/l"
+  run_sandboxed "${PAR[@]}" -- --preset native --connect './src/ = copy' --profile probe --exec bash -c '
+    echo "v=$([ -L src/l ] && echo link || echo file) $(cat src/l)" >view'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/view")" = "v=file SHARED" ]
+}
+
+@test "under native, a sandbox: source inside another role's store through that role's link launches, as with no sandbox" {
+  mkdir -p "$IHOME/secret"
+  printf 'S\n' >"$IHOME/secret/s"
+  TEST_PRESET=isolated run_sandboxed "${PAR[@]}" -- --role b --profile probe --exec bash -c 'ln -s "$HOME/secret" "$HOME/.probe/docs/sub"'
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${PAR[@]}" -- --role a --preset native --connect '~/.probe/docs/sub/ = read-only sandbox:@b' --profile probe --exec true
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"leaves the store"* ]]
+}
+
 @test "a read-only channel the profile creates, under native: missing, it is made as with no check, and bound" {
   printf '%s\n' 'profile_channel_create=(docs)' >>"$IPROFILES/probe/profile.sh"
   rm -rf "$IHOME/.probe/docs"
