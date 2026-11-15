@@ -738,6 +738,47 @@ part_in_place() {
   [ "$(cat "$IHOME/.probe/docs/n")" = N ]
 }
 
+# hide_link -- the probe profile on a base (~/.probe) with lnk -> real, real/secret/s TOPSECRET.
+hide_link() {
+  printf '%s\n' 'profile_base="$HOME/.probe"' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/.probe/real/secret" "$IHOME/.probe/other"
+  printf 'TOPSECRET\n' >"$IHOME/.probe/real/secret/s"
+  ln -s real "$IHOME/.probe/lnk"
+}
+
+@test "the profile's hide through a link the role can replace is refused: the role cannot retarget the link to uncover what it hides" {
+  hide_link
+  printf '%s\n' 'profile_hide=(lnk/secret)' >>"$IPROFILES/probe/profile.sh"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
+    cd "$HOME/.probe" && rm lnk && ln -s other lnk && echo swapped=yes >>"'"$W"'/report"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: $IHOME/.probe/lnk/secret: its path goes through $IHOME/.probe/lnk, a symbolic link in a directory the role can write"* ]]
+  [ -z "$(report swapped)" ]
+  [ "$(readlink "$IHOME/.probe/lnk")" = real ]
+}
+
+@test "a project's [probe] hide through a link the role can replace is refused the same way" {
+  hide_link
+  printf '%s\n' 'profile_dotfile_keys=(hide)' >>"$IPROFILES/probe/profile.sh"
+  printf '[probe]\nhide = lnk/secret\n' >"$W/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" AGENT_SANDBOX_PROFILE_DIR="$4" "${@:5}" --trust --profile probe 2>&1' \
+    _ "$W" "$IHOME" "$I/bin:/usr/bin:/bin" "$IPROFILES" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
+    cd "$HOME/.probe" && rm lnk && ln -s other lnk && echo swapped=yes >>"'"$W"'/report"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: $IHOME/.probe/lnk/secret: its path goes through $IHOME/.probe/lnk, a symbolic link in a directory the role can write"* ]]
+  [ -z "$(report swapped)" ]
+  # with the link made the directory it points to, the hide is fixed and still hides
+  rm "$IHOME/.probe/lnk"
+  mv "$IHOME/.probe/real" "$IHOME/.probe/lnk"
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
+    echo "seen=$(cat "$HOME/.probe/lnk/secret/s" 2>&1)" >>"'"$W"'/report"'
+  [ "$status" -eq 0 ]
+  [[ "$(report seen)" != *TOPSECRET* ]]
+}
+
 @test "R1 at the first launch: directories on the way to a key that the host does not have yet are made where bwrap would make them, and pinned already" {
   mkdir -p "$IHOME/big"
   printf 'BIG\n' >"$IHOME/big/f"

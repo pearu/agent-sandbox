@@ -15576,15 +15576,14 @@ _as_ro_pins() {
     if [[ -n "$_x" ]]; then
       _as_ro_pins_apart "$_x" "$_k" || _as_ro_pins_chain "$_x" "$_d" src || return 1
     fi
-    # The host path the key lands on, under the mount that shows its directory (not a
-    # hide's: a tmpfs covers on purpose and is pinned).
-    if [[ "$_o" != --tmpfs ]]; then
-      _x="${_d%/*}"
-      _as_ro_pins_host_at "${_x:-/}" _x
-      if [[ -n "$_x" ]]; then
-        _x="${_x%/}/${_d##*/}"
-        _as_ro_pins_apart "$_x" || _as_ro_pins_chain "$_x" "$_d" dest || return 1
-      fi
+    # The host path the key lands on, under the mount that shows its directory -- a
+    # hide's too: through a link the role could retarget, the next launch would blank
+    # another path and show the one it hid (measured: lnk/secret, lnk swapped).
+    _x="${_d%/*}"
+    _as_ro_pins_host_at "${_x:-/}" _x
+    if [[ -n "$_x" ]]; then
+      _x="${_x%/}/${_d##*/}"
+      _as_ro_pins_apart "$_x" || _as_ro_pins_chain "$_x" "$_d" dest || return 1
     fi
   done
   ((${#_pn_p[@]})) || return 0
@@ -15667,9 +15666,31 @@ _as_launch() {
   _as_briefing_pins "$_pins_fixed" ${_pinned[@]+"${_pinned[@]}"} || return 1
   if ((${#_pinned[@]})); then
     _bwrap_opts=("${_pinned_opts[@]}")
-    local _pn _pl=""
-    for _pn in "${_pinned[@]}"; do _pl+="${_pl:+, }$(_as_check_name "$_pn")"; done
-    _as_info "pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): $_pl"
+    if ((! _as_quiet)); then
+      # The names as _as_check_name gives them, without a subshell per directory: the
+      # slug looked up once.
+      local _pn _pq _pl="" _pslug=""
+      declare -F profile_slug >/dev/null && _pslug="$(profile_slug "$cwd" 2>/dev/null || true)"
+      for _pn in "${_pinned[@]}"; do
+        case "$_pn" in
+          "$cwd") _pq=. ;;
+          "$cwd"/*) _pq="./${_pn#"$cwd"/}" ;;
+          *)
+            _pq="$_pn"
+            if [[ -n "$_pslug" ]]; then
+              _pq="${_pq//\/"$_pslug"\//\/\{slug\}\/}"
+              [[ "$_pq" == */"$_pslug" ]] && _pq="${_pq%/"$_pslug"}/{slug}"
+            fi
+            case "$_pq" in
+              "$HOME") _pq='~' ;;
+              "$HOME"/*) _pq="~${_pq#"$HOME"}" ;;
+            esac
+            ;;
+        esac
+        _pl+="${_pl:+, }$_pq"
+      done
+      _as_msg "pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): $_pl"
+    fi
   fi
   (umask 077 && printf '%s\0' "${_bwrap_opts[@]}" >"$_session_dir/bwrap.args") || return 1
   # The payload: `sleep` under the marker as its argv[0], set by the shell's `exec -a`, not

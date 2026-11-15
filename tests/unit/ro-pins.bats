@@ -539,6 +539,18 @@ cache_pins() {
   [ ! -e "$P/nodir2" ]
 }
 
+@test "a hide (a tmpfs) whose path goes through a link the role can replace is refused, naming the link; through a plain directory it is fixed as any declared path" {
+  mkdir -p "$P/real/secret" "$P/d/secret"
+  ln -s real "$P/lnk"
+  pins -- --bind "$P" "$P" --tmpfs "$P/lnk/secret"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"connect: $P/lnk/secret: its path goes through $P/lnk, a symbolic link in a directory the role can write"* ]]
+  [[ "$MSG" == *"Make $P/lnk the directory it points to ($P/real). Refusing to launch"* ]]
+  pins -- --bind "$P" "$P" --tmpfs "$P/d/secret"
+  [ "$RC" -eq 0 ]
+  [ "${PIN[*]}" = "$P/d" ]
+}
+
 @test "a read-only bind whose source goes through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
   ln -s a "$P/lnk"
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
