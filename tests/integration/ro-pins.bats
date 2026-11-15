@@ -870,6 +870,50 @@ plant_docs() {
   [ "$(report wrote)" = yes ]
 }
 
+# sbx_native SPEC_KEY SOURCE -- a sandbox: source naming a project with no record, so it
+# resolves to the native path through the profile's relocation of SPEC_KEY to SOURCE
+sbx_native() {
+  printf '%s\n' "profile_channel_sources=(\"\$HOME/.probe/$1\"\$'\\t'\"\$HOME/alt/$2\")" >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt" "$IHOME/secret" "$I/P"
+  printf 'TOPSECRET\n' >"$IHOME/secret/g"
+}
+
+@test "a sandbox: source that resolves to a native path of the user's (no record) is a declared source: a link the role planted there is refused (file)" {
+  sbx_native NOTES.md notes.md
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  local -a D=(--connect '~/alt/ = read-write' --connect "~/.probe/NOTES.md = read-only sandbox:$I/P")
+  run_sandboxed "${BASE[@]}" -- "${D[@]}" --profile probe --exec bash -c 'ln -s ../secret/g "$HOME/alt/notes.md"'
+  [ "$status" -eq 0 ]
+  run_sandboxed "${BASE[@]}" -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/NOTES.md" 2>/dev/null)" >>report'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/alt/notes.md, a symbolic link in a directory the role can write"* ]]
+  [[ "$(report seen)" != *TOPSECRET* ]]
+}
+
+@test "a sandbox: source that resolves to a native path of the user's (no record) is a declared source: a link the role planted there is refused (directory)" {
+  sbx_native extra extra
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  local -a D=(--connect '~/alt/ = read-write' --connect "~/.probe/extra/ = read-only sandbox:$I/P")
+  run_sandboxed "${BASE[@]}" -- "${D[@]}" --profile probe --exec bash -c 'ln -s ../secret "$HOME/alt/extra"'
+  [ "$status" -eq 0 ]
+  run_sandboxed "${BASE[@]}" -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/extra/g" 2>/dev/null)" >>report'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/alt/extra, a symbolic link in a directory the role can write"* ]]
+  [[ "$(report seen)" != *TOPSECRET* ]]
+}
+
+@test "directories on the way made for a hide get the mode bwrap gives a tmpfs's (0755); for a bind, 0700" {
+  printf '%s\n' 'profile_base="$HOME/.probe"' 'profile_hide=(missing/a/s)' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/big"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --connect './n1/n2/key/ = read-only outside:~/big/' --profile probe --exec true
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %a "$IHOME/.probe/missing")" = 755 ]
+  [ "$(stat -c %a "$IHOME/.probe/missing/a")" = 755 ]
+  [ "$(stat -c %a "$W/n1")" = 700 ]
+  [ "$(stat -c %a "$W/n1/n2")" = 700 ]
+}
+
 # relo_link TARGET -- the probe's extra channel relocated to ~/alt/extra, a link to TARGET
 relo_link() {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"

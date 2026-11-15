@@ -553,9 +553,9 @@ editor's or `sed -i`'s save fails with "Device or resource busy" there). Nothing
 under `--preset native`, the exception, whose claim is parity with no sandbox; nor inside
 a `copy-on-write` mount, the project included, or a read-only mount. A directory on the
 way that the host does not have yet is made there just before the launch, exactly where
-and as bwrap would make it to mount the bind beneath it (inside a read-write host mount,
-mode 0700), and only once every check has passed, so it is pinned at the first launch
-too.
+and as bwrap would make it to mount what is beneath it (inside a read-write host mount,
+with the mode bwrap gives it), and only once every check has passed, so it is pinned at
+the first launch too.
 
 **A bind protects a name, not a file with several names (hard links):** another name of a
 read-only file that a declaration shows read-write is writable there, as declared, and

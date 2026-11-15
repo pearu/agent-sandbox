@@ -21,13 +21,13 @@ it -- a restore comes from the source -- so its content is dead weight, and the
 one thing it must record is what the source looked like, which a hash says.
 
     sync    --kind file|dir --source S --copy C --base M
-    reset   --kind file|dir --source S --copy C --base M
     shadows --source S --upper U --seen M
 
 `sync` prints one `conflict <path>` line per file it refused to overwrite, for
 the engine to relay as a warning; the paths are relative for a directory channel
-and the channel's own name for a file one. `reset` throws the sandbox's copy away
-and re-seeds, which is the supported way back to the source.
+and the channel's own name for a file one. The way back to the source is the
+engine's `--reset`, which discards the copy and its manifest; the next launch's
+`sync` seeds it again.
 
 `shadows` answers the same question for `copy-on-write`, where the kernel hides
 and nothing here copies anything. An overlay's upper layer IS the list of files
@@ -39,7 +39,6 @@ it loudly -- the source moved on and the sandbox will never see it.
 import hashlib
 import json
 import os
-import shutil
 import stat
 import sys
 
@@ -469,25 +468,9 @@ def walk_regular(root):
     return out
 
 
-def reset(kind, source, copy, base_path):
-    """Throw the sandbox's copy away and seed again from the source."""
-    if kind == "dir":
-        shutil.rmtree(copy, ignore_errors=True)
-    else:
-        try:
-            os.unlink(copy)
-        except OSError:
-            pass
-    try:
-        os.unlink(base_path)
-    except OSError:
-        pass
-    return sync(kind, source, copy, base_path)
-
-
 def main(argv):
-    if len(argv) < 1 or argv[0] not in ("sync", "reset", "shadows"):
-        sys.stderr.write("connect-sync.py sync|reset --kind file|dir "
+    if len(argv) < 1 or argv[0] not in ("sync", "shadows"):
+        sys.stderr.write("connect-sync.py sync --kind file|dir "
                          "--source S --copy C --base M\n"
                          "connect-sync.py shadows --source S --upper U --seen M\n")
         return 2
@@ -514,8 +497,7 @@ def main(argv):
         rels = shadows(opts["source"], opts["upper"], opts["seen"])
         base_name = opts["source"]
     else:
-        fn = sync if cmd == "sync" else reset
-        rels, links = fn(opts["kind"], opts["source"], opts["copy"], opts["base"])
+        rels, links = sync(opts["kind"], opts["source"], opts["copy"], opts["base"])
         base_name = opts["source"]
     for rel in rels:
         # A file channel has one unnamed entry; name it after the source so the

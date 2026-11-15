@@ -287,7 +287,7 @@ run_role() {
   [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
 }
 
-@test "a link to a file on a channel's path: the hint says what it points to, without recommending it" {
+@test "a link to a file on a channel's path: the hint says what it points to and both ways out (make the link what it should be, or bind from its target if that is meant)" {
   mkdir -p "$IHOME/secret"
   printf 'SECRET\n' >"$IHOME/secret/g"
   ln -s ../secret/g "$IHOME/.claude/CLAUDE.md"

@@ -21,6 +21,8 @@
 # test that checks named properties only ever finds the differences someone
 # already thought of.
 
+# shellcheck disable=SC2016 # the --exec scripts expand inside the sandbox, not here
+
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
   load "$BATS_TEST_DIRNAME/../helpers/integration"
@@ -145,4 +147,14 @@ capture() { # capture NAME engine-args...
     echo "v=$(cat "$HOME/.probe/docs/a.md") $(cat c/f) $(cat one.md)" >view'
   [ "$status" -eq 0 ]
   [ "$(cat "$IWORK/view")" = "v=YOURS HOST ONE" ]
+}
+
+@test "a read-only channel the profile creates, under native: missing, it is made as with no check, and bound" {
+  printf '%s\n' 'profile_channel_create=(docs)' >>"$IPROFILES/probe/profile.sh"
+  rm -rf "$IHOME/.probe/docs"
+  run_sandboxed "${PAR[@]}" -- --preset native --connect 'docs = read-only' --profile probe --exec bash -c '
+    echo "v=$([ -d "$HOME/.probe/docs" ] && echo dir)" >view'
+  [ "$status" -eq 0 ]
+  [ -d "$IHOME/.probe/docs" ]
+  [ "$(cat "$IWORK/view")" = "v=dir" ]
 }

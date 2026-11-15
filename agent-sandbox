@@ -2677,6 +2677,19 @@ _as_sandbox_record_write() {
   return 0
 }
 
+# _as_sandbox_src_engine NAME SRC -- is SRC, the source NAME's `sandbox:` resolved to,
+# another role's ENGINE-OWNED store (a slot under the state directory, which no role
+# ever sees as a host path it can write)? Not for no `sandbox:` source, and not for a
+# native host path of the user's that _as_sandbox_store returns -- no record (the
+# native path, through the relocation), or a record at read-write or read-only (the
+# native path): those are declared sources like any other, checked and fixed.
+_as_sandbox_src_engine() {
+  [[ -n "${_connect_sandbox[$1]:-}" ]] || return 1
+  local st
+  st="$(_as_state_dir)"
+  [[ "$2" == "$st"/* ]]
+}
+
 # _as_sandbox_store "PROJECT<TAB>ROLE<TAB>WRITTEN" KEY [CHANNEL] -- set $_sbx_src to the
 # host path that role's store has at KEY, from its record: the slot of an own, seed-only
 # or copy store (a subpath inside it for a key inside the channel path), the native
@@ -2779,6 +2792,13 @@ _as_connect_bind_channel() {
     _as_sandbox_store "${_connect_sandbox[$ch]}" "$path" "$ch" || return 1
     [[ -n "$_sbx_src" ]] || return 0 # nothing there; said
     src="$_sbx_src"
+    # a native path of the user's (no record, or a record at read-write or read-only) is
+    # a declared source like any other; another role's engine-owned store is not
+    if ! _as_sandbox_src_engine "$ch" "$src"; then
+      case "$mode" in
+        read-write | read-only | copy | copy-on-write | seed-only) _ds_pending="$src" ;;
+      esac
+    fi
   fi
   # A relocated path is not bound under `native`: see _as_channel_source.
   if [[ "$src" != "$path" ]] && _as_preset_is_native; then
@@ -3039,7 +3059,7 @@ _as_connect_bind_path() {
     [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
     # Each join seeds from (or reads through) the source: a declared source like any
     # other, resolved link by link and fixed (_as_ro_pins) -- not an own store's.
-    [[ "$mode" == own || -n "${_connect_sandbox[$p]:-}" ]] || _ds_pending="$s"
+    [[ "$mode" == own ]] || _as_sandbox_src_engine "$p" "$s" || _ds_pending="$s"
     if [[ "$mode" == copy-on-write ]] && { ((${_connect_isdir[$p]})) || [[ -d "$s" ]]; } \
       && _as_join_scoped_overlay_ok dir; then
       _as_join_scoped_bind dir "$p" "" "$_jseed" || return 1
@@ -3095,7 +3115,7 @@ _as_connect_bind_path() {
   # read-write host mount shows it (declared paths are fixed for the role). Not an own
   # store, nor another sandbox's: no host path of the user's.
   # (_ds_pending: recorded by _as_connect_bind_all once this bind adds a mount here.)
-  [[ "$mode" == own || -n "${_connect_sandbox[$p]:-}" ]] || _ds_pending="$s"
+  [[ "$mode" == own ]] || _as_sandbox_src_engine "$p" "$s" || _ds_pending="$s"
   # A relocated FILE whose key is not there yet: bwrap creates the mount point, which
   # lands on the host when the key's directory is bound from it; the cleanup removes
   # it again if it is still empty (as for a channel's relocated file).
@@ -15485,7 +15505,14 @@ _as_ro_pins_walk() {
     # made first -- once every check has passed (_pn_new), so a refused launch leaves the
     # host as it was -- so it is pinned at this launch too (not only from the next).
     if [[ ! -e "$_rd" && ! -L "$_rd" ]] && [[ -z "${_wself:-}" || "$_p" != "$_wself" ]]; then
-      [[ -n "${_pn_new_seen[$_rd]+x}" ]] || _pn_new+=("$_rd")
+      # with the mode bwrap gives it, by the mount it makes it for (measured, 0.12.0:
+      # 0755 for a --tmpfs or --dir destination, 0700 for every bind, an overlay, --dev)
+      if [[ -z "${_pn_new_seen[$_rd]+x}" ]]; then
+        case "${_on[_k]-}" in
+          --tmpfs | --dir) _pn_new+=("022" "$_rd") ;;
+          *) _pn_new+=("077" "$_rd") ;;
+        esac
+      fi
       _pn_new_seen[$_rd]=1
     elif [[ ! -d "$_rd" ]] && ! [[ -n "${_wself:-}" && "$_p" == "$_wself" && -e "$_rd" ]]; then
       _pin_no[$_p]=1
@@ -15830,9 +15857,16 @@ _as_ro_pins() {
     done
   done
   # Every check passed: the directories on the way the host lacked, made as bwrap makes
-  # them (mode 0700, parents first; one process).
+  # them -- in the order of the mounts that need them, each with its umask (UMASK DIR
+  # pairs), parents first; one process.
   if ((${#_pn_new[@]})); then
-    (umask 077 && mkdir -p -- "${_pn_new[@]}") 2>/dev/null || true
+    (
+      set -- "${_pn_new[@]}"
+      while (($#)); do
+        umask "$1" && mkdir -p -- "$2"
+        shift 2
+      done
+    ) 2>/dev/null || true
   fi
   # Insert, parents first at one place: sorted by (place, depth, path).
   local -a _ord=()
