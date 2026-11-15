@@ -1106,6 +1106,11 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`copy` keeps a symbolic link inside its source as a link.** It read through a link
+  at a file's name in a directory source: a link the role made in a source it may write
+  (`~/store/real/leak -> ~/secret/s`) brought the secret into the copy at the next
+  launch. A link inside the source is now copied as the same link, never read through,
+  as `seed-only` keeps it; the copy-on-write shadow check records a link by its target.
 - **Declared paths are fixed for the role.** A declaration's access governs what is
   inside its path, not the path: in every mode, `read-write` included, the role can no
   longer rename, remove or replace a declared path, the directories on the way to it

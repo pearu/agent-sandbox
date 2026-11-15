@@ -149,3 +149,22 @@ PROBE
   [ "$(report file_redirect)" = yes ]      # takes a redirect...
   [ ! -e "$IWORK/.asb/coord/file.md.tmp" ] # ...but no temp file beside it
 }
+
+# shellcheck disable=SC2016 # the --exec scripts expand inside the sandbox, not here
+@test "copy keeps a symbolic link inside its source as a link: a link the role puts in a source it may write does not bring what it names into the copy" {
+  mkdir -p "$IHOME/store/real" "$IHOME/secret"
+  printf 'REAL\n' >"$IHOME/store/real/r"
+  printf 'SECRET\n' >"$IHOME/secret/s"
+  ln -s r "$IHOME/store/real/alias" # the user's own link inside the source: kept, and works
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  local -a decl=(--connect '~/store/ = read-write' --connect './x/d/ = copy outside:~/store/real/')
+  run_sandboxed "${ENV[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'ln -s "$HOME/secret/s" "$HOME/store/real/leak"'
+  [ "$status" -eq 0 ]
+  run_sandboxed "${ENV[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "leak=$([ -L x/d/leak ] && echo link) $(cat x/d/leak 2>/dev/null)" >>report
+    echo "alias=$(readlink x/d/alias) $(cat x/d/alias)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report leak)" = "link " ]
+  [ "$(report alias)" = "r REAL" ]
+  run ! grep -rqs SECRET "$IHOME/.local/state"
+}

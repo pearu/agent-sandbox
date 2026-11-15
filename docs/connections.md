@@ -133,8 +133,9 @@ Definitions, so the sub-decisions stop multiplying:
   every file B has not touched; a file B changed stays B's; when both changed, B's stays
   and the launch says so; a file A deleted goes from B if B never touched it; a file B
   deleted stays deleted. Nothing is ever merged textually, nothing is ever written back
-  to A, and nothing of B's is overwritten without a word. A `reset` re-seeds a file, a
-  channel or a sandbox from A on request. This is the rule the config file's
+  to A, and nothing of B's is overwritten without a word. A symbolic link inside A is
+  copied as the same link, never read through, as `seed-only` keeps it. A `reset`
+  re-seeds a file, a channel or a sandbox from A on request. This is the rule the config file's
   `mcpServers` refresh already follows for one key, applied per file.
 - **`copy-on-write`**: B reads A's files through until it writes one; the write creates
   B's private copy, which shadows A's file from then on. A's edits reach B live for

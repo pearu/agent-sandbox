@@ -474,3 +474,69 @@ tsync() { run timeout 10 "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S
   [ "$(stat -c %a "$c")" = 640 ]
   [ "$(stat -c %Y "$c")" = "$(stat -c %Y "$f")" ]
 }
+
+# ----- links in the SOURCE: copied as links, never read through ----------------------
+
+@test "a link in the source to a file outside it is copied as a link, never as the file it names; the base records the link, not a hash of its target" {
+  O="$BATS_TEST_TMPDIR/secret"
+  printf 'SECRET\n' >"$O"
+  plant a.md ONE
+  ln -s "$O" "$S/leak"
+  sync
+  [ "$status" -eq 0 ]
+  [ -L "$C/leak" ]
+  [ "$(readlink "$C/leak")" = "$O" ]
+  run ! grep -q "$(sha256sum "$O" | cut -c1-64)" "$B"
+  grep -qF "\"leak\": \"link:$O\"" "$B"
+  [ "$(at_copy a.md)" = ONE ]
+}
+
+@test "a relative link to a file inside the source is copied as the same link, and works in the copy; a dangling one and a link to a directory too, none followed" {
+  plant real.md REAL
+  ln -s real.md "$S/alias.md"
+  ln -s nowhere "$S/dangling"
+  mkdir -p "$BATS_TEST_TMPDIR/outdir"
+  printf 'OUT\n' >"$BATS_TEST_TMPDIR/outdir/x"
+  ln -s "$BATS_TEST_TMPDIR/outdir" "$S/dirlink"
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$C/alias.md")" = real.md ]
+  [ "$(cat "$C/alias.md")" = REAL ]
+  [ "$(readlink "$C/dangling")" = nowhere ]
+  [ "$(readlink "$C/dirlink")" = "$BATS_TEST_TMPDIR/outdir" ]
+  [ ! -e "$C/dirlink/x" ] || [ -L "$C/dirlink" ] # a link, not a copied directory
+}
+
+@test "a link in the source retargeted is retargeted in the copy; one replaced by a file becomes the file; one the sandbox changed is kept and named" {
+  plant a.md A
+  plant b.md B
+  ln -s a.md "$S/l"
+  ln -s a.md "$S/m"
+  sync
+  ln -sfn b.md "$S/l"
+  rm "$S/m"
+  printf 'FILE\n' >"$S/m"
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$C/l")" = b.md ]
+  [ ! -L "$C/m" ]
+  [ "$(cat "$C/m")" = FILE ]
+  # the sandbox points the copy's link elsewhere; the source moves too: the sandbox's kept
+  ln -sfn a.md "$C/l"
+  ln -sfn m "$S/l"
+  sync
+  [ "$(readlink "$C/l")" = a.md ]
+  [[ "$output" == *"link $C/l"* ]]
+}
+
+@test "the shadow check hashes no file through a link in the source: a link is recorded by its target" {
+  U="$BATS_TEST_TMPDIR/upper"
+  mkdir -p "$U"
+  O="$BATS_TEST_TMPDIR/secret"
+  printf 'SECRET\n' >"$O"
+  ln -s "$O" "$S/leak"
+  shadows
+  [ "$status" -eq 0 ]
+  grep -qF "\"leak\": \"link:$O\"" "$B"
+  run ! grep -q "$(sha256sum "$O" | cut -c1-64)" "$B"
+}

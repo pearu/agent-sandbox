@@ -1361,6 +1361,14 @@ and the channel's own name for a file one. The way back to the source is the
 engine's `--reset`, which discards the copy and its manifest; the next launch's
 `sync` seeds it again.
 
+A SYMBOLIC LINK INSIDE A DIRECTORY SOURCE IS COPIED AS A LINK, never read through, as
+`seed-only`'s `cp -a` keeps it: its state is its target, `link:TARGET`, compared like a
+hash, and what the store gets is the same link. Read through, a link the role could
+make in a source it may write would hand it whatever the link names (measured: a link to
+~/secret/s came into the copy as a regular file holding the secret). The source itself,
+the path the channel or declaration names, is followed as before: the engine checks the
+links on its way.
+
 `shadows` answers the same question for `copy-on-write`, where the kernel hides
 and nothing here copies anything. An overlay's upper layer IS the list of files
 the sandbox has written, so the scan is: for each of them, has the source changed
@@ -1418,14 +1426,31 @@ import sys
 SPECIAL = "special"
 
 
-def sha(path):
+LINK = "link:"
+
+
+def link_state(target):
+    return LINK + target
+
+
+def is_link_state(state):
+    return isinstance(state, str) and state.startswith(LINK)
+
+
+def sha(path, follow=True):
+    """The state of PATH: its hash, SPECIAL, None (no file); with FOLLOW false, a link
+    at PATH is its target string (link_state), never read through."""
     try:
+        if not follow:
+            lm = os.lstat(path).st_mode
+            if stat.S_ISLNK(lm):
+                return link_state(os.readlink(path))
         m = os.stat(path).st_mode
         if stat.S_ISDIR(m):
             return None
         if not stat.S_ISREG(m):
             return SPECIAL
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | (0 if follow else os.O_NOFOLLOW))
     except OSError:
         return None
     h = hashlib.sha256()
@@ -1462,16 +1487,22 @@ def save_base(path, base):
 
 
 def walk(root):
-    """Relative paths of the regular files under root (or [""] for a file)."""
+    """Relative paths of the regular files and the symbolic links under root (or [""]
+    for a file); a link to a directory is not descended into, and none is followed."""
     if os.path.isfile(root):
         return [""]
     out = []
-    for dirpath, _dirs, files in os.walk(root):
-        for name in files:
+    for dirpath, dirs, files in os.walk(root):
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]:
             full = os.path.join(dirpath, name)
-            if os.path.isfile(full):
+            if os.path.islink(full) or os.path.isfile(full):
                 out.append(os.path.relpath(full, root))
     return out
+
+
+def src_state(source, rel):
+    """The source's state at REL: the source itself (REL "") followed, a link inside it not."""
+    return sha(at(source, rel), follow=(rel == ""))
 
 
 def at(root, rel):
@@ -1579,7 +1610,9 @@ def copy_state(copy, rel):
         if m is None or stat.S_ISDIR(m):
             return None, 0
         if stat.S_ISLNK(m):
-            return InWay(path), 0
+            # a link here is a state like a file's, its target, never followed: one this
+            # sync made from the source's, or the sandbox's own
+            return link_state(os.readlink(name, dir_fd=fd)), 0
         if not stat.S_ISREG(m):
             return InWay(path, "special"), 0
         try:
@@ -1608,6 +1641,11 @@ def copy_file(src, copy, rel):
     path = os.path.join(anchor, *parts, name)
     fd = _open_parent(anchor, parts, create=True)
     try:
+        m = _mode(name, fd)
+        if m is not None and stat.S_ISLNK(m):
+            # a link the base says is this sync's (the caller decided): replaced, never
+            # written through
+            os.unlink(name, dir_fd=fd)
         _check(name, fd, path, stat.S_ISREG)
         st = os.stat(src)
         flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
@@ -1636,6 +1674,32 @@ def copy_file(src, copy, rel):
         os.close(fd)
 
 
+def copy_link(target, copy, rel):
+    """A symbolic link to TARGET at REL in the store COPY, as the source has it: what is
+    at that name (a file or a link the caller decided is this sync's) replaced, never
+    followed; a directory there is in the way (InWay)."""
+    anchor, parts, name = _split(copy, rel)
+    path = os.path.join(anchor, *parts, name)
+    fd = _open_parent(anchor, parts, create=True)
+    try:
+        m = _mode(name, fd)
+        if m is not None:
+            if stat.S_ISDIR(m):
+                raise InWay(path, "dir")
+            os.unlink(name, dir_fd=fd)
+        os.symlink(target, name, dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
+def put(source, rel, s, copy):
+    """Bring the source's state S at REL into the store COPY: a link as a link."""
+    if is_link_state(s):
+        copy_link(s[len(LINK):], copy, rel)
+    else:
+        copy_file(at(source, rel), copy, rel)
+
+
 def remove(copy, rel):
     """Unlink REL in the store COPY -- never through a link at it or above it
     (InWay) -- and prune the directories it left empty, STRICTLY BELOW the store.
@@ -1656,9 +1720,8 @@ def remove(copy, rel):
     except FileNotFoundError:
         return
     try:
-        m = _mode(name, fds[-1])
-        if m is not None and stat.S_ISLNK(m):
-            raise InWay(os.path.join(anchor, *parts, name))
+        # a link at the name is unlinked, never followed: the caller removes only what
+        # the base says is this sync's (a link included)
         try:
             os.unlink(name, dir_fd=fds[-1])
         except OSError:
@@ -1683,7 +1746,7 @@ def sync(kind, source, copy, base_path):
         os.makedirs(copy, exist_ok=True)
 
     rels = sorted(set(walk(source)) | set(walk(copy)) | set(base))
-    src = {rel: sha(at(source, rel)) for rel in rels}
+    src = {rel: src_state(source, rel) for rel in rels}
     # TWO PASSES: what the source deleted first, then what it has. A directory the source
     # turned into a file (or the reverse) is then the old entries removed -- the emptied
     # directory pruned -- before the new one is seeded, in one sync and silently; in one
@@ -1697,6 +1760,10 @@ def sync(kind, source, copy, base_path):
                 continue  # yours, and no file to copy
             c, csize = copy_state(copy, rel)
             b = base.get(rel)
+            if is_link_state(c) and c != b and c != s:
+                # a link this sync did not make: the sandbox's, named and never
+                # written through, as before links were copied
+                c, csize = InWay(at(copy, rel)), 0
             inway = isinstance(c, InWay)
 
             if s is None and b is None:
@@ -1723,9 +1790,9 @@ def sync(kind, source, copy, base_path):
                 # rules below protect it.
                 if inway:
                     links.append((c.kind, c.path))  # not seeded: said again next launch
-                elif c is None or csize == 0:
+                elif c is None or (csize == 0 and not is_link_state(c)):
                     try:
-                        copy_file(at(source, rel), copy, rel)  # seed, or new upstream
+                        put(source, rel, s, copy)  # seed, or new upstream
                         base[rel] = s
                     except InWay as e:
                         links.append((e.kind, e.path))  # not seeded: the next launch tries again
@@ -1736,7 +1803,7 @@ def sync(kind, source, copy, base_path):
                 continue  # the source has not moved; the copy is the sandbox's business
             if c == b:
                 try:
-                    copy_file(at(source, rel), copy, rel)  # refresh
+                    put(source, rel, s, copy)  # refresh
                     base[rel] = s
                 except InWay as e:
                     links.append((e.kind, e.path))  # the base stays: said again next launch
@@ -1773,7 +1840,7 @@ def shadows(source, upper, seen_path):
     for rel in sorted(set(walk(source)) | shadowed | set(old)):
         if rel == "":
             continue  # a file-shaped path never gets here: overlays need a directory
-        cur = sha(os.path.join(source, rel))
+        cur = sha(os.path.join(source, rel), follow=False)  # a link: its target, unread
         if rel in shadowed and rel in old and old[rel] != cur:
             # The source moved under a file this sandbox is holding. Keep the OLD
             # hash rather than the current one, so the next launch says it again:
