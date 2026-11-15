@@ -765,6 +765,101 @@ part_in_place() {
   [ "$(git -C "$W" log --format=%s -3 | tr '\n' ' ')" = "feature-change main-change base " ]
 }
 
+# THE ONE WAY THE ENGINE TOUCHES A SOURCE (_as_src_guard): each place that reads, hashes
+# or makes something at a source, through a link the role planted, refuses and leaves
+# nothing behind.
+
+@test "source guard, a join's seed: a join-scoped copy or seed-only source missing at launch, made a link by the role meanwhile, is not copied at the next join" {
+  local m i
+  for m in copy seed-only; do
+    rm -rf "$IHOME/store" "$IHOME/secret" "$W/x" "$W/report" "$W/a.in" "$W/release.all"
+    mkdir -p "$IHOME/store" "$IHOME/secret/real"
+    printf 'SECRET\n' >"$IHOME/secret/real/s"
+    # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+    local -a D=(--connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/sub/real/")
+    engine_cmd
+    (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
+      AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE=0 \
+      AGENT_SANDBOX_PRESET=shared "${BASE[@]}" "${ENGINE_CMD[@]}" "${D[@]}" --profile probe --exec sh -c \
+      'ln -s "$HOME/secret" "$HOME/store/sub"; touch a.in; until [ -e release.all ]; do sleep 0.05; done') </dev/null >"$I/a.out" 2>&1 3>&- &
+    local bg=$!
+    for ((i = 0; i < 300; i++)); do
+      [[ -e "$W/a.in" ]] && break
+      sleep 0.05
+    done
+    [ -e "$W/a.in" ]
+    run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat x/d/s 2>/dev/null)" >>report'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its source goes through $IHOME/store/sub, a symbolic link made since the launch resolved it"* ]]
+    [ -z "$(report seen)" ]
+    : >"$W/release.all"
+    wait "$bg" 2>/dev/null || true
+  done
+}
+
+# shellcheck disable=SC2030 # run's status, the test's own
+@test "source guard, the shadows walk: a copy-on-write source through a link the role can replace is refused before it is walked or hashed (channel and declaration)" {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/store" "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/s"
+  ln -s ../secret "$IHOME/store/real"
+  local d
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  for d in 'extra = copy-on-write outside:~/store/real/' './x/d/ = copy-on-write outside:~/store/real/'; do
+    rm -rf "$IHOME/.local/state"
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect "$d" --profile probe --exec true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its source goes through $IHOME/store/real, a symbolic link in a directory the role can write"* ]]
+    run ! grep -rqs '"s"' "$IHOME/.local/state"
+  done
+}
+
+# plant_docs TARGET -- launch 1: the role makes the probe's missing docs channel a link
+plant_docs() {
+  rm -rf "$IHOME/.probe/docs"
+  run_sandboxed "${BASE[@]}" -- --connect 'docs = read-write' --profile probe --exec bash -c "ln -s $1 \"\$HOME/.probe/docs\""
+  # shellcheck disable=SC2031 # run's status, read in the same function
+  [ "$status" -eq 0 ]
+  [ -L "$IHOME/.probe/docs" ]
+}
+
+@test "source guard, a source made when missing: a copy-on-write channel at its own path, a link the role planted there, is refused and nothing is made through it" {
+  plant_docs ../made
+  run_sandboxed "${BASE[@]}" -- --connect 'docs = copy-on-write' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/.probe/docs, a symbolic link in a directory the role can write"* ]]
+  [ ! -e "$IHOME/made" ]
+}
+
+@test "source guard, a source the profile makes when missing: a read-only channel the profile creates, a link the role planted there, is refused and nothing is made through it" {
+  printf '%s\n' 'profile_channel_create=(docs)' >>"$IPROFILES/probe/profile.sh"
+  plant_docs ../made
+  run_sandboxed "${BASE[@]}" -- --connect 'docs = read-only' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/.probe/docs, a symbolic link in a directory the role can write"* ]]
+  [ ! -e "$IHOME/made" ]
+}
+
+@test "source guard, the role's own state tree: a read-write channel at its own path under an own declaration covering the state directory -- a link the role planted in another launch is refused, not bound nor made through" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/s"
+  plant_docs ../made
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/.probe/ = own' --connect 'docs = read-write' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/.probe/docs, a symbolic link"* ]]
+  [ ! -e "$IHOME/made" ]
+  # an existing target: refused too, never bound
+  rm "$IHOME/.probe/docs"
+  ln -s ../secret "$IHOME/.probe/docs"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/.probe/ = own' --connect 'docs = read-write' --profile probe --exec bash -c '
+    echo "seen=$(cat "$HOME/.probe/docs/s" 2>/dev/null)" >>report'
+  [ "$status" -ne 0 ]
+  [ -z "$(report seen)" ]
+}
+
 # relo_link TARGET -- the probe's extra channel relocated to ~/alt/extra, a link to TARGET
 relo_link() {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"

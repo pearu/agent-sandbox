@@ -2379,11 +2379,19 @@ _as_connect_seed() {
   mv -T -- "$tmp" "$store"
 }
 
-# _as_read_later KEY SRC SLOT KIND CMD... -- run CMD, a read of SRC (as declared) into the
-# store SLOT (a KIND, dir or file) bound at KEY, once SRC's own links are checked: queued
-# in _as_connect_bind_all's _reads and _reads_chk (run there, and only where SLOT is what
-# shows at KEY), else run now.
-_as_read_later() {
+# _as_src_guard KEY SRC SLOT KIND CMD... -- THE ONE WAY THE ENGINE TOUCHES A SOURCE ON
+# THE HOST: CMD reads, copies, hashes, lists or makes something at or under SRC (a
+# declaration's or channel's source, as declared) for what is bound at KEY from SLOT (a
+# KIND, dir or file). A source is touched only once its own links are checked (R3: a
+# link the role can replace refuses, with the pins' message):
+# - in a launch (inside _as_connect_bind_all): queued in _reads/_reads_chk and run there
+#   at the end, after the check on that launch's view (_as_ro_pins in its check mode),
+#   and only where SLOT is what shows at KEY (a path a later declaration took over is
+#   not touched at all);
+# - anywhere else (a join, a verb): there is no view to check against, and the source
+#   was resolved by the launch, so any symbolic link on its way now was made since:
+#   refused (_as_src_strict).
+_as_src_guard() {
   local k="$1" src="$2" slot="$3" kind="$4"
   shift 4
   if declare -p _reads &>/dev/null; then
@@ -2393,8 +2401,33 @@ _as_read_later() {
     _reads_kind+=("$kind")
     _reads+=("$#" "$@")
   else
+    _as_src_strict "$k" "$src" || return 1
     "$@"
   fi
+}
+
+# _as_src_strict KEY SRC -- for _as_src_guard outside a launch: refuse when a component
+# of SRC is a symbolic link (a source the launch resolved has none; one there now was
+# made since, by the role as like as not), saying so as the pins do.
+_as_src_strict() {
+  local c=/ comp rest="${2#/}"
+  while [[ -n "$rest" ]]; do
+    comp="${rest%%/*}"
+    [[ "$rest" == */* ]] && rest="${rest#*/}" || rest=""
+    [[ -n "$comp" && "$comp" != . ]] || continue
+    c="${c%/}/$comp"
+    if [[ -L "$c" ]]; then
+      _as_msg "connect: $1: its source goes through $c, a symbolic link made since the launch resolved it: declared paths are fixed for the role, and a link cannot be -- the role may have made it, choosing which host path this reads. $c points to $(_as_ro_pins_link_to "$c"): make it the directory or file it should be, and relaunch. Refusing"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# _as_make_source_dir DIR -- a channel's source the profile has made when missing
+# (profile_channel_create): its parent as needed, the directory itself mode 700.
+_as_make_source_dir() {
+  mkdir -p -- "$(dirname -- "$1")" && mkdir -m 700 -- "$1"
 }
 
 # _as_read_hidden KEY<TAB>SRC<TAB>SLOT KIND -- a queued read that does not run (its
@@ -2410,8 +2443,15 @@ _as_read_hidden() {
   mkdir -p -- "${st%/*}" || return 1
   if [[ "$2" == dir ]]; then mkdir -p -- "$st"; else : >"$st"; fi || return 1
   for ((i = 0; i + 2 < ${#args[@]}; i++)); do
-    [[ "${args[i]}" == --bind ]] || continue
-    a="${args[i + 1]}" b="${args[i + 2]}"
+    case "${args[i]}" in
+      --bind | --ro-bind) b="${args[i + 2]}" ;;
+      --overlay-src)
+        [[ "${args[i + 2]}" == --overlay ]] || continue
+        b="${args[i + 5]-}"
+        ;;
+      *) continue ;;
+    esac
+    a="${args[i + 1]}"
     _as_ro_pins_norm a
     _as_ro_pins_norm b
     [[ "$a" == "$slot" && "$b" == "$k" ]] && args[i + 1]="$st"
@@ -2471,7 +2511,7 @@ _as_connect_bind_all() {
   local rolebase base mode _bind_covered _rec_mode _rec_store
   local -a _record=()
   # The reads of a source (seed, copy, a filter's view), queued by the binds below
-  # (_as_read_later) and run only once the sources' link checks have passed.
+  # (_as_src_guard) and run only once the sources' link checks have passed.
   local -a _reads=() _reads_chk=() _reads_kind=()
   # The source the bind at each path declares (_ds_pending, set by the bind functions):
   # recorded for the pins only when that bind added a mount there, so _decl_src always
@@ -2758,10 +2798,14 @@ _as_connect_bind_channel() {
     elif [[ "$src" == "$path" ]] && ((! _bind_covered)) && ! _as_preset_is_native; then
       [[ -e "$src" ]] && args+=(--bind "$src" "$path")
     elif [[ "$src" == "$path" ]] && ((_bind_covered)); then
-      if [[ "$kind" == dir && ! -e "$src" ]]; then mkdir -p -- "$src" || return 1; fi
+      local _mkd=0
+      if [[ "$kind" == dir && ! -e "$src" ]]; then
+        _as_src_guard "$path" "$src" "$src" dir mkdir -p -- "$src" || return 1
+        _mkd=1
+      fi
       # (Under an account a missing file was made in the base already, before the base's
       # entries were listed: _as_base_rw_sources.)
-      if [[ -e "$src" ]]; then
+      if [[ -e "$src" ]] || ((_mkd)); then
         # an account's directory (#355) has no such file: the mount point is made there
         [[ "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--bind "$src" "$path")
@@ -2815,7 +2859,7 @@ _as_connect_bind_channel() {
         slot="$(_as_channel_store "$ch" "$path" copy)"
         manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
         mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-        _as_read_later "$path" "$src" "$slot" "$kind" _as_read_copy "$ch" "$kind" "$src" "$path" "$slot" "$manifest" || return 1
+        _as_src_guard "$path" "$src" "$slot" "$kind" _as_read_copy "$ch" "$kind" "$src" "$path" "$slot" "$manifest" || return 1
         [[ "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--bind "$slot" "$path")
         _rec_mode=copy _rec_store="$slot"
@@ -2842,7 +2886,7 @@ _as_connect_bind_channel() {
       # layer is kept for the launch that finds the source.
       local lower="$src"
       if [[ "$src" == "$path" ]]; then
-        mkdir -p -- "$src" || return 1
+        [[ -e "$src" ]] || _as_src_guard "$path" "$src" "$src" dir mkdir -p -- "$src" || return 1
       elif [[ ! -e "$src" ]]; then
         _as_session_begin || return 1
         lower="$_session_dir/connect/$ch/lower-$(_as_iso_slug "$path")"
@@ -2851,7 +2895,7 @@ _as_connect_bind_channel() {
       # What the sandbox is shadowing, and whether the source has moved under
       # it. The one thing `copy-on-write` hides, reported before the mount so the user
       # reads it whatever the session then does.
-      _as_connect_shadows "$ch" "$lower" "$upper" "$seen" || return 1
+      _as_src_guard "$path" "$src" "$lower" dir _as_connect_shadows "$ch" "$lower" "$upper" "$seen" || return 1
       # Mounted by the keeper at the real path. One launch per role is what makes
       # that safe: two overlays over one upper directory, which overlayfs calls
       # undefined, need two launches, and a second invocation joins this one.
@@ -2862,7 +2906,7 @@ _as_connect_bind_channel() {
       slot="$(_as_channel_store "$ch" "$path" seed-only)"
       # Nothing to seed from: a file store starts as an `own` one would (_as_read_seed).
       if [[ ! -e "$slot" ]]; then
-        _as_read_later "$path" "$src" "$slot" "$kind" _as_read_seed "$ch" "$kind" "$src" "$path" "$slot" || return 1
+        _as_src_guard "$path" "$src" "$slot" "$kind" _as_read_seed "$ch" "$kind" "$src" "$path" "$slot" || return 1
       fi
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
       args+=(--bind "$slot" "$path")
@@ -2876,16 +2920,18 @@ _as_connect_bind_channel() {
       manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
       mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
       # A channel whose source has nothing yet still needs a mount point (_as_read_copy).
-      _as_read_later "$path" "$src" "$slot" "$kind" _as_read_copy "$ch" "$kind" "$src" "$path" "$slot" "$manifest" || return 1
+      _as_src_guard "$path" "$src" "$slot" "$kind" _as_read_copy "$ch" "$kind" "$src" "$path" "$slot" "$manifest" || return 1
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
       args+=(--bind "$slot" "$path")
       _rec_store="$slot"
       ;;
     read-only)
+      local _mkd=0
       if [[ ! -e "$src" && "$kind" == dir && " ${profile_channel_create[*]-} " == *" $ch "* ]]; then
-        mkdir -p -- "$(dirname -- "$src")" && mkdir -m 700 -- "$src" || return 1
+        _as_src_guard "$path" "$src" "$src" dir _as_make_source_dir "$src" || return 1
+        _mkd=1
       fi
-      if [[ -e "$src" ]]; then
+      if [[ -e "$src" ]] || ((_mkd)); then
         [[ "$src" != "$path" && "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--ro-bind "$src" "$path")
         _rec_store="$src"
@@ -3062,7 +3108,7 @@ _as_connect_bind_path() {
       ;;
     seed-only)
       slot="$base/seed-only/$(_as_iso_slug "$p")"
-      _as_read_later "$p" "$s" "$slot" "$kind" _as_connect_seed "$real" "$slot" "$kind" || return 1
+      _as_src_guard "$p" "$s" "$slot" "$kind" _as_connect_seed "$real" "$slot" "$kind" || return 1
       args+=(--bind "$slot" "$p")
       _connect_host[$p]="$slot"
       ;;
@@ -3080,7 +3126,7 @@ _as_connect_bind_path() {
           work="$base/work/$(_as_iso_slug "$p")"
           seen="$base/seen/$(_as_iso_slug "$p").json"
           mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
-          _as_connect_shadows "$key" "$real" "$upper" "$seen" || return 1
+          _as_src_guard "$p" "$s" "$real" dir _as_connect_shadows "$key" "$real" "$upper" "$seen" || return 1
           args+=(--overlay-src "$real" --overlay "$upper" "$work" "$p")
           _connect_host[$p]="layer:$upper"
           return 0
@@ -3090,7 +3136,7 @@ _as_connect_bind_path() {
       slot="$base/copy/$(_as_iso_slug "$p")"
       manifest="$base/base/$(_as_iso_slug "$p").json"
       mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-      _as_read_later "$p" "$s" "$slot" "$kind" _as_read_dsync "$key" "$kind" "$real" "$slot" "$manifest" || return 1
+      _as_src_guard "$p" "$s" "$slot" "$kind" _as_read_dsync "$key" "$kind" "$real" "$slot" "$manifest" || return 1
       args+=(--bind "$slot" "$p")
       _connect_host[$p]="$slot"
       ;;
@@ -3820,13 +3866,13 @@ _as_join_scoped_bind() {
     # the lower is always the source itself, created if missing, as for the role's own
     # copy-on-write: an empty stand-in would hide a directory created later -- except a
     # source elsewhere (relocated, `outside:`), which is not made: an empty stand-in
+    lid="${#_join_scoped[@]}"
     if [[ "$lower" == "$path" ]]; then
-      mkdir -p -- "$lower" || return 1
+      [[ -e "$lower" ]] || _as_src_guard "$(_as_join_lower_inside)/$lid" "$lower" "$lower" dir mkdir -p -- "$lower" || return 1
     elif [[ ! -e "$lower" ]]; then
       lower="$_session_dir/connect/@join/lower-$(_as_iso_slug "$path")"
       mkdir -p -- "$lower" || return 1
     fi
-    lid="${#_join_scoped[@]}"
     args+=(--ro-bind "$lower" "$(_as_join_lower_inside)/$lid")
   fi
   # `-` for no seed: a tab is IFS whitespace, so an empty field between two would collapse
@@ -4158,7 +4204,7 @@ _as_keeper_join() {
         continue
       elif [[ -n "$jseed" && "$jseed" != - && -e "$jseed" ]]; then
         # seeded (#153): a copy of the source as it is at this join
-        cp -a -- "$jseed" "$jst" || return 1
+        _as_src_guard "$jpath" "$jseed" "$jst" "$jkind" cp -a -- "$jseed" "$jst" || return 1
       elif [[ "$jkind" == dir ]]; then
         mkdir -p -- "$jst"
       else
@@ -15240,7 +15286,17 @@ _as_ro_pins_chain() {
     _ch_d="${_ch_l%/*}"
     [[ -n "$_ch_d" ]] || _ch_d=/
     _as_ro_pins_shows "$_ch_d" _ch_pos
-    if ((${#_ch_pos[@]})) && _as_ro_pins_replaceable "$_ch_l"; then
+    # A directory of the role's own state (its agent's base, the profile's read-write
+    # state binds) is one the role writes in its other launches, whether or not this
+    # launch's view shows it (an outer declaration may cover it here): a link the role
+    # can replace there is as good as shown.
+    local _ch_rt=0 _ch_t2
+    if ((! ${#_ch_pos[@]})); then
+      for _ch_t2 in ${_ro_role_trees[@]+"${_ro_role_trees[@]}"}; do
+        [[ "$_ch_d" == "$_ch_t2" || "$_ch_d" == "$_ch_t2"/* ]] && _ch_rt=1 && break
+      done
+    fi
+    if { ((${#_ch_pos[@]})) || ((_ch_rt)); } && _as_ro_pins_replaceable "$_ch_l"; then
       _ch_q="$(readlink -f -- "$1" 2>/dev/null || printf '%s' "$1")"
       local _ch_to _ch_side="its source goes through" _ch_hint
       _ch_to="$(_as_ro_pins_link_to "$_ch_l")"
@@ -15546,6 +15602,17 @@ _as_ro_pins() {
   # depth, so the mount that decides can come after the bind in the list. Only where an
   # insertion goes is about order (the placement rules).
   local -A _vis=() _mk=() _ms=() _mopt=() _mops=() _touch=() _pin_cur=() _pin_no=()
+  # The role's own state trees, host paths (_as_ro_pins_chain): its agent's base and the
+  # profile's read-write state binds that are directories.
+  local -a _ro_role_trees=()
+  local _rt
+  for _rt in ${profile_base:+"$profile_base"} ${profile_config_binds[@]+"${profile_config_binds[@]}"}; do
+    _rt="${_rt%%$'\t'*}"
+    [[ -d "$_rt" ]] || continue
+    _as_ro_pins_norm _rt
+    _ro_role_trees+=("$_rt")
+    [[ ! -L "$_rt" ]] || _ro_role_trees+=("$(readlink -f -- "$_rt")")
+  done
   # The pins, in the order found: directory, place, host source, the mount it lies in.
   local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=() _pn_new=()
   local -A _pn_new_seen=()
