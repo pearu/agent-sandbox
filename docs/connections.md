@@ -470,13 +470,22 @@ instructions = copy-on-write native   # no slash: a channel name, exactly as bef
 trailing `/` says the path must be a directory. A mistyped *path* can still declare an
 unwanted one: the exposure any path grant carries.
 
-**A declaration is about a path:** at this path the role gets this source with this
-access. A bind whose source is elsewhere (`outside:`, `sandbox:`) promises nothing about
-a host object at its path: that object, if there is one, is the business of the
-declaration that covers its own path. One source may be shown at several paths with
-different access, and each path gets its own: `~/store/ = read-write` with
-`./cfg/x.md = read-only outside:~/store/x.md` is valid, and the role writing
-`~/store/x.md` (which `./cfg/x.md` then shows) is what the two declarations say.
+**A declaration is about a path, and declared paths are fixed for the role:** at this
+path the role gets this source with this access. The access governs what is inside the
+path -- a directory's content, a file's content -- not the path itself: in every mode,
+`read-write` included, the role cannot rename, remove or replace the declared path, the
+directories on the way to it that it has read-write from the host, its source, or the
+directories on the way to the source wherever a read-write host mount shows them. So
+for `./A/B/C/ = read-write`, `./A`, `./A/B` and `./A/B/C` stay where they are, and the
+role cannot choose which host path a later launch binds there. What else is in `./A` and
+`./A/B` is governed by the declaration covering it (`project = ...` for everything in
+the project not declared otherwise), not by this one. One source may be shown at
+several paths with different access, and each path gets its own: `~/store/ =
+read-write` with `./cfg/x.md = read-only outside:~/store/x.md` is valid, and the role
+writing `~/store/x.md` (which `./cfg/x.md` then shows) is what the two declarations say.
+To rename, move or remove a declared path or a directory on the way to it (a `git mv`,
+say), the user does it on the host and, where needed, updates the dot-file and
+relaunches; the briefing says so to the role.
 
 **The key is always a path inside the sandbox**, and with no source given the source is
 the same path outside. A relative key is relative to the project, whichever form it came
@@ -516,64 +525,42 @@ the engine makes it on the host before the launch, the same directory or file.
 mount point, so it cannot be deleted or renamed from inside, and `copy-on-write` on a
 file is `copy`, since overlayfs cannot stack on one file.
 
-**The directories above a read-only, hidden or own path at its own host path are
-pinned.** A deeper declaration wins at its path over the directory above it, and a
-bound file or directory is a mount point the role cannot rename or remove; but where the
-role has the directory around it read-write from the host it could rename a parent. A
-read-only path moves with it, on the host too, to where the role can write it (measured:
-the Supervisor's `mv .asb .asb.moved`, then its purpose files edited there); above an
-`own`, `copy`, `copy-on-write` or `seed-only` path the host's original moves out from
-under the declaration, and the next launch shows it to the role, readable and writable.
-So at launch every directory above such a bind, up to the outermost one the role has
-read-write from the host, is bound onto itself, read-write, unless it is a mount point
-already (`./.asb` and `./.asb/roles` above `./.asb/roles/x.md` in a read-write project):
-a mount point too, so the role's rename or removal of it fails with EBUSY. The walk goes
-through the mounts on the way: under `./x/a/ = read-write`, `own`, `copy` or
-`copy-on-write`, `./x/a/b/f.md = read-only` pins `./x` too. Every read-only and own bind
-at its own host path is covered, the built-in dot-file and purpose files included,
-wherever declared, and every hide (the profile's or `[claude] hide`) nested in a
-directory the role has read-write, whose hidden content would otherwise show at the next
-launch. Where such a path goes through a link the role cannot replace, the directories
-above the real path are pinned too, in the same way. A declaration with its source
-elsewhere (`outside:`, `sandbox:`) gets none: renaming the directory above it leaves the
-role nothing that another declaration does not give it (measured: `./a/data/ =
-read-only outside:~/big/`, `mv a a.moved`, and the next launch shows `~/big` read-only
-at `./a/data` again). Elsewhere means the source resolves to another host path than the
-key: an `outside:` naming the key's own host path, directly or through a link, is a
-declaration at its own path, pinned as one without `outside:`. A `read-write`
-declaration gets none either, and nothing is pinned
-under `--preset native`, inside a `copy-on-write` mount, the project included (nothing
-there reaches the host), or inside a read-only mount. A pinned directory stays writable
-inside; a rename, hard link or `git mv` across its boundary fails with "Invalid
-cross-device link", while `mv`, `cp`, rsync and git's checkout, stash and rebase work
-(they copy); the pinned directory itself cannot be renamed or removed (EBUSY). A
-directory that is not there on the host is not pinned: the bind's source exists
-elsewhere, so only the mount point bwrap makes there would move.
+**How declared paths are fixed.** A bound file or directory is a mount point, which the
+kernel refuses to rename or remove (EBUSY). Every other path the rule covers is made one
+at launch: each directory on the way to a declared path that the role has read-write
+from the host, and each directory on the way to its source, and the source itself (a
+file too), wherever a read-write host mount shows them, is bound onto itself (a pin).
+Every mode is covered -- `read-only`, `read-write`, `own`, `copy`, `copy-on-write`,
+`seed-only`, a hide (the profile's or `[claude] hide`), the built-in dot-file and purpose
+files, channels -- and the walk goes through the mounts on the way (under `./x/a/ =
+read-write`, `./x/a/b/f.md = read-only` pins `./x` too). Measured: without it a rename
+of `.asb` moved the Supervisor's purpose files to where it could write them (#389), a
+rename above an own path uncovered the host's original, and a source in a read-write
+store, replaced by a link, had the next launch bind an undeclared `~/secret` read-write
+-- `read-write`, `copy` and `copy-on-write` alike. What it costs the role: a pinned
+directory stays as writable inside as its declaration says, but a rename, hard link or
+`git mv` across its boundary fails with "Invalid cross-device link" (`mv`, `cp`, rsync
+and git's checkout, stash and rebase copy and work); a single-file source a read-write
+directory view shows can be written in place but not replaced by a temp-file rename (an
+editor's or `sed -i`'s save fails with "Device or resource busy" there). Nothing is pinned
+under `--preset native`, the exception, whose claim is parity with no sandbox; nor inside
+a `copy-on-write` mount, the project included, or a read-only mount (nothing there can be
+renamed from inside). A directory that is not there on the host is not pinned: only the
+mount point bwrap makes there would move.
 
-**A read-only path's source is not resolved through a link the role can replace.** The
-engine resolves a read-only declaration's source on the host, so the launch follows it
-link by link -- links inside link targets, relative and absolute targets, `..` -- and a
-link the role could replace refuses the launch, naming that link and the path the
-source resolves to, which is what to declare instead: by retargeting the link the role
-would choose which host path the next launch binds there, one no declaration gives it
-(measured: an undeclared `~/secret` bound at the next launch; also when the role replaced
-a plain source file or directory with a link, which the next launch then refuses).
+**A declared path or source through a link the role can replace is refused**, in every
+mode and on both sides. A symbolic link cannot be fixed by a mount point, and by
+retargeting it the role would choose which host path a later launch binds (measured for
+a source: an undeclared `~/secret` bound read-write). The engine follows the source as
+declared, and the host path the key lands on, link by link -- links inside link
+targets, relative and absolute targets, `..` -- and a link the role could replace refuses
+the launch, naming that link and the resolved path, which is what to declare instead.
 Replaceable means an entry of a directory a read-write host mount shows to the role,
 which it owns or can write; a link in a directory it cannot write (another user's) is
 not, nor one in a sticky directory that neither it nor the link is the role's. A link it
 cannot replace -- in a read-only or copy-on-write mount, a read-only project, or such a
-directory -- is not refused. Under `--preset native` nothing is refused. At 40 links (a
-loop) the launch is refused. The same retargeting reaches a `read-write`, `copy` or
-`copy-on-write` declaration's source (measured), which this refusal does not cover yet.
-
-**An own, copy, copy-on-write or seed-only path at its own host path is not bound through
-a link the role can replace where that would uncover a host file.** Such a path covers
-the host object at its path; through a link the role can replace, retargeting it would
-leave that object uncovered, readable and writable, at the next launch (measured), and
-no pin can stop a link from being replaced. So such a link refuses the launch where the
-real path exists and shows to the role, naming the link and the path to declare instead;
-where nothing is there, or the role does not see it, it is not refused. With its source
-elsewhere the path covers nothing it promises anything about, and is not refused.
+directory -- is not refused, and the path behind it is fixed as above. Under `--preset
+native` nothing is refused. At 40 links (a loop) the launch is refused.
 
 **A bind protects a name, not a file with several names (hard links):** another name of a
 read-only file that a declaration shows read-write is writable there, as declared, and

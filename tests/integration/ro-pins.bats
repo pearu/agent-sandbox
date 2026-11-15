@@ -301,19 +301,17 @@ part_in_place() {
   [[ "$output" == *"its source goes through $IHOME/store/l, a symbolic link in a directory the role can write"* ]]
 }
 
-@test "B2: a link on the destination side only, the source elsewhere, is not refused; replacing it binds the same source at the role's directory" {
-  mkdir -p "$W/real/b" "$I/ext"
+@test "R3: a declared path through a link the role can replace is refused, in every mode and with its source elsewhere too" {
+  mkdir -p "$W/real/b" "$I/ext/d"
   printf 'EXT\n' >"$I/ext/f.md"
   ln -s real "$W/lnk"
-  local -a decl=(--connect "./lnk/b/f.md = read-only outside:$I/ext/f.md")
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
-    echo "seen1=$(cat lnk/b/f.md)" >>report
-    rm lnk && mkdir -p lnk/b && (echo ROLE >lnk/b/f.md) 2>/dev/null; true'
-  [ "$status" -eq 0 ]
-  [ "$(report seen1)" = EXT ]
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen2=$(cat lnk/b/f.md)" >>report'
-  [ "$status" -eq 0 ]
-  [ "$(report seen2)" = EXT ]
+  local m
+  for m in "read-only outside:$I/ext/f.md" "read-write outside:$I/ext/f.md" "copy outside:$I/ext/f.md" own; do
+    run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = $m" --profile probe --exec bash -c 'echo ran=yes >>report'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$W/lnk/b/f.md: its path goes through $W/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role"* ]]
+    [ -z "$(report ran)" ]
+  done
 }
 
 @test "a link in a read-write host directory the role cannot write (root's) is not refused" {
@@ -342,7 +340,7 @@ part_in_place() {
   [ "$(report seen)" = "" ]
 }
 
-@test "the role's own paths through a link the role can replace, covering a host file it sees, are refused: own, copy, copy-on-write, seed-only" {
+@test "R3: own, copy, copy-on-write and seed-only paths through a link the role can replace are refused (its key, or its source, through the link)" {
   mkdir -p "$W/x/real/a"
   printf 'HOST\n' >"$W/x/real/a/f"
   ln -s real "$W/x/lnk"
@@ -350,7 +348,7 @@ part_in_place() {
   for mode in own copy copy-on-write seed-only; do
     run_sandboxed "${BASE[@]}" -- --connect "./x/lnk/a/f = $mode" --profile probe --exec bash -c 'echo ran=yes >>report'
     [ "$status" -ne 0 ]
-    [[ "$output" == *"$W/x/lnk/a/f goes through $W/x/lnk, a symbolic link in a directory the role can write, and covers $W/x/real/a/f, which the role sees"* ]]
+    [[ "$output" == *"$W/x/lnk/a/f: its "*" goes through $W/x/lnk, a symbolic link in a directory the role can write"* ]]
     [ -z "$(report ran)" ]
   done
   [ "$(cat "$W/x/real/a/f")" = HOST ]
@@ -367,42 +365,22 @@ part_in_place() {
   [ "$(cat "$W/real/a/f")" = HOST ]
 }
 
-@test "a destination-side link the role can replace, the source elsewhere: not refused -- the declaration promises nothing about the host file it covers" {
-  mkdir -p "$W/real/b" "$I/ext"
-  printf 'EXT\n' >"$I/ext/f.md"
-  printf 'PROJ\n' >"$W/real/b/f.md"
-  ln -s real "$W/lnk"
-  run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = read-only outside:$I/ext/f.md" --profile probe --exec bash -c 'echo "seen=$(cat lnk/b/f.md)" >>report'
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]]
-  [ "$(report seen)" = EXT ]
-}
-
-@test "a read-only source another declaration shows read-write launches: each path its own access, the write through the read-write path as declared; declared read-only at its own path too, that path is pinned (P2)" {
+@test "a read-only source another declaration shows read-write launches: each path its own access, the write through the read-write path as declared; the source fixed there (R1)" {
   mkdir -p "$IHOME/store/roles" "$W/cfg"
   printf 'HOST\n' >"$IHOME/store/roles/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   local -a decl=(--connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/roles/x.md')
   run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
-    python3 ops.py rw:write:"$HOME/store/roles/x.md":ROLE ro:write:cfg/x.md:R
+    python3 ops.py rw:write:"$HOME/store/roles/x.md":ROLE ro:write:cfg/x.md:R \
+      mvsrc:rename:"$HOME/store/roles/x.md":"$HOME/store/roles/y.md" mvdir:rename:"$HOME/store/roles":"$HOME/store/r2"
     echo "seen=$(cat cfg/x.md)" >>report'
   [ "$status" -eq 0 ]
   [[ "$output" != *contradict* ]]
-  [[ "$output" != *"pinned, above"* ]]
   [ "$(report rw)" = ok ]
   [ "$(report ro)" = EROFS ]
   [ "$(report seen)" = ROLE ]
-  printf 'HOST\n' >"$IHOME/store/roles/x.md"
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --connect '~/store/roles/x.md = read-only' --profile probe --exec \
-    python3 ops.py inplace:write:"$IHOME/store/roles/x.md":ROLE declared:write:cfg/x.md:ROLE \
-    beside:write:"$IHOME/store/roles/new":N mv:rename:"$IHOME/store/roles":"$IHOME/store/roles.moved"
-  [ "$status" -eq 0 ]
-  [ "$(report inplace)" = EROFS ]
-  [ "$(report declared)" = EROFS ]
-  [ "$(report beside)" = ok ]
-  [ "$(report mv)" = EBUSY ]
-  [ "$(cat "$IHOME/store/roles/x.md")" = HOST ]
+  [ "$(report mvsrc)" = EBUSY ]
+  [ "$(report mvdir)" = EBUSY ]
 }
 
 @test "final view: a read-write mount bound AFTER the read-only path (deeper) that shows its source launches; with a link there the role can replace, the link refuses" {
@@ -552,7 +530,7 @@ part_in_place() {
   part_in_place copy-on-write
 }
 
-@test "ey shape 2 launches: the read-only source's host directory is not pinned (another path, its own declarations), and the role's rename there works" {
+@test "ey shape 2 launches: the read-write file's directory fixed (R1), the role's rename there EBUSY" {
   mkdir -p "$IHOME/store/roles" "$W/cfg/sub"
   printf 'HOST\n' >"$IHOME/store/roles/x.md"
   printf 'OTHER\n' >"$IHOME/other.md"
@@ -562,46 +540,73 @@ part_in_place() {
   run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
     python3 ops.py mv:rename:"$HOME/store/roles":"$HOME/store/r2"'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]]
-  [ "$(report mv)" = ok ]
+  [ "$(report mv)" = EBUSY ]
 }
 
-@test "a read-write outside: directory bind over a project directory pins nothing: the role's rename of the directory above it works, as the project's declaration allows" {
+@test "R1, the key side: a read-write or read-only outside: directory over a project directory fixes the directory above it; content writes go on" {
   mkdir -p "$W/a/data" "$IHOME/big"
   printf 'HOST\n' >"$W/a/data/f"
   printf 'BIG\n' >"$IHOME/big/f"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect './a/data/ = read-write outside:~/big/' --profile probe --exec bash -c '
     echo "seen=$(cat a/data/f)" >>report
-    python3 ops.py mv:rename:a:a.moved'
+    python3 ops.py mv:rename:a:a.moved in:write:a/data/new:N beside:write:a/beside:B'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]]
   [ "$(report seen)" = BIG ]
-  [ "$(report mv)" = ok ]
-  [ "$(cat "$W/a.moved/data/f")" = HOST ]
+  [ "$(report mv)" = EBUSY ]
+  [ "$(report in)" = ok ]
+  [ "$(report beside)" = ok ] # the project's declaration governs what is beside it (R2)
+  [ "$(cat "$IHOME/big/new")" = N ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './a/data/ = read-only outside:~/big/' --profile probe --exec python3 ops.py mv:rename:a:a.moved
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = EBUSY ]
 }
 
-@test "a read-only outside: directory over a project directory pins nothing: the role's rename above it works, the next launch shows the source there again, what it planted covered" {
-  mkdir -p "$W/a/data" "$IHOME/big"
-  printf 'HOST\n' >"$W/a/data/f"
-  printf 'BIG\n' >"$IHOME/big/f"
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  local -a decl=(--connect './a/data/ = read-only outside:~/big/')
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
-    python3 ops.py mv:rename:a:a.moved
-    mkdir -p a/data && echo ROLE >a/data/planted'
+@test "R1, the source side (the measured leak): a read-write, copy or copy-on-write source in a read-write store cannot be replaced by a link; the next launch binds the declared source" {
+  local m
+  for m in read-write copy copy-on-write; do
+    if [[ "$m" == copy-on-write ]]; then
+      command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' || continue
+    fi
+    rm -rf "$IHOME/store" "$IHOME/secret" "$W/x"
+    mkdir -p "$IHOME/store/real" "$IHOME/secret" "$W/x"
+    printf 'REAL\n' >"$IHOME/store/real/f"
+    printf 'SECRET\n' >"$IHOME/secret/f"
+    # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+    local -a decl=(--connect '~/store/ = read-write' --connect "./x/d/ = $m outside:~/store/real/")
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+      echo "seen1=$(cat x/d/f)" >>report
+      python3 ops.py mv:rename:"$HOME/store/real":"$HOME/store/real.old" rm:rmdir:"$HOME/store/real" \
+        key:write:x/d/k:K src:write:"$HOME/store/real/s":S'
+    [ "$status" -eq 0 ]
+    [ "$(report seen1)" = REAL ]
+    [ "$(report mv)" = EBUSY ]
+    [ "$(report rm)" = EBUSY ]
+    [ "$(report key)" = ok ]
+    [ "$(report src)" = ok ]
+    [ -d "$IHOME/store/real" ]
+    run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'echo "seen2=$(cat x/d/f)" >>report'
+    [ "$status" -eq 0 ]
+    [ "$(report seen2)" = REAL ]
+  done
+}
+
+@test "R1, a single-file source a read-write view shows: written in place, never renamed, removed or replaced by a temp-file rename" {
+  mkdir -p "$IHOME/store" "$W/x"
+  printf 'REAL\n' >"$IHOME/store/x.md"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './x/x.md = read-only outside:~/store/x.md' \
+    --profile probe --exec bash -c '
+      printf T >"$HOME/store/x.md.tmp"
+      python3 ops.py inplace:write:"$HOME/store/x.md":IN mv:rename:"$HOME/store/x.md":"$HOME/store/y.md" \
+        rm:unlink:"$HOME/store/x.md" tmp:rename:"$HOME/store/x.md.tmp":"$HOME/store/x.md"'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]]
-  [ "$(report mv)" = ok ]
-  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
-    echo "seen=$(cat a/data/f)" >>report
-    echo "planted=$([ -e a/data/planted ] && echo yes || echo no)" >>report
-    python3 ops.py w:write:a/data/f:X'
-  [ "$status" -eq 0 ]
-  [ "$(report seen)" = BIG ]
-  [ "$(report planted)" = no ]
-  [ "$(report w)" = EROFS ]
-  [ "$(cat "$IHOME/big/f")" = BIG ]
+  [ "$(report inplace)" = ok ]
+  [ "$(report mv)" = EBUSY ]
+  [ "$(report rm)" = EBUSY ]
+  [ "$(report tmp)" = EBUSY ]
+  [ "$(cat "$IHOME/store/x.md")" = IN ]
 }
 
 @test "an outside: naming the declaration's own host path through a link is a declaration at its own path: ./a pinned, the next launch reads the host's file" {
@@ -680,11 +685,11 @@ part_in_place() {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec bash -c '
     python3 ops.py mv_a:rename:a:a.moved mv_b:rename:a/b:a/b.moved
     echo "ns=$(readlink /proc/self/ns/mnt)" >>report
-    grep -q "cannot be renamed or removed ($PWD/a, $PWD/a/b)" /run/agent-sandbox/briefing.md && echo brief=pins >>report
+    grep -q "cannot be renamed, removed or replaced ($PWD/a, $PWD/a/b)" /run/agent-sandbox/briefing.md && echo brief=pins >>report
     grep -q "agent-sandbox: the pinned directories" /run/agent-sandbox/briefing.md || echo marker=gone >>report'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]] # a join builds nothing
-  [ "$(report brief)" = pins ]         # the keeper's briefing, which the launch filled in
+  [[ "$output" != *"pinned, on the way"* ]] # a join builds nothing
+  [ "$(report brief)" = pins ]              # the keeper's briefing, which the launch filled in
   [ "$(report marker)" = gone ]
   [ "$(report mv_a)" = EBUSY ]
   [ "$(report mv_b)" = EBUSY ]
@@ -707,7 +712,7 @@ part_in_place() {
     w .asb/new asb_inside
     echo "busy=$(mv .asb .asb.moved 2>&1)" >>report'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"pinned, above a read-only, hidden or own path (the role cannot rename or remove them): ./.asb, ./.asb/roles"* ]]
+  [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./.asb, ./.asb/roles"* ]]
   [ "$(report mv_asb)" = refused ]
   [ "$(report mv_roles)" = refused ]
   [[ "$(report busy)" == *"Device or resource busy"* ]]
@@ -725,12 +730,59 @@ part_in_place() {
   [ -f "$W/.asb/new" ]
 }
 
+@test "the roles model in normal operation under R1: inbox written by temp file + rename, messages.md by Write/Edit's rename, git commit/branch/checkout/stash/merge in the Supervisor's tree and an Implementer's clone" {
+  roles_project
+  [ -d "$W/.asb/impl/1" ] || skip "no Implementer clone made by --init here"
+  run_sandboxed "${BASE[@]}" -- --role supervisor --profile probe --exec bash -c '
+    st() { "$@" >/dev/null 2>&1 && echo ok || echo "failed"; }
+    G="git -c user.name=t -c user.email=t@example.org"
+    printf "report\n" >>.git/info/exclude # the report stays out of the stash
+    printf "task\n" >.asb/coord/to/.implementer-1.md.tmp
+    echo "inbox=$(st mv .asb/coord/to/.implementer-1.md.tmp .asb/coord/to/implementer-1.md)" >>report
+    printf "m\n" >.asb/coord/supervisor/.messages.md.tmp
+    echo "messages=$(st mv .asb/coord/supervisor/.messages.md.tmp .asb/coord/supervisor/messages.md)" >>report
+    echo "a" >work.txt
+    echo "add=$(st $G add work.txt)" >>report
+    echo "commit=$(st $G commit -qm one)" >>report
+    echo "branch=$(st $G checkout -qb side)" >>report
+    echo "b" >>work.txt
+    echo "commit2=$(st $G commit -qam two)" >>report
+    echo "back=$(st $G checkout -q -)" >>report
+    # (a tracked change: `stash --include-untracked` would remove the untracked .agent-sandbox,
+    # a mount point at every launch, with or without the pins)
+    echo "c" >>work.txt
+    echo "stash=$(st $G stash -q)" >>report
+    echo "pop=$(st $G stash pop -q)" >>report
+    $G checkout -q -- work.txt # the merge below wants a clean tree
+    echo "merge=$(st $G merge -q --no-edit side)" >>report'
+  [ "$status" -eq 0 ]
+  local k
+  for k in inbox messages add commit branch commit2 back stash pop merge; do
+    [ "$(report "$k")" = ok ] || {
+      echo "supervisor $k: $(report "$k"); output: $output; report: $(cat "$W/report" 2>&1)" >&2
+      return 1
+    }
+  done
+  run_sandboxed "${BASE[@]}" -- --role implementer-1 --profile probe --exec bash -c '
+    st() { "$@" >/dev/null 2>&1 && echo ok || echo "failed"; }
+    G="git -c user.name=t -c user.email=t@example.org -C .asb/impl/1"
+    printf "m\n" >.asb/coord/implementer-1/.messages.md.tmp
+    mv .asb/coord/implementer-1/.messages.md.tmp .asb/coord/implementer-1/messages.md && echo messages=ok >.asb/coord/implementer-1/r || echo messages=failed >.asb/coord/implementer-1/r
+    echo "x" >.asb/impl/1/impl.txt
+    for c in "add impl.txt" "commit -qm impl" "checkout -qb feature" "checkout -q -" "stash list" "merge -q --no-edit feature"; do
+      echo "$c=$(st $G $c)" >>.asb/coord/implementer-1/r
+    done'
+  [ "$status" -eq 0 ]
+  run ! grep -q failed "$W/.asb/coord/implementer-1/r"
+  grep -qx 'messages=ok' "$W/.asb/coord/implementer-1/r"
+}
+
 @test "the roles model's Implementer: nothing pinned, its read-only project refuses the rename itself" {
   roles_project
   run_sandboxed "${BASE[@]}" -- --role implementer-1 --profile probe --exec bash -c '
     echo "mv=$(mv .asb .asb.moved 2>&1)" >.asb/coord/implementer-1/seen # its own directory: the project is read-only to it'
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]]
+  [[ "$output" != *"pinned, on the way"* ]]
   [[ "$(cat "$W/.asb/coord/implementer-1/seen")" == *"Read-only file system"* ]]
   [ ! -e "$W/.asb.moved" ]
 }

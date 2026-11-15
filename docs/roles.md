@@ -477,10 +477,11 @@ the file declares under `.asb/` with a `..` in it (`.asb/../x/ = read-only`), wh
 `--init` would make outside `.asb/`: the refusal names the line.
 
 Nor can a role with the project read-write move `.asb/` or `.asb/roles/` out of the way:
-the directories above a read-only file or directory, or one of the role's own, are pinned at launch, so the
+declared paths, and the directories on the way to them, are fixed for the role, so the
 Supervisor's and the setup role's `mv .asb .asb.moved` fails with "Device or resource
 busy" ([connections.md](connections.md), paths). They stay writable inside; a rename,
-hard link or `git mv` across their boundary fails with "Invalid cross-device link".
+hard link or `git mv` across their boundary fails with "Invalid cross-device link". To
+move one, ask the user to do it on the host.
 
 `--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
 under the conda base that applies, and says to launch the setup role,

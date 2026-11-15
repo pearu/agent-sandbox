@@ -1299,8 +1299,8 @@ login_file() {
       echo "$mode: $n computations" >&2
       return 1
     }
-    [ "$(grep -c 'pinned, above a read-only, hidden or own path' <<<"$output")" -eq 1 ]
-    grep -qxF -- "  copy-on-write, seed-only) cannot be renamed or removed ($PROJ/a, $PROJ/a/b): they stay" "$OUT/briefing.md"
+    [ "$(grep -c 'pinned, on the way to a declared path' <<<"$output")" -eq 1 ]
+    grep -qxF -- "  source, cannot be renamed, removed or replaced ($PROJ/a, $PROJ/a/b). What a declaration allows" "$OUT/briefing.md"
     run ! grep -q 'agent-sandbox: the pinned directories' "$OUT/briefing.md"
   done
 }
@@ -1319,8 +1319,8 @@ login_file() {
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
   [[ "$(cat "$OUT/briefing.md")" == *"$purpose"* ]]
-  [ "$(grep -c 'cannot be renamed or removed' "$OUT/briefing.md")" -eq 1 ]
-  grep -qF "cannot be renamed or removed ($PROJ/.asb, $PROJ/.asb/roles)" "$OUT/briefing.md"
+  [ "$(grep -c 'cannot be renamed, removed or replaced' "$OUT/briefing.md")" -eq 1 ]
+  grep -qF "cannot be renamed, removed or replaced ($PROJ/.asb, $PROJ/.asb/roles)" "$OUT/briefing.md"
   [ "$(grep -cxF '<!-- agent-sandbox: the pinned directories -->' "$OUT/briefing.md")" -eq 1 ]
   [ "$(grep -cxF '<!-- agent-sandbox: the pinned directories, 1234567890 -->' "$OUT/briefing.md")" -eq 1 ]
   [ "$(grep -c 'agent-sandbox: the pinned directories' "$OUT/briefing.md")" -eq 2 ] # the purpose's two, no other
@@ -1335,9 +1335,9 @@ login_file() {
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pinned, above"* ]]
+  [[ "$output" != *"pinned, on the way"* ]]
   [[ "$(cat "$OUT/briefing.md")" == *"$purpose"* ]]
-  run ! grep -q 'cannot be renamed or removed' "$OUT/briefing.md"
+  run ! grep -q 'cannot be renamed, removed or replaced' "$OUT/briefing.md"
   [ "$(grep -c 'agent-sandbox: the pinned directories' "$OUT/briefing.md")" -eq 2 ] # the purpose's two only
   run ! grep -rqE 'agent-sandbox: the pinned directories, [0-9]{30}' "$OUT"
 }
@@ -1360,25 +1360,27 @@ login_file() {
   touch "$PROJ/a/b/f.md" "$PROJ/top.md"
   run_engine BWRAP_COPY="$OUT" -- asb --connect './a/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
-  grep -qxF -- '- the directories above a read-only, hidden or your own path (own, copy,' "$OUT/briefing.md"
-  grep -qxF -- "  copy-on-write, seed-only) cannot be renamed or removed ($PROJ/a, $PROJ/a/b): they stay" "$OUT/briefing.md"
+  grep -qxF -- '- declared paths are fixed for you: these, on the way to a declared path or to its' "$OUT/briefing.md"
+  grep -qxF -- "  source, cannot be renamed, removed or replaced ($PROJ/a, $PROJ/a/b). What a declaration allows" "$OUT/briefing.md"
   # shellcheck disable=SC2016 # the briefing's backticks, literal
-  grep -qxF -- '  writable inside, but a rename, hard link or `git mv` across their boundary fails' "$OUT/briefing.md"
-  # shellcheck disable=SC2016 # the briefing's backticks, literal
-  grep -qxF -- '  with "Invalid cross-device link"; `mv` and `cp` work' "$OUT/briefing.md"
+  grep -qxF -- '  fails with "Invalid cross-device link" (`mv` and `cp` work), and a file among them is' "$OUT/briefing.md"
+  # the way out (R4): the user, on the host
+  grep -qxF -- '  declared path or a directory on the way to it, ask the user to do it on the host and,' "$OUT/briefing.md"
   run_engine BWRAP_COPY="$OUT" -- asb --connect './top.md = read-only' claude --version
   [ "$status" -eq 0 ]
   grep -q -- "- extra read-only paths: $PROJ/top.md\$" "$OUT/briefing.md"
-  run ! grep -q 'cannot be renamed or' "$OUT/briefing.md"
+  run ! grep -q 'cannot be renamed, removed' "$OUT/briefing.md"
 }
 
-@test "a read-only source that another declaration shows read-write launches: each path gets its own access, nothing pinned for the source, nothing refused" {
+@test "a read-only source that another declaration shows read-write launches: each path gets its own access, nothing refused; the source fixed where that read-write declaration shows it" {
   mkdir -p "$H/home/store" "$PROJ/cfg"
   printf 'S\n' >"$H/home/store/x.md"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
   [ "$status" -eq 0 ]
   [[ "$output" != *contradict* ]]
-  [[ "$output" != *"pinned, above"* ]] # its source is elsewhere: nothing for its destination either
+  # shellcheck disable=SC2088 # the message's own ~
+  [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./cfg, ~/store/x.md"* ]]
   argv_has --ro-bind "$H/home/store/x.md" "$PROJ/cfg/x.md"
+  argv_has --bind "$H/home/store/x.md" "$H/home/store/x.md"
 }
