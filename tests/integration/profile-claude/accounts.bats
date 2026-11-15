@@ -180,17 +180,26 @@ run_claude() {
   [ ! -e "$ACC/cache/changelog.md" ]
 }
 
-@test "a linked cache under an account is not supported: the changelog channel's path goes through the link made again in the account's directory, which the role can replace, so the launch is refused (R3); nothing is made through the link" {
+@test "a linked cache under an account is not supported: the changelog channel's path goes through the link made again in the account's directory, which the role can replace, so the launch is refused (R3), naming the base's entry as the way out; nothing is made through the link, and the way out works" {
   mkdir -p "$IHOME/.claude/cache.real"
   ln -s cache.real "$IHOME/.claude/cache" # the changelog channel's directory, a link
   TEST_PRESET=isolated run_claude --account work
   [ "$status" -ne 0 ]
   [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its path goes through $ACC/cache, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"Make $ACC/cache the directory it points to"* ]]
+  [[ "$output" == *"Make the base's $IHOME/.claude/cache the directory it points to ($IHOME/.claude/cache.real): the link in the account's directory is made again from it at every launch. Refusing to launch"* ]]
+  [[ "$output" != *"Make $ACC/cache"* ]]      # not the account's link: one made a directory is refused next
   [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory before the refusal; left there
   # the refused launch made no mount point through the link, on either side
   [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
   [ ! -e "$ACC/cache.real/changelog.md" ]
+  # the way out the hint names: the base's entry made the directory it points to
+  rm "$IHOME/.claude/cache"
+  mv "$IHOME/.claude/cache.real" "$IHOME/.claude/cache"
+  TEST_PRESET=isolated run_claude --account work
+  [ "$status" -eq 0 ]
+  [ "${M[login]}" = WORK-LOGIN ]
+  [ ! -L "$ACC/cache" ]                        # the stale link the engine made is replaced
+  [ ! -e "$IHOME/.claude/cache/changelog.md" ] # its mount point removed after the launch
 }
 
 # Two roles at once on one state directory share its mount-point files: the first

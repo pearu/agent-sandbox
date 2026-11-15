@@ -15068,6 +15068,16 @@ _as_ro_pins_chain() {
         _ch_hint="Make $_ch_l the directory it points to, or bind from the resolved path ($_ch_q; for a channel, its mode with outside:$_ch_q)"
         [[ "$3" == dest ]] && _ch_hint="Make $_ch_l the directory it points to ($_ch_q)"
       fi
+      # A link the engine made again in an account's directory for a linked top-level
+      # entry of the base (_as_base_entry_binds): the next launch makes it again from
+      # the base's, so the way out is the base's entry (an account's directory where
+      # the base has a symlink is refused there).
+      local _ch_be="${_ch_l#"${_acct_dir:-}"/}"
+      if [[ -n "${_acct_dir:-}" && -n "${_as_base_real:-}" && "$_ch_l" == "$_acct_dir/$_ch_be" && "$_ch_be" != */* ]] \
+        && [[ -L "$_as_base_real/$_ch_be" && "$(readlink -- "$_as_base_real/$_ch_be")" == "$(readlink -- "$_ch_l")" ]]; then
+        _ch_be="$_as_base_real/$_ch_be"
+        _ch_hint="Make the base's $_ch_be the directory it points to ($(readlink -f -- "$_ch_be" 2>/dev/null || printf '%s' "$_ch_be")): the link in the account's directory is made again from it at every launch"
+      fi
       _as_msg "connect: $2: $_ch_side $_ch_l, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $_ch_hint. Refusing to launch"
       return 1
     fi
