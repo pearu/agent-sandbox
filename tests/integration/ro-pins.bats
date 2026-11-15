@@ -699,6 +699,32 @@ part_in_place() {
   [ -d "$IHOME/alt/extra.m" ]
 }
 
+@test "a copy-on-write channel with a relocated directory source reads that source, as copy does (the profile's relocation and outside:); a write lands in the role's layer, not in the source nor at the path" {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt/extra" "$IHOME/.probe/extra" "$IHOME/alt2/extra"
+  printf 'RELOC\n' >"$IHOME/alt/extra/r"
+  printf 'PATH\n' >"$IHOME/.probe/extra/p"
+  printf 'OUT\n' >"$IHOME/alt2/extra/o"
+  local m want
+  for m in copy-on-write copy "copy-on-write outside:~/alt2/extra" "copy outside:~/alt2/extra"; do
+    want=r
+    [[ "$m" == *outside:* ]] && want=o
+    rm -f "$W/report"
+    run_sandboxed "${BASE[@]}" -- --connect "extra = $m" --profile probe --exec bash -c '
+      echo "seen=$(ls "$HOME/.probe/extra" | grep -v "^w$" | tr "\n" " ")" >>report
+      echo W >"$HOME/.probe/extra/w" && echo wrote=yes >>report'
+    [ "$status" -eq 0 ]
+    [ "$(report seen)" = "$want " ] || {
+      echo "$m: saw [$(report seen)], expected [$want ]" >&2
+      return 1
+    }
+    [ "$(report wrote)" = yes ]
+    [ ! -e "$IHOME/alt/extra/w" ]
+    [ ! -e "$IHOME/alt2/extra/w" ]
+    [ ! -e "$IHOME/.probe/extra/w" ]
+  done
+}
+
 @test "R1 at the first launch: directories on the way to a key that the host does not have yet are made where bwrap would make them, and pinned already" {
   mkdir -p "$IHOME/big"
   printf 'BIG\n' >"$IHOME/big/f"

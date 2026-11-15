@@ -2712,16 +2712,18 @@ _as_connect_bind_channel() {
       # track the source if the source IS the lower. What that costs is one
       # empty directory in a tree the engine already binds read-write and lets
       # bwrap create mount points in; it is not something the SANDBOX wrote,
-      # which is the promise `copy-on-write` makes.
-      mkdir -p -- "$path" || return 1
+      # which is the promise `copy-on-write` makes. The source, not the path: a
+      # relocated one (the profile's, or `outside:`) is what the overlay reads
+      # through, as `copy` seeds from it and a path declaration's overlay reads it.
+      mkdir -p -- "$src" || return 1
       # What the sandbox is shadowing, and whether the source has moved under
       # it. The one thing `copy-on-write` hides, reported before the mount so the user
       # reads it whatever the session then does.
-      _as_connect_shadows "$ch" "$path" "$upper" "$seen" || return 1
+      _as_connect_shadows "$ch" "$src" "$upper" "$seen" || return 1
       # Mounted by the keeper at the real path. One launch per role is what makes
       # that safe: two overlays over one upper directory, which overlayfs calls
       # undefined, need two launches, and a second invocation joins this one.
-      args+=(--overlay-src "$path" --overlay "$upper" "$work" "$path")
+      args+=(--overlay-src "$src" --overlay "$upper" "$work" "$path")
       _rec_store="-"
       ;;
     seed-only)

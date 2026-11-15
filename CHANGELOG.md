@@ -1142,6 +1142,11 @@ names are gone; there are no aliases for removed names before 1.0.
   on its final list, every decision on the final view, with no `find`; an option list
   the computation cannot read refuses the launch. The bwrap arguments are unchanged
   where nothing is pinned.
+- **A `copy-on-write` channel reads its relocated source.** With a source elsewhere --
+  the profile's relocation, or `outside:` on the `[connect]` line -- the channel's
+  overlay read through the channel's own path instead, so it showed other content than
+  `copy` for the same line; its lower is now the source, as a path declaration's overlay
+  and a join's already were. A write still lands in the role's layer.
 - **A claude session no longer asks to read its own briefing or to write its summary
   line.** Claude Code asked "Allow this read outside the working directories?" for
   `/run/agent-sandbox/briefing.md` in every role without a `[briefing] start` (only
