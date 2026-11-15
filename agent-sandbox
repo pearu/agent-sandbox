@@ -8475,11 +8475,49 @@ _as_base_bind() {
   fi
   if [[ -n "${_acct_dir:-}" ]]; then
     args+=(--bind "$_acct_dir" "$profile_base")
+    _as_base_channel_links || return 1
     _as_base_rw_sources || return 1
     _as_base_entry_binds "$_preal" || return 1
   else
     args+=(--bind "$_preal" "$profile_base")
   fi
+}
+
+# _as_base_channel_links -- under an account (#355), refuse a channel bound from the base
+# whose path in the base is, or goes through, a symbolic link. Without an account the pins
+# refuse it (the base is the role's read-write directory, _as_ro_pins_chain); with one the
+# base is not shown to the role at all, so they cannot see it -- yet the base is a
+# directory roles write in other launches, and the engine cannot tell the user's link from
+# one a role planted there: bound (or seeded from, or made through) as it is, the
+# account's launch would hand the role whatever the link names (measured: a role under
+# `shared` put ~/.claude/CLAUDE.md -> ../secret/g in the base, and the next launch on an
+# account bound ~/secret/g read-write). Every mode that reads or binds the base's path
+# (all but `own`); a channel relocated elsewhere or from another sandbox is not bound from
+# the base. Checked before anything is made in the base (_as_base_rw_sources writes
+# through such a path). The base directory itself was resolved by _as_base_bind.
+# shellcheck disable=SC2154,SC2031
+_as_base_channel_links() {
+  local line entry ch path c rel
+  local -a fields=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$line"
+    ch="${fields[0]}"
+    [[ "${_connect_mode[$ch]:-own}" != own ]] || continue
+    [[ -z "${_connect_src[$ch]:-}" && -z "${_connect_sandbox[$ch]:-}" ]] || continue
+    for entry in "${fields[@]:1}"; do
+      path="${entry#*:}"
+      [[ "$path" == "$profile_base"/* && "$(_as_channel_source "$path")" == "$path" ]] || continue
+      c="$profile_base" rel="${path#"$profile_base"/}"
+      while [[ -n "$rel" ]]; do
+        c="$c/${rel%%/*}"
+        [[ "$rel" == */* ]] && rel="${rel#*/}" || rel=""
+        [[ -L "$c" ]] || continue
+        _as_msg "connect: $path: under the account '${_acct_name:-}', its path in the base goes through $c, a symbolic link: the base is a directory roles write in other launches, and a link there would hand this launch whatever it names. Make $c $(_as_ro_pins_link_what "$c"). Refusing to launch"
+        return 1
+      done
+    done
+  done
+  return 0
 }
 
 # _as_base_rw_sources -- under an account (#355), the read-write channels' own sources in

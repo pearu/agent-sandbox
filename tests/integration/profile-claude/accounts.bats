@@ -159,6 +159,41 @@ run_role() {
   [ "$(cat "$IHOME/secret/g")" = SECRET ]
 }
 
+@test "a missing channel file in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it, naming the way out, and binds nothing it names" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/g"
+  [ ! -e "$IHOME/.claude/CLAUDE.md" ]
+  run_role -- bash -c 'cd ~/.claude && ln -s ../secret/g CLAUDE.md'
+  [ "$status" -eq 0 ]
+  [ -L "$IHOME/.claude/CLAUDE.md" ]
+  run_role --account work -- bash -c 'cat ~/.claude/CLAUDE.md; echo PWNED >>~/.claude/CLAUDE.md'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: $IHOME/.claude/CLAUDE.md: under the account 'work', its path in the base goes through $IHOME/.claude/CLAUDE.md, a symbolic link"* ]]
+  [[ "$output" == *"Make $IHOME/.claude/CLAUDE.md the file it points to ($IHOME/secret/g). Refusing to launch"* ]]
+  [[ "$output" != *SECRET* ]]
+  [ "$(cat "$IHOME/secret/g")" = SECRET ]
+  # the way out: the base's entry made the file it points to
+  cp --remove-destination "$IHOME/secret/g" "$IHOME/.claude/CLAUDE.md"
+  run_role --account work -- bash -c 'echo MINE >>~/.claude/CLAUDE.md'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IHOME/secret/g")" = SECRET ]
+}
+
+@test "a missing channel directory in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it" {
+  mkdir -p "$IHOME/secretdir"
+  printf 'SECRETD\n' >"$IHOME/secretdir/s"
+  [ ! -e "$IHOME/.claude/agents" ]
+  run_role -- bash -c 'cd ~/.claude && ln -s ../secretdir agents'
+  [ "$status" -eq 0 ]
+  [ -L "$IHOME/.claude/agents" ]
+  run_role --account work -- bash -c 'cat ~/.claude/agents/s; echo PWNED >>~/.claude/agents/s'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its path in the base goes through $IHOME/.claude/agents, a symbolic link"* ]]
+  [[ "$output" == *"Make $IHOME/.claude/agents the directory it points to ($IHOME/secretdir). Refusing to launch"* ]]
+  [[ "$output" != *SECRETD* ]]
+  [ "$(cat "$IHOME/secretdir/s")" = SECRETD ]
+}
+
 @test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel and the base's other entries still from the base; a write lands in the account" {
   run_claude --account work
   [ "$status" -eq 0 ]
