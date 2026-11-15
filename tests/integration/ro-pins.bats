@@ -914,6 +914,23 @@ sbx_native() {
   [ "$(stat -c %a "$W/n1/n2")" = 700 ]
 }
 
+@test "a join-scoped channel under a linked HOME: each join seeds from the source the launch resolved (copy, seed-only, copy-on-write; a directory and a file)" {
+  ln -s home "$I/hl"
+  printf 'DOC\n' >"$IHOME/.probe/docs/a.md"
+  printf 'NOTE\n' >"$IHOME/.probe/NOTES.md"
+  local m
+  for m in copy seed-only copy-on-write; do
+    rm -f "$W/report"
+    run_sandboxed "${BASE[@]}" HOME="$I/hl" AGENT_SANDBOX_PRESET=isolated -- --connect "docs = $m join-scoped" \
+      --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/docs/a.md" "$HOME/.probe/NOTES.md" 2>&1 | tr "\n" " ")" >>report'
+    [ "$status" -eq 0 ] || {
+      echo "$m: $output" >&2
+      return 1
+    }
+    [ "$(report seen)" = "DOC NOTE " ]
+  done
+}
+
 # relo_link TARGET -- the probe's extra channel relocated to ~/alt/extra, a link to TARGET
 relo_link() {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"

@@ -2845,12 +2845,22 @@ _as_connect_bind_channel() {
   if [[ "${_connect_scope[$ch]:-}" == join-scoped && "$mode" != read-only ]]; then
     # own starts empty; copy and seed-only are seeded from the source at each join;
     # copy-on-write is an overlay per join on the source, or a seeded copy (a file)
+    # The source each join reads, resolved here, by the launch that checks its links (as
+    # a path declaration's is): what exists of it, every link followed; a part still
+    # missing as written. A join then refuses only a link made since (_as_src_strict).
+    # A copy-on-write lower that is missing stays as written: it is made at the path.
+    local _jsrc
+    _jsrc="$(realpath -m -- "$src" 2>/dev/null || printf '%s' "$src")"
     if [[ "$mode" == own ]]; then
       _as_join_scoped_bind "$kind" "$path" || return 1
     elif [[ "$mode" == copy-on-write ]] && _as_join_scoped_overlay_ok "$kind"; then
-      _as_join_scoped_bind "$kind" "$path" "" "$src" || return 1
+      if [[ -e "$src" ]]; then
+        _as_join_scoped_bind "$kind" "$path" "" "$_jsrc" || return 1
+      else
+        _as_join_scoped_bind "$kind" "$path" "" "$src" || return 1
+      fi
     else
-      _as_join_scoped_bind "$kind" "$path" "$src" || return 1
+      _as_join_scoped_bind "$kind" "$path" "$_jsrc" || return 1
     fi
     _rec_store="-"
     return 0
@@ -3056,7 +3066,17 @@ _as_connect_bind_path() {
   if [[ "${_connect_scope[$p]:-}" == join-scoped && "$mode" != read-only ]]; then
     local _jseed=""
     _connect_host[$p]=-
-    [[ "$mode" == own ]] || _jseed="$(readlink -f -- "$s" 2>/dev/null || printf '%s' "$s")"
+    # resolved by this launch, which checks its links; a part still missing as written
+    # (a missing copy-on-write lower stays as written: it is made at the path)
+    if [[ "$mode" != own ]]; then
+      if [[ -e "$s" ]]; then
+        _jseed="$(readlink -f -- "$s")"
+      elif [[ "$mode" == copy-on-write ]]; then
+        _jseed="$s"
+      else
+        _jseed="$(realpath -m -- "$s" 2>/dev/null || printf '%s' "$s")"
+      fi
+    fi
     # Each join seeds from (or reads through) the source: a declared source like any
     # other, resolved link by link and fixed (_as_ro_pins) -- not an own store's.
     [[ "$mode" == own ]] || _as_sandbox_src_engine "$p" "$s" || _ds_pending="$s"
