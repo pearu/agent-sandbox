@@ -110,3 +110,39 @@ capture() { # capture NAME engine-args...
   [ "$status" -ne 0 ]
   [[ "$output" == *"only accepted as the --preset flag"* ]]
 }
+
+@test "the oracle holds with copy and seed-only declared: under native they bind what --preset none shows" {
+  capture native --preset native --connect 'docs = copy' --connect 'extra = seed-only'
+  capture none --preset none
+  run diff -u "$IWORK/native" "$IWORK/none"
+  [ "$status" -eq 0 ]
+}
+
+@test "copy and seed-only under native, channel and path declaration, first launch and next: the role sees the source" {
+  mkdir -p "$IWORK/d" "$IWORK/e"
+  printf 'HOST\n' >"$IWORK/d/f"
+  printf 'HOST\n' >"$IWORK/e/f"
+  local i
+  for i in 1 2; do
+    rm -f "$IWORK/view"
+    run_sandboxed "${PAR[@]}" -- --preset native --connect 'docs = copy' --connect 'extra = seed-only' \
+      --connect './d/ = copy' --connect './e/ = seed-only' --profile probe --exec bash -c '
+      echo "v=$(cat "$HOME/.probe/docs/a.md") $(cat "$HOME/.probe/extra/e.md") $(cat d/f) $(cat e/f)" >view'
+    [ "$status" -eq 0 ]
+    [ "$(cat "$IWORK/view")" = "v=YOURS EXTRA HOST HOST" ] || {
+      echo "launch $i: $(cat "$IWORK/view")" >&2
+      return 1
+    }
+  done
+}
+
+@test "copy-on-write under native, channel, directory and file (the copy fallback) declarations: the role sees the source" {
+  mkdir -p "$IWORK/c"
+  printf 'HOST\n' >"$IWORK/c/f"
+  printf 'ONE\n' >"$IWORK/one.md"
+  run_sandboxed "${PAR[@]}" -- --preset native --connect 'docs = copy-on-write' --connect './c/ = copy-on-write' \
+    --connect './one.md = copy-on-write' --profile probe --exec bash -c '
+    echo "v=$(cat "$HOME/.probe/docs/a.md") $(cat c/f) $(cat one.md)" >view'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IWORK/view")" = "v=YOURS HOST ONE" ]
+}

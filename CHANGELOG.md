@@ -1153,8 +1153,7 @@ names are gone; there are no aliases for removed names before 1.0.
   source reached through a read-write directory view is written in place, not replaced
   by a temp-file rename. Nothing changes under `--preset native`. The pins are computed
   once per launch on its final list, every decision on the final view, with no `find`;
-  an option list the computation cannot read refuses the launch. The bwrap arguments are
-  unchanged where nothing is pinned.
+  an option list the computation cannot read refuses the launch.
 - **A `copy-on-write` channel reads its relocated source.** With a source elsewhere --
   the profile's relocation, or `outside:` on the `[connect]` line -- the channel's
   overlay read through the channel's own path instead, so it showed other content than

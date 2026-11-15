@@ -2401,7 +2401,8 @@ _as_src_guard() {
     _reads_kind+=("$kind")
     _reads+=("$#" "$@")
   else
-    _as_src_strict "$k" "$src" || return 1
+    # (not under native, which is unchanged: R5)
+    _as_preset_is_native || _as_src_strict "$k" "$src" || return 1
     "$@"
   fi
 }
@@ -2609,7 +2610,14 @@ _as_connect_bind_all() {
   # (_as_launch).
   if ((${#_reads[@]})); then
     local -a _rd_in=("${args[@]}") _rd_run=() _rd_pin=()
-    _as_ro_pins _rd_in _rd_run _rd_pin _reads_chk || return 1
+    if _as_preset_is_native; then
+      # native is unchanged: every read and creation runs, as without the check (R5)
+      _rd_run=()
+      local _rk
+      for _rk in "${_reads_chk[@]}"; do _rd_run+=(run); done
+    else
+      _as_ro_pins _rd_in _rd_run _rd_pin _reads_chk || return 1
+    fi
     local _ri=0 _rn _rj=0
     while ((_ri < ${#_reads[@]})); do
       _rn="${_reads[_ri]}"
