@@ -566,10 +566,11 @@ the read-only name shows what is written. Where that is cheap to see -- the othe
 declared read-write as a single file -- the launch says so in one warning line and goes
 on; another name inside a read-write directory is not looked for.
 
-**Every one of these decisions is made on the final view** -- what shows at each path once
-every bind is made -- not on the binds made so far: declarations are bound by depth, so the
-mount that makes a directory read-write, or read-only, can come later in the list than
-the path it concerns.
+**These decisions are made on the final view** -- what shows at each path once every
+bind is made, not on the binds made so far (the check before a source is read, on the
+binds made up to the declarations, every one that can show a directory read-write among
+them): declarations are bound by depth, so the mount that makes a directory read-write,
+or read-only, can come later in the list than the path it concerns.
 
 **Under the claude profile, `~/.claude/cache` is pinned where the changelog channel,
 `~/.claude/cache/changelog.md`, is bound** (every preset but `native`; under `shared`,

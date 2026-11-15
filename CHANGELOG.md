@@ -1146,19 +1146,20 @@ names are gone; there are no aliases for removed names before 1.0.
   launch. `--reset` of a `copy` channel no longer copies from the source itself: it
   discards the copy, and the next launch copies the source again. The engine touches a
   source -- reads, copies, hashes (copy-on-write's shadow check) or makes it when
-  missing -- only through one check of its links: at a launch, on that launch's view,
-  also counting the role's own state directories it covers there; at a join, a seed
-  whose source has gained a symbolic link since the launch is refused. One source shown
-  at two paths with different access is valid, each path its own; a hard link of a
-  read-only file that a read-write single-file mount shows is warned of. The briefing
-  names the fixed paths and the way out: ask the user to rename, move or remove on the
-  host and, where needed, update the dot-file and relaunch. A pinned directory stays
-  writable inside as declared; a rename, hard link or `git mv` across its boundary fails
-  with "Invalid cross-device link" (`mv` and `cp` copy instead), and a single-file
-  source reached through a read-write directory view is written in place, not replaced
-  by a temp-file rename. Nothing changes under `--preset native`. The pins are computed
-  once per launch on its final list, every decision on the final view, with no `find`;
-  an option list the computation cannot read refuses the launch.
+  missing -- only through one check of the links on its way (not of links inside a
+  source directory): at a launch, on that launch's view, also counting the role's own
+  state directories it covers there; at a join, a seed whose source has gained a
+  symbolic link since the launch is refused. One source shown at two paths with
+  different access is valid, each path its own; a hard link of a read-only file that a
+  read-write single-file mount shows is warned of. The briefing names the fixed paths
+  and the way out: ask the user to rename, move or remove on the host and, where needed,
+  update the dot-file and relaunch. A pinned directory stays writable inside as
+  declared; a rename, hard link or `git mv` across its boundary fails with "Invalid
+  cross-device link" (`mv` and `cp` copy instead), and a single-file source reached
+  through a read-write directory view is written in place, not replaced by a temp-file
+  rename. Nothing changes under `--preset native`. The pins are computed once per launch
+  on its final list, every decision on the final view, with no `find`; an option list
+  the computation cannot read refuses the launch.
 - **A `copy-on-write` channel reads its relocated source.** With a source elsewhere --
   the profile's relocation, or `outside:` on the `[connect]` line -- the channel's
   overlay read through the channel's own path instead, so it showed other content than

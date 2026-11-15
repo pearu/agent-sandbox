@@ -2612,7 +2612,6 @@ _as_connect_bind_all() {
     local -a _rd_in=("${args[@]}") _rd_run=() _rd_pin=()
     if _as_preset_is_native; then
       # native is unchanged: every read and creation runs, as without the check (R5)
-      _rd_run=()
       local _rk
       for _rk in "${_reads_chk[@]}"; do _rd_run+=(run); done
     else
