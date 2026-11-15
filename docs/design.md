@@ -387,7 +387,8 @@ Stated plainly. These are what the adversary above can still do.
   window a declaration's bind has too. Mount points bwrap creates for the channels and
   the entries are made inside the account's directory (under an entry bound from the
   base, inside the base's entry, as with no account) -- the shape CVE-2026-87766
-  describes, already noted for the base -- and the empty files among them are removed
+  describes, already noted for the base, and why a launch refuses a bubblewrap below
+  0.12.0, which lacks its fix -- and the empty files among them are removed
   after the launch (recorded as the host path bwrap made them at, never an empty file
   of the same name elsewhere).
 - **What a session writes in `~/.claude` can steer later sessions -- how far

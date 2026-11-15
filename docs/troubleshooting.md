@@ -292,14 +292,16 @@ outage; the rebuild (and the restart the installer performs) is what removes it.
 
 ## bubblewrap older than 0.12.0 (Ubuntu 24.04 and 26.04)
 
-`install.sh` warns when `bwrap --version` is below 0.12.0. That release fixes
+agent-sandbox requires bubblewrap 0.12.0 or newer: `install.sh` stops, and `asb`
+refuses to launch, when `bwrap --version` is below 0.12.0 or names no version. That
+release fixes
 **CVE-2026-87766** (GHSA-pxhw-h44j-8pfx): during sandbox setup, a symlink in a
 directory the sandboxed process controls could redirect the files and
 directories bwrap creates as mount points onto the host, as the launching user.
 agent-sandbox creates mount points inside the agent's writable state directory
-(`~/.claude`), which is exactly that shape, so the fix matters here. 0.11.0 also
-added the overlay options (`--overlay-src`, `--overlay`, `--tmp-overlay`,
-`--ro-overlay`) that the connections design relies on.
+(`~/.claude`), which is exactly that shape, so the fix matters here. The engine
+also uses the overlay options (`--overlay-src`, `--overlay`, `--tmp-overlay`,
+`--ro-overlay`, added in 0.11.0) without asking whether bwrap has them.
 
 Ubuntu 24.04 ships 0.9.0. Canonical backported the fix in `0.9.0-1ubuntu0.2`,
 then **dropped it again** in `0.9.0-1ubuntu0.3` (noble-security, 2026-09-17,
@@ -328,8 +330,10 @@ without a Debian keyring (the pinned sums are the check), and dpkg-genchanges ca
 `0.12.0-1~<codename>1` earlier than `0.12.0-1` (the tilde version, by design). The
 `.deb` stays in that directory, so it can be reinstalled. If a step fails, the hold
 stays in place and the message says so; `sudo apt-mark unhold bubblewrap` releases it.
-`install.sh` itself names this option when it finds an older bubblewrap on Ubuntu, and
-`sudo apt install bubblewrap` when apt already has 0.12.0 or newer.
+`install.sh` itself names this option when it stops on an older bubblewrap on Ubuntu,
+and `sudo apt install bubblewrap` when apt already has 0.12.0 or newer; `asb`'s refusal
+names it too. `--rebuild-bwrap` is a run of its own, so it works from the old
+bubblewrap; run the plain `./install.sh` after it.
 
 **By hand**, the same steps:
 

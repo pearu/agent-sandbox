@@ -264,8 +264,11 @@ If you are an agent running inside this sandbox while maintaining it:
   0.9.0, and its noble-security update dropped the fix for CVE-2026-87766 again
   -- the supported route is a no-change rebuild of Ubuntu's newer source
   package, never a third-party PPA; the recipe is in `docs/troubleshooting.md`,
-  and `install.sh` warns below 0.12.0. The sandbox creates mount points inside
+  and `install.sh --rebuild-bwrap` runs it. The sandbox creates mount points inside
   the agent's writable state directory, which is the shape that CVE describes.
+- **bubblewrap 0.12.0 or newer is required, with no fallback.** `install.sh` stops
+  and a launch refuses below it (`_as_bwrap_check`), so the engine has one code path
+  for one bubblewrap: nothing asks bwrap what it supports.
 - **install.sh is a true install (copy), not an in-place symlink.** It copies
   the engine and profiles under `~/.local/share/agent-sandbox/app` and points
   `asb` there, so the installed command does not depend on the checkout

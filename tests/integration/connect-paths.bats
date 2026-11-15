@@ -63,8 +63,6 @@ PROBE
 }
 
 @test "copy-on-write: the project's files read through, a write lands in the role's layer, the project is untouched" {
-  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
-    || skip "bubblewrap has no --overlay (needs >= 0.11; this host: $(bwrap --version))"
   mkdir -p "$IWORK/data"
   printf 'DATA\n' >"$IWORK/data/a"
   run_sandboxed "${ENV[@]}" PROBE_WRITE=x -- --connect './data/ = copy-on-write' probe run
@@ -104,7 +102,6 @@ PROBE
 }
 
 @test "project = copy-on-write: a role's writes stay in its layer, kept across its launches; the project and another role see none" {
-  [[ "$(bwrap --help 2>&1)" == *"--overlay "* ]] || skip "this bubblewrap cannot mount an overlay"
   mkdir -p "$IWORK/data"
   printf 'DATA\n' >"$IWORK/data/a"
   : >"$I/rep"

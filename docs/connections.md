@@ -533,7 +533,7 @@ the project's files.
 A directory path at `copy-on-write` is an overlay the keeper mounts at the declared
 path, as it does a channel's: the project's files read through, live, and a write lands
 in the role's upper layer and shadows the source's file from then on. Where the overlay
-is off or this bubblewrap cannot mount one, it is `copy` with a message saying so.
+is off, it is `copy` with a message saying so.
 `--reset ./scratch/` takes a declaration back to its source, as `--reset <channel>` does
 a channel (#126). A per-role scratchpad is already what `./scratch/ = own` gives, since
 a role is the instance.
@@ -818,8 +818,8 @@ is untouched, `--tmp-overlay` discards the writes, and the engine's integration 
 passes unchanged on 0.12.0. So `copy-on-write` has two implementations with one
 semantics:
 
-- **real**: `--overlay-src <A> --overlay <upper> <work> <inside>` where bubblewrap
-  allows it; reads live, writes to the upper directory, which is the sandbox's
+- **real**: `--overlay-src <A> --overlay <upper> <work> <inside>` on a directory, with
+  the overlay on; reads live, writes to the upper directory, which is the sandbox's
   persistent private layer;
 - **emulated**: a per-launch snapshot of A into the session tmpfs with the private layer
   copied over it, bound read-write; at exit, files that differ from the snapshot go to
@@ -975,15 +975,13 @@ is where different agents meet.
 ## Settled while writing this
 
 - **Overlay availability per host.** Real `copy-on-write` needs bubblewrap 0.11 or
-  later. Ubuntu 26.04 ships 0.11.1; 24.04 ships 0.9.0 and gets 0.12.0 through the
-  rebuild recipe in
+  later, and agent-sandbox requires 0.12.0 (it carries the fix for CVE-2026-87766, a
+  setup-time symlink escape through directories the sandboxed process controls), so
+  every host that launches has it. Ubuntu ships less (26.04 0.11.1, 24.04 0.9.0, 22.04
+  0.6.1) and gets 0.12.0 through the rebuild recipe in
   [troubleshooting.md](troubleshooting.md#bubblewrap-older-than-0120-ubuntu-2404-and-2604),
-  which `install.sh` points at when it finds an older bubblewrap (0.12.0 also carries
-  the fix for CVE-2026-87766, a setup-time symlink escape through directories the
-  sandboxed process controls, which noble-security's 0.9.0-1ubuntu0.3 dropped again).
-  Measured in CI: 26.04 has overlay support, 24.04 ships 0.9.0 and 22.04 ships 0.6.1, so
-  two of the three supported releases take the fallback unless their bubblewrap is
-  upgraded. Nothing may therefore be designed as if the overlay path were the usual one.
+  which `install.sh` and `asb` name when they refuse an older bubblewrap. The fallback
+  remains for `[overlay] mode = off` and for a single file.
 - **Where there is no overlay, `copy-on-write` is `copy`** — not a separate emulation to
   write and keep in step. Compare the two definitions above and they differ in exactly
   one place. Across launches they are identical: a source change to an untouched file

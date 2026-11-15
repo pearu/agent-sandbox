@@ -122,6 +122,24 @@ settings_of() {
   [ ! -s "$H/argv" ]
 }
 
+@test "--serve on a bubblewrap below 0.12.0, no keeper running: refused non-zero, the project and the role store left as they were" {
+  printf '[serve:worker]\nwatch = inbox.md\nprompt = p.md\n' >"$PROJ/.agent-sandbox"
+  : >"$PROJ/p.md"
+  trust
+  local st="$H/home/.local/state/agent-sandbox" before_p before_s
+  before_p="$(cd "$PROJ" && find . | sort)"
+  before_s="$(cd "$H/home" && find . | sort)"
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --role worker --serve claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [[ "$output" != *"--serve ends"* ]]
+  [ ! -e "$PROJ/.asb" ]
+  [ "$(cd "$PROJ" && find . | sort)" = "$before_p" ]
+  [ "$(cd "$H/home" && find . | sort)" = "$before_s" ]
+  [ ! -s "$H/argv" ]
+  [ -d "$st" ] # (the comparison above saw the state dir, not an empty home)
+}
+
 @test "--serve refuses a role with no [serve] section, naming the --apply line; and one missing a key" {
   run_engine -- asb --role planner-1 --serve claude
   [ "$status" -eq 1 ]

@@ -119,8 +119,8 @@ account, so whatever escapes the sandbox lands there and not in the owner's.
    Missing packages are named with the `apt` line to give them (`bubblewrap`, `curl`;
    `passt` and `nftables` for `strict`); the proxy's environment needs none, install.sh
    builds it with the micromamba it fetches. The sshd binary is `openssh-server`'s. A
-   bubblewrap below 0.12.0 is a warning, and its rebuild (`install.sh --rebuild-bwrap`)
-   is the owner's, host-wide. An account that never logs in has no user manager:
+   bubblewrap below 0.12.0 stops the install, and its rebuild
+   (`install.sh --rebuild-bwrap`) is the owner's, host-wide. An account that never logs in has no user manager:
    install.sh writes the proxy unit, says `note: this account has no user manager ...`,
    and goes on. That is fine here: the sshd profile runs a proxy of its own at every
    launch and needs no unit. The proxy's port is the account's own (8888, or the next

@@ -83,6 +83,21 @@ trust() {
   [ "$BG_STATUS" -eq 0 ]
 }
 
+@test "a join runs no bwrap, so an old bubblewrap does not refuse it; the next cold start is refused" {
+  engine_bg -- asb claude --version
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb claude -p again
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"below 0.12.0"* ]]
+  [ ! -s "$H/argv" ]
+  join_has "$BIN" -p again
+  release_bg
+  [ "$BG_STATUS" -eq 0 ]
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb claude -p again
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [ ! -s "$H/argv" ]
+}
+
 @test "a bare join always joins, whatever the keeper was started with" {
   engine_bg -- asb --preset isolated --connect 'skills=read-only native' --allow pypi.org claude --version
   # TEST_PRESET empty: the harness otherwise sets AGENT_SANDBOX_PRESET, which is a knob set
@@ -129,6 +144,21 @@ trust() {
   [ -s "$H/argv" ] # a launch of its own
   [[ "$output" != *"cannot change"* ]]
   [ ! -d "/proc/$spid" ] # the idle one was ended
+}
+
+@test "an idle keeper of another policy is not stopped for a launch a bubblewrap below 0.12.0 refuses" {
+  engine_bg AGENT_SANDBOX_KEEPER_GRACE=30 -- asb --preset isolated claude --version
+  release_bg
+  local spid
+  read -r spid _ <"$SBOX/keeper/id" # still there, in its grace
+  run_engine AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --preset inherit claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bubblewrap 0.11.1 ($H/bin/bwrap) is below 0.12.0"* ]]
+  [ ! -s "$H/argv" ]
+  [ -d "/proc/$spid" ] # the idle one runs on
+  [ ! -e "$SBOX/keeper/stop" ]
+  run_engine -- asb --shutdown claude
+  [ "$status" -eq 0 ]
 }
 
 # The agent binary is part of a running role's policy: the keeper binds the one it

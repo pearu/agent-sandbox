@@ -101,24 +101,8 @@ make_harness() {
 # Not measured, so not traced: under coverage kcov traces every bash process the
 # engine starts, and a stub's trace only slows it and pollutes what it captures.
 set +x
-# Stub bwrap: record argv, one token per line, then exit 0 (never sandboxes).
-#
-# It answers --help too, because the engine asks bwrap whether it can mount an
-# overlay before deciding how to implement `cow`. A stub that said nothing made
-# every overlay path fall back to copy, so the argv those tests exist to pin was
-# never produced. AGENT_SANDBOX_TEST_NO_OVERLAY makes it report a bubblewrap too
-# old for overlays, which is the other half of that decision.
-# AGENT_SANDBOX_TEST_HELP_MORE makes it go on writing after that line, as the real
-# bwrap does (its help is two writes), so a reader that stops early breaks its pipe.
-if [[ "${1:-}" == --help ]]; then
-  [[ -n "${AGENT_SANDBOX_TEST_NO_OVERLAY:-}" ]] \
-    || printf '    --overlay RWSRC WORKDIR DEST Mount overlayfs on DEST\n'
-  if [[ -n "${AGENT_SANDBOX_TEST_HELP_MORE:-}" ]]; then
-    sleep 0.3
-    printf '%065536d\n' 0 # the stub's own write, as bwrap's is: a closed pipe kills it
-  fi
-  exit 0
-fi
+# Stub bwrap: record argv, one token per line, then exit 0 (never sandboxes). Its
+# --version is stub-env's (below).
 : >"${BWRAP_DUMP:?}"
 for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
 . "${0%/*}/keeper-tail"
@@ -141,8 +125,10 @@ STUB
   # environment of its own, so a stub takes back the one of its nearest ancestor that
   # has one -- the engine's -- to find the dump path and the rest of its test's knobs.
   # What it was given itself goes to $BWRAP_DUMP.env, one name per line, for the tests
-  # that pin that it was nothing. It also reads back the options the engine passes
-  # through `--args` (below).
+  # that pin that it was nothing. It answers `--version`, which a launch asks before it
+  # starts anything (_as_bwrap_check): `bubblewrap 0.12.0`, or the version in
+  # AGENT_SANDBOX_TEST_BWRAP_VERSION (empty: a line with no version). It also reads back
+  # the options the engine passes through `--args` (below).
   cat >"$H/bin/stub-env" <<'STUB'
 _stub_given=()
 while IFS= read -r -d '' _kv; do _stub_given+=("${_kv%%=*}"); done </proc/$$/environ
@@ -153,7 +139,11 @@ while [[ -z "${HOME:-}" && "${_stub_p:-1}" -gt 1 ]]; do
   { while IFS=$' \t' read -r _k _v; do [[ "$_k" == PPid: ]] && _stub_n="$_v"; done <"/proc/$_stub_p/status"; } 2>/dev/null
   _stub_p="$_stub_n"
 done
-if [[ -n "${BWRAP_DUMP:-}" && "${1:-}" != --help && "${1:-}" != --version ]]; then
+if [[ "${1:-}" == --version ]]; then
+  printf 'bubblewrap %s\n' "${AGENT_SANDBOX_TEST_BWRAP_VERSION-0.12.0}"
+  exit 0
+fi
+if [[ -n "${BWRAP_DUMP:-}" ]]; then
   : >"$BWRAP_DUMP.env"
   for _kv in ${_stub_given[@]+"${_stub_given[@]}"}; do printf '%s\n' "$_kv" >>"$BWRAP_DUMP.env"; done
 fi
