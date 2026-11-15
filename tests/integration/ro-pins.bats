@@ -626,6 +626,51 @@ part_in_place() {
   [ "$(report seen)" = HOST ]
 }
 
+@test "R1, a channel whose source the profile relocates: in copy mode the source cannot be moved away and replaced by a link; through a link the role can replace it is refused (copy, copy-on-write, seed-only, read-only, read-write)" {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt/extra" "$IHOME/secret"
+  printf 'REAL\n' >"$IHOME/alt/extra/r"
+  printf 'S\n' >"$IHOME/secret/s"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  local -a decl=(--connect '~/alt/ = read-write' --connect 'extra = copy')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen1=$(ls "$HOME/.probe/extra" | tr "\n" " ")" >>report
+    python3 ops.py mv:rename:"$HOME/alt/extra":"$HOME/alt/extra.m"'
+  [ "$status" -eq 0 ]
+  [ "$(report seen1)" = "r " ]
+  [ "$(report mv)" = EBUSY ]
+  [ -d "$IHOME/alt/extra" ]
+  # the source already a link the role can replace: refused in every mode
+  mv "$IHOME/alt/extra" "$IHOME/alt/realextra"
+  ln -s realextra "$IHOME/alt/extra"
+  local m
+  for m in copy copy-on-write seed-only read-only read-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect "extra = $m" --profile probe --exec bash -c 'echo ran=yes >>report'
+    [ "$status" -ne 0 ] || {
+      echo "$m launched: $output" >&2
+      return 1
+    }
+    [[ "$output" == *"goes through $IHOME/alt/extra, a symbolic link in a directory the role can write"* ]]
+    [ -z "$(report ran)" ]
+  done
+}
+
+@test "R1 at the first launch: directories on the way to a key that the host does not have yet are made where bwrap would make them, and pinned already" {
+  mkdir -p "$IHOME/big"
+  printf 'BIG\n' >"$IHOME/big/f"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './n1/n2/key/ = read-only outside:~/big/' --profile probe --exec bash -c '
+    echo "seen=$(cat n1/n2/key/f)" >>report
+    python3 ops.py mvn2:rename:n1/n2:n1/n2.m mvn1:rename:n1:n1.m'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = BIG ]
+  [ "$(report mvn2)" = EBUSY ]
+  [ "$(report mvn1)" = EBUSY ]
+  [ -d "$W/n1/n2/key" ] # what bwrap makes there anyway
+  [ ! -e "$W/n1.m" ]
+}
+
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec bash -c '
     python3 ops.py mv_b:rename:a/b:a/b2 write:write:a/b/f.md:ROLE unlink:unlink:a/b/f.md \

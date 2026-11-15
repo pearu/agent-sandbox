@@ -532,8 +532,9 @@ from the host, and each directory on the way to its source, and the source itsel
 file too), wherever a read-write host mount shows them, is bound onto itself (a pin).
 Every mode is covered -- `read-only`, `read-write`, `own`, `copy`, `copy-on-write`,
 `seed-only`, a hide (the profile's or `[claude] hide`), the built-in dot-file and purpose
-files, channels -- and the walk goes through the mounts on the way (under `./x/a/ =
-read-write`, `./x/a/b/f.md = read-only` pins `./x` too). Measured: without it a rename
+files, channels (their sources too, relocated by the profile or by `outside:`) -- and
+the walk goes through the mounts on the way (under `./x/a/ = read-write`,
+`./x/a/b/f.md = read-only` pins `./x` too). Measured: without it a rename
 of `.asb` moved the Supervisor's purpose files to where it could write them (#389), a
 rename above an own path uncovered the host's original, and a source in a read-write
 store, replaced by a link, had the next launch bind an undeclared `~/secret` read-write
@@ -545,8 +546,9 @@ directory view shows can be written in place but not replaced by a temp-file ren
 editor's or `sed -i`'s save fails with "Device or resource busy" there). Nothing is pinned
 under `--preset native`, the exception, whose claim is parity with no sandbox; nor inside
 a `copy-on-write` mount, the project included, or a read-only mount (nothing there can be
-renamed from inside). A directory that is not there on the host is not pinned: only the
-mount point bwrap makes there would move.
+renamed from inside). A directory on the way that the host does not have yet is made
+there just before the launch, exactly where bwrap would make it to mount the bind
+beneath it (inside a read-write host mount), so it is pinned at the first launch too.
 
 **A declared path or source through a link the role can replace is refused**, in every
 mode and on both sides. A symbolic link cannot be fixed by a mount point, and by
@@ -576,10 +578,10 @@ role's, is not replaceable (the kernel lets only their owners remove it). A refu
 channel or a built-in path, which has no declaration to rewrite, says to make the link
 the directory it points to or to bind from the resolved path.
 
-**Under the claude profile, `~/.claude/cache` is pinned where the changelog channel's
-file, `~/.claude/cache/changelog.md`, exists** and the channel is the role's own (every
-preset but `shared` and `native`): it is a directory of the read-write base above that
-store. The role cannot rename or remove `~/.claude/cache`, and a rename or hard link
+**Under the claude profile, `~/.claude/cache` is pinned where the changelog channel,
+`~/.claude/cache/changelog.md`, is the role's own** (every preset but `shared` and
+`native`): it is a directory of the read-write base above that store, made there first
+when the base does not have it yet, as bwrap would make it. The role cannot rename or remove `~/.claude/cache`, and a rename or hard link
 across it fails with "Invalid cross-device link"; inside it everything works. The host
 is not restricted: a rename, hard link, `mv` or `rm` across or of the directory works on
 the host while the sandbox runs.

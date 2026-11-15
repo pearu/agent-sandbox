@@ -1115,12 +1115,14 @@ names are gone; there are no aliases for removed names before 1.0.
   `mv .asb .asb.moved` and their purpose files were writable there; a rename above an
   `own` path uncovered the host's original; a `read-write`, `copy` or `copy-on-write`
   source in a read-write store, replaced by a link, had the next launch bind an undeclared
-  `~/secret`. Each such directory, and a source file, is bound onto itself at launch (a
+  `~/secret`; a channel whose source the profile relocates was no different. Each such
+  directory, and a source file, is bound onto itself at launch (a
   pin), so its rename or removal fails with EBUSY: in the shipped models `.asb` and
   `.asb/roles` for the `roles` Supervisor and setup role, the `github` setup role and the
   `market` role, none for the roles with a read-only or copy-on-write project; and, under
-  the claude profile where `~/.claude/cache/changelog.md` exists, `~/.claude/cache` for
-  every role whose changelog channel is its own. A declared path or source through a
+  the claude profile, `~/.claude/cache` for every role whose changelog channel is its own
+  (a directory on the way that the host does not have yet is made where bwrap would make
+  it, and pinned at the first launch already). A declared path or source through a
   symbolic link the role can replace refuses the launch, in every mode, naming the link
   and the resolved path. One source shown at two paths with different access is valid,
   each path its own; a hard link of a read-only file that a read-write single-file mount

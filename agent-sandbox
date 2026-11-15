@@ -2597,11 +2597,13 @@ _as_connect_bind_channel() {
   src="$(_as_channel_source "$path")"
   # `outside:PATH` on the [connect] line: another source for this channel's one path.
   [[ -n "${_connect_src[$ch]:-}" ]] && src="${_connect_src[$ch]}"
-  # an `outside:` source, declared: resolved and fixed as a path declaration's (_as_ro_pins)
-  if [[ -n "${_connect_src[$ch]:-}" ]] && declare -p _decl_src &>/dev/null; then
+  # A source elsewhere -- an `outside:`, or the profile's relocation -- is a declared source
+  # like any other: resolved link by link and fixed (_as_ro_pins), in every mode. Not
+  # another sandbox's store (below), no host path of the user's.
+  if [[ "$src" != "$path" && -z "${_connect_sandbox[$ch]:-}" ]] && declare -p _decl_src &>/dev/null; then
     local _ru_k="$path"
     _as_ro_pins_norm _ru_k
-    _decl_src[$_ru_k]="${_connect_src[$ch]}"
+    _decl_src[$_ru_k]="$src"
   fi
   # Another sandbox's store (#200): resolved now, from that role's last launch.
   if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
@@ -15202,6 +15204,12 @@ _as_ro_pins_walk() {
     [[ -z "${_pin_no[$_p]+x}" ]] || continue
     # already pinned under the mount that shows there now
     [[ -n "${_pin_cur[$_p]+x}" && "${_pn_m[${_pin_cur[$_p]}]}" == "$_best" ]] && continue
+    # A directory on the way that the host does not have yet: bwrap would make it there,
+    # through this read-write host mount, to mount the bind beneath it. Made here first,
+    # the same directory, so it is pinned at this launch too (not only from the next).
+    if [[ ! -e "$_rd" && ! -L "$_rd" ]] && [[ -z "${_wself:-}" || "$_p" != "$_wself" ]]; then
+      mkdir -p -- "$_rd" 2>/dev/null || true
+    fi
     if [[ ! -d "$_rd" ]] && ! [[ -n "${_wself:-}" && "$_p" == "$_wself" && -e "$_rd" ]]; then
       _pin_no[$_p]=1
       continue
@@ -15271,11 +15279,10 @@ _as_ro_pins_walk() {
 #   them.
 #
 # One source shown at two paths with different access is valid (each path its own), and
-# nothing searches for it. Conservative where the probes did not go: a directory that is
-# not there on the host is not pinned. A missing directory is not said: the bind's
-# source exists, so it cannot lie under a directory that does not, and only the
-# mount-point stub bwrap makes there moves if the role renames it. Nothing under
-# `--preset native`, the exception: parity with no sandbox.
+# nothing searches for it. A directory on the way that the host does not have yet is made
+# there first, where bwrap would make it (inside a read-write host mount), and pinned at
+# this launch already. Nothing under `--preset native`, the exception: parity with no
+# sandbox.
 _as_ro_pins() {
   local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
   local _rp_quiet="${4:-}"

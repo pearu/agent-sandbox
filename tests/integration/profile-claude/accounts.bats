@@ -180,13 +180,14 @@ run_claude() {
   [ ! -e "$ACC/cache/changelog.md" ]
 }
 
-@test "a channel nested under a base entry that is a symlink: refused -- the link, made again in the account's directory, is the role's to replace, and a declared path is fixed (R3); nothing left behind" {
+@test "a channel nested under a base entry that is a symlink: refused -- the link, made again in the account's directory, is the role's to replace, and a declared path is fixed (R3); the link the engine made there stays, no mount point is left" {
   mkdir -p "$IHOME/.claude/cache.real"
   ln -s cache.real "$IHOME/.claude/cache" # the changelog channel's directory, a link
   TEST_PRESET=isolated run_claude --account work
   [ "$status" -ne 0 ]
   [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its path goes through $ACC/cache, a symbolic link in a directory the role can write"* ]]
   [[ "$output" == *"Make $ACC/cache the directory it points to"* ]]
+  [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory before the refusal; left there
   [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
   [ ! -e "$ACC/cache.real/changelog.md" ]
 }

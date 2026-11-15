@@ -146,8 +146,9 @@ pinned() {
 
 # cache_pins MODEL ROLE=PINS... -- with ~/.claude/cache/changelog.md in the home (the
 # changelog channel's file), each ROLE's launch under the model's own preset pins exactly
-# PINS (comma-separated, any order) and ~/.claude/cache. Without the file (NOCACHE=1)
-# exactly PINS; with HOME a symbolic link to the home (HLINK=1), the same.
+# PINS (comma-separated, any order) and ~/.claude/cache. Without the file (NOCACHE=1) the
+# same: the launch makes ~/.claude/cache where bwrap would make it for the channel's own
+# store, and pins it at once; with HOME a symbolic link to the home (HLINK=1), the same.
 cache_pins() {
   model "$1"
   shift
@@ -171,7 +172,7 @@ cache_pins() {
     # shellcheck disable=SC2088 # the message's own ~
     want="$({
       tr ',' '\n' <<<"$want"
-      [[ "${NOCACHE:-0}" == 1 ]] || echo '~/.claude/cache'
+      echo '~/.claude/cache'
     } | grep . | sort | paste -sd' ')"
     got="$(printf '%s\n' "$output" | sed -n "s/^agent-sandbox: pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): //p" | tr ',' '\n' | sed 's/^ *//' | sort | paste -sd' ')"
     [ "$got" = "$want" ] || {
@@ -236,8 +237,10 @@ cache_pins() {
 
 @test "B1: an own store between: ./x pinned above it" {
   pins -- --bind "$P" "$P" --bind "$ST/x" "$P/x/a" --ro-bind "$P/x/a/b/f.md" "$P/x/a/b/f.md"
-  [ "${PIN[*]}" = "$P/x" ] # $ST/x/b is not there: nothing to pin inside the store
-  [ -z "$MSG" ]            # and not said: only a mount point bwrap makes in the store
+  # $ST/x/b, not there yet, made where bwrap would make it (in the store) and pinned there
+  [ "${PIN[*]}" = "$P/x $P/x/a/b" ]
+  [ -d "$ST/x/b" ]
+  [ -z "$MSG" ]
 }
 
 @test "B1: a copy-on-write overlay between: nothing inside it, ./x above it" {
@@ -530,10 +533,16 @@ cache_pins() {
   [ "${#PIN[@]}" -eq 0 ]
 }
 
-@test "a directory not there on the host is not pinned, and not said (only bwrap's mount-point stub is there): the launch does not fail on it" {
+@test "a directory on the way that the host does not have yet is made there first, where bwrap would make it, and pinned at this launch already" {
   pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/nodir/sub/f.md" # an outside: source's shape
-  same "${IN[@]}"
+  same --bind "$P" "$P" --bind "$P/nodir" "$P/nodir" --bind "$P/nodir/sub" "$P/nodir/sub" --ro-bind "$ST/f" "$P/nodir/sub/f.md"
+  [ -d "$P/nodir/sub" ]
+  [ ! -e "$P/nodir/sub/f.md" ] # the bind's own mount point stays bwrap's to make
   [ -z "$MSG" ]
+  # not under a read-only mount (bwrap could not make it there either)
+  pins -- --ro-bind "$P" "$P" --ro-bind "$ST/f" "$P/nodir2/sub/f.md"
+  same "${IN[@]}"
+  [ ! -e "$P/nodir2" ]
 }
 
 @test "a read-only bind whose source goes through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
@@ -710,6 +719,41 @@ cache_pins() {
       echo "copy outside:$src: $output" >&2
       return 1
     }
+  done
+}
+
+@test "R1 and R3 through the engine: a channel whose source the profile relocates is a declared source -- fixed where a read-write mount shows it, refused through a link the role can replace, in every mode" {
+  make_harness
+  mkdir -p "$H/profiles/relo"
+  cp "$REPO_ROOT/tests/helpers/probe-profile.sh" "$H/profiles/relo/profile.sh"
+  # shellcheck disable=SC2016 # a line of the profile, for its own shell
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$H/profiles/relo/profile.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/probe"
+  chmod +x "$H/bin/probe"
+  mkdir -p "$H/home/alt/extra" "$H/home/.probe/extra"
+  local m
+  for m in copy copy-on-write seed-only read-only read-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --profile relo \
+      --connect '~/alt/ = read-write' --connect "extra = $m" --exec true
+    [ "$status" -eq 0 ]
+    # shellcheck disable=SC2088 # the message's own ~
+    [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): "*"~/alt/extra"* ]] || {
+      echo "$m: $output" >&2
+      return 1
+    }
+  done
+  mv "$H/home/alt/extra" "$H/home/alt/realextra"
+  ln -s realextra "$H/home/alt/extra"
+  for m in copy copy-on-write seed-only read-only read-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --profile relo \
+      --connect '~/alt/ = read-write' --connect "extra = $m" --exec true
+    [ "$status" -ne 0 ] || {
+      echo "$m launched: $output" >&2
+      return 1
+    }
+    [[ "$output" == *"goes through $H/home/alt/extra, a symbolic link in a directory the role can write"* ]]
   done
 }
 
