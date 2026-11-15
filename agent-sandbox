@@ -2730,6 +2730,26 @@ _as_sandbox_store() {
     return 1
   fi
   _sbx_src="$bestst${key#"$bestp"}"
+  [[ -e "$_sbx_src" || -L "$_sbx_src" ]] || {
+    _as_info "connect: '$written' has nothing at '$key' yet; skipped this launch"
+    _sbx_src=""
+    return 0
+  }
+  # THAT ROLE'S OWN STORE (a slot under the state directory) is engine-owned only while
+  # the path stays inside it: a key inside the store, through a symbolic link that role
+  # left there, would bind or copy what the link names, outside every store. Resolved
+  # here, refused when it leaves the store.
+  local _sbx_st _sbx_real _sbx_root
+  _sbx_st="$(_as_state_dir)"
+  if [[ "$bestst" == "$_sbx_st"/* ]]; then
+    _sbx_root="$(readlink -f -- "$bestst" 2>/dev/null || printf '%s' "$bestst")"
+    _sbx_real="$(readlink -m -- "$_sbx_src" 2>/dev/null || printf '%s' "$_sbx_src")"
+    if [[ "$_sbx_real" != "$_sbx_root" && "$_sbx_real" != "$_sbx_root"/* ]]; then
+      _as_msg "connect: '$written' at '$key': that role's store has a symbolic link there that leaves the store ($_sbx_src resolves to $_sbx_real), so it is not that role's store to read. Refusing to launch"
+      _sbx_src=""
+      return 1
+    fi
+  fi
   [[ -e "$_sbx_src" ]] || {
     _as_info "connect: '$written' has nothing at '$key' yet; skipped this launch"
     _sbx_src=""

@@ -1111,6 +1111,11 @@ names are gone; there are no aliases for removed names before 1.0.
   (`~/store/real/leak -> ~/secret/s`) brought the secret into the copy at the next
   launch. A link inside the source is now copied as the same link, never read through,
   as `seed-only` keeps it; the copy-on-write shadow check records a link by its target.
+- **A `sandbox:` source inside another role's store stays in that store.** A key inside
+  the other role's store, through a symbolic link that role had left there, bound (or
+  copied, or seeded from) what the link named: `~/.probe/docs/sub/ = read-only
+  sandbox:@b` with b's `sub -> ~/secret` showed the secret. Such a source is now resolved,
+  and one that leaves the store refuses the launch.
 - **Declared paths are fixed for the role.** A declaration's access governs what is
   inside its path, not the path: in every mode, `read-write` included, the role can no
   longer rename, remove or replace a declared path, the directories on the way to it

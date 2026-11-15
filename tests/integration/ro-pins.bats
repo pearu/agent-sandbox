@@ -1331,3 +1331,25 @@ hide_link() {
   [[ "$(cat "$W/.asb/coord/implementer-1/seen")" == *"Read-only file system"* ]]
   [ ! -e "$W/.asb.moved" ]
 }
+
+@test "a sandbox: source inside another role's store, through a symbolic link that role left there, is refused (read-only, copy, seed-only): nothing it names is read" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/s"
+  # role b, docs its own store: it leaves a link in it
+  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- --role b --profile probe --exec bash -c 'ln -s "$HOME/secret" "$HOME/.probe/docs/sub"'
+  [ "$status" -eq 0 ]
+  local m
+  for m in read-only copy seed-only; do
+    rm -f "$W/report"
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=isolated -- --role a --connect "~/.probe/docs/sub/ = $m sandbox:@b" \
+      --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/docs/sub/s" 2>/dev/null)" >>report'
+    [ "$status" -ne 0 ] || {
+      echo "$m launched: $output" >&2
+      return 1
+    }
+    [[ "$output" == *"that role's store has a symbolic link there that leaves the store"* ]]
+    [ -z "$(report seen)" ]
+  done
+  run ! grep -rqs SECRET "$IHOME/.local/state"
+}
