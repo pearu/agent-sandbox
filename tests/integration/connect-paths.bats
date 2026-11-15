@@ -168,3 +168,21 @@ PROBE
   [ "$(report alias)" = "r REAL" ]
   run ! grep -rqs SECRET "$IHOME/.local/state"
 }
+
+# shellcheck disable=SC2016 # the --exec scripts expand inside the sandbox, not here
+@test "copy reads nothing through a directory inside its source that the role replaced by a link" {
+  mkdir -p "$IHOME/store/real/sub" "$IHOME/secret"
+  printf 'REAL\n' >"$IHOME/store/real/sub/s"
+  printf 'SECRET\n' >"$IHOME/secret/s"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  local -a decl=(--connect '~/store/ = read-write' --connect './x/d/ = copy outside:~/store/real/')
+  run_sandboxed "${ENV[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen=$(cat x/d/sub/s)" >>report; rm -r "$HOME/store/real/sub"; ln -s "$HOME/secret" "$HOME/store/real/sub"'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = REAL ]
+  run_sandboxed "${ENV[@]}" -- "${decl[@]}" --profile probe --exec bash -c '
+    echo "seen=$(cat x/d/sub/s 2>/dev/null)" >>report'
+  [ "$status" -eq 0 ]
+  [[ "$(report seen)" != *SECRET* ]]
+  run ! grep -rqs SECRET "$IHOME/.local/state"
+}

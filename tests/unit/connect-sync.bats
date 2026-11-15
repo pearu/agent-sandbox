@@ -540,3 +540,90 @@ tsync() { run timeout 10 "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S
   grep -qF "\"leak\": \"link:$O\"" "$B"
   run ! grep -q "$(sha256sum "$O" | cut -c1-64)" "$B"
 }
+
+# ----- no component inside the source is followed --------------------------------------
+
+@test "a directory in the source replaced by a link: what the copy holds under it is not read through the link; the files the source no longer has go as usual" {
+  O="$BATS_TEST_TMPDIR/secretdir"
+  mkdir -p "$O"
+  printf 'SECRET\n' >"$O/s"
+  plant sub/s REAL
+  sync
+  [ "$(at_copy sub/s)" = REAL ]
+  rm -r "$S/sub"
+  ln -s "$O" "$S/sub"
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$C/sub")" = "$O" ] # the link, as the source has it
+  run ! grep -q "$(sha256sum "$O/s" | cut -c1-64)" "$B"
+  [ ! -f "$C/sub/s" ] || [ -L "$C/sub" ]
+  run ! grep -rqs SECRET "$C" --no-dereference
+}
+
+@test "a name the sandbox made under a source directory that is now a link is not filled through the link" {
+  O="$BATS_TEST_TMPDIR/secretdir"
+  mkdir -p "$O" "$C/sub"
+  printf 'SECRET\n' >"$O/s"
+  ln -s "$O" "$S/sub"
+  : >"$C/sub/s" # the sandbox's own empty file, the way a mount point would look
+  sync
+  [ "$status" -eq 0 ]
+  [ ! -s "$C/sub/s" ]
+  run ! grep -q "$(sha256sum "$O/s" | cut -c1-64)" "$B"
+}
+
+@test "the shadow check reads no file through a directory link in the source" {
+  U="$BATS_TEST_TMPDIR/upper"
+  O="$BATS_TEST_TMPDIR/secretdir"
+  mkdir -p "$U/sub" "$O"
+  printf 'SECRET\n' >"$O/s"
+  printf 'MINE\n' >"$U/sub/s"
+  ln -s "$O" "$S/sub"
+  shadows
+  [ "$status" -eq 0 ]
+  run ! grep -q "$(sha256sum "$O/s" | cut -c1-64)" "$B"
+}
+
+@test "the copy reads the file it hashed from one descriptor, through no link: a file replaced by a link after the hash is not copied through it" {
+  O="$BATS_TEST_TMPDIR/secret"
+  printf 'SECRET\n' >"$O"
+  plant a.md ONE
+  run "${PYTHON_CMD[@]}" - "$SYNC" "$S" "$C" "$O" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("cs", sys.argv[1])
+cs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cs)
+source, copy, secret = sys.argv[2:5]
+os.makedirs(copy, exist_ok=True)
+s = cs.src_state(source, "a.md")
+os.unlink(os.path.join(source, "a.md"))
+os.symlink(secret, os.path.join(source, "a.md"))  # swapped after the hash
+print("put=%s" % cs.put(source, "a.md", s, copy))
+print("copied=%s" % os.path.exists(os.path.join(copy, "a.md")))
+PY
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"put=None"* ]]
+  [[ "$output" == *"copied=False"* ]]
+}
+
+@test "upgrade: a manifest as the old sync wrote it (the content of links copied as files) -- the next sync puts the links in, and says so once per name" {
+  O="$BATS_TEST_TMPDIR/shared"
+  printf 'SHARED\n' >"$O"
+  plant a ONE
+  ln -s "$O" "$S/l"
+  ln -s a "$S/in"
+  # what the old sync left: regular files with the targets' content, their hashes in the base
+  mkdir -p "$C"
+  printf 'SHARED\n' >"$C/l"
+  printf 'ONE\n' >"$C/in"
+  printf 'ONE\n' >"$C/a"
+  printf '{"a": "%s", "in": "%s", "l": "%s"}\n' "$(sha256sum "$S/a" | cut -c1-64)" "$(sha256sum "$S/a" | cut -c1-64)" "$(sha256sum "$O" | cut -c1-64)" >"$B"
+  sync
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$C/l")" = "$O" ]
+  [ "$(readlink "$C/in")" = a ]
+  [[ "$output" == *"relinked in"* ]]
+  [[ "$output" == *"relinked l"* ]]
+  sync # said once: the next sync has nothing to say
+  [ -z "$output" ]
+}

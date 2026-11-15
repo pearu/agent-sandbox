@@ -35,7 +35,13 @@ hash, and what the store gets is the same link. Read through, a link the role co
 make in a source it may write would hand it whatever the link names (measured: a link to
 ~/secret/s came into the copy as a regular file holding the secret). The source itself,
 the path the channel or declaration names, is followed as before: the engine checks the
-links on its way.
+links on its way. NO COMPONENT INSIDE THE SOURCE IS EVER FOLLOWED either: every
+path below it is opened from a descriptor of the source, each directory with O_NOFOLLOW,
+so a name whose directory in the source is now a link (or no directory) is simply not
+in the source -- not read through it (measured: a directory the role replaced by a link
+to ~/secret brought ~/secret/s into the copy). `--follow-links yes`, which the engine
+passes only under `--preset native` (parity with no sandbox), keeps the old reading:
+every link followed.
 
 `shadows` answers the same question for `copy-on-write`, where the kernel hides
 and nothing here copies anything. An overlay's upper layer IS the list of files
@@ -105,25 +111,16 @@ def is_link_state(state):
     return isinstance(state, str) and state.startswith(LINK)
 
 
-def sha(path, follow=True):
-    """The state of PATH: its hash, SPECIAL, None (no file); with FOLLOW false, a link
-    at PATH is its target string (link_state), never read through."""
-    try:
-        if not follow:
-            lm = os.lstat(path).st_mode
-            if stat.S_ISLNK(lm):
-                return link_state(os.readlink(path))
-        m = os.stat(path).st_mode
-        if stat.S_ISDIR(m):
-            return None
-        if not stat.S_ISREG(m):
-            return SPECIAL
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | (0 if follow else os.O_NOFOLLOW))
-    except OSError:
-        return None
+# --follow-links yes: read the source as the old sync did, every link followed (the
+# engine's `--preset native` only, whose claim is parity with no sandbox).
+FOLLOW = False
+
+
+def _hash_fd(fd):
+    """The hash of the regular file open at FD (closed here), or SPECIAL."""
     h = hashlib.sha256()
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):  # changed since the stat
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
             return SPECIAL
         with os.fdopen(fd, "rb") as fh:
             fd = None
@@ -135,6 +132,152 @@ def sha(path, follow=True):
         if fd is not None:
             os.close(fd)
     return h.hexdigest()
+
+
+def _src_parent(source, rel):
+    """(descriptor, name) of REL's directory in SOURCE and REL's last name: the source
+    itself opened as declared (followed), every directory below it with O_NOFOLLOW;
+    None when one of them is a link, or no directory -- REL is then not in the source."""
+    parts = rel.split(os.sep)
+    try:
+        fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+    try:
+        for part in parts[:-1]:
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except OSError:
+        os.close(fd)
+        return None
+    return fd, parts[-1]
+
+
+def src_state(source, rel):
+    """The source's state at REL, read through no link inside the source: a link there
+    is its target (link_state), never read; the source itself (REL "") is followed."""
+    if FOLLOW:
+        return sha(at(source, rel))
+    if rel == "":
+        return sha(source)
+    pn = _src_parent(source, rel)
+    if pn is None:
+        return None
+    fd, name = pn
+    try:
+        try:
+            m = os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode
+        except OSError:
+            return None
+        if stat.S_ISLNK(m):
+            return link_state(os.readlink(name, dir_fd=fd))
+        if stat.S_ISDIR(m):
+            return None
+        if not stat.S_ISREG(m):
+            return SPECIAL
+        try:
+            f = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError:
+            return None
+        return _hash_fd(f)
+    finally:
+        os.close(fd)
+
+
+def src_open(source, rel):
+    """A descriptor of the regular file at REL in SOURCE, opened once, through no link
+    inside the source (the source itself followed; every link under --follow-links);
+    None when there is no regular file there now."""
+    try:
+        if FOLLOW or rel == "":
+            f = os.open(at(source, rel), os.O_RDONLY | os.O_NONBLOCK)
+        else:
+            pn = _src_parent(source, rel)
+            if pn is None:
+                return None
+            fd, name = pn
+            try:
+                f = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
+            finally:
+                os.close(fd)
+    except OSError:
+        return None
+    if not stat.S_ISREG(os.fstat(f).st_mode):
+        os.close(f)
+        return None
+    return f
+
+
+def walk_src(root):
+    """Relative paths of the regular files and the symbolic links in the source root
+    (or [""] for a file), from descriptors: no link inside it followed or descended."""
+    if FOLLOW:
+        return walk_follow(root)
+    if os.path.isfile(root):
+        return [""]
+    out = []
+    try:
+        top = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return out
+
+    def scan(fd, prefix):
+        try:
+            entries = list(os.scandir(fd))
+        except OSError:
+            return
+        for e in entries:
+            rel = prefix + e.name
+            try:
+                if e.is_symlink() or e.is_file(follow_symlinks=False):
+                    out.append(rel)
+                elif e.is_dir(follow_symlinks=False):
+                    try:
+                        sub = os.open(e.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    except OSError:
+                        continue
+                    try:
+                        scan(sub, rel + os.sep)
+                    finally:
+                        os.close(sub)
+            except OSError:
+                continue
+
+    try:
+        scan(top, "")
+    finally:
+        os.close(top)
+    return out
+
+
+def walk_follow(root):
+    """The old listing (--follow-links): regular files under root, links to files
+    followed, links to directories not descended."""
+    if os.path.isfile(root):
+        return [""]
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            full = os.path.join(dirpath, name)
+            if os.path.isfile(full):
+                out.append(os.path.relpath(full, root))
+    return out
+
+
+def sha(path):
+    """The state of PATH, every link followed (the source itself, or --follow-links):
+    its hash, SPECIAL, or None (no file)."""
+    try:
+        m = os.stat(path).st_mode
+        if stat.S_ISDIR(m):
+            return None
+        if not stat.S_ISREG(m):
+            return SPECIAL
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    return _hash_fd(fd)
 
 
 def load_base(path):
@@ -168,9 +311,7 @@ def walk(root):
     return out
 
 
-def src_state(source, rel):
-    """The source's state at REL: the source itself (REL "") followed, a link inside it not."""
-    return sha(at(source, rel), follow=(rel == ""))
+
 
 
 def at(root, rel):
@@ -299,12 +440,14 @@ def copy_state(copy, rel):
         os.close(fd)
 
 
-def copy_file(src, copy, rel):
+def copy_file(src_fd, copy, rel):
     """SRC's content, mode and times to REL in the store COPY, in place: the file
     there keeps its inode (a running bind of a file channel sees the change), and
     is opened with O_NOFOLLOW, so a link at its name is refused, never followed; and
     with O_NONBLOCK, so a FIFO there cannot hang it -- anything but a regular file is
-    refused before the open, and checked again after it."""
+    refused before the open, and checked again after it. The source is SRC_FD, opened
+    once (src_open) and read from that descriptor: the hash of what was copied is
+    returned, for the base."""
     anchor, parts, name = _split(copy, rel)
     path = os.path.join(anchor, *parts, name)
     fd = _open_parent(anchor, parts, create=True)
@@ -315,7 +458,7 @@ def copy_file(src, copy, rel):
             # written through
             os.unlink(name, dir_fd=fd)
         _check(name, fd, path, stat.S_ISREG)
-        st = os.stat(src)
+        st = os.fstat(src_fd)
         flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
         try:
             out = os.open(name, flags, 0o600, dir_fd=fd)
@@ -326,11 +469,15 @@ def copy_file(src, copy, rel):
             if not stat.S_ISREG(os.fstat(out).st_mode):
                 raise InWay(path, "special")
             os.ftruncate(out, 0)
-            with open(src, "rb") as fh:
-                for chunk in iter(lambda: fh.read(65536), b""):
-                    view = memoryview(chunk)
-                    while view:  # os.write may write less than it was given
-                        view = view[os.write(out, view):]
+            h = hashlib.sha256()
+            while True:
+                chunk = os.read(src_fd, 65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+                view = memoryview(chunk)
+                while view:  # os.write may write less than it was given
+                    view = view[os.write(out, view):]
             os.fchmod(out, stat.S_IMODE(st.st_mode))
             # The source's mtime, as copy2 kept it: a seeded file looks to the agent
             # exactly as it does natively, and a tool that caches on mtime behaves the
@@ -340,6 +487,7 @@ def copy_file(src, copy, rel):
             os.close(out)
     finally:
         os.close(fd)
+    return h.hexdigest()
 
 
 def copy_link(target, copy, rel):
@@ -361,11 +509,19 @@ def copy_link(target, copy, rel):
 
 
 def put(source, rel, s, copy):
-    """Bring the source's state S at REL into the store COPY: a link as a link."""
+    """Bring the source's state S at REL into the store COPY: a link as a link, a file
+    from one descriptor (src_open). The state now there, for the base, or None when the
+    source has no regular file there any more (nothing written)."""
     if is_link_state(s):
         copy_link(s[len(LINK):], copy, rel)
-    else:
-        copy_file(at(source, rel), copy, rel)
+        return s
+    f = src_open(source, rel)
+    if f is None:
+        return None
+    try:
+        return copy_file(f, copy, rel)
+    finally:
+        os.close(f)
 
 
 def remove(copy, rel):
@@ -413,7 +569,8 @@ def sync(kind, source, copy, base_path):
     if kind == "dir":
         os.makedirs(copy, exist_ok=True)
 
-    rels = sorted(set(walk(source)) | set(walk(copy)) | set(base))
+    relinked = []
+    rels = sorted(set(walk_src(source)) | set(walk(copy)) | set(base))
     src = {rel: src_state(source, rel) for rel in rels}
     # TWO PASSES: what the source deleted first, then what it has. A directory the source
     # turned into a file (or the reverse) is then the old entries removed -- the emptied
@@ -460,8 +617,9 @@ def sync(kind, source, copy, base_path):
                     links.append((c.kind, c.path))  # not seeded: said again next launch
                 elif c is None or (csize == 0 and not is_link_state(c)):
                     try:
-                        put(source, rel, s, copy)  # seed, or new upstream
-                        base[rel] = s
+                        st = put(source, rel, s, copy)  # seed, or new upstream
+                        if st is not None:
+                            base[rel] = st
                     except InWay as e:
                         links.append((e.kind, e.path))  # not seeded: the next launch tries again
                 else:
@@ -471,8 +629,11 @@ def sync(kind, source, copy, base_path):
                 continue  # the source has not moved; the copy is the sandbox's business
             if c == b:
                 try:
-                    put(source, rel, s, copy)  # refresh
-                    base[rel] = s
+                    st = put(source, rel, s, copy)  # refresh
+                    if st is not None:
+                        if is_link_state(st) and not is_link_state(b):
+                            relinked.append(rel)  # a file it copied, now the source's link
+                        base[rel] = st
                 except InWay as e:
                     links.append((e.kind, e.path))  # the base stays: said again next launch
             elif inway:
@@ -483,7 +644,7 @@ def sync(kind, source, copy, base_path):
                 conflicts.append(rel)
 
     save_base(base_path, base)
-    return conflicts, links
+    return conflicts, links, relinked
 
 
 def shadows(source, upper, seen_path):
@@ -505,10 +666,10 @@ def shadows(source, upper, seen_path):
     old = load_base(seen_path)
     seen, conflicts = {}, []
     shadowed = set(walk_regular(upper))
-    for rel in sorted(set(walk(source)) | shadowed | set(old)):
+    for rel in sorted(set(walk_src(source)) | shadowed | set(old)):
         if rel == "":
             continue  # a file-shaped path never gets here: overlays need a directory
-        cur = sha(os.path.join(source, rel), follow=False)  # a link: its target, unread
+        cur = src_state(source, rel)  # a link: its target, unread; through none
         if rel in shadowed and rel in old and old[rel] != cur:
             # The source moved under a file this sandbox is holding. Keep the OLD
             # hash rather than the current one, so the next launch says it again:
@@ -558,13 +719,15 @@ def main(argv):
     if cmd != "shadows" and opts["kind"] not in ("file", "dir"):
         sys.stderr.write("connect-sync.py: --kind is file or dir\n")
         return 2
+    global FOLLOW
+    FOLLOW = opts.get("follow-links") == "yes"
 
-    links = []
+    links, relinked = [], []
     if cmd == "shadows":
         rels = shadows(opts["source"], opts["upper"], opts["seen"])
         base_name = opts["source"]
     else:
-        rels, links = sync(opts["kind"], opts["source"], opts["copy"], opts["base"])
+        rels, links, relinked = sync(opts["kind"], opts["source"], opts["copy"], opts["base"])
         base_name = opts["source"]
     for rel in rels:
         # A file channel has one unnamed entry; name it after the source so the
@@ -574,6 +737,9 @@ def main(argv):
         # A symlink, or no regular file, in the sandbox's copy where the sync was to
         # write or remove: not followed, not opened, not replaced; the engine says so.
         sys.stdout.write("%s %s\n" % (kind, path))
+    for rel in relinked:
+        # a file the copy held as the content of a link, now the link itself
+        sys.stdout.write("relinked %s\n" % (rel or os.path.basename(base_name)))
     return 0
 
 
