@@ -656,6 +656,49 @@ part_in_place() {
   done
 }
 
+@test "a channel's relocated source that does not exist: nothing made on the host on the way to it and nothing pinned (copy, own); the launch that finds it there resolves it again" {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/deep/er/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt" "$IHOME/secret"
+  local m
+  for m in copy own; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect "extra = $m" --profile probe --exec true
+    [ "$status" -eq 0 ]
+    [ -z "$(ls -A "$IHOME/alt")" ] || {
+      echo "$m: made $(ls -A "$IHOME/alt")" >&2
+      return 1
+    }
+    [[ "$output" != *"pinned, on the way"* ]]
+  done
+  # the role puts a link there: the next launch that reads the source refuses it
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' --profile probe --exec bash -c '
+    mkdir -p "$HOME/alt/deep/er" && ln -s "$HOME/secret" "$HOME/alt/deep/er/extra"'
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"goes through $IHOME/alt/deep/er/extra, a symbolic link in a directory the role can write"* ]]
+}
+
+@test "an own channel does not read its relocated source: a link there launches, and a directory there is the role's to rename as ~/alt/ = read-write grants" {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt/realextra"
+  ln -s realextra "$IHOME/alt/extra"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = own' --profile probe --exec bash -c 'echo ran=yes >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report ran)" = yes ]
+  rm "$IHOME/alt/extra"
+  mv "$IHOME/alt/realextra" "$IHOME/alt/extra"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = own' --profile probe --exec bash -c '
+    python3 ops.py mv:rename:"$HOME/alt/extra":"$HOME/alt/extra.m"'
+  [ "$status" -eq 0 ]
+  [ "$(report mv)" = ok ]
+  [ -d "$IHOME/alt/extra.m" ]
+}
+
 @test "R1 at the first launch: directories on the way to a key that the host does not have yet are made where bwrap would make them, and pinned already" {
   mkdir -p "$IHOME/big"
   printf 'BIG\n' >"$IHOME/big/f"

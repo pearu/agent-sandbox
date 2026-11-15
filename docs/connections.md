@@ -532,9 +532,12 @@ from the host, and each directory on the way to its source, and the source itsel
 file too), wherever a read-write host mount shows them, is bound onto itself (a pin).
 Every mode is covered -- `read-only`, `read-write`, `own`, `copy`, `copy-on-write`,
 `seed-only`, a hide (the profile's or `[claude] hide`), the built-in dot-file and purpose
-files, channels (their sources too, relocated by the profile or by `outside:`) -- and
-the walk goes through the mounts on the way (under `./x/a/ = read-write`,
-`./x/a/b/f.md = read-only` pins `./x` too). Measured: without it a rename
+files, channels (their sources too, relocated by the profile or by `outside:`, in the
+modes that read or bind them: not under `own`, which never reads one) -- and the walk
+goes through the mounts on the way (under `./x/a/ = read-write`,
+`./x/a/b/f.md = read-only` pins `./x` too). A source that does not exist yet is neither
+pinned nor made on the host (bwrap makes a mount's destination, never its source); the
+launch that finds it there resolves it. Measured: without the pins a rename
 of `.asb` moved the Supervisor's purpose files to where it could write them (#389), a
 rename above an own path uncovered the host's original, and a source in a read-write
 store, replaced by a link, had the next launch bind an undeclared `~/secret` read-write

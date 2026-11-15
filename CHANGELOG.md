@@ -1115,16 +1115,18 @@ names are gone; there are no aliases for removed names before 1.0.
   `mv .asb .asb.moved` and their purpose files were writable there; a rename above an
   `own` path uncovered the host's original; a `read-write`, `copy` or `copy-on-write`
   source in a read-write store, replaced by a link, had the next launch bind an undeclared
-  `~/secret`; a channel whose source the profile relocates was no different. Each such
-  directory, and a source file, is bound onto itself at launch (a
-  pin), so its rename or removal fails with EBUSY: in the shipped models `.asb` and
-  `.asb/roles` for the `roles` Supervisor and setup role, the `github` setup role and the
-  `market` role, none for the roles with a read-only or copy-on-write project; and, under
-  the claude profile, `~/.claude/cache` for every role whose changelog channel is its own
-  (a directory on the way that the host does not have yet is made where bwrap would make
-  it, and pinned at the first launch already). A declared path or source through a
-  symbolic link the role can replace refuses the launch, in every mode, naming the link
-  and the resolved path; under an account that includes a channel under a top-level
+  `~/secret`; a channel whose source the profile relocates was no different. A source
+  is one the mode reads or binds (an `own` channel's relocated source is none), and one
+  that does not exist yet is neither pinned nor made on the host. Each such directory,
+  and a source file, is bound onto itself at launch (a pin), so its rename or removal
+  fails with EBUSY: in the shipped models `.asb` and `.asb/roles` for the `roles`
+  Supervisor and setup role, the `github` setup role and the `market` role, none for the
+  roles with a read-only or copy-on-write project; and, under the claude profile,
+  `~/.claude/cache` for every role whose changelog channel is its own (a directory on
+  the way that the host does not have yet is made where bwrap would make it, and pinned
+  at the first launch already). A declared path or source through a symbolic link the
+  role can replace refuses the launch, in every mode, naming the link and the resolved
+  path; under an account that includes a channel under a top-level
   entry of the base that is a symlink (made again in the account's directory): a linked
   `~/.claude/cache`, which holds the changelog channel, is not supported and refuses the
   launch (make it the directory it points to), while a linked entry with nothing

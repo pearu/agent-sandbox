@@ -2598,12 +2598,20 @@ _as_connect_bind_channel() {
   # `outside:PATH` on the [connect] line: another source for this channel's one path.
   [[ -n "${_connect_src[$ch]:-}" ]] && src="${_connect_src[$ch]}"
   # A source elsewhere -- an `outside:`, or the profile's relocation -- is a declared source
-  # like any other: resolved link by link and fixed (_as_ro_pins), in every mode. Not
-  # another sandbox's store (below), no host path of the user's.
+  # like any other, resolved link by link and fixed (_as_ro_pins), in the modes that
+  # read or bind it: read-write and read-only bind it, copy and seed-only seed from it,
+  # copy-on-write seeds from it where it falls back to copy (a join-scoped one reads
+  # through it). Not under `own`, whose store starts from nothing and never reads it
+  # (a join-scoped one neither); not another sandbox's store (below), no host path of
+  # the user's.
   if [[ "$src" != "$path" && -z "${_connect_sandbox[$ch]:-}" ]] && declare -p _decl_src &>/dev/null; then
-    local _ru_k="$path"
-    _as_ro_pins_norm _ru_k
-    _decl_src[$_ru_k]="$src"
+    case "$mode" in
+      read-write | read-only | copy | copy-on-write | seed-only)
+        local _ru_k="$path"
+        _as_ro_pins_norm _ru_k
+        _decl_src[$_ru_k]="$src"
+        ;;
+    esac
   fi
   # Another sandbox's store (#200): resolved now, from that role's last launch.
   if [[ -n "${_connect_sandbox[$ch]:-}" ]]; then
@@ -15018,7 +15026,8 @@ _as_ro_pins_readlink() {
 #   a key lands on.
 # - Every link met and the real path are fixed where a read-write host mount shows them:
 #   the directories above (pins) and, for a source, the path itself (a self-bind, a
-#   file's too), so the role can neither rename nor remove nor replace them (EBUSY).
+#   file's too), so the role can neither rename nor remove nor replace them (EBUSY). A
+#   source that does not exist gets none of these, and nothing is made on its way.
 # - A read-only source then gets the hard-link warning (_as_ro_pins_hardlink).
 #
 # At 40 links (a loop) the launch is refused: `readlink -f` gives up there, and bwrap
@@ -15088,6 +15097,11 @@ _as_ro_pins_chain() {
     _ch_todo=(${_ch_more[@]+"${_ch_more[@]}"} "${_ch_todo[@]:_ch_ti}")
     _ch_ti=0
   done
+  # A source that does not exist: nothing there to fix, and nothing is made on the way
+  # to it -- bwrap makes a mount's destination, never its source, and no mode binds a
+  # missing one. The links on the way were checked above; the launch that finds the
+  # source resolves it again.
+  [[ "$3" == src && ! -e "$_ch_cur" ]] && return 0
   for _ch_l in ${_ch_links[@]+"${_ch_links[@]}"} "$_ch_cur"; do # the links met, then the real path
     _as_ro_pins_shows "$_ch_l" _ch_pos
     for _ch_q in ${_ch_pos[@]+"${_ch_pos[@]}"}; do
