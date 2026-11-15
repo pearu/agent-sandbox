@@ -545,18 +545,18 @@ cache_pins() {
   pins -- --bind "$P" "$P" --tmpfs "$P/lnk/secret"
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"connect: $P/lnk/secret: its path goes through $P/lnk, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"Make $P/lnk the directory it points to ($P/real). Refusing to launch"* ]]
+  [[ "$MSG" == *"$P/lnk points to $P/real: make it the directory or file it should be. Refusing to launch"* ]]
   pins -- --bind "$P" "$P" --tmpfs "$P/d/secret"
   [ "$RC" -eq 0 ]
   [ "${PIN[*]}" = "$P/d" ]
 }
 
-@test "a refusal's hint for a link whose target does not exist names the directory or file it should be" {
+@test "a refusal's hint for a link whose target does not exist says so" {
   ln -s nowhere "$P/lnk"
   pins -- --bind "$P" "$P" --tmpfs "$P/lnk/x"
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"its path goes through $P/lnk, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"Make $P/lnk the directory or file it should be (it points to $P/nowhere, which does not exist). Refusing to launch"* ]]
+  [[ "$MSG" == *"$P/lnk points to $P/nowhere, which does not exist: make it the directory or file it should be. Refusing to launch"* ]]
 }
 
 @test "a join-scoped path declaration's source is a declared source: fixed where a read-write mount shows it, refused through a link the role can replace (copy, seed-only, copy-on-write)" {
@@ -592,7 +592,7 @@ cache_pins() {
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 1 ]
   # not a declaration here (no recorded declared source): what a channel's user can do
-  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. Make $P/lnk the directory it points to ($P/a), or bind from the resolved path ($P/a/b/f.md; for a channel, its mode with outside:$P/a/b/f.md). Refusing to launch"* ]]
+  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $P/lnk points to $P/a: make it the directory or file it should be, or, if $P/a/b/f.md is what you mean, bind from there (for a channel, its mode with outside:$P/a/b/f.md). Refusing to launch"* ]]
   ln -s ../a "$P/x/lnk2" # deeper: a link inside a plain directory of the project
   pins -- --bind "$P" "$P" --ro-bind "$P/x/lnk2/b/f.md" "$P/x/lnk2/b/f.md"
   [ "$RC" -eq 1 ]
@@ -608,7 +608,7 @@ cache_pins() {
   pins -- --ro-bind "$P" "$P" --bind "$P/rw" "$P/rw" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"its source goes through $P/rw/l2, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"bind from the resolved path ($P/real/b/f.md;"* ]]
+  [[ "$MSG" == *"if $P/real/b/f.md is what you mean, bind from there"* ]]
   # shape 2: ~/store read-write, the source through ~/store/l -> realdir
   local h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$h/realdir"
@@ -925,7 +925,7 @@ cache_pins() {
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -ne 0 ]
   [ "$(printf '%s\n' "$output" | grep -c "its source goes through $proj/lnk, a symbolic link in a directory the role can write")" -eq 1 ]
-  [[ "$output" == *"Declare the path it resolves to instead: $proj/real/b/f.md. Refusing to launch"* ]]
+  [[ "$output" == *"if $proj/real/b/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
   [ ! -s "$H/argv" ]
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './real/b/f.md = read-only' claude --version # the resolved path
   [ "$status" -eq 0 ]

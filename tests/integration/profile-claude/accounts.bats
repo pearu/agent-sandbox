@@ -169,7 +169,7 @@ run_role() {
   run_role --account work -- bash -c 'cat ~/.claude/CLAUDE.md; echo PWNED >>~/.claude/CLAUDE.md'
   [ "$status" -ne 0 ]
   [[ "$output" == *"connect: $IHOME/.claude/CLAUDE.md: under the account 'work', its path in the base goes through $IHOME/.claude/CLAUDE.md, a symbolic link"* ]]
-  [[ "$output" == *"Make $IHOME/.claude/CLAUDE.md the file it points to ($IHOME/secret/g). Refusing to launch"* ]]
+  [[ "$output" == *"$IHOME/.claude/CLAUDE.md points to $IHOME/secret/g: make it the directory or file it should be. Refusing to launch"* ]]
   [[ "$output" != *SECRET* ]]
   [ "$(cat "$IHOME/secret/g")" = SECRET ]
   # the way out: the base's entry made the file it points to
@@ -189,7 +189,7 @@ run_role() {
   run_role --account work -- bash -c 'cat ~/.claude/agents/s; echo PWNED >>~/.claude/agents/s'
   [ "$status" -ne 0 ]
   [[ "$output" == *"its path in the base goes through $IHOME/.claude/agents, a symbolic link"* ]]
-  [[ "$output" == *"Make $IHOME/.claude/agents the directory it points to ($IHOME/secretdir). Refusing to launch"* ]]
+  [[ "$output" == *"$IHOME/.claude/agents points to $IHOME/secretdir: make it the directory or file it should be. Refusing to launch"* ]]
   [[ "$output" != *SECRETD* ]]
   [ "$(cat "$IHOME/secretdir/s")" = SECRETD ]
 }
@@ -261,7 +261,7 @@ run_role() {
   TEST_PRESET=isolated run_claude --account work
   [ "$status" -ne 0 ]
   [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its path goes through $ACC/cache, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"Make the base's $IHOME/.claude/cache the directory it points to ($IHOME/.claude/cache.real): the link in the account's directory is made again from it at every launch. Refusing to launch"* ]]
+  [[ "$output" == *"the base's $IHOME/.claude/cache points to $IHOME/.claude/cache.real: make it the directory or file it should be (the link in the account's directory is made again from it at every launch). Refusing to launch"* ]]
   [[ "$output" != *"Make $ACC/cache"* ]]      # not the account's link: one made a directory is refused next
   [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory before the refusal; left there
   # the refused launch made no mount point through the link, on either side
@@ -277,25 +277,24 @@ run_role() {
   [ ! -e "$IHOME/.claude/cache/changelog.md" ] # its mount point removed after the launch
 }
 
-@test "a linked cache without an account, the default preset: the changelog channel's path goes through the link in the base, which the role can replace, so the launch is refused (R3); the hint names the directory the link points to" {
+@test "a linked cache without an account, the default preset: the changelog channel's source (its own path, seeded from) goes through the link in the base, which the role can replace, so the launch is refused (R3) before anything is read; the hint says what the link points to" {
   mkdir -p "$IHOME/.claude/cache.real"
   ln -s cache.real "$IHOME/.claude/cache"
   TEST_PRESET='' run_claude
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its path goes through $IHOME/.claude/cache, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"Make $IHOME/.claude/cache the directory it points to ($IHOME/.claude/cache.real). Refusing to launch"* ]]
+  [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its source goes through $IHOME/.claude/cache, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"$IHOME/.claude/cache points to $IHOME/.claude/cache.real: make it the directory or file it should be"* ]]
   [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
 }
 
-@test "a link to a file on a channel's path: the hint names the file it points to" {
+@test "a link to a file on a channel's path: the hint says what it points to, without recommending it" {
   mkdir -p "$IHOME/secret"
   printf 'SECRET\n' >"$IHOME/secret/g"
   ln -s ../secret/g "$IHOME/.claude/CLAUDE.md"
   run_claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"its source goes through $IHOME/.claude/CLAUDE.md, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"Make $IHOME/.claude/CLAUDE.md the file it points to ($IHOME/secret/g), or bind from the resolved path"* ]]
-  [[ "$output" != *"the directory it points to"* ]]
+  [[ "$output" == *"$IHOME/.claude/CLAUDE.md points to $IHOME/secret/g: make it the directory or file it should be, or, if $IHOME/secret/g is what you mean, bind from there (for a channel, its mode with outside:$IHOME/secret/g). Refusing to launch"* ]]
 }
 
 # Two roles at once on one state directory share its mount-point files: the first

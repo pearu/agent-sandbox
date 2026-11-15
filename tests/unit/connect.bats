@@ -1036,7 +1036,7 @@ DF
   [ "$(cat "$slot/topic.md")" = SANDBOX ]     # and kept the sandbox's
 }
 
-@test "--reset takes the source's version back, and does NOT launch" {
+@test "--reset takes the source's version back at the next launch, and does NOT launch" {
   printf 'YOURS\n' >"$C/rules/topic.md"
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   local slot
@@ -1044,8 +1044,11 @@ DF
   printf 'SANDBOX\n' >"$slot/topic.md"
   run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
-  [ "$(cat "$slot/topic.md")" = YOURS ]
   [ ! -s "$H/argv" ] # bwrap was never reached: it resets and exits
+  [ ! -e "$slot" ]   # the copy discarded; nothing read from the source here
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$slot/topic.md")" = YOURS ]
 }
 
 @test "--reset on a channel the profile does not carry is refused" {

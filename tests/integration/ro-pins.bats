@@ -252,7 +252,7 @@ part_in_place() {
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'
   [ "$status" -ne 0 ]
   [[ "$output" == *"its source goes through $W/x/lnk, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"Declare the path it resolves to instead: $W/x/real/f.md. Refusing to launch"* ]]
+  [[ "$output" == *"if $W/x/real/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
   [ -z "$(report ran)" ]
   run_sandboxed "${BASE[@]}" -- --connect './x/real/f.md = read-only' --profile probe --exec python3 ops.py mv:rename:x/real:x/real.moved
   [ "$status" -eq 0 ]
@@ -287,7 +287,7 @@ part_in_place() {
     --connect './lnk/b/f.md = read-only' --profile probe --exec true
   [ "$status" -ne 0 ]
   [[ "$output" == *"its source goes through $W/rw/l2, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"Declare the path it resolves to instead: $W/real/b/f.md. Refusing to launch"* ]]
+  [[ "$output" == *"if $W/real/b/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
 }
 
 @test "B1: an outside: source through a replaceable link in a read-write store is refused" {
@@ -738,6 +738,79 @@ part_in_place() {
       return 1
     }
   done
+}
+
+@test "git rebase works across pinned directories: ./a and ./a/b pinned above a read-only file, a branch rebased onto another that changed files in them" {
+  rm -rf "$W/a" "$W/ops.py"
+  git -C "$W" init -q -b main
+  mkdir -p "$W/a/b" "$W/a/c"
+  printf 'HOST\n' >"$W/a/b/f.md"
+  printf '1\n' >"$W/a/x"
+  printf '1\n' >"$W/a/c/y"
+  git -C "$W" add -A
+  git -C "$W" -c user.name=t -c user.email=t@example.org commit -q -m base
+  git -C "$W" branch feature
+  printf '2\n' >"$W/a/c/y"
+  git -C "$W" -c user.name=t -c user.email=t@example.org commit -q -am main-change
+  run_sandboxed "${BASE[@]}" -- --connect './a/b/f.md = read-only' --profile probe --exec bash -c '
+    g() { git -c user.name=t -c user.email=t@example.org "$@"; }
+    g checkout -q feature && mkdir -p a/d && printf "n\n" >a/d/z && printf "f\n" >a/x &&
+      g add -A && g commit -q -m feature-change && g rebase -q main >/dev/null 2>&1
+    echo "rebase=$?" >>report
+    echo "files=$(cat a/c/y a/x a/d/z | tr "\n" " ")" >>report'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./a, ./a/b"* ]]
+  [ "$(report rebase)" = 0 ]
+  [ "$(report files)" = "2 f n " ]
+  [ "$(git -C "$W" log --format=%s -3 | tr '\n' ' ')" = "feature-change main-change base " ]
+}
+
+# relo_link TARGET -- the probe's extra channel relocated to ~/alt/extra, a link to TARGET
+relo_link() {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt" "$IHOME/secret" "$IHOME/plain"
+  printf 'SECRET\n' >"$IHOME/secret/s"
+  ln -s "$1" "$IHOME/alt/extra"
+}
+
+@test "a channel whose path a declaration takes over: its copy is not read in that launch (nothing shows it), so nothing goes through its source's link -- not into its store, not to another role reading that store" {
+  relo_link ../secret
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' \
+    --connect '~/.probe/extra/ = read-only outside:~/plain/' --profile probe --exec true
+  [ "$status" -eq 0 ]
+  run ! grep -rqs SECRET "$IHOME/.local/state"
+  run_sandboxed "${BASE[@]}" -- --role r2 --connect 'extra = read-only sandbox:@default' --profile probe --exec bash -c '
+    echo "seen=$(cat "$HOME/.probe/extra/s" 2>/dev/null)" >>report'
+  [ "$status" -eq 0 ]
+  [ -z "$(report seen)" ]
+}
+
+@test "a channel whose path an own declaration takes over: its relocated source is nobody's, so a link there neither refuses nor is read" {
+  relo_link realextra
+  mkdir -p "$IHOME/alt/realextra"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' \
+    --connect '~/.probe/extra/ = own' --profile probe --exec bash -c 'echo ran=yes >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report ran)" = yes ]
+}
+
+@test "--reset of a copy reads nothing from the source: the store is discarded, and the next launch refuses the link the role planted there" {
+  relo_link ../secret
+  rm "$IHOME/alt/extra"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  local -a decl=(--connect '~/alt/ = read-write' --connect 'extra = copy')
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec bash -c 'ln -s ../secret "$HOME/alt/extra"'
+  [ "$status" -eq 0 ]
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --reset extra
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"its copy discarded, the next launch copies it from yours again"* ]]
+  run ! grep -rqs SECRET "$IHOME/.local/state"
+  run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its source goes through $IHOME/alt/extra, a symbolic link in a directory the role can write"* ]]
+  run ! grep -rqs SECRET "$IHOME/.local/state"
 }
 
 @test "an own channel does not read its relocated source: a link there launches, and a directory there is the role's to rename as ~/alt/ = read-write grants" {

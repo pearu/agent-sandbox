@@ -1136,18 +1136,21 @@ names are gone; there are no aliases for removed names before 1.0.
   link; a hide (the profile's or a project's) through a link the role can replace; and,
   under `shared` without an account, a channel file in the base that is such a link. A
   `join-scoped` path declaration's source is fixed like any other. A launch that refuses
-  has read nothing through the link: a source is seeded or copied only once its links
-  are checked. One source shown at two paths with different access is valid, each path
-  its own; a hard link of a read-only file that a read-write single-file mount shows is
-  warned of. The briefing names the fixed paths and the way out: ask the user to rename,
-  move or remove on the host and, where needed, update the dot-file and relaunch. A
-  pinned directory stays writable inside as declared; a rename, hard link or `git mv`
-  across its boundary fails with "Invalid cross-device link" (`mv` and `cp` copy
-  instead), and a single-file source reached through a read-write directory view is
-  written in place, not replaced by a temp-file rename. Nothing changes under `--preset
-  native`. The pins are computed once per launch on its final list, every decision on
-  the final view, with no `find`; an option list the computation cannot read refuses the
-  launch. The bwrap arguments are unchanged where nothing is pinned.
+  has read nothing through the link: a source is seeded or copied only once its own
+  links are checked, and a channel whose path a declaration takes over is not read in
+  that launch. `--reset` of a `copy` channel no longer copies from the source itself: it
+  discards the copy, and the next launch copies the source again. One source shown at
+  two paths with different access is valid, each path its own; a hard link of a
+  read-only file that a read-write single-file mount shows is warned of. The briefing
+  names the fixed paths and the way out: ask the user to rename, move or remove on the
+  host and, where needed, update the dot-file and relaunch. A pinned directory stays
+  writable inside as declared; a rename, hard link or `git mv` across its boundary fails
+  with "Invalid cross-device link" (`mv` and `cp` copy instead), and a single-file
+  source reached through a read-write directory view is written in place, not replaced
+  by a temp-file rename. Nothing changes under `--preset native`. The pins are computed
+  once per launch on its final list, every decision on the final view, with no `find`;
+  an option list the computation cannot read refuses the launch. The bwrap arguments are
+  unchanged where nothing is pinned.
 - **A `copy-on-write` channel reads its relocated source.** With a source elsewhere --
   the profile's relocation, or `outside:` on the `[connect]` line -- the channel's
   overlay read through the channel's own path instead, so it showed other content than
