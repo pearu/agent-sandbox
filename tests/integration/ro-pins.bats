@@ -671,6 +671,23 @@ part_in_place() {
   [ ! -e "$W/n1.m" ]
 }
 
+@test "the directories on the way made for the pins: none when a later check refuses the launch (it leaves the host as it was), and mode 0700 as bwrap makes them" {
+  mkdir -p "$IHOME/big" "$W/real/a/b"
+  ln -s real "$W/lnk"
+  # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './n1/n2/key/ = read-only outside:~/big/' \
+    --connect './lnk/a/b/c/d/ = read-write outside:~/big/' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its path goes through $W/lnk"* ]]
+  [ ! -e "$W/n1" ]
+  [ ! -e "$W/real/a/b/c" ]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect './n1/n2/key/ = read-only outside:~/big/' --profile probe --exec true
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %a "$W/n1")" = 700 ]
+  [ "$(stat -c %a "$W/n1/n2")" = 700 ]
+}
+
 @test "the role cannot get a file of its own to the protected path, and the next launch reads the host's" {
   run_sandboxed "${BASE[@]}" -- "${RO[@]}" --profile probe --exec bash -c '
     python3 ops.py mv_b:rename:a/b:a/b2 write:write:a/b/f.md:ROLE unlink:unlink:a/b/f.md \

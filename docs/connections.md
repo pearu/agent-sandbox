@@ -547,8 +547,9 @@ editor's or `sed -i`'s save fails with "Device or resource busy" there). Nothing
 under `--preset native`, the exception, whose claim is parity with no sandbox; nor inside
 a `copy-on-write` mount, the project included, or a read-only mount (nothing there can be
 renamed from inside). A directory on the way that the host does not have yet is made
-there just before the launch, exactly where bwrap would make it to mount the bind
-beneath it (inside a read-write host mount), so it is pinned at the first launch too.
+there just before the launch, exactly where and as bwrap would make it to mount the
+bind beneath it (inside a read-write host mount, mode 0700), and only once every check
+has passed, so it is pinned at the first launch too and a refused launch leaves nothing.
 
 **A declared path or source through a link the role can replace is refused**, in every
 mode and on both sides. A symbolic link cannot be fixed by a mount point, and by

@@ -15205,12 +15205,13 @@ _as_ro_pins_walk() {
     # already pinned under the mount that shows there now
     [[ -n "${_pin_cur[$_p]+x}" && "${_pn_m[${_pin_cur[$_p]}]}" == "$_best" ]] && continue
     # A directory on the way that the host does not have yet: bwrap would make it there,
-    # through this read-write host mount, to mount the bind beneath it. Made here first,
-    # the same directory, so it is pinned at this launch too (not only from the next).
+    # through this read-write host mount, to mount the bind beneath it. Pinned as one, and
+    # made first -- once every check has passed (_pn_new), so a refused launch leaves the
+    # host as it was -- so it is pinned at this launch too (not only from the next).
     if [[ ! -e "$_rd" && ! -L "$_rd" ]] && [[ -z "${_wself:-}" || "$_p" != "$_wself" ]]; then
-      mkdir -p -- "$_rd" 2>/dev/null || true
-    fi
-    if [[ ! -d "$_rd" ]] && ! [[ -n "${_wself:-}" && "$_p" == "$_wself" && -e "$_rd" ]]; then
+      [[ -n "${_pn_new_seen[$_rd]+x}" ]] || _pn_new+=("$_rd")
+      _pn_new_seen[$_rd]=1
+    elif [[ ! -d "$_rd" ]] && ! [[ -n "${_wself:-}" && "$_p" == "$_wself" && -e "$_rd" ]]; then
       _pin_no[$_p]=1
       continue
     fi
@@ -15334,7 +15335,8 @@ _as_ro_pins() {
   # insertion goes is about order (the placement rules).
   local -A _vis=() _mk=() _ms=() _mopt=() _mops=() _touch=() _pin_cur=() _pin_no=()
   # The pins, in the order found: directory, place, host source, the mount it lies in.
-  local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=()
+  local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=() _pn_new=()
+  local -A _pn_new_seen=()
   local _src _kind _a _p _c _t _ok _walk _wk _sd _m _x
   local -a _rwm=() _hm=() _rhm=() _okind=() _osrc=()
   _sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox" # _as_state_dir, without a subshell
@@ -15520,6 +15522,11 @@ _as_ro_pins() {
       [[ -n "$_a" ]] || _a=/
     done
   done
+  # Every check passed: the directories on the way the host lacked, made as bwrap makes
+  # them (mode 0700, parents first; one process).
+  if ((${#_pn_new[@]})); then
+    (umask 077 && mkdir -p -- "${_pn_new[@]}") 2>/dev/null || true
+  fi
   # Insert, parents first at one place: sorted by (place, depth, path).
   local -a _ord=()
   local -A _said=()
