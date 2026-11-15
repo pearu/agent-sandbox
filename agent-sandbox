@@ -2987,9 +2987,7 @@ _as_connect_bind_path() {
       args+=(--bind "$slot" "$p")
       _connect_host[$p]="$slot"
       ;;
-    read-only)
-      args+=(--ro-bind "$real" "$p")
-      ;;
+    read-only) args+=(--ro-bind "$real" "$p") ;;
     read-write)
       args+=(--bind "$real" "$p")
       _connect_host[$p]="$real"
@@ -5817,19 +5815,6 @@ _as_briefing_write() {
   # (profile_briefing_args) must appear inside after the mounts are made.
   local bdir="$_session_dir/briefing"
   mkdir -p -- "$bdir" || return 1
-  # The proxy's per-session refusals: created here, empty, so the addon (which runs
-  # as this user) only ever appends to a file the engine made; bound read-only over
-  # a placeholder in the briefing directory, which is itself bound read-only.
-  : >"$_session_dir/refused.log" || return 1
-  : >"$bdir/refused.log" || return 1
-  # The summary directory's placeholder: bwrap cannot make a mount point inside the
-  # read-only bind (measured, 0.12.0), so it is made here, before.
-  mkdir -p -- "$bdir/summary" || return 1
-  # The briefing's own binds, added to the launch's list at the end; the pins below are
-  # computed on the list with them, the launch's list, so the launch reuses the result.
-  # The role's summary directory, read-write, over its placeholder (made at keeper start).
-  local -a _bf_tail=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log"
-    --bind "$_keeper_sb/summary" "$(_as_summary_inside)")
   local md="$bdir/briefing.md"
   _briefing_md="$md" # for the pins line (_as_briefing_pins)
   # Its marker: a token this launch makes up, so no text the briefing carries (a purpose
@@ -5858,9 +5843,9 @@ _as_briefing_write() {
     printf '\n## Filesystem\n\n'
     printf -- '- writable: %s\n' "$rw_line"
     printf -- '- extra read-only paths: %s\n' "$ro_line"
-    # The directories this launch pins above a read-only file or directory: computed
-    # once, by the launch on its final list (_as_launch), which puts the line here, in
-    # place of this marker, before bwrap starts (_as_briefing_pins).
+    # What is fixed for the role (declared paths and the directories pinned on the way to
+    # them): computed once, by the launch on its final list (_as_launch), which puts the
+    # line here, in place of this marker, before bwrap starts (_as_briefing_pins).
     printf '%s\n' "$_briefing_mark"
     if ((${#_gpu_nodes[@]})); then
       printf -- '- the host'"'"'s GPUs: %s\n' "${_gpu_nodes[*]}"
@@ -5950,6 +5935,15 @@ _as_briefing_write() {
   fi
   # and the tools env's (#304), the engine's own table
   _as_tools_telemetry | cut -f2 >>"$bdir/telemetry-hosts" || return 1
+  # The proxy's per-session refusals: created here, empty, so the addon (which runs
+  # as this user) only ever appends to a file the engine made; bound read-only over
+  # a placeholder in the briefing directory, which is itself bound read-only.
+  : >"$_session_dir/refused.log" || return 1
+  : >"$bdir/refused.log" || return 1
+  # The summary directory's placeholder: bwrap cannot make a mount point inside the
+  # read-only bind (measured, 0.12.0), so it is made here, before.
+  mkdir -p -- "$bdir/summary" || return 1
+
   local short _lnshort conda_short=""
   # a few words for conda: the command, and where its environments are
   if [[ -n "${_conda_brief:-}" ]]; then
@@ -5981,19 +5975,32 @@ _as_briefing_write() {
       "$ev" "$(_as_json_str "$ctx")" >"$bdir/hook-$ev.json" || return 1
   done
 
-  args+=("${_bf_tail[@]}")
+  args+=(--ro-bind "$bdir" "$inside" --ro-bind "$_session_dir/refused.log" "$inside/refused.log")
+  # The role's summary directory, read-write, over its placeholder (made at keeper start).
+  args+=(--bind "$_keeper_sb/summary" "$(_as_summary_inside)")
   return 0
 }
 
-# _as_briefing_pins DIR... -- put the pinned directories in this launch's briefing.md
-# (_briefing_md) in place of its marker line (_briefing_mark, this launch's own token),
-# that line only, every other byte as it was; no line where nothing is pinned. Nothing
-# where no briefing was written.
+# _as_briefing_pins FIXED DIR... -- put what is fixed for the role in this launch's
+# briefing.md (_briefing_md) in place of its marker line (_briefing_mark, this launch's
+# own token), that line only, every other byte as it was: the pinned directories DIR, or,
+# with none but FIXED 1 (a declared path the role has a read-write directory around,
+# _as_ro_pins), the declared paths themselves; no line where neither. Nothing where no
+# briefing was written.
 _as_briefing_pins() {
+  local _bp_fixed="${1:-0}"
+  shift
   [[ -n "${_briefing_md:-}" && -n "${_briefing_mark:-}" && -f "$_briefing_md" ]] || return 0
   local _bp_text="" _bp_l="" _bp_p _bp_line=""
   IFS= read -r -d '' _bp_text <"$_briefing_md" || [[ -n "$_bp_text" ]] || return 1
-  if (($#)); then
+  if ((! $# && _bp_fixed)); then
+    # shellcheck disable=SC2016 # the backticks name commands for the reader
+    printf -v _bp_line '%s\n%s\n%s\n%s\n' \
+      '- declared paths are fixed for you: a declared path cannot be renamed, removed or' \
+      '  replaced. What a declaration allows inside it is unchanged, and a file declared on' \
+      '  its own is written in place. To rename, move or remove a declared path, ask the' \
+      '  user to do it on the host and, where needed, to update the dot-file and relaunch'
+  elif (($#)); then
     for _bp_p in "$@"; do _bp_l+="${_bp_l:+, }$_bp_p"; done
     # shellcheck disable=SC2016 # the backticks name commands for the reader
     printf -v _bp_line '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
@@ -14947,17 +14954,14 @@ _as_ro_pins_comps() {
   return 0
 }
 
-# _as_ro_pins_shows HOST NAME [any] -- for _as_ro_pins, on its locals: NAME := every
-# sandbox path where the host path HOST shows to the role through a read-write host mount
-# (with `any`, through any bind of a host path, read-only too) -- the mount that shows at
-# that path in the final view (the latest at or above it) is that one -- and _sh_mnt :=
-# those mounts.
+# _as_ro_pins_shows HOST NAME -- for _as_ro_pins, on its locals: NAME := every sandbox
+# path where the host path HOST shows to the role through a read-write host mount -- the
+# mount that shows at that path in the final view (the latest at or above it) is that one.
 _as_ro_pins_shows() {
   local -n _sh_out="$2"
   local _sh_m _sh_s _sh_p _sh_a _sh_t _sh_c
-  if [[ "${3:-}" == any ]]; then local -n _sh_list=_hm; else local -n _sh_list=_rhm; fi
-  _sh_out=() _sh_mnt=()
-  for _sh_m in ${_sh_list[@]+"${_sh_list[@]}"}; do
+  _sh_out=()
+  for _sh_m in ${_rhm[@]+"${_rhm[@]}"}; do
     _sh_s="${_ms[$_sh_m]}"
     [[ "$_sh_s" == / ]] && _sh_s=""
     [[ "$1" == "$_sh_s" || "$1" == "$_sh_s"/* ]] || continue
@@ -14974,7 +14978,7 @@ _as_ro_pins_shows() {
       [[ -n "$_sh_a" ]] || _sh_a=/
     done
     [[ "$_sh_t" == "$_sh_m" ]] || continue
-    _sh_out+=("$_sh_p") _sh_mnt+=("$_sh_m")
+    _sh_out+=("$_sh_p")
   done
   return 0
 }
@@ -15048,7 +15052,7 @@ _as_ro_pins_readlink() {
 # could not bind the path. Every decision is on the final view.
 _as_ro_pins_chain() {
   local _ch_cur=/ _ch_c _ch_t _ch_n=0 _ch_l _ch_d _ch_q _wself=""
-  local -a _ch_todo=() _ch_links=() _ch_pos=() _ch_more=() _sh_mnt=()
+  local -a _ch_todo=() _ch_links=() _ch_pos=() _ch_more=()
   _as_ro_pins_comps "$1" _ch_todo
   local _ch_ti=0 # the next component (the list is replaced at a link)
   while ((_ch_ti < ${#_ch_todo[@]})); do
@@ -15123,10 +15127,10 @@ _as_ro_pins_chain() {
       if [[ "$3" == src && "$_ch_l" == "$_ch_cur" ]]; then
         # the source itself, where a read-write host mount shows it: a self-bind too
         _wself="$_ch_q"
-        _as_ro_pins_walk "$_ch_q/." "$2" ro || return 1
+        _as_ro_pins_walk "$_ch_q/." "$2" || return 1
         _wself=""
       else
-        _as_ro_pins_walk "$_ch_q" "$2" ro || return 1
+        _as_ro_pins_walk "$_ch_q" "$2" || return 1
       fi
     done
   done
@@ -15217,7 +15221,7 @@ _as_ro_pins_euid="$EUID"
 # _as_ro_pins_uid PATH -- the owner of PATH itself (a link: the link's), as a number.
 _as_ro_pins_uid() { stat -c %u -- "$1" 2>/dev/null || printf -- '-1'; }
 
-# _as_ro_pins_walk TARGET BIND ro|own -- for _as_ro_pins, on its locals: look at every
+# _as_ro_pins_walk TARGET BIND -- for _as_ro_pins, on its locals: look at every
 # directory above TARGET (a sandbox path: a bind's DEST, or where its source shows), through
 # the mount points on the way, and record a pin for each plain directory the role has
 # read-write from the host. BIND names the bind in a message. Returns 1 when the
@@ -15230,7 +15234,6 @@ _as_ro_pins_walk() {
     _pref=("$_p" ${_pref[@]+"${_pref[@]}"})
     _p="${_p%/*}"
   done
-  _best=-1
   _a=/
   _best="${_vis[$_a]:--1}"
   # (paths are never an arithmetic subscript: a path may hold any character)
@@ -15279,19 +15282,12 @@ _as_ro_pins_walk() {
       _as_msg "pins: $_p would go before the mount it lies in: this is a bug in agent-sandbox, and the launch is refused"
       return 1
     }
-    # A later --remount-ro of the directory itself would take the pin read-only.
-    _t="${_remount[$_p]:--1}"
-    if ((_t >= _c)); then
-      _pin_no[$_p]=1
-      [[ -n "$_rp_quiet" ]] || _as_msg "pins: $_p is remounted read-only later in the list, so it is not pinned"
-      continue
-    fi
     _pin_cur[$_p]=${#_pn_p[@]}
     _pn_p+=("$_p") _pn_c+=("$_c") _pn_s+=("$_rd") _pn_m+=("$_best")
   done
 }
 
-# _as_ro_pins IN OUT PINNED [quiet] -- OUT := the bwrap options in the array IN with the
+# _as_ro_pins IN OUT PINNED -- OUT := the bwrap options in the array IN with the
 # pins inserted; PINNED := the pinned directories (inside paths), parents first. OUT is IN
 # unchanged, element for element, when nothing is pinned; under `native` nothing is.
 # Returns 1, saying so, on an option list it cannot read: only an engine change can make
@@ -15332,8 +15328,7 @@ _as_ro_pins_walk() {
 # sandbox.
 _as_ro_pins() {
   local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
-  local _rp_quiet="${4:-}"
-  _rp_out=("${_rp_in[@]}") _rp_pinned=()
+  _rp_out=("${_rp_in[@]}") _rp_pinned=() _pins_fixed=0
   _as_preset_is_native && return 0
   local -A _nargs=() _qual=()
   _as_bwrap_nargs _nargs _qual
@@ -15383,8 +15378,8 @@ _as_ro_pins() {
   # The pins, in the order found: directory, place, host source, the mount it lies in.
   local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=() _pn_new=()
   local -A _pn_new_seen=()
-  local _src _kind _a _p _c _t _ok _walk _wk _sd _m _x
-  local -a _rwm=() _hm=() _rhm=() _okind=() _osrc=()
+  local _src _kind _a _p _c _t _sd _x
+  local -a _rwm=() _rhm=() _okind=() _osrc=()
   _sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox" # _as_state_dir, without a subshell
   _as_ro_pins_norm _sd
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
@@ -15426,7 +15421,6 @@ _as_ro_pins() {
     if [[ -n "$_kind" ]]; then
       _vis[$_d]=$_k _mk[$_k]=$_kind _ms[$_k]="$_src" _mopt[$_k]="$_o"
       [[ "$_kind" == rw || "$_kind" == rwfile ]] && _rwm+=("$_k")
-      [[ -n "$_src" && "$_kind" != other ]] && _hm+=("$_k")
       [[ -n "$_src" && ("$_kind" == rw || "$_kind" == rwfile) ]] && _rhm+=("$_k")
       _mops[$_d]+="$_k "
     fi
@@ -15524,9 +15518,14 @@ _as_ro_pins() {
     # A mount a later mount at or above it hides is not in the final view: nothing to keep.
     _as_ro_pins_latest "$_d" _t
     [[ "$_t" == "$_k" ]] || continue
-    _wk=own
-    [[ "$_kind" == ro ]] && _wk=ro
-    _as_ro_pins_walk "$_d" "$_d" "$_wk" || return 1
+    _as_ro_pins_walk "$_d" "$_d" || return 1
+    # Fixed for the role though nothing on its way is pinned: a mount point where the
+    # role has the directory read-write from the host (the briefing says so, R4).
+    if ((! _pins_fixed)); then
+      _x="${_d%/*}"
+      _as_ro_pins_latest "${_x:-/}" _x
+      ((_x >= 0)) && [[ "${_mk[$_x]-}" == rw ]] && _pins_fixed=1
+    fi
     # The source: as declared (_decl_src: before `readlink -f`; a store's or an overlay's
     # declared host source too), else the list's own host source. A store's own path is
     # no host path of the user's.
@@ -15625,8 +15624,9 @@ _as_launch() {
   # shape and network mode gets them; the list is unchanged when nothing is pinned. The
   # briefing's line comes from this result (a join reads the keeper's briefing).
   local -a _pinned_opts=() _pinned=()
+  local _pins_fixed=0 # set by _as_ro_pins: a declared path the role could otherwise move
   _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1
-  _as_briefing_pins ${_pinned[@]+"${_pinned[@]}"} || return 1
+  _as_briefing_pins "$_pins_fixed" ${_pinned[@]+"${_pinned[@]}"} || return 1
   if ((${#_pinned[@]})); then
     _bwrap_opts=("${_pinned_opts[@]}")
     local _pn _pl=""
@@ -16193,8 +16193,8 @@ agent_sandbox() (
   # network mode, run by _as_launch. bwrap's options are not on it: they are in
   # _bwrap_opts, which reach bwrap through a file (see _as_launch).
   local -a _launch=() _bwrap_opts=()
-  # A read-only declaration's source as declared, by its DEST (_as_connect_bind_path),
-  # for the pins to resolve link by link (_as_ro_pins_chain).
+  # A declared source as declared, by its DEST (_as_connect_bind_path,
+  # _as_connect_bind_channel), for the pins to resolve link by link (_as_ro_pins_chain).
   local -A _decl_src=()
   # The join-scoped paths the launch declares (#147): `kind<TAB>name<TAB>path`.
   local -a _join_scoped=()

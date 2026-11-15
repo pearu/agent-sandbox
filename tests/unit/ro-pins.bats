@@ -330,12 +330,6 @@ cache_pins() {
   [[ "$MSG" == *"its source goes through $d/l, a symbolic link in a directory the role can write"* ]]
 }
 
-@test "a directory remounted read-only later is not pinned (the remount would take the pin), and said" {
-  pins -- --bind "$P" "$P" --ro-bind "$P/a/f.md" "$P/a/f.md" --remount-ro "$P/a"
-  same "${IN[@]}"
-  [[ "$MSG" == *"pins: $P/a is remounted read-only later in the list, so it is not pinned"* ]]
-}
-
 @test "nested read-only binds: the parents of the outer one pinned, nothing inside the read-only mount" {
   pins -- --bind "$P" "$P" --ro-bind "$P/a/b/c" "$P/a/b/c" --ro-bind "$P/a/b/c/f.md" "$P/a/b/c/f.md"
   same --bind "$P" "$P" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --ro-bind "$P/a/b/c" "$P/a/b/c" \

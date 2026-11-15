@@ -1355,7 +1355,7 @@ login_file() {
   [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]
 }
 
-@test "the directories pinned above a read-only path are said, with what fails across them; nothing where nothing is pinned" {
+@test "the directories pinned above a read-only path are said, with what fails across them; a declared path at the project's top, with nothing to pin, is said fixed with the same way out (R4)" {
   mkdir -p "$PROJ/a/b"
   touch "$PROJ/a/b/f.md" "$PROJ/top.md"
   run_engine BWRAP_COPY="$OUT" -- asb --connect './a/b/f.md = read-only' claude --version
@@ -1369,7 +1369,11 @@ login_file() {
   run_engine BWRAP_COPY="$OUT" -- asb --connect './top.md = read-only' claude --version
   [ "$status" -eq 0 ]
   grep -q -- "- extra read-only paths: $PROJ/top.md\$" "$OUT/briefing.md"
-  run ! grep -q 'cannot be renamed, removed' "$OUT/briefing.md"
+  [[ "$output" != *"pinned, on the way"* ]]
+  grep -qxF -- '- declared paths are fixed for you: a declared path cannot be renamed, removed or' "$OUT/briefing.md"
+  grep -qxF -- '  its own is written in place. To rename, move or remove a declared path, ask the' "$OUT/briefing.md"
+  grep -qxF -- '  user to do it on the host and, where needed, to update the dot-file and relaunch' "$OUT/briefing.md"
+  run ! grep -q 'on the way to a declared path or to its' "$OUT/briefing.md"
 }
 
 @test "a read-only source that another declaration shows read-write launches: each path gets its own access, nothing refused; the source fixed where that read-write declaration shows it" {
