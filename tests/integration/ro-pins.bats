@@ -52,6 +52,8 @@ teardown() {
     [[ -r "$f" ]] || continue
     read -r spid _ <"$f" 2>/dev/null && [[ -n "$spid" ]] && kill "$spid" 2>/dev/null
   done
+  # an overlay's workdir keeps a mode-000 directory bats could not remove
+  chmod -R u+rwX "$IHOME/.local/state" 2>/dev/null
   return 0
 }
 
@@ -288,6 +290,11 @@ part_in_place() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"its source goes through $W/rw/l2, a symbolic link in a directory the role can write"* ]]
   [[ "$output" == *"if $W/real/b/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
+  # the hint followed: the resolved path declared instead launches
+  run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './rw/ = read-write' \
+    --connect './real/b/f.md = read-only' --profile probe --exec cat real/b/f.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *HOST* ]]
 }
 
 @test "B1: an outside: source through a replaceable link in a read-write store is refused" {
@@ -299,6 +306,29 @@ part_in_place() {
     --profile probe --exec true
   [ "$status" -ne 0 ]
   [[ "$output" == *"its source goes through $IHOME/store/l, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"if $IHOME/store/realdir/x.md is what you mean, declare that path instead. Refusing to launch"* ]]
+  # the hint followed: the resolved source declared instead launches
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect "./cfg/x.md = read-only outside:$IHOME/store/realdir/x.md" \
+    --profile probe --exec bash -c 'echo "seen=$(cat cfg/x.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+}
+
+@test "a channel of one path whose relocated source goes through a link the role can replace: the hint names outside: as a way out, and following it launches" {
+  printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
+  mkdir -p "$IHOME/alt/realextra"
+  printf 'R\n' >"$IHOME/alt/realextra/r"
+  ln -s realextra "$IHOME/alt/extra"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' --profile probe --exec true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$IHOME/alt/extra points to $IHOME/alt/realextra: make it the directory or file it should be, or, if $IHOME/alt/realextra is what you mean, give the channel its mode with outside:$IHOME/alt/realextra. Refusing to launch"* ]]
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect "extra = copy outside:$IHOME/alt/realextra" \
+    --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/extra/r")" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = R ]
 }
 
 @test "R3: a declared path through a link the role can replace is refused, in every mode and with its source elsewhere too" {
@@ -914,6 +944,7 @@ sbx_native() {
   [ "$(stat -c %a "$W/n1/n2")" = 700 ]
 }
 
+# shellcheck disable=SC2030,SC2031 # run's status, the test's own
 @test "a join-scoped channel under a linked HOME: each join seeds from the source the launch resolved (copy, seed-only, copy-on-write; a directory and a file)" {
   ln -s home "$I/hl"
   printf 'DOC\n' >"$IHOME/.probe/docs/a.md"
@@ -929,6 +960,56 @@ sbx_native() {
     }
     [ "$(report seen)" = "DOC NOTE " ]
   done
+}
+
+# layer_link TARGET -- a copy-on-write project; launch 1, the declared source missing: the
+# role replaces ./a with a link to TARGET in its own layer; then the source appears
+layer_link() {
+  mkdir -p "$IHOME/x"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  LAYER_D=(--connect 'project = copy-on-write' --connect './a/f = read-only outside:~/x/f')
+  run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c "rm -rf a; mkdir -p a.role; ln -s $1 a"
+  # shellcheck disable=SC2031 # run's status, read in the same function
+  [ "$status" -eq 0 ]
+  printf 'HOSTF\n' >"$IHOME/x/f"
+}
+
+@test "a key through a link the role made in its own copy-on-write layer is refused (a relative link)" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  layer_link a.role
+  run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/f)"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: $W/a/f: its path goes through $W/a, a symbolic link the role made in its own layer of the copy-on-write mount at $W"* ]]
+  [[ "$output" != *"seen="* ]]
+}
+
+@test "a key through a link the role made in its own copy-on-write layer is refused (an absolute link)" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  layer_link "$W/a.role"
+  run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/f)"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"connect: $W/a/f: its path goes through $W/a, a symbolic link the role made in its own layer of the copy-on-write mount at $W"* ]]
+  [[ "$output" != *"bwrap:"* ]]
+}
+
+@test "in a copy-on-write project, directories on the way to a read-only key that only the role's layer has are pinned: no rename, and the key stays read-only" {
+  command -v bwrap >/dev/null && bwrap --help 2>&1 | grep -q -- '--overlay ' \
+    || skip "bubblewrap has no --overlay (needs >= 0.11)"
+  mkdir -p "$IHOME/x"
+  printf 'HOSTF\n' >"$IHOME/x/f"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect 'project = copy-on-write' --connect './new/deep/f.md = read-only outside:~/x/f' \
+    --profile probe --exec bash -c 'mv new new.m 2>/dev/null; echo mv=$?; echo W >new/side && echo side=ok
+      echo ROLE >new/deep/f.md 2>/dev/null; echo write=$?; echo "seen=$(cat new/deep/f.md)"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./new, ./new/deep"* ]]
+  [[ "$output" == *"mv=1"* ]]
+  [[ "$output" == *"side=ok"* ]] # writable inside, as the project's layer
+  [[ "$output" == *"write=1"* ]]
+  [[ "$output" == *"seen=HOSTF"* ]]
+  [ ! -e "$W/new" ] # nothing on the host
 }
 
 # relo_link TARGET -- the probe's extra channel relocated to ~/alt/extra, a link to TARGET

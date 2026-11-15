@@ -1134,24 +1134,27 @@ names are gone; there are no aliases for removed names before 1.0.
   `~/.claude/cache` (the changelog channel's directory), with an account and without;
   under an account, a channel's path in the base that is or goes through a symbolic
   link; a hide (the profile's or a project's) through a link the role can replace; and,
-  under `shared` without an account, a channel file in the base that is such a link. A
-  `join-scoped` path declaration's source is fixed like any other. So is a `sandbox:`
-  source that resolves to a native path of the user's (a role with no record, or a
-  read-write or read-only one); another role's own store is not a path of the user's. A
-  launch that refuses has read nothing through the link: a source is seeded or copied
-  only once its own links are checked, and a channel whose path a declaration takes over
-  is not read in that launch. `--reset` of a `copy` channel no longer copies from the
-  source itself: it discards the copy, and the next launch copies the source again. The
-  engine touches a source -- reads, copies, hashes (copy-on-write's shadow check) or
-  makes it when missing -- only through one check of its links: at a launch, on that
-  launch's view, also counting the role's own state directories it covers there; at a
-  join, a seed whose source has gained a symbolic link since the launch is refused. One
-  source shown at two paths with different access is valid, each path its own; a hard
-  link of a read-only file that a read-write single-file mount shows is warned of. The
-  briefing names the fixed paths and the way out: ask the user to rename, move or remove
-  on the host and, where needed, update the dot-file and relaunch. A pinned directory
-  stays writable inside as declared; a rename, hard link or `git mv` across its boundary
-  fails with "Invalid cross-device link" (`mv` and `cp` copy instead), and a single-file
+  under `shared` without an account, a channel file in the base that is such a link. So
+  does a declared path through a symbolic link the role made in its own layer of a
+  copy-on-write mount; and a directory on the way to a declared path that only the
+  role's layer of such a mount has is pinned like one on the host. A `join-scoped` path
+  declaration's source is fixed like any other. So is a `sandbox:` source that resolves
+  to a native path of the user's (a role with no record, or a read-write or read-only
+  one); another role's own store is not a path of the user's. A launch that refuses has
+  read nothing through the link: a source is seeded or copied only once its own links
+  are checked, and a channel whose path a declaration takes over is not read in that
+  launch. `--reset` of a `copy` channel no longer copies from the source itself: it
+  discards the copy, and the next launch copies the source again. The engine touches a
+  source -- reads, copies, hashes (copy-on-write's shadow check) or makes it when
+  missing -- only through one check of its links: at a launch, on that launch's view,
+  also counting the role's own state directories it covers there; at a join, a seed
+  whose source has gained a symbolic link since the launch is refused. One source shown
+  at two paths with different access is valid, each path its own; a hard link of a
+  read-only file that a read-write single-file mount shows is warned of. The briefing
+  names the fixed paths and the way out: ask the user to rename, move or remove on the
+  host and, where needed, update the dot-file and relaunch. A pinned directory stays
+  writable inside as declared; a rename, hard link or `git mv` across its boundary fails
+  with "Invalid cross-device link" (`mv` and `cp` copy instead), and a single-file
   source reached through a read-write directory view is written in place, not replaced
   by a temp-file rename. Nothing changes under `--preset native`. The pins are computed
   once per launch on its final list, every decision on the final view, with no `find`;

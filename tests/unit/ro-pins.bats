@@ -592,7 +592,7 @@ cache_pins() {
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 1 ]
   # not a declaration here (no recorded declared source): what a channel's user can do
-  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $P/lnk points to $P/a: make it the directory or file it should be, or, if $P/a/b/f.md is what you mean, bind from there (for a channel, its mode with outside:$P/a/b/f.md). Refusing to launch"* ]]
+  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $P/lnk points to $P/a: make it the directory or file it should be. Refusing to launch"* ]]
   ln -s ../a "$P/x/lnk2" # deeper: a link inside a plain directory of the project
   pins -- --bind "$P" "$P" --ro-bind "$P/x/lnk2/b/f.md" "$P/x/lnk2/b/f.md"
   [ "$RC" -eq 1 ]
@@ -608,7 +608,7 @@ cache_pins() {
   pins -- --ro-bind "$P" "$P" --bind "$P/rw" "$P/rw" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 1 ]
   [[ "$MSG" == *"its source goes through $P/rw/l2, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"if $P/real/b/f.md is what you mean, bind from there"* ]]
+  [[ "$MSG" == *"$P/rw/l2 points to $P/real: make it the directory or file it should be. Refusing to launch"* ]]
   # shape 2: ~/store read-write, the source through ~/store/l -> realdir
   local h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$h/realdir"

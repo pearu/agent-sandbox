@@ -15181,6 +15181,30 @@ _as_ro_pins_latest() {
   return 0
 }
 
+# _as_ro_pins_layer DIR KEY -- for _as_ro_pins, on its locals: where DIR (KEY's
+# directory) lies in a copy-on-write mount, refuse KEY when its way, as the role's view
+# has it, goes through a symbolic link in the role's own layer: the overlay shows the
+# layer's entry over the lower's, and the role made it (the lower's way is the chain's).
+_as_ro_pins_layer() {
+  local _ly_t _ly_b _ly_rel _ly_c _ly_u
+  _as_ro_pins_latest "$1" _ly_t
+  ((_ly_t >= 0)) && [[ "${_on[_ly_t]}" == --overlay && -n "${_oup[_ly_t]-}" ]] || return 0
+  _ly_b="${_od[_ly_t]}"
+  [[ "$_ly_b" == / ]] && _ly_b=""
+  _ly_rel="${2#"$_ly_b"}"
+  _ly_c="" _ly_u="${_oup[_ly_t]}"
+  while [[ -n "$_ly_rel" ]]; do
+    _ly_rel="${_ly_rel#/}"
+    _ly_c+="/${_ly_rel%%/*}"
+    [[ "$_ly_rel" == */* ]] && _ly_rel="${_ly_rel#*/}" || _ly_rel=""
+    if [[ -L "$_ly_u$_ly_c" ]]; then
+      _as_msg "connect: $2: its path goes through $_ly_b$_ly_c, a symbolic link the role made in its own layer of the copy-on-write mount at ${_ly_b:-/}: declared paths are fixed for the role, and a link cannot be. Remove it from that layer ($_ly_u$_ly_c), or make it there the directory it should be. Refusing to launch"
+      return 1
+    fi
+  done
+  return 0
+}
+
 # _as_ro_pins_host_at DIR NAME -- for _as_ro_pins, on its locals: NAME := the host path that
 # shows at the sandbox directory DIR (through the mount that shows there, a bind of a
 # host path), or empty.
@@ -15354,13 +15378,19 @@ _as_ro_pins_chain() {
       local _ch_decl=0
       if [[ "$3" == src ]]; then
         declare -p _decl_src &>/dev/null && [[ -n "${_decl_src[$2]+x}" ]] && _ch_decl=1
+        # a channel's relocated source is recorded too, and is no declaration
+        ((_ch_decl)) && _as_channel_npaths "$2" >/dev/null && _ch_decl=0
       else
         local _ch_k2="$2/"
         declare -p _connect_key &>/dev/null && [[ -n "${_connect_key[$2]+x}${_connect_key[$_ch_k2]+x}" ]] && _ch_decl=1
       fi
       if ((! _ch_decl)); then
-        _ch_hint="$_ch_l points to $_ch_to: make it the directory or file it should be, or, if $_ch_q is what you mean, bind from there (for a channel, its mode with outside:$_ch_q)"
-        [[ "$3" == dest ]] && _ch_hint="$_ch_l points to $_ch_to: make it the directory or file it should be"
+        # `outside:` is a way out only where following it works: a channel of one path
+        # whose relocated source alone goes through the link (the key is not the link)
+        _ch_hint="$_ch_l points to $_ch_to: make it the directory or file it should be"
+        if [[ "$3" == src && "$1" != "$2" && "$(_as_channel_npaths "$2")" == 1 ]]; then
+          _ch_hint+=", or, if $_ch_q is what you mean, give the channel its mode with outside:$_ch_q"
+        fi
       fi
       # A link the engine made again in an account's directory for a linked top-level
       # entry of the base (_as_base_entry_binds): the next launch makes it again from
@@ -15456,6 +15486,26 @@ _as_ro_pins_hardlink() {
   return 0
 }
 
+# _as_channel_npaths KEY -- print how many paths the channel holding KEY has (an
+# `outside:` on the [connect] line may relocate a channel of one); fails when KEY is no
+# channel's path.
+# shellcheck disable=SC2031 # the launch's own profile_channels
+_as_channel_npaths() {
+  local line e k="${1%/}"
+  local -a f=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a f <<<"$line"
+    for e in "${f[@]:1}"; do
+      e="${e#*:}"
+      if [[ "${e%/}" == "$k" ]]; then
+        printf '%s' "$((${#f[@]} - 1))"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
 # _as_ro_pins_link_to LINK -- for a refusal's hint, what LINK points to, resolved:
 # "TARGET", or "TARGET, which does not exist". Said, never recommended: the role may
 # have planted the link, so its target is the role's choice, not the user's.
@@ -15509,10 +15559,21 @@ _as_ro_pins_walk() {
     ((_t > _best)) && _best=$_t
     ((_best >= 0)) || continue
     [[ "${_vis[$_p]:-x}" == "$_best" ]] && continue # a mount point: cannot be renamed
-    [[ "${_mk[$_best]}" == rw ]] || continue        # nothing a host bind can pin
     _bk="${_od[_best]}"
     [[ "$_bk" == / ]] && _bk=""
-    _rd="${_ms[$_best]}${_p#"$_bk"}"
+    if [[ "${_mk[$_best]}" == rw ]]; then
+      _rd="${_ms[$_best]}${_p#"$_bk"}"
+    elif [[ "${_on[_best]}" == --overlay && -n "${_oup[_best]-}" ]]; then
+      # Inside a copy-on-write mount, a directory its lower has answers a rename across
+      # it with EXDEV already; one only the role's layer has (made for the mount
+      # beneath) could be renamed away, leaving the role's own writable content at the
+      # declared path. Pinned with the layer's own directory (measured: EBUSY; what the
+      # role writes lands in the layer, as through the overlay).
+      [[ -e "${_osrc[_best]}${_p#"$_bk"}" || -L "${_osrc[_best]}${_p#"$_bk"}" ]] && continue
+      _rd="${_oup[_best]}${_p#"$_bk"}"
+    else
+      continue # nothing a host bind can pin
+    fi
     # A link on the way is not pinned, nor anything beneath it: where the link leads is
     # the chain's (_as_ro_pins_chain), which refuses a link the role can replace where
     # that matters and pins behind any other.
@@ -15671,8 +15732,8 @@ _as_ro_pins() {
   # The pins, in the order found: directory, place, host source, the mount it lies in.
   local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=() _pn_new=()
   local -A _pn_new_seen=()
-  local _src _kind _a _p _c _t _sd _x
-  local -a _rwm=() _rhm=() _okind=() _osrc=()
+  local _src _kind _a _p _c _t _sd _x _ouv
+  local -a _rwm=() _rhm=() _okind=() _osrc=() _oup=()
   _sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox" # _as_state_dir, without a subshell
   _as_ro_pins_norm _sd
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
@@ -15699,6 +15760,10 @@ _as_ro_pins() {
         _kind=other _src=""
         ((_k > 0)) && [[ "${_on[_k - 1]}" == --overlay-src ]] && _src="${_rp_in[${_oa[_k - 1]}]}"
         [[ -z "$_src" ]] || _as_ro_pins_norm _src
+        # and its upper layer, the role's own (_as_ro_pins_walk, _as_ro_pins_layer)
+        _ouv="${_rp_in[${_oa[_k]}]}"
+        _as_ro_pins_norm _ouv
+        _oup[_k]="$_ouv"
         ;;
     esac
     _okind[_k]="$_kind" _osrc[_k]="$_src"
@@ -15852,6 +15917,7 @@ _as_ro_pins() {
     # hide's too: through a link the role could retarget, the next launch would blank
     # another path and show the one it hid (measured: lnk/secret, lnk swapped).
     _x="${_d%/*}"
+    _as_ro_pins_layer "${_x:-/}" "$_d" || return 1
     _as_ro_pins_host_at "${_x:-/}" _x
     if [[ -n "$_x" ]]; then
       _x="${_x%/}/${_d##*/}"

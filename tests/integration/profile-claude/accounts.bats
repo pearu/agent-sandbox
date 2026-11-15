@@ -287,14 +287,19 @@ run_role() {
   [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
 }
 
-@test "a link to a file on a channel's path: the hint says what it points to and both ways out (make the link what it should be, or bind from its target if that is meant)" {
+@test "a link to a file at a channel's own path (instructions has two paths): the hint names the one way out that works, and following it launches" {
   mkdir -p "$IHOME/secret"
   printf 'SECRET\n' >"$IHOME/secret/g"
   ln -s ../secret/g "$IHOME/.claude/CLAUDE.md"
   run_claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"its source goes through $IHOME/.claude/CLAUDE.md, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"$IHOME/.claude/CLAUDE.md points to $IHOME/secret/g: make it the directory or file it should be, or, if $IHOME/secret/g is what you mean, bind from there (for a channel, its mode with outside:$IHOME/secret/g). Refusing to launch"* ]]
+  [[ "$output" == *"$IHOME/.claude/CLAUDE.md points to $IHOME/secret/g: make it the directory or file it should be. Refusing to launch"* ]]
+  [[ "$output" != *"outside:"* ]]
+  # the hint followed: the link made the file it should be
+  cp --remove-destination "$IHOME/secret/g" "$IHOME/.claude/CLAUDE.md"
+  run_claude
+  [ "$status" -eq 0 ]
 }
 
 # Two roles at once on one state directory share its mount-point files: the first
