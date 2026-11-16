@@ -1255,9 +1255,10 @@ removed and made afresh when the base's entry is no longer a symlink to the same
 Any other mismatch (a file in the account's directory where the base has a directory, a
 directory where it has a file, a file or non-empty directory where it has a symlink; an
 empty one is an earlier launch's cover of the link) refuses the launch before anything
-starts, naming both paths: remove the account's to see the base's there, or the base's to keep the account's. An entry created in the base after the
-launch is not seen by that launch (a role on the base sees it at once); one the agent
-creates at the top during the session lands in the account's directory. A `read-write`
+starts, naming both paths: remove the account's to see the base's there, or the base's
+to keep the account's. An entry created in the base after the launch is not seen by that
+launch (a role on the base sees it at once); one the agent creates at the top during the
+session lands in the account's directory. A `read-write`
 file channel whose source does not exist in the base is created there under an account,
 as a `read-write` directory channel's is -- containing `{}` when its path ends in
 `.json` (an empty file is no JSON), empty otherwise -- so what the agent writes there is
