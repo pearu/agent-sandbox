@@ -269,6 +269,19 @@ part_in_place() {
   [ "$(report w)" = no ]
   [ "$(report mv)" = no ]
   [ "$(cat "$W/real/cfg")" = CFG ]
+  # and a directory declared through a link on the way (./d/docs/, d -> rd)
+  mkdir -p "$W/rd/docs"
+  printf 'DOC\n' >"$W/rd/docs/a"
+  ln -s rd "$W/d"
+  run_sandboxed "${BASE[@]}" -- --connect './d/docs/ = read-only' --profile probe --exec bash -c '
+    (echo W >>d/docs/a) 2>/dev/null && echo wl=ok >>report || echo wl=no >>report
+    (echo W >>rd/docs/a) 2>/dev/null && echo w=ok >>report || echo w=no >>report
+    mv rd rd2 2>/dev/null && echo mv=ok >>report || echo mv=no >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report wl)" = no ]
+  [ "$(report w)" = no ]
+  [ "$(report mv)" = no ]
+  [ "$(cat "$W/rd/docs/a")" = DOC ]
   rm "$W/x/lnk"
   ln -s "$I/ext" "$W/x/lnk"
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'
