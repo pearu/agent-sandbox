@@ -2685,7 +2685,7 @@ _as_connect_bind_all() {
       if [[ "${_rd_run[_rj]}" == run ]]; then
         # a source to make where a dangling symbolic link stands: it implies nothing yet
         # (#401), and nothing is made through a link -- that would make its target
-        if [[ "${_reads[_ri+1]}" == mkdir || "${_reads[_ri+1]}" == _as_make_source_dir ]] \
+        if [[ "${_reads[_ri + 1]}" == mkdir || "${_reads[_ri + 1]}" == _as_make_source_dir ]] \
           && ! _as_preset_is_native; then
           local _rs_s="${_reads_chk[_rj]#*$'\t'}"
           _rs_s="${_rs_s%%$'\t'*}"
