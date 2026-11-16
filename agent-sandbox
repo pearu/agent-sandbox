@@ -2181,27 +2181,39 @@ _as_connect_parse_path() {
         ;;
     esac
     src="$(realpath -m -s -- "$src")"
-    for c in "$src" "$(readlink -f -- "$src" 2>/dev/null || printf '%s' "$src")"; do
-      if [[ "$c" == / || "$c" == "$HOME" || "$HOME" == "$c"/* ]]; then
-        _as_msg "connect ($where): refusing 'outside:$outside' (it would show all of '$c': / , \$HOME or a parent of it)."
-        return 1
-      fi
-      if _as_path_protected "$c" "$mode"; then
-        _as_msg "connect ($where): refusing 'outside:$outside' ('$c' $_prot_how $_prot_what '$_prot_path')."
-        return 1
-      fi
-    done
-    # shellcheck disable=SC2031 # the launch's own profile_account_paths
-    if _bwhy="$(_as_base_refused "$src" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"})"; then
-      _as_msg "connect ($where): refusing 'outside:$outside': $_bwhy."
-      return 1
-    fi
+    _as_outside_ok "$src" "$mode" "connect ($where): refusing 'outside:$outside'" || return 1
   fi
   [[ -n "${_connect_key[$p]:-}" ]] || _connect_paths+=("$p")
   _connect_key["$p"]="$key"
   _connect_isdir["$p"]="$dir"
   _connect_src["$p"]="$src"
   _path_key="$p"
+  return 0
+}
+
+# _as_outside_ok SRC MODE PREFIX -- may SRC (absolute) be an outside source in MODE? Not
+# /, $HOME or a parent of it, nothing protected, lexically and resolved, not the agent's
+# state directory or its login. On no, says why after PREFIX. The one check of an
+# `outside:` source -- a written one (_as_connect_parse_path) and the one a symbolic
+# link implies (_as_ln_met, the scan): a link may not hand over what the user could not
+# declare (#401).
+_as_outside_ok() {
+  local src="$1" mode="$2" c _bwhy _prot_what _prot_path _prot_how
+  for c in "$src" "$(readlink -f -- "$src" 2>/dev/null || printf '%s' "$src")"; do
+    if [[ "$c" == / || "$c" == "$HOME" || "$HOME" == "$c"/* ]]; then
+      _as_msg "$3 (it would show all of '$c': / , \$HOME or a parent of it)."
+      return 1
+    fi
+    if _as_path_protected "$c" "$mode"; then
+      _as_msg "$3 ('$c' $_prot_how $_prot_what '$_prot_path')."
+      return 1
+    fi
+  done
+  # shellcheck disable=SC2031 # the launch's own profile_account_paths
+  if _bwhy="$(_as_base_refused "$src" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"})"; then
+    _as_msg "$3: $_bwhy."
+    return 1
+  fi
   return 0
 }
 
@@ -2683,7 +2695,7 @@ _as_connect_bind_all() {
   # in its check mode) before any runs. The launch computes the pins on its final list
   # (_as_launch).
   if ((${#_reads[@]})); then
-    local -a _rd_in=("${args[@]}") _rd_run=() _rd_pin=()
+    local -a _rd_in=("${args[@]}") _rd_run=() _rd_pin=() _rd_res=()
     if _as_preset_is_native; then
       # native is unchanged: every read and creation runs, as without the check (R5)
       local _rk
@@ -2706,7 +2718,17 @@ _as_connect_bind_all() {
             return 1
           fi
         fi
-        "${_reads[@]:_ri+1:_rn}" || return 1
+        # read what the check approved: a source through a link as it resolved there, so
+        # a link retargeted since is not followed (#401)
+        local -a _rd_cmd=("${_reads[@]:_ri+1:_rn}")
+        if [[ -n "${_rd_res[_rj]-}" ]]; then
+          local _rd_s="${_reads_chk[_rj]#*$'\t'}" _rd_i
+          _rd_s="${_rd_s%%$'\t'*}"
+          for _rd_i in "${!_rd_cmd[@]}"; do
+            [[ "${_rd_cmd[_rd_i]}" != "$_rd_s" ]] || _rd_cmd[_rd_i]="${_rd_res[_rj]}"
+          done
+        fi
+        "${_rd_cmd[@]}" || return 1
       else
         _as_read_hidden "${_reads_chk[_rj]}" "${_reads_kind[_rj]}" || return 1
       fi
@@ -7432,6 +7454,7 @@ _as_links_scan_review() {
         if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else continue; fi
         _as_links_view_shows "$t" && continue
         _as_links_approved "$proj" "$l"$'\t'"$chain"$'\t'"$t"$'\t'"$tk" && continue
+        _as_links_outside_ok "$l" "$chain" "$t" "$mode" || continue
         printf '%s\t%s\t%s\t%s\t%s\n' "$l" "$chain" "$t" "$tk" "$mode"
       done < <(find "$d" \( "${prune[@]}" \) -prune -o -type l -print0 2>/dev/null)
     done <"$vf"
@@ -7459,6 +7482,7 @@ _as_links_scan_one() {
   if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else return 0; fi
   _as_links_view_shows "$t" && return 0
   _as_links_approved "$1" "$2"$'\t'"$lk"$'\t'"$t"$'\t'"$tk" && return 0
+  _as_links_outside_ok "$2" "$lk" "$t" "$4" || return 0
   printf '%s\t%s\t%s\t%s\t%s\n' "$2" "$lk" "$t" "$tk" "$4"
 }
 
@@ -15872,6 +15896,13 @@ _as_ln_met() {
     own | hide) _lm_need="" ;;
   esac
   [[ -n "${_ms[$_k]-}" && "${_ms[$_k]}" != "$_sd"/* && "${_mk[$_k]-}" != other ]] && _lm_host=1
+  # BIND WHAT WAS CHECKED: a host mount whose source goes through these links gets the
+  # resolved path as its source, never the link -- a role that retargets the link
+  # between this check and bwrap's mount must not get another target (_ln_src; a store's
+  # read of its source uses it too)
+  if [[ "$3" == src ]] || { ((_lm_host)) && [[ "${_ms[$_k]}" == "$1" ]]; }; then
+    _ln_src[$_k]="$_ch_cur"
+  fi
   if [[ "$3" == dest ]]; then
     local _lm_first="${_ch_links[0]}"
     if [[ "$_lm_first" == "$_sd"/* ]]; then
@@ -15914,8 +15945,17 @@ _as_ln_met() {
     _as_ro_pins_host_at "${_lm_kh:-/}" _lm_kh
     [[ -n "$_lm_kh" && "${_lm_kh%/}/${2##*/}" == "$_lm_t" ]] && return 0
   fi
+  # what the user could not declare, no link declares: the written outside:'s refusals
+  _as_links_outside_ok "$2" "$_lm_chain" "$_lm_t" "$_lm_mode" || return 1
   _ln_pending+=("$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode")
   return 0
+}
+
+# _as_links_outside_ok P CHAIN T MODE -- the implied declaration `P = MODE outside:T`
+# passes the checks a written outside: source does (_as_outside_ok); on no, the link is
+# refused with that refusal's message.
+_as_links_outside_ok() {
+  _as_outside_ok "$3" "$4" "connect: $(_as_tilde "$1") is reached through a symbolic link (${2// ; /, }) to $(_as_tilde "$3"), which stands for '$(_as_tilde "$1") = $4 outside:$(_as_tilde "$3")'; as written that is refused, so the link is: refusing 'outside:$(_as_tilde "$3")'"
 }
 
 # _as_ro_pins_chain PATH BIND src|dest -- for _as_ro_pins, on its locals: resolve PATH --
@@ -16203,7 +16243,7 @@ _as_ro_pins() {
   [[ -n "$_rp_only" ]] || _pins_fixed=0
   _as_preset_is_native && return 0
   # What the links met imply, and where the mounts through them go (_as_ln_met).
-  local -A _ln_move=() _ln_drop=() _ln_rroot=()
+  local -A _ln_move=() _ln_drop=() _ln_rroot=() _ln_src=()
   local -a _ln_syms=() _ln_cover=() _ln_pending=()
   # (the connect paths' modes are the launch's; called without them, no path is one)
   declare -p _ln_mode &>/dev/null || local -A _ln_mode=()
@@ -16394,8 +16434,11 @@ _as_ro_pins() {
         continue
       fi
       _k=$_t
+      unset '_ln_src[$_k]'
       _as_ro_pins_chain "$_cs" "$_d" src || return 1
       _rp_out+=(run)
+      # the resolved source the check approved, which the read then uses (_as_ln_met)
+      ! declare -p _rd_res &>/dev/null || _rd_res[${#_rp_out[@]} - 1]="${_ln_src[$_k]-}"
     done
     # nothing is read through a link before it is approved
     _as_links_gate "${_proj:-$cwd}" || return 1
@@ -16465,7 +16508,7 @@ _as_ro_pins() {
   local -a _ln_extra=()
   ((${_ln_depth:-0})) || _as_ln_recorded || return 1
   _as_links_gate "${_proj:-$cwd}" || return 1
-  if ((${#_ln_move[@]} + ${#_ln_drop[@]} + ${#_ln_cover[@]} + ${#_ln_extra[@]})) && ((! ${_ln_depth:-0})); then
+  if ((${#_ln_move[@]} + ${#_ln_drop[@]} + ${#_ln_cover[@]} + ${#_ln_extra[@]} + ${#_ln_src[@]})) && ((! ${_ln_depth:-0})); then
     local _ln_e _ln_j _ln_w
     for _ln_e in ${_ln_cover[@]+"${_ln_cover[@]}"}; do
       _ln_w="${_ln_e%%$'\t'*}"
@@ -16497,6 +16540,14 @@ _as_ro_pins() {
         fi
         break
       done
+    done
+    # the sources through links: the resolved path the check approved (_as_ln_met)
+    for _ln_e in "${!_ln_src[@]}"; do
+      [[ -z "${_ln_drop[$_ln_e]+x}" && -n "${_ms[$_ln_e]-}" && "${_ms[$_ln_e]}" != "$_sd"/* ]] || continue
+      case "${_on[_ln_e]}" in
+        --bind | --bind-try | --dev-bind | --dev-bind-try | --ro-bind | --ro-bind-try) _ln_in[_oa[_ln_e]]="${_ln_src[$_ln_e]}" ;;
+        --overlay) ((_ln_e > 0)) && [[ "${_on[_ln_e - 1]}" == --overlay-src ]] && _ln_in[_oa[_ln_e - 1]]="${_ln_src[$_ln_e]}" ;;
+      esac
     done
     for _ln_w in "${!_ln_gone[@]}"; do unset '_ln_in[_ln_w]'; done
     _ln_in=(${_ln_in[@]+"${_ln_in[@]}"})
