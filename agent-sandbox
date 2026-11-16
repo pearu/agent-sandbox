@@ -15703,19 +15703,23 @@ _as_ln_inview() {
   return 1
 }
 
-# _as_ln_scan_mode K -- for _as_ro_pins, on its locals: the mode of mount K when the scan
-# looks inside it (a directory bound from the host at its own path, read-only or
-# read-write, that is a declaration, a channel or the project), else nothing.
+# _as_ln_scan_mode K NAME -- for _as_ro_pins, on its locals: NAME := the mode of mount K
+# when the scan looks inside it (a directory bound from the host at its own path,
+# read-only or read-write, that is a declaration, a channel or the project), else
+# empty. No subshell: it runs per mount of every launch.
 _as_ln_scan_mode() {
-  local _sm_d="${_od[$1]}" _sm_m
+  local -n _sm_out="$2"
+  local _sm_d="${_od[$1]}"
+  _sm_out=""
   [[ "${_mk[$1]-}" == rw || "${_mk[$1]-}" == ro ]] && [[ "${_ms[$1]-}" == "$_sm_d" && -d "$_sm_d" && "$_sm_d" != "$_sd"/* ]] || return 0
-  _sm_m="${_ln_mode[$_sm_d]-}"
-  if [[ "$_sm_m" != read-only && "$_sm_m" != read-write ]]; then
+  _sm_out="${_ln_mode[$_sm_d]-}"
+  if [[ "$_sm_out" != read-only && "$_sm_out" != read-write ]]; then
+    _sm_out=""
     [[ "$_sm_d" == "${_proj:-$cwd}" || "$_sm_d" == "${profile_base:-/nonexistent}" ]] || return 0
-    _sm_m=read-only
-    [[ "${_mk[$1]}" == rw ]] && _sm_m=read-write
+    _sm_out=read-only
+    [[ "${_mk[$1]}" == rw ]] && _sm_out=read-write
   fi
-  printf '%s' "$_sm_m"
+  return 0
 }
 
 # _as_links_view_write -- for _as_ro_pins, on its locals: this launch's final view, for
@@ -15729,16 +15733,17 @@ _as_links_view_write() {
   mkdir -p -- "${_vw_f%/*}" 2>/dev/null || return 0
   for ((_vw_k = 0; _vw_k < ${#_on[@]}; _vw_k++)); do
     [[ -n "${_mk[$_vw_k]+x}" ]] || continue
-    _vw_m="$(_as_ln_scan_mode "$_vw_k")"
+    _as_ln_scan_mode "$_vw_k" _vw_m
     [[ "${_od[_vw_k]}${_ms[$_vw_k]}" != *[$'\t\n']* ]] || continue
     printf '%s\t%s\t%s\t%s\n' "${_od[_vw_k]}" "${_mk[$_vw_k]}" "${_ms[$_vw_k]}" "${_vw_m:--}"
   done >"$_vw_f.tmp" 2>/dev/null || return 0
   # the connect paths, whose links are the launch's own to find (_as_ln_met), not the scan's
   # (their declared source and mode: the review reads their links as the launch does)
-  local _vw_s
+  local _vw_s _vw_ds=0
+  declare -p _decl_src &>/dev/null && _vw_ds=1
   for _vw_k in "${!_ln_mode[@]}"; do
     _vw_s="$_vw_k"
-    ! declare -p _decl_src &>/dev/null || _vw_s="${_decl_src[$_vw_k]:-$_vw_k}"
+    ((! _vw_ds)) || _vw_s="${_decl_src[$_vw_k]:-$_vw_k}"
     [[ "$_vw_k$_vw_s" != *[$'\t\n']* ]] && printf '%s\tconnect\t%s\t%s\n' "$_vw_k" "$_vw_s" "${_ln_mode[$_vw_k]}"
   done >>"$_vw_f.tmp" 2>/dev/null
   mv -f -- "$_vw_f.tmp" "$_vw_f"
@@ -15764,7 +15769,7 @@ _as_ln_recorded() {
     _lr_d="${_lr_f[0]%/*}"
     _as_ro_pins_latest "${_lr_d:-/}" _lr_m
     ((_lr_m >= 0)) || continue
-    _lr_mode="$(_as_ln_scan_mode "$_lr_m")"
+    _as_ln_scan_mode "$_lr_m" _lr_mode
     [[ -n "$_lr_mode" ]] || continue
     _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
     [[ "$_lr_h" == "${_lr_d:-/}" ]] || continue
