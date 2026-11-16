@@ -15985,8 +15985,8 @@ _as_ln_insert() {
 # `P = MODE outside:T`, MODE what the path has without the link, and it needs the user's
 # approval where it would hand the role a host object it does not see: T exists, and the
 # final view does not show it at T from the host. A target the view shows, with any
-# access, is ordinary content: the role has the access T has there, nothing more, and no
-# mount is added for it. `own` hands nothing over. Refused outright, whatever the link
+# access, asks nothing; the declaration's mount still goes to T's own path, with its own
+# mode (below). `own` hands nothing over. Refused outright, whatever the link
 # leads to (_as_links_unsupported): a channel whose profile has no `links = yes`, the
 # project's dot-file, a hide. A dangling link implies nothing. On the src side that is all (bwrap binds the resolved
 # source; a store reads it after the check). On the dest side the mount cannot go on the
@@ -15997,9 +15997,11 @@ _as_ln_insert() {
 # - else at T's own path (_ln_move), each link of the chain the view does not show made
 #   again inside (_ln_syms), so the link resolves to it; the role sees T at T too;
 # - not at all (_ln_drop) where nothing is there to show: a host bind through a link
-#   whose target's directory does not exist (a dangling link), a host bind whose source
-#   is T itself and which the view shows already (with any access: the role keeps what
-#   T has there).
+#   whose target's directory does not exist (a dangling link).
+# A DECLARATION THE USER WROTE KEEPS ITS MOUNT: one naming P whose target the view shows
+# already is still moved to T's own path with the declaration's mode, and fixed there
+# (R1); it asks nothing, the target being in view. Only a link no declaration names
+# (one the scan finds) implies nothing when its target is in view.
 _as_ln_met() {
   local _lm_mode="${_ln_mode[$2]-}" _lm_t="$_ch_cur" _lm_kind="" _lm_chain="" _lm_l _lm_x _lm_need=r _lm_host=0
   [[ -n "${_ln_mode[$2]+x}" ]] || return 0
@@ -16061,9 +16063,6 @@ _as_ln_met() {
       _ln_cover+=("$_lm_first"$'\t'"$_lm_pk")
       return 0 # what lands there is the mount's own; its source's links are the src side's
     elif [[ -z "$_lm_kind" && ! -d "${_lm_t%/*}" ]] && ((_lm_host)); then
-      _ln_drop[$_k]=1
-      return 0
-    elif ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] && _as_ln_inview "$_ch_cur"; then
       _ln_drop[$_k]=1
       return 0
     else

@@ -240,16 +240,35 @@ part_in_place() {
   own_case seed-only dir
 }
 
-@test "a read-only declaration through a link to what the role sees launches with the access the target has (A: no mount added); through one to a host path outside its view it is refused before anything runs" {
+@test "a read-only declaration through a link to what the role sees keeps its mount, at the target's own path, read-only and fixed; through one to a host path outside its view it is refused before anything runs" {
   mkdir -p "$W/x/real" "$I/ext"
   printf 'HOST\n' >"$W/x/real/f.md"
   printf 'EXT\n' >"$I/ext/f.md"
   ln -s real "$W/x/lnk"
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c '
-    echo "seen=$(cat x/lnk/f.md)" >>report; (echo W >>x/real/f.md) 2>/dev/null && echo w=ok >>report || echo w=no >>report'
+    echo "seen=$(cat x/lnk/f.md)" >>report
+    (echo W >>x/lnk/f.md) 2>/dev/null && echo wl=ok >>report || echo wl=no >>report
+    (echo W >>x/real/f.md) 2>/dev/null && echo w=ok >>report || echo w=no >>report
+    mv x/real x/real2 2>/dev/null && echo mv=ok >>report || echo mv=no >>report'
   [ "$status" -eq 0 ]
   [ "$(report seen)" = HOST ]
-  [ "$(report w)" = ok ] # the target is in the read-write project: the role has what it has
+  [ "$(report wl)" = no ] # the declaration's mode, through the link
+  [ "$(report w)" = no ]  # and at the target's own path
+  [ "$(report mv)" = no ] # the target's directory fixed (R1)
+  [ "$(cat "$W/x/real/f.md")" = HOST ]
+  # the same for a file declared at the link itself (./cfg -> real/cfg)
+  mkdir -p "$W/real"
+  printf 'CFG\n' >"$W/real/cfg"
+  ln -s real/cfg "$W/cfg"
+  run_sandboxed "${BASE[@]}" -- --connect './cfg = read-only' --profile probe --exec bash -c '
+    (echo W >>cfg) 2>/dev/null && echo wl=ok >>report || echo wl=no >>report
+    (echo W >>real/cfg) 2>/dev/null && echo w=ok >>report || echo w=no >>report
+    mv real real2 2>/dev/null && echo mv=ok >>report || echo mv=no >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report wl)" = no ]
+  [ "$(report w)" = no ]
+  [ "$(report mv)" = no ]
+  [ "$(cat "$W/real/cfg")" = CFG ]
   rm "$W/x/lnk"
   ln -s "$I/ext" "$W/x/lnk"
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'

@@ -349,25 +349,33 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   implied "$P/lnk/b/f.md" read-only "$e/b/b/f.md"
 }
 
-@test "links: a target the view shows, read-only or read-write, implies nothing in any mode (A): the role keeps the access the target has" {
+@test "links: a declaration naming a path whose link leads to what the view shows keeps its mount, at the target's own path with the declaration's mode, asking nothing (a written declaration is not voided by A)" {
   local e="$BATS_TEST_TMPDIR/ext"
   mkdir -p "$e"
   touch "$e/f.md"
   ln -s "$e/f.md" "$P/l.md"
-  local m
-  for m in read-write copy copy-on-write seed-only; do
-    ln_mode "$P/l.md" "$m"
-    pins -- --bind "$P" "$P" --ro-bind "$e" "$e" --bind "$P/l.md" "$P/l.md"
-    [ "$RC" -eq 0 ]
-    [[ " ${OUT[*]} " != *" --bind $e/f.md "* ]] # no read-write bind of the read-only target
-  done
+  ln_mode "$P/l.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$e" "$e" --ro-bind "$P/l.md" "$P/l.md"
+  [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " == *" --ro-bind $e/f.md $e/f.md "* ]]
+  [[ " ${OUT[*]} " != *" $P/l.md "* ]] # bwrap cannot mount on the link
+  # read-only, the target read-write in the project: the declaration's mode, not the target's
+  mkdir -p "$P/real"
+  touch "$P/real/cfg"
+  ln -s real/cfg "$P/cfg"
+  ln_mode "$P/cfg" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$P/cfg" "$P/cfg"
+  [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " == *" --ro-bind $P/real/cfg $P/real/cfg "* ]]
+  [[ " ${OUT[*]} " == *" --bind $P/real $P/real "* ]] # its directory fixed (R1)
 }
 
-@test "links: a link to what the role already sees asks nothing (L4); a dangling one implies nothing" {
+@test "links: a declared path through a link to what the role already sees asks nothing (L4), its mount at the target; a dangling one implies nothing" {
   ln -s a "$P/lnk"
   ln_mode "$P/lnk/b/f.md" read-only
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " == *" --ro-bind $P/a/b/f.md $P/a/b/f.md "* ]]
   ln -s nowhere "$P/dang"
   ln_mode "$P/dang/f" read-only
   pins -- --bind "$P" "$P" --ro-bind-try "$P/dang/f" "$P/dang/f"
@@ -950,9 +958,10 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   ln -s real "$proj/lnk"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
-  # the target is in the role's view: ordinary content, no mount added for it (A)
+  # the target is in the role's view: no question; the declaration keeps its mount, at
+  # the target's own path, read-only
   run argv_has --ro-bind "$proj/real/b/f.md" "$proj/real/b/f.md"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
   rm "$proj/lnk"
   ln -s "$H/ext" "$proj/lnk"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
