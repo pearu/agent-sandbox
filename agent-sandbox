@@ -2698,8 +2698,15 @@ _as_connect_bind_all() {
             _ln_mode[$_ds_k]="${_rec_mode:-$mode}"
             ! declare -p _ln_chan &>/dev/null || _ln_chan[$_ds_k]="$ch"
             ;;
-          p) _ln_mode[$_ds_k]="${_connect_mode[$path]:-}" ;;
-          t) _ln_mode[$_ds_k]=hide ;;
+          p)
+            _ln_mode[$_ds_k]="${_connect_mode[$path]:-}"
+            # a declaration that takes a channel's path over makes it a declared path
+            ! declare -p _ln_chan &>/dev/null || unset '_ln_chan[$_ds_k]'
+            ;;
+          t)
+            _ln_mode[$_ds_k]=hide
+            ! declare -p _ln_chan &>/dev/null || unset '_ln_chan[$_ds_k]'
+            ;;
         esac
       fi
     fi

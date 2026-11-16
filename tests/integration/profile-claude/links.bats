@@ -368,14 +368,14 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   rec="$(ls "$IHOME/.config/agent-sandbox/trust/"*.links)"
   [ -s "$rec" ]
   printf '%s\n' "cat '$rec' >/dev/null 2>&1 && echo read=yes || echo read=no" \
-    "(echo X >>'$rec') 2>/dev/null && echo write=yes || echo write=no" >"$IWORK/probe.sh"
+    "(echo ROLE-WROTE-THIS >>'$rec') 2>/dev/null && echo write=yes || echo write=no" >"$IWORK/probe.sh"
   claude_
   [ "$status" -eq 0 ] || {
     printf "%s\n" "$output" | tail -5 >&3
     false
   }
   [ "$(rpt)" = $'read=no\nwrite=no' ]
-  run grep -c X "$rec"
+  run grep -c ROLE-WROTE-THIS "$rec" # a marker no path holds (a random X in the test's temporary path did)
   [ "$output" = 0 ]
 }
 
@@ -458,6 +458,32 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   done
   run bash -c 'find "$1" -name "*.links" 2>/dev/null' _ "$IHOME/.config"
   [ -z "$output" ] # nothing approved: nothing needed it
+}
+
+@test "a declaration you wrote takes a linked channel path over: a linked settings.json, refused as a channel path, launches once declared, under shared, inherit and isolated" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  printf '{"marker":"DOTSET"}\n' >"$IHOME/dot/claude/settings.json"
+  rm -f "$IHOME/.claude/settings.json"
+  ln -s ../dot/claude/settings.json "$IHOME/.claude/settings.json"
+  printf '%s\n' 'cat "$HOME/.claude/settings.json"' >"$IWORK/probe.sh"
+  local p
+  for p in shared inherit isolated; do
+    TEST_PRESET=$p
+    claude_
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"~/.claude/settings.json (the settings channel) is reached through the symbolic link"*"not supported through a symbolic link"* ]] || {
+      printf "%s undeclared: %s\n" "$p" "$output" | tail -5 >&3
+      false
+    }
+    [ ! -e "$IWORK/report" ]
+    # shellcheck disable=SC2088 # the declaration's own ~
+    claude_ --connect '~/.claude/settings.json = read-only outside:~/dot/claude/settings.json'
+    [ "$status" -eq 0 ] || {
+      printf "%s declared: %s\n" "$p" "$output" | tail -5 >&3
+      false
+    }
+    [ "$(rpt)" = '{"marker":"DOTSET"}' ]
+  done
 }
 
 @test "a link that stands for what a written outside: may not name is refused as that declaration is: a secret store, the trust store, the home (G)" {
