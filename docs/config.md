@@ -923,11 +923,15 @@ file: stopping what runs needs no policy.
 
 The review then asks about the declarations symbolic links imply
 ([connections.md](connections.md)), each on its own after the dot-file's question: a yes
-approves that link for this project, with the mode shown, and a no leaves it unapproved
-and changes nothing else. A link that is new or changed since, or that a launch would use
-with another mode, is asked about again, by a launch at a terminal or by `asb --trust`
-(which a launch without one names). Each question names the declaration that makes it
-unnecessary, to write in the dot-file. `--check` lists them too.
+approves that link for this project, with the mode shown, and a no leaves it unapproved.
+At `asb --trust` a no changes nothing else; at a launch, a no to a link on a path that
+launch declares or connects refuses the launch, and a no to one the review found inside a
+plainly bound directory blocks nothing (the link leads nowhere inside). A link on a
+declared or channel path that is new or changed since, or that a launch would use with
+another mode, is asked about again, by a launch at a terminal or by `asb --trust` (which
+a launch without one names); one found inside a plainly bound directory waits for the
+next review. Each question names the declaration that makes it unnecessary, to write in
+the dot-file. `--check` lists them too.
 
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
 bound into the sandbox**, so the agent can neither read nor forge it. Refusing

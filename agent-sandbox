@@ -9729,7 +9729,12 @@ _as_trust_notes() {
     if [[ "$key" != */ && -f "$(readlink -f -- "${src:-$p}" 2>/dev/null || printf '%s' "${src:-$p}")" ]]; then
       local cow_note=""
       [[ "$mode" == copy-on-write ]] && cow_note=" And copy-on-write on a file is copy: overlayfs cannot stack on a single file."
-      _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
+      if [[ -z "$src" ]] && _as_links_below_root "$p"; then
+        # (#401: bwrap cannot mount on a link, so the mount is at the file it leads to)
+        _as_msg "connect: '$key' is a file reached through a symbolic link. The file it leads to is bound over, so that file cannot be deleted or renamed from inside the sandbox; a link on its way, in a directory the role can write, can be.$cow_note"
+      else
+        _as_msg "connect: '$key' is a file. It is bound over, so it cannot be deleted or renamed from inside the sandbox.$cow_note"
+      fi
     fi
   done
   return "$remote_rc"
