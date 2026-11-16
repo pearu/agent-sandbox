@@ -2407,20 +2407,66 @@ _as_src_guard() {
   fi
 }
 
-# _as_src_strict KEY SRC -- for _as_src_guard outside a launch: refuse when a component
-# of SRC is a symbolic link (a source the launch resolved has none; one there now was
-# made since, by the role as like as not), saying so as the pins do.
+# _as_src_strict KEY SRC -- for _as_src_guard outside a launch (a join): SRC may go
+# through symbolic links only as an approved implied declaration has them (#401) -- the
+# chain the keeper's launch went through, every link reading as recorded. A link new or
+# changed since cannot be asked about here, so it is refused, naming what approves it.
 _as_src_strict() {
-  local c=/ comp rest="${2#/}"
-  while [[ -n "$rest" ]]; do
-    comp="${rest%%/*}"
-    [[ "$rest" == */* ]] && rest="${rest#*/}" || rest=""
-    [[ -n "$comp" && "$comp" != . ]] || continue
-    c="${c%/}/$comp"
-    if [[ -L "$c" ]]; then
-      _as_msg "connect: $1: its source goes through $c, a symbolic link made since the launch resolved it: declared paths are fixed for the role, and a link cannot be -- the role may have made it, choosing which host path this reads. $c points to $(_as_ro_pins_link_to "$c"): make it the directory or file it should be, and relaunch. Refusing"
-      return 1
+  local out chain t rec
+  out="$(_as_links_chain "$2")" || return 1
+  chain="${out%%$'\n'*}" t="${out#*$'\n'}"
+  [[ -n "$chain" ]] || return 0
+  rec="$(_as_links_rec "${_proj:-${cwd:-$PWD}}")"
+  if [[ -f "$rec" ]] && cut -f2,3 -- "$rec" | grep -qFx -- "$chain"$'\t'"$t"; then
+    return 0
+  fi
+  _as_msg "connect: $1: its source is reached through a symbolic link (${chain// ; /, }) to $t, new or changed since the launch this joins, and a join cannot ask. Refusing; review it with: ${invoked:-agent-sandbox} --trust, then launch again"
+  return 1
+}
+
+# _as_links_chain PATH -- two lines: the chain of PATH (every symbolic link met while
+# resolving it, `LINK -> TEXT` joined by ` ; `; empty when none), then the resolved path.
+# Fails at 40 links. No process but one readlink per link.
+_as_links_chain() {
+  local cur=/ c t n=0 l chain=""
+  local -a todo=() more=()
+  _as_ro_pins_comps "$1" todo
+  local i=0
+  while ((i < ${#todo[@]})); do
+    c="${todo[i]}"
+    i=$((i + 1))
+    case "$c" in
+      "" | .) continue ;;
+      ..)
+        cur="${cur%/*}"
+        [[ -n "$cur" ]] || cur=/
+        continue
+        ;;
+    esac
+    l="${cur%/}/$c"
+    if [[ ! -L "$l" ]]; then
+      cur="$l"
+      continue
     fi
+    n=$((n + 1))
+    ((n <= 40)) || return 1
+    t="$(readlink -- "$l")"
+    chain+="${chain:+ ; }$l -> $t"
+    [[ "$t" == /* ]] && cur=/
+    _as_ro_pins_comps "$t" more
+    todo=(${more[@]+"${more[@]}"} "${todo[@]:i}")
+    i=0
+  done
+  printf '%s\n%s' "$chain" "$cur"
+}
+
+# _as_links_none_on BASE PATH -- no component of PATH below BASE is a symbolic link.
+_as_links_none_on() {
+  local c="$1" rel="${2#"$1"/}"
+  while [[ -n "$rel" ]]; do
+    c="$c/${rel%%/*}"
+    [[ "$rel" == */* ]] && rel="${rel#*/}" || rel=""
+    [[ ! -L "$c" ]] || return 1
   done
   return 0
 }
@@ -2596,6 +2642,12 @@ _as_connect_bind_all() {
         else
           unset '_decl_src[$_ds_k]'
         fi
+        # what the path is, for the links met on its way (_as_ln_met): its mode
+        case "$what" in
+          c) _ln_mode[$_ds_k]="${_rec_mode:-$mode}" ;;
+          p) _ln_mode[$_ds_k]="${_connect_mode[$path]:-}" ;;
+          t) _ln_mode[$_ds_k]=hide ;;
+        esac
       fi
     fi
   done
@@ -7204,6 +7256,213 @@ _as_trust_forget() {
   rm -rf -- "$rec.purpose"
 }
 
+# ----- symbolic links: the declarations they imply (#401) ---------------------
+# A symbolic link P -> T that would hand the role a host object outside its view is
+# taken as the declaration `P = MODE outside:T` (MODE: what P would have without the
+# link), and such an implied declaration is approved as the dot-file is: the review
+# lists it, the user's yes records it, and a new or changed one asks again (refused
+# where nobody can answer). The record is <trust>/<sha256(project)>.links, one line per
+# approved implied declaration: P, the chain (every link met while resolving it, as
+# `LINK -> TEXT`, joined by ` ; `), the resolved target, its kind (dir, file), TAB
+# separated. The mode is not part of it: it comes from the approved dot-file or the
+# preset. <rec>.links.pending holds what a launch found and could not ask about, with
+# the mode as a fifth field, for `asb --trust` to show; and <rec>.links.views, per role,
+# the directories a launch bound plainly from the host, which --trust scans (the scan
+# is never run at an ordinary launch). All under the trust store, which no role sees.
+_as_links_rec() { printf '%s/trust/%s.links' "$(_as_config_dir)" "$(_as_sha256_str "$1")"; }
+
+# _as_links_approved PROJECT LINE -- is LINE (four fields) in PROJECT's record?
+_as_links_approved() {
+  local rec
+  rec="$(_as_links_rec "$1")"
+  [[ -f "$rec" ]] && grep -qFx -- "$2" "$rec"
+}
+
+# _as_links_record PROJECT LINE... -- add the lines (four fields, or five: the mode is
+# dropped) to PROJECT's record.
+_as_links_record() {
+  local rec l
+  rec="$(_as_links_rec "$1")"
+  shift
+  mkdir -p -- "${rec%/*}" || return 1
+  {
+    [[ ! -f "$rec" ]] || cat -- "$rec"
+    for l in "$@"; do
+      IFS=$'\t' read -r -a _lr_f <<<"$l"
+      printf '%s\t%s\t%s\t%s\n' "${_lr_f[0]}" "${_lr_f[1]}" "${_lr_f[2]}" "${_lr_f[3]}"
+    done
+  } | sort -u >"$rec.tmp" && mv -f -- "$rec.tmp" "$rec"
+}
+
+# _as_links_line_ok LINE -- does LINE's chain still hold: every link of it reads as
+# recorded, and its target is still of its kind? (A pending line is shown at --trust
+# only while it does, so what is approved is what is there.)
+_as_links_line_ok() {
+  local -a f=()
+  IFS=$'\t' read -r -a f <<<"$1"
+  ((${#f[@]} >= 4)) || return 1
+  local rest="${f[1]}" e l t
+  while [[ -n "$rest" ]]; do
+    e="${rest%% ; *}"
+    [[ "$rest" == *" ; "* ]] && rest="${rest#* ; }" || rest=""
+    l="${e%% -> *}" t="${e#* -> }"
+    [[ -L "$l" && "$(readlink -- "$l")" == "$t" ]] || return 1
+  done
+  case "${f[3]}" in
+    dir) [[ -d "${f[2]}" ]] ;;
+    file) [[ -e "${f[2]}" && ! -d "${f[2]}" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# _as_links_show LINE... -- the review's list: each implied declaration as the line it
+# stands for, then the links it comes from (through cat -v, as the dot-file is shown).
+_as_links_show() {
+  local l e rest
+  local -a f=()
+  printf '\nimplied by symbolic links (each a declaration you did not write; the mode is what the path has without the link):\n'
+  for l in "$@"; do
+    IFS=$'\t' read -r -a f <<<"$l"
+    printf '  %s = %s outside:%s\n' "$(_as_tilde "${f[0]}")" "${f[4]:-MODE}" "$(_as_tilde "${f[2]}")"
+    rest="${f[1]}"
+    while [[ -n "$rest" ]]; do
+      e="${rest%% ; *}"
+      [[ "$rest" == *" ; "* ]] && rest="${rest#* ; }" || rest=""
+      printf '      %s -> %s\n' "$(_as_tilde "${e%% -> *}")" "${e#* -> }"
+    done
+  done | cat -v
+}
+
+# _as_links_pending PROJECT -- the pending lines that still hold, and are not approved.
+_as_links_pending() {
+  local rec l
+  rec="$(_as_links_rec "$1").pending"
+  [[ -f "$rec" ]] || return 0
+  while IFS= read -r l; do
+    [[ -n "$l" ]] || continue
+    _as_links_line_ok "$l" || continue
+    _as_links_approved "$1" "$(cut -f1-4 <<<"$l")" && continue
+    printf '%s\n' "$l"
+  done <"$rec" | sort -u
+}
+
+# _as_links_view_file PROJECT -- the prefix of PROJECT's view files: one per profile and
+# role a launch ran, written by it (_as_links_view_write), read by the scan.
+_as_links_view_file() { printf '%s.view.' "$(_as_links_rec "$1")"; }
+
+# _as_links_scan_review PROJECT -- THE SCAN (#401), run by the review only (`--trust`,
+# the review a launch runs at a terminal when it asks anyway, `--roles` before its
+# panes), never by an ordinary launch: in every directory a launch of PROJECT bound
+# plainly from the host at its own path (a read-only or read-write declaration or
+# channel, the project), as its view file has it, each symbolic link whose target exists
+# and is outside that launch's view: an implied declaration (five fields), unless
+# approved. One `find -type l` per directory, pruned at every mount inside it (what
+# shows there is another mount's) and at the state directory (the roles' own stores).
+# shellcheck disable=SC2030,SC2031 # vd/vk/vs: per view file, read by _as_links_view_shows
+_as_links_scan_review() {
+  local proj="$1" vf d kind src mode l out chain t tk need
+  local sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
+  for vf in "$(_as_links_view_file "$proj")"*; do
+    [[ -f "$vf" ]] || continue
+    local -a vd=() vk=() vs=()
+    local -A vc=()
+    while IFS=$'\t' read -r d kind src mode; do
+      if [[ "$kind" == connect ]]; then
+        vc[$d]=1
+        continue
+      fi
+      vd+=("$d") vk+=("$kind") vs+=("$src")
+    done <"$vf"
+    while IFS=$'\t' read -r d kind src mode; do
+      [[ "$mode" == read-only || "$mode" == read-write ]] || continue
+      local -a prune=(-path "$sd" -o -path "$sd/*")
+      local x
+      for x in "${vd[@]}"; do
+        [[ "$x" == "$d"/* ]] && prune+=(-o -path "$x")
+      done
+      need=r
+      [[ "$mode" == read-write ]] && need=rw
+      while IFS= read -r -d '' l; do
+        [[ -z "${vc[$l]+x}" ]] || continue
+        out="$(_as_links_chain "$l")" || continue
+        chain="${out%%$'\n'*}" t="${out#*$'\n'}"
+        [[ "$chain$t" != *[$'\t']* ]] || continue
+        if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else continue; fi
+        _as_links_view_shows "$t" "$need" && continue
+        _as_links_approved "$proj" "$l"$'\t'"$chain"$'\t'"$t"$'\t'"$tk" && continue
+        printf '%s\t%s\t%s\t%s\t%s\n' "$l" "$chain" "$t" "$tk" "$mode"
+      done < <(find "$d" \( "${prune[@]}" \) -prune -o -type l -print0 2>/dev/null)
+    done <"$vf"
+  done | sort -u
+}
+
+# _as_links_view_shows HOST NEED -- for the scan, on its vd/vk/vs (a view file, in the
+# list's order): is HOST shown at its own path from the host with NEED, by the latest
+# mount at or above it?
+# shellcheck disable=SC2031
+_as_links_view_shows() {
+  local i j=-1
+  for ((i = 0; i < ${#vd[@]}; i++)); do
+    [[ "$1" == "${vd[i]}" || "$1" == "${vd[i]}"/* || "${vd[i]}" == / ]] && j=$i
+  done
+  ((j >= 0)) && [[ -n "${vs[j]}" && "${vs[j]}" != "${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"/* ]] || return 1
+  [[ "${vs[j]}${1#"${vd[j]%/}"}" == "$1" ]] || return 1
+  case "${vk[j]}:$2" in
+    rw:* | rwfile:* | ro:r) return 0 ;;
+  esac
+  return 1
+}
+
+# _as_links_gate PROJECT -- for a launch, on _ln_pending (five fields per line): every
+# implied declaration not in the record is asked about at a terminal, and refused
+# without one (or under --serve), naming the command that reviews it. The lines go to
+# <rec>.links.pending either way, for that review. Returns 0 when nothing is left
+# unapproved.
+_as_links_gate() {
+  local proj="$1" rec l ans
+  local -a new=()
+  _as_inside_sandbox && return 0
+  for l in ${_ln_pending[@]+"${_ln_pending[@]}"}; do
+    _as_links_approved "$proj" "$(cut -f1-4 <<<"$l")" || new+=("$l")
+  done
+  ((${#new[@]})) || return 0
+  mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
+  rec="$(_as_links_rec "$proj")"
+  if mkdir -p -- "${rec%/*}" 2>/dev/null; then
+    {
+      [[ ! -f "$rec.pending" ]] || cat -- "$rec.pending"
+      printf '%s\n' "${new[@]}"
+    } | sort -u >"$rec.pending.tmp" 2>/dev/null \
+      && mv -f -- "$rec.pending.tmp" "$rec.pending"
+  fi
+  if _as_has_terminal && ((! ${_do_serve:-0})); then
+    # asking anyway: the scan's findings go into the same list
+    mapfile -t new < <({
+      printf '%s\n' "${new[@]}"
+      _as_links_scan_review "$proj"
+    } | sort -u)
+    _as_links_show "${new[@]}" >&2
+    printf 'agent-sandbox: approve these for %s? [y/N] ' "$proj" >&2
+    read -r ans || true
+    case "$ans" in
+      y | Y | yes | YES)
+        _as_links_record "$proj" "${new[@]}" || return 1
+        _as_msg "approved."
+        return 0
+        ;;
+    esac
+    _as_msg "not approved; refusing to launch."
+    return 1
+  fi
+  local -a f=()
+  for l in "${new[@]}"; do
+    IFS=$'\t' read -r -a f <<<"$l"
+    _as_msg "connect: $(_as_tilde "${f[0]}") is reached through a symbolic link (${f[1]// ; /, }) to $(_as_tilde "${f[2]}"), which is outside the role's view: it stands for '$(_as_tilde "${f[0]}") = ${f[4]:-MODE} outside:$(_as_tilde "${f[2]}")', new or changed since you approved this project's links."
+  done
+  _as_msg "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: ${invoked:-agent-sandbox} --trust"
+  return 1
+}
+
 # _as_dotfile_briefing_files PROJECT FILE [unread] -- _as_briefing_files for FILE, parsed here.
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
@@ -8691,49 +8950,11 @@ _as_base_bind() {
   fi
   if [[ -n "${_acct_dir:-}" ]]; then
     args+=(--bind "$_acct_dir" "$profile_base")
-    _as_base_channel_links || return 1
     _as_base_rw_sources || return 1
     _as_base_entry_binds "$_preal" || return 1
   else
     args+=(--bind "$_preal" "$profile_base")
   fi
-}
-
-# _as_base_channel_links -- under an account (#355), refuse a channel bound from the base
-# whose path in the base is, or goes through, a symbolic link. Without an account the pins
-# refuse it (the base is the role's read-write directory, _as_ro_pins_chain); with one the
-# base is not shown to the role at all, so they cannot see it -- yet the base is a
-# directory roles write in other launches, and the engine cannot tell the user's link from
-# one a role planted there: bound (or seeded from, or made through) as it is, the
-# account's launch would hand the role whatever the link names (measured: a role under
-# `shared` put ~/.claude/CLAUDE.md -> ../secret/g in the base, and the next launch on an
-# account bound ~/secret/g read-write). Every mode that reads or binds the base's path
-# (all but `own`); a channel relocated elsewhere or from another sandbox is not bound from
-# the base. Checked before anything is made in the base (_as_base_rw_sources writes
-# through such a path). The base directory itself was resolved by _as_base_bind.
-# shellcheck disable=SC2154,SC2031
-_as_base_channel_links() {
-  local line entry ch path c rel
-  local -a fields=()
-  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
-    IFS=$'\t' read -r -a fields <<<"$line"
-    ch="${fields[0]}"
-    [[ "${_connect_mode[$ch]:-own}" != own ]] || continue
-    [[ -z "${_connect_src[$ch]:-}" && -z "${_connect_sandbox[$ch]:-}" ]] || continue
-    for entry in "${fields[@]:1}"; do
-      path="${entry#*:}"
-      [[ "$path" == "$profile_base"/* && "$(_as_channel_source "$path")" == "$path" ]] || continue
-      c="$profile_base" rel="${path#"$profile_base"/}"
-      while [[ -n "$rel" ]]; do
-        c="$c/${rel%%/*}"
-        [[ "$rel" == */* ]] && rel="${rel#*/}" || rel=""
-        [[ -L "$c" ]] || continue
-        _as_msg "connect: $path: under the account '${_acct_name:-}', its path in the base goes through $c, a symbolic link: the base is a directory roles write in other launches, and a link there would hand this launch whatever it names. $c points to $(_as_ro_pins_link_to "$c"): make it the directory or file it should be. Refusing to launch"
-        return 1
-      done
-    done
-  done
-  return 0
 }
 
 # _as_base_rw_sources -- under an account (#355), the read-write channels' own sources in
@@ -8762,6 +8983,9 @@ _as_base_rw_sources() {
       kind="${entry%%:*}" path="${entry#*:}"
       [[ "$path" == "$profile_base"/* && "$(_as_channel_source "$path")" == "$path" ]] || continue
       [[ ! -e "$path" && ! -L "$path" ]] || continue
+      # nothing is made through a symbolic link: one on the way may be the role's, and
+      # what it implies is approved first (_as_ln_met); the channel waits for its source
+      _as_links_none_on "$profile_base" "$path" || continue
       if [[ "$kind" == dir ]]; then
         mkdir -p -- "$path" || return 1
       elif ! _as_channel_hook profile_channel_start "$path" >/dev/null; then
@@ -8790,10 +9014,10 @@ _as_base_rw_sources() {
 # on a symlink already at the destination even when it is the same (its
 # SETUP_MAKE_SYMLINK takes EEXIST as an error until 0.9.0, which accepts an identical
 # one), and the account's directory keeps the one an earlier or a running launch made.
-# Such an entry is supported only with nothing declared under it: the role can replace
-# the link, so a declared path through it -- a channel's too, the claude profile's
-# `{base}/cache/changelog.md` under a linked `cache` -- refuses the launch
-# (_as_ro_pins_chain); the way out is to make the entry the directory it points to.
+# A declared path through such a link -- a channel's too, the claude profile's
+# `{base}/cache/changelog.md` under a linked `cache` -- is mounted with the link covered
+# (_as_ln_met: an empty directory or file put in its place in the account's directory,
+# which the next launch takes back for the link).
 # Entries created in the base after the launch are not seen by it. Bwrap makes each
 # mount point in the account's directory; an empty file among them is removed by the
 # cleanup (as a placeholder), a directory or a symlink stays. Sets _as_base_real and
@@ -8846,6 +9070,11 @@ _as_base_entry_binds() {
       [[ -d "$a" ]] && ka=directory
       [[ -d "$e" ]] && ke=directory
       [[ -L "$e" ]] && ke=symlink
+      # an empty directory where the base has a symlink: an earlier launch's cover of it
+      # (_as_ln_met; a file one is removed at the end), made the link again below
+      if [[ "$ke" == symlink && -d "$a" && -z "$(ls -A -- "$a" 2>/dev/null)" ]]; then
+        ka=symlink
+      fi
       if [[ "$ka" != "$ke" ]]; then
         _as_msg "the account '${_acct_name:-}': '$a' is a $ka where the base's '$e' is a $ke, so the base's cannot be put over it; remove '$a' (the account's) to see the base's there, or '$e' (the base's) to keep the account's. Nothing was started"
         return 1
@@ -8864,6 +9093,7 @@ _as_base_entry_binds() {
     fi
     if [[ -L "$e" ]]; then
       t="$(readlink -- "$e")"
+      [[ -L "$a" || ! -d "$a" ]] || rmdir -- "$a" 2>/dev/null
       # Another launch on the account may make the same one at the same moment.
       if [[ ! -L "$a" ]] && ! ln -s -- "$t" "$a" 2>/dev/null \
         && ! [[ -L "$a" && "$(readlink -- "$a")" == "$t" ]]; then
@@ -9242,8 +9472,28 @@ _as_trust_prompt() {
   local cwd="$1" file rec ans
   file="$cwd/.agent-sandbox"
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  # The implied declarations to approve with it (#401): what a launch found and could
+  # not ask about, and what the scan of the plainly bound directories finds, that still
+  # hold and are not approved. One list, one question with the dot-file's.
+  local -a links=()
+  mapfile -t links < <({
+    _as_links_pending "$cwd"
+    _as_links_scan_review "$cwd"
+  } | sort -u)
+  if [[ ! -f "$file" && ! -f "$rec" ]]; then
+    ((${#links[@]})) || return 1
+    _as_links_show "${links[@]}" >&2
+    printf 'agent-sandbox: approve these for %s? [y/N] ' "$cwd" >&2
+    read -r ans || true
+    case "$ans" in
+      y | Y | yes | YES) ;;
+      *) return 1 ;;
+    esac
+    _as_links_record "$cwd" "${links[@]}" || return 1
+    _as_msg "approved."
+    return 0
+  fi
   if [[ ! -f "$file" ]]; then
-    [[ -f "$rec" ]] || return 1
     {
       printf '\nagent-sandbox: %s has no .agent-sandbox, but one was approved earlier' "$cwd"
       if [[ -f "$rec.approved" ]]; then
@@ -9271,13 +9521,19 @@ _as_trust_prompt() {
     return 1
   }
   _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
-  printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
+  if ((${#links[@]})); then
+    _as_links_show "${links[@]}" >&2
+    printf 'agent-sandbox: approve this .agent-sandbox and the declarations its links imply for %s? [y/N] ' "$cwd" >&2
+  else
+    printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
+  fi
   read -r ans || true
   case "$ans" in
     y | Y | yes | YES) ;;
     *) return 1 ;;
   esac
   _as_trust_record "$cwd" "$file" || return 1
+  ((${#links[@]} == 0)) || _as_links_record "$cwd" "${links[@]}" || return 1
   _as_msg "approved."
   return 0
 }
@@ -12333,6 +12589,17 @@ _as_trust_check() {
   local cwd="$1" file rec
   file="$cwd/.agent-sandbox"
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  # What the review would list of the links (#401): a launch's that it could not ask
+  # about, and the scan's.
+  local -a links=()
+  mapfile -t links < <({
+    _as_links_pending "$cwd"
+    _as_links_scan_review "$cwd"
+  } | sort -u)
+  if ((${#links[@]})); then
+    _as_links_show "${links[@]}" >&2
+    _as_msg "check: ${#links[@]} implied declaration(s) new or changed since approved; a launch through them asks first ($invoked --trust)"
+  fi
   if [[ ! -f "$file" ]]; then
     if [[ -f "$rec" ]]; then
       _as_msg "check: $cwd has no .agent-sandbox, but one was approved earlier: a launch refuses until it is restored or the approval forgotten ($invoked --trust)"
@@ -14443,7 +14710,11 @@ _as_init() {
 _as_trust_review() {
   local cwd="$1" file ans
   file="$cwd/.agent-sandbox"
-  if [[ ! -f "$file" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]; then
+  if [[ ! -f "$file" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]] \
+    && [[ -z "$({
+      _as_links_pending "$cwd"
+      _as_links_scan_review "$cwd"
+    } | head -c1)" ]]; then
     _as_msg "no .agent-sandbox in $cwd"
     return 1
   fi
@@ -15197,8 +15468,11 @@ _as_ro_pins_layer() {
     _ly_c+="/${_ly_rel%%/*}"
     [[ "$_ly_rel" == */* ]] && _ly_rel="${_ly_rel#*/}" || _ly_rel=""
     if [[ -L "$_ly_u$_ly_c" ]]; then
-      _as_msg "connect: $2: its path goes through $_ly_b$_ly_c, a symbolic link the role made in its own layer of the copy-on-write mount at ${_ly_b:-/}: declared paths are fixed for the role, and a link cannot be. Remove it from that layer ($_ly_u$_ly_c), or make it there the directory it should be. Refusing to launch"
-      return 1
+      # covered (_as_ln_met): the layer is the engine's, the path fixed there
+      local _ly_k=dir
+      [[ -z "$_ly_rel" && -n "${_ms[$_k]-}" && ! -d "${_ms[$_k]}" && "${_on[_k]}" != --tmpfs ]] && _ly_k='file'
+      _ln_cover+=("$_ly_u$_ly_c"$'\t'"$_ly_k")
+      return 0
     fi
   done
   return 0
@@ -15309,17 +15583,243 @@ _as_ro_pins_readlink() {
   _rlc[$1]="$_rk_out"
 }
 
+# _as_ln_root LINK -- is LINK where $HOME or the project is, or above it? Such a link
+# (a linked home, /home -> /data/home) places everything the sandbox shows at the path
+# as written: it is no declaration, and the paths are not moved through it.
+_as_ln_root() {
+  local r
+  for r in "$HOME" "${_proj:-${cwd:-}}"; do
+    [[ -n "$r" ]] || continue
+    [[ "$r" == "$1" || "$r" == "$1"/* ]] && return 0
+  done
+  return 1
+}
+
+# _as_ln_unroot HOST NAME -- NAME := HOST as the sandbox has it: under the resolved home or
+# project, at the home or project as written.
+_as_ln_unroot() {
+  local -n _ur_out="$2"
+  local r rr
+  _ur_out="$1"
+  for r in "$HOME" "${_proj:-${cwd:-}}"; do
+    [[ -n "$r" ]] || continue
+    rr="${_ln_rroot[$r]-}"
+    if [[ -z "${_ln_rroot[$r]+x}" ]]; then
+      rr="$(readlink -f -- "$r" 2>/dev/null || printf '%s' "$r")"
+      _ln_rroot[$r]="$rr"
+    fi
+    [[ "$rr" != "$r" ]] || continue
+    if [[ "$1" == "$rr" || "$1" == "$rr"/* ]]; then
+      _ur_out="$r${1#"$rr"}"
+      return 0
+    fi
+  done
+}
+
+# _as_ln_inview HOST NEED -- for _as_ro_pins, on its locals: does the final view show the
+# host object HOST at its own path from the host, with NEED (rw: read-write; r: either)?
+# A store, an overlay, a tmpfs or a hide at that path is not the host's object.
+_as_ln_inview() {
+  local _iv_t _iv_d _iv_s
+  _as_ln_unroot "$1" _iv_s
+  _as_ro_pins_latest "$_iv_s" _iv_t
+  ((_iv_t >= 0)) && [[ -n "${_ms[$_iv_t]-}" && "${_ms[$_iv_t]}" != "$_sd"/* ]] || return 1
+  _iv_d="${_od[_iv_t]}"
+  [[ "$_iv_d" == / ]] && _iv_d=""
+  [[ "${_ms[$_iv_t]}${_iv_s#"$_iv_d"}" == "$1" ]] || return 1
+  case "${_mk[$_iv_t]}:$2" in
+    rw:* | rwfile:* | ro:r) return 0 ;;
+  esac
+  return 1
+}
+
+# _as_ln_scan_mode K -- for _as_ro_pins, on its locals: the mode of mount K when the scan
+# looks inside it (a directory bound from the host at its own path, read-only or
+# read-write, that is a declaration, a channel or the project), else nothing.
+_as_ln_scan_mode() {
+  local _sm_d="${_od[$1]}" _sm_m
+  [[ "${_mk[$1]-}" == rw || "${_mk[$1]-}" == ro ]] && [[ "${_ms[$1]-}" == "$_sm_d" && -d "$_sm_d" && "$_sm_d" != "$_sd"/* ]] || return 0
+  _sm_m="${_ln_mode[$_sm_d]-}"
+  if [[ "$_sm_m" != read-only && "$_sm_m" != read-write ]]; then
+    [[ "$_sm_d" == "${_proj:-$cwd}" || "$_sm_d" == "${profile_base:-/nonexistent}" ]] || return 0
+    _sm_m=read-only
+    [[ "${_mk[$1]}" == rw ]] && _sm_m=read-write
+  fi
+  printf '%s' "$_sm_m"
+}
+
+# _as_links_view_write -- for _as_ro_pins, on its locals: this launch's final view, for
+# the scan at the next review (_as_links_scan_review): each mount in the list's order,
+# DEST, KIND, host source, and the mode the scan reads it with (or `-`). Under the trust
+# store, by profile and role; not inside a sandbox, where there is no review.
+_as_links_view_write() {
+  [[ -z "$_rp_only" ]] && ! _as_inside_sandbox || return 0
+  local _vw_f _vw_k _vw_m
+  _vw_f="$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")"
+  mkdir -p -- "${_vw_f%/*}" 2>/dev/null || return 0
+  for ((_vw_k = 0; _vw_k < ${#_on[@]}; _vw_k++)); do
+    [[ -n "${_mk[$_vw_k]+x}" ]] || continue
+    _vw_m="$(_as_ln_scan_mode "$_vw_k")"
+    [[ "${_od[_vw_k]}${_ms[$_vw_k]}" != *[$'\t\n']* ]] || continue
+    printf '%s\t%s\t%s\t%s\n' "${_od[_vw_k]}" "${_mk[$_vw_k]}" "${_ms[$_vw_k]}" "${_vw_m:--}"
+  done >"$_vw_f.tmp" 2>/dev/null || return 0
+  # the connect paths, whose links are the launch's own to find (_as_ln_met), not the scan's
+  for _vw_k in "${!_ln_mode[@]}"; do
+    [[ "$_vw_k" != *[$'\t\n']* ]] && printf '%s\tconnect\t\t-\n' "$_vw_k"
+  done >>"$_vw_f.tmp" 2>/dev/null
+  mv -f -- "$_vw_f.tmp" "$_vw_f"
+  return 0
+}
+
+# _as_ln_recorded -- for _as_ro_pins, on its locals: the approved links inside the
+# directories the scan looks in (_as_ln_scan_mode), re-read: one whose chain reads as
+# recorded gets its target bound at the target's own path with that directory's mode
+# (_ln_extra; each link of the chain the view does not show made again inside, so the
+# link resolves to it); one that changed and now leads outside the view is a changed
+# implied declaration (_ln_pending, asked or refused). A link made since the last review
+# is not known here: nothing is bound for it until the next one.
+_as_ln_recorded() {
+  local _lr_rec _lr_l _lr_t _lr_m _lr_mode _lr_need _lr_out _lr_c _lr_x _lr_d _lr_h _lr_k
+  local -a _lr_f=()
+  _lr_rec="$(_as_links_rec "${_proj:-$cwd}")"
+  [[ -f "$_lr_rec" ]] || return 0
+  while IFS= read -r _lr_l; do
+    IFS=$'\t' read -r -a _lr_f <<<"$_lr_l"
+    ((${#_lr_f[@]} == 4)) || continue
+    [[ -z "${_vis[${_lr_f[0]}]+x}" && -z "${_ln_mode[${_lr_f[0]}]+x}" ]] || continue # a mount's own path: _as_ln_met's
+    _lr_d="${_lr_f[0]%/*}"
+    _as_ro_pins_latest "${_lr_d:-/}" _lr_m
+    ((_lr_m >= 0)) || continue
+    _lr_mode="$(_as_ln_scan_mode "$_lr_m")"
+    [[ -n "$_lr_mode" ]] || continue
+    _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
+    [[ "$_lr_h" == "${_lr_d:-/}" ]] || continue
+    _lr_need=r
+    [[ "$_lr_mode" == read-write ]] && _lr_need=rw
+    if _as_links_line_ok "$_lr_l"; then
+      _as_ln_inview "${_lr_f[2]}" "$_lr_need" && continue
+      _lr_k=--ro-bind
+      [[ "$_lr_mode" == read-write ]] && _lr_k=--bind
+      _ln_extra+=("$_lr_k" "${_lr_f[2]}" "${_lr_f[2]}")
+      _lr_c="${_lr_f[1]}"
+      _lr_c="${_lr_c#* ; }"
+      [[ "${_lr_f[1]}" == *" ; "* ]] || _lr_c=""
+      while [[ -n "$_lr_c" ]]; do
+        _lr_x="${_lr_c%% ; *}"
+        [[ "$_lr_c" == *" ; "* ]] && _lr_c="${_lr_c#* ; }" || _lr_c=""
+        _lr_t="${_lr_x%% -> *}"
+        _lr_d="${_lr_t%/*}"
+        _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
+        [[ "$_lr_h" == "${_lr_d:-/}" ]] || _ln_syms+=("${_lr_x#* -> }"$'\t'"$_lr_t")
+      done
+    elif [[ -L "${_lr_f[0]}" ]]; then
+      _lr_out="$(_as_links_chain "${_lr_f[0]}")" || continue
+      _lr_c="${_lr_out%%$'\n'*}" _lr_t="${_lr_out#*$'\n'}"
+      _lr_x=""
+      if [[ -d "$_lr_t" ]]; then _lr_x='dir'; elif [[ -e "$_lr_t" ]]; then _lr_x='file'; fi
+      [[ -n "$_lr_x" ]] || continue
+      _as_ln_inview "$_lr_t" "$_lr_need" && continue
+      _ln_pending+=("${_lr_f[0]}"$'\t'"$_lr_c"$'\t'"$_lr_t"$'\t'"$_lr_x"$'\t'"$_lr_mode")
+    fi
+  done <"$_lr_rec"
+  return 0
+}
+
+# _as_ln_met PATH KEY src|dest -- for _as_ro_pins_chain, on its locals (_ch_links, _ch_cur,
+# the mount _k): links met on the way to PATH, for the mount at KEY. Only a connect path
+# (_ln_mode: a channel, a declaration, a hide) is concerned; a bind of the engine's own
+# goes on as bwrap follows it. THE RULE (#401): a link P -> T is the declaration
+# `P = MODE outside:T`, MODE what the path has without the link, and it needs the user's
+# approval where it would hand the role a host object it does not see: T exists, and the
+# final view does not show it at T from the host with the access MODE gives (read-write;
+# read for read-only, copy, copy-on-write, seed-only). `own` and a hide hand nothing over.
+# A dangling link implies nothing. On the src side that is all (bwrap binds the resolved
+# source; a store reads it after the check). On the dest side the mount cannot go on the
+# link (bwrap refuses a symbolic-link destination), so it goes where the link leads:
+# - the link in a directory of the engine's (under the state directory: an account's,
+#   a role's store, a copy-on-write layer): covered, the link replaced there by an empty
+#   file or directory once every check passed, so the path is fixed (_ln_cover);
+# - else at T's own path (_ln_move), each link of the chain the view does not show made
+#   again inside (_ln_syms), so the link resolves to it; the role sees T at T too;
+# - not at all (_ln_drop) where nothing is there to show: a host bind or a hide through
+#   a dangling link, a host bind whose source is T itself and which the view shows
+#   already, a hide of what the view does not show.
+_as_ln_met() {
+  local _lm_mode="${_ln_mode[$2]-}" _lm_t="$_ch_cur" _lm_kind="" _lm_chain="" _lm_l _lm_x _lm_need=r _lm_host=0
+  [[ -n "${_ln_mode[$2]+x}" ]] || return 0
+  # a linked home or project is where things are, not a declaration (_as_ln_root)
+  local -a _ch_links=("${_ch_links[@]}") _lm_keep=()
+  for _lm_l in "${_ch_links[@]}"; do
+    _as_ln_root "$_lm_l" || _lm_keep+=("$_lm_l")
+  done
+  ((${#_lm_keep[@]})) || return 0
+  _ch_links=("${_lm_keep[@]}")
+  _as_ln_unroot "$_lm_t" _lm_t
+  for _lm_l in "${_ch_links[@]}"; do
+    _as_ro_pins_readlink "$_lm_l" _lm_x
+    [[ "$_lm_l$_lm_x" != *[$'\t\n']* ]] || {
+      _as_msg "connect: $2: $_lm_l, a symbolic link on its way, has a tab or a newline in its name or target, which cannot be shown for approval. Refusing to launch"
+      return 1
+    }
+    _lm_chain+="${_lm_chain:+ ; }$_lm_l -> $_lm_x"
+  done
+  if [[ -d "$_lm_t" ]]; then
+    _lm_kind='dir'
+  elif [[ -e "$_lm_t" ]]; then
+    _lm_kind='file'
+  fi
+  case "$_lm_mode" in
+    read-write) _lm_need=rw ;;
+    own | hide) _lm_need="" ;;
+  esac
+  [[ -n "${_ms[$_k]-}" && "${_ms[$_k]}" != "$_sd"/* && "${_mk[$_k]-}" != other ]] && _lm_host=1
+  if [[ "$3" == dest ]]; then
+    local _lm_first="${_ch_links[0]}"
+    if [[ "$_lm_first" == "$_sd"/* ]]; then
+      local _lm_pk=file
+      [[ -d "${_ms[$_k]-}" || "${_on[_k]}" == --tmpfs || "${_on[_k]}" == --overlay || "$1" != "$_lm_first" ]] && _lm_pk=dir
+      _ln_cover+=("$_lm_first"$'\t'"$_lm_pk")
+      return 0 # what lands there is the mount's own; its source's links are the src side's
+    elif [[ "$_lm_mode" == hide ]]; then
+      if [[ -n "$_lm_kind" ]] && _as_ln_inview "$_ch_cur" r; then _ln_move[$_k]="$_lm_t"; else _ln_drop[$_k]=1; fi
+      return 0
+    elif [[ -z "$_lm_kind" ]] && ((_lm_host)); then
+      _ln_drop[$_k]=1
+      return 0
+    elif ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] && _as_ln_inview "$_ch_cur" "$_lm_need"; then
+      _ln_drop[$_k]=1
+      return 0
+    else
+      _ln_move[$_k]="$_lm_t"
+      local _lm_d _lm_h
+      for _lm_l in "${_ch_links[@]:1}"; do
+        _lm_d="${_lm_l%/*}"
+        _as_ro_pins_host_at "${_lm_d:-/}" _lm_h
+        [[ "$_lm_h" == "${_lm_d:-/}" ]] && continue
+        _as_ro_pins_readlink "$_lm_l" _lm_x
+        _as_ln_unroot "$_lm_l" _lm_h
+        _ln_syms+=("$_lm_x"$'\t'"$_lm_h")
+      done
+    fi
+    # where it lands is all a store, an own or a mount of the engine's needs
+    ((_lm_host)) || return 0
+  fi
+  [[ -n "$_lm_need" && -n "$_lm_kind" ]] || return 0
+  _as_ln_inview "$_ch_cur" "$_lm_need" && return 0
+  _ln_pending+=("$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode")
+  return 0
+}
+
 # _as_ro_pins_chain PATH BIND src|dest -- for _as_ro_pins, on its locals: resolve PATH --
 # a declaration's source as declared (src), or the host path its key lands on (dest) --
 # link by link, as `readlink -f` does (relative and absolute targets, links inside link
 # targets, `..`). PROTECTS: declared paths are fixed for the role; the role cannot choose
 # which host path a later launch binds.
 #
-# - A link the role can replace (an entry of a directory a read-write host mount shows
-#   it, which it owns or can write) refuses the launch, in every mode, on both sides: a
-#   link cannot be pinned, and retargeting it the role would choose what the next launch
-#   binds there (measured for a source: an undeclared ~/secret bound read-write) or what
-#   a key lands on.
+# - The links met on a connect path's way are the user's or the role's alike: what they
+#   imply, and where the mount then goes, is _as_ln_met's (a link cannot be pinned, and
+#   retargeting one the role would choose what the next launch binds -- measured for a
+#   source: an undeclared ~/secret bound read-write -- so a new or changed one is asked).
 # - Every link met and the real path are fixed where a read-write host mount shows them:
 #   the directories above (pins) and, for a source, the path itself (a self-bind, a
 #   file's too), so the role can neither rename nor remove nor replace them (EBUSY). A
@@ -15354,56 +15854,6 @@ _as_ro_pins_chain() {
       _as_msg "connect: $2: $1 does not resolve (40 symbolic links: a loop?), so it cannot be bound. Refusing to launch"
       return 1
     fi
-    _ch_d="${_ch_l%/*}"
-    [[ -n "$_ch_d" ]] || _ch_d=/
-    _as_ro_pins_shows "$_ch_d" _ch_pos
-    # A directory of the role's own state (its agent's base, the profile's read-write
-    # state binds) is one the role writes in its other launches, whether or not this
-    # launch's view shows it (an outer declaration may cover it here): a link the role
-    # can replace there is as good as shown.
-    local _ch_rt=0 _ch_t2
-    if ((! ${#_ch_pos[@]})); then
-      for _ch_t2 in ${_ro_role_trees[@]+"${_ro_role_trees[@]}"}; do
-        [[ "$_ch_d" == "$_ch_t2" || "$_ch_d" == "$_ch_t2"/* ]] && _ch_rt=1 && break
-      done
-    fi
-    if { ((${#_ch_pos[@]})) || ((_ch_rt)); } && _as_ro_pins_replaceable "$_ch_l"; then
-      _ch_q="$(readlink -f -- "$1" 2>/dev/null || printf '%s' "$1")"
-      local _ch_to _ch_side="its source goes through" _ch_hint
-      _ch_to="$(_as_ro_pins_link_to "$_ch_l")"
-      _ch_hint="$_ch_l points to $_ch_to: make it the directory or file it should be, or, if $_ch_q is what you mean, declare that path instead"
-      [[ "$3" == dest ]] && _ch_side="its path goes through"
-      # not a declaration (a channel's path, a built-in path): what its user can do
-      local _ch_decl=0
-      if [[ "$3" == src ]]; then
-        declare -p _decl_src &>/dev/null && [[ -n "${_decl_src[$2]+x}" ]] && _ch_decl=1
-        # a channel's relocated source is recorded too, and is no declaration
-        ((_ch_decl)) && _as_channel_npaths "$2" >/dev/null && _ch_decl=0
-      else
-        local _ch_k2="$2/"
-        declare -p _connect_key &>/dev/null && [[ -n "${_connect_key[$2]+x}${_connect_key[$_ch_k2]+x}" ]] && _ch_decl=1
-      fi
-      if ((! _ch_decl)); then
-        # `outside:` is a way out only where following it works: a channel of one path
-        # whose relocated source alone goes through the link (the key is not the link)
-        _ch_hint="$_ch_l points to $_ch_to: make it the directory or file it should be"
-        if [[ "$3" == src && "$1" != "$2" && "$(_as_channel_npaths "$2")" == 1 ]]; then
-          _ch_hint+=", or, if $_ch_q is what you mean, give the channel its mode with outside:$_ch_q"
-        fi
-      fi
-      # A link the engine made again in an account's directory for a linked top-level
-      # entry of the base (_as_base_entry_binds): the next launch makes it again from
-      # the base's, so the way out is the base's entry (an account's directory where
-      # the base has a symlink is refused there).
-      local _ch_be="${_ch_l#"${_acct_dir:-}"/}"
-      if [[ -n "${_acct_dir:-}" && -n "${_as_base_real:-}" && "$_ch_l" == "$_acct_dir/$_ch_be" && "$_ch_be" != */* ]] \
-        && [[ -L "$_as_base_real/$_ch_be" && "$(readlink -- "$_as_base_real/$_ch_be")" == "$(readlink -- "$_ch_l")" ]]; then
-        _ch_be="$_as_base_real/$_ch_be"
-        _ch_hint="the base's $_ch_be points to $(_as_ro_pins_link_to "$_ch_be"): make it the directory or file it should be (the link in the account's directory is made again from it at every launch)"
-      fi
-      _as_msg "connect: $2: $_ch_side $_ch_l, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $_ch_hint. Refusing to launch"
-      return 1
-    fi
     _ch_links+=("$_ch_l")
     _as_ro_pins_readlink "$_ch_l" _ch_t
     [[ "$_ch_t" == /* ]] && _ch_cur=/
@@ -15411,10 +15861,14 @@ _as_ro_pins_chain() {
     _ch_todo=(${_ch_more[@]+"${_ch_more[@]}"} "${_ch_todo[@]:_ch_ti}")
     _ch_ti=0
   done
+  # The links met: for a connect path, the declaration they imply, if any, and where
+  # its mount goes (_as_ln_met; nothing else changes for a bind of the engine's own).
+  if ((${#_ch_links[@]})); then
+    _as_ln_met "$1" "$2" "$3" || return 1
+  fi
   # A source that does not exist: nothing there to fix, and nothing is made on the way
   # to it -- bwrap makes a mount's destination, never its source, and no mode binds a
-  # missing one. The links on the way were checked above; the launch that finds the
-  # source resolves it again.
+  # missing one. The launch that finds the source resolves it again.
   [[ "$3" == src && ! -e "$_ch_cur" ]] && return 0
   # (the check mode: the refusals above are all it asks for)
   [[ -z "${_rp_only:-}" ]] || return 0
@@ -15504,38 +15958,6 @@ _as_channel_npaths() {
   done
   return 1
 }
-
-# _as_ro_pins_link_to LINK -- for a refusal's hint, what LINK points to, resolved:
-# "TARGET", or "TARGET, which does not exist". Said, never recommended: the role may
-# have planted the link, so its target is the role's choice, not the user's.
-_as_ro_pins_link_to() {
-  local t
-  t="$(readlink -f -- "$1" 2>/dev/null || readlink -m -- "$1" 2>/dev/null || printf '%s' "$1")"
-  if [[ -e "$t" ]]; then
-    printf '%s' "$t"
-  else
-    printf '%s, which does not exist' "$t"
-  fi
-}
-
-# _as_ro_pins_replaceable LINK -- can the role replace LINK? Its directory is read-write to
-# it (the caller decided that on the final view) and it owns that directory, or can write
-# it -- unless the directory is sticky and neither it nor the link is the role's: then the
-# kernel lets only their owners remove the link.
-_as_ro_pins_replaceable() {
-  local _rl_d="${1%/*}"
-  [[ -n "$_rl_d" ]] || _rl_d=/
-  [[ "$(_as_ro_pins_uid "$_rl_d")" == "$_as_ro_pins_euid" ]] && return 0
-  [[ -w "$_rl_d" ]] || return 1
-  [[ -k "$_rl_d" ]] || return 0
-  [[ "$(_as_ro_pins_uid "$1")" == "$_as_ro_pins_euid" ]]
-}
-
-# The role's uid, as _as_ro_pins compares owners with it.
-_as_ro_pins_euid="$EUID"
-
-# _as_ro_pins_uid PATH -- the owner of PATH itself (a link: the link's), as a number.
-_as_ro_pins_uid() { stat -c %u -- "$1" 2>/dev/null || printf -- '-1'; }
 
 # _as_ro_pins_walk TARGET BIND -- for _as_ro_pins, on its locals: look at every
 # directory above TARGET (a sandbox path: a bind's DEST, or where its source shows), through
@@ -15672,6 +16094,9 @@ _as_ro_pins() {
   _rp_out=("${_rp_in[@]}") _rp_pinned=()
   [[ -n "$_rp_only" ]] || _pins_fixed=0
   _as_preset_is_native && return 0
+  # What the links met imply, and where the mounts through them go (_as_ln_met).
+  local -A _ln_move=() _ln_drop=() _ln_rroot=()
+  local -a _ln_syms=() _ln_cover=() _ln_pending=()
   local -A _nargs=() _qual=()
   _as_bwrap_nargs _nargs _qual
   # Parse: per option its name, first argument's index, DEST (no trailing /), and the
@@ -15717,17 +16142,6 @@ _as_ro_pins() {
   # depth, so the mount that decides can come after the bind in the list. Only where an
   # insertion goes is about order (the placement rules).
   local -A _vis=() _mk=() _ms=() _mopt=() _mops=() _touch=() _pin_cur=() _pin_no=()
-  # The role's own state trees, host paths (_as_ro_pins_chain): its agent's base and the
-  # profile's read-write state binds that are directories.
-  local -a _ro_role_trees=()
-  local _rt
-  for _rt in ${profile_base:+"$profile_base"} ${profile_config_binds[@]+"${profile_config_binds[@]}"}; do
-    _rt="${_rt%%$'\t'*}"
-    [[ -d "$_rt" ]] || continue
-    _as_ro_pins_norm _rt
-    _ro_role_trees+=("$_rt")
-    [[ ! -L "$_rt" ]] || _ro_role_trees+=("$(readlink -f -- "$_rt")")
-  done
   # The pins, in the order found: directory, place, host source, the mount it lies in.
   local -a _pn_p=() _pn_c=() _pn_s=() _pn_m=() _pn_new=()
   local -A _pn_new_seen=()
@@ -15873,6 +16287,8 @@ _as_ro_pins() {
       _as_ro_pins_chain "$_cs" "$_d" src || return 1
       _rp_out+=(run)
     done
+    # nothing is read through a link before it is approved
+    _as_links_gate "${_proj:-$cwd}" || return 1
     return 0
   fi
   for ((_k = 0; _k < ${#_on[@]}; _k++)); do
@@ -15923,6 +16339,57 @@ _as_ro_pins() {
       _as_ro_pins_apart "$_x" || _as_ro_pins_chain "$_x" "$_d" dest || return 1
     fi
   done
+  # The links met (_as_ln_met): what they imply approved first -- asked, or refused --
+  # before anything is made; then the covers, and, where a mount moves or goes, the list
+  # rewritten and everything computed again on it (once: what moved has no link left).
+  # The links the scan found and the user approved, re-read first (_as_ln_recorded).
+  local -a _ln_extra=()
+  ((${_ln_depth:-0})) || _as_ln_recorded || return 1
+  _as_links_gate "${_proj:-$cwd}" || return 1
+  if ((${#_ln_move[@]} + ${#_ln_drop[@]} + ${#_ln_cover[@]} + ${#_ln_extra[@]})) && ((! ${_ln_depth:-0})); then
+    local _ln_e _ln_j _ln_w
+    for _ln_e in ${_ln_cover[@]+"${_ln_cover[@]}"}; do
+      _ln_w="${_ln_e%%$'\t'*}"
+      [[ -L "$_ln_w" ]] || continue
+      rm -f -- "$_ln_w" || return 1
+      if [[ "${_ln_e##*$'\t'}" == dir ]]; then
+        mkdir -- "$_ln_w" || return 1
+      else
+        # an empty file, removed at the end as every mount point the engine made is
+        : >"$_ln_w" || return 1
+        _as_placeholder_files=("$_ln_w") _as_placeholder_maybe=()
+        _as_placeholder_register
+      fi
+    done
+    local -a _ln_in=("${_rp_in[@]:0:_end}") _ln_tail=("${_rp_in[@]:_end}")
+    local -A _ln_gone=()
+    for ((_ln_j = 0; _ln_j < ${#_on[@]}; _ln_j++)); do
+      for _ln_e in "${!_ln_move[@]}" "${!_ln_drop[@]}"; do
+        [[ "$_ln_j" == "$_ln_e" || ("${_od[_ln_j]}" == "${_od[_ln_e]}" && "${_on[_ln_j]}" =~ ^--(remount-ro|chmod)$) ]] || continue
+        if [[ -n "${_ln_drop[$_ln_e]+x}" ]]; then
+          for ((_ln_w = _oa[_og[_ln_j]] - 1; _ln_w < _oa[_ln_j] + _nargs[${_on[_ln_j]}]; _ln_w++)); do _ln_gone[$_ln_w]=1; done
+        else
+          case "${_on[_ln_j]}" in
+            --tmpfs | --dir | --remount-ro | --tmp-overlay | --ro-overlay) _ln_w=${_oa[_ln_j]} ;;
+            --overlay) _ln_w=$((_oa[_ln_j] + 2)) ;;
+            *) _ln_w=$((_oa[_ln_j] + 1)) ;;
+          esac
+          _ln_in[_ln_w]="${_ln_move[$_ln_e]}"
+        fi
+        break
+      done
+    done
+    for _ln_w in "${!_ln_gone[@]}"; do unset '_ln_in[_ln_w]'; done
+    _ln_in=(${_ln_in[@]+"${_ln_in[@]}"} ${_ln_extra[@]+"${_ln_extra[@]}"})
+    for _ln_e in ${_ln_syms[@]+"${_ln_syms[@]}"}; do
+      _ln_in+=(--symlink "${_ln_e%%$'\t'*}" "${_ln_e##*$'\t'}")
+    done
+    _ln_in+=(${_ln_tail[@]+"${_ln_tail[@]}"})
+    local _ln_depth=1
+    _as_ro_pins _ln_in "$2" "$3"
+    return
+  fi
+  _as_links_view_write
   ((${#_pn_p[@]})) || return 0
   # The self-check, again on what the output shows: no mount at or above a pinned
   # directory between its mount and its place (a pin would hide what came after it).
@@ -16002,14 +16469,15 @@ _as_launch() {
   _as_session_begin || return 1
   _as_placeholder_register
   # The pins (_as_ro_pins): computed once, from the final list, here, so every launch
-  # shape and network mode gets them; the list is unchanged when nothing is pinned. The
-  # briefing's line comes from this result (a join reads the keeper's briefing).
+  # shape and network mode gets them; the list is unchanged when nothing is pinned and no
+  # mount goes where a symbolic link leads (_as_ln_met). The briefing's line comes from
+  # this result (a join reads the keeper's briefing).
   local -a _pinned_opts=() _pinned=()
   local _pins_fixed=0 # set by _as_ro_pins: a declared path the role could otherwise move
   _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1
   _as_briefing_pins "$_pins_fixed" ${_pinned[@]+"${_pinned[@]}"} || return 1
+  _bwrap_opts=("${_pinned_opts[@]}")
   if ((${#_pinned[@]})); then
-    _bwrap_opts=("${_pinned_opts[@]}")
     if ((! _as_quiet)); then
       # The names as _as_check_name gives them, without a subshell per directory: the
       # slug looked up once.
@@ -16248,6 +16716,14 @@ _as_roles_open() {
   if [[ -f "$df" ]]; then
     _as_dotfile_trusted "$dir" "$df" || need=1
   elif [[ -f "$rec" ]]; then
+    need=1
+  fi
+  # and every role's implied declarations (#401): what a launch could not ask about, and
+  # the scan of what the roles' last launches bound
+  if ((! need)) && [[ -n "$({
+    _as_links_pending "$dir"
+    _as_links_scan_review "$dir"
+  } | head -c1)" ]]; then
     need=1
   fi
   if ((need)); then
@@ -16599,6 +17075,9 @@ agent_sandbox() (
   # A declared source as declared, by its DEST (_as_connect_bind_path,
   # _as_connect_bind_channel), for the pins to resolve link by link (_as_ro_pins_chain).
   local -A _decl_src=()
+  # A connect path's mode by its DEST (hide for a blanked path), for the links met on its
+  # way (_as_ln_met): only these paths imply declarations (#401).
+  local -A _ln_mode=()
   # The join-scoped paths the launch declares (#147): `kind<TAB>name<TAB>path`.
   local -a _join_scoped=()
   local _join_stage_bound=0
