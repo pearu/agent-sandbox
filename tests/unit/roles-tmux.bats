@@ -436,7 +436,7 @@ no_tmux_path() {
   agents '[agent]' 'command = claude' '[connect:planner-*]' '[connect:supervisor]'
   run_engine TMUX_DUMP="$TM" -- asb --roles supervisor-not-existing planner-1
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--roles: role 'supervisor-not-existing' matches no role section of .agent-sandbox (it has: planner-* supervisor); nothing was opened"* ]]
+  [[ "$output" == *"--roles: role 'supervisor-not-existing' matches no role section of .agent-sandbox (it has: planner-* supervisor); add [connect:*] if every name should be accepted. Nothing was opened"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
   # the unknown role after a known one, too
   run_engine TMUX_DUMP="$TM" -- asb --roles planner-1 nosuch

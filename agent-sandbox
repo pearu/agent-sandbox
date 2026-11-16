@@ -17083,7 +17083,9 @@ _as_launch_pasta() {
 #
 # Before tmux is called, in this terminal, and nothing opens when one fails: the
 # dot-file review a launch runs is run here, once -- launched together, every pane would
-# ask it; every --agent form must match a listed role; then every role's agent is
+# ask it; every listed role must match a role section of the approved file, as a single
+# launch's must (_as_role_resolve), unless it has none; every --agent form must match a
+# listed role; then every role's agent is
 # resolved as its pane will resolve it (_as_agent_resolve), and must name a profile
 # installed here and a binary to run (_as_resolve_bin), and with --resume a profile that
 # says how to resume; a role with no agent is refused, by name. Then a session of that
@@ -17166,7 +17168,7 @@ _as_roles_open() {
           [[ "$r" == $g ]] && hit=1 && break
         done
         if ((! hit)); then
-          _as_msg "--roles: role '$r' matches no role section of .agent-sandbox (it has: ${role_globs[*]}); nothing was opened"
+          _as_msg "--roles: role '$r' matches no role section of .agent-sandbox (it has: ${role_globs[*]}); add [connect:*] if every name should be accepted. Nothing was opened"
           return 2
         fi
       done
