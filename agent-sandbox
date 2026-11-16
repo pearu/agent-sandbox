@@ -2448,38 +2448,53 @@ _as_src_strict() {
 
 # _as_links_chain PATH -- two lines: the chain of PATH (every symbolic link met while
 # resolving it, `LINK -> TEXT` joined by ` ; `; empty when none), then the resolved path.
-# Fails at 40 links. No process but one readlink per link.
+# Fails at 40 links. (_as_links_resolve, printed.)
 _as_links_chain() {
-  local cur=/ c t n=0 l chain=""
-  local -a todo=() more=()
-  _as_ro_pins_comps "$1" todo
-  local i=0
-  while ((i < ${#todo[@]})); do
-    c="${todo[i]}"
-    i=$((i + 1))
-    case "$c" in
+  local _lc_c _lc_t
+  _as_links_resolve "$1" _lc_c _lc_t || return 1
+  printf '%s\n%s' "$_lc_c" "$_lc_t"
+}
+
+# _as_links_resolve PATH CHAIN T -- CHAIN := the chain of PATH, T := the resolved path,
+# without a subshell. A link's text comes from the caller's _lk_text (LINK -> TEXT, the
+# scan's `find -printf %l`, with _lk_on set) when it has it, else from one readlink. Fails at 40 links.
+_as_links_resolve() {
+  local -n _rv_chain="$2" _rv_t="$3"
+  local _rv_cur=/ _rv_c _rv_x _rv_n=0 _rv_l
+  local -a _rv_todo=() _rv_more=()
+  _rv_chain=""
+  _as_ro_pins_comps "$1" _rv_todo
+  local _rv_i=0
+  while ((_rv_i < ${#_rv_todo[@]})); do
+    _rv_c="${_rv_todo[_rv_i]}"
+    _rv_i=$((_rv_i + 1))
+    case "$_rv_c" in
       "" | .) continue ;;
       ..)
-        cur="${cur%/*}"
-        [[ -n "$cur" ]] || cur=/
+        _rv_cur="${_rv_cur%/*}"
+        [[ -n "$_rv_cur" ]] || _rv_cur=/
         continue
         ;;
     esac
-    l="${cur%/}/$c"
-    if [[ ! -L "$l" ]]; then
-      cur="$l"
+    _rv_l="${_rv_cur%/}/$_rv_c"
+    if [[ ! -L "$_rv_l" ]]; then
+      _rv_cur="$_rv_l"
       continue
     fi
-    n=$((n + 1))
-    ((n <= 40)) || return 1
-    t="$(readlink -- "$l")"
-    chain+="${chain:+ ; }$l -> $t"
-    [[ "$t" == /* ]] && cur=/
-    _as_ro_pins_comps "$t" more
-    todo=(${more[@]+"${more[@]}"} "${todo[@]:i}")
-    i=0
+    _rv_n=$((_rv_n + 1))
+    ((_rv_n <= 40)) || return 1
+    if [[ -n "${_lk_on:-}" && -n "${_lk_text[$_rv_l]+x}" ]]; then
+      _rv_x="${_lk_text[$_rv_l]}"
+    else
+      _rv_x="$(readlink -- "$_rv_l")"
+    fi
+    _rv_chain+="${_rv_chain:+ ; }$_rv_l -> $_rv_x"
+    [[ "$_rv_x" == /* ]] && _rv_cur=/
+    _as_ro_pins_comps "$_rv_x" _rv_more
+    _rv_todo=(${_rv_more[@]+"${_rv_more[@]}"} "${_rv_todo[@]:_rv_i}")
+    _rv_i=0
   done
-  printf '%s\n%s' "$chain" "$cur"
+  _rv_t="$_rv_cur"
 }
 
 # _as_links_below_root PATH -- is a component of PATH a symbolic link other than one at
@@ -7425,7 +7440,7 @@ _as_links_view_file() { printf '%s.view.' "$(_as_links_rec "$1")"; }
 # shows there is another mount's) and at the state directory (the roles' own stores).
 # shellcheck disable=SC2030,SC2031 # vd/vk/vs: per view file, read by _as_links_view_shows
 _as_links_scan_review() {
-  local proj="$1" vf d kind src mode l out chain t tk
+  local proj="$1" vf d kind src mode l x chain t tk
   local sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
   for vf in "$(_as_links_view_file "$proj")"*; do
     [[ -f "$vf" && "$vf" != *.tmp ]] || continue
@@ -7448,22 +7463,53 @@ _as_links_scan_review() {
     done
     while IFS=$'\t' read -r d kind src mode; do
       [[ "$mode" == read-only || "$mode" == read-write ]] || continue
-      local -a prune=(-path "$sd" -o -path "$sd/*")
-      local x
+      local -a prune=(-path "$sd" -o -path "$sd/*") nest=()
+      local x y dshows=0 inn
       for x in "${vd[@]}"; do
-        [[ "$x" == "$d"/* ]] && prune+=(-o -path "$x")
+        [[ "$x" == "$d"/* ]] && prune+=(-o -path "$x") nest+=("$x")
       done
-      while IFS= read -r -d '' l; do
+      _as_links_view_shows "$d" && dshows=1
+      # every link with its text from one find (no process per link); one that resolves
+      # to what the view shows, the most common by far, is dropped at once
+      local -A _lk_text=()
+      local -a lks=()
+      local _lk_on=1
+      local -a lkf=()
+      # through a file: mapfile reads a pipe a byte at a call (measured: 0.38 s for 2000
+      # links, 0.03 s from a file); under the trust store, which no role sees
+      local lt
+      lt="$(_as_links_rec "$proj").scan.$BASHPID"
+      find "$d" \( "${prune[@]}" \) -prune -o -type l -printf '%p\0%l\0' >"$lt" 2>/dev/null
+      mapfile -d '' lkf <"$lt"
+      rm -f -- "$lt"
+      local i
+      for ((i = 0; i + 1 < ${#lkf[@]}; i += 2)); do
+        _lk_text[${lkf[i]}]="${lkf[i + 1]}" lks+=("${lkf[i]}")
+      done
+      for l in ${lks[@]+"${lks[@]}"}; do
         [[ -z "${vc[$l]+x}" ]] || continue
-        out="$(_as_links_chain "$l")" || continue
-        chain="${out%%$'\n'*}" t="${out#*$'\n'}"
+        # (find walks no link, so a name beside the link that is no link is the target)
+        y="${_lk_text[$l]}"
+        if [[ "$y" != */* && "$y" != . && "$y" != .. && -n "$y" && ! -L "${l%/*}/$y" ]]; then
+          chain="$l -> $y" t="${l%/*}/$y"
+        else
+          _as_links_resolve "$l" chain t || continue
+        fi
+        # in d itself, under no mount nested in it: shown as d is
+        if ((dshows)) && [[ "$t" == "$d"/* ]]; then
+          inn=1
+          for y in ${nest[@]+"${nest[@]}"}; do
+            [[ "$t" == "$y" || "$t" == "$y"/* ]] && inn=0 && break
+          done
+          ((! inn)) || continue
+        fi
+        _as_links_view_shows "$t" && continue
         [[ "$chain$t" != *[$'\t']* ]] || continue
         if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else continue; fi
-        _as_links_view_shows "$t" && continue
         _as_links_approved "$proj" "$l"$'\t'"$chain"$'\t'"$t"$'\t'"$tk"$'\t'"$mode" && continue
         _as_links_outside_ok "$l" "$chain" "$t" "$mode" || continue
         printf '%s\t%s\t%s\t%s\t%s\n' "$l" "$chain" "$t" "$tk" "$mode"
-      done < <(find "$d" \( "${prune[@]}" \) -prune -o -type l -print0 2>/dev/null)
+      done
     done <"$vf"
   done | sort -u
 }
