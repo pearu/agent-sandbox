@@ -37,7 +37,9 @@ pins() {
   # (HOME a test's own: the computation writes the launch's view under its trust store)
   mkdir -p "$BATS_TEST_TMPDIR/home"
   # shellcheck disable=SC2016 # the script's own expansions
-  mapfile -d '' _all < <(HOME="$BATS_TEST_TMPDIR/home" XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" PINS_PRE="${PINS_PRE:-}" ${_wrap[@]+"${_wrap[@]}"} bash -c 'source "$1"; eval "$PINS_PRE"; shift; _preset="$1"; shift; IN=("$@")
+  # (AGENT_SANDBOX cleared, as run_engine clears it: inside a role's sandbox the gate
+  # would take this for a launch inside one, which asks nothing)
+  mapfile -d '' _all < <(env -u AGENT_SANDBOX HOME="$BATS_TEST_TMPDIR/home" XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" PINS_PRE="${PINS_PRE:-}" ${_wrap[@]+"${_wrap[@]}"} bash -c 'source "$1"; eval "$PINS_PRE"; shift; _preset="$1"; shift; IN=("$@")
     _as_ro_pins IN OUT PIN 2>"$BATS_TEST_TMPDIR/msg"; rc=$?
     printf "%s\0" "$rc" "${#OUT[@]}" "${OUT[@]}" ${PIN[@]+"${PIN[@]}"}' _ "$ENGINE" "$preset" "$@")
   RC="${_all[0]}"
@@ -303,12 +305,13 @@ cache_pins() {
 # ---- symbolic links as the declarations they imply (#401) ----
 # ln KEY MODE -- PINS_PRE for a launch in project $P whose connect path KEY has MODE
 # (_as_connect_bind_all records it in _ln_mode); approve P CHAIN T KIND -- the record
-# `asb --trust` writes for an implied declaration, under the computation's HOME.
+# `asb --trust` writes for an implied declaration (P CHAIN T KIND MODE: the mode is part
+# of what is approved), under the computation's HOME.
 ln_mode() { PINS_PRE="_proj=$P; declare -A _ln_mode=([$1]=$2)"; }
 approve() {
   local d="$BATS_TEST_TMPDIR/home/.config/agent-sandbox/trust"
   mkdir -p "$d"
-  printf '%s\t%s\t%s\t%s\n' "$@" >>"$d/$(printf '%s' "$P" | sha256sum | cut -d' ' -f1).links"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$@" >>"$d/$(printf '%s' "$P" | sha256sum | cut -d' ' -f1).links"
 }
 implied() { # MSG names the implied declaration KEY = MODE outside:T, refused without a terminal
   [ "$RC" -eq 1 ]
@@ -325,11 +328,18 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   implied "$P/lnk/b/f.md" read-only "$e/b/f.md"
   [[ "$MSG" == *"($P/lnk -> $e)"* ]]
-  approve "$P/lnk/b/f.md" "$P/lnk -> $e" "$e/b/f.md" file
+  approve "$P/lnk/b/f.md" "$P/lnk -> $e" "$e/b/f.md" file read-write # another mode: asked again
+  ln_mode "$P/lnk/b/f.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  implied "$P/lnk/b/f.md" read-only "$e/b/f.md"
+  approve "$P/lnk/b/f.md" "$P/lnk -> $e" "$e/b/f.md" file read-only
   ln_mode "$P/lnk/b/f.md" read-only
   pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
   [ "$RC" -eq 0 ]
-  [[ " ${OUT[*]} " == *" --ro-bind $P/lnk/b/f.md $e/b/f.md "* ]] # bwrap cannot mount on the link: at its target
+  # bwrap cannot mount on the link: at its target; and from the target the check
+  # resolved, not through the link (H)
+  [[ " ${OUT[*]} " == *" --ro-bind $e/b/f.md $e/b/f.md "* ]]
+  [[ " ${OUT[*]} " != *" $P/lnk/"* ]]
   # retargeted: changed since approved, asked again
   rm "$P/lnk"
   ln -s "$e/b" "$P/lnk"
@@ -339,7 +349,7 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   implied "$P/lnk/b/f.md" read-only "$e/b/b/f.md"
 }
 
-@test "links: the mode is what the path has without the link; read-write needs the target shown read-write, read the target shown at all" {
+@test "links: a target the view shows, read-only or read-write, implies nothing in any mode (A): the role keeps the access the target has" {
   local e="$BATS_TEST_TMPDIR/ext"
   mkdir -p "$e"
   touch "$e/f.md"
@@ -348,7 +358,8 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   for m in read-write copy copy-on-write seed-only; do
     ln_mode "$P/l.md" "$m"
     pins -- --bind "$P" "$P" --ro-bind "$e" "$e" --bind "$P/l.md" "$P/l.md"
-    if [[ "$m" == read-write ]]; then implied "$P/l.md" read-write "$e/f.md"; else [ "$RC" -eq 0 ]; fi
+    [ "$RC" -eq 0 ]
+    [[ " ${OUT[*]} " != *" --bind $e/f.md "* ]] # no read-write bind of the read-only target
   done
 }
 
@@ -383,22 +394,18 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   [ "$RC" -eq 0 ]
 }
 
-@test "links: a hide through a link blanks the target where the role would see it, no question; through a dangling link, nothing" {
-  mkdir -p "$P/real/secret" "$P/d/secret"
+@test "links: a hide through a link is refused, the link named, a feature request invited; through a dangling link too (N)" {
+  mkdir -p "$P/real/secret"
   ln -s real "$P/lnk"
   ln_mode "$P/lnk/secret" hide
   pins -- --bind "$P" "$P" --tmpfs "$P/lnk/secret"
-  [ "$RC" -eq 0 ]
-  [[ " ${OUT[*]} " == *" --tmpfs $P/real/secret "* ]]
+  [ "$RC" -ne 0 ]
+  [[ "$MSG" == *"$P/lnk/secret (a hidden path) is reached through the symbolic link"*"lnk -> real"*"not supported through a symbolic link"*"github.com/pearu/agent-sandbox/issues"* ]]
   ln -s nowhere "$P/dang"
   ln_mode "$P/dang/x" hide
   pins -- --bind "$P" "$P" --tmpfs "$P/dang/x"
-  [ "$RC" -eq 0 ]
-  [[ " ${OUT[*]} " != *" --tmpfs "* ]]
-  ln_mode "$P/d/secret" hide
-  pins -- --bind "$P" "$P" --tmpfs "$P/d/secret"
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/d" ]
+  [ "$RC" -ne 0 ]
+  [[ "$MSG" == *"not supported through a symbolic link"* ]]
 }
 
 @test "links: a declaration whose path is a link but whose source is elsewhere asks nothing (S2): the source goes at the target's path" {
@@ -803,6 +810,16 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
       echo "$m launched: $output" >&2
       return 1
     }
+    # the probe profile's channel has no `links = yes`: through a link it is refused (C)
+    [[ "$output" == *"(the extra channel) is reached through the symbolic link ~/alt/extra -> ../ext, and this location is not supported through a symbolic link"*"github.com/pearu/agent-sandbox/issues"* ]]
+  done
+  # with `links = yes` it is the implied declaration, refused without a terminal
+  printf '%s\n' 'profile_channel_links=(extra)' >>"$H/profiles/relo/profile.sh"
+  for m in copy read-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --profile relo \
+      --connect '~/alt/ = read-write' --connect "extra = $m" --exec true
+    [ "$status" -ne 0 ]
     [[ "$output" == *"to ~/ext, which is outside the role's view: it stands for '~/.probe/extra = $m outside:~/ext'"* ]]
   done
 }
@@ -932,20 +949,23 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   ln -s real "$proj/lnk"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$proj/real/b/f.md" "$proj/real/b/f.md" # bwrap cannot mount on the link: at its target
+  # the target is in the role's view: ordinary content, no mount added for it (A)
+  run argv_has --ro-bind "$proj/real/b/f.md" "$proj/real/b/f.md"
+  [ "$status" -ne 0 ]
   rm "$proj/lnk"
   ln -s "$H/ext" "$proj/lnk"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -ne 0 ]
   [ "$(printf '%s\n' "$output" | grep -c "is reached through a symbolic link ($proj/lnk -> $H/ext)")" -eq 1 ]
   [ ! -s "$H/argv" ]
-  run_engine AGENT_SANDBOX_NET=none -- asb --trust <<<y
+  run_engine AGENT_SANDBOX_NET=none -- asb --trust <<<$'y\ny' # one question per link
   [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c 'approve this link for')" -eq 2 ]
   [[ "$output" == *"/proj/lnk/b/f.md = read-only outside:"*"/ext/b/f.md"* ]]
   [[ "$output" == *"/proj/lnk = read-write outside:"*"/ext"* ]] # the link itself, in the project: the scan's
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
-  argv_has --ro-bind "$(cd "$H/ext" && pwd -P)/b/f.md" "$H/ext/b/f.md"
+  argv_has --ro-bind "$(cd "$H/ext" && pwd -P)/b/f.md" "$(cd "$H/ext" && pwd -P)/b/f.md"
 }
 
 @test "a read-only file two levels down in a read-write project: exactly the two pins added, before it" {

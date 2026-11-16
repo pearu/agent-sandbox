@@ -16060,7 +16060,7 @@ _as_ln_met() {
     # a declaration the user wrote with that very source (`P = MODE outside:T`, in the
     # dot-file or --connect) is theirs already: the question it would be asks nothing
     # (its source's own links are the src side's)
-    [[ -z "${_connect_src[$2]:-}" ]] || return 0
+    ! declare -p _connect_src &>/dev/null || [[ -z "${_connect_src[$2]:-}" ]] || return 0
   fi
   [[ -n "$_lm_need" && -n "$_lm_kind" ]] || return 0
   _as_ln_inview "$_ch_cur" && return 0
