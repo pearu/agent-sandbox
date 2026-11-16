@@ -1129,59 +1129,77 @@ names are gone; there are no aliases for removed names before 1.0.
   `skills/` under `shared`), is bound onto itself, so it is fixed too: measured before,
   a role under `shared` renamed `~/.claude/CLAUDE.md` away and put a link to
   `~/secret/g` there, which the next launch on an account bound, read and wrote. A
-  `join-scoped` path declaration's source is fixed like any other, and so is a `sandbox:`
-  source that resolves to a native path of the user's (a role with no record, or a
-  read-write or read-only one); another role's own store is not a path of the user's. A
-  symbolic link is taken as the declaration it implies: `P -> T` on a declared path or a
-  channel's path, on a source's way, or inside a directory bound plainly from the host
-  (the project, `~/.claude`, a `read-only` or `read-write` declaration) stands for
-  `P = MODE outside:T`, MODE being what P has without the link -- the channel's mode under
-  the preset, the declaration's, or the mode of what shows its directory. Where it would
-  hand the role a host object outside its view, it is approved with the dot-file: the
-  review lists it under "implied by symbolic links", one question approves both, and the
-  approval is recorded per project in the trust store; a new or changed link asks again
-  at a terminal and refuses without one (and under `--serve`), naming `asb --trust`, with
-  nothing read, copied, hashed, bound or made through it before. A link to what the role
-  already sees with that access needs no approval, nor does one under `own` (the role's
-  own store goes where the link leads) or a hide (the target is blanked where the role
-  would see it); a dangling link implies nothing until its target appears, and a source
-  the engine would make where one stands is refused, nothing made through it. bwrap
-  cannot mount on a link, so the mount goes where it leads: in a directory the role has
-  from the host, at the target's own path, each link of a chain
-  the view does not show made again inside -- so the role sees the target at its own
-  path too, and in a read-write directory it can replace the link, which the next launch
-  asks about; in a directory of the engine's (an account's, a role's store, a
-  copy-on-write layer) the link is covered and the path fixed. Links inside plainly
-  bound directories are found by a scan during the review (`--trust`, a launch's review
-  at a terminal, `--roles` before its panes), never at an ordinary launch, which
-  re-reads only the approved ones: a link made after the last review dangles inside
-  until the next. The review also reads the links on each role's declared and channel
-  paths as its last launch had them (no search), so a link there is asked about once,
-  the mode shown being that launch's. `--check` lists what the review would. A join
-  refuses a source that gained a link since its launch unless the link leads to what
-  the role already sees, or is approved. A link inside a `copy`, `seed-only` or
-  `copy-on-write` source is not covered here. Measured before: `~/.claude/CLAUDE.md ->
-  ../dot/claude/CLAUDE.md` (dotfiles) was unreadable under `shared` and failed with
-  "bwrap: Can't mount on symlink destination" under `inherit` and `isolated`. A launch
-  that refuses has read nothing through the link: a source is seeded or copied only once
-  what its links imply is approved, and a channel whose path a declaration takes over is
-  not read in that launch. `--reset` of a `copy` channel no longer copies from the source
-  itself: it discards the copy, and the next launch copies the source again. The engine
-  touches a source -- reads, copies, hashes (copy-on-write's shadow check) or makes it
-  when missing -- only through one check of the links on its way (not of links inside a
+  `join-scoped` path declaration's source is fixed like any other, and so is a
+  `sandbox:` source that resolves to a native path of the user's (a role with no record,
+  or a read-write or read-only one); another role's own store is not a path of the
+  user's. A symbolic link is taken as the declaration it implies: `P -> T` on a declared
+  path or a channel's path, on a source's way, or inside a directory bound plainly from
+  the host (the project, `~/.claude`, a `read-only` or `read-write` declaration) stands
+  for `P = MODE outside:T`, MODE being what P has without the link -- the channel's mode
+  under the preset, the declaration's, or the mode of what shows its directory. An
+  implied declaration passes the refusals a written `outside:` passes (a secret store,
+  the engine's own directories, `~`). Where it would hand the role a host object outside
+  its view, the user approves it: each such link is asked about on its own, apart from
+  the dot-file, at a terminal (`asb --trust`, a launch's review there, `--roles` before
+  its panes), and the question names the declaration that, written in the dot-file,
+  skips it. The approval is recorded per project in the trust store with the links on
+  the way, the target, its kind and the mode; every launch resolves the path again
+  against it and binds and reads the target it resolved, never the link's path. A new or
+  changed link -- another target, a link on the way replaced, another mode -- on a
+  declared or channel path asks again at a terminal and refuses without one (and under
+  `--serve`), naming `asb --trust`, with nothing read, copied, hashed, bound or made
+  through it before; a no at a launch refuses only for such a link. A link to what the
+  role already sees, with any access, implies nothing: the role reaches the target with
+  the access the target has, and a declaration written for such a path keeps its mount,
+  at the target's own path with the declaration's mode, fixed there. A link at a path
+  under `own` needs no approval either (the role's own store goes where the link leads).
+  A dangling link implies nothing until its target appears, and a source the engine
+  would make where one stands is refused, nothing made through it. Of the claude
+  profile's channel paths only `CLAUDE.md`, `skills/` and the cache's `changelog.md` may
+  be reached through a link (a profile marks such a path `links:yes`); any other channel
+  path or source through a link -- a linked `settings.json`, `plugins/`, `agents/`,
+  `projects/`, `rules/`, `commands/` or `~/.claude.json`, among others -- refuses the
+  launch (under `isolated` a linked `~/.claude.json` launches: its channel is `own`
+  there and reads nothing from it), as do a project whose `.agent-sandbox` is a link and
+  a hide through a link; each such refusal names the link and invites a feature request
+  at the project's issues. A linked agent base (`~/.claude -> elsewhere`) refuses too,
+  naming `CLAUDE_CONFIG_DIR` for a base that lives elsewhere. bwrap cannot mount on a
+  link, so the mount goes where it leads: in a directory the role has from the host, at
+  the target's own path, each link of a chain the view does not show made again inside
+  -- so the role sees the target at its own path too, and in a read-write directory it
+  can replace the link, which the next launch asks about; in a directory of the engine's
+  (an account's, a role's store, a copy-on-write layer) the link is covered and the path
+  fixed. Links inside plainly bound directories are found by a scan during the review,
+  never at an ordinary launch, and a no to one blocks nothing. An ordinary launch
+  resolves each approved one again; one that changed, or whose mode differs (a role that
+  sees its directory with other access), is left unbound and pending, per role, until
+  the next review, and a link made after the last review dangles inside until the next.
+  The review also reads the links on each role's declared and channel paths as its last
+  launch had them (no search), so a link there is asked about once, the mode shown being
+  that launch's. `--check` lists what the review would. A join refuses a source that
+  gained a link since its launch unless the link leads to what the role already sees, or
+  is approved. A link inside a `copy`, `seed-only` or `copy-on-write` source is not
+  covered here (#407). Measured before: `~/.claude/CLAUDE.md -> ../dot/claude/CLAUDE.md`
+  (dotfiles) was unreadable under `shared` and failed with "bwrap: Can't mount on
+  symlink destination" under `inherit` and `isolated`. A launch that refuses has read
+  nothing through the link: a source is seeded or copied only once what its links imply
+  is approved, and a channel whose path a declaration takes over is not read in that
+  launch. `--reset` of a `copy` channel no longer copies from the source itself: it
+  discards the copy, and the next launch copies the source again. The engine touches a
+  source -- reads, copies, hashes (copy-on-write's shadow check) or makes it when
+  missing -- only through one check of the links on its way (not of links inside a
   source directory): at a launch, on that launch's view; at a join, against the keeper's
   view and what was approved. One source shown at two paths with different access is
   valid, each path its own; a hard link of a read-only file that a read-write
   single-file mount shows is warned of. The briefing names the fixed paths and the way
   out: ask the user to rename, move or remove on the host and, where needed, update the
   dot-file and relaunch. A pinned directory stays writable inside as declared; a rename,
-  hard link or `git mv`
-  across its boundary fails with "Invalid cross-device link" (`mv` and `cp` copy
-  instead), and a single-file source reached through a read-write directory view is
-  written in place, not replaced by a temp-file
-  rename. Nothing changes under `--preset native`. The pins are computed once per launch
-  on its final list, every decision on the final view, with no `find`; an option list
-  the computation cannot read refuses the launch.
+  hard link or `git mv` across its boundary fails with "Invalid cross-device link" (`mv`
+  and `cp` copy instead), and a single-file source reached through a read-write
+  directory view is written in place, not replaced by a temp-file rename. Nothing
+  changes under `--preset native`. The pins are computed once per launch on its final
+  list, every decision on the final view, with no `find`; an option list the computation
+  cannot read refuses the launch.
 - **A `copy-on-write` channel reads its relocated source.** With a source elsewhere --
   the profile's relocation, or `outside:` on the `[connect]` line -- the channel's
   overlay read through the channel's own path instead, so it showed other content than
