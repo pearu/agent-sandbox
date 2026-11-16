@@ -2470,6 +2470,18 @@ _as_links_chain() {
   printf '%s\n%s' "$chain" "$cur"
 }
 
+# _as_links_below_root PATH -- is a component of PATH a symbolic link other than one at
+# or above the home or the project (_as_ln_root: those place paths, they imply nothing)?
+_as_links_below_root() {
+  local c="" rel="${1#/}"
+  while [[ -n "$rel" ]]; do
+    c="$c/${rel%%/*}"
+    [[ "$rel" == */* ]] && rel="${rel#*/}" || rel=""
+    [[ -L "$c" ]] && ! _as_ln_root "$c" && return 0
+  done
+  return 1
+}
+
 # _as_links_none_on BASE PATH -- no component of PATH below BASE is a symbolic link.
 _as_links_none_on() {
   local c="$1" rel="${2#"$1"/}"
@@ -2689,7 +2701,7 @@ _as_connect_bind_all() {
           && ! _as_preset_is_native; then
           local _rs_s="${_reads_chk[_rj]#*$'\t'}"
           _rs_s="${_rs_s%%$'\t'*}"
-          if [[ ! -e "$_rs_s" ]] && ! _as_links_none_on "" "$_rs_s"; then
+          if [[ ! -e "$_rs_s" ]] && _as_links_below_root "$_rs_s"; then
             _as_msg "connect: ${_reads_chk[_rj]%%$'\t'*}: its source $(_as_tilde "$_rs_s") is missing and reached through a symbolic link to what does not exist; nothing is made through a link. Make the source on the host, or remove the link. Refusing to launch"
             return 1
           fi

@@ -1144,7 +1144,8 @@ names are gone; there are no aliases for removed names before 1.0.
   nothing read, copied, hashed, bound or made through it before. A link to what the role
   already sees with that access needs no approval, nor does one under `own` (the role's
   own store goes where the link leads) or a hide (the target is blanked where the role
-  would see it). bwrap cannot mount on a link, so the mount goes where it leads: in a
+  would see it); a dangling link implies nothing until its target appears, and a source
+  the engine would make where one stands is refused, nothing made through it. bwrap cannot mount on a link, so the mount goes where it leads: in a
   directory the role has from the host, at the target's own path, each link of a chain
   the view does not show made again inside -- so the role sees the target at its own
   path too, and in a read-write directory it can replace the link, which the next launch
