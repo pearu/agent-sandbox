@@ -805,11 +805,14 @@ part_in_place() {
 # or makes something at a source, through a link the role planted, refuses and leaves
 # nothing behind.
 
-@test "source guard, a join's seed: a join-scoped copy or seed-only source missing at launch, made a link by the role meanwhile, is not copied at the next join" {
-  local m i
-  for m in copy seed-only; do
+@test "source guard, a join's seed: a join-scoped copy or seed-only source missing at launch, made a link by the role meanwhile, is not copied at the next join; one to what the role sees is (#401)" {
+  local m i tgt
+  for m in copy seed-only copy:in-view; do
+    tgt='"$HOME/secret"'
+    [[ "$m" == *:in-view ]] && tgt='"$HOME/store/inview"' m="${m%:*}"
     rm -rf "$IHOME/store" "$IHOME/secret" "$W/x" "$W/report" "$W/a.in" "$W/release.all"
-    mkdir -p "$IHOME/store" "$IHOME/secret/real"
+    mkdir -p "$IHOME/store/inview/real" "$IHOME/secret/real"
+    printf 'MINE\n' >"$IHOME/store/inview/real/s"
     printf 'SECRET\n' >"$IHOME/secret/real/s"
     # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
     local -a D=(--connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/sub/real/")
@@ -817,7 +820,7 @@ part_in_place() {
     (cd "$IWORK" && exec env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" USER="$(id -un)" TERM=xterm \
       AGENT_SANDBOX_PROFILE_DIR="$IPROFILES" AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_KEEPER_GRACE=0 \
       AGENT_SANDBOX_PRESET=shared "${BASE[@]}" "${ENGINE_CMD[@]}" "${D[@]}" --profile probe --exec sh -c \
-      'ln -s "$HOME/secret" "$HOME/store/sub"; touch a.in; until [ -e release.all ]; do sleep 0.05; done') </dev/null >"$I/a.out" 2>&1 3>&- &
+      'ln -s '"$tgt"' "$HOME/store/sub"; touch a.in; until [ -e release.all ]; do sleep 0.05; done') </dev/null >"$I/a.out" 2>&1 3>&- &
     local bg=$!
     for ((i = 0; i < 300; i++)); do
       [[ -e "$W/a.in" ]] && break
@@ -825,9 +828,17 @@ part_in_place() {
     done
     [ -e "$W/a.in" ]
     run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat x/d/s 2>/dev/null)" >>report'
-    [ "$status" -ne 0 ]
-    link_refused
-    [ -z "$(report seen)" ]
+    if [[ "$tgt" == *inview* ]]; then
+      [ "$status" -eq 0 ] || {
+        printf '%s\n' "$output" | tail -3 >&2
+        false
+      }
+      [ "$(report seen)" = MINE ]
+    else
+      [ "$status" -ne 0 ]
+      link_refused
+      [ -z "$(report seen)" ]
+    fi
     : >"$W/release.all"
     wait "$bg" 2>/dev/null || true
   done
