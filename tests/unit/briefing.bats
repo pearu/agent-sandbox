@@ -1267,3 +1267,140 @@ login_file() {
   run_engine BWRAP_COPY="$OUT" TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb claude --version
   grep -qxF "You run as claude on the user's own login. Its login expired on $day; the user renews it with sign in again from the menu." "$md"
 }
+
+# shellcheck disable=SC2016 # stub scripts and engine text, literal
+@test "the pins are computed once per launch, on its final list, in every network mode, and the briefing names them" {
+  # an engine that counts its pin computations (beside copies of what it reads)
+  local e="$BATS_TEST_TMPDIR/counting" mode n
+  mkdir -p "$e"
+  cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$e/"
+  cp "$(dirname "$ENGINE")/VERSION" "$e/" 2>/dev/null || true
+  # (the refusals-only check before a source is read -- _as_ro_pins' 4th argument -- is
+  # not a computation of the pins)
+  sed 's/^_as_ro_pins() {$/&\n  [ -n "${4:-}" ] || echo pins >>"${PINS_COUNT:?}"/' "$ENGINE" >"$e/agent-sandbox"
+  chmod +x "$e/agent-sandbox"
+  [ "$(grep -cF '  [ -n "${4:-}" ] || echo pins >>"${PINS_COUNT:?}"' "$e/agent-sandbox")" -eq 1 ]
+  # strict's tools, stubbed as tests/unit/strict.bats does: pasta runs its command
+  printf '#!/usr/bin/env bash\n[ "$1" = --help ] && exit 0\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n' >"$H/bin/pasta"
+  printf '#!/usr/bin/env bash\n[ "$1 $2 $3 $4" = "-4 route show default" ] && echo "default via 10.9.9.1 dev eth0"\nexit 0\n' >"$H/bin/ip"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/nft"
+  chmod +x "$H/bin/pasta" "$H/bin/ip" "$H/bin/nft"
+  make_fake_ca "$H/ca.pem"
+  mkdir -p "$PROJ/a/b"
+  touch "$PROJ/a/b/f.md"
+  for mode in none open proxy strict; do
+    rm -rf "$OUT" "$BATS_TEST_TMPDIR/count"
+    run_engine BWRAP_COPY="$OUT" PINS_COUNT="$BATS_TEST_TMPDIR/count" AGENT_SANDBOX_NET="$mode" AGENT_SANDBOX_PROXY_CA="$H/ca.pem" \
+      -- "$e/agent-sandbox" --connect './a/b/f.md = read-only' claude --version
+    [ "$status" -eq 0 ] || {
+      echo "$mode: $output" >&2
+      return 1
+    }
+    n="$(wc -l <"$BATS_TEST_TMPDIR/count")"
+    [ "$n" -eq 1 ] || {
+      echo "$mode: $n computations" >&2
+      return 1
+    }
+    [ "$(grep -c 'pinned, on the way to a declared path' <<<"$output")" -eq 1 ]
+    grep -qxF -- "  source, cannot be renamed, removed or replaced ($PROJ/a, $PROJ/a/b). What a declaration allows" "$OUT/briefing.md"
+    run ! grep -q 'agent-sandbox: the pinned directories' "$OUT/briefing.md"
+  done
+}
+
+@test "the pins line goes where the engine put its own marker only: a purpose file carrying marker-like lines stays as it is; exactly one pins line, or none and no marker" {
+  mkdir -p "$PROJ/.asb/roles"
+  # the marker text of before, and a line like this launch's own token
+  printf 'Report, do not fix.\n<!-- agent-sandbox: the pinned directories -->\n<!-- agent-sandbox: the pinned directories, 1234567890 -->\nEnd.\n' \
+    >"$PROJ/.asb/roles/reviewer-1.md"
+  local purpose f
+  purpose="$(cat "$PROJ/.asb/roles/reviewer-1.md")"
+  # the project read-write: .asb and .asb/roles pinned
+  printf '[briefing:reviewer-*]\n[connect:supervisor]\n' >"$PROJ/.agent-sandbox"
+  approve
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$OUT/briefing.md")" == *"$purpose"* ]]
+  [ "$(grep -c 'cannot be renamed, removed or replaced' "$OUT/briefing.md")" -eq 1 ]
+  grep -qF "cannot be renamed, removed or replaced ($PROJ/.asb, $PROJ/.asb/roles)" "$OUT/briefing.md"
+  [ "$(grep -cxF '<!-- agent-sandbox: the pinned directories -->' "$OUT/briefing.md")" -eq 1 ]
+  [ "$(grep -cxF '<!-- agent-sandbox: the pinned directories, 1234567890 -->' "$OUT/briefing.md")" -eq 1 ]
+  [ "$(grep -c 'agent-sandbox: the pinned directories' "$OUT/briefing.md")" -eq 2 ] # the purpose's two, no other
+  # the hook carries the purpose verbatim, and no marker of the engine's
+  grep -qF 'Report, do not fix.\n<!-- agent-sandbox: the pinned directories -->\n<!-- agent-sandbox: the pinned directories, 1234567890 -->\nEnd.' "$OUT/hook-SessionStart.json"
+  for f in "$OUT"/*.json; do
+    [ "$(grep -o 'agent-sandbox: the pinned directories' "$f" | wc -l)" -le 2 ]
+  done
+  # the project read-only: nothing pinned, no pins line, no marker left
+  printf '[briefing:reviewer-*]\n[connect:reviewer-*]\nproject = read-only\n' >"$PROJ/.agent-sandbox"
+  approve
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role reviewer-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"pinned, on the way"* ]]
+  [[ "$(cat "$OUT/briefing.md")" == *"$purpose"* ]]
+  run ! grep -q 'cannot be renamed, removed or replaced' "$OUT/briefing.md"
+  [ "$(grep -c 'agent-sandbox: the pinned directories' "$OUT/briefing.md")" -eq 2 ] # the purpose's two only
+  run ! grep -rqE 'agent-sandbox: the pinned directories, [0-9]{30}' "$OUT"
+}
+
+@test "an unapproved symbolic link refuses before bwrap, without a terminal, and leaves no session directory behind" {
+  local real="$BATS_TEST_TMPDIR/real"
+  mkdir -p "$real" "$PROJ/w"
+  touch "$real/f.md"
+  ln -s "$real" "$PROJ/w/l"
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './w/l/f.md = read-only' claude --version
+  [ "$status" -ne 0 ]
+  [ "$(grep -c "which is outside the role's view: it stands for './w/l/f.md = read-only outside:$real/f.md'" <<<"${output//$PROJ/.}")" -eq 1 ]
+  [[ "$output" == *"review it with: "*" --trust"* ]]
+  [ ! -s "$H/argv" ] # bwrap never ran
+  # no session directory left behind
+  [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]
+}
+
+@test "the directories pinned above a read-only path are said, with what fails across them; a declared path at the project's top, with nothing to pin, is said fixed with the same way out (R4)" {
+  mkdir -p "$PROJ/a/b"
+  touch "$PROJ/a/b/f.md" "$PROJ/top.md"
+  run_engine BWRAP_COPY="$OUT" -- asb --connect './a/b/f.md = read-only' claude --version
+  [ "$status" -eq 0 ]
+  grep -qxF -- '- declared paths are fixed for you: these, on the way to a declared path or to its' "$OUT/briefing.md"
+  grep -qxF -- "  source, cannot be renamed, removed or replaced ($PROJ/a, $PROJ/a/b). What a declaration allows" "$OUT/briefing.md"
+  # shellcheck disable=SC2016 # the briefing's backticks, literal
+  grep -qxF -- '  fails with "Invalid cross-device link" (`mv` and `cp` work), and a file among them is' "$OUT/briefing.md"
+  # the way out (R4): the user, on the host
+  grep -qxF -- '  declared path or a directory on the way to it, ask the user to do it on the host and,' "$OUT/briefing.md"
+  run_engine BWRAP_COPY="$OUT" -- asb --connect './top.md = read-only' claude --version
+  [ "$status" -eq 0 ]
+  grep -q -- "- extra read-only paths: $PROJ/top.md\$" "$OUT/briefing.md"
+  [[ "$output" != *"pinned, on the way"* ]]
+  grep -qxF -- '- declared paths are fixed for you: a declared path cannot be renamed, removed or' "$OUT/briefing.md"
+  grep -qxF -- '  its own is written in place. To rename, move or remove a declared path, ask the' "$OUT/briefing.md"
+  grep -qxF -- '  user to do it on the host and, where needed, to update the dot-file and relaunch' "$OUT/briefing.md"
+  run ! grep -q 'on the way to a declared path or to its' "$OUT/briefing.md"
+}
+
+@test "a read-only source that another declaration shows read-write launches: each path gets its own access, nothing refused; the source fixed where that read-write declaration shows it" {
+  mkdir -p "$H/home/store" "$PROJ/cfg"
+  printf 'S\n' >"$H/home/store/x.md"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_engine BWRAP_COPY="$OUT" -- asb --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/x.md' claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *contradict* ]]
+  # shellcheck disable=SC2088 # the message's own ~
+  [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./cfg, ~/store/x.md"* ]]
+  argv_has --ro-bind "$H/home/store/x.md" "$PROJ/cfg/x.md"
+  argv_has --bind "$H/home/store/x.md" "$H/home/store/x.md"
+}
+
+@test "the briefing's marker gone: the pins line refuses the launch, saying it is a bug, never silently" {
+  source_engine
+  local _briefing_md="$BATS_TEST_TMPDIR/briefing.md" _briefing_mark='<!-- mark -->'
+  printf '# briefing\nno marker here\n' >"$_briefing_md"
+  run _as_briefing_pins 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pins: the briefing has no line for what is fixed for the role (its marker is gone): this is a bug in agent-sandbox, and the launch is refused"* ]]
+  printf '# briefing\n%s\nmore\n' "$_briefing_mark" >"$_briefing_md"
+  run _as_briefing_pins 1
+  [ "$status" -eq 0 ]
+  grep -qxF -- '- declared paths are fixed for you: a declared path cannot be renamed, removed or' "$_briefing_md"
+}

@@ -95,6 +95,13 @@ inside() {
      awk -v m="$PWD/$1" '"'"'$5 == m { n++ } END { print "MOUNT=" n + 0 }'"'"' /proc/self/mountinfo' _ "$2"
 }
 
+# pinned ROLE -- a join into the running ROLE: PINS=n, how many of .asb and .asb/roles are
+# mount points of their own there (the pins above its purpose file)
+pinned() {
+  run_sandboxed "${BASE[@]}" -- --role "$1" --profile probe --exec sh -c \
+    'awk -v a="$PWD/.asb" -v r="$PWD/.asb/roles" '"'"'$5 == a || $5 == r { n++ } END { print "PINS=" n + 0 }'"'"' /proc/self/mountinfo'
+}
+
 @test "a role with the project read-write keeps the dot-file read-only through --apply and an --init that changes only the dot-file: the new text, the mount, no write" {
   start writer
   inside writer .agent-sandbox
@@ -128,6 +135,9 @@ inside() {
 
 @test "an --init that would change a running read-write role's purpose file is refused, nothing written; after --shutdown it goes ahead" {
   start writer
+  pinned writer # the directories above its purpose file are pinned: the record still reads them read-write
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PINS=2"* ]]
   printf 'Now also this.\n' >>"$M/roles/writer.md"
   cp "$IWORK/.asb/roles/writer.md" "$I/writer.before"
   asb_host --init tiny
@@ -144,6 +154,59 @@ inside() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"updated .asb/roles/writer.md from model 'tiny'"* ]]
   [ "$(tail -1 "$IWORK/.asb/roles/writer.md")" = "Now also this." ]
+}
+
+@test "with a pinned read-write role running, an --init that changes only a read-only-project role's purpose file goes ahead; the pinned role runs on" {
+  start writer
+  start reader
+  pinned writer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PINS=2"* ]]
+  printf 'Now also this.\n' >>"$M/roles/reader.md"
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/reader.md from model 'tiny'"* ]]
+  approve
+  inside reader .asb/roles/reader.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Now also this."* ]]
+  inside writer .asb/roles/writer.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WRITE=no"* ]]
+  [[ "$output" == *"MOUNT=1"* ]]
+  pinned writer
+  [[ "$output" == *"PINS=2"* ]]
+}
+
+@test "a running writer with another role's purpose file as a read-only source (self-bound where the project shows it, R1): an --init that replaces that file is the user's host action and goes ahead; the next launch fixes the new file" {
+  printf '[connect:writer]\n./ref.md = read-only outside:%s/.asb/roles/reader.md\n' "$IWORK" >>"$IWORK/.agent-sandbox"
+  approve
+  start writer
+  look() {
+    run_sandboxed "${BASE[@]}" -- --role writer --profile probe --exec sh -c \
+      'f=.asb/roles/reader.md; echo "text=$(cat $f | tr "\n" "/") mount=$(awk -v m="$PWD/$f" '"'"'$5 == m { n++ } END { print n + 0 }'"'"' /proc/self/mountinfo)"'
+  }
+  look
+  [[ "$output" == *"text=You are the reader./ mount=1"* ]] # the source fixed: a mount point
+  # its record: a read-write file over itself, writable before and after a host replace
+  local kd
+  for kd in "$IHOME"/.local/state/agent-sandbox/probe/*/writer/keeper; do
+    [ "$(tr '\0' '|' <"$kd/binds" | grep -c "rw|rw|y|$IWORK/.asb/roles/reader.md|")" -eq 1 ]
+  done
+  printf 'Now also this.\n' >>"$M/roles/reader.md"
+  asb_host --init tiny
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated .asb/roles/reader.md from model 'tiny'"* ]]
+  look
+  [[ "$output" == *"text=You are the reader./Now also this./ mount=0"* ]] # the host's rename detached it
+  asb_host --role writer --shutdown probe
+  [ "$status" -eq 0 ]
+  : >"$IWORK/out/release.all"
+  rm -f "$IWORK/out/release.all" "$IWORK/out/writer.in"
+  approve # the purpose file --init changed
+  start writer
+  look
+  [[ "$output" == *"text=You are the reader./Now also this./ mount=1"* ]] # fixed again at the next launch
 }
 
 @test "a role with the project read-only keeps running through an --init that changes its purpose file, and sees the new text, read-only" {

@@ -87,6 +87,18 @@ approve() { # approve the project's dot-file the way --trust does, content kept
   [[ "$output" != *"under your home directory"* ]]
 }
 
+@test "the review says of a declared file reached through a symbolic link that the file it leads to is bound over, the link not (#401)" {
+  mkdir -p "$PROJ/real"
+  printf 'x\n' >"$PROJ/real/cfg"
+  ln -s real/cfg "$PROJ/cfg"
+  printf '[connect]\n./cfg = read-only\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  run bash -c 'cd "$1" && printf "y\nn\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'./cfg' is a file reached through a symbolic link. The file it leads to is bound over, so that file cannot be deleted or renamed from inside the sandbox; a link on its way, in a directory the role can write, can be."* ]]
+  [[ "$output" != *"'./cfg' is a file. It is bound over"* ]]
+}
+
 @test "the review says a declared file is bound over, and that copy-on-write on one is copy; the launch does not" {
   printf 'x\n' >"$PROJ/AGENT.md"
   printf 'y\n' >"$PROJ/NOTES.md"

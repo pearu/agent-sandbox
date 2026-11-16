@@ -36,8 +36,12 @@ slugify() {
   printf 'MINE\n' >"$sk/s.md"
   run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
-  [[ "$output" == *"reset 'instructions' at $C/rules: its copy taken from yours again"* ]]
+  [[ "$output" == *"reset 'instructions' at $C/rules: its copy discarded, the next launch copies it from yours again"* ]]
   [ ! -s "$H/argv" ] # nothing launched
+  [ ! -e "$ins" ]    # nothing read from the source here: the next launch copies it
+  [ "$(cat "$sk/s.md")" = MINE ]
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native;skills=copy native' -- asb claude --version
+  [ "$status" -eq 0 ]
   [ "$(cat "$ins/topic.md")" = NATIVE ]
   [ "$(cat "$sk/s.md")" = MINE ]
 }

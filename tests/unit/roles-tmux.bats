@@ -551,6 +551,23 @@ no_tmux_path() {
   [ -s "$H/argv" ]
 }
 
+@test "--roles: a link asked about here and declined blocks nothing -- the panes open; a yes records it (#401, J)" {
+  mkdir -p "$H/ext"
+  ln -s "$H/ext" "$PROJ/x"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$PROJ/x" "$PROJ/x -> $H/ext" "$H/ext" dir read-write >"$REC.links.pending.r"
+  run_engine_tty 'n\n' TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'approve this link for' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"to be asked no more, declare it yourself in .agent-sandbox under [connect]: "*"/x = read-write outside:"*"/ext"* ]]
+  [ -e "$TM" ] # the panes opened
+  [ ! -e "$REC.links" ]
+  rm -f "$TM"
+  run_engine_tty 'y\n' TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ]
+  [ -e "$TM" ]
+  grep -qF "$PROJ/x"$'\t' "$REC.links"
+}
+
 # THE HOST TAKES RESETS (#329). --roles starts one watcher beside the session, out of
 # the terminal's session; it is the engine again, with the internal word __roles-resets.
 
@@ -701,4 +718,20 @@ resets() {
   [ "$(grep -c '^send-keys' "$H/calls")" -eq 1 ]
   [ "$(grep -c '^has-session' "$H/calls")" -eq 4 ]
   [[ "$output" == *"--roles: could not remove $PROJ/.asb/coord/to/a.reset; no reset"* ]]
+}
+
+@test "--roles without a terminal: a pending link already approved needs no review, the panes open (#401)" {
+  mkdir -p "$H/ext"
+  ln -s "$H/ext" "$PROJ/x"
+  local l="$PROJ/x"$'\t'"$PROJ/x -> $H/ext"$'\t'"$H/ext"$'\t'dir$'\t'read-write
+  mkdir -p "${REC%/*}"
+  printf '%s\n' "$l" >"$REC.links.pending.r"
+  printf '%s\n' "$l" >"$REC.links"
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ] || {
+    echo "$output" >&2
+    return 1
+  }
+  [[ "$output" != *"needs your review"* ]]
+  [ -e "$TM" ]
 }

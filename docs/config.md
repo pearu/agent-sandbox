@@ -921,6 +921,18 @@ policy does not change. The answer applies at the next keeper. The management
 verbs (`--status`, `--shutdown`, `agents`, …) are never asked or refused over the
 file: stopping what runs needs no policy.
 
+The review then asks about the declarations symbolic links imply
+([connections.md](connections.md)), each on its own after the dot-file's question: a yes
+approves that link for this project, with the mode shown, and a no leaves it unapproved.
+At `asb --trust` a no changes nothing else; at a launch, a no to a link on a path that
+launch declares or connects refuses the launch, and a no to one the review found inside a
+plainly bound directory blocks nothing (the link leads nowhere inside). A link on a
+declared or channel path that is new or changed since, or that a launch would use with
+another mode, is asked about again, by a launch at a terminal or by `asb --trust` (which
+a launch without one names); one found inside a plainly bound directory waits for the
+next review. Each question names the declaration that makes it unnecessary, to write in
+the dot-file. `--check` lists them too.
+
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
 bound into the sandbox**, so the agent can neither read nor forge it. Refusing
 rather than ignoring a changed or missing file matters because ignoring would
@@ -1247,11 +1259,12 @@ kind, the base's covers it. Any symlink there, under a name the base has, is tak
 one an earlier launch made again (the engine does not tell its own from yours), and is
 removed and made afresh when the base's entry is no longer a symlink to the same target.
 Any other mismatch (a file in the account's directory where the base has a directory, a
-directory where it has a file, a file or directory where it has a symlink) refuses the
-launch before anything starts, naming both paths: remove the account's to see the base's
-there, or the base's to keep the account's. An entry created in the base after the
-launch is not seen by that launch (a role on the base sees it at once); one the agent
-creates at the top during the session lands in the account's directory. A `read-write`
+directory where it has a file, a file or non-empty directory where it has a symlink; an
+empty one is an earlier launch's cover of the link) refuses the launch before anything
+starts, naming both paths: remove the account's to see the base's there, or the base's
+to keep the account's. An entry created in the base after the launch is not seen by that
+launch (a role on the base sees it at once); one the agent creates at the top during the
+session lands in the account's directory. A `read-write`
 file channel whose source does not exist in the base is created there under an account,
 as a `read-write` directory channel's is -- containing `{}` when its path ends in
 `.json` (an empty file is no JSON), empty otherwise -- so what the agent writes there is
@@ -1260,9 +1273,8 @@ file (claude: the policy bodies): that is not what it starts as, so it is not bo
 what the agent writes there lands in the account's directory. Mount points bwrap creates
 for the channels and the entries are made in the account's directory, as they are in the
 base (one under an entry bound from the base, `cache/changelog.md`, in the base's entry,
-as with no account; one under a symlink made again, wherever its target is); empty files
-among them are removed after the launch, empty directories and the symlinks made again
-stay.
+as with no account); empty files among them are removed after the launch, empty
+directories and the symlinks made again stay.
 
 **Logging an account in: `asb [--agent AGENT] --account NAME --login`.** At your own
 shell (refused inside a sandbox), with nothing else on the line: `--login` once, and at

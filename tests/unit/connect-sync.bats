@@ -20,9 +20,8 @@ setup() {
   mkdir -p "$S"
 }
 
-# sync / reset over the directory-shaped channel
+# sync over the directory-shaped channel
 sync() { run "${PYTHON_CMD[@]}" "$SYNC" sync --kind dir --source "$S" --copy "$C" --base "$B"; }
-reset() { run "${PYTHON_CMD[@]}" "$SYNC" reset --kind dir --source "$S" --copy "$C" --base "$B"; }
 # and over a file-shaped one
 fsync() { run "${PYTHON_CMD[@]}" "$SYNC" sync --kind file --source "$1" --copy "$2" --base "$B"; }
 
@@ -155,21 +154,6 @@ at_copy() { cat "$C/$1" 2>/dev/null; }
   [ "$(at_copy own.md)" = MINE ]
   [ -z "$output" ]
   [ ! -e "$S/own.md" ] # and is not written back
-}
-
-@test "C8 reset throws the sandbox's copy away, re-seeds, and clears the conflict" {
-  plant a.md ONE
-  sync
-  inside a.md MINE
-  plant a.md THEIRS
-  sync
-  [ "$output" = "conflict a.md" ]
-  reset
-  [ "$status" -eq 0 ]
-  [ "$(at_copy a.md)" = THEIRS ]
-  [ -z "$output" ]
-  sync # and the conflict does not come back
-  [ -z "$output" ]
 }
 
 @test "C2 nothing is ever written back to the source, whatever the sandbox does" {

@@ -1036,7 +1036,7 @@ DF
   [ "$(cat "$slot/topic.md")" = SANDBOX ]     # and kept the sandbox's
 }
 
-@test "--reset takes the source's version back, and does NOT launch" {
+@test "--reset takes the source's version back at the next launch, and does NOT launch" {
   printf 'YOURS\n' >"$C/rules/topic.md"
   run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
   local slot
@@ -1044,8 +1044,11 @@ DF
   printf 'SANDBOX\n' >"$slot/topic.md"
   run_engine -- asb --reset instructions claude
   [ "$status" -eq 0 ]
-  [ "$(cat "$slot/topic.md")" = YOURS ]
   [ ! -s "$H/argv" ] # bwrap was never reached: it resets and exits
+  [ ! -e "$slot" ]   # the copy discarded; nothing read from the source here
+  run_engine AGENT_SANDBOX_CONNECT='instructions=copy native' -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$slot/topic.md")" = YOURS ]
 }
 
 @test "--reset on a channel the profile does not carry is refused" {
@@ -1324,14 +1327,19 @@ DF
   [[ "$output" == *"secret store"* ]]
 }
 
-@test "a key that is a symlink binds its resolved target, at the declared name" {
+@test "a key that is a symlink is the declaration it implies (#401): refused without a terminal until approved, then its resolved target bound at the declared name" {
   # Binding the link would let bwrap resolve it again at mount time, and a link
   # repointed after the check could mount a refused target; the bind is of the target
-  # just validated, mounted at the key.
+  # just validated, mounted at the key (inside, nothing shows the link there).
   local d
   d="$(readlink -f "$H")"
   mkdir -p "$d/realdir"
   ln -s "$d/realdir" "$d/link"
+  run_engine -- asb --connect "$d/link = read-only" claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"it stands for '$d/link = read-only outside:$d/realdir'"* ]]
+  run_engine -- asb --trust <<<y
+  [ "$status" -eq 0 ]
   run_engine -- asb --connect "$d/link = read-only" claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$d/realdir" "$d/link"

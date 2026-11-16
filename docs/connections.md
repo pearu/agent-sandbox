@@ -470,6 +470,23 @@ instructions = copy-on-write native   # no slash: a channel name, exactly as bef
 trailing `/` says the path must be a directory. A mistyped *path* can still declare an
 unwanted one: the exposure any path grant carries.
 
+**A declaration is about a path, and declared paths are fixed for the role:** at this
+path the role gets this source with this access. The access governs what is inside the
+path -- a directory's content, a file's content -- not the path itself: in every mode,
+`read-write` included, the role cannot rename, remove or replace the declared path, the
+directories on the way to it that it has read-write from the host, its source, or the
+directories on the way to the source wherever a read-write host mount shows them. So
+for `./A/B/C/ = read-write`, `./A`, `./A/B` and `./A/B/C` stay where they are, and the
+role cannot choose which host path a later launch binds there. What else is in `./A` and
+`./A/B` is governed by the declaration covering it (`project = ...` for everything in
+the project not declared otherwise), not by this one. One source may be shown at
+several paths with different access, and each path gets its own: `~/store/ =
+read-write` with `./cfg/x.md = read-only outside:~/store/x.md` is valid, and the role
+writing `~/store/x.md` (which `./cfg/x.md` then shows) is what the two declarations say.
+To rename, move or remove a declared path or a directory on the way to it (a `git mv`,
+say), the user does it on the host and, where needed, updates the dot-file and
+relaunches; the briefing says so to the role.
+
 **The key is always a path inside the sandbox**, and with no source given the source is
 the same path outside. A relative key is relative to the project, whichever form it came
 from; `~` is `$HOME`. Inside, `$HOME` is empty, so `~/notes/ = own` is sandbox-only
@@ -507,6 +524,92 @@ the engine makes it on the host before the launch, the same directory or file.
 **A file** is allowed, with two permanent limits said at the dot-file's review: it is a
 mount point, so it cannot be deleted or renamed from inside, and `copy-on-write` on a
 file is `copy`, since overlayfs cannot stack on one file.
+
+**How declared paths are fixed.** A bound file or directory is a mount point, which the
+kernel refuses to rename or remove (EBUSY). Every other path the rule covers is made one
+at launch: each directory on the way to a declared path that the role has read-write
+from the host, and each directory on the way to its source, and the source itself (a
+file too), wherever a read-write host mount shows them, is bound onto itself (a pin).
+Every mode is covered -- `read-only`, `read-write`, `own`, `copy`, `copy-on-write`,
+`seed-only`, a hide (the profile's or `[claude] hide`), the built-in dot-file and purpose
+files, channels (their sources too, relocated by the profile or by `outside:`, in the
+modes that read or bind them) -- and the walk goes through the mounts on the way (under
+`./x/a/ = read-write`, `./x/a/b/f.md = read-only` pins `./x` too). A source is fixed
+from the first launch that finds it there. A `read-write` channel at its own path, which
+the state directory's bind already shows (claude's `CLAUDE.md`, `settings.json`,
+`skills/` under `shared`), is bound onto itself all the same in every preset but
+`native`, so it is a mount point like every other declared path. Measured: without the
+pins a rename of `.asb` moved the Supervisor's purpose files to where it could write
+them (#389), a rename above an own path uncovered the host's original, a source in a
+read-write store, replaced by a link, had the next launch bind an undeclared `~/secret`
+read-write -- `read-write`, `copy` and `copy-on-write` alike -- and a role under
+`shared` renamed `~/.claude/CLAUDE.md` away and put a link to `~/secret/g` there, which
+the next launch on an account bound, read and wrote. What it costs the role: a pinned
+directory stays as writable inside as its declaration says, but a rename, hard link or
+`git mv` across its boundary fails with "Invalid cross-device link" (`mv`, `cp`, rsync
+and git's checkout, stash and rebase copy and work); a single-file source a read-write
+directory view shows can be written in place but not replaced by a temp-file rename (an
+editor's or `sed -i`'s save fails with "Device or resource busy" there). Nothing is pinned
+under `--preset native`, the exception, whose claim is parity with no sandbox; nor inside
+a read-only mount, nor a directory of a `copy-on-write` mount (the project included)
+that its source has, which the overlay does not let the role rename (EXDEV); one only
+the role's layer has, made there for a declared path beneath it, is pinned as on the
+host. A
+directory on the way that the host does not have yet is made there just before the
+launch, exactly where and as bwrap would make it to mount what is beneath it (inside a
+read-write host mount, with the mode bwrap gives it), and only once every check has
+passed, so it is pinned at the first launch too.
+
+**A bind protects a name, not a file with several names (hard links):** another name of a
+read-only file that a declaration shows read-write is writable there, as declared, and
+the read-only name shows what is written. Where that is cheap to see -- the other name
+declared read-write as a single file -- the launch says so in one warning line and goes
+on; another name inside a read-write directory is not looked for.
+
+**Symbolic links work, as the declarations they imply.** A link `P -> T` stands for `P =
+MODE outside:T`, MODE being what P has without the link: the channel's mode under the
+preset, the declaration's, or the mode of what shows its directory. Under the claude
+profile these work: a linked `~/.claude/CLAUDE.md` (your dotfiles), a chain of links to
+it, a linked `~/.claude/skills/` and `~/.claude/cache/`; a link on a declared path or on
+the way to its source; links inside the project and the other directories bound plainly
+from the host; a linked home or project. Where a link would show the role a host path it
+does not otherwise see, it is asked about on its own -- one question per link, by a launch
+at a terminal or by `asb --trust`, which a launch without one names -- and what you
+approve is the line the question shows, its mode included: a link on a declared or channel
+path that is new or changed, or that a launch would use with another mode, is asked again.
+Each question names the declaration that makes it unnecessary: write `P = MODE outside:T`
+in the dot-file yourself and that link asks nothing from the next launch on (a link the
+review finds inside a plainly bound directory is asked once more by the review that
+approves your edit: the scan reads what the last launch bound). A declaration naming P
+whose link leads to what the role already sees asks nothing and keeps its mount, at T's
+own path with the declaration's mode; a link no declaration names that leads to what the
+role already sees, read-only or read-write, is ordinary content: the role has the access
+the target has there. An approved link found inside a plainly bound directory is resolved
+again at every launch; one that changed, or that a launch would use with another mode,
+leads nowhere inside until the next review asks about it. The role sees T at P, and at T's
+own path too; in a directory it has read-write from the host it can replace the link, and
+the next launch asks about the new one where it is on a declared or channel path. Links
+inside the project and other plainly bound directories are found when the review runs
+(`asb --trust`, or a launch that asks at a terminal). Under `own` the role's own store is
+what it finds there. An agent base kept elsewhere is named by the variable the agent reads
+(`CLAUDE_CONFIG_DIR` for Claude Code), set in the shell you launch from. `--preset native`
+is unchanged.
+
+**These decisions are made on the final view** -- what shows at each path once every
+bind is made, not on the binds made so far (the check before a source is read, on the
+binds made up to the declarations, every one that can show a directory read-write among
+them): declarations are bound by depth, so the mount that makes a directory read-write,
+or read-only, can come later in the list than the path it concerns.
+
+**Under the claude profile, `~/.claude/cache` is pinned where the changelog channel,
+`~/.claude/cache/changelog.md`, is bound** (every preset but `native`; under `shared`,
+where it is read-write at its own path, once the file is there): it is a directory of
+the read-write base above that mount, made there first when the base does not have it
+yet, as bwrap would make it. The role cannot rename or remove `~/.claude/cache`, and a
+rename or hard link across it fails with "Invalid cross-device link"; inside it
+everything works. The host
+is not restricted: a rename, hard link, `mv` or `rm` across or of the directory works on
+the host while the sandbox runs.
 
 **Paths nest, and are bound by depth, outer first** (#196): channel paths and
 declarations alike, whichever file they come from and in whatever order they are
@@ -764,7 +867,7 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 | `--list-all [WORD]` | the same for every project's role stores, its last line `cd PROJECT_DIR && asb --role ROLE --resume`; reads only the state directory, so it works from any directory. When `--summarize` wrote `summary/description.md` in a role's store (a regular file only), `--list` shows it under the summary: its first 5 non-blank lines, control characters dropped, then `full description: PATH` when there is more; `--list-all` names it, `description: PATH`. The project's line is bold on a terminal, as role names are cyan | — |
 | `--summarize` | one headless turn of a new session in the role's sandbox, under its policy, the way a `--serve` turn runs: the profile's `serve-new` arguments (claude: `-p --session-id ID --permission-mode bypassPermissions`) with a fresh id, no `[briefing] start`, no watcher, and the engine's prompt: read the role's earlier conversations (the `transcripts` channel's paths, from the role's record), its memory and the files in its writable stores, and write exactly two files, `summary/line` (what `--list` shows) and `summary/description.md` -- what the sessions worked on, found or concluded, what is left open, and the files they produced by their host paths. It prints the new line and the description's host path, then deletes the turn's own `ID.jsonl` (and a directory `ID`) wherever the role's transcripts are kept, and any prompt-history record of session ID -- a `-p` turn writes none (measured, Claude Code 2.1.311) -- so `--continue` resumes the role's own conversation and `--list` never sees the summarizer. One model call (#314) | the role runs: it names `--shutdown`; the role has no conversation (a transcript with a user record); `--preset native`, where the conversations are your own `~/.claude` ones, not the role's; the turn fails or leaves no new line (non-zero exit) |
 | `--delete` | removes the role's stores, all of them; the next launch starts from the source | anything is joined, or a daemon runs: it names `--shutdown`. An idle keeper is ended first |
-| `--reset <channel\|path>` | discards one store, in whatever mode, and takes the source's version again (for `own`, the profile's start template, else empty), keeping the rest; renamed from `--reset-connection`, which is refused with the new name, and takes a path declaration too | the same as `--delete` |
+| `--reset <channel\|path>` | discards one store, in whatever mode, and takes the source's version again at the next launch (for `own`, the profile's start template, else empty), keeping the rest; renamed from `--reset-connection`, which is refused with the new name, and takes a path declaration too | the same as `--delete` |
 
 ### Storage scope (#125)
 

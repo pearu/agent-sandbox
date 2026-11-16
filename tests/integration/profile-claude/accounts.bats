@@ -19,6 +19,13 @@ setup() {
   cat >"$IHOME/.local/share/claude/versions/9.9.9/claude" <<'PROBE'
 #!/usr/bin/env bash
 c="${CLAUDE_CONFIG_DIR:-unset}"
+# `... @@ CMD...`: run CMD as the role (run_role)
+for ((i = 1; i <= $#; i++)); do
+  if [ "${!i}" = @@ ]; then
+    shift "$i"
+    exec "$@"
+  fi
+done
 # `... hold NAME` (last on the line; the profile adds its own arguments first): report,
 # wait for go-NAME, report again
 if [ "$#" -ge 2 ] && [ "${@: -2:1}" = hold ]; then
@@ -119,6 +126,74 @@ run_claude() {
   while IFS='=' read -r k v; do [[ -n "$k" ]] && M["$k"]="$v"; done <"$IWORK/report" 2>/dev/null || true
 }
 
+# run_role [ENGINE ARGS...] -- CMD... -- run CMD as the role, through the stub's `@@`.
+run_role() {
+  local -a ea=()
+  while [[ $# -gt 0 && "$1" != -- ]]; do
+    ea+=("$1")
+    shift
+  done
+  shift
+  engine_cmd
+  # shellcheck disable=SC2016 # $1/$@ are for the inner bash -c, not this shell
+  run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
+    AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
+    AGENT_SANDBOX_SESSION_BASE="$I/base" AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
+    bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" ${ea[@]+"${ea[@]}"} \
+    "$IHOME/.local/share/claude/versions/9.9.9/claude" @@ "$@"
+}
+
+@test "a read-write channel at its own path is fixed for the role under shared (R1): a role cannot rename ~/.claude/CLAUDE.md away and plant a link there, so the next launch on an account does not bind a path no declaration grants" {
+  printf 'INSTR\n' >"$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/g"
+  run_role -- bash -c 'cd ~/.claude && mv CLAUDE.md CLAUDE.md.old && ln -s ../secret/g CLAUDE.md'
+  [[ "$output" == *"Device or resource busy"* ]]
+  [ ! -L "$IHOME/.claude/CLAUDE.md" ]
+  [ "$(cat "$IHOME/.claude/CLAUDE.md")" = INSTR ]
+  [ ! -e "$IHOME/.claude/CLAUDE.md.old" ]
+  run_role --account work -- bash -c 'cat ~/.claude/CLAUDE.md; echo PWNED >>~/.claude/CLAUDE.md'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *INSTR* ]]
+  [[ "$output" != *SECRET* ]]
+  [ "$(cat "$IHOME/secret/g")" = SECRET ]
+}
+
+@test "a missing channel file in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it without a terminal, as the declaration it implies, and binds nothing it names" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/g"
+  [ ! -e "$IHOME/.claude/CLAUDE.md" ]
+  run_role -- bash -c 'cd ~/.claude && ln -s ../secret/g CLAUDE.md'
+  [ "$status" -eq 0 ]
+  [ -L "$IHOME/.claude/CLAUDE.md" ]
+  run_role --account work -- bash -c 'cat ~/.claude/CLAUDE.md; echo PWNED >>~/.claude/CLAUDE.md'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"it stands for '~/.claude/CLAUDE.md = read-write outside:~/secret/g'"* ]]
+  [[ "$output" == *"review it with: "*"--trust"* ]]
+  [[ "$output" != *SECRET* ]]
+  [ "$(cat "$IHOME/secret/g")" = SECRET ]
+  # the base's entry made a file: nothing implied
+  cp --remove-destination "$IHOME/secret/g" "$IHOME/.claude/CLAUDE.md"
+  run_role --account work -- bash -c 'echo MINE >>~/.claude/CLAUDE.md'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$IHOME/secret/g")" = SECRET ]
+}
+
+@test "a missing channel directory in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it" {
+  mkdir -p "$IHOME/secretdir"
+  printf 'SECRETD\n' >"$IHOME/secretdir/s"
+  [ ! -e "$IHOME/.claude/agents" ]
+  run_role -- bash -c 'cd ~/.claude && ln -s ../secretdir agents'
+  [ "$status" -eq 0 ]
+  [ -L "$IHOME/.claude/agents" ]
+  run_role --account work -- bash -c 'cat ~/.claude/agents/s; echo PWNED >>~/.claude/agents/s'
+  [ "$status" -ne 0 ]
+  # the agents channel is not one the claude profile supports through a link (#401, C)
+  [[ "$output" == *"~/.claude/agents (the agents channel) is reached through the symbolic link ~/.claude/agents -> ../secretdir, and this location is not supported through a symbolic link"* ]]
+  [[ "$output" != *SECRETD* ]]
+  [ "$(cat "$IHOME/secretdir/s")" = SECRETD ]
+}
+
 @test "with an account, CLAUDE_CONFIG_DIR is the account's directory: its login, not the base's, which is nowhere inside; a channel and the base's other entries still from the base; a write lands in the account" {
   run_claude --account work
   [ "$status" -eq 0 ]
@@ -180,15 +255,18 @@ run_claude() {
   [ ! -e "$ACC/cache/changelog.md" ]
 }
 
-@test "a channel nested under a base entry that is a symlink: the mount point is made through the link, and removed from there after the launch" {
-  mkdir -p "$IHOME/.claude/cache.real"
-  ln -s cache.real "$IHOME/.claude/cache" # the changelog channel's directory, a link
-  TEST_PRESET=isolated run_claude --account work
+@test "a link to a file at a channel's own path (instructions has two paths): refused without a terminal as the declaration it implies; made a file, it launches" {
+  mkdir -p "$IHOME/secret"
+  printf 'SECRET\n' >"$IHOME/secret/g"
+  ln -s ../secret/g "$IHOME/.claude/CLAUDE.md"
+  run_claude
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"it stands for '~/.claude/CLAUDE.md = read-write outside:~/secret/g'"* ]]
+  [[ "$output" != *SECRET* ]]
+  # the link made a file: nothing implied
+  cp --remove-destination "$IHOME/secret/g" "$IHOME/.claude/CLAUDE.md"
+  run_claude
   [ "$status" -eq 0 ]
-  [ "${M[login]}" = WORK-LOGIN ]
-  [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory
-  [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
-  [ ! -e "$ACC/cache.real/changelog.md" ]
 }
 
 # Two roles at once on one state directory share its mount-point files: the first

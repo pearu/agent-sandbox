@@ -205,7 +205,8 @@ statsigapi.net
 
 [channel:instructions]
 reach = context
-{base}/CLAUDE.md
+# a linked CLAUDE.md (dotfiles) works: tests/integration/profile-claude/links.bats
+{base}/CLAUDE.md = links:yes
 {base}/rules/
 
 [channel:settings]
@@ -218,7 +219,7 @@ reach = context -- a SessionStart hook runs, and what it prints is in context
 # yours for a conflict warning to report.
 [channel:skills]
 reach = context -- their descriptions are in every session, a body when invoked
-{base}/skills/ = vendor:synced/
+{base}/skills/ = vendor:synced/ links:yes
 {base}/commands/
 
 [channel:agents]
@@ -322,7 +323,8 @@ reach = searched
 {base}/remote-settings.json.synced-at
 
 [channel:changelog]
-{base}/cache/changelog.md
+# reached through a linked cache/ too (links.bats)
+{base}/cache/changelog.md = links:yes
 
 # GH IS A CHANNEL (#88): your gh login, where `gh auth login` keeps it. It holds a token
 # that can do whatever its scopes allow, so no sandbox gets it unless its dot-file asks:
