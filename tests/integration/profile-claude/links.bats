@@ -613,8 +613,8 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
 @test "under an account, a missing channel source in the base behind a link is not made through it" {
   rm "$IHOME/.claude/CLAUDE.md"
   mkdir -p "$IHOME/.local/state/agent-sandbox/claude/accounts/work" "$IHOME/elsewhere"
-  ln -s ../elsewhere/gone "$IHOME/.claude/rules" # rules/ is the instructions channel's, which links may reach
+  ln -s ../elsewhere "$IHOME/.claude/cache" # the changelog channel's cache/changelog.md, read-write under shared
   printf 'echo ran\n' >"$IWORK/probe.sh"
   claude_ --account work
-  [ ! -e "$IHOME/elsewhere/gone" ] # nothing made there
+  [ ! -e "$IHOME/elsewhere/changelog.md" ] # not made through the link (_as_base_rw_sources)
 }
