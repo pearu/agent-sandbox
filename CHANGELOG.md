@@ -1171,8 +1171,8 @@ names are gone; there are no aliases for removed names before 1.0.
   when missing -- only through one check of the links on its way (not of links inside a
   source directory): at a launch, on that launch's view; at a join, against the keeper's
   view and what was approved. One source shown at two paths with different access is
-  valid, each path its own; a hard link of a read-only file that a read-write single-file mount shows is
-  warned of. The briefing names the fixed paths and the way out: ask the user to rename,
+  valid, each path its own; a hard link of a read-only file that a read-write
+  single-file mount shows is warned of. The briefing names the fixed paths and the way out: ask the user to rename,
   move or remove on the host and, where needed, update the dot-file and relaunch. A
   pinned directory stays writable inside as declared; a rename, hard link or `git mv`
   across its boundary fails with "Invalid cross-device link" (`mv` and `cp` copy
