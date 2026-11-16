@@ -9133,6 +9133,18 @@ _as_host_path_of() {
 # shellcheck disable=SC2154,SC2031
 _as_base_bind() {
   [[ -n "$profile_base" ]] || return 0
+  # A LINKED BASE IS REFUSED (#401; not under native, which is unchanged): its every
+  # channel would be reached through the link. A base that lives elsewhere is named by
+  # the variable the agent itself reads (the profile's base-env), set in the launching
+  # shell.
+  if ! _as_preset_is_native && _as_links_below_root "$profile_base"; then
+    local _lb_out _lb_hint=""
+    _lb_out="$(_as_links_chain "$profile_base")" || _lb_out=""
+    [[ -z "$profile_base_env" ]] \
+      || _lb_hint=" For a base that lives elsewhere, set $profile_base_env to it in the shell you launch from: $profile_base_env=${_lb_out#*$'\n'}."
+    _as_msg "profile '$profile': its base $(_as_tilde "$profile_base") is reached through a symbolic link (${_lb_out%%$'\n'*}), and a linked base is not supported.$_lb_hint Or ask for the feature at https://github.com/pearu/agent-sandbox/issues. Refusing to launch"
+    return 1
+  fi
   if [[ -n "${_acct_name:-}" && -z "${_acct_dir:-}" ]]; then
     _as_msg "the account '$_acct_name': its directory was not resolved; refusing to run the role on the base in its place"
     return 1
@@ -15948,8 +15960,9 @@ _as_ln_insert() {
 # approval where it would hand the role a host object it does not see: T exists, and the
 # final view does not show it at T from the host. A target the view shows, with any
 # access, is ordinary content: the role has the access T has there, nothing more, and no
-# mount is added for it. `own` and a hide hand nothing over.
-# A dangling link implies nothing. On the src side that is all (bwrap binds the resolved
+# mount is added for it. `own` hands nothing over. Refused outright, whatever the link
+# leads to (_as_links_unsupported): a channel whose profile has no `links = yes`, the
+# project's dot-file, a hide. A dangling link implies nothing. On the src side that is all (bwrap binds the resolved
 # source; a store reads it after the check). On the dest side the mount cannot go on the
 # link (bwrap refuses a symbolic-link destination), so it goes where the link leads:
 # - the link in a directory of the engine's (under the state directory: an account's,
@@ -15960,7 +15973,7 @@ _as_ln_insert() {
 # - not at all (_ln_drop) where nothing is there to show: a host bind through a link
 #   whose target's directory does not exist (a dangling link), a host bind whose source
 #   is T itself and which the view shows already (with any access: the role keeps what
-#   T has there), a hide of what the view does not show.
+#   T has there).
 _as_ln_met() {
   local _lm_mode="${_ln_mode[$2]-}" _lm_t="$_ch_cur" _lm_kind="" _lm_chain="" _lm_l _lm_x _lm_need=r _lm_host=0
   [[ -n "${_ln_mode[$2]+x}" ]] || return 0
@@ -15979,10 +15992,14 @@ _as_ln_met() {
     _as_links_unsupported "$(_as_tilde "$2") (the $_lm_ch channel)" "${_ch_links[0]}" "$_lm_x"
     return 1
   fi
-  # nor the project's dot-file, which the review reads and the role sees read-only
-  if [[ "$2" == "${_proj:-${cwd:-}}/.agent-sandbox" ]]; then
+  # nor the project's dot-file, which the review reads and the role sees read-only, nor
+  # a hide: through a link the role could retarget, the next launch would blank another
+  # path and show the one it hid
+  if [[ "$2" == "${_proj:-${cwd:-}}/.agent-sandbox" || "$_lm_mode" == hide ]]; then
     _as_ro_pins_readlink "${_ch_links[0]}" _lm_x
-    _as_links_unsupported "$(_as_tilde "$2") (the project's dot-file)" "${_ch_links[0]}" "$_lm_x"
+    local _lm_what="the project's dot-file"
+    [[ "$_lm_mode" != hide ]] || _lm_what="a hidden path"
+    _as_links_unsupported "$(_as_tilde "$2") ($_lm_what)" "${_ch_links[0]}" "$_lm_x"
     return 1
   fi
   _as_ln_unroot "$_lm_t" _lm_t
@@ -16000,7 +16017,7 @@ _as_ln_met() {
     _lm_kind='file'
   fi
   case "$_lm_mode" in
-    own | hide) _lm_need="" ;;
+    own) _lm_need="" ;;
   esac
   [[ -n "${_ms[$_k]-}" && "${_ms[$_k]}" != "$_sd"/* && "${_mk[$_k]-}" != other ]] && _lm_host=1
   # BIND WHAT WAS CHECKED: a host mount whose source goes through these links gets the
@@ -16017,9 +16034,6 @@ _as_ln_met() {
       [[ -d "${_ms[$_k]-}" || "${_on[_k]}" == --tmpfs || "${_on[_k]}" == --overlay || "$1" != "$_lm_first" ]] && _lm_pk=dir
       _ln_cover+=("$_lm_first"$'\t'"$_lm_pk")
       return 0 # what lands there is the mount's own; its source's links are the src side's
-    elif [[ "$_lm_mode" == hide ]]; then
-      if [[ -n "$_lm_kind" ]] && _as_ln_inview "$_ch_cur"; then _ln_move[$_k]="$_lm_t"; else _ln_drop[$_k]=1; fi
-      return 0
     elif [[ -z "$_lm_kind" && ! -d "${_lm_t%/*}" ]] && ((_lm_host)); then
       _ln_drop[$_k]=1
       return 0
