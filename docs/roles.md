@@ -964,8 +964,8 @@ has built the environment (section 3, "Setup"), it runs `asb --role setup --resu
 the terminal instead, so the first line of a new project is the same as every later one.
 Three tmux keys move around it, with nothing of ours behind them: `C-b C-o`
 (`rotate-window`) moves every role one pane along while the layout stays, so the second
-role takes the top pane; `C-b M-o`
-rotates the other way; and `C-b z` zooms the active pane to the whole window and back.
+role takes the top pane; `C-b M-o` rotates the other way; and `C-b z` zooms the active
+pane to the whole window and back.
 Then, in terminal 1 (or the Supervisor's pane):
 
 > The problem is issue #NNN. Tell P1 to work out the options with me.

@@ -471,6 +471,16 @@ no_tmux_path() {
     false
   }
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  # the same line holds before and after the setup: the setup launch gets the --agent and
+  # --account forms a pane for setup would get (a bare one, one for setup), not the
+  # others' (ey on #415)
+  run_engine TMUX_DUMP="$TM" -- asb --roles --agent supervisor=claude --agent 'set*=claude' --resume
+  [[ "$output" == *"running asb --role setup"*"role: setup (--role)"* ]] || {
+    printf '%s\n' "$output" | tail -5 >&3
+    false
+  }
+  [[ "$output" != *"matches no role of this launch"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
   # built (conda made conda-meta): the five groups, in order, numbered by number; neither
   # setup nor the other role, nor the globs
   mkdir "$env/conda-meta"
@@ -484,6 +494,17 @@ no_tmux_path() {
   [ "${PC[3]}" = "$(window --role implementer-1 --resume)" ]
   [ "${PC[4]}" = "$(window --role reviewer-1 --resume)" ]
   [ "${PC[5]}" = "$(window --role gate --resume)" ]
+  # and a form for setup alone on that line is not refused once setup has run: no pane
+  # gets it, the supervisor's form reaches the supervisor's pane alone
+  rm -f "$TM" "$TM.has"
+  run_engine TMUX_DUMP="$TM" -- asb --roles --agent setup=claude --agent supervisor=claude --resume
+  [ "$status" -eq 0 ] || {
+    printf '%s\n' "$output" | tail -5 >&3
+    false
+  }
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role supervisor --agent claude --resume)" ]
+  [ "${PC[1]}" = "$(window --role planner-2 --resume)" ]
   # a setup role with no environment of its own ([conda:setup] commented out, as --init
   # writes it without --env): nothing to build, the five groups open
   rm -f "$TM" "$TM.has"

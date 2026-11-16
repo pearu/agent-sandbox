@@ -647,9 +647,10 @@ Engine flags (before CMD):
                         supervisor, planners, implementers, reviewers and
                         gate, in that order -- or, while its setup role has
                         not built the environment its [conda:setup] names,
-                        --role setup here instead. No command: each pane runs its role's agent
-                        ([agent:<glob>] or [agent] command), and gets
-                        --agent AGENT only when the line named its role's.
+                        --role setup here instead. No command: each pane runs
+                        its role's agent ([agent:<glob>] or [agent] command),
+                        and gets --agent AGENT only when the line named its
+                        role's.
                         Reviews the dot-file once, here, first, then resolves
                         every role's agent: one with none, or not installed,
                         refuses and nothing opens. Refused with a command, a
@@ -17184,12 +17185,15 @@ _as_roles_open() {
   # `--role setup`, in this terminal; otherwise the Supervisor, the Planners, the
   # Implementers, the Reviewers and the Gate the file names, in that order, numbered
   # instances by number, and no other role.
+  local defaulted=0 had_setup=0
   if ((${#_roles[@]} == 0)); then
+    defaulted=1
     local -a names=() grp=()
     local g envpath="" k
     [[ -f "$df" ]] && mapfile -t names < <(_as_dotfile_role_globs "$df" | grep -v '[]*?[]')
     for g in ${names[@]+"${names[@]}"}; do
       if [[ "$g" == setup ]]; then
+        had_setup=1
         envpath="$(_as_dotfile_role_envpath "$df" setup)"
         if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
           _as_msg "--roles: the setup role has not built the environment at $(_as_tilde "$envpath") yet: running $invoked --role setup"
@@ -17258,6 +17262,10 @@ _as_roles_open() {
       # shellcheck disable=SC2053 # the glob is the pattern
       [[ "$r" == $_af_role ]] && hit=1 && break
     done
+    # with no role named, a form for the setup role is the setup launch's (above), not an
+    # error once setup has run: the same line before and after it
+    # shellcheck disable=SC2053 # the glob is the pattern
+    ((! hit && defaulted && had_setup)) && [[ setup == $_af_role ]] && hit=1
     if ((! hit)); then
       _as_msg "$fl $e: '$_af_role' matches none of the roles --roles opens (${_roles[*]}); nothing was opened"
       return 2
@@ -18127,8 +18135,30 @@ agent_sandbox() (
       [[ "$_rw" == --agent=* || "$_rw" == --account=* ]] || _roles_flags+=("$_rw")
     done
     # With no roles named, a setup not run yet is `--role setup` with this line's words
-    # (_as_roles_open): the words before and after `--roles`, --agent and --account kept.
-    _roles_setup_argv=("${_argv_given[@]:0:_roles_at}" --role setup "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}")
+    # (_as_roles_open): the words before and after `--roles`, and of the --agent and
+    # --account forms those a pane for `setup` would get -- a bare one, or one whose role
+    # or glob matches setup -- so one line holds before and after the setup.
+    local _sv _sk="" _sr
+    local -a _sw=("${_argv_given[@]:0:_roles_at}" "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}")
+    _roles_setup_argv=(--role setup)
+    for _rw in ${_sw[@]+"${_sw[@]}"}; do
+      if [[ -n "$_sk" ]]; then
+        _sv="$_rw"
+      elif [[ "$_rw" == --agent || "$_rw" == --account ]]; then
+        _sk="$_rw"
+        continue
+      elif [[ "$_rw" == --agent=* || "$_rw" == --account=* ]]; then
+        _sk="${_rw%%=*}" _sv="${_rw#*=}"
+      else
+        _roles_setup_argv+=("$_rw")
+        continue
+      fi
+      _sr=""
+      [[ "$_sv" == *=* ]] && _sr="${_sv%%=*}"
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ -z "$_sr" || setup == $_sr ]] && _roles_setup_argv+=("$_sk" "$_sv")
+      _sk=""
+    done
   fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
   # The engine's own words, but --serve, are what the loop starts its holder, and every
