@@ -33,9 +33,9 @@ asb() {
   engine_cmd
   local -a pre=()
   [[ -n "$TEST_PRESET" ]] && pre=(AGENT_SANDBOX_PRESET="$TEST_PRESET")
-  run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
+  run env -i HOME="$IHOME" PATH="${XPATH:+$XPATH:}/usr/bin:/bin" USER="$(id -un)" TERM=xterm AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
-    AGENT_SANDBOX_SESSION_BASE="$I/base" "${pre[@]}" \
+    AGENT_SANDBOX_SESSION_BASE="$I/base" "${pre[@]}" ${XENV[@]+"${XENV[@]}"} \
     bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" "$@"
 }
 claude_() { asb "$@" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe; }
@@ -152,7 +152,7 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [[ "$(rpt)" == *"read=DOTFILE"* ]]
 }
 
-@test "a linked directory (skills), a linked cache with its changelog, and a chain are read after one approval" {
+@test "a linked directory (skills), a linked cache with its changelog, and a chain are read once approved (the linked cache/ itself needs a second review: its changelog is all the first one lists)" {
   rm "$IHOME/.claude/CLAUDE.md"
   mkdir -p "$IHOME/dot/skills" "$IHOME/dot/cache"
   printf 'MY-SKILL\n' >"$IHOME/dot/skills/s.md"
@@ -360,25 +360,261 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [[ "$output" == *"~/.claude/skills/x = read-write outside:~/secret"* ]]
 }
 
-@test "the approval is where no role sees it: the trust store is not in the sandbox" {
+@test "the approval is where no role sees it: the record is on the host, and neither readable nor writable from inside" {
   claude_
   refused_for_link
   trust_y
-  printf '%s\n' 'ls -A "$HOME/.config/agent-sandbox" 2>/dev/null | head -1; echo end' >"$IWORK/probe.sh"
+  local rec
+  rec="$(ls "$IHOME/.config/agent-sandbox/trust/"*.links)"
+  [ -s "$rec" ]
+  printf '%s\n' "cat '$rec' >/dev/null 2>&1 && echo read=yes || echo read=no" \
+    "(echo X >>'$rec') 2>/dev/null && echo write=yes || echo write=no" >"$IWORK/probe.sh"
   claude_
   [ "$status" -eq 0 ] || {
     printf "%s\n" "$output" | tail -5 >&3
     false
   }
-  [ "$(rpt)" = end ]
+  [ "$(rpt)" = $'read=no\nwrite=no' ]
+  run grep -c X "$rec"
+  [ "$output" = 0 ]
 }
 
-@test "native is unchanged: the link is followed as without a sandbox, nothing asked" {
+@test "native is unchanged: the link is followed as without a sandbox, nothing asked, nothing recorded" {
   TEST_PRESET=""
   asb --preset native "$IHOME/.local/share/claude/versions/9.9.9/claude" probe
   [ "$status" -eq 0 ] || {
     printf "%s\n" "$output" | tail -5 >&3
     false
   }
-  [[ "$(rpt)" == *"read=DOTFILE"* ]]
+  [[ "$(rpt)" == *"read=DOTFILE"*"write=ok"* ]]
+  [[ "$output" != *"symbolic link"* ]]
+  run bash -c 'find "$1" -name "*.links*" 2>/dev/null' _ "$IHOME/.config"
+  [ -z "$output" ]
+}
+
+@test "a link to what the role already sees, read-only included, implies nothing: not listed, no extra bind, the role has the target's access (A)" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IWORK/ro"
+  printf 'P\n' >"$IWORK/ro/p.md"
+  printf '[connect]\nproject = read-write\n./ro/p.md = read-only\n' >"$IWORK/.agent-sandbox"
+  trust_y
+  printf '%s\n' 'ln -s .agent-sandbox x; ln -s ro/p.md y; ln -s /usr/bin/env py; echo planted' >"$IWORK/probe.sh"
+  claude_
+  [ "$(rpt)" = planted ]
+  trust_y
+  [[ "$output" != *"implied by symbolic links"* ]]
+  [[ "$output" != *"approve this link"* ]]
+  printf '%s\n' '(echo HACK >>x) 2>/dev/null && echo x=written || echo x=refused' \
+    '(echo HACK >>y) 2>/dev/null && echo y=written || echo y=refused' >"$IWORK/probe.sh"
+  claude_
+  [ "$status" -eq 0 ]
+  [ "$(rpt)" = $'x=refused\ny=refused' ]
+  [ "$(cat "$IWORK/ro/p.md")" = P ]
+  run grep -c HACK "$IWORK/.agent-sandbox"
+  [ "$output" = 0 ]
+}
+
+@test "one question per link: the dot-file approved and the link declined -- the dot-file holds, the link is not approved; each question names the declaration that skips it (B)" {
+  claude_ # the link: refused without a terminal, kept for --trust to ask
+  refused_for_link
+  printf '[allow]\nexample.org\n' >"$IWORK/.agent-sandbox"
+  trust_y 'y n'
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'approve this .agent-sandbox for' <<<"$output")" -eq 1 ]
+  [ "$(grep -c 'approve this link for' <<<"$output")" -eq 1 ] || {
+    printf "%s\n" "$output" >&3
+    false
+  }
+  [[ "$output" == *"to be asked no more, declare it yourself in .agent-sandbox under [connect]: ~/.claude/CLAUDE.md = read-write outside:~/dot/claude/CLAUDE.md"* ]]
+  claude_
+  refused_for_link # the link only: the dot-file is approved
+  [[ "$output" != *"never been approved"* ]]
+  # the declaration the question names: written, it asks nothing
+  printf '[allow]\nexample.org\n[connect]\n~/.claude/CLAUDE.md = read-write outside:~/dot/claude/CLAUDE.md\n' >"$IWORK/.agent-sandbox"
+  trust_y 'y n'
+  printf '%s\n' 'cat "$HOME/.claude/CLAUDE.md"' >"$IWORK/probe.sh"
+  claude_
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = DOTFILE ]
+  trust_y n # nothing pending any more: that launch found no implied declaration there
+  [[ "$output" != *"approve this link"* ]]
+}
+
+@test "a declaration you wrote whose source is the link's target asks nothing, under shared, inherit and isolated (B)" {
+  printf '%s\n' 'cat "$HOME/.claude/CLAUDE.md"' >"$IWORK/probe.sh"
+  local p
+  for p in shared inherit isolated; do
+    TEST_PRESET=$p
+    # shellcheck disable=SC2088 # the declaration's own ~
+    claude_ --connect '~/.claude/CLAUDE.md = read-only outside:~/dot/claude/CLAUDE.md'
+    [ "$status" -eq 0 ] || {
+      printf "%s: %s\n" "$p" "$output" | tail -5 >&3
+      false
+    }
+    [ "$(rpt)" = DOTFILE ]
+  done
+  run bash -c 'find "$1" -name "*.links" 2>/dev/null' _ "$IHOME/.config"
+  [ -z "$output" ] # nothing approved: nothing needed it
+}
+
+@test "a link that stands for what a written outside: may not name is refused as that declaration is: a secret store, the trust store, the home (G)" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/.ssh" "$IHOME/.config/agent-sandbox"
+  printf 'KEY\n' >"$IHOME/.ssh/id"
+  printf '%s\n' 'cat "$HOME/.claude/skills/id" "$HOME/.claude/skills/.ssh/id" 2>&1; echo ran' >"$IWORK/probe.sh"
+  local t
+  for t in ../.ssh ../.config/agent-sandbox ..; do
+    rm -f "$IHOME/.claude/skills"
+    ln -s "$t" "$IHOME/.claude/skills"
+    claude_
+    [ "$status" -ne 0 ]
+    [ ! -e "$IWORK/report" ]
+    [[ "$output" == *"~/.claude/skills is reached through a symbolic link"*"as written that is refused, so the link is: refusing 'outside:"* ]]
+    trust_y
+    [[ "$output" != *"approve this link"* ]]
+    run find "$IHOME/.config/agent-sandbox" -name '*.links'
+    [ -z "$output" ]
+  done
+}
+
+@test "the bind source is the target the check resolved, never the link: a retarget between the check and the mount changes nothing (H)" {
+  mkdir -p "$I/wbin"
+  # a bwrap that keeps its argument file (fd 11, --args) and runs the real one
+  printf '%s\n' '#!/bin/bash' \
+    "if [ -e /proc/self/fd/11 ]; then /usr/bin/cat <&11 >'$I/args'; exec /usr/bin/bwrap \"\$@\" 11<'$I/args'; fi" \
+    'exec /usr/bin/bwrap "$@"' >"$I/wbin/bwrap"
+  chmod +x "$I/wbin/bwrap"
+  local p
+  for p in shared inherit; do
+    TEST_PRESET=$p
+    claude_
+    trust_y
+    rm -f "$I/args"
+    XPATH="$I/wbin" claude_
+    [ "$status" -eq 0 ] || {
+      printf "%s\n" "$output" | tail -5 >&3
+      false
+    }
+    [ -s "$I/args" ]
+    run grep -zxcF "$IHOME/.claude/CLAUDE.md" "$I/args"
+    [ "$output" = 0 ] # the link path is no argument at all: not a source, not a destination
+    [[ "$(rpt)" == *"read=DOTFILE"* ]]
+  done
+}
+
+@test "a channel the profile does not support through a link is refused, naming the link and inviting a feature request: settings.json, plugins, agents, projects, the base's .claude.json, and the project's .agent-sandbox (C)" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/dot2"
+  printf 'echo ran\n' >"$IWORK/probe.sh"
+  local n
+  for n in settings.json plugins agents projects; do
+    if [[ "$n" == *.json ]]; then printf '{}\n' >"$IHOME/dot2/$n"; else mkdir -p "$IHOME/dot2/$n"; fi
+    rm -rf "${IHOME:?}/.claude/$n" # (an earlier refused launch may have made projects/)
+    ln -s "../dot2/$n" "$IHOME/.claude/$n"
+    claude_
+    [ "$status" -ne 0 ] || {
+      printf '%s launched: %s\n' "$n" "$output" >&3
+      false
+    }
+    [ ! -e "$IWORK/report" ]
+    [[ "$output" == *"channel) is reached through the symbolic link ~/.claude/$n -> ../dot2/$n, and this location is not supported through a symbolic link"*"https://github.com/pearu/agent-sandbox/issues"* ]] || {
+      printf '%s: %s\n' "$n" "$output" | tail -3 >&3
+      false
+    }
+    [ "$(readlink "$IHOME/.claude/$n")" = "../dot2/$n" ] # the user's link left as it is
+    rm "$IHOME/.claude/$n"
+  done
+  printf '{}\n' >"$IHOME/dot2/cj"
+  ln -s dot2/cj "$IHOME/.claude.json"
+  claude_
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"(the config channel) is reached through the symbolic link ~/.claude.json -> dot2/cj, and this location is not supported"* ]]
+  rm "$IHOME/.claude.json"
+  printf '[allow]\nexample.org\n' >"$IHOME/dot2/as"
+  ln -s "$IHOME/dot2/as" "$IWORK/.agent-sandbox"
+  trust_y
+  claude_
+  [ "$status" -ne 0 ]
+  [ ! -e "$IWORK/report" ]
+  [[ "$output" == *"(the project's dot-file) is reached through the symbolic link"*"not supported through a symbolic link"* ]]
+}
+
+@test "a linked agent base (~/.claude -> dot/claude-base) is refused, naming CLAUDE_CONFIG_DIR for a base that lives elsewhere; set, it launches on that base (O)" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mv "$IHOME/.claude" "$IHOME/dot/claude-base"
+  printf 'BASEMD\n' >"$IHOME/dot/claude-base/CLAUDE.md"
+  ln -s dot/claude-base "$IHOME/.claude"
+  printf '%s\n' 'cat "$CLAUDE_CONFIG_DIR/CLAUDE.md"' >"$IWORK/probe.sh"
+  local p
+  for p in shared inherit isolated; do
+    TEST_PRESET=$p
+    claude_
+    [ "$status" -ne 0 ]
+    [ ! -e "$IWORK/report" ]
+    [[ "$output" == *"its base ~/.claude is reached through a symbolic link (~/.claude -> dot/claude-base), and a linked base is not supported. For a base that lives elsewhere, set CLAUDE_CONFIG_DIR to it"*"https://github.com/pearu/agent-sandbox/issues"* ]] || {
+      printf '%s: %s\n' "$p" "$output" >&3
+      false
+    }
+  done
+  rm "$IHOME/.claude"
+  TEST_PRESET=shared
+  XENV=(CLAUDE_CONFIG_DIR="$IHOME/dot/claude-base")
+  claude_
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = BASEMD ]
+}
+
+@test "a scan-approved project link retargeted is asked again: refused without a terminal; --serve at a terminal refuses and does not ask" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  printf 'ENV\n' >"$IHOME/dot/envrc"
+  ln -s "$IHOME/dot/envrc" "$IWORK/.envrc"
+  printf '%s\n' 'cat "$PWD/.envrc" 2>/dev/null || echo none' >"$IWORK/probe.sh"
+  printf '[serve:r]\nwatch = ./inbox\nprompt = ./p.md\n' >"$IWORK/.agent-sandbox"
+  mkdir -p "$IWORK/inbox"
+  printf 'go\n' >"$IWORK/p.md"
+  trust_y
+  claude_ --role r --connect 'project = read-write'
+  trust_y
+  claude_ --role r --connect 'project = read-write'
+  [ "$(rpt)" = ENV ]
+  rm "$IWORK/.envrc"
+  ln -s ../secret/s "$IHOME/dot/s2" # a chain, to the secret
+  ln -s "$IHOME/dot/s2" "$IWORK/.envrc"
+  claude_ --role r --connect 'project = read-write'
+  refused_for_link
+  [[ "$output" == *"outside:~/secret/s'"* ]]
+  no_secret
+  claude_tty y --role r --serve --connect 'project = read-write'
+  [ ! -e "$IWORK/report" ] # (--serve itself ends with its launch, exit 0)
+  [[ "$output" != *"approve this link"* ]]
+  [[ "$output" == *"review it with: "*"--trust"* ]] || {
+    printf '%s\n' "$output" >&3
+    false
+  }
+}
+
+@test "a link with a newline in its target cannot be shown for approval: refused" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/dot/a"$'\n'"b"
+  printf 'X\n' >"$IHOME/dot/a"$'\n'"b/CLAUDE.md"
+  ln -s "../dot/a"$'\n'"b/CLAUDE.md" "$IHOME/.claude/CLAUDE.md"
+  claude_
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"has a tab or a newline in its name or target, which cannot be shown for approval"* ]]
+  [ ! -e "$IWORK/report" ]
+}
+
+@test "under an account, a missing channel source in the base behind a link is not made through it" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/.local/state/agent-sandbox/claude/accounts/work" "$IHOME/elsewhere"
+  ln -s ../elsewhere/gone "$IHOME/.claude/rules" # rules/ is the instructions channel's, which links may reach
+  printf 'echo ran\n' >"$IWORK/probe.sh"
+  claude_ --account work
+  [ ! -e "$IHOME/elsewhere/gone" ] # nothing made there
 }

@@ -7570,10 +7570,21 @@ _as_links_gate() {
   for l in ${_ln_pending[@]+"${_ln_pending[@]}"}; do
     _as_links_approved "$proj" "$l" || new+=("$l")
   done
-  ((${#new[@]})) || return 0
-  mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   rec="$(_as_links_rec "$proj")"
   local tmp="$rec.pending.$BASHPID.tmp"
+  # what this launch no longer finds at its own connect paths (a declaration written
+  # since, the link gone or changed) is no longer pending: --trust does not ask it
+  if [[ -f "$rec.pending" ]] && declare -p _ln_mode &>/dev/null; then
+    local -A _lg_now=()
+    for l in ${new[@]+"${new[@]}"}; do _lg_now[$l]=1; done
+    while IFS= read -r l; do
+      [[ -n "$l" ]] || continue
+      [[ -n "${_ln_mode[${l%%$'\t'*}]+x}" && -z "${_lg_now[$l]+x}" ]] && continue
+      printf '%s\n' "$l"
+    done <"$rec.pending" >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$rec.pending"
+  fi
+  ((${#new[@]})) || return 0
+  mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   if [[ -n "$proj" ]] && mkdir -p -- "${rec%/*}" 2>/dev/null; then
     {
       [[ ! -f "$rec.pending" ]] || cat -- "$rec.pending"
@@ -9143,6 +9154,7 @@ _as_base_bind() {
     _lb_out="$(_as_links_chain "$profile_base")" || _lb_out=""
     [[ -z "$profile_base_env" ]] \
       || _lb_hint=" For a base that lives elsewhere, set $profile_base_env to it in the shell you launch from: $profile_base_env=${_lb_out#*$'\n'}."
+    _lb_out="${_lb_out//"$HOME"\//\~/}"
     _as_msg "profile '$profile': its base $(_as_tilde "$profile_base") is reached through a symbolic link (${_lb_out%%$'\n'*}), and a linked base is not supported.$_lb_hint Or ask for the feature at https://github.com/pearu/agent-sandbox/issues. Refusing to launch"
     return 1
   fi
@@ -15853,7 +15865,7 @@ _as_ln_scan_mode() {
 # DEST, KIND, host source, and the mode the scan reads it with (or `-`). Under the trust
 # store, by profile and role; not inside a sandbox, where there is no review.
 _as_links_view_write() {
-  [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox || return 0
+  [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox && ! _as_preset_is_native || return 0
   local _vw_f _vw_k _vw_m _vw_t
   _vw_f="$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")"
   _vw_t="$_vw_f.$BASHPID.tmp" # this launch's own: concurrent launches each rename theirs
