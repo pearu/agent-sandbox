@@ -1145,8 +1145,9 @@ names are gone; there are no aliases for removed names before 1.0.
   already sees with that access needs no approval, nor does one under `own` (the role's
   own store goes where the link leads) or a hide (the target is blanked where the role
   would see it); a dangling link implies nothing until its target appears, and a source
-  the engine would make where one stands is refused, nothing made through it. bwrap cannot mount on a link, so the mount goes where it leads: in a
-  directory the role has from the host, at the target's own path, each link of a chain
+  the engine would make where one stands is refused, nothing made through it. bwrap
+  cannot mount on a link, so the mount goes where it leads: in a directory the role has
+  from the host, at the target's own path, each link of a chain
   the view does not show made again inside -- so the role sees the target at its own
   path too, and in a read-write directory it can replace the link, which the next launch
   asks about; in a directory of the engine's (an account's, a role's store, a
@@ -1158,8 +1159,8 @@ names are gone; there are no aliases for removed names before 1.0.
   paths as its last launch had them (no search), so a link there is asked about once,
   the mode shown being that launch's. `--check` lists what the review would. A join
   refuses a source that gained a link since its launch unless the link leads to what
-  the role already sees, or is approved. A link inside a `copy`, `seed-only` or `copy-on-write`
-  source is not covered here. Measured before: `~/.claude/CLAUDE.md ->
+  the role already sees, or is approved. A link inside a `copy`, `seed-only` or
+  `copy-on-write` source is not covered here. Measured before: `~/.claude/CLAUDE.md ->
   ../dot/claude/CLAUDE.md` (dotfiles) was unreadable under `shared` and failed with
   "bwrap: Can't mount on symlink destination" under `inherit` and `isolated`. A launch
   that refuses has read nothing through the link: a source is seeded or copied only once
@@ -1168,8 +1169,8 @@ names are gone; there are no aliases for removed names before 1.0.
   itself: it discards the copy, and the next launch copies the source again. The engine
   touches a source -- reads, copies, hashes (copy-on-write's shadow check) or makes it
   when missing -- only through one check of the links on its way (not of links inside a
-  source directory): at a launch, on that launch's view; at a join, against what was
-  approved. One source shown at two paths with different access is valid, each path its
+  source directory): at a launch, on that launch's view; at a join, against the keeper's
+  view and what was approved. One source shown at two paths with different access is valid, each path its
   own; a hard link of a read-only file that a read-write single-file mount shows is
   warned of. The briefing names the fixed paths and the way out: ask the user to rename,
   move or remove on the host and, where needed, update the dot-file and relaunch. A
