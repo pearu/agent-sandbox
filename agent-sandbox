@@ -2678,7 +2678,10 @@ _as_connect_bind_all() {
         fi
         # what the path is, for the links met on its way (_as_ln_met): its mode
         case "$what" in
-          c) _ln_mode[$_ds_k]="${_rec_mode:-$mode}" ;;
+          c)
+            _ln_mode[$_ds_k]="${_rec_mode:-$mode}"
+            ! declare -p _ln_chan &>/dev/null || _ln_chan[$_ds_k]="$ch"
+            ;;
           p) _ln_mode[$_ds_k]="${_connect_mode[$path]:-}" ;;
           t) _ln_mode[$_ds_k]=hide ;;
         esac
@@ -2714,7 +2717,10 @@ _as_connect_bind_all() {
           local _rs_s="${_reads_chk[_rj]#*$'\t'}"
           _rs_s="${_rs_s%%$'\t'*}"
           if [[ ! -e "$_rs_s" ]] && _as_links_below_root "$_rs_s"; then
-            _as_msg "connect: ${_reads_chk[_rj]%%$'\t'*}: its source $(_as_tilde "$_rs_s") is missing and reached through a symbolic link to what does not exist; nothing is made through a link. Make the source on the host, or remove the link. Refusing to launch"
+            local _rs_out
+            _rs_out="$(_as_links_chain "$_rs_s")" || _rs_out=""
+            _rs_out="${_rs_out%%$'\n'*}"
+            _as_msg "connect: ${_reads_chk[_rj]%%$'\t'*}: its source $(_as_tilde "$_rs_s") is missing, and its way goes through a symbolic link (${_rs_out// ; /, }); nothing is made through a link. Make the source on the host, or remove the link. Refusing to launch"
             return 1
           fi
         fi
@@ -7317,39 +7323,40 @@ _as_trust_forget() {
 # ----- symbolic links: the declarations they imply (#401) ---------------------
 # A symbolic link P -> T that would hand the role a host object outside its view is
 # taken as the declaration `P = MODE outside:T` (MODE: what P would have without the
-# link), and such an implied declaration is approved as the dot-file is: the review
-# lists it, the user's yes records it, and a new or changed one asks again (refused
-# where nobody can answer). The record is <trust>/<sha256(project)>.links, one line per
-# approved implied declaration: P, the chain (every link met while resolving it, as
-# `LINK -> TEXT`, joined by ` ; `), the resolved target, its kind (dir, file), TAB
-# separated. The mode is not part of it: it comes from the approved dot-file or the
-# preset. <rec>.links.pending holds what a launch found and could not ask about, with
-# the mode as a fifth field, for `asb --trust` to show; and <rec>.links.views, per role,
+# link), and such an implied declaration is approved on its own, one question per link
+# (the dot-file has its own): the user's yes records it, and a new or changed one -- its
+# mode included -- asks again (refused where nobody can answer). The record is
+# <trust>/<sha256(project)>.links, one line per approved implied declaration: P, the
+# chain (every link met while resolving it, as `LINK -> TEXT`, joined by ` ; `), the
+# resolved target, its kind (dir, file), the mode, TAB separated: what is approved is
+# the line the question showed. <rec>.links.pending holds what a launch found and could
+# not ask about, the same five fields, for `asb --trust` to ask; and <rec>.links.views, per role,
 # the directories a launch bound plainly from the host, which --trust scans (the scan
 # is never run at an ordinary launch). All under the trust store, which no role sees.
 _as_links_rec() { printf '%s/trust/%s.links' "$(_as_config_dir)" "$(_as_sha256_str "$1")"; }
 
-# _as_links_approved PROJECT LINE -- is LINE (four fields) in PROJECT's record?
+# _as_links_approved PROJECT LINE -- is LINE (five fields, the mode last) in PROJECT's
+# record?
 _as_links_approved() {
   local rec
   rec="$(_as_links_rec "$1")"
   [[ -f "$rec" ]] && grep -qFx -- "$2" "$rec"
 }
 
-# _as_links_record PROJECT LINE... -- add the lines (four fields, or five: the mode is
-# dropped) to PROJECT's record.
+# _as_links_record PROJECT LINE... -- add the lines (five fields) to PROJECT's record.
 _as_links_record() {
-  local rec l
+  local rec l tmp
   rec="$(_as_links_rec "$1")"
+  tmp="$rec.$BASHPID.tmp"
   shift
   mkdir -p -- "${rec%/*}" || return 1
   {
     [[ ! -f "$rec" ]] || cat -- "$rec"
     for l in "$@"; do
       IFS=$'\t' read -r -a _lr_f <<<"$l"
-      printf '%s\t%s\t%s\t%s\n' "${_lr_f[0]}" "${_lr_f[1]}" "${_lr_f[2]}" "${_lr_f[3]}"
+      printf '%s\t%s\t%s\t%s\t%s\n' "${_lr_f[0]}" "${_lr_f[1]}" "${_lr_f[2]}" "${_lr_f[3]}" "${_lr_f[4]}"
     done
-  } | sort -u >"$rec.tmp" && mv -f -- "$rec.tmp" "$rec"
+  } | sort -u >"$tmp" && mv -f -- "$tmp" "$rec"
 }
 
 # _as_links_line_ok LINE -- does LINE's chain still hold: every link of it reads as
@@ -7358,7 +7365,7 @@ _as_links_record() {
 _as_links_line_ok() {
   local -a f=()
   IFS=$'\t' read -r -a f <<<"$1"
-  ((${#f[@]} >= 4)) || return 1
+  ((${#f[@]} == 5)) || return 1
   local rest="${f[1]}" e l t
   while [[ -n "$rest" ]]; do
     e="${rest%% ; *}"
@@ -7378,7 +7385,7 @@ _as_links_line_ok() {
 _as_links_show() {
   local l e rest
   local -a f=()
-  printf '\nimplied by symbolic links (each a declaration you did not write; the mode is what the path has without the link):\n'
+  printf '\nimplied by symbolic links (each a declaration you did not write; the mode is what the path had without the link at the launch that found it):\n'
   for l in "$@"; do
     IFS=$'\t' read -r -a f <<<"$l"
     printf '  %s = %s outside:%s\n' "$(_as_tilde "${f[0]}")" "${f[4]:-MODE}" "$(_as_tilde "${f[2]}")"
@@ -7399,7 +7406,7 @@ _as_links_pending() {
   while IFS= read -r l; do
     [[ -n "$l" ]] || continue
     _as_links_line_ok "$l" || continue
-    _as_links_approved "$1" "$(cut -f1-4 <<<"$l")" && continue
+    _as_links_approved "$1" "$l" && continue
     printf '%s\n' "$l"
   done <"$rec" | sort -u
 }
@@ -7421,7 +7428,7 @@ _as_links_scan_review() {
   local proj="$1" vf d kind src mode l out chain t tk
   local sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
   for vf in "$(_as_links_view_file "$proj")"*; do
-    [[ -f "$vf" ]] || continue
+    [[ -f "$vf" && "$vf" != *.tmp ]] || continue
     local -a vd=() vk=() vs=() cp=()
     local -A vc=()
     while IFS=$'\t' read -r d kind src mode; do
@@ -7453,7 +7460,7 @@ _as_links_scan_review() {
         [[ "$chain$t" != *[$'\t']* ]] || continue
         if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else continue; fi
         _as_links_view_shows "$t" && continue
-        _as_links_approved "$proj" "$l"$'\t'"$chain"$'\t'"$t"$'\t'"$tk" && continue
+        _as_links_approved "$proj" "$l"$'\t'"$chain"$'\t'"$t"$'\t'"$tk"$'\t'"$mode" && continue
         _as_links_outside_ok "$l" "$chain" "$t" "$mode" || continue
         printf '%s\t%s\t%s\t%s\t%s\n' "$l" "$chain" "$t" "$tk" "$mode"
       done < <(find "$d" \( "${prune[@]}" \) -prune -o -type l -print0 2>/dev/null)
@@ -7481,7 +7488,7 @@ _as_links_scan_one() {
   [[ "$t" != "$2" ]] || return 0
   if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else return 0; fi
   _as_links_view_shows "$t" && return 0
-  _as_links_approved "$1" "$2"$'\t'"$lk"$'\t'"$t"$'\t'"$tk" && return 0
+  _as_links_approved "$1" "$2"$'\t'"$lk"$'\t'"$t"$'\t'"$tk"$'\t'"$4" && return 0
   _as_links_outside_ok "$2" "$lk" "$t" "$4" || return 0
   printf '%s\t%s\t%s\t%s\t%s\n' "$2" "$lk" "$t" "$tk" "$4"
 }
@@ -7510,40 +7517,35 @@ _as_links_view_shows() {
 # <rec>.links.pending either way, for that review. Returns 0 when nothing is left
 # unapproved.
 _as_links_gate() {
-  local proj="$1" rec l ans
+  local proj="$1" rec l
   local -a new=()
   _as_inside_sandbox && return 0
   for l in ${_ln_pending[@]+"${_ln_pending[@]}"}; do
-    _as_links_approved "$proj" "$(cut -f1-4 <<<"$l")" || new+=("$l")
+    _as_links_approved "$proj" "$l" || new+=("$l")
   done
   ((${#new[@]})) || return 0
   mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   rec="$(_as_links_rec "$proj")"
+  local tmp="$rec.pending.$BASHPID.tmp"
   if [[ -n "$proj" ]] && mkdir -p -- "${rec%/*}" 2>/dev/null; then
     {
       [[ ! -f "$rec.pending" ]] || cat -- "$rec.pending"
       printf '%s\n' "${new[@]}"
-    } | sort -u >"$rec.pending.tmp" 2>/dev/null \
-      && mv -f -- "$rec.pending.tmp" "$rec.pending"
+    } | sort -u >"$tmp" 2>/dev/null \
+      && mv -f -- "$tmp" "$rec.pending"
   fi
   if _as_has_terminal && ((! ${_do_serve:-0})); then
-    # asking anyway: the scan's findings go into the same list
-    mapfile -t new < <({
-      printf '%s\n' "${new[@]}"
-      _as_links_scan_review "$proj"
-    } | sort -u)
-    _as_links_show "${new[@]}" >&2
-    printf 'agent-sandbox: approve these for %s? [y/N] ' "$proj" >&2
-    read -r ans || true
-    case "$ans" in
-      y | Y | yes | YES)
-        _as_links_record "$proj" "${new[@]}" || return 1
-        _as_msg "approved."
-        return 0
-        ;;
-    esac
-    _as_msg "not approved; refusing to launch."
-    return 1
+    # one question per link; a no to one this launch needs refuses it
+    _as_links_ask "$proj" "${new[@]}" || return 1
+    if ((_la_no)); then
+      _as_msg "not approved; refusing to launch."
+      return 1
+    fi
+    # asking anyway: the scan's findings too, each on its own; a no to one of those
+    # blocks nothing (it is simply not approved)
+    _as_links_found "$proj"
+    _as_links_ask "$proj" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+    return 0
   fi
   local -a f=()
   for l in "${new[@]}"; do
@@ -7552,6 +7554,59 @@ _as_links_gate() {
   done
   _as_msg "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: ${invoked:-agent-sandbox} --trust"
   return 1
+}
+
+# _as_links_found PROJECT -- _lf_lines := what the review asks about of PROJECT's links:
+# what a launch found and could not ask about, and the scan's findings (both: still
+# holding, not approved). Computed once per command and project (the scan reads every
+# plainly bound directory).
+_lf_proj="" _lf_done=0
+declare -ga _lf_lines=()
+_as_links_found() {
+  if ((_lf_done)) && [[ "$_lf_proj" == "$1" ]]; then return 0; fi
+  mapfile -t _lf_lines < <({
+    _as_links_pending "$1"
+    _as_links_scan_review "$1"
+  } | sort -u)
+  _lf_proj="$1" _lf_done=1
+}
+
+# _as_links_ask PROJECT LINE... -- ONE QUESTION PER LINK (#401): each implied declaration
+# not yet approved is shown and asked about on its own, with the declaration that makes
+# the question unnecessary (written in the dot-file, it is the user's own and asks
+# nothing). A yes records it; a no leaves it unapproved. Each is asked once per command
+# (_la_asked): one declined earlier counts as declined again, unasked. _la_no := how many
+# of LINE... are declined. Fails only when the record cannot be written.
+declare -gA _la_asked=()
+_la_no=0
+_as_links_ask() {
+  local proj="$1" l ans
+  local -a f=()
+  shift
+  _la_no=0
+  for l in "$@"; do
+    [[ -n "$l" ]] || continue
+    _as_links_approved "$proj" "$l" && continue
+    if [[ -n "${_la_asked[$proj$'\n'$l]+x}" ]]; then
+      _la_no=$((_la_no + 1))
+      continue
+    fi
+    _la_asked[$proj$'\n'$l]=1
+    IFS=$'\t' read -r -a f <<<"$l"
+    _as_links_show "$l" >&2
+    printf 'to be asked no more, declare it yourself in .agent-sandbox under [connect]: %s = %s outside:%s\n' \
+      "$(_as_tilde "${f[0]}")" "${f[4]}" "$(_as_tilde "${f[2]}")" | cat -v >&2
+    printf 'agent-sandbox: approve this link for %s? [y/N] ' "$proj" >&2
+    read -r ans || true
+    case "$ans" in
+      y | Y | yes | YES)
+        _as_links_record "$proj" "$l" || return 1
+        _as_msg "approved."
+        ;;
+      *) _la_no=$((_la_no + 1)) ;;
+    esac
+  done
+  return 0
 }
 
 # _as_dotfile_briefing_files PROJECT FILE [unread] -- _as_briefing_files for FILE, parsed here.
@@ -7758,6 +7813,13 @@ _as_profile_dotfile() {
     # writes there later (a `gh auth login`) lands where the role reads, live.
     if [[ "$line" =~ ^[[:space:]]*create[[:space:]]*=[[:space:]]*yes[[:space:]]*$ ]]; then
       profile_channel_create+=("$name")
+      continue
+    fi
+    # `links = yes` (#401): the channel's paths and source may be reached through a
+    # symbolic link (each such link the declaration it implies, _as_ln_met). Only where a
+    # test holds it: any other channel through a link is refused.
+    if [[ "$line" =~ ^[[:space:]]*links[[:space:]]*=[[:space:]]*yes[[:space:]]*$ ]]; then
+      profile_channel_links+=("$name")
       continue
     fi
     # `login = FILE -- NOTE`: the file whose absence means the channel carries nothing
@@ -7969,7 +8031,7 @@ _as_profile_facts_dotfile() {
   local -a profile_hide=() profile_visible=() profile_env_pass=() profile_env_set=() profile_env_refuse=() _profile_allow_hosts=()
   local -a profile_channel_sources=() profile_channel_filters=() profile_channel_vendor=()
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
-  local -a profile_channel_create=() profile_channel_login=()
+  local -a profile_channel_create=() profile_channel_login=() profile_channel_links=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login, profile_account_expiry, profile_login_renew, profile_install
   # the caller's: the base, for the review's [connect] check (#355)
   _pf_base="$profile_base"
@@ -9557,33 +9619,29 @@ _as_trust_notes() {
 #     approval is older than the kept content)
 #   - new: the whole file
 #   - gone, though one was approved: what was approved, and whether to forget it
-# Returns 0 when approved (or forgotten), 1 when not. Reads the answer from stdin and
-# writes everything else to stderr.
+# Then the implied declarations (#401), what a launch found and could not ask about and
+# what the scan of the plainly bound directories finds, each asked on its own
+# (_as_links_ask): a no to one leaves it unapproved and changes nothing else.
+# Returns 0 when approved (or forgotten), 1 when not -- the dot-file's answer; with
+# neither a dot-file nor an approval of one, 0 when there were links to ask about. Reads
+# the answers from stdin and writes everything else to stderr.
 _as_trust_prompt() {
+  local cwd="$1" rc=0
+  _as_links_found "$cwd"
+  if [[ ! -f "$cwd/.agent-sandbox" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]; then
+    ((${#_lf_lines[@]})) || return 1
+  else
+    _as_trust_prompt_file "$cwd" || rc=1
+  fi
+  _as_links_ask "$cwd" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+  return "$rc"
+}
+
+# _as_trust_prompt_file CWD -- _as_trust_prompt's question on the dot-file.
+_as_trust_prompt_file() {
   local cwd="$1" file rec ans
   file="$cwd/.agent-sandbox"
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
-  # The implied declarations to approve with it (#401): what a launch found and could
-  # not ask about, and what the scan of the plainly bound directories finds, that still
-  # hold and are not approved. One list, one question with the dot-file's.
-  local -a links=()
-  mapfile -t links < <({
-    _as_links_pending "$cwd"
-    _as_links_scan_review "$cwd"
-  } | sort -u)
-  if [[ ! -f "$file" && ! -f "$rec" ]]; then
-    ((${#links[@]})) || return 1
-    _as_links_show "${links[@]}" >&2
-    printf 'agent-sandbox: approve these for %s? [y/N] ' "$cwd" >&2
-    read -r ans || true
-    case "$ans" in
-      y | Y | yes | YES) ;;
-      *) return 1 ;;
-    esac
-    _as_links_record "$cwd" "${links[@]}" || return 1
-    _as_msg "approved."
-    return 0
-  fi
   if [[ ! -f "$file" ]]; then
     {
       printf '\nagent-sandbox: %s has no .agent-sandbox, but one was approved earlier' "$cwd"
@@ -9612,19 +9670,13 @@ _as_trust_prompt() {
     return 1
   }
   _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
-  if ((${#links[@]})); then
-    _as_links_show "${links[@]}" >&2
-    printf 'agent-sandbox: approve this .agent-sandbox and the declarations its links imply for %s? [y/N] ' "$cwd" >&2
-  else
-    printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
-  fi
+  printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
   read -r ans || true
   case "$ans" in
     y | Y | yes | YES) ;;
     *) return 1 ;;
   esac
   _as_trust_record "$cwd" "$file" || return 1
-  ((${#links[@]} == 0)) || _as_links_record "$cwd" "${links[@]}" || return 1
   _as_msg "approved."
   return 0
 }
@@ -12682,14 +12734,10 @@ _as_trust_check() {
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
   # What the review would list of the links (#401): a launch's that it could not ask
   # about, and the scan's.
-  local -a links=()
-  mapfile -t links < <({
-    _as_links_pending "$cwd"
-    _as_links_scan_review "$cwd"
-  } | sort -u)
-  if ((${#links[@]})); then
-    _as_links_show "${links[@]}" >&2
-    _as_msg "check: ${#links[@]} implied declaration(s) new or changed since approved; a launch through them asks first ($invoked --trust)"
+  _as_links_found "$cwd"
+  if ((${#_lf_lines[@]})); then
+    _as_links_show "${_lf_lines[@]}" >&2
+    _as_msg "check: ${#_lf_lines[@]} implied declaration(s) new or changed since approved: $invoked --trust asks about each"
   fi
   if [[ ! -f "$file" ]]; then
     if [[ -f "$rec" ]]; then
@@ -14801,11 +14849,8 @@ _as_init() {
 _as_trust_review() {
   local cwd="$1" file ans
   file="$cwd/.agent-sandbox"
-  if [[ ! -f "$file" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]] \
-    && [[ -z "$({
-      _as_links_pending "$cwd"
-      _as_links_scan_review "$cwd"
-    } | head -c1)" ]]; then
+  _as_links_found "$cwd"
+  if [[ ! -f "$file" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]] && ((${#_lf_lines[@]} == 0)); then
     _as_msg "no .agent-sandbox in $cwd"
     return 1
   fi
@@ -15750,15 +15795,16 @@ _as_ln_scan_mode() {
 # store, by profile and role; not inside a sandbox, where there is no review.
 _as_links_view_write() {
   [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox || return 0
-  local _vw_f _vw_k _vw_m
+  local _vw_f _vw_k _vw_m _vw_t
   _vw_f="$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")"
+  _vw_t="$_vw_f.$BASHPID.tmp" # this launch's own: concurrent launches each rename theirs
   mkdir -p -- "${_vw_f%/*}" 2>/dev/null || return 0
   for ((_vw_k = 0; _vw_k < ${#_on[@]}; _vw_k++)); do
     [[ -n "${_mk[$_vw_k]+x}" ]] || continue
     _as_ln_scan_mode "$_vw_k" _vw_m
     [[ "${_od[_vw_k]}${_ms[$_vw_k]}" != *[$'\t\n']* ]] || continue
     printf '%s\t%s\t%s\t%s\n' "${_od[_vw_k]}" "${_mk[$_vw_k]}" "${_ms[$_vw_k]}" "${_vw_m:--}"
-  done >"$_vw_f.tmp" 2>/dev/null || return 0
+  done >"$_vw_t" 2>/dev/null || return 0
   # the connect paths, whose links are the launch's own to find (_as_ln_met), not the scan's
   # (their declared source and mode: the review reads their links as the launch does)
   local _vw_s _vw_ds=0
@@ -15767,8 +15813,8 @@ _as_links_view_write() {
     _vw_s="$_vw_k"
     ((! _vw_ds)) || _vw_s="${_decl_src[$_vw_k]:-$_vw_k}"
     [[ "$_vw_k$_vw_s" != *[$'\t\n']* ]] && printf '%s\tconnect\t%s\t%s\n' "$_vw_k" "$_vw_s" "${_ln_mode[$_vw_k]}"
-  done >>"$_vw_f.tmp" 2>/dev/null
-  mv -f -- "$_vw_f.tmp" "$_vw_f"
+  done >>"$_vw_t" 2>/dev/null
+  mv -f -- "$_vw_t" "$_vw_f"
   return 0
 }
 
@@ -15776,7 +15822,7 @@ _as_links_view_write() {
 # directories the scan looks in (_as_ln_scan_mode), re-read: one whose chain reads as
 # recorded gets its target bound at the target's own path with that directory's mode
 # (_ln_extra; each link of the chain the view does not show made again inside, so the
-# link resolves to it); one that changed and now leads outside the view is a changed
+# link resolves to it); one that changed (its mode included) and now leads outside the view is a changed
 # implied declaration (_ln_pending, asked or refused). A link made since the last review
 # is not known here: nothing is bound for it until the next one.
 _as_ln_recorded() {
@@ -15786,7 +15832,7 @@ _as_ln_recorded() {
   [[ -f "$_lr_rec" ]] || return 0
   while IFS= read -r _lr_l; do
     IFS=$'\t' read -r -a _lr_f <<<"$_lr_l"
-    ((${#_lr_f[@]} == 4)) || continue
+    ((${#_lr_f[@]} == 5)) || continue
     [[ -z "${_vis[${_lr_f[0]}]+x}" && -z "${_ln_mode[${_lr_f[0]}]+x}" ]] || continue # a mount's own path: _as_ln_met's
     _lr_d="${_lr_f[0]%/*}"
     _as_ro_pins_latest "${_lr_d:-/}" _lr_m
@@ -15795,7 +15841,7 @@ _as_ln_recorded() {
     [[ -n "$_lr_mode" ]] || continue
     _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
     [[ "$_lr_h" == "${_lr_d:-/}" ]] || continue
-    if _as_links_line_ok "$_lr_l"; then
+    if _as_links_line_ok "$_lr_l" && [[ "${_lr_f[4]}" == "$_lr_mode" ]]; then
       _as_ln_inview "${_lr_f[2]}" && continue
       _lr_k=--ro-bind
       [[ "$_lr_mode" == read-write ]] && _lr_k=--bind
@@ -15818,6 +15864,7 @@ _as_ln_recorded() {
       if [[ -d "$_lr_t" ]]; then _lr_x='dir'; elif [[ -e "$_lr_t" ]]; then _lr_x='file'; fi
       [[ -n "$_lr_x" ]] || continue
       _as_ln_inview "$_lr_t" && continue
+      _as_links_outside_ok "${_lr_f[0]}" "$_lr_c" "$_lr_t" "$_lr_mode" || return 1
       _ln_pending+=("${_lr_f[0]}"$'\t'"$_lr_c"$'\t'"$_lr_t"$'\t'"$_lr_x"$'\t'"$_lr_mode")
     fi
   done <"$_lr_rec"
@@ -15878,6 +15925,20 @@ _as_ln_met() {
   done
   ((${#_lm_keep[@]})) || return 0
   _ch_links=("${_lm_keep[@]}")
+  # A CHANNEL THROUGH A LINK ONLY WHERE A TEST HOLDS IT (the profile's `links = yes`):
+  # any other is refused, inviting a feature request
+  local _lm_ch="${_ln_chan[$2]-}"
+  if [[ -n "$_lm_ch" && " ${profile_channel_links[*]-} " != *" $_lm_ch "* ]]; then
+    _as_ro_pins_readlink "${_ch_links[0]}" _lm_x
+    _as_links_unsupported "$(_as_tilde "$2") (the $_lm_ch channel)" "${_ch_links[0]}" "$_lm_x"
+    return 1
+  fi
+  # nor the project's dot-file, which the review reads and the role sees read-only
+  if [[ "$2" == "${_proj:-${cwd:-}}/.agent-sandbox" ]]; then
+    _as_ro_pins_readlink "${_ch_links[0]}" _lm_x
+    _as_links_unsupported "$(_as_tilde "$2") (the project's dot-file)" "${_ch_links[0]}" "$_lm_x"
+    return 1
+  fi
   _as_ln_unroot "$_lm_t" _lm_t
   for _lm_l in "${_ch_links[@]}"; do
     _as_ro_pins_readlink "$_lm_l" _lm_x
@@ -15935,6 +15996,10 @@ _as_ln_met() {
     # declaration is about its path: one whose source is not the link's target (an
     # outside: elsewhere, a relocated source) hands the role that source at P, not T
     ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] || return 0
+    # a declaration the user wrote with that very source (`P = MODE outside:T`, in the
+    # dot-file or --connect) is theirs already: the question it would be asks nothing
+    # (its source's own links are the src side's)
+    [[ -z "${_connect_src[$2]:-}" ]] || return 0
   fi
   [[ -n "$_lm_need" && -n "$_lm_kind" ]] || return 0
   _as_ln_inview "$_ch_cur" && return 0
@@ -15949,6 +16014,12 @@ _as_ln_met() {
   _as_links_outside_ok "$2" "$_lm_chain" "$_lm_t" "$_lm_mode" || return 1
   _ln_pending+=("$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode")
   return 0
+}
+
+# _as_links_unsupported WHAT LINK TARGET -- the refusal of a location not supported
+# through a symbolic link (#401): none is used until a test holds it.
+_as_links_unsupported() {
+  _as_msg "connect: $1 is reached through the symbolic link $(_as_tilde "$2") -> $3, and this location is not supported through a symbolic link. Refusing to launch. Replace the link with what it points to, or ask for the feature at https://github.com/pearu/agent-sandbox/issues"
 }
 
 # _as_links_outside_ok P CHAIN T MODE -- the implied declaration `P = MODE outside:T`
@@ -16247,6 +16318,7 @@ _as_ro_pins() {
   local -a _ln_syms=() _ln_cover=() _ln_pending=()
   # (the connect paths' modes are the launch's; called without them, no path is one)
   declare -p _ln_mode &>/dev/null || local -A _ln_mode=()
+  declare -p _ln_chan &>/dev/null || local -A _ln_chan=()
   local -A _nargs=() _qual=()
   _as_bwrap_nargs _nargs _qual
   # Parse: per option its name, first argument's index, DEST (no trailing /), and the
@@ -16892,22 +16964,20 @@ _as_roles_open() {
     need=1
   fi
   # and every role's implied declarations (#401): what a launch could not ask about, and
-  # the scan of what the roles' last launches bound
-  if ((! need)) && [[ -n "$({
-    _as_links_pending "$dir"
-    _as_links_scan_review "$dir"
-  } | head -c1)" ]]; then
-    need=1
+  # the scan of what the roles' last launches bound -- each asked on its own; a no to
+  # one of those blocks nothing (a pane that needs it refuses by itself)
+  _as_links_found "$dir"
+  if ((need || ${#_lf_lines[@]})) && ! _as_has_terminal; then
+    _as_msg "--roles: .agent-sandbox needs your review, and there is no terminal here to ask at: run $invoked --trust first"
+    return 1
   fi
   if ((need)); then
-    if ! _as_has_terminal; then
-      _as_msg "--roles: .agent-sandbox needs your review, and there is no terminal here to ask at: run $invoked --trust first"
-      return 1
-    fi
     if ! _as_trust_prompt "$dir"; then
       _as_msg "not approved; --roles opens no panes."
       return 1
     fi
+  else
+    _as_links_ask "$dir" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
   fi
   # Every role's agent, as its pane will resolve it: the line's forms that apply to the
   # role, then the approved file's [agent] lines. A form matching no listed role is
@@ -17251,6 +17321,8 @@ agent_sandbox() (
   # A connect path's mode by its DEST (hide for a blanked path), for the links met on its
   # way (_as_ln_met): only these paths imply declarations (#401).
   local -A _ln_mode=()
+  # ... and a channel's name by its DEST, for the channels a link may lead to (_as_ln_met)
+  local -A _ln_chan=()
   # The join-scoped paths the launch declares (#147): `kind<TAB>name<TAB>path`.
   local -a _join_scoped=()
   local _join_stage_bound=0
@@ -18220,6 +18292,7 @@ agent_sandbox() (
   local -a profile_channel_reach=()  # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
   local -a profile_channel_env=()    # [channel:<name>] env: "CHANNEL<TAB>NAME" (#88)
   local -a profile_channel_create=() # [channel:<name>] create = yes: its missing source is made
+  local -a profile_channel_links=()  # [channel:<name>] links = yes: reached through a link (#401)
   local -a profile_channel_login=()  # [channel:<name>] login: "CHANNEL<TAB>FILE<TAB>NOTE"
   local profile_base=""              # [agent] base: the agent's state directory (#175)
   local profile_base_env=""          # [agent] base-env: the variable the agent reads it from

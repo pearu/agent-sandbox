@@ -39,9 +39,10 @@ asb() {
     bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" "$@"
 }
 claude_() { asb "$@" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe; }
+# trust_y [ANSWERS] -- asb --trust, ANSWERS (default: yes to every question) one per line
 trust_y() {
   run env -i HOME="$IHOME" PATH="/usr/bin:/bin" USER="$(id -un)" AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" \
-    bash -c 'cd "$1" && printf "y\n" | "$2" --trust 2>&1' _ "$IWORK" "$REPO_ROOT/agent-sandbox"
+    bash -c 'cd "$1" && printf "%s\n" $3 | "$2" --trust 2>&1' _ "$IWORK" "$REPO_ROOT/agent-sandbox" "${1:-y y y y y y y y}"
 }
 rpt() { cat "$IWORK/report" 2>/dev/null; }
 # claude_tty ANSWER ARGS... -- claude_ at a terminal (script(1)), ANSWER typed at the question.
@@ -58,7 +59,12 @@ claude_tty() {
 }
 # no_secret -- nothing of ~/secret/s was read into the state or session directories
 no_secret() {
-  ! grep -rqs SECRET "$IHOME/.local/state" "$I/base" "$IHOME/.claude"
+  local -a d=()
+  local x
+  for x in "$IHOME/.local/state" "$I/base" "$IHOME/.claude"; do [ ! -e "$x" ] || d+=("$x"); done
+  run grep -rl SECRET "${d[@]}"
+  [ "$status" -eq 1 ] || printf 'secret in: %s\n' "$output" >&3 # 1: nothing found (2: an error)
+  [ "$status" -eq 1 ]
 }
 
 refused_for_link() { # what a launch without a terminal says, and that nothing ran
@@ -181,13 +187,23 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
     false
   }
   [ "$(rpt)" = INSIDE ]
-  mv "$IHOME/CLAUDE.md.lnk" "$IHOME/.claude/CLAUDE.md"
+}
+
+@test "a dot-file declaration for the linked path sets the mode; the approval is of the mode shown, and another mode is asked again" {
+  claude_
+  refused_for_link
+  trust_y
+  [[ "$output" == *"~/.claude/CLAUDE.md = read-write outside:~/dot/claude/CLAUDE.md"* ]]
   printf '[connect]\n~/.claude/CLAUDE.md = read-only\n' >"$IWORK/.agent-sandbox"
   printf '%s\n' 'p="$HOME/.claude/CLAUDE.md"' 'printf "read=%s\n" "$(cat "$p" 2>&1)"' \
     '(echo ROLE >>"$p") 2>/dev/null && echo write=ok || echo write=refused' >"$IWORK/probe.sh"
-  trust_y # one review: the dot-file, and the link (the mode shown is the last launch's)
-  [[ "$output" == *"~/.claude/CLAUDE.md = "*" outside:~/dot/claude/CLAUDE.md"* ]]
-  claude_
+  trust_y # the dot-file's own question
+  [[ "$output" == *"approve this .agent-sandbox for"* ]]
+  claude_ # the link was approved read-write; read-only is another line
+  refused_for_link
+  [[ "$output" == *"'~/.claude/CLAUDE.md = read-only outside:~/dot/claude/CLAUDE.md'"* ]]
+  claude_tty y
+  [[ "$output" == *"~/.claude/CLAUDE.md = read-only outside:~/dot/claude/CLAUDE.md"* ]]
   [ "$status" -eq 0 ] || {
     printf "%s\n" "$output" | tail -5 >&3
     false
@@ -253,7 +269,7 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [[ "$output" == *"implied declaration(s) new or changed"* ]]
   claude_tty n
   [ "$status" -ne 0 ]
-  [[ "$output" == *"approve these for"* ]]
+  [[ "$output" == *"approve this link for"* ]]
   [ ! -e "$IWORK/report" ]
   no_secret
   claude_tty y
@@ -289,9 +305,14 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [ "$(rpt)" = planted ]
   printf '%s\n' 'cat "$HOME/.claude/CLAUDE.md" "$HOME/.claude/agents/s"' >"$IWORK/probe.sh"
   claude_ --account work
+  [ "$status" -ne 0 ]
+  [ ! -e "$IWORK/report" ]
+  [[ "$output" == *"the agents channel"*"not supported through a symbolic link"*"github.com/pearu/agent-sandbox/issues"* ]] # (C)
+  no_secret
+  rm "$IHOME/.claude/agents"
+  claude_ --account work
   refused_for_link
   [[ "$output" == *"outside:~/secret/s'"* ]]
-  [[ "$output" == *"outside:~/secretdir'"* ]]
   no_secret
 }
 
