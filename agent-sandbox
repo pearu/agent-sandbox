@@ -2394,8 +2394,9 @@ _as_connect_seed() {
 # _as_src_guard KEY SRC SLOT KIND CMD... -- THE ONE WAY THE ENGINE TOUCHES A SOURCE ON
 # THE HOST: CMD reads, copies, hashes, lists or makes something at or under SRC (a
 # declaration's or channel's source, as declared) for what is bound at KEY from SLOT (a
-# KIND, dir or file). A source is touched only once its own links are checked (R3: a
-# link the role can replace refuses, with the pins' message):
+# KIND, dir or file). A source is touched only once its own links are checked (each
+# link the declaration it implies, approved first: _as_ln_met), and then as the check
+# resolved it:
 # - in a launch (inside _as_connect_bind_all): queued in _reads/_reads_chk and run there
 #   at the end, after the check on that launch's view (_as_ro_pins in its check mode),
 #   and only where SLOT is what shows at KEY (a path a later declaration took over is
@@ -2944,8 +2945,8 @@ _as_connect_bind_channel() {
     # there, which the next launch that binds the path (an account's, or one whose
     # outer bind covers it) followed to a host path no declaration grants (measured:
     # ~/.claude/CLAUDE.md -> ../secret/g, read and written by the next role). Bound,
-    # it is a mount point (EBUSY) and _as_ro_pins fixes its way and refuses a link the
-    # role can replace on it. A missing one is not made: there is nothing to fix, and
+    # it is a mount point (EBUSY) and _as_ro_pins fixes its way; a link on it is the
+    # declaration it implies (_as_ln_met), asked before the launch follows it. A missing one is not made: there is nothing to fix, and
     # what the role puts there is resolved by the launch that binds it.
     if [[ "$src" != "$path" && -e "$src" ]]; then
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
@@ -3258,7 +3259,7 @@ _as_connect_bind_path() {
     return 1
   fi
   # The source as declared, before readlink -f, every mode: _as_ro_pins resolves it link
-  # by link (a link the role can replace refuses the launch) and fixes it where a
+  # by link (each link met the declaration it implies, _as_ln_met) and fixes it where a
   # read-write host mount shows it (declared paths are fixed for the role). Not an own
   # store, nor another sandbox's: no host path of the user's.
   # (_ds_pending: recorded by _as_connect_bind_all once this bind adds a mount here.)
@@ -9087,7 +9088,7 @@ _as_version_said() {
 # under an entry of the base bound there from the base (_as_base_entry_binds):
 # `{base}/E/Y` is created at BASE/E/Y, as it is with no account. Any other path is the
 # same on both sides. No mount point is ever made under an entry made again as a
-# symlink: a declared path through that link refuses the launch (_as_ro_pins_chain). A
+# symlink: a declared path through that link goes where _as_ln_met puts it. A
 # placeholder's record must name the host path bwrap creates, or the cleanup would
 # test, and remove, an empty file of that name where bwrap did not make it, and leave
 # the one it did.
@@ -16108,7 +16109,7 @@ _as_links_outside_ok() {
 # At 40 links (a loop) the launch is refused: `readlink -f` gives up there, and bwrap
 # could not bind the path. Every decision is on the final view.
 _as_ro_pins_chain() {
-  local _ch_cur=/ _ch_c _ch_t _ch_n=0 _ch_l _ch_d _ch_q _wself=""
+  local _ch_cur=/ _ch_c _ch_t _ch_n=0 _ch_l _ch_q _wself=""
   local -a _ch_todo=() _ch_links=() _ch_pos=() _ch_more=()
   _as_ro_pins_comps "$1" _ch_todo
   local _ch_ti=0 # the next component (the list is replaced at a link)
@@ -16218,26 +16219,6 @@ _as_ro_pins_hardlink() {
   return 0
 }
 
-# _as_channel_npaths KEY -- print how many paths the channel holding KEY has (an
-# `outside:` on the [connect] line may relocate a channel of one); fails when KEY is no
-# channel's path.
-# shellcheck disable=SC2031 # the launch's own profile_channels
-_as_channel_npaths() {
-  local line e k="${1%/}"
-  local -a f=()
-  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
-    IFS=$'\t' read -r -a f <<<"$line"
-    for e in "${f[@]:1}"; do
-      e="${e#*:}"
-      if [[ "${e%/}" == "$k" ]]; then
-        printf '%s' "$((${#f[@]} - 1))"
-        return 0
-      fi
-    done
-  done
-  return 1
-}
-
 # _as_ro_pins_walk TARGET BIND -- for _as_ro_pins, on its locals: look at every
 # directory above TARGET (a sandbox path: a bind's DEST, or where its source shows), through
 # the mount points on the way, and record a pin for each plain directory the role has
@@ -16275,8 +16256,7 @@ _as_ro_pins_walk() {
       continue # nothing a host bind can pin
     fi
     # A link on the way is not pinned, nor anything beneath it: where the link leads is
-    # the chain's (_as_ro_pins_chain), which refuses a link the role can replace where
-    # that matters and pins behind any other.
+    # the chain's (_as_ro_pins_chain, _as_ln_met), which pins behind it.
     [[ -L "$_rd" ]] && break
     [[ -z "${_pin_no[$_p]+x}" ]] || continue
     # already pinned under the mount that shows there now
@@ -16351,8 +16331,8 @@ _as_ro_pins_walk() {
 # pinned once. A pin is bound as the mount it lies in is (--dev-bind stays --dev-bind).
 #
 # - each declaration's source (as declared, _decl_src, or the list's own host source) and
-#   the host path its key lands on are resolved link by link (_as_ro_pins_chain): a link
-#   the role can replace refuses the launch, in every mode, on both sides; the source
+#   the host path its key lands on are resolved link by link (_as_ro_pins_chain): each
+#   link met is the declaration it implies (_as_ln_met), on both sides; the source
 #   itself and the directories on the way are fixed where a read-write host mount shows
 #   them.
 #
@@ -16582,8 +16562,8 @@ _as_ro_pins() {
     # LAUNCH BINDS. For every mount of the final view, in every mode, read-write included:
     # the key's directories that the role has read-write from the host are pinned (the
     # key itself is a mount point), and the host path the key lands on and the
-    # declaration's source are resolved link by link (_as_ro_pins_chain): a link the role
-    # can replace refuses the launch, the real paths are fixed where a read-write host
+    # declaration's source are resolved link by link (_as_ro_pins_chain): each link met
+    # is the declaration it implies (_as_ln_met), the real paths are fixed where a read-write host
     # mount shows them. What the declaration's access governs is what is inside the path,
     # not the path itself (measured, #389 and after: a rename of a directory above moved
     # a read-only file to where the role could write it, uncovered a host original under
