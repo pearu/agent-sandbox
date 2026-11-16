@@ -665,3 +665,73 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [[ "$output" == *"~/data/sub -> ~/secret"* ]] || [[ "$output" == *"/data/sub -> "*"/secret"* ]]
 }
 
+@test "a path declaration's copy, seed-only and copy-on-write read the source as the check resolved it: a link flipped around the bind-time readlink -f copies, seeds and hashes nothing of its other target" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  TEST_PRESET=inherit
+  mkdir -p "$IHOME/data" "$I/rl"
+  printf 'DATA\n' >"$IHOME/data/f"
+  printf 'SECRET\n' >"$IHOME/secret/f"
+  ln -s "$IHOME/data" "$IWORK/lnk"
+  # a readlink that, for every `readlink -f` of the link, points it at the secret for that
+  # call and back: only a resolution other than the check's sees the secret
+  printf '%s\n' '#!/bin/bash' \
+    'if [[ -z "$RL_PERSIST" && " $* " == *" -f "* && "${@: -1}" == "$RL_LNK" ]]; then' \
+    '  good="$(/usr/bin/readlink -- "$RL_LNK")"; ln -sfn "$RL_EVIL" "$RL_LNK"; /usr/bin/readlink "$@"; rc=$?' \
+    '  ln -sfn "$good" "$RL_LNK"; : >"$RL_LNK.flipped"; exit $rc' \
+    'fi' \
+    'if [[ -n "$RL_PERSIST" && " $* " != *" -f "* && " $* " == *" $RL_LNK "* && ! -e "$RL_LNK.flipped" ]]; then' \
+    '  /usr/bin/readlink "$@"; rc=$?; ln -sfn "$RL_EVIL" "$RL_LNK"; : >"$RL_LNK.flipped"; exit $rc' \
+    'fi' 'exec /usr/bin/readlink "$@"' >"$I/rl/readlink"
+  chmod +x "$I/rl/readlink"
+  printf '%s\n' 'cat view/f' >"$IWORK/probe.sh"
+  local m
+  for m in copy seed-only copy-on-write; do
+    rm -rf "${IHOME:?}/.local/state" "$IWORK/lnk.flipped"
+    printf '[connect]\n./view/ = %s outside:%s\n' "$m" "$IWORK/lnk" >"$IWORK/.agent-sandbox"
+    XPATH="" XENV=()
+    trust_y
+    claude_
+    trust_y
+    XPATH="$I/rl" XENV=(RL_LNK="$IWORK/lnk" RL_EVIL="$IHOME/secret")
+    claude_
+    [ "$status" -eq 0 ] || {
+      printf "%s: %s\n" "$m" "$output" | tail -5 >&3
+      false
+    }
+    [ -e "$IWORK/lnk.flipped" ] # the wrapper did flip it
+    [ "$(rpt)" = DATA ] || {
+      printf '%s: %s\n' "$m" "$(rpt)" >&3
+      false
+    }
+    # (the overlay's work directories are unreadable: grep says 2 for them, and still
+    # prints every file it found)
+    [ -d "$IHOME/.local/state/agent-sandbox" ]
+    run grep -rls SECRET "$IHOME/.local/state" "$I/base"
+    [ -z "$output" ] || {
+      printf '%s: secret in %s\n' "$m" "$output" >&3
+      false
+    }
+    # the copy-on-write record of what it shadows names the data's file, not the secret's
+    if [[ "$m" == copy-on-write ]]; then
+      run grep -rls --include='*.json' '"f"' "$IHOME/.local/state"
+      [ -n "$output" ]
+      run grep -rls --include='*.json' '"s"' "$IHOME/.local/state"
+      [ -z "$output" ]
+    fi
+    # the link left pointing at the secret right after the check read it: the read
+    # still uses what the check resolved (the later full pass sees the change and
+    # refuses the launch, which is not what this checks)
+    rm -rf "${IHOME:?}/.local/state" "$IWORK/lnk.flipped"
+    XPATH="$I/rl" XENV=(RL_LNK="$IWORK/lnk" RL_EVIL="$IHOME/secret" RL_PERSIST=1)
+    claude_
+    [ -e "$IWORK/lnk.flipped" ]
+    [ "$(readlink "$IWORK/lnk")" = "$IHOME/secret" ]
+    [ -d "$IHOME/.local/state/agent-sandbox" ]
+    run grep -rls SECRET "$IHOME/.local/state" "$I/base"
+    [ -z "$output" ] || {
+      printf '%s (persist): secret in %s\n' "$m" "$output" >&3
+      false
+    }
+    ln -sfn "$IHOME/data" "$IWORK/lnk"
+  done
+}

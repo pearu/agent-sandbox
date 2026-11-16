@@ -3258,6 +3258,13 @@ _as_connect_bind_path() {
     _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
     return 1
   fi
+  # THE READS USE WHAT THE CHECK APPROVED: seed-only, copy and the copy-on-write hash are
+  # given the source as declared, never $real -- the check resolves it link by link, and
+  # a source through a link is read as that check resolved it (_as_src_guard, _rd_res),
+  # not as it resolved here, earlier (measured: a link flipped around this readlink had
+  # the secret copied, seeded and hashed). Under native, which checks nothing (R5): $real.
+  local rsrc="$s"
+  _as_preset_is_native && rsrc="$real"
   # The source as declared, before readlink -f, every mode: _as_ro_pins resolves it link
   # by link (each link met the declaration it implies, _as_ln_met) and fixes it where a
   # read-write host mount shows it (declared paths are fixed for the role). Not an own
@@ -3284,7 +3291,7 @@ _as_connect_bind_path() {
       ;;
     seed-only)
       slot="$base/seed-only/$(_as_iso_slug "$p")"
-      _as_src_guard "$p" "$s" "$slot" "$kind" _as_connect_seed "$real" "$slot" "$kind" || return 1
+      _as_src_guard "$p" "$s" "$slot" "$kind" _as_connect_seed "$rsrc" "$slot" "$kind" || return 1
       args+=(--bind "$slot" "$p")
       _connect_host[$p]="$slot"
       ;;
@@ -3302,7 +3309,7 @@ _as_connect_bind_path() {
           work="$base/work/$(_as_iso_slug "$p")"
           seen="$base/seen/$(_as_iso_slug "$p").json"
           mkdir -p -- "$upper" "$work" "$(dirname -- "$seen")" || return 1
-          _as_src_guard "$p" "$s" "$real" dir _as_connect_shadows "$key" "$real" "$upper" "$seen" || return 1
+          _as_src_guard "$p" "$s" "$real" dir _as_connect_shadows "$key" "$rsrc" "$upper" "$seen" || return 1
           args+=(--overlay-src "$real" --overlay "$upper" "$work" "$p")
           _connect_host[$p]="layer:$upper"
           return 0
@@ -3312,7 +3319,7 @@ _as_connect_bind_path() {
       slot="$base/copy/$(_as_iso_slug "$p")"
       manifest="$base/base/$(_as_iso_slug "$p").json"
       mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
-      _as_src_guard "$p" "$s" "$slot" "$kind" _as_read_dsync "$key" "$kind" "$real" "$slot" "$manifest" || return 1
+      _as_src_guard "$p" "$s" "$slot" "$kind" _as_read_dsync "$key" "$kind" "$rsrc" "$slot" "$manifest" || return 1
       args+=(--bind "$slot" "$p")
       _connect_host[$p]="$slot"
       ;;
