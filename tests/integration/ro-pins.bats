@@ -144,18 +144,6 @@ own_case() {
   [ "$(cat "$W/$f")" = HOST ]
 }
 
-# behind_link DECL... -- ro/lnk or c/lnk -> ../real, real/f.md HOST in the read-write project:
-# the launch is not refused, the role's rename of real is EBUSY, the next launch reads HOST.
-behind_link() {
-  run_sandboxed "${BASE[@]}" -- "$@" --profile probe --exec bash -c '
-    python3 ops.py mv:rename:real:real.moved
-    mkdir -p real 2>/dev/null; echo ROLE >real/f.md 2>/dev/null; true'
-  [ "$status" -eq 0 ]
-  [ "$(report mv)" = EBUSY ]
-  [ "$(cat "$W/real/f.md")" = HOST ]
-  [ ! -e "$W/real.moved" ]
-}
-
 # part_in_place MODE -- ./ref/ read-only from ~/src/libfoo/, ./ref/build/ MODE in place, and
 # ./build/ read-write from ~/src/libfoo/build/: it launches; what the role writes in
 # ref/build stays its own, what it writes in build reaches the host.
@@ -252,7 +240,7 @@ part_in_place() {
   own_case seed-only dir
 }
 
-@test "a read-only declaration through a link to what the role sees launches, read-only at the target too; through one to a host path outside its view it is refused before anything runs" {
+@test "a read-only declaration through a link to what the role sees launches with the access the target has (A: no mount added); through one to a host path outside its view it is refused before anything runs" {
   mkdir -p "$W/x/real" "$I/ext"
   printf 'HOST\n' >"$W/x/real/f.md"
   printf 'EXT\n' >"$I/ext/f.md"
@@ -261,7 +249,7 @@ part_in_place() {
     echo "seen=$(cat x/lnk/f.md)" >>report; (echo W >>x/real/f.md) 2>/dev/null && echo w=ok >>report || echo w=no >>report'
   [ "$status" -eq 0 ]
   [ "$(report seen)" = HOST ]
-  [ "$(report w)" = no ]
+  [ "$(report w)" = ok ] # the target is in the read-write project: the role has what it has
   rm "$W/x/lnk"
   ln -s "$I/ext" "$W/x/lnk"
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'
@@ -270,21 +258,23 @@ part_in_place() {
   [ -z "$(report ran)" ]
 }
 
-@test "a link in a read-only directory, its target read-write: not refused, the real path pinned" {
+@test "a link in a read-only directory, its target read-write in the view: not refused, nothing added for it (A)" {
   mkdir -p "$W/ro" "$W/real"
   printf 'HOST\n' >"$W/real/f.md"
   ln -s ../real "$W/ro/lnk"
-  behind_link --connect './ro/ = read-only' --connect './ro/lnk/f.md = read-only'
   run_sandboxed "${BASE[@]}" -- --connect './ro/ = read-only' --connect './ro/lnk/f.md = read-only' \
     --profile probe --exec bash -c 'echo "seen=$(cat ro/lnk/f.md)" >>report'
   [ "$(report seen)" = HOST ]
 }
 
-@test "a link under copy-on-write, its target read-write: not refused, the real path pinned" {
+@test "a link under copy-on-write, its target read-write in the view: not refused, nothing added for it (A)" {
   mkdir -p "$W/c" "$W/real"
   printf 'HOST\n' >"$W/real/f.md"
   ln -s ../real "$W/c/lnk"
-  behind_link --connect './c/ = copy-on-write' --connect './c/lnk/f.md = read-only'
+  run_sandboxed "${BASE[@]}" -- --connect './c/ = copy-on-write' --connect './c/lnk/f.md = read-only' \
+    --profile probe --exec bash -c 'echo "seen=$(cat c/lnk/f.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
 }
 
 @test "B1: a chain through a read-write directory (read-only project, ./rw/ read-write): to what the role sees it launches; retargeted outside the view, the middle link's implied declaration is refused" {
@@ -875,7 +865,7 @@ plant_docs() {
   plant_docs ../made
   run_sandboxed "${BASE[@]}" -- --connect 'docs = copy-on-write' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"is missing and reached through a symbolic link to what does not exist; nothing is made through a link"* ]]
+  [[ "$output" == *"is missing, and its way goes through a symbolic link ("*"); nothing is made through a link"* ]]
   [ ! -e "$IHOME/made" ]
 }
 
@@ -884,7 +874,7 @@ plant_docs() {
   plant_docs ../made
   run_sandboxed "${BASE[@]}" -- --connect 'docs = read-only' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"is missing and reached through a symbolic link to what does not exist; nothing is made through a link"* ]]
+  [[ "$output" == *"is missing, and its way goes through a symbolic link ("*"); nothing is made through a link"* ]]
   [ ! -e "$IHOME/made" ]
 }
 
@@ -895,7 +885,7 @@ plant_docs() {
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/.probe/ = own' --connect 'docs = read-write' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"is missing and reached through a symbolic link to what does not exist; nothing is made through a link"* ]]
+  [[ "$output" == *"is missing, and its way goes through a symbolic link ("*"); nothing is made through a link"* ]]
   [ ! -e "$IHOME/made" ]
   # an existing target outside the view: the implied declaration, refused, never bound
   rm "$IHOME/.probe/docs"
@@ -1135,18 +1125,17 @@ hide_link() {
   ln -s real "$IHOME/.probe/lnk"
 }
 
-@test "the profile's hide through a link blanks the target where the role would see it, no question; the role may retarget the link in its read-write directory" {
+@test "the profile's hide through a link is refused, naming the link and inviting a feature request (N)" {
   hide_link
   printf '%s\n' 'profile_hide=(lnk/secret)' >>"$IPROFILES/probe/profile.sh"
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
-    echo "seen=$(cat "$HOME/.probe/real/secret/s" "$HOME/.probe/lnk/secret/s" 2>/dev/null)" >>"'"$W"'/report"
-    cd "$HOME/.probe" && rm lnk && ln -s other lnk && echo swapped=yes >>"'"$W"'/report"'
-  [ "$status" -eq 0 ]
+    echo "seen=$(cat "$HOME/.probe/real/secret/s" "$HOME/.probe/lnk/secret/s" 2>/dev/null)" >>"'"$W"'/report"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"(a hidden path) is reached through the symbolic link"*"lnk -> real"*"not supported through a symbolic link"*"github.com/pearu/agent-sandbox/issues"* ]]
   [ -z "$(report seen)" ]
-  [ "$(report swapped)" = yes ]
 }
 
-@test "a project's [probe] hide through a link blanks the target the same way" {
+@test "a project's [probe] hide through a link is refused the same way" {
   hide_link
   printf '%s\n' 'profile_dotfile_keys=(hide)' >>"$IPROFILES/probe/profile.sh"
   printf '[probe]\nhide = lnk/secret\n' >"$W/.agent-sandbox"
@@ -1156,7 +1145,8 @@ hide_link() {
   [ "$status" -eq 0 ]
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
     echo "seen=$(cat "$HOME/.probe/real/secret/s" "$HOME/.probe/lnk/secret/s" 2>/dev/null)" >>"'"$W"'/report"'
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"(a hidden path) is reached through the symbolic link"*"not supported through a symbolic link"* ]]
   [ -z "$(report seen)" ]
 }
 

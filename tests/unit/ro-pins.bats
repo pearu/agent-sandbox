@@ -781,7 +781,8 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
 @test "R1 through the engine: a channel whose source the profile relocates is a declared source -- fixed where a read-write mount shows it; through a link outside the view, the implied declaration is refused without a terminal, in every mode" {
   make_harness
   mkdir -p "$H/profiles/relo"
-  cp "$REPO_ROOT/tests/helpers/probe-profile.sh" "$H/profiles/relo/profile.sh"
+  # (without the probe's `links = yes` for its channels: added below)
+  grep -v '^profile_channel_links=' "$REPO_ROOT/tests/helpers/probe-profile.sh" >"$H/profiles/relo/profile.sh"
   # shellcheck disable=SC2016 # a line of the profile, for its own shell
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$H/profiles/relo/profile.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$H/bin/probe"
