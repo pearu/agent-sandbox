@@ -1129,34 +1129,50 @@ names are gone; there are no aliases for removed names before 1.0.
   `skills/` under `shared`), is bound onto itself, so it is fixed too: measured before,
   a role under `shared` renamed `~/.claude/CLAUDE.md` away and put a link to
   `~/secret/g` there, which the next launch on an account bound, read and wrote. A
-  declared path or source through a symbolic link the role can replace refuses the
-  launch, in every mode, naming the link and the resolved path. So do a linked
-  `~/.claude/cache` (the changelog channel's directory), with an account and without;
-  under an account, a channel's path in the base that is or goes through a symbolic
-  link; a hide (the profile's or a project's) through a link the role can replace; and,
-  under `shared` without an account, a channel file in the base that is such a link. So
-  does a declared path through a symbolic link the role made in its own layer of a
-  copy-on-write mount; and a directory on the way to a declared path that only the
-  role's layer of such a mount has is pinned like one on the host. A `join-scoped` path
-  declaration's source is fixed like any other. So is a `sandbox:` source that resolves
-  to a native path of the user's (a role with no record, or a read-write or read-only
-  one); another role's own store is not a path of the user's. A launch that refuses has
-  read nothing through the link: a source is seeded or copied only once its own links
-  are checked, and a channel whose path a declaration takes over is not read in that
-  launch. `--reset` of a `copy` channel no longer copies from the source itself: it
-  discards the copy, and the next launch copies the source again. The engine touches a
-  source -- reads, copies, hashes (copy-on-write's shadow check) or makes it when
-  missing -- only through one check of the links on its way (not of links inside a
-  source directory): at a launch, on that launch's view, also counting the role's own
-  state directories it covers there; at a join, a seed whose source has gained a
-  symbolic link since the launch is refused. One source shown at two paths with
-  different access is valid, each path its own; a hard link of a read-only file that a
-  read-write single-file mount shows is warned of. The briefing names the fixed paths
-  and the way out: ask the user to rename, move or remove on the host and, where needed,
-  update the dot-file and relaunch. A pinned directory stays writable inside as
-  declared; a rename, hard link or `git mv` across its boundary fails with "Invalid
-  cross-device link" (`mv` and `cp` copy instead), and a single-file source reached
-  through a read-write directory view is written in place, not replaced by a temp-file
+  `join-scoped` path declaration's source is fixed like any other, and so is a `sandbox:`
+  source that resolves to a native path of the user's (a role with no record, or a
+  read-write or read-only one); another role's own store is not a path of the user's. A
+  symbolic link is taken as the declaration it implies: `P -> T` on a declared path or a
+  channel's path, on a source's way, or inside a directory bound plainly from the host
+  (the project, `~/.claude`, a `read-only` or `read-write` declaration) stands for
+  `P = MODE outside:T`, MODE being what P has without the link -- the channel's mode under
+  the preset, the declaration's, or the mode of what shows its directory. Where it would
+  hand the role a host object outside its view, it is approved with the dot-file: the
+  review lists it under "implied by symbolic links", one question approves both, and the
+  approval is recorded per project in the trust store; a new or changed link asks again
+  at a terminal and refuses without one (and under `--serve`), naming `asb --trust`, with
+  nothing read, copied, hashed, bound or made through it before. A link to what the role
+  already sees with that access needs no approval, nor does one under `own` (the role's
+  own store goes where the link leads) or a hide (the target is blanked where the role
+  would see it). bwrap cannot mount on a link, so the mount goes where it leads: in a
+  directory the role has from the host, at the target's own path, each link of a chain
+  the view does not show made again inside -- so the role sees the target at its own
+  path too, and in a read-write directory it can replace the link, which the next launch
+  asks about; in a directory of the engine's (an account's, a role's store, a
+  copy-on-write layer) the link is covered and the path fixed. Links inside plainly
+  bound directories are found by a scan during the review (`--trust`, a launch's review
+  at a terminal, `--roles` before its panes), never at an ordinary launch, which
+  re-reads only the approved ones: a link made after the last review dangles inside
+  until the next. `--check` lists what the review would. A join refuses a source whose
+  links are not as approved. A link inside a `copy`, `seed-only` or `copy-on-write`
+  source is not covered here. Measured before: `~/.claude/CLAUDE.md ->
+  ../dot/claude/CLAUDE.md` (dotfiles) was unreadable under `shared` and failed with
+  "bwrap: Can't mount on symlink destination" under `inherit` and `isolated`. A launch
+  that refuses has read nothing through the link: a source is seeded or copied only once
+  what its links imply is approved, and a channel whose path a declaration takes over is
+  not read in that launch. `--reset` of a `copy` channel no longer copies from the source
+  itself: it discards the copy, and the next launch copies the source again. The engine
+  touches a source -- reads, copies, hashes (copy-on-write's shadow check) or makes it
+  when missing -- only through one check of the links on its way (not of links inside a
+  source directory): at a launch, on that launch's view; at a join, against what was
+  approved. One source shown at two paths with different access is valid, each path its
+  own; a hard link of a read-only file that a read-write single-file mount shows is
+  warned of. The briefing names the fixed paths and the way out: ask the user to rename,
+  move or remove on the host and, where needed, update the dot-file and relaunch. A
+  pinned directory stays writable inside as declared; a rename, hard link or `git mv`
+  across its boundary fails with "Invalid cross-device link" (`mv` and `cp` copy
+  instead), and a single-file source reached through a read-write directory view is
+  written in place, not replaced by a temp-file
   rename. Nothing changes under `--preset native`. The pins are computed once per launch
   on its final list, every decision on the final view, with no `find`; an option list
   the computation cannot read refuses the launch.

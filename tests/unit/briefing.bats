@@ -1344,14 +1344,15 @@ login_file() {
   run ! grep -rqE 'agent-sandbox: the pinned directories, [0-9]{30}' "$OUT"
 }
 
-@test "a pin refusal comes before bwrap and leaves no session directory behind" {
+@test "an unapproved symbolic link refuses before bwrap, without a terminal, and leaves no session directory behind" {
   local real="$BATS_TEST_TMPDIR/real"
   mkdir -p "$real" "$PROJ/w"
   touch "$real/f.md"
   ln -s "$real" "$PROJ/w/l"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './w/l/f.md = read-only' claude --version
   [ "$status" -ne 0 ]
-  [ "$(grep -c 'a symbolic link in a directory the role can write' <<<"$output")" -eq 1 ]
+  [ "$(grep -c "which is outside the role's view: it stands for './w/l/f.md = read-only outside:$real/f.md'" <<<"${output//$PROJ/.}")" -eq 1 ]
+  [[ "$output" == *"review it with: "*" --trust"* ]]
   [ ! -s "$H/argv" ] # bwrap never ran
   # no session directory left behind
   [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]

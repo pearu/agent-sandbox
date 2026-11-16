@@ -566,6 +566,22 @@ the read-only name shows what is written. Where that is cheap to see -- the othe
 declared read-write as a single file -- the launch says so in one warning line and goes
 on; another name inside a read-write directory is not looked for.
 
+**Symbolic links work, as the declarations they imply.** A link `P -> T` in
+`~/.claude`, in a project, on a declared path or on a source's way stands for
+`P = MODE outside:T`, MODE being what P has without the link: the channel's mode under the
+preset, the declaration's, or the mode of what shows its directory. Where it would show
+the role a host path it does not otherwise see with that access, the `--trust` review lists
+it under "implied by symbolic links", approved with the dot-file in one answer; a link
+that is new or changed since is asked about again (refused where nobody can answer). A
+declaration of your own for P sets its mode. The role sees T at P, and at T's own path
+too; in a directory it has read-write from the host it can replace the link, and the next
+launch asks about the new one. Links inside the project and other plainly bound
+directories are found when the review runs (`asb --trust`, or a launch that asks at a
+terminal), not at every launch: one made after the last review leads nowhere inside until
+the next. Under `own` the role's own store is what it finds there, and a hidden path
+stays hidden wherever its link leads; neither is asked about. `--preset native` is
+unchanged.
+
 **These decisions are made on the final view** -- what shows at each path once every
 bind is made, not on the binds made so far (the check before a source is read, on the
 binds made up to the declarations, every one that can show a directory read-write among

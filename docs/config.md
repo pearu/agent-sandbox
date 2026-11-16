@@ -921,6 +921,12 @@ policy does not change. The answer applies at the next keeper. The management
 verbs (`--status`, `--shutdown`, `agents`, …) are never asked or refused over the
 file: stopping what runs needs no policy.
 
+The review also lists the declarations symbolic links imply
+([connections.md](connections.md)), under "implied by symbolic links", and the same answer
+approves them for this project; a link that is new or changed since is asked about again,
+by a launch at a terminal or by `asb --trust` (which a launch without one names).
+`--check` lists them too.
+
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
 bound into the sandbox**, so the agent can neither read nor forge it. Refusing
 rather than ignoring a changed or missing file matters because ignoring would
