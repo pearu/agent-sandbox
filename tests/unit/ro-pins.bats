@@ -1134,3 +1134,15 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
     return 1
   }
 }
+
+@test "links: inside a sandbox there is no gate (a nested launch only narrows): a link outside the view is neither asked nor refused, nothing written to the trust store" {
+  local e="$BATS_TEST_TMPDIR/ext"
+  mkdir -p "$e/b"
+  touch "$e/b/f.md"
+  ln -s "$e" "$P/lnk"
+  PINS_PRE="_proj=$P; declare -A _ln_mode=([$P/lnk/b/f.md]=read-only); AGENT_SANDBOX=1; _as_pid1_bwrap() { return 0; }" \
+    pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  [[ "$MSG" != *"symbolic link"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/home/.config/agent-sandbox" ]
+}

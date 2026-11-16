@@ -719,3 +719,19 @@ resets() {
   [ "$(grep -c '^has-session' "$H/calls")" -eq 4 ]
   [[ "$output" == *"--roles: could not remove $PROJ/.asb/coord/to/a.reset; no reset"* ]]
 }
+
+@test "--roles without a terminal: a pending link already approved needs no review, the panes open (#401)" {
+  mkdir -p "$H/ext"
+  ln -s "$H/ext" "$PROJ/x"
+  local l="$PROJ/x"$'\t'"$PROJ/x -> $H/ext"$'\t'"$H/ext"$'\t'dir$'\t'read-write
+  mkdir -p "${REC%/*}"
+  printf '%s\n' "$l" >"$REC.links.pending.r"
+  printf '%s\n' "$l" >"$REC.links"
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ] || {
+    echo "$output" >&2
+    return 1
+  }
+  [[ "$output" != *"needs your review"* ]]
+  [ -e "$TM" ]
+}

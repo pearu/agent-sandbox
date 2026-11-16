@@ -812,3 +812,82 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   trust_y n
   [[ "$output" == *"/x = read-only outside:~/data"* ]] # still pending for the review
 }
+
+@test "the --trust scan lists no link that stands for what a written outside: may not name: the home, the trust store" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/.config/agent-sandbox"
+  ln -s "$IHOME" "$IWORK/h"
+  ln -s "$IHOME/.config/agent-sandbox" "$IWORK/t"
+  ln -s "$IHOME/dot" "$IWORK/d" # (one it lists, so the scan is seen to run)
+  printf 'echo ran\n' >"$IWORK/probe.sh"
+  claude_ --connect 'project = read-write'
+  [ "$status" -eq 0 ]
+  trust_y "n n n n"
+  [[ "$output" == *"/d = read-write outside:~/dot"* ]]
+  # not listed, nor asked: the refusal a written outside: gets is said instead
+  [[ "$output" != *$'\n'"  $IWORK/h = "* ]]
+  [[ "$output" != *$'\n'"  $IWORK/t = "* ]]
+  [[ "$output" == *"/work/h is reached through a symbolic link"*"refusing 'outside:~'"* ]]
+  [ "$(grep -c 'approve this link for' <<<"$output")" -eq 1 ]
+}
+
+@test "an approved scan-found link whose target a declaration now shows read-only gets no bind of its own: the role has what the declaration gives" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/data"
+  printf 'DATA\n' >"$IHOME/data/f"
+  ln -s "$IHOME/data" "$IWORK/x"
+  printf '%s\n' 'cat x/f' '(echo W >>x/f) 2>/dev/null && echo write=ok || echo write=refused' >"$IWORK/probe.sh"
+  claude_ --connect 'project = read-write'
+  trust_y
+  claude_ --connect 'project = read-write'
+  [ "$(rpt)" = "DATA"$'\n'"write=ok" ] # approved read-write
+  printf 'DATA\n' >"$IHOME/data/f"
+  # shellcheck disable=SC2088 # the declaration's own ~
+  claude_ --connect 'project = read-write' --connect '~/data/ = read-only'
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = "DATA"$'\n'"write=refused" ]
+  [ "$(cat "$IHOME/data/f")" = DATA ]
+}
+
+@test "an approved scan-found link in a read-only directory is bound read-only: read, not written" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/data" "$IWORK/ro"
+  printf 'DATA\n' >"$IHOME/data/f"
+  ln -s "$IHOME/data" "$IWORK/ro/x"
+  printf '%s\n' 'cat ro/x/f' '(echo W >>ro/x/f) 2>/dev/null && echo write=ok || echo write=refused' >"$IWORK/probe.sh"
+  claude_ --connect './ro/ = read-only'
+  trust_y
+  [[ "$output" == *"/ro/x = read-only outside:~/data"* ]]
+  claude_ --connect './ro/ = read-only'
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = "DATA"$'\n'"write=refused" ]
+  [ "$(cat "$IHOME/data/f")" = DATA ]
+}
+
+@test "the --trust review scans each plainly bound directory once per command" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  ln -s "$IHOME/dot" "$IWORK/d"
+  printf 'echo ran\n' >"$IWORK/probe.sh"
+  claude_ --connect 'project = read-write'
+  [ "$status" -eq 0 ]
+  mkdir -p "$I/fbin"
+  printf '%s\n' '#!/bin/bash' "printf '%s\n' \"\$*\" >>'$I/finds'" 'exec /usr/bin/find "$@"' >"$I/fbin/find"
+  chmod +x "$I/fbin/find"
+  rm -f "$I/finds"
+  run env -i HOME="$IHOME" PATH="$I/fbin:/usr/bin:/bin" USER="$(id -un)" AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" \
+    bash -c 'cd "$1" && printf "n\n" | "$2" --trust 2>&1' _ "$IWORK" "$REPO_ROOT/agent-sandbox"
+  [[ "$output" == *"/d = read-write outside:~/dot"* ]]
+  # each directory once (the project, ~/.claude, ...): the review's two readers share one
+  [ -s "$I/finds" ]
+  run bash -c 'grep -- "-type l" "$1" | cut -d" " -f1 | sort | uniq -d' _ "$I/finds"
+  [ -z "$output" ] || {
+    cat "$I/finds" >&3
+    false
+  }
+}
