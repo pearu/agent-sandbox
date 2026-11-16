@@ -7565,10 +7565,14 @@ _as_links_view_shows() {
 # unapproved.
 _as_links_gate() {
   local proj="$1" rec l
-  local -a new=()
+  local -a new=() spend=()
   _as_inside_sandbox && return 0
   for l in ${_ln_pending[@]+"${_ln_pending[@]}"}; do
     _as_links_approved "$proj" "$l" || new+=("$l")
+  done
+  # (an approved scan-found link that changed: pending for the review, blocking nothing)
+  for l in ${_ln_scanpend[@]+"${_ln_scanpend[@]}"}; do
+    _as_links_approved "$proj" "$l" || spend+=("$l")
   done
   rec="$(_as_links_rec "$proj")"
   local tmp="$rec.pending.$BASHPID.tmp"
@@ -7583,15 +7587,16 @@ _as_links_gate() {
       printf '%s\n' "$l"
     done <"$rec.pending" >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$rec.pending"
   fi
-  ((${#new[@]})) || return 0
-  mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
+  ((${#new[@]} + ${#spend[@]})) || return 0
   if [[ -n "$proj" ]] && mkdir -p -- "${rec%/*}" 2>/dev/null; then
     {
       [[ ! -f "$rec.pending" ]] || cat -- "$rec.pending"
-      printf '%s\n' "${new[@]}"
+      printf '%s\n' ${new[@]+"${new[@]}"} ${spend[@]+"${spend[@]}"}
     } | sort -u >"$tmp" 2>/dev/null \
       && mv -f -- "$tmp" "$rec.pending"
   fi
+  ((${#new[@]})) || return 0
+  mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   if _as_has_terminal && ((! ${_do_serve:-0})); then
     # one question per link; a no to one this launch needs refuses it
     _as_links_ask "$proj" "${new[@]}" || return 1
@@ -15890,14 +15895,18 @@ _as_links_view_write() {
 }
 
 # _as_ln_recorded -- for _as_ro_pins, on its locals: the approved links inside the
-# directories the scan looks in (_as_ln_scan_mode), re-read: one whose chain reads as
-# recorded gets its target bound at the target's own path with that directory's mode
+# directories the scan looks in (_as_ln_scan_mode), resolved again link by link, as a
+# written source is: one whose whole chain and resolved target are as recorded (its kind
+# and mode too) gets that target bound at its own path with that directory's mode
 # (_ln_extra; each link of the chain the view does not show made again inside, so the
-# link resolves to it); one that changed (its mode included) and now leads outside the view is a changed
-# implied declaration (_ln_pending, asked or refused). A link made since the last review
-# is not known here: nothing is bound for it until the next one.
+# link resolves to it). One that changed -- a link of its chain, a directory on the way
+# replaced by a link, its mode -- and now leads outside the view is left unbound: the
+# link dangles inside, and the line waits for the next review (_ln_scanpend, written to
+# the pending file; the launch goes on, as for a link the scan found and nobody approved).
+# A link made since the last review is not known here: nothing is bound for it until the
+# next one.
 _as_ln_recorded() {
-  local _lr_rec _lr_l _lr_t _lr_m _lr_mode _lr_out _lr_c _lr_x _lr_d _lr_h _lr_k
+  local _lr_rec _lr_l _lr_t _lr_m _lr_mode _lr_c _lr_x _lr_d _lr_h _lr_k
   local -a _lr_f=()
   _lr_rec="$(_as_links_rec "${_proj:-$cwd}")"
   [[ -f "$_lr_rec" ]] || return 0
@@ -15912,14 +15921,16 @@ _as_ln_recorded() {
     [[ -n "$_lr_mode" ]] || continue
     _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
     [[ "$_lr_h" == "${_lr_d:-/}" ]] || continue
-    if _as_links_line_ok "$_lr_l" && [[ "${_lr_f[4]}" == "$_lr_mode" ]]; then
-      _as_ln_inview "${_lr_f[2]}" && continue
+    _lr_c="" _lr_t=""
+    _as_links_resolve "${_lr_f[0]}" _lr_c _lr_t || continue
+    _lr_x=""
+    if [[ -d "$_lr_t" ]]; then _lr_x='dir'; elif [[ -e "$_lr_t" ]]; then _lr_x='file'; fi
+    if [[ "$_lr_c" == "${_lr_f[1]}" && "$_lr_t" == "${_lr_f[2]}" && "$_lr_x" == "${_lr_f[3]}" && "${_lr_f[4]}" == "$_lr_mode" ]]; then
+      _as_ln_inview "$_lr_t" && continue
       _lr_k=--ro-bind
       [[ "$_lr_mode" == read-write ]] && _lr_k=--bind
-      _ln_extra+=("$_lr_k" "${_lr_f[2]}" "${_lr_f[2]}")
-      _lr_c="${_lr_f[1]}"
-      _lr_c="${_lr_c#* ; }"
-      [[ "${_lr_f[1]}" == *" ; "* ]] || _lr_c=""
+      _ln_extra+=("$_lr_k" "$_lr_t" "$_lr_t")
+      [[ "$_lr_c" == *" ; "* ]] && _lr_c="${_lr_c#* ; }" || _lr_c=""
       while [[ -n "$_lr_c" ]]; do
         _lr_x="${_lr_c%% ; *}"
         [[ "$_lr_c" == *" ; "* ]] && _lr_c="${_lr_c#* ; }" || _lr_c=""
@@ -15928,15 +15939,10 @@ _as_ln_recorded() {
         _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
         [[ "$_lr_h" == "${_lr_d:-/}" ]] || _ln_syms+=("${_lr_x#* -> }"$'\t'"$_lr_t")
       done
-    elif [[ -L "${_lr_f[0]}" ]]; then
-      _lr_out="$(_as_links_chain "${_lr_f[0]}")" || continue
-      _lr_c="${_lr_out%%$'\n'*}" _lr_t="${_lr_out#*$'\n'}"
-      _lr_x=""
-      if [[ -d "$_lr_t" ]]; then _lr_x='dir'; elif [[ -e "$_lr_t" ]]; then _lr_x='file'; fi
-      [[ -n "$_lr_x" ]] || continue
+    elif [[ -L "${_lr_f[0]}" && -n "$_lr_x" && "$_lr_c$_lr_t" != *$'\t'* ]]; then
       _as_ln_inview "$_lr_t" && continue
-      _as_links_outside_ok "${_lr_f[0]}" "$_lr_c" "$_lr_t" "$_lr_mode" || return 1
-      _ln_pending+=("${_lr_f[0]}"$'\t'"$_lr_c"$'\t'"$_lr_t"$'\t'"$_lr_x"$'\t'"$_lr_mode")
+      _as_links_outside_ok "${_lr_f[0]}" "$_lr_c" "$_lr_t" "$_lr_mode" 2>/dev/null || continue
+      _ln_scanpend+=("${_lr_f[0]}"$'\t'"$_lr_c"$'\t'"$_lr_t"$'\t'"$_lr_x"$'\t'"$_lr_mode")
     fi
   done <"$_lr_rec"
   return 0
@@ -16367,7 +16373,7 @@ _as_ro_pins() {
   _as_preset_is_native && return 0
   # What the links met imply, and where the mounts through them go (_as_ln_met).
   local -A _ln_move=() _ln_drop=() _ln_rroot=() _ln_src=()
-  local -a _ln_syms=() _ln_cover=() _ln_pending=()
+  local -a _ln_syms=() _ln_cover=() _ln_pending=() _ln_scanpend=()
   # (the connect paths' modes are the launch's; called without them, no path is one)
   declare -p _ln_mode &>/dev/null || local -A _ln_mode=()
   declare -p _ln_chan &>/dev/null || local -A _ln_chan=()

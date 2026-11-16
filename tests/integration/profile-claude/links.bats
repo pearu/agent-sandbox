@@ -570,7 +570,7 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [ "$(rpt)" = BASEMD ]
 }
 
-@test "a scan-approved project link retargeted is asked again: refused without a terminal; --serve at a terminal refuses and does not ask" {
+@test "a scan-approved project link retargeted is left unbound and pending for the next review: the launch goes on without a terminal; a new channel link under --serve at a terminal refuses, asking nothing" {
   rm "$IHOME/.claude/CLAUDE.md"
   printf 'ENV\n' >"$IHOME/dot/envrc"
   ln -s "$IHOME/dot/envrc" "$IWORK/.envrc"
@@ -587,9 +587,16 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   ln -s ../secret/s "$IHOME/dot/s2" # a chain, to the secret
   ln -s "$IHOME/dot/s2" "$IWORK/.envrc"
   claude_ --role r --connect 'project = read-write'
-  refused_for_link
-  [[ "$output" == *"outside:~/secret/s'"* ]]
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = none ] # it leads nowhere inside
   no_secret
+  trust_y n
+  [[ "$output" == *"/.envrc = read-write outside:~/secret/s"* ]]
+  # a new link on a channel path still refuses; --serve at a terminal does not ask
+  ln -s ../secret/s "$IHOME/.claude/CLAUDE.md"
   claude_tty y --role r --serve --connect 'project = read-write'
   [ ! -e "$IWORK/report" ] # (--serve itself ends with its launch, exit 0)
   [[ "$output" != *"approve this link"* ]]
@@ -597,6 +604,7 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
     printf '%s\n' "$output" >&3
     false
   }
+  no_secret
 }
 
 @test "a link with a newline in its target cannot be shown for approval: refused" {
@@ -618,3 +626,42 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   claude_ --account work
   [ ! -e "$IHOME/elsewhere/changelog.md" ] # not made through the link (_as_base_rw_sources)
 }
+
+@test "an approved scan-found link is resolved again at every launch: a directory on its way that another role replaced by a link leaves it unbound, nothing read or written through it" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  TEST_PRESET=inherit
+  mkdir -p "$IHOME/data/sub"
+  printf 'DATA\n' >"$IHOME/data/sub/f"
+  printf 'SECRET\n' >"$IHOME/secret/f"
+  printf '[connect:b]\n~/data/ = read-write\n[connect:a]\n' >"$IWORK/.agent-sandbox"
+  ln -s "$IHOME/data/sub/f" "$IWORK/x"
+  printf '%s\n' 'cat x 2>/dev/null || echo none' >"$IWORK/probe.sh"
+  trust_y
+  claude_ --role a
+  claude_ --role b
+  trust_y
+  [[ "$output" == *"/x = read-write outside:~/data/sub/f"* ]]
+  claude_ --role a
+  [ "$status" -eq 0 ]
+  [ "$(rpt)" = DATA ]
+  # role b, which has ~/data read-write, puts a link to the secret on x's way
+  printf '%s\n' 'mv ~/data/sub ~/data/sub.old && ln -s ~/secret ~/data/sub && echo swapped' >"$IWORK/probe.sh"
+  claude_ --role b
+  [ "$(rpt)" = swapped ]
+  printf '%s\n' 'cat x 2>/dev/null || echo none' '(echo ROLE-A >>x) 2>/dev/null && echo write=ok || echo write=refused' >"$IWORK/probe.sh"
+  claude_ --role a
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = "none"$'\n'"write=refused" ] || {
+    rpt >&3
+    false
+  }
+  [ "$(cat "$IHOME/secret/f")" = SECRET ]
+  # pending for the next review, as it now resolves
+  trust_y n
+  [[ "$output" == *"/x = read-write outside:~/secret/f"* ]]
+  [[ "$output" == *"~/data/sub -> ~/secret"* ]] || [[ "$output" == *"/data/sub -> "*"/secret"* ]]
+}
+
