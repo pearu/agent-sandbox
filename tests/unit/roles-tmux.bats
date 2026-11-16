@@ -289,7 +289,7 @@ no_tmux_path() {
 }
 
 @test "--roles: [agent:a] command = claude -x gives a's pane no agent word; the pane, run, resolves claude -x from the file and records where (#355)" {
-  agents '[agent]' 'command = claude' '[agent:a]' 'command = claude -x'
+  agents '[agent]' 'command = claude' '[agent:a]' 'command = claude -x' '[connect:b]'
   run_engine TMUX_DUMP="$TM" -- asb --roles a b
   [ "$status" -eq 0 ]
   pane_cmds
@@ -377,7 +377,7 @@ no_tmux_path() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"the account 'nosuch' (--account): there is no $acc/nosuch for the agent claude: log it in with asb --agent claude --account nosuch --login"*"--roles: role 'b' cannot start; nothing was opened"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
-  agents '[agent]' 'command = claude' '[agent:b]' 'account = gone'
+  agents '[agent]' 'command = claude' '[agent:b]' 'account = gone' '[connect:a]'
   run_engine TMUX_DUMP="$TM" -- asb --roles a b
   [ "$status" -eq 2 ]
   [[ "$output" == *"the account 'gone' (.agent-sandbox [agent:b] account): there is no $acc/gone"* ]]
@@ -389,12 +389,12 @@ no_tmux_path() {
 }
 
 @test "--roles: one role with no agent, or one whose agent cannot start, is refused up front, by name, and tmux is never called (#355)" {
-  agents '[agent:a]' 'command = claude'
+  agents '[agent:a]' 'command = claude' '[connect:b]'
   run_engine TMUX_DUMP="$TM" -- asb --roles a b
   [ "$status" -eq 2 ]
   [[ "$output" == *"--roles: no agent for role 'b'. Name it on the line, --agent b=AGENT (or --agent AGENT for every role), or in .agent-sandbox, [agent:b] command = AGENT, or for every role: asb --apply '[agent]' 'command = claude'; nothing was opened"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
-  agents '[agent]' 'command = claude' '[agent:b]' 'command = nosuch'
+  agents '[agent]' 'command = claude' '[agent:b]' 'command = nosuch' '[connect:a]'
   run_engine TMUX_DUMP="$TM" -- asb --roles a b
   [ "$status" -eq 2 ]
   [[ "$output" == *"--roles: role 'b': its agent 'nosuch' (.agent-sandbox [agent:b]) names no profile installed here"* ]]
@@ -430,6 +430,29 @@ no_tmux_path() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"or for every role: asb --apply '[agent]' 'command = claude'; nothing was opened"* ]]
   [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+}
+
+@test "--roles: a role matching no role section of the approved file is refused up front, by name, and tmux is never called; a file with no role section accepts any name" {
+  agents '[agent]' 'command = claude' '[connect:planner-*]' '[connect:supervisor]'
+  run_engine TMUX_DUMP="$TM" -- asb --roles supervisor-not-existing planner-1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--roles: role 'supervisor-not-existing' matches no role section of .agent-sandbox (it has: planner-* supervisor); add [connect:*] if every name should be accepted. Nothing was opened"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  # the unknown role after a known one, too
+  run_engine TMUX_DUMP="$TM" -- asb --roles planner-1 nosuch
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--roles: role 'nosuch' matches no role section"* ]]
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  # every name matching: the panes open
+  run_engine TMUX_DUMP="$TM" -- asb --roles supervisor planner-1
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role supervisor)" ] && [ "${PC[1]}" = "$(window --role planner-1)" ]
+  # no role section at all: any name, as a single launch accepts it
+  rm -f "$TM" "$TM.has"
+  agents '[agent]' 'command = claude'
+  run_engine TMUX_DUMP="$TM" -- asb --roles anything
+  [ "$status" -eq 0 ]
 }
 
 @test "--roles: the session name is the project directory's, with . and : made _" {
