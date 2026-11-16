@@ -7352,8 +7352,9 @@ _as_trust_forget() {
 # <trust>/<sha256(project)>.links, one line per approved implied declaration: P, the
 # chain (every link met while resolving it, as `LINK -> TEXT`, joined by ` ; `), the
 # resolved target, its kind (dir, file), the mode, TAB separated: what is approved is
-# the line the question showed. <rec>.links.pending holds what a launch found and could
-# not ask about, the same five fields, for `asb --trust` to ask; and <rec>.links.views, per role,
+# the line the question showed. <rec>.pending.<sha256(profile/role)> holds what that
+# role's launches found and could not ask about, the same five fields, for `asb --trust`
+# to ask (one file per role: a launch prunes only its own); and <rec>.view.*, per role,
 # the directories a launch bound plainly from the host, which --trust scans (the scan
 # is never run at an ordinary launch). All under the trust store, which no role sees.
 _as_links_rec() { printf '%s/trust/%s.links' "$(_as_config_dir)" "$(_as_sha256_str "$1")"; }
@@ -7366,13 +7367,33 @@ _as_links_approved() {
   [[ -f "$rec" ]] && grep -qFx -- "$2" "$rec"
 }
 
+# _as_links_locked FILE CMD... -- run CMD holding an flock on FILE.lock: the record and
+# the pending files are read, changed and renamed over by launches that may run at once
+# (`--roles` panes), and none may lose another's lines.
+_as_links_locked() {
+  local f="$1"
+  shift
+  mkdir -p -- "${f%/*}" 2>/dev/null || return 1
+  if command -v flock >/dev/null 2>&1; then
+    {
+      flock -w 10 9 || _as_msg "links: could not lock $f.lock in 10 s; going on unlocked"
+      "$@"
+    } 9>"$f.lock"
+  else
+    "$@"
+  fi
+}
+
 # _as_links_record PROJECT LINE... -- add the lines (five fields) to PROJECT's record.
 _as_links_record() {
-  local rec l tmp
+  local rec
   rec="$(_as_links_rec "$1")"
-  tmp="$rec.$BASHPID.tmp"
   shift
-  mkdir -p -- "${rec%/*}" || return 1
+  _as_links_locked "$rec" _as_links_record_in "$rec" "$@"
+}
+_as_links_record_in() {
+  local rec="$1" l tmp="$1.$BASHPID.tmp"
+  shift
   {
     [[ ! -f "$rec" ]] || cat -- "$rec"
     for l in "$@"; do
@@ -7423,15 +7444,17 @@ _as_links_show() {
 
 # _as_links_pending PROJECT -- the pending lines that still hold, and are not approved.
 _as_links_pending() {
-  local rec l
-  rec="$(_as_links_rec "$1").pending"
-  [[ -f "$rec" ]] || return 0
-  while IFS= read -r l; do
-    [[ -n "$l" ]] || continue
-    _as_links_line_ok "$l" || continue
-    _as_links_approved "$1" "$l" && continue
-    printf '%s\n' "$l"
-  done <"$rec" | sort -u
+  local rec l f
+  rec="$(_as_links_rec "$1").pending."
+  for f in "$rec"*; do
+    [[ -f "$f" && "$f" != *.tmp && "$f" != *.lock ]] || continue
+    while IFS= read -r l; do
+      [[ -n "$l" ]] || continue
+      _as_links_line_ok "$l" || continue
+      _as_links_approved "$1" "$l" && continue
+      printf '%s\n' "$l"
+    done <"$f"
+  done | sort -u
 }
 
 # _as_links_view_file PROJECT -- the prefix of PROJECT's view files: one per profile and
@@ -7568,7 +7591,7 @@ _as_links_view_shows() {
 # _as_links_gate PROJECT -- for a launch, on _ln_pending (five fields per line): every
 # implied declaration not in the record is asked about at a terminal, and refused
 # without one (or under --serve), naming the command that reviews it. The lines go to
-# <rec>.links.pending either way, for that review. Returns 0 when nothing is left
+# the role's pending file either way, for that review. Returns 0 when nothing is left
 # unapproved.
 _as_links_gate() {
   local proj="$1" rec l
@@ -7581,26 +7604,14 @@ _as_links_gate() {
   for l in ${_ln_scanpend[@]+"${_ln_scanpend[@]}"}; do
     _as_links_approved "$proj" "$l" || spend+=("$l")
   done
-  rec="$(_as_links_rec "$proj")"
-  local tmp="$rec.pending.$BASHPID.tmp"
-  # what this launch no longer finds at its own connect paths (a declaration written
-  # since, the link gone or changed) is no longer pending: --trust does not ask it
-  if [[ -f "$rec.pending" ]] && declare -p _ln_mode &>/dev/null; then
-    local -A _lg_now=()
-    for l in ${new[@]+"${new[@]}"}; do _lg_now[$l]=1; done
-    while IFS= read -r l; do
-      [[ -n "$l" ]] || continue
-      [[ -n "${_ln_mode[${l%%$'\t'*}]+x}" && -z "${_lg_now[$l]+x}" ]] && continue
-      printf '%s\n' "$l"
-    done <"$rec.pending" >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$rec.pending"
-  fi
-  ((${#new[@]} + ${#spend[@]})) || return 0
-  if [[ -n "$proj" ]] && mkdir -p -- "${rec%/*}" 2>/dev/null; then
-    {
-      [[ ! -f "$rec.pending" ]] || cat -- "$rec.pending"
-      printf '%s\n' ${new[@]+"${new[@]}"} ${spend[@]+"${spend[@]}"}
-    } | sort -u >"$tmp" 2>/dev/null \
-      && mv -f -- "$tmp" "$rec.pending"
+  # this role's pending file: what it found and could not ask about, for the review;
+  # what it no longer finds at its own connect paths with the mode it has there now (a
+  # declaration written since, the link gone or changed) is no longer pending. Another
+  # role's lines, or this role's with another mode (another preset), are not this
+  # launch's to drop.
+  if [[ -n "$proj" ]]; then
+    rec="$(_as_links_rec "$proj").pending.$(_as_sha256_str "${profile:-}/${_role:-default}")"
+    _as_links_locked "$rec" _as_links_pending_update "$rec" ${new[@]+"${new[@]}"} -- ${spend[@]+"${spend[@]}"} || true
   fi
   ((${#new[@]})) || return 0
   mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
@@ -7624,6 +7635,36 @@ _as_links_gate() {
   done
   _as_msg "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: ${invoked:-agent-sandbox} --trust"
   return 1
+}
+
+# _as_links_pending_update FILE NEW... -- SPEND... -- for _as_links_gate, on its
+# _ln_mode, under the lock: FILE pruned of this launch's connect paths it no longer
+# finds with their mode, then NEW and SPEND added.
+_as_links_pending_update() {
+  local pf="$1" tmp="$1.$BASHPID.tmp" l m
+  shift
+  local -a add=()
+  local -A now=()
+  while (($#)) && [[ "$1" != -- ]]; do
+    now[$1]=1 add+=("$1")
+    shift
+  done
+  (($#)) && shift
+  add+=("$@")
+  [[ -f "$pf" ]] || ((${#add[@]})) || return 0
+  {
+    if [[ -f "$pf" ]]; then
+      while IFS= read -r l; do
+        [[ -n "$l" ]] || continue
+        m="${l##*$'\t'}"
+        if declare -p _ln_mode &>/dev/null && [[ -n "${_ln_mode[${l%%$'\t'*}]+x}" && "${_ln_mode[${l%%$'\t'*}]}" == "$m" && -z "${now[$l]+x}" ]]; then
+          continue
+        fi
+        printf '%s\n' "$l"
+      done <"$pf"
+    fi
+    ((${#add[@]})) && printf '%s\n' "${add[@]}"
+  } | sort -u >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$pf"
 }
 
 # _as_links_found PROJECT -- _lf_lines := what the review asks about of PROJECT's links:

@@ -554,7 +554,7 @@ no_tmux_path() {
 @test "--roles: a link asked about here and declined blocks nothing -- the panes open; a yes records it (#401, J)" {
   mkdir -p "$H/ext"
   ln -s "$H/ext" "$PROJ/x"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$PROJ/x" "$PROJ/x -> $H/ext" "$H/ext" dir read-write >"$REC.links.pending"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$PROJ/x" "$PROJ/x -> $H/ext" "$H/ext" dir read-write >"$REC.links.pending.r"
   run_engine_tty 'n\n' TMUX_DUMP="$TM" -- asb --roles a b
   [ "$status" -eq 0 ]
   [ "$(grep -c 'approve this link for' <<<"$output")" -eq 1 ]

@@ -1088,3 +1088,49 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
 @test "the market model under its own preset, under a linked \$HOME, without the changelog: each role's pins exact, nothing refused" {
   HLINK=1 NOCACHE=1 cache_pins market market-1=./.asb,./.asb/roles default=
 }
+
+@test "links: the record and a pending file written by launches at once lose nobody's lines (the lock); a launch prunes only its own role's file, and there only lines of the mode it has" {
+  local h="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$h"
+  # shellcheck disable=SC2016 # the inner script's own expansions
+  run env -u AGENT_SANDBOX HOME="$h" bash -c 'source "$1"
+    f="$HOME/t/p"
+    for i in $(seq 1 24); do
+      _as_links_locked "$f" _as_links_pending_update "$f" "/l$i	c	/t$i	dir	read-write" -- &
+      _as_links_record /proj "/r$i	c	/t$i	dir	read-only" &
+    done
+    wait
+    wc -l <"$f"; wc -l <"$(_as_links_rec /proj)"
+    # a launch of this role with /l1 at mode copy: /l1 read-write (another preset) stays;
+    # /l2 at read-write, not found now, goes
+    declare -A _ln_mode=([/l1]=copy [/l2]=read-write)
+    _as_links_pending_update "$f" --
+    grep -c "^/l1	" "$f"; grep -c "^/l2	" "$f" || true' _ "$REPO_ROOT/agent-sandbox"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = 24 ]
+  [ "${lines[1]}" = 24 ]
+  [ "${lines[2]}" = 1 ]
+  [ "${lines[3]}" = 0 ]
+}
+
+@test "links: a launch of another role, or under another preset, leaves the pending lines it did not write for the review" {
+  mkdir -p "$BATS_TEST_TMPDIR/home"
+  ln -s ../ext "$P/lnk"
+  mkdir -p "$BATS_TEST_TMPDIR/ext"
+  local rec
+  rec="$BATS_TEST_TMPDIR/home/.config/agent-sandbox/trust/$(printf '%s' "$P" | sha256sum | cut -d' ' -f1).links"
+  PINS_PRE="_proj=$P; profile=probe; _role=a; declare -A _ln_mode=([$P/lnk]=read-write)" \
+    pins -- --bind "$P/lnk" "$P/lnk"
+  [ "$RC" -eq 1 ]
+  PINS_PRE="_proj=$P; profile=probe; _role=b; declare -A _ln_mode=([$P/lnk]=copy)" \
+    pins -- --bind "$P/lnk" "$P/lnk"
+  [ "$RC" -eq 1 ]
+  PINS_PRE="_proj=$P; profile=probe; _role=a; declare -A _ln_mode=([$P/lnk]=copy)" \
+    pins -- --bind "$P/lnk" "$P/lnk"
+  [ "$RC" -eq 1 ]
+  run bash -c 'cat "$1".pending.* | cut -f1,5 | sort' _ "$rec"
+  [ "$output" = "$P/lnk"$'\t'"copy"$'\n'"$P/lnk"$'\t'"copy"$'\n'"$P/lnk"$'\t'"read-write" ] || {
+    echo "$output" >&2
+    return 1
+  }
+}
