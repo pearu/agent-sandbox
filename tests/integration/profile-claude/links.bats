@@ -735,3 +735,37 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
     ln -sfn "$IHOME/data" "$IWORK/lnk"
   done
 }
+
+@test "a scan-found link approved with one mode, met by a role that would have it with another: left unbound and pending, the launch goes on, at a terminal nothing asked" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  TEST_PRESET=inherit
+  mkdir -p "$IHOME/data"
+  printf 'DATA\n' >"$IHOME/data/f"
+  printf '[connect:default]\n[connect:r]\nproject = read-only\n./out/ = read-write\n' >"$IWORK/.agent-sandbox"
+  ln -s "$IHOME/data" "$IWORK/x"
+  # (the project is read-only for r: the report goes to ./out)
+  mkdir -p "$IWORK/out"
+  printf '%s\n' '#!/usr/bin/env bash' 'bash "$PWD/probe.sh" >"$PWD/out/report" 2>&1' >"$IHOME/.local/share/claude/versions/9.9.9/claude"
+  rpt() { cat "$IWORK/out/report" 2>/dev/null && rm -f "$IWORK/out/report"; }
+  printf '%s\n' 'cat x/f 2>/dev/null || echo unbound' >"$IWORK/probe.sh"
+  trust_y
+  claude_
+  claude_ --role r
+  trust_y "y n y" # the dot-file; read-only (role r): no; read-write (default): yes
+  [[ "$output" == *"/x = read-only outside:~/data"*"/x = read-write outside:~/data"* ]]
+  claude_
+  [ "$status" -eq 0 ]
+  [ "$(rpt)" = DATA ]
+  claude_ --role r
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+  [ "$(rpt)" = unbound ]
+  claude_tty n --role r
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"approve this link"* ]]
+  [ "$(rpt)" = unbound ]
+  trust_y n
+  [[ "$output" == *"/x = read-only outside:~/data"* ]] # still pending for the review
+}
