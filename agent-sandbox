@@ -7493,7 +7493,9 @@ _as_links_scan_review() {
       _as_links_scan_one "$proj" "$d" "$src" "$mode"
     done
     while IFS=$'\t' read -r d kind src mode; do
-      [[ "$mode" == read-only || "$mode" == read-write ]] || continue
+      # (a connect path's line is read above; where it is bound from the host at its own
+      # path, its mount's line is the one scanned: once per directory)
+      [[ "$kind" != connect && ("$mode" == read-only || "$mode" == read-write) ]] || continue
       local -a prune=(-path "$sd" -o -path "$sd/*") nest=()
       local x y dshows=0 inn
       for x in "${vd[@]}"; do
@@ -7590,7 +7592,7 @@ _as_links_view_shows() {
 
 # _as_links_gate PROJECT -- for a launch, on _ln_pending (five fields per line): every
 # implied declaration not in the record is asked about at a terminal, and refused
-# without one (or under --serve), naming the command that reviews it. The lines go to
+# without one (--serve has none), naming the command that reviews it. The lines go to
 # the role's pending file either way, for that review. Returns 0 when nothing is left
 # unapproved.
 _as_links_gate() {
@@ -7615,7 +7617,7 @@ _as_links_gate() {
   fi
   ((${#new[@]})) || return 0
   mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
-  if _as_has_terminal && ((! ${_do_serve:-0})); then
+  if _as_has_terminal; then
     # one question per link; a no to one this launch needs refuses it
     _as_links_ask "$proj" "${new[@]}" || return 1
     if ((_la_no)); then
@@ -7683,7 +7685,7 @@ _as_links_found() {
 }
 
 # _as_links_ask PROJECT LINE... -- ONE QUESTION PER LINK (#401): each implied declaration
-# not yet approved is shown and asked about on its own, with the declaration that makes
+# (none approved: the callers pass what the record lacks) is shown and asked about on its own, with the declaration that makes
 # the question unnecessary (written in the dot-file, it is the user's own and asks
 # nothing). A yes records it; a no leaves it unapproved. Each is asked once per command
 # (_la_asked): one declined earlier counts as declined again, unasked. _la_no := how many
@@ -7697,7 +7699,6 @@ _as_links_ask() {
   _la_no=0
   for l in "$@"; do
     [[ -n "$l" ]] || continue
-    _as_links_approved "$proj" "$l" && continue
     if [[ -n "${_la_asked[$proj$'\n'$l]+x}" ]]; then
       _la_no=$((_la_no + 1))
       continue
@@ -15915,7 +15916,8 @@ _as_ln_scan_mode() {
 # DEST, KIND, host source, and the mode the scan reads it with (or `-`). Under the trust
 # store, by profile and role; not inside a sandbox, where there is no review.
 _as_links_view_write() {
-  [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox && ! _as_preset_is_native || return 0
+  # (never under native: _as_ro_pins returns before it)
+  [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox || return 0
   local _vw_f _vw_k _vw_m _vw_t
   _vw_f="$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")"
   _vw_t="$_vw_f.$BASHPID.tmp" # this launch's own: concurrent launches each rename theirs
