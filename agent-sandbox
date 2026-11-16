@@ -7665,8 +7665,12 @@ _as_links_pending_update() {
         printf '%s\n' "$l"
       done <"$pf"
     fi
-    ((${#add[@]})) && printf '%s\n' "${add[@]}"
-  } | sort -u >"$tmp" 2>/dev/null && mv -f -- "$tmp" "$pf"
+    if ((${#add[@]})); then printf '%s\n' "${add[@]}"; fi
+  } | sort -u >"$tmp" 2>/dev/null || {
+    rm -f -- "$tmp"
+    return 0
+  }
+  mv -f -- "$tmp" "$pf"
 }
 
 # _as_links_found PROJECT -- _lf_lines := what the review asks about of PROJECT's links:
