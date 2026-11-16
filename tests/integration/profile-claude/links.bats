@@ -505,41 +505,84 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   done
 }
 
-@test "a channel the profile does not support through a link is refused, naming the link and inviting a feature request: settings.json, plugins, agents, projects, the base's .claude.json, and the project's .agent-sandbox (C)" {
+@test "a channel path the profile does not mark links:yes is refused through a link, naming the link's own location and inviting a feature request, under shared, inherit and isolated: settings.json, plugins, agents, projects, rules, commands, the base's .claude.json (not under isolated: its own store reads nothing), and the project's .agent-sandbox (C)" {
   rm "$IHOME/.claude/CLAUDE.md"
   mkdir -p "$IHOME/dot2"
   printf 'echo ran\n' >"$IWORK/probe.sh"
-  local n
-  for n in settings.json plugins agents projects; do
-    if [[ "$n" == *.json ]]; then printf '{}\n' >"$IHOME/dot2/$n"; else mkdir -p "$IHOME/dot2/$n"; fi
-    rm -rf "${IHOME:?}/.claude/$n" # (an earlier refused launch may have made projects/)
-    ln -s "../dot2/$n" "$IHOME/.claude/$n"
+  local n p ch
+  for p in shared inherit isolated; do
+    TEST_PRESET=$p
+    for n in settings.json plugins agents projects rules commands; do
+      case "$n" in
+        settings.json) ch=settings ;;
+        rules) ch=instructions ;;
+        commands) ch=skills ;;
+        *) ch="$n" ;;
+      esac
+      if [[ "$n" == *.json ]]; then printf '{}\n' >"$IHOME/dot2/$n"; else mkdir -p "$IHOME/dot2/$n"; fi
+      rm -rf "${IHOME:?}/.claude/$n" # (an earlier refused launch may have made projects/)
+      ln -s "../dot2/$n" "$IHOME/.claude/$n"
+      trust_y
+      claude_
+      [ "$status" -ne 0 ] || {
+        printf '%s %s launched: %s\n' "$p" "$n" "$output" >&3
+        false
+      }
+      [ ! -e "$IWORK/report" ]
+      [[ "$output" == *"connect: ~/.claude/$n (the $ch channel) is reached through the symbolic link ~/.claude/$n -> ../dot2/$n, and this location is not supported through a symbolic link"*"https://github.com/pearu/agent-sandbox/issues"* ]] || {
+        printf '%s %s: %s\n' "$p" "$n" "$output" | tail -3 >&3
+        false
+      }
+      [ "$(readlink "$IHOME/.claude/$n")" = "../dot2/$n" ] # the user's link left as it is
+      rm "$IHOME/.claude/$n"
+    done
+    printf '{}\n' >"$IHOME/dot2/cj"
+    ln -s dot2/cj "$IHOME/.claude.json"
     claude_
-    [ "$status" -ne 0 ] || {
-      printf '%s launched: %s\n' "$n" "$output" >&3
-      false
-    }
+    if [[ "$p" == isolated ]]; then
+      [ "$status" -eq 0 ] # the role's own config store: the link is not read
+    else
+      [ "$status" -ne 0 ]
+      [[ "$output" == *"connect: ~/.claude.json (the config channel's source) is reached through the symbolic link ~/.claude.json -> dot2/cj, and this location is not supported"* ]] || {
+        printf '%s cj: %s\n' "$p" "$output" | tail -3 >&3
+        false
+      }
+    fi
+    rm "$IHOME/.claude.json"
+    printf '[allow]\nexample.org\n' >"$IHOME/dot2/as"
+    ln -s "$IHOME/dot2/as" "$IWORK/.agent-sandbox"
+    trust_y
+    claude_
+    [ "$status" -ne 0 ]
     [ ! -e "$IWORK/report" ]
-    [[ "$output" == *"channel) is reached through the symbolic link ~/.claude/$n -> ../dot2/$n, and this location is not supported through a symbolic link"*"https://github.com/pearu/agent-sandbox/issues"* ]] || {
-      printf '%s: %s\n' "$n" "$output" | tail -3 >&3
+    [[ "$output" == *"(the project's dot-file) is reached through the symbolic link"*"not supported through a symbolic link"* ]]
+    rm "$IWORK/.agent-sandbox"
+  done
+}
+
+@test "a links:yes channel's own outside: source through a link (changelog = read-only outside:~/l) is the implied declaration of its source: refused until approved, then read as declared, nothing written" {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/dot/cl" "$IHOME/.claude/cache"
+  printf 'CHG\n' >"$IHOME/dot/cl/changelog.md"
+  ln -s dot/cl/changelog.md "$IHOME/l"
+  printf '%s\n' 'cat ~/.claude/cache/changelog.md' '(echo X >>~/.claude/cache/changelog.md) 2>/dev/null && echo write=ok || echo write=refused' >"$IWORK/probe.sh"
+  local p
+  for p in shared inherit; do
+    TEST_PRESET=$p
+    if [[ "$p" == shared ]]; then # (the approval is per project and mode: inherit has it then)
+      claude_ --connect 'changelog = read-only outside:~/l'
+      refused_for_link
+      [[ "$output" == *"'~/.claude/cache/changelog.md = read-only outside:~/dot/cl/changelog.md'"* ]]
+      trust_y
+    fi
+    claude_ --connect 'changelog = read-only outside:~/l'
+    [ "$status" -eq 0 ] || {
+      printf "%s: %s\n" "$p" "$output" | tail -5 >&3
       false
     }
-    [ "$(readlink "$IHOME/.claude/$n")" = "../dot2/$n" ] # the user's link left as it is
-    rm "$IHOME/.claude/$n"
+    [ "$(rpt)" = "CHG"$'\n'"write=refused" ]
+    [ "$(cat "$IHOME/dot/cl/changelog.md")" = CHG ]
   done
-  printf '{}\n' >"$IHOME/dot2/cj"
-  ln -s dot2/cj "$IHOME/.claude.json"
-  claude_
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"(the config channel) is reached through the symbolic link ~/.claude.json -> dot2/cj, and this location is not supported"* ]]
-  rm "$IHOME/.claude.json"
-  printf '[allow]\nexample.org\n' >"$IHOME/dot2/as"
-  ln -s "$IHOME/dot2/as" "$IWORK/.agent-sandbox"
-  trust_y
-  claude_
-  [ "$status" -ne 0 ]
-  [ ! -e "$IWORK/report" ]
-  [[ "$output" == *"(the project's dot-file) is reached through the symbolic link"*"not supported through a symbolic link"* ]]
 }
 
 @test "a linked agent base (~/.claude -> dot/claude-base) is refused, naming CLAUDE_CONFIG_DIR for a base that lives elsewhere; set, it launches on that base (O)" {

@@ -789,7 +789,7 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
 @test "R1 through the engine: a channel whose source the profile relocates is a declared source -- fixed where a read-write mount shows it; through a link outside the view, the implied declaration is refused without a terminal, in every mode" {
   make_harness
   mkdir -p "$H/profiles/relo"
-  # (without the probe's `links = yes` for its channels: added below)
+  # (without the probe's `links:yes` for its channel paths: added below)
   grep -v '^profile_channel_links=' "$REPO_ROOT/tests/helpers/probe-profile.sh" >"$H/profiles/relo/profile.sh"
   # shellcheck disable=SC2016 # a line of the profile, for its own shell
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$H/profiles/relo/profile.sh"
@@ -819,11 +819,12 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
       echo "$m launched: $output" >&2
       return 1
     }
-    # the probe profile's channel has no `links = yes`: through a link it is refused (C)
-    [[ "$output" == *"(the extra channel) is reached through the symbolic link ~/alt/extra -> ../ext, and this location is not supported through a symbolic link"*"github.com/pearu/agent-sandbox/issues"* ]]
+    # the probe profile's channel path has no `links:yes`: through a link it is refused (C)
+    [[ "$output" == *"~/alt/extra (the extra channel's source) is reached through the symbolic link ~/alt/extra -> ../ext, and this location is not supported through a symbolic link"*"github.com/pearu/agent-sandbox/issues"* ]]
   done
-  # with `links = yes` it is the implied declaration, refused without a terminal
-  printf '%s\n' 'profile_channel_links=(extra)' >>"$H/profiles/relo/profile.sh"
+  # with `links:yes` it is the implied declaration, refused without a terminal
+  # shellcheck disable=SC2016 # a line of the profile, for its own shell
+  printf '%s\n' 'profile_channel_links=("$HOME/.probe/extra")' >>"$H/profiles/relo/profile.sh"
   for m in copy read-write; do
     # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
     run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --profile relo \

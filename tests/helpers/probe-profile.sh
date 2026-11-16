@@ -12,9 +12,10 @@ profile_channels=(
   "docs	dir:$HOME/.probe/docs	file:$HOME/.probe/NOTES.md"
   "extra	dir:$HOME/.probe/extra"
 )
-# Both may be reached through a symbolic link (#401, the claude profile's `links = yes`),
-# so the link rule's tests can act on them; a channel without it is refused through one.
-profile_channel_links=(docs extra)
+# Their paths may be reached through a symbolic link (#401, the claude profile's
+# `links:yes`), so the link rule's tests can act on them; a channel path without it is
+# refused through one.
+profile_channel_links=("$HOME/.probe/docs" "$HOME/.probe/NOTES.md" "$HOME/.probe/extra")
 
 # A background daemon, for the keeper's hold (tests/integration/keeper.bats): a
 # process with these argv tokens, inside the launch, keeps the role running.

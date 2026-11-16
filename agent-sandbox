@@ -7885,13 +7885,6 @@ _as_profile_dotfile() {
       profile_channel_create+=("$name")
       continue
     fi
-    # `links = yes` (#401): the channel's paths and source may be reached through a
-    # symbolic link (each such link the declaration it implies, _as_ln_met). Only where a
-    # test holds it: any other channel through a link is refused.
-    if [[ "$line" =~ ^[[:space:]]*links[[:space:]]*=[[:space:]]*yes[[:space:]]*$ ]]; then
-      profile_channel_links+=("$name")
-      continue
-    fi
     # `login = FILE -- NOTE`: the file whose absence means the channel carries nothing
     # yet, and the one sentence that says what to do; said at launch, by --check and in
     # the briefing when the channel is connected and the file is missing.
@@ -7934,8 +7927,12 @@ _as_profile_dotfile() {
           profile_channel_start+=("$key"$'\t'"$_slug_out")
           ;;
         vendor:?*) _ch_vendor[$name]+=" ${t#vendor:}" ;;
+        # `links:yes` (#401): this path, and its source, may be reached through a
+        # symbolic link (each such link the declaration it implies, _as_ln_met). Only
+        # where a test holds it: any other channel path through a link is refused.
+        links:yes) profile_channel_links+=("$key") ;;
         *)
-          _as_msg "profile '$pname': $file: [channel:$name] '$t' is not outside:, filter:, vendor: or start:"
+          _as_msg "profile '$pname': $file: [channel:$name] '$t' is not outside:, filter:, vendor:, start: or links:yes"
           return 1
           ;;
       esac
@@ -15987,7 +15984,7 @@ _as_ln_insert() {
 # final view does not show it at T from the host. A target the view shows, with any
 # access, asks nothing; the declaration's mount still goes to T's own path, with its own
 # mode (below). `own` hands nothing over. Refused outright, whatever the link
-# leads to (_as_links_unsupported): a channel whose profile has no `links = yes`, the
+# leads to (_as_links_unsupported): a channel path the profile does not mark `links:yes`, the
 # project's dot-file, a hide. A dangling link implies nothing. On the src side that is all (bwrap binds the resolved
 # source; a store reads it after the check). On the dest side the mount cannot go on the
 # link (bwrap refuses a symbolic-link destination), so it goes where the link leads:
@@ -16012,12 +16009,18 @@ _as_ln_met() {
   done
   ((${#_lm_keep[@]})) || return 0
   _ch_links=("${_lm_keep[@]}")
-  # A CHANNEL THROUGH A LINK ONLY WHERE A TEST HOLDS IT (the profile's `links = yes`):
-  # any other is refused, inviting a feature request
-  local _lm_ch="${_ln_chan[$2]-}"
-  if [[ -n "$_lm_ch" && " ${profile_channel_links[*]-} " != *" $_lm_ch "* ]]; then
+  # A CHANNEL PATH THROUGH A LINK ONLY WHERE A TEST HOLDS IT (the profile's `links:yes`,
+  # per path): any other is refused, inviting a feature request
+  local _lm_ch="${_ln_chan[$2]-}" _lm_ok=0 _lm_p
+  if [[ -n "$_lm_ch" ]]; then
+    for _lm_p in ${profile_channel_links[@]+"${profile_channel_links[@]}"}; do
+      _as_ro_pins_norm _lm_p
+      [[ "$_lm_p" == "$2" ]] && _lm_ok=1 && break
+    done
+  fi
+  if [[ -n "$_lm_ch" ]] && ((! _lm_ok)); then
     _as_ro_pins_readlink "${_ch_links[0]}" _lm_x
-    _as_links_unsupported "$(_as_tilde "$2") (the $_lm_ch channel)" "${_ch_links[0]}" "$_lm_x"
+    _as_links_unsupported "$(_as_links_where "${_ch_links[0]}" "$2" "$_lm_ch")" "${_ch_links[0]}" "$_lm_x"
     return 1
   fi
   # nor the project's dot-file, which the review reads and the role sees read-only, nor
@@ -16099,6 +16102,37 @@ _as_ln_met() {
   _as_links_outside_ok "$2" "$_lm_chain" "$_lm_t" "$_lm_mode" || return 1
   _ln_pending+=("$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode")
   return 0
+}
+
+# _as_links_where LINK KEY CHANNEL -- the link's own location, for a refusal: LINK, and
+# the channel whose path it is (else the path KEY, or its source, it is on the way of).
+# shellcheck disable=SC2031 # the launch's own profile_channels
+_as_links_where() {
+  local line e n="" k
+  local -a f=()
+  for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
+    IFS=$'\t' read -r -a f <<<"$line"
+    for e in "${f[@]:1}"; do
+      k="${e#*:}"
+      _as_ro_pins_norm k
+      [[ "$k" == "$1" ]] && n="${f[0]}" && break 2
+    done
+  done
+  for line in ${profile_channel_sources[@]+"${profile_channel_sources[@]}"}; do
+    k="${line#*$'\t'}"
+    _as_ro_pins_norm k
+    [[ -z "$n" && "$k" == "$1" ]] && n="${line%%$'\t'*}" && {
+      printf "%s (the %s channel's source)" "$(_as_tilde "$1")" "$3"
+      return 0
+    }
+  done
+  if [[ -n "$n" ]]; then
+    printf '%s (the %s channel)' "$(_as_tilde "$1")" "$n"
+  elif [[ "$1" == "$2" ]]; then
+    printf '%s (the %s channel)' "$(_as_tilde "$1")" "$3"
+  else
+    printf '%s, on the way of %s (the %s channel)' "$(_as_tilde "$1")" "$(_as_tilde "$2")" "$3"
+  fi
 }
 
 # _as_links_unsupported WHAT LINK TARGET -- the refusal of a location not supported
@@ -18356,7 +18390,7 @@ agent_sandbox() (
   local -a profile_channel_reach=()  # [channel:<name>] reach: "CHANNEL<TAB>HOW<TAB>NOTE" (--check)
   local -a profile_channel_env=()    # [channel:<name>] env: "CHANNEL<TAB>NAME" (#88)
   local -a profile_channel_create=() # [channel:<name>] create = yes: its missing source is made
-  local -a profile_channel_links=()  # [channel:<name>] links = yes: reached through a link (#401)
+  local -a profile_channel_links=()  # [channel:<name>] PATH = links:yes: reached through a link (#401)
   local -a profile_channel_login=()  # [channel:<name>] login: "CHANNEL<TAB>FILE<TAB>NOTE"
   local profile_base=""              # [agent] base: the agent's state directory (#175)
   local profile_base_env=""          # [agent] base-env: the variable the agent reads it from
