@@ -2420,6 +2420,16 @@ _as_src_strict() {
   if [[ -f "$rec" ]] && cut -f2,3 -- "$rec" | grep -qFx -- "$chain"$'\t'"$t"; then
     return 0
   fi
+  # a link to what the role already sees, read-only or read-write, is ordinary content
+  # (#401): the keeper's view, as its launch recorded it (_as_keeper_start)
+  if [[ -n "${kd:-}" && -f "$kd/links.view" ]]; then
+    local d kind s mode
+    local -a vd=() vk=() vs=()
+    while IFS=$'\t' read -r d kind s mode; do
+      [[ "$kind" == connect ]] || vd+=("$d") vk+=("$kind") vs+=("$s")
+    done <"$kd/links.view"
+    _as_links_view_shows "$t" r && return 0
+  fi
   _as_msg "connect: $1: its source is reached through a symbolic link (${chain// ; /, }) to $t, new or changed since the launch this joins, and a join cannot ask. Refusing; review it with: ${invoked:-agent-sandbox} --trust, then launch again"
   return 1
 }
@@ -4222,6 +4232,9 @@ _as_keeper_start() {
   [[ -z "${_ca_record:-}" ]] || printf '%s\n' "$_ca_record" >"$kd/ca"
   # The join-scoped paths, for each join to make its own stores for.
   ((${#_join_scoped[@]})) && printf '%s\n' "${_join_scoped[@]}" >"$kd/join-scoped"
+  # The launch's view (_as_links_view_write), for a join to tell a link to what the role
+  # sees already from one that hands it something new (_as_src_strict, #401).
+  cp -- "$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")" "$kd/links.view" 2>/dev/null || :
   # Its single-file binds, for --init to tell what a host write would do to it (#389).
   # None when it cannot be read (an option it does not know, said), and binds.unread to say
   # why: --init then reads the launch's declarations, as for a keeper an older asb started.
@@ -7364,15 +7377,23 @@ _as_links_scan_review() {
   local sd="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
   for vf in "$(_as_links_view_file "$proj")"*; do
     [[ -f "$vf" ]] || continue
-    local -a vd=() vk=() vs=()
+    local -a vd=() vk=() vs=() cp=()
     local -A vc=()
     while IFS=$'\t' read -r d kind src mode; do
       if [[ "$kind" == connect ]]; then
-        vc[$d]=1
+        vc[$d]=1 cp+=("$d"$'\t'"$src"$'\t'"$mode")
         continue
       fi
       vd+=("$d") vk+=("$kind") vs+=("$src")
     done <"$vf"
+    # the connect paths: each one's source read as the launch reads it (_as_ln_met's src
+    # side), without a search -- so the review asks about a channel's link once
+    local c
+    for c in ${cp[@]+"${cp[@]}"}; do
+      IFS=$'\t' read -r d src mode <<<"$c"
+      case "$mode" in own | hide | "" | -) continue ;; esac
+      _as_links_scan_one "$proj" "$d" "$src" "$mode"
+    done
     while IFS=$'\t' read -r d kind src mode; do
       [[ "$mode" == read-only || "$mode" == read-write ]] || continue
       local -a prune=(-path "$sd" -o -path "$sd/*")
@@ -7394,6 +7415,31 @@ _as_links_scan_review() {
       done < <(find "$d" \( "${prune[@]}" \) -prune -o -type l -print0 2>/dev/null)
     done <"$vf"
   done | sort -u
+}
+
+# _as_links_scan_one PROJECT KEY SRC MODE -- for the scan, on its vd/vk/vs: the implied
+# declaration of KEY's source SRC, if its links lead to a host object outside that
+# launch's view (a link at or above the home or the project is none), unless approved.
+# shellcheck disable=SC2031
+_as_links_scan_one() {
+  local out chain t tk e rest lk="" need=r
+  local -A _ln_rroot=()
+  [[ "$4" == read-write ]] && need=rw
+  out="$(_as_links_chain "$3")" || return 0
+  chain="${out%%$'\n'*}" t="${out#*$'\n'}"
+  rest="$chain"
+  while [[ -n "$rest" ]]; do
+    e="${rest%% ; *}"
+    [[ "$rest" == *" ; "* ]] && rest="${rest#* ; }" || rest=""
+    _as_ln_root "${e%% -> *}" || lk+="${lk:+ ; }$e"
+  done
+  [[ -n "$lk" && "$lk$t" != *[$'\t']* ]] || return 0
+  _as_ln_unroot "$t" t
+  [[ "$t" != "$2" ]] || return 0
+  if [[ -d "$t" ]]; then tk='dir'; elif [[ -e "$t" ]]; then tk='file'; else return 0; fi
+  _as_links_view_shows "$t" "$need" && return 0
+  _as_links_approved "$1" "$2"$'\t'"$lk"$'\t'"$t"$'\t'"$tk" && return 0
+  printf '%s\t%s\t%s\t%s\t%s\n' "$2" "$lk" "$t" "$tk" "$4"
 }
 
 # _as_links_view_shows HOST NEED -- for the scan, on its vd/vk/vs (a view file, in the
@@ -7428,7 +7474,7 @@ _as_links_gate() {
   ((${#new[@]})) || return 0
   mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   rec="$(_as_links_rec "$proj")"
-  if mkdir -p -- "${rec%/*}" 2>/dev/null; then
+  if [[ -n "$proj" ]] && mkdir -p -- "${rec%/*}" 2>/dev/null; then
     {
       [[ ! -f "$rec.pending" ]] || cat -- "$rec.pending"
       printf '%s\n' "${new[@]}"
@@ -15617,7 +15663,8 @@ _as_ln_unroot() {
 }
 
 # _as_ln_inview HOST NEED -- for _as_ro_pins, on its locals: does the final view show the
-# host object HOST at its own path from the host, with NEED (rw: read-write; r: either)?
+# host object HOST at its own path from the host, with NEED (rw: read-write; r: either;
+# ro: read-only, exactly)?
 # A store, an overlay, a tmpfs or a hide at that path is not the host's object.
 _as_ln_inview() {
   local _iv_t _iv_d _iv_s
@@ -15628,7 +15675,7 @@ _as_ln_inview() {
   [[ "$_iv_d" == / ]] && _iv_d=""
   [[ "${_ms[$_iv_t]}${_iv_s#"$_iv_d"}" == "$1" ]] || return 1
   case "${_mk[$_iv_t]}:$2" in
-    rw:* | rwfile:* | ro:r) return 0 ;;
+    rw:r | rw:rw | rwfile:r | rwfile:rw | ro:r | ro:ro) return 0 ;;
   esac
   return 1
 }
@@ -15653,7 +15700,7 @@ _as_ln_scan_mode() {
 # DEST, KIND, host source, and the mode the scan reads it with (or `-`). Under the trust
 # store, by profile and role; not inside a sandbox, where there is no review.
 _as_links_view_write() {
-  [[ -z "$_rp_only" ]] && ! _as_inside_sandbox || return 0
+  [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox || return 0
   local _vw_f _vw_k _vw_m
   _vw_f="$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")"
   mkdir -p -- "${_vw_f%/*}" 2>/dev/null || return 0
@@ -15664,8 +15711,12 @@ _as_links_view_write() {
     printf '%s\t%s\t%s\t%s\n' "${_od[_vw_k]}" "${_mk[$_vw_k]}" "${_ms[$_vw_k]}" "${_vw_m:--}"
   done >"$_vw_f.tmp" 2>/dev/null || return 0
   # the connect paths, whose links are the launch's own to find (_as_ln_met), not the scan's
+  # (their declared source and mode: the review reads their links as the launch does)
+  local _vw_s
   for _vw_k in "${!_ln_mode[@]}"; do
-    [[ "$_vw_k" != *[$'\t\n']* ]] && printf '%s\tconnect\t\t-\n' "$_vw_k"
+    _vw_s="$_vw_k"
+    ! declare -p _decl_src &>/dev/null || _vw_s="${_decl_src[$_vw_k]:-$_vw_k}"
+    [[ "$_vw_k$_vw_s" != *[$'\t\n']* ]] && printf '%s\tconnect\t%s\t%s\n' "$_vw_k" "$_vw_s" "${_ln_mode[$_vw_k]}"
   done >>"$_vw_f.tmp" 2>/dev/null
   mv -f -- "$_vw_f.tmp" "$_vw_f"
   return 0
@@ -15725,6 +15776,29 @@ _as_ln_recorded() {
   return 0
 }
 
+# _as_ln_insert NAME OPT ARG DEST -- for _as_ro_pins (its _nargs): put the option OPT ARG
+# DEST (a bind of a link's target at its own path, a link made again) into the option
+# list NAME at the end, or before the first --remount-ro at or above DEST: bwrap makes
+# a mount point or a link only where it can write (the home is a tmpfs remounted
+# read-only at the end; measured: "Can't make symlink ...: Read-only file system").
+_as_ln_insert() {
+  local -n _li_a="$1"
+  local _li_d="$4" _li_i=0 _li_o _li_r
+  while ((_li_i < ${#_li_a[@]})); do
+    _li_o="${_li_a[_li_i]}"
+    if [[ "$_li_o" == --remount-ro ]]; then
+      _li_r="${_li_a[_li_i + 1]}"
+      _as_ro_pins_norm _li_r
+      if [[ "$_li_d" == "$_li_r" || "$_li_d" == "${_li_r%/}"/* ]]; then
+        _li_a=("${_li_a[@]:0:_li_i}" "$2" "$3" "$4" "${_li_a[@]:_li_i}")
+        return 0
+      fi
+    fi
+    _li_i=$((_li_i + 1 + ${_nargs[$_li_o]:-0}))
+  done
+  _li_a+=("$2" "$3" "$4")
+}
+
 # _as_ln_met PATH KEY src|dest -- for _as_ro_pins_chain, on its locals (_ch_links, _ch_cur,
 # the mount _k): links met on the way to PATH, for the mount at KEY. Only a connect path
 # (_ln_mode: a channel, a declaration, a hide) is concerned; a bind of the engine's own
@@ -15743,7 +15817,7 @@ _as_ln_recorded() {
 #   again inside (_ln_syms), so the link resolves to it; the role sees T at T too;
 # - not at all (_ln_drop) where nothing is there to show: a host bind or a hide through
 #   a dangling link, a host bind whose source is T itself and which the view shows
-#   already, a hide of what the view does not show.
+#   already with that very access, a hide of what the view does not show.
 _as_ln_met() {
   local _lm_mode="${_ln_mode[$2]-}" _lm_t="$_ch_cur" _lm_kind="" _lm_chain="" _lm_l _lm_x _lm_need=r _lm_host=0
   [[ -n "${_ln_mode[$2]+x}" ]] || return 0
@@ -15786,7 +15860,7 @@ _as_ln_met() {
     elif [[ -z "$_lm_kind" ]] && ((_lm_host)); then
       _ln_drop[$_k]=1
       return 0
-    elif ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] && _as_ln_inview "$_ch_cur" "$_lm_need"; then
+    elif ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] && _as_ln_inview "$_ch_cur" "$([[ "$_lm_need" == rw ]] && echo rw || echo ro)"; then
       _ln_drop[$_k]=1
       return 0
     else
@@ -15801,11 +15875,20 @@ _as_ln_met() {
         _ln_syms+=("$_lm_x"$'\t'"$_lm_h")
       done
     fi
-    # where it lands is all a store, an own or a mount of the engine's needs
-    ((_lm_host)) || return 0
+    # where it lands is all a store, an own or a mount of the engine's needs; and a
+    # declaration is about its path: one whose source is not the link's target (an
+    # outside: elsewhere, a relocated source) hands the role that source at P, not T
+    ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] || return 0
   fi
   [[ -n "$_lm_need" && -n "$_lm_kind" ]] || return 0
   _as_ln_inview "$_ch_cur" "$_lm_need" && return 0
+  # a source that leads back to the key's own host path: `P = MODE outside:P` is the
+  # declaration at its own path, which hands the role nothing new
+  if [[ "$3" == src ]]; then
+    local _lm_kh="${2%/*}"
+    _as_ro_pins_host_at "${_lm_kh:-/}" _lm_kh
+    [[ -n "$_lm_kh" && "${_lm_kh%/}/${2##*/}" == "$_lm_t" ]] && return 0
+  fi
   _ln_pending+=("$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode")
   return 0
 }
@@ -16097,6 +16180,8 @@ _as_ro_pins() {
   # What the links met imply, and where the mounts through them go (_as_ln_met).
   local -A _ln_move=() _ln_drop=() _ln_rroot=()
   local -a _ln_syms=() _ln_cover=() _ln_pending=()
+  # (the connect paths' modes are the launch's; called without them, no path is one)
+  declare -p _ln_mode &>/dev/null || local -A _ln_mode=()
   local -A _nargs=() _qual=()
   _as_bwrap_nargs _nargs _qual
   # Parse: per option its name, first argument's index, DEST (no trailing /), and the
@@ -16306,8 +16391,17 @@ _as_ro_pins() {
     [[ -n "$_kind" || "$_o" == --overlay || "$_o" == --tmpfs ]] || continue
     [[ "$_d" == /?* ]] || continue
     # A mount a later mount at or above it hides is not in the final view: nothing to keep.
+    # One at a connect path through a symbolic link goes (bwrap cannot mount on the link;
+    # the mount that shows there went where the link leads).
     _as_ro_pins_latest "$_d" _t
-    [[ "$_t" == "$_k" ]] || continue
+    if [[ "$_t" != "$_k" ]]; then
+      if [[ -n "${_ln_mode[$_d]+x}" && -z "$_rp_only" ]]; then
+        _x="${_d%/*}"
+        _as_ro_pins_host_at "${_x:-/}" _x
+        [[ -n "$_x" ]] && ! _as_links_none_on "" "${_x%/}/${_d##*/}" && _ln_drop[$_k]=1
+      fi
+      continue
+    fi
     _as_ro_pins_walk "$_d" "$_d" || return 1
     # Fixed for the role though nothing on its way is pinned: a mount point where the
     # role has the directory read-write from the host (the briefing says so, R4).
@@ -16380,9 +16474,12 @@ _as_ro_pins() {
       done
     done
     for _ln_w in "${!_ln_gone[@]}"; do unset '_ln_in[_ln_w]'; done
-    _ln_in=(${_ln_in[@]+"${_ln_in[@]}"} ${_ln_extra[@]+"${_ln_extra[@]}"})
+    _ln_in=(${_ln_in[@]+"${_ln_in[@]}"})
+    for ((_ln_j = 0; _ln_j < ${#_ln_extra[@]}; _ln_j += 3)); do
+      _as_ln_insert _ln_in "${_ln_extra[@]:_ln_j:3}"
+    done
     for _ln_e in ${_ln_syms[@]+"${_ln_syms[@]}"}; do
-      _ln_in+=(--symlink "${_ln_e%%$'\t'*}" "${_ln_e##*$'\t'}")
+      _as_ln_insert _ln_in --symlink "${_ln_e%%$'\t'*}" "${_ln_e##*$'\t'}"
     done
     _ln_in+=(${_ln_tail[@]+"${_ln_tail[@]}"})
     local _ln_depth=1

@@ -34,8 +34,10 @@ pins() {
   # mounts something first, say
   [[ -z "${PINS_WRAP:-}" ]] || read -r -a _wrap <<<"$PINS_WRAP"
   # PINS_PRE: code run after the engine is sourced (a test's stand-in for a helper)
+  # (HOME a test's own: the computation writes the launch's view under its trust store)
+  mkdir -p "$BATS_TEST_TMPDIR/home"
   # shellcheck disable=SC2016 # the script's own expansions
-  mapfile -d '' _all < <(XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" PINS_PRE="${PINS_PRE:-}" ${_wrap[@]+"${_wrap[@]}"} bash -c 'source "$1"; eval "$PINS_PRE"; shift; _preset="$1"; shift; IN=("$@")
+  mapfile -d '' _all < <(HOME="$BATS_TEST_TMPDIR/home" XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg" PINS_PRE="${PINS_PRE:-}" ${_wrap[@]+"${_wrap[@]}"} bash -c 'source "$1"; eval "$PINS_PRE"; shift; _preset="$1"; shift; IN=("$@")
     _as_ro_pins IN OUT PIN 2>"$BATS_TEST_TMPDIR/msg"; rc=$?
     printf "%s\0" "$rc" "${#OUT[@]}" "${OUT[@]}" ${PIN[@]+"${PIN[@]}"}' _ "$ENGINE" "$preset" "$@")
   RC="${_all[0]}"
@@ -90,9 +92,9 @@ ref_engine() {
   mkdir -p "$d"
   cp -r "$(dirname "$ENGINE")/profiles" "$(dirname "$ENGINE")/components" "$(dirname "$ENGINE")/models" "$d/"
   cp "$(dirname "$ENGINE")/VERSION" "$d/" 2>/dev/null || true
-  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
+  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1$/  _pinned_opts=("${_bwrap_opts[@]}") # no pins/' "$ENGINE" >"$d/agent-sandbox"
   chmod +x "$d/agent-sandbox"
-  [ "$(grep -c '^  : no pins$' "$d/agent-sandbox")" -eq 1 ]
+  [ "$(grep -c '# no pins$' "$d/agent-sandbox")" -eq 1 ]
   REF="$d/agent-sandbox"
 }
 
@@ -287,20 +289,7 @@ cache_pins() {
   [ "${PIN[*]}" = "$P/a $P/a/b" ]
 }
 
-@test "final view: a link whose directory a LATER read-write mount shows is replaceable (refused); a later read-only mount over it makes it safe" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/realdir" "$h/p/links"
-  touch "$h/realdir/x.md"
-  ln -s ../../realdir "$h/p/links/l"
-  pins -- --bind "$P" "$P" --ro-bind "$h/p/links/l/x.md" "$P/x.md" --bind "$h" "$h"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $h/p/links/l, a symbolic link in a directory the role can write"* ]]
-  pins -- --bind "$P" "$P" --ro-bind "$h/p/links/l/x.md" "$P/x.md" --bind "$h" "$h" --ro-bind "$h/p/links" "$h/p/links" \
-    --ro-bind "$h/realdir" "$h/realdir"
-  [ "$RC" -eq 0 ]
-}
-
-@test "a chain of three links resolves; a declared path through a link the role can replace is refused even where it covers nothing (R3)" {
+@test "a chain of three links resolves: the real path's directories and the source itself fixed where the project shows them" {
   mkdir -p "$P/ro" "$P/real/b"
   touch "$P/real/b/f.md"
   ln -s l2 "$P/ro/l1"
@@ -308,26 +297,129 @@ cache_pins() {
   ln -s ../real "$P/ro/l3"
   pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --ro-bind "$P/ro/l1/b/f.md" "$P/ro/l1/b/f.md"
   [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/real $P/real/b $P/real/b/f.md" ] # the real path's directories, and the source itself, where the project shows them
-  ln -s a "$P/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/lnk/b/new.md" # nothing covered: refused all the same
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its path goes through $P/lnk"* ]]
+  [ "${PIN[*]}" = "$P/real $P/real/b $P/real/b/f.md" ]
 }
 
-@test "a link in a sticky directory, neither the directory nor the link the role's, is not replaceable; the role's own link there is" {
-  local d="$BATS_TEST_TMPDIR/sticky"
-  mkdir -p "$d" "$P/real/b"
-  chmod 1777 "$d"
-  touch "$P/real/b/f.md"
-  ln -s "$P/real" "$d/l"
-  # shellcheck disable=SC2016 # the stand-in's own expansions
-  PINS_PRE='_as_ro_pins_uid() { printf 0; }' pins -- --bind "$d" "$d" --ro-bind "$d/l/b/f.md" "$P/x.md"
-  [ "$RC" -eq 0 ]
-  # shellcheck disable=SC2016 # the stand-in's own expansions
-  PINS_PRE='_as_ro_pins_uid() { [[ "$1" == */l ]] && printf "%s" "$EUID" || printf 0; }' pins -- --bind "$d" "$d" --ro-bind "$d/l/b/f.md" "$P/x.md"
+# ---- symbolic links as the declarations they imply (#401) ----
+# ln KEY MODE -- PINS_PRE for a launch in project $P whose connect path KEY has MODE
+# (_as_connect_bind_all records it in _ln_mode); approve P CHAIN T KIND -- the record
+# `asb --trust` writes for an implied declaration, under the computation's HOME.
+ln_mode() { PINS_PRE="_proj=$P; declare -A _ln_mode=([$1]=$2)"; }
+approve() {
+  local d="$BATS_TEST_TMPDIR/home/.config/agent-sandbox/trust"
+  mkdir -p "$d"
+  printf '%s\t%s\t%s\t%s\n' "$@" >>"$d/$(printf '%s' "$P" | sha256sum | cut -d' ' -f1).links"
+}
+implied() { # MSG names the implied declaration KEY = MODE outside:T, refused without a terminal
   [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $d/l, a symbolic link in a directory the role can write"* ]]
+  [[ "$MSG" == *"connect: $1 is reached through a symbolic link"*"to $3, which is outside the role's view: it stands for '$1 = $2 outside:$3'"* ]]
+  [[ "$MSG" == *"review it with: "*"--trust"* ]]
+}
+
+@test "links: a declared path through a link to a host object outside the view is the declaration it implies: refused without a terminal, launched once approved, the mount at the target's own path" {
+  local e="$BATS_TEST_TMPDIR/ext"
+  mkdir -p "$e/b"
+  touch "$e/b/f.md"
+  ln -s "$e" "$P/lnk"
+  ln_mode "$P/lnk/b/f.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  implied "$P/lnk/b/f.md" read-only "$e/b/f.md"
+  [[ "$MSG" == *"($P/lnk -> $e)"* ]]
+  approve "$P/lnk/b/f.md" "$P/lnk -> $e" "$e/b/f.md" file
+  ln_mode "$P/lnk/b/f.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " == *" --ro-bind $P/lnk/b/f.md $e/b/f.md "* ]] # bwrap cannot mount on the link: at its target
+  # retargeted: changed since approved, asked again
+  rm "$P/lnk"
+  ln -s "$e/b" "$P/lnk"
+  mkdir -p "$e/b/b"
+  touch "$e/b/b/f.md"
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  implied "$P/lnk/b/f.md" read-only "$e/b/b/f.md"
+}
+
+@test "links: the mode is what the path has without the link; read-write needs the target shown read-write, read the target shown at all" {
+  local e="$BATS_TEST_TMPDIR/ext"
+  mkdir -p "$e"
+  touch "$e/f.md"
+  ln -s "$e/f.md" "$P/l.md"
+  local m
+  for m in read-write copy copy-on-write seed-only; do
+    ln_mode "$P/l.md" "$m"
+    pins -- --bind "$P" "$P" --ro-bind "$e" "$e" --bind "$P/l.md" "$P/l.md"
+    if [[ "$m" == read-write ]]; then implied "$P/l.md" read-write "$e/f.md"; else [ "$RC" -eq 0 ]; fi
+  done
+}
+
+@test "links: a link to what the role already sees asks nothing (L4); a dangling one implies nothing" {
+  ln -s a "$P/lnk"
+  ln_mode "$P/lnk/b/f.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 0 ]
+  ln -s nowhere "$P/dang"
+  ln_mode "$P/dang/f" read-only
+  pins -- --bind "$P" "$P" --ro-bind-try "$P/dang/f" "$P/dang/f"
+  [ "$RC" -eq 0 ]
+}
+
+@test "links: a source through a link in a store-like directory (the middle of a chain too) is asked about; the role's own store, or own, is not" {
+  local h="$BATS_TEST_TMPDIR/home/store"
+  mkdir -p "$h/realdir" "$P/rw" "$P/real/b"
+  touch "$h/realdir/x.md" "$P/real/b/f.md"
+  ln -s realdir "$h/l"
+  PINS_PRE="_proj=$P; declare -A _ln_mode=([$P/cfg/x.md]=read-only) _decl_src=([$P/cfg/x.md]=$h/l/x.md)" \
+    pins -- --bind "$P" "$P" --ro-bind "$h/l/x.md" "$P/cfg/x.md"
+  # shellcheck disable=SC2088 # the message's own ~
+  implied "$P/cfg/x.md" read-only "~/store/realdir/x.md"
+  # the middle of a chain, lnk -> rw/l2 -> ../real: the target is in the read-only project's view
+  ln -s rw/l2 "$P/lnk"
+  ln -s ../real "$P/rw/l2"
+  PINS_PRE="_proj=$P; declare -A _ln_mode=([$P/x.md]=read-only) _decl_src=([$P/x.md]=$P/lnk/b/f.md)" pins -- --ro-bind "$P" "$P" --bind "$P/rw" "$P/rw" --ro-bind "$P/lnk/b/f.md" "$P/x.md"
+  [ "$RC" -eq 0 ]
+  # own: the role's own store goes where the link leads, nothing handed over
+  ln_mode "$P/lnk/own" own
+  pins -- --bind "$P" "$P" --bind "$ST/x" "$P/lnk/own"
+  [ "$RC" -eq 0 ]
+}
+
+@test "links: a hide through a link blanks the target where the role would see it, no question; through a dangling link, nothing" {
+  mkdir -p "$P/real/secret" "$P/d/secret"
+  ln -s real "$P/lnk"
+  ln_mode "$P/lnk/secret" hide
+  pins -- --bind "$P" "$P" --tmpfs "$P/lnk/secret"
+  [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " == *" --tmpfs $P/real/secret "* ]]
+  ln -s nowhere "$P/dang"
+  ln_mode "$P/dang/x" hide
+  pins -- --bind "$P" "$P" --tmpfs "$P/dang/x"
+  [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " != *" --tmpfs "* ]]
+  ln_mode "$P/d/secret" hide
+  pins -- --bind "$P" "$P" --tmpfs "$P/d/secret"
+  [ "$RC" -eq 0 ]
+  [ "${PIN[*]}" = "$P/d" ]
+}
+
+@test "links: a declaration whose path is a link but whose source is elsewhere asks nothing (S2): the source goes at the target's path" {
+  local e="$BATS_TEST_TMPDIR/ext"
+  mkdir -p "$e"
+  touch "$e/f.md"
+  ln -s "$e/f.md" "$P/l.md"
+  ln_mode "$P/l.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$ST/f" "$P/l.md"
+  [ "$RC" -eq 0 ]
+  [[ " ${OUT[*]} " == *" --ro-bind $ST/f $e/f.md "* ]]
+}
+
+@test "links: a link at or above the home or the project is no declaration" {
+  local real="$BATS_TEST_TMPDIR/realp"
+  mkdir -p "$real/a"
+  touch "$real/a/f.md"
+  ln -s "$real" "$BATS_TEST_TMPDIR/lp"
+  PINS_PRE="_proj=$BATS_TEST_TMPDIR/lp; declare -A _ln_mode=([$BATS_TEST_TMPDIR/lp/a/f.md]=read-only)" \
+    pins -- --bind "$BATS_TEST_TMPDIR/lp" "$BATS_TEST_TMPDIR/lp" --ro-bind "$BATS_TEST_TMPDIR/lp/a/f.md" "$BATS_TEST_TMPDIR/lp/a/f.md"
+  [ "$RC" -eq 0 ]
 }
 
 @test "nested read-only binds: the parents of the outer one pinned, nothing inside the read-only mount" {
@@ -440,43 +532,6 @@ cache_pins() {
   [[ " ${PIN[*]} " == *" $h/real "* ]]
 }
 
-@test "R3, the key side: a declared path through a link the role can replace is refused in every mode, whatever it covers; through one it cannot replace, the real path fixed" {
-  ln -s a "$P/lnk"
-  local -a b
-  for b in "--bind $ST/x" "--bind $BATS_TEST_TMPDIR" "--ro-bind $BATS_TEST_TMPDIR"; do
-    read -r -a b <<<"$b"
-    pins -- --bind "$P" "$P" "${b[@]}" "$P/lnk/b"
-    [ "$RC" -eq 1 ]
-    [[ "$MSG" == *"connect: $P/lnk/b: its path goes through $P/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role"* ]]
-    pins -- --bind "$P" "$P" "${b[@]}" "$P/lnk/new" # nothing there to cover: refused too
-    [ "$RC" -eq 1 ]
-  done
-  mkdir -p "$P/ro"
-  ln -s ../a "$P/ro/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$P/ro" "$P/ro" --bind "$ST/f" "$P/ro/lnk/b/f.md"
-  [ "$RC" -eq 0 ] # the link is in a read-only mount
-  [ "${PIN[*]}" = "$P/a $P/a/b" ]
-}
-
-@test "R3, the source side: a source through a link the role can replace is refused in every mode with a host source" {
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/real" "$P/x" "$ST/u" "$ST/w"
-  ln -s real "$h/l"
-  local o
-  for o in --bind --ro-bind; do
-    pins -- --bind "$P" "$P" --bind "$h" "$h" "$o" "$h/l" "$P/x/d"
-    [ "$RC" -eq 1 ]
-    [[ "$MSG" == *"its source goes through $h/l, a symbolic link in a directory the role can write"* ]]
-  done
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --overlay-src "$h/l" --overlay "$ST/u" "$ST/w" "$P/x/d"
-  [ "$RC" -eq 1 ]
-  PINS_PRE="declare -A _decl_src=([$P/x/d]=$h/l)" pins -- --bind "$P" "$P" --bind "$h" "$h" --bind "$ST/x" "$P/x/d"
-  [ "$RC" -eq 1 ]
-  # an own store has no host source: nothing to resolve
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --bind "$ST/x" "$P/x/d"
-  [ "$RC" -eq 0 ]
-}
-
 @test "a hide (a tmpfs) in a read-write host directory gets its parents pinned; one directly in the root none" {
   pins -- --bind "$P" "$P" --tmpfs "$P/a/b/c"
   same --bind "$P" "$P" --bind "$P/a" "$P/a" --bind "$P/a/b" "$P/a/b" --tmpfs "$P/a/b/c"
@@ -539,27 +594,7 @@ cache_pins() {
   [ ! -e "$P/nodir2" ]
 }
 
-@test "a hide (a tmpfs) whose path goes through a link the role can replace is refused, naming the link; through a plain directory it is fixed as any declared path" {
-  mkdir -p "$P/real/secret" "$P/d/secret"
-  ln -s real "$P/lnk"
-  pins -- --bind "$P" "$P" --tmpfs "$P/lnk/secret"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"connect: $P/lnk/secret: its path goes through $P/lnk, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"$P/lnk points to $P/real: make it the directory or file it should be. Refusing to launch"* ]]
-  pins -- --bind "$P" "$P" --tmpfs "$P/d/secret"
-  [ "$RC" -eq 0 ]
-  [ "${PIN[*]}" = "$P/d" ]
-}
-
-@test "a refusal's hint for a link whose target does not exist says so" {
-  ln -s nowhere "$P/lnk"
-  pins -- --bind "$P" "$P" --tmpfs "$P/lnk/x"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its path goes through $P/lnk, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"$P/lnk points to $P/nowhere, which does not exist: make it the directory or file it should be. Refusing to launch"* ]]
-}
-
-@test "a join-scoped path declaration's source is a declared source: fixed where a read-write mount shows it, refused through a link the role can replace (copy, seed-only, copy-on-write)" {
+@test "a join-scoped path declaration's source is a declared source: fixed where a read-write mount shows it; through a link, asked about only where it leads outside the view (copy, seed-only, copy-on-write)" {
   make_harness
   mkdir -p "$H/home/store/real"
   printf 'R\n' >"$H/home/store/real/r"
@@ -574,8 +609,21 @@ cache_pins() {
       return 1
     }
   done
+  # a link to what the role sees already (~/store/realdir, read-write): ordinary content
   mv "$H/home/store/real" "$H/home/store/realdir"
   ln -s realdir "$H/home/store/real"
+  for m in copy seed-only copy-on-write; do
+    # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+    run_engine AGENT_SANDBOX_NET=none -- asb --connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/real/" claude --version
+    [ "$status" -eq 0 ] || {
+      echo "$m: $output" >&2
+      return 1
+    }
+  done
+  # a link to what it does not see: the implied declaration, refused without a terminal
+  mkdir -p "$H/home/ext"
+  rm "$H/home/store/real"
+  ln -s ../ext "$H/home/store/real"
   for m in copy seed-only copy-on-write; do
     # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
     run_engine AGENT_SANDBOX_NET=none -- asb --connect '~/store/ = read-write' --connect "./x/d/ = $m join-scoped outside:~/store/real/" claude --version
@@ -583,40 +631,8 @@ cache_pins() {
       echo "$m launched: $output" >&2
       return 1
     }
-    [[ "$output" == *"its source goes through $H/home/store/real, a symbolic link in a directory the role can write"* ]]
+    [[ "$output" == *"to ~/ext, which is outside the role's view: it stands for '"*"/proj/x/d = $m outside:~/ext'"* ]]
   done
-}
-
-@test "a read-only bind whose source goes through a link the role can replace (in a read-write host directory) is refused, naming the link and the resolved path" {
-  ln -s a "$P/lnk"
-  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
-  [ "$RC" -eq 1 ]
-  # not a declaration here (no recorded declared source): what a channel's user can do
-  [[ "$MSG" == *"connect: $P/lnk/b/f.md: its source goes through $P/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role, and a link cannot be -- replacing it, the role would choose which host path a later launch binds there. $P/lnk points to $P/a: make it the directory or file it should be. Refusing to launch"* ]]
-  ln -s ../a "$P/x/lnk2" # deeper: a link inside a plain directory of the project
-  pins -- --bind "$P" "$P" --ro-bind "$P/x/lnk2/b/f.md" "$P/x/lnk2/b/f.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $P/x/lnk2,"* ]]
-}
-
-@test "B1: a replaceable link in the MIDDLE of the source's resolution is refused, naming that link" {
-  # shape 1: a read-only project, ./rw/ read-write, lnk -> rw/l2 -> real
-  mkdir -p "$P/rw" "$P/real/b"
-  touch "$P/real/b/f.md"
-  ln -s rw/l2 "$P/lnk"
-  ln -s ../real "$P/rw/l2"
-  pins -- --ro-bind "$P" "$P" --bind "$P/rw" "$P/rw" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $P/rw/l2, a symbolic link in a directory the role can write"* ]]
-  [[ "$MSG" == *"$P/rw/l2 points to $P/real: make it the directory or file it should be. Refusing to launch"* ]]
-  # shape 2: ~/store read-write, the source through ~/store/l -> realdir
-  local h="$BATS_TEST_TMPDIR/home/store"
-  mkdir -p "$h/realdir"
-  touch "$h/realdir/x.md"
-  ln -s realdir "$h/l"
-  pins -- --bind "$P" "$P" --bind "$h" "$h" --ro-bind "$h/l/x.md" "$P/cfg/x.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $h/l, a symbolic link"* ]]
 }
 
 @test "the resolution follows links inside link targets, absolute targets and .., and is bounded" {
@@ -687,18 +703,6 @@ cache_pins() {
   same "${IN[@]}"
 }
 
-@test "mutants: a link in a directory the role owns but has made unwritable is replaceable (it can chmod it)" {
-  local e="$BATS_TEST_TMPDIR/ext" # the target: not shown to the role, no contradiction
-  mkdir -p "$P/own" "$e/b"
-  touch "$e/b/f.md"
-  ln -s "$e" "$P/own/l"
-  chmod 555 "$P/own"
-  pins -- --bind "$P" "$P" --ro-bind "$P/own/l/b/f.md" "$P/x.md"
-  [ "$RC" -eq 1 ]
-  [[ "$MSG" == *"its source goes through $P/own/l, a symbolic link in a directory the role can write"* ]]
-  chmod 755 "$P/own"
-}
-
 @test "hard links: another name of a read-only file shown through a read-write FILE mount launches with one warning naming both; a different file, or a covered mount, none" {
   local e="$BATS_TEST_TMPDIR/ext" h="$BATS_TEST_TMPDIR/home/store"
   mkdir -p "$e" "$h" "$P/cfg"
@@ -756,7 +760,10 @@ cache_pins() {
       return 1
     }
     run_engine AGENT_SANDBOX_NET=none -- asb --connect "./a/b/ = copy outside:$src/a/b/" claude --version
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 0 ] || {
+      echo "$src: $output" >&2
+      false
+    }
     [[ "$output" == *"pinned, on the way to a declared path or its source (the role cannot rename, remove or replace them): ./a"* ]] || {
       echo "copy outside:$src: $output" >&2
       return 1
@@ -764,7 +771,7 @@ cache_pins() {
   done
 }
 
-@test "R1 and R3 through the engine: a channel whose source the profile relocates is a declared source -- fixed where a read-write mount shows it, refused through a link the role can replace, in every mode" {
+@test "R1 through the engine: a channel whose source the profile relocates is a declared source -- fixed where a read-write mount shows it; through a link outside the view, the implied declaration is refused without a terminal, in every mode" {
   make_harness
   mkdir -p "$H/profiles/relo"
   cp "$REPO_ROOT/tests/helpers/probe-profile.sh" "$H/profiles/relo/profile.sh"
@@ -785,8 +792,9 @@ cache_pins() {
       return 1
     }
   done
-  mv "$H/home/alt/extra" "$H/home/alt/realextra"
-  ln -s realextra "$H/home/alt/extra"
+  mkdir -p "$H/home/ext"
+  rm -r "$H/home/alt/extra"
+  ln -s ../ext "$H/home/alt/extra"
   for m in copy copy-on-write seed-only read-only read-write; do
     # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
     run_engine AGENT_SANDBOX_NET=none AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --profile relo \
@@ -795,7 +803,7 @@ cache_pins() {
       echo "$m launched: $output" >&2
       return 1
     }
-    [[ "$output" == *"goes through $H/home/alt/extra, a symbolic link in a directory the role can write"* ]]
+    [[ "$output" == *"to ~/ext, which is outside the role's view: it stands for '~/.probe/extra = $m outside:~/ext'"* ]]
   done
 }
 
@@ -915,20 +923,29 @@ cache_pins() {
   [ "$A" = "$B" ]
 }
 
-@test "a launch refuses a read-only declaration through a link the role can replace, saying it once, bwrap never run" {
+@test "a launch through a link: to what the role sees, launched with the mount at the target; outside the view, refused once without a terminal, bwrap never run; approved by --trust, launched" {
   make_harness
   local proj
   proj="$(cd "$H/proj" && pwd -P)"
-  mkdir -p "$proj/real/b"
-  touch "$proj/real/b/f.md"
+  mkdir -p "$proj/real/b" "$H/ext/b"
+  touch "$proj/real/b/f.md" "$H/ext/b/f.md"
   ln -s real "$proj/lnk"
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
-  [ "$status" -ne 0 ]
-  [ "$(printf '%s\n' "$output" | grep -c "its source goes through $proj/lnk, a symbolic link in a directory the role can write")" -eq 1 ]
-  [[ "$output" == *"if $proj/real/b/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
-  [ ! -s "$H/argv" ]
-  run_engine AGENT_SANDBOX_NET=none -- asb --connect './real/b/f.md = read-only' claude --version # the resolved path
   [ "$status" -eq 0 ]
+  argv_has --ro-bind "$proj/real/b/f.md" "$proj/real/b/f.md" # bwrap cannot mount on the link: at its target
+  rm "$proj/lnk"
+  ln -s "$H/ext" "$proj/lnk"
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
+  [ "$status" -ne 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c "is reached through a symbolic link ($proj/lnk -> $H/ext)")" -eq 1 ]
+  [ ! -s "$H/argv" ]
+  run_engine AGENT_SANDBOX_NET=none -- asb --trust <<<y
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/proj/lnk/b/f.md = read-only outside:"*"/ext/b/f.md"* ]]
+  [[ "$output" == *"/proj/lnk = read-write outside:"*"/ext"* ]] # the link itself, in the project: the scan's
+  run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
+  [ "$status" -eq 0 ]
+  argv_has --ro-bind "$(cd "$H/ext" && pwd -P)/b/f.md" "$H/ext/b/f.md"
 }
 
 @test "a read-only file two levels down in a read-write project: exactly the two pins added, before it" {

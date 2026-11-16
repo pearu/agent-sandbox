@@ -63,9 +63,9 @@ ref_engine() {
   local d="$BATS_TEST_TMPDIR/ref"
   mkdir -p "$d"
   cp -r "$(dirname "$ENGINE")/components" "$d/"
-  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1$/  : no pins/' "$ENGINE" >"$d/agent-sandbox"
+  sed 's/^  _as_ro_pins _bwrap_opts _pinned_opts _pinned || return 1$/  _pinned_opts=("${_bwrap_opts[@]}") # no pins/' "$ENGINE" >"$d/agent-sandbox"
   chmod +x "$d/agent-sandbox"
-  [ "$(grep -c '^  : no pins$' "$d/agent-sandbox")" -eq 1 ]
+  [ "$(grep -c '# no pins$' "$d/agent-sandbox")" -eq 1 ]
   REF="$d/agent-sandbox"
 }
 
