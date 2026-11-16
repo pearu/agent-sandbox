@@ -179,7 +179,7 @@ run_role() {
   [ "$(cat "$IHOME/secret/g")" = SECRET ]
 }
 
-@test "a missing channel directory in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it without a terminal" {
+@test "a missing channel directory in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it" {
   mkdir -p "$IHOME/secretdir"
   printf 'SECRETD\n' >"$IHOME/secretdir/s"
   [ ! -e "$IHOME/.claude/agents" ]
@@ -188,7 +188,8 @@ run_role() {
   [ -L "$IHOME/.claude/agents" ]
   run_role --account work -- bash -c 'cat ~/.claude/agents/s; echo PWNED >>~/.claude/agents/s'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"it stands for '~/.claude/agents = read-write outside:~/secretdir'"* ]]
+  # the agents channel is not one the claude profile supports through a link (#401, C)
+  [[ "$output" == *"~/.claude/agents (the agents channel) is reached through the symbolic link ~/.claude/agents -> ../secretdir, and this location is not supported through a symbolic link"* ]]
   [[ "$output" != *SECRETD* ]]
   [ "$(cat "$IHOME/secretdir/s")" = SECRETD ]
 }
