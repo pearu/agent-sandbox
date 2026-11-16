@@ -2683,6 +2683,17 @@ _as_connect_bind_all() {
     while ((_ri < ${#_reads[@]})); do
       _rn="${_reads[_ri]}"
       if [[ "${_rd_run[_rj]}" == run ]]; then
+        # a source to make where a dangling symbolic link stands: it implies nothing yet
+        # (#401), and nothing is made through a link -- that would make its target
+        if [[ "${_reads[_ri+1]}" == mkdir || "${_reads[_ri+1]}" == _as_make_source_dir ]] \
+          && ! _as_preset_is_native; then
+          local _rs_s="${_reads_chk[_rj]#*$'\t'}"
+          _rs_s="${_rs_s%%$'\t'*}"
+          if [[ ! -e "$_rs_s" ]] && ! _as_links_none_on "" "$_rs_s"; then
+            _as_msg "connect: ${_reads_chk[_rj]%%$'\t'*}: its source $(_as_tilde "$_rs_s") is missing and reached through a symbolic link to what does not exist; nothing is made through a link. Make the source on the host, or remove the link. Refusing to launch"
+            return 1
+          fi
+        fi
         "${_reads[@]:_ri+1:_rn}" || return 1
       else
         _as_read_hidden "${_reads_chk[_rj]}" "${_reads_kind[_rj]}" || return 1
@@ -15815,8 +15826,8 @@ _as_ln_insert() {
 #   file or directory once every check passed, so the path is fixed (_ln_cover);
 # - else at T's own path (_ln_move), each link of the chain the view does not show made
 #   again inside (_ln_syms), so the link resolves to it; the role sees T at T too;
-# - not at all (_ln_drop) where nothing is there to show: a host bind or a hide through
-#   a dangling link, a host bind whose source is T itself and which the view shows
+# - not at all (_ln_drop) where nothing is there to show: a host bind through a link
+#   whose target's directory does not exist (a dangling link), a hide through one, a host bind whose source is T itself and which the view shows
 #   already with that very access, a hide of what the view does not show.
 _as_ln_met() {
   local _lm_mode="${_ln_mode[$2]-}" _lm_t="$_ch_cur" _lm_kind="" _lm_chain="" _lm_l _lm_x _lm_need=r _lm_host=0
@@ -15857,7 +15868,7 @@ _as_ln_met() {
     elif [[ "$_lm_mode" == hide ]]; then
       if [[ -n "$_lm_kind" ]] && _as_ln_inview "$_ch_cur" r; then _ln_move[$_k]="$_lm_t"; else _ln_drop[$_k]=1; fi
       return 0
-    elif [[ -z "$_lm_kind" ]] && ((_lm_host)); then
+    elif [[ -z "$_lm_kind" && ! -d "${_lm_t%/*}" ]] && ((_lm_host)); then
       _ln_drop[$_k]=1
       return 0
     elif ((_lm_host)) && [[ "${_ms[$_k]}" == "$_ch_cur" ]] && _as_ln_inview "$_ch_cur" "$([[ "$_lm_need" == rw ]] && echo rw || echo ro)"; then

@@ -159,7 +159,7 @@ run_role() {
   [ "$(cat "$IHOME/secret/g")" = SECRET ]
 }
 
-@test "a missing channel file in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it, naming the way out, and binds nothing it names" {
+@test "a missing channel file in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it without a terminal, as the declaration it implies, and binds nothing it names" {
   mkdir -p "$IHOME/secret"
   printf 'SECRET\n' >"$IHOME/secret/g"
   [ ! -e "$IHOME/.claude/CLAUDE.md" ]
@@ -168,18 +168,18 @@ run_role() {
   [ -L "$IHOME/.claude/CLAUDE.md" ]
   run_role --account work -- bash -c 'cat ~/.claude/CLAUDE.md; echo PWNED >>~/.claude/CLAUDE.md'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: $IHOME/.claude/CLAUDE.md: under the account 'work', its path in the base goes through $IHOME/.claude/CLAUDE.md, a symbolic link"* ]]
-  [[ "$output" == *"$IHOME/.claude/CLAUDE.md points to $IHOME/secret/g: make it the directory or file it should be. Refusing to launch"* ]]
+  [[ "$output" == *"it stands for '~/.claude/CLAUDE.md = read-write outside:~/secret/g'"* ]]
+  [[ "$output" == *"review it with: "*"--trust"* ]]
   [[ "$output" != *SECRET* ]]
   [ "$(cat "$IHOME/secret/g")" = SECRET ]
-  # the way out: the base's entry made the file it points to
+  # the base's entry made a file: nothing implied
   cp --remove-destination "$IHOME/secret/g" "$IHOME/.claude/CLAUDE.md"
   run_role --account work -- bash -c 'echo MINE >>~/.claude/CLAUDE.md'
   [ "$status" -eq 0 ]
   [ "$(cat "$IHOME/secret/g")" = SECRET ]
 }
 
-@test "a missing channel directory in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it" {
+@test "a missing channel directory in the base that a role makes a link (launch 1, shared): the next launch on an account refuses it without a terminal" {
   mkdir -p "$IHOME/secretdir"
   printf 'SECRETD\n' >"$IHOME/secretdir/s"
   [ ! -e "$IHOME/.claude/agents" ]
@@ -188,8 +188,7 @@ run_role() {
   [ -L "$IHOME/.claude/agents" ]
   run_role --account work -- bash -c 'cat ~/.claude/agents/s; echo PWNED >>~/.claude/agents/s'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its path in the base goes through $IHOME/.claude/agents, a symbolic link"* ]]
-  [[ "$output" == *"$IHOME/.claude/agents points to $IHOME/secretdir: make it the directory or file it should be. Refusing to launch"* ]]
+  [[ "$output" == *"it stands for '~/.claude/agents = read-write outside:~/secretdir'"* ]]
   [[ "$output" != *SECRETD* ]]
   [ "$(cat "$IHOME/secretdir/s")" = SECRETD ]
 }
@@ -255,48 +254,15 @@ run_role() {
   [ ! -e "$ACC/cache/changelog.md" ]
 }
 
-@test "a linked cache under an account is not supported: the changelog channel's path goes through the link made again in the account's directory, which the role can replace, so the launch is refused (R3), naming the base's entry as the way out; nothing is made through the link, and the way out works" {
-  mkdir -p "$IHOME/.claude/cache.real"
-  ln -s cache.real "$IHOME/.claude/cache" # the changelog channel's directory, a link
-  TEST_PRESET=isolated run_claude --account work
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its path goes through $ACC/cache, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"the base's $IHOME/.claude/cache points to $IHOME/.claude/cache.real: make it the directory or file it should be (the link in the account's directory is made again from it at every launch). Refusing to launch"* ]]
-  [[ "$output" != *"Make $ACC/cache"* ]]      # not the account's link: one made a directory is refused next
-  [ "$(readlink "$ACC/cache")" = cache.real ] # made again in the account's directory before the refusal; left there
-  # the refused launch made no mount point through the link, on either side
-  [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
-  [ ! -e "$ACC/cache.real/changelog.md" ]
-  # the way out the hint names: the base's entry made the directory it points to
-  rm "$IHOME/.claude/cache"
-  mv "$IHOME/.claude/cache.real" "$IHOME/.claude/cache"
-  TEST_PRESET=isolated run_claude --account work
-  [ "$status" -eq 0 ]
-  [ "${M[login]}" = WORK-LOGIN ]
-  [ ! -L "$ACC/cache" ]                        # the stale link the engine made is replaced
-  [ ! -e "$IHOME/.claude/cache/changelog.md" ] # its mount point removed after the launch
-}
-
-@test "a linked cache without an account, the default preset: the changelog channel's source (its own path, seeded from) goes through the link in the base, which the role can replace, so the launch is refused (R3) before anything is read; the hint says what the link points to" {
-  mkdir -p "$IHOME/.claude/cache.real"
-  ln -s cache.real "$IHOME/.claude/cache"
-  TEST_PRESET='' run_claude
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"$IHOME/.claude/cache/changelog.md: its source goes through $IHOME/.claude/cache, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"$IHOME/.claude/cache points to $IHOME/.claude/cache.real: make it the directory or file it should be"* ]]
-  [ ! -e "$IHOME/.claude/cache.real/changelog.md" ]
-}
-
-@test "a link to a file at a channel's own path (instructions has two paths): the hint names the one way out that works, and following it launches" {
+@test "a link to a file at a channel's own path (instructions has two paths): refused without a terminal as the declaration it implies; made a file, it launches" {
   mkdir -p "$IHOME/secret"
   printf 'SECRET\n' >"$IHOME/secret/g"
   ln -s ../secret/g "$IHOME/.claude/CLAUDE.md"
   run_claude
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/.claude/CLAUDE.md, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"$IHOME/.claude/CLAUDE.md points to $IHOME/secret/g: make it the directory or file it should be. Refusing to launch"* ]]
-  [[ "$output" != *"outside:"* ]]
-  # the hint followed: the link made the file it should be
+  [[ "$output" == *"it stands for '~/.claude/CLAUDE.md = read-write outside:~/secret/g'"* ]]
+  [[ "$output" != *SECRET* ]]
+  # the link made a file: nothing implied
   cp --remove-destination "$IHOME/secret/g" "$IHOME/.claude/CLAUDE.md"
   run_claude
   [ "$status" -eq 0 ]

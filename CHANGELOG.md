@@ -1153,8 +1153,11 @@ names are gone; there are no aliases for removed names before 1.0.
   bound directories are found by a scan during the review (`--trust`, a launch's review
   at a terminal, `--roles` before its panes), never at an ordinary launch, which
   re-reads only the approved ones: a link made after the last review dangles inside
-  until the next. `--check` lists what the review would. A join refuses a source whose
-  links are not as approved. A link inside a `copy`, `seed-only` or `copy-on-write`
+  until the next. The review also reads the links on each role's declared and channel
+  paths as its last launch had them (no search), so a link there is asked about once,
+  the mode shown being that launch's. `--check` lists what the review would. A join
+  refuses a source that gained a link since its launch unless the link leads to what
+  the role already sees, or is approved. A link inside a `copy`, `seed-only` or `copy-on-write`
   source is not covered here. Measured before: `~/.claude/CLAUDE.md ->
   ../dot/claude/CLAUDE.md` (dotfiles) was unreadable under `shared` and failed with
   "bwrap: Can't mount on symlink destination" under `inherit` and `isolated`. A launch

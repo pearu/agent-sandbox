@@ -573,7 +573,8 @@ preset, the declaration's, or the mode of what shows its directory. Where it wou
 the role a host path it does not otherwise see with that access, the `--trust` review lists
 it under "implied by symbolic links", approved with the dot-file in one answer; a link
 that is new or changed since is asked about again (refused where nobody can answer). A
-declaration of your own for P sets its mode. The role sees T at P, and at T's own path
+link to what the role already sees with that access asks nothing. A declaration of your
+own for P sets its mode. The role sees T at P, and at T's own path
 too; in a directory it has read-write from the host it can replace the link, and the next
 launch asks about the new one. Links inside the project and other plainly bound
 directories are found when the review runs (`asb --trust`, or a launch that asks at a

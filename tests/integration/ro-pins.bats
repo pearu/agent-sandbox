@@ -44,6 +44,15 @@ PY
   BGS=()
 }
 
+# link_refused -- the launch was refused over the declaration a symbolic link implies (#401):
+# new or changed since approved, and no terminal to ask at (a join cannot ask either)
+link_refused() {
+  [[ "$output" == *"is reached through a symbolic link"*"review it with: "*"--trust"* ]] || {
+    printf '%s\n' "$output" | tail -4 >&2
+    false
+  }
+}
+
 teardown() {
   local p f spid
   : >"$IWORK/release.all" 2>/dev/null
@@ -243,18 +252,22 @@ part_in_place() {
   own_case seed-only dir
 }
 
-@test "a read-only declaration through a link the role can replace is refused before anything runs; the resolved path launches" {
-  mkdir -p "$W/x/real"
+@test "a read-only declaration through a link to what the role sees launches, read-only at the target too; through one to a host path outside its view it is refused before anything runs" {
+  mkdir -p "$W/x/real" "$I/ext"
   printf 'HOST\n' >"$W/x/real/f.md"
+  printf 'EXT\n' >"$I/ext/f.md"
   ln -s real "$W/x/lnk"
+  run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c '
+    echo "seen=$(cat x/lnk/f.md)" >>report; (echo W >>x/real/f.md) 2>/dev/null && echo w=ok >>report || echo w=no >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+  [ "$(report w)" = no ]
+  rm "$W/x/lnk"
+  ln -s "$I/ext" "$W/x/lnk"
   run_sandboxed "${BASE[@]}" -- --connect './x/lnk/f.md = read-only' --profile probe --exec bash -c 'echo ran=yes >>report'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $W/x/lnk, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"if $W/x/real/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
+  link_refused
   [ -z "$(report ran)" ]
-  run_sandboxed "${BASE[@]}" -- --connect './x/real/f.md = read-only' --profile probe --exec python3 ops.py mv:rename:x/real:x/real.moved
-  [ "$status" -eq 0 ]
-  [ "$(report mv)" = EBUSY ]
 }
 
 @test "a link in a read-only directory, its target read-write: not refused, the real path pinned" {
@@ -274,67 +287,69 @@ part_in_place() {
   behind_link --connect './c/ = copy-on-write' --connect './c/lnk/f.md = read-only'
 }
 
-@test "B1: a replaceable link in the middle of the source's resolution is refused, naming it (read-only project, ./rw/ read-write)" {
-  mkdir -p "$W/rw" "$W/real/b"
+@test "B1: a chain through a read-write directory (read-only project, ./rw/ read-write): to what the role sees it launches; retargeted outside the view, the middle link's implied declaration is refused" {
+  mkdir -p "$W/rw" "$W/real/b" "$I/ext/b"
   printf 'HOST\n' >"$W/real/b/f.md"
+  printf 'EXT\n' >"$I/ext/b/f.md"
   ln -s rw/l2 "$W/lnk"
   ln -s ../real "$W/rw/l2"
   run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './rw/ = read-write' \
-    --connect './lnk/b/f.md = read-only' --profile probe --exec true
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $W/rw/l2, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"if $W/real/b/f.md is what you mean, declare that path instead. Refusing to launch"* ]]
-  # the hint followed: the resolved path declared instead launches
-  run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './rw/ = read-write' \
-    --connect './real/b/f.md = read-only' --profile probe --exec cat real/b/f.md
+    --connect './lnk/b/f.md = read-only' --profile probe --exec cat lnk/b/f.md
   [ "$status" -eq 0 ]
   [[ "$output" == *HOST* ]]
+  rm "$W/rw/l2"
+  ln -s "$I/ext" "$W/rw/l2"
+  run_sandboxed "${BASE[@]}" -- --connect 'project = read-only' --connect './rw/ = read-write' \
+    --connect './lnk/b/f.md = read-only' --profile probe --exec cat lnk/b/f.md
+  [ "$status" -ne 0 ]
+  link_refused
+  [[ "$output" != *EXT* ]]
 }
 
-@test "B1: an outside: source through a replaceable link in a read-write store is refused" {
-  mkdir -p "$IHOME/store/realdir" "$W/cfg"
+@test "B1: an outside: source through a link in a read-write store to what the role sees there launches; to a path outside its view, refused" {
+  mkdir -p "$IHOME/store/realdir" "$W/cfg" "$I/ext"
   printf 'HOST\n' >"$IHOME/store/realdir/x.md"
+  printf 'EXT\n' >"$I/ext/x.md"
   ln -s realdir "$IHOME/store/l"
+  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
+  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/l/x.md' \
+    --profile probe --exec bash -c 'echo "seen=$(cat cfg/x.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
+  rm "$IHOME/store/l"
+  ln -s "$I/ext" "$IHOME/store/l"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect './cfg/x.md = read-only outside:~/store/l/x.md' \
     --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/store/l, a symbolic link in a directory the role can write"* ]]
-  [[ "$output" == *"if $IHOME/store/realdir/x.md is what you mean, declare that path instead. Refusing to launch"* ]]
-  # the hint followed: the resolved source declared instead launches
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect "./cfg/x.md = read-only outside:$IHOME/store/realdir/x.md" \
-    --profile probe --exec bash -c 'echo "seen=$(cat cfg/x.md)" >>report'
-  [ "$status" -eq 0 ]
-  [ "$(report seen)" = HOST ]
+  link_refused
 }
 
-@test "a channel of one path whose relocated source goes through a link the role can replace: the hint names outside: as a way out, and following it launches" {
+@test "a channel of one path whose relocated source goes through a link to what the role sees launches and reads it" {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
   mkdir -p "$IHOME/alt/realextra"
   printf 'R\n' >"$IHOME/alt/realextra/r"
   ln -s realextra "$IHOME/alt/extra"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' --profile probe --exec true
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"$IHOME/alt/extra points to $IHOME/alt/realextra: make it the directory or file it should be, or, if $IHOME/alt/realextra is what you mean, give the channel its mode with outside:$IHOME/alt/realextra. Refusing to launch"* ]]
-  # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
-  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect "extra = copy outside:$IHOME/alt/realextra" \
+  run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' \
     --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/extra/r")" >>report'
   [ "$status" -eq 0 ]
   [ "$(report seen)" = R ]
 }
 
-@test "R3: a declared path through a link the role can replace is refused, in every mode and with its source elsewhere too" {
+@test "a declared path through a link to what the role sees, its source elsewhere or own: launched in every mode, the mount where the link leads, no question (S2)" {
   mkdir -p "$W/real/b" "$I/ext/d"
   printf 'EXT\n' >"$I/ext/f.md"
   ln -s real "$W/lnk"
   local m
   for m in "read-only outside:$I/ext/f.md" "read-write outside:$I/ext/f.md" "copy outside:$I/ext/f.md" own; do
-    run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = $m" --profile probe --exec bash -c 'echo ran=yes >>report'
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"$W/lnk/b/f.md: its path goes through $W/lnk, a symbolic link in a directory the role can write: declared paths are fixed for the role"* ]]
-    [ -z "$(report ran)" ]
+    rm -f "$W/report"
+    run_sandboxed "${BASE[@]}" -- --connect "./lnk/b/f.md = $m" --profile probe --exec bash -c 'echo "seen=$(cat lnk/b/f.md)" >>report'
+    [ "$status" -eq 0 ] || {
+      echo "$m: $output" >&2
+      false
+    }
+    [[ "$m" == own ]] || [ "$(report seen)" = EXT ]
   done
 }
 
@@ -364,18 +379,21 @@ part_in_place() {
   [ "$(report seen)" = "" ]
 }
 
-@test "R3: own, copy, copy-on-write and seed-only paths through a link the role can replace are refused (its key, or its source, through the link)" {
+@test "own, copy, copy-on-write and seed-only paths through a link to what the role sees: launched, the role's own there, the host's file untouched" {
   mkdir -p "$W/x/real/a"
   printf 'HOST\n' >"$W/x/real/a/f"
   ln -s real "$W/x/lnk"
   local mode
   for mode in own copy copy-on-write seed-only; do
-    run_sandboxed "${BASE[@]}" -- --connect "./x/lnk/a/f = $mode" --profile probe --exec bash -c 'echo ran=yes >>report'
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"$W/x/lnk/a/f: its "*" goes through $W/x/lnk, a symbolic link in a directory the role can write"* ]]
-    [ -z "$(report ran)" ]
+    rm -f "$W/report"
+    run_sandboxed "${BASE[@]}" -- --connect "./x/lnk/a/f = $mode" --profile probe --exec bash -c 'echo ran=yes >>report; echo ROLE >x/lnk/a/f'
+    [ "$status" -eq 0 ] || {
+      echo "$mode: $output" >&2
+      false
+    }
+    [ "$(report ran)" = yes ]
+    [ "$(cat "$W/x/real/a/f")" = HOST ]
   done
-  [ "$(cat "$W/x/real/a/f")" = HOST ]
 }
 
 @test "an own path through a link the role cannot replace (in a read-only directory): not refused, the real path pinned" {
@@ -407,11 +425,13 @@ part_in_place() {
   [ "$(report mvdir)" = EBUSY ]
 }
 
-@test "final view: a read-write mount bound AFTER the read-only path (deeper) that shows its source launches; with a link there the role can replace, the link refuses" {
+@test "final view: a read-write mount bound AFTER the read-only path (deeper) that shows its source launches; through a link there to a path outside the view, the implied declaration is refused" {
   mkdir -p "$IHOME/a/b/c/store/sub" "$IHOME/a/b/c/store/realdir"
   printf 'HOST\n' >"$IHOME/a/b/c/store/sub/x.md"
   printf 'HOST\n' >"$IHOME/a/b/c/store/realdir/x.md"
-  ln -s realdir "$IHOME/a/b/c/store/l"
+  mkdir -p "$I/ext"
+  printf 'EXT\n' >"$I/ext/x.md"
+  ln -s "$I/ext" "$IHOME/a/b/c/store/l"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/a/b/c/store/ = read-write' --connect './x.md = read-only outside:~/a/b/c/store/sub/x.md' \
     --profile probe --exec true
@@ -420,7 +440,7 @@ part_in_place() {
   run_sandboxed "${BASE[@]}" -- --connect '~/a/b/c/store/ = read-write' --connect './x.md = read-only outside:~/a/b/c/store/l/x.md' \
     --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/a/b/c/store/l, a symbolic link in a directory the role can write"* ]]
+  link_refused
 }
 
 @test "final view: a deeper read-only declaration bound AFTER makes the link's directory read-only: not refused (B2)" {
@@ -463,17 +483,16 @@ part_in_place() {
   [ ! -e "$W/a/cow/w" ] # the overlay's, not the project's
 }
 
-@test "round 6, B2: under a linked \$HOME a replaceable link in a read-write channel is refused" {
+@test "round 6, B2: under a linked \$HOME a link in a read-write channel to what the role sees there launches (the linked home is no declaration)" {
   ln -s home "$I/hlink"
   mkdir -p "$IHOME/.probe/extra/realdir"
   printf 'HOST\n' >"$IHOME/.probe/extra/realdir/n.md"
   ln -s realdir "$IHOME/.probe/extra/l"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" HOME="$I/hlink" -- --connect './cfg/n.md = read-only outside:~/.probe/extra/l/n.md' \
-    --profile probe --exec bash -c 'echo ran=yes >>report'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/.probe/extra/l, a symbolic link in a directory the role can write"* ]]
-  [ -z "$(report ran)" ]
+    --profile probe --exec bash -c 'echo "seen=$(cat cfg/n.md)" >>report'
+  [ "$status" -eq 0 ]
+  [ "$(report seen)" = HOST ]
 }
 
 @test "a read-only project with ./out/ read-write and ~/out-alias/ read-write from the same directory launches, and without ./out/ declared too" {
@@ -643,7 +662,7 @@ part_in_place() {
   [ "$(report seen)" = HOST ]
 }
 
-@test "R1, a channel whose source the profile relocates: in copy mode the source cannot be moved away and replaced by a link; through a link the role can replace it is refused (copy, copy-on-write, seed-only, read-only, read-write)" {
+@test "R1, a channel whose source the profile relocates: in copy mode the source cannot be moved away and replaced by a link; through a link to a path outside the view it is refused without a terminal (copy, copy-on-write, seed-only, read-only, read-write)" {
   printf '%s\n' 'profile_channel_sources=("$HOME/.probe/extra"$'"'"'\t'"'"'"$HOME/alt/extra")' >>"$IPROFILES/probe/profile.sh"
   mkdir -p "$IHOME/alt/extra" "$IHOME/secret"
   printf 'REAL\n' >"$IHOME/alt/extra/r"
@@ -657,9 +676,9 @@ part_in_place() {
   [ "$(report seen1)" = "r " ]
   [ "$(report mv)" = EBUSY ]
   [ -d "$IHOME/alt/extra" ]
-  # the source already a link the role can replace: refused in every mode
+  # the source a link to a path outside the view: its implied declaration refused in every mode
   mv "$IHOME/alt/extra" "$IHOME/alt/realextra"
-  ln -s realextra "$IHOME/alt/extra"
+  ln -s ../secret "$IHOME/alt/extra"
   local m
   for m in copy copy-on-write seed-only read-only read-write; do
     # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
@@ -668,7 +687,7 @@ part_in_place() {
       echo "$m launched: $output" >&2
       return 1
     }
-    [[ "$output" == *"goes through $IHOME/alt/extra, a symbolic link in a directory the role can write"* ]]
+    link_refused
     [ -z "$(report ran)" ]
   done
 }
@@ -698,10 +717,10 @@ part_in_place() {
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/alt/ = read-write' --connect 'extra = copy' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"goes through $IHOME/alt/deep/er/extra, a symbolic link in a directory the role can write"* ]]
+  link_refused
 }
 
-@test "a join-scoped path declaration's source is fixed (copy, seed-only, copy-on-write): the role cannot move it away and put a link there; a link the role can replace there is refused" {
+@test "a join-scoped path declaration's source is fixed (copy, seed-only, copy-on-write): the role cannot move it away and put a link there; a link there to a path outside the view is refused without a terminal" {
   local m
   for m in copy seed-only copy-on-write; do
     rm -rf "$IHOME/store" "$IHOME/secret" "$W/x" "$W/report"
@@ -718,12 +737,12 @@ part_in_place() {
       return 1
     }
     [ -d "$IHOME/store/real" ]
-    # a link the role can replace on the way: refused, nothing of ~/secret seeded
+    # a link to a path outside the view on the way: refused, nothing of ~/secret seeded
     mv "$IHOME/store/real" "$IHOME/store/realdir"
-    ln -s realdir "$IHOME/store/real"
+    ln -s ../secret "$IHOME/store/real"
     run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec true
     [ "$status" -ne 0 ]
-    [[ "$output" == *"its source goes through $IHOME/store/real, a symbolic link in a directory the role can write"* ]]
+    link_refused
   done
 }
 
@@ -741,7 +760,7 @@ part_in_place() {
     # launch 2: refused, and nothing was read through the link
     run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec true
     [ "$status" -ne 0 ]
-    [[ "$output" == *"its source goes through $IHOME/store/real, a symbolic link in a directory the role can write"* ]]
+    link_refused
     run ! grep -rqs SECRET "$IHOME/.local/state"
     # launch 3, after the user's repair: the role sees the real source, never ~/secret
     rm "$IHOME/store/real"
@@ -807,7 +826,7 @@ part_in_place() {
     [ -e "$W/a.in" ]
     run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat x/d/s 2>/dev/null)" >>report'
     [ "$status" -ne 0 ]
-    [[ "$output" == *"its source goes through $IHOME/store/sub, a symbolic link made since the launch resolved it"* ]]
+    link_refused
     [ -z "$(report seen)" ]
     : >"$W/release.all"
     wait "$bg" 2>/dev/null || true
@@ -827,7 +846,7 @@ part_in_place() {
     # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
     run_sandboxed "${BASE[@]}" -- --connect '~/store/ = read-write' --connect "$d" --profile probe --exec true
     [ "$status" -ne 0 ]
-    [[ "$output" == *"its source goes through $IHOME/store/real, a symbolic link in a directory the role can write"* ]]
+    link_refused
     run ! grep -rqs '"s"' "$IHOME/.local/state"
   done
 }
@@ -845,7 +864,7 @@ plant_docs() {
   plant_docs ../made
   run_sandboxed "${BASE[@]}" -- --connect 'docs = copy-on-write' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/.probe/docs, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"is missing and reached through a symbolic link to what does not exist; nothing is made through a link"* ]]
   [ ! -e "$IHOME/made" ]
 }
 
@@ -854,7 +873,7 @@ plant_docs() {
   plant_docs ../made
   run_sandboxed "${BASE[@]}" -- --connect 'docs = read-only' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/.probe/docs, a symbolic link in a directory the role can write"* ]]
+  [[ "$output" == *"is missing and reached through a symbolic link to what does not exist; nothing is made through a link"* ]]
   [ ! -e "$IHOME/made" ]
 }
 
@@ -865,15 +884,16 @@ plant_docs() {
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/.probe/ = own' --connect 'docs = read-write' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/.probe/docs, a symbolic link"* ]]
+  [[ "$output" == *"is missing and reached through a symbolic link to what does not exist; nothing is made through a link"* ]]
   [ ! -e "$IHOME/made" ]
-  # an existing target: refused too, never bound
+  # an existing target outside the view: the implied declaration, refused, never bound
   rm "$IHOME/.probe/docs"
   ln -s ../secret "$IHOME/.probe/docs"
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect '~/.probe/ = own' --connect 'docs = read-write' --profile probe --exec bash -c '
     echo "seen=$(cat "$HOME/.probe/docs/s" 2>/dev/null)" >>report'
   [ "$status" -ne 0 ]
+  link_refused
   [ -z "$(report seen)" ]
 }
 
@@ -903,7 +923,7 @@ sbx_native() {
   [ "$status" -eq 0 ]
   run_sandboxed "${BASE[@]}" -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/NOTES.md" 2>/dev/null)" >>report'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/alt/notes.md, a symbolic link in a directory the role can write"* ]]
+  link_refused
   [[ "$(report seen)" != *TOPSECRET* ]]
 }
 
@@ -915,7 +935,7 @@ sbx_native() {
   [ "$status" -eq 0 ]
   run_sandboxed "${BASE[@]}" -- "${D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat "$HOME/.probe/extra/g" 2>/dev/null)" >>report'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/alt/extra, a symbolic link in a directory the role can write"* ]]
+  link_refused
   [[ "$(report seen)" != *TOPSECRET* ]]
 }
 
@@ -961,20 +981,18 @@ layer_link() {
   printf 'HOSTF\n' >"$IHOME/x/f"
 }
 
-@test "a key through a link the role made in its own copy-on-write layer is refused (a relative link)" {
+@test "a key through a link the role made in its own copy-on-write layer is covered: the declaration lands at its path, the source as declared (a relative link)" {
   layer_link a.role
   run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/f)"'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: $W/a/f: its path goes through $W/a, a symbolic link the role made in its own layer of the copy-on-write mount at $W"* ]]
-  [[ "$output" != *"seen="* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"seen=HOSTF"* ]]
 }
 
-@test "a key through a link the role made in its own copy-on-write layer is refused (an absolute link)" {
+@test "a key through a link the role made in its own copy-on-write layer is covered: the declaration lands at its path, the source as declared (an absolute link)" {
   layer_link "$W/a.role"
   run_sandboxed "${BASE[@]}" -- "${LAYER_D[@]}" --profile probe --exec bash -c 'echo "seen=$(cat a/f)"'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: $W/a/f: its path goes through $W/a, a symbolic link the role made in its own layer of the copy-on-write mount at $W"* ]]
-  [[ "$output" != *"bwrap:"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"seen=HOSTF"* ]]
 }
 
 @test "in a copy-on-write project, directories on the way to a read-only key that only the role's layer has are pinned: no rename, and the key stays read-only" {
@@ -1037,7 +1055,7 @@ relo_link() {
   run ! grep -rqs SECRET "$IHOME/.local/state"
   run_sandboxed "${BASE[@]}" -- "${decl[@]}" --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its source goes through $IHOME/alt/extra, a symbolic link in a directory the role can write"* ]]
+  link_refused
   run ! grep -rqs SECRET "$IHOME/.local/state"
 }
 
@@ -1106,18 +1124,18 @@ hide_link() {
   ln -s real "$IHOME/.probe/lnk"
 }
 
-@test "the profile's hide through a link the role can replace is refused: the role cannot retarget the link to uncover what it hides" {
+@test "the profile's hide through a link blanks the target where the role would see it, no question; the role may retarget the link in its read-write directory" {
   hide_link
   printf '%s\n' 'profile_hide=(lnk/secret)' >>"$IPROFILES/probe/profile.sh"
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
+    echo "seen=$(cat "$HOME/.probe/real/secret/s" "$HOME/.probe/lnk/secret/s" 2>/dev/null)" >>"'"$W"'/report"
     cd "$HOME/.probe" && rm lnk && ln -s other lnk && echo swapped=yes >>"'"$W"'/report"'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: $IHOME/.probe/lnk/secret: its path goes through $IHOME/.probe/lnk, a symbolic link in a directory the role can write"* ]]
-  [ -z "$(report swapped)" ]
-  [ "$(readlink "$IHOME/.probe/lnk")" = real ]
+  [ "$status" -eq 0 ]
+  [ -z "$(report seen)" ]
+  [ "$(report swapped)" = yes ]
 }
 
-@test "a project's [probe] hide through a link the role can replace is refused the same way" {
+@test "a project's [probe] hide through a link blanks the target the same way" {
   hide_link
   printf '%s\n' 'profile_dotfile_keys=(hide)' >>"$IPROFILES/probe/profile.sh"
   printf '[probe]\nhide = lnk/secret\n' >"$W/.agent-sandbox"
@@ -1126,17 +1144,9 @@ hide_link() {
     _ "$W" "$IHOME" "$I/bin:/usr/bin:/bin" "$IPROFILES" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
-    cd "$HOME/.probe" && rm lnk && ln -s other lnk && echo swapped=yes >>"'"$W"'/report"'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"connect: $IHOME/.probe/lnk/secret: its path goes through $IHOME/.probe/lnk, a symbolic link in a directory the role can write"* ]]
-  [ -z "$(report swapped)" ]
-  # with the link made the directory it points to, the hide is fixed and still hides
-  rm "$IHOME/.probe/lnk"
-  mv "$IHOME/.probe/real" "$IHOME/.probe/lnk"
-  run_sandboxed "${BASE[@]}" AGENT_SANDBOX_PRESET=shared -- --profile probe --exec bash -c '
-    echo "seen=$(cat "$HOME/.probe/lnk/secret/s" 2>&1)" >>"'"$W"'/report"'
+    echo "seen=$(cat "$HOME/.probe/real/secret/s" "$HOME/.probe/lnk/secret/s" 2>/dev/null)" >>"'"$W"'/report"'
   [ "$status" -eq 0 ]
-  [[ "$(report seen)" != *TOPSECRET* ]]
+  [ -z "$(report seen)" ]
 }
 
 @test "R1 at the first launch: directories on the way to a key that the host does not have yet are made where bwrap would make them, and pinned already" {
@@ -1156,14 +1166,15 @@ hide_link() {
 
 @test "the directories on the way made for the pins: none when a later check refuses the launch (it leaves the host as it was), and mode 0700 as bwrap makes them" {
   mkdir -p "$IHOME/big" "$W/real/a/b"
-  ln -s real "$W/lnk"
+  mkdir -p "$I/ext"
+  printf 'X\n' >"$I/ext/x"
+  ln -s "$I/ext/x" "$W/lnk"
   # shellcheck disable=SC2088 # the declarations' own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect './n1/n2/key/ = read-only outside:~/big/' \
-    --connect './lnk/a/b/c/d/ = read-write outside:~/big/' --profile probe --exec true
+    --connect './lnk = read-only' --profile probe --exec true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"its path goes through $W/lnk"* ]]
+  link_refused
   [ ! -e "$W/n1" ]
-  [ ! -e "$W/real/a/b/c" ]
   # shellcheck disable=SC2088 # the declaration's own ~, the engine's to expand
   run_sandboxed "${BASE[@]}" -- --connect './n1/n2/key/ = read-only outside:~/big/' --profile probe --exec true
   [ "$status" -eq 0 ]
