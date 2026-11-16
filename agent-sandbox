@@ -643,7 +643,11 @@ Engine flags (before CMD):
                         `--role ROLE` with the line's engine words, five to a
                         window: the first role on top, the others in a row
                         below; the roles end at the first word that starts
-                        with `-`. No command: each pane runs its role's agent
+                        with `-`. With no role named, the project's: its
+                        supervisor, planners, implementers, reviewers and
+                        gate, in that order -- or, while its setup role has
+                        not built the environment its [conda:setup] names,
+                        --role setup here instead. No command: each pane runs its role's agent
                         ([agent:<glob>] or [agent] command), and gets
                         --agent AGENT only when the line named its role's.
                         Reviews the dot-file once, here, first, then resolves
@@ -8302,6 +8306,30 @@ _as_dotfile_role_globs() {
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
   _as_dotfile_parse "$1" 2>/dev/null
   ((${#_df_role_globs[@]} == 0)) || printf '%s\n' "${_df_role_globs[@]}" | sort -u
+}
+
+# _as_dotfile_role_envpath FILE ROLE -- the conda environment ROLE's [conda] lines in FILE
+# name, as a path: `prefix` as written (a leading ~ is the home), `name` under the conda
+# base that applies (_as_conda_mode); nothing when ROLE has none.
+_as_dotfile_role_envpath() {
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  _as_dotfile_parse "$1" 2>/dev/null
+  _as_dotfile_apply_role "$2" 2>/dev/null
+  if [[ -n "$_df_conda_prefix" ]]; then
+    printf '%s' "${_df_conda_prefix/#\~/$HOME}"
+  elif [[ -n "$_df_conda_name" ]]; then
+    local _conda_mode="" _conda_mode_src="" _conda_hbase="" _b
+    _as_conda_mode "$_df_conda_base" 2>/dev/null
+    _b="$_conda_hbase"
+    [[ "$_conda_mode" == sandbox ]] && _b="$(_as_conda_root)"
+    [[ -z "$_b" ]] || printf '%s/envs/%s' "$_b" "$_df_conda_name"
+  fi
 }
 
 # _as_account_flag_split VALUE -- one --account value (#355): sets _af_role (the role or
@@ -17081,6 +17109,12 @@ _as_launch_pasta() {
 # NOTHING HERE IS POLICY: every pane runs this engine, plainly, which enforces
 # everything; this only builds the tmux command.
 #
+# With no role named, the roles are the project's own, from the approved file: its
+# supervisor, planner-N, implementer-N, reviewer-N and gate roles, in that order and by
+# number, no other; but a project with a setup role whose [conda:setup] names an
+# environment that has no conda-meta yet (conda makes it on creating the environment)
+# runs `--role setup` with the line's words, in this terminal, instead.
+#
 # Before tmux is called, in this terminal, and nothing opens when one fails: the
 # dot-file review a launch runs is run here, once -- launched together, every pane would
 # ask it; every listed role must match a role section of the approved file, as a single
@@ -17119,15 +17153,6 @@ _as_launch_pasta() {
 _as_roles_open() {
   local dir name tmux slot self line r e
   dir="$(pwd -P)"
-  tmux="$(command -v tmux 2>/dev/null || true)"
-  if [[ -z "$tmux" ]]; then
-    slot="$(_as_tools_slot)"
-    [[ -n "$slot" && -x "$slot/bin/tmux" ]] && tmux="$slot/bin/tmux"
-  fi
-  if [[ -z "$tmux" ]]; then
-    _as_msg "--roles opens its panes with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there (tmux is in its default list; a ~/.config/agent-sandbox/tools.txt of your own needs a tmux line): run install.sh again, or install tmux"
-    return 1
-  fi
   # The review a launch runs (_as_trust_prompt), once, here; a no opens nothing, as every
   # pane would refuse, and so does no terminal to ask at.
   local df="$dir/.agent-sandbox" rec need=0 hit
@@ -17152,6 +17177,42 @@ _as_roles_open() {
     fi
   else
     _as_links_ask "$dir" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+  fi
+  # No roles named: the project's own, from the approved file. A project that needs its
+  # setup -- a setup role whose [conda:setup] names an environment -- and has not had it
+  # (no conda-meta there: conda makes it when it creates the environment) runs
+  # `--role setup`, in this terminal; otherwise the Supervisor, the Planners, the
+  # Implementers, the Reviewers and the Gate the file names, in that order, numbered
+  # instances by number, and no other role.
+  if ((${#_roles[@]} == 0)); then
+    local -a names=() grp=()
+    local g envpath="" k
+    [[ -f "$df" ]] && mapfile -t names < <(_as_dotfile_role_globs "$df" | grep -v '[]*?[]')
+    for g in ${names[@]+"${names[@]}"}; do
+      if [[ "$g" == setup ]]; then
+        envpath="$(_as_dotfile_role_envpath "$df" setup)"
+        if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
+          _as_msg "--roles: the setup role has not built the environment at $(_as_tilde "$envpath") yet: running $invoked --role setup"
+          self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+          exec "$self" ${_roles_setup_argv[@]+"${_roles_setup_argv[@]}"}
+        fi
+      fi
+    done
+    for k in supervisor planner implementer reviewer gate; do
+      grp=()
+      if [[ "$k" == supervisor || "$k" == gate ]]; then
+        for g in ${names[@]+"${names[@]}"}; do [[ "$g" == "$k" ]] && grp+=("$g"); done
+      else
+        for g in ${names[@]+"${names[@]}"}; do [[ "$g" =~ ^$k-[0-9]+$ ]] && grp+=("$g"); done
+        ((${#grp[@]} < 2)) || mapfile -t grp < <(printf '%s\n' "${grp[@]}" | sort -t- -k2,2n)
+      fi
+      _roles+=(${grp[@]+"${grp[@]}"})
+    done
+    if ((${#_roles[@]} == 0)); then
+      _as_msg "--roles: .agent-sandbox names no supervisor, planner, implementer, reviewer or gate role to open; name the roles: $invoked --roles ROLE... [ENGINE FLAGS]"
+      return 2
+    fi
+    _as_info "--roles: the project's roles: ${_roles[*]}"
   fi
   # Every listed role is one the approved file has, as a single launch's role must be
   # (_as_role_resolve): a name matching no role section opens nothing, rather than the
@@ -17287,6 +17348,15 @@ _as_roles_open() {
   done
   if ((${#cold[@]})) && ! _as_bwrap_check; then
     _as_msg "--roles: ${cold[*]} would start a sandbox; nothing was opened"
+    return 1
+  fi
+  tmux="$(command -v tmux 2>/dev/null || true)"
+  if [[ -z "$tmux" ]]; then
+    slot="$(_as_tools_slot)"
+    [[ -n "$slot" && -x "$slot/bin/tmux" ]] && tmux="$slot/bin/tmux"
+  fi
+  if [[ -z "$tmux" ]]; then
+    _as_msg "--roles opens its panes with tmux, and there is none: not on PATH, nor in the tools env. install.sh installs it there (tmux is in its default list; a ~/.config/agent-sandbox/tools.txt of your own needs a tmux line): run install.sh again, or install tmux"
     return 1
   fi
   name="$(basename -- "$dir")"
@@ -17484,7 +17554,7 @@ agent_sandbox() (
   local _do_resume=0
   local -a _argv_given=("$@")
   # --roles ROLE... (#317): the roles, and where their words are in _argv_given.
-  local -a _roles=() _roles_flags=()
+  local -a _roles=() _roles_flags=() _roles_setup_argv=()
   local _roles_set=0 _roles_at=0 _roles_n=0
   # Connections: the resolved channel -> mode map, and where each came from, so
   # a refusal or a report can name the source the user has to go and edit.
@@ -18018,10 +18088,6 @@ agent_sandbox() (
   # Each pane runs this invocation's engine words but `--roles ROLE...`, after its own
   # `--role ROLE`. --serve is one of them: a pane can hold a served role.
   if ((_roles_set)); then
-    if ((${#_roles[@]} == 0)); then
-      _as_msg "--roles needs the roles to open: $invoked --roles ROLE... [ENGINE FLAGS]"
-      return 2
-    fi
     local _rw
     local -A _rseen=()
     for _rw in "${_roles[@]}"; do
@@ -18060,6 +18126,9 @@ agent_sandbox() (
       [[ "$_rw" == --agent || "$_rw" == --account ]] && _rk=1 && continue
       [[ "$_rw" == --agent=* || "$_rw" == --account=* ]] || _roles_flags+=("$_rw")
     done
+    # With no roles named, a setup not run yet is `--role setup` with this line's words
+    # (_as_roles_open): the words before and after `--roles`, --agent and --account kept.
+    _roles_setup_argv=("${_argv_given[@]:0:_roles_at}" --role setup "${_argv_given[@]:_roles_at+_roles_n:_rflags_end-_roles_at-_roles_n}")
   fi
   # ---- --serve (#277): what it cannot be combined with, and the role it needs ----
   # The engine's own words, but --serve, are what the loop starts its holder, and every

@@ -111,6 +111,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`asb --roles` with no role named opens the project's roles.** The approved
+  `.agent-sandbox`'s supervisor, planner-N, implementer-N, reviewer-N and gate roles, in
+  that order and by number, and no other role; `asb --roles --resume` is the one line
+  that opens a round. A project that needs its setup -- a setup role whose
+  `[conda:setup]` names an environment -- and has not had it, the environment having no
+  `conda-meta` yet (conda makes it when it creates the environment), runs
+  `asb --role setup` with the line's words in this terminal instead. With none of those
+  roles in the file it is refused, naming `asb --roles ROLE...`. tmux is now looked for
+  after the dot-file review and the role list, so a setup launch needs none.
 - **The `github` model grants each role the commands it publishes with** (#391), so
   Claude Code's auto-mode classifier no longer blocks a post the user asked for (a
   gh-review role's `gh pr review` was): `[permissions:gh-review-*]` `gh pr review`, `gh

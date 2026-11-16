@@ -455,6 +455,47 @@ no_tmux_path() {
   [ "$status" -eq 0 ]
 }
 
+@test "--roles with no role named: the project's supervisor, planners, implementers, reviewers and gate, in that order, numbered by number, no other role; a setup not run yet runs --role setup in this terminal instead" {
+  local env="$H/env-own"
+  mkdir -p "$env"
+  agents '[agent]' 'command = claude' '[connect:implementer-*]' '[connect:planner-*]' \
+    '[connect:gate]' '[connect:reviewer-1]' '[connect:planner-10]' '[connect:planner-2]' \
+    '[connect:implementer-1]' '[connect:supervisor]' '[connect:extra]' \
+    '[conda:setup]' "prefix = $env" '[connect:setup]'
+  # the environment not built (its directory empty): this engine again, as --role setup
+  # with the line's words, in this terminal; tmux never called (the harness has no
+  # micromamba, so that launch stops at its conda check, which is the setup launch's own)
+  run_engine TMUX_DUMP="$TM" -- asb --roles --resume
+  [[ "$output" == *"--roles: the setup role has not built the environment at $env yet: running asb --role setup"*"role: setup (--role)"* ]] || {
+    printf '%s\n' "$output" | tail -5 >&3
+    false
+  }
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  # built (conda made conda-meta): the five groups, in order, numbered by number; neither
+  # setup nor the other role, nor the globs
+  mkdir "$env/conda-meta"
+  run_engine TMUX_DUMP="$TM" -- asb --roles --resume
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${#PC[@]}" -eq 6 ]
+  [ "${PC[0]}" = "$(window --role supervisor --resume)" ]
+  [ "${PC[1]}" = "$(window --role planner-2 --resume)" ]
+  [ "${PC[2]}" = "$(window --role planner-10 --resume)" ]
+  [ "${PC[3]}" = "$(window --role implementer-1 --resume)" ]
+  [ "${PC[4]}" = "$(window --role reviewer-1 --resume)" ]
+  [ "${PC[5]}" = "$(window --role gate --resume)" ]
+  # a setup role with no environment of its own ([conda:setup] commented out, as --init
+  # writes it without --env): nothing to build, the five groups open
+  rm -f "$TM" "$TM.has"
+  agents '[agent]' 'command = claude' '[connect:supervisor]' '[connect:planner-1]' \
+    '# [conda:setup]' '# prefix = ENVPATH' '[connect:setup]'
+  run_engine TMUX_DUMP="$TM" -- asb --roles
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${#PC[@]}" -eq 2 ]
+  [ "${PC[0]}" = "$(window --role supervisor)" ] && [ "${PC[1]}" = "$(window --role planner-1)" ]
+}
+
 @test "--roles: the session name is the project directory's, with . and : made _" {
   mkdir -p "$H/my.pro:j"
   RUN_CWD="$H/my.pro:j" run_engine TMUX_DUMP="$TM" -- asb --roles a --agent claude
@@ -464,10 +505,11 @@ no_tmux_path() {
   [ "${T[*]: -8}" = "; select-window -t =my_pro_j:^ ; select-pane -t =my_pro_j:^.{top}" ]
 }
 
-@test "--roles: refused with no role, a role twice, a bad name, twice, with --role, a verb, --exec, a review" {
+@test "--roles: refused with no role named and none in the file, a role twice, a bad name, twice, with --role, a verb, --exec, a review" {
   run_engine TMUX_DUMP="$TM" -- asb --roles --resume
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--roles needs the roles to open: asb --roles ROLE... [ENGINE FLAGS]"* ]]
+  [[ "$output" == *"--roles: .agent-sandbox names no supervisor, planner, implementer, reviewer or gate role to open; name the roles: asb --roles ROLE... [ENGINE FLAGS]"* ]]
+  [ ! -e "$TM" ]
   run_engine TMUX_DUMP="$TM" -- asb --roles a b a
   [ "$status" -eq 2 ]
   [[ "$output" == *"--roles: role 'a' is listed twice"* ]]
