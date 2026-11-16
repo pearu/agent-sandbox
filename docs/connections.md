@@ -566,22 +566,27 @@ the read-only name shows what is written. Where that is cheap to see -- the othe
 declared read-write as a single file -- the launch says so in one warning line and goes
 on; another name inside a read-write directory is not looked for.
 
-**Symbolic links work, as the declarations they imply.** A link `P -> T` in
-`~/.claude`, in a project, on a declared path or on a source's way stands for
+**Symbolic links work, as the declarations they imply.** A link `P -> T` stands for
 `P = MODE outside:T`, MODE being what P has without the link: the channel's mode under the
-preset, the declaration's, or the mode of what shows its directory. Where it would show
-the role a host path it does not otherwise see with that access, the `--trust` review lists
-it under "implied by symbolic links", approved with the dot-file in one answer; a link
-that is new or changed since is asked about again (refused where nobody can answer). A
-link to what the role already sees with that access asks nothing. A declaration of your
-own for P sets its mode. The role sees T at P, and at T's own path
-too; in a directory it has read-write from the host it can replace the link, and the next
-launch asks about the new one. Links inside the project and other plainly bound
-directories are found when the review runs (`asb --trust`, or a launch that asks at a
-terminal), not at every launch: one made after the last review leads nowhere inside until
-the next. Under `own` the role's own store is what it finds there, and a hidden path
-stays hidden wherever its link leads; neither is asked about. `--preset native` is
-unchanged.
+preset, the declaration's, or the mode of what shows its directory. Under the claude
+profile these work: a linked `~/.claude/CLAUDE.md` (your dotfiles), a chain of links to
+it, a linked `~/.claude/skills/` and `~/.claude/cache/`; a link on a declared path or on
+the way to its source; links inside the project and the other directories bound plainly
+from the host; a linked home or project. Where a link would show the role a host path it
+does not otherwise see, it is asked about on its own -- one question per link, by a
+launch at a terminal or by `asb --trust`, which a launch without one names -- and what
+you approve is the line the question shows, its mode included: a link that is new or
+changed, or that a launch would use with another mode, is asked again. Each question
+names the declaration that makes it unnecessary: write `P = MODE outside:T` in the
+dot-file yourself and that link asks nothing. A link to what the role already sees,
+read-only or read-write, is ordinary content: the role has the access the target has
+there. The role sees T at P, and at T's own path too; in a directory it has read-write
+from the host it can replace the link, and the next launch asks about the new one. Links
+inside the project and other plainly bound directories are found when the review runs
+(`asb --trust`, or a launch that asks at a terminal). Under `own` the role's own store is
+what it finds there. An agent base kept elsewhere is named by the variable the agent
+reads (`CLAUDE_CONFIG_DIR` for Claude Code), set in the shell you launch from.
+`--preset native` is unchanged.
 
 **These decisions are made on the final view** -- what shows at each path once every
 bind is made, not on the binds made so far (the check before a source is read, on the
