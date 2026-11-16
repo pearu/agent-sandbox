@@ -8289,6 +8289,21 @@ _as_dotfile_agent() {
   ((${#_df_agent[@]} == 0)) || printf '%s\n' "${_df_agent[@]}"
 }
 
+# _as_dotfile_role_globs FILE -- the role globs of FILE's role-suffixed sections, one per
+# line (none: the file has no role section, and any role name is accepted), as a launch's
+# _as_role_resolve matches them.
+_as_dotfile_role_globs() {
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  _as_dotfile_parse "$1" 2>/dev/null
+  ((${#_df_role_globs[@]} == 0)) || printf '%s\n' "${_df_role_globs[@]}" | sort -u
+}
+
 # _as_account_flag_split VALUE -- one --account value (#355): sets _af_role (the role or
 # glob before the first `=`, empty for a bare NAME, which is every role's) and _af_acct:
 # NAME, or `-`, the base (no account: the agent's own login, D12). NAME has a role name's
@@ -17113,7 +17128,7 @@ _as_roles_open() {
   fi
   # The review a launch runs (_as_trust_prompt), once, here; a no opens nothing, as every
   # pane would refuse, and so does no terminal to ask at.
-  local df="$dir/.agent-sandbox" rec need=0
+  local df="$dir/.agent-sandbox" rec need=0 hit
   rec="$(_as_config_dir)/trust/$(_as_sha256_str "$dir")"
   if [[ -f "$df" ]]; then
     _as_dotfile_trusted "$dir" "$df" || need=1
@@ -17135,6 +17150,27 @@ _as_roles_open() {
     fi
   else
     _as_links_ask "$dir" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+  fi
+  # Every listed role is one the approved file has, as a single launch's role must be
+  # (_as_role_resolve): a name matching no role section opens nothing, rather than the
+  # other roles' panes and a refusal in its own.
+  if [[ -f "$df" ]]; then
+    local -a role_globs=()
+    local g
+    mapfile -t role_globs < <(_as_dotfile_role_globs "$df")
+    if ((${#role_globs[@]})); then
+      for r in "${_roles[@]}"; do
+        hit=0
+        for g in "${role_globs[@]}"; do
+          # shellcheck disable=SC2053 # the glob is the pattern
+          [[ "$r" == $g ]] && hit=1 && break
+        done
+        if ((! hit)); then
+          _as_msg "--roles: role '$r' matches no role section of .agent-sandbox (it has: ${role_globs[*]}); nothing was opened"
+          return 2
+        fi
+      done
+    fi
   fi
   # Every role's agent, as its pane will resolve it: the line's forms that apply to the
   # role, then the approved file's [agent] lines. A form matching no listed role is

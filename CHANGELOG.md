@@ -1106,6 +1106,13 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`--roles` refuses a role the dot-file does not have, before opening anything.** A
+  listed role matching no role section of the approved `.agent-sandbox` opened the
+  session with the other roles' panes, and only that role's own pane refused, as
+  `asb --role NAME` does. Now `--roles` checks every listed name against the file's
+  role sections first and, for one that matches none, opens nothing: "--roles: role
+  'NAME' matches no role section of .agent-sandbox (it has: ...); nothing was opened". A
+  file with no role section accepts any name, as a single launch does.
 - **Declared paths are fixed for the role.** A declaration's access governs what is
   inside its path, not the path: in every mode, `read-write` included, the role can no
   longer rename, remove or replace a declared path, the directories on the way to it
