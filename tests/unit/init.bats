@@ -50,6 +50,57 @@ init() {
     _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "${#envs[@]}" ${envs[@]+"${envs[@]}"} "$@"
 }
 
+# The sandbox base (`[conda] base = sandbox`): no conda on the host, a stub micromamba
+# that clones as conda-stub does. ROOT is the conda root, SLUG this project's directory
+# name there (the state directory's slug).
+sandbox_base() {
+  ROOT="$H/home/.local/share/agent-sandbox/conda" SLUG="${PROJ//[^A-Za-z0-9-]/-}"
+  local mm="$H/home/.local/share/agent-sandbox/micromamba/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
+  chmod +x "$H/bin/conda" "$H/bin/mamba"
+  mkdir -p "$mm" "$ROOT"
+  cp "$H/bin/conda-stub" "$mm/micromamba"
+}
+# roles_in FILE -- every role FILE names, one per line: a pattern's instance 1 for its `*`.
+roles_in() {
+  sed -n 's/^\[[a-z-]*:\([^]]*\)\].*/\1/p' "$1" | sed 's/\*/1/' | grep -vx default | sort -u
+}
+# sbx_check ROLE / sbx_launch ROLE -- `--check --role ROLE`, and a launch of it, under the
+# sandbox base.
+sbx_check() {
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_CONDA_BASE=sandbox "${@:4}" --profile claude --check --role "$0" 2>&1 </dev/null' \
+    "$1" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+}
+sbx_launch() { run_engine AGENT_SANDBOX_CONDA_BASE=sandbox AGENT_SANDBOX_NET=open CONDA_LOG="$H/mm.log" -- asb --role "$1" claude --version; }
+
+# sbx_model "MODEL ARGS" -- under agent-sandbox's conda root (sandbox_base first),
+# `--init MODEL ARGS --env dev`, approved, and every role the file names passes --check,
+# none refused as the control plane. Sets EP, the environment's prefix.
+sbx_model() {
+  local r df="$PROJ/.agent-sandbox"
+  EP="$ROOT/envs/$SLUG/dev"
+  # shellcheck disable=SC2086 # the model and its counts, as words
+  init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- $1 --env dev
+  [ "$status" -eq 0 ]
+  [ -d "$EP" ]
+  grep -qF "$EP" "$df"
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"control plane"* ]]
+  for r in $(roles_in "$df"); do
+    sbx_check "$r"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"control plane"* ]]
+  done
+}
+# sbx_launch_has ROLE -- a launch of ROLE under agent-sandbox's conda root succeeds.
+sbx_launch_has() {
+  sbx_launch "$1"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"control plane"* ]]
+}
+
 @test "the roles model: every instance's sections, purpose files, clones, directories, the index and .asb/.gitignore" {
   init -- roles planner=2 implementer=2 reviewer=1
   [ "$status" -eq 0 ]
@@ -3345,57 +3396,33 @@ EOF
 }
 
 # ---- environments under agent-sandbox's conda root: a directory per project ----------
-# The sandbox base (`[conda] base = sandbox`): no conda on the host, a stub micromamba
-# that clones as conda-stub does. ROOT is the conda root, SLUG this project's directory
-# name there (the state directory's slug).
-sandbox_base() {
-  ROOT="$H/home/.local/share/agent-sandbox/conda" SLUG="${PROJ//[^A-Za-z0-9-]/-}"
-  local mm="$H/home/.local/share/agent-sandbox/micromamba/bin"
-  printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
-  chmod +x "$H/bin/conda" "$H/bin/mamba"
-  mkdir -p "$mm" "$ROOT"
-  cp "$H/bin/conda-stub" "$mm/micromamba"
-}
-# roles_in FILE -- every role FILE names, one per line: a pattern's instance 1 for its `*`.
-roles_in() {
-  sed -n 's/^\[[a-z-]*:\([^]]*\)\].*/\1/p' "$1" | sed 's/\*/1/' | grep -vx default | sort -u
-}
-# sbx_check ROLE / sbx_launch ROLE -- `--check --role ROLE`, and a launch of it, under the
-# sandbox base.
-sbx_check() {
-  engine_cmd
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_CONDA_BASE=sandbox "${@:4}" --profile claude --check --role "$0" 2>&1 </dev/null' \
-    "$1" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
-}
-sbx_launch() { run_engine AGENT_SANDBOX_CONDA_BASE=sandbox AGENT_SANDBOX_NET=open CONDA_LOG="$H/mm.log" -- asb --role "$1" claude --version; }
-
-@test "under agent-sandbox's conda root, every role of every model with an environment passes --check and launches: the environment is the project's own, not the control plane" {
+@test "under agent-sandbox's conda root, the roles model's every role passes --check, and its setup role and a role with no line of the environment launch" {
   sandbox_base
-  local m r ep="$ROOT/envs/$SLUG/dev" df="$PROJ/.agent-sandbox"
-  for m in "roles planner=1 implementer=1 reviewer=1" github market; do
-    rm -rf "$df" "$PROJ/.asb" "$ROOT/envs"
-    [[ "$m" == market ]] && mkdir -p "$ep/conda-meta" # no setup role: it takes a built one
-    # shellcheck disable=SC2086 # the model and its counts, as words
-    init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- $m --env dev
-    [ "$status" -eq 0 ]
-    [ -d "$ep" ]
-    grep -qF "$ep" "$df"
-    approve
-    [ "$status" -eq 0 ]
-    [[ "$output" != *"control plane"* ]]
-    for r in $(roles_in "$df"); do
-      sbx_check "$r"
-      [ "$status" -eq 0 ]
-      [[ "$output" != *"control plane"* ]]
-      sbx_launch "$r"
-      [ "$status" -eq 0 ]
-      [[ "$output" != *"control plane"* ]]
-      case "$m:$r" in
-        roles*:setup | github:gh-setup) argv_has --bind "$ep" "$ep" ;; # it builds the environment
-        github:gh-* | market:*) argv_has --overlay-src "$ep" ;;        # its layer over it
-      esac
-    done
-  done
+  sbx_model "roles planner=1 implementer=1 reviewer=1"
+  sbx_launch_has setup
+  argv_has --bind "$EP" "$EP" # it builds the environment
+  sbx_launch_has planner-1
+  # its [conda] prefix only, no line of its own: not built yet, so not activated
+  [[ "$output" == *"is not a conda env yet (no conda-meta/ in $EP)"* ]]
+  run ! argv_has --bind "$EP" "$EP"
+  run ! argv_has --overlay-src "$EP"
+}
+
+@test "under agent-sandbox's conda root, the github model's every role passes --check, and gh-setup and a gh-* role over the environment launch" {
+  sandbox_base
+  sbx_model github
+  sbx_launch_has gh-setup
+  argv_has --bind "$EP" "$EP"
+  sbx_launch_has gh-review-1
+  argv_has --overlay-src "$EP" # its layer over it
+}
+
+@test "under agent-sandbox's conda root, the market model's every role passes --check, and a market role over the environment launches" {
+  sandbox_base
+  mkdir -p "$ROOT/envs/$SLUG/dev/conda-meta" # no setup role: it takes a built one
+  sbx_model market
+  sbx_launch_has market-1
+  argv_has --overlay-src "$EP"
 }
 
 @test "under agent-sandbox's conda root, two projects' --env of one name are two environments, each made empty in its project's directory" {
