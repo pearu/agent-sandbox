@@ -3438,3 +3438,29 @@ sbx_launch() { run_engine AGENT_SANDBOX_CONDA_BASE=sandbox AGENT_SANDBOX_NET=ope
     [ "$(setenv_value CONDA_PREFIX)" = "$other" ]
   done
 }
+
+@test "the Supervisor updates the environment by its prefix, with conda or agent-sandbox's micromamba, under either base; its permissions name both" {
+  local sup="$PROJ/.asb/roles/supervisor.md" df="$PROJ/.agent-sandbox" ep
+  # the host's base: <base>/envs/E
+  mkdir -p "$H/conda/envs/E/conda-meta"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env E
+  [ "$status" -eq 0 ]
+  ep="$H/conda/envs/E"
+  grep -qF "\`conda env update -p $ep -f environment.yml --prune\`" "$sup"
+  grep -qF "\`micromamba env update -y -p $ep -f environment.yml --prune\`" "$sup"
+  run ! grep -qF -- '-n E' "$sup"
+  section '[permissions:supervisor]' "$df" | grep -qx 'Bash(conda env update:\*)'
+  section '[permissions:supervisor]' "$df" | grep -qx 'Bash(micromamba env update:\*)'
+  grep -qF 'micromamba env update -y -p .asb/impl/1/.env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
+  # agent-sandbox's conda root: the project's own directory there
+  rm -rf "$df" "$PROJ/.asb"
+  sandbox_base
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env dev
+  [ "$status" -eq 0 ]
+  ep="$ROOT/envs/$SLUG/dev"
+  grep -qF "\`conda env update -p $ep -f environment.yml --prune\`" "$sup"
+  grep -qF "\`micromamba env update -y -p $ep -f environment.yml --prune\`" "$sup"
+  run ! grep -qF -- '-n dev' "$sup"
+  run ! grep -qE '\{(env|envpath)\}' "$sup"
+  section '[permissions:supervisor]' "$df" | grep -qx 'Bash(micromamba env update:\*)'
+}

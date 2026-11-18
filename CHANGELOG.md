@@ -1136,7 +1136,11 @@ names are gone; there are no aliases for removed names before 1.0.
   its path; a bare name is refused, the layout said. The host's base is unchanged
   (`<base>/envs/NAME`, shared by name). An environment built at the old
   `<root>/envs/NAME` is not found: rebuild it (`asb --role setup claude`) or move it to
-  `<root>/envs/<project-slug>/NAME`.
+  `<root>/envs/<project-slug>/NAME`. The roles model's Supervisor and Implementers
+  update their environment by its prefix, with the conda command the briefing names:
+  `conda env update -p PREFIX ...`, or `micromamba env update -y -p PREFIX ...` under
+  agent-sandbox's own (the Supervisor's `-n NAME` named the root's shared `envs/NAME`,
+  and there is no `conda` inside); `[permissions:supervisor]` names both.
 - **`--roles` refuses a role the dot-file does not have, before opening anything.** A
   listed role matching no role section of the approved `.agent-sandbox` opened the
   session with the other roles' panes, and only that role's own pane refused, as

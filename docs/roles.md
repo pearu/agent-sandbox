@@ -855,6 +855,7 @@ project = read-write              # merges the branches in the main tree
 Bash(git fetch:*)
 Bash(git merge:*)
 Bash(conda env update:*)
+Bash(micromamba env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 

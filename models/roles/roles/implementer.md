@@ -10,7 +10,10 @@ address what holds, and object, with reasons, to what does not.
 - Your tree, a clone of the project on branch `impl-{n}`: `.asb/impl/{n}/`. Work and
   commit there, nowhere else; its history is `.asb/git/{n}/`, yours alone.
 #@own - Your environment: `.asb/impl/{n}/{envdir}` (if one was made). At every start,
-#@own   sync it: `conda env update -p .asb/impl/{n}/{envdir} -f environment.yml --prune`
+#@own   sync it with the conda command your briefing names:
+#@own   `conda env update -p .asb/impl/{n}/{envdir} -f environment.yml --prune`,
+#@own   or under agent-sandbox's own
+#@own   `micromamba env update -y -p .asb/impl/{n}/{envdir} -f environment.yml --prune`
 #@own   (or the project's lock file). A package you need is a change to the
 #@own   specification, in the diff like any other.
 #@shared - Your environment: `{env}`, another project's, read-only to
