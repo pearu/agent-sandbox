@@ -1115,6 +1115,28 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A model's environment under agent-sandbox's conda root launches; each project's
+  environments are its own.** Under `[conda] base = sandbox`, `asb --init MODEL --env
+  NAME` made the environment at `~/.local/share/agent-sandbox/conda/envs/NAME` and wrote
+  `[connect]` lines naming it, which every role refused: that directory is the sandbox's
+  control plane, refused in every mode. Measured: the github model's every `gh-*` role
+  (`{envpath}/ = copy-on-write`) and its gh-setup (`read-write`) could not launch, nor
+  `--check` (`refusing '.../conda/envs/dev/' (... is inside the sandbox's own control
+  plane ...), in every mode`); the roles model's setup role, the market model's roles
+  and `--shared-env`'s copy-on-write lines hit the same rule. A role that only activated
+  a built environment worked, so it went unseen. Now a name under the sandbox's conda
+  root is this project's own, `<root>/envs/<project-slug>/NAME` (the slug of the state
+  directory), for `--init --env NAME` (its prefix, `{envpath}`, made empty there), a
+  `[conda] name = NAME` at launch, `--roles`' setup check and the Implementers' clones
+  (`micromamba create --clone PATH`): two projects' `dev` are two environments. That
+  directory and what is inside it -- any project's, never shallower -- is declarable;
+  the root, its `envs/`, a project's directory there and everything else under
+  `~/.local/share/agent-sandbox` stay refused, and a link out of an environment is
+  judged by where it leads. `--shared-env` takes another project's environment there by
+  its path; a bare name is refused, the layout said. The host's base is unchanged
+  (`<base>/envs/NAME`, shared by name). An environment built at the old
+  `<root>/envs/NAME` is not found: rebuild it (`asb --role setup claude`) or move it to
+  `<root>/envs/<project-slug>/NAME`.
 - **`--roles` refuses a role the dot-file does not have, before opening anything.** A
   listed role matching no role section of the approved `.agent-sandbox` opened the
   session with the other roles' panes, and only that role's own pane refused, as

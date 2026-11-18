@@ -153,7 +153,10 @@ Sections:
   code base as one static executable, needing no base environment): its directory
   (`~/.local/share/agent-sandbox/micromamba/bin`) bound read-only and first on PATH,
   its conda root (`~/.local/share/agent-sandbox/conda`) bound read-only and named by
-  `MAMBA_ROOT_PREFIX`, a `name` resolved under the root's `envs/`, a `prefix` as given,
+  `MAMBA_ROOT_PREFIX`, a `name` resolved in this project's own directory under the root,
+  `envs/<project-slug>/<name>` (the project's path with every character outside
+  `[A-Za-z0-9-]` a `-`), so two projects' environments of one name are two, a `prefix`
+  as given,
   `write` and the package cache as above -- and nothing of the host's conda: not its
   base, not an env active in your shell, not its root-prefix variables. The command
   inside is then `micromamba` (`micromamba create -p PREFIX ...`, `micromamba install
@@ -163,7 +166,11 @@ Sections:
   then `host` where the host has conda and `sandbox` where it has none. `host` on a
   host without conda says so and uses the sandbox's; `sandbox` with micromamba not
   installed refuses the launch, naming `install.sh`. `--check` prints which one a
-  role gets, and `--init --env NAME` makes the env's prefix under that one's base.
+  role gets, and `--init --env NAME` makes the env's prefix under that one's base (the
+  host's `<base>/envs/NAME`, your environments, shared by name; the sandbox's
+  `<root>/envs/<project-slug>/NAME`). Another project's environment under the sandbox's
+  root is named by its path (`--init --shared-env PATH`, a `prefix`): a bare name is
+  this project's.
 - **`[net]`** — key/value lines. `hosts = allowlist|public` (default allowlist):
   `public` lets the role reach every public host, the allowlist not applying -- for work
   whose sites are not known in advance (the `market` model). The proxy stays in the

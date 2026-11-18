@@ -98,6 +98,7 @@
 #                                           read-only, MAMBA_ROOT_PREFIX the
 #                                           root, micromamba first on PATH; the
 #                                           env as above, under <root>/envs/
+#                                           <project-slug>/
 #     $HOME/.cache                          writable, empty, session-private
 #                                           tmpfs for tool caches; gone at exit
 #     $HOME/.conda  (if conda is active)    likewise: conda's registry and
@@ -820,9 +821,15 @@ _as_state_dir() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandb
 # the caller's _prot_what ("the secret store" / "the sandbox's own control plane"),
 # _prot_path (the listed path) and _prot_how ("is" / "is inside" / "contains") for
 # its message. ~/.local/bin, and what is inside it, is not protected read-only.
+# A project's conda environment under agent-sandbox's conda root is not the control plane
+# either: <root>/envs/<slug>/<name> (_as_sandbox_env_prefix) and what is inside it, never
+# shallower -- the root, its envs/ and a project's directory there stay refused, as does
+# every sibling of the root (micromamba, the tools and proxy envs, seccomp). $1 is resolved
+# by the caller, so a link inside an environment is judged by where it leads.
 _as_path_protected() {
-  local real="$1" mode="${2:-}" kind p
+  local real="$1" mode="${2:-}" kind p croot
   _prot_what="" _prot_path="" _prot_how=""
+  croot="$(_as_conda_root)"
   for kind in secret control; do
     while IFS= read -r p; do
       if [[ "$real" == "$p" ]]; then
@@ -835,6 +842,7 @@ _as_path_protected() {
         continue
       fi
       [[ "$mode" == read-only && "$p" == "$HOME"/.local/bin && "$_prot_how" != contains ]] && continue
+      [[ "$kind" == control && "$_prot_how" == "is inside" && "$real" == "$croot"/envs/?*/?* ]] && continue
       _prot_path="$p"
       if [[ "$kind" == secret ]]; then _prot_what="the secret store"; else _prot_what="the sandbox's own control plane"; fi
       return 0
@@ -6948,6 +6956,12 @@ _as_conda_base() {
 _as_conda_home() { printf '%s' "${AGENT_SANDBOX_HOME:-$HOME/.local/share/agent-sandbox}"; }
 _as_micromamba_bin() { printf '%s/micromamba/bin' "$(_as_conda_home)"; }
 _as_conda_root() { printf '%s/conda' "$(_as_conda_home)"; }
+# _as_sandbox_env_prefix NAME [PROJECT] -- the prefix of the environment NAME under the
+# conda root: in a directory of the project's own, <root>/envs/<slug>/NAME (_as_path_slug,
+# the state directory's slug), so two projects' environments of one name are two. PROJECT
+# is this launch's (_as_project_dir) when not given. The host's base keeps <base>/envs/NAME:
+# those are the user's own environments, shared by name.
+_as_sandbox_env_prefix() { printf '%s/envs/%s/%s' "$(_as_conda_root)" "$(_as_path_slug "${2:-$(_as_project_dir)}")" "$1"; }
 
 # ----- the tools env: install.sh's conda-forge CLI tools (gh, ...) on the inner PATH -----
 # install.sh builds it from ~/.config/agent-sandbox/tools.txt (default: gh) into one of
@@ -8311,7 +8325,8 @@ _as_dotfile_role_globs() {
 
 # _as_dotfile_role_envpath FILE ROLE -- the conda environment ROLE's [conda] lines in FILE
 # name, as a path: `prefix` as written (a leading ~ is the home), `name` under the conda
-# base that applies (_as_conda_mode); nothing when ROLE has none.
+# base that applies (_as_conda_mode; under agent-sandbox's conda root, in the directory of
+# FILE's project, _as_sandbox_env_prefix); nothing when ROLE has none.
 _as_dotfile_role_envpath() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
@@ -8327,9 +8342,12 @@ _as_dotfile_role_envpath() {
   elif [[ -n "$_df_conda_name" ]]; then
     local _conda_mode="" _conda_mode_src="" _conda_hbase="" _b
     _as_conda_mode "$_df_conda_base" 2>/dev/null
-    _b="$_conda_hbase"
-    [[ "$_conda_mode" == sandbox ]] && _b="$(_as_conda_root)"
-    [[ -z "$_b" ]] || printf '%s/envs/%s' "$_b" "$_df_conda_name"
+    if [[ "$_conda_mode" == sandbox ]]; then
+      _as_sandbox_env_prefix "$_df_conda_name" "$(cd -- "$(dirname -- "$1")" && pwd -P)"
+    else
+      _b="$_conda_hbase"
+      [[ -z "$_b" ]] || printf '%s/envs/%s' "$_b" "$_df_conda_name"
+    fi
   fi
 }
 
@@ -13244,7 +13262,10 @@ _as_init() {
   done
 
   # The environment's prefix, for {envpath}: a path as given, a name under the conda base
-  # that applies (_as_conda_mode: the host's base, or agent-sandbox's conda root).
+  # that applies (_as_conda_mode): the host's base, <base>/envs/NAME, or agent-sandbox's
+  # conda root, in this project's own directory there (_as_sandbox_env_prefix). Another
+  # project's environment there (--shared-env) is named by its path: a bare name cannot
+  # say whose it is.
   # A model with a setup role (`#@ setup = ROLE`) takes one not built yet: its directory
   # is made empty, for conda to create into and for the role's declaration to bind (a
   # declared path that does not exist is skipped at launch).
@@ -13254,9 +13275,14 @@ _as_init() {
     case "$env" in
       */*) envpath="$(realpath -m -s -- "$env")" ;;
       *)
-        base="$_conda_hbase"
-        [[ "$_conda_mode" == sandbox ]] && base="$(_as_conda_root)"
-        envpath="$base/envs/$env"
+        base="$_conda_hbase" envpath="$_conda_hbase/envs/$env"
+        if [[ "$_conda_mode" == sandbox ]]; then
+          base="$(_as_conda_root)" envpath="$(_as_sandbox_env_prefix "$env" "$proj")"
+          if ((${_init_shared:-0})); then
+            _as_msg "--init: --shared-env $env: under agent-sandbox's conda root each project's environments are its own, $(_as_tilde "$base")/envs/<project-slug>/<name> ($(_as_tilde "$envpath") is this project's $env), so a name cannot say whose: give the other project's environment by its path, --shared-env $(_as_tilde "$base")/envs/<project-slug>/$env"
+            return 1
+          fi
+        fi
         ;;
     esac
     if ((${_init_shared:-0})) && [[ ! -d "$envpath/conda-meta" ]]; then
@@ -14802,7 +14828,7 @@ _as_init() {
     elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && ! -L "$proj/$prefix" ]]; then
       _as_msg "cloning conda env '$env' into $prefix (for $inst)"
       if [[ "$_conda_mode" == sandbox ]]; then
-        "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$env" -p "$proj/$prefix" >/dev/null || {
+        "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$envpath" -p "$proj/$prefix" >/dev/null || {
           _as_msg "--init: 'micromamba create --clone $env -p $prefix' failed (conda base = sandbox, $_conda_mode_src)"
           return 1
         }
@@ -19045,7 +19071,7 @@ agent_sandbox() (
   # bound, and an env active in the launching shell, the host's, is left outside.
   # Decided only when conda is in play (an env named, or one active), and for --check.
   local _conda_mode="" _conda_mode_src="" _conda_hbase="" _conda_root="" _conda_mm="" _conda_brief=""
-  local _conda_want=0 _conda_from="${CONDA_PREFIX:-}" _cbase _cwhat
+  local _conda_want=0 _conda_from="${CONDA_PREFIX:-}" _cbase _cwhat _cenv=""
   [[ -n "$_df_conda_name$_df_conda_prefix" ]] && _conda_want=1
   [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX" ]] && _conda_want=1
   if ((_conda_want || _check_plan)); then
@@ -19062,11 +19088,17 @@ agent_sandbox() (
   else
     _cbase="$_conda_hbase" _cwhat="the conda base $_conda_hbase is bound read-only, so conda runs"
   fi
-  # conda name: pin the project's env; resolve <base>/envs/<name> and hand it
-  # to the conda block by setting CONDA_PREFIX for the rest of this launch.
+  # conda name: pin the project's env; resolve <base>/envs/<name> (under agent-sandbox's
+  # conda root, the project's own <root>/envs/<slug>/<name>) and hand it to the conda
+  # block by setting CONDA_PREFIX for the rest of this launch.
   if [[ -n "$_df_conda_name" ]]; then
-    if [[ -n "$_cbase" && -d "$_cbase/envs/$_df_conda_name" ]]; then
-      CONDA_PREFIX="$_cbase/envs/$_df_conda_name"
+    if [[ "$_conda_mode" == sandbox ]]; then
+      _cenv="$(_as_sandbox_env_prefix "$_df_conda_name")"
+    elif [[ -n "$_cbase" ]]; then
+      _cenv="$_cbase/envs/$_df_conda_name"
+    fi
+    if [[ -n "$_cenv" && -d "$_cenv" ]]; then
+      CONDA_PREFIX="$_cenv"
       CONDA_DEFAULT_ENV="$_df_conda_name"
       # Setting CONDA_PREFIX alone is not enough: PATH still comes from the
       # launching shell, so the env's own tools would not be found inside and
@@ -19078,7 +19110,7 @@ agent_sandbox() (
       _as_info "using conda env '$_df_conda_name' from .agent-sandbox"
     elif [[ -n "$_cbase" ]]; then
       _as_conda_base_only "$_cbase"
-      _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under $_cbase/envs: $_cwhat ($_cbase/envs is not writable here)"
+      _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cenv%/*}: $_cwhat ($_cbase/envs is not writable here)"
     else # the host's: an active env with no base to find
       _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found: no conda base was found on this host, only the active env"
     fi

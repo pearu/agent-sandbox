@@ -1319,6 +1319,26 @@ DF
   [[ "$output" == *"contains the"*"in every mode."* ]]
 }
 
+@test "a project's environment under agent-sandbox's conda root is declarable, <root>/envs/<slug>/<name> and deeper; the rest of the control plane is not" {
+  local sh="$H/home/.local/share/agent-sandbox" root env spec
+  root="$sh/conda" env="$sh/conda/envs/-some-project/dev"
+  mkdir -p "$env/lib" "$sh/micromamba/bin" "$sh/seccomp"
+  ln -s "$sh/seccomp" "$env/lnk"
+  for spec in "$env/ = read-write" "$env/lib/ = copy-on-write" "$env/ = read-only"; do
+    run_engine -- asb --connect "$spec" claude --version
+    [ "$status" -eq 0 ]
+  done
+  argv_has --ro-bind "$env" "$env"
+  # shallower than an environment, a sibling of the root, a link out of an environment
+  for spec in "$root/ = read-only" "$root/envs/ = read-only" "$root/envs/-some-project/ = read-write" \
+    "$root/../micromamba/ = read-only" "$env/lnk/ = read-only"; do
+    run_engine -- asb --connect "$spec" claude --version
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the sandbox's own control plane '$sh'"* ]]
+    [ ! -s "$H/argv" ]
+  done
+}
+
 @test "a key that is a symlink into a secret store is refused" {
   mkdir -p "$H/home/.ssh"
   ln -s "$H/home/.ssh" "$PROJ/keys"
