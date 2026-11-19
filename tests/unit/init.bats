@@ -3457,25 +3457,41 @@ EOF
   PROJ="$long" init AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env dev
   [ "$status" -eq 0 ]
   [ -d "$ROOT/envs/$d/dev" ]
-  # NAME is the rest: a prefix past conda's 255-character placeholder is refused, nothing made
+  # NAME is the rest: a prefix past conda's 255-byte placeholder is refused, nothing made
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
   name="$(printf 'n%.0s' $(seq 1 $((256 - ${#ROOT} - ${#PDIR} - 7))))"
   ((${#ROOT} + 6 + ${#PDIR} + 1 + ${#name} == 256)) # <root>/envs/<dir>/<name>
   init AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env "$name"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--init: --env $name: the conda prefix $ROOT/envs/$PDIR/$name is 256 characters, longer than 255: conda packages' binaries are relocated through a 255-character placeholder, so binaries installed there would break -- use a shorter path"* ]]
+  [[ "$output" == *"--init: --env $name: the conda prefix $ROOT/envs/$PDIR/$name is 256 bytes, longer than 255: conda packages' binaries are relocated through a 255-byte placeholder, so binaries installed there would break -- use a shorter path, or ask for the feature at https://github.com/pearu/agent-sandbox/issues"* ]]
   [ ! -e "$ROOT/envs/$PDIR/$name" ] && [ ! -e "$PROJ/.agent-sandbox" ]
   # an --env PATH, under any base, likewise
   mkdir -p "$long/env/conda-meta"
   init AGENT_SANDBOX_CONDA_BASE=host -- market --env "$long/env"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--init: --env $long/env: the conda prefix $long/env is $((${#long} + 4)) characters, longer than 255"* ]]
+  [[ "$output" == *"--init: --env $long/env: the conda prefix $long/env is $((${#long} + 4)) bytes, longer than 255"* ]]
   # and at launch, a [conda] name that does the same
   printf '[conda]\nbase = sandbox\nname = %s\n' "$name" >"$PROJ/.agent-sandbox"
   approve
   run_engine -- asb claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *".agent-sandbox: [conda] name = $name: the conda prefix $ROOT/envs/$PDIR/$name is 256 characters, longer than 255"* ]]
+  [[ "$output" == *".agent-sandbox: [conda] name = $name: the conda prefix $ROOT/envs/$PDIR/$name is 256 bytes, longer than 255"* ]]
+}
+
+@test "an Implementer's clone at a prefix longer than 255 bytes is refused by --init, where it would be made" {
+  sandbox_base
+  # a project path that leaves the environment's prefix short but its clone's long:
+  # <project>/.asb/impl/1/.env is 17 bytes more than the project's path
+  local p="$H/p" d
+  while ((${#p} < 245)); do p+="x"; done
+  mkdir -p "$p" && git -C "$p" init -q && p="$(cd "$p" && pwd -P)"
+  ((${#p} + 17 > 255))
+  d="$(project_env_dir "$p")"
+  mkdir -p "$ROOT/envs/$d/E/conda-meta"
+  PROJ="$p" init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env E
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: implementer-1's environment: the conda prefix $p/.asb/impl/1/.env is $((${#p} + 17)) bytes, longer than 255"*"or ask for the feature at https://github.com/pearu/agent-sandbox/issues"* ]]
+  [ ! -e "$p/.asb/impl/1/.env" ]
 }
 
 @test "under agent-sandbox's conda root, --shared-env takes another project's environment by its path; a bare name is refused, the layout said" {

@@ -38,10 +38,10 @@ names are gone; there are no aliases for removed names before 1.0.
   `conda env update -p PREFIX ...`, or `micromamba env update -y -p PREFIX ...` under
   agent-sandbox's own (the Supervisor's `-n NAME` named the root's shared `envs/NAME`,
   and there is no `conda` inside); `[permissions:supervisor]` names both. A conda
-  prefix longer than 255 characters is refused under either base, by `--init --env`
-  (a name or a path) and by a launch's `[conda] name` or `prefix`: conda packages'
-  binaries are relocated through a 255-character placeholder, and micromamba 2.9.0
-  installs past it silently, leaving binaries that crash.
+  prefix longer than 255 bytes is refused under either base, by `--init --env` (a name
+  or a path, and an Implementer's clone) and by a launch's `[conda] name` or `prefix`:
+  conda packages' binaries are relocated through a 255-byte placeholder, and micromamba
+  2.9.0 installs past it silently, leaving binaries that crash.
   **Upgrade:** a project that ran `asb --init MODEL --env NAME` under the sandbox base
   keeps the old absolute path in its `.agent-sandbox` and stays refused -- its setup
   role cannot start a rebuild, and `--init` does not rewrite a prefix. Edit the file:

@@ -171,9 +171,9 @@ Sections:
   host's `<base>/envs/NAME`, your environments, shared by name; the sandbox's
   `<root>/envs/<project>-<hash>/NAME`). Another project's environment under the sandbox's
   root is named by its path (`--init --shared-env PATH`, a `prefix`): a bare name is
-  this project's. Under either base, a prefix longer than 255 characters is refused, by
-  `--init --env` and at launch: conda packages' binaries are relocated through a
-  255-character placeholder, so binaries installed there would break.
+  this project's. Under either base, a prefix longer than 255 bytes is refused, by
+  `--init --env` (an Implementer's clone too) and at launch: conda packages' binaries
+  are relocated through a 255-byte placeholder, so binaries installed there would break.
 - **`[net]`** — key/value lines. `hosts = allowlist|public` (default allowlist):
   `public` lets the role reach every public host, the allowlist not applying -- for work
   whose sites are not known in advance (the `market` model). The proxy stays in the

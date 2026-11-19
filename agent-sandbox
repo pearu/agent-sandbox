@@ -6982,14 +6982,17 @@ _as_project_env_dir() {
   printf '%s-%s' "${b:0:32}" "${h:0:12}"
 }
 # _as_conda_prefix_ok PREFIX WHAT -- may PREFIX be a conda environment's? Not longer than
-# 255 characters: conda packages are built with a 255-character placeholder for the
+# 255 bytes: conda packages are built with a 255-byte placeholder for the
 # prefix, which an install rewrites in their files, binaries included, so a longer prefix
 # cannot be written into them; micromamba 2.9.0 installs there anyway, silently, and the
 # binaries break (a reviewer measured rhash segfaulting at a 315-character prefix). Any
-# base, any prefix. On no, says why, with WHAT first.
+# base, any prefix -- an Implementer's clone's too. Counted in bytes, as the placeholder
+# is. On no, says why, with WHAT first.
 _as_conda_prefix_ok() {
-  ((${#1} <= 255)) && return 0
-  _as_msg "$2: the conda prefix $1 is ${#1} characters, longer than 255: conda packages' binaries are relocated through a 255-character placeholder, so binaries installed there would break -- use a shorter path"
+  local n
+  n="$(LC_ALL=C && printf '%s' "${#1}")"
+  ((n <= 255)) && return 0
+  _as_msg "$2: the conda prefix $1 is $n bytes, longer than 255: conda packages' binaries are relocated through a 255-byte placeholder, so binaries installed there would break -- use a shorter path, or ask for the feature at https://github.com/pearu/agent-sandbox/issues"
   return 1
 }
 
@@ -14857,6 +14860,7 @@ _as_init() {
     if [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
       _as_msg "--init: no environment for $inst yet: $env is not built, so there is nothing to clone into $prefix; once $invoked --role $setup claude has built it, run --init again and it clones it"
     elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && ! -L "$proj/$prefix" ]]; then
+      _as_conda_prefix_ok "$proj/$prefix" "--init: $inst's environment" || return 1
       _as_msg "cloning conda env '$env' into $prefix (for $inst)"
       if [[ "$_conda_mode" == sandbox ]]; then
         # by its prefix: a name is this project's under the root (envpath is resolved only

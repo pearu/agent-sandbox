@@ -331,7 +331,7 @@ trust() {
   argv_has --ro-bind "$base" "$base"
 }
 
-@test "[conda] a prefix longer than 255 characters is refused under the host's base too, by name or by path: binaries installed there would break" {
+@test "[conda] a prefix longer than 255 bytes is refused under the host's base too, by name or by path: binaries installed there would break" {
   local base="$H/conda" long
   long="$(printf 'x%.0s' $(seq 1 $((256 - ${#base} - 6))))" # <base>/envs/<long> is 256
   mkdir -p "$base/envs/$long/conda-meta"
@@ -339,13 +339,21 @@ trust() {
   trust "$PROJ"
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *".agent-sandbox: [conda] name = $long: the conda prefix $base/envs/$long is 256 characters, longer than 255: conda packages' binaries are relocated through a 255-character placeholder, so binaries installed there would break -- use a shorter path"* ]]
+  [[ "$output" == *".agent-sandbox: [conda] name = $long: the conda prefix $base/envs/$long is 256 bytes, longer than 255: conda packages' binaries are relocated through a 255-byte placeholder, so binaries installed there would break -- use a shorter path, or ask for the feature at https://github.com/pearu/agent-sandbox/issues"* ]]
   [ ! -s "$H/argv" ]
   printf '[conda]\nprefix = %s\n' "$base/envs/$long" >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
   [ "$status" -ne 0 ]
-  [[ "$output" == *".agent-sandbox: [conda] prefix = $base/envs/$long: the conda prefix $base/envs/$long is 256 characters"* ]]
+  [[ "$output" == *".agent-sandbox: [conda] prefix = $base/envs/$long: the conda prefix $base/envs/$long is 256 bytes"* ]]
+  # counted in bytes, as the placeholder is: 255 characters, 256 bytes (é is two)
+  local u="${long%xx}é"
+  mkdir -p "$base/envs/$u/conda-meta"
+  printf '[conda]\nprefix = %s\n' "$base/envs/$u" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" LANG=C.UTF-8 -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the conda prefix $base/envs/$u is 256 bytes, longer than 255"* ]]
   # 255 is fine
   mkdir -p "$base/envs/${long%x}/conda-meta"
   printf '[conda]\nprefix = %s\n' "$base/envs/${long%x}" >"$PROJ/.agent-sandbox"
