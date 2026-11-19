@@ -377,6 +377,9 @@ commented template in
 - [docs/roles.md](docs/roles.md): working on one project with several agents --
   Planners, Implementers, Reviewers, a Supervisor and a Gate, with you deciding: what
   each may do, how the work moves, and `asb --init roles` to set it up.
+- [docs/developing.md](docs/developing.md): agent-sandbox's own repository under the
+  roles model: its development environment, and a test account where the suites that
+  need real bwrap run, over ssh.
 - [docs/ssh.md](docs/ssh.md): the SSH broker.
 - [docs/sshd.md](docs/sshd.md): the `sshd` profile, a sandboxed ssh login to this
   account for other machines: the policy, the recipe on a shared host and a cloud

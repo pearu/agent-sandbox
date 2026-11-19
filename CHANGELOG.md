@@ -153,6 +153,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **`docs/developing.md`, agent-sandbox's own repository under the roles model**
+  (#425): the development environment (`asb --init roles --env agent-sandbox-dev`, the
+  conda base on a first run, `micromamba create -p PREFIX -f environment.yml` as CI),
+  and a test account where the suites that need real bwrap run, over ssh, since inside
+  a role they skip and report success: the account, its forced command, the key and the
+  alias, a port on `127.0.0.1` forwarded to sshd by two systemd user units, with no
+  sudo, and the `[127.0.0.1]:PORT` host key when the account is on the same machine, the
+  project's `.asb/host-tests.sh` and `.asb/iterate.sh` in full, the `[ssh:...]` and
+  `host-port` grants for the Implementers, Reviewers and Planners, and the checks. Also
+  the Gate's grants for landing a pull request (SSH to GitHub, the `gh pr merge` verbs,
+  the fetch after a merge) and the way a change lands: a pull request, a squash merge, a
+  fetch, and the Supervisor's fast-forward, tree check and build. README and
+  CONTRIBUTING link it.
 - **A role's effort level: `[agent] effort = LEVEL`.** One of `low medium high xhigh max`
   (Claude Code's `--effort` levels, from its `--help` on 2.1.311), or `-` for none (the
   agent's own), per role with `[agent:<glob>]`, which beats `[agent]`. The level is the
