@@ -1157,6 +1157,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`--init` no longer takes the user's own unsuffixed sections for an old --init's
+  common block.** A file with a scoped model's role sections (`--init roles`) and an
+  unsuffixed section of the user's under a header of the model's common block -- `[conda]`
+  `base = sandbox` from `asb --apply '[conda]' 'base = sandbox'`, or a hand-written
+  `[conda]` `name = ...` -- was refused by every model's `--init` as "common sections
+  unsuffixed, written by an earlier --init": the check went by the header alone. Now an
+  unsuffixed section is the old block only when it has one of the block's own lines
+  (`prefix = ...`, `.asb/coord/ = read-only`, its placeholders matching any text),
+  commented out or not; a section with none of them is the user's, and `--init` goes on
+  and leaves it. The refusal names each old block by the line of its header in
+  `.agent-sandbox`: "remove its unsuffixed [conda] block at line 12 and [connect] block
+  at line 30".
 - **`--roles` refuses a role the dot-file does not have, before opening anything.** A
   listed role matching no role section of the approved `.agent-sandbox` opened the
   session with the other roles' panes, and only that role's own pane refused, as

@@ -2199,18 +2199,47 @@ approve() {
   cp "$PROJ/.agent-sandbox" "$H/before"
   init -- roles
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--init: this .agent-sandbox has model 'roles''s common sections unsuffixed, written by an earlier --init"*"remove its unsuffixed [connect]/[net] blocks (or start from a fresh file) and run --init again"* ]]
+  [[ "$output" == *"--init: this .agent-sandbox has model 'roles''s common sections unsuffixed, written by an earlier --init"*"remove its unsuffixed [connect] block at line 1 and [net] block at line 3 (or start from a fresh file) and run --init again"* ]]
   cmp "$H/before" "$PROJ/.agent-sandbox"
   [ ! -e "$PROJ/.asb" ]
   # any model's --init: github's on an old roles file, whose [net] would reach gh-*
   init -- github
   [ "$status" -ne 0 ]
-  [[ "$output" == *"has model 'roles''s common sections unsuffixed"*"remove its unsuffixed [connect]/[net] blocks"* ]]
+  [[ "$output" == *"has model 'roles''s common sections unsuffixed"*"remove its unsuffixed [connect] block at line 1 and [net] block at line 3 ("* ]]
   cmp "$H/before" "$PROJ/.agent-sandbox"
   # an unsuffixed section of your own, with nothing of the model's, is yours: kept
   printf '[net]\nmode = strict\n' >"$PROJ/.agent-sandbox"
   init -- roles
   [ "$status" -eq 0 ]
+}
+
+@test "unsuffixed sections of the user's own beside the roles model's role sections are the user's: --init goes on and leaves them" {
+  sandbox_base
+  init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- roles --env dev
+  [ "$status" -eq 0 ]
+  printf '\n[conda]\nbase = sandbox\n\n[conda]\nname = x\n' >>"$PROJ/.agent-sandbox"
+  cp "$PROJ/.agent-sandbox" "$H/before"
+  init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- roles --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing added to it"* ]]
+  cmp "$H/before" "$PROJ/.agent-sandbox"
+}
+
+@test "the old --init's unsuffixed block is told by its lines and named by the line of its header, commented out or not; a section of the user's beside it is not named" {
+  local df="$PROJ/.agent-sandbox"
+  printf '[connect:planner-*]\n.asb/plan/ = read-write\n[conda]\nprefix   =   /x/env   # the env\n[connect]\n.asb/coord/ = read-only\n# [net]\n# mode = strict\n' >"$df"
+  cp "$df" "$H/before"
+  init -- roles
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"remove its unsuffixed [conda] block at line 3, [connect] block at line 5 and [net] block at line 7 (or start from a fresh file)"* ]]
+  cmp "$H/before" "$df"
+  # the user's [conda] beside an old [connect]: only the [connect] is named
+  printf '[connect:planner-*]\n.asb/plan/ = read-write\n[conda]\nbase = sandbox\n[connect]\nproject = read-only\n' >"$df"
+  cp "$df" "$H/before"
+  init -- roles
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"remove its unsuffixed [connect] block at line 5 (or start from a fresh file)"* ]]
+  cmp "$H/before" "$df"
 }
 
 @test "the roles model takes an --env not built yet: the prefix made empty, setup to build it, no clone until it has (#267)" {
