@@ -817,17 +817,20 @@ _as_control_paths() {
 # config file here, under claude/<slug>/.
 _as_state_dir() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"; }
 
-# Is the resolved path $1 protected, bound in mode $2 (none: as CWD)? On yes, sets
+# Is the resolved path $1 protected, bound in mode $2 (none: as CWD), as a path
+# declaration's when $3 is `decl`? On yes, sets
 # the caller's _prot_what ("the secret store" / "the sandbox's own control plane"),
 # _prot_path (the listed path) and _prot_how ("is" / "is inside" / "contains") for
 # its message. ~/.local/bin, and what is inside it, is not protected read-only.
-# A project's conda environment under agent-sandbox's conda root is not the control plane
-# either: <root>/envs/<project>/<name> (_as_sandbox_env_prefix) and what is inside it, never
+# For a path declaration ($3 = decl: its key, its outside: source, the one a link implies,
+# and its bind) a project's conda environment under agent-sandbox's conda root is not the
+# control plane either -- never as CWD, a channel's source or a profile's base:
+# <root>/envs/<project>/<name> (_as_sandbox_env_prefix) and what is inside it, never
 # shallower -- the root, its envs/ and a project's directory there stay refused, as does
 # every sibling of the root (micromamba, the tools and proxy envs, seccomp). $1 is resolved
 # by the caller, so a link inside an environment is judged by where it leads.
 _as_path_protected() {
-  local real="$1" mode="${2:-}" kind p croot
+  local real="$1" mode="${2:-}" decl="${3:-}" kind p croot
   _prot_what="" _prot_path="" _prot_how=""
   croot="$(_as_conda_root)"
   for kind in secret control; do
@@ -842,7 +845,7 @@ _as_path_protected() {
         continue
       fi
       [[ "$mode" == read-only && "$p" == "$HOME"/.local/bin && "$_prot_how" != contains ]] && continue
-      [[ "$kind" == control && "$_prot_how" == "is inside" && "$real" == "$croot"/envs/?*/?* ]] && continue
+      [[ "$decl" == decl && "$kind" == control && "$_prot_how" == "is inside" && "$real" == "$croot"/envs/?*/?* ]] && continue
       _prot_path="$p"
       if [[ "$kind" == secret ]]; then _prot_what="the secret store"; else _prot_what="the sandbox's own control plane"; fi
       return 0
@@ -2156,7 +2159,7 @@ _as_connect_parse_path() {
       _as_msg "connect ($where): refusing '$key' ('$c' is the project or a parent of it, and a declaration over it would cover the project). Declare a directory inside it instead, or the project's own mode: 'project = read-only'."
       return 1
     fi
-    if _as_path_protected "$c" "$mode"; then
+    if _as_path_protected "$c" "$mode" decl; then
       local every="in every mode"
       [[ "$_prot_path" == "$HOME"/.local/bin && "$_prot_how" != contains ]] && every="in every mode but read-only"
       _as_msg "connect ($where): refusing '$key' ('$c' $_prot_how $_prot_what '$_prot_path'), $every."
@@ -2217,7 +2220,7 @@ _as_outside_ok() {
       _as_msg "$3 (it would show all of '$c': / , \$HOME or a parent of it)."
       return 1
     fi
-    if _as_path_protected "$c" "$mode"; then
+    if _as_path_protected "$c" "$mode" decl; then
       _as_msg "$3 ('$c' $_prot_how $_prot_what '$_prot_path')."
       return 1
     fi
@@ -3273,7 +3276,7 @@ _as_connect_bind_path() {
   # the engine itself resolved for a `sandbox:` source passes, and nothing else does.
   # shellcheck disable=SC2031 # the launch's own profile_account_paths
   if [[ "$real" == / || "$real" == "$HOME" || "$HOME" == "$real"/* ]] \
-    || { [[ "$real" != "$sbx_store" || "$real" != "$(_as_state_dir)"/* ]] && _as_path_protected "$real" "$mode"; } \
+    || { [[ "$real" != "$sbx_store" || "$real" != "$(_as_state_dir)"/* ]] && _as_path_protected "$real" "$mode" decl; } \
     || _as_base_refused "$real" "${profile_base:-}" ${profile_account_paths[@]+"${profile_account_paths[@]}"} >/dev/null; then
     _as_msg "connect: refusing to bind $what: it resolves to a protected path ('$real')"
     return 1

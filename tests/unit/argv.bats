@@ -278,6 +278,14 @@ setup() {
   RUN_CWD="$H/home/.config" run_engine -- asb claude --version # contains the trust store
   [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it contains"* ]] && [ ! -s "$H/argv" ]
   run ! argv_has --bind "$H/home" "$H/home"
+  # a project's conda environment under agent-sandbox's conda root is declarable, but no
+  # place to run from: as CWD it is the control plane, as everything under it
+  local env="$H/home/.local/share/agent-sandbox/conda/envs/proj-0123456789ab/dev"
+  mkdir -p "$env/lib"
+  for d in "$env" "$env/lib"; do
+    RUN_CWD="$d" run_engine -- asb claude --version
+    [ "$status" -eq 1 ] && [[ "$output" == *"as CWD: it is inside the sandbox's own control plane"* ]] && [ ! -s "$H/argv" ]
+  done
 }
 
 @test "a path declaration into a secret store or a parent of HOME is refused before bwrap runs" {

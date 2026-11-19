@@ -950,6 +950,25 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   [ "$A" = "$B" ]
 }
 
+@test "links: a link into a project's conda environment under agent-sandbox's conda root implies a declaration to approve; a link to the rest of the control plane is refused" {
+  local sh="$BATS_TEST_TMPDIR/home/.local/share/agent-sandbox" e
+  e="$sh/conda/envs/proj-0123456789ab/dev"
+  mkdir -p "$e/b" "$sh/micromamba/b"
+  touch "$e/b/f.md" "$sh/micromamba/b/f.md"
+  ln -s "$e" "$P/lnk"
+  ln_mode "$P/lnk/b/f.md" read-only
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  # a declaration the user could write: asked about, not refused as the control plane
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"connect: $P/lnk/b/f.md is reached through a symbolic link ($P/lnk -> $e) to ~/.local/share/agent-sandbox/conda/envs/proj-0123456789ab/dev/b/f.md, which is outside the role's view: it stands for '$P/lnk/b/f.md = read-only outside:~/.local/share/agent-sandbox/conda/envs/proj-0123456789ab/dev/b/f.md'"* ]]
+  [[ "$MSG" != *"control plane"* ]]
+  rm "$P/lnk"
+  ln -s "$sh/micromamba" "$P/lnk"
+  pins -- --bind "$P" "$P" --ro-bind "$P/lnk/b/f.md" "$P/lnk/b/f.md"
+  [ "$RC" -eq 1 ]
+  [[ "$MSG" == *"as written that is refused, so the link is: refusing 'outside:~/.local/share/agent-sandbox/micromamba/b/f.md' ('$sh/micromamba/b/f.md' is inside the sandbox's own control plane '$sh')."* ]]
+}
+
 @test "a launch through a link: to what the role sees, launched with the mount at the target; outside the view, refused once without a terminal, bwrap never run; approved by --trust, launched" {
   make_harness
   local proj
