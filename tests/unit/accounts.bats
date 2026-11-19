@@ -1118,7 +1118,11 @@ codex_profile() {
     'signal.signal(signal.SIGINT, signal.SIG_IGN)' \
     'os.killpg(os.getpgrp(), signal.SIGINT)' \
     'sys.exit(130)' >"$H/bin/join-int.py"
-  printf '#!/bin/sh\nexec setsid -w %q "$@"\n' "$H/bin/asb" >"$H/bin/asb-own-group"
+  # The engine starts with SIGINT at its default, as at a terminal. Under bats --jobs,
+  # where bash hands the test an ignored SIGINT (bash 5.3.9 does; 5.2.37 does not), the
+  # engine, a non-interactive bash, could not undo an ignore it started with (#424). The
+  # system's env, not one on the test's PATH.
+  printf '#!/bin/sh\nexec /usr/bin/env --default-signal=INT setsid -w %q "$@"\n' "$H/bin/asb" >"$H/bin/asb-own-group"
   chmod +x "$H/bin/asb-own-group"
   run_engine AGENT_SANDBOX_JOIN="$H/bin/join-int.py" SIG_SEEN="$H/sig" -- "$H/bin/asb-own-group" --agent claude --account work --login
   [ "$status" -eq 130 ]
