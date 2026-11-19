@@ -3538,3 +3538,12 @@ EOF
   [ "$status" -eq 0 ]
   grep -qx "create -q -y -r $ROOT --clone $ROOT/envs/$PDIR/x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
 }
+
+@test "under agent-sandbox's conda root, a clone that fails says what was run: micromamba create --clone of the environment's prefix" {
+  sandbox_base
+  printf '#!/bin/sh\nexit 1\n' >"$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  mkdir -p "$ROOT/envs/$PDIR/x-dev/conda-meta"
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: 'micromamba create --clone $ROOT/envs/$PDIR/x-dev -p .asb/impl/1/.env' failed (conda base = sandbox, "* ]]
+}

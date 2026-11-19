@@ -14864,7 +14864,7 @@ _as_init() {
         local csrc="${envpath:-$env}"
         [[ -n "$envpath" || "$env" == */* ]] || csrc="$(_as_sandbox_env_prefix "$env" "$proj")"
         "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$csrc" -p "$proj/$prefix" >/dev/null || {
-          _as_msg "--init: 'micromamba create --clone $env -p $prefix' failed (conda base = sandbox, $_conda_mode_src)"
+          _as_msg "--init: 'micromamba create --clone $csrc -p $prefix' failed (conda base = sandbox, $_conda_mode_src)"
           return 1
         }
       else
