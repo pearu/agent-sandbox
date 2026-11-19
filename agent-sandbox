@@ -13551,8 +13551,10 @@ _as_init() {
   # A file the old --init wrote has a scoped model's common block unsuffixed, where it
   # reaches every role of every model: any model's --init refuses it, not rewrites it. A
   # scoped model is this one or a shipped one with `#@ scope`; its block is in the file
-  # when one of the block's unsuffixed headers is (commented out or not) beside a section
-  # suffixed for one of its role patterns.
+  # when a section under one of the block's unsuffixed headers (commented out or not) has
+  # a line of the block's own section -- its placeholders matching any text -- beside a
+  # section suffixed for one of its role patterns. An unsuffixed section with none of the
+  # block's lines (`[conda]` `base = sandbox`) is the user's, and stays.
   _init_scoped() { # TEMPLATE -> "PATTERNS<tab>BLOCK HEADERS", for a template with #@ scope
     awk '{ sub(/^#@(own|shared) /, "") }
       /^#@[[:space:]]*scope[[:space:]]*=/ { on = 1; next }
@@ -13565,6 +13567,61 @@ _as_init() {
       }
       END { if (on) print substr(ps, 2) "\t" substr(bs, 2) }' "$1"
   }
+  # _init_oldblocks TEMPLATE FILE -> "LINE<tab>HEADER" for each of FILE's sections that is
+  # the scoped block's: its header's line number. A line is compared as the parser reads
+  # it (a comment, blanks around it and around its `=`, runs of blanks), the file's
+  # commented out or not, as _init_missing reads them. A `#@shared` line is never one of
+  # an old --init's: --shared-env came after the block was scoped (#268).
+  _init_oldblocks() {
+    awk 'function norm(x) {
+        sub(/#.*/, "", x); gsub(/[ \t]+/, " ", x); sub(/^ /, "", x); sub(/ $/, "", x)
+        sub(/ ?= ?/, " = ", x)
+        return x
+      }
+      function hdr(x) { # as _init_hdrv reads a header
+        if (substr(x, 1, 2) == "# ") x = substr(x, 3)
+        sub(/#.*/, "", x); sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x)
+        if (x !~ /^\[.*\]$/) return ""
+        gsub(/[ \t]/, "", x)
+        return x
+      }
+      function like(x, t, n, p, i, pos, k) { # x is t, each {placeholder} at least a character
+        n = split(t, p, /\{[a-z]+\}/)
+        if (n == 1) return x == t
+        if (substr(x, 1, length(p[1])) != p[1]) return 0
+        pos = length(p[1]) + 1
+        for (i = 2; i < n; i++) {
+          k = index(substr(x, pos + 1), p[i])
+          if (!k) return 0
+          pos += k + length(p[i])
+        }
+        return length(x) - length(p[n]) >= pos && substr(x, length(x) - length(p[n]) + 1) == p[n]
+      }
+      FNR == NR {
+        if ($0 ~ /^#@shared [^[]/) next
+        sub(/^#@(own|shared) /, "")
+        if ($0 ~ /^#@[[:space:]]*scope[[:space:]]*=/) { on = 1; next }
+        if ($0 ~ /^\[[^]]+\]/) {
+          h = $0; sub(/\].*/, "]", h)
+          cur = (on && h !~ /:/) ? h : ""
+          next
+        }
+        if (cur == "" || $0 ~ /^#/) next
+        x = norm($0)
+        if (x != "") t[cur, ++nt[cur]] = x
+        next
+      }
+      {
+        h = hdr($0)
+        if (h != "") { sec = (h in nt) ? h : ""; at = FNR; said = 0; next }
+        if (sec == "" || said) next
+        x = $0
+        while (x ~ /^[ \t]*#/) sub(/^[ \t]*#/, "", x)
+        x = norm(x)
+        if (x == "") next
+        for (i = 1; i <= nt[sec]; i++) if (like(x, t[sec, i])) { print at "\t" sec; said = 1; break }
+      }' "$1" "$2"
+  }
   if [[ -n "$sufs" ]]; then
     local mt mn
     local -a old=() mp=() mb=()
@@ -13575,9 +13632,9 @@ _as_init() {
       read -r -a mb <<<"${v:-}"
       ((${#mb[@]})) || continue
       old=()
-      for hd in "${mb[@]}"; do
-        _init_has "$hd" && old+=("$hd")
-      done
+      while IFS=$'\t' read -r q hd; do
+        [[ -n "$q" ]] && old+=("$hd block at line $q")
+      done < <(_init_oldblocks "$mt" "$df")
       ((${#old[@]})) || continue
       mine=0
       while IFS= read -r q; do
@@ -13588,7 +13645,11 @@ _as_init() {
       done <<<"$sufs"
       ((mine)) || continue
       mn="$(basename -- "$(dirname -- "$mt")")"
-      _as_msg "--init: this .agent-sandbox has model '$mn''s common sections unsuffixed, written by an earlier --init, so they reach every role of every model: remove its unsuffixed $(printf '%s\n' "${old[@]}" | paste -sd/) blocks (or start from a fresh file) and run --init again, which writes them per role pattern of the model"
+      v="${old[0]}"
+      for ((k = 1; k < ${#old[@]}; k++)); do
+        if ((k + 1 == ${#old[@]})); then v+=" and ${old[k]}"; else v+=", ${old[k]}"; fi
+      done
+      _as_msg "--init: this .agent-sandbox has model '$mn''s common sections unsuffixed, written by an earlier --init, so they reach every role of every model: remove its unsuffixed $v (or start from a fresh file) and run --init again, which writes them per role pattern of the model"
       return 1
     done
   fi
