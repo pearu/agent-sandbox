@@ -41,9 +41,12 @@ artefact** -- a review that says "run this" is relayed, not run.
 - The Implementers' clones, read-only to you: `.asb/impl/N/`, their histories
   `.asb/git/N/`. Collect a branch with `git fetch .asb/impl/N impl-N:impl-N`, then
   merge it in the main tree.
-#@own - The development environment `{env}`: after a merge, update it from the
-#@own   specification (`conda env update -n {env} -f environment.yml --prune`),
-#@own   then build.
+#@own - The development environment `{env}`, at `{envpath}`: after a merge, update it
+#@own   from the specification with the conda command your briefing names --
+#@own   `conda env update -p {envpath} -f environment.yml --prune`, or under
+#@own   agent-sandbox's own
+#@own   `micromamba env update -y -p {envpath} -f environment.yml --prune`
+#@own   -- then build.
 #@shared - The environment `{env}` is another project's: you do not
 #@shared   update or build it. What you install for this project lands in a
 #@shared   layer of your own over it; the user brings a change to the

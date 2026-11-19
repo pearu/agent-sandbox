@@ -71,18 +71,19 @@ fake_tools() {
 @test "the tools env goes after the conda env and micromamba, so a project's own gh wins" {
   fake_tools
   local MM="$H/home/.local/share/agent-sandbox/micromamba/bin" ROOT="$H/home/.local/share/agent-sandbox/conda"
-  mkdir -p "$MM" "$ROOT/envs/proj-env/conda-meta"
+  local proj env
+  proj="$(cd "$H/proj" && pwd -P)"
+  env="$ROOT/envs/$(project_env_dir "$proj")/proj-env" # the project's own, under the root
+  mkdir -p "$MM" "$env/conda-meta"
   printf '#!/bin/sh\n' >"$MM/micromamba" && chmod +x "$MM/micromamba"
   printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
   chmod +x "$H/bin/conda" "$H/bin/mamba"
-  local proj
-  proj="$(cd "$H/proj" && pwd -P)"
   printf '[conda]\nbase = sandbox\nname = proj-env\n' >"$proj/.agent-sandbox"
   mkdir -p "$H/home/.config/agent-sandbox/trust"
   sha256sum -- "$proj/.agent-sandbox" | cut -d" " -f1 >"$H/home/.config/agent-sandbox/trust/$(printf "%s" "$proj" | sha256sum | cut -d" " -f1)"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
-  [ "$(setenv_value PATH)" = "$MM:$ROOT/envs/proj-env/bin:$H/bin:$TOOLS/a/bin:/usr/bin:/bin" ]
+  [ "$(setenv_value PATH)" = "$MM:$env/bin:$H/bin:$TOOLS/a/bin:/usr/bin:/bin" ]
 }
 
 @test "under --preset native the tools env is on PATH too: which executables are there is not state isolation" {

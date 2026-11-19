@@ -11,6 +11,48 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Breaking
 
+- **A model's environment under agent-sandbox's conda root launches; each project's
+  environments are its own.** Under `[conda] base = sandbox`, `asb --init MODEL --env
+  NAME` made the environment at `~/.local/share/agent-sandbox/conda/envs/NAME` and wrote
+  `[connect]` lines naming it, which every role refused: that directory is the sandbox's
+  control plane, refused in every mode. Measured: the github model's every `gh-*` role
+  (`{envpath}/ = copy-on-write`) and its gh-setup (`read-write`) could not launch, nor
+  `--check` (`refusing '.../conda/envs/dev/' (... is inside the sandbox's own control
+  plane ...), in every mode`); the roles model's setup role, the market model's roles
+  and `--shared-env`'s copy-on-write lines hit the same rule. A role that only activated
+  a built environment worked, so it went unseen. Now a name under the sandbox's conda
+  root is this project's own, `<root>/envs/<project>-<hash>/NAME` (the project directory's
+  name made safe and cut to 32 characters, a `-`, and the first 12 hex digits of the
+  SHA-256 of its path: short, and distinct for paths that differ only in punctuation),
+  for `--init --env NAME` (its prefix, `{envpath}`, made empty there), a
+  `[conda] name = NAME` at launch, `--roles`' setup check and the Implementers' clones
+  (`micromamba create --clone PATH`): two projects' `dev` are two environments. That
+  directory and what is inside it -- any project's, never shallower -- is declarable;
+  the root, its `envs/`, a project's directory there and everything else under
+  `~/.local/share/agent-sandbox` stay refused, and a link out of an environment is
+  judged by where it leads. `--shared-env` takes another project's environment there by
+  its path; a bare name is refused, the layout said. The host's base is unchanged
+  (`<base>/envs/NAME`, shared by name). An environment built at the old
+  `<root>/envs/NAME` is not found. The roles model's Supervisor and Implementers
+  update their environment by its prefix, with the conda command the briefing names:
+  `conda env update -p PREFIX ...`, or `micromamba env update -y -p PREFIX ...` under
+  agent-sandbox's own (the Supervisor's `-n NAME` named the root's shared `envs/NAME`,
+  and there is no `conda` inside); `[permissions:supervisor]` names both. A conda
+  prefix longer than 255 bytes is refused under either base, by `--init --env` (a name
+  or a path, and an Implementer's clone) and by a launch's `[conda] name` or `prefix`:
+  conda packages' binaries are relocated through a 255-byte placeholder, and micromamba
+  2.9.0 installs past it silently, leaving binaries that crash.
+  **Upgrade:** a project that ran `asb --init MODEL --env NAME` under the sandbox base
+  keeps the old absolute path in its `.agent-sandbox` and stays refused -- its setup
+  role cannot start a rebuild, and `--init` does not rewrite a prefix. Edit the file:
+  every line naming the old path, `~/.local/share/agent-sandbox/conda/envs/NAME` (written
+  absolute: the `prefix = ` lines and the `[connect]` lines), names the new path instead, which the refusal names
+  (`... this project's NAME is now <root>/envs/<project>-<hash>/NAME`; `--check` shows
+  it too), then approve the file again (`asb --trust`) and build the environment there
+  (`asb --role setup claude`, or `gh-setup`). A hand-written `[conda] base = sandbox` with
+  `name = NAME` that used a built `<root>/envs/NAME` now finds nothing there, and the
+  launch says so: rebuild the environment at the new path, or move it there (a moved
+  environment's scripts still name the old path, so a rebuild is the safer way).
 - **bubblewrap 0.12.0 or newer is required.** A launch that would start a sandbox
   refuses on an older `bwrap`, or one whose `--version` names no version, naming the
   version found and the way to 0.12.0 (`./install.sh --rebuild-bwrap` on Ubuntu,

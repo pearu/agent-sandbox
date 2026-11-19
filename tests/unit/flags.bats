@@ -361,7 +361,10 @@ STUB
   argv_has --bind "$H/home/.other" "$H/home/.other"
   # a base that is protected, relative, or $HOME itself is refused, and nothing launches
   local base
-  for base in '~/.ssh' 'rel/dir' '~'; do
+  # a project's conda environment under agent-sandbox's conda root is declarable, but
+  # not a profile's base: that is a declaration's carve-out only
+  mkdir -p "$H/home/.local/share/agent-sandbox/conda/envs/proj-0123456789ab/dev"
+  for base in '~/.ssh' 'rel/dir' '~' '~/.local/share/agent-sandbox/conda/envs/proj-0123456789ab/dev'; do
     printf '[agent]\nbase = %s\n' "$base" >"$H/profiles2/other/agent-sandbox"
     run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles2" -- agent-sandbox --profile other --exec true
     [ "$status" -ne 0 ]

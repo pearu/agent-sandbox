@@ -331,11 +331,44 @@ trust() {
   argv_has --ro-bind "$base" "$base"
 }
 
+@test "[conda] a prefix longer than 255 bytes is refused under the host's base too, by name or by path: binaries installed there would break" {
+  local base="$H/conda" long
+  long="$(printf 'x%.0s' $(seq 1 $((256 - ${#base} - 6))))" # <base>/envs/<long> is 256
+  mkdir -p "$base/envs/$long/conda-meta"
+  printf '[conda]\nname = %s\n' "$long" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".agent-sandbox: [conda] name = $long: the conda prefix $base/envs/$long is 256 bytes, longer than 255: conda packages' binaries are relocated through a 255-byte placeholder, so binaries installed there would break -- use a shorter path, or ask for the feature at https://github.com/pearu/agent-sandbox/issues"* ]]
+  [ ! -s "$H/argv" ]
+  printf '[conda]\nprefix = %s\n' "$base/envs/$long" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".agent-sandbox: [conda] prefix = $base/envs/$long: the conda prefix $base/envs/$long is 256 bytes"* ]]
+  # counted in bytes, as the placeholder is: 255 characters, 256 bytes (é is two)
+  local u="${long%xx}é"
+  mkdir -p "$base/envs/$u/conda-meta"
+  printf '[conda]\nprefix = %s\n' "$base/envs/$u" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" LANG=C.UTF-8 -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the conda prefix $base/envs/$u is 256 bytes, longer than 255"* ]]
+  # 255 is fine
+  mkdir -p "$base/envs/${long%x}/conda-meta"
+  printf '[conda]\nprefix = %s\n' "$base/envs/${long%x}" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$base/envs/${long%x}" ]
+}
+
 # agent-sandbox's own micromamba, as install.sh leaves it in the fake HOME: the binary
 # (a stub: the engine only binds its directory) and the empty conda root.
 fake_micromamba() {
   MM="$H/home/.local/share/agent-sandbox/micromamba/bin"
   ROOT="$H/home/.local/share/agent-sandbox/conda"
+  PENVS="$ROOT/envs/$(project_env_dir "$PROJ")" # this project's environments under the root
   mkdir -p "$MM" "$ROOT"
   printf '#!/bin/sh\n' >"$MM/micromamba"
   chmod +x "$MM/micromamba"
@@ -367,11 +400,13 @@ no_host_conda() {
   [ "$(setenv_value PATH)" = "$MM:$H/bin:/usr/bin:/bin" ]
 }
 
-@test "[conda] base = sandbox: micromamba and its root read-only, the env under the root, and nothing of the host's conda" {
+@test "[conda] base = sandbox: micromamba and its root read-only, the env in the project's directory under the root, and nothing of the host's conda" {
   fake_micromamba
-  local base="$H/conda" active="$H/conda/envs/shell-env" env="$ROOT/envs/proj-env"
+  local base="$H/conda" active="$H/conda/envs/shell-env" env="$PENVS/proj-env"
   local pkgs="$H/home/.cache/agent-sandbox/conda-pkgs"
   mkdir -p "$base/pkgs" "$active/bin" "$env/conda-meta"
+  # the name at the root's envs/ itself, and another project's of that name: neither is this one
+  mkdir -p "$ROOT/envs/proj-env/conda-meta" "$ROOT/envs/-elsewhere/proj-env/conda-meta"
   printf '[conda]\nbase = sandbox\nname = proj-env\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   # launched from a shell with a host env active, the way conda leaves it
@@ -412,10 +447,28 @@ no_host_conda() {
   [ "$(setenv_value PATH)" = "$MM:$H/bin:/usr/bin:/bin" ]
 }
 
+@test "[conda] base = sandbox, the old layout: a declaration of <root>/envs/NAME is refused naming the project's new path; a name built there is not found, and the message says where it went" {
+  fake_micromamba
+  mkdir -p "$ROOT/envs/dev/conda-meta"
+  printf '[conda]\nbase = sandbox\nprefix = %s\n[connect]\n%s/ = copy-on-write\n' "$ROOT/envs/dev" "$ROOT/envs/dev" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing '$ROOT/envs/dev/' ('$ROOT/envs/dev' is inside the sandbox's own control plane '$H/home/.local/share/agent-sandbox'), in every mode -- that is where agent-sandbox once kept a conda environment; this project's dev is now $PENVS/dev: change the lines naming the old path to it (the prefix too), build or move the environment there, and approve the file again (asb --trust)."* ]]
+  [ ! -s "$H/argv" ]
+  printf '[conda]\nbase = sandbox\nname = dev\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"conda env 'dev' not found under $PENVS"* ]]
+  [[ "$output" == *"$ROOT/envs/dev is where agent-sandbox once kept it; a project's environments are now in a directory of its own: rebuild it at $PENVS/dev, or move it there"* ]]
+  run ! setenv_value CONDA_PREFIX
+}
+
 @test "[conda] base: the shell's AGENT_SANDBOX_CONDA_BASE wins, the file's default is install.sh's answer, host with no conda falls back" {
   fake_micromamba
   local base="$H/conda"
-  mkdir -p "$base/envs/proj-env" "$ROOT/envs/proj-env"
+  mkdir -p "$base/envs/proj-env" "$PENVS/proj-env"
   printf '[conda]\nname = proj-env\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   # no file, a host base: the host's, as before
@@ -429,7 +482,7 @@ no_host_conda() {
   echo sandbox >"$CFG/conda"
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
   [ "$status" -eq 0 ]
-  [ "$(setenv_value CONDA_PREFIX)" = "$ROOT/envs/proj-env" ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$PENVS/proj-env" ]
   argv_has --ro-bind "$MM" "$MM"
   run ! argv_has --ro-bind "$base" "$base"
   # the shell's variable wins over the file
@@ -442,7 +495,7 @@ no_host_conda() {
   printf '[conda]\nbase = sandbox\nname = proj-env\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
-  [ "$(setenv_value CONDA_PREFIX)" = "$ROOT/envs/proj-env" ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$PENVS/proj-env" ]
   run_engine MAMBA_ROOT_PREFIX="$base" AGENT_SANDBOX_CONDA_BASE=host -- asb claude --version
   [ "$(setenv_value CONDA_PREFIX)" = "$base/envs/proj-env" ]
   # host, but the host has no conda: said, and the sandbox's is used
@@ -452,18 +505,18 @@ no_host_conda() {
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"[conda] base says host, but this host has no conda"*"agent-sandbox's micromamba is used"* ]]
-  [ "$(setenv_value CONDA_PREFIX)" = "$ROOT/envs/proj-env" ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$PENVS/proj-env" ]
 }
 
 @test "[conda:<glob>] base = sandbox applies to that role only" {
   fake_micromamba
   local base="$H/conda"
-  mkdir -p "$base/envs/proj-env" "$ROOT/envs/proj-env"
+  mkdir -p "$base/envs/proj-env" "$PENVS/proj-env"
   printf '[conda]\nname = proj-env\n[conda:gh-*]\nbase = sandbox\n[conda:default]\nbase = host\n' >"$PROJ/.agent-sandbox"
   trust "$PROJ"
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb --role gh-fix-1 claude --version
   [ "$status" -eq 0 ]
-  [ "$(setenv_value CONDA_PREFIX)" = "$ROOT/envs/proj-env" ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$PENVS/proj-env" ]
   argv_has --ro-bind "$MM" "$MM"
   run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
   [ "$status" -eq 0 ]

@@ -50,6 +50,57 @@ init() {
     _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "${#envs[@]}" ${envs[@]+"${envs[@]}"} "$@"
 }
 
+# The sandbox base (`[conda] base = sandbox`): no conda on the host, a stub micromamba
+# that clones as conda-stub does. ROOT is the conda root, PDIR this project's directory
+# name there (the state directory's slug).
+sandbox_base() {
+  ROOT="$H/home/.local/share/agent-sandbox/conda" PDIR="$(project_env_dir "$PROJ")"
+  local mm="$H/home/.local/share/agent-sandbox/micromamba/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
+  chmod +x "$H/bin/conda" "$H/bin/mamba"
+  mkdir -p "$mm" "$ROOT"
+  cp "$H/bin/conda-stub" "$mm/micromamba"
+}
+# roles_in FILE -- every role FILE names, one per line: a pattern's instance 1 for its `*`.
+roles_in() {
+  sed -n 's/^\[[a-z-]*:\([^]]*\)\].*/\1/p' "$1" | sed 's/\*/1/' | grep -vx default | sort -u
+}
+# sbx_check ROLE / sbx_launch ROLE -- `--check --role ROLE`, and a launch of it, under the
+# sandbox base.
+sbx_check() {
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX_CONDA_BASE=sandbox "${@:4}" --profile claude --check --role "$0" 2>&1 </dev/null' \
+    "$1" "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+}
+sbx_launch() { run_engine AGENT_SANDBOX_CONDA_BASE=sandbox AGENT_SANDBOX_NET=open CONDA_LOG="$H/mm.log" -- asb --role "$1" claude --version; }
+
+# sbx_model "MODEL ARGS" -- under agent-sandbox's conda root (sandbox_base first),
+# `--init MODEL ARGS --env dev`, approved, and every role the file names passes --check,
+# none refused as the control plane. Sets EP, the environment's prefix.
+sbx_model() {
+  local r df="$PROJ/.agent-sandbox"
+  EP="$ROOT/envs/$PDIR/dev"
+  # shellcheck disable=SC2086 # the model and its counts, as words
+  init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- $1 --env dev
+  [ "$status" -eq 0 ]
+  [ -d "$EP" ]
+  grep -qF "$EP" "$df"
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"control plane"* ]]
+  for r in $(roles_in "$df"); do
+    sbx_check "$r"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"control plane"* ]]
+  done
+}
+# sbx_launch_has ROLE -- a launch of ROLE under agent-sandbox's conda root succeeds.
+sbx_launch_has() {
+  sbx_launch "$1"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"control plane"* ]]
+}
+
 @test "the roles model: every instance's sections, purpose files, clones, directories, the index and .asb/.gitignore" {
   init -- roles planner=2 implementer=2 reviewer=1
   [ "$status" -eq 0 ]
@@ -1819,38 +1870,39 @@ EOF
   [[ "$output" != *"left over"* ]]
 }
 
-@test "--init --env NAME under agent-sandbox's micromamba: the prefix is under its conda root, and the message says so" {
-  local root="$H/home/.local/share/agent-sandbox/conda"
+@test "--init --env NAME under agent-sandbox's micromamba: the prefix is in the project's directory under its conda root, and the message says so" {
+  local root="$H/home/.local/share/agent-sandbox/conda" s
+  s="$(project_env_dir "$PROJ")"
   # no conda on the host -- and a CI runner has conda on PATH, so these stubs find none:
   # the default is the sandbox's own
   printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
   chmod +x "$H/bin/conda" "$H/bin/mamba"
   init -- github --env dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"environment dev is not built yet (created empty at $root/envs/dev, under agent-sandbox's conda root)"*"--role gh-setup claude builds it"* ]]
-  [ -d "$root/envs/dev" ] && [ -z "$(ls -A "$root/envs/dev")" ]
-  grep -A3 -xF '[connect:gh-setup]' "$PROJ/.agent-sandbox" | grep -qx "$root/envs/dev/ = read-write.*"
+  [[ "$output" == *"environment dev is not built yet (created empty at $root/envs/$s/dev, under agent-sandbox's conda root)"*"--role gh-setup claude builds it"* ]]
+  [ -d "$root/envs/$s/dev" ] && [ -z "$(ls -A "$root/envs/$s/dev")" ]
+  grep -A3 -xF '[connect:gh-setup]' "$PROJ/.agent-sandbox" | grep -qx "$root/envs/$s/dev/ = read-write.*"
   # a host base, but install.sh's answer was sandbox: the root, not the host's base
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
   mkdir -p "$H/base/envs" "$H/home/.config/agent-sandbox"
   echo sandbox >"$H/home/.config/agent-sandbox/conda"
   init MAMBA_ROOT_PREFIX="$H/base" -- github --env dev2
   [ "$status" -eq 0 ]
-  [ -d "$root/envs/dev2" ] && [ ! -e "$H/base/envs/dev2" ]
+  [ -d "$root/envs/$s/dev2" ] && [ ! -e "$H/base/envs/dev2" ]
   # and the shell's variable wins over the file
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
   init MAMBA_ROOT_PREFIX="$H/base" AGENT_SANDBOX_CONDA_BASE=host -- github --env dev3
   [ "$status" -eq 0 ]
-  [ -d "$H/base/envs/dev3" ] && [ ! -e "$root/envs/dev3" ]
+  [ -d "$H/base/envs/dev3" ] && [ ! -e "$root/envs/$s/dev3" ] && [ ! -e "$root/envs/dev3" ]
   # an Implementer's clone is micromamba's, under the root
   local mm="$H/home/.local/share/agent-sandbox/micromamba/bin"
   mkdir -p "$mm"
   cp "$H/bin/conda-stub" "$mm/micromamba"
   rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
-  mkdir -p "$root/envs/x-dev/conda-meta"
+  mkdir -p "$root/envs/$s/x-dev/conda-meta"
   init CONDA_LOG="$H/mm.log" -- roles planner=1 implementer=1 reviewer=1 --env x-dev
   [ "$status" -eq 0 ]
-  grep -qx "create -q -y -r $root --clone x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
+  grep -qx "create -q -y -r $root --clone $root/envs/$s/x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
 }
 
 @test "the github model takes an --env not built yet: its prefix made empty, gh-setup to build it, the others to check it" {
@@ -3342,4 +3394,172 @@ EOF
   init -- roles implementer=1
   [ "$status" -eq 0 ]
   [[ "$output" == *"removed .asb/roles/implementer-2.md"* ]]
+}
+
+# ---- environments under agent-sandbox's conda root: a directory per project ----------
+@test "under agent-sandbox's conda root, the roles model's every role passes --check, and its setup role and a role with no line of the environment launch" {
+  sandbox_base
+  sbx_model "roles planner=1 implementer=1 reviewer=1"
+  sbx_launch_has setup
+  argv_has --bind "$EP" "$EP" # it builds the environment
+  sbx_launch_has planner-1
+  # its [conda] prefix only, no line of its own: not built yet, so not activated
+  [[ "$output" == *"is not a conda env yet (no conda-meta/ in $EP)"* ]]
+  run ! argv_has --bind "$EP" "$EP"
+  run ! argv_has --overlay-src "$EP"
+}
+
+@test "under agent-sandbox's conda root, the github model's every role passes --check, and gh-setup and a gh-* role over the environment launch" {
+  sandbox_base
+  sbx_model github
+  sbx_launch_has gh-setup
+  argv_has --bind "$EP" "$EP"
+  sbx_launch_has gh-review-1
+  argv_has --overlay-src "$EP" # its layer over it
+}
+
+@test "under agent-sandbox's conda root, the market model's every role passes --check, and a market role over the environment launches" {
+  sandbox_base
+  mkdir -p "$ROOT/envs/$PDIR/dev/conda-meta" # no setup role: it takes a built one
+  sbx_model market
+  sbx_launch_has market-1
+  argv_has --overlay-src "$EP"
+}
+
+@test "under agent-sandbox's conda root, two projects' --env of one name are two environments, each made empty in its project's directory, even where their paths differ only in punctuation" {
+  sandbox_base
+  local p d
+  local -a dirs=()
+  for p in my_proj my-proj my.proj; do
+    mkdir -p "$H/$p" && git -C "$H/$p" init -q
+    p="$(cd "$H/$p" && pwd -P)" d="$(project_env_dir "$p")"
+    PROJ="$p" init AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env dev
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"environment dev is not built yet (created empty at $ROOT/envs/$d/dev, under agent-sandbox's conda root)"* ]]
+    [[ "$d" == "${p##*/}-"???????????? ]] # the basename, a -, 12 hex digits
+    [ -d "$ROOT/envs/$d/dev" ] && [ -z "$(ls -A "$ROOT/envs/$d/dev")" ]
+    grep -qx "prefix = $ROOT/envs/$d/dev .*" "$p/.agent-sandbox"
+    dirs+=("$d")
+  done
+  [ "$(printf '%s\n' "${dirs[@]}" | sort -u | wc -l)" -eq 3 ]
+  [ ! -e "$ROOT/envs/dev" ]
+}
+
+@test "under agent-sandbox's conda root, a long project path still gives a short prefix; a name that makes it longer than 255 characters is refused" {
+  sandbox_base
+  local long="$H" i d name
+  for i in 1 2 3 4 5 6; do long+="/a-rather-long-directory-name-number-$i-of-several"; done
+  long+="/and-a-project-directory-whose-own-name-is-long-too"
+  mkdir -p "$long" && git -C "$long" init -q && long="$(cd "$long" && pwd -P)"
+  ((${#long} > 255))
+  d="$(project_env_dir "$long")"
+  [ "${#d}" -eq 45 ] # 32 of the basename, a -, 12 hex digits
+  PROJ="$long" init AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env dev
+  [ "$status" -eq 0 ]
+  [ -d "$ROOT/envs/$d/dev" ]
+  # NAME is the rest: a prefix past conda's 255-byte placeholder is refused, nothing made
+  rm -rf "$PROJ/.agent-sandbox" "$PROJ/.asb"
+  name="$(printf 'n%.0s' $(seq 1 $((256 - ${#ROOT} - ${#PDIR} - 7))))"
+  ((${#ROOT} + 6 + ${#PDIR} + 1 + ${#name} == 256)) # <root>/envs/<dir>/<name>
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env "$name"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: --env $name: the conda prefix $ROOT/envs/$PDIR/$name is 256 bytes, longer than 255: conda packages' binaries are relocated through a 255-byte placeholder, so binaries installed there would break -- use a shorter path, or ask for the feature at https://github.com/pearu/agent-sandbox/issues"* ]]
+  [ ! -e "$ROOT/envs/$PDIR/$name" ] && [ ! -e "$PROJ/.agent-sandbox" ]
+  # an --env PATH, under any base, likewise
+  mkdir -p "$long/env/conda-meta"
+  init AGENT_SANDBOX_CONDA_BASE=host -- market --env "$long/env"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: --env $long/env: the conda prefix $long/env is $((${#long} + 4)) bytes, longer than 255"* ]]
+  # and at launch, a [conda] name that does the same
+  printf '[conda]\nbase = sandbox\nname = %s\n' "$name" >"$PROJ/.agent-sandbox"
+  approve
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".agent-sandbox: [conda] name = $name: the conda prefix $ROOT/envs/$PDIR/$name is 256 bytes, longer than 255"* ]]
+}
+
+@test "an Implementer's clone at a prefix longer than 255 bytes is refused by --init, where it would be made" {
+  sandbox_base
+  # a project path that leaves the environment's prefix short but its clone's long:
+  # <project>/.asb/impl/1/.env is 17 bytes more than the project's path
+  local p="$H/p" d
+  while ((${#p} < 245)); do p+="x"; done
+  mkdir -p "$p" && git -C "$p" init -q && p="$(cd "$p" && pwd -P)"
+  ((${#p} + 17 > 255))
+  d="$(project_env_dir "$p")"
+  mkdir -p "$ROOT/envs/$d/E/conda-meta"
+  PROJ="$p" init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env E
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: implementer-1's environment: the conda prefix $p/.asb/impl/1/.env is $((${#p} + 17)) bytes, longer than 255"*"or ask for the feature at https://github.com/pearu/agent-sandbox/issues"* ]]
+  [ ! -e "$p/.asb/impl/1/.env" ]
+}
+
+@test "under agent-sandbox's conda root, --shared-env takes another project's environment by its path; a bare name is refused, the layout said" {
+  sandbox_base
+  local other="$ROOT/envs/-elsewhere-torch/torch-dev" df="$PROJ/.agent-sandbox" r
+  mkdir -p "$other/conda-meta" "$ROOT/envs/$PDIR/torch-dev/conda-meta"
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --shared-env torch-dev
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: --shared-env torch-dev: under agent-sandbox's conda root each project's environments are its own, ~/.local/share/agent-sandbox/conda/envs/<project>-<hash>/<name> (~/.local/share/agent-sandbox/conda/envs/$PDIR/torch-dev is this project's torch-dev), so a name cannot say whose: give the other project's environment by its path, --shared-env ~/.local/share/agent-sandbox/conda/envs/<project>-<hash>/torch-dev"* ]]
+  [ ! -e "$df" ]
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --shared-env "$other"
+  [ "$status" -eq 0 ]
+  grep -qx "$other/ = copy-on-write .*" "$df"
+  approve
+  [ "$status" -eq 0 ]
+  for r in implementer-1 supervisor; do
+    sbx_check "$r"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"control plane"* ]]
+    sbx_launch "$r"
+    [ "$status" -eq 0 ]
+    argv_has --overlay-src "$other"
+    [ "$(setenv_value CONDA_PREFIX)" = "$other" ]
+  done
+}
+
+@test "the Supervisor updates the environment by its prefix, with conda or agent-sandbox's micromamba, under either base; its permissions name both" {
+  local sup="$PROJ/.asb/roles/supervisor.md" df="$PROJ/.agent-sandbox" ep
+  # the host's base: <base>/envs/E
+  mkdir -p "$H/conda/envs/E/conda-meta"
+  init MAMBA_ROOT_PREFIX="$H/conda" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" -- roles planner=1 implementer=1 reviewer=1 --env E
+  [ "$status" -eq 0 ]
+  ep="$H/conda/envs/E"
+  grep -qF "\`conda env update -p $ep -f environment.yml --prune\`" "$sup"
+  grep -qF "\`micromamba env update -y -p $ep -f environment.yml --prune\`" "$sup"
+  run ! grep -qF -- '-n E' "$sup"
+  section '[permissions:supervisor]' "$df" | grep -qx 'Bash(conda env update:\*)'
+  section '[permissions:supervisor]' "$df" | grep -qx 'Bash(micromamba env update:\*)'
+  grep -qF 'micromamba env update -y -p .asb/impl/1/.env -f environment.yml --prune' "$PROJ/.asb/roles/implementer-1.md"
+  # agent-sandbox's conda root: the project's own directory there
+  rm -rf "$df" "$PROJ/.asb"
+  sandbox_base
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env dev
+  [ "$status" -eq 0 ]
+  ep="$ROOT/envs/$PDIR/dev"
+  grep -qF "\`conda env update -p $ep -f environment.yml --prune\`" "$sup"
+  grep -qF "\`micromamba env update -y -p $ep -f environment.yml --prune\`" "$sup"
+  run ! grep -qF -- '-n dev' "$sup"
+  run ! grep -qE '\{(env|envpath)\}' "$sup"
+  section '[permissions:supervisor]' "$df" | grep -qx 'Bash(micromamba env update:\*)'
+}
+
+@test "under agent-sandbox's conda root, a model whose Implementers clone the environment but whose file has no {envpath} line clones this project's environment, by its path" {
+  sandbox_base
+  cp -r "$REPO_ROOT/models/roles" "$H/roles-noenvpath"
+  sed -i '/{envpath}/d' "$H/roles-noenvpath/agent-sandbox"
+  run ! grep -qF '{envpath}' "$H/roles-noenvpath/agent-sandbox"
+  mkdir -p "$ROOT/envs/$PDIR/x-dev/conda-meta"
+  init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- "$H/roles-noenvpath" planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx "create -q -y -r $ROOT --clone $ROOT/envs/$PDIR/x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
+}
+
+@test "under agent-sandbox's conda root, a clone that fails says what was run: micromamba create --clone of the environment's prefix" {
+  sandbox_base
+  printf '#!/bin/sh\nexit 1\n' >"$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+  mkdir -p "$ROOT/envs/$PDIR/x-dev/conda-meta"
+  init AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--init: 'micromamba create --clone $ROOT/envs/$PDIR/x-dev -p .asb/impl/1/.env' failed (conda base = sandbox, "* ]]
 }
