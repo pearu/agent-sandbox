@@ -3828,6 +3828,14 @@ _as_keeper_supervise() {
   # ends what is joined from there, never the launch other terminals joined too.
   trap '' INT QUIT HUP TSTP TTIN TTOU
   trap - EXIT TERM
+  # USR1 wakes it from its waits (a join's exit, a reset, --shutdown). A HANDLER THAT
+  # RUNS WHILE BASH PARSES A COMMAND SUBSTITUTION ABANDONS THE REST OF THE SUPERVISOR:
+  # bash 5.2.21 prints "trap: line 2: unexpected EOF while looking for matching `)'" and
+  # nothing after that command runs (measured 2026-11-19: the release of the mount-point
+  # files stopped at `list="$(_as_placeholder_list)"`, every one of them left behind). So
+  # from its record (keeper/id), when a join can first signal it, to the end of its loop
+  # the supervisor runs no command substitution, and once it is ending, when nothing
+  # needs waking, USR1 is ignored.
   trap ':' USR1
   local me mestart
   me="$BASHPID"
@@ -3868,14 +3876,15 @@ _as_keeper_supervise() {
   tstart="$_ps_start"
   _as_proc_start "$init"
   istart="$_ps_start"
+  # Before the record: once it is there a join can signal (see the USR1 trap above).
+  local grace sl
+  grace="$(_as_keeper_grace)"
   printf '%s %s %s %s %s %s\n' "$me" "$mestart" "$t" "$tstart" "$init" "$istart" >"$kd/id.new" \
     && mv -f -- "$kd/id.new" "$kd/id"
   # The payload in the session directory too, for _as_placeholders_in_use from a launch
   # under another state directory (another XDG_STATE_HOME) on the same session base.
   [[ -n "${_session_dir:-}" ]] && printf '%s %s\n' "$t" "$tstart" >"$_session_dir/keeper.new" \
     && mv -f -- "$_session_dir/keeper.new" "$_session_dir/keeper"
-  local grace sl
-  grace="$(_as_keeper_grace)"
   exec 8>"$sb/keeper.lock"
   local again=0
   while :; do
@@ -3920,6 +3929,9 @@ _as_keeper_supervise() {
     fi
     flock -u 8
   done
+  # Nothing to wake from any more, and the cleanup below runs command substitutions; a
+  # join that ends with the sandbox still signals (see the USR1 trap above).
+  trap '' USR1
   # Ending it: pid 1 of the sandbox first, which takes every process in it along, and
   # the launch with it. The watchdog is for a launch that does not follow (a pasta
   # that outlived its child): five seconds, then it is killed too.

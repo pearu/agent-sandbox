@@ -380,6 +380,43 @@ two_roles_first_out() {
   [ -n "$(empty_files "$ACC")" ] # unlisted: left behind
 }
 
+# The supervisor releases the mount points while the join that ended the launch still
+# signals it (USR1, until it is gone), and a handler that runs while bash 5.2 parses a
+# command substitution abandons the rest of the supervisor: every mount point was left,
+# now and then (CI, 2026-11-19). Held here at the list's lock, inside the release, it
+# must take no USR1 there -- ignored, not caught.
+@test "a supervisor releasing the mount points takes no USR1: the join signalling it cannot stop the release" {
+  local state="$IHOME/.local/state/agent-sandbox" spid s sess="" i st ign cgt fd
+  bg_claude a ra --account work
+  read -r spid _ <"$(echo "$state"/claude/*/ra/keeper/id)"
+  for s in "$I"/base/session.*; do
+    [[ "$(cut -d' ' -f1 "$s/owner.id")" == "$spid" ]] && sess="$s"
+  done
+  [ -d "$sess" ]
+  exec {fd}>"$state/placeholders.lock"
+  flock "$fd"
+  : >"$IWORK/go-a"
+  # its session directory gone: the supervisor is in its cleanup, at the lock
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$sess" ]] || break
+    sleep 0.05
+  done
+  [ ! -e "$sess" ]
+  st="$(cat "/proc/$spid/status")"
+  flock -u "$fd"
+  exec {fd}>&-
+  local bp=BG_PID_a
+  wait "${!bp}"
+  ign="$(awk '$1 == "SigIgn:" { print $2 }' <<<"$st")"
+  cgt="$(awk '$1 == "SigCgt:" { print $2 }' <<<"$st")"
+  # SIGUSR1 is 10: bit 9 of each mask
+  [ "$(((0x$ign >> 9) & 1))$(((0x$cgt >> 9) & 1))" = 10 ] || {
+    echo "USR1 not ignored: SigIgn=$ign SigCgt=$cgt"
+    false
+  }
+  [ -z "$(empty_files "$ACC")" ]
+}
+
 # A launch under another XDG_STATE_HOME has a list and a keeper record of its own, out
 # of the other's sight; the session base they share still names its keeper.
 # ...and before its supervisor records its keeper there (played by hiding that record
