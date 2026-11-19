@@ -1319,7 +1319,7 @@ DF
   [[ "$output" == *"contains the"*"in every mode."* ]]
 }
 
-@test "a project's environment under agent-sandbox's conda root is declarable, <root>/envs/<slug>/<name> and deeper; the rest of the control plane is not" {
+@test "a project's environment under agent-sandbox's conda root is declarable, <root>/envs/<project>-<hash>/<name> and deeper; the rest of the control plane is not" {
   local sh="$H/home/.local/share/agent-sandbox" root env spec
   root="$sh/conda" env="$sh/conda/envs/-some-project/dev"
   mkdir -p "$env/lib" "$sh/micromamba/bin" "$sh/seccomp"
