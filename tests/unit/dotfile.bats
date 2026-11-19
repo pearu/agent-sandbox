@@ -331,12 +331,36 @@ trust() {
   argv_has --ro-bind "$base" "$base"
 }
 
+@test "[conda] a prefix longer than 255 characters is refused under the host's base too, by name or by path: binaries installed there would break" {
+  local base="$H/conda" long
+  long="$(printf 'x%.0s' $(seq 1 $((256 - ${#base} - 6))))" # <base>/envs/<long> is 256
+  mkdir -p "$base/envs/$long/conda-meta"
+  printf '[conda]\nname = %s\n' "$long" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".agent-sandbox: [conda] name = $long: the conda prefix $base/envs/$long is 256 characters, longer than 255: conda packages' binaries are relocated through a 255-character placeholder, so binaries installed there would break -- use a shorter path"* ]]
+  [ ! -s "$H/argv" ]
+  printf '[conda]\nprefix = %s\n' "$base/envs/$long" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".agent-sandbox: [conda] prefix = $base/envs/$long: the conda prefix $base/envs/$long is 256 characters"* ]]
+  # 255 is fine
+  mkdir -p "$base/envs/${long%x}/conda-meta"
+  printf '[conda]\nprefix = %s\n' "$base/envs/${long%x}" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine MAMBA_ROOT_PREFIX="$base" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(setenv_value CONDA_PREFIX)" = "$base/envs/${long%x}" ]
+}
+
 # agent-sandbox's own micromamba, as install.sh leaves it in the fake HOME: the binary
 # (a stub: the engine only binds its directory) and the empty conda root.
 fake_micromamba() {
   MM="$H/home/.local/share/agent-sandbox/micromamba/bin"
   ROOT="$H/home/.local/share/agent-sandbox/conda"
-  PENVS="$ROOT/envs/${PROJ//[^A-Za-z0-9-]/-}" # this project's environments under the root
+  PENVS="$ROOT/envs/$(project_env_dir "$PROJ")" # this project's environments under the root
   mkdir -p "$MM" "$ROOT"
   printf '#!/bin/sh\n' >"$MM/micromamba"
   chmod +x "$MM/micromamba"

@@ -1125,8 +1125,10 @@ names are gone; there are no aliases for removed names before 1.0.
   plane ...), in every mode`); the roles model's setup role, the market model's roles
   and `--shared-env`'s copy-on-write lines hit the same rule. A role that only activated
   a built environment worked, so it went unseen. Now a name under the sandbox's conda
-  root is this project's own, `<root>/envs/<project-slug>/NAME` (the slug of the state
-  directory), for `--init --env NAME` (its prefix, `{envpath}`, made empty there), a
+  root is this project's own, `<root>/envs/<project>-<hash>/NAME` (the project directory's
+  name made safe and cut to 32 characters, a `-`, and the first 12 hex digits of the
+  SHA-256 of its path: short, and distinct for paths that differ only in punctuation),
+  for `--init --env NAME` (its prefix, `{envpath}`, made empty there), a
   `[conda] name = NAME` at launch, `--roles`' setup check and the Implementers' clones
   (`micromamba create --clone PATH`): two projects' `dev` are two environments. That
   directory and what is inside it -- any project's, never shallower -- is declarable;
@@ -1136,11 +1138,15 @@ names are gone; there are no aliases for removed names before 1.0.
   its path; a bare name is refused, the layout said. The host's base is unchanged
   (`<base>/envs/NAME`, shared by name). An environment built at the old
   `<root>/envs/NAME` is not found: rebuild it (`asb --role setup claude`) or move it to
-  `<root>/envs/<project-slug>/NAME`. The roles model's Supervisor and Implementers
+  `<root>/envs/<project>-<hash>/NAME`. The roles model's Supervisor and Implementers
   update their environment by its prefix, with the conda command the briefing names:
   `conda env update -p PREFIX ...`, or `micromamba env update -y -p PREFIX ...` under
   agent-sandbox's own (the Supervisor's `-n NAME` named the root's shared `envs/NAME`,
-  and there is no `conda` inside); `[permissions:supervisor]` names both.
+  and there is no `conda` inside); `[permissions:supervisor]` names both. A conda
+  prefix longer than 255 characters is refused under either base, by `--init --env`
+  (a name or a path) and by a launch's `[conda] name` or `prefix`: conda packages'
+  binaries are relocated through a 255-character placeholder, and micromamba 2.9.0
+  installs past it silently, leaving binaries that crash.
 - **`--roles` refuses a role the dot-file does not have, before opening anything.** A
   listed role matching no role section of the approved `.agent-sandbox` opened the
   session with the other roles' panes, and only that role's own pane refused, as

@@ -504,7 +504,7 @@ not `/`, `$HOME` or a parent of it; nothing that is, is inside or contains a sec
 store or the sandbox's control plane, except `~/.local/bin` read-only, which puts your
 commands on the sandbox's PATH and whose harm is only a write, and a project's conda
 environment under agent-sandbox's conda root,
-`~/.local/share/agent-sandbox/conda/envs/<project-slug>/<name>`, and what is inside it
+`~/.local/share/agent-sandbox/conda/envs/<project>-<hash>/<name>`, and what is inside it
 (any project's: `--shared-env PATH` names another's; the root, its `envs/` and a
 project's directory there stay refused, a link out of an environment is judged by where
 it leads); and **not the project or a parent of it**, because a declaration is bound after the project and would cover it --

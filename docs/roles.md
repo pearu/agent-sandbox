@@ -485,7 +485,7 @@ move one, ask the user to do it on the host.
 
 `--env x-dev` need not exist yet: `--init` then makes its prefix as an empty directory,
 under the conda base that applies (the host's `<base>/envs/x-dev`; under agent-sandbox's
-conda root, this project's own `<root>/envs/<project-slug>/x-dev`, so another project's
+conda root, this project's own `<root>/envs/<project>-<hash>/x-dev`, so another project's
 `x-dev` is another environment), and says to launch the setup role,
 `asb --role setup claude`, which builds `main` into it. The Implementers' environments
 are clones of it, so until it is built there is nothing to clone: `--init` says so and
@@ -517,7 +517,7 @@ trees NAME's editable installs import from (its `direct_url.json`, `.egg-link` a
 `.pth` entries) are declared read-only for every role, so its imports work inside. NAME
 must be built; `--init` refuses one that is not. Under agent-sandbox's conda root a
 name is this project's own environment, so another project's is given by its path,
-`--shared-env ~/.local/share/agent-sandbox/conda/envs/<project-slug>/NAME`, and a bare
+`--shared-env ~/.local/share/agent-sandbox/conda/envs/<project>-<hash>/NAME`, and a bare
 name is refused, the layout said. `asb --check` names an active
 environment's editable source a role cannot read, with the `asb --apply` line that
 declares it, whichever way the file was written.

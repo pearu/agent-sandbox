@@ -424,6 +424,15 @@ argv_index() {
   return 1
 }
 
+# project_env_dir PROJECT -- the project's directory under agent-sandbox's conda root's
+# envs/, as the engine names it (_as_project_env_dir): its basename made safe and cut to
+# 32 characters, a -, and the first 12 hex digits of the SHA-256 of its path.
+project_env_dir() {
+  local b
+  b="$(printf '%s' "${1##*/}" | tr -c 'A-Za-z0-9._-' '-')"
+  printf '%s-%s' "${b:0:32}" "$(printf '%s' "$1" | sha256sum | cut -c1-12)"
+}
+
 # A short session base: unix socket paths are limited to ~108 bytes and
 # BATS_TEST_TMPDIR can be long. Sets SHORT_BASE; remove it in teardown.
 make_short_base() {

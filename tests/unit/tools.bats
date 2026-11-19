@@ -73,7 +73,7 @@ fake_tools() {
   local MM="$H/home/.local/share/agent-sandbox/micromamba/bin" ROOT="$H/home/.local/share/agent-sandbox/conda"
   local proj env
   proj="$(cd "$H/proj" && pwd -P)"
-  env="$ROOT/envs/${proj//[^A-Za-z0-9-]/-}/proj-env" # the project's own, under the root
+  env="$ROOT/envs/$(project_env_dir "$proj")/proj-env" # the project's own, under the root
   mkdir -p "$MM" "$env/conda-meta"
   printf '#!/bin/sh\n' >"$MM/micromamba" && chmod +x "$MM/micromamba"
   printf '#!/bin/sh\nexit 1\n' >"$H/bin/conda" && printf '#!/bin/sh\nexit 1\n' >"$H/bin/mamba"
