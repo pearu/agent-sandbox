@@ -261,6 +261,29 @@ run_engine() {
   fi
 }
 
+# effort_hook_profiles -- a profile directory whose claude profile records each call of
+# its profile_effort_args, the level one line per call, in $H/effort.calls, then does
+# what the claude profile does. A launch takes it with "$PE" before its `--`; a test
+# empties the record before the invocation it counts (effort_calls).
+effort_hook_profiles() {
+  mkdir -p "$H/profiles-e"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles-e/claude"
+  cat >>"$H/profiles-e/claude/profile.sh" <<HOOK
+eval "_t_\$(declare -f profile_effort_args)"
+profile_effort_args() { printf '%s\\n' "\$*" >>"$H/effort.calls"; _t_profile_effort_args "\$@"; }
+HOOK
+  # shellcheck disable=SC2034 # read by the suites
+  PE="AGENT_SANDBOX_PROFILE_DIR=$H/profiles-e"
+  : >"$H/effort.calls"
+}
+
+# effort_calls -- the levels profile_effort_args was called with since the record was
+# emptied, space-separated, and empties it.
+effort_calls() {
+  paste -sd' ' "$H/effort.calls"
+  : >"$H/effort.calls"
+}
+
 # run_review [DIR] -- the dot-file review of DIR ($PROJ, else $H/proj), as `--trust`
 # runs it, answered no: sets $output to what it says before the question. Records
 # nothing. What follows from the file's text alone is said here, not at a launch.

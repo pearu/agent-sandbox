@@ -980,6 +980,22 @@ STUB
   [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"$'\n'* ]]
 }
 
+@test "[agent] effort and --summarize: its own invocation calls no effort hook; its one turn carries the level once, before -p (#314)" {
+  effort_hook_profiles
+  summ_setup
+  printf '[agent]\ncommand = claude\neffort = high\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  effort_calls >/dev/null
+  run_engine "$PE" AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=line -- asb --summarize claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default' summarized:"* ]]
+  # one call: the turn's (the engine again), none for the invocation that runs it
+  [ "$(effort_calls)" = high ]
+  [[ " ${JOINV[*]} " == *"/claude --effort high -p --session-id "* ]]
+  [ "$(grep -c -x -- --effort "$H/join")" -eq 1 ]
+}
+
 @test "--summarize's clean-up never writes the prompt history through a link a sandbox left beside it: the old fixed temp name history.jsonl.asb-summarize pointing outside is left as it is, its target unchanged (#314)" {
   # A store the record names can be a directory the sandbox writes (transcripts
   # read-write: the native path); the clean-up runs on the host.

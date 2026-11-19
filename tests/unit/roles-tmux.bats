@@ -301,6 +301,43 @@ no_tmux_path() {
   [ "$(cat "$H/home/.local/state/agent-sandbox/claude/$slug/a/agent")" = $'dotfile:[agent:a]\nclaude -x' ]
 }
 
+@test "--roles with [agent] effort: no pane carries an effort word; each pane, run, puts its own role's level before the agent's arguments" {
+  agents '[agent]' 'command = claude' 'effort = medium' '[agent:a]' 'effort = high' '[connect:b]'
+  run_engine TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role a)" ]
+  [ "${PC[1]}" = "$(window --role b)" ]
+  run_pane "${PC[0]}"
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  [ "${JOINV[*]: -2}" = "--effort high" ] # the pane has no arguments of its own
+  [ "$(grep -c -x -- --effort < <(printf '%s\n' "${JOINV[@]}"))" -eq 1 ]
+  run_pane "${PC[1]}"
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  [ "${JOINV[*]: -2}" = "--effort medium" ]
+  [ "$(grep -c -x -- --effort < <(printf '%s\n' "${JOINV[@]}"))" -eq 1 ]
+}
+
+@test "[agent] effort under an agent whose profile has no profile_effort_args: the launch says the level is not applied, and runs the agent without it" {
+  two_profiles
+  agents '[agent]' 'effort = high'
+  run_engine "$P2" -- asb --role r codex --x
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'r': its effort level high (.agent-sandbox [agent]) is not applied: profile 'codex' has no way to give its agent one (profile_effort_args)"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+  [ "${JOINV[0]##*/}" = codex ]
+  [ "${JOINV[*]:1}" = "--x" ]
+  # --check says so too; claude's profile gives it
+  run_engine "$P2" -- asb --check --role r codex
+  [[ "$output" == *"  effort: high -- .agent-sandbox [agent]; NOT APPLIED: profile codex has no way to give its agent one (profile_effort_args)"* ]]
+  run_engine "$P2" -- asb --role r claude
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort high" ]
+  [[ "$output" != *"is not applied"* ]]
+}
+
 @test "--roles --agent: the role's form reaches its pane alone, as a bare --agent; a bare one reaches every pane (#355)" {
   two_profiles
   run_engine TMUX_DUMP="$TM" "$P2" -- asb --roles a b --agent b=codex --resume

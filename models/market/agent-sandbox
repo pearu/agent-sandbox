@@ -20,4 +20,6 @@ git = refuse                      # no git over HTTPS; and no [ssh] host, so no 
 mode = off
 [briefing:market-*]
 file = .asb/roles/market.md
+[agent:market-*]
+effort = high                     # in its agent's words (claude: --effort high): sources weighed, prices compared
 [connect:default]                 # your own sessions here keep the directory's policy

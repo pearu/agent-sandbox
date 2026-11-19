@@ -66,6 +66,19 @@
 #                               carries, the briefing on or off (not --exec, not a
 #                               verb); the engine puts them first. _preset (the
 #                               sandbox's preset) is in scope (#6).
+#   profile_effort_args LEVEL   optional. Sets profile_effort_argv to the
+#                               agent's arguments that run its session at
+#                               a role's effort level ([agent] effort =
+#                               LEVEL in a project's file, one of low
+#                               medium high xhigh max), for every launch of
+#                               such a role that runs the agent as a session
+#                               (not --exec, a verb, a review, nor --serve's
+#                               or --summarize's own invocation: their turns
+#                               are launches); called once, after the level is
+#                               validated, never for `effort = -`. The engine
+#                               puts them before the agent's own arguments,
+#                               after the briefing's. Without it, a level is
+#                               said not to be applied.
 #   profile_start_args TEXT ARGS...
 #                               optional. Sets profile_start_argv to the
 #                               agent's arguments that run TEXT as the
@@ -559,6 +572,20 @@ _claude_watch_ok() {
     esac
   done
   return 0
+}
+
+# profile_effort_args LEVEL -- engine hook: a role's effort level, Claude Code's own
+# `--effort LEVEL` (its --help: `--effort <level>  Effort level for the current session
+# (low, medium, high, xhigh, max)`, the engine's levels), into profile_effort_argv, which
+# the engine puts before the agent's own arguments: a subcommand refuses it after it
+# (`claude mcp list --effort high` is "unknown option"; `claude --effort high mcp list`
+# works), and after a typed `--` it would be another command's (`mcp add NAME -- CMD`)
+# or the prompt's. Of two --effort options the last wins, so one the user types among
+# their own arguments overrides the role's; the role's overrides a level in a settings
+# file (`effortLevel`, the user's own --settings too). Measured on 2.1.311 by the level
+# in the request Claude Code sends, interactive and -p, the briefing's words on or off.
+profile_effort_args() {
+  profile_effort_argv=(--effort "$1")
 }
 
 # profile_start_args TEXT [AGENT ARGS...] -- engine hook: the arguments that make Claude

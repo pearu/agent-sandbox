@@ -81,12 +81,18 @@
 # base (claude: ~/.claude); `-` is the base, your own login. `asb --agent AGENT
 # --account NAME --login` logs one in; a launch refuses while it is missing.
 # `--account ROLE=NAME` on the line beats the file.
+# `effort = LEVEL`: the role's effort level, one of low medium high xhigh max, given
+# to its agent by the agent's profile before the agent's own arguments (claude:
+# --effort LEVEL); an --effort you type on the line wins. `-` is none: the agent's own
+# level, yours from its settings.
 #[agent]
 #command = claude
 #account = work
+#effort = high
 #[agent:planner-*]
 #command = codex
 #account = -
+#effort = high
 
 
 # --- Memory scoping ------------------------------------------------------

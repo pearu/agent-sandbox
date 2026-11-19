@@ -6,7 +6,8 @@
 
 # ---- every role's agent: what a launch with no command runs, the native arguments
 #   after it (asb --role NAME --resume, asb --roles NAME... --resume); one role's own
-#   is an [agent:NAME] command = AGENT ARGS section of yours
+#   is an [agent:NAME] command = AGENT ARGS section of yours. Each role's effort level
+#   is its [agent:...] effort below, in its agent's words (claude: --effort LEVEL)
 [agent]
 command = claude
 
@@ -41,6 +42,8 @@ watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
+[agent:planner-*]
+effort = high                     # Statements and Tasks: the reasoning the round rests on
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-{n}]
@@ -59,6 +62,8 @@ watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
+[agent:implementer-*]
+effort = high                     # the code, its tests and its measurements
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-{n}]
@@ -70,6 +75,8 @@ watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
+[agent:reviewer-*]
+effort = high                     # finds what the Implementer missed
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -89,6 +96,8 @@ Bash(git merge:*)
 #@own Bash(micromamba env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
+[agent:supervisor]
+effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal stays open: it wakes on its inbox, as every role does
@@ -118,6 +127,8 @@ watch = .asb/coord/to/{role}.md
 [briefing:gate]
 file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
+[agent:gate]
+effort = low                      # executes an approved message as written
 
 #@own # ---- setup: builds the environment, once per project, again after main moves ----
 #@own #   asb --role setup claude
@@ -133,3 +144,5 @@ start = .asb/start/gate.md        # its first turn: arm the watcher, read the in
 #@own git = refuse
 #@own [briefing:setup]
 #@own file = .asb/roles/setup.md
+#@own [agent:setup]
+#@own effort = high                     # a failing build is debugged here
