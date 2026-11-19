@@ -455,6 +455,26 @@ no_tmux_path() {
   [ "$status" -eq 0 ]
 }
 
+@test "--roles with no role named, under agent-sandbox's conda root: the setup role's [conda] name is this project's environment there, not built until it is" {
+  local root="$H/home/.local/share/agent-sandbox/conda" mm="$H/home/.local/share/agent-sandbox/micromamba/bin" env
+  env="$root/envs/$(project_env_dir "$(cd "$H/proj" && pwd -P)")/dev"
+  mkdir -p "$mm" "$env" "$root/envs/dev/conda-meta" # the old layout's, built: not this project's
+  printf '#!/bin/sh\n' >"$mm/micromamba" && chmod +x "$mm/micromamba"
+  agents '[agent]' 'command = claude' '[connect:supervisor]' '[connect:planner-1]' \
+    '[conda:setup]' 'base = sandbox' 'name = dev' '[connect:setup]'
+  run_engine TMUX_DUMP="$TM" -- asb --roles --resume
+  [[ "$output" == *"--roles: the setup role has not built the environment at ~/.local/share/agent-sandbox/conda/envs/${env#"$root/envs/"} yet: running asb --role setup"* ]] || {
+    printf '%s\n' "$output" | tail -5 >&3
+    false
+  }
+  [ ! -e "$TM" ] && [ ! -e "$TM.has" ]
+  mkdir "$env/conda-meta"
+  run_engine TMUX_DUMP="$TM" -- asb --roles --resume
+  [ "$status" -eq 0 ]
+  pane_cmds
+  [ "${PC[0]}" = "$(window --role supervisor --resume)" ]
+}
+
 @test "--roles with no role named: the project's supervisor, planners, implementers, reviewers and gate, in that order, numbered by number, no other role; a setup not run yet runs --role setup in this terminal instead" {
   local env="$H/env-own"
   mkdir -p "$env"
