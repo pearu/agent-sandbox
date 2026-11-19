@@ -3527,3 +3527,14 @@ EOF
   run ! grep -qE '\{(env|envpath)\}' "$sup"
   section '[permissions:supervisor]' "$df" | grep -qx 'Bash(micromamba env update:\*)'
 }
+
+@test "under agent-sandbox's conda root, a model whose Implementers clone the environment but whose file has no {envpath} line clones this project's environment, by its path" {
+  sandbox_base
+  cp -r "$REPO_ROOT/models/roles" "$H/roles-noenvpath"
+  sed -i '/{envpath}/d' "$H/roles-noenvpath/agent-sandbox"
+  run ! grep -qF '{envpath}' "$H/roles-noenvpath/agent-sandbox"
+  mkdir -p "$ROOT/envs/$PDIR/x-dev/conda-meta"
+  init AGENT_SANDBOX_CONDA_BASE=sandbox CONDA_LOG="$H/mm.log" -- "$H/roles-noenvpath" planner=1 implementer=1 reviewer=1 --env x-dev
+  [ "$status" -eq 0 ]
+  grep -qx "create -q -y -r $ROOT --clone $ROOT/envs/$PDIR/x-dev -p $PROJ/.asb/impl/1/.env" "$H/mm.log"
+}

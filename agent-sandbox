@@ -14859,7 +14859,11 @@ _as_init() {
     elif [[ -n "$env" && -n "$prefix" && ! -e "$proj/$prefix" && ! -L "$proj/$prefix" ]]; then
       _as_msg "cloning conda env '$env' into $prefix (for $inst)"
       if [[ "$_conda_mode" == sandbox ]]; then
-        "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$envpath" -p "$proj/$prefix" >/dev/null || {
+        # by its prefix: a name is this project's under the root (envpath is resolved only
+        # for a file that names {envpath}, so not taken for granted here)
+        local csrc="${envpath:-$env}"
+        [[ -n "$envpath" || "$env" == */* ]] || csrc="$(_as_sandbox_env_prefix "$env" "$proj")"
+        "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$csrc" -p "$proj/$prefix" >/dev/null || {
           _as_msg "--init: 'micromamba create --clone $env -p $prefix' failed (conda base = sandbox, $_conda_mode_src)"
           return 1
         }
