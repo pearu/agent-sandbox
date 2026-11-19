@@ -439,6 +439,24 @@ no_host_conda() {
   [ "$(setenv_value PATH)" = "$MM:$H/bin:/usr/bin:/bin" ]
 }
 
+@test "[conda] base = sandbox, the old layout: a declaration of <root>/envs/NAME is refused naming the project's new path; a name built there is not found, and the message says where it went" {
+  fake_micromamba
+  mkdir -p "$ROOT/envs/dev/conda-meta"
+  printf '[conda]\nbase = sandbox\nprefix = %s\n[connect]\n%s/ = copy-on-write\n' "$ROOT/envs/dev" "$ROOT/envs/dev" >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing '$ROOT/envs/dev/' ('$ROOT/envs/dev' is inside the sandbox's own control plane '$H/home/.local/share/agent-sandbox'), in every mode -- that is where agent-sandbox once kept a conda environment; this project's dev is now $PENVS/dev: change the lines naming the old path to it (the prefix too), build or move the environment there, and approve the file again (asb --trust)."* ]]
+  [ ! -s "$H/argv" ]
+  printf '[conda]\nbase = sandbox\nname = dev\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"conda env 'dev' not found under $PENVS"* ]]
+  [[ "$output" == *"$ROOT/envs/dev is where agent-sandbox once kept it; a project's environments are now in a directory of its own: rebuild it at $PENVS/dev, or move it there"* ]]
+  run ! setenv_value CONDA_PREFIX
+}
+
 @test "[conda] base: the shell's AGENT_SANDBOX_CONDA_BASE wins, the file's default is install.sh's answer, host with no conda falls back" {
   fake_micromamba
   local base="$H/conda"

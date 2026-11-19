@@ -2162,7 +2162,13 @@ _as_connect_parse_path() {
     if _as_path_protected "$c" "$mode" decl; then
       local every="in every mode"
       [[ "$_prot_path" == "$HOME"/.local/bin && "$_prot_how" != contains ]] && every="in every mode but read-only"
-      _as_msg "connect ($where): refusing '$key' ('$c' $_prot_how $_prot_what '$_prot_path'), $every."
+      # an environment of the conda root's old layout (<root>/envs/NAME): where it is now
+      local _croot _old=""
+      _croot="$(_as_conda_root)"
+      if [[ "$c" == "$_croot"/envs/?* && "$c" != "$_croot"/envs/*/* ]]; then
+        _old=" -- that is where agent-sandbox once kept a conda environment; this project's ${c##*/} is now $(_as_sandbox_env_prefix "${c##*/}"): change the lines naming the old path to it (the prefix too), build or move the environment there, and approve the file again (asb --trust)"
+      fi
+      _as_msg "connect ($where): refusing '$key' ('$c' $_prot_how $_prot_what '$_prot_path'), $every$_old."
       return 1
     fi
   done
@@ -19137,6 +19143,8 @@ agent_sandbox() (
     elif [[ -n "$_cbase" ]]; then
       _as_conda_base_only "$_cbase"
       _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found under ${_cenv%/*}: $_cwhat ($_cbase/envs is not writable here)"
+      [[ "$_conda_mode" == sandbox && -d "$_cbase/envs/$_df_conda_name/conda-meta" ]] \
+        && _as_msg ".agent-sandbox: $_cbase/envs/$_df_conda_name is where agent-sandbox once kept it; a project's environments are now in a directory of its own: rebuild it at $_cenv, or move it there (a moved environment's scripts still name the old path)"
     else # the host's: an active env with no base to find
       _as_msg ".agent-sandbox: conda env '$_df_conda_name' not found: no conda base was found on this host, only the active env"
     fi
