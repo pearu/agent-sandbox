@@ -140,6 +140,30 @@ settings_of() {
   [ -d "$st" ] # (the comparison above saw the state dir, not an empty home)
 }
 
+@test "[agent] effort and --serve: its own invocation calls no effort hook; a turn, joined into the running role as the loop runs one, carries the level once, before -p" {
+  effort_hook_profiles
+  printf '[agent]\ncommand = claude\neffort = high\n[serve:worker]\nwatch = inbox.md\nprompt = p.md\n' >"$PROJ/.agent-sandbox"
+  : >"$PROJ/p.md"
+  trust
+  # the loop's own invocation, past the role and the [serve] check, refused before the
+  # loop starts (a bubblewrap below 0.12.0): no level for it, whose turns take their own
+  run_engine "$PE" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --role worker --serve claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is below 0.12.0"* ]]
+  [ -z "$(effort_calls)" ]
+  # a turn: the engine again, as the loop runs it (_as_serve), into the running role
+  engine_bg "$PE" -- asb --role worker claude
+  effort_calls >/dev/null
+  run_engine "$PE" AGENT_SANDBOX_SERVE_TURN=1 -- \
+    asb --role worker claude -p --resume 01234567-89ab-cdef-0123-456789abcdef --permission-mode bypassPermissions 'Read your inbox.'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'worker'"* ]]
+  [ "$(effort_calls)" = high ]
+  [ "${JOINV[*]:1}" = "--effort high -p --resume 01234567-89ab-cdef-0123-456789abcdef --permission-mode bypassPermissions Read your inbox." ]
+  [ "$(grep -c -x -- --effort "$H/join")" -eq 1 ]
+  release_bg
+}
+
 @test "--serve refuses a role with no [serve] section, naming the --apply line; and one missing a key" {
   run_engine -- asb --role planner-1 --serve claude
   [ "$status" -eq 1 ]

@@ -703,6 +703,12 @@ lines bind only the tools that use the proxy.
 # Review it, add what this project needs -- hosts to allow, a Planner's material --
 # and approve it with `asb --trust`; `asb --check --role NAME` shows what a role has.
 
+# ---- every role's agent: what a launch with no command runs, the native arguments
+#   after it (asb --role NAME --resume, asb --roles NAME... --resume); one role's own
+#   is an [agent:NAME] command = AGENT ARGS section of yours. Each role's effort level
+#   is its [agent:...] effort below, in its agent's words (claude: --effort LEVEL)
+[agent]
+command = claude
 # ---- what every role gets: --init writes it per role, [connect:planner-*] and so on --
 [sandbox:planner-*]
 preset = inherit
@@ -804,6 +810,8 @@ watch = .asb/coord/to/planner-2.md
 prompt = .asb/serve/planner-2.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
+[agent:planner-*]
+effort = high                     # Statements and Tasks: the reasoning the round rests on
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-1]
@@ -830,6 +838,8 @@ watch = .asb/coord/to/implementer-2.md
 prompt = .asb/serve/implementer-2.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
+[agent:implementer-*]
+effort = high                     # the code, its tests and its measurements
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
@@ -840,6 +850,8 @@ watch = .asb/coord/to/reviewer-1.md
 prompt = .asb/serve/reviewer-1.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
+[agent:reviewer-*]
+effort = high                     # finds what the Implementer missed
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -858,6 +870,8 @@ Bash(conda env update:*)
 Bash(micromamba env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
+[agent:supervisor]
+effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal stays open: it wakes on its inbox, as every role does
@@ -886,6 +900,8 @@ watch = .asb/coord/to/gate.md
 [briefing:gate]
 file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
+[agent:gate]
+effort = low                      # executes an approved message as written
 
 # ---- setup: builds the environment, once per project, again after main moves ----
 #   asb --role setup claude
@@ -900,7 +916,31 @@ retrieve-only = on                # GET and HEAD only; asb --apply '[net:setup]'
 git = refuse
 [briefing:setup]
 file = .asb/roles/setup.md
+[agent:setup]
+effort = high                     # a failing build is debugged here
 ```
+
+Each role has an effort level of its own, `[agent:...] effort` (`--effort LEVEL` for
+claude; [config.md](config.md#effort)), chosen by what the role spends its turns on:
+
+- **Planners: `high`.** Their Statements and Tasks are the reasoning the whole round
+  rests on; a weak Statement costs every role downstream.
+- **Implementers: `high`.** They write the code, its tests and the measurements, where a
+  shallow pass shows up as a failed Gate run or a Reviewer's round trip.
+- **Reviewers: `high`.** Their work is finding what the Implementer missed, which a
+  quick read does not.
+- **The Supervisor: `medium`.** It routes messages, merges and builds on your word; the
+  reasoning it relays is the other roles', and it answers you in your terminal, where
+  speed matters.
+- **The Gate: `low`.** It executes a message you approved as written, and decides
+  nothing.
+- **Setup: `high`.** A build that fails is debugged here, once per project; written only
+  for an environment of the project's own.
+
+Change one by editing the `effort` line of the role's section, then `asb --trust`;
+`effort = -` runs the role at its agent's own level (yours, from its settings), and
+`--init` leaves such a section as it is. An `--init` run on a file from before the
+levels adds the sections the file lacks.
 
 Add to it what a round turns out to need, when it does; `asb --trust` then reviews the
 change.

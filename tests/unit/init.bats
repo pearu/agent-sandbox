@@ -1816,7 +1816,7 @@ EOF
   # the shared template's own lines were never written: said as lines the model has
   [[ "$output" == *"--apply '[connect:implementer-1]' '$ep/ = copy-on-write'"* ]]
   # the setup role the no-env --init wrote: said, and left
-  [[ "$output" == *"--init: .agent-sandbox has the setup role setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([sandbox:setup] [connect:setup] "*"[net:setup] "*"[briefing:setup]) and its purpose file .asb/roles/setup.md, then agent-sandbox --trust; agent-sandbox --role setup --delete claude removes its stores, if it was ever launched"* ]]
+  [[ "$output" == *"--init: .agent-sandbox has the setup role setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([sandbox:setup] [connect:setup] "*"[net:setup] "*"[briefing:setup] [agent:setup]) and its purpose file .asb/roles/setup.md, then agent-sandbox --trust; agent-sandbox --role setup --delete claude removes its stores, if it was ever launched"* ]]
   [[ "$output" == *"  - the left-over setup role setup above: yours to remove"* ]]
   grep -qx '\[connect:setup\]' "$df"
   # its purpose file, kept, tells it what it sees then: a shared environment, nothing to build
@@ -1850,7 +1850,7 @@ EOF
   [ "$status" -eq 0 ]
   init MAMBA_ROOT_PREFIX="$H/conda" -- github --shared-env torch-dev
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--init: .agent-sandbox has the setup role gh-setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([connect:gh-setup] [net:gh-setup] [briefing:gh-setup]) and its purpose file .asb/roles/gh-setup.md, then agent-sandbox --trust; agent-sandbox --role gh-setup --delete claude removes its stores, if it was ever launched"* ]]
+  [[ "$output" == *"--init: .agent-sandbox has the setup role gh-setup: a shared environment, built by the project that owns it, needs no setup role here. --init leaves it; to remove it, delete its sections from .agent-sandbox ([connect:gh-setup] [net:gh-setup] [briefing:gh-setup] [agent:gh-setup]) and its purpose file .asb/roles/gh-setup.md, then agent-sandbox --trust; agent-sandbox --role gh-setup --delete claude removes its stores, if it was ever launched"* ]]
   grep -qx '\[connect:gh-setup\]' "$df" # not removed
   [ -f "$PROJ/.asb/roles/gh-setup.md" ]
   grep -qx "prefix = $H/conda/envs/torch-dev .*" "$df" # what gh-setup reads
@@ -2486,7 +2486,7 @@ shared_env() {
   run ! grep -qE '`asb --role NAME claude`|claude --continue|with `--continue`' "$PROJ/.asb/roles/supervisor.md"
   # what those lines resolve: an unsuffixed [agent], written once, not per role pattern
   [ "$(sed -n '/^\[agent\]$/,/^\[/p' "$PROJ/.agent-sandbox" | grep -cx 'command = claude')" -eq 1 ]
-  run ! grep -q '^\[agent:' "$PROJ/.agent-sandbox"
+  [ "$(grep -c '^command = ' "$PROJ/.agent-sandbox")" -eq 1 ] # no [agent:...] section sets one
   # and the review reads it as every role's agent
   run_review
   [[ "$output" == *"[agent] command = claude: the agent of every role is claude (the profile claude, installed here), with no fixed arguments"* ]]
@@ -2625,6 +2625,86 @@ shared_env() {
   for r in supervisor planner implementer reviewer gate; do
     [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
   done
+}
+
+# effort_of HEADER FILE -- the effort line's value under HEADER in FILE, comments dropped.
+effort_of() {
+  sed -n "/^$(printf '%s' "$1" | sed 's/[][*.]/\\&/g')/,/^\[/{s/^effort = \([a-z]*\).*/\1/p}" "$2"
+}
+
+@test "the roles model: each role's effort level, an [agent:...] section of its own -- planners, implementers, reviewers and setup high, the Supervisor medium, the Gate low; none for setup under --shared-env" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox"
+  [ "$(effort_of '[agent:planner-*]' "$df")" = high ]
+  [ "$(effort_of '[agent:implementer-*]' "$df")" = high ]
+  [ "$(effort_of '[agent:reviewer-*]' "$df")" = high ]
+  [ "$(effort_of '[agent:supervisor]' "$df")" = medium ]
+  [ "$(effort_of '[agent:gate]' "$df")" = low ]
+  [ "$(effort_of '[agent:setup]' "$df")" = high ]
+  [ "$(grep -c '^effort = ' "$df")" -eq 6 ] # once per role pattern, never per instance
+  # the review takes them; --check shows a role's, in the profile's words
+  run_review
+  [[ "$output" == *"[agent:gate] effort = low: the roles gate run at the effort level low"* ]]
+  [[ "$output" != *"not an effort level"* ]]
+  # under --shared-env there is no setup role, and no level for it
+  rm -rf "$PROJ/.asb" "$df"
+  shared_env torch-dev
+  init MAMBA_ROOT_PREFIX="$H/conda" -- roles planner=1 --shared-env torch-dev
+  [ "$status" -eq 0 ]
+  run ! grep -qF '[agent:setup]' "$df"
+  [ "$(grep -c '^effort = ' "$df")" -eq 5 ]
+}
+
+@test "the roles model on a file written before the effort levels: --init adds the [agent:...] sections it lacks, and an existing [agent:ROLE] section without effort gets its --apply line" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox"
+  # a file from before: no [agent:...] section; the gate's agent named by the user
+  sed -i '/^\[agent:/,/^effort = /d' "$df"
+  run ! grep -q '^effort = ' "$df"
+  printf '[agent:gate]\ncommand = claude --model x\n' >>"$df"
+  cp "$df" "$H/before"
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [agent:planner-*] [agent:implementer-*] [agent:reviewer-*] [agent:supervisor] [agent:setup]"* ]]
+  cmp <(head -n "$(wc -l <"$H/before")" "$df") "$H/before" # nothing before it changed
+  [ "$(effort_of '[agent:supervisor]' "$df")" = medium ]
+  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low'" <<<"$output"
+}
+
+@test "the roles model with a role's effort = - (no level, the agent's own): a second --init leaves the file byte-identical, the section being there, and offers no --apply line for it" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox"
+  sed -i '/^\[agent:gate\]$/,/^effort = /s/^effort = .*/effort = -/' "$df"
+  [ "$(effort_of '[agent:gate]' "$df")" = "" ] # (effort_of reads letters: - is none of them)
+  grep -A1 -x '\[agent:gate\]' "$df" | grep -qx 'effort = -'
+  cp "$df" "$H/before"
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/before"
+  [[ "$output" != *"[agent:gate]"* ]]
+  # and the review accepts it
+  run_review
+  [[ "$output" == *"[agent:gate] effort = -: the roles gate run at their agent's own effort level"* ]]
+  [[ "$output" != *"not an effort level"* ]]
+}
+
+@test "the github model: every role's effort level high, gh-setup's with an environment of the project's own; the market model's high" {
+  init -- github
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox"
+  [ "$(effort_of '[agent:gh-review-*]' "$df")" = high ]
+  [ "$(effort_of '[agent:gh-triage-*]' "$df")" = high ]
+  [ "$(effort_of '[agent:gh-fix-*]' "$df")" = high ]
+  [ "$(effort_of '[agent:gh-setup]' "$df")" = high ]
+  [ "$(grep -c '^effort = ' "$df")" -eq 4 ]
+  rm -rf "$PROJ/.asb" "$df"
+  init -- market
+  [ "$status" -eq 0 ]
+  [ "$(effort_of '[agent:market-*]' "$df")" = high ]
+  [ "$(grep -c '^effort = ' "$df")" -eq 1 ]
 }
 
 @test "the roles model: a Task may start fresh -- the Supervisor asks the user before a new Task, writes the reset marker and sends once it is gone, or asks for /clear when nobody took it; every other role writes to its memory before done, and resumes a turn cut short without asking" {

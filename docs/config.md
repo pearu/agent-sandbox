@@ -1361,6 +1361,51 @@ so. Without an account such a line would add nothing; with one it would put the 
 or its login, back over the account. Other paths under the base are declarations like
 any other: `[share-memory]`'s `~/.claude/projects/{slug:P}/memory/` is one.
 
+### Effort
+
+```ini
+[agent]
+effort = medium                   # every role's level
+
+[agent:planner-*]
+effort = high                     # the planners'
+[agent:gate]
+effort = -                        # none: the agent's own
+```
+
+`effort = LEVEL` is the role's effort level, one of `low`, `medium`, `high`, `xhigh`,
+`max` (Claude Code's `--effort` levels: its `--help`, 2.1.311), or `-`, none. The level
+is the engine's word, not the agent's: the role's agent's profile gives it to its agent
+(its `profile_effort_args` hook, [profiles.md](profiles.md); claude: `--effort LEVEL`),
+so a role keeps its level when its agent changes (`command = codex`, `--agent
+ROLE=codex`). `[agent:<glob>]` beats `[agent]` as for `command` and `account`, the
+later suffixed line winning; there is no line form. `effort = -` names no level, as
+`account = -` names the base: the role runs at its agent's own effort level, whatever a
+weaker line says.
+
+A launch of the role puts the profile's words **before** the agent's own arguments,
+after the briefing's, under every preset, and for a command typed on the line too, a
+join, and the agent an `asb` inside a sandbox runs: `asb --role planner-1 --resume`
+runs `claude --effort high --continue`, and `asb claude mcp list` runs `claude --effort
+medium mcp list`. A subcommand takes them there and refuses them after it (`claude mcp
+list --effort high` is "unknown option"), and the words after a typed `--` stay the
+other command's (`asb claude mcp add srv -- npx my-server` records `npx my-server`). Of
+two `--effort` options Claude Code takes the last (measured on 2.1.311, by the level in
+the request it sends, interactive and `-p`), so an `--effort` you type on the line wins
+over the role's. The role's level wins over one in a settings file -- `effortLevel` in
+your `settings.json`, or in a `--settings` you type -- as any option does: a role that
+should keep yours says `effort = -`.
+
+An agent whose profile has no `profile_effort_args` runs without the level, and its
+launch says that it is not applied. A `--roles` pane carries nothing: each pane's
+launch resolves its own role's level from the approved file. `--exec`, a verb, a role
+verb and a review take none; `--serve` and `--summarize` take it in their turns, which
+are launches of the role, and not in their own invocation. A value that is not a level
+(nor `-`) is refused at the review (the file cannot be approved) and by `--check`, and
+a launch refuses it. The review says each line, for which roles; `--check` shows the
+level in force and where it was named, and whether the role's agent's profile gives
+it.
+
 ## The config file: the `config` channel
 
 Claude Code's top-level config file, `~/.claude.json`, holds app state

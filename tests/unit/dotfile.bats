@@ -1323,6 +1323,204 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$(cat "$H/home/.local/state/agent-sandbox/claude/${PROJ//[^A-Za-z0-9-]/-}/r1/agent")" = $'line\nclaude' ]
 }
 
+@test "[agent:<glob>] effort: the profile's effort words (profile_effort_args) before the agent's own arguments, for that role and no other; before --resume's words; a typed command too" {
+  printf '[connect:*]\n[agent:r]\ncommand = claude --model x\neffort = high\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --role r
+  [ "$status" -eq 0 ]
+  [ "${JOINV[0]##*/}" = claude ]
+  [ "${JOINV[*]:1}" = "--effort high --model x" ]
+  run_engine -- asb --role r --resume
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort high --model x --continue" ]
+  # a command typed on the line: the role's level still, its own options not looked into;
+  # one the user typed comes after the role's, so it is the one Claude Code takes
+  run_engine -- asb --role r claude -p hi
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort high -p hi" ]
+  run_engine -- asb --role r claude --effort low -p hi
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort high --effort low -p hi" ]
+  # another role: none
+  run_engine -- asb --role q claude -p hi
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-p hi" ]
+  # --exec runs a program, not the agent: nothing added
+  run_engine -- asb --role r --profile claude --exec true x
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]}" = "true x" ]
+}
+
+@test "[agent] effort is every role's level; a role's own [agent:<glob>] effort wins, whatever the order" {
+  printf '[connect:*]\n[agent:r*]\neffort = max\n[agent]\ncommand = claude\neffort = low\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --role q
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort low" ]
+  run_engine -- asb --role r1
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort max" ]
+  # effort = -: no level for the roles it names, whatever a weaker line says
+  printf '[connect:*]\n[agent]\ncommand = claude\neffort = low\n[agent:gate]\neffort = -\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --role gate claude -p hi
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-p hi" ]
+  run_engine -- asb --role q claude -p hi
+  [ "${JOINV[*]:1}" = "--effort low -p hi" ]
+  # an unapproved file gives no level
+  printf '[agent]\neffort = low\n' >"$PROJ/.agent-sandbox"
+  run_engine -- asb --role q claude
+  [ "${JOINV[*]:1}" = "" ]
+}
+
+@test "[agent] effort: a value that is not a level is refused at the review and by --check, naming the levels; a launch on a file approved with one refuses" {
+  printf '[connect:*]\n[agent:r]\neffort = extreme\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [[ "$output" == *"[agent:r] effort = extreme: not an effort level -- one of low medium high xhigh max; a launch refuses it"* ]]
+  [[ "$output" == *"a launch refuses this file as it is, so it cannot be approved."* ]]
+  [ ! -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
+  run_engine -- asb --check --role r claude
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[agent:r] effort = extreme: not an effort level"* ]]
+  # approved anyway (an engine that did not read the key approved it): the launch refuses
+  trust "$PROJ"
+  run_engine -- asb --role r claude
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'r': .agent-sandbox [agent:r] effort = extreme is not an effort level (low medium high xhigh max); refusing the launch"* ]]
+  [ ! -s "$H/join" ]
+  # another role does not take the line
+  run_engine -- asb --role q claude
+  [ "$status" -eq 0 ]
+}
+
+@test "the review and --check show a role's effort level and where it came from" {
+  printf '[connect:*]\n[agent]\neffort = medium\n[agent:r1]\neffort = high\n[agent:r*]\neffort = low\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[agent] effort = medium: every role run at the effort level medium, given to their agent by its profile (profile_effort_args) before the agent's own arguments"* ]]
+  [[ "$output" == *"[agent:r1] effort = high: the roles r1 run at the effort level high"* ]]
+  [[ "$output" == *"[agent:r1] effort = high: role r1 takes the later [agent:r*] effort = low instead"* ]]
+  trust "$PROJ"
+  run_engine -- asb --check --role q claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  effort: medium -- .agent-sandbox [agent]; given by profile claude (profile_effort_args) before the agent's arguments"* ]]
+  run_engine -- asb --check --role r2 claude
+  [[ "$output" == *"  effort: low -- .agent-sandbox [agent:r*]; given by profile claude (profile_effort_args) before the agent's arguments"* ]]
+  [[ "$output" == *"  agent: [agent:r*] effort = low"* ]]
+}
+
+@test "[agent] effort and a typed subcommand or '--': the effort words go before them, so mcp list, mcp add's server command and auth status get theirs unchanged, on a launch and on a join" {
+  printf '[connect:*]\n[agent]\ncommand = claude\neffort = medium\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  # a launch that starts the role
+  run_engine -- asb claude mcp list
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort medium mcp list" ]
+  run_engine -- asb claude mcp add srv -- npx my-server
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort medium mcp add srv -- npx my-server" ]
+  run_engine -- asb --role r claude auth status
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "--effort medium auth status" ]
+  # after the briefing's own words, in a slot of their own, once
+  [ "${JOINB[0]}" = --settings ]
+  [ "$(grep -n -x -m1 -- --settings "$H/join" | cut -d: -f1)" -lt "$(grep -n -x -m1 -- --effort "$H/join" | cut -d: -f1)" ]
+  [ "$(grep -c -x -- --effort "$H/join")" -eq 1 ]
+  # a join into the running role: the same
+  engine_bg -- asb --role r claude
+  run_engine -- asb --role r claude mcp add srv -- npx my-server
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'r'"* ]]
+  [ "${JOINV[*]:1}" = "--effort medium mcp add srv -- npx my-server" ]
+  [ "$(grep -c -x -- --effort "$H/join")" -eq 1 ]
+  release_bg
+}
+
+@test "[agent] effort: profile_effort_args is called once for a launch, a typed command and a join, and never for --exec, a verb, a role verb, --check, effort = - or no level" {
+  effort_hook_profiles
+  printf '[connect:*]\n[agent]\ncommand = claude\neffort = high\n[agent:gate]\neffort = -\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine "$PE" -- asb --role r
+  [ "$status" -eq 0 ]
+  [ "$(effort_calls)" = high ]
+  [ "${JOINV[*]:1}" = "--effort high" ]
+  run_engine "$PE" -- asb --role r claude -p hi
+  [ "$status" -eq 0 ]
+  [ "$(effort_calls)" = high ]
+  [ "${JOINV[*]:1}" = "--effort high -p hi" ]
+  run_engine "$PE" -- asb --role r --profile claude --exec true x
+  [ "$status" -eq 0 ]
+  [ -z "$(effort_calls)" ]
+  [ "${JOINV[*]}" = "true x" ]
+  run_engine "$PE" -- asb --role r --check claude
+  [ "$status" -eq 0 ]
+  [ -z "$(effort_calls)" ]
+  # effort = -: no level, no call
+  run_engine "$PE" -- asb --role gate claude -p hi
+  [ "$status" -eq 0 ]
+  [ -z "$(effort_calls)" ]
+  [ "${JOINV[*]:1}" = "-p hi" ]
+  # a running role: its join gets the level; a verb (the profile's), --status and
+  # --shutdown do not
+  engine_bg "$PE" -- asb --role r claude
+  effort_calls >/dev/null
+  run_engine "$PE" -- asb --role r claude -p hi
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'r'"* ]]
+  [ "$(effort_calls)" = high ]
+  [ "${JOINV[*]:1}" = "--effort high -p hi" ]
+  run_engine "$PE" -- asb --role r claude agents
+  [ "$status" -eq 0 ]
+  [ -z "$(effort_calls)" ]
+  [ "${JOINV[*]:1}" = "agents" ]
+  run_engine "$PE" -- asb --role r --status
+  [ -z "$(effort_calls)" ]
+  run_engine "$PE" -- asb --role r --shutdown
+  [ -z "$(effort_calls)" ]
+  release_bg
+  # no level at all: no call
+  printf '[connect:*]\n[agent]\ncommand = claude\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine "$PE" -- asb --role r claude -p hi
+  [ "$status" -eq 0 ]
+  [ -z "$(effort_calls)" ]
+  [ "${JOINV[*]:1}" = "-p hi" ]
+}
+
+@test "[agent] effort under --preset none, and for the agent an asb inside a sandbox runs: before the agent's own arguments, as a launch puts them; not for a verb" {
+  printf '[connect:*]\n[agent]\ncommand = claude\neffort = high\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --preset none --role r claude mcp list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stub-agent argv: --effort high mcp list"* ]]
+  run_engine -- asb --preset none --role r claude agents
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stub-agent argv: agents"* ]]
+  # Inside is pid 1 being bubblewrap (_as_inside_sandbox), which a unit test cannot
+  # arrange; the engine is sourced and that one test answered yes.
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" bash -c '
+    cd "$1" && source "$2" && _as_inside_sandbox() { return 0; } && agent_sandbox --role r claude mcp add srv -- npx my-server
+  ' _ "$PROJ" "$ENGINE" </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stub-agent argv: --effort high mcp add srv -- npx my-server"* ]]
+}
+
+@test "[agent] effort = -: the review and --check accept it and say the role has no level; a launch runs the agent without one" {
+  printf '[connect:*]\n[agent]\ncommand = claude\neffort = high\n[agent:gate]\neffort = -\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [[ "$output" == *"[agent:gate] effort = -: the roles gate run at their agent's own effort level, whatever a weaker line says"* ]]
+  [[ "$output" != *"not an effort level"* ]]
+  [ -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
+  run_engine -- asb --check --role gate claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  effort: none, the agent's own (-, .agent-sandbox [agent:gate])"* ]]
+  run_engine -- asb --role gate claude -p hi
+  [ "$status" -eq 0 ]
+  [ "${JOINV[*]:1}" = "-p hi" ]
+  [[ "$output" != *"effort"* ]]
+}
+
 @test "the role's agent: an unapproved file is not read, and no agent anywhere names both places; at a terminal it is asked about once (#355)" {
   printf '[agent]\ncommand = claude -u\n' >"$PROJ/.agent-sandbox"
   run_engine -- asb --role r

@@ -153,6 +153,25 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A role's effort level: `[agent] effort = LEVEL`.** One of `low medium high xhigh max`
+  (Claude Code's `--effort` levels, from its `--help` on 2.1.311), or `-` for none (the
+  agent's own), per role with `[agent:<glob>]`, which beats `[agent]`. The level is the
+  engine's word: the agent's profile gives it to its agent through a new optional hook,
+  `profile_effort_args LEVEL`, which fills `profile_effort_argv` (claude: `--effort
+  LEVEL`), so a role keeps its level when its agent changes. A launch of the role, a
+  typed command's and a join's too, under every preset, puts those words before the
+  agent's own arguments, after the briefing's: a subcommand takes them there
+  (`claude --effort high mcp list`), what follows a typed `--` is left as it was, and an
+  `--effort` typed on the line comes later and wins (Claude Code takes the last,
+  measured on 2.1.311). The role's level wins over an `effortLevel` in a settings file;
+  `effort = -` keeps that. An agent whose profile has no hook runs without it, and the
+  launch says so. `--roles` panes carry nothing: each resolves its own role's level;
+  `--serve` and `--summarize` take it in their turns, not their own invocation. Another
+  value is refused at the review, by `--check` and at a launch; the review and
+  `--check` show the level and where it came from. The shipped
+  models set one per role: the roles model's planners, implementers, reviewers and setup
+  `high`, the Supervisor `medium`, the Gate `low`; the github model's every role `high`;
+  the market model's `high`. `--init` on a file from before adds the sections it lacks.
 - **`asb --roles` with no role named opens the project's roles.** The approved
   `.agent-sandbox`'s supervisor, planner-N, implementer-N, reviewer-N and gate roles, in
   that order and by number, and no other role; `asb --roles --resume` is the one line

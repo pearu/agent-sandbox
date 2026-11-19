@@ -8531,6 +8531,54 @@ _as_account_resolve() {
   return 0
 }
 
+# _as_effort_levels -- the effort levels a role's [agent] effort takes, space-separated:
+# Claude Code's --effort levels (its --help, measured on 2.1.311), the engine's own words
+# for them; the agent's profile gives one to its agent (profile_effort_args,
+# _as_effort_apply). `effort = -` is no level: the agent's own default.
+_as_effort_levels() { printf 'low medium high xhigh max'; }
+
+# _as_effort_ok LEVEL -- LEVEL is one of _as_effort_levels.
+_as_effort_ok() {
+  [[ " $(_as_effort_levels) " == *" $1 "* && "$1" != *[[:space:]]* && -n "$1" ]]
+}
+
+# _as_effort_resolve ROLE [LINE...] -- the effort level of ROLE: sets _effort (the level as
+# written, `-` for none named, empty for no line) and _effort_from (`dotfile:[agent:<glob>]`
+# or `dotfile:[agent]`), from an approved dot-file's [agent] lines (_df_agent,
+# _as_dotfile_agent) by _as_dotfile_pick: [agent:<glob>] effort over [agent] effort. No
+# line form: the agent's own option, typed after the command, is the agent's.
+_as_effort_resolve() {
+  local role="$1" _dp_val _dp_from
+  shift
+  _as_dotfile_pick "$role" effort "$@"
+  _effort="$_dp_val" _effort_from="$_dp_from"
+  return 0
+}
+
+# _as_effort_apply ROLE [LINE...] -- the effort level of ROLE, for a launch that runs the
+# agent as a session (the caller decides which): resolved from the approved file's [agent]
+# lines (_as_effort_resolve). None, or `-`: nothing. One that is not a level refuses the
+# launch (rc 2): the review would not have approved it, an older engine's may have. A
+# level is handed, once, to the profile's profile_effort_args, which fills the caller's
+# profile_effort_argv with the words its agent takes it in; the engine puts those, as
+# they are, before the agent's own arguments, so an option the user types among them
+# comes later (claude: the last --effort wins, measured on 2.1.311). A profile without the
+# hook: the level is said not to be applied, and the launch goes on.
+_as_effort_apply() {
+  local _effort="" _effort_from="" _ea_role="$1"
+  _as_effort_resolve "$@"
+  [[ -n "$_effort" && "$_effort" != - ]] || return 0
+  if ! _as_effort_ok "$_effort"; then
+    _as_msg "role '$_ea_role': .agent-sandbox ${_effort_from#dotfile:} effort = $_effort is not an effort level ($(_as_effort_levels)); refusing the launch"
+    return 2
+  fi
+  if ! declare -F profile_effort_args >/dev/null; then
+    _as_msg "role '$_ea_role': its effort level $_effort (.agent-sandbox ${_effort_from#dotfile:}) is not applied: profile '$profile' has no way to give its agent one (profile_effort_args)"
+    return 0
+  fi
+  profile_effort_args "$_effort" || return 1
+}
+
 # _as_account_where FROM -- where an account was named, for a message: `--account`, or the
 # dot-file line's section.
 _as_account_where() {
@@ -9494,9 +9542,10 @@ _as_base_entry_binds() {
 # note, not a refusal: the file may serve another host), and the fixed arguments as
 # written. `--permission-mode bypassPermissions` or `--dangerously-skip-permissions` there is
 # said in its own sentence: it turns off the agent's own prompts, so the sandbox's
-# policy is all that is left.
+# policy is all that is left. An effort level, for which roles, or `-`, none; one that is
+# not a level (_as_effort_ok) fails it, as a launch refuses the file.
 _as_agent_notes() {
-  local e g k v n sect b i what flag
+  local e g k v n sect b i what flag bad=0
   local -a w=()
   for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
     g="${e%%$'\t'*}" e="${e#*$'\t'}"
@@ -9509,6 +9558,17 @@ _as_agent_notes() {
         _as_msg ".agent-sandbox: $sect account = -: $n run on the agent's base, your own login, whatever a weaker line or the defaults say"
       else
         _as_msg ".agent-sandbox: $sect account = $v: $n run on the account '$v' -- its directory $(_as_tilde "$(_as_state_dir)")/AGENT/accounts/$v/ is the agent's state directory, holding its login, shared read-write by every role on that account in every project; a launch is refused while it is missing (log it in with asb --agent AGENT --account $v --login)"
+      fi
+      continue
+    fi
+    if [[ "$k" == effort ]]; then
+      if [[ "$v" == - ]]; then
+        _as_msg ".agent-sandbox: $sect effort = -: $n run at their agent's own effort level, whatever a weaker line says"
+      elif _as_effort_ok "$v"; then
+        _as_msg ".agent-sandbox: $sect effort = $v: $n run at the effort level $v, given to their agent by its profile (profile_effort_args) before the agent's own arguments"
+      else
+        _as_msg ".agent-sandbox: $sect effort = $v: not an effort level -- one of $(_as_effort_levels); a launch refuses it"
+        bad=1
       fi
       continue
     fi
@@ -9541,10 +9601,10 @@ _as_agent_notes() {
   done
   # Among suffixed sections the later line wins (_as_dotfile_pick), so a role a section
   # names exactly takes a later glob's line when that glob matches it too: said, per key
-  # (command, account), since the exact name reads as the stronger one.
+  # (command, account, effort), since the exact name reads as the stronger one.
   local -a sfx=()
   local j eg ev lg lv key
-  for key in command account; do
+  for key in command account effort; do
     sfx=()
     for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
       [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'"$key"$'\t'* ]] || sfx+=("$e")
@@ -9562,7 +9622,7 @@ _as_agent_notes() {
       [[ -z "$lg" || "$lg" != *[*?[]* ]] || _as_msg ".agent-sandbox: [agent:$eg] $key = $ev: role $eg takes the later [agent:$lg] $key = $lv instead (among suffixed sections the later line wins); put [agent:$eg] after it to keep its own"
     done
   done
-  return 0
+  return "$bad"
 }
 
 # _as_trust_notes CWD FILE -- what the review says about the file, before the question:
@@ -9577,8 +9637,10 @@ _as_agent_notes() {
 #     sandbox-only storage and any other mode shows the real one; and a file -- bound
 #     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy);
 #   - each [remote:ALIAS] in full (_as_remote_notes, #344);
-#   - each [agent] line: the roles, the agent, its fixed arguments (_as_agent_notes, #355).
-# Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice.
+#   - each [agent] line: the roles, the agent, its fixed arguments, the account, the
+#     effort level (_as_agent_notes, #355).
+# Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice,
+# an [agent] effort that is not a level.
 # Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
 # serves them all. What depends on the host or the moment -- a path that does not
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
@@ -9656,7 +9718,7 @@ _as_trust_notes() {
   done
   _as_serve_notes
   _as_briefing_start_notes
-  _as_agent_notes
+  _as_agent_notes || remote_rc=1
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
@@ -10287,8 +10349,9 @@ _as_dotfile_line() {
       ;;
     agent)
       # [agent] and [agent:<glob>] (#355): the role's agent and the native arguments
-      # always passed to it, `command = AGENT [ARGS]`, words split at blanks, and its
-      # account, `account = NAME` or `-`; kept with the section's glob, in file order. While a profile's own dot-file is read,
+      # always passed to it, `command = AGENT [ARGS]`, words split at blanks, its
+      # account, `account = NAME` or `-`, and its effort level, `effort = LEVEL` or `-`; kept
+      # with the section's glob, in file order. While a profile's own dot-file is read,
       # `profile` is `agent` (_as_profile_dotfile) and [agent] is that profile's
       # section: its keys go to the profile, as any profile-named section's do.
       if [[ "${profile:-}" == agent ]]; then
@@ -10312,6 +10375,17 @@ _as_dotfile_line() {
               _df_agent+=("$sglob"$'\t'account$'\t'"$cv")
             else
               _as_msg ".agent-sandbox: [agent] account = $cv: not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring"
+            fi
+            ;;
+          effort)
+            # The role's effort level, agent-neutral: the agent's profile gives it to its
+            # agent (profile_effort_args, _as_effort_apply); `-`, none, the agent's own.
+            # Kept as written: one that is not a level (_as_effort_ok) is the review's to
+            # refuse, and a launch's.
+            if [[ -z "$cv" ]]; then
+              _as_msg ".agent-sandbox: [agent] effort names no level (effort = $(_as_effort_levels), or - for none); ignoring"
+            else
+              _df_agent+=("$sglob"$'\t'effort$'\t'"$cv")
             fi
             ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
@@ -12347,6 +12421,20 @@ _as_check_plan() {
         "$invoked" "$profile" "$_acct_name"
     elif [[ -n "${_acct_from:-}" ]]; then
       printf '  account: the base (-, %s)\n' "$(_as_account_where "$_acct_from")"
+    fi
+    # Its effort level: the one in force and where it was named, and whether the profile
+    # gives it (profile_effort_args, not called here: --check runs no agent), or that it
+    # does not (a launch says so, and goes on); `-`, none.
+    local _effort="" _effort_from=""
+    _as_effort_resolve "${_role:-default}" ${_df_agent[@]+"${_df_agent[@]}"}
+    if [[ "$_effort" == - ]]; then
+      printf "  effort: none, the agent's own (-, .agent-sandbox %s)\n" "${_effort_from#dotfile:}"
+    elif [[ -n "$_effort" ]] && ! _as_effort_ok "$_effort"; then
+      printf '  effort: %s -- .agent-sandbox %s; NOT AN EFFORT LEVEL (%s), so a launch refuses\n' "$_effort" "${_effort_from#dotfile:}" "$(_as_effort_levels)"
+    elif [[ -n "$_effort" ]] && declare -F profile_effort_args >/dev/null; then
+      printf "  effort: %s -- .agent-sandbox %s; given by profile %s (profile_effort_args) before the agent's arguments\n" "$_effort" "${_effort_from#dotfile:}" "$profile"
+    elif [[ -n "$_effort" ]]; then
+      printf "  effort: %s -- .agent-sandbox %s; NOT APPLIED: profile %s has no way to give its agent one (profile_effort_args)\n" "$_effort" "${_effort_from#dotfile:}" "$profile"
     fi
     local _ag_e _ag_g
     for _ag_e in ${_df_agent[@]+"${_df_agent[@]}"}; do
@@ -18726,6 +18814,12 @@ agent_sandbox() (
   local profile_clear=""
   # What --resume appends to the agent's arguments (#355; claude: --continue).
   local -a profile_resume=()
+  # The words that give the agent a role's effort level (claude: --effort LEVEL), filled
+  # by the profile's profile_effort_args (_as_effort_apply), once, for a launch of a role
+  # with a level; the engine puts them, as they are, before the agent's own arguments on
+  # every path that runs the agent as a session. Declared here, beside the profile's
+  # other words, since the level is applied once, ahead of the paths that use it.
+  local -a profile_effort_argv=()
   # Its agent's files that are an account's, under its base (#355): none, no accounts.
   local -a profile_account_paths=()
   # What starts its agent's login, for --login (#355); read here only so that the
@@ -18825,17 +18919,23 @@ agent_sandbox() (
     # An account (#355, D11) is a state directory bound in a sandbox; with none there is
     # nothing to bind it in, and running on the base instead would be another login than
     # the one named. Refused, from the line or from an approved file, the role named as
-    # a launch names it; `--account -` runs it on the base, as asked.
+    # a launch names it; `--account -` runs it on the base, as asked. The role and its
+    # [agent] lines are the ones the agent was resolved from (_ag_read), when it was,
+    # else read here: once either way.
     local _na_role="" _na_proj
     local -a _na_lines=()
-    _na_proj="$(pwd -P)"
-    if [[ -f "$_na_proj/.agent-sandbox" ]] && _as_dotfile_trusted "$_na_proj" "$_na_proj/.agent-sandbox"; then
-      mapfile -t _na_lines < <(_as_dotfile_agent "$_na_proj/.agent-sandbox")
-      _na_role="${_na_lines[0]:-}"
-      _na_lines=(${_na_lines[@]+"${_na_lines[@]:1}"})
+    if ((${_ag_read:-0})); then
+      _na_role="$_ag_role" _na_lines=(${_ag_lines[@]+"${_ag_lines[@]}"})
+    else
+      _na_proj="$(pwd -P)"
+      if [[ -f "$_na_proj/.agent-sandbox" ]] && _as_dotfile_trusted "$_na_proj" "$_na_proj/.agent-sandbox"; then
+        mapfile -t _na_lines < <(_as_dotfile_agent "$_na_proj/.agent-sandbox")
+        _na_role="${_na_lines[0]:-}"
+        _na_lines=(${_na_lines[@]+"${_na_lines[@]:1}"})
+      fi
+      ((_role_flag_set)) && _na_role="$_role_flag"
+      [[ -z "${AGENT_SANDBOX_ROLE:-}" ]] || ((_role_flag_set)) || _na_role="$AGENT_SANDBOX_ROLE"
     fi
-    ((_role_flag_set)) && _na_role="$_role_flag"
-    [[ -z "${AGENT_SANDBOX_ROLE:-}" ]] || ((_role_flag_set)) || _na_role="$AGENT_SANDBOX_ROLE"
     _as_account_resolve "${_na_role:-default}" ${_na_lines[@]+"${_na_lines[@]}"} || return 2
     if [[ -n "$_acct_name" ]]; then
       _as_msg "the account '$_acct_name' ($(_as_account_where "$_acct_from")): --preset none runs the agent with no sandbox, so no account's directory can be its state directory; run it on the base with --account -, or in a sandbox"
@@ -18846,9 +18946,19 @@ agent_sandbox() (
       _as_msg "preset none: running '$1' with no sandbox"
       exec "$@"
     fi
+    # The role's effort level, as a sandboxed launch takes it (see the role block below);
+    # not for a profile's verb.
+    local _na_verb=0 _na_v
+    for _na_v in ${profile_verbs[@]+"${profile_verbs[@]}"}; do
+      [[ "${1:-}" != "$_na_v" ]] || _na_verb=1
+    done
+    if ((! _na_verb && ! _do_serve && ! _do_summarize && ! _do_status && ! _do_shutdown && ! _do_delete && ! _check_plan)) \
+      && [[ -z "$_reset_connection" ]]; then
+      _as_effort_apply "${_na_role:-default}" ${_na_lines[@]+"${_na_lines[@]}"} || return $?
+    fi
     ((! _install_pending)) || _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" none || return $?
     _as_msg "preset none: running $profile_command with no sandbox"
-    exec "$profile_bin" "$@"
+    exec "$profile_bin" ${profile_effort_argv[@]+"${profile_effort_argv[@]}"} "$@"
   fi
 
   # ---- management verbs: they join the role's launch, and never start one ----
@@ -19313,6 +19423,30 @@ agent_sandbox() (
   # started; the keeper being joined is the one the live file named.
   ((_df_from_keeper)) && _df_role="$_pre_role"
   _as_role_resolve || return 1
+
+  # ---- the role's effort level (_as_effort_apply) ----
+  # For the launches that run the agent as a session -- a command typed on the line too,
+  # whose own options are not looked into, a join, and the agent an `asb` inside a
+  # sandbox runs -- under every preset (--preset none applies it above): not --exec, a
+  # verb, a role verb, a review, nor --serve's and --summarize's own invocations, whose
+  # turns are launches of their own and take it there. Its words go before the agent's
+  # own arguments (profile_effort_argv's slot in _run_argv), where a subcommand still
+  # takes them and a typed `--` keeps what follows it. The [agent] lines are the approved
+  # file's, read above: the live file's, as the agent's were (_ag_lines); only a join of a
+  # busy keeper, which read its copy, with a typed command reads the live file here.
+  if ((! _do_exec && ! _do_verb && ! _do_serve && ! _do_summarize && ! _do_status && ! _do_shutdown && ! _do_delete && ! _check_plan)) \
+    && [[ -z "$_reset_connection" ]]; then
+    local -a _ef_lines=()
+    if ((! _df_from_keeper)); then
+      _ef_lines=(${_df_agent[@]+"${_df_agent[@]}"})
+    elif ((${_ag_read:-0})); then
+      _ef_lines=(${_ag_lines[@]+"${_ag_lines[@]}"})
+    elif [[ -f "$_dotfile" ]] && _as_dotfile_trusted "$_proj" "$_dotfile"; then
+      mapfile -t _ef_lines < <(_as_dotfile_agent "$_dotfile")
+      _ef_lines=(${_ef_lines[@]+"${_ef_lines[@]:1}"})
+    fi
+    _as_effort_apply "$_role" ${_ef_lines[@]+"${_ef_lines[@]}"} || return $?
+  fi
   # A SELF-CONTAINED PROFILE'S SESSIONS LIVE IN THE ROLE'S STORE (#335), not under
   # $XDG_RUNTIME_DIR: logind removes /run/user/UID and all it holds at the account's last
   # logout (pam_systemd(8)), and such a launch outlives its owner's login. The store is
@@ -19564,7 +19698,7 @@ agent_sandbox() (
   # this path runs the agent unsandboxed. --exec runs its command; anything else, the
   # agent with its arguments. `--trust` is not routed.
   if ((! _do_trust)) && _as_inside_sandbox; then
-    exec "$profile_bin" "$@" # (an --exec was run before the agent was looked up)
+    exec "$profile_bin" ${profile_effort_argv[@]+"${profile_effort_argv[@]}"} "$@" # (an --exec was run before the agent was looked up)
   fi
 
   # ---- profile routing: sandbox this invocation, or hand it off ----
@@ -19728,10 +19862,11 @@ agent_sandbox() (
         local _kpreset
         _kpreset="$(awk -F'\t' '$1 == "preset" { print $2; exit }' "$_keeper_sb/keeper/policy" 2>/dev/null)" || _kpreset=""
         _as_session_args "${_kpreset:-$_preset}" "$@" || return 1
+        # The role's effort level (profile_effort_argv) goes where a launch puts it.
         if [[ -n "$_start_text" ]] && declare -F profile_start_args >/dev/null; then
           profile_start_args "$_start_text" "$@" || return 1
         fi
-        _run_argv=("$profile_bin" ${profile_session_argv[@]+"${profile_session_argv[@]}"} ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
+        _run_argv=("$profile_bin" ${profile_session_argv[@]+"${profile_session_argv[@]}"} ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_effort_argv[@]+"${profile_effort_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
       fi
       _as_info "joining role '${_role:-default}', running since $(date -d "@$(stat -c %Y "$_keeper_sb/keeper/id")" '+%F %T' 2>/dev/null)"
       # The account it runs on is the keeper's (#355), whatever the live file says now.
@@ -20587,12 +20722,14 @@ agent_sandbox() (
     if ((! _do_verb)); then
       _as_session_args "$_preset" "$@" || return 1
     fi
+    # The role's effort level next, after the briefing's and just before the agent's own,
+    # so an option the user typed among those comes after it (profile_effort_argv).
     # The first turn's arguments go LAST, after the agent's own: claude's prompt is its
     # positional argument (profile_start_args).
     if [[ -n "$_start_text" ]] && declare -F profile_start_args >/dev/null; then
       profile_start_args "$_start_text" "$@" || return 1
     fi
-    _run_argv=("$profile_bin" ${profile_session_argv[@]+"${profile_session_argv[@]}"} ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
+    _run_argv=("$profile_bin" ${profile_session_argv[@]+"${profile_session_argv[@]}"} ${profile_briefing_argv[@]+"${profile_briefing_argv[@]}"} ${profile_effort_argv[@]+"${profile_effort_argv[@]}"} ${profile_agent_argv[@]+"${profile_agent_argv[@]}"} ${profile_start_argv[@]+"${profile_start_argv[@]}"})
   fi
 
   # ----- Network mode -----
