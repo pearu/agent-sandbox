@@ -13278,6 +13278,67 @@ _as_init_envfile() {
   return 0
 }
 
+# _as_init_conda_base FILE MODEL ENV ROLE... -- the [conda] base a bare --env ENV (or
+# --shared-env ENV) of an --init of MODEL resolves under (#432): each ROLE's, as its launch
+# takes it -- FILE's [conda] base, the role's own section's over the file's
+# (_as_dotfile_apply_role), wherever in FILE the line is -- for _as_conda_mode, which puts
+# AGENT_SANDBOX_CONDA_BASE first. Sets _icb_base, empty for none. When the ROLEs' bases
+# differ (a role-scoped [conda:GLOB] base), one name cannot name one environment under
+# both: said, naming the lines, and 2 -- nothing is written. FILE is read once.
+_as_init_conda_base() {
+  local file="$1" model="$2" env="$3"
+  shift 3
+  _icb_base=""
+  local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
+  local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
+  local -a _df_gpu_devices=()
+  local -a _df_remote=()
+  local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
+  _as_dotfile_parse "$file" 2>/dev/null
+  _icb_base="$_df_conda_base"
+  (($#)) || return 0
+  local fbase="$_df_conda_base" r m l
+  local _conda_mode="" _conda_mode_src="" _conda_hbase=""
+  local -a ms=()
+  local -A mode_of=() raw_of=() roles_of=()
+  for r; do
+    _df_conda_base="$fbase"
+    _as_dotfile_apply_role "$r" 2>/dev/null
+    if [[ -z "${mode_of[x$_df_conda_base]:-}" ]]; then
+      _as_conda_mode "$_df_conda_base" 2>/dev/null
+      mode_of[x$_df_conda_base]="$_conda_mode"
+    fi
+    m="${mode_of[x$_df_conda_base]}"
+    [[ -n "${raw_of[$m]+x}" ]] || raw_of[$m]="$_df_conda_base" ms+=("$m")
+    roles_of[$m]+=" $r"
+  done
+  _icb_base="${raw_of[${ms[0]}]}"
+  ((${#ms[@]} > 1)) || return 0
+  local flag=--env
+  ((${_init_shared:-0})) && flag=--shared-env
+  _as_msg "--init: $flag $env: .agent-sandbox gives the roles of model '$(basename -- "$model")' two conda bases -- ${ms[0]} for${roles_of[${ms[0]}]}, ${ms[1]} for${roles_of[${ms[1]}]} -- and one name cannot name one environment under both; nothing was written -- give the environment by its path, $flag PATH, or set AGENT_SANDBOX_CONDA_BASE (host or sandbox) for this --init. The [conda] base lines:"
+  # the lines: each [conda] or [conda:GLOB] base line, read as _as_dotfile_parse reads it,
+  # whose section applies to one of the ROLEs
+  while IFS=$'\t' read -r l m r; do
+    for m in "$@"; do
+      # shellcheck disable=SC2053 # the glob is the pattern
+      [[ "$m" == $l ]] || continue
+      printf '    %s\n' "$r" >&2
+      break
+    done
+  done < <(awk '
+    { x = $0; sub(/\r$/, "", x); sub(/#.*/, "", x); gsub(/^[ \t]+|[ \t]+$/, "", x) }
+    x == "" { next }
+    x ~ /^\[.*\]$/ { s = x; gsub(/[ \t]/, "", s); s = substr(s, 2, length(s) - 2); next }
+    (s == "conda" || s ~ /^conda:/) && x ~ /^base[ \t]*=/ {
+      g = (s == "conda") ? "*" : substr(s, 7)
+      print g "\t-\tline " NR ", in [" s "]: " x
+    }' "$file")
+  return 2
+}
+
 _as_init() {
   local model="$1" env="$2"
   shift 2
@@ -13561,11 +13622,40 @@ _as_init() {
   # conda root, in this project's own directory there (_as_sandbox_env_prefix). Another
   # project's environment there (--shared-env) is named by its path: a bare name cannot
   # say whose it is.
+  # The base that applies to a name (#432) is the one the model's roles launch with, the
+  # file's [conda] base included (_as_init_conda_base): each role this --init writes a
+  # [conda...] section for, one instance of a numbered or globbed one.
   # A model with a setup role (`#@ setup = ROLE`) takes one not built yet: its directory
   # is made empty, for conda to create into and for the role's declaration to bind (a
   # declared path that does not exist is skipped at launch).
-  local envpath="" base="/" _conda_mode="" _conda_mode_src="" _conda_hbase=""
-  [[ -n "$env" ]] && _as_conda_mode
+  local envpath="" base="/" _conda_mode="" _conda_mode_src="" _conda_hbase="" _icb_base=""
+  if [[ -n "$env" && "$env" != */* && -z "$envfile" && -f "$proj/.agent-sandbox" ]]; then
+    local cg ci cof=0 cw
+    local -a cglobs=() cinst=()
+    for i in "${!heads[@]}"; do
+      case "${heads[i]%%]*}" in
+        "[conda") cof=1 ;;
+        "[conda:"*)
+          cg="${heads[i]%%]*}"
+          cg="${cg#\[conda:}"
+          cglobs+=("${cg//\{n\}/1}")
+          ;;
+      esac
+    done
+    for rn in "${roles[@]}"; do
+      ((${count[$rn]} > 0)) || continue
+      ci="$rn"
+      [[ "${kind[$rn]}" == multi ]] && ci="$rn-1"
+      cw="$cof"
+      for cg in ${cglobs[@]+"${cglobs[@]}"}; do
+        # shellcheck disable=SC2053 # the glob is the pattern
+        [[ "$ci" == $cg ]] && cw=1 && break
+      done
+      ((cw)) && cinst+=("$ci")
+    done
+    _as_init_conda_base "$proj/.agent-sandbox" "$model" "$env" ${cinst[@]+"${cinst[@]}"} || return $?
+  fi
+  [[ -n "$env" ]] && _as_conda_mode "$_icb_base"
   if [[ -n "$env" ]] && grep -qF '{envpath}' <<<"$tpltext"; then
     case "$env" in
       */*) envpath="$(realpath -m -s -- "$env")" ;;

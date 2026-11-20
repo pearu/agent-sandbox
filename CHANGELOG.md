@@ -1176,6 +1176,22 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **`--init --env NAME` resolves NAME under the conda base the model's roles launch with,
+  the file's `[conda] base` included** (#432). `--init` skipped that key, while a launch
+  honours it. Measured on main 2a6172a, with a file holding only `[conda]`
+  `base = sandbox`, a host with conda, and `dev` built under agent-sandbox's conda root:
+  `--init github --env dev` and `--init roles ... --env dev` exited 0, wrote the host
+  base's `<base>/envs/dev`, and made that directory empty there ("not built yet"),
+  passing over the built environment; only `AGENT_SANDBOX_CONDA_BASE=sandbox` gave the
+  root's. Now a bare `--env NAME` or `--shared-env NAME` takes the base each of the
+  model's roles launches with (`AGENT_SANDBOX_CONDA_BASE`, then the file's `[conda]
+  base`, a role's own over the file's and wherever in the file it is, then
+  `~/.config/agent-sandbox/conda`). When a role-scoped `base` gives some roles another
+  base, the run is refused (exit 2, nothing written), naming the lines: give the
+  environment by its path, or set `AGENT_SANDBOX_CONDA_BASE`. So under a file's
+  `base = sandbox`, a bare `--shared-env NAME` meets the refusal it met under the
+  variable. `--env PATH`, a file with no `base`, and a re-run without the flags are
+  unchanged.
 - **An `--init` re-run without `--env` keeps the environment the file declares, in the
   purpose files too** (#427). A project set up with `asb --init roles --env NAME` and
   run again without it (to add an instance, say) kept its `[conda]` lines, but rewrote

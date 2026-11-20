@@ -2008,6 +2008,196 @@ same() {
   done
 }
 
+# ---- --env NAME under the base the model's roles launch with (#432) ----------------
+# two_bases -- the host has conda ($H/base, empty), and agent-sandbox's conda root has this
+# project's dev built; a stub micromamba clones as conda-stub does. ROOT, PDIR as
+# sandbox_base; RP the root's dev, HP the host base's.
+two_bases() {
+  ROOT="$H/home/.local/share/agent-sandbox/conda" PDIR="$(project_env_dir "$PROJ")"
+  RP="$ROOT/envs/$PDIR/dev" HP="$H/base/envs/dev"
+  mkdir -p "$RP/conda-meta" "$H/base/envs" "$H/home/.local/share/agent-sandbox/micromamba/bin"
+  cp "$H/bin/conda-stub" "$H/home/.local/share/agent-sandbox/micromamba/bin/micromamba"
+}
+# hinit [VAR=value ...] -- ARGS: init with the host's conda (two_bases), conda's log in $H/conda.log
+hinit() {
+  local -a envs=()
+  while [[ $# -gt 0 && "$1" != -- ]]; do
+    envs+=("$1")
+    shift
+  done
+  init MAMBA_ROOT_PREFIX="$H/base" CONDA_EXE="$H/bin/conda-stub" CONDA_LOG="$H/conda.log" ${envs[@]+"${envs[@]}"} "$@"
+}
+
+@test "--env NAME under the file's [conda] base = sandbox, where the host has conda: the root's environment, for github and roles; nothing made under the host's base (#432)" {
+  two_bases
+  local df="$PROJ/.agent-sandbox" m
+  for m in github "roles planner=1 implementer=1 reviewer=1"; do
+    rm -rf "$df" "$PROJ/.asb" "$H/conda.log"
+    printf '[conda]\nbase = sandbox\n' >"$df"
+    # shellcheck disable=SC2086 # the model and its counts, as words
+    hinit -- $m --env dev
+    [ "$status" -eq 0 ]
+    grep -q "^prefix = $RP " "$df"
+    run ! grep -qF "$HP" "$df"
+    [[ "$output" != *"not built yet"* ]]
+    [ ! -e "$HP" ]
+  done
+  # the Implementer's environment: cloned from the root's, by agent-sandbox's micromamba
+  grep -qF -- "--clone $RP -p $PROJ/.asb/impl/1/.env" "$H/conda.log"
+  [ -d "$PROJ/.asb/impl/1/.env/conda-meta" ]
+  grep -qF "$RP" "$PROJ/.asb/roles/setup.md"
+}
+
+@test "--env NAME: AGENT_SANDBOX_CONDA_BASE over the file's [conda] base, and the file's base over install.sh's answer (#432)" {
+  two_bases
+  local df="$PROJ/.agent-sandbox"
+  mkdir -p "$HP/conda-meta"
+  printf '[conda]\nbase = sandbox\n' >"$df"
+  hinit AGENT_SANDBOX_CONDA_BASE=host -- github --env dev
+  [ "$status" -eq 0 ]
+  grep -q "^prefix = $HP " "$df"
+  run ! grep -qF "$RP" "$df"
+  rm -rf "$df" "$PROJ/.asb"
+  mkdir -p "$H/home/.config/agent-sandbox"
+  echo sandbox >"$H/home/.config/agent-sandbox/conda"
+  printf '[conda]\nbase = host\n' >"$df"
+  hinit -- github --env dev
+  [ "$status" -eq 0 ]
+  grep -q "^prefix = $HP " "$df"
+  run ! grep -qF "$RP" "$df"
+  # install.sh's answer alone, as before: the root's
+  rm -rf "$df" "$PROJ/.asb"
+  hinit -- github --env dev
+  [ "$status" -eq 0 ]
+  grep -q "^prefix = $RP " "$df"
+}
+
+@test "--env NAME with the file-wide [conda] base = sandbox in another model's region: resolved under the root, not refused as another environment, the purpose files unchanged (#432)" {
+  two_bases
+  local df="$PROJ/.agent-sandbox"
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- roles --env dev
+  [ "$status" -eq 0 ]
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env dev
+  [ "$status" -eq 0 ]
+  printf '\n# ---- added by asb --init github ----\n[conda]\nbase = sandbox\n' >>"$df"
+  [ "$(grep -c "^prefix = $RP " "$df")" -ge 2 ]
+  snap first
+  hinit -- roles --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"another environment"* ]]
+  [[ "$output" != *"updated .asb/roles/"* ]]
+  hinit -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"another environment"* ]]
+  same first
+  [ ! -e "$HP" ]
+}
+
+@test "--env NAME where a role-scoped [conda:GLOB] base gives some of the model's roles another base: refused, exit 2, nothing written, the lines and both ways out named; one that agrees is used (#432)" {
+  two_bases
+  local df="$PROJ/.agent-sandbox"
+  local n
+  # the roles model's file, as an --init wrote it; then the user's lines: the reviewers on the host
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- roles planner=1 implementer=1 reviewer=1 --env dev
+  [ "$status" -eq 0 ]
+  # (and another model's roles' base, which none of these roles takes: not named)
+  printf '[conda]\nbase = sandbox\n[conda:reviewer-*]   # the reviewers on the host\nbase = host\n[conda:gh-*]\nbase = host\n' >>"$df"
+  n="$(wc -l <"$df")"
+  rm -f "$H/conda.log"
+  snap first
+  hinit -- roles --env dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == "agent-sandbox: --init: --env dev: .agent-sandbox gives the roles of model 'roles' two conda bases -- sandbox for planner-1 implementer-1 "*", host for reviewer-1 -- and one name cannot name one environment under both; nothing was written -- give the environment by its path, --env PATH, or set AGENT_SANDBOX_CONDA_BASE (host or sandbox) for this --init. The [conda] base lines:"$'\n'"    line $((n - 4)), in [conda]: base = sandbox"$'\n'"    line $((n - 2)), in [conda:reviewer-*]: base = host" ]]
+  same first
+  [ ! -e "$HP" ] && [ ! -e "$H/conda.log" ]
+  hinit -- roles --shared-env dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --shared-env dev: "*"give the environment by its path, --shared-env PATH, or set AGENT_SANDBOX_CONDA_BASE"* ]]
+  same first
+  # a plain re-run takes the file's prefix (#427) and resolves no name: not refused
+  hinit -- roles
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"two conda bases"* ]]
+  same first
+  # github's roles, every one under the user's [conda:gh-*]: host, all of them, used over
+  # the file's sandbox (the section is the user's, so its prefix line is an --apply said)
+  rm -rf "$df" "$PROJ/.asb"
+  printf '[conda]\nbase = sandbox\n[conda:gh-*]\nbase = host\n' >"$df"
+  hinit -- github --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"created empty at $HP)"* && "$output" == *"--apply '[conda:gh-*]' 'prefix = $HP'"* ]]
+  # a role-scoped base for some of github's, in a file an --init of it wrote: refused
+  rm -rf "$df" "$PROJ/.asb"
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env dev
+  [ "$status" -eq 0 ]
+  printf '[conda]\nbase = sandbox\n[conda:gh-fix-*]\nbase = host\n' >>"$df"
+  n="$(wc -l <"$df")"
+  snap first
+  hinit -- github --env dev
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--init: --env dev: .agent-sandbox gives the roles of model 'github' two conda bases -- sandbox for "*", host for gh-fix-1 -- "*"    line $((n - 2)), in [conda]: base = sandbox"$'\n'"    line $n, in [conda:gh-fix-*]: base = host" ]]
+  same first
+  # the ways out: the variable, or the path
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- github --env dev
+  [ "$status" -eq 0 ]
+  hinit -- github --env "$RP"
+  [ "$status" -eq 0 ]
+  same first
+  # a role-scoped base that agrees with the rest (the host has conda: host by default)
+  rm -rf "$df" "$PROJ/.asb"
+  mkdir -p "$HP/conda-meta"
+  hinit -- roles --env dev
+  [ "$status" -eq 0 ]
+  printf '[conda:reviewer-*]\nbase = host\n' >>"$df"
+  snap first
+  hinit -- roles --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"two conda bases"* ]]
+  grep -q "^prefix = $HP " "$df"
+  run ! grep -qF "$RP" "$df"
+  same first
+  # a role this run writes nothing for (a count of 0, which removes its sections) has no say
+  rm -rf "$df" "$PROJ/.asb"
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- roles reviewer=0 --env dev
+  [ "$status" -eq 0 ]
+  printf '[conda]\nbase = sandbox\n[conda:reviewer-*]\nbase = host\n' >>"$df"
+  hinit -- roles reviewer=0 --env dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed from .agent-sandbox: [conda:reviewer-*]"* && "$output" != *"two conda bases"* ]]
+  grep -q "^prefix = $RP " "$df"
+  run ! grep -qF "$HP" "$df"
+}
+
+@test "--env PATH and a file with no [conda] base: unchanged by the file's base; --shared-env NAME under the file's base = sandbox refused as under the variable (#432)" {
+  two_bases
+  local df="$PROJ/.agent-sandbox" st
+  mkdir -p "$HP/conda-meta"
+  # --env PATH: the path, whatever the base
+  printf '[conda]\nbase = sandbox\n' >"$df"
+  hinit -- github --env "$HP"
+  [ "$status" -eq 0 ]
+  grep -q "^prefix = $HP " "$df"
+  # no [conda] base in the file: the host's, as the default
+  rm -rf "$df" "$PROJ/.asb"
+  printf '[net]\nmode = open\n' >"$df"
+  hinit -- github --env dev
+  [ "$status" -eq 0 ]
+  grep -q "^prefix = $HP " "$df"
+  # --shared-env NAME: the variable's refusal, and its exit, from the file's base alone
+  rm -rf "$df" "$PROJ/.asb"
+  hinit AGENT_SANDBOX_CONDA_BASE=sandbox -- roles --shared-env dev
+  st="$status"
+  [ "$st" -ne 0 ]
+  [[ "$output" == *"--init: --shared-env dev: under agent-sandbox's conda root each project's environments are its own,"* ]]
+  printf '[conda]\nbase = sandbox\n' >"$df"
+  cp "$df" "$H/dot"
+  hinit -- roles --shared-env dev
+  [ "$status" -eq "$st" ]
+  [[ "$output" == *"--init: --shared-env dev: under agent-sandbox's conda root each project's environments are its own,"*"give the other project's environment by its path, --shared-env ~/.local/share/agent-sandbox/conda/envs/<project>-<hash>/dev"* ]]
+  cmp "$df" "$H/dot"
+  [ ! -e "$PROJ/.asb" ]
+}
+
 @test "--shared-env on a file --init wrote without an environment: the shared lines completed, the own ones left commented out" {
   shared_env torch-dev
   local df="$PROJ/.agent-sandbox" ep="$H/conda/envs/torch-dev"

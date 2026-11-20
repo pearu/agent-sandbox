@@ -166,14 +166,16 @@ Sections:
   over the file's), then `~/.config/agent-sandbox/conda` (the installer's question),
   then `host` where the host has conda and `sandbox` where it has none. `host` on a
   host without conda says so and uses the sandbox's; `sandbox` with micromamba not
-  installed refuses the launch, naming `install.sh`. `--check` prints which one a
-  role gets, and `--init --env NAME` makes the env's prefix under that one's base (the
-  host's `<base>/envs/NAME`, your environments, shared by name; the sandbox's
-  `<root>/envs/<project>-<hash>/NAME`). Another project's environment under the sandbox's
-  root is named by its path (`--init --shared-env PATH`, a `prefix`): a bare name is
-  this project's. Under either base, a prefix longer than 255 bytes is refused, by
-  `--init --env` (an Implementer's clone too) and at launch: conda packages' binaries
-  are relocated through a 255-byte placeholder, so binaries installed there would break.
+  installed refuses the launch, naming `install.sh`. `--check` prints which one a role
+  gets, and `--init --env NAME` makes the env's prefix under that one's base, the one
+  the model's roles launch with, this key included (the host's `<base>/envs/NAME`, your
+  environments, shared by name; the sandbox's `<root>/envs/<project>-<hash>/NAME`; a
+  name is refused where a role-scoped `base` gives the model's roles two bases,
+  [roles.md](roles.md)). Another project's environment under the sandbox's root is named
+  by its path (`--init --shared-env PATH`, a `prefix`): a bare name is this project's.
+  Under either base, a prefix longer than 255 bytes is refused, by `--init --env` (an
+  Implementer's clone too) and at launch: conda packages' binaries are relocated through
+  a 255-byte placeholder, so binaries installed there would break.
 - **`[net]`** — key/value lines. `hosts = allowlist|public` (default allowlist):
   `public` lets the role reach every public host, the allowlist not applying -- for work
   whose sites are not known in advance (the `market` model). The proxy stays in the
