@@ -56,10 +56,15 @@ PROBE
   printf 'MY-SKILL\n' >"$IHOME/.claude/skills/s.md"
   printf 'WORK-LOGIN\n' >"$ACC/.credentials.json"
   BGS=()
+  HOLD_PID="" HOLD_RELEASE=""
 }
 
 teardown() {
   local p f spid
+  if [[ -n "$HOLD_PID" ]]; then
+    : >"$HOLD_RELEASE"
+    wait "$HOLD_PID" 2>/dev/null || true
+  fi
   for p in ${BGS[@]+"${BGS[@]}"}; do : >"$IWORK/go-$p"; done
   # Only keepers this test started, by the supervisor pid their record names.
   for f in "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id "$IHOME"/.local/state/agent-sandbox/claude/*/*/keeper/id.hidden "$I"/xs/agent-sandbox/claude/*/*/keeper/id; do
@@ -91,6 +96,30 @@ bg_claude() {
   echo "bg_claude $name: not inside:" >&2
   cat "$I/out-$name" >&2
   return 1
+}
+
+# hold_lock FILE -- take FILE's flock in the background and return once it is held; it
+# stays held until release_lock (or teardown), however long that takes. Sets HOLD_PID.
+hold_lock() {
+  local held="$I/lock-held" i
+  HOLD_RELEASE="$I/lock-release"
+  rm -f "$held" "$HOLD_RELEASE"
+  # shellcheck disable=SC2016 # $1/$2 are for the inner bash -c, not this shell
+  flock "$1" bash -c ': >"$1"; while [[ ! -e "$2" ]]; do sleep 0.05; done' _ "$held" "$HOLD_RELEASE" 3>&- &
+  HOLD_PID=$!
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$held" ]] && return 0
+    sleep 0.05
+  done
+  echo "hold_lock $1: not held" >&2
+  return 1
+}
+
+# release_lock -- let go of hold_lock's lock and wait for its holder to end.
+release_lock() {
+  : >"$HOLD_RELEASE"
+  wait "$HOLD_PID"
+  HOLD_PID=""
 }
 
 # finish NAME -- release NAME's probe and wait for its launch to end.
@@ -369,11 +398,11 @@ two_roles_first_out() {
   local state="$IHOME/.local/state/agent-sandbox"
   mkdir -p "$state"
   : >"$state/placeholders"
-  flock "$state/placeholders.lock" sleep 12 &
-  local holder=$!
-  sleep 0.3
+  # Held from before the launch until it is inside, so past its own wait for the lock
+  # (#421: a hold of fixed length ended first under load, and the launch got the lock).
+  hold_lock "$state/placeholders.lock"
   bg_claude a ra --account work
-  wait "$holder"
+  release_lock
   [ -n "$(empty_files "$ACC")" ]
   [ ! -s "$state/placeholders" ] # nothing listed
   finish a
