@@ -461,6 +461,28 @@ another environment refuses the `--init`, while a path line (`PREFIX/ = ...`) na
 is left and said (`--init` never rewrites a prefix). It approves nothing --
 `asb --trust` does, after you have read the file and the purpose files.
 
+Run again without `--env` or `--shared-env` (to add an instance, say), `--init` takes
+the environment, and its kind, from the file (#427): the file is what you approved. It
+reads the model's own lines, under every `# ---- written by` or `added by asb --init
+MODEL ----` mark of that model. The environment is the absolute `prefix = PATH` of their
+active `[conda...]` sections (an Implementer's `.asb/impl/N/.env` is its clone, not it).
+It is another project's (`--shared-env`) when they have a line only `--shared-env`
+writes, such as the roles model's `PATH/ = copy-on-write` for the Implementers. It is the
+project's own when they have one only `--env` writes, such as the setup role's
+`PATH/ = read-write`. With neither, it is shared when the model's `--shared-env` text has
+no line of its own: the github model's differs only by the setup role, so one removed
+stays removed. It is given by the name the file's lines spell it with, as `--env` was
+given it. The run says which, `--init: the environment from .agent-sandbox's model
+'roles' lines: --env x-dev (PATH)`, and goes on exactly as with that flag: the purpose
+files keep naming it (one unchanged since is not even rewritten), an Implementer
+without its environment gets it cloned from that prefix, and the flag's refusals hold:
+an environment the file names that is gone stops the run, as `--env` would. Two
+different prefixes, lines of both kinds, or nothing that tells the kind refuse the run
+(exit 2, nothing written), naming the lines: run it with `--env NAME` or
+`--shared-env NAME`. So does a prefix spelled with `~`, which `--init` never writes:
+spell it as the absolute path. A file with no environment's line re-runs as it was
+written, the `[conda]` sections commented out.
+
 What `--init` makes under `.asb/` stays as it made it. A path it writes, or writes under
 -- `.asb/` itself, a directory the file names, a purpose file, an Implementer's clone
 (`.asb/impl/N/`, `.asb/git/N/`) and its `.env`, an inbox, `.asb/migrate/`, the index --
@@ -489,7 +511,7 @@ conda root, this project's own `<root>/envs/<project>-<hash>/x-dev`, so another 
 `x-dev` is another environment), and says to launch the setup role,
 `asb --role setup claude`, which builds `main` into it. The Implementers' environments
 are clones of it, so until it is built there is nothing to clone: `--init` says so and
-skips them, and run again once setup is done, it makes them.
+skips them, and run again once setup is done (with `--env` or without), it makes them.
 
 An Implementer's environment is `.asb/impl/N/.env` in its clone. A project that tracks a
 `.env` of its own (a file of settings, say) has it in every clone, so `--init --env`

@@ -1176,6 +1176,25 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **An `--init` re-run without `--env` keeps the environment the file declares, in the
+  purpose files too** (#427). A project set up with `asb --init roles --env NAME` and
+  run again without it (to add an instance, say) kept its `[conda]` lines, but rewrote
+  every purpose file nobody had changed with the placeholders: `supervisor.md` and
+  `setup.md` named `ENVPATH`, and the setup role read that as "No environment declared"
+  and stopped. Measured on main 89341b4: the lines naming the environment went from 3 to
+  0 in `supervisor.md` and from 4 to 0 in `setup.md`, while `.agent-sandbox` kept its 6.
+  A `--shared-env` project was rewritten with the project-own texts. Now a re-run with
+  neither flag takes the environment, and its kind, from the model's own lines in the
+  file. The environment is their active absolute `prefix = PATH`. The kind comes from a
+  line only `--env` or only `--shared-env` writes; with neither, it is shared when the
+  model's `--shared-env` text has no line of its own. Its name is the one the file's
+  lines spell it with, else PATH's basename when that name resolves to PATH, else PATH.
+  The run says which, and goes on exactly as with that flag. So the purpose files come
+  out byte for byte as the first `--init` wrote them. Also as with the flag, a plain
+  re-run now clones an Implementer's missing environment (from the file's prefix), and
+  stops when the environment the file names is gone. Two prefixes, lines of both kinds,
+  nothing that tells the kind, or a prefix spelled with `~` refuse the re-run (exit 2,
+  nothing written), naming the lines.
 - **An account launch no longer leaves its mount-point files behind when the join that
   ends it signals the keeper's supervisor** (#419). Now and then every mount-point file
   in the account's directory was left (CI on #418, integration ubuntu-24.04: 12 empty

@@ -13126,6 +13126,158 @@ _as_models_list() {
   done | paste -sd' '
 }
 
+# _as_init_envfile MODEL TPL PROJ -- the environment a re-run with neither --env nor
+# --shared-env takes from .agent-sandbox (#427): the file is the policy the user approved,
+# so a re-run renders the purpose files with the environment it declares, never with the
+# ENV/ENVPATH placeholders. Read from the lines in MODEL's regions (every `# ---- written
+# by` / `added by asb --init MODEL ----` one, by basename), active ones only, read as the
+# parser reads them (a commented-out header is a comment, its lines the section before's):
+#  - PATH: the absolute `prefix = ...` of their [conda] sections (a clone's relative
+#    .asb/impl/N/ENVDIR is not one); none is no environment, as before #427;
+#  - the kind: TPL's lines naming {envpath} or {envdir} that only `#@own` writes (O) or
+#    only `#@shared` writes (S), as the region has them; with neither, own when O is
+#    empty (both kinds write the same) and shared when S is (own would have written one
+#    of O, its setup role's, and never is it granted by inference);
+#  - the name --env was given: the value a line TPL writes with {env} has, when it names
+#    PATH as --env would; else PATH's basename when that name names PATH under either
+#    conda base; else PATH itself.
+# Sets _ief_env, _ief_path (empty: none) and _ief_shared (0|1). Two PATHs, or both
+# kinds, or no telling the kind: said, and 2 -- nothing is written.
+_as_init_envfile() {
+  local model="$1" tpl="$2" proj="$3" df="$3/.agent-sandbox"
+  _ief_env="" _ief_path="" _ief_shared=0
+  [[ -f "$df" && ! -L "$df" ]] || return 0
+  local mb no l x sec="" v t p re hb cand tl=""
+  local -a lno=() ltx=() lall=() oev=() sev=()
+  local -A pfx=() tset=()
+  mb="$(basename -- "$model")"
+  _ief_norm() { # LINE -> no comment, blanks collapsed, none around it
+    local y="${1%%#*}"
+    y="$(printf '%s' "$y" | tr -s '[:space:]' ' ')"
+    y="${y# }"
+    printf '%s' "${y% }"
+  }
+  _ief_ere() { # LINE -> an ERE for it: {envpath} PATH, {env} a capture, {n} digits, any other placeholder a word
+    local y
+    y="$(printf '%s' "$1" | tr -s '[:space:]' ' ' | sed -e 's/[][\.^$*+?(){}|]/\\&/g')"
+    y="${y//\\\{envpath\\\}/"$(printf '%s' "$p" | sed -e 's/[][\.^$*+?(){}|]/\\&/g')"}"
+    y="${y//\\\{env\\\}/([^[:space:]]+)}"
+    y="${y//\\\{n\\\}/[0-9]+}"
+    printf '%s' "$y" | sed -e 's/\\{[a-z]*\\}/[^\/[:space:]]+/g'
+  }
+  while IFS=$'\t' read -r no l; do
+    if [[ "$l" =~ ^\[([^]]*)\] ]]; then
+      sec="${BASH_REMATCH[1]}"
+      lall+=("$(printf '%s' "$l" | tr -s '[:space:]' ' ')")
+      continue
+    fi
+    x="$(_ief_norm "$l")"
+    [[ -n "$x" ]] || continue
+    lno+=("$no") ltx+=("$x") lall+=("$(printf '%s' "$l" | tr -s '[:space:]' ' ')")
+    if [[ ("$sec" == conda || "$sec" == conda:*) && "$x" =~ ^prefix\ ?=\ ?([^[:space:]]+)$ ]]; then
+      v="${BASH_REMATCH[1]}"
+      # --init writes {envpath} absolute and compares the prefix as written, so a `~` is
+      # one it can neither read nor keep
+      [[ "$v" == \~ || "$v" == \~/* ]] && tl+="line $no: $x"$'\n' && continue
+      [[ "$v" == /* ]] || continue
+      while [[ "$v" == */ && "$v" != / ]]; do v="${v%/}"; done
+      pfx[$v]+="line $no: $x"$'\n'
+    fi
+  done < <(awk -v m="$mb" '
+    { sub(/\r$/, "") }
+    /^# ---- (written|added) by asb --init .* ----$/ {
+      s = $0; sub(/^# ---- (written|added) by asb --init /, "", s); sub(/ ----$/, "", s)
+      k = split(s, q, "/"); on = (q[k] == m); next
+    }
+    on { print NR "\t" $0 }' "$df")
+  if [[ -n "$tl" ]]; then
+    _as_msg "--init: .agent-sandbox's model '$mb' lines spell the environment's prefix with '~', and --init writes and compares a prefix as the absolute path; nothing was written -- spell it as the absolute path, then run --init again:"
+    printf '%s' "$tl" | sed 's/^/    /' >&2
+    return 2
+  fi
+  ((${#pfx[@]})) || return 0
+  if ((${#pfx[@]} > 1)); then
+    _as_msg "--init: .agent-sandbox's model '$mb' lines name ${#pfx[@]} environments, and --init cannot tell which is this project's; nothing was written -- run it with the one you mean, --env NAME (the project's own) or --shared-env NAME (another project's):"
+    printf '%s' "${pfx[@]}" | sort -t' ' -k2 -n | sed 's/^/    /' >&2
+    return 2
+  fi
+  p="${!pfx[*]}"
+  # the kind: each tag's lines naming the environment, as the template has them
+  while IFS= read -r l || [[ -n "$l" ]]; do
+    t=c
+    case "$l" in
+      '#@own '*) t=o l="${l#\#@own }" ;;
+      '#@shared '*) t=s l="${l#\#@shared }" ;;
+      '#@'*) continue ;;
+    esac
+    [[ "$l" == *'{envpath}'* || "$l" == *'{envdir}'* ]] || continue
+    [[ "$l" =~ ^[[:space:]]*(\[|#) ]] && continue
+    x="$(_ief_norm "$l")"
+    tset["$t"$'\t'"$x"]=1
+  done <"$tpl"
+  local -a ores=() sres=()
+  for x in "${!tset[@]}"; do
+    t="${x%%$'\t'*}" l="${x#*$'\t'}"
+    case "$t" in
+      o) [[ -n "${tset[s$'\t'$l]:-}${tset[c$'\t'$l]:-}" ]] || ores+=("^$(_ief_ere "$l")\$") ;;
+      s) [[ -n "${tset[o$'\t'$l]:-}${tset[c$'\t'$l]:-}" ]] || sres+=("^$(_ief_ere "$l")\$") ;;
+    esac
+  done
+  local i
+  for i in "${!ltx[@]}"; do
+    for re in ${ores[@]+"${ores[@]}"}; do
+      [[ "${ltx[i]}" =~ $re ]] && oev+=("line ${lno[i]}: ${ltx[i]}") && break
+    done
+    for re in ${sres[@]+"${sres[@]}"}; do
+      [[ "${ltx[i]}" =~ $re ]] && sev+=("line ${lno[i]}: ${ltx[i]}") && break
+    done
+  done
+  if ((${#oev[@]} && ${#sev[@]})); then
+    _as_msg "--init: .agent-sandbox's model '$mb' lines have both an environment of the project's own and one another project owns, at $p, and --init cannot tell which this is; nothing was written -- run it with the one you mean, --env NAME (the project's own) or --shared-env NAME (another project's). The project's own:"
+    printf '    %s\n' "${oev[@]}" >&2
+    printf '  another project'"'"'s:\n' >&2
+    printf '    %s\n' "${sev[@]}" >&2
+    return 2
+  elif ((${#oev[@]})); then
+    _ief_shared=0
+  elif ((${#sev[@]})); then
+    _ief_shared=1
+  elif ((${#ores[@]} == 0)); then
+    _ief_shared=0
+  elif ((${#sres[@]} == 0)); then
+    _ief_shared=1
+  else
+    _as_msg "--init: .agent-sandbox's model '$mb' lines name the environment $p, and nothing in them tells whether it is the project's own or another project's; nothing was written -- run it with the one you mean, --env NAME (the project's own) or --shared-env NAME (another project's)"
+    return 2
+  fi
+  # the name --env was given: as a line written with {env} has it, when that names PATH
+  hb="$(_as_conda_base)"
+  _ief_names() { # VALUE -> 0 when --env VALUE names PATH (a path, or a name under either base)
+    if [[ "$1" == */* ]]; then
+      [[ "$(realpath -m -s -- "$1")" == "$p" ]]
+    else
+      [[ (-n "$hb" && "$hb/envs/$1" == "$p") || "$(_as_sandbox_env_prefix "$1" "$proj")" == "$p" ]]
+    fi
+  }
+  while IFS= read -r l || [[ -n "$l" ]]; do
+    l="${l#\#@own }" l="${l#\#@shared }"
+    [[ "$l" == *'{env}'* && "$l" != '#@'* ]] || continue
+    re="^$(_ief_ere "$l")\$"
+    for x in ${lall[@]+"${lall[@]}"}; do
+      [[ "$x" =~ $re ]] || continue
+      cand="${BASH_REMATCH[1]}"
+      if _ief_names "$cand"; then
+        _ief_env="$cand" _ief_path="$p"
+        return 0
+      fi
+    done
+  done <"$tpl"
+  cand="$(basename -- "$p")"
+  _ief_names "$cand" || cand="$p"
+  _ief_env="$cand" _ief_path="$p"
+  return 0
+}
+
 _as_init() {
   local model="$1" env="$2"
   shift 2
@@ -13149,6 +13301,16 @@ _as_init() {
   if [[ ! -f "$tpl" ]]; then
     _as_msg "--init: no model '$model' ($tpl not found). Shipped: $(_as_models_list)"
     return 1
+  fi
+  # A re-run with neither --env nor --shared-env takes the environment, and its kind, from
+  # what the file declares in this model's lines (#427), and goes on as if given it.
+  local _init_shared="${_init_shared:-0}" envfile=""
+  if [[ -z "$env" ]]; then
+    _as_init_envfile "$model" "$tpl" "$proj" || return $?
+    if [[ -n "$_ief_path" ]]; then
+      env="$_ief_env" envfile="$_ief_path" _init_shared="$_ief_shared"
+      _as_msg "--init: the environment from .agent-sandbox's model '$(basename -- "$model")' lines: $( ((_init_shared)) && printf -- --shared-env || printf -- --env) $env$([[ "$env" == "$envfile" ]] || printf ' (%s)' "$envfile")"
+    fi
   fi
   # The template's text for this --init (#268): a line `#@own LINE` belongs to an
   # environment of the project's own (--env, or none), `#@shared LINE` to one another
@@ -13411,13 +13573,16 @@ _as_init() {
         base="$_conda_hbase" envpath="$_conda_hbase/envs/$env"
         if [[ "$_conda_mode" == sandbox ]]; then
           base="$(_as_conda_root)" envpath="$(_as_sandbox_env_prefix "$env" "$proj")"
-          if ((${_init_shared:-0})); then
+          if ((${_init_shared:-0})) && [[ -z "$envfile" ]]; then
             _as_msg "--init: --shared-env $env: under agent-sandbox's conda root each project's environments are its own, $(_as_tilde "$base")/envs/<project>-<hash>/<name> ($(_as_tilde "$envpath") is this project's $env), so a name cannot say whose: give the other project's environment by its path, --shared-env $(_as_tilde "$base")/envs/<project>-<hash>/$env"
             return 1
           fi
         fi
         ;;
     esac
+    # the file's own prefix (#427), as the file has it: the name read from it may say it
+    # under the other base than the one that applies now
+    [[ -z "$envfile" ]] || envpath="$envfile" base=/
     _as_conda_prefix_ok "$envpath" "--init: --env $env" || return 1
     if ((${_init_shared:-0})) && [[ ! -d "$envpath/conda-meta" ]]; then
       _as_msg "--init: --shared-env $env: no conda environment at $envpath -- an environment another project owns is built there, by that project, not here"
@@ -15033,8 +15198,10 @@ _as_init() {
           return 1
         }
       else
-        "${CONDA_EXE:-conda}" create -q -y --clone "$env" -p "$proj/$prefix" >/dev/null || {
-          _as_msg "--init: 'conda create --clone $env -p $prefix' failed"
+        # by the file's prefix when the run took it from there: its name may be read under
+        # the sandbox base, and conda resolves a name under its own (#427)
+        "${CONDA_EXE:-conda}" create -q -y --clone "${envfile:-$env}" -p "$proj/$prefix" >/dev/null || {
+          _as_msg "--init: 'conda create --clone ${envfile:-$env} -p $prefix' failed"
           return 1
         }
       fi
