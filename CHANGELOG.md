@@ -1176,6 +1176,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **An account launch no longer leaves its mount-point files behind when the join that
+  ends it signals the keeper's supervisor** (#419). Now and then every mount-point file
+  in the account's directory was left (CI on #418, integration ubuntu-24.04: 12 empty
+  files in `accounts/work/`). The join that ends a launch keeps sending USR1 to the
+  supervisor until it is gone (under `AGENT_SANDBOX_KEEPER_GRACE=0`; joins that die
+  with the sandbox send one each under any grace), and the supervisor's `trap ':' USR1`
+  handler, run while bash 5.2.21 parses a command substitution, failed with "trap: line
+  2: unexpected EOF while looking for matching `)'" and abandoned the rest of the
+  supervisor: the release stopped at its list of mount points. Now the supervisor
+  ignores USR1 from the end of its loop, before its cleanup, and computes its grace
+  before writing its keeper record, so it runs no command substitution while a join can
+  signal it with the handler installed.
 - **`--init` no longer takes the user's own unsuffixed sections for an old --init's
   common block.** A file with a scoped model's role sections (`--init roles`) and an
   unsuffixed section of the user's under a header of the model's common block -- `[conda]`
