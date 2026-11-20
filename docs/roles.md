@@ -509,7 +509,15 @@ move one, ask the user to do it on the host.
 under the conda base that applies (the host's `<base>/envs/x-dev`; under agent-sandbox's
 conda root, this project's own `<root>/envs/<project>-<hash>/x-dev`, so another project's
 `x-dev` is another environment), and says to launch the setup role,
-`asb --role setup claude`, which builds `main` into it. The Implementers' environments
+`asb --role setup claude`, which builds `main` into it. The base that applies to a name
+is the one the model's roles launch with ([config.md](config.md), `[conda]`):
+`AGENT_SANDBOX_CONDA_BASE`, then the file's `[conda] base` (a role's `[conda:<role>]`
+over the file's, wherever in the file the line is, another model's lines included), then
+`~/.config/agent-sandbox/conda`, then the default. When a role-scoped `base` gives some
+of the model's roles another base than the rest, one name cannot name one environment
+under both, and `--init --env NAME` (or `--shared-env NAME`) is refused (exit 2,
+nothing written), naming the `base` lines: give the environment by its path, or set
+`AGENT_SANDBOX_CONDA_BASE` for that run. The Implementers' environments
 are clones of it, so until it is built there is nothing to clone: `--init` says so and
 skips them, and run again once setup is done (with `--env` or without), it makes them.
 

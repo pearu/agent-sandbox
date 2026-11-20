@@ -27,8 +27,9 @@ number, each in a layer of its own over the project as the setup role built it:
   `copy-on-write` under `[connect:gh-*]` (or a host under `[allow:gh-setup]`), approved
   with `--trust`; gh-setup asks for exactly that and installs what it builds from them
   into the environment. `--init` takes an `--env` NAME not built yet (a conda env name,
-  made empty under the conda base that applies: the host's, or agent-sandbox's conda
-  root, in the project's own directory there, `envs/<project>-<hash>/NAME`).
+  made empty under the conda base that applies, the one the roles launch with, the
+  file's `[conda] base` included: the host's, or agent-sandbox's conda root, in the
+  project's own directory there, `envs/<project>-<hash>/NAME`).
   `--init github` without `--env` writes the environment's lines commented out,
   and gh-setup then has nothing to build into: it stops and asks for
   `asb --init github --env NAME`, which, run on that file, completes those lines (and
