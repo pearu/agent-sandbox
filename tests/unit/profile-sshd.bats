@@ -44,7 +44,8 @@ echo "ssh-ed25519 AAAA test" >"$f.pub"
 S
   # mitmdump: the engine starts it with no environment but HOME, USER, PATH, the session
   # base and PYTHONUNBUFFERED, so the stub reads its mode from a file beside it: listen
-  # (default), `exit` (fails at once), `sleep` (never listens). It writes its argv and
+  # (default), `exit` (fails at once), `sleep` (never listens: it writes its pid and start
+  # time to mitm.pid beside it, then becomes `sleep 60`). It writes its argv and
   # environment beside itself.
   cat >"$H/bin/fake-mitmdump" <<'S'
 #!/usr/bin/env bash
@@ -57,7 +58,11 @@ port=""
 while [ "$#" -gt 0 ]; do [ "$1" = --listen-port ] && port="$2"; shift; done
 case "$mode" in
   exit) echo "fake-mitmdump: failing" >&2; exit 1 ;;
-  sleep) exec sleep 60 ;;
+  sleep)
+    s="$(cat /proc/$$/stat)" && s="${s##*) }" && set -- $s
+    echo "$$ ${20}" >"$d/mitm.pid"
+    exec sleep 60
+    ;;
 esac
 exec python3 -c '
 import socket, sys
@@ -81,9 +86,25 @@ teardown() {
   true
 }
 
-# A TCP port nothing listens on now.
+# A TCP port nothing listens on now, nor on the one above it: drawn below the kernel's
+# ephemeral range (ip_local_port_range). Never from it: a connection anywhere on the
+# machine takes its source port from that range, and a port bound that way is not
+# listening, so the engine takes it for free and the proxy then cannot bind it. A port
+# from bind(0) is odd and connect() prefers the even ones, so the port above it, the
+# one the proxy takes when the account's port is in use, was the likeliest to be held.
 free_port() {
-  python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+  python3 -c '
+import random, socket
+lo = int(open("/proc/sys/net/ipv4/ip_local_port_range").read().split()[0])
+for _ in range(1000):
+    p = random.randrange(10000, lo - 1) if lo > 10002 else 0
+    try:
+        a = socket.socket(); a.bind(("127.0.0.1", p)); p = a.getsockname()[1]
+        b = socket.socket(); b.bind(("127.0.0.1", p + 1))
+    except OSError:
+        continue
+    print(p)
+    break'
 }
 
 # Record approval of the project's .agent-sandbox the way --trust would.
@@ -280,6 +301,17 @@ EOF
 
 _listening() { (echo >"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
+# _proc_is PID START -- is PID still the process that started at START (field 22 of
+# /proc/PID/stat)? A pid that is gone, or reused by another process, is not.
+_proc_is() {
+  local s
+  s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+  s="${s##*) }"
+  # shellcheck disable=SC2086 # split into the stat fields
+  set -- "$2" $s
+  [[ "${21}" == "$1" ]]
+}
+
 @test "sshd: the account's port in use -- the proxy of its own takes the next free one, and the launch line says why" {
   policy
   python3 -c '
@@ -314,7 +346,13 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(1); time.sleep(60)' "$PORT" &
   sshd_launch -- --agent-port 40123
   [ "$status" -ne 0 ]
   [[ "$output" == *"its proxy of its own did not come up on 127.0.0.1:$PORT"* ]]
-  run ! pgrep -f "^sleep 60\$"
+  # ...and ended: that one process, by its pid and start time. Never by its name: a
+  # `pgrep -f "^sleep 60$"` matches every `sleep 60` the account can see, another
+  # test's or another user's.
+  local pid start
+  read -r pid start <"$H/bin/mitm.pid"
+  [[ -n "$start" ]]
+  run ! _proc_is "$pid" "$start"
 }
 
 @test "sshd: the session base is the role's store; an explicit AGENT_SANDBOX_SESSION_BASE still wins; claude keeps the runtime one" {
