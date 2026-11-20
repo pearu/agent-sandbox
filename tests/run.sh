@@ -79,9 +79,11 @@ case "$suite" in
 esac
 # Run bats, then fail the run if it left role keepers behind (tests/helpers/keeper-leaks.sh):
 # a leaked keeper passes every test and is only ever noticed by counting.
+# The run's start goes to the check, which says how far into the run a leak started.
 before="$(tests/helpers/keeper-leaks.sh snapshot)"
+start="$(date +%s)"
 status=0
 bats --recursive ${jobs[@]+"${jobs[@]}"} "$@" || status=$?
 # shellcheck disable=SC2086 # a list of pids
-tests/helpers/keeper-leaks.sh check $before || status=1
+AS_RUN_START="$start" tests/helpers/keeper-leaks.sh check $before || status=1
 exit "$status"
