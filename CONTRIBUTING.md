@@ -28,3 +28,5 @@ Thank you. A few things make changes here easy to review.
   than in a public issue.
 
 AI agents maintaining this repository should read `AGENTS.md` first.
+To develop it with its own roles (`asb --init roles`), and to run the suites that
+need real bwrap from inside them, see `docs/developing.md`.
