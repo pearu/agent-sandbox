@@ -25,13 +25,20 @@ handlers() { sed -nE "s/^ *trap '([^']+)' ([A-Z0-9 ]+)\$/\\1|\\2/p" "$1"; }
 # Exempt, by name, as text that is not the engine's own trap:
 # - _as_remote_account's remote command string (`ssh … 'set -e; …; trap … EXIT; …'`),
 #   which runs on the remote host.
+# - _as_keeper_tie's watcher, the `bash -c '…'` body of strict's parent-death watcher
+#   (#430): a bash of its own, outside the engine's shell, whose handler `end` runs no
+#   command substitution (its body has none, so bash 5.2 has nothing to meet).
 # What it cannot see, none of which the engine writes: `builtin trap …`, `command trap …`,
 # `eval "trap …"`, and a `trap` inside backticks.
 other_traps() {
   python3 - "$1" <<'PY'
 import re, sys
 
-EXEMPT = ["""trap '"'"'rm -rf "$t"'"'"' EXIT"""]  # _as_remote_account's remote command
+EXEMPT = [
+    """trap '"'"'rm -rf "$t"'"'"' EXIT""",  # _as_remote_account's remote command
+    "trap end TERM URG",  # _as_keeper_tie's watcher: its handler
+    'trap "" TERM URG',  # _as_keeper_tie's watcher: its handler ignores both from its start
+]
 CMD = re.compile(r"(?:^|[;&|({!]|\b(?:then|do|else|elif|if)\b)\s*trap(?=\s|$)")
 ONE = re.compile(r"^ *trap '[^']+' [A-Z0-9 ]+$")
 for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):

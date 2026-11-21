@@ -35,6 +35,9 @@ PROBE
 teardown() {
   local p f spid
   : >"$IWORK/release.all" 2>/dev/null
+  # What a test found left behind after its supervisor was killed (a failing run): pasta
+  # first, which nothing else here can end.
+  for p in ${KILLS[@]+"${KILLS[@]}"}; do kill -KILL "$p" 2>/dev/null; done
   for p in ${BGS[@]+"${BGS[@]}"}; do kill "$p" 2>/dev/null; done
   # Only keepers this test started, by the supervisor pid their record names.
   for f in "$IHOME"/.local/state/agent-sandbox/probe/*/*/keeper/id; do
@@ -85,6 +88,130 @@ release() { : >"$IWORK/release.$1"; }
 keeper_payload() {
   local t
   read -r _ _ t _ <"$SB/keeper/id" && printf '%s' "$t"
+}
+
+# child_of PID pasta|tie -- PID's child that is strict's pasta (by its name, pasta or
+# pasta.avx2), or the keeper's watcher (the fourth word of its command line is
+# agent-sandbox-tie, _as_keeper_tie)
+child_of() {
+  local f c n
+  local -a k a
+  for f in /proc/"$1"/task/*/children; do
+    k=()
+    { read -r -a k <"$f"; } 2>/dev/null || :
+    for c in ${k[@]+"${k[@]}"}; do
+      if [[ "$2" == pasta ]]; then
+        n=""
+        { read -r n <"/proc/$c/comm"; } 2>/dev/null || :
+        [[ "$n" == pasta || "$n" == pasta.avx2 ]] && printf '%s\n' "$c" && return 0
+      else
+        a=()
+        { mapfile -d '' -t a <"/proc/$c/cmdline"; } 2>/dev/null || :
+        [[ "${a[3]:-}" == agent-sandbox-tie ]] && printf '%s\n' "$c" && return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# live PID -- PID runs (a zombie does not)
+live() {
+  local st
+  { read -r st <"/proc/$1/stat"; } 2>/dev/null || return 1
+  st="${st##*) }"
+  [[ "${st:0:1}" != Z ]]
+}
+
+# subtree PID -- PID and all its descendants, one "pid start comm" per line (R1's T11 probe)
+subtree() {
+  local -a todo=("$1") k
+  local p f c st n
+  while ((${#todo[@]})); do
+    p=${todo[0]}
+    todo=("${todo[@]:1}")
+    st=""
+    { read -r st <"/proc/$p/stat"; } 2>/dev/null || continue
+    n=""
+    { read -r n <"/proc/$p/comm"; } 2>/dev/null || :
+    st="${st##*) }"
+    read -r -a k <<<"$st"
+    printf '%s %s %s\n' "$p" "${k[19]}" "$n"
+    for f in /proc/"$p"/task/*/children; do
+      k=()
+      { read -r -a k <"$f"; } 2>/dev/null || :
+      for c in ${k[@]+"${k[@]}"}; do todo+=("$c"); done
+    done
+  done
+}
+
+# alive_of "pid start comm"... -- those still the same process (same start time), not zombies
+alive_of() {
+  local l p s c st
+  local -a f
+  for l in "$@"; do
+    read -r p s c <<<"$l"
+    { read -r st <"/proc/$p/stat"; } 2>/dev/null || continue
+    st="${st##*) }"
+    read -r -a f <<<"$st"
+    [[ "${f[19]}" == "$s" && "${f[0]}" != Z ]] && printf '%s\n' "$l"
+  done
+  return 0
+}
+
+# none_left_in SECS LINE... -- every process listed (subtree's lines) ends within SECS
+none_left_in() {
+  local secs=$1 i left
+  shift
+  for ((i = 0; i < secs * 20; i++)); do
+    left="$(alive_of "$@")"
+    [[ -z "$left" ]] && return 0
+    sleep 0.05
+  done
+  echo "still running after ${secs} s:" >&2
+  printf '%s\n' "$left" >&2
+  return 1
+}
+
+# strict_here -- can this host run a strict launch (pasta and nft)?
+strict_here() { { command -v pasta && { command -v nft || [ -x /usr/sbin/nft ]; }; } >/dev/null 2>&1; }
+
+# killed_supervisor MODE -- a launch in MODE held by its join, with a long grace; its
+# supervisor killed with -9. Sets WATCH to what has to end with it: the payload, and under
+# strict pasta and the keeper's watcher; under strict TREE too, pasta's whole subtree
+# taken just before the kill (subtree's lines); KILLS, for teardown.
+killed_supervisor() {
+  local mode="$1" spid p w
+  KEEPER_GRACE=600 bg_sandboxed "k$mode" AGENT_SANDBOX_NET="$mode" XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec sh -c "$(hold "k$mode")"
+  WATCH=("$(keeper_payload)")
+  read -r spid _ <"$SB/keeper/id"
+  TREE=()
+  if [[ "$mode" == strict ]]; then
+    p="$(child_of "$spid" pasta)"
+    WATCH=("$p" "${WATCH[@]}")
+    w="$(child_of "$spid" tie)" && WATCH+=("$w")
+    mapfile -t TREE < <(subtree "$p")
+  fi
+  KILLS=("${WATCH[@]}")
+  live "${WATCH[0]}"
+  kill -KILL "$spid"
+}
+
+# gone_in_5 PID... -- every PID ends within 5 s; otherwise say which did not
+gone_in_5() {
+  local i p left n
+  for ((i = 0; i < 100; i++)); do
+    left=""
+    for p in "$@"; do
+      live "$p" || continue
+      n=""
+      { read -r n <"/proc/$p/comm"; } 2>/dev/null || : # it may end meanwhile
+      left+=" $p ($n)"
+    done
+    [[ -z "$left" ]] && return 0
+    sleep 0.05
+  done
+  echo "still running 5 s after the supervisor's -9:$left" >&2
+  return 1
 }
 
 wait_gone() { # wait_gone PID -- up to 10 s
@@ -283,8 +410,15 @@ wait_gone() { # wait_gone PID -- up to 10 s
     fi
     rm -f "$IWORK"/*.in "$IWORK"/release.*
     bg_sandboxed "a$mode" AGENT_SANDBOX_NET=$mode XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec sh -c "$(hold "a$mode")"
-    local t
+    local t spid w=""
     t="$(keeper_payload)"
+    read -r spid _ <"$SB/keeper/id"
+    # strict's keeper has a watcher (#430); the other modes have none
+    if [[ "$mode" == strict ]]; then
+      w="$(child_of "$spid" tie)"
+    else
+      run ! child_of "$spid" tie
+    fi
     run_sandboxed AGENT_SANDBOX_NET=$mode XDG_STATE_HOME="$IHOME/.local/state" -- \
       --profile probe --exec sh -c 'readlink /proc/self/ns/net >net.b; printf "%s" "$HTTPS_PROXY" >proxy.b'
     [ "$status" -eq 0 ]
@@ -293,7 +427,70 @@ wait_gone() { # wait_gone PID -- up to 10 s
     release "a$mode"
     wait "$BG_PID"
     wait_gone "$t"
+    # a normal end leaves no watcher
+    [[ -z "$w" ]] || wait_gone "$w"
   done
+}
+
+@test "a supervisor killed with -9 takes its sandbox with it, under none: bwrap's --die-with-parent (#430's control)" {
+  killed_supervisor none
+  gone_in_5 "${WATCH[@]}"
+  release knone
+}
+
+@test "a supervisor killed with -9 takes its sandbox with it, under strict: its watcher ends pasta and everything below it (#430)" {
+  strict_here || skip "strict needs pasta and nft"
+  killed_supervisor strict
+  gone_in_5 "${WATCH[@]}"
+  [ "${#WATCH[@]}" -eq 3 ] # pasta, the payload and the watcher were watched
+  # and everything that was below pasta, the two bwraps included, each by its start time
+  ((${#TREE[@]} >= 4)) # pasta, two bwraps, the payload at least
+  none_left_in 5 "${TREE[@]}"
+  release kstrict
+}
+
+@test "a strict start that fails (a bwrap slow to show the payload) leaves nothing of pasta's subtree: the watcher ends it before the supervisor's failure exit (#430)" {
+  strict_here || skip "strict needs pasta and nft"
+  # A bwrap on the launch's PATH that, run with its options (--args), records its pid
+  # namespace (pasta's: it runs there as pid 1) and sleeps 30 s first, so the supervisor's
+  # 10 s wait for the payload runs out and it takes its failure path. A pasta sent TERM
+  # leaves this child running (R1's review of T11, measured on f571dae).
+  cat >"$I/bin/bwrap" <<S
+#!/bin/sh
+if [ "\$1" = --args ]; then
+  /usr/bin/readlink /proc/self/ns/pid >>"$I/slow.pids"
+  /usr/bin/sleep 30
+fi
+exec /usr/bin/bwrap "\$@"
+S
+  chmod +x "$I/bin/bwrap"
+  bg_sandboxed rd AGENT_SANDBOX_NET=strict XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec sh -c "$(hold rd)" || :
+  local rc=0
+  wait "$BG_PID" || rc=$?
+  [ "$rc" -ne 0 ]
+  sleep 1
+  local -a left=()
+  local ns q c st pp
+  local -a f
+  read -r ns <"$I/slow.pids"
+  for q in /proc/[0-9]*; do
+    [[ "$(readlink "$q/ns/pid" 2>/dev/null)" == "$ns" ]] || continue
+    st=""
+    { read -r st <"$q/stat"; } 2>/dev/null || continue
+    st="${st##*) }"
+    [[ "${st:0:1}" != Z ]] || continue
+    c="" pp=""
+    { read -r c <"$q/comm"; } 2>/dev/null || :
+    read -r -a f <<<"$st"
+    pp="${f[1]:-?}"
+    left+=("${q#/proc/}($c, ppid $pp)")
+    KILLS+=("${q#/proc/}")
+  done
+  if ((${#left[@]})); then
+    echo "in pasta's pid namespace 1 s after the failed start: ${left[*]}" >&2
+    return 1
+  fi
+  grep -q 'the sandbox did not start (exit 137)' "$I/rd.out" # the watcher's SIGKILL, the true status
 }
 
 @test "a write inside lands in the layer, never in the source" {

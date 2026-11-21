@@ -307,10 +307,9 @@ the role's host key (see [design.md](design.md#residual-risks)).
   (`To resume: asb --role ROLE --agent sshd --resume`, or `add --agent sshd for: ROLE`
   beside a claude role's), which does not apply to it: the profile has no
   `[agent] resume`, so `--resume` is refused.
-- A SIGKILL of the keeper's supervisor (the process `--status` names) orphans the
-  launch: measured (2026-11-01), the sandbox and its sshd keep serving logins, sessions
-  stay confined but the proxy, which also keeps running, refuses their requests (407:
-  the session's owner is gone), and `--status` and `--shutdown` call the role not
-  running. End it by hand: `kill -KILL` the innermost `bwrap` under the role's `pasta`
-  (`pstree -p` of that pasta; it is the sandbox's pid 1), which takes sshd and its jobs
-  along, and `kill` the `mitmdump` listening on the proxy port the launch named.
+- A SIGKILL of the keeper's supervisor (the process `--status` names) ends the sandbox,
+  sshd and its sessions with it, through the strict keeper's watcher (#430), but not the
+  proxy of its own, which keeps running and holding its port: `kill` the `mitmdump`
+  listening on the proxy port the launch named. Before #430 the sandbox and its sshd kept
+  serving logins too (measured 2026-11-01), and a watcher killed together with the
+  supervisor still leaves them so: `probes/orphans.sh` lists that, and `--kill` ends it.

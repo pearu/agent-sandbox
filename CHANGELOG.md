@@ -1223,6 +1223,30 @@ names are gone; there are no aliases for removed names before 1.0.
   files) and **ends the launch with 128 + the signal** (130, 143, 129), where a single
   signal used to let it go on. A launch's normal exit still runs the cleanup; after
   the handoff the launch's signals are untouched.
+- **A strict keeper ends with its supervisor, a SIGKILL of it included** (#430). Under
+  `AGENT_SANDBOX_NET=strict` a supervisor killed with -9 (or by the OOM killer, or a
+  crash) left its sandbox running: measured on 12d04c6 and again on 7a8f9d7, pasta, both
+  bwraps and the keeper's payload were reparented to pid 1 and stayed, while under `none`
+  they went. bwrap's `--die-with-parent` tied bwrap to pasta, not to the supervisor, and
+  on Ubuntu, where passt's AppArmor profile confines pasta, no parent-death signal holds
+  across it: one set before the exec into pasta is lost (`setpriv --pdeathsig KILL pasta`
+  changed nothing), and one a dying pasta sends is not delivered. So the leaked sandbox
+  held the role's resources, its mount-point files among them, the next launch started a
+  second keeper beside it (the live check judges by the supervisor), and
+  `probes/orphans.sh` did not list it (the payload's parent, bwrap, was alive); from
+  reading the code, not measured, the next launch's janitor also removed the session
+  directory of the sandbox still running, its owner being dead. Now the supervisor of a
+  strict keeper starts a watcher beside pasta, an unconfined process with a parent-death
+  signal of its own; when the supervisor dies it collects pasta's subtree, each process
+  by pid and start time, and kills each one still the process collected. Measured on the
+  account: after the supervisor's -9, pasta, the payload and the watcher are gone within
+  5 s; a normal end leaves no watcher. A strict start that fails ends pasta's whole
+  subtree too, through the watcher (pasta sent TERM left its child running), and its
+  message now says `(exit 137)`, the launch's true status, where it said `(exit 1)`. A
+  watcher that is killed with its supervisor leaves the sandbox as before, and
+  `probes/orphans.sh` now lists that shape (a pasta whose parent is gone with a keeper
+  payload below it, or a watcher whose parent is gone) and ends it with `--kill`. The
+  other network modes are unchanged.
 - **`--init --env NAME` resolves NAME under the conda base the model's roles launch with,
   the file's `[conda] base` included** (#432). `--init` skipped that key, while a launch
   honours it. Measured on main 2a6172a, with a file holding only `[conda]`
