@@ -1189,6 +1189,20 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The roles' watcher no longer misses a change made between two of its runs** (#339).
+  `inbox-wait` took each FILE's state when it started as its baseline, so a change made
+  after one run's exit and before the next one's start -- a role's whole turn, seconds
+  to minutes for the Supervisor -- was never reported: an Implementer's `done` written
+  then left every role waiting on the Supervisor for about 8 minutes. A new option,
+  `-s STATE`, carries the baseline across runs: a FILE with an entry there is compared
+  with the saved state, so the next run reports such a change at once, and an exit 0
+  writes STATE anew by a rename, advancing only the reported FILE. A killed watcher
+  leaves STATE as it was: at worst one extra wake, never a missed change. Without
+  `-s`, nothing changes. The roles model's purpose files now run it with
+  `-s .asb/coord/<role>/inbox-wait.state`; a project's own copy changes when
+  `asb --init roles` is run again (a purpose file edited since it was written is kept,
+  and said).
+
 - **Under bash 5.2, a signal no longer abandons a run at a command with two command
   substitutions; `--serve` ends cleanly under a flood of signals; a signal during a
   launch's exit cleanup is ignored** (#423). Bash 5.2 (5.2.15, 5.2.21 and 5.2.37

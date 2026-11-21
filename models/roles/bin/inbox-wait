@@ -1,20 +1,44 @@
 #!/bin/sh
-# inbox-wait [-t SECS] [-a ALIVE] FILE... -- written by `asb --init roles` (docs/roles.md,
-# section 5). Exit 0 at the first change of any FILE -- its modification time, inode or
-# size: a rename over it, as the Write tool does, counts -- printing that FILE's path, and
-# 1 after SECS seconds without a change (0 or none: wait for ever). ALIVE, a path, is
-# touched at every poll, so its age says whether the role that waits is running. A
-# one-second poll by path: there is no inotifywait here.
+# inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE... -- written by `asb --init roles`
+# (docs/roles.md, section 5). Exit 0 at the first change of any FILE -- its modification
+# time, inode or size: a rename over it, as the Write tool does, counts -- printing that
+# FILE's path, and 1 after SECS seconds without a change (0 or none: wait for ever).
+# ALIVE, a path, is touched at every poll, so its age says whether the role that waits
+# is running. A one-second poll by path: there is no inotifywait here.
+#
+# STATE carries the baseline from one run to the next (#339). Without it, the baseline
+# is each FILE as this run finds it, so a change made between one run's exit and the
+# next run's start is never reported. With it, a FILE that STATE has an entry for is
+# compared with the state saved there, so such a change is reported at once by the
+# first poll; a FILE with no entry (a missing or empty STATE: every FILE) starts from
+# now. At exit 0, STATE is written anew, by a rename from a temporary file beside it:
+# the reported FILE's entry advances to the state that poll saw, every other FILE keeps
+# its baseline (two FILEs changed in one poll are reported by two runs, the second at
+# once), and entries for paths not among the FILEs are kept. At exit 1, or killed, it
+# is left as it was: the next run may then report a change the role has already read,
+# one extra wake at worst, never a missed change. One line per FILE: its state, a tab,
+# its path as given (a path may hold spaces and tabs). Refused at start (exit 2): a FILE
+# path with a newline, STATE among the FILEs (by any spelling), STATE a directory or
+# unreadable, and STATE's directory missing or not writable.
 usage() {
-  echo "usage: inbox-wait [-t SECS] [-a ALIVE] FILE..." >&2
+  echo "usage: inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE..." >&2
+  exit 2
+}
+refuse() {
+  printf 'inbox-wait: %s\n' "$1" >&2
   exit 2
 }
 lim=0
 alive=""
-while getopts t:a: o; do
+sf=""
+while getopts t:a:s: o; do
   case "$o" in
     t) lim="$OPTARG" ;;
     a) alive="$OPTARG" ;;
+    s)
+      sf="$OPTARG"
+      [ -n "$sf" ] || usage
+      ;;
     *) usage ;;
   esac
 done
@@ -24,22 +48,84 @@ case "$lim" in '' | *[!0-9]*) usage ;; esac
 # A FILE of digits alone is the old form's SECS (`FILE SECS [ALIVE]`), which would wait
 # for ever on a file named 0: refused.
 for f; do case "$f" in '' | *[!0-9]*) ;; *) usage ;; esac done
+nl='
+'
+tab="$(printf '\t')"
 st() { stat -c '%y %i %s' "$1" 2>/dev/null; }
-m="" # each FILE's state, a line each, in order
-for f; do m="$m$(st "$f")
-"; done
+# saved PATH -- STATE's entry for PATH: its state in $sv, status 1 when there is none.
+saved() {
+  [ -f "$sf" ] || return 1
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in *"$tab"*) ;; *) continue ;; esac
+    [ "${l#*"$tab"}" = "$1" ] || continue
+    sv="${l%%"$tab"*}"
+    return 0
+  done <"$sf"
+  return 1
+}
+# save FILE... -- STATE anew from the baseline $m, the reported FILE ($rep) at $cur, then
+# the entries of paths not among the FILEs; renamed over STATE from a temporary file in
+# its directory, so a reader never sees half of it.
+save() {
+  t="$(mktemp "$sf.XXXXXX")" || return 1
+  seen="$nl" rest="$m"
+  {
+    for p; do
+      s="${rest%%"$nl"*}"
+      rest="${rest#*"$nl"}"
+      [ "$p" != "$rep" ] || s="$cur"
+      case "$seen" in *"$nl$p$nl"*) continue ;; esac
+      seen="$seen$p$nl"
+      printf '%s\t%s\n' "$s" "$p"
+    done
+    if [ -f "$sf" ]; then
+      while IFS= read -r l || [ -n "$l" ]; do
+        case "$l" in *"$tab"*) ;; *) continue ;; esac
+        case "$seen" in *"$nl${l#*"$tab"}$nl"*) continue ;; esac
+        seen="$seen${l#*"$tab"}$nl"
+        printf '%s\n' "$l"
+      done <"$sf"
+    fi
+  } >"$t" && mv -f "$t" "$sf" && return 0
+  rm -f "$t"
+  return 1
+}
+if [ -n "$sf" ]; then
+  # Refused at start, rather than missing a change after the next exit 0.
+  d="$(dirname "$sf")"
+  [ -d "$d" ] && [ -w "$d" ] || refuse "-s $sf: its directory is missing or not writable"
+  [ ! -d "$sf" ] || refuse "-s $sf: a directory"
+  [ ! -e "$sf" ] || [ -r "$sf" ] || refuse "-s $sf: not readable"
+  # STATE among the FILEs by any spelling: by the path, and, once STATE exists, by its
+  # device and inode, as the poll's own stat sees them (a first run makes it; the next
+  # is refused).
+  si="$(stat -c '%d %i' "$sf" 2>/dev/null)"
+  for f; do
+    case "$f" in *"$nl"*) refuse "-s: a FILE path holds a newline, which STATE cannot record" ;; esac
+    if [ "$f" = "$sf" ] || { [ -n "$si" ] && [ "$(stat -c '%d %i' "$f" 2>/dev/null)" = "$si" ]; }; then
+      refuse "-s $sf: STATE is also a FILE, so writing it would wake the next run"
+    fi
+  done
+fi
+m="" # each FILE's baseline, a line each, in order
+for f; do
+  if [ -n "$sf" ] && saved "$f"; then s="$sv"; else s="$(st "$f")"; fi
+  m="$m$s$nl"
+done
 n=0
 while :; do
   [ -n "$alive" ] && touch "$alive" 2>/dev/null
   rest="$m"
   for f; do
-    [ "$(st "$f")" = "${rest%%
-*}" ] || {
+    cur="$(st "$f")"
+    [ "$cur" = "${rest%%"$nl"*}" ] || {
       printf '%s\n' "$f"
+      rep="$f"
+      [ -z "$sf" ] || save "$@" \
+        || printf 'inbox-wait: could not write %s; the next run reports this change again\n' "$sf" >&2
       exit 0
     }
-    rest="${rest#*
-}"
+    rest="${rest#*"$nl"}"
   done
   sleep 1
   n=$((n + 1))

@@ -325,16 +325,17 @@ goes when the run is green (section 4).
   Planner one of the two notices (below), the sandbox cannot see: it is the one rule
   in the Supervisor's purpose file that carries everything, as "publish only what the
   user accepted" was.
-- **The watcher.** `--init` writes `.asb/bin/inbox-wait [-t SECS] [-a ALIVE] FILE...`:
-  a one-second poll on each FILE's modification time, inode and size (there is no
-  `inotifywait` on the hosts, and a poll by path sees the rename the Write tool does),
-  exiting 0 at the first change, with that FILE's path on its output, and 1 after SECS
-  without one (none, or 0: wait for ever). A role runs it at start with the Bash tool
-  in the background (`run_in_background: true`) --
-  `.asb/bin/inbox-wait -a .asb/coord/<role>/alive .asb/coord/to/<role>.md` -- and
-  again after each wake, which is a turn anyway. Claude Code wakes the idle session
-  when the command exits and tells it which file changed; a background command has no
-  time limit in a terminal session, so nothing expires (measured with Claude Code
+- **The watcher.** `--init` writes
+  `.asb/bin/inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE...`: a one-second poll on
+  each FILE's modification time, inode and size (there is no `inotifywait` on the
+  hosts, and a poll by path sees the rename the Write tool does), exiting 0 at the
+  first change, with that FILE's path on its output, and 1 after SECS without one
+  (none, or 0: wait for ever). A role runs it at start with the Bash tool in the
+  background (`run_in_background: true`) --
+  `.asb/bin/inbox-wait -s .asb/coord/<role>/inbox-wait.state -a .asb/coord/<role>/alive .asb/coord/to/<role>.md`
+  -- and again after each wake, which is a turn anyway. Claude Code wakes the idle
+  session when the command exits and tells it which file changed; a background command
+  has no time limit in a terminal session, so nothing expires (measured with Claude Code
   2.1.300: 13.6 minutes idle with no notice, and the reply 5 s after the write). A
   session relaunched with `--resume` has no turn to do it in until something gives it
   one, so the launch does: `[briefing:...] start = .asb/start/<role>.md` is the text it
@@ -349,6 +350,29 @@ goes when the run is green (section 4).
   profile's `Stop` hook, for every role whose `[serve:<role>]` names its inbox -- the
   Gate's with `watch` alone, since it is never served: the model is told to arm it, and
   then ends its turn.
+  - **Nothing is missed between two runs** (#339). A run compares each FILE with a
+    baseline. Without `-s` that is the FILE as the run finds it, so a change made
+    after one run's exit and before the next one's start -- the role's whole turn,
+    seconds to minutes -- is never reported: a role's `done` written then left every
+    role waiting on the Supervisor for 8 minutes. With `-s STATE`, a FILE that STATE
+    has an entry for is compared with the state saved there, so the next run reports
+    such a change at once; a FILE with no entry (a missing or empty STATE: every FILE)
+    starts from now. At exit 0 the run writes STATE anew, by a rename: the reported
+    FILE's entry advances to the state it saw, every other FILE keeps its baseline (two
+    changed at once are reported by two runs, the second at once), and entries for
+    paths it was not given are kept. At exit 1 it is left as it was.
+  - **At worst one extra wake.** A watcher killed (`TaskStop`, the session's end) does
+    not advance STATE, so the next run may report a change the role has already read;
+    the role reads from its cursor, finds nothing new and runs it again. Likewise,
+    each watched file that changed while the role worked wakes the next run once, even
+    if the role read it then: after a long turn the Supervisor may get a few short
+    "nothing new" wakes, the price of never missing one.
+  - STATE is one line per FILE, its state, a tab and its path as given; `-s` refuses
+    (exit 2) a FILE whose path holds a newline, STATE among the FILEs by any spelling
+    (by device and inode once STATE exists), a STATE that is a directory or
+    unreadable, and a STATE whose directory is missing or not writable.
+    It lives in the role's own directory, which the Supervisor does not watch; the
+    Supervisor's `-t 10 ….reset` wait has no `-s`.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
   `.asb/scratch/inbox-cursor` (the last N it handled), at every wake and at every
   start, so a lost notification costs nothing.
