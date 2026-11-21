@@ -129,6 +129,64 @@ run), touches `.asb/coord/R/alive` itself, reads the prompt through one open fil
 real path must be in the project, and writes the session id by a rename in the role's
 directory, so a link planted there is replaced, never written through.
 
+### Signals (#422, #423)
+
+The engine's own handlers, and what each does with INT, TERM and HUP:
+
+- **A launch's setup.** From making its session directory until it hands the session to
+  the keeper's supervisor, the first INT, TERM or HUP ignores all three, runs the
+  session's cleanup once (the directory, the ssh agent, the mount-point files) and ends
+  the launch with 128 + the signal. A launch that ends otherwise in that time (a
+  refusal, a failed start) runs the same cleanup on its way out, with the three ignored
+  while it runs, so a Ctrl-C there is not taken (the cleanup is bounded by the
+  mount-point list's 10-second lock).
+- **The hand-over.** A signal between the supervisor's start and the launch's hand-over
+  runs the launch's cleanup on the session the starting keeper uses. The launch ends
+  with 128 + the signal; the keeper, joined by no one, ends itself after about five
+  seconds plus its grace, with its own cleanup. Left as it is; the keeper's start
+  protocol is #430's.
+- **`--serve`.** A signal ends the loop at its next check, and the launch with it. From
+  then until it returns it ignores the three, so a flood of them neither cuts the shutdown
+  short nor changes its status. A shutdown that fails (a stuck keeper) ends it at once,
+  with status 1.
+- **A join, `--login`, `--summarize`.** The handler only waits for one foreground
+  command and decides what this process does after it.
+
+**Bash 5.2.** A handler that runs while bash 5.2 parses a command substitution fails
+(``trap: line 2: unexpected EOF while looking for matching `)'``), and bash abandons the
+command it was in: for the engine, the whole run, of which only the EXIT trap still
+runs. Bash 4.4 to 5.1 and 5.3 do not have this (measured: 4.4.18, 5.0.18, 5.1.16,
+5.2.15, 5.2.21, 5.2.37, 5.3.0, 5.3.9). It happens deterministically when the signal
+arrived during an earlier substitution of the same simple command (`v="$(a)$(b)"`, two
+arguments, two assignments), so the engine runs **one substitution per simple command**
+(`$(…)`, `<(…)` or `>(…)`; `tests/unit/traps.bats` checks the engine and the profiles'
+scripts). What is nested in one, or in a `( … )` subshell, is expanded in the child,
+where no handler is installed, and so is an element of a pipeline. The exception is a
+child that arms its own handler, such as `agent_sandbox() ( … )`; the check reads such
+a body line by line, so the rule holds there too. Three forms comply:
+
+- **an assignment, wrapped:**
+  `dir="$(_as_one "$(_as_state_dir)/$p/$(_as_path_slug "$x")")"` keeps the expression as
+  written; `_as_one` returns the status the shell had on entry, the last inner
+  substitution's, so the assignment's status is the expression's;
+- **a command that leaves the shell's state alone, in a subshell:**
+  `(mkdir -p -- "$(dirname -- "$a")" "$(dirname -- "$b")") || return 1`,
+  `if ([[ "$(a)" == "$(b)" ]]); then`;
+- **hoisted**, where neither does: a loop's words, two variables set at once, an array
+  element list, a background job; a part whose status the command ignored gets `|| :`.
+
+What is left is a signal that lands in the microseconds bash spends parsing a single
+`$(`:
+
+- **a launch's setup:** measured, three launches in 1000 sent a single TERM at a random
+  moment, under bash 5.2.37 (54 in 1000 before #423). It ends with status 2 and that
+  message instead of 128 + the signal, its cleanup run by the EXIT trap, nothing left
+  behind;
+- **`--serve`:** its loop runs a few single substitutions a second (the watched file's
+  `stat` among them; bash has no builtin for it), and no flood showed it;
+- **`--install`'s fetch:** single substitutions only; a hit ends the fetch, its
+  temporary directory removed and nothing installed.
+
 ## Threat model
 
 **Adversary**: the agent process and anything it runs inside the sandbox,
