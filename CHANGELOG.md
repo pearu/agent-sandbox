@@ -1189,6 +1189,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A launch signalled while it is set up ends, cleaned up once** (#422). From making
+  its session directory until it hands the session to the keeper's supervisor, a
+  launch ran its cleanup on INT, TERM or HUP and went on, without its session
+  directory; every further signal ran the cleanup again, over the one in progress.
+  Measured on main 58c516a, a launch sent repeated TERM there crashed bash in 48 of 48
+  runs (`Segmentation fault`, exit 139), 8 of them after "unexpected EOF while looking
+  for matching `)'"; on main 7a8f9d7, bash 5.2.37 printed "pop_var_context: head of
+  shell_variables not a function context". Now the first INT, TERM or HUP ignores all
+  three, runs the cleanup once (the session directory, the ssh agent, the mount-point
+  files) and **ends the launch with 128 + the signal** (130, 143, 129), where a single
+  signal used to let it go on. A launch's normal exit still runs the cleanup; after
+  the handoff the launch's signals are untouched.
 - **`--init --env NAME` resolves NAME under the conda base the model's roles launch with,
   the file's `[conda] base` included** (#432). `--init` skipped that key, while a launch
   honours it. Measured on main 2a6172a, with a file holding only `[conda]`

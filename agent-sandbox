@@ -926,7 +926,10 @@ _as_session_begin() {
   local _owner_pid=$BASHPID _owner_start
   _owner_start="$(awk '{print $22}' "/proc/$_owner_pid/stat" 2>/dev/null || echo 0)"
   printf '%s %s\n' "$_owner_pid" "$_owner_start" >"$_session_dir/owner.id"
-  trap '_as_session_cleanup' EXIT INT TERM HUP
+  trap '_as_session_cleanup' EXIT
+  trap '_as_session_signal 2' INT
+  trap '_as_session_signal 15' TERM
+  trap '_as_session_signal 1' HUP
   return 0
 }
 
@@ -1194,6 +1197,23 @@ _as_session_cleanup() {
   _as_placeholder_files=() _as_placeholder_maybe=()
   _ssh_agent_pid="" _session_dir=""
   return 0
+}
+
+# _as_session_signal NUM -- the session's INT, TERM and HUP (_as_session_begin), until
+# _as_launch hands the session to the keeper's supervisor: the cleanup, once, and the
+# end of the launch, with 128 + NUM. A launch that went on after its cleanup would go on
+# without its session directory, and a handler that does not end its shell runs again
+# at the next signal, over a cleanup still in progress: bash crashed in every one of 48
+# launches sent repeated TERM, some after a parse error (#422). So the three are ignored
+# from here on, and the EXIT trap is cleared: the cleanup runs here and only here. With
+# errexit off, so that a step that fails (an rm -rf the directory resists) neither skips
+# the steps after it nor gives the launch its own status.
+_as_session_signal() {
+  trap '' INT TERM HUP
+  trap - EXIT
+  set +e
+  _as_session_cleanup
+  exit $((128 + $1))
 }
 
 _as_ssh_pick_key() {
