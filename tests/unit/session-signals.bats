@@ -14,6 +14,12 @@
 # up). Setup runs one substitution per simple command; the tests here send the TERM
 # inside the first of what were two (fire_in), under a bash 5.2 (bash52), and the EXIT
 # trap's own cleanup ignores the three signals.
+#
+# And the hand-over (#422, R1's N3 on it): from the keeper's supervisor's start until the
+# start's outcome is known, the session's owner is changing, and a signal is only
+# recorded. A stub bwrap holds the start there (handover_stub). A keeper that comes up
+# is the supervisor's, which cleans up when it ends, at once; a start that fails leaves
+# the session the launch's, which cleans up. Either way once, and 128 + the signal.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -35,7 +41,7 @@ sock=""; while [[ \$# -gt 0 ]]; do [[ "\$1" == -a ]] && sock="\$2"; shift; done
 echo "\$!" >"$H/agent.pid"
 echo "SSH_AGENT_PID=\$!; export SSH_AGENT_PID;"
 X
-  HOLD_PID="" LAUNCH_PID="" OWNER=""
+  HOLD_PID="" LAUNCH_PID="" OWNER="" SUP=""
 }
 
 teardown() {
@@ -44,6 +50,21 @@ teardown() {
   [[ -n "$HOLD_PID" ]] && release_lock
   [[ -n "$LAUNCH_PID" ]] && kill -KILL "$LAUNCH_PID" 2>/dev/null
   [[ -s "$H/agent.pid" ]] && kill "$(cat "$H/agent.pid")" 2>/dev/null
+  # a keeper a hand-over test left (one that failed): its start let go, then it and its
+  # supervisor ended
+  : >"$H/bwrap-go"
+  local f s t
+  for f in "$STATE"/claude/*/*/keeper/id; do
+    [[ -s "$f" ]] || continue
+    read -r s _ t _ <"$f"
+    kill -KILL "$s" "$t" 2>/dev/null
+  done
+  [[ -n "${SUP:-}" ]] && kill -KILL "$SUP" 2>/dev/null
+  # ...and the stub bwrap of a start still held (handover_stub), or the payload it became:
+  # it runs in a session of its own, so the supervisor's end does not reach it
+  local b=""
+  [[ -s "$H/bwrap.pid" ]] && read -r b <"$H/bwrap.pid"
+  [[ -n "$b" ]] && grep -qa agent-sandbox-keeper "/proc/$b/cmdline" 2>/dev/null && kill -KILL "$b"
   return 0
 }
 
@@ -358,4 +379,121 @@ X
   [ "$LAUNCH_STATUS" -eq "$st" ]
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || [ "$(grep -c '^+*[0-9]*: _as_session_cleanup$' "$H/trace")" -eq 1 ]
   [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]
+}
+
+# handover_stub -- a bwrap that holds a keeper's start: it records its argv, says it is
+# there ($H/in-bwrap), and waits for $H/bwrap-go; then it runs the payload, or, with
+# $H/bwrap-fail, exits 1, a start that failed. The supervisor has taken the session
+# (owner.id) by then: the launch waits for the keeper, in the hand-over.
+handover_stub() {
+  cat >"$H/bin/bwrap" <<'STUB'
+#!/usr/bin/env bash
+. "${0%/*}/stub-env"
+set +x
+: >"${BWRAP_DUMP:?}"
+for a in "$@"; do printf '%s\n' "$a" >>"$BWRAP_DUMP"; done
+if [[ "${!#}" == agent-sandbox-keeper ]]; then
+  echo "$$" >"${BWRAP_DUMP%/*}/bwrap.pid"
+  : >"${BWRAP_DUMP%/*}/in-bwrap"
+  while [[ ! -e "${BWRAP_DUMP%/*}/bwrap-go" ]]; do sleep 0.02; done
+  [[ ! -e "${BWRAP_DUMP%/*}/bwrap-fail" ]] || exit 1
+fi
+. "${0%/*}/keeper-tail"
+STUB
+  chmod +x "$H/bin/bwrap"
+}
+
+# launch_in_handover [VAR=value...] -- a launch with --ssh, held in the hand-over (handover_stub); sets
+# SUP, the supervisor (owner.id's process now), OWNER, the launch's process that held the
+# session before it (the supervisor's parent, which has the handlers), and SESS.
+launch_in_handover() {
+  local i
+  handover_stub
+  : >"$H/home/.ssh/id_ed25519.pub"
+  launch_free "$@" -- --ssh example.test claude --version
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$H/in-bwrap" ]] && break
+    kill -0 "$LAUNCH_PID" 2>/dev/null || break
+    sleep 0.05
+  done
+  [ -e "$H/in-bwrap" ]
+  OWNER=""
+  owner_of
+  SUP="$OWNER"
+  # the launch's process that holds the session and its handlers: the supervisor's parent
+  OWNER="$(awk '$1 == "PPid:" {print $2}' "/proc/$SUP/status")"
+  [ "$OWNER" != "$SUP" ]
+  [ "$(cat "/proc/$(cat "$H/agent.pid")/comm")" = ssh-agent ]
+}
+
+# _us EPOCHREALTIME -- that time in microseconds.
+_us() { echo "$((10#${1/./}))"; }
+
+# launch_cleanups -- how many times the launch itself (not its supervisor) ran
+# _as_session_cleanup, from its xtrace.
+launch_cleanups() { grep -c "^+*$OWNER: _as_session_cleanup\$" "$H/trace" || :; }
+
+# handover_live SIG STATUS -- SIG to a launch in the hand-over, whose keeper then comes
+# up: the session is the supervisor's. Until the start is over the launch waits and
+# the session is whole (on main the launch's cleanup removed it from under the starting
+# keeper); then the launch ends with STATUS without joining, never cleaning up itself,
+# and the keeper, joined by no one, ends at once, its cleanup with it (slowed here), before
+# the launch does: woken (not after the supervisor's five-second wait) and told to stop
+# (keeper/stop; not after the grace, which is long here).
+handover_live() {
+  local rm
+  # the supervisor's removal of the session directory takes 0.5 s, so that a launch that
+  # ended before its keeper had would be seen
+  rm="$(command -v rm)"
+  cat >"$H/bin/rm" <<X
+#!/bin/bash
+set +x
+[[ "\$1 \$2" == "-rf --" && "\$3" == "$H/base/session."* ]] && sleep 0.5
+exec "$rm" "\$@"
+X
+  chmod +x "$H/bin/rm"
+  launch_in_handover AGENT_SANDBOX_KEEPER_GRACE=60
+  kill -s "$1" "$OWNER"
+  sleep 0.5
+  [ -d "$SESS" ]
+  kill -0 "$OWNER" # still waiting for the start
+  [ "$(cat "/proc/$(cat "$H/agent.pid")/comm")" = ssh-agent ]
+  local t0=$EPOCHREALTIME
+  : >"$H/bwrap-go"
+  launch_end
+  [ "$LAUNCH_STATUS" -eq "$2" ]
+  [ ! -s "$H/join" ]
+  [ ! -d "/proc/$SUP" ] # ended before the launch did
+  # ...within 3 s: well before the supervisor's own five-second wait would end it
+  (($(_us "$EPOCHREALTIME") - $(_us "$t0") < 3000000))
+  [ ! -e "$SESS" ]
+  gone "$(cat "$H/agent.pid")"
+  [ -z "$(find "$STATE" -path '*/keeper/id' -print -quit)" ]
+  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || [ "$(launch_cleanups)" -eq 0 ]
+}
+
+@test "a launch sent TERM while its keeper starts leaves the session to the keeper, which ends at once with its cleanup; the launch ends 143 (#422)" {
+  handover_live TERM 143
+}
+
+@test "a launch sent INT while its keeper starts leaves the session to the keeper, which ends at once with its cleanup; the launch ends 130 (#422)" {
+  handover_live INT 130
+}
+
+@test "a launch sent TERM while its keeper starts, which then fails, keeps the session and cleans it up once; it ends 143 (#422)" {
+  launch_in_handover
+  : >"$H/bwrap-fail"
+  kill -TERM "$OWNER"
+  sleep 0.5
+  [ -d "$SESS" ]
+  kill -0 "$OWNER" # still waiting for the start
+  : >"$H/bwrap-go"
+  launch_end
+  [ "$LAUNCH_STATUS" -eq 143 ]
+  grep -q "the sandbox did not start" "$H/out"
+  [ ! -s "$H/join" ]
+  [ ! -d "/proc/$SUP" ]
+  [ ! -e "$SESS" ]
+  gone "$(cat "$H/agent.pid")"
+  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || [ "$(launch_cleanups)" -eq 1 ]
 }

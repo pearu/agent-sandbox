@@ -940,10 +940,17 @@ _as_session_begin() {
   _owner_start="$(awk '{print $22}' "/proc/$_owner_pid/stat" 2>/dev/null || echo 0)"
   printf '%s %s\n' "$_owner_pid" "$_owner_start" >"$_session_dir/owner.id"
   trap '_as_session_exit' EXIT
+  _as_session_traps
+  return 0
+}
+
+# _as_session_traps -- the session's INT, TERM and HUP (_as_session_signal), armed by
+# _as_session_begin and again when a keeper's start gives the session back
+# (_as_handover_resume).
+_as_session_traps() {
   trap '_as_session_signal 2' INT
   trap '_as_session_signal 15' TERM
   trap '_as_session_signal 1' HUP
-  return 0
 }
 
 # _as_placeholders_in_use HOSTPATH... -- print the index (from 1) of each of the given
@@ -1213,7 +1220,7 @@ _as_session_cleanup() {
 }
 
 # _as_session_signal NUM -- the session's INT, TERM and HUP (_as_session_begin), until
-# _as_launch hands the session to the keeper's supervisor: the cleanup, once, and the
+# the keeper's supervisor is started (then _as_handover_defer): the cleanup, once, and the
 # end of the launch, with 128 + NUM. A launch that went on after its cleanup would go on
 # without its session directory, and a handler that does not end its shell runs again
 # at the next signal, over a cleanup still in progress: bash crashed in every one of 48
@@ -1239,6 +1246,48 @@ _as_session_exit() {
   trap '' INT TERM HUP
   set +e
   _as_session_cleanup
+}
+
+# _as_handover_defer / _as_handover_resume -- the launch's INT, TERM and HUP while a
+# keeper starts (_as_keeper_start), from the supervisor's fork until the start's outcome
+# is known: the hand-over of the session (#422, R1's N3 on it).
+#
+# ONE OWNER AT A TIME. The session (its directory, the ssh agent, the mount-point files)
+# is the launch's until a keeper is live, and the supervisor's from then on: it rewrites
+# owner.id at its start, and its own cleanup runs when the keeper ends. A signal in
+# between used to run the launch's cleanup on the session the starting keeper was given,
+# and then the supervisor's over it once more (93 of 1000 single TERMs at a random
+# moment, bash 5.2.37, main d0080b7). So here a signal is only recorded, with a
+# builtin assignment (no substitution, no cleanup: the handler of #423's class can do no
+# harm), and the launch acts on it when the start is over, by its outcome:
+# - the keeper is live: the session is the supervisor's. The launch does not join; it
+#   tells the keeper to stop (keeper/stop, as --shutdown and a reset do, so no grace),
+#   wakes the supervisor until it is gone, and exits with 128 + the signal
+#   (_as_launch). The supervisor, with nothing joined, ends the keeper and runs the
+#   cleanup.
+# - the start failed: the supervisor exited without cleaning up (it has no session to
+#   clean once it fails), so the session is still the launch's: _as_handover_resume runs
+#   _as_session_signal, the cleanup once and 128 + the signal. Whoever owner.id names
+#   by then does not matter to it: the directory, the agent and the list's entries are
+#   the launch's own variables, and the directory is removed before the list's busy
+#   check could read it (_as_placeholders_in_use).
+# Not ignored (`trap ''`): a Ctrl-C during a start that hangs would be lost for up to its
+# 15 s, and the launch would then join a session the user tried to stop. A recorded
+# signal is acted on as soon as the start's outcome is known, within a turn of its wait.
+# A later signal replaces an earlier one: the last is the status.
+_as_handover_defer() {
+  _as_handover_sig=0
+  trap '_as_handover_sig=2' INT
+  trap '_as_handover_sig=15' TERM
+  trap '_as_handover_sig=1' HUP
+}
+
+# _as_handover_resume -- the start failed: the session's own handlers again, and a
+# signal recorded during the start ends the launch now, as it would have then.
+_as_handover_resume() {
+  _as_session_traps
+  ((${_as_handover_sig:-0} == 0)) || _as_session_signal "$_as_handover_sig"
+  return 0
 }
 
 _as_ssh_pick_key() {
@@ -4529,6 +4578,10 @@ _as_keeper_start() {
     rm -f -- "$kd/binds"
     : >"$kd/binds.unread"
   fi
+  # From the fork on, a signal waits for the start's outcome (_as_handover_defer): a live
+  # keeper returns with it recorded, for _as_launch; a failed start resumes the session's
+  # handlers, which act on it.
+  _as_handover_defer
   (_as_keeper_supervise "$sb" -- "$@") &
   local sup=$!
   for ((i = 0; i < 1500; i++)); do
@@ -4536,11 +4589,13 @@ _as_keeper_start() {
     kill -0 "$sup" 2>/dev/null || break
     sleep 0.01
   done
-  wait "$sup" 2>/dev/null
+  # A recorded signal ends a wait early; the supervisor's own end is the one waited for.
+  until wait "$sup" 2>/dev/null || ! kill -0 "$sup" 2>/dev/null; do :; done
   if [[ -e "$kd/failed-proxy" ]]; then
     _as_msg "role '${_role:-default}': its proxy of its own did not come up on 127.0.0.1:$_proxy_port; refusing to launch. Its output is in $sb/keeper.log"
     kill "$sup" 2>/dev/null
     rm -rf -- "$kd"
+    _as_handover_resume
     return 1
   fi
   local frc=1
@@ -4550,6 +4605,7 @@ _as_keeper_start() {
   sed 's/^/  /' "$sb/keeper.log" >&2
   kill "$sup" 2>/dev/null
   rm -rf -- "$kd"
+  _as_handover_resume
   return "$frc"
 }
 
@@ -17693,6 +17749,26 @@ _as_launch() {
   # the ssh agent and removes the mount-point files once the keeper ends.
   trap - EXIT INT TERM HUP
   _session_dir="" _ssh_agent_pid="" _as_placeholder_files=() _as_placeholder_maybe=()
+  # A signal during the start, recorded (_as_handover_defer), checked once the handlers are
+  # reset, so that none falls between: the launch does not join, and the keeper it
+  # started, with nothing joined, ends at once, with its cleanup. The launch ends after
+  # it. Woken until it is gone, as a join with no grace wakes it, because the supervisor
+  # can lose a wake: a USR1 that lands between its checks and its `wait` (here, between
+  # its keeper/id record and its first wait) runs its `:` handler, and it then sleeps its
+  # five seconds (52 of 238 such runs, measured, with one USR1). A fix of that window in
+  # the supervisor (a flag its handler sets, checked before each wait; drafted as an
+  # issue) would let this go back to one USR1. A second signal meanwhile ends the
+  # launch; the keeper, told to stop, then ends within that wait.
+  if ((${_as_handover_sig:-0})); then
+    : >"$_keeper_sb/keeper/stop" || :
+    _as_keeper_unlock
+    local _hw
+    for ((_hw = 0; _hw < 1000; _hw++)); do
+      kill -USR1 "$_keeper_spid" 2>/dev/null || break
+      sleep 0.01
+    done
+    exit $((128 + _as_handover_sig))
+  fi
   ((_do_exec)) || ! declare -F profile_before_join >/dev/null || profile_before_join "$@"
   _as_keeper_join "$_keeper_sb" "$@" || rc=$?
   [[ -n "${_help_footer:-}" ]] && _as_engine_help_footer

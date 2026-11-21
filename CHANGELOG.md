@@ -1223,6 +1223,22 @@ names are gone; there are no aliases for removed names before 1.0.
   files) and **ends the launch with 128 + the signal** (130, 143, 129), where a single
   signal used to let it go on. A launch's normal exit still runs the cleanup; after
   the handoff the launch's signals are untouched.
+- **A launch signalled while its keeper starts leaves the session to one owner** (#422).
+  Between starting the keeper's supervisor, which takes the session over, and seeing the
+  keeper live, a launch's INT, TERM or HUP ran the launch's cleanup on the session the
+  starting keeper had been given (its directory removed, its ssh agent stopped, its
+  mount-point files released), and the supervisor's cleanup ran over it again when the
+  keeper ended, about five seconds plus its grace later. Measured with one TERM at a
+  random moment under bash 5.2.37, on main d0080b7: 93 of 1000 runs cleaned the session
+  up twice, the launch and then the supervisor. Now a signal there is only recorded and
+  acted on once the start's outcome is known: a keeper that came up is the supervisor's,
+  and the launch does not join it but stops it (no grace), waits for it to end with its
+  cleanup, and ends with 128 + the signal; a start that failed leaves the session the
+  launch's, which cleans it up once and ends with 128 + the signal. The same
+  measurement: 0 of 1000 cleaned it up twice; the 98 runs whose TERM came during the
+  start ended 143 with the keeper and its cleanup done, and nothing was left in any run.
+  A Ctrl-C during a start that hangs waits for the start's own bound (15 s), and is not
+  lost.
 - **A strict keeper ends with its supervisor, a SIGKILL of it included** (#430). Under
   `AGENT_SANDBOX_NET=strict` a supervisor killed with -9 (or by the OOM killer, or a
   crash) left its sandbox running: measured on 12d04c6 and again on 7a8f9d7, pasta, both
