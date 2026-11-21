@@ -141,6 +141,9 @@ _as_session_exit|EXIT
 _as_session_signal 2|INT
 _as_session_signal 15|TERM
 _as_session_signal 1|HUP
+_as_handover_sig=2|INT
+_as_handover_sig=15|TERM
+_as_handover_sig=1|HUP
 :|USR1
 :|INT QUIT
 sig=1|INT TERM HUP
@@ -150,8 +153,11 @@ chmod -R u+rwX -- "$tmp" 2>/dev/null; rm -rf -- "$tmp"|EXIT
 exit 130|INT TERM HUP
 EOF
   )"
-  # _as_session_exit, _as_session_signal (_as_session_begin): a launch's setup, until
-  #   _as_launch hands the session over; one substitution per simple command there.
+  # _as_session_exit, _as_session_signal (_as_session_begin): a launch's setup, until the
+  #   keeper's supervisor is started, and again after a failed start; one substitution
+  #   per simple command there.
+  # _as_handover_sig=N (_as_handover_defer): while a keeper starts, the signal recorded
+  #   by a builtin assignment, no cleanup; acted on once the start's outcome is known.
   # : USR1 (_as_keeper_supervise): no substitution once a join can signal it (#419).
   # : INT QUIT (_as_keeper_join): around one foreground command.
   # sig=1 (_as_summarize): around the turn and _as_summarize_forget; no substitution.

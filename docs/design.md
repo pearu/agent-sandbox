@@ -135,18 +135,24 @@ directory, so a link planted there is replaced, never written through.
 
 The engine's own handlers, and what each does with INT, TERM and HUP:
 
-- **A launch's setup.** From making its session directory until it hands the session to
-  the keeper's supervisor, the first INT, TERM or HUP ignores all three, runs the
-  session's cleanup once (the directory, the ssh agent, the mount-point files) and ends
-  the launch with 128 + the signal. A launch that ends otherwise in that time (a
-  refusal, a failed start) runs the same cleanup on its way out, with the three ignored
-  while it runs, so a Ctrl-C there is not taken (the cleanup is bounded by the
-  mount-point list's 10-second lock).
-- **The hand-over.** A signal between the supervisor's start and the launch's hand-over
-  runs the launch's cleanup on the session the starting keeper uses. The launch ends
-  with 128 + the signal; the keeper, joined by no one, ends itself after about five
-  seconds plus its grace, with its own cleanup. Left as it is; the keeper's start
-  protocol is #430's.
+- **A launch's setup.** From making its session directory until it starts the keeper's
+  supervisor, the first INT, TERM or HUP ignores all three, runs the session's cleanup
+  once (the directory, the ssh agent, the mount-point files) and ends the launch with
+  128 + the signal. A launch that ends otherwise in that time (a refusal, a failed
+  start) runs the same cleanup on its way out, with the three ignored while it runs, so
+  a Ctrl-C there is not taken (the cleanup is bounded by the mount-point list's 10-second
+  lock).
+- **The hand-over.** The session has one owner at a time: the launch until its keeper is
+  live, the keeper's supervisor from then on. From the supervisor's start until the
+  start's outcome is known, a signal is only recorded (a builtin assignment, no
+  cleanup), and the launch acts on it then. A keeper that came up is the supervisor's:
+  the launch does not join, tells the keeper to stop (`keeper/stop`, as `--shutdown`
+  does, so no grace), wakes its supervisor until it has ended, with its cleanup, and
+  then ends with 128 + the signal. A start that failed leaves the session the launch's:
+  its cleanup runs once and it ends with 128 + the signal. A Ctrl-C during a start that
+  hangs waits for the start's own bound (15 s) and is not lost. Before, the launch's
+  cleanup ran on the session the starting keeper was given, and the supervisor's ran
+  over it again (#422, R1's N3 on it).
 - **`--serve`.** A signal ends the loop at its next check, and the launch with it. From
   then until it returns it ignores the three, so a flood of them neither cuts the shutdown
   short nor changes its status. A shutdown that fails (a stuck keeper) ends it at once,
