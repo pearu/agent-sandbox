@@ -6357,17 +6357,29 @@ _as_briefing_write() {
     *) rw_line="$cwd" ;;
   esac
   # The paths declared read-write or read-only. Not the built-in read-only dot-file,
-  # which is no grant.
-  local _bp
+  # which is no grant. And the role's own (`own`: its scratch, a history of its own),
+  # writable too and the only ones kept for the role alone across its launches (#435):
+  # named as the dot-file names them, as the list of where the user reaches them does
+  # (_as_briefing_handing). Without them on this line, the line steered kept work to
+  # ~/.cache and /tmp, which go at exit.
+  local _bp kept=""
   for _bp in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
     [[ "${_connect_where[$_bp]:-}" == "built in"* ]] && continue
     case "${_connect_mode[$_bp]:-}" in
       read-write) rw_line="${rw_line:+$rw_line, }$_bp" ;;
       read-only) ro_line="${ro_line:+$ro_line, }$_bp" ;;
+      # not one with a shorter scope: its store goes when the run or the join ends
+      own) [[ -n "${_connect_scope[$_bp]:-}" ]] || kept="${kept:+$kept, }${_connect_key[$_bp]:-$_bp}" ;;
     esac
   done
   rw_line="${rw_line:-nothing in the project}"
   ro_line="${ro_line:-none}"
+  [[ -n "$kept" ]] && rw_line+="; kept: $kept (yours, across launches)"
+  # What goes at exit, outside native (there $HOME and /tmp are the host's own): the
+  # start line's one clause, beside the writable paths.
+  local throw=""
+  _as_preset_is_native \
+    || throw="; throwaway, gone at exit: ~/.cache and /tmp -- under ~, besides these, only ~/.cache is writable: point a tool that writes under ~ there with its variable"
 
   local sec="off"
   case "${_knob_seccomp:-}" in on | 1) sec="on: syscalls outside an allowlist fail with EPERM" ;; esac
@@ -6449,6 +6461,23 @@ _as_briefing_write() {
       printf '  system": point it at ~/.cache, or at your scratch to keep it across launches,\n'
       printf '  with its variable (TRITON_HOME, XDG_CACHE_HOME, ...) in your own shell, not\n'
       printf '  in the code\n'
+      # Where kept work goes (#435): a worktree or a measurement put in ~/.cache was lost
+      # with the session, or moved by hand.
+      # It names no path: an own path can be a mask (a history hidden from the role), and
+      # where work goes is the role's purpose's to say, where it has one.
+      if [[ -n "$kept" ]]; then
+        local _ap=""
+        [[ -n "${_purpose_file:-}" ]] && _ap=", as your purpose says"
+        printf -- '- anything to keep (worktrees, prototypes, measurements, drafts) goes where it\n'
+        printf '  is kept%s (your scratch, or your clone),\n' "$_ap"
+        printf '  never in ~/.cache or /tmp: those are for caches and builds you can lose,\n'
+        printf '  both gone at exit, a scratchpad your agent gives you under /tmp included\n'
+      else
+        printf -- '- anything to keep (worktrees, prototypes, measurements, drafts) goes in a\n'
+        printf '  writable path above, where it belongs to the work; ~/.cache and\n'
+        printf '  /tmp are for caches and builds you can lose: both are gone at exit, a\n'
+        printf '  scratchpad your agent gives you under /tmp included\n'
+      fi
     fi
     _as_briefing_handing
     printf '\n## Other projects\n\n%s.\n' "$mem_line"
@@ -6534,7 +6563,7 @@ _as_briefing_write() {
     fi
   fi
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="$(_as_one "agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). Each command you hand says where it runs -- this session (behind its shell escape, where this agent has one; inside paths) or the host (the user's shell, host paths) -- never one whose paths exist only on the other side. If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user.")"
+  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}${throw}. Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). Each command you hand says where it runs -- this session (behind its shell escape, where this agent has one; inside paths) or the host (the user's shell, host paths) -- never one whose paths exist only on the other side. If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user."
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --

@@ -66,7 +66,8 @@ engine file), `AGENT_SANDBOX_PROFILE` (this profile's name),
 `AGENT_SANDBOX_PROFILE_DIR`, `_as_msg` for prefixed stderr messages,
 `profile_role_dir` in `profile_prepare()` (the role's store on the host, never bound
 into a sandbox, #335), and, by dynamic scope there, the launch's resolved `_knob_net`
-(the network mode), `_preset` in `profile_session_args()` (the sandbox's preset),
+(the network mode), `_preset` in `profile_session_args()` and `profile_briefing_args()`
+(the sandbox's preset),
 `_agent_ports` (the agent-port tokens, merged from every source and
 normalized: `PORT`, or `ADDR:PORT` for an address other than `127.0.0.1`), `_role` and
 `_df_profile_kv` (the approved dot-file's pairs of the profile's section), and, in
@@ -74,20 +75,28 @@ normalized: `PORT`, or `ADDR:PORT` for an address other than `127.0.0.1`), `_rol
 `[permissions]` rules for this launch's role, each once, in the agent's own syntax, for
 the profile to hand to the agent (claude: `permissions.allow` in its `--settings`). A
 profile that reads none leaves them unapplied. Before them, claude's `--settings`
-carries two rules of the engine's own at every briefed launch and join, so that Claude
-Code does not ask "outside the working directories" for the engine's files:
-`Read(//run/agent-sandbox/**)`, the briefing directory, and
+carries rules of the engine's own at every briefed launch and join, so that Claude Code
+does not ask "outside the working directories" for the engine's files and the sandbox's
+private ones: `Read(//run/agent-sandbox/**)`, the briefing directory;
 `Edit(//run/agent-sandbox/summary/line)`, the session's summary line where the engine
-bound it (`_summary_line`). A leading `//` is an absolute path in Claude Code's
+bound it (`_summary_line`); and, but under `native`, where both are the host's own,
+`Read` and `Edit` of `~/.cache/**` and `/tmp/**`, written `//home/you/.cache/**` (a `/`
+before `$HOME`) and `//tmp/**` (#435): the sandbox's private tmpfs mounts, gone at
+exit, for caches and builds. A leading `//` is an absolute path in Claude Code's
 `Read`/`Edit` rules (a single `/` is relative to the settings file), and an `Edit` rule
 covers `Write`, whose own path rules never match
 ([permissions](https://code.claude.com/docs/en/permissions)). They are narrower than
-`--add-dir`, which would allow edits anywhere in the directory, and the trust review and
+`--add-dir`, which would allow edits anywhere in the briefing directory, and apply
+where `--add-dir` is not passed (only with a first turn); the trust review and
 `--check` do not list them: no dot-file line asks for them, and they reach nothing the
-binds do not already give. A user's `--settings` rules come first, and their `deny` and
-`ask` rules still win; a `permissions` of theirs that is not an object (or an `allow`
-that is not an array) is kept as it is and no rule is added, which the launch says, the
-hooks merged all the same.
+binds do not already give. The `~/.cache` and `/tmp` rules cover whatever is bound under
+those trees too, such as the host's conda package cache at
+`~/.cache/agent-sandbox/conda-pkgs`, read-write and shared by every sandbox. Such a bind
+is the exception to "gone at exit": it is kept, but it is the host's cache, not a place
+for a role's work. A user's `--settings` rules come first, and their `deny` and `ask`
+rules still win; a `permissions` of theirs that is not an object (or an `allow` that is
+not an array) is kept as it is and no rule is added, which the launch says, the hooks
+merged all the same.
 
 ### A dot-file section named after the profile
 
